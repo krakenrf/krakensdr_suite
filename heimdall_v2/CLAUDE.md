@@ -40,7 +40,8 @@ startup by `html_loader.cpp`.
   `PhaseCompensationData`, `ChannelCompensation`, `OperatingMode`),
   `config.hpp` (wraps `config.h`; `kerberos_manual_cal_only()`,
   `external_noise_mode`), `buffer_pool.hpp`, `atomic_complex.hpp`,
-  `logging.hpp` (`LOG_I/W/E`), `utils` (`set_thread_realtime()`), and the
+  `logging.hpp` (`LOG_I/W/E`), `utils` (`set_thread_realtime()`,
+  `lock_process_memory()`), and the
   copies shared with kraken_doa (`net_compat.hpp`, `platform.*`,
   `fs_compat.*`, `host_check.hpp`, `log_sanitize.hpp`).
 - `src/sdr/`: `sdr_device.cpp` (L1 buffers, the RTL callback), `sdr_init.cpp`
@@ -112,7 +113,8 @@ Calibration
 - A retune / gain / mixer-side / ring change goes through
   `update_sdr_settings()` and the cooldown (`STABILITY_DELAY_MS` 3 s, a
   debounce kept on purpose) -> noise on -> `NOISE_SETTLE_MS` -> snapshots ->
-  verify. A change during a recovery restarts its phase stage; the discrete
+  verify, phase only - but a channel whose lag reads > 1 sample during it is
+  re-acquired by the servo (`check_lag_during_phase_recal`). A change during a recovery restarts its phase stage; the discrete
   scanner defers calibration (`scanner_cal_deferred`); `hold_calibration` is
   a lease, and a coherence recovery is never held.
 - The lag servo writes only the sample-clock register
@@ -122,8 +124,10 @@ Calibration
 
 Hardware and replies
 - `init_rtlsdr_device()` fails a channel whose sample rate, centre frequency
-  or buffer reset can't be set (a mistuned dongle breaks coherence); other
-  setup calls only warn.
+  or buffer hold / reset can't be set (a mistuned dongle breaks coherence);
+  other setup calls only warn.
+- Never `rtlsdr_reset_buffer()` with transfers queued: it STALLs them and the
+  stream dies (stream start: `docs/dev/calibration.md` *Stream start*).
 - Tune through `for_each_tuner`: one by one on Windows (parallel control
   transfers time out there), parallel threads on Linux - each thread touches
   only its own handle and result slot, and the shared atomics are written
@@ -146,7 +150,9 @@ Persistence (`heimdall_settings.conf`)
   (`persisted_num_elements`), never from `-n` or `--kerberos`.
 
 Performance
-- Flags `-O3 -fno-math-errno -fcx-fortran-rules`, no fast-math. For array
+- Flags `-O3 -fno-math-errno -fcx-fortran-rules`, no fast-math (on macOS
+  the force-included `mac/fast_complex.h` replaces `-fcx-fortran-rules`;
+  see `../docs/dev/macos.md`). For array
   magnitudes use `std::sqrt(std::norm(z))` or compare norms: `std::abs` of a
   complex is a `hypotf` call per element.
 - pffft: forward transforms in place, one scratch buffer per thread
@@ -170,5 +176,6 @@ Performance
 There is no automated test suite. On hardware: every channel reaches
 CONVERGED within ~25-30 s, Check Calibration (`check_calibration`) reports
 |lag| 0 and |phase| < 1 deg, and `coherence_events` in the status JSON stays
-0 across retunes, gain changes and element-count changes. Hardware
+0 (and `lag_no_peak` empty) across retunes, gain changes and element-count
+changes. Hardware
 measurements are made by scripts that drive 8092 and read the 8091 headers.

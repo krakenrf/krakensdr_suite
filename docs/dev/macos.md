@@ -46,7 +46,8 @@ Apple Silicon Mac.
   disk_util's mount list from getmntinfo (+ `/Volumes/` drives); kraken_doa
   makes its 8080 certificate in-process as on Windows
 - Apple clang 14 / its libc++ (macOS 12's Command Line Tools): no
-  `-fcx-fortran-rules` (filtered out; plugins via `CX_RULES`), no
+  `-fcx-fortran-rules` (filtered out; plugins via `CX_RULES`;
+  `mac/fast_complex.h` stands in - see the section below), no
   floating-point `std::from_chars` (websocket_server's FFT_VIEW parser falls
   back to strtod under `!__cpp_lib_to_chars`), no structured-binding lambda
   captures (`[&key = k]`), unused-const warnings GCC doesn't give
@@ -121,3 +122,103 @@ a launchd agent would be the Mac's),
 - Checks: Linux cross-compile with zig (`zig c++ -target x86_64-linux-gnu
   -c`; zig 0.13's `-fsyntax-only` fails with FileNotFound)
 
+## std::complex arithmetic: `mac/fast_complex.h`
+
+Added 2026-10-25 after the user asked whether libc++'s NaN checks were
+worth removing. The header is MIT, identical in `heimdall_v2/mac/` and
+`kraken_doa_v2/mac/`, and force-included (after `posix_compat.h`) into
+every C++ file of heimdall, kraken_doa and the plugins by the three
+Makefiles' `MACOS` blocks. Linux and Windows never include it.
+
+### Why it exists
+
+libc++ writes C99's inf / NaN recovery into `<complex>` itself: every
+`complex * complex` tests the result for NaN and has a recovery branch,
+and `norm` tests both parts for infinity. Apple's libc++ 13 (Apple clang
+14, macOS 12) has it, and so does LLVM's libc++ 18. The branches keep
+complex loops from vectorizing.
+
+On Linux and Windows, GCC's library hands `std::complex` arithmetic to the
+compiler, so `-fcx-fortran-rules` (heimdall, plugins) or `-ffast-math`
+(kraken_doa) removes the recovery. On macOS no such flag reaches libc++'s
+code. Apple clang 14 doesn't have `-fcx-fortran-rules` at all, and newer
+clang's `-fcx-fortran-rules` / `-fcomplex-arithmetic=` only affect the
+built-in C `_Complex` type. The one flag that does remove the branches,
+`-ffinite-math-only`, also folds `std::isfinite` / `std::isnan` to
+constants, which breaks NaN-as-unknown in the plugins (see
+`compiler-flags.md`).
+
+### What it does
+
+The header adds plain (non-template) overloads for `complex<float>` and
+`complex<double>`: `operator*`, `operator*=` and `norm`. They are declared
+in libc++'s own namespace (`_LIBCPP_BEGIN_NAMESPACE_STD`). On an exact
+match, overload resolution prefers a non-template to libc++'s templates,
+so every such operation in our code takes them. The arithmetic is
+libc++'s minus the recovery: four products, then ac - bd and ad + bc. The
+only results that differ are those where libc++ would have turned a NaN
+back into an infinity.
+
+The overloads are `constexpr`, like libc++ 16+'s versions in C++20.
+
+### Decisions and pitfalls
+
+- **Overloads, not explicit specializations.** The first version
+  specialized `operator*<float>`. Apple clang 14 accepted it, but libc++ 16+
+  (Xcode 15 and later) rejects it: there `complex<float>::operator*=` is
+  `constexpr`, so `<complex>` instantiates `operator*` while being read, and
+  a specialization after that is a compile error ("explicit specialization
+  after instantiation"). Checked with zig 0.13's libc++ 18 for x86_64 and
+  arm64 macOS: overloads compile in C++17 and C++20 and are picked (same
+  speed-up, identical sums).
+- **Division is left to libc++.** Its cost is the `logb` / `scalbn` range
+  scaling, not the checks. Without the checks a divide went from 23 to
+  22 ns, and the 37 test signals showed no difference at all (multiply,
+  `norm` and division without the checks vs multiply and `norm` only:
+  42.98 vs 43.01 s). Keeping division also
+  avoids copying libc++'s scaling code (Apache-2.0).
+- **Formally not allowed.** C++ doesn't allow adding declarations to
+  namespace `std` ([namespace.std]); Apple clang / libc++ accept it. A future
+  libc++ that declared its own non-template operators with these
+  signatures would fail to compile here, and could never compute anything
+  different. If libc++ ever drops the recovery, the header just becomes
+  redundant.
+- **Bit-identity.** With the plugins' and heimdall's flags, results are
+  bit-identical to stock. Under kraken_doa's `-ffast-math` the compiler may
+  fuse a multiply-add once the branch is gone, giving last-bit differences
+  (GCC on Linux already does the same).
+- **Alternatives rejected.** Global `-ffinite-math-only` gains nothing
+  more: kraken_doa live (heavy load) was 73.1 % of a core with it against
+  73.3 % with only libc++'s complex checks removed. It would also break 434 `std::isfinite` uses, 346 NaN
+  sentinels and implicit infinities such as `log10(0)`. Building with
+  Homebrew's GCC would give the Linux flags, but on macOS 12 Homebrew
+  probably has no ready-built GCC, arm64 Macs need a separately maintained
+  port, and it would be a third toolchain to support. A `cmul` helper in hot
+  loops would have meant hundreds of edits for part of the gain, which is
+  spread over nearly every plugin.
+- **Updating the compiler doesn't help.** The MacBook Air 2015 can't get
+  past macOS 12 / Command Line Tools 14. Newer libc++ (checked: 18) still has
+  the recovery code, and newer clang's complex flags don't reach it.
+
+### Measurements
+
+All on the MacBook Air 2015 (i5-5350U, 2 cores, Apple clang 14), stock vs
+the header, alternating runs:
+
+- **Plugins**, all 37 debug-playback test signals decoded offline
+  (`decoder --file`, 3 rounds, min CPU): 54.0 -> 43.1 s (-20 %). By
+  plugin: lora -36 %, uat / ssr1030 / cells -19 %, radar / flarm / mpt1327
+  / tetra -17 %, dme -13 %, rds -12 % (single channel), ism -3.5 %. Decoded
+  output was identical in 37 / 37; only the plugins' own CPU-time lines
+  differed.
+- **kraken_doa live** on heimdall's stream (2 rounds, % of a core): one
+  WBFM VFO 37.1 -> 35.9; with 3 more VFOs (2 x 12.5 kHz, 240 kHz) and
+  beamforming 89.9 -> 72.5 (-19 %).
+- **Bearings**: in debug playback of adsb-six-aircraft,
+  dmr-repeater-and-direct, p25-three-units and lora-mesh-five, all 19
+  talkers came out on their scene bearings with both builds.
+- **heimdall**: converged 24.5 -> 24.0 % of a core (its hot loops already
+  avoid complex operators since 84e3e08). CONVERGED in 24-31 s either way,
+  calibration check OK (|lag| 0.0, |phase| 0.1 deg), 0 coherence events.
+- **Micro-benchmark** (multiply + `*=` + `norm` loop): 2-2.7x faster with
+  libc++ 13 and with libc++ 18.

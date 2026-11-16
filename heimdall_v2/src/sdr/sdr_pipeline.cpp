@@ -8,7 +8,9 @@
 #include "../net/rtl_tcp_server.hpp"   // Need full definition to call methods
 #include <iostream>
 #include <algorithm>
+#include <climits>
 #include <mutex>
+#include <string>
 
 // Global L2 buffer
 moodycamel::BlockingConcurrentQueue<std::vector<ComplexBuffer>> l2_buffer;
@@ -97,7 +99,7 @@ static int64_t steady_now_ns() {
 //    flushed then, it keeps one packet fewer (a one-packet slip)
 // If there is no such point (arrival skew above half a period, a reader stuck
 // in catch-up) flush anyway after the timeout, as before, with a warning.
-static void flush_l1_now(int num_elements, bool wait_quiet) {
+static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
     if (wait_quiet && num_elements > 0) {
         const int64_t period = static_cast<int64_t>(1e9 * NUM_SAMPLES / SAMPLE_RATE);
         const int64_t deadline = steady_now_ns() + 4 * period;
@@ -126,7 +128,7 @@ static void flush_l1_now(int num_elements, bool wait_quiet) {
                     (steady && hi - lo < period / 2 && steady_now_ns() - hi < period / 2);
             if (!quiet) std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
-        if (!quiet) {
+        if (!quiet && warn) {
             static int64_t last_warn_ns = 0;  // flush callers are serialized by the drain
             const int64_t now = steady_now_ns();
             if (now - last_warn_ns > 10'000'000'000LL) {
@@ -335,6 +337,59 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
     }
 }
 
+static void flush_downstream();
+
+// Startup flush, once per pipeline start, before the drain's first set: as
+// soon as every active stream has delivered two packets, flush at a quiet
+// point (flush_l1_now). Without it the drain paired each stream's buffers by
+// count from that stream's own first packet, so a stream whose first transfer
+// went out late started that many samples behind - beyond the correlator's
+// +-NUM_SAMPLES when a reader was held up (one CPU core, a slow buffer
+// mapping): no lag peak at all. Flushed at a quiet point, the buffers pair by
+// arrival time, which keeps the startup lag within a packet (about half a
+// packet when the streams' packet times lie within half a period); smaller
+// lags are left as they are (docs/dev/calibration.md, *Stream start*). Two packets, so the quiet point's inter-arrival check has a
+// gap to look at. A stream silent for STARTUP_FLUSH_WAIT_MS: no flush - the
+// stuck-device check handles it.
+static void startup_flush(int num_elements) {
+    const int64_t start = steady_now_ns();
+    num_elements = std::min(num_elements, std::min(static_cast<int>(devices.size()), NUM_DEVICES));
+    // Each stream's first packet: last_arrival_ns holds it until the second
+    // arrives a packet period later. The spread is the startup lag (first lag
+    // ~= -2.4 x difference in us), logged for checking a machine's start.
+    int64_t first[NUM_DEVICES] = {};
+    for (;;) {
+        if (!global_running || !pipeline_running.load(std::memory_order_acquire)) return;
+        bool all = true;
+        for (int i = 0; i < num_elements; i++) {
+            if (!devices[i] || !devices[i]->dev) continue;
+            if (!first[i] && devices[i]->prev_arrival_ns.load(std::memory_order_acquire) == 0)
+                first[i] = devices[i]->last_arrival_ns.load(std::memory_order_acquire);
+            if (devices[i]->prev_arrival_ns.load(std::memory_order_acquire) == 0) all = false;
+        }
+        if (all) break;
+        if (steady_now_ns() - start > STARTUP_FLUSH_WAIT_MS * 1'000'000LL) {
+            std::cerr << "Sample drain: a USB stream delivered nothing within " << STARTUP_FLUSH_WAIT_MS
+                      << " ms of the start - no startup flush" << std::endl;
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    // A slip at a non-quiet point is harmless here - nothing is calibrated yet
+    flush_l1_now(num_elements, true, false);
+    flush_downstream();
+
+    int64_t lo = INT64_MAX;
+    for (int i = 0; i < num_elements; i++)
+        if (first[i]) lo = std::min(lo, first[i]);
+    std::string per;
+    for (int i = 0; i < num_elements; i++) {
+        if (!devices[i] || !devices[i]->dev) continue;
+        per += (per.empty() ? "" : " ") + (first[i] ? std::to_string((first[i] - lo) / 1000) : std::string("?"));
+    }
+    std::cout << "Sample drain: first packets at " << per << " us (channel order), startup flush done" << std::endl;
+}
+
 // Minimal, time-critical L1 -> L2-raw drain (#4). Does ONLY the cheap aligned
 // collection: pull one block from each device's L1 in lockstep and hand the
 // aligned raw set to the conversion_worker. No IQ conversion, no compensation,
@@ -365,6 +420,8 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
         flush_completed.store(req, std::memory_order_release);
         return true;
     };
+
+    startup_flush(std::min(active_num_elements.load(), static_cast<int>(devices.size())));
 
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
         // Re-read per pass: the thread is restarted by a reconfiguration, but a

@@ -297,6 +297,10 @@ services:
   - `ulimits: rtprio: 30` lets heimdall raise its USB reader and sample-drain
     threads to SCHED_RR 30. It's the same as `LimitRTPRIO=30` in the native
     boot service.
+  - `ulimits: memlock: -1` (unlimited) lets heimdall lock its memory in RAM
+    (`mlockall`), so the pages those threads use can't be swapped out. It's
+    the same as `LimitMEMLOCK=infinity` in the native boot service. heimdall
+    locks only with an unlimited limit.
   - `ulimits: core: 0`: containers inherit the Docker daemon's unlimited core
     size, so every crash wrote a ~280 MB core file into `docker-data/`.
   - Log rotation (3 × 10 MB) and health checks: the control port (8092)
@@ -345,6 +349,9 @@ Also tested:
 - **"SCHED_RR unavailable" in the heimdall log**: the `ulimits: rtprio`
   setting is missing from the compose file. heimdall still runs, but at
   normal priority, which risks USB overruns under load.
+- **"Memory locking unavailable" in the heimdall log**: the `ulimits:
+  memlock` setting is missing from the compose file. heimdall runs as
+  before, without its memory locked.
 - **Port already in use / "address in use"**: the native stack is running.
   Stop it with `./run.sh stop` and `sudo systemctl disable --now krakensdr`.
 - **"Illegal instruction"**: the image was built on a different CPU. Rebuild

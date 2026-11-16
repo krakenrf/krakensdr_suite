@@ -10,6 +10,7 @@
 #include "control_handler.hpp"
 #include "message_builders.hpp"
 #include "decoder_log.hpp"
+#include "wb_board.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
 #include "voice2text.hpp"
@@ -39,6 +40,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <algorithm>
+#include <thread>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -704,6 +706,49 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 }
             });
         })
+        .get("/wb_telemetry/history", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // Wideband board telemetry sheet: the logged history of the last
+            // ?range= seconds as JSON (wb_board_history_json). The log files
+            // are read on a worker thread - a month of rows takes a while on a
+            // Pi and must not stall the spectrum stream on the uWS loop.
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            auto aborted = std::make_shared<bool>(false);
+            res->onAborted([aborted]() { *aborted = true; });
+            std::thread([res, aborted, range]() {
+                std::string body = wb_board_history_json(range > 0 ? range : 3600);
+                if (!loop) return;
+                loop->defer([res, aborted, body = std::move(body)]() {
+                    if (*aborted) return;
+                    res->writeHeader("Content-Type", "application/json")->writeHeader("Cache-Control", "no-store")->end(body);
+                });
+            }).detach();
+        })
+        .get("/wb_telemetry/export.csv", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // ... and the logged rows of that range as a CSV download
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            auto aborted = std::make_shared<bool>(false);
+            res->onAborted([aborted]() { *aborted = true; });
+            std::thread([res, aborted, range]() {
+                std::string name;
+                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name);
+                if (!loop) return;
+                loop->defer([res, aborted, path = std::move(path), name = std::move(name)]() {
+                    if (*aborted) return;
+                    if (path.empty()) { res->writeStatus("500 Internal Server Error")->end("Cannot write the export file"); return; }
+                    stream_download(res, path, name);
+                });
+            }).detach();
+        })
         .get("/voice_clip/*", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
             // 🗣 Voice to Text: the audio clip of a transcript (<id>.opus in the
@@ -1108,10 +1153,11 @@ void WebSocketServer::doa_http_server_thread() {
                     res->writeStatus("403 Forbidden")->end("request refused");
                     return;
                 }
-                // Last fully-computed payload, served verbatim while a retune
-                // calibration is in progress. Confined to this thread's event
-                // loop (the only place this handler runs), so no lock needed.
+                // Android Doppler compatibility adjustment (2026):
+                // Retain a complete message per source-frame set, not per HTTP poll.
+                // This handler owns its cache on the same event-loop thread.
                 static std::string last_good_message;
+                static std::string last_source_key;
 
                 // "Retune calibration in progress": while the server retunes it
                 // pulses the noise source, and bearings computed on that injected
@@ -1129,20 +1175,28 @@ void WebSocketServer::doa_http_server_thread() {
                     return;
                 }
 
-                // Build the body from the shared capture/format helpers so the
-                // served CSV stays byte-identical to what the logger writes.
-                std::string message;
-                for (const DoaRecord& rec : capture_doa_records()) {
-                    message += format_doa_csv_line(rec);
+                // Rebuild the whole legacy CSV only if a MUSIC source frame
+                // changes; different HTTP polls must not invent measurements.
+                auto records = capture_doa_records();
+                std::string source_key;
+                for (const DoaRecord& rec : records) {
+                    const int64_t stamp = rec.source_stamp_ms > 0
+                        ? rec.source_stamp_ms : rec.timestamp_ms;
+                    source_key += std::to_string(rec.decimator_id) + ":" +
+                                  std::to_string(stamp) + ";";
                 }
-
-                // Calibration is settled here: this is a trustworthy frame, so
-                // remember it as the value to hold during the next retune cycle.
-                last_good_message = message;
+                if (last_good_message.empty() || source_key != last_source_key) {
+                    std::string message;
+                    for (const DoaRecord& rec : records) {
+                        message += format_doa_csv_line(rec);
+                    }
+                    last_good_message = std::move(message);
+                    last_source_key = std::move(source_key);
+                }
 
                 res->writeHeader("Content-Type", "text/html; charset=utf-8")
                    ->writeHeader("Cache-Control", "no-cache, no-store, must-revalidate")
-                   ->end(message);
+                   ->end(last_good_message);
             })
             .get("/*", [](auto* res, auto* /*req*/) {
                 res->writeStatus("404 Not Found")->end("Not found");

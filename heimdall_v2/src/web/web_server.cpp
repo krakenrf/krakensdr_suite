@@ -3,6 +3,7 @@
 #include "html_loader.hpp"
 #include "../sdr/sdr_init.hpp"
 #include "../sdr/pipeline_control.hpp"
+#include "../sdr/downconverter.hpp"
 #include "../dsp/correlation.hpp"  // For build_correlation_message
 #include "../dsp/compensation.hpp" // get_phase_compensation_state (kerberos stale check)
 #include "../core/config.hpp"
@@ -129,7 +130,9 @@ static std::string build_state_message() {
         // --ext_noise: CH0's bias tee powers the add-on array's noise source
         + ",\"external_noise\":"
         + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false")
-        + ",\"operating_mode\":\"" + operating_mode_name(operating_mode.load(std::memory_order_relaxed)) + "\"";
+        + ",\"operating_mode\":\"" + operating_mode_name(operating_mode.load(std::memory_order_relaxed)) + "\""
+        // channels whose lag calibration finds no correlation peak (8092 status: same field)
+        + ",\"lag_no_peak\":" + lag_no_peak_json();
     {
         // Last calibration check (periodic or Check Calibration)
         static const char* const results[] = {"none", "ok", "drifted", "no_verdict"};
@@ -146,6 +149,16 @@ static std::string build_state_message() {
     uint64_t rf_min, rf_max;
     rf_frequency_range(rf_min, rf_max);
     s += ",\"rf_min_hz\":" + std::to_string(rf_min) + ",\"rf_max_hz\":" + std::to_string(rf_max);
+
+    // KrakenSDR Wideband variant: mixer state + board telemetry for the
+    // "Wideband board" card (same object as get_status "downconverter").
+    if (downconverter.enabled.load()) {
+        s += ",\"downconverter\":{\"enabled\":true,\"if_hz\":" + std::to_string(WB_VARIANT_IF_HZ)
+           + ",\"side\":\"" + mixer_side_name(downconverter.side.load()) + "\""
+           + ",\"lo_hz\":" + std::to_string(downconverter.lo_hz.load())
+           + ",\"lo_current\":" + std::to_string(downconverter.lo_current.load())
+           + downconverter_status_json_fields() + "}";
+    }
 
     // KerberosSDR support mode: drives the warning banner + guarded recal button.
     s += ",\"kerberos_mode\":";

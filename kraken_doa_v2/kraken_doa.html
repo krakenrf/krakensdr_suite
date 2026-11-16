@@ -472,6 +472,23 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .top-bar .tb-vol {font-size:13px;color:#7cb3f0;min-width:32px}
 .top-bar .hw-stats {margin-left:auto;font-size:12px;color:#8aa8c7;white-space:nowrap;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;padding:0 8px;
   min-width:31ch;text-align:right}  /* fixed width: changing digits must not re-wrap the bar */
+/* Telemetry fields: one for the computer running the software, one for the Wideband board */
+/* The telemetry stays pinned to the right edge: it comes last (order) and the
+   status badges, whose text changes all the time, sit to its left with fixed
+   widths - a badge that changes or hides must not push anything around. */
+.top-bar .tele-group {margin-left:auto;order:99;display:flex;gap:8px;align-items:center}
+.top-bar .status-badges {margin-left:0}
+.top-bar #status-connection {min-width:104px}
+.top-bar #status-mode {min-width:86px}
+.top-bar #status-calibration {min-width:170px}   /* "Verifying (Noise On)" */
+.top-bar #status-cooldown {min-width:108px}
+.top-bar #status-scanner {min-width:52px}
+.top-bar .tele-chip {margin-left:0;min-width:0;display:inline-flex;align-items:center;gap:7px;padding:3px 9px 3px 0;
+  border:1px solid #2c4a6e;border-radius:6px;background:rgba(8,18,32,.55);line-height:1.3}
+.top-bar .tele-chip .tele-lbl {font-family:Arial,sans-serif;font-size:10px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;
+  color:#cfe0f5;background:#22395a;padding:4px 7px;margin:-3px 0;border-radius:5px 0 0 5px}
+.top-bar #hw-stats {min-width:25ch;text-align:left}
+.top-bar #wb-chip-val {min-width:18ch;text-align:left}
 .top-bar .status-badges {display:flex;gap:6px}
 .top-bar .status-badge {font-size:14px;padding:5px 12px;border-radius:4px;background:#2d4059;color:#fff;font-weight:500;text-align:center;white-space:nowrap}
 .top-bar .tb-cog {font-size:17px;line-height:1;padding:3px 8px;border-radius:4px;background:#2d4059;color:#fff;border:1px solid #3d5a80;cursor:pointer;font-family:'Segoe UI Symbol','DejaVu Sans',sans-serif}
@@ -662,7 +679,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-df-body {margin-top:4px;line-height:1.45}
 .map-df-row {display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:3px}
 .map-df-row label {display:flex;align-items:center;gap:3px}
-.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-tid, .map-df.closed #map-df-lobe, .map-df.closed #map-df-lines, .map-df.closed #map-df-heat {display:none}
+.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-tid, .map-df.closed #map-df-lobe, .map-df.closed #map-df-lines, .map-df.closed #map-df-heat, .map-df.closed #map-df-rng {display:none}
 #map-df-txt .w {color:#ffcc80}
 #map-df-txt .g {color:#a5d6a7}
 #map-df-tid {max-width:150px}
@@ -780,6 +797,17 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .pl-lk {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;border-top:1px solid #2a4a7a;padding-top:4px}
 .pl-lk .nm {font-weight:bold;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
 .pl-lk .map-btn {height:20px;padding:0 5px;font-size:11px;margin-left:auto}
+/* 📏 a VFO's level next to the mouse over its bar (vfoLvlRender) */
+.vfo-lvl-tip {position:fixed;z-index:10000;pointer-events:none;display:none;background:rgba(16,24,44,.95);border:1px solid #2a4a7a;border-radius:4px;padding:4px 8px;font:11px sans-serif;color:#dbe8ff;line-height:1.45;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+/* 📏 range from signal strength (📏 RANGE) - the viewshed / path loss panels' look */
+.map-rg {flex:0 1 auto}
+.map-rg .rg-src {margin-top:4px;line-height:1.45}
+.map-rg .rg-st {margin-top:5px;border-top:1px solid #2a4a7a;padding-top:4px;line-height:1.45}
+.map-rg .rg-st:empty, .map-rg .rg-calh:empty, .map-rg .rg-job:empty {display:none}
+.map-rg.cfg-closed .rg-cfg {display:none}
+.map-rg .rg-cfg {border-top:1px solid #2a4a7a;margin-top:4px}
+.map-rg .map-btn {height:20px;padding:0 5px;font-size:11px}
+.map-rg .map-btn:disabled {opacity:.5}
 /* the link at the bottom of the map: numbers left, profile right */
 .map-plk {position:absolute;left:6px;right:6px;bottom:20px;height:232px;z-index:4;display:flex;gap:8px;background:rgba(16,24,44,.95);border:1px solid #2a4a7a;border-radius:4px;padding:5px 7px;font-size:11px;color:#cfe3ff;box-sizing:border-box}
 .plk-t {flex:0 1 410px;min-width:220px;overflow-y:auto}
@@ -1102,6 +1130,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   .top-bar .hw-stats {display:none}
   .top-bar .status-badge {font-size:11px;padding:3px 8px}
   .top-bar .tb-cog {font-size:14px;padding:2px 7px}
+  .top-bar .status-badges .status-badge {min-width:0 !important}
+  .top-bar #status-cooldown[style*="hidden"] {display:none}
   .top-bar .status-badges {flex-wrap:wrap}
   .spectrum-header .hint {display:none}
   .wf-controls select {max-width:120px}
@@ -1156,6 +1186,42 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   #fp {height:150px}
   #wf-container {height:110px}
 }
+/* Wideband board telemetry card */
+.wb-grid { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px; line-height:1.6; }
+.wb-k { color:#777; }
+.wb-v { color:#cfd8dc; font-variant-numeric:tabular-nums; }
+.wb-v .warn { color:#ff9800; font-weight:bold; }
+.wb-v .alarm { color:#ef5350; font-weight:bold; }
+.wb-v .stale { color:#777; }
+/* Wideband board telemetry sheet */
+.wb-sheet {width:1120px;max-width:100%;max-height:100%;overflow-y:auto;background:#121a30;border:1px solid #4fc3f7;border-radius:6px;box-shadow:0 6px 30px rgba(0,0,0,.6);color:#dbe8ff;font-size:12px;padding:12px 14px;box-sizing:border-box}
+.wb-sheet-h {display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.wb-sheet-h .ttl {font-weight:bold;font-size:15px}
+.wb-sheet-h .x {margin-left:auto;cursor:pointer;color:#8aa;font-size:18px;padding:0 6px;line-height:1}
+.wb-seg {display:inline-flex;border:1px solid #2a4a7a;border-radius:5px;overflow:hidden}
+.wb-seg button {background:#16223c;color:#b9cbe6;border:0;border-right:1px solid #2a4a7a;padding:5px 14px;font-size:12px;cursor:pointer}
+.wb-seg button:last-child {border-right:0}
+.wb-seg button.sel {background:#1565c0;color:#fff;font-weight:bold}
+.wb-now {display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px}
+.wb-tile {background:#0f1a30;border:1px solid #1d3a62;border-radius:5px;padding:6px 9px}
+.wb-tile .k {color:#7f9cc0;font-size:11px}
+.wb-tile .n {font-size:20px;font-weight:bold;font-variant-numeric:tabular-nums;color:#eaf2ff;line-height:1.25}
+.wb-tile .r {color:#8aa8c7;font-size:11px;font-variant-numeric:tabular-nums}
+.wb-tile.warn {border-color:#ff9800}.wb-tile.alarm {border-color:#ef5350}
+.wb-charts {display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.wb-chart {background:#0d1520;border:1px solid #1d3a62;border-radius:5px;padding:6px 6px 2px;min-width:0}
+.wb-chart .ct {display:flex;justify-content:space-between;color:#b9cbe6;font-size:12px;padding:0 4px 2px}
+.wb-chart .ct b {color:#eaf2ff}
+.wb-chart .u-legend {display:none}
+.wb-chart .empty {color:#777;text-align:center;padding:60px 0}
+.wb-sheet .sec {margin-top:10px;background:#0f1a30;border:1px solid #1d3a62;border-radius:5px;padding:7px 10px}
+.wb-sheet .sec h4 {margin:0 0 5px;font-size:12px;color:#9fc4f5}
+.wb-sheet .row {display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.wb-sheet select {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:12px;padding:3px 6px}
+.wb-sheet .info {color:#8aa8c7;font-size:11px}
+.wb-ev {max-height:132px;overflow-y:auto;font-family:'Consolas',ui-monospace,monospace;font-size:11px;line-height:1.5}
+.wb-ev .t {color:#7f9cc0}.wb-ev .warn {color:#ff9800}.wb-ev .alarm {color:#ef5350}
+@media (max-width:820px) {.wb-charts {grid-template-columns:1fr}.wb-now {grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body class="ai-dk-off">
@@ -1492,6 +1558,27 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <span id="get-gps-status" style="font-size:10px;color:#888"></span>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- KrakenSDR Wideband board telemetry (heimdall --wideband; hidden otherwise) -->
+    <div class="sb-section" id="wb-section" style="display:none">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🔌 Wideband Board<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The downconverter board's own sensors, read by heimdall once a second: input voltage and current (INA219, measured before the eFuse), board temperature and humidity (SHT40 on Testunit_3v2, Si7020 on 3v0), the LO as set and as read back from the board, firmware and board revision. Orange = warning, red = alarm; an alarm clears 30 s after the value is back in range. Grey = no fresh reading. Logged to wb_logs/ (wb_telemetry.csv every 10 s, wb_events.csv on every change). Testunit_3v0 cannot measure above 3.2 A.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div id="wb-fw-warn" style="display:none;font-size:12px;color:#ffd9a0;background:#3a2a10;border:1px solid #b3822c;border-radius:4px;padding:4px 6px;margin-bottom:6px"></div>
+        <div class="wb-grid" id="wb-grid">
+          <span class="wb-k">Input</span><span class="wb-v" id="wb-power">–</span>
+          <span class="wb-k">Board</span><span class="wb-v" id="wb-env">–</span>
+          <span class="wb-k">LO</span><span class="wb-v" id="wb-lo">–</span>
+          <span class="wb-k">Hardware</span><span class="wb-v" id="wb-hw">–</span>
+          <span class="wb-k">Firmware</span><span class="wb-v" id="wb-fw">–</span>
+        </div>
+        <canvas id="wb-trend" width="280" height="76" style="width:100%;height:76px;margin-top:6px;background:#0d1520;border-radius:4px"></canvas>
+        <div style="font-size:10px;color:#777;display:flex;justify-content:space-between"><span><span style="color:#4fc3f7">■</span> current (A)</span><span>last hour</span><span><span style="color:#ffb74d">■</span> temperature (°C)</span></div>
+        <button class="btn" style="width:100%;margin-top:6px" onclick="wbSheetOpen()">📈 Telemetry history, log &amp; CSV</button>
       </div>
     </div>
 
@@ -2089,6 +2176,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- KerberosSDR manual-calibration banner (hidden unless heimdall runs --kerberos) -->
     <div id="kerberos-banner" style="display:none;padding:8px 12px;font-weight:bold;font-size:13px;
          border-bottom:1px solid #b33;background:#3a1515;color:#ffb3b3;"></div>
+    <!-- KrakenSDR Wideband board: firmware too old / board alarm (hidden otherwise) -->
+    <div id="wb-banner" style="display:none;padding:6px 12px;font-weight:bold;font-size:13px;
+         border-bottom:1px solid #b3822c;background:#3a2a10;color:#ffd9a0;cursor:pointer" onclick="wbOpenSection()"></div>
     <!-- Top Bar -->
     <div class="top-bar">
       <!-- Hamburger (mobile only) -->
@@ -2181,13 +2271,19 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <span class="tb-vol" id="vv">50%</span>
       </div>
       <!-- Hardware Stats -->
-      <span class="hw-stats" id="hw-stats"></span>
+      <span class="tele-group">
+        <span class="hw-stats tele-chip" id="hw-chip" style="display:none" title="The computer running this software: CPU temperature, CPU load, memory">
+          <span class="tele-lbl" id="hw-lbl">Host</span><span id="hw-stats"></span></span>
+        <!-- Wideband board telemetry (heimdall --wideband only) -->
+        <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for the history charts, the log settings and the CSV download)" onclick="wbSheetOpen()">
+          <span class="tele-lbl">WB board</span><span id="wb-chip-val"></span></span>
+      </span>
       <!-- Status Badges (pushed to right) -->
       <div class="status-badges">
         <span class="status-badge" id="status-connection" style="background:#b71c1c">Disconnected</span>
         <span class="status-badge" id="status-mode">Coherent</span>
         <span class="status-badge" id="status-calibration">Calibrating</span>
-        <span class="status-badge" id="status-cooldown" style="display:none">Cooldown</span>
+        <span class="status-badge" id="status-cooldown" style="visibility:hidden">Cooldown</span>
         <span class="status-badge" id="status-scanner">Idle</span>
         <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Settings: the map provider (OpenStreetMap, Mapbox, Google Maps, ...) and its API key" aria-label="Settings">⚙</button>
       </div>
@@ -2337,6 +2433,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="map-legend" id="map-legend" style="display:none"></div>
             <div class="map-vs" id="map-vs" style="display:none"></div>
             <div class="map-vs map-ai" id="map-ai" style="display:none"></div>
+            <div class="map-vs map-pl map-rg coh-only" id="map-rg" style="display:none"></div>
           </div>
           <div class="map-ctl map-ctl-tr">
             <button type="button" class="map-btn" id="map-srch-btn" onclick="srchToggle()" title="Search: an address, a city or place (OpenStreetMap, online), coordinates in any usual form, UTM / MGRS, a grid locator, a map link - or your own markers and the decoders' positions">🔍</button>
@@ -2355,6 +2452,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
               <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobes around the station">Lobe</button>
               <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="Bearing lines: from each lobe's peak to the edge of the map (one radio / aircraft: also its earlier bearings), and the bearings taken while driving">Lines</button>
               <button type="button" class="map-btn" id="map-df-heat" onclick="mapSet('rdfHeat', !mapState.rdfHeat)" title="Where the transmitter probably is (one VFO at a time)">Heat</button>
+              <button type="button" class="map-btn" id="map-df-rng" onclick="rgToggle()" title="📏 Range from signal strength: where the transmitter of the selected lobe probably is - its measured level against the path loss over the terrain (ITU-R P.1812) and your estimate of its EIRP">Range</button>
             </div>
             <div class="map-df-body">
               <div id="map-df-txt"></div>
@@ -2545,7 +2643,7 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
     fmEnabled=true,doaEnabled=true,currentTopology='UCA',
     audioInitialized=false,currentBandwidth=7,currentCenterFreq=100,currentFrequencies=[],
     currentMagnitudes=[],isDragging=false,dragStartX=0,isDraggingEdge=false,draggedEdge=null,pendingOffsetTimeout=null,
-    dragStartBandwidth=null,dragStartOffset=null,activeDecimatorId=0,currentEdgeClip=0.8,fullFrequencies=[],fullMagnitudes=[],
+    edgeDrag=null,dragStartOffset=null,activeDecimatorId=0,currentEdgeClip=0.8,fullFrequencies=[],fullMagnitudes=[],
     // spectrum views (FFT type 7, "SPECTRUM VIEWS" block): the last main
     // frame, the views asked for per display ({lo, hi, bins, at, t})
     specMain=null,specViewSent={},specViewSeq=0,
@@ -2784,6 +2882,96 @@ const plState = (() => {
 })();
 let plWorker = null, plJob = null, plSeq = 0, plRes = null, plFail = '', plSel = null, plHov = null, plReady = false,
     plOffS = null, plComp = null, plLine = null, plSigVer = 0, plCompKey = '';
+// 📏 range from signal strength (see 📏 RANGE): where the transmitter of the
+// DF panel's selected lobe probably is - the settings (localStorage
+// kraken_rg; rebuilt field by field): the transmitter (power + antenna -
+// cable, or its EIRP; +- dB; antenna height, surroundings), our antenna
+// (gain, cable, height - null: the viewshed station's / 5 m -, surroundings),
+// the receiver's calibration (dBm = dBFS - gain + cal, +- dB; how / where it
+// was set; calTx = a known transmitter to set it from), the model and the
+// uncertainties; the sweep worker / job / result, the estimate
+const rgState = (() => {
+  const d = {on: false, open: true, cfg: true, set: false, txMode: 'ptx', ptx: 5, gt: 0, lt: 0, eirp: 5, sigE: 3, txH: 1.5, envTx: 3,
+             gr: 0, lr: 1, stH: null, envRx: 3, calOff: 0, sigC: 3, calHow: '', calF: 0, calG: 0, calTx: null,
+             model: 'p1812', pol: 'v', r: 30, fade: 'auto', K: 6, sigL: null, sigM: 4, bsd: null};
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_rg') || '{}'), num = (v, lo, hi, def) => typeof v === 'number' && v >= lo && v <= hi ? v : def;
+    for (const [k, lo, hi] of [['ptx', 1e-6, 1e7], ['gt', -30, 60], ['lt', 0, 60], ['eirp', 1e-6, 1e8], ['sigE', 0, 30], ['txH', 0.5, 3000],
+                               ['envTx', 0, 5], ['gr', -30, 60], ['lr', 0, 60], ['envRx', 0, 5], ['calOff', -60, 60], ['sigC', 0, 30], ['calF', 0, 20000],
+                               ['calG', -1, 60],
+                               ['r', 1, 300], ['K', -20, 40], ['sigM', 0, 30]]) d[k] = num(s[k], lo, hi, d[k]);
+    for (const [k, hi] of [['stH', 3000], ['sigL', 30], ['bsd', 90]]) if (s[k] !== null && s[k] !== undefined) d[k] = num(s[k], 0, hi, null);   // (null = automatic)
+    for (const k of ['on', 'open', 'cfg', 'set']) if (typeof s[k] === 'boolean') d[k] = s[k];
+    if (['ptx', 'eirp'].includes(s.txMode)) d.txMode = s.txMode;
+    if (['p1812', 'itm', 'fs'].includes(s.model)) d.model = s.model;
+    if (['v', 'h'].includes(s.pol)) d.pol = s.pol;
+    if (['auto', 'none', 'rayleigh', 'rician'].includes(s.fade)) d.fade = s.fade;
+    if (typeof s.calHow === 'string') d.calHow = s.calHow.slice(0, 200);
+    const t = s.calTx;
+    if (t && Math.abs(t.lat) <= 85.05 && Math.abs(t.lon) <= 180)
+      d.calTx = {lat: +t.lat, lon: +t.lon, h: num(t.h, 0.5, 3000, 30), eirp: num(t.eirp, 1e-6, 1e8, 50)};   // (eirp W)
+  } catch (e) {}
+  return d;
+})();
+let rgWorker = null, rgJob = null, rgSeq = 0, rgRes = null, rgFail = null, rgCalJob = null, rgCalMsg = '',
+    rgPostW = null, rgPostBusy = false, rgPostAt = 0, rgPostT = 0, rgPostSeq = 0, rgPostKidx = '',
+    rgEst = null, rgLast = null, rgHovAt = null, rgOff = null, rgLevelKnown = false, rgReady = false;
+// 📏 the receiver's calibration: dBm at its input = dBFS - tuner gain + C.
+// NOMINAL C from published R820T / R820T2 measurements (stock librtlsdr's
+// manual gain = our fixed IF VGA step 8), converted to our dBFS (0 = a
+// full-scale complex tone) - kraken_doa_v2/CLAUDE.md *Range from signal
+// strength*: a calibrated generator into 6 dongles at 895 MHz, gain 0
+// (WPI 2016: -14.7, spread 2.4 dB); ADC overload points vs gain at 144 MHz
+// (N8UR, power-meter-checked generator: -15 / -20.5 / -21.1 / -19.8 / -17.4
+// at 0 / 12.5 / 22.9 / 37.2 / 49.6 dB); max-gain overload / saturation
+// (HB9AJG -14.4 at 145, -20.4 at 435 MHz; J. Adams -15.4); calibrated tones
+// at 915 MHz (J. Clark: -15...-18 at 0 dB, -18.3...-19.3 at 19.7 dB); the
+// gain table's error per step (Simon: 43.9 and 44.5 dB "identical"). C BY
+// THE GAIN SETTING (the table reads high mid-range) + the gain's FREQUENCY
+// roll-off (above ~1 GHz; a little below 50 MHz). Sigma 3 dB (unit to unit,
+// the sources' spread), more at the band's ends. Our own floor at 49.6 dB
+// with C -16: a system noise figure ~11 dB (the literature: 3.5-13 dB at
+// max gain, + man-made noise indoors). Until 2026-10-24 a single -23 dB
+// guessed from that floor with a 5 dB noise figure - ~7 dB too low (0 dBFS
+// at -72.6 dBm at 49.6 dB; the measured overload is -64 to -70 dBm)
+// A calibration (known level / known transmitter / entered) is a
+// CORRECTION on top of the model (rgState.calOff, set at calG dB / calF
+// MHz): the model's gain / frequency shape carries it elsewhere
+const RG_CAL_G = [[0, -14.5], [4, -17], [12.5, -19], [23, -19.5], [37, -19], [49.6, -16]];   // [gain dB, C]
+const RG_CAL_F = [[24, 2, 2.5], [50, 0, 0], [900, 0, 0], [1000, 1, 1], [1200, 3, 2], [1400, 6, 3], [1500, 9.5, 4],
+                  [1600, 12, 5], [1766, 15, 6]];   // [MHz, + dB (less gain), + sigma (dB, in squares)]
+const RG_CAL_SD = 3;
+function rgInterp(T, x, col) {
+  if (!(x > T[0][0])) return T[0][col];
+  for (let i = 1; i < T.length; i++)
+    if (x <= T[i][0]) return T[i - 1][col] + (T[i][col] - T[i - 1][col]) * (x - T[i - 1][0]) / (T[i][0] - T[i - 1][0]);
+  return T[T.length - 1][col];
+}
+// The KrakenSDR Wideband (downconverter) variant parks every tuner at its IF
+// (wbVariant.ifHz, 1268 MHz): the gain's frequency roll-off is the IF's,
+// whatever the RF. The mixer's conversion loss and the front end before it
+// aren't characterised: RG_CAL_DC_SD more (in squares) on the nominal there
+const RG_CAL_DC_SD = 6;
+function rgCalDc() { return !!wbVariant.enabled; }
+// the tuner's frequency (MHz) for an RF (MHz)
+function rgTunerMhz(f) { return rgCalDc() ? wbVariant.ifHz / 1e6 : f; }
+// the nominal C at a gain (dB; the AGC's -1: the top setting's) and RF (MHz), its sigma
+function rgCalNom(g, f) { return rgInterp(RG_CAL_G, g < 0 ? 49.6 : g, 1) + rgInterp(RG_CAL_F, rgTunerMhz(f), 1); }
+function rgCalNomSd(f) { return Math.hypot(RG_CAL_SD, rgInterp(RG_CAL_F, rgTunerMhz(f), 2), rgCalDc() ? RG_CAL_DC_SD : 0); }
+// (the user's words for the nominal on the downconverter variant)
+const RG_CAL_DC_TXT = 'downconverter: its conversion loss isn\'t in the nominal - calibrate';
+// the C in use and its sigma: the nominal + the correction; calibrated: the
+// calibration's own sigma, + the model's shape (1.5 dB, and the frequency
+// terms' difference) when used away from where it was set (gain > 3 dB,
+// RF > 15 % off - the RF also on the downconverter variant: its conversion
+// loss changes with it; the frequency terms are the tuner's, 0 there)
+function rgCal(g, f) { return rgCalNom(g, f) + rgState.calOff; }
+function rgCalSd(g, f) {
+  const s = rgState;
+  if (!s.calHow) return rgCalNomSd(f);
+  const away = (s.calF > 0 && Math.abs(Math.log(f / s.calF)) > 0.14) || Math.abs((g < 0 ? 49.6 : g) - s.calG) > 3;
+  return away ? Math.hypot(s.sigC, 1.5, rgInterp(RG_CAL_F, rgTunerMhz(f), 2) - rgInterp(RG_CAL_F, rgTunerMhz(s.calF || f), 2)) : s.sigC;
+}
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -2842,7 +3030,8 @@ const BW_EFFICIENT = (() => {   // ascending Hz
   return a;
 })();
 let bwServerHz = false;   // the receiver takes SET_DECIMATOR_BW_HZ (its decimator_info has bandwidth_hz)
-// a pane VFO's side clipped at the plot border keeps its edge this far inside (paneDrawOverlay)
+// a VFO's side clipped at the plot border keeps its edge this far inside
+// (paneDrawOverlay, drawBox, WaterfallDisplay.drawOverlay; bwEdgeDragBegin)
 const PANE_CLIP_EDGE_PX = 5;
 function bwClampHz(hz) {
   hz = Math.round(+hz);
@@ -2899,14 +3088,47 @@ function refreshWidebandCoverage() {
   if (wbs) wbs.textContent = 'Status: Enabled (~' + widebandCoverageMhz() + ' MHz coverage)';
 }
 
-function maxOffsetHz(bwMhz) {
-  // Wideband: the stitched spectrum is every open tuner's edge-clipped
-  // 2.4 MHz side by side (FFTProcessor::stitch_wideband_fft). The old fixed
-  // 9.6 MHz assumed 5 tuners at 0.8 clip and then clipped it again - too
-  // narrow on 5 tuners, past the edge on a 4-tuner KerberosSDR.
+// The band (MHz) the main display shows at 1x: the tuner's edge-clipped
+// 2.4 MHz, or in wideband scan mode every open tuner's side by side
+// (FFTProcessor::stitch_wideband_fft). The old fixed 9.6 MHz assumed 5
+// tuners at 0.8 clip and then clipped it again - too narrow on 5 tuners,
+// past the edge on a 4-tuner KerberosSDR.
+function vfoBandMhz() {
   const tuners = widebandEnabled ? activeNumElements : 1;
-  const visible = tuners * 2.4 * currentEdgeClip;
-  return Math.max(0, (visible - bwMhz) * 500000);
+  return tuners * 2.4 * currentEdgeClip;
+}
+function maxOffsetHz(bwMhz) {
+  return Math.max(0, (vfoBandMhz() - bwMhz) * 500000);
+}
+
+// ---- Bar-edge drags (main display + waterfall: pointerDown / pointerMove;
+// independent panes: paneDown / paneMove) ----
+// The edge follows the pointer (its x held inside the plot) and the centre
+// stays, so the width changes by twice the movement - but never past the
+// band the display shows (bandMhz: vfoBandMhz / the pane's sr x edge clip).
+// Before, the main display's drag went up to 2.4 MHz (wider than the 1.92
+// MHz of a 0.8 edge clip) and a pane's followed the pointer out of the pane.
+// A VFO can still be wider than the plot (a typed width, a decoder's 2.4
+// MHz, a narrower edge clip, zoomed in): its side beyond the plot is drawn
+// clipped, the edge just inside the border (PANE_CLIP_EDGE_PX). A drag of
+// such an edge counts from where it is DRAWN, not from the hidden edge:
+// from the hidden edge the pointer first had to cover the hidden part
+// before anything moved (12 % of the plot for 2.4 MHz at 1x, more than the
+// whole plot zoomed in) - the user's report "once pulled larger, it can no
+// longer be pulled smaller again". A clipped edge only comes in: moved
+// outward (or just pressed), the VFO keeps the width it had - also one wider
+// than the band (a decoder's 2.4 MHz must survive a touch on its edge).
+function bwEdgeDragBegin(edge, centreMhz, bwMhz, drawnMhz, clipped) {
+  const toEdge = edge === 'left' ? centreMhz - drawnMhz : drawnMhz - centreMhz;
+  clipped = !!clipped && toEdge > 0;   // (the centre off the plot too: as before)
+  return {edge, bw0Hz: Math.round(bwMhz * 1e6), b0: clipped ? Math.min(bwMhz, 2 * toEdge) : bwMhz, clipped};
+}
+// the width (Hz) for drag dr after the pointer moved dfMhz
+function bwEdgeDragHz(dr, dfMhz, bandMhz) {
+  const maxHz = bandMhz > 0 ? bwClampHz(bandMhz * 1e6) : BW_MAX_HZ;
+  const grow = dr.edge === 'left' ? -dfMhz : dfMhz;   // > 0 = outward
+  if (dr.clipped && grow >= 0) return dr.bw0Hz;   // also a press with no movement: unchanged
+  return Math.min(bwUserHz((dr.b0 + 2 * grow) * 1e6), maxHz);
 }
 
 // Center frequency of the FFT frame currently on screen (null until the first
@@ -2989,6 +3211,70 @@ function showBwTooltip(e, bwMhz) {
 function hideBwTooltip() {
   if (bwTooltipEl) bwTooltipEl.style.display = 'none';
 }
+
+// 📏 Each VFO's received level (system_status decimator_squelch[].lvl -
+// vfo_level.cpp: {dbfs, noise, total, gain, age, n}) and its readout next to
+// the mouse over the VFO's bar - main spectrum, waterfall, independent
+// panes: dBFS (the band's signal without its noise; 0 = a full-scale complex
+// tone), the SNR in the VFO's band, dBm by the 📏 range panel's calibration
+// (dBm = dBFS - gain + rgCal(gain, MHz): the nominal from published R820T
+// data + the user's correction). Updated live while shown
+let vfoLvl = {}, vfoLvlTipEl = null, vfoLvlTip = null;   // (vfoLvlTip: {id, cx, cy} while shown)
+function vfoLvlNote(list) {
+  const now = Date.now(), m = {};
+  for (const sq of list || []) if (sq && sq.lvl) m[sq.id] = Object.assign({at: now}, sq.lvl);
+  vfoLvl = m;
+  if (vfoLvlTip) vfoLvlRender();
+}
+function vfoLvlHtml(id) {
+  const dec = (decimatorInfo || []).find(d => d.id === id), L = vfoLvl[id];
+  const bw = dec ? (dec.bandwidth_mhz || (bwo[dec.bandwidth_index || 0] || {}).bandwidth || 0) : 0;
+  const bwTxt = bw >= 1 ? bw.toFixed(1) + ' MHz' : bw >= 0.001 ? +(bw * 1000).toFixed(1) + ' kHz' : '';
+  const mhz = dec ? vfoCenterMhz(dec) + dec.freq_offset_hz / 1e6 : 0;
+  let h = `<b style="color:${getDecimatorColor(id)}">D${id}</b>` + (dec ? ` · ${mhz.toFixed(4)} MHz` : '') + (bwTxt ? ` · ${bwTxt}` : '');
+  if (!L) return h + '<br><span style="color:#8296b4">no level yet: measured while its signal is above the noise in its band' +
+                     (dec && dec.squelch_enabled ? ' and its squelch is open' : '') + '</span>';
+  const age = L.age + (Date.now() - L.at) / 1000;
+  h += `<br><b>${L.dbfs.toFixed(1)} dBFS</b> · SNR ${(L.dbfs - L.noise).toFixed(1)} dB`;
+  if (L.gain < 0) h += '<br><span style="color:#ffcc80">dBm: the tuner AGC is on - its gain isn\'t known</span>';
+  else {
+    const f = mhz || 100, c = rgCal(L.gain, f), sd = rgCalSd(L.gain, f);
+    h += ` · <b>${(L.dbfs - L.gain + c).toFixed(1)} dBm</b><br><span style="color:#8296b4">gain ${L.gain.toFixed(1)} dB · ` +
+         (rgState.calHow ? `calibrated` : `nominal (published R820T data)`) + ` ± ${sd.toFixed(1)} dB</span>` +
+         (!rgState.calHow && rgCalDc() ? `<br><span style="color:#ffcc80">${RG_CAL_DC_TXT}</span>` : '');
+  }
+  if (L.total > -8) h += `<br><span style="color:#ffcc80">⚠ near full scale (${L.total.toFixed(1)} dBFS in the tuner's band): reads low - lower the gain</span>`;
+  if (age > 2) h += `<br><span style="color:#8296b4">last heard ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} ago</span>`;
+  return h;
+}
+function vfoLvlRender() {
+  if (!vfoLvlTip) return;
+  if (!vfoLvlTipEl) {
+    vfoLvlTipEl = document.createElement('div');
+    vfoLvlTipEl.className = 'vfo-lvl-tip';
+    document.body.appendChild(vfoLvlTipEl);
+  }
+  const h = vfoLvlHtml(vfoLvlTip.id);
+  if (vfoLvlTipEl.dataset.html !== h) { vfoLvlTipEl.dataset.html = h; vfoLvlTipEl.innerHTML = h; }
+  vfoLvlTipEl.style.display = 'block';
+  // beside the pointer, kept on the screen
+  const w = vfoLvlTipEl.offsetWidth, ht = vfoLvlTipEl.offsetHeight;
+  vfoLvlTipEl.style.left = Math.max(4, Math.min(window.innerWidth - w - 4, vfoLvlTip.cx + 16)) + 'px';
+  vfoLvlTipEl.style.top = Math.max(4, Math.min(window.innerHeight - ht - 4, vfoLvlTip.cy + 18)) + 'px';
+}
+function vfoLvlShow(id, e) { vfoLvlTip = {id, cx: e.clientX, cy: e.clientY}; vfoLvlRender(); }
+function vfoLvlHide() {
+  vfoLvlTip = null;
+  if (vfoLvlTipEl) vfoLvlTipEl.style.display = 'none';
+}
+// over a bar of c (the spectrum's / waterfall's overlay: c.boxes) - not while
+// dragging, nor over a marker with a tip of its own
+function vfoLvlHover(e, c, other) {
+  if (other || isDragging || isDraggingEdge || isScrollDragging || squelchDrag || !c || !c.boxes) { vfoLvlHide(); return; }
+  const r = c.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  const box = c.boxes.find(b => inRect(x, y, b));
+  if (box) vfoLvlShow(box.id, e); else vfoLvlHide();
+}
 // Safety net: always hide when the mouse button is released anywhere
 window.addEventListener('mouseup', hideBwTooltip);
 
@@ -3014,7 +3300,7 @@ window.addEventListener('mouseup', () => {
     isDragging = false;
     isDraggingEdge = false;
     draggedEdge = null;
-    dragStartBandwidth = null;
+    edgeDrag = null;
     dragStartOffset = null;
     // Same server-echo protection the canvas handlers apply on drag end
     if (pendingOffsetTimeout) clearTimeout(pendingOffsetTimeout);
@@ -3320,8 +3606,8 @@ class WaterfallDisplay {
         }
 
         ctx.fillStyle = color + 'aa';
-        ctx.fillRect(box.x - 2, h/2 - 12, 4, 24);
-        ctx.fillRect(box.x + box.w - 2, h/2 - 12, 4, 24);
+        ctx.fillRect((box.xl ?? box.x) - 2, h/2 - 12, 4, 24);
+        ctx.fillRect((box.xr ?? box.x + box.w) - 2, h/2 - 12, 4, 24);
       });
       this.drawLockedLines(decimatorInfo, centerFreq);
       return;
@@ -3358,12 +3644,18 @@ class WaterfallDisplay {
       let pxMax = this.plotLeft + ((freqMax - minFreq) / freqRange) * this.plotWidth;
       const pxCenter = this.plotLeft + ((selCenter - minFreq) / freqRange) * this.plotWidth;
 
-      // Clamp both edges to canvas bounds
-      pxMin = Math.max(0, Math.min(w, pxMin));
-      pxMax = Math.max(0, Math.min(w, pxMax));
+      // Clamp both edges to the plot area (the data's; the canvas also has
+      // the axis gutters): a clipped side keeps its edge just inside, as on
+      // the spectrum (drawBox)
+      const pl = this.plotLeft, pr = this.plotLeft + this.plotWidth;
+      const clipL = pxMin < pl, clipR = pxMax > pr;
+      pxMin = Math.max(pl, Math.min(pr, pxMin));
+      pxMax = Math.max(pl, Math.min(pr, pxMax));
 
       const bx = Math.min(pxMin, pxMax);
       const bw = Math.abs(pxMax - pxMin);
+      const inset = bw > 4 * PANE_CLIP_EDGE_PX ? PANE_CLIP_EDGE_PX : 0;
+      const xl = clipL ? bx + inset : bx, xr = clipR ? bx + bw - inset : bx + bw;
 
       // Store box info
       const handleHeight = 24;
@@ -3376,8 +3668,9 @@ class WaterfallDisplay {
         y: 0,
         w: bw,
         h: h,
-        left_edge: {x: bx-5, y: 0, w: 10, h: h},
-        right_edge: {x: bx+bw-5, y: 0, w: 10, h: h},
+        left_edge: {x: xl-5, y: 0, w: 10, h: h},
+        right_edge: {x: xr-5, y: 0, w: 10, h: h},
+        xl, xr, clipL, clipR,
         handleMiddle: {x: bx, y: handleY, w: bw, h: handleHeight},
         handleColor: handleColor,
         color: color,
@@ -3402,8 +3695,8 @@ class WaterfallDisplay {
 
       // Draw edge handles
       ctx.fillStyle = color + 'aa';
-      ctx.fillRect(bx - 2, h/2 - 12, 4, 24);
-      ctx.fillRect(bx + bw - 2, h/2 - 12, 4, 24);
+      ctx.fillRect(xl - 2, h/2 - 12, 4, 24);
+      ctx.fillRect(xr - 2, h/2 - 12, 4, 24);
 
       // Draw center line (dashed)
       ctx.strokeStyle = color + '88';
@@ -3433,7 +3726,7 @@ class WaterfallDisplay {
     } else {
       const activeBox = this.overlay.boxes.find(b => b.id === activeDecimatorId);
       if (activeBox && this.overlay.hoveredEdge) {
-        const edgeX = this.overlay.hoveredEdge === 'left' ? activeBox.x : activeBox.x + activeBox.w;
+        const edgeX = this.overlay.hoveredEdge === 'left' ? activeBox.xl : activeBox.xr;
         ctx.fillStyle = activeBox.color + 'aa';
         ctx.fillRect(edgeX - 3, h/2 - 16, 6, 32);
         this.overlay.style.cursor = 'ew-resize';
@@ -3569,16 +3862,13 @@ function computeAutoRange(magnitudes) {
 
   // Set max to show peaks with some headroom
   // Ensure at least 30dB dynamic range for good color spread
-  const minDynamicRange = 30;
+  const minDynamicRange = 40;
   let newMax = Math.ceil(peak + 5);
 
-  // If data range is less than our minimum, expand the range
-  if (newMax - newMin < minDynamicRange) {
-    // Center the range around the data
-    const center = (noiseFloor + peak) / 2;
-    newMin = Math.floor(center - minDynamicRange / 2);
-    newMax = Math.ceil(center + minDynamicRange / 2);
-  }
+  // Less than that in the data (a quiet band, nothing but noise): extend the
+  // range UPWARDS. Centring it on the data put the noise floor in the middle
+  // of the colour scale - an empty band showed as a solid orange/red sheet.
+  if (newMax - newMin < minDynamicRange) newMax = newMin + minDynamicRange;
 
   // Round to nice 5 dB steps
   newMin = Math.floor(newMin / 5) * 5;
@@ -4801,8 +5091,8 @@ function drawBox() {
 
       // Draw edge handles
       ctx.fillStyle = color;
-      ctx.fillRect(box.x-2, h/2-15, 4, 30);
-      ctx.fillRect(box.x+box.w-2, h/2-15, 4, 30);
+      ctx.fillRect((box.xl ?? box.x)-2, h/2-15, 4, 30);
+      ctx.fillRect((box.xr ?? box.x+box.w)-2, h/2-15, 4, 30);
 
       // Draw label
       ctx.fillStyle = color;
@@ -4833,6 +5123,11 @@ function drawBox() {
 
     let pxMin = u.valToPos(minF, 'x');
     let pxMax = u.valToPos(maxF, 'x');
+    // a side beyond the plot (zoomed in, or a VFO wider than the band shown)
+    // is drawn at the border, its edge PANE_CLIP_EDGE_PX inside it (the
+    // panes' rule; at the border half the edge was off the canvas) - see
+    // bwEdgeDragBegin for how such an edge drags
+    const clipL = pxMin < 0, clipR = pxMax > w;
 
     pxMin = Math.max(0, Math.min(w, pxMin));
     pxMax = Math.max(0, Math.min(w, pxMax));
@@ -4847,6 +5142,8 @@ function drawBox() {
       bx = (pxMin + pxMax) / 2 - MIN_BOX_PX / 2;
       bw2 = MIN_BOX_PX;
     }
+    const inset = bw2 > 4 * PANE_CLIP_EDGE_PX ? PANE_CLIP_EDGE_PX : 0;
+    const xl = clipL ? bx + inset : bx, xr = clipR ? bx + bw2 - inset : bx + bw2;
 
     // Middle grab handle dimensions
     const handleHeight = 24;
@@ -4860,8 +5157,9 @@ function drawBox() {
       y: 0,
       w: bw2,
       h: h,
-      left_edge: {x: bx-5, y: 0, w: 10, h: h},
-      right_edge: {x: bx+bw2-5, y: 0, w: 10, h: h},
+      left_edge: {x: xl-5, y: 0, w: 10, h: h},
+      right_edge: {x: xr-5, y: 0, w: 10, h: h},
+      xl, xr, clipL, clipR,
       handleMiddle: {x: bx, y: handleY, w: bw2, h: handleHeight},
       handleColor: handleColor,
       color: color,
@@ -4886,8 +5184,8 @@ function drawBox() {
 
     // Draw edge handles (for resizing) - positioned at middle
     ctx.fillStyle = color;
-    ctx.fillRect(bx-2, h/2-15, 4, 30);
-    ctx.fillRect(bx+bw2-2, h/2-15, 4, 30);
+    ctx.fillRect(xl-2, h/2-15, 4, 30);
+    ctx.fillRect(xr-2, h/2-15, 4, 30);
 
     // Draw label (at top)
     ctx.fillStyle = color;
@@ -4909,7 +5207,7 @@ function drawBox() {
       c.style.cursor = 'grab';
     }
   } else if (activeBox && c.hoveredEdge) {
-    const edgeX = c.hoveredEdge === 'left' ? activeBox.x : activeBox.x + activeBox.w;
+    const edgeX = c.hoveredEdge === 'left' ? activeBox.xl : activeBox.xr;
     ctx.fillStyle = activeBox.color + 'cc'; // 80% opacity
     ctx.fillRect(edgeX - 3, h/2-20, 6, 40);
     c.style.cursor = 'ew-resize';
@@ -5058,6 +5356,7 @@ const fftSurface = {
   canMap: () => true,
   xToMhz: x => fftPlot.posToVal(x, 'x'),
   dxToMhz: dx => fftPlot.posToVal(dx, 'x') - fftPlot.posToVal(0, 'x'),
+  plotX: () => [0, fftPlot.over.clientWidth],   // the plot area's x range (the 'fo' canvas is it)
   hoverRedraw: () => drawBox()
 };
 const wfSurface = {
@@ -5073,6 +5372,7 @@ const wfSurface = {
     const f = waterfall.lastFrequencies;
     return (dx / waterfall.plotWidth) * (f[f.length - 1] - f[0]);
   },
+  plotX: () => [waterfall.plotLeft, waterfall.plotLeft + waterfall.plotWidth],
   hoverRedraw: (c, cursor) => {
     c.style.cursor = cursor;
     waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
@@ -5207,12 +5507,18 @@ function pointerDown(s, e) {
     for(const box of c.boxes) {
       if(box.id !== activeDecimatorId) continue;
       const edge = inRect(x, y, box.left_edge) ? 'left' : inRect(x, y, box.right_edge) ? 'right' : null;
-      if(edge) {
+      const dec = edge ? decimatorInfo.find(d => d.id === box.id) : null;
+      if(dec) {
         isDraggingEdge = true;
         draggedEdge = edge;
-        dragStartX = x;
-        dragStartBandwidth = box.bandwidth_hz / 1e6;
-        dragStartOffset = box.offset_hz;
+        const [px0, px1] = s.plotX();
+        dragStartX = Math.max(px0, Math.min(px1, x));
+        // from the edge where it is drawn (bwEdgeDragBegin; the decimator's
+        // own width / offset - a pan lock's saved boxes are only pixels)
+        const left = edge === 'left';
+        edgeDrag = bwEdgeDragBegin(edge, barCenterFreq() + dec.freq_offset_hz / 1e6, decBwMhz(dec),
+                                   s.xToMhz(left ? (box.xl ?? box.x) : (box.xr ?? box.x + box.w)), left ? box.clipL : box.clipR);
+        dragStartOffset = dec.freq_offset_hz;
         e.preventDefault();
         drawBox();
         return;
@@ -5238,16 +5544,10 @@ function pointerDown(s, e) {
     const fo = $id('fo');
     if (fo && fo.boxes) {
       scrollDragSavedBoxes = fo.boxes.map(box => ({
-        id: box.id,
-        x: box.x,
-        y: box.y,
-        w: box.w,
-        h: box.h,
+        ...box,   // (id, x / w, the edges xl / xr / clipL / clipR, colours, ...)
         handleMiddle: box.handleMiddle ? {...box.handleMiddle} : null,
         left_edge: {...box.left_edge},
-        right_edge: {...box.right_edge},
-        color: box.color,
-        handleColor: box.handleColor
+        right_edge: {...box.right_edge}
       }));
     }
     c.style.cursor = 'grabbing';
@@ -5306,10 +5606,11 @@ function pointerMove(s, e) {
   }
 
   if(isDraggingEdge) {
-    const df=s.dxToMhz(x-dragStartX);
-    const dbw=draggedEdge==='left'?dragStartBandwidth-df*2:dragStartBandwidth+df*2;
-    // any width (3 significant figures), or the nearest efficient size
-    const newHz = bwUserHz(dbw * 1e6);
+    // the edge stays on the plot (a touch drag goes on outside the canvas)
+    const [px0, px1] = s.plotX();
+    const df=s.dxToMhz(Math.max(px0, Math.min(px1, x))-dragStartX);
+    // any width (3 significant figures), no wider than the band shown
+    const newHz = bwEdgeDragHz(edgeDrag, df, vfoBandMhz());
     showBwTooltip(e, newHz / 1e6);
 
     // Find active decimator info
@@ -5447,7 +5748,7 @@ function pointerUp(s, e) {
     isDraggingEdge=false;
     suppressNextClick = true;
     draggedEdge=null;
-    dragStartBandwidth=null;
+    edgeDrag=null;
     dragStartOffset=null;
     // Set timeout to protect against server overwriting our local offset
     if (pendingOffsetTimeout) clearTimeout(pendingOffsetTimeout);
@@ -5486,12 +5787,14 @@ function handleMove(e) {
     fpHover = {x: e.clientX - r.left, y: e.clientY - r.top};
   }
   pointerMove(fftSurface, e);
-  if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e);
+  let mk = false;   // (over a marker with a tip of its own: no 📏 level readout)
+  if (!isDragging && !isDraggingEdge && !isScrollDragging) mk = aiMarkerHover(e) || sfMarkerHover(e);
+  vfoLvlHover(e, fo, mk);
 }
 function handleUp(e) { pointerUp(fftSurface, e); }
 function handleClick(e) { if (aiMarkerConsumed || sfMarkerConsumed) return; pointerClick(fftSurface, e); }
 function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
-function handleWaterfallMove(e) { pointerMove(wfSurface, e); }
+function handleWaterfallMove(e) { pointerMove(wfSurface, e); vfoLvlHover(e, $id('wf-overlay')); }
 function handleWaterfallUp(e) { pointerUp(wfSurface, e); }
 function handleWaterfallClick(e) { pointerClick(wfSurface, e); }
 
@@ -7935,6 +8238,7 @@ function createPlot() {
         addTouchHandlers(c,handleDown,handleMove,handleUp);
         c.addEventListener('mouseleave',()=>{
           fpHover=null;
+          vfoLvlHide();
           // Clear the ACTUAL hover state props (c.ih/c.he were leftovers
           // from an older version - the highlight/cursor used to stay stuck)
           if(c.hoveredBox||c.hoveredEdge||c.hoveredHandle){
@@ -7974,6 +8278,7 @@ function initWaterfall(plot) {
     wfOverlay.addEventListener('mousemove', handleWaterfallMove);
     wfOverlay.addEventListener('mouseup', handleWaterfallUp);
     wfOverlay.addEventListener('mouseleave', () => {
+      vfoLvlHide();
       if (wfOverlay.hoveredHandle !== null || wfOverlay.hoveredEdge || wfOverlay.hoveredBox) {
         wfOverlay.hoveredHandle = null;
         wfOverlay.hoveredEdge = null;
@@ -8839,7 +9144,7 @@ function panesBuild(n) {
     ov.addEventListener('pointermove', e => paneMove(p, e));
     ov.addEventListener('pointerup', e => paneUp(p, e));
     ov.addEventListener('pointercancel', e => paneUp(p, e));
-    ov.addEventListener('pointerleave', () => { if (p.hover) { p.hover = null; paneDrawOverlay(p); } });
+    ov.addEventListener('pointerleave', () => { vfoLvlHide(); if (p.hover) { p.hover = null; paneDrawOverlay(p); } });
     panes.push(p);
   }
   panesResize();
@@ -9192,9 +9497,9 @@ function paneDrawOverlay(p) {
     // clipped to the plot area (zoomed in, or a VFO wider than the band the
     // pane shows - 2.4 MHz with the edge clip -, a VFO can be partly or wholly
     // outside it). A clipped side keeps its edge just inside the plot border
-    // (PANE_CLIP_EDGE_PX, as the main display's at the canvas border): the
-    // edge drag changes the width from where it started, so it resizes
-    // alike - without it a full-width VFO couldn't be resized at all
+    // (PANE_CLIP_EDGE_PX, as the main display's): its edge drag starts from
+    // where the edge is drawn (bwEdgeDragBegin) - without the edge a
+    // full-width VFO couldn't be resized at all
     const L = p.L, R = p.sw - 4;
     if (x1 < L || x0 > R) continue;
     const clipL = x0 < L, clipR = x1 > R;
@@ -9308,9 +9613,11 @@ function paneDown(p, e) {
     return;
   }
   if (ht && ht.kind === 'edge') {
-    // bandwidth: the edge moves, the centre stays (like the main display)
-    const s = paneSpan(p), W = Math.max(10, p.sw - p.L - 4);
-    paneDrag = {p, id: ht.bar.id, edge: ht.edge, x0: x, bw0: ht.bar.bw, mhzPerPx: (s[1] - s[0]) / W, pointerId: e.pointerId};
+    // bandwidth: the edge moves, the centre stays (like the main display);
+    // a clipped side from where its edge is drawn (bwEdgeDragBegin)
+    const s = paneSpan(p), W = Math.max(10, p.sw - p.L - 4), b = ht.bar, left = ht.edge === 'left';
+    paneDrag = {p, id: b.id, edge: ht.edge, x0: Math.max(p.L, Math.min(p.sw - 4, x)), mhzPerPx: (s[1] - s[0]) / W, pointerId: e.pointerId,
+                ed: bwEdgeDragBegin(ht.edge, p.freqMhz + b.offset_hz / 1e6, b.bw, paneFreqAt(p, left ? b.xl : b.xr), left ? b.clipL : b.clipR)};
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault();
     return;
@@ -9352,18 +9659,21 @@ function paneMove(p, e) {
     const sft = sfSpecAt(p.sf || [], x, paneXY(e).y, 2), tip = sft ? sfTagTip(sft) : '';
     if (e.currentTarget.title !== tip) e.currentTarget.title = tip;
     if (sft) e.currentTarget.style.cursor = 'pointer';
+    // 📏 the level readout over a VFO's bar (not over a tag, nor its squelch line)
+    if (ht && !sft && ht.kind !== 'squelch') vfoLvlShow(ht.bar.id, e); else vfoLvlHide();
     return;
   }
+  vfoLvlHide();
   if (paneDrag.squelch !== undefined) {
     const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;
     squelchSetFromDrag(paneDrag.squelch, (bot - paneXY(e).y) / (bot - top) * ymax);
     return;
   }
   if (paneDrag.edge) {
-    const df = (x - paneDrag.x0) * paneDrag.mhzPerPx;
-    const dbw = paneDrag.edge === 'left' ? paneDrag.bw0 - df * 2 : paneDrag.bw0 + df * 2;
-    // any width (3 significant figures), or the nearest efficient size
-    const hz = bwUserHz(dbw * 1e6);
+    // the edge stays on the plot (the captured pointer goes on outside the pane)
+    const df = (Math.max(p.L, Math.min(p.sw - 4, x)) - paneDrag.x0) * paneDrag.mhzPerPx;
+    // any width (3 significant figures), no wider than the pane's band
+    const hz = bwEdgeDragHz(paneDrag.ed, df, (p.sr / 1e6) * currentEdgeClip);
     showBwTooltip(e, hz / 1e6);
     const d = (decimatorInfo || []).find(z => z.id === paneDrag.id);
     if (d && hz !== decBwHz(d)) {
@@ -13510,7 +13820,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const btn = $id('map-btn');
     if (btn) btn.classList.toggle('on', mapState.on);
     rpApplyWidth();
-    if (showMap) { mapInit(); mapResize(); }
+    // (shown again: draw it now - nothing drew while it was hidden, and the 📏 range's sweep starts from rgDraw)
+    if (showMap) { mapInit(); mapResize(); if (changed) mapDraw(); }
     if (changed) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
   }
   // Both: the DoA part's height (mapState.dh px, 0 = default 42 %)
@@ -13857,13 +14168,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     mapAttrUpdate();
     if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
+    rgRender();
   }
 
   // the attribution line (bottom right): the layer's (+ the provider's for
   // the view: mapAttrDyn), + OpenStreetMap's for the masts / incident
   // addresses on a layer that doesn't credit it, + the terrain's with the
-  // viewshed. Also from every draw - incidents come
-  // with the map pushes; the DOM is only touched when the text changes
+  // viewshed / the 📏 range. Also from every draw - incidents come with the
+  // map pushes; the DOM is only touched when the text changes
   function mapAttrUpdate() {
     const at = $id('map-attr');
     if (!at) return;
@@ -13873,7 +14185,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const L = mapLayer(), dyn = mapAttrDyn();
     const h = [dyn && L.attrFb ? '' : L.attr, dyn].filter(Boolean).join(' · ') +   // attrFb: attr only stands in for dyn
       (osm.length && !L.osm ? ' · ' + osm.join(' + ') + ' ' + OSM_ATTR : '') +
-      (mapState.vs ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 &amp; others' : '');
+      (mapState.vs || rgState.on ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 &amp; others' : '');
     if (at.dataset.html !== h) { at.dataset.html = h; at.innerHTML = h; }
   }
 
@@ -14397,6 +14709,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
           mapDrawTile(urlf, tz, x, y, (x - left) * size, (y - top) * size, size, fb);
     }
     vsDraw(c);
+    rgDraw(c);   // (📏 the range estimate: under the DF lobes)
     rdfDraw(c);
     v2tLobeDraw(c);
     lrDraw(c);
@@ -14468,6 +14781,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapRenderPopup();
     mkRender();
     vsRender();
+    rgRender();
     mapRenderStatus();
     srchTxBtn();
     if (mapState.masts) mastSchedule();
@@ -14537,6 +14851,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // held, frames, gate_m, moved_m, records}], talkers:[{vfo, tid, label,
   // active, tx, tframes, tx_frames, age, tx_age, doa, lobe, peak, conf, held,
   // frames, gate_m, moved_m, records, hist:[[age, peak, doa, conf, frames]]}]}}
+  // (vfos / talkers also lvl: {dbfs, noise, total, gain, age, n} - the
+  // received level for 📏 RANGE, when measured)
   // at 2 Hz - talkers = the radios a VFO's digital decoder named (P25 unit
   // IDs, talker_doa.cpp), each with the DoA of its own transmissions only;
   // {"rdf_grid":{vfo, tid ("" = the VFO's whole signal), mhz, records,
@@ -14603,6 +14919,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const live = new Set([...(m.vfos || []).map(v => rdfGk(v.id, '')), ...(m.talkers || []).map(t => rdfGk(t.vfo, t.tid))]);
     for (const k of Object.keys(rdfGrids)) if (!live.has(k)) delete rdfGrids[k];
     rdfRenderPanel();
+    rgOnStatus();   // (📏 the range estimate follows the lobe and its level)
     if (mapCv && document.body.classList.contains('rp-map')) mapDraw();
   }
   function rdfOnGrid(g) {
@@ -14977,7 +15294,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
                        ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node',
-                       wildlife: 'collar', rds: 'broadcast'};
+                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft', vdl2: 'aircraft'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
   const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
@@ -14994,8 +15311,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // separation, by delay: a reflection, or another SFN transmitter)
     if (t.sp) return t.pl === 'cells' ? 'cell' : 'path';
     // UAT ground stations (their uplinks and the TIS-B / ADS-R traffic they
-    // rebroadcast) beside the aircraft
-    if (t.pk && t.pl === 'uat' && /^GS /.test(t.tid)) return 'gs';
+    // rebroadcast), ACARS ground stations (their squitters) and VDL2 ground
+    // stations (their own bursts) beside the aircraft
+    if (t.pk && (t.pl === 'uat' || t.pl === 'acars' || t.pl === 'vdl2') && /^GS /.test(t.tid)) return 'gs';
     // an analog FM transmitter named by its radio ID (MDC1200 / FleetSync /
     // selcall / DTMF), else its CTCSS tone / DCS code / tone burst - the
     // analog_id plugin ("ctcss" until 2026-10-22: an open page from before)
@@ -15601,7 +15919,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>' +
             '<button type="button" onclick="mapMenuClose();sfNew({lat:mapMenuAt.la,lon:mapMenuAt.lo})" title="Save a frequency transmitted from here (a new marker)">📻 Save a frequency here</button>' +
             (plMenuOn() ? `<button type="button" onclick="vsAddAt('tx')" title="${vsAddTip('here')}">${vsAddLabel('here')}</button>` : '') +
-            plMenuItem() +
+            plMenuItem() + rgMenuItem() +
             `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
@@ -20399,6 +20717,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function vsHover(x, y) {
     vsHovAt = x === null ? null : [x, y];
     vsHoverRender();
+    rgHover(x, y);   // (📏 the range estimate's line)
   }
   function vsHoverRender() {
     const el = $id('map-vs-hov');
@@ -20585,20 +20904,22 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // - TROPOSCATTER (Rayleigh) taking over far beyond the horizon: K = Kt
   //   (1 - w) / (1 + Kt w), w = its share of the power (from Lbs - Lbd)
   // terr, dts (dB): Lbull - Lbulls, Lbs - Lbd - from P.1812 with either
-  // terrain model (the worker's fadQ, the link's p1812); free space: K
-  function plKeff(terr, dts) {
-    const Kt = 10 ** ((plState.K - Math.max(0, terr)) / 10), w = 1 / (1 + 10 ** (dts / 10));
+  // terrain model (the worker's fadQ, the link's p1812); free space: K.
+  // K (dB, a clear path's) and the settings s ({fade, K, model}): the 📶
+  // path loss's own unless given (the 📏 range has its own)
+  function plKeff(terr, dts, K = plState.K) {
+    const Kt = 10 ** ((K - Math.max(0, terr)) / 10), w = 1 / (1 + 10 ** (dts / 10));
     return Kt * (1 - w) / (1 + Kt * w);
   }
-  function plAutoFade() { return plState.fade === 'auto' && plState.model !== 'fs'; }
-  function plFading(terr, dts) {
-    const f = plState.fade;
+  function plAutoFade(s = plState) { return s.fade === 'auto' && s.model !== 'fs'; }
+  function plFading(terr, dts, s = plState) {
+    const f = s.fade;
     if (f === 'none') return ['none', 0];
     if (f === 'rayleigh') return ['rayleigh', 0];
-    return ['rician', plAutoFade() ? plKeff(terr, dts) : 10 ** (plState.K / 10)];
+    return ['rician', plAutoFade(s) ? plKeff(terr, dts, s.K) : 10 ** (s.K / 10)];
   }
   // a cell's fadQ (the worker's: terrain 0.25 dB << 8 | Lbs - Lbd + 32 in 0.25 dB) -> K linear
-  function plKeffQ(v) { return plKeff((v >> 8) / 4, (v & 255) === 255 ? 99 : (v & 255) / 4 - 32); }
+  function plKeffQ(v, K = plState.K) { return plKeff((v >> 8) / 4, (v & 255) === 255 ? 99 : (v & 255) / 4 - 32, K); }
   // I0(z) e^-z (Abramowitz & Stegun 9.8.1 / 9.8.2, |error| < 2e-7)
   function plI0e(z) {
     if (z < 3.75) {
@@ -20691,20 +21012,24 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // the coverage's tables for a sigma: fixed fading one; auto (K per cell)
   // one per K level - Rayleigh at -20 dB, Rician up to the setting (<= 30
   // dB) in <= 1 dB steps - with idx[fadQ] = a cell's place between them
-  // (plRelK interpolates: a smooth K, no bands)
-  let plKidxKey = '', plKidx = null;
-  function plRelSet(sigma) {
-    if (!plAutoFade()) { const [kind, K] = plFading(0, 99); return {tabs: [plRelLut(sigma, kind, K)], idx: null}; }
-    const lo = -20, hi = Math.min(30, plState.K), n = hi > lo ? Math.ceil(hi - lo) : 0, step = n ? (hi - lo) / n : 1, tabs = [];
+  // (plRelK interpolates: a smooth K, no bands). s: the settings ({fade, K,
+  // model}) - the 📶 path loss's unless given (the 📏 range's); the idx is
+  // cached per K (ikey), so the two settings' K don't throw each other's out
+  const plKidxs = new Map();
+  function plRelSet(sigma, s = plState) {
+    if (!plAutoFade(s)) { const [kind, K] = plFading(0, 99, s); return {tabs: [plRelLut(sigma, kind, K)], idx: null, ikey: ''}; }
+    const lo = -20, hi = Math.min(30, s.K), n = hi > lo ? Math.ceil(hi - lo) : 0, step = n ? (hi - lo) / n : 1, tabs = [];
     for (let i = 0; i <= n; i++) tabs.push(i ? plRelLut(sigma, 'rician', 10 ** ((lo + i * step) / 10)) : plRelLut(sigma, 'rayleigh', 0));
-    if (!n) return {tabs, idx: null};
-    const key = `${plState.K}`;
-    if (plKidxKey !== key) {
-      plKidx = new Float32Array(65536);
-      for (let v = 0; v < 65536; v++) plKidx[v] = Math.max(0, Math.min(n, (10 * Math.log10(plKeffQ(v)) - lo) / step));
-      plKidxKey = key;
+    if (!n) return {tabs, idx: null, ikey: ''};
+    const ikey = `${s.K}`;
+    let idx = plKidxs.get(ikey);
+    if (!idx) {
+      idx = new Float32Array(65536);
+      for (let v = 0; v < 65536; v++) idx[v] = Math.max(0, Math.min(n, (10 * Math.log10(plKeffQ(v, s.K)) - lo) / step));
+      if (plKidxs.size >= 4) plKidxs.delete(plKidxs.keys().next().value);   // (256 KB each)
+      plKidxs.set(ikey, idx);
     }
-    return {tabs, idx: plKidx};
+    return {tabs, idx, ikey};
   }
   function plRelK(rs, v, m) {
     const t = rs.tabs;
@@ -21439,6 +21764,1015 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
 
   plReady = true;
+
+  // --- 📏 RANGE: where the transmitter of ONE DoA lobe probably is, from its signal strength ------
+  // The 📡 DF panel's selected lobe (a VFO's whole signal, or one radio's -
+  // rdf_mapper.cpp) and its received level ({"rdf"} "lvl": the VFO band's
+  // power in the FFT channel's raw frames while the signal is there, dBFS,
+  // + the tuner gain then) -> dBm at the receiver input = dBFS - gain + the
+  // calibration. With the user's estimate of the transmitter (power +
+  // antenna - cable, or its EIRP; its antenna height and surroundings) and
+  // our antenna, the level says how much path loss the signal took. The
+  // STATION's own sweep - the viewshed worker's signal sweep (the 📶 path
+  // loss's models: ITU-R P.1812 over the terrain, Longley-Rice or free
+  // space, + P.2108 clutter) from the station to every cell around it, with
+  // a transmitter at the TX antenna height there (path loss is reciprocal;
+  // each end's clutter by its role) - gives each place's median loss. A
+  // worker of its own (rgPostMain) weighs every cell: its area x the lobe's
+  // factor at its bearing x how likely the measured level is with that
+  // place's median. Coloured by how much of the probability lies in places
+  // at least as likely (the 50 / 90 / 99 % regions); the most likely place
+  // is marked, the distance's quantiles are in the panel.
+  // - bearing: the lobe as a record of 📡 mobile DF (rdf_engine.hpp):
+  //   blurred by the bearing uncertainty (2 deg MUSIC + the heading's, as
+  //   rdf_mapper.cpp), normalised, (1 - eps) p 720 + eps - NOT tempered
+  //   (mobile DF's alpha 0.5 discounts many correlated records; one lobe
+  //   is one observation - tempered, its square root put ~half of the
+  //   probability off the bearing)
+  // - level: the slope of the 📶 path loss's reliability tables (plRelLut)
+  //   in the margin = the level's pdf around the median: lognormal (sigma =
+  //   the location variability of the transmitter's end (P.1546), the
+  //   model's error and the EIRP's / calibration's +-, in squares) with the
+  //   fading around it (Rician, K per cell from the path as the path loss's
+  //   auto, or as chosen)
+  // Its own worker, panel (top left, "Range" in the DF panel's header),
+  // layer and settings (rgState): the viewshed's signal mode stays without
+  // the station (the user's call 2026-10-12 - that is about coverage)
+  const RG_EPS = 0.05, RG_ALPHA = 1, RG_NEAR_M = 30, RG_BASE_SD = 2;   // (rdf_engine.hpp Options - alpha 1: one record; rdf_mapper.cpp BASE_SIGMA_DEG)
+  // (the receiver's calibration - the nominal model from published R820T
+  // data + the user's correction - is in the globals block: rgCal / rgCalSd)
+  const RG_PRESETS = [
+    ['Handheld radio: 5 W, -3 dBi, 1.5 m', {txMode: 'ptx', ptx: 5, gt: -3, lt: 0, txH: 1.5, sigE: 4}],
+    ['PMR446 / FRS: 0.5 W ERP, 1.5 m', {txMode: 'eirp', eirp: 0.82, txH: 1.5, sigE: 4}],
+    ['Vehicle radio: 25 W, 2 dBi, 1.8 m', {txMode: 'ptx', ptx: 25, gt: 2, lt: 1, txH: 1.8, sigE: 4}],
+    ['Base / repeater: 50 W, 6 dBi, 25 m', {txMode: 'ptx', ptx: 50, gt: 6, lt: 2, txH: 25, sigE: 5}],
+    ['ISM device (433 / 868 MHz): 10 mW, 1.5 m', {txMode: 'eirp', eirp: 0.01, txH: 1.5, sigE: 6}]];
+  // the colours: by the share of the probability in places at least as
+  // likely (0 = the most likely place .. 0.99 - beyond: transparent)
+  const RG_STOPS = [[0, '#ff1e14'], [0.2, '#ff8c00'], [0.5, '#ffe600'], [0.75, '#3ddc4b'], [0.9, '#00c8e6'], [0.99, '#2a4bd7']];
+  let rgUiKl = false, rgUiKt = false, rgPostKey = '', rgPostSetKey = '', rgPostReq = null, rgPostFailKey = '', rgLutA = null, rgSrcKey = null, rgLikC = null;
+
+  function rgSave() { try { localStorage.setItem('kraken_rg', JSON.stringify(rgState)); } catch (e) {} }
+  const rgDbm = w => 10 * Math.log10(w * 1000);
+  function rgEirp() { const s = rgState; return s.txMode === 'eirp' ? rgDbm(s.eirp) : rgDbm(s.ptx) + s.gt - s.lt; }
+  // our antenna's height: the setting, else the viewshed's station's, else 5 m
+  function rgStH() {
+    if (rgState.stH !== null) return rgState.stH;
+    const st = vsState.items.find(i => i.st);
+    return st ? st.h : 5;
+  }
+  // P.1546-6 (12) for the transmitter's end (the unknown one): K 0.5 in the
+  // open, 1.0 an antenna up at its clutter, 1.2 one down in it
+  function rgSigmaL(f) {
+    if (rgState.sigL !== null) return rgState.sigL;
+    const env = rgState.envTx, K = env <= 2 ? 0.5 : rgState.txH >= PL_ENV_R[env] ? 1.0 : 1.2;
+    return K + 1.3 * Math.log10(f);
+  }
+  function rgSigma(f, g) { const s = rgState; return Math.hypot(rgSigmaL(f), s.sigM, s.sigE, rgCalSd(g, f)); }
+  // the bearing's uncertainty (deg): the setting, else as mobile DF's frames
+  // (2 deg + the heading's: compass 4, else 1.5 + 8 / speed - a static
+  // location counts as a slow GPS course, 5.5)
+  function rgBsd(sn) {
+    if (rgState.bsd !== null) return rgState.bsd;
+    return Math.hypot(RG_BASE_SD, sn.src === 'compass' ? 4 : 1.5 + 8 / Math.max(sn.spd || 0, 2));
+  }
+
+  // ---- the source: the DF panel's selection ----
+  // one radio (a talker), else the selected VFO - with all of them shown:
+  // the sidebar's selected one if it has a lobe, else the first with a lobe
+  function rgSource() {
+    if (!rdfStatus || opMode !== 'coherent') return null;
+    const ts = rdfTidSel();
+    if (ts && ts !== '*') {
+      const t = rdfTalkers().find(x => rdfGk(x.vfo, x.tid) === ts);
+      return t ? {key: ts, vfo: t.vfo, tid: t.tid, name: `D${t.vfo} · ${rdfShortName(t)}`, col: rdfTalkerColor(t), mhz: t.mhz,
+                  lobe: t.lobe, peak: t.peak, lvl: t.lvl || null, pk: !!t.pk} : null;
+    }
+    const ids = rdfSelIds(), vs = rdfVfos().filter(v => ids.includes(v.id));
+    const v = vs.find(x => x.id === activeDecimatorId && x.lobe) || vs.find(x => x.lobe && x.lvl) || vs.find(x => x.lobe) || vs[0];
+    return v ? {key: rdfGk(v.id, ''), vfo: v.id, tid: '', name: 'D' + v.id, col: getDecimatorColor(v.id), mhz: v.mhz,
+                lobe: v.lobe, peak: v.peak, lvl: v.lvl || null, pk: false} : null;
+  }
+  // what the estimate is made from: the source's lobe + level now, with
+  // where the station is - or the last ones it had (held: the signal ended).
+  // LIVE only while its level is fresh (its age now under RG_FRESH_S - the
+  // server starts a new average after a 3 s gap): with the squelch off MUSIC
+  // keeps publishing lobes on the noise after the transmitter stopped while
+  // the level stays held, and every RG_LIVE_MS an estimate from a random
+  // noise bearing + the old level made the map jump around. Otherwise the
+  // last fresh one is HELD, as when the lobe is gone; with none (no level
+  // yet, a packet talker, only an old level) the snapshot says why (rgInputs)
+  const RG_FRESH_S = 2.75;
+  // ms since the {"rdf"} came; a level's age now (s: its age when sent + that)
+  function rgSinceMs() { return rdfStatusT ? Math.max(0, performance.now() - rdfStatusT) : 0; }
+  function rgLvlAge(L) { return L.age + rgSinceMs() / 1000; }
+  function rgAgeTxt(a) { return a < 90 ? a.toFixed(0) + ' s' : (a / 60).toFixed(0) + ' min'; }
+  function rgSnap() {
+    const s = rgSource(), st = rdfStatus && rdfStatus.station;
+    if (s) rgSrcSet(s.key);
+    if (s && s.lobe && st && s.mhz > 0) {
+      const cur = {key: s.key, name: s.name, col: s.col, mhz: s.mhz, lobe: s.lobe, peak: s.peak, lvl: s.lvl, pk: s.pk,
+                   lat: st.lat, lon: st.lon, src: st.src, spd: st.spd, t: Date.now() - rgSinceMs()};   // (t: when the level was L.age old)
+      if (s.lvl && rgLvlAge(s.lvl) < RG_FRESH_S) { rgLast = cur; return Object.assign({held: false}, cur); }
+      if (!rgLast) return Object.assign({held: false, stale: !!s.lvl}, cur);
+    }
+    if (rgLast && (!s || rgLast.key === s.key)) return Object.assign({held: true}, rgLast);
+    return null;
+  }
+  // the DF panel's selection moved to another source: what was worked out for
+  // the previous one goes - its held lobe, the estimate, the painted result
+  // (the sweep stays: it is the station's) - and the post in flight is ignored
+  function rgSrcSet(key) {
+    if (key === rgSrcKey) return;
+    const had = rgSrcKey !== null;
+    rgSrcKey = key;
+    if (had) rgDrop();
+  }
+  function rgDrop() {
+    const shown = !!(rgRes && rgRes.shown) || !!rgEst;
+    rgLast = null;
+    rgEst = null;
+    rgPostReq = null;   // (its reply only releases rgPostBusy)
+    rgPostKey = rgPostSetKey = '';
+    if (rgRes) rgRes.shown = false;
+    if (shown) mapDraw();
+  }
+  // why there is nothing to work with (the source line)
+  function rgNoSource() {
+    if (opMode !== 'coherent') return 'Coherent mode only (it needs a DoA lobe)';
+    if (!rdfStatus) return 'Waiting for the DoA lobes…';
+    if (!rdfStatus.station) return 'No station position (Station Information: a static location or GPS)';
+    const s = rgSource();
+    if (!s) return 'No VFO with DoA: add a VFO in coherent mode with DoA on';
+    return `${digEsc(s.name)}: no DoA lobe yet (a heading is needed - Station Information; the signal on, its squelch open)`;
+  }
+  // the measured level -> the numbers the posterior needs (base: the margin
+  // of a place = base - its loss)
+  function rgInputs(sn) {
+    const L = sn.lvl;
+    if (!L) return {why: sn.pk ? 'No level for a packet decoder\'s radios (aircraft, ships...): their packets share the VFO\'s band'
+                               : sn.key.endsWith('|') ? 'No level yet: it is measured while the signal is above the noise in the VFO\'s band (its squelch open)'
+                               : 'No level for this radio yet: it is measured while it is the only one transmitting on its VFO'};
+    if (sn.stale) return {why: `No recent level (last heard ${rgAgeTxt(rgLvlAge(L))} ago): the estimate waits for the signal - it needs the level while the lobe is measured`};
+    if (L.gain < 0) return {why: 'The tuner AGC is on: its gain isn\'t known, so the level can\'t be turned into dBm - set a fixed gain'};
+    const prx = L.dbfs - L.gain + rgCal(L.gain, sn.mhz), sigma = rgSigma(sn.mhz, L.gain);
+    return {ok: true, prx, sigma, base: rgEirp() + rgState.gr - rgState.lr - prx, snr: L.dbfs - L.noise};
+  }
+
+  // ---- the station's sweep (the viewshed worker's code, an instance of its own) ----
+  // the job: its origin (the station, rounded to ~10 m) with our antenna,
+  // the radius, the signal message (the worker's "Tx" end = the station: our
+  // clutter there, the transmitter's in the cells) - its JSON is the
+  // result's key (the posterior worker's), without the origin the settings'
+  // (skey: a change there cancels a running sweep at once)
+  function rgSweepMsg(sn) {
+    const s = rgState, f = Number(sn.mhz.toPrecision(3));   // (0.3 %: < 0.03 dB of loss)
+    const sig = {f, tgt: s.txH, amsl: false, pol: s.pol === 'h' ? 0 : 1, N0: plState.N0, envTx: s.envRx, envRx: s.envTx,
+                 hmTx: PL_ENV_HM[s.envRx], hmRx: PL_ENV_HM[s.envTx], model: s.model};
+    if (s.model === 'itm') { const g = PL_GROUNDS[plState.ground]; Object.assign(sig, {climate: plState.climate, eps: g[1], sigma: g[2]}); }
+    return {lat: +sn.lat.toFixed(4), lon: +sn.lon.toFixed(4), h: rgStH(), r: s.r, sig};
+  }
+  function rgSKey(sn) { const m = rgSweepMsg(sn); return JSON.stringify([m.h, m.r, m.sig]); }
+  // THE ORIGIN follows the station with hysteresis: a static location (typed,
+  // dragged on the map) exactly and at once (a running sweep is cancelled);
+  // a GPS / compass station's only once it is more than rgTolM() from it
+  // (RG_ORG_M, or RG_ORG_FR of the radius), at most every RG_ORG_MS (as the
+  // viewshed's vsFollowStation) - and its running sweep is never cancelled
+  // for it: driving at 10 m/s the rounded position changed every second
+  // while a P.1812 sweep takes 6-20 s (no estimate ever came), and parked GPS
+  // jitter across a rounding boundary threw a result away. Its estimates
+  // keep coming from the last sweep while the station is within RG_ORG_USE
+  // x that of its origin (the panel says how far back it was worked out)
+  const RG_ORG_M = 30, RG_ORG_FR = 0.005, RG_ORG_MS = 30000, RG_ORG_USE = 10;
+  function rgTolM() { return Math.max(RG_ORG_M, RG_ORG_FR * rgState.r * 1000); }
+  function rgOrgM(o, p) { return mapDistKm(o.lat, o.lon, p.lat, p.lon) * 1000; }
+  // a sweep / job / failure (o: its skey + origin) serves the snapshot's station (lim: x the tolerance)
+  function rgFits(o, sn, lim = 1) {
+    if (!o || o.skey !== rgSKey(sn)) return false;
+    if (sn.src === 'static') return o.lat === +sn.lat.toFixed(4) && o.lon === +sn.lon.toFixed(4);
+    return rgOrgM(o, sn) <= lim * rgTolM();
+  }
+  // the estimates (the posterior, its sweeps) only while the map is shown - not behind the MUSIC DoA tab
+  function rgMapShown() { return mapState.on && document.body.classList.contains('rp-map'); }
+  function rgWorkerStart() {
+    if (rgWorker) return true;
+    try {
+      rgWorker = new Worker(URL.createObjectURL(new Blob(['(' + vsWorkerMain.toString() + ')()'], {type: 'text/javascript'})));
+    } catch (e) { rgFail = {key: '', msg: 'this browser can\'t run it (' + e.message + ')'}; return false; }
+    rgWorker.onmessage = e => rgOnWorker(e.data);
+    rgWorker.onerror = e => {
+      e.preventDefault();
+      rgWorker.terminate();
+      rgWorker = null;
+      rgFail = Object.assign(rgJob ? {key: rgJob.key, skey: rgJob.skey, lat: rgJob.lat, lon: rgJob.lon} : {key: ''}, {msg: 'failed: ' + (e.message || 'worker error')});
+      rgJob = rgCalJob = null;
+      rgRender();
+    };
+    return true;
+  }
+  // one sweep at a time, only while the map is shown; a setting changed (or
+  // a static station moved) cancels the running one, a GPS station moving
+  // doesn't - it ends, its estimate shows, then the next starts if due
+  function rgPump() {
+    if (!rgReady || !rgState.on || !rgMapShown()) return;
+    const sn = rgSnap();
+    if (!sn) return;
+    const skey = rgSKey(sn);
+    if (rgJob) {
+      if (!rgJob.cancel && (rgJob.skey !== skey || (sn.src === 'static' && !rgFits(rgJob, sn)))) { rgJob.cancel = true; rgWorker.postMessage({cancel: rgJob.job}); }
+      return;
+    }
+    if (rgRes && rgFits(rgRes, sn)) { rgPostPump(); return; }
+    if (rgFail && rgFits(rgFail, sn)) return;
+    // (a GPS station's next origin at most every RG_ORG_MS: the last sweep's estimates meanwhile)
+    if (rgRes && sn.src !== 'static' && rgRes.skey === skey && Date.now() - rgRes.t0 < RG_ORG_MS) { rgPostPump(); return; }
+    if (!rgWorkerStart()) { rgRender(); return; }
+    const m = rgSweepMsg(sn);
+    rgJob = {job: ++rgSeq, key: JSON.stringify(m), skey, lat: m.lat, lon: m.lon, t0: Date.now(), prog: null, m};
+    rgWorker.postMessage({job: rgJob.job, lat: m.lat, lon: m.lon, h: m.h, amsl: false, k: 4 / 3, levels: vsPlan(m.lat, m.r * 1000),
+                          sig: m.sig, par: vsPar === null ? undefined : vsPar});
+    rgRender();
+  }
+  function rgOnWorker(m) {
+    if (rgCalJob && m.job === rgCalJob.job) { rgOnCal(m); return; }
+    if (!rgJob || m.job !== rgJob.job) return;
+    if (m.prog) { rgJob.prog = m.prog; rgRender(); return; }
+    const job = rgJob;
+    rgJob = null;
+    if (m.error) {
+      if (m.error !== 'cancelled') rgFail = {key: job.key, skey: job.skey, lat: job.lat, lon: job.lon, msg: m.error};
+    } else {
+      rgRes = {key: job.key, skey: job.skey, t0: job.t0, lat: job.m.lat, lon: job.m.lon, r: job.m.r, f: job.m.sig.f, model: job.m.sig.model, ms: m.ms, tiles: m.tiles,
+               workers: (m.sig && m.sig.workers) || 1, ready: false, shown: false,
+               levels: m.levels.map(l => ({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, cell: l.cell, loss: new Uint16Array(l.loss),
+                                           fad: new Uint16Array(l.fad), rank: null, cv: null, cx: null}))};
+      rgFail = null;
+      rgEst = null;
+      rgPostInit();
+    }
+    rgPump();
+    rgRender();
+    mapDraw();
+  }
+
+  // ---- the posterior (a worker of its own: a few million cells) ----
+  // init: the sweep's rings -> each cell's bearing + distance from the
+  // station (great circle; bearing in 65536ths of a turn) and each row's
+  // cell area. post: one estimate -> per ring a u8 per cell (0 = no data /
+  // beyond the 99 % region; 1..255 = the share of the probability in places
+  // at least as likely, 0..99 %) + the numbers: the most likely spot (the
+  // mode, inside the most likely CORE_P of the probability - see below),
+  // the distance's quantiles, the margins' range (a level no place fits).
+  // self.rgTest for node
+  function rgPostMain() {
+    const RE = 6371000, D2R = Math.PI / 180, NB = 1200, ND = 2000, CORE_P = 0.01;
+    let G = null, KIDX = null;
+    function init(I) {
+      const s1 = Math.sin(I.lat * D2R), c1 = Math.cos(I.lat * D2R), lv = [];
+      for (const l of I.levels) {
+        const N = l.N, W = 256 * 2 ** l.z, n = N * N, mpp = 2 * Math.PI * RE / W;
+        const brg = new Uint16Array(n), dist = new Float32Array(n), area = new Float64Array(N), dens = new Float32Array(n);
+        const sx = new Float64Array(N), cx = new Float64Array(N);   // per column: the longitude difference's sin / cos
+        for (let i = 0; i < N; i++) { const d = (((l.gx0 + i + 0.5) / W) * 360 - 180 - I.lon) * D2R; sx[i] = Math.sin(d); cx[i] = Math.cos(d); }
+        for (let j = 0; j < N; j++) {
+          const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (l.gy0 + j + 0.5) / W))), s2 = Math.sin(lat), c2 = Math.cos(lat);
+          area[j] = (mpp * c2) ** 2;
+          for (let i = 0; i < N; i++) {
+            const k = j * N + i;
+            if (l.loss[k] >= 65534) continue;
+            // the initial bearing's east / north parts have the length sin(angle) (the distance's)
+            const e = sx[i] * c2, nn = c1 * s2 - s1 * c2 * cx[i];
+            let b = Math.atan2(e, nn) / D2R;
+            if (b < 0) b += 360;
+            brg[k] = Math.round(b / 360 * 65536) & 65535;
+            dist[k] = RE * Math.atan2(Math.hypot(e, nn), s1 * s2 + c1 * c2 * cx[i]);
+          }
+        }
+        lv.push({N, z: l.z, gx0: l.gx0, gy0: l.gy0, loss: l.loss, fad: l.fad, brg, dist, area, dens});
+      }
+      return {key: I.key, lat: I.lat, lon: I.lon, rM: I.rM, lv};
+    }
+    // P: {seq, key, ang (720: the bearing factor every 0.5 deg), base (dB),
+    // D (nk x 481: the level's pdf every 0.25 dB of margin from -50 dB), nk,
+    // near (m)}; KIDX: a cell's fadQ -> its place between the nk tables
+    function post(P) {
+      const t0 = Date.now(), {ang, base, D, nk, near} = P, idx = nk > 1 ? KIDX : null;
+      let Z = 0, dmax = 0, mMin = Infinity, mMax = -Infinity;
+      const dh = new Float64Array(ND), dbin = ND / (G.rM * 1.05);
+      for (let li = 0; li < G.lv.length; li++) {
+        const l = G.lv[li], N = l.N, loss = l.loss, fad = l.fad, brg = l.brg, dist = l.dist, dens = l.dens;
+        for (let j = 0; j < N; j++) {
+          const A = l.area[j];
+          for (let i = 0, k = j * N; i < N; i++, k++) {
+            const ls = loss[k];
+            if (ls >= 65534) { dens[k] = 0; continue; }
+            const m = base - ls / 10;
+            if (m < mMin) mMin = m;
+            if (m > mMax) mMax = m;
+            const x = (m + 50) * 4;
+            let lik = 0;
+            if (x > 0 && x < 480) {
+              const i0 = Math.floor(x), f = x - i0;
+              if (idx) {
+                const fi = idx[fad[k]], t0 = Math.min(nk - 2, Math.floor(fi)), u = fi - t0, o0 = t0 * 481 + i0, o1 = o0 + 481;
+                const a = D[o0] + (D[o0 + 1] - D[o0]) * f, b = D[o1] + (D[o1 + 1] - D[o1]) * f;
+                lik = a + (b - a) * u;
+              } else {
+                lik = D[i0] + (D[i0 + 1] - D[i0]) * f;
+              }
+            }
+            let a = 1;   // (near the station the bearing says nothing)
+            if (dist[k] >= near) {
+              const bb = brg[k] * (720 / 65536), b0 = Math.floor(bb), fb = bb - b0;
+              a = ang[b0 % 720] + (ang[(b0 + 1) % 720] - ang[b0 % 720]) * fb;
+            }
+            const d = a * lik;
+            dens[k] = d;
+            if (d > 0) {
+              const w = d * A;
+              Z += w;
+              dh[Math.min(ND - 1, Math.floor(dist[k] * dbin))] += w;
+              if (d > dmax) dmax = d;
+            }
+          }
+        }
+      }
+      if (!(Z > 0)) return {seq: P.seq, key: G.key, empty: true, mMin, mMax};
+      // the highest-density regions: the probability by density (0.01
+      // decade bins over 12 decades), summed from the top
+      const hb = new Float64Array(NB + 1), lmax = Math.log10(dmax);
+      for (const l of G.lv) {
+        const n = l.N * l.N, N = l.N;
+        for (let k = 0; k < n; k++) {
+          const d = l.dens[k];
+          if (d > 0) hb[Math.min(NB, Math.floor((lmax - Math.log10(d)) * 100))] += d * l.area[Math.floor(k / N)];
+        }
+      }
+      const cum = new Float64Array(NB + 1);
+      let s = 0;
+      for (let b = 0; b <= NB; b++) { s += hb[b]; cum[b] = s / Z; }
+      cum[NB] = 1;
+      // THE MOST LIKELY SPOT: the mode, taken INSIDE the core - the places
+      // holding the most likely CORE_P of the probability (at least the top
+      // density bin), so the ✕ is always on the deepest red - as the one
+      // whose density averaged over its 3 x 3 neighbours (its ring's, with
+      // data) is highest: one odd cell (a ridge top with just the loss)
+      // can't take it. (Until 2026-10-22 the centre of the probability in
+      // the most probable block of a 128 x 128 grid: a mean, not a mode - it
+      // fell between bright cells or into a block of much moderate ground,
+      // outside the core: the user's report)
+      const cCore = Math.max(CORE_P, cum[0]);
+      let a50 = 0, a90 = 0, edge = 0, sBest = -1, best = null;
+      const levels = G.lv.map((l, li) => {
+        const N = l.N, n = N * N, out = new Uint8Array(n), dens = l.dens;
+        for (let k = 0; k < n; k++) {
+          const d = dens[k];
+          if (!(d > 0)) continue;
+          const c = cum[Math.min(NB, Math.floor((lmax - Math.log10(d)) * 100))], A = l.area[Math.floor(k / N)];
+          if (l.dist[k] > 0.9 * G.rM) edge += d * A;
+          if (c <= cCore) {
+            const i = k % N, j = (k - i) / N;
+            let sm = 0, sn = 0;
+            for (let dj = -1; dj <= 1; dj++) {
+              if (j + dj < 0 || j + dj >= N) continue;
+              for (let di = -1; di <= 1; di++) {
+                if (i + di < 0 || i + di >= N) continue;
+                const kk = k + dj * N + di;
+                if (l.loss[kk] < 65534) { sm += dens[kk]; sn++; }
+              }
+            }
+            if (sm / sn > sBest) { sBest = sm / sn; best = [li, k, c]; }
+          }
+          if (c > 0.99) continue;
+          out[k] = 1 + Math.round(c / 0.99 * 254);
+          if (c <= 0.5) a50 += A;
+          if (c <= 0.9) a90 += A;
+        }
+        return out;
+      });
+      // the distance's quantiles
+      const q = [0.05, 0.25, 0.5, 0.75, 0.95].map(p => {
+        let c = 0;
+        for (let b = 0; b < ND; b++) { c += dh[b]; if (c >= p * Z) return (b + 0.5) / dbin; }
+        return G.rM;
+      });
+      // the spot's cell centre (c: the share of the probability in places at least as likely as it)
+      const [li, k, c] = best, l = G.lv[li], W = 256 * 2 ** l.z, i = k % l.N, j = (k - i) / l.N;
+      const lon = (((l.gx0 + i + 0.5) / W) * 360 - 180 + 540) % 360 - 180;
+      const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (l.gy0 + j + 0.5) / W))) / D2R;
+      return {seq: P.seq, key: G.key, levels, st: {lat, lon, d: l.dist[k], b: l.brg[k] * 360 / 65536, c, core: cCore, q, edge: edge / Z,
+              a50: a50 / 1e6, a90: a90 / 1e6, mMin, mMax, ms: Date.now() - t0}};
+    }
+    self.rgTest = {init: I => { G = init(I); return G; }, post, setIdx: v => { KIDX = v; }};
+    self.onmessage = e => {
+      const m = e.data;
+      try {
+        if (m.init) { G = init(m.init); return; }
+        if (!m.post) return;
+        if (m.post.idx) KIDX = m.post.idx;   // (kept: sent once per K setting)
+        if (!G || G.key !== m.post.key) { self.postMessage({seq: m.post.seq, key: m.post.key, error: 'no sweep'}); return; }
+        const r = post(m.post);
+        self.postMessage(r, r.levels ? r.levels.map(u => u.buffer) : []);
+      } catch (err) {
+        self.postMessage({seq: m.post ? m.post.seq : 0, key: m.post ? m.post.key : '', error: String((err && err.message) || err)});
+      }
+    };
+  }
+  function rgPostStart() {
+    if (rgPostW) return true;
+    try {
+      rgPostW = new Worker(URL.createObjectURL(new Blob(['(' + rgPostMain.toString() + ')()'], {type: 'text/javascript'})));
+    } catch (e) { rgFail = {key: '', msg: 'this browser can\'t run it (' + e.message + ')'}; return false; }
+    rgPostW.onmessage = e => rgOnPost(e.data);
+    rgPostW.onerror = e => {
+      e.preventDefault();
+      rgPostW.terminate();
+      rgPostW = null;
+      rgPostBusy = false;
+      rgPostKidx = '';
+      if (rgRes) { rgRes.ready = false; rgPostFailKey = rgRes.key; }
+      rgEst = {why: 'failed: ' + (e.message || 'worker error')};
+      rgRender();
+    };
+    return true;
+  }
+  // the sweep's rings to the posterior worker (copies: the page keeps its own for the hover)
+  function rgPostInit() {
+    if (!rgRes || !rgPostStart()) return;
+    const L = rgRes.levels.map(l => ({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, loss: l.loss.slice(), fad: l.fad.slice()}));
+    rgPostW.postMessage({init: {key: rgRes.key, lat: rgRes.lat, lon: rgRes.lon, rM: rgRes.r * 1000, levels: L}},
+                        L.flatMap(l => [l.loss.buffer, l.fad.buffer]));
+    rgRes.ready = true;
+    rgPostKey = '';
+    rgPostPump();
+  }
+  // the bearing factor every 0.5 deg from the lobe (as rdf::north_lobe + one record of the grid)
+  function rgAng(lobe, sd) {
+    const u = rdfB64(lobe), n = 720, v = new Float64Array(n);
+    if (u.length !== n) return null;
+    const sb = Math.max(sd, 0.25) / 0.5, half = Math.ceil(3 * sb), ker = [];
+    let ks = 0, tot = 0;
+    for (let j = -half; j <= half; j++) { const w = Math.exp(-0.5 * j * j / (sb * sb)); ker.push(w); ks += w; }
+    for (let k = 0; k < n; k++) {
+      let s = 0;
+      for (let j = -half; j <= half; j++) s += ker[j + half] * u[((k + j) % n + n) % n];
+      tot += v[k] = s / ks;
+    }
+    const out = new Float32Array(n);
+    for (let k = 0; k < n; k++) out[k] = Math.pow((1 - RG_EPS) * (tot > 0 ? v[k] / tot : 1 / n) * n + RG_EPS, RG_ALPHA);
+    return out;
+  }
+  // the level's pdf (per dB of margin) = the slope of the 📶 path loss's
+  // reliability tables - plRelSet with this panel's fading / K / model:
+  // fixed fading one table; auto one per K level (Rayleigh at -20 dB,
+  // Rician to the setting <= 30 dB in <= 1 dB steps) + idx[fadQ] (a cell's
+  // place between them; ikey says when it changed). Cached by what it
+  // depends on (up to 51 x 481 values)
+  function rgLik(sigma) {
+    const s = rgState, key = `${sigma.toFixed(3)}|${s.fade}|${s.K}|${s.model}`;
+    if (rgLikC && rgLikC.key === key) return rgLikC.v;
+    const rs = plRelSet(sigma, s), D = new Float32Array(481 * rs.tabs.length);
+    rs.tabs.forEach((t, o) => { for (let i = 1; i < 480; i++) D[o * 481 + i] = Math.max(0, (t[i + 1] - t[i - 1]) / 0.5); });
+    rgLikC = {key, v: {D, nk: rs.tabs.length, idx: rs.idx, ikey: rs.ikey}};
+    return rgLikC.v;
+  }
+  // the next estimate (one at a time; only when something it depends on
+  // changed): a setting / the source at once (0.3 s), the live lobe and
+  // level at most every RG_LIVE_MS - each is a pass over a few million
+  // cells (a Pi's browser); not while the map isn't shown. The key first,
+  // from cheap inputs: the tables and the blurred lobe only for a post that
+  // goes out (rgDraw pumps on every map draw - every pan frame)
+  const RG_LIVE_MS = 2500;
+  function rgPostPump() {
+    clearTimeout(rgPostT);
+    if (!rgReady || !rgState.on || !rgRes || rgPostBusy || !rgMapShown()) return;
+    if (!rgRes.ready) { if (rgPostFailKey !== rgRes.key) rgPostInit(); return; }
+    const sn = rgSnap();
+    // (the sweep for these settings from where the station is - a GPS one's within RG_ORG_USE x the tolerance while the next is worked out)
+    if (!sn || !rgFits(rgRes, sn, RG_ORG_USE)) return;
+    const inp = rgInputs(sn);
+    if (!inp.ok) {
+      if (!rgEst || rgEst.why !== inp.why) { rgEst = {why: inp.why}; rgRes.shown = false; rgRender(); mapDraw(); }
+      rgPostKey = '';
+      return;
+    }
+    const sd = rgBsd(sn);
+    // (setKey: what the user set + the source; the rest: the live lobe and level)
+    const setKey = [rgRes.key, sn.key, rgEirp().toFixed(2), rgState.gr, rgState.lr, rgState.calOff, rgState.calHow, sd.toFixed(2), inp.sigma.toFixed(3), rgState.fade, rgState.K].join('|');
+    const ikey = setKey + '|' + sn.lobe + '|' + inp.base.toFixed(2);
+    if (ikey === rgPostKey) return;
+    const wait = rgPostAt + (setKey !== rgPostSetKey ? 300 : RG_LIVE_MS) - Date.now();
+    if (wait > 0) { rgPostT = setTimeout(rgPostPump, wait); return; }
+    const ang = rgAng(sn.lobe, sd);
+    if (!ang) { rgPostKey = ikey; return; }   // (not a lobe: not again until it changes)
+    const lik = rgLik(inp.sigma);
+    rgPostAt = Date.now();
+    rgPostBusy = true;
+    rgPostKey = ikey;
+    rgPostSetKey = setKey;
+    rgPostReq = {seq: ++rgPostSeq, inp, sn, sd};
+    const msg = {seq: rgPostSeq, key: rgRes.key, ang, base: inp.base, D: lik.D, nk: lik.nk, near: RG_NEAR_M};
+    if (lik.idx && lik.ikey !== rgPostKidx) { msg.idx = lik.idx; rgPostKidx = lik.ikey; }
+    rgPostW.postMessage({post: msg});
+  }
+  function rgOnPost(m) {
+    rgPostBusy = false;
+    const req = rgPostReq && rgPostReq.seq === m.seq ? rgPostReq : null;
+    if (rgRes && m.key === rgRes.key && req) {
+      if (m.error) { rgEst = {why: m.error}; rgRes.shown = false; }
+      else if (m.empty) { rgEst = {empty: true, mMin: m.mMin, mMax: m.mMax, inp: req.inp, sn: req.sn, sd: req.sd}; rgRes.shown = false; }
+      else {
+        m.levels.forEach((u, i) => { rgRes.levels[i].rank = u; });
+        rgPaint();
+        rgEst = Object.assign({inp: req.inp, sn: req.sn, sd: req.sd, at: Date.now()}, m.st);
+      }
+    }
+    rgPostPump();
+    rgRender();
+    mapDraw();
+  }
+
+  // ---- the paint + the map ----
+  function rgRelRgb(c) {
+    const S = RG_STOPS;
+    for (let i = 1; i < S.length; i++) {
+      if (c > S[i][0] && i < S.length - 1) continue;
+      const t = Math.max(0, Math.min(1, (c - S[i - 1][0]) / (S[i][0] - S[i - 1][0]))), a = plHex(S[i - 1][1]), b = plHex(S[i][1]);
+      return a.map((v, k) => Math.round(v + (b[k] - v) * t));
+    }
+    return plHex(S[S.length - 1][1]);
+  }
+  // u8 -> ABGR: the colour of its share, opaque at the most likely place, fainter out to 99 %
+  function rgLut() {
+    if (rgLutA) return rgLutA;
+    rgLutA = new Uint32Array(256);
+    for (let u = 1; u < 256; u++) {
+      const c = (u - 1) / 254 * 0.99, [r, g, b] = rgRelRgb(c), a = Math.round(235 - 135 * c / 0.99);
+      rgLutA[u] = ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
+    }
+    return rgLutA;
+  }
+  function rgPaint() {
+    const lut = rgLut();
+    for (const l of rgRes.levels) {
+      if (!l.rank) continue;
+      const N = l.N;
+      if (!l.cv) { l.cv = document.createElement('canvas'); l.cv.width = l.cv.height = N; l.cx = l.cv.getContext('2d'); }
+      const img = l.cx.createImageData(N, N), px = new Uint32Array(img.data.buffer), r = l.rank;
+      for (let i = 0; i < N * N; i++) px[i] = lut[r[i]];
+      l.cx.putImageData(img, 0, 0);
+    }
+    rgRes.shown = true;
+  }
+  // a point dM metres from (lat, lon) towards brg (deg) on the sphere
+  function rgDest(lat, lon, brg, dM) {
+    const r = Math.PI / 180, d = dM / 6371000, p1 = lat * r, b = brg * r;
+    const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
+    return [p2 / r, lon + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2)) / r];
+  }
+  // (mapDrawNow, under the DF lobes) the rings coarse -> fine onto one layer,
+  // drawn at 0.75; the radius (dashed); the most likely place; the known
+  // transmitter of a calibration
+  function rgDraw(c) {
+    if (!rgReady || !rgState.on || opMode !== 'coherent') return;
+    if (!rgJob) rgPump();
+    const res = rgRes;
+    if (res && res.shown) {
+      if (!rgOff) rgOff = document.createElement('canvas');
+      if (rgOff.width !== mapCv.width || rgOff.height !== mapCv.height) { rgOff.width = mapCv.width; rgOff.height = mapCv.height; }
+      const o = rgOff.getContext('2d');
+      o.setTransform(1, 0, 0, 1, 0, 0);
+      o.clearRect(0, 0, rgOff.width, rgOff.height);
+      o.setTransform(mapDpr, 0, 0, mapDpr, 0, 0);
+      plDrawLevels(o, res);
+      c.save();
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalAlpha = 0.75;
+      c.drawImage(rgOff, 0, 0);
+      c.restore();
+    }
+    c.save();
+    if (res) {
+      // the radius: the circle on the ground (dashed; faint once the estimate is in)
+      c.beginPath();
+      for (let a = 0; a <= 360; a += 4) {
+        const [x, y] = mapLatLonToScreen(...rgDest(res.lat, res.lon, a, res.r * 1000));
+        if (a) c.lineTo(x, y); else c.moveTo(x, y);
+      }
+      c.setLineDash([6, 5]);
+      c.lineWidth = 1.2;
+      c.strokeStyle = res.shown ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.7)';
+      c.stroke();
+      c.setLineDash([]);
+    }
+    if (res && res.shown && rgEst && rgEst.lat !== undefined) {
+      const [x, y] = mapLatLonToScreen(rgEst.lat, rgEst.lon);
+      for (const lw of [4, 2]) {
+        c.lineWidth = lw;
+        c.strokeStyle = lw === 4 ? 'rgba(0,0,0,0.8)' : '#fff';
+        c.beginPath();
+        c.moveTo(x - 7, y - 7); c.lineTo(x + 7, y + 7); c.moveTo(x + 7, y - 7); c.lineTo(x - 7, y + 7);
+        c.stroke();
+      }
+      const lab = `TX? ${vsFmtM(rgEst.d)}`;
+      c.font = 'bold 11px sans-serif';
+      c.lineJoin = 'round';
+      c.lineWidth = 3;
+      c.strokeStyle = 'rgba(0,0,0,0.85)';
+      c.fillStyle = '#fff';
+      c.strokeText(lab, x + 10, y - 6);
+      c.fillText(lab, x + 10, y - 6);
+    }
+    const t = rgState.calTx;
+    if (t && (rgUiKt || rgCalJob)) {
+      const [x, y] = mapLatLonToScreen(t.lat, t.lon);
+      c.fillStyle = '#ffd54f';
+      c.strokeStyle = 'rgba(0,0,0,0.85)';
+      c.lineWidth = 2;
+      c.beginPath();
+      c.rect(x - 6, y - 6, 12, 12);
+      c.fill();
+      c.stroke();
+      c.font = 'bold 11px sans-serif';
+      c.lineWidth = 3;
+      c.strokeText('known TX', x + 9, y + 4);
+      c.fillStyle = '#ffd54f';
+      c.fillText('known TX', x + 9, y + 4);
+    }
+    c.restore();
+  }
+
+  // ---- calibration: dBm = dBFS - gain + cal ----
+  function rgCalNominal() {
+    Object.assign(rgState, {calOff: 0, sigC: RG_CAL_SD, calHow: '', calF: 0, calG: 0});
+    rgCalMsg = '';
+    rgSave();
+    rgChanged();
+  }
+  // a known level at the receiver input (a signal generator through an
+  // attenuator, a calibrated meter): the selected signal's level now
+  function rgCalLevel() {
+    const el = document.querySelector('#map-rg .rg-klv'), v = el ? Number(el.value) : NaN, sn = rgSnap();
+    if (!(el && el.value !== '' && Number.isFinite(v) && v > -200 && v < 50)) { rgCalMsg = '⚠ enter the level the receiver gets (dBm)'; rgRender(); return; }
+    if (!sn || !sn.lvl || sn.lvl.gain < 0) { rgCalMsg = '⚠ no level measured for the selected signal (or the AGC is on)'; rgRender(); return; }
+    // (a correction on the nominal model at this gain + frequency)
+    rgState.calOff = +(v - (sn.lvl.dbfs - sn.lvl.gain) - rgCalNom(sn.lvl.gain, sn.mhz)).toFixed(1);
+    Object.assign(rgState, {sigC: 1.5, calHow: `a known level: ${plF(v)} dBm`, calF: sn.mhz, calG: sn.lvl.gain});
+    rgCalMsg = `Set: ${plF(sn.lvl.dbfs)} dBFS at ${plF(sn.lvl.gain)} dB gain = ${plF(v)} dBm`;
+    rgUiKl = false;
+    rgSave();
+    rgChanged();
+  }
+  // a known transmitter (right-click its place): the selected signal must be
+  // it - its path loss to the station by the model -> the level expected
+  function rgMenuItem() {
+    return rgReady && rgState.on && opMode === 'coherent'
+      ? `<button type="button" onclick="rgCalTxAt()" title="Calibrate the receiver for the 📏 range on a transmitter here whose EIRP you know (a repeater, a broadcast station from a licence register): tune the DF panel's selected VFO to it first">📏 Known transmitter here (calibrate)</button>` : '';
+  }
+  function rgCalTxAt() {
+    const at = mapMenuAt;
+    mapMenuClose();
+    if (!at) return;
+    const o = rgState.calTx || {h: 30, eirp: 50};
+    rgState.calTx = {lat: +at.la.toFixed(6), lon: +at.lo.toFixed(6), h: o.h, eirp: o.eirp};
+    rgUiKt = true;
+    rgState.open = true;
+    rgSave();
+    rgRender(true);
+    mapDraw();
+  }
+  function rgCalTxSet(k, v) {
+    const t = rgState.calTx, n = Number(v), lim = {h: [0.5, 3000], eirp: [1e-6, 1e8]}[k];
+    if (t && lim && Number.isFinite(n) && n >= lim[0] && n <= lim[1]) { t[k] = n; rgSave(); }
+    rgRender(true);
+  }
+  function rgCalTx() {
+    const t = rgState.calTx, sn = rgSnap();
+    if (!t) return;
+    if (!sn || !sn.lvl || sn.lvl.gain < 0) { rgCalMsg = '⚠ no level measured for the selected signal (or the AGC is on): tune its VFO to the known transmitter'; rgRender(); return; }
+    if (rgCalJob || !rgWorkerStart()) return;
+    const s = rgState, g = PL_GROUNDS[plState.ground];
+    rgCalJob = {job: ++rgSeq, lvl: sn.lvl, mhz: sn.mhz, d: mapDistKm(sn.lat, sn.lon, t.lat, t.lon), eirp: t.eirp};
+    rgWorker.postMessage({job: rgCalJob.job, link: {a: {lat: t.lat, lon: t.lon, h: t.h, amsl: false}, b: {lat: sn.lat, lon: sn.lon, h: rgStH(), amsl: false},
+      f: sn.mhz, k: 4 / 3, pol: s.pol === 'h' ? 0 : 1, N0: plState.N0, climate: plState.climate, eps: g[1], sigma: g[2],
+      envA: s.envTx, envB: s.envRx, hmA: PL_ENV_HM[s.envTx], hmB: PL_ENV_HM[s.envRx], rel: 50}});
+    rgCalMsg = 'working out the path loss from the known transmitter…';
+    rgRender();
+  }
+  function rgOnCal(m) {
+    if (m.prog) return;
+    const job = rgCalJob;
+    rgCalJob = null;
+    if (m.error) rgCalMsg = m.error === 'cancelled' ? '' : '⚠ ' + m.error;
+    else {
+      const r = m.link, mdl = rgState.model;
+      const Lm = mdl === 'itm' ? (r.itm.err ? null : r.itm.A) : mdl === 'fs' ? r.fs : r.p1812.Lb;
+      if (Lm === null) rgCalMsg = '⚠ Longley-Rice: ' + plItmErr(r.itm.err);
+      else {
+        const L = Lm + r.clut.a + r.clut.b, exp = rgDbm(job.eirp) - L + rgState.gr - rgState.lr;
+        rgState.calOff = +(exp - (job.lvl.dbfs - job.lvl.gain) - rgCalNom(job.lvl.gain, job.mhz)).toFixed(1);
+        rgState.calG = job.lvl.gain;
+        // (the prediction itself is uncertain: the location variability + the model's error)
+        rgState.sigC = +Math.hypot(rgSigmaL(job.mhz), rgState.sigM).toFixed(1);
+        rgState.calHow = `a known transmitter ${plF(job.d)} km away: ${plF(L)} dB (${PL_MODELS[mdl]}) → ${plF(exp)} dBm expected`;
+        rgState.calF = job.mhz;
+        rgCalMsg = `Set: ${plF(job.lvl.dbfs)} dBFS at ${plF(job.lvl.gain)} dB gain = ${plF(exp)} dBm`;
+        rgUiKt = false;
+        rgSave();
+      }
+    }
+    rgChanged();
+  }
+
+  // ---- the panel (#map-rg, top left) ----
+  function rgToggle() {
+    rgState.on = !rgState.on;
+    if (rgState.on) rgState.open = true;
+    else if (rgJob && rgWorker && !rgJob.cancel) { rgJob.cancel = true; rgWorker.postMessage({cancel: rgJob.job}); }
+    rgSave();
+    rgChanged();
+  }
+  function rgPreset(i) {
+    const p = RG_PRESETS[+i];
+    if (!p) return;
+    Object.assign(rgState, p[1]);
+    rgSave();
+    rgChanged();
+  }
+  function rgSet(k, v) {
+    const n = Number(v), lim = {ptx: [1e-6, 1e7], gt: [-30, 60], lt: [0, 60], eirp: [1e-6, 1e8], sigE: [0, 30], txH: [0.5, 3000], gr: [-30, 60],
+                                lr: [0, 60], calOff: [-60, 60], sigC: [0, 30], r: [1, 300], K: [-20, 40], sigM: [0, 30]}[k];
+    if (lim) {
+      if (!(v !== '' && Number.isFinite(n) && n >= lim[0] && n <= lim[1])) { rgRender(true); return; }
+      rgState[k] = n;
+      if (k === 'calOff') {   // (a correction typed in: at the selected signal's gain + frequency)
+        const sn = rgSnap();
+        Object.assign(rgState, {calHow: n || rgState.calHow ? 'a correction entered by hand' : '', calF: sn ? sn.mhz : 0,
+                                calG: sn && sn.lvl ? Math.max(0, sn.lvl.gain) : 49.6});
+      }
+    } else if (['stH', 'sigL', 'bsd'].includes(k)) {
+      const hi = {stH: 3000, sigL: 30, bsd: 90}[k];
+      if (v === '' || v === null) rgState[k] = null;
+      else if (Number.isFinite(n) && n >= 0 && n <= hi) rgState[k] = n;
+      else { rgRender(true); return; }
+    } else if (k === 'envTx' || k === 'envRx') rgState[k] = Math.max(0, Math.min(5, Math.round(n) || 0));
+    else if (k === 'open' || k === 'cfg' || k === 'set') rgState[k] = !!v;
+    else if ({txMode: ['ptx', 'eirp'], model: ['p1812', 'itm', 'fs'], pol: ['v', 'h'], fade: ['auto', 'rician', 'rayleigh', 'none']}[k]?.includes(v)) rgState[k] = v;
+    else { rgRender(true); return; }
+    rgSave();
+    rgChanged();
+  }
+  // anything changed: a new sweep where its key moved, a new estimate
+  function rgChanged() {
+    rgPostKey = '';
+    rgPump();
+    rgPostPump();
+    rgRender(true);
+    mapDraw();
+  }
+  // {"rdf"} came (2 Hz): the lobe / level moved on
+  function rgOnStatus() {
+    if (!rgReady || !rgState.on) return;
+    rgPump();
+    rgPostPump();
+    rgRender();
+  }
+  function rgPanelBuild(el) {
+    el.dataset.built = '1';
+    const num = (k, w, step, tip) => `<input type="number" data-k="${k}" style="width:${w}px" step="${step}" title="${tip}" onchange="rgSet('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">`;
+    const txt = (k, w, tip) => `<input type="text" data-k="${k}" style="width:${w}px" title="${tip}" onchange="rgSet('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">`;
+    const sel = (k, opts, tip) => `<select data-k="${k}" title="${tip}" onchange="rgSet('${k}',this.value)">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+    const envs = PL_ENVS.map((t, i) => [i, t]);
+    el.innerHTML =
+      `<div class="map-vs-h"><span class="t">📏 Range from signal strength</span><span class="hint">the DF panel's lobe</span>` +
+      `<span class="x rg-fold" onclick="rgSet('open', !rgState.open)" title="Fold / unfold"></span></div>` +
+      `<div class="map-vs-body">` +
+      `<div class="rg-src"></div><div class="rg-job pl-note"></div>` +
+      // (the readout first: the settings fold away once set up - the map is narrow)
+      `<div class="rg-st"></div><div class="rg-leg"></div>` +
+      `<div class="map-vs-row rg-btns"><button type="button" class="map-btn" onclick="rgCentre()" title="Centre the map on the most likely spot">◎ Most likely</button>` +
+      `<button type="button" class="map-btn" onclick="rgClear()" title="Forget the held lobe and level (the estimate shows again with the next ones)">Clear</button></div>` +
+      `<div class="map-vs-hov rg-hov"></div>` +
+      `<div class="pl-set-h" onclick="rgSet('cfg', !rgState.cfg)"><span class="rg-cfg-f"></span> Transmitter, our antenna, calibration, model</div>` +
+      `<div class="rg-cfg">` +
+      `<div class="map-vs-row"><span class="pl-l">Transmitter</span>${sel('txMode', [['ptx', 'power + antenna'], ['eirp', 'EIRP']], 'Give the transmitter\'s power, antenna gain and cable loss - or its EIRP (effective isotropic radiated power; ERP + 2.15 dB) directly')}` +
+      `<select onchange="rgPreset(this.value);this.value=''" title="Fill in a typical transmitter"><option value="">typical…</option>${RG_PRESETS.map(([t], i) => `<option value="${i}">${t}</option>`).join('')}</select></div>` +
+      `<div class="map-vs-row rg-ptx"><span class="pl-l"></span><label>${num('ptx', 56, 'any', 'Transmitter power at its antenna connector (W) - your estimate')} W</label>` +
+      `<label>antenna ${num('gt', 44, '0.5', 'Its antenna gain (dBi): a handheld\'s rubber duck ~ -3 to 0, a vehicle\'s whip ~ 0-3, a collinear ~ 6')} dBi</label>` +
+      `<label>cable ${num('lt', 40, '0.5', 'Its feed line + connector loss (dB)')} dB</label></div>` +
+      `<div class="map-vs-row rg-eirp"><span class="pl-l"></span><label>EIRP ${num('eirp', 64, 'any', 'Effective isotropic radiated power (W) - your estimate; from an ERP add 2.15 dB (x 1.64)')} W</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l"></span><span class="rg-eirpv pl-note"></span>` +
+      `<label title="How far off your estimate of the EIRP may be (dB, one standard deviation): widens the range">± ${num('sigE', 40, '0.5', 'Uncertainty of the EIRP estimate (dB, 1 sigma)')} dB</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">TX antenna</span><label>${num('txH', 50, 'any', 'The transmitter\'s antenna height above the ground there (m): a handheld ~1.5, a vehicle ~1.8, a mast more')} m above ground</label>` +
+      `${sel('envTx', envs, 'The transmitter\'s surroundings (ITU-R P.2108 clutter: adds loss when its antenna is below the clutter height - 10 m open / suburban, 15 m urban / forest, 20 m dense urban)')}</div>` +
+      `<div class="map-vs-row"><span class="pl-l">Our antenna</span><label>${num('gr', 44, '0.5', 'Our receiving antenna\'s gain (dBi) - one array element: a magnetic whip ~0, a dipole 2.15')} dBi</label>` +
+      `<label>cable ${num('lr', 40, '0.5', 'Feed line + connector loss between our antenna and the KrakenSDR (dB)')} dB</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l"></span><label>${txt('stH', 44, 'Our antenna\'s height above the ground (m); empty = the viewshed station\'s antenna height, else 5 m')} m above ground</label>` +
+      `${sel('envRx', envs, 'Our surroundings (ITU-R P.2108 clutter)')}</div>` +
+      `<div class="map-vs-row"><span class="pl-l">Calibration</span><span class="rg-calc" title="dBm at the receiver input = dBFS - the tuner gain + C. C = the nominal from published R820T / R820T2 measurements (it depends on the gain setting and the frequency) + your correction"></span></div>` +
+      `<div class="map-vs-row"><span class="pl-l"></span><label title="Added to the nominal C - set by Known level / Known transmitter below, or typed">correction ${num('calOff', 52, '0.1', 'dB added to the nominal calibration')} dB</label>` +
+      `<label class="rg-sigc" title="How far off your calibration may be (dB, one standard deviation): widens the range">± ${num('sigC', 40, '0.5', 'Uncertainty of your calibration (dB, 1 sigma)')} dB</label></div>` +
+      `<div class="map-vs-row rg-calh pl-note"></div>` +
+      `<div class="map-vs-row rg-calb"><span class="pl-l"></span><button type="button" class="map-btn" onclick="rgUiKl=!rgUiKl;rgRender(true)" title="You know the level the selected signal arrives with at the receiver input (a signal generator through an attenuator, a calibrated meter)">Known level…</button>` +
+      `<button type="button" class="map-btn" onclick="rgUiKt=!rgUiKt;rgRender(true);mapDraw()" title="A transmitter whose place and EIRP you know (a repeater, a broadcast station from a licence register): its path loss to the station by the model says what level it should arrive with">Known transmitter…</button>` +
+      `<button type="button" class="map-btn" onclick="rgCalNominal()" title="Back to the nominal calibration from published R820T / R820T2 measurements (no correction): C -14.5 dB at gain 0, about -19 at 12-37 dB, -16 at 49.6 dB, less gain above ~1 GHz; ± ${RG_CAL_SD} dB">Nominal</button></div>` +
+      `<div class="map-vs-row rg-kl"><span class="pl-l"></span><label>the signal is <input type="number" class="rg-klv" style="width:60px" step="0.1" title="The level the selected signal arrives with at the receiver input (dBm)" onkeydown="if(event.key==='Enter')rgCalLevel()"> dBm at the input</label>` +
+      `<button type="button" class="map-btn" onclick="rgCalLevel()">Set</button></div>` +
+      `<div class="map-vs-row rg-kt"><span class="pl-l"></span><span class="rg-ktd pl-note"></span></div>` +
+      `<div class="map-vs-row rg-kt2"><span class="pl-l"></span><label>EIRP <input type="number" class="rg-kte" style="width:64px" step="any" title="The known transmitter's EIRP (W)" onchange="rgCalTxSet('eirp',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> W</label>` +
+      `<label>antenna <input type="number" class="rg-kth" style="width:50px" step="any" title="Its antenna height above the ground (m)" onchange="rgCalTxSet('h',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
+      `<button type="button" class="map-btn rg-ktb" onclick="rgCalTx()" title="Work out its path loss to the station (the model chosen below) and set the calibration from what the selected signal measures">Calibrate</button></div>` +
+      `<div class="map-vs-row rg-calm pl-note"></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Model</span>${sel('model', PL_MODEL_OPTS, 'The propagation model (as the Viewshed\'s 📶 path loss): P.1812 and Longley-Rice follow the terrain, free space doesn\'t. Longley-Rice\'s climate and ground, and N0: the 📶 Signal settings')}` +
+      `${sel('pol', [['v', 'vertical'], ['h', 'horizontal']], 'The antennas\' polarization (both; the models\' horizontal / vertical)')}</div>` +
+      `<div class="map-vs-row"><span class="pl-l"></span><label>radius ${num('r', 50, '1', 'How far out to look (km, up to 300): the terrain is loaded and the loss worked out to here - larger takes longer')} km</label></div>` +
+      `<div class="pl-set-h" onclick="rgSet('set', !rgState.set)"><span class="pl-set-f"></span> Uncertainty, fading</div>` +
+      `<div class="pl-set">` +
+      `<div class="map-vs-row"><label title="Location variability (lognormal shadowing)">σ<sub>L</sub> ${txt('sigL', 40, 'Location variability (dB); empty = automatic (ITU-R P.1546 for the transmitter\'s end: 0.5 + 1.3 log f in the open, 1.0-1.2 + 1.3 log f in clutter)')} dB</label>` +
+      `<label>model ± ${num('sigM', 40, '0.5', 'The model\'s own error over real terrain (dB, 1 sigma): buildings and trees aren\'t in the terrain data')} dB</label>` +
+      `<label>bearing σ ${txt('bsd', 40, 'The bearing\'s uncertainty (degrees); empty = automatic: 2 + the heading\'s (compass 4, a static location 5.5)')}°</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Fading</span>${sel('fade', [['auto', 'auto: Rician, K lower behind terrain'], ['rician', 'Rician, the same K everywhere'], ['rayleigh', 'Rayleigh'], ['none', 'none (averaged out)']], 'Fast (multipath) fading of the measured level around its local mean - none when the transmitter moved while it was measured (a vehicle) and the level averaged it out')}` +
+      `<label class="rg-k">K ${num('K', 40, '1', 'Rician K-factor (dB) of a clear path')} dB</label></div>` +
+      `<div class="map-vs-row rg-sig pl-note"></div></div>` +
+      `<div class="map-vs-note">Where the transmitter of the DF panel's selected lobe probably is: the measured level (dBFS - gain + the calibration = dBm at the receiver input) against ` +
+      `the path loss from the station to each place (the model over the terrain, with a transmitter at the TX antenna height there) and the lobe's bearing. ` +
+      `Coloured by how likely: the red core is the most likely, out to the 50 / 90 / 99 % regions; the ✕ is the single most likely spot (per square metre, on the deepest red) - ` +
+      `the median distance can lie further out, as the lobe widens with distance. The transmitter's power and EIRP are entered in watts. Only as good as the EIRP guess and the calibration - calibrate on a ` +
+      `known transmitter (right-click it on the map) for absolute levels. Bare terrain: buildings and trees only through the clutter setting.</div></div></div>`;
+  }
+  function rgCentre() { if (rgEst && rgEst.lat !== undefined) { mapCenterOn(rgEst.lat, rgEst.lon); mapDraw(); } }
+  // (an estimate in flight is ignored when it comes - it would bring the cleared one back)
+  function rgClear() {
+    rgDrop();
+    rgRender(true);
+    mapDraw();
+  }
+  function rgLegendHtml() {
+    const S = RG_STOPS, pos = c => (c / 0.99 * 100).toFixed(1);
+    return `<div class="pl-leg-g" style="background:linear-gradient(to right, ${S.map(([c, col]) => `${col} ${pos(c)}%`).join(', ')})"></div>` +
+           `<div class="pl-leg-t"><span style="left:0">most likely</span><span style="left:${pos(0.5)}%;transform:translateX(-50%)">50 %</span>` +
+           `<span style="left:${pos(0.9)}%;transform:translateX(-100%)">90 %│</span><span style="right:0">99 %</span></div>`;
+  }
+  function rgRender(force) {
+    const el = $id('map-rg');
+    if (!el || !rgReady) return;
+    const show = rgState.on && opMode === 'coherent' && document.body.classList.contains('rp-map');
+    if (el.style.display !== (show ? '' : 'none')) el.style.display = show ? '' : 'none';
+    const bt = $id('map-df-rng');
+    if (bt) bt.classList.toggle('on', !!rgState.on);
+    if (!show) return;
+    if (!el.dataset.built) rgPanelBuild(el);
+    el.classList.toggle('closed', !rgState.open);
+    el.classList.toggle('cfg-closed', !rgState.cfg);
+    el.classList.toggle('set-closed', !rgState.set);
+    const set = (sel, html) => { const e = el.querySelector(sel); if (e && e.dataset.html !== html) { e.dataset.html = html; e.innerHTML = html; } };
+    const vis = (sel, on) => { const e = el.querySelector(sel); if (e && e.style.display !== (on ? '' : 'none')) e.style.display = on ? '' : 'none'; };
+    set('.rg-fold', rgState.open ? '▾' : '▸');
+    set('.rg-cfg-f', rgState.cfg ? '▾' : '▸');
+    set('.pl-set-f', rgState.set ? '▾' : '▸');
+    for (const inp of el.querySelectorAll('[data-k]')) {
+      const k = inp.dataset.k, v = rgState[k];
+      vsSetVal(inp, v === null ? '' : v, force);
+    }
+    const sh = el.querySelector('[data-k=stH]');
+    if (sh) { const ph = String(rgStH()); if (rgState.stH === null && sh.placeholder !== ph) sh.placeholder = ph; }
+    for (const [k, ph] of [['sigL', 'auto'], ['bsd', 'auto']]) { const e = el.querySelector(`[data-k=${k}]`); if (e && e.placeholder !== ph) e.placeholder = ph; }
+    vis('.rg-ptx', rgState.txMode === 'ptx');
+    vis('.rg-eirp', rgState.txMode === 'eirp');
+    vis('.rg-k', rgState.fade === 'auto' || rgState.fade === 'rician');
+    // (the entry is in watts; this is what it comes to - for power + antenna, the EIRP)
+    set('.rg-eirpv', rgState.txMode === 'ptx' ? `= EIRP <b>${plF(rgEirp())} dBm</b> (${rgFmtW(10 ** (rgEirp() / 10) / 1000)})`
+                                              : `= <b>${plF(rgEirp())} dBm</b> (${plF(rgEirp() - 30)} dBW)`);
+    // the source: what is measured
+    const sn = rgSnap();
+    let src = '';
+    if (!sn) src = `<span class="w">${rgNoSource()}</span>`;
+    else {
+      const L = sn.lvl, age = !L ? 0 : sn.held ? L.age + (Date.now() - sn.t) / 1000 : rgLvlAge(L);
+      src = `<span style="color:${sn.col}">■</span> <b>${digEsc(sn.name)}</b> · ${sn.mhz.toFixed(4)} MHz · lobe ${plF(sn.peak, 0)}°`;
+      if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgCal(L.gain, sn.mhz))} dBm</b> · SNR ${plF(L.dbfs - L.noise, 0)} dB`;
+      if (sn.held || age > 3) src += ` <span class="w">(${sn.held ? 'held, ' : ''}level ${rgAgeTxt(age)} old)</span>`;
+    }
+    set('.rg-src', src);
+    // the calibration
+    const s = rgState;
+    // C in use here (the selected signal's gain + frequency; without one: 49.6 dB, 146 MHz)
+    const cg = sn && sn.lvl && sn.lvl.gain >= 0 ? sn.lvl.gain : 49.6, cf = sn ? sn.mhz : 146;
+    const cNom = rgCalNom(cg, cf), cSd = rgCalSd(cg, cf), dc = rgCalDc();
+    // (the downconverter variant: the tuner sits at the IF - the nominal's frequency term is the IF's)
+    set('.rg-calc', `dBm = dBFS − gain + C, C = <b>${plF(cNom + s.calOff)} dB</b> ± ${plF(cSd)} ` +
+                    `<span class="pl-note">(nominal ${plF(cNom)} at ${plF(cg)} dB, ${plF(cf, cf < 100 ? 1 : 0)} MHz` +
+                    `${dc ? ` - the tuner at the IF, ${plF(rgTunerMhz(cf), 0)} MHz` : ''}${s.calOff ? `, ${plSgn(s.calOff)} correction` : ''})</span>`);
+    vis('.rg-sigc', !!s.calHow);
+    set('.rg-calh', s.calHow ? `calibrated from ${digEsc(s.calHow)}${s.calF ? ` at ${plF(s.calF, 3)} MHz, ${plF(s.calG)} dB gain` : ''}` +
+                    (s.calF && sn && Math.abs(Math.log2(sn.mhz / s.calF)) > 0.5 ? ' <span class="w">- far from this frequency: the model\'s gain roll-off carries it, less surely</span>' : '')
+                  : `<span class="w">uncalibrated: the nominal from published R820T measurements, ± ${plF(cSd)} dB - ` +
+                    `${dc ? RG_CAL_DC_TXT : 'calibrate on a known transmitter for better'}</span>`);
+    vis('.rg-kl', rgUiKl);
+    vis('.rg-kt', rgUiKt);
+    vis('.rg-kt2', rgUiKt && !!s.calTx);
+    const t = s.calTx;
+    set('.rg-ktd', !t ? 'Right-click the transmitter\'s place on the map → "📏 Known transmitter here", tune the selected VFO to it' :
+        `Known TX ${sn ? `${plF(mapDistKm(sn.lat, sn.lon, t.lat, t.lon))} km, ${plF(mapBearing(sn.lat, sn.lon, t.lat, t.lon), 0)}°` : `at ${t.lat.toFixed(4)}, ${t.lon.toFixed(4)}`}` +
+        ` - the selected VFO tuned to it (right-click elsewhere to move it)`);
+    if (t) {
+      const ke = el.querySelector('.rg-kte'), kh = el.querySelector('.rg-kth');
+      if (ke) vsSetVal(ke, t.eirp, force);
+      if (kh) vsSetVal(kh, t.h, force);
+      const kb = el.querySelector('.rg-ktb');
+      if (kb) kb.disabled = !!rgCalJob;
+    }
+    set('.rg-calm', rgCalMsg ? digEsc(rgCalMsg) : '');
+    vis('.rg-calm', !!rgCalMsg);
+    // the uncertainty in total
+    const f = sn ? sn.mhz : 146;
+    set('.rg-sig', `in total σ <b>${plF(rgSigma(f, cg))} dB</b> (location ${plF(rgSigmaL(f))}, model ${plF(s.sigM)}, EIRP ${plF(s.sigE)}, calibration ${plF(rgCalSd(cg, f))})` +
+                   (sn ? ` + fading · bearing σ ${plF(rgBsd(sn))}°` : ''));
+    // the sweep
+    let job = '';
+    if (rgJob) job = Array.isArray(rgJob.prog) && rgJob.prog[0] === 'sig' ? `path loss ${rgJob.prog[1]} %…` :
+                     Array.isArray(rgJob.prog) ? `loading terrain ${rgJob.prog[0]}/${rgJob.prog[1]}…` : 'working out the path loss…';
+    else if (rgFail && sn && rgFits(rgFail, sn)) job = `<span class="e">⚠ ${digEsc(rgFail.msg)}</span>`;
+    else if (rgRes) job = `${PL_MODELS[rgRes.model]} at ${plF(rgRes.f, 0)} MHz, ${rgRes.r} km, ${(rgRes.ms / 1000).toFixed(1)} s` +
+                          (rgEst && rgEst.ms !== undefined ? ` · estimate ${rgEst.ms} ms` : '');
+    set('.rg-job', job);
+    // the estimate
+    let st = '';
+    const E = rgEst;
+    if (E && E.why) st = `<span class="w">${digEsc(E.why)}</span>`;
+    else if (E && E.empty) {
+      const sg = E.inp ? E.inp.sigma : 6;
+      st = E.mMax < 0 ? `<span class="e">⚠ The signal is stronger than this transmitter could give anywhere within ${rgRes ? rgRes.r : s.r} km ` +
+                        `(at best ${plF(-E.mMax)} dB short, σ ${plF(sg)} dB): more EIRP, a higher / nearer transmitter, or check the calibration</span>`
+         : `<span class="e">⚠ The signal is weaker than this transmitter would give anywhere within ${rgRes ? rgRes.r : s.r} km ` +
+           `(at least ${plF(E.mMin)} dB): a larger radius, less EIRP, or check the calibration</span>`;
+    } else if (E && E.lat !== undefined) {
+      // (the distance's quantiles first: with a few dB of uncertainty the
+      // probability is spread along the lobe - the most likely spot is the
+      // mode of a broad distribution)
+      const [q05, q25, q50, q75, q95] = E.q;
+      st = `Bearing <b>${plF(E.sn.peak, 0)}°</b> · distance: median <b>${vsFmtM(q50)}</b>, half the probability <b>${vsFmtM(q25)} – ${vsFmtM(q75)}</b>, ` +
+           `90 % ${vsFmtM(q05)} – ${vsFmtM(q95)}<br><span title="The single most likely spot per square metre - always on the deepest red (inside the most likely 1 % of the probability). ` +
+           `It can be nearer than the median distance: the lobe widens with distance, so further out more ground shares the probability - each place a little less likely, together more">` +
+           `✕ most likely spot ${vsFmtM(E.d)} at ${plF(E.b, 0)}° (the deepest red)</span> · the 50 % region ${rgArea(E.a50)}, the 90 % ${rgArea(E.a90)}`;
+      const w = [], sg = E.inp.sigma;
+      // no place fits well: even the strongest place's median is 3 sigma below the level (too strong), or the weakest above it
+      if (E.mMax < -3 * sg) w.push(`no place fits: stronger than this transmitter would be even next to the station (by ${plF(-E.mMax, 0)} dB, σ ${plF(sg)} dB) - more EIRP, or check the calibration`);
+      else if (E.mMin > 3 * sg) w.push(`no place fits: weaker than anywhere within the radius (by ${plF(E.mMin, 0)} dB, σ ${plF(sg)} dB) - a larger radius, less EIRP, or check the calibration`);
+      if (E.edge > 0.05) w.push(`${Math.round(E.edge * 100)} % of the probability is at the edge of the ${rgRes.r} km radius - it may be further: a larger radius`);
+      const L = E.sn.lvl;
+      // (below ~10 dB only the moments the noise added to pass the level's significance test - a
+      // narrow VFO's most: 1 kHz reads +1.2 dB at 6 dB, +3.6 at 3 dB)
+      if (E.inp.snr < 10) w.push(`weak (SNR ${plF(E.inp.snr, 0)} dB): the level may read high, the range short`);
+      if (L.total > -8) w.push(`the receiver is near full scale (${plF(L.total)} dBFS in the band): the level may read low - lower the gain`);
+      if (!s.calHow) w.push(`uncalibrated: absolute levels ± ${plF(rgCalNomSd(E.sn.mhz))} dB (the nominal from published R820T data${rgCalDc() ? '; ' + RG_CAL_DC_TXT : ''})`);
+      if (E.sn.held) w.push('held: the signal ended');
+      if (w.length) st += '<br><span class="w">⚠ ' + w.join('<br>⚠ ') + '</span>';
+      // (a GPS station has moved on from the sweep's origin: the next sweep is worked out / due -
+      // not for a held estimate: it stays where the signal was heard, no sweep follows)
+      const p = rdfStatus && rdfStatus.station, dm = p && rgRes && !E.sn.held ? rgOrgM(rgRes, p) : 0;
+      if (dm > rgTolM()) st += `<br><span class="w rg-back">↻ worked out ${vsFmtM(dm)} back - updating…</span>`;
+    } else if (sn && rgRes && !rgJob) st = 'working out…';
+    set('.rg-st', st);
+    set('.rg-leg', rgRes && rgRes.shown ? rgLegendHtml() : '');
+    vis('.rg-btns', !!(rgRes && rgRes.shown) || !!rgLast);
+    set('.rg-hov', rgHoverHtml());
+  }
+  const rgFmtW = w => w >= 1000 ? plF(w / 1000, w >= 1e4 ? 0 : 1) + ' kW' : w >= 1 ? plF(w, w >= 10 ? 0 : 1) + ' W' : plF(w * 1000, w >= 0.01 ? 0 : 1) + ' mW';
+  const rgArea = a => a >= 100 ? a.toFixed(0) + ' km²' : a >= 1 ? a.toFixed(1) + ' km²' : (a * 100).toFixed(1) + ' ha';
+  // ---- under the pointer: how likely, how far, the loss and the level expected from there ----
+  function rgHover(x, y) {
+    rgHovAt = x === null ? null : [x, y];
+    if (!rgReady || !rgState.on) return;
+    const el = $id('map-rg');
+    if (!el || !el.dataset.built) return;
+    const e = el.querySelector('.rg-hov'), h = rgHoverHtml();
+    if (e && e.dataset.html !== h) { e.dataset.html = h; e.innerHTML = h; }
+  }
+  function rgHoverHtml() {
+    const res = rgRes, E = rgEst;
+    if (!rgHovAt || !res || !res.shown || !E || !E.inp || !mapCv) return '';
+    const [x, y] = rgHovAt, W = mapWorld();
+    const nx = mapState.mx + (x - mapW / 2) / W, ny = mapState.my + (y - mapH / 2) / W;
+    for (const l of res.levels) {   // finest first
+      const Wv = 256 * 2 ** l.z, N = l.N;
+      let px = nx * Wv - l.gx0;
+      px -= Math.round((px - N / 2) / Wv) * Wv;
+      const i = Math.floor(px), j = Math.floor(ny * Wv - l.gy0);
+      if (i < 0 || j < 0 || i >= N || j >= N) continue;
+      const k = j * N + i, ls = l.loss[k];
+      if (ls === 65535) continue;
+      if (ls === 65534) return '📏 outside the model\'s range here';
+      const [la, lo] = mapScreenToLatLon(x, y), u = l.rank ? l.rank[k] : 0;
+      const d = mapDistKm(res.lat, res.lon, la, lo), b = mapBearing(res.lat, res.lon, la, lo);
+      const med = rgEirp() - ls / 10 + rgState.gr - rgState.lr;
+      const where = u ? `in the <b>${Math.max(1, Math.round((u - 1) / 254 * 99))} %</b> region` : '<span class="no">outside the 99 % region</span>';
+      return `📏 ${where} · ${d < 10 ? d.toFixed(2) : d.toFixed(1)} km, ${b.toFixed(0)}° · loss ${plF(ls / 10)} dB → ${plF(med)} dBm from here (median; measured ${plF(E.inp.prx)})`;
+    }
+    return '';
+  }
+
+  rgReady = true;
 
   // --- 🤖 AI MAP LAYERS: what the assistant plots (ai_map.cpp) ----------------------
   // {"ai_map":{seq, layers:[{id, name, desc, src, conv, col, t, f:[{g: pt|ln|pg|ci,
@@ -23957,6 +25291,339 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     recRender();
   }
 
+  // ---- KrakenSDR Wideband board telemetry (system_status.wb_telemetry) ----
+  // heimdall's "downconverter" object: fw {date, build, telemetry_ok, set_cmd},
+  // telemetry {revision, vin_v, iin_a, iin_saturated, temp_c, rh_pct,
+  // lo_hz_read, stale, alarms {iin, vin, temp, rh, sensor}, ...}, age_s.
+  const wbTrend = [];            // {t, i, temp}, one point per 10 s, one hour
+  let wbLastTrend = 0;
+  function wbOpenSection() {
+    const sec = $id('wb-section');
+    if (!sec) return;
+    if (typeof mobileLayoutMQ !== 'undefined' && mobileLayoutMQ.matches) toggleSidebar(true);
+    if (sec.classList.contains('collapsed')) toggleSection(sec.querySelector('.sb-header'));
+    sec.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+  function wbSpan(text, level, stale) {
+    const cls = stale ? 'stale' : (level === 'alarm' ? 'alarm' : level === 'warn' ? 'warn' : '');
+    return cls ? '<span class="' + cls + '">' + text + '</span>' : text;
+  }
+  function wbAgo(ts) {
+    if (!ts) return '';
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    return s < 90 ? Math.round(s) + ' s ago' : Math.round(s / 60) + ' min ago';
+  }
+  // ---- Telemetry sheet: history charts (1 h / 24 h / 7 d / 30 d), log settings, CSV download ----
+  // Data: GET wb_telemetry/history?range=<s> (wb_board_history_json: <= ~600
+  // buckets of min / mean / max). The live tiles follow system_status.
+  const WB_RANGES = [['1 h', 3600], ['24 h', 86400], ['7 days', 604800], ['30 days', 2592000]];
+  const WB_CHARTS = [['iin', 'Input current', 'A', '#4fc3f7', 2], ['vin', 'Input voltage', 'V', '#81c784', 2],
+                     ['temp', 'Board temperature', '°C', '#ffb74d', 1], ['rh', 'Relative humidity', '%RH', '#ba68c8', 1]];
+  let wbSheetRange = 3600, wbSheetTimer = null, wbSheetPlots = [], wbSheetLast = null, wbLatest = null;
+  function wbSheetOpen() {
+    if ($id('wb-sheet-bg')) return;
+    const bg = document.createElement('div');
+    bg.className = 'sf-dlg-bg'; bg.id = 'wb-sheet-bg';
+    bg.innerHTML =
+      '<div class="wb-sheet" role="dialog" aria-label="Wideband board telemetry">' +
+        '<div class="wb-sheet-h"><span class="ttl">🔌 Wideband board telemetry</span>' +
+          '<span class="wb-seg" id="wb-sheet-seg">' + WB_RANGES.map(r => '<button data-r="' + r[1] + '">' + r[0] + '</button>').join('') + '</span>' +
+          '<span class="info" id="wb-sheet-note"></span><span class="x" title="Close" onclick="wbSheetClose()">✕</span></div>' +
+        '<div class="wb-now" id="wb-sheet-now"></div>' +
+        '<div class="wb-charts" id="wb-sheet-charts">' + WB_CHARTS.map(c =>
+          '<div class="wb-chart"><div class="ct"><span>' + c[1] + ' (' + c[2] + ')</span><span id="wb-st-' + c[0] + '"></span></div><div id="wb-pl-' + c[0] + '"></div></div>').join('') + '</div>' +
+        '<div class="sec"><h4>Logging</h4><div class="row">' +
+          '<label><input type="checkbox" id="wb-log-en" onchange="send(\'WB_LOG_ENABLE:\' + (this.checked ? 1 : 0))"> Log to the SD card</label>' +
+          '<label>One row every <select id="wb-log-per" onchange="send(\'WB_LOG_PERIOD:\' + this.value)">' +
+            [[1, '1 s'], [5, '5 s'], [10, '10 s'], [30, '30 s'], [60, '1 min'], [300, '5 min']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
+          '<label>Keep <select id="wb-log-keep" onchange="send(\'WB_LOG_KEEP:\' + this.value)">' +
+            [[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, '1 year']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
+          '<span style="flex:1"></span>' +
+          '<button class="btn primary" id="wb-csv-btn" onclick="wbSheetCsv()">⬇ Download CSV (<span id="wb-csv-span">1 h</span>)</button></div>' +
+          '<div class="info" id="wb-log-info" style="margin-top:4px"></div></div>' +
+        '<div class="sec"><h4>Events in this range</h4><div class="wb-ev" id="wb-sheet-ev"></div></div>' +
+      '</div>';
+    bg.addEventListener('mousedown', e => { if (e.target === bg) wbSheetClose(); });
+    document.body.appendChild(bg);
+    $id('wb-sheet-seg').addEventListener('click', e => { const r = e.target && e.target.dataset && e.target.dataset.r; if (r) wbSheetSetRange(+r); });
+    document.addEventListener('keydown', wbSheetKey);
+    window.addEventListener('resize', wbSheetResize);
+    wbSheetLive();
+    wbSheetSetRange(wbSheetRange);
+  }
+  function wbSheetKey(e) { if (e.key === 'Escape') wbSheetClose(); }
+  function wbSheetClose() {
+    const bg = $id('wb-sheet-bg');
+    if (!bg) return;
+    if (wbSheetTimer) { clearInterval(wbSheetTimer); wbSheetTimer = null; }
+    wbSheetPlots.forEach(p => p.destroy()); wbSheetPlots = [];
+    document.removeEventListener('keydown', wbSheetKey);
+    window.removeEventListener('resize', wbSheetResize);
+    bg.remove();
+  }
+  function wbSheetSetRange(r) {
+    wbSheetRange = r;
+    document.querySelectorAll('#wb-sheet-seg button').forEach(b => b.classList.toggle('sel', +b.dataset.r === r));
+    $id('wb-csv-span').textContent = (WB_RANGES.find(x => x[1] === r) || WB_RANGES[0])[0];
+    if (wbSheetTimer) clearInterval(wbSheetTimer);
+    wbSheetTimer = setInterval(wbSheetLoad, r <= 3600 ? 20000 : 120000);   // the newest bucket fills in
+    wbSheetLoad();
+  }
+  async function wbSheetLoad() {
+    const want = wbSheetRange, note = $id('wb-sheet-note');
+    if (!note) return;
+    try {
+      const token = storedToken();
+      const r = await fetch('wb_telemetry/history?range=' + want, {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const h = await r.json();
+      if (want !== wbSheetRange || !$id('wb-sheet-bg')) return;   // the range changed / the sheet closed meanwhile
+      wbSheetLast = h;
+      wbSheetDraw(h);
+      note.textContent = h.rows ? h.rows.toLocaleString() + ' logged rows, one point per ' + wbDur(h.bucket_s) : 'nothing logged in this range yet';
+    } catch (e) {
+      note.textContent = 'Cannot load the history: ' + (e && e.message ? e.message : e);
+    }
+  }
+  function wbEsc(s) { return String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c])); }
+  function wbDur(s) { return s < 60 ? s + ' s' : s < 3600 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(s % 3600 ? 1 : 0) + ' h'; }
+  function wbSheetWidth(id) { const el = $id(id); return Math.max(240, Math.floor(el.parentElement.clientWidth - 14)); }
+  function wbSheetResize() { wbSheetPlots.forEach(p => p.setSize({width: wbSheetWidth(p.root.parentElement.id), height: 190})); }
+  function wbSheetDraw(h) {
+    wbSheetPlots.forEach(p => p.destroy()); wbSheetPlots = [];
+    const day = h.range_s > 86400;
+    for (const [key, , unit, color, dec] of WB_CHARTS) {
+      const host = $id('wb-pl-' + key), st = $id('wb-st-' + key);
+      host.innerHTML = '';
+      const [mn, av, mx] = h[key];
+      const vals = av.filter(v => v !== null);
+      if (!vals.length) { host.innerHTML = '<div class="empty">no data</div>'; st.textContent = ''; continue; }
+      const lo = Math.min(...mn.filter(v => v !== null)), hi = Math.max(...mx.filter(v => v !== null));
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      st.innerHTML = 'min <b>' + lo.toFixed(dec) + '</b> · avg <b>' + mean.toFixed(dec) + '</b> · max <b>' + hi.toFixed(dec) + '</b> ' + unit;
+      const pad = Math.max((hi - lo) * 0.15, key === 'vin' ? 0.02 : key === 'iin' ? 0.05 : 0.5);
+      const fmtT = ts => { const d = new Date(ts * 1000); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+                           return day ? (d.getMonth() + 1) + '/' + d.getDate() + (h.range_s <= 604800 ? ' ' + hm : '') : hm; };
+      const axis = {stroke: '#8aa8c7', font: '11px Arial', grid: {stroke: '#1f2c44', width: 1}, ticks: {stroke: '#1f2c44', width: 1}};
+      const tip = document.createElement('div');
+      tip.style.cssText = 'position:absolute;display:none;pointer-events:none;z-index:5;background:#0d3c61;border:1px solid #1565c0;color:#e8f2ff;border-radius:4px;padding:3px 7px;font-size:11px;white-space:nowrap';
+      const plot = new uPlot({
+        width: wbSheetWidth('wb-pl-' + key), height: 190, legend: {show: false},
+        cursor: {y: false, points: {size: 7, fill: color}},
+        scales: {x: {time: true}, y: {range: [lo - pad, hi + pad]}},
+        axes: [Object.assign({values: (u, sp) => sp.map(fmtT), space: 70}, axis),
+               Object.assign({size: 52, values: (u, sp) => sp.map(v => v.toFixed(dec))}, axis)],
+        series: [{}, {stroke: 'transparent', points: {show: false}},
+                 {stroke: color, width: 1.6, spanGaps: false, points: {show: vals.length < 40, size: 4, fill: color}},
+                 {stroke: 'transparent', points: {show: false}}],
+        bands: [{series: [3, 1], fill: color + '33'}],
+        hooks: {setCursor: [u => {
+          const i = u.cursor.idx;
+          if (i == null || av[i] == null) { tip.style.display = 'none'; return; }
+          const d = new Date(h.t[i] * 1000);
+          tip.innerHTML = d.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' &nbsp; <b>' + av[i].toFixed(dec) + ' ' + unit + '</b>' +
+                          (mx[i] - mn[i] > 0 ? ' &nbsp;(' + mn[i].toFixed(dec) + ' – ' + mx[i].toFixed(dec) + ')' : '');
+          tip.style.display = 'block';
+          const x = u.cursor.left + u.over.offsetLeft;
+          tip.style.left = Math.min(Math.max(0, x + 10), u.root.clientWidth - tip.offsetWidth - 2) + 'px';
+          tip.style.top = (u.over.offsetTop + 4) + 'px';
+        }]},
+      }, [h.t, mn, av, mx], host);
+      plot.root.style.position = 'relative';
+      plot.root.appendChild(tip);
+      plot.over.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+      wbSheetPlots.push(plot);
+    }
+    const ev = $id('wb-sheet-ev');
+    ev.innerHTML = h.events.length ? h.events.slice().reverse().map(e => {
+      const cls = /alarm$/.test(e.d.split(' ')[0]) || e.d.startsWith('alarm') ? 'alarm' : e.d.startsWith('warn') || e.d.startsWith('lost') ? 'warn' : '';
+      return '<div><span class="t">' + new Date(e.t * 1000).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'}) +
+             '</span> &nbsp;' + wbEsc(e.e.replace(/^alarm_/, '').replace(/_/g, ' ')) + ': <span class="' + cls + '">' + wbEsc(e.d) + '</span></div>'; }).join('')
+      : '<span class="info">none</span>';
+    const lg = h.log || {};
+    $id('wb-log-info').textContent = 'On the SD card: ' + ((lg.bytes || 0) / 1048576).toFixed(1) + ' MB in ' + (lg.files || 0) + ' file' + (lg.files === 1 ? '' : 's') +
+      (lg.oldest ? ', from ' + lg.oldest : '') + ' (wb_logs/, one file per day; older days are deleted).';
+  }
+  // live tiles + the log settings in force (every status message while the sheet is open)
+  function wbSheetLive() {
+    const box = $id('wb-sheet-now');
+    if (!box || !wbLatest) return;
+    const t = wbLatest.telemetry || {}, al = t.alarms || {}, n = v => typeof v === 'number';
+    const tile = (k, v, sub, lvl) => '<div class="wb-tile ' + (lvl === 'alarm' || lvl === 'warn' ? lvl : '') + '"><div class="k">' + k + '</div><div class="n">' + v + '</div><div class="r">' + sub + '</div></div>';
+    box.innerHTML =
+      tile('Input current', n(t.iin_a) ? (t.iin_saturated ? '&gt; 3.2' : t.iin_a.toFixed(2)) + ' A' : '–', n(t.iin_a) && n(t.vin_v) ? (t.iin_a * t.vin_v).toFixed(1) + ' W' : '', al.iin) +
+      tile('Input voltage', n(t.vin_v) ? t.vin_v.toFixed(2) + ' V' : '–', 'before the eFuse', al.vin) +
+      tile('Board temperature', n(t.temp_c) ? t.temp_c.toFixed(1) + ' °C' : '–', t.sensor || '', al.temp) +
+      tile('Relative humidity', n(t.rh_pct) ? t.rh_pct.toFixed(0) + ' %' : '–', (t.revision ? 'Testunit_' + t.revision : '') + (wbLatest.fw && wbLatest.fw.date ? ' · fw' + wbLatest.fw.date + '.' + (wbLatest.fw.build || 0) : ''), al.rh);
+    const lg = wbLatest.logging;
+    if (lg) {
+      const en = $id('wb-log-en'), per = $id('wb-log-per'), keep = $id('wb-log-keep');
+      const setSel = (el, v) => { if (document.activeElement === el) return;
+        if (![...el.options].some(o => +o.value === v)) el.add(new Option(v + (el === per ? ' s' : ' days'), v));
+        el.value = v; };
+      if (document.activeElement !== en) en.checked = !!lg.enabled;
+      setSel(per, lg.period_s); setSel(keep, lg.keep_days);
+      per.disabled = keep.disabled = !lg.enabled;
+    }
+  }
+  async function wbSheetCsv() {
+    const btn = $id('wb-csv-btn'), note = $id('wb-sheet-note');
+    btn.disabled = true;
+    try {
+      const token = storedToken();
+      const r = await fetch('wb_telemetry/export.csv?range=' + wbSheetRange, {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a');
+      a.href = url; a.download = m ? m[1] : 'wb_telemetry.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      if (note) note.textContent = 'CSV download failed: ' + (e && e.message ? e.message : e);
+    }
+    btn.disabled = false;
+  }
+
+  let wbHashOpened = false;
+  function updateWbTelemetry(wb) {
+    wbLatest = wb || null;
+    wbSheetLive();
+    // https://<receiver>:8080/#wb-telemetry opens the sheet directly (a bookmark)
+    // (#wb-telemetry=86400 with that range in seconds)
+    const wbHash = /^#wb-telemetry(?:=(\d+))?$/.exec(location.hash);
+    if (wb && !wbHashOpened && wbHash) {
+      wbHashOpened = true;
+      if (wbHash[1] && WB_RANGES.some(r => r[1] === +wbHash[1])) wbSheetRange = +wbHash[1];
+      wbSheetOpen();
+    }
+    const sec = $id('wb-section'), chip = $id('wb-chip'), banner = $id('wb-banner');
+    if (!sec) return;
+    if (!wb) {
+      sec.style.display = 'none';
+      if (chip) chip.style.display = 'none';
+      if (banner) banner.style.display = 'none';
+      return;
+    }
+    sec.style.display = '';
+    const fw = wb.fw || {}, t = wb.telemetry || {}, al = t.alarms || {};
+    const fwText = fw.date > 0 ? 'fw' + fw.date + (fw.build ? '.' + fw.build : '') : (fw.date === 0 ? 'older than fw20261109' : 'no reply');
+    $id('wb-fw').innerHTML = fwText + (fw.set_cmd === 'w' ? ' <span class="alarm">tunes with Flash save</span>' : '') +
+                             (fw.no_reply ? ' <span class="stale">(' + fw.no_reply + ' unanswered)</span>' : '');
+    const lo = wb.lo_hz ? (wb.lo_hz / 1e6).toFixed(3) + ' MHz' : '–';
+    const loRead = t.lo_hz_read ? (t.lo_hz_read === wb.lo_hz ? ' ✓' : ' <span class="warn">board: ' + (t.lo_hz_read / 1e6).toFixed(3) + ' MHz</span>') : '';
+    const rings = ['outer', 'center', 'inner'];
+    $id('wb-lo').innerHTML = lo + loRead + ' <span class="stale">' + (wb.side || '') + ' side, ' + (rings[wb.array] || '') + ' ring</span>';
+
+    const fwWarn = $id('wb-fw-warn');
+    if (!t.enabled) {
+      fwWarn.textContent = '⚠ Board telemetry disabled: ' + (t.reason || 'firmware too old') + '.';
+      fwWarn.style.display = '';
+      $id('wb-power').textContent = '–';
+      $id('wb-env').textContent = '–';
+      $id('wb-hw').textContent = '–';
+      if (chip) chip.style.display = 'none';
+      if (banner) {
+        banner.textContent = '⚠ Wideband board firmware too old - telemetry disabled. Update the board to fw20261110.3 (USB bootloader).';
+        banner.style.background = '#3a2a10';
+        banner.style.color = '#ffd9a0';
+        banner.style.display = 'block';
+      }
+      return;
+    }
+    fwWarn.style.display = t.shunt_consistent === false ? '' : 'none';
+    if (t.shunt_consistent === false) fwWarn.textContent = '⚠ The R6 shunt voltage does not fit the detected board revision: reworked or mixed board? The current reading may be off by 10×.';
+
+    const ps = !!t.power_stale, es = !!t.env_stale;
+    if (t.vin_v !== undefined) {
+      const cur = t.iin_saturated ? '&gt; 3.2 A' : t.iin_a.toFixed(2) + ' A';
+      $id('wb-power').innerHTML = wbSpan(t.vin_v.toFixed(2) + ' V', al.vin, ps) + ' · ' + wbSpan(cur, al.iin, ps) +
+        ' · ' + wbSpan((t.vin_v * t.iin_a).toFixed(1) + ' W', '', ps) + (ps ? ' <span class="stale">(' + wbAgo(t.power_ts) + ')</span>' : '');
+    } else {
+      $id('wb-power').innerHTML = '<span class="stale">no reading yet</span>';
+    }
+    if (t.temp_c !== undefined) {
+      $id('wb-env').innerHTML = wbSpan(t.temp_c.toFixed(1) + ' °C', al.temp, es) + ' · ' + wbSpan(t.rh_pct.toFixed(0) + ' %RH', al.rh, es) +
+        (es ? ' <span class="stale">(' + wbAgo(t.env_ts) + ')</span>' : '');
+    } else {
+      $id('wb-env').innerHTML = '<span class="stale">' + (t.sensor ? 'no reading yet' : 'no humidity sensor answers') + '</span>';
+    }
+    const rev = t.revision && t.revision !== 'unknown' ? 'Testunit_' + t.revision : 'revision unknown';
+    $id('wb-hw').innerHTML = rev + ' <span class="stale">' + (t.sensor || 'no RH sensor') + ', R6 ' + (t.r_shunt_mohm || '?') + ' mΩ' +
+                             (t.errors ? ', ' + t.errors + ' read errors' : '') + '</span>';
+
+    // worst alarm -> chip colour + banner
+    const levels = [al.iin, al.vin, al.temp, al.rh, al.sensor];
+    const worst = levels.includes('alarm') ? 'alarm' : levels.includes('warn') ? 'warn' : 'ok';
+    if (chip) {
+      const parts = [];
+      if (t.vin_v !== undefined) parts.push(t.vin_v.toFixed(2) + 'V', t.iin_saturated ? '>3.2A' : t.iin_a.toFixed(2) + 'A');
+      if (t.temp_c !== undefined) parts.push(t.temp_c.toFixed(0) + '°C');
+      $id('wb-chip-val').textContent = parts.join(' \u2502 ');
+      chip.style.color = worst === 'alarm' ? '#ef5350' : worst === 'warn' ? '#ff9800' : (t.stale ? '#777' : '#8aa8c7');
+      chip.style.display = '';
+    }
+    if (banner) {
+      const names = {iin: 'input current', vin: 'input voltage', temp: 'board temperature', rh: 'humidity', sensor: 'sensor readings stale'};
+      const bad = Object.keys(names).filter(k => al[k] === 'alarm' || al[k] === 'warn');
+      if (bad.length) {
+        banner.textContent = (worst === 'alarm' ? '🚨 Wideband board ALARM: ' : '⚠ Wideband board warning: ') +
+                             bad.map(k => names[k] + (al[k] === 'alarm' ? ' (alarm)' : '')).join(', ') + ' - click for details';
+        banner.style.background = worst === 'alarm' ? '#3a1515' : '#3a2a10';
+        banner.style.color = worst === 'alarm' ? '#ffb3b3' : '#ffd9a0';
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    // one-hour trend (memory only; the long history is in wb_logs/)
+    const now = Date.now() / 1000;
+    if (now - wbLastTrend >= 10 && (t.iin_a !== undefined || t.temp_c !== undefined) && !t.stale) {
+      wbLastTrend = now;
+      wbTrend.push({t: now, i: t.iin_a, temp: t.temp_c});
+      while (wbTrend.length && wbTrend[0].t < now - 3600) wbTrend.shift();
+    }
+    wbDrawTrend();
+  }
+  function wbDrawTrend() {
+    const c = $id('wb-trend');
+    if (!c || !c.offsetParent) return;
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = '#1e2a38';
+    for (let k = 1; k < 4; k++) { g.beginPath(); g.moveTo(0, h * k / 4); g.lineTo(w, h * k / 4); g.stroke(); }
+    if (wbTrend.length < 2) {
+      g.fillStyle = '#555'; g.font = '11px sans-serif'; g.fillText('collecting…', 8, h / 2 + 4);
+      return;
+    }
+    const now = Date.now() / 1000, x = p => w - (now - p.t) / 3600 * w;
+    const series = (key, color, unit, alignRight) => {
+      const v = wbTrend.map(p => p[key]).filter(q => q !== undefined && q !== null);
+      if (!v.length) return;
+      let lo = Math.min(...v), hi = Math.max(...v);
+      const pad = Math.max((hi - lo) * 0.15, key === 'i' ? 0.05 : 0.5);
+      lo -= pad; hi += pad;
+      const y = q => h - 4 - (q - lo) / (hi - lo) * (h - 8);
+      g.strokeStyle = color; g.lineWidth = 1.5; g.beginPath();
+      let started = false;
+      for (const p of wbTrend) {
+        if (p[key] === undefined || p[key] === null) continue;
+        if (!started) { g.moveTo(x(p), y(p[key])); started = true; } else g.lineTo(x(p), y(p[key]));
+      }
+      g.stroke();
+      g.fillStyle = color; g.font = '10px sans-serif';
+      const top = (key === 'i' ? hi.toFixed(2) : hi.toFixed(0)) + unit, bot = (key === 'i' ? lo.toFixed(2) : lo.toFixed(0)) + unit;
+      g.fillText(top, alignRight ? w - g.measureText(top).width - 3 : 3, 11);
+      g.fillText(bot, alignRight ? w - g.measureText(bot).width - 3 : 3, h - 3);
+    };
+    series('i', '#4fc3f7', ' A', false);
+    series('temp', '#ffb74d', ' °C', true);
+  }
+
   function updateSystemStatus(status) {
     setServerOs(status.platform || (status.hw && status.hw.os), status.source_tree);
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
@@ -24007,8 +25674,16 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         parts.push('CPU ' + h.cpu_pct.toFixed(0) + '%');
         parts.push('RAM ' + (h.ram_used/1024).toFixed(1) + '/' + (h.ram_total/1024).toFixed(1) + 'G');
         el.innerHTML = parts.join(' \u2502 ');
+        // name the computer: "RPi 5" on a Raspberry Pi, "Host" elsewhere
+        const m = /Raspberry Pi (?:Compute Module )?(\d+)/.exec(h.model || '');
+        $id('hw-lbl').textContent = m ? 'RPi ' + m[1] : 'Host';
+        $id('hw-chip').title = (h.model ? h.model + ' - ' : '') + 'the computer running this software: CPU temperature, CPU load, memory';
+        $id('hw-chip').style.display = '';
       }
     }
+
+    // Wideband board telemetry (absent unless heimdall runs --wideband)
+    updateWbTelemetry(status.wb_telemetry);
 
     // Update GPS status panel
     if (status.gps) updateGpsStatus(status.gps);
@@ -24059,11 +25734,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
           if (!cooldownTickTimer) cooldownTickTimer = setInterval(updateCooldownBadge, 200);
         }
         updateCooldownBadge();
-        cooldownEl.style.display = 'inline-block';
+        cooldownEl.style.visibility = 'visible';   // hidden, not removed: the row must not reflow
       } else {
         cooldownEndTime = null;
         if (cooldownTickTimer) { clearInterval(cooldownTickTimer); cooldownTickTimer = null; }
-        cooldownEl.style.display = 'none';
+        cooldownEl.style.visibility = 'hidden';
       }
     }
 
@@ -24103,6 +25778,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     // Update per-decimator squelch status from backend
     if (status.decimator_squelch && Array.isArray(status.decimator_squelch)) {
       let estSources = -1;  // auto source estimate (from the first decimator reporting one)
+      vfoLvlNote(status.decimator_squelch);   // (📏 each VFO's level: the hover readout)
       status.decimator_squelch.forEach(sq => {
         updateDecimatorSquelchStatus(sq.id, sq.open);
         if (estSources < 0 && sq.est_sources !== undefined && sq.est_sources >= 0) {

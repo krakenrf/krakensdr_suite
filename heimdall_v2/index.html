@@ -73,7 +73,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
     </style>
 </head>
 <body>
-    <h1>Heimdall - RTL-SDR Cross-Correlation</h1>
+    <h1>Heimdall - RTL-SDR Cross-Correlation <span id="wb-badge" style="display:none;vertical-align:middle;margin-left:8px;padding:3px 10px;border-radius:12px;font-size:14px;background:#2c5aa8;color:#fff">Wideband</span></h1>
 
     <!-- KerberosSDR manual-calibration banner (hidden unless --kerberos) -->
     <div id="kerberos-banner" style="display:none;margin:8px 0;padding:10px 14px;border-radius:6px;
@@ -82,6 +82,11 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
     <div id="mode-banner" style="display:none;margin:8px 0;padding:10px 14px;border-radius:6px;
          font-weight:bold;border:1px solid #2c5aa8;background:#13233a;color:#a8c8f0;"></div>
     <div class="card"><strong>Config:</strong> <span id="config-info">Loading...</span></div>
+    <!-- KrakenSDR Wideband board (STATE.downconverter; hidden on the standard KrakenSDR) -->
+    <div class="card" id="wb-card" style="display:none;border-left:5px solid #2c5aa8">
+        <strong>Wideband board:</strong> <span id="wb-mixer"></span>
+        <div style="margin-top:6px"><span id="wb-board"></span> <span id="wb-alarm" style="font-weight:bold"></span></div>
+    </div>
     
     <div id="status" class="card status">Status: <span id="txt">Connecting...</span><div id="stats"></div></div>
     
@@ -1124,6 +1129,33 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             b.style.display = 'block';
         };
 
+        // --- KrakenSDR Wideband variant (STATE.downconverter) ---
+        const applyWidebandState = st => {
+            const dc = st.downconverter, on = !!(dc && dc.enabled);
+            $('wb-badge').style.display = on ? '' : 'none';
+            $('wb-card').style.display = on ? '' : 'none';
+            $('biastee-control-group').style.display = on ? 'none' : '';   // GPIO1-6 drive the RF switches there
+            if (!on) return;
+            const mhz = hz => (hz / 1e6).toFixed(3) + ' MHz';
+            const side = dc.side === 'high' ? 'high side (LO = RF + IF, spectrum inversion corrected)'
+                       : dc.side === 'below' ? 'below side (LO = RF - IF)' : dc.side + ' side';
+            $('wb-mixer').textContent = `LO ${mhz(dc.lo_hz)} · ${side} · IF ${mhz(dc.if_hz)} · LO current ${dc.lo_current}`;
+            const fw = dc.fw || {}, t = dc.telemetry || {};
+            const parts = [];
+            if (t.revision) parts.push(`Testunit ${t.revision}`);
+            if (fw.date) parts.push(`fw${fw.date}${fw.build ? '.' + fw.build : ''}`);
+            if (Number.isFinite(t.vin_v) && Number.isFinite(t.iin_a))
+                parts.push(`${t.vin_v.toFixed(2)} V · ${t.iin_a.toFixed(2)} A · ${(t.vin_v * t.iin_a).toFixed(1)} W`);
+            if (Number.isFinite(t.temp_c)) parts.push(`${t.temp_c.toFixed(1)} °C`);
+            if (Number.isFinite(t.rh_pct)) parts.push(`${t.rh_pct.toFixed(0)} %RH`);
+            if (!t.enabled) parts.push('telemetry not available (firmware too old)');
+            $('wb-board').textContent = parts.join('  |  ');
+            const bad = Object.entries(t.alarms || {}).filter(([, v]) => v !== 'ok').map(([k, v]) => `${k}: ${v}`);
+            if (t.stale) bad.push('telemetry stale');
+            $('wb-alarm').textContent = bad.length ? '⚠ ' + bad.join(', ') : '';
+            $('wb-alarm').style.color = bad.length ? '#dc3545' : '';
+        };
+
         const handleTextMessage = msg => {
             if (msg.startsWith('STATE:')) {
                 try {
@@ -1133,6 +1165,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     applyElementsState(st);
                     applyKerberosState(st);
                     applyModeState(st);
+                    applyWidebandState(st);
                     if (Number.isFinite(st.rf_min_hz) && Number.isFinite(st.rf_max_hz)) {
                         $('freq-input').min = st.rf_min_hz / 1e6;
                         $('freq-input').max = st.rf_max_hz / 1e6;

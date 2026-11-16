@@ -49,9 +49,10 @@ endif
 
 # macOS (Apple clang + Homebrew: eigen, openssl@3, opus, cmake, pkg-config -
 # `make deps-macos`): the Linux build plus the shims of mac/posix_compat.h
-# (force-included) and Homebrew's include / library paths (OpenSSL is
-# keg-only). Everything macOS-specific is under MACOS (plugins/Makefile and
-# liquid.mk too)
+# and mac/fast_complex.h (std::complex * / norm without libc++'s inf / NaN
+# recovery; both force-included) and Homebrew's include / library paths
+# (OpenSSL is keg-only). Everything macOS-specific is under MACOS
+# (plugins/Makefile and liquid.mk too)
 MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)
 ifeq ($(MACOS),1)
 # one deployment target for everything (this macOS version, as CMake picks
@@ -61,7 +62,7 @@ endif
 ifeq ($(MACOS),1)
     BREW_PREFIX := $(or $(shell brew --prefix 2>/dev/null),/usr/local)
     OPENSSL_PREFIX := $(or $(shell brew --prefix openssl@3 2>/dev/null),$(BREW_PREFIX)/opt/openssl@3)
-    CXXFLAGS += -include mac/posix_compat.h
+    CXXFLAGS += -include mac/posix_compat.h -include mac/fast_complex.h
     INCLUDES += -I$(BREW_PREFIX)/include/eigen3 -I$(OPENSSL_PREFIX)/include -I$(BREW_PREFIX)/include
     LDFLAGS = -L$(OPENSSL_PREFIX)/lib -L$(BREW_PREFIX)/lib
     # platform.cpp's keep_system_awake (an IOKit power assertion)
@@ -198,6 +199,7 @@ APP_SRCS = \
 	$(SRCDIR)/main.cpp \
 	$(SRCDIR)/station_info.cpp \
 	$(SRCDIR)/doa_logger.cpp \
+	$(SRCDIR)/wb_board.cpp \
 	$(SRCDIR)/channel_manager.cpp \
 	$(SRCDIR)/control_handler.cpp \
 	$(SRCDIR)/settings_store.cpp \
@@ -219,6 +221,7 @@ APP_SRCS = \
 	$(SRCDIR)/decoder_log.cpp \
 	$(SRCDIR)/rdf_engine.cpp \
 	$(SRCDIR)/rdf_mapper.cpp \
+	$(SRCDIR)/vfo_level.cpp \
 	$(SRCDIR)/talker_doa.cpp \
 	$(SRCDIR)/array_cal.cpp \
 	$(SRCDIR)/voice2text.cpp \
@@ -353,7 +356,18 @@ $(OBJDIR)/win/app_res.o: win/app.rc win/app.manifest | $(OBJDIRS)
 # without AVX2 - the objects of the default x86-64-v3 build would stay in the
 # exe and still crash there (liquid.mk rebuilds liquid-dsp itself;
 # plugins/Makefile has a stamp of its own). It was WIN_MARCH on Windows only
-FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS))
+# "native" names no CPU: the same flags text stands for different instruction
+# sets on a Pi 4 (Cortex-A72) and a Pi 5 (A76: LSE atomics, dot product), so a
+# tree whose objects were built on another kind of CPU (a copied folder, an SD
+# card moved to another Pi) looked up to date and died with "Illegal
+# instruction" (status 132). The stamp therefore also names this machine's
+# CPU(s) - /proc/cpuinfo's "CPU part" (ARM) / "model name" (x86) - whenever
+# the flags say native; no /proc/cpuinfo (macOS) = nothing added
+HOST_CPU :=
+ifneq ($(findstring native,$(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS)),)
+HOST_CPU := $(shell sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ -)
+endif
+FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS)$(if $(HOST_CPU), | cpu $(HOST_CPU)))
 ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
 $(FLAGS_STAMP): flags-changed
 endif

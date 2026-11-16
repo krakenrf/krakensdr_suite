@@ -297,6 +297,10 @@ void discrete_scanner_thread() {
 // close the dongles so they are clean for the next run. The workers only touch
 // device QUEUES, never the librtlsdr handle, so closing here can't race them.
 static void release_hardware() {
+    // Wideband board MCU first: it takes a few ms, saves the last LO as the
+    // power-on default (one Flash write per clean exit, none per retune) and
+    // stops the telemetry poller.
+    if (downconverter.enabled.load()) downconverter_close();
     // An element-count reconfiguration holds settings_mutex from closing the
     // handles until its new USB readers are running: wait for it, or this
     // closed handles a just-started reader was entering rtlsdr_read_async with
@@ -508,6 +512,12 @@ int main(int argc, char* argv[]) {
     static SanitizingBuf san_out(std::cout.rdbuf(), 0), san_err(std::cerr.rdbuf(), 1);
     std::cout.rdbuf(&san_out);
     std::cerr.rdbuf(&san_err);
+
+    // Lock the process's memory (core/utils, Linux only, best-effort like the
+    // threads' SCHED_RR): before the dongles open and the USB reader / drain
+    // threads start, so no page they touch can be swapped out under them.
+    // MCL_FUTURE covers everything allocated after this call.
+    lock_process_memory();
 
     // Load persisted runtime settings (e.g. per-bin EQ toggle, web-UI element
     // count) before any calibration starts, so a remembered "on" builds the

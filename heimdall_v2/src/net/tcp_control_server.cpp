@@ -295,6 +295,7 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                     << "\"lo_hz\":" << downconverter.lo_hz.load() << ","
                     << "\"array\":" << downconverter.array_select.load() << ","
                     << "\"lo_current\":" << downconverter.lo_current.load()
+                    << downconverter_status_json_fields()   // board fw + telemetry
                     << "}";
     }
 
@@ -352,7 +353,10 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
     // recovery (flush + recalibration) is in progress, so the UI/operator can see
     // that coherence was lost and is being restored.
     status_json << ",\"coherence_events\":" << coherence_event_count.load()
-               << ",\"recovering\":" << (recovery_in_progress.load() ? "true" : "false");
+               << ",\"recovering\":" << (recovery_in_progress.load() ? "true" : "false")
+               // channels whose lag calibration finds no correlation peak
+               // (stream skew beyond +-NUM_SAMPLES; config.h LAG_NO_PEAK_*)
+               << ",\"lag_no_peak\":" << lag_no_peak_json();
 
     status_json << "}";
     return status_json.str();

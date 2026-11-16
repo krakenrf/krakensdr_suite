@@ -1,0 +1,131 @@
+[
+{
+ "id": "acars-three-aircraft",
+ "title": "ACARS: three aircraft and a ground station",
+ "description": "2400 bit/s MSK on AM, 131.550 MHz. Downlinks from N123AB (40 deg, carrier +800 Hz), G-ABCD (165 deg, -1200 Hz: a message of two blocks, ETB + ETX, then a link test) and VH-XYZ (290 deg, +300 Hz); the SITA ground station ZRH (230 deg, -400 Hz) sends an acknowledgement and an addressed uplink (no talker: an uplink doesn't name its station) and two squitters (talker GS ZRH). Expect talkers N123AB, G-ABCD, VH-XYZ, GS ZRH at those bearings and the reassembled two-block message.",
+ "rf_hz": 131550000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 16,
+ "vfo": {
+  "bw_khz": 25,
+  "demod": "AM"
+ },
+ "steps": [
+  [
+   "{tools}/acars_gen.py",
+   "N123AB.cf32",
+   "--offset",
+   "800",
+   "--at",
+   "0.5",
+   "down:N123AB:H1:2:M01AXY0123POSITION REPORT /FL350 /ETA 1432",
+   "--at",
+   "7.0",
+   "down:N123AB:5Z:3:M02AXY0123FUEL 0123 WX OK"
+  ],
+  [
+   "{tools}/acars_gen.py",
+   "GABCD.cf32",
+   "--offset",
+   "-1200",
+   "--at",
+   "2.0",
+   "down+:G-ABCD:H1:3:M03AAB0042FIRST BLOCK OF A LONGER MESSAGE / ",
+   "--at",
+   "2.8",
+   "down:G-ABCD:H1:4:M03BAB0042SECOND AND LAST BLOCK",
+   "--at",
+   "11.0",
+   "down:G-ABCD:Q0:5:M04AAB0042"
+  ],
+  [
+   "{tools}/acars_gen.py",
+   "VHXYZ.cf32",
+   "--offset",
+   "300",
+   "--at",
+   "4.5",
+   "down:VH-XYZ:H1:6:M05AQF0001REQUEST WEATHER YSSY",
+   "--at",
+   "13.0",
+   "down:VH-XYZ:H1:7:M06AQF0001ONBLOCKS 0412"
+  ],
+  [
+   "{tools}/acars_gen.py",
+   "GS.cf32",
+   "--offset",
+   "-400",
+   "--at",
+   "1.4",
+   "up:N123AB:_d:A:",
+   "--at",
+   "6.0",
+   "up::SQ:A:02XSZRHLSZH",
+   "--at",
+   "9.5",
+   "up:G-ABCD:SA:B:UPLINK TEXT FOR G-ABCD",
+   "--at",
+   "14.5",
+   "up::SQ:B:02XSZRHLSZH"
+  ]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 20,
+  "seed": 5,
+  "sources": [
+   {
+    "name": "N123AB",
+    "file": "N123AB.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 40
+   },
+   {
+    "name": "G-ABCD",
+    "file": "GABCD.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 165,
+    "gain_db": -3
+   },
+   {
+    "name": "VH-XYZ",
+    "file": "VHXYZ.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 290,
+    "gain_db": 2
+   },
+   {
+    "name": "GS ZRH",
+    "file": "GS.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 230
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "N123AB",
+   "bearing": 40
+  },
+  {
+   "tid": "G-ABCD",
+   "bearing": 165
+  },
+  {
+   "tid": "VH-XYZ",
+   "bearing": 290
+  },
+  {
+   "tid": "GS ZRH",
+   "bearing": 230
+  },
+  {
+   "event": "message of 2 blocks"
+  }
+ ]
+}
+]

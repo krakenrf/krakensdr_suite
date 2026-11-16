@@ -62,15 +62,23 @@ else ifneq ($(filter aarch64 x86_64,$(LIQUID_ARCH)),)
 LIQUID_CFLAGS ?= -march=native
 endif
 LIQUID_PATCH ?= true
-# what the archive was built from: the commit, plus (Windows) the CPU target
-LIQUID_STAMP = $(LIQUID_COMMIT)$(if $(LIQUID_WINDOWS), $(strip $(LIQUID_CFLAGS) $(LIQUID_CMAKE_SIMD)),)
+# what the archive was built from: the commit, plus (Windows) the CPU target,
+# plus (-march=native elsewhere) the CPU native stood for - an archive built
+# on a Pi 5 is an illegal instruction on a Pi 4 (see FLAGS_TEXT in the Makefile)
+LIQUID_HOST_CPU :=
+ifeq ($(LIQUID_WINDOWS),)
+ifneq ($(findstring native,$(LIQUID_CFLAGS)),)
+LIQUID_HOST_CPU := $(shell sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ -)
+endif
+endif
+LIQUID_STAMP = $(strip $(LIQUID_COMMIT)$(if $(LIQUID_WINDOWS), $(strip $(LIQUID_CFLAGS) $(LIQUID_CMAKE_SIMD)),)$(if $(LIQUID_HOST_CPU), cpu $(LIQUID_HOST_CPU)))
 
 # A library built from another commit (an older pin) is rebuilt: the build
 # (archive + header) removed here, before any rule runs, so everything that
 # includes the header is compiled again too
 ifneq ($(wildcard $(LIQUID_A)),)
 ifneq ($(shell cat $(LIQUID_BUILD)/commit 2>/dev/null),$(LIQUID_STAMP))
-$(info liquid-dsp was built from another commit - rebuilding $(LIQUID_COMMIT))
+$(info liquid-dsp was built from another commit or for another CPU - rebuilding $(LIQUID_COMMIT))
 LIQUID_SWITCH := $(shell rm -rf $(LIQUID_BUILD))
 endif
 endif

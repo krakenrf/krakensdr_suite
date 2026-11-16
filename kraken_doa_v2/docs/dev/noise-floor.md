@@ -229,3 +229,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   in 5 % of the fast drag's frames (p95, 3 runs; 300 ms wait 1.3-59 kHz);
   with the averages' own frequencies 1.2-1.3 kHz, the rest as before (block
   16.9-18.8 dB over the noise at worst, spread p95 <= 1.9 dB)
+- `nfloor::bin_noise_db(ch, fft size)` (📏 *Range from signal strength*,
+  `FFTProcessor::band_power`): the mean noise power of one RAW bin - the
+  frame's percentile r (`noise_r`, kept by on_frame) - 10 log10(fft size) +
+  9.773 dB (a noise bin's power is exponential: its mean over its 10th
+  percentile). Held: the remembered floor's r. Wideband scan mode: the
+  frame's own r less what the tuner's flattened percentile stands above the
+  floor it is measured from (the blend towards the common floor) - set in
+  both branches of on_frame (the wideband one returned before it when the
+  two were merged, 2026-11-15)

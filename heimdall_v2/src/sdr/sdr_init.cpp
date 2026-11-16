@@ -412,7 +412,31 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
         check(rtlsdr_set_bias_tee(sdr->dev, 1), "enabling the noise source", false);
 #endif
 
-#if USB_RESET_ON_INIT
+#ifdef RTLSDR_HAS_PREALLOC_ASYNC
+    // Ask the fork for usbfs zero-copy transfer buffers (Linux; its default
+    // since 3ad1746, only for a handle that makes this call) and map them
+    // now. Mapped in rtlsdr_read_async instead, it delays each reader's first
+    // transfer and the channels start skewed by thousands of samples, against
+    // a lag range of +-NUM_SAMPLES. Returns 1 without zero-copy: the buffers
+    // then stay per stream, as before. The RTL callback must keep copying
+    // each buffer out in one go: on a Pi the mapped memory is slow to read
+    // byte by byte (docs/dev/librtlsdr-fork.md, *Zero-copy USB buffers*).
+    // (0 = zero-copy buffers mapped and kept, 1 = none: user-space buffers)
+    const int prealloc_rc = rtlsdr_prealloc_async(sdr->dev, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2);
+    sdr->zero_copy.store(prealloc_rc == 0, std::memory_order_relaxed);
+    if (prealloc_rc < 0)
+        std::cerr << "Channel " << sdr->index << ": could not map the USB transfer buffers ahead of the stream"
+                  << std::endl;
+#else
+    sdr->zero_copy.store(false, std::memory_order_relaxed);
+#endif
+
+#if HELD_STREAM_START
+    // Empty the FIFO and keep it so until start_pipeline_threads() releases
+    // every dongle's at once (see sdr_init.hpp). Not rtlsdr_reset_buffer():
+    // its reset value STALLs transfers queued meanwhile.
+    check(rtlsdr_set_fifo_hold(sdr->dev, 1), "holding the USB buffer", true);
+#elif USB_RESET_ON_INIT
     check(rtlsdr_reset_buffer(sdr->dev), "resetting the USB buffer", true);
 #endif
 

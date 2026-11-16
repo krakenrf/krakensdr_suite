@@ -9,6 +9,7 @@
 #include "scanner_manager.hpp"
 #include "station_info.hpp"
 #include "signal_processing/music_processor.hpp"
+#include "signal_processing/fft_processor.hpp"
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 
@@ -46,6 +47,13 @@ bool doa_is_calibrating() {
     return scanner_manager.isNoiseRecentlyActive();
 }
 
+float vfo_power_dbfs(int tuner_channel, float offset_hz, int bandwidth_hz) {
+    const int ch = multi_tuner_mode() ? tuner_channel : active_channel.load(std::memory_order_relaxed);
+    return std::clamp(FFTProcessor::get_peak_magnitude_in_range(ch, offset_hz,
+                                                                static_cast<float>(bandwidth_hz)),
+                      -100.0f, 0.0f);
+}
+
 std::vector<DoaRecord> capture_doa_records() {
     std::vector<DoaRecord> out;
 
@@ -80,7 +88,14 @@ std::vector<DoaRecord> capture_doa_records() {
         float eigen_ratio = dec->music_processor->getEigenvalueRatio();
         float power_db = 10.0f * std::log10(std::max(eigen_ratio, 0.001f));
 
-        float center_freq = ChannelManager::get_frequency(active_channel.load());
+        // Field 4 is the passband's peak in dBFS (V1's value; the Android app
+        // maps it to its tone and power trend), not the eigenvalue ratio
+        const int active_ch = active_channel.load();
+        const float legacy_power_db = vfo_power_dbfs(
+            dec->tuner_channel.load(std::memory_order_relaxed), dec->frequency_offset_hz,
+            dec->bandwidth_hz.load(std::memory_order_relaxed));
+
+        float center_freq = ChannelManager::get_frequency(active_ch);
         float freq_hz = center_freq + dec->frequency_offset_hz;
 
         const char* ant_type;
@@ -126,6 +141,7 @@ std::vector<DoaRecord> capture_doa_records() {
         rec.app_bearing = app_bearing;
         rec.confidence = confidence;
         rec.power_db = power_db;
+        rec.legacy_power_db = legacy_power_db;
         rec.freq_hz = static_cast<uint64_t>(freq_hz);
         rec.antenna = ant_type;
         rec.station_id_csv = station_id_csv;
@@ -158,12 +174,16 @@ std::string format_doa_csv_line(const DoaRecord& rec) {
     // the SQLite log; only this text format rounds.
     int legacy_bearing = static_cast<int>(std::lround(rec.app_bearing)) % 360;
 
+    // Legacy records identify the source MUSIC frame, not the polling request.
+    const int64_t legacy_timestamp =
+        rec.source_stamp_ms > 0 ? rec.source_stamp_ms : rec.timestamp_ms;
+
     std::ostringstream line;
     line << std::fixed;
-    line << rec.timestamp_ms << ", "
+    line << legacy_timestamp << ", "
          << legacy_bearing << ", "
          << std::setprecision(2) << rec.confidence << ", "
-         << std::setprecision(1) << rec.power_db << ", "
+         << std::setprecision(1) << rec.legacy_power_db << ", "
          << rec.freq_hz << ", "
          << rec.antenna << ", 0, " << rec.station_id_csv << ", "
          << gps_ss.str() << ", R, R, R, R";

@@ -34,7 +34,8 @@ plugins/
 │                         (P25/DMR 4FSK sync), dig_vocoder (IMBE, mbelib AMBE,
 │                         TETRA ACELP), dig_common (front ends, the Bridge below),
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
-│                         beam - radar, ssr1030)
+│                         beam - radar, ssr1030), acars_msg.hpp (ACARS block fields -
+│                         acars, vdl2)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
 ├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
@@ -49,6 +50,13 @@ plugins/
 ├── ssr1030/              1030 MHz interrogations (SSR / Mode S / TCAS): Mode S DPSK at 0.6
 │                         samples per chip by a sequence estimator against the receiver's
 │                         measured response; interrogators told apart by train / level / code
+├── acars/                VHF ACARS (ARINC 618): 2400 bit/s MSK on AM, NRZI detected coherently against a
+│                         2400 Hz reference, odd parity + CRC-16 BCS with soft-decision repair; a packet
+│                         talker per aircraft (registration), ground stations from their squitters
+├── vdl2/                 VDL Mode 2 (136.x MHz): D8PSK bursts, unique word correlator, coherent + differential
+│                         demodulators side by side, descrambler, header FEC, RS(255,249) errors + erasures
+│                         (rs.cpp), HDLC / AVLC, ACARS over AVLC, ground station XID (map); a packet talker
+│                         per burst = its sender's address (aircraft ICAO hex, ground station)
 ├── uat/                  978 MHz UAT (US ADS-B + ground uplink): CPFSK at 2.3 samples per bit,
 │                         Reed-Solomon GF(256), FIS-B headers / DLAC text; TIS-B = the ground station's
 ├── flarm/                FLARM (ID + bearing only: encrypted payload) / OGN trackers (LDPC soft
@@ -793,7 +801,10 @@ sample counts and times are `int64_t`, printed with `%lld` / PRId64.
 
 **macOS** (Apple clang + Homebrew, see docs/dev/macos.md): the same
 commands; the Makefile force-includes `kraken_doa_v2/mac/posix_compat.h`
-(pipe2, fdatasync, `st_mtim`, std::bit_cast for older libc++ ...). Apple
+(pipe2, fdatasync, `st_mtim`, std::bit_cast for older libc++ ...) and
+`kraken_doa_v2/mac/fast_complex.h`, which makes `std::complex` `*`, `*=`
+and `std::norm` as fast as GCC's `-fcx-fortran-rules` on Linux - write
+complex arithmetic normally, no helper needed. Apple
 clang 14 (macOS 12) can't capture a structured binding in a lambda - name it
 in the capture (`[&key = k]`).
 

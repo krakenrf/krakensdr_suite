@@ -24,7 +24,9 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
 - At most `-j3` on a Pi. Stale header dependencies after big header
   changes: `make distclean && make`.
 - Flags `-O3 -ffast-math -fno-finite-math-only -march=native`; `obj/.flags`
-  rebuilds everything when they change.
+  rebuilds everything when they change. On macOS `mac/fast_complex.h` is
+  force-included into kraken_doa and the plugins (`std::complex` `*` / `*=`
+  / `norm` without libc++'s inf / NaN recovery; `../docs/dev/macos.md`).
 - `kraken_doa.html` (and `array_calculator.html`) are read per request:
   edit, then hard-reload the browser. New HTTP routes need a rebuild.
 
@@ -47,7 +49,7 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
   `saved_freqs`, `sf_scanner` / `sf_scan_plan`, `continuous_scanner`,
   `scanner_manager`, `recorder*` / `sigmf` / `playback`, `voice2text`,
   `decoder_log`, `incidents` / `geo_*`, `rdf_engine` / `rdf_mapper`,
-  `talker_doa`, `array_cal`, `station_info`, `ai_*`.
+  `talker_doa`, `vfo_level`, `array_cal`, `station_info`, `ai_*`.
 - `plugins/<id>/` decoders, `plugins/lib/` (libkrakendig), `plugins/sdk/`
   (plugin API `kraken_plugin.hpp` + `plugin_host.cpp`); the plugin guide is
   `plugins/SDK.md`.
@@ -56,7 +58,7 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
   THE MAP", "👁 VIEWSHED", ...), which the topic files cite.
 - `tools/`: offline benches and validators (`decim_bench.cpp`,
   `digi_test.cpp`, `replay_validate.mjs`, `pathloss_validate.mjs`,
-  `rdf_sim.cpp`, `fast_log_test.cpp`).
+  `range_validate.mjs`, `rdf_sim.cpp`, `fast_log_test.cpp`).
 
 ## Threads and the command path
 
@@ -191,7 +193,7 @@ the job's scratch directory (not committed). The established setup:
 | Decoder plugins (process model, registry); digital voice (codecs) | `decoder-plugins.md`, `digital-voice.md` |
 | Digital squelch; fixed-frequency decoders | `digital-squelch.md`, `fixed-frequency-decoders.md` |
 | DoA per talker (ID separation, packets, covariances) | `doa-per-talker.md` |
-| Plugins: ADS-B, AIS, ISM, LoRa, Pagers, RDS, Radiosonde, FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME, ILS / VOR, Analog FM IDs, 406 MHz, Wildlife | `plugin-adsb.md`, `plugin-ais.md`, `plugin-ism.md`, `plugin-lora.md`, `plugin-pagers.md`, `plugin-rds.md`, `plugin-radiosonde.md`, `plugin-flarm.md`, `plugin-dtv.md`, `plugin-cells.md`, `plugin-radar.md`, `plugin-ssr1030.md`, `plugin-uat.md`, `plugin-dme.md`, `plugin-ils.md`, `plugin-analog-id.md`, `plugin-beacon406.md`, `plugin-wildlife.md` |
+| Plugins: ACARS, VDL Mode 2, ADS-B, AIS, ISM, LoRa, Pagers, RDS, Radiosonde, FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME, ILS / VOR, Analog FM IDs, 406 MHz, Wildlife | `plugin-acars.md`, `plugin-vdl2.md`, `plugin-adsb.md`, `plugin-ais.md`, `plugin-ism.md`, `plugin-lora.md`, `plugin-pagers.md`, `plugin-rds.md`, `plugin-radiosonde.md`, `plugin-flarm.md`, `plugin-dtv.md`, `plugin-cells.md`, `plugin-radar.md`, `plugin-ssr1030.md`, `plugin-uat.md`, `plugin-dme.md`, `plugin-ils.md`, `plugin-analog-id.md`, `plugin-beacon406.md`, `plugin-wildlife.md` |
 | Map pane and decoder map points | `map.md` |
 | Station on the map; map search | `station-on-map.md`, `map-search.md` |
 | Saved frequencies and map markers | `saved-frequencies.md` |
@@ -200,6 +202,7 @@ the job's scratch directory (not committed). The established setup:
 | Viewshed; path loss (P.1812, ITM, P.2108, coverage) | `viewshed.md`, `path-loss.md` |
 | Incident map (pager addresses) | `incident-map.md` |
 | Mobile direction finding; log replay | `mobile-df.md`, `log-replay.md` |
+| Range from signal strength (level -> dBm, calibration, the sweep, the posterior); a VFO's level on mouseover | `range.md` |
 | Array calibration from ADS-B (experimental) | `array-calibration.md` |
 | Debug playback | `debug-playback.md` |
 | IQ & audio recorder, SigMF, playback of recordings | `recorder.md` |

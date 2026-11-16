@@ -16,6 +16,9 @@ struct SDRDevice {
     static constexpr size_t MAX_BUFFER_SIZE = BUFFER_SIZE;
     std::thread async_thread;
     std::atomic<bool> running{true}, init_success{false};
+    // This handle streams into usbfs zero-copy buffers (rtlsdr_prealloc_async
+    // mapped them in init_rtlsdr_device); the dashboard's "zerocopy"
+    std::atomic<bool> zero_copy{false};
     // Set by the USB reader thread once it is past rtlsdr_read_async (or never
     // entered it). stop_pipeline_threads() re-sends the cancel until it is set.
     std::atomic<bool> async_exited{true};

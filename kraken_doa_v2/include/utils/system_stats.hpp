@@ -3,6 +3,7 @@
 #include <atomic>
 #include <string>
 #include <array>
+#include <string>
 #include <vector>
 #include <mutex>
 #include <chrono>
@@ -12,6 +13,7 @@ struct HardwareStats {
     float cpu_usage_pct = 0.0f;  // CPU usage percentage (0-100)
     float ram_used_mb = 0.0f;    // RAM used in MB
     float ram_total_mb = 0.0f;   // Total RAM in MB
+    std::string model;           // board model (Linux device tree, e.g. "Raspberry Pi 5 Model B Rev 1.1"), "" if unknown
 };
 
 // Get current hardware stats (CPU temp, CPU usage, RAM)

@@ -247,7 +247,12 @@ plots.
 Newline-delimited JSON commands; the server also **broadcasts a status JSON at 2 Hz**
 with `settings` (center_freq, gain, sample_rate, rtl_tcp_channel), `num_channels`,
 `operating_mode` (`coherent`/`wideband`), `wideband_enabled`, `cooldown_active` /
-`cooldown_remaining_ms`, and the coherence fields `coherence_events` + `recovering`.
+`cooldown_remaining_ms`, the coherence fields `coherence_events` + `recovering`, and
+`lag_no_peak`: the channels whose lag calibration has found no correlation peak for
+60 s (normally `[]`; the dongles' streams most likely started more than +-16384
+samples apart - run a Full Recalibration / `reset_lag_compensation`, and restart
+heimdall if the channel shows up again; heimdall also logs one warning line per
+channel to stderr).
 
 ```bash
 echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
@@ -326,6 +331,13 @@ reboots regardless of USB enumeration order.
 **Realtime scheduling (optional):** USB readers and the drain use `SCHED_RR` if the
 process is granted it; otherwise they log once and run at normal priority. To enable,
 add `<user> - rtprio 30` to `/etc/security/limits.conf` or grant `CAP_SYS_NICE`.
+
+**Memory locking (optional, Linux):** at startup heimdall locks its memory in RAM
+(`mlockall` with `MCL_ONFAULT`: only pages it touches), so the realtime threads don't
+stall on a swapped-out page. It does so only when the locked-memory limit is unlimited;
+otherwise it logs once and runs as before. To enable, add `<user> - memlock unlimited`
+to `/etc/security/limits.conf` (`LimitMEMLOCK=infinity` in a systemd unit). install.sh
+and `install-pi-service.sh` set both limits.
 
 ---
 

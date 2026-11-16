@@ -31,6 +31,7 @@ every session needs and points here.
 | `overview.md` | Overview: build, architecture, threads, components |
 | `patch-3d-topology.md` | Patch / 3D topology |
 | `path-loss.md` | Path loss (the viewshed's Signal mode) |
+| `plugin-acars.md` | ACARS (VHF) plugin |
 | `plugin-adsb.md` | ADS-B plugin |
 | `plugin-ais.md` | AIS plugin |
 | `plugin-analog-id.md` | Analog FM IDs plugin |
@@ -48,7 +49,9 @@ every session needs and points here.
 | `plugin-rds.md` | RDS / RBDS + SCA plugin |
 | `plugin-ssr1030.md` | 1030 MHz interrogations plugin |
 | `plugin-uat.md` | UAT plugin |
+| `plugin-vdl2.md` | VDL Mode 2 plugin |
 | `plugin-wildlife.md` | Wildlife collars plugin |
+| `range.md` | Range from signal strength, a VFO's level on mouseover |
 | `recorder.md` | IQ & audio recorder and playback of recordings |
 | `reference.md` | Hot paths, development tasks, key files, common issues, testing, dependencies |
 | `saved-frequencies.md` | Saved frequencies and map markers |

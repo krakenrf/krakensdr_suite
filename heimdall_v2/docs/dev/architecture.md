@@ -78,7 +78,7 @@ Provides fundamental types and utilities shared across all modules.
 **Key Files:**
 - `config.hpp`: Wraps config.h constants, includes NUM_DEVICES, ports
 - `types.hpp`: Type aliases (Complex, ComplexBuffer), enums (LagCompensatorState, PhaseCompensatorState), structs (CorrelationResult, PhaseCompensationData, ChannelCompensation)
-- `utils.{hpp,cpp}`: Endian conversion, clamping, IQ LUT, `set_thread_realtime()` (best-effort SCHED_RR)
+- `utils.{hpp,cpp}`: Endian conversion, clamping, IQ LUT, `set_thread_realtime()` (best-effort SCHED_RR), `lock_process_memory()` (best-effort `mlockall`, Linux)
 - `buffer_pool.hpp`: Lock-free buffer pool (`acquire`/`try_acquire`/`release`) used for the alloc-free callback and L2/L2-raw recycling
 - `logging.hpp`: LOG_I(), LOG_W(), LOG_E() macros
 
@@ -166,6 +166,7 @@ loss under high CPU load.
 2. **Sample Drain** (`sample_processor` in sdr_pipeline.cpp):
    - Pulls one block from every device's L1 in lockstep into an aligned raw set, then hands it to the `l2_raw_buffer` staging queue. **No conversion/compensation/TCP here** — keeps the drain fast. Runs at realtime priority.
    - On staging overflow it drops the oldest **whole aligned set** (coherence-safe). The drain also OWNS the L1 flush (recovery / retune): `clear_l1_buffer()` posts a request that the drain serves between sets, dropping any partial set, and `flush_l1_now()` waits for a quiet point (every active device's `last_arrival_ns` - stamped at the END of the callback, after the enqueue - within half a packet period of the others and of now) so each device loses the same round of packets. A stamp taken before the enqueue let one device keep a packet the others lost: a whole-packet slip the lag servo then had to slew off. The quiet point also requires each device's last inter-arrival gap (`prev_arrival_ns` -> `last_arrival_ns`) to be 0.5-1.5 periods: a reader thread catching up after a stall delivers an OLD round late and then in a burst, which the last-arrival times alone can't tell from the current round. No quiet point within 4 periods: flush anyway, with a (10 s throttled) warning. A persistently stalled device trips `STUCK_DEVICE_MAX_TIMEOUTS` → `signal_coherence_lost()`.
+   - **Stream start**: on Linux (fork with `RTLSDR_HAS_FIFO_HOLD`) every dongle's USB FIFO is held empty from `init_rtlsdr_device()` until `start_pipeline_threads()` releases all of them together (`rtlsdr_release_fifos`, once every reader has queued its transfers; elsewhere the reader threads wait at a gate and call `rtlsdr_read_async` together); and every pipeline start, before its first set, the drain waits for each stream's first two packets and flushes once at a quiet point (`startup_flush`), so the streams' buffers pair by arrival time instead of by count. Why and the measurements: calibration.md, *Stream start*.
 
 3. **Conversion Worker** (`conversion_worker` in sdr_pipeline.cpp):
    - Consumes `l2_raw_buffer` **in order**; converts uint8 IQ → complex with phase/lag/EQ compensation (`samples_to_complex_with_compensation`, per channel, written in place into a recycled `l2_buffer_pool` set). Everything applied set-wide (phase vector × forward comp, noise-source state, per-bin EQ, spectral inversion) is read ONCE per set (`SetConversionState`), so a set straddling a change is converted the same way on every channel.
@@ -204,6 +205,7 @@ loss under high CPU load.
 - Atomic flags: `global_running`, `current_frequency`, `current_gain`, `bias_tee_enabled`, `rtl_tcp_channel`, plus coherence flags `coherence_lost`, `recovery_in_progress`, `coherence_event_count`
 - **Queue size counter rule (important):** `l1_buffer_size`, `l2_buffer_size`, `l2_raw_buffer_size` are maintained ONLY by matched `fetch_add` (on enqueue) / `fetch_sub` (on every dequeue). Never `store(0)` them — a store races concurrent producers/consumers and can leave a phantom item whose later `fetch_sub` underflows the `size_t` to `SIZE_MAX` (which permanently wedges the L1-full / staging-depth checks).
 - **Thread scheduling:** `set_thread_realtime()` (core/utils) raises the USB readers and sample drain to SCHED_RR (round-robin, so equal-priority readers can't lock each other out). Best-effort: with no `CAP_SYS_NICE`/`rtprio` privilege it logs once and runs at normal priority.
+- **Memory locking:** `lock_process_memory()` (core/utils, called once from `main()` before the dongles open) locks the process's memory with `mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT)` so those threads don't stall on a swapped-out page. Linux only, and only with an unlimited `RLIMIT_MEMLOCK` (see Configuration); otherwise it logs once and heimdall runs as before.
 
 ### Pipeline Decoupling (L1 → L2-raw → L2)
 
@@ -258,6 +260,7 @@ The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ c
 - **Lag servo ringing / slow convergence**: gain auto-derates with the measured update period (CPU load lengthens feedback delay); tune `ChannelCompensation::servo_gain` / `servo_max_counts` in types.hpp
 - **Frequent coherence recoveries / `!! COHERENCE LOST` logs**: the ingest is dropping under load. Watch `coherence_events` / `recovering` in the control-port status. Causes: CPU overload (the conversion worker or correlation can't keep up), USB/power issues, or a flaky dongle. Grant realtime scheduling (see Configuration), reduce active channels, or check USB. A recovery that wedges is aborted after 120 s (noise source switched off).
 - **Realtime priority not taking effect**: `set_thread_realtime` logs once if it lacks privilege; add `rtprio` to limits.conf or grant `CAP_SYS_NICE`. The app runs correctly at normal priority either way.
+- **"Memory locking unavailable" at startup**: the locked-memory limit isn't unlimited. Add `<user> - memlock unlimited` to limits.conf (new login needed), `LimitMEMLOCK=infinity` to a systemd unit, or `ulimits: memlock: -1` in Docker. heimdall runs correctly without it.
 
 ## Dependencies
 
@@ -278,7 +281,7 @@ OUT retry) apply on every platform and to the installed `rtl_*`
 tools too (only fewer USB transfers for them): docs/dev/librtlsdr-fork.md,
 *Drag retunes* above.
 `init_rtlsdr_device()` fails a channel whose sample rate, center frequency or
-USB buffer reset can't be set (a silently mistuned dongle breaks coherence);
+USB buffer hold / reset can't be set (a silently mistuned dongle breaks coherence);
 other setup calls only warn.
 
 **System Libraries:**

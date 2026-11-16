@@ -93,7 +93,25 @@ RTLSDR_DIR  = ../librtlsdr
 RTLSDR_REPO = https://github.com/krakenrf/librtlsdr
 RTLSDR_LIB  = $(RTLSDR_DIR)/build/src/librtlsdr.a
 LIBUSB_LIBS := $(shell pkg-config --libs libusb-1.0 2>/dev/null || echo -lusb-1.0)
-RTLSDR_CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON -DINSTALL_UDEV_RULES=ON
+# -ULIBUSB_FOUND (every platform): the fork's FindLibUSB wraps everything,
+# its add_definitions(-DHAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED=1
+# -DHAVE_LIBUSB_ERROR_NAME=1) too, in if(NOT LIBUSB_FOUND), and
+# LIBUSB_FOUND is cached - so the cmake run below on an existing build dir
+# (a pull, a changed librtlsdr.c) compiled the library without them. Without
+# the first, librtlsdr.c maps libusb_handle_events_timeout_completed() to
+# libusb_handle_events_timeout(): a cancel then waits out read_async's 1 s
+# event timeout (heimdall's stop and every stream restart took ~1 s longer,
+# measured on a Pi 5).
+RTLSDR_CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON -DINSTALL_UDEV_RULES=ON \
+    -ULIBUSB_FOUND
+# a build dir already compiled without the defines (configured again before
+# the line above) is configured again once: CMake's cache says libusb has the
+# call, the library's compile flags don't define it
+RTLSDR_FLAGS_MAKE = $(RTLSDR_DIR)/build/src/CMakeFiles/rtlsdr_static.dir/flags.make
+ifneq ($(shell grep -qs '^HAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED:INTERNAL=1' $(RTLSDR_DIR)/build/CMakeCache.txt && \
+    test -f $(RTLSDR_FLAGS_MAKE) && ! grep -qs 'DHAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED' $(RTLSDR_FLAGS_MAKE) && echo yes),)
+RTLSDR_RECONFIGURE = rtlsdr-reconfigure
+endif
 # heimdall requires the fork at krakenrf/librtlsdr 578b43d or later, on every
 # platform: the drag calls rtlsdr_set_center_freq_fast / rtlsdr_finish_tune
 # (RTLSDR_TUNE_KEEP_AUTOTUNE; an older fork builds heimdall's full retune
@@ -155,7 +173,8 @@ RTLSDR_CMAKE_FLAGS = -G "MSYS Makefiles" -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTO
 # path, which -static doesn't change - the tools needed MSYS2's
 # libusb-1.0.dll. -ULIBUSB_FOUND: with LIBUSB_FOUND cached FindLibUSB skips
 # everything, its -DHAVE_LIBUSB_* defines too, so a reconfigure of an existing
-# build dir compiled the library without them (unlike a fresh one)
+# build dir compiled the library without them (unlike a fresh one); it is
+# also what makes FindLibUSB take the path below
 RTLSDR_CMAKE_FLAGS += -ULIBUSB_FOUND \
     -DLIBUSB_LIBRARIES:FILEPATH=$(shell pkg-config --variable=libdir libusb-1.0)/libusb-1.0.a
 # a build dir configured with the import library (before the line above) is
@@ -192,10 +211,11 @@ endif
 # Add SSL if available (optional for uWebSockets)
 LDFLAGS += -lssl -lcrypto
 
-# macOS: Apple clang has no -fcx-fortran-rules (GCC only); OpenSSL from
-# Homebrew is keg-only (not in the default search paths)
+# macOS: Apple clang has no -fcx-fortran-rules (GCC only) - mac/fast_complex.h
+# takes libc++'s inf / NaN recovery out of std::complex * and norm instead;
+# OpenSSL from Homebrew is keg-only (not in the default search paths)
 ifeq ($(MACOS),1)
-    CFLAGS := $(filter-out -fcx-fortran-rules,$(CFLAGS)) -include mac/posix_compat.h
+    CFLAGS := $(filter-out -fcx-fortran-rules,$(CFLAGS)) -include mac/posix_compat.h -include mac/fast_complex.h
     OPENSSL_PREFIX := $(or $(shell brew --prefix openssl@3 2>/dev/null),/usr/local/opt/openssl@3)
     CFLAGS += -I$(OPENSSL_PREFIX)/include
     LDFLAGS += -L$(OPENSSL_PREFIX)/lib -framework IOKit -framework CoreFoundation
@@ -333,7 +353,18 @@ $(BUILD_DIR)/win/app_res.o: win/app.rc win/app.manifest | $(BUILD_DIR)
 # WIN_MARCH=-march=x86-64-v2` for a CPU without AVX2 (the objects of the
 # default x86-64-v3 build would otherwise stay in the exe and still crash
 # there), or new optimisation flags reaching an existing build
-FLAGS_TEXT = $(strip $(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS))
+# "native" names no CPU: the same flags text stands for different instruction
+# sets on a Pi 4 (Cortex-A72) and a Pi 5 (A76: LSE atomics, dot product), so a
+# tree whose objects were built on another kind of CPU (a copied folder, an SD
+# card moved to another Pi) looked up to date and died with "Illegal
+# instruction" (status 132). The stamp therefore also names this machine's
+# CPU(s) - /proc/cpuinfo's "CPU part" (ARM) / "model name" (x86) - whenever
+# the flags say native; no /proc/cpuinfo (macOS) = nothing added
+HOST_CPU :=
+ifneq ($(findstring native,$(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS)),)
+HOST_CPU := $(shell sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ -)
+endif
+FLAGS_TEXT = $(strip $(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS)$(if $(HOST_CPU), | cpu $(HOST_CPU)))
 ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
 $(FLAGS_STAMP): flags-changed
 endif
@@ -343,10 +374,10 @@ $(FLAGS_STAMP):
 
 .PHONY: flags-changed
 flags-changed:
-ifeq ($(WINDOWS),1)
+# forcing prerequisite of the fork's library: configure its build dir again
+# (every platform: the -DHAVE_LIBUSB_* check above; Windows: the import library)
 .PHONY: rtlsdr-reconfigure
 rtlsdr-reconfigure:
-endif
 # forcing prerequisites of the fork's library (every platform, see RTLSDR_FIX_MARK)
 .PHONY: rtlsdr-update rtlsdr-check
 rtlsdr-update rtlsdr-check:

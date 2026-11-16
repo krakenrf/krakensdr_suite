@@ -55,10 +55,15 @@ services:
       - 'c 189:* rmw'
     # SCHED_RR 30 for the USB reader / sample-drain threads (RT_PRIO_* in
     # heimdall_v2/config.h) - the container equivalent of the boot service's
-    # LimitRTPRIO=30
+    # LimitRTPRIO=30. memlock unlimited lets heimdall lock its memory in RAM
+    # (mlockall; it locks only with an unlimited limit) - the boot service's
+    # LimitMEMLOCK=infinity
     ulimits:
       core: 0
       rtprio: 30
+      memlock:
+        soft: -1
+        hard: -1
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "krakensdr-entrypoint", "health-heimdall"]

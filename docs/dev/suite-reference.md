@@ -685,7 +685,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, acars, vdl2, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -910,6 +910,66 @@ leaves it out) with the models in `docker-data/whisper_models/`
   with a tag whose ✕ removes it
 - Pi 5: base.en ~280 MB RAM, ~2-3x faster than real time on 2-3 cores
 
+**📏 Range from signal strength (🗺 Map, coherent mode; the user's request
+2026-10-20)** (details: `kraken_doa_v2/docs/dev/range.md`): "Range" in the 📡 DF panel's header -> a panel (top left) + a
+heat map of where the transmitter of the DF panel's selected lobe (a VFO's,
+or one radio's) probably is, from its signal strength over the terrain
+- kraken_doa: each VFO's received level (`lvl`: dbfs, noise, total, gain,
+  age, n) in `{"rdf"}` (vfos / talkers) and system_status
+  `decimator_squelch[]` - `src/vfo_level.cpp` (every VFO, EVERY mode, its
+  own tuner + gain) samples `FFTProcessor::band_power` (the VFO band in the
+  tuner's latest RAW FFT frame, Parseval, the Hamming window's 0.3974 taken
+  out, the band's noise - `nfloor::bin_noise_db`, the frame's 10th
+  percentile + 9.77 dB - taken out; the tuner-centre bins included) every
+  100 ms while it is above the noise - 2x it AND the noise's own ~1e-5
+  quantile for the band's bins (`BandPower::thresh`: a 1 kHz VFO needs
+  ~+10 dB SNR for a level on every sample; "sig > noise" alone gave silent
+  narrow VFOs a level) - and the squelch open, averaged in power; a talker
+  gets the VFO's moments that lie inside its own transmission by stream
+  position (`TalkerDoa::talker_at`, as its MUSIC frames - not "the one
+  active now", which mixed a radio keying up right after another into its
+  level)
+- Mouseover a VFO's bar (spectrum, waterfall, independent panes; every
+  mode): its dBFS, SNR in its band and dBm (the range panel's calibration),
+  gain, calibrated or not (`vfoLvlHover`, `.vfo-lvl-tip`)
+- page (`kraken_doa.html` "📏 RANGE", settings `rgState`, localStorage
+  `kraken_rg`): dBm = dBFS - gain + C (`rgCal`: a NOMINAL model from
+  published R820T / R820T2 level measurements - by the gain setting, -14.5
+  at 0 dB, ~-19 at 12-37 dB, -16 at 49.6, + the gain's roll-off above ~1
+  GHz; +- 3 dB, more at the band's ends; checked against the 14 source
+  points in tools/range_validate.mjs - plus a correction from a calibration;
+  "Known level…", "Known transmitter…" = right-click its place, its path
+  loss to the station by the model); the user's EIRP guess (power +
+  antenna - cable, or EIRP; presets) + our antenna -> the loss the signal
+  took; the STATION's own sweep (the viewshed worker's signal sweep - P.1812
+  / ITM / free space + P.2108 - from the station, a transmitter at the TX
+  antenna height in every cell; an instance of its own) -> per cell area x
+  the lobe's factor (as one mobile DF record, NOT tempered) x the level's
+  pdf around its median (the slope of the 📶 path loss's reliability
+  tables: sigma = location variability, model, EIRP, calibration in
+  squares, with the fading - Rician K per cell) in a worker of its own
+  (`rgPostMain`) -> coloured by the highest-density regions (50 / 90 / 99
+  %), the distance's quantiles, the most likely spot (the mode inside the
+  most likely 1 %, 3 x 3 smoothed - on the deepest red by construction; it
+  was a block's probability centre until 2026-10-22 and could fall outside
+  the core). EIRP / power entered in watts. The sweep's origin follows a
+  GPS station with hysteresis (max(30 m, 0.5 % of the radius), at most
+  every 30 s, a running sweep never cancelled for it - a static one exactly
+  and at once); an estimate only from a FRESH level (< 2.75 s old, else the
+  last one held); another DF source selected or Clear drops the estimate
+  (and the post in flight); sweeps / posts only while the map shows; the
+  fading tables are the path loss's own helpers (`plRelSet(sigma,
+  rgState)`); on the downconverter variant the nominal's frequency term is
+  the IF's + 6 dB more sigma (conversion loss unknown) - all from the
+  review of 2026-11-12. Separate from the viewshed's signal mode (the
+  station stays out of that - the user's call 2026-10-12)
+- Tests: `kraken_doa_v2/tools/range_validate.mjs` (node, offline; incl. a
+  Monte Carlo calibration over P.1812: the true place in the 50 / 90 %
+  regions 50 / 91 % of the time; the station's sweep = links from the
+  transmitter's cells, 0.03 dB median; the nominal calibration vs 14
+  published R820T points: rms 1.8 dB); band_power through the real FFT path
+  (scratch: tones, NBFM, multitone, SNR -2 dB - within 0.3 dB)
+
 **📡 Mobile DF on the map (coherent mode)** (details: `kraken_doa_v2/CLAUDE.md`
 *Mobile direction finding*): each VFO's live DoA lobe (north frame, from
 the station heading) + bearing on the 🗺 Map, and while driving a heat map
@@ -944,7 +1004,7 @@ spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI, ACARS and VDL Mode 2 aircraft / ground stations)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested

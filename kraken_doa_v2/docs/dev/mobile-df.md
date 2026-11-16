@@ -140,3 +140,26 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
+
+**The KrakenSDR Android app's feeds (2026-11-12, PR #4 + `power_dbfs`):**
+- Two connection methods in the app (krakensdr_rdf_android): `legacy` polls
+  `DOA_value.html` on 8081; `v2` (the default) is the 8080 WebSocket (DoA
+  type 3 + `system_status`, `KrakenV2Client.kt`). The app takes a frame as NEW
+  only when its timestamp changes (bearing averaging, logging, heat map).
+- 8081 timestamp = the MUSIC frame's stamp (`source_stamp_ms`), and the page
+  serves the same body until a new frame arrives. It was the POLL time: a
+  frozen frame (FFT squelch closed - MUSIC isn't run -, calibration, retune
+  hold) went out as a new reading every poll and was drawn along the drive
+  with the current heading (forum reports, 2026-11). V1 used the IQ frame's
+  stamp and rewrote the file only for VFOs above the squelch
+- The type 3 stream has no stamp and re-sends the frozen frame every 200 ms;
+  the app treats a bit-identical pseudospectrum as a repeat (keeps its last
+  fresh time). Keep `getPseudospectrum()` returning the stored frame
+  unchanged - a per-read transform would break that
+- "power" (8081 field 4, `system_status.decimator_squelch[].power_dbfs`) =
+  `vfo_power_dbfs()`: the passband's averaged-FFT peak in dBFS, clamped to
+  [-100, 0], as V1 sent it. The app maps it to its tone (-120..0 dB ->
+  125..440 Hz) and a warmer/colder slope in dB per 100 m. The MUSIC
+  eigenvalue ratio (field 4 until PR #4) is >= 0 dB - the tone sat at its
+  top - and flattens at high SNR, so it is no strength measure. The CSV
+  layout itself is fixed: older apps break on an extra column
