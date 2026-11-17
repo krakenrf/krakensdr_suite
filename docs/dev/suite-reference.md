@@ -572,10 +572,10 @@ decoders `kraken_doa_v2/plugins/`
   plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC), also
   used for Yaesu Fusion VW; DMR / D-STAR / NXDN / Fusion DN and V/D mode 1
   AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`; DN through its
-  `mbe_processAmbe2450Dataf`, optional) - Fusion voice untested on real
-  radios (written from Yaesu's standard, which doesn't give the voice frames'
-  bit order; the placement checked against dsdcc, VW's corrected to the
-  on-air order then; no off-air recording), TETRA
+  `mbe_processAmbe2450Dataf`, optional) - Fusion written from Yaesu's
+  standard, which doesn't give the voice frames' bit order: the placement
+  checked against dsdcc (VW's corrected to the on-air order then) and
+  against off-air DN / VW recordings; its AMBE+2 audio not run yet. TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
   `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
   `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the

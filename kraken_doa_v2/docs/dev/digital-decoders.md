@@ -177,7 +177,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     as a reference only, 2026-11-16) reads the generator's frames, CSD and
     voice bits the same way (DN 174 / 175, V/D 1 100 / 100, VW 161 / 169
     frames bit-exact - the rest its own symbol errors; plugin README).
-    No off-air recording checked; AMBE+2 audio never run (no mbelib).
+    Off-air IQ recordings of a DN and a VW call (2026-11-17): every
+    frame decoded, VW's IMBE codewords all valid as received (plugin
+    README); AMBE+2 audio never run (no mbelib).
     `KRAKEN_YSF_DUMP=1`: frames, DCH units, voice bits to stderr
   - `Mpt1327Receiver` (plugins/mpt1327): MPT1327 / MPT1343 analogue
     trunking signalling, 1200 bit/s FFSK (1 = 1200 Hz, 0 = 1800 Hz) on the

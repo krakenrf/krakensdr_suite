@@ -45,9 +45,11 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   error count passed is the triplets that disagreed). Yaesu's standard
   doesn't give the bit order inside any voice frame: all three placements
   checked against dsdcc's recovered frames (2026-11-16; the VW order was
-  P25's before - wrong); untested on real radios (no off-air recording),
-  AMBE+2 audio never run (mbelib not installed), VW audio only with the
-  generator's placeholder IMBE frames
+  P25's before - wrong) and, 2026-11-17, on off-air recordings (VW: every
+  Golay word of 422 real frames valid as received; DN: the pitch parameter
+  runs in smooth tracks in this order only - plugin README); AMBE+2 audio
+  never run (mbelib not installed), VW audio decoded from real frames but
+  not listened to
 - TETRA: `TetraCodec` runs the ETSI programs as `cdecoder /dev/stdin
   /dev/stdout | sdecoder ...` (posix_spawn, non-blocking pipes, 690-word
   test-frame blocks of descrambled type-4 soft bits). Full-slot traffic

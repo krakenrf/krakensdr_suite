@@ -137,13 +137,36 @@ voice bits).
   first while its PN seed and layout take the first bit first, so its
   corrections flip data bits; the first-bit-first reading (the one the seed
   needs for c1..c6 to descramble at all) is the one used here.
+- Off-air recordings (2026-11-17): `c4fm-48k.wav` (DN) and
+  `c4fm-vw-48k.wav` (VW) of github.com/michael-roe/sdr-samples (IQ, 48 kHz,
+  16 bit, one radio's call of 8.6 s each, 12.6 / 10.8 kHz off centre -
+  shifted to 0 Hz; no licence stated, so downloaded to scratch, not in the
+  repo). DN: 86 / 86 frames (header, 84 Communication frames FN 0..7 / FT
+  7, terminator), all 88 DCH units pass their CRC, one call start and end,
+  narrow deviation, Radio ID mode (destination `*****` + the source radio
+  ID; Rem4 the same ID), DT1 / DT2 carry 20 data bytes (shown as hex). VW:
+  87 / 87 frames - header, sub header FT 1 / FN 0, FT 1 / FN 1, 83 x FT 0 /
+  FN 0, terminator, the sequence `ysf_gen.py` sends; the source from the
+  header. `dsdccx` on the same files reads the same (`YSF>C V2 RI 0:7
+  NL000|<call>     >*****:<id> |...|<id>`, `YSF>C VF RI 0:0 WL000|...`).
+  VW voice: 422 / 422 frames clean through `ImbeDecoder` (8.44 s of audio,
+  written to a file, not listened to); as received, c0 is a valid
+  Golay(23,12) word in 422 / 422 frames and c1..c3 after descrambling in
+  1266 / 1266 (0 without the de-interleave, 0 / 422 with c0 read last bit
+  first) - the 24 x 6 order, first bit first and the PN seed hold on a real
+  radio. DN voice (420 frames): in the received order the AMBE+2 pitch
+  parameter b0 (mbelib: bits 0..3 and 37..39) starts with silence frames
+  (124) and then runs in smooth tracks (89 86 84 81 78 76 ..., 76 78 81 86
+  92 95 97 102 ...): it moves by <= 4 in 287 of 419 frame pairs, against
+  215 / 149 / 118 with the bits in the DVSI chip order, its inverse or
+  reversed.
 
-Not verified (2026-11): no off-air recording - the only YSF signals were
-the generator's, so a misreading shared by Yaesu's document, the generator,
-the plugin and dsdcc would go unnoticed. dsdcc confirms the framing (FS,
-FICH, every DCH unit, the CSD fields) and where the voice bits sit (DN's
-VCH / VeCH, whitening and majority, V/D mode 1's VCH, VW's interleave and
-scrambling); the bit order inside the AMBE+2 frames rests on mbelib's
-convention, which dsdcc shares. AMBE+2 audio (DN, V/D mode 1) was not
-exercised at all - mbelib wasn't installed; VW audio only with placeholder
-frames, never with speech.
+Not verified (2026-11): AMBE+2 audio (DN, V/D mode 1) was never run -
+mbelib wasn't installed; DN's bit order rests on mbelib's convention (which
+dsdcc shares) and on the pitch tracks of the off-air recording. VW audio
+was decoded from real frames (all clean) but not listened to. The off-air
+recordings are one radio, direct, at high SNR, in DN and VW: V/D mode 1,
+Data FR, calls through a repeater or over VoIP and non-zero DG-IDs were
+only checked with the generator and dsdcc. The data real DN calls carry in
+DT1 / DT2 (20 bytes, probably the position) isn't in Yaesu's standard and
+is only shown as hex.
