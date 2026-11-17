@@ -241,6 +241,94 @@ int count_expected_devices_present() {
     return leading;
 }
 
+RtlUsbInventory survey_rtlsdr_usb() {
+    RtlUsbInventory inv;
+    inv.total = static_cast<int>(rtlsdr_get_device_count());
+    for (int i = 0; i < inv.total; i++) {
+        int rc = 0;
+        const std::string serial = get_device_serial(i, &rc);
+        if (rc != 0) inv.unreadable++;
+        else if (std::find(expected_serials.begin(), expected_serials.end(), serial) != expected_serials.end())
+            inv.expected++;
+    }
+    return inv;
+}
+
+// Generic RTL-SDR mode: a USB serial as shown in the web page / logs - any
+// bytes from the dongle's EEPROM, and html_loader puts it into a JS string
+// unescaped. Empty (unreadable or blank) shows as "-".
+static std::string display_serial(const std::string& s) {
+    std::string out;
+    for (const char c : s) {
+        const bool ok = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                        c == '-' || c == '_' || c == '.' || c == ':' || c == ' ';
+        out += ok ? c : '?';
+    }
+    return out.empty() ? "-" : out.substr(0, 32);
+}
+
+static const char* tuner_name(rtlsdr_tuner t) {
+    switch (t) {
+        case RTLSDR_TUNER_E4000: return "E4000";
+        case RTLSDR_TUNER_FC0012: return "FC0012";
+        case RTLSDR_TUNER_FC0013: return "FC0013";
+        case RTLSDR_TUNER_FC2580: return "FC2580";
+        case RTLSDR_TUNER_R820T: return "R820T";
+        case RTLSDR_TUNER_R828D: return "R828D";
+        default: return "unknown";
+    }
+}
+
+// Generic RTL-SDR mode's open (see init_all_rtlsdr_devices): by USB index,
+// one after another, so a dongle that fails is simply skipped and the
+// channels stay contiguous. devices is empty on entry.
+static bool init_generic_rtlsdr_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    const int max_open = std::clamp(active_num_elements.load(), 1, NUM_DEVICES);
+    const int count = static_cast<int>(rtlsdr_get_device_count());
+    std::cout << "Generic RTL-SDR mode: " << count << " RTL-SDR(s) on USB, opening up to " << max_open
+              << " by USB index" << std::endl;
+    devices.reserve(static_cast<size_t>(max_open));
+    std::vector<std::string> shown;
+    for (int idx = 0; idx < count && static_cast<int>(devices.size()) < max_open; idx++) {
+        int serial_rc = 0;
+        const std::string serial = get_device_serial(idx, &serial_rc);
+        const char* name = rtlsdr_get_device_name(idx);
+        auto sdr = std::make_unique<SDRDevice>(idx, static_cast<int>(devices.size()), serial);
+        if (!init_rtlsdr_device(sdr.get())) {
+            if (sdr->dev) {
+                rtlsdr_close(sdr->dev);
+                sdr->dev = nullptr;
+            }
+            const std::string hint = usb_open_hint(serial_rc);
+            std::cerr << "Generic RTL-SDR: USB device " << idx << " (" << (name ? name : "?") << ", serial "
+                      << display_serial(serial) << ") could not be opened - skipped"
+                      << (hint.empty() ? "" : " (" + hint + ")") << std::endl;
+            continue;
+        }
+        std::cout << "Channel " << devices.size() << " -> USB device " << idx << " (" << (name ? name : "?")
+                  << ", serial " << display_serial(serial) << ", tuner "
+                  << tuner_name(rtlsdr_get_tuner_type(sdr->dev)) << ")" << std::endl;
+        shown.push_back(display_serial(serial));
+        devices.push_back(std::move(sdr));
+    }
+    if (devices.empty()) {
+        std::cerr << "ERROR: generic RTL-SDR mode - none of the " << count
+                  << " RTL-SDR(s) on USB could be opened. Cannot proceed." << std::endl;
+#ifdef _WIN32
+        std::cerr << "On Windows every dongle needs the WinUSB driver (Zadig, https://zadig.akeo.ie - "
+                     "'Bulk-In, Interface (Interface 0)' of each RTL2832U, USB ID 0BDA 2838; a KrakenSDR's "
+                     "dongles too) and must not be open in another program." << std::endl;
+#endif
+        return false;
+    }
+    // The channel list from now on: one entry per OPENED dongle (the vector
+    // never changes shape after this; max element count == N here)
+    expected_serials = shown;
+    active_num_elements.store(static_cast<int>(devices.size()));
+    std::cout << "Generic RTL-SDR mode: " << devices.size() << " independent receiver(s) open" << std::endl;
+    return true;
+}
+
 std::vector<DeviceMapping> enumerate_devices_by_serial() {
     std::cout << "Enumerating RTL-SDR devices by serial number..." << std::endl;
     
@@ -320,6 +408,13 @@ std::vector<DeviceMapping> enumerate_devices_by_serial() {
 // gain-mode / gain change - an auto-gain switch would otherwise keep the manual
 // index. Non-R820T tuners return -1 (no IF VGA to fix).
 static int set_fixed_if_vga(rtlsdr_dev_t* dev, bool auto_gain) {
+    // Generic RTL-SDR mode: a tuner without that VGA (E4000, FC001x, FC2580)
+    // has nothing to fix - not a failed gain change. (A KrakenSDR's tuners are
+    // all R820T: unchanged.)
+    if (generic_rtlsdr()) {
+        const rtlsdr_tuner t = rtlsdr_get_tuner_type(dev);
+        if (t != RTLSDR_TUNER_R820T && t != RTLSDR_TUNER_R828D) return 0;
+    }
     return rtlsdr_set_tuner_if_mode(dev, 10000 + (auto_gain ? R820T_IF_VGA_AUTO_IDX
                                                             : R820T_IF_VGA_MANUAL_IDX));
 }
@@ -360,7 +455,8 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
 #else
     std::string actual_serial = get_device_serial(sdr->device_id);
 #endif
-    if (actual_serial != sdr->serial_number) {
+    // (generic RTL-SDR mode opens by USB index: no serial to verify)
+    if (!generic_rtlsdr() && actual_serial != sdr->serial_number) {
         std::cerr << "WARNING: Serial mismatch for device " << sdr->device_id 
              << " - expected " << sdr->serial_number << ", got " << actual_serial << std::endl;
     }
@@ -406,7 +502,11 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
     // --ext_noise: the internal noise source stays off (forced: the fork keeps
     // the GPIO state across close/open); the add-on array's source is powered
     // from the CH0 bias tee once channel 0 is open (open_active_devices).
-    if (external_noise_mode.load(std::memory_order_relaxed))
+    // Generic RTL-SDR mode: no GPIO is ever written - GPIO0 is the ANTENNA
+    // bias tee on an RTL-SDR Blog dongle (4.5 V on the antenna port).
+    if (generic_rtlsdr()) {
+        // nothing
+    } else if (external_noise_mode.load(std::memory_order_relaxed))
         check(rtlsdr_set_bias_tee(sdr->dev, 0), "disabling the internal noise source", false);
     else if (!kerberos_manual_cal_only())
         check(rtlsdr_set_bias_tee(sdr->dev, 1), "enabling the noise source", false);
@@ -458,6 +558,7 @@ bool init_all_rtlsdr_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
     // never resized after this. Channels beyond the active element count keep
     // dev == nullptr; the runtime reconfiguration only closes/reopens handles
     // inside these objects.
+    if (generic_rtlsdr()) return devices.empty() && init_generic_rtlsdr_devices(devices);
     if (devices.empty()) {
         devices.reserve(expected_serials.size());
         for (size_t i = 0; i < expected_serials.size(); i++) {
@@ -469,6 +570,13 @@ bool init_all_rtlsdr_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
 }
 
 bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    // Generic RTL-SDR mode opens once, by USB index (init_generic_rtlsdr_devices);
+    // a reopen by serial would mix up dongles with the same serial. Its only
+    // other caller, the element-count change, is refused there.
+    if (generic_rtlsdr()) {
+        std::cerr << "Device reopen is not available in generic RTL-SDR mode" << std::endl;
+        return false;
+    }
     // Defensive clamp: callers validate against the serial list, but an OOB
     // read of expected_serials here would be memory corruption, not an error.
     const int num_to_open = std::min({active_num_elements.load(),
@@ -658,6 +766,13 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
 }
 
 void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    // Generic RTL-SDR mode: there is no noise source, and GPIO0 is the antenna
+    // bias tee on an RTL-SDR Blog dongle - never written, either way. The flag
+    // stays off, so no calibration stage can ever advance.
+    if (generic_rtlsdr()) {
+        bias_tee_enabled = false;
+        return;
+    }
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     // Every calibration switches the noise source on through here (cooldown
     // expiry, recovery, periodic check, scanner resume, BIAS_TEE_ENABLE):
@@ -723,6 +838,13 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
 }
 
 void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    // Generic RTL-SDR mode: GPIO1-7 of a generic dongle drive nothing known
+    // (the per-port bias tees are KrakenSDR hardware) - never written. The
+    // saved mask is the KrakenSDR's and stays as it is.
+    if (generic_rtlsdr()) {
+        if (mask) std::cerr << "Bias tees: not available with generic RTL-SDRs (KrakenSDR hardware)" << std::endl;
+        return;
+    }
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     // One GPIO per OPEN channel (GPIO ch+1 on the channel-0 chip) - the RTL2832
     // only has GPIO0-7, so never sweep the compile-time ceiling here.
@@ -1262,6 +1384,15 @@ static bool return_to_coherent_locked(const std::vector<std::unique_ptr<SDRDevic
     return true;
 }
 
+const char* generic_mode_refusal(OperatingMode target) {
+    if (!generic_rtlsdr()) return nullptr;
+    if (target == OperatingMode::COHERENT)
+        return "coherent mode needs a KrakenSDR / KerberosSDR - generic RTL-SDRs run as independent receivers";
+    if (target == OperatingMode::WIDEBAND_SCAN && active_num_elements.load() < 2)
+        return "wideband scan mode needs at least 2 tuners - only 1 generic RTL-SDR is open";
+    return nullptr;
+}
+
 bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     // The tuner-spread scan and independent tuners need to retune individual
     // tuners, but the Wideband (downconverter) variant requires every tuner
@@ -1269,6 +1400,17 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
     if (target != OperatingMode::COHERENT && downconverter.enabled.load()) {
         std::cerr << "System: " << operating_mode_name(target)
                   << " mode is unavailable in KrakenSDR Wideband (downconverter) mode" << std::endl;
+        return false;
+    }
+    // Generic RTL-SDR mode: no array to calibrate (every entry point -
+    // control port, the settings replay, wideband off - ends here). A client
+    // may ask on every reconnect: logged at most every 10 s per mode.
+    if (const char* why = generic_mode_refusal(target)) {
+        static std::atomic<int64_t> last_log_ms[3] = {-100000, -100000, -100000};
+        const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto& last = last_log_ms[std::clamp(static_cast<int>(target), 0, 2)];
+        if (now_ms - last.exchange(now_ms) >= 10000) std::cerr << "System: " << why << std::endl;
         return false;
     }
     std::lock_guard<std::mutex> lock(settings_mutex);
@@ -1316,6 +1458,16 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
     if (enable) return set_operating_mode(OperatingMode::WIDEBAND_SCAN, devices);
     // "wideband off" only leaves the scan - it doesn't end independent mode
     if (operating_mode.load() != OperatingMode::WIDEBAND_SCAN) return false;
+    if (generic_rtlsdr()) {
+        // No coherent mode to return to: the scan ends in independent mode,
+        // where the discrete scanner isn't available - stop it first
+        if (discrete_scanner.enabled.load()) {
+            discrete_scanner.enabled = false;
+            discrete_scanner.run_generation.fetch_add(1);  // wake the scan thread out of its dwell
+            std::cout << "Scanner stopped (wideband scan ended in generic RTL-SDR mode)" << std::endl;
+        }
+        return set_operating_mode(OperatingMode::INDEPENDENT, devices);
+    }
     return set_operating_mode(OperatingMode::COHERENT, devices);
 }
 
@@ -1360,18 +1512,45 @@ bool set_independent_tuner(int tuner_index, uint64_t frequency, int gain,
 }
 
 void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    if (generic_rtlsdr()) return;  // the saved mode is the KrakenSDR's (enter_generic_independent_mode)
     const int m = settings::persisted_mode.load();
     if (m == static_cast<int>(OperatingMode::WIDEBAND_SCAN)) {
         if (set_operating_mode(OperatingMode::WIDEBAND_SCAN, devices))
             setup_wideband_frequencies(current_frequency.load(), devices);
     } else if (m == static_cast<int>(OperatingMode::INDEPENDENT)) {
+        // The saved per-tuner tuning first: set_operating_mode and every
+        // set_independent_tuner refresh it from the live state (note_mode)
+        uint32_t freq[NUM_DEVICES];
+        int gain[NUM_DEVICES];
+        for (int i = 0; i < NUM_DEVICES; i++) {
+            freq[i] = settings::persisted_tuner_freq[i].load();
+            gain[i] = settings::persisted_tuner_gain[i].load();
+        }
         if (!set_operating_mode(OperatingMode::INDEPENDENT, devices)) return;
         for (int i = 0; i < std::min(active_num_elements.load(), NUM_DEVICES); i++) {
-            const uint32_t f = settings::persisted_tuner_freq[i].load();
-            const int g = settings::persisted_tuner_gain[i].load();
-            if (f > 0 || g != -999) set_independent_tuner(i, f, g, devices, nullptr);
+            if (freq[i] > 0 || gain[i] != -999) set_independent_tuner(i, freq[i], gain[i], devices, nullptr);
         }
     }
+}
+
+void enter_generic_independent_mode(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    // The saved generic tuning first: set_operating_mode and every
+    // set_independent_tuner refresh it from the live state (note_mode)
+    uint32_t freq[NUM_DEVICES];
+    int gain[NUM_DEVICES];
+    for (int i = 0; i < NUM_DEVICES; i++) {
+        freq[i] = settings::persisted_generic_tuner_freq[i].load();
+        gain[i] = settings::persisted_generic_tuner_gain[i].load();
+    }
+    // From COHERENT: parks the (never started) calibration - phase machine
+    // idle, FFT off; the noise source is off already. note_mode() leaves the
+    // saved operating mode alone in generic mode.
+    set_operating_mode(OperatingMode::INDEPENDENT, devices);
+    for (int i = 0; i < std::min(active_num_elements.load(), NUM_DEVICES); i++) {
+        if (freq[i] > 0 || gain[i] != -999) set_independent_tuner(i, freq[i], gain[i], devices, nullptr);
+    }
+    std::cout << "Generic RTL-SDR mode: " << active_num_elements.load()
+              << " receiver(s) in independent mode (coherent mode and calibration unavailable)" << std::endl;
 }
 
 void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
@@ -1475,8 +1654,21 @@ bool reopen_device_after_stream_loss(SDRDevice* sdr) {
         sdr->dev = nullptr;
         sdr->init_success = false;
     }
-    // By serial: USB indices shift when a dongle re-enumerates (a replug)
-    const int idx = rtlsdr_get_index_by_serial(sdr->serial_number.c_str());
+    // By serial: USB indices shift when a dongle re-enumerates (a replug).
+    // Generic RTL-SDR mode: serials repeat ("00000001") or are blank - by
+    // serial only if this one is unique among the dongles opened, else at the
+    // USB index it was opened at (a dongle another program holds there
+    // can't be opened: WinUSB is exclusive).
+    int idx = -1;
+    if (generic_rtlsdr()) {
+        const auto same = std::count_if(devices.begin(), devices.end(), [sdr](const auto& d) {
+            return d && d->serial_number == sdr->serial_number;
+        });
+        idx = (!sdr->serial_number.empty() && same == 1) ? rtlsdr_get_index_by_serial(sdr->serial_number.c_str())
+                                                         : sdr->device_id;
+    } else {
+        idx = rtlsdr_get_index_by_serial(sdr->serial_number.c_str());
+    }
     if (idx < 0) return false;
     sdr->device_id = idx;
     if (!init_rtlsdr_device(sdr)) {
@@ -1502,6 +1694,7 @@ bool reopen_device_after_stream_loss(SDRDevice* sdr) {
         if (!ok) std::cerr << "Channel " << sdr->index << ": reopened, but restoring its own tuning failed" << std::endl;
     }
 #if ENABLE_BIAS_TEE
+    if (generic_rtlsdr()) return true;  // no GPIO is ever written there
     const bool ext = external_noise_mode.load(std::memory_order_relaxed);
     const bool noise = bias_tee_enabled.load();
     rtlsdr_set_bias_tee(sdr->dev, noise && !ext ? 1 : 0);

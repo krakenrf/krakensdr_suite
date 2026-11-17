@@ -67,6 +67,9 @@ std::atomic<bool> kerberos_cal_stale{false};
 // --ext_noise: add-on array whose noise source is powered from the CH0 bias
 // tee (see core/config.hpp)
 std::atomic<bool> external_noise_mode{false};
+// Generic RTL-SDR mode (see core/config.hpp): no KrakenSDR attached - run the
+// attached RTL-SDRs as independent receivers. Decided once in main().
+std::atomic<bool> generic_rtlsdr_mode{false};
 
 std::atomic<bool> coherence_lost{false};
 std::atomic<bool> recovery_in_progress{false};
@@ -384,18 +387,21 @@ int main(int argc, char* argv[]) {
 
     // Parse command line arguments
     int num_elements_cli = 0;  // 0 = not given on the command line
+    bool serials_given = false;
 
     for (int i = 1; i < argc; i++) {
         const bool has_value = i + 1 < argc;
         if ((strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--num-elements") == 0) && has_value) {
             char* end = nullptr;
             const long n = strtol(argv[++i], &end, 10);
-            if (end == argv[i] || *end != '\0' || n < 2 || n > NUM_DEVICES) {
+            // -n 1 only in generic RTL-SDR mode (checked once that is decided)
+            if (end == argv[i] || *end != '\0' || n < 1 || n > NUM_DEVICES) {
                 std::cerr << "Error: -n must be between 2 and " << NUM_DEVICES << std::endl;
                 return 1;
             }
             num_elements_cli = static_cast<int>(n);
         } else if (strcmp(argv[i], "--serials") == 0 && has_value) {
+            serials_given = true;
             // Comma-separated USB serials, channel order. Replaces the default
             // KrakenSDR list so any set of dongles can form the array.
             expected_serials.clear();
@@ -447,7 +453,13 @@ int main(int argc, char* argv[]) {
                       << "                          source, powered from the CH0 bias tee: calibration\n"
                       << "                          switches that bias tee; the internal noise source\n"
                       << "                          stays off\n"
-                      << "  -h, --help              Show this help message\n";
+                      << "  -h, --help              Show this help message\n"
+                      << "\n"
+                      << "Without a KrakenSDR / KerberosSDR (fewer than 2 of the serials above attached)\n"
+                      << "and without --serials / a hardware flag, heimdall runs whatever RTL-SDRs are\n"
+                      << "attached (any serials, 1 to " << NUM_DEVICES << ") as independent receivers: no coherent\n"
+                      << "mode, no calibration, no noise source or bias tee switching. -n caps how many\n"
+                      << "open (1 allowed there).\n";
             return 0;
         } else {
             // Refuse anything else: a misspelt flag used to be ignored, so e.g.
@@ -513,6 +525,30 @@ int main(int argc, char* argv[]) {
     std::cout.rdbuf(&san_out);
     std::cerr.rdbuf(&san_err);
 
+    // Generic RTL-SDR mode (core/config.hpp): no KrakenSDR / KerberosSDR on
+    // USB, so run whatever RTL-SDRs are attached as independent receivers
+    // instead of failing. Only when nothing names the hardware: --serials or a
+    // variant flag keeps the old failure, and so does a KrakenSDR with a dead
+    // or busy channel (2+ factory serials attached, or 1 plus a dongle whose
+    // serial can't be read - on Windows a dongle without the WinUSB driver).
+    // Startup only, no hotplug.
+    if (!serials_given && !kerberos_mode.load() && !downconverter.enabled.load() && !external_noise_mode.load()) {
+        const RtlUsbInventory usb = survey_rtlsdr_usb();
+        const bool kraken_like = usb.expected >= 2 || (usb.expected >= 1 && usb.unreadable >= 1);
+        if (usb.total >= 1 && !kraken_like && count_expected_devices_present() < 2) {
+            generic_rtlsdr_mode = true;
+            bias_tee_enabled = false;   // no noise source: nothing is ever switched on
+            std::cout << "Generic RTL-SDR mode: no KrakenSDR / KerberosSDR found (" << usb.expected
+                      << " of the expected serials attached, " << usb.total
+                      << " RTL-SDR(s) on USB) - running them as independent receivers; coherent mode, "
+                         "calibration and the noise source are unavailable" << std::endl;
+        }
+    }
+    if (num_elements_cli == 1 && !generic_rtlsdr()) {
+        std::cerr << "Error: -n must be between 2 and " << NUM_DEVICES << std::endl;
+        return 1;
+    }
+
     // Lock the process's memory (core/utils, Linux only, best-effort like the
     // threads' SCHED_RR): before the dongles open and the USB reader / drain
     // threads start, so no page they touch can be swapped out under them.
@@ -551,7 +587,11 @@ int main(int argc, char* argv[]) {
     // KerberosSDR is 4-channel hardware: --kerberos pins the default to 4
     // (ignoring the persisted value and USB auto-detection, which could see 5
     // when simulating on a KrakenSDR); only an explicit -n overrides it.
-    int num_elements = num_elements_cli;
+    // Generic RTL-SDR mode: up to -n (else every attached dongle, to the
+    // NUM_DEVICES ceiling); the open below sets the real count. The saved
+    // element count belongs to the KrakenSDR and stays untouched.
+    int num_elements = generic_rtlsdr() ? (num_elements_cli > 0 ? num_elements_cli : NUM_DEVICES)
+                                        : num_elements_cli;
     if (num_elements == 0 && kerberos_mode.load()) {
         num_elements = std::min(4, max_elements);
         std::cout << "KerberosSDR mode: defaulting to " << num_elements
@@ -588,7 +628,11 @@ int main(int argc, char* argv[]) {
          << "Modified for serial number-based RTL-SDR initialization\n"
          << "ENHANCED: RTL-TCP server with selectable source channel via web interface\n"
          << "MODULAR: Split into core, sdr, dsp, net, and web modules\n"
-         << "Active Elements: " << num_elements << " (of " << max_elements << " configured), Reference: " << REF_CHANNEL
+         << (generic_rtlsdr()
+                 ? "Receivers: up to " + std::to_string(num_elements) + " generic RTL-SDRs (counted once opened)"
+                 : "Active Elements: " + std::to_string(num_elements) + " (of " + std::to_string(max_elements) +
+                       " configured)")
+         << ", Reference: " << REF_CHANNEL
          << ", Samples: " << NUM_SAMPLES << "\n"
          << "Frequency: " << std::fixed << std::setprecision(1) << current_frequency.load()/1e6
          << " MHz, Sample Rate: " << SAMPLE_RATE/1e6 << " MSPS\n"
@@ -605,6 +649,10 @@ int main(int argc, char* argv[]) {
                  : std::string())
          << (external_noise_mode.load()
                  ? "Mode: EXTERNAL noise source (add-on array, powered from the CH0 bias tee)\n"
+                 : "")
+         << (generic_rtlsdr()
+                 ? "Mode: GENERIC RTL-SDR (no KrakenSDR found) - independent receivers, opened by USB index;\n"
+                   "      no coherent mode, no calibration, noise source / bias tees never switched\n"
                  : "")
          << "Web Server: http://localhost:" << WEB_PORT << " (uWebSockets)\n"
          << "RTL-TCP Port: " << RTL_TCP_PORT << " (Selectable channel via web UI)\n"
@@ -685,6 +733,13 @@ int main(int argc, char* argv[]) {
         std::cerr << "Device initialization failed" << std::endl;
         fail_startup();
     }
+    // Generic RTL-SDR mode: the page's channel labels ({{SERIALS}}) are the
+    // dongles just opened, not the KrakenSDR list it was loaded with (the web
+    // server isn't running yet)
+    if (generic_rtlsdr() && !load_html_file(html_content)) {
+        std::cerr << "Failed to load index.html" << std::endl;
+        fail_startup();
+    }
 
     // KrakenSDR Wideband variant: the tuners were just parked at the IF; bring
     // up the downconverter LO for the startup RF before any data consumers
@@ -706,7 +761,12 @@ int main(int argc, char* argv[]) {
     
     // Initialize correlation result with domain-specific setup
     initialize_correlation_result(correlation_result);
-    
+
+    // Generic RTL-SDR mode: independent mode from the start - before any
+    // thread that could calibrate (or switch a GPIO) exists. Not saved as the
+    // user's mode: a KrakenSDR plugged back in starts as it did before.
+    if (generic_rtlsdr()) enter_generic_independent_mode(devices);
+
     // Start RTL-TCP server with default channel 0
     // Built locally and published only once started: the dashboard thread
     // already reads the global
@@ -763,7 +823,8 @@ int main(int argc, char* argv[]) {
     // The saved wideband / independent mode (and independent mode's per-tuner
     // tuning): a restart - e.g. the supervisor after a crash - comes back in
     // it instead of starting a calibration the user switched away from
-    restore_operating_mode(devices);
+    // (generic RTL-SDR mode entered its own mode above)
+    if (!generic_rtlsdr()) restore_operating_mode(devices);
 
     // Device-touching threads (USB readers, drain, conversion, per-channel lag
     // compensation) are managed by pipeline_control so the runtime element-count
