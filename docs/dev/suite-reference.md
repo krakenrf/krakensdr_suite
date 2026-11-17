@@ -415,7 +415,8 @@ getting the old type 0 / 6 frames at 2048 points per tuner band
 **Digital voice/data decoders (per VFO)**: engine `kraken_doa_v2/src/digital/`,
 decoders `kraken_doa_v2/plugins/`
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):
-  p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
+  p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), ysf (Yaesu System
+  Fusion: DN, VW, V/D mode 1, Data FR), mpt1327 (analogue
   trunking signalling), pagers (POCSAG + FLEX; was pocsag), aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
   as a locked line, `kp::Info::fixed_freq_hz`; v2.0: in coherent mode with
@@ -568,8 +569,13 @@ decoders `kraken_doa_v2/plugins/`
   options, e.g. `dmr.slot`, `p25.nac`); persisted in the VFO snapshot. See
   `kraken_doa_v2/CLAUDE.md` for the design
 - Voice: Demod "Digital" (or the panel's Listen button) on a VFO heard (🔊)
-  plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
-  D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
+  plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC), also
+  used for Yaesu Fusion VW; DMR / D-STAR / NXDN / Fusion DN and V/D mode 1
+  AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`; DN through its
+  `mbe_processAmbe2450Dataf`, optional) - Fusion written from Yaesu's
+  standard, which doesn't give the voice frames' bit order: the placement
+  checked against dsdcc (VW's corrected to the on-air order then) and
+  against off-air DN / VW recordings, whose voice decodes to speech. TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
   `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
   `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the
@@ -684,7 +690,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   connection open after a reconnect). A
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
-  tetra, dstar, nxdn, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
+  tetra, dstar, nxdn, ysf, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
   Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, acars, vdl2, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
@@ -872,7 +878,7 @@ models + Silero VAD) - opt-in setup `cd kraken_doa_v2 && make whisper`
 base.en) or `WHISPER=1 ./install.sh`; Docker builds it in (`WHISPER=0`
 leaves it out) with the models in `docker-data/whisper_models/`
 - Source per VFO, not what the 🔊 speakers play: its digital decoder's voice when the
-  decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / TETRA vocoder
+  decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / YSF / TETRA vocoder
   output via `dig::set_voice_tap_handler`, with the talker's unit ID /
   talkgroup; cut at talker changes), else - no decoder, or one of no voice
   (`DigitalDecoder::takes_voice()`: analog_id, pagers ...) - its analog demod
@@ -1004,7 +1010,7 @@ spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI, ACARS and VDL Mode 2 aircraft / ground stations)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR / Yaesu Fusion callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI, ACARS and VDL Mode 2 aircraft / ground stations)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -1022,7 +1028,8 @@ transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
 transmissions - DMR timeslots; id "?" = a busy channel whose radio isn't
 named yet). p25: LDU1 / TDULC link control source; dmr: full / embedded LC
-source per timeslot; nxdn: VCALL source; dstar: MY callsign of the RF
+source per timeslot; nxdn: VCALL source; ysf: the source callsign (CSD1 /
+V/D mode 2 DCH); dstar: MY callsign of the RF
 header (or its slow-data copy); adsb: every accepted message as a
 `kp::Talker::packet` (exact samples) - the VFO keeps per-16-sample
 covariances for 1.5 s while packets come, each aircraft's lobe = its

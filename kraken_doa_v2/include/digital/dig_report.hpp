@@ -18,7 +18,8 @@ namespace dig {
 
 // OFF, AUTO (every plugin that declares auto_detect runs and the one whose
 // frames pass their checks wins) or one fixed PLUGIN (plugins/<id>/; the
-// built-in protocols are plugins too: p25, dmr, tetra, dstar, nxdn, mpt1327)
+// built-in protocols are plugins too: p25, dmr, tetra, dstar, nxdn, ysf,
+// mpt1327)
 enum class Mode : int { OFF = 0, AUTO = 1, PLUGIN = 2 };
 const char* mode_name(Mode m);     // "OFF", "AUTO", "PLUGIN"
 // Wire / persisted form: "OFF", "AUTO" or "PLUGIN:<id>"
@@ -114,10 +115,13 @@ public:
     // table's keep time left out (with their details)
     std::string tables_json() const;
 
-    // --- Plots (kp::Host::plot): the latest per plugin, as JSON ---
-    void plot_set(const std::string& plugin, std::string json);
+    // --- Plots (kp::Host::plot): the latest per plugin and plot id, as JSON ---
+    // key: "<plugin>" (the plugin's one plot) or "<plugin>/<id>" (a named one,
+    // kp::Plot::id); a new named key past max_named of the plugin's is dropped
+    void plot_set(const std::string& plugin, const std::string& key, std::string json, size_t max_named = 0);
     void plot_clear();
-    // {"<plugin>":{t, xu, yu, x0, dx, ymin, ymax, thr, y:[..], mk:[[x, label, talker]..], age}}
+    // {"<key>":{t, xu, yu, x0, dx, ymin, ymax, thr, y:[..], mk:[[x, label, talker]..],
+    //  [id, pos, opt, also, snap, step,] age}}
     std::string plots_json() const;
 
 private:

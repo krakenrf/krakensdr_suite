@@ -5,7 +5,8 @@
 //  - ImbeDecoder: P25 Phase 1 full-rate IMBE (7200 bit/s with FEC, 4400 voice),
 //    built in. A port of the IMBE path of mbelib (ISC licence, see
 //    mbe_tables.hpp) with a per-instance random generator.
-//  - MbeLib: AMBE (D-STAR, 3600x2400) and AMBE+2 (DMR, 3600x2450) through a
+//  - MbeLib: AMBE (D-STAR, 3600x2400) and AMBE+2 (DMR, 3600x2450; YSF DN from
+//    its 49 parameter bits) through a
 //    mbelib the USER installed (README "Digital voice codecs"). Loaded at run
 //    time with dlopen, so kraken_doa neither ships nor links any AMBE code
 //    (Windows: libmbe.dll through dlfcn-win32).
@@ -71,6 +72,13 @@ public:
     // ambe_fr in mbelib's [4][24] layout; dstar = 3600x2400 (D-STAR), else
     // 3600x2450 (DMR). out: 160 samples at 8 kHz. Returns mbelib's errs2.
     int decode(bool dstar, char fr[4][24], void* state, float* out160) const;
+    // AMBE+2 3600x2450 from its 49 parameter bits alone, without the 72-bit
+    // frame's FEC (YSF V/D mode 2 protects them its own way): mbelib's
+    // mbe_processAmbe2450Dataf, optional - false = this mbelib lacks it.
+    // errs = bit errors the caller's own FEC saw (mbelib repeats the last
+    // frame above 3). Returns errs as mbelib took it, -1 if unavailable.
+    bool has_ambe49() const { return ok_ && ambe49_ != nullptr; }
+    int decode49(const char d[49], int errs, void* state, float* out160) const;
     void init_state(void* state) const;
     static constexpr size_t STATE_BYTES = 3 * 4096;   // 3 mbe_parms, generously sized
 private:
@@ -80,6 +88,7 @@ private:
     void (*init_)(void*, void*, void*) = nullptr;
     void (*ambe2450_)(float*, int*, int*, char*, char[4][24], char*, void*, void*, void*, int) = nullptr;
     void (*ambe2400_)(float*, int*, int*, char*, char[4][24], char*, void*, void*, void*, int) = nullptr;
+    void (*ambe49_)(float*, int*, int*, char*, char*, void*, void*, void*, int) = nullptr;
 };
 
 class AmbeStream {
@@ -88,6 +97,7 @@ public:
     ~AmbeStream();
     void reset();
     int decode(char fr[4][24], float* out160);
+    int decode49(const char d[49], int errs, float* out160);   // MbeLib::decode49
 private:
     bool dstar_;
     std::vector<uint8_t> state_;
