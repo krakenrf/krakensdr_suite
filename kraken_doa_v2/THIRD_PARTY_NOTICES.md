@@ -91,7 +91,7 @@ commercial product or service.
   https://operations.osmfoundation.org/policies/
 - **Esri World Imagery** (satellite layer): © Esri and its data providers;
   Esri's terms of use apply.
-- **Optional map providers** (⚙ Settings, only with the user's own API
+- **Optional map providers** (⚙ Setup Settings, only with the user's own API
   key): Mapbox, Google Maps Platform (Map Tiles API), Azure Maps, MapTiler,
   Thunderforest, Stadia Maps, HERE, or any tile server the user enters. The
   browser fetches their tiles under the user's own account and terms; the

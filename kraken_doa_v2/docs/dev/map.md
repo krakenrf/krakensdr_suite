@@ -96,12 +96,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   kraken_doa (from a scratch dir - its own doa_settings.json) fed by a fake
   heimdall streaming a synthetic 1090 MHz recording
 
-**Tile providers (⚙ Settings, 2026-10-25):**
+**Tile providers (⚙ Setup Settings - "⚙ Settings" until 2026-11-17 -, 2026-10-25):**
 - The top bar's ⚙ (`#settings-btn`, at the right end, as tall as the chips' and the telemetry's lines;
   on the phone's bar on the status chips' line - *sidebar.md*, "Top bar and
-  rail") opens the Settings dialog (`#set-dlg-bg`, the saved-frequency dialog's
-  `.sf-dlg` look; "⚙ SETTINGS" section of the page; its tabs - *sidebar.md*,
-  "Settings dialog"). Its 🗺 Map tab picks
+  rail") opens ⚙ Setup Settings (`#set-dlg-bg`, the saved-frequency dialog's
+  `.sf-dlg` look; "⚙ SETUP SETTINGS" section of the page; its tabs - *sidebar.md*,
+  "Setup Settings dialog"). Its 🗺 Map tab picks
   the provider and takes its API key: OpenStreetMap + Esri (default, no
   key), Mapbox (public token, `styles/v1` raster tiles, 512 px), Google
   Maps (Map Tiles API), Azure Maps, MapTiler, Thunderforest, Stadia Maps
@@ -145,7 +145,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `gmReject()` drops it and the next draw makes a new one - at once the
   first time, then only after 15 s doubling to 5 min (`rej`, reset by an
   accepted viewport request), so a bad key can't loop `createSession`.
-  Save in ⚙ Settings discards every stored session (re-saving the same
+  Save in ⚙ Setup Settings discards every stored session (re-saving the same
   key is a real fresh start).
   Attribution: "Google Maps" (the policy accepts the text where the logo
   doesn't fit) + the `copyright` of `tile/v1/viewport` for the view.

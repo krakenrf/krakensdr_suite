@@ -322,7 +322,7 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .info-dec-facts {width:38%;flex-shrink:0}
 .info-dec-log {flex:1}
 #info-dec-log {max-height:none;font-size:11px}
-/* 🗣 Voice to Text: the tab's transcripts, the VFO cards' state, the sidebar badge */
+/* 🗣 Voice to Text: the panel's transcripts, the VFO cards' state (its settings: "⚙ Setup Settings" below) */
 #info-body-voice .info-row select {background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:2px 4px;border-radius:3px;font-size:12px}
 .v2t-head {font-size:11px;color:var(--t3);margin:0 0 4px;flex-shrink:0}
 .v2t-head:empty {display:none}
@@ -348,10 +348,11 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .v2t-play {background:var(--s3);border:1px solid var(--l2);color:var(--t1);border-radius:3px;font-size:10px;padding:0 5px;cursor:pointer;line-height:16px}
 .v2t-play:hover {border-color:var(--ac);color:#fff}
 .v2t-play.on {background:#0068bb;border-color:var(--ac);color:#fff}
-.v2t-badge {font-size:10px;padding:1px 6px;border-radius:8px;margin-left:auto;margin-right:6px;background:#195e2b;color:var(--ok-t2)}
-.v2t-badge:empty {display:none}
-.v2t-badge.warn {background:#5a4520;color:var(--warn-t2)}
 .dec-v2t-state {margin-left:auto;font-size:10px;color:var(--t3);white-space:nowrap}
+/* a warning that opens ⚙ Setup Settings on the Voice to Text tab */
+a.v2t-go,.sidebar a.v2t-go {color:var(--warn-t);text-decoration:none}
+a.v2t-go:hover {text-decoration:underline}
+.v2t-head a {color:var(--ac-t)}
 .ai-hist-item {padding:4px 6px;border:1px solid var(--l1);border-radius:3px;margin-bottom:4px;cursor:pointer;font-size:12px;display:flex;gap:6px;align-items:flex-start}
 .ai-hist-item:hover {border-color:var(--l4)}
 .ai-hist-item.sel {border-color:var(--ac);background:var(--s5)}
@@ -1065,10 +1066,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .pw-box .pw-dry {display:inline-block;margin-top:10px;padding:2px 8px;border-radius:9px;background:var(--warn-d);color:var(--warn-t2);font-size:11px}
 .pw-box .btn {margin-top:14px;min-width:90px}
 .sf-toast {position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;max-width:90vw;box-sizing:border-box;background:rgba(17,21,27,.97);border:1px solid var(--ac-t);color:#fff;border-radius:4px;padding:7px 14px;font-size:12px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.6);transition:opacity .3s;opacity:0}
-/* ⚙ Settings (the map provider and its API key) */
-/* ⚙ Settings: a fixed size, so the tabs stay put; each pane scrolls by itself */
+/* ⚙ Setup Settings (the top bar's ⚙: map provider, decoders, Voice to Text, assistant) */
+/* a fixed size, so the tabs stay put; each pane scrolls by itself. The tabs
+   wrap onto a second line where they don't fit (a phone narrower than ~380 px) */
 .sf-dlg.set-dlg {width:540px;height:540px;display:flex;flex-direction:column;overflow:hidden;padding-bottom:0}
-.set-tabs {flex:none;display:flex;gap:2px;margin:6px -14px 0;padding:0 14px;border-bottom:1px solid var(--l2)}
+.set-tabs {flex:none;display:flex;flex-wrap:wrap;gap:0 2px;margin:6px -14px 0;padding:0 14px;border-bottom:1px solid var(--l2)}
 .set-tabs button {background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:7px 11px;color:var(--t3);font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
 .set-tabs button:hover {color:var(--t0)}
 .set-tabs button.on {color:var(--ac-t);border-bottom-color:var(--ac)}
@@ -1094,6 +1096,28 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .set-dlg .ok {color:var(--ok-t)}
 .set-dlg .bad {color:var(--bad-t)}
 .set-dlg label.ck {display:flex;gap:5px;align-items:center;font-size:12px;margin-top:4px}
+/* a tick, not a text box: .sf-dlg input sizes every input of the dialog */
+.set-dlg label.ck input[type="checkbox"] {height:auto;margin:0;padding:0;border:0;background:none;box-shadow:none}
+@media (max-width:560px) {
+  .set-tabs {gap:0}
+  .set-tabs button {padding:7px 6px}
+}
+@media (max-width:420px) {
+  .set-tabs button {padding:7px 5px}
+}
+/* the Voice to Text tab (v2tRenderBox): rows of the dialog, switches with
+   their name on the left, status lines name | value */
+#v2t-card {margin-top:4px}
+.set-dlg .row > .v2t-threads {flex:none;width:72px}
+.set-dlg .v2t-speed {margin:0}
+.set-dlg label.v2t-tr {flex:none;margin:0;white-space:nowrap;cursor:pointer}
+.set-dlg label.swr {display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--t1);padding:4px 0;cursor:pointer}
+.set-dlg .v2t-clips {margin:0 0 2px;overflow-wrap:anywhere}
+.set-dlg .v2t-clips:empty {display:none}
+.set-dlg .kv {display:flex;justify-content:space-between;gap:10px;font-size:12px;line-height:1.75;color:var(--t2)}
+.set-dlg .kv > span:first-child {flex:none;color:var(--t5)}
+.set-dlg .kv > span:last-child {min-width:0;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.set-dlg .kv a {color:var(--ac-t)}
 .sf-toast.show {opacity:1}
 .sf-toast.err {border-color:var(--bad-t)}
 
@@ -1196,7 +1220,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .sidebar .sb-header:hover {background:var(--s5)}
 .sidebar .sb-header h3 {flex:1 1 auto;min-width:0;display:flex;align-items:center;font-size:13.5px;font-weight:600;color:var(--t2)}
 .sb-title {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sidebar .sb-header .acal-badge,.sidebar .sb-header .v2t-badge,.sidebar .sb-header .sf-count {margin:0 2px 0 4px;flex:none;white-space:nowrap}
+.sidebar .sb-header .acal-badge,.sidebar .sb-header .sf-count {margin:0 2px 0 4px;flex:none;white-space:nowrap}
 .sidebar .sb-toggle {display:flex;align-items:center;justify-content:center;width:18px;height:20px;flex:none;color:var(--t4);transition:transform .15s}
 .sidebar .sb-section.collapsed .sb-toggle {transform:rotate(-90deg)}
 .sidebar .sb-content {margin-top:0;padding:8px 9px 9px}
@@ -1459,7 +1483,7 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar .tb-right {margin-left:auto;min-width:436px;display:grid;grid-template-columns:1fr auto;grid-template-areas:"chips cog" "tele cog";justify-items:end;align-items:center;gap:4px 8px}
 .top-bar .status-badges {grid-area:chips;margin-left:0;gap:6px;align-items:center}
 .top-bar .tele-group {grid-area:tele;margin-left:0;order:0}
-/* ⚙ Settings: as tall as both lines of the block */
+/* ⚙ Setup Settings: as tall as both lines of the block */
 .top-bar .tb-cog {grid-area:cog;align-self:stretch;width:46px;height:auto;min-height:46px;font-size:26px;border-radius:9px}
 .top-bar .tele-chip {padding-top:1px;padding-bottom:1px;font-size:11px}
 .top-bar .tele-chip .tele-lbl {padding-top:2px;padding-bottom:2px;margin:-1px 0;font-size:9px}
@@ -2415,56 +2439,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
       </div>
     </div>
 
-    <!-- 🗣 Voice to Text (voice2text.cpp, transcribe/) - all modes -->
-    <div class="sb-section" data-sb="voice-to-text" id="v2t-section">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title">🗣 Voice to Text</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>🗣 Transcribe</b> box is ticked (on the VFO cards above) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>🗣 Transcription</b> panel under the waterfall (its button is on the right-hand rail) - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the <b>Decoder Logging</b> files when that is on (type "Voice transcripts").</span></span></h3>
-        <span class="v2t-badge" id="v2t-badge"></span>
-        <span class="sb-toggle"></span>
-      </div>
-      <div class="sb-content">
-        <div id="v2t-install" class="dig-help" style="display:none"></div>
-        <div class="ctrl-row" id="v2t-model-row">
-          <label title="The speech model. Bigger = more accurate but slower; .en models are English only">Model</label>
-          <select id="v2t-model" style="flex:1;min-width:0;max-width:none" onchange="v2tSetModel(this.value)"></select>
-        </div>
-        <div class="ctrl-row" style="gap:6px" id="v2t-dl-row">
-          <select id="v2t-dl" style="flex:1;min-width:0;max-width:none" title="Speech models that can be downloaded (once, from Hugging Face)"></select>
-          <button class="btn sm" type="button" id="v2t-dl-btn" onclick="v2tDownload()" title="Download this model to the receiver">⬇ Get</button>
-        </div>
-        <div id="v2t-dl-state" style="display:none;font-size:11px;color:#9aa6b4;margin:-2px 0 4px"></div>
-        <div class="ctrl-row" id="v2t-lang-row">
-          <label title="The language spoken (multilingual models only)">Language</label>
-          <select id="v2t-lang" style="flex:1;min-width:0" onchange="send('VOICE2TEXT_LANGUAGE:' + this.value)"></select>
-          <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:12px" title="Write the text in English, whatever language is spoken (multilingual models)"><input type="checkbox" id="v2t-translate" onchange="send('VOICE2TEXT_TRANSLATE:' + (this.checked ? 1 : 0))"> → English</label>
-        </div>
-        <div class="ctrl-row">
-          <label title="CPU cores the speech model may use. It runs below the receiver's priority; more = faster transcripts">CPU cores</label>
-          <select id="v2t-threads" onchange="send('VOICE2TEXT_THREADS:' + this.value)">
-            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
-          </select>
-          <span id="v2t-speed" style="font-size:11px;color:#9aa6b4;margin-left:auto"></span>
-        </div>
-        <div class="ctrl-row" style="gap:6px">
-          <input type="text" id="v2t-prompt" maxlength="300" style="flex:1;min-width:0" placeholder="Words to expect: callsigns, places…" title="Vocabulary hint for the model: callsigns, unit names, place names, phrases - spelled as you want them written. Helps with names it would otherwise mishear." onkeydown="if(event.key==='Enter')v2tApplyPrompt()">
-          <button class="btn sm" type="button" onclick="v2tApplyPrompt()" title="Use these words">Apply</button>
-        </div>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#cdd5df;margin-top:4px" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><input type="checkbox" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"> Skip non-speech</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#cdd5df;margin-top:2px" title="Keep each transcript's audio to play it back in the Transcription panel: Opus files (~7 MB an hour of speech) in the Decoder Logging folder (voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><input type="checkbox" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"> Keep the audio</label>
-        <div id="v2t-clips" style="font-size:11px;color:#7f8995;margin:1px 0 0 22px;word-break:break-all"></div>
-        <div id="v2t-status" style="margin-top:6px">
-          <div class="kv"><span>Status</span><span id="v2t-state">&mdash;</span></div>
-          <div class="kv"><span>VFOs</span><span id="v2t-vfos">&mdash;</span></div>
-          <div class="kv"><span>Waiting</span><span id="v2t-queue">&mdash;</span></div>
-          <div class="kv"><span>Transcribed</span><span id="v2t-done">&mdash;</span></div>
-          <div class="kv"><span>To disk</span><span id="v2t-log">&mdash;</span></div>
-        </div>
-        <div class="ctrl-row" style="margin-top:6px">
-          <button class="btn sm" type="button" onclick="infoPanelOpen('voice')" title="The transcripts, in the panel under the waterfall">⤢ Transcripts</button>
-        </div>
-      </div>
-    </div>
-
     <!-- 🧪 Experimental: features still being developed (coherent mode for now - its only one is) -->
     <div class="sb-section coh-only collapsed" data-sb="experimental" id="exp-section">
       <div class="sb-header" onclick="toggleSection(this)">
@@ -2642,8 +2616,8 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
         <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for the history charts, the log settings and the CSV download)" onclick="wbSheetOpen()">
           <span class="tele-lbl">WB board</span><span id="wb-chip-val"></span></span>
       </span>
-      <!-- ⚙ Settings (the map provider): as tall as the chips' and the telemetry's lines together; the phone layout puts it on the chips' line -->
-      <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Settings: the map provider (OpenStreetMap, Mapbox, Google Maps, ...) and its API key" aria-label="Settings">⚙</button>
+      <!-- ⚙ Setup Settings (#set-dlg): as tall as the chips' and the telemetry's lines together; the phone layout puts it on the chips' line -->
+      <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Setup Settings: the map provider and its key, the decoders, Voice to Text, the AI assistant" aria-label="Setup Settings">⚙</button>
       </div>
     </div>
 
@@ -2911,16 +2885,17 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 </div>
 <button type="button" class="ai-fab" id="ai-fab" onclick="aiDockCollapse(false)" title="AI assistant">🤖</button>
 
-<!-- ⚙ Settings (see ⚙ SETTINGS): one tab each for the map provider, the
-     digital decoders (voice codecs, plugins) and the optional features that
-     are set up on the receiver (assistant, Voice to Text) -->
+<!-- ⚙ Setup Settings (see ⚙ SETUP SETTINGS): everything about setting the
+     software up, one tab each - the map provider, the digital decoders (voice
+     codecs, plugins), Voice to Text and the AI assistant -->
 <div class="sf-dlg-bg" id="set-dlg-bg" style="display:none" onpointerdown="if(event.target===this)setDlgClose()">
   <div class="sf-dlg set-dlg" id="set-dlg" role="dialog" aria-modal="true" aria-labelledby="set-dlg-title">
-    <div class="sf-dlg-h"><span id="set-dlg-title">⚙ Settings</span><span class="x" onclick="setDlgClose()" title="Close (Esc)">✕</span></div>
+    <div class="sf-dlg-h"><span id="set-dlg-title">⚙ Setup Settings</span><span class="x" onclick="setDlgClose()" title="Close (Esc)">✕</span></div>
     <div class="set-tabs" role="tablist">
       <button type="button" role="tab" data-t="map" onclick="setDlgTab('map')">🗺 Map</button>
       <button type="button" role="tab" data-t="dec" onclick="setDlgTab('dec')">🔐 Decoders<span class="n" id="set-tab-dec-n"></span></button>
-      <button type="button" role="tab" data-t="addons" onclick="setDlgTab('addons')">🧩 Add-ons</button>
+      <button type="button" role="tab" data-t="v2t" onclick="setDlgTab('v2t')">🗣 Voice to Text<span class="n" id="set-tab-v2t-n"></span></button>
+      <button type="button" role="tab" data-t="ai" onclick="setDlgTab('ai')">🤖 Assistant</button>
     </div>
     <div class="set-pane" data-t="map" role="tabpanel">
     <div class="lbl">Map provider<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Kept in this browser only: each browser (and device) has its own provider and key. The browser fetches the tiles itself, with the key in their URLs - it never goes to the receiver.</span></span></div>
@@ -2960,9 +2935,62 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
         <button class="btn sm" type="button" onclick="send('PLUGINS_RESCAN')" title="Re-read the plugins folder (after copying a plugin in and running make)">↻ Rescan</button></div>
       <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
     </div>
-    <!-- Add-ons: is the assistant / Voice to Text set up on the receiver, and how to (setDlgAddons) -->
-    <div class="set-pane" data-t="addons" role="tabpanel">
-      <div id="set-addons"></div>
+    <!-- 🗣 Voice to Text (voice2text.cpp, transcribe/; v2tRenderBox): set up or
+         not and what to run, then its settings - each sends its command at once -
+         and its state. It was a sidebar box (data-sb "voice-to-text") until 2026-11-17 -->
+    <div class="set-pane" data-t="v2t" role="tabpanel">
+      <div class="dig-codec" id="v2t-card">
+        <div class="h"><span class="i" id="v2t-card-i">…</span><b>🗣 Voice to Text</b><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>🗣 Transcribe</b> box is ticked (on the VFO cards in the ⚙️ Decimators box) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>🗣 Transcription</b> panel under the waterfall (its button is on the right-hand rail) - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the <b>Decoder Logging</b> files when that is on (type "Voice transcripts").</span></span><span class="u" id="v2t-card-u">Checking…</span></div>
+        <div id="v2t-install"></div>
+      </div>
+      <div class="sec"><span>Speech model</span></div>
+      <div id="v2t-model-row">
+        <div class="lbl" title="The speech model. Bigger = more accurate but slower; .en models are English only">Model</div>
+        <select id="v2t-model" onchange="v2tSetModel(this.value)"></select>
+      </div>
+      <div id="v2t-dl-row">
+        <div class="lbl" title="Speech models that can be downloaded (once, from Hugging Face)">Download</div>
+        <div class="row">
+          <select id="v2t-dl" title="Speech models that can be downloaded (once, from Hugging Face)"></select>
+          <button class="btn sm" type="button" id="v2t-dl-btn" onclick="v2tDownload()" title="Download this model to the receiver">⬇ Get</button>
+        </div>
+      </div>
+      <div class="info" id="v2t-dl-state" style="display:none"></div>
+      <div id="v2t-lang-row">
+        <div class="lbl" title="The language spoken (multilingual models only)">Language</div>
+        <div class="row">
+          <select id="v2t-lang" onchange="send('VOICE2TEXT_LANGUAGE:' + this.value)"></select>
+          <label class="ck v2t-tr" title="Write the text in English, whatever language is spoken (multilingual models)"><input type="checkbox" id="v2t-translate" onchange="send('VOICE2TEXT_TRANSLATE:' + (this.checked ? 1 : 0))"> → English</label>
+        </div>
+      </div>
+      <div class="lbl" title="CPU cores the speech model may use. It runs below the receiver's priority; more = faster transcripts">CPU cores</div>
+      <div class="row">
+        <select id="v2t-threads" class="v2t-threads" onchange="send('VOICE2TEXT_THREADS:' + this.value)">
+          <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+        </select>
+        <span class="info v2t-speed" id="v2t-speed"></span>
+      </div>
+      <div class="lbl" title="Vocabulary hint for the model: callsigns, unit names, place names, phrases - spelled as you want them written. Helps with names it would otherwise mishear.">Words to expect</div>
+      <div class="row">
+        <input type="text" id="v2t-prompt" maxlength="300" placeholder="Callsigns, places…" title="Vocabulary hint for the model: callsigns, unit names, place names, phrases - spelled as you want them written. Helps with names it would otherwise mishear." onkeydown="if(event.key==='Enter')v2tApplyPrompt()">
+        <button class="btn sm" type="button" onclick="v2tApplyPrompt()" title="Use these words">Apply</button>
+      </div>
+      <div class="sec"><span>Audio</span></div>
+      <label class="swr" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><span>Skip non-speech</span><input type="checkbox" class="sw" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"></label>
+      <label class="swr" title="Keep each transcript's audio to play it back in the Transcription panel: Opus files (~7 MB an hour of speech) in the Decoder Logging folder (voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><span>Keep the audio</span><input type="checkbox" class="sw" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"></label>
+      <div class="info v2t-clips" id="v2t-clips"></div>
+      <div class="sec"><span>Status</span></div>
+      <div id="v2t-status">
+        <div class="kv"><span>Status</span><span id="v2t-state">&mdash;</span></div>
+        <div class="kv"><span>VFOs</span><span id="v2t-vfos">&mdash;</span></div>
+        <div class="kv"><span>Waiting</span><span id="v2t-queue">&mdash;</span></div>
+        <div class="kv"><span>Transcribed</span><span id="v2t-done">&mdash;</span></div>
+        <div class="kv"><span>To disk</span><span id="v2t-log">&mdash;</span></div>
+      </div>
+    </div>
+    <!-- 🤖 Assistant: is it set up on the receiver, and how to (setDlgAi) -->
+    <div class="set-pane" data-t="ai" role="tabpanel">
+      <div id="set-ai"></div>
     </div>
   </div>
 </div>
@@ -3139,7 +3167,7 @@ let mapTileOk = 0, mapTileErrAt = 0, mapAutoFit = !mapState.z;
 // while it is dragged and until the receiver reports it back
 let mapStSel = false, vsSel = null, mapObjDrag = null, mapStLocal = null;
 let mapSaveT = 0, mapFlashT = 0, mapFlashMsg = '';
-// the map's tile provider (⚙ Settings, per browser; MAP_PROVIDERS): p = its
+// the map's tile provider (⚙ Setup Settings, per browser; MAP_PROVIDERS): p = its
 // id, keys = the API key entered for each provider, cu = the custom tile URL
 const mapProvCfg = (() => {
   const d = {p: 'osm', keys: {}, cu: {url: '', max: 19, attr: '', dark: false}};
@@ -12151,7 +12179,7 @@ function addTouchHandlers(el, down, move, up) {
     }
   }
 
-  // ⚙ Settings, Decoders tab: the voice codecs the decoders can use,
+  // ⚙ Setup Settings, Decoders tab: the voice codecs the decoders can use,
   // as the plugins find them ({"codecs":{...}}, plugins/lib/tools/codecs.cpp)
   // and how to install the missing ones (same steps as the README). A
   // Windows receiver gets install_win + win_note instead: mbelib built as a
@@ -12340,7 +12368,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!st.busy) aiAskedHere = false;
     aiDockApply();
     aiQueueRender();
-    setDlgAddons();
+    setDlgAi();
   }
   function aiOnEvent(x) {
     if (x.seq <= aiLastSeq) return;
@@ -13630,7 +13658,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // are placed inside title="..." attributes)
   // --- 🗣 VOICE TO TEXT (voice2text.cpp, {"voice2text":{status | history | new | error}}) ---
   // The backend transcribes the VFOs with Transcribe ticked; this shows its
-  // settings (sidebar box), each VFO's tick + state (cards) and the
+  // settings (⚙ Setup Settings' 🗣 Voice to Text tab), each VFO's tick + state (cards) and the
   // transcripts (the 🗣 Transcription panel). State: see the globals block.
   const V2T_MAX = 1000;
   const V2T_LANGS = [['auto', 'Detect'], ['en', 'English'], ['mi', 'Māori'], ['de', 'German'], ['fr', 'French'],
@@ -13732,7 +13760,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         const v = ((v2tStatus && v2tStatus.vfos) || []).find(x => x.id === d.id);
         const state = v2tStatus ? v2tStatus.state : '';
         if (state === 'not installed' || state === 'no model' || state === 'error')
-          html = `<span style="color:#f4c170" title="See the 🗣 Voice to Text box in the sidebar">⚠ ${digEsc((V2T_STATE[state] || [, state])[1])}</span>`;
+          html = `<a href="#" class="v2t-go" onclick="setDlgOpen('v2t');return false" title="⚙ Setup Settings → 🗣 Voice to Text">⚠ ${digEsc((V2T_STATE[state] || [, state])[1])}</a>`;
         else if (v && v.rec)
           html = `<span style="color:#d8625c">&#9679;</span> ${digEsc(v2tSrcName(v.src))} ${v.secs.toFixed(0)} s`;
         else
@@ -13744,7 +13772,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
 
   // a "?" with the long version of a note (initHelpTips shows it)
   const v2tHelp = (html) => `<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">${html}</span></span>`;
-  // Voice to Text is not installed: what to run on the receiver (the box, and ⚙ Settings → Add-ons)
+  // Voice to Text is not installed: what to run on the receiver (⚙ Setup Settings → 🗣 Voice to Text)
   function v2tInstallHtml() {
     if (serverPkg)
       return 'This package was made without Voice to Text.' +
@@ -13760,19 +13788,36 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
            v2tHelp('It builds whisper.cpp - about 10 min on a Pi 5 - and downloads the base.en model (142 MB). Free, and everything ' +
                    'stays on this device. Docker: the image includes it - rebuild it without WHISPER=0.');
   }
+  // the tab's first card: set up or not - and while not, what to run on the
+  // receiver -, the model (Add-ons' card until 2026-11-17)
+  function v2tRenderSetup(s) {
+    let cls = '', u = 'Checking…', h = '';
+    if (s && !s.installed) {
+      cls = 'missing'; u = 'Not set up';
+      h = '<div class="how">' + v2tInstallHtml().replace(/^Not set up yet\. /, '') + '</div>';
+    } else if (s && !(s.models || []).length) {
+      cls = 'warn'; u = 'No speech model';
+      h = '<div class="how">Installed. ⬇ Get a speech model below (base.en is a good start).</div>';
+    } else if (s) {
+      cls = 'ok'; u = 'Set up';
+      const cur = s.models.find(m => m.name === s.model);
+      h = '<div class="s">' + (cur ? 'Model ' + digEsc(cur.name) + ' (' + cur.mb + ' MB)' : 'Model ' + digEsc(s.model || '') + ' - not downloaded') +
+          (s.models.length > 1 ? ' · ' + s.models.length + ' models downloaded' : '') + '</div>';
+    }
+    const card = $id('v2t-card');
+    if (!card) return;
+    card.className = 'dig-codec' + (cls ? ' ' + cls : '');
+    $id('v2t-card-i').textContent = cls === 'ok' ? '✔' : cls === 'warn' ? '⚠' : cls === 'missing' ? '✗' : '…';
+    $id('v2t-card-u').textContent = u;
+    v2tSetHtml($id('v2t-install'), h);
+  }
+  // the 🗣 Voice to Text tab of ⚙ Setup Settings (the sidebar's box until
+  // 2026-11-17 - the function kept its name)
   function v2tRenderBox() {
-    setDlgAddons();
     const s = v2tStatus;
+    v2tRenderSetup(s);
     if (!s) return;
     const idle = (el) => el && document.activeElement !== el;
-    // not set up yet: what to run on the receiver
-    const inst = $id('v2t-install');
-    let ih = '';
-    if (!s.installed) ih = v2tInstallHtml();
-    else if (!s.models.length)
-      ih = 'No speech model yet: ⬇ Get one below (base.en is a good start).';
-    v2tSetHtml(inst, ih);
-    inst.style.display = ih ? '' : 'none';
     // model: the installed ones (+ the chosen one if it isn't)
     const msel = $id('v2t-model');
     let mopts = s.models.map(m => `<option value="${digEsc(m.name)}">${digEsc(m.name)} (${m.mb} MB)</option>`).join('');
@@ -13863,11 +13908,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     v2tSetHtml($id('v2t-speed'), s.rtf > 0 ? `<span title="Audio seconds transcribed per second of work (last transmissions)">${(1 / s.rtf).toFixed(1)}× real time</span>` : '');
     v2tSetHtml($id('v2t-log'), s.log && s.log.enabled ? '<span style="color:#7ccd93">✓</span> decoder log files'
       : '<span style="color:#7f8995">off</span> <a href="#" onclick="v2tLogOn();return false" title="Turn Decoder Logging on, with voice transcripts">turn on</a>');
-    // header badge: VFOs transcribing / a problem
-    const badge = $id('v2t-badge');
-    const bad = ['not installed', 'no model', 'error'].includes(s.state) && s.vfos.length;
-    badge.className = 'v2t-badge' + (bad ? ' warn' : '');
-    badge.textContent = bad ? '⚠ ' + label : (s.vfos.length ? s.vfos.length + ' VFO' + (s.vfos.length > 1 ? 's' : '') : '');
+    // on the tab: a problem while VFOs are set to transcribe (the box's
+    // header badge until 2026-11-17; its VFO count is the VFOs line)
+    const tn = $id('set-tab-v2t-n');
+    const bad = ['not installed', 'no model', 'error'].includes(s.state) && s.vfos.length > 0;
+    tn.textContent = bad ? '⚠' : '';
+    tn.title = bad ? label : '';
   }
 
   function v2tRenderHead() {
@@ -13875,7 +13921,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     let h = '';
     if (s) {
       if (['not installed', 'no model', 'error'].includes(s.state))
-        h = `<span style="color:#f4c170">⚠ ${digEsc((V2T_STATE[s.state] || [, s.state])[1])}${s.error ? ': ' + digEsc(s.error) : ''} - see the 🗣 Voice to Text box in the sidebar</span>`;
+        h = `<span style="color:#f4c170">⚠ ${digEsc((V2T_STATE[s.state] || [, s.state])[1])}${s.error ? ': ' + digEsc(s.error) : ''}</span> - ` +
+            `<a href="#" onclick="setDlgOpen('v2t');return false" title="Open the 🗣 Voice to Text tab">⚙ Setup Settings</a>`;
       else if (!s.vfos.length)
         h = 'No VFO is transcribing - tick <b>🗣 Transcribe</b> on a VFO card.';
       else {
@@ -14438,7 +14485,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // that changed and the keys of all live points; GET_MAP asks for all of
   // them. Each decoder's "Plot on map" (decoder tab, DIGITAL_OPT map) decides
   // whether its points are sent. Per-browser view settings in localStorage.
-  // Tile providers (⚙ Settings - per browser, mapProvCfg): OpenStreetMap +
+  // Tile providers (⚙ Setup Settings - per browser, mapProvCfg): OpenStreetMap +
   // Esri need no key; the others take the user's own API key, which goes
   // into the tile URLs the browser fetches (never to the receiver). The
   // layer keys are shared, so Street / Satellite stays picked across
@@ -15116,7 +15163,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function mapUpdateControls() {
     const seg = $id('map-layers');
     if (seg) {
-      const P = mapProv(), lk = mapLayerKey(), tip = escapeHtml(P.name) + ' - change the map provider in ⚙ Settings (top right)';
+      const P = mapProv(), lk = mapLayerKey(), tip = escapeHtml(P.name) + ' - change the map provider in ⚙ Setup Settings (top right)';
       const html = Object.entries(P.layers).map(([k, l]) =>
         `<button type="button" class="${lk === k ? 'on' : ''}" onclick="mapSet('layer','${k}')" title="${tip}">${l.name}</button>`).join('');
       if (seg.dataset.html !== html) { seg.dataset.html = html; seg.innerHTML = html; }
@@ -15311,9 +15358,11 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     c.restore();
   }
 
-  // --- ⚙ SETTINGS (the top bar's ⚙): tabs - the map provider and its API key
-  // (below), the decoders' voice codecs and plugins (digOnCodecs,
-  // aiRenderPlugins), and the Add-ons' setup state (setDlgAddons) ------------
+  // --- ⚙ SETUP SETTINGS (the top bar's ⚙; "⚙ Settings" until 2026-11-17):
+  // everything about setting the software up, a tab each - the map provider
+  // and its API key (below), the decoders' voice codecs and plugins
+  // (digOnCodecs, aiRenderPlugins), Voice to Text (v2tRenderBox, in the
+  // "🗣 VOICE TO TEXT" section) and the assistant's setup state (setDlgAi) --
   // The dialog edits a copy of mapProvCfg - with the key of every provider,
   // so going through the list loses none - and Save stores it in
   // localStorage kraken_map_prov: per browser, like the map's view
@@ -15327,14 +15376,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       e.classList.toggle('on', on);
       if (e.tagName === 'BUTTON') e.setAttribute('aria-selected', on ? 'true' : 'false');
     }
-    if (t === 'addons') setDlgAddons();
+    if (t === 'ai') setDlgAi();
   }
-  // Add-ons: the optional features that are set up on the receiver, not from
-  // the page - the assistant (ai_state) and Voice to Text (the voice2text
-  // status) -, each with its state and, while it is not set up, what to run.
-  // Drawn again whenever either state or the receiver's OS arrives.
-  function setDlgAddons() {
-    const el = $id('set-addons');
+  // Assistant: set up on the receiver or not (it can't be from the page), and
+  // while it is not, what to run. Drawn again whenever ai_state or the
+  // receiver's OS arrives. (Until 2026-11-17 a card of the Add-ons tab, next
+  // to Voice to Text's - that one is the top of its own tab now.)
+  function setDlgAi() {
+    const el = $id('set-ai');
     if (!el) return;
     const card = (cls, name, state, lines) => `<div class="dig-codec ${cls}">` +
       `<div class="h"><span class="i">${cls === 'ok' ? '✔' : cls === 'warn' ? '⚠' : cls === 'missing' ? '✗' : '…'}</span><b>${name}</b><span class="u">${state}</span></div>` +
@@ -15372,25 +15421,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                 '): it can answer and use the receiver only.') + '</div>');
       h = card('ok', '🤖 AI assistant', 'Set up', lines);
     }
-    // --- Voice to Text
-    const v = v2tStatus;
-    if (!v) {
-      h += card('', '🗣 Voice to Text', 'Checking…', []);
-    } else if (!v.installed) {
-      h += card('missing', '🗣 Voice to Text', 'Not set up', ['<div class="how">' + v2tInstallHtml().replace(/^Not set up yet\. /, '') + '</div>']);
-    } else if (!(v.models || []).length) {
-      h += card('warn', '🗣 Voice to Text', 'No speech model', [
-        '<div class="how">Installed. Download a speech model with <b>⬇ Get</b> in the sidebar\'s 🗣 Voice to Text box (base.en is a good start).</div>']);
-    } else {
-      const cur = v.models.find(m => m.name === v.model);
-      h += card('ok', '🗣 Voice to Text', 'Set up', ['<div class="s">' +
-        (cur ? 'Model ' + digEsc(cur.name) + ' (' + cur.mb + ' MB)' : 'Model ' + digEsc(v.model || '') + ' - not downloaded') +
-        (v.models.length > 1 ? ' · ' + v.models.length + ' models downloaded' : '') + '</div>'].concat(
-        v.state === 'error' ? ['<div class="wn">⚠ ' + digEsc(v.error || 'Error') + '</div>'] : []));
-    }
     if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
   }
-  // tab: 'map' | 'dec' | 'addons'; none = the tab shown last
+  // tab: 'map' | 'dec' | 'v2t' | 'ai'; none = the tab shown last
   function setDlgOpen(tab) {
     setDlgCfg = JSON.parse(JSON.stringify(mapProvCfg));
     if (!mapHas(MAP_PROVIDERS, setDlgCfg.p)) setDlgCfg.p = 'osm';
@@ -16876,9 +16909,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (ob.style.display !== (off ? 'block' : 'none')) ob.style.display = off ? 'block' : 'none';
     if (off) {
       const P = mapProv();
-      const t = (blk ? "Map tiles can't be loaded: the custom tile URL is http://, which this https page may not load (mixed content) - serve the tiles over https, or from this machine (⚙ Settings) - " :
+      const t = (blk ? "Map tiles can't be loaded: the custom tile URL is http://, which this https page may not load (mixed content) - serve the tiles over https, or from this machine (⚙ Setup Settings) - " :
                  mapProvErr && P === MAP_PROVIDERS.google ? mapProvErr + ' - ' :
-                 P.key ? "Map tiles can't be loaded (no internet connection, or the " + P.name + ' key is wrong or not allowed for this page? See ⚙ Settings) - ' :
+                 P.key ? "Map tiles can't be loaded (no internet connection, or the " + P.name + ' key is wrong or not allowed for this page? See ⚙ Setup Settings) - ' :
                  "Map tiles can't be loaded (no internet connection?) - ") + 'positions are still shown on a plain grid.';
       if (ob.textContent !== t) ob.textContent = t;
     }
@@ -26344,7 +26377,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     aiRender();
     aiRenderPlugins();
     v2tRenderBox();
-    setDlgAddons();
+    setDlgAi();
     recRender();
   }
 

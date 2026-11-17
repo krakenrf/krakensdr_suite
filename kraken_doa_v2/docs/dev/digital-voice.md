@@ -66,7 +66,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   correlation with the spoken input 0.948 (codec delay 40 samples). ccoder
   writes a 1 as 0x0081 (129), TetraCodec sends -127 - cdecoder decodes both
   the same
-- Codec availability: the sidebar box (above), and each voice plugin sets a "Voice codec" fact (e.g.
+- Codec availability: ⚙ Setup Settings → Decoders (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens
 - Docker: the entrypoint exports `KRAKEN_MBELIB` / `KRAKEN_TETRA_CODEC_DIR`

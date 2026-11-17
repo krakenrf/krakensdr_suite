@@ -18,7 +18,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   *Wildlife collars*), rds (see *RDS / RBDS + SCA*), acars (see *ACARS*), vdl2 (see *VDL Mode 2*), dtv and cells
   (ARRAY plugins - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
-  tick per plugin in the plugin list (⚙ Settings → Decoders), all on by
+  tick per plugin in the plugin list (⚙ Setup Settings → Decoders), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
   registry generation, so decoders in AUTO rebuild their plugin set) and
   records the setting `AUTO_DETECT_OFF:id,id` (settings_store schema, before
@@ -276,9 +276,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   their last "Decoder set to / on"; each line tagged with its VFO in the
   VFO's colour). Clear (`digClearTab`) hides the tab's lines up to now
   (`kraken_dig_cleared`) - the decoders keep their logs (another mode's tab
-  still needs them) ⚙ Settings → Decoders
+  still needs them) ⚙ Setup Settings → Decoders
   (a sidebar box, "🔐 Digital Decoders", until 2026-11-17 - *sidebar.md*,
-  "Settings dialog") shows the plugin list (`aiRenderPlugins` -> `#ai-plugins`:
+  "Setup Settings dialog") shows the plugin list (`aiRenderPlugins` -> `#ai-plugins`:
   Auto detect tick, ↻ = `PLUGINS_RESCAN` after a manual copy + make; no
   export / import / rebuild in the web UI - plugins move as folders + `make`;
   a plugin is put on a VFO with the VFO card's decoder list; the

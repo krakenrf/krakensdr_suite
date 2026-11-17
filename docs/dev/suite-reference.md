@@ -559,7 +559,7 @@ decoders `kraken_doa_v2/plugins/`
   event log (a VFO switched to another mode or removed leaves its lines in
   the old mode's tab); a VFO in Auto detect shows up in the tab of the
   decoder it detected -
-  waterfall (its settings + data); ⚙ Settings → Decoders shows
+  waterfall (its settings + data); ⚙ Setup Settings → Decoders shows
   which voice codecs are installed (+ install steps for missing ones, from
   `plugins/lib/build/codecs` - the plugins' own detection) and the plugin list
   (Auto detect ticks, ↻ re-scan); WS
@@ -735,7 +735,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
 - Street (OpenStreetMap) / satellite (Esri World Imagery) map drawn by the
   page itself - or the tiles of Mapbox, Google Maps, Azure Maps, MapTiler,
   Thunderforest, Stadia Maps, HERE or a custom XYZ URL with the user's own
-  API key (⚙ Settings in the top bar, per browser; `kraken_doa_v2/docs/dev/map.md`)
+  API key (⚙ Setup Settings in the top bar, per browser; `kraken_doa_v2/docs/dev/map.md`)
   (no map library, no CDN): without internet it keeps working on
   a lat/lon grid with a notice. Shown with the 🗺 DoA & Map button on the right-hand
   rail (it shows / hides the whole right pane, MUSIC DoA included); a tab
@@ -892,6 +892,9 @@ leaves it out) with the models in `docker-data/whisper_models/`
   the quietest 100 ms with 0.3 s overlap) - the text follows a broadcast live.
   A pause = 240 ms under a tenth of the median energy, or twice the noise
   floor on hissy audio
+- Set up and set in ⚙ Setup Settings → 🗣 Voice to Text (set up or not and
+  what to run, model + ⬇ Get, language, CPU cores, words to expect, VAD,
+  keep the audio, state; a sidebar box until 2026-11-17)
 - Out: the 🗣 Transcription panel under the waterfall (search, VFO filter, ▶ audio
   clip, CSV), `transcripts.jsonl` (cwd), decoder log type "voice", the
   audio as Ogg Opus 16 kbit/s in the DECODER LOG FOLDER

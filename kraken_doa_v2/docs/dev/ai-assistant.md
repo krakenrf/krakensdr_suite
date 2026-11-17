@@ -22,8 +22,9 @@ the internet and writes / changes decoder plugins):
   user asked for the button to stay (2026-11-17): on a receiver without
   `ai/ai_config.json` - a per-checkout, untracked file, so a stack run from
   another worktree has none - it had vanished with nothing to say why.
-  ⚙ Settings → Add-ons shows the same state with the full steps (Claude
-  Code, then setup) - *sidebar.md*, "Settings dialog".
+  ⚙ Setup Settings → 🤖 Assistant (a card of its Add-ons tab until
+  2026-11-17) shows the same state with the full steps (Claude Code, then
+  setup) - *sidebar.md*, "Setup Settings dialog".
   ⟩ in the dock collapses it too; the left edge (`#ai-dock-rs`) resizes it
   (260 px .. 60 % of the window), width + collapsed state per browser
   (localStorage `kraken_ai_dock`). Phone (<= 900 px): a floating 🤖 button

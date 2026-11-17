@@ -300,9 +300,10 @@ or hides the right-hand pane; its **🗺 Map** tab is a street or satellite map
   **📡 Set station here**.
 - **Map provider**: OpenStreetMap and Esri imagery need no key. With your
   own API key you can switch to Mapbox, Google Maps, Azure Maps, MapTiler,
-  Thunderforest, Stadia Maps, HERE or any tile URL: **⚙** in the top bar,
-  next to the scanner badge. The provider and key are kept in that browser
-  only, and **Test** checks the key before you save it.
+  Thunderforest, Stadia Maps, HERE or any tile URL: the **🗺 Map** tab of
+  **⚙ Setup Settings** (the cog at the right of the top bar). The provider
+  and key are kept in that browser only, and **Test** checks the key before
+  you save it.
 
 Map tiles, terrain, masts and address lookups come from the internet,
 loaded by your browser. Without a connection the map still works on a plain
@@ -383,7 +384,7 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 The AMBE and TETRA codecs are not shipped with this software: AMBE+2 is
 commercially licensed (DVSI), and the ETSI codec may not be redistributed.
 You can build them yourself for personal use; whether that is allowed where
-you live is your responsibility. **⚙ Settings → Decoders** (the cog at the
+you live is your responsibility. **⚙ Setup Settings → 🔐 Decoders** (the cog at the
 right of the top bar) shows which codecs are installed.
 
 **DMR, D-STAR and NXDN: mbelib**
@@ -460,11 +461,12 @@ does the same during the install.
 | small.en / small.en-q5_1 | 466 / 181 MB | ~2x slower than real time | most accurate on a Pi; for quiet channels |
 | tiny, base, small (+ -q5_1) | as above | as above | any language, or translated to English |
 
-Get other models from the sidebar's **🗣 Voice to Text** box (**⬇ Get**), or
-with `transcribe/setup.sh --models-only small.en` (`transcribe/setup.sh --list`
-shows them all). The box also sets the CPU
-cores the model may use and the "Words to expect": callsigns and names
-spelled as you want them.
+Get other models in **⚙ Setup Settings → 🗣 Voice to Text** (the cog at the
+right of the top bar; **⬇ Get**), or with
+`transcribe/setup.sh --models-only small.en` (`transcribe/setup.sh --list`
+shows them all). That tab also shows whether Voice to Text is set up (and
+what to run while it is not), and sets the CPU cores the model may use and
+the "Words to expect": callsigns and names spelled as you want them.
 
 - Transcripts appear in the **🗣 Transcription** panel (its button is on the
   rail at the right edge of the page) a few seconds after each
@@ -502,8 +504,8 @@ Once, on the receiver:
    ```
 
 `python3 ai/kraken_ai.py disable` switches it off again. In the web page,
-**⚙ Settings → Add-ons** shows whether the assistant and Voice to Text are
-set up, and the steps while they are not. The web page can't
+**⚙ Setup Settings → 🤖 Assistant** shows whether the assistant is set up,
+and the steps while it is not. The web page can't
 switch it on, because the assistant lets anyone using the page run an AI
 agent on the receiver that controls it and compiles code. **If other people
 can reach your receiver's web page, set an API token first**
@@ -561,7 +563,7 @@ make -j3                                # kraken_doa and every plugin
 make -C plugins PLUGIN=<id>             # or just one plugin
 ```
 
-Then press ↻ Rescan next to "Decoder plugins" in **⚙ Settings → Decoders**,
+Then press ↻ Rescan next to "Decoder plugins" in **⚙ Setup Settings → 🔐 Decoders**,
 or restart the software. The same list picks which decoders take part in
 Auto detect; untick the ones you never need, since each costs CPU.
 

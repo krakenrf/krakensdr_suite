@@ -417,7 +417,7 @@ automatically:
   `doa_settings.json` or `api_token` slipped through (bypass:
   `git push --no-verify`). Root commits and merge commits (including a
   secret added while resolving a merge) are scanned too.
-- **Map provider API keys** (the web UI's ⚙ Settings: Google, Mapbox,
+- **Map provider API keys** (the web UI's ⚙ Setup Settings: Google, Mapbox,
   Azure, MapTiler, ...) live only in the browser's localStorage, never in a
   file of the tree. The pre-push hook still blocks an outgoing commit that
   ADDS a recognisable one to any file (`MAP_KEY_AWK`): a Google `AIza…`

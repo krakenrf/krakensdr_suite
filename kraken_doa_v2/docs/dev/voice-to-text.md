@@ -6,7 +6,7 @@ loaded automatically. *Italic* topic names refer to the other files in this
 folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
-**🗣 Voice to Text (`src/voice2text.cpp`, `include/voice2text*.hpp`, `transcribe/`, sidebar "🗣 Voice to Text", the 🗣 Transcription panel):**
+**🗣 Voice to Text (`src/voice2text.cpp`, `include/voice2text*.hpp`, `transcribe/`, ⚙ Setup Settings → "🗣 Voice to Text", the 🗣 Transcription panel):**
 - What is said on a VFO, written down by a LOCAL, free model: whisper.cpp
   (MIT, pinned v1.9.4 = `WHISPER_COMMIT` in `transcribe/setup.sh`) with
   OpenAI's Whisper models (ggml-*.bin from huggingface.co/ggerganov/whisper.cpp)
@@ -163,9 +163,11 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   The status `error` = `last_error`, kept until the helper loads (READY) or
   a job goes through (a crash's message used to be overwritten by
   "starting" within ms)
-- Set up or not is also shown in ⚙ Settings → Add-ons (`setDlgAddons`, from
-  the same status; the "not installed" text is `v2tInstallHtml()` in both
-  places) - *sidebar.md*, "Settings dialog".
+- Set up or not is the card at the top of ⚙ Setup Settings → 🗣 Voice to
+  Text (`v2tRenderSetup`, from the same status; the "not installed" text is
+  `v2tInstallHtml()`, per receiver OS / Windows package). It was a card of
+  that dialog's Add-ons tab, beside the sidebar box's own note, until
+  2026-11-17 - *sidebar.md*, "Setup Settings dialog".
 - Pushes: `{"voice2text":{"new":[..]}}` (1 s timer, `take_new_message`) and
   `{"voice2text":{"status":{..}}}` when it changed (state off | starting |
   ready | busy | error | not installed | no model, error, installed,
@@ -212,12 +214,22 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   check + token like /recordings; only ids in the clip list
   (`v2t::clip_path`)
 - UI (kraken_doa.html "🗣 VOICE TO TEXT" block; state `v2tStatus / v2tList /
-  v2tUnseen` in the globals block - `infoRenderTabs` reads them): sidebar
-  box `#v2t-section` (`v2tRenderBox`: install hint, model + ⬇ Get list,
-  language row only for multilingual models, cores + speed, prompt, VAD /
-  keep ticks, status, "To disk" + `v2tLogOn` = DECODER_LOG_TYPES + voice,
-  DECODER_LOG:1), VFO cards (`dec-v2t-<id>` + state, `v2tRenderCards` from
-  updateDecimatorList and every status), the 🗣 Transcription panel - the
+  v2tUnseen` in the globals block - `infoRenderTabs` reads them): the
+  🗣 Voice to Text tab of ⚙ Setup Settings (`.set-pane[data-t="v2t"]`; a
+  sidebar box, `#v2t-section` / `data-sb` "voice-to-text", until 2026-11-17,
+  when the user asked for everything about setting the software up to be in
+  that dialog - the ids stayed, `v2tRenderBox` kept its name: the set-up
+  card `#v2t-card` (`v2tRenderSetup`, the box's `?` in its header), model +
+  ⬇ Get list, language row only for multilingual models, cores + speed,
+  prompt, VAD / keep switches, status rows, "To disk" + `v2tLogOn` =
+  DECODER_LOG_TYPES + voice, DECODER_LOG:1; the box header's badge is a ⚠
+  on the tab, `#set-tab-v2t-n`, while VFOs are ticked and the state is not
+  installed / no model / error - its VFO count is the VFOs row; the box's
+  "⤢ Transcripts" button went, the rail opens the panel), VFO cards
+  (`dec-v2t-<id>` + state, `v2tRenderCards` from updateDecimatorList and
+  every status; the "⚠ Not installed" / "⚠ Error" state is a link,
+  `a.v2t-go` -> `setDlgOpen('v2t')`, as is "⚙ Setup Settings" in the
+  panel's warning, `v2tRenderHead`), the 🗣 Transcription panel - the
   panel under the waterfall with `infoTab = 'voice'`. It is a feature of its
   own there, not a tab beside the decoders' (it was one, "🗣 Voice", until
   2026-11-17; the user: it is not a decoder): the rail's 🗣 Transcription
@@ -229,7 +241,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `<mark>` on the raw text, VFO filter, ▶ `v2tPlay` - fetch with the token
   -> blob -> Audio; a browser without Ogg Opus (`canPlayType`, older
   Safari): `v2tDecodeOgg` (Ogg pages -> packets, pre-skip from OpusHead ->
-  the live audio's opus-decoder.min.js) -> WebAudio; the box's clip line
+  the live audio's opus-decoder.min.js) -> WebAudio; the tab's clip line
   `#v2t-clips` (count, MB, Keep days, folder, low disk / errors), ⬇ CSV `v2tExport` - cells starting = + - @ get a ' so a
   spreadsheet doesn't run them, Clear), the panel's name with a red dot while
   recording; the count of transcripts that came while the panel was closed

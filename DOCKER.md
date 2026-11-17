@@ -195,16 +195,16 @@ docker-data/kraken_doa/doa_recordings/        DoA recordings
 docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
                                               cdecoder, sdecoder - README "Digital voice codecs")
-docker-data/whisper_models/                   Voice to Text speech models (the sidebar's "⬇ Get")
+docker-data/whisper_models/                   Voice to Text speech models ("⬇ Get" in ⚙ Setup Settings → 🗣 Voice to Text)
 docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (🗣 Transcription)
 docker-data/kraken_doa/decoder_logs/          Decoder Logging files, and in voice_clips/ the
                                               transcripts' audio (Opus, kept as many days as the logs)
 ```
 
-**Voice to Text** (sidebar "🗣 Voice to Text"): the image includes the
+**Voice to Text** (⚙ Setup Settings → 🗣 Voice to Text): the image includes the
 speech-to-text helper (whisper.cpp; `--build-arg WHISPER=0` leaves it out and
 saves ~10 minutes of build). The speech models are not in the image: pick one
-in the sidebar box and press "⬇ Get" - it is downloaded once into
+on that tab and press "⬇ Get" - it is downloaded once into
 `docker-data/whisper_models/` and kept across rebuilds.
 
 **📼 Recordings on a USB drive**: the container only sees `/data` and what

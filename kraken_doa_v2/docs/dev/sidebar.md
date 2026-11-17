@@ -194,16 +194,20 @@ page got the same treatment on 2026-11-16.
 ### What moved out of boxes of their own (2026-11-17)
 
 The user asked for fewer boxes: three were folded away, and their `data-sb`
-keys (`gps`, `fft`, `digital-decoders`) are retired - never reuse them. A
-layout stored with them still loads (`sbBoxOrder` skips keys it has no box
-for).
+keys (`gps`, `fft`, `digital-decoders`) are retired - never reuse them. Later
+the same day (2026-11-17) the user asked for "everything relating to setting
+up the software" to be in the top bar's cog dialog, now ⚙ Setup Settings:
+the 🗣 Voice to Text box went there, and its key `voice-to-text` is retired
+too. A layout stored with any of them still loads (`sbBoxOrder` skips keys it
+has no box for; the next save drops them).
 
 - **GPS status** is the last part of *Station Information* (`#gps-sec`: the
   "GPS" row with the old box's `?`, then `#gps-details`; `updateGpsStatus`
   is unchanged). It is shown for every Location source: "📍 From GPS" of a
   static location uses the same fix.
 - **FFT size, Slow link, Points sent** are in *Display* (FFT size first).
-- **Digital Decoders** is the Decoders tab of the Settings dialog.
+- **Digital Decoders** is the Decoders tab of ⚙ Setup Settings.
+- **Voice to Text** is the 🗣 Voice to Text tab of ⚙ Setup Settings (below).
 
 ### Array diagrams (2026-11-17)
 
@@ -248,13 +252,20 @@ nowhere else), bitmap size at 1x, 2x and in a zoomed sidebar, the Radius
 box redrawing it, every topology tab, the phone drawer; and the VFO
 readout's dots (*operating-modes.md*).
 
-### Settings dialog (2026-11-17)
+### Setup Settings dialog (2026-11-17)
 
-`#set-dlg` (the top bar's ⚙, `setDlgOpen(tab)`) has tabs (`.set-tabs`
-buttons and `.set-pane`s with the same `data-t`; `setDlgTab(t)`; the tab
-shown last is kept while the page is open, `setDlgTabId`). The dialog has a
-fixed size (540 x 540 px, less on a small screen) so the tabs stay put, and
-each pane scrolls by itself.
+`#set-dlg` (the top bar's ⚙, `setDlgOpen(tab)`) is "⚙ Setup Settings": the
+user asked (2026-11-17) for everything relating to setting the software up
+to be in it, under that name ("⚙ Settings" before; the cog's tooltip and
+aria-label say "Setup Settings" too). It has tabs (`.set-tabs` buttons and
+`.set-pane`s with the same `data-t`; `setDlgTab(t)`; the tab shown last is
+kept while the page is open, `setDlgTabId`). The dialog has a fixed size
+(540 x 540 px, less on a small screen) so the tabs stay put, and each pane
+scrolls by itself. The four tabs fit one line down to a 400 px phone (the
+tabs' side padding is 6 px below 560 px of window, 5 px below 420 px); on a
+narrower screen (320 px) the strip wraps and 🤖 Assistant goes to a second
+line. Wrapping was chosen over a sideways-scrolling strip, which would hide
+a tab behind the dialog's edge with nothing to show it is there.
 
 - **🗺 Map** (`map`): the tile provider and its key - *map.md*. Test /
   Cancel / Save belong to this tab only (Enter in one of its fields saves;
@@ -266,20 +277,56 @@ each pane scrolls by itself.
   detect ticks) - *digital-decoders.md*. The list is always open (the box
   had it collapsed); `#set-tab-dec-n` on the tab counts plugins that need
   attention.
-- **🧩 Add-ons** (`addons`, `setDlgAddons()` -> `#set-addons`): the two
-  optional features that are set up on the receiver and not from the page,
-  each a card in the codecs' look with its state and, while it is not set
-  up, the commands for the receiver's OS:
-  - 🤖 AI assistant, from `ai_state`: *Not set up* (install Claude Code,
-    then `kraken_ai.py setup`) / *Claude Code not found* (enabled, backend
-    "claude", no CLI) / *Set up* (the CLI's version or the backend; the
-    dock's two warnings - no API token, no sandbox).
-  - 🗣 Voice to Text, from the voice2text status: *Not set up*
-    (`v2tInstallHtml()`, the same text as the Voice to Text box) / *No
-    speech model* / *Set up* (the model).
-  It is drawn again when either state or the receiver's OS arrives
-  (`aiOnState`, `v2tRenderBox`, `setServerOs`), so a dialog left open
-  follows a setup done meanwhile.
+- **🗣 Voice to Text** (`v2t`; the sidebar box `voice-to-text` until
+  2026-11-17 - *voice-to-text.md*). On top a card in the codecs' look
+  (`#v2t-card`, `v2tRenderSetup`) with the state from the voice2text
+  status: *Checking…* / *Not set up* (`v2tInstallHtml()`: the command for
+  the receiver's OS, or the Windows package's note) / *No speech model* /
+  *Set up* (the model, how many are downloaded); the box's `?` is in the
+  card's header. Then the box's controls in the dialog's own rows (`.lbl`
+  above, `.row`, `.sec` headings): *Speech model* - Model, Download + ⬇ Get
+  and its progress line, Language + → English (multilingual models only),
+  CPU cores + speed, Words to expect + Apply; *Audio* - Skip non-speech and
+  Keep the audio as switches (name left, switch right: `label.swr`; they
+  were plain ticks in the box), the clips line; *Status* - Status, VFOs,
+  Waiting, Transcribed, To disk (`.set-dlg .kv`, the sidebar's look). The
+  element ids are the box's, so `v2tRenderBox` drives them as before; each
+  control sends its command when it changes. The box header's badge
+  (`#v2t-badge`: "N VFOs", or "⚠ state" while VFOs were ticked and Voice to
+  Text was not installed / had no model / failed) became a ⚠ on the tab
+  (`#set-tab-v2t-n`, titled with the state) for the problem case; the VFO
+  count is the VFOs row. The box's "⤢ Transcripts" button was dropped: the
+  rail's 🗣 Transcription opens the panel. A VFO card's "⚠ Not installed"
+  (or "⚠ Error") and the "⚙ Setup Settings" link in the Transcription
+  panel's warning open the dialog on this tab (`setDlgOpen('v2t')`).
+- **🤖 Assistant** (`ai`, `setDlgAi()` -> `#set-ai`): set up on the
+  receiver or not, from `ai_state`, in the codecs' look: *Not set up*
+  (install Claude Code, then `kraken_ai.py setup`) / *Claude Code not found*
+  (enabled, backend "claude", no CLI) / *Set up* (the CLI's version or the
+  backend; the dock's two warnings - no API token, no sandbox). Drawn again
+  when `ai_state` or the receiver's OS arrives (`aiOnState`, `setServerOs`),
+  so a dialog left open follows a setup done meanwhile.
+- **🧩 Add-ons** (`addons`, `setDlgAddons`, `#set-addons`) was the third tab
+  until 2026-11-17: a card for the assistant and one for Voice to Text. It
+  was split into the two tabs above - the Voice to Text card is the top of
+  its tab, next to the controls it is about.
+
+Tests (2026-11-17, scratch `test_v2t.py`, headless Chromium, real mouse,
+key and touch events; 96 checks): no Voice to Text box (17 keyed boxes),
+every moved control once and inside the tab; the cog's tooltip, the title,
+the four tabs in order, on one line inside the dialog at 1700 and 400 px
+and wrapped, uncut and inside at 320 px (also with the ⚠ on the tab); the
+receiver's "not set up" card, the `?` on screen; simulated states (set up,
+no model, error with escaped text, multilingual, a download running,
+Windows source tree / package) with the receiver's messages held: card,
+rows, controls filled, the tab's ⚠ only while VFOs are ticked; every
+control's command from a click, Enter or a change (Enter in Words to expect
+doesn't close the dialog); a real 🗣 Transcribe tick on D0 -> the card's
+"⚠ Not installed" link and the panel's link open the tab; a stored layout
+with `voice-to-text` loads and the next save drops it; nothing overflows its
+pane at any width; no JS errors. The other suites pass with outdated
+expectations updated (box count 18 -> 17, the tab list, the Assistant tab in
+place of Add-ons, the dropped Transcripts button).
 
 ### Top bar and rail (2026-11-16)
 
@@ -307,8 +354,8 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   selector stands next to them. Remove a chip's element only together with
   its script: the countdown's timer was inside `if (cooldownEl)`.
 - **`.tb-right`** is a grid: the chips on its first line, the telemetry on
-  its second, and the ⚙ Settings button (`#settings-btn` - "Settings dialog"
-  above) in a column of its own as tall as both lines (46 px wide, a
+  its second, and the ⚙ Setup Settings button (`#settings-btn` - "Setup
+  Settings dialog" above) in a column of its own as tall as both lines (46 px wide, a
   26 px icon - the user asked for it "two rows big", 2026-11-17).
   `min-width:436px` reserves the room of one chip that comes and goes (the
   scanner's 95 px, or the RTL-SDR chip's 93 px: 95 + 170 + 104 + the gaps +
@@ -317,7 +364,7 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   the Gain / Audio sliders are 120 / 80 px. With generic RTL-SDR dongles
   an "RTL-SDR" chip (`#status-generic`) stands first. The phone layout puts
   ⚙ (42 px) at the end of the chips' line.
-- **Merged with main 2026-11-17** (map providers' ⚙ Settings dialog, generic
+- **Merged with main 2026-11-17** (map providers' ⚙ Settings dialog - ⚙ Setup Settings now -, generic
   RTL-SDR mode): main had put ⚙ after the chips and "(RTL-SDR)" on the mode
   chip - with ⚙ on the chips' line the scanner chip wrapped the bar at
   1700 px, hence its own place in the grid and the reserved width. Main's new lines
