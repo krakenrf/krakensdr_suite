@@ -149,8 +149,8 @@ voice bits).
   FN 0, terminator, the sequence `ysf_gen.py` sends; the source from the
   header. `dsdccx` on the same files reads the same (`YSF>C V2 RI 0:7
   NL000|<call>     >*****:<id> |...|<id>`, `YSF>C VF RI 0:0 WL000|...`).
-  VW voice: 422 / 422 frames clean through `ImbeDecoder` (8.44 s of audio,
-  written to a file, not listened to); as received, c0 is a valid
+  VW voice: 422 / 422 frames clean through `ImbeDecoder` (8.44 s of
+  audio); as received, c0 is a valid
   Golay(23,12) word in 422 / 422 frames and c1..c3 after descrambling in
   1266 / 1266 (0 without the de-interleave, 0 / 422 with c0 read last bit
   first) - the 24 x 6 order, first bit first and the PN seed hold on a real
@@ -160,13 +160,29 @@ voice bits).
   92 95 97 102 ...): it moves by <= 4 in 287 of 419 frame pairs, against
   215 / 149 / 118 with the bits in the DVSI chip order, its inverse or
   reversed.
+- Voice of those recordings (2026-11-17, mbelib 1.3.0 installed by the
+  user; `--audio`): DN through `mbe_processAmbe2450Dataf` - 420 frames,
+  8.40 s, every frame clean; VW through `ImbeDecoder` - 8.44 s. Both are
+  speech: the suite's Voice to Text helper (whisper base.en) writes each
+  down as the station's callsign spelled phonetically + "testing", twice -
+  the callsign the DCH carries. dsdcc built with the same mbelib gives the
+  same words from both files, and the same DN level profile (the burst,
+  the pauses and the speech onsets in the same 20 ms frames; log-envelope
+  correlation 0.75 over the call, its output gain not being constant). The
+  DN audio starts with a loud burst: 60-140 ms into the call it reaches
+  full scale, then decays over the next 100 ms - the call's first five
+  frames are AMBE+2 silence frames (b0
+  124), whose other bits mbelib still decodes as gain and spectrum; dsdcc +
+  mbelib has the same burst, later silence frames in the call are quiet.
+  With the burst in, whisper gets one of the two phrases (confidence 0.51);
+  with the first 0.3 s cut, both (0.71; dsdcc's audio 0.69). V/D mode 1
+  through mbelib only with the generator's random 72-bit frames (runs, 1-3
+  of 5 frames "clean" as random bits go): no real V/D mode 1 voice yet.
 
-Not verified (2026-11): AMBE+2 audio (DN, V/D mode 1) was never run -
-mbelib wasn't installed; DN's bit order rests on mbelib's convention (which
-dsdcc shares) and on the pitch tracks of the off-air recording. VW audio
-was decoded from real frames (all clean) but not listened to. The off-air
-recordings are one radio, direct, at high SNR, in DN and VW: V/D mode 1,
-Data FR, calls through a repeater or over VoIP and non-zero DG-IDs were
-only checked with the generator and dsdcc. The data real DN calls carry in
-DT1 / DT2 (20 bytes, probably the position) isn't in Yaesu's standard and
-is only shown as hex.
+Not verified (2026-11): V/D mode 1 voice with real speech (only the
+generator's random frames went through mbelib). The off-air recordings are
+one radio, direct, at high SNR, in DN and VW: V/D mode 1, Data FR, calls
+through a repeater or over VoIP and non-zero DG-IDs were only checked with
+the generator and dsdcc. The data real DN calls carry in DT1 / DT2 (20
+bytes, probably the position) isn't in Yaesu's standard and is only shown
+as hex. Known: the burst at the start of a DN call's audio (above).

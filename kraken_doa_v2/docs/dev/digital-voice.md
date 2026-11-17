@@ -47,9 +47,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   checked against dsdcc's recovered frames (2026-11-16; the VW order was
   P25's before - wrong) and, 2026-11-17, on off-air recordings (VW: every
   Golay word of 422 real frames valid as received; DN: the pitch parameter
-  runs in smooth tracks in this order only - plugin README); AMBE+2 audio
-  never run (mbelib not installed), VW audio decoded from real frames but
-  not listened to
+  runs in smooth tracks in this order only - plugin README); the audio
+  of both recordings is speech (2026-11-17, mbelib 1.3.0: Voice to Text
+  writes down the callsign spelled out, as dsdcc + mbelib's audio; a DN
+  call's first ~150 ms are a full-scale burst - mbelib decoding the gain
+  of the opening silence frames, dsdcc has it too); V/D mode 1 only with
+  the generator's random frames
 - TETRA: `TetraCodec` runs the ETSI programs as `cdecoder /dev/stdin
   /dev/stdout | sdecoder ...` (posix_spawn, non-blocking pipes, 690-word
   test-frame blocks of descrambled type-4 soft bits). Full-slot traffic

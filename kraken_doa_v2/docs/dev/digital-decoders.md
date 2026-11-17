@@ -179,7 +179,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     frames bit-exact - the rest its own symbol errors; plugin README).
     Off-air IQ recordings of a DN and a VW call (2026-11-17): every
     frame decoded, VW's IMBE codewords all valid as received (plugin
-    README); AMBE+2 audio never run (no mbelib).
+    README); DN (mbelib) and VW audio of those recordings is speech,
+    V/D mode 1 voice not heard from a real radio yet.
     `KRAKEN_YSF_DUMP=1`: frames, DCH units, voice bits to stderr
   - `Mpt1327Receiver` (plugins/mpt1327): MPT1327 / MPT1343 analogue
     trunking signalling, 1200 bit/s FFSK (1 = 1200 Hz, 0 = 1800 Hz) on the

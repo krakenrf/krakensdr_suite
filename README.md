@@ -357,8 +357,9 @@ shows which codecs are installed.
 
 The Yaesu System Fusion decoder was written from Yaesu's standard and
 checked against another decoder (dsdcc) and against off-air recordings of
-DN and VW calls (every frame decoded, the VW voice frames all clean). Its
-AMBE+2 voice (DN, V/D mode 1) hasn't been listened to yet.
+DN and VW calls: every frame decoded, and both voices come out as
+intelligible speech (DN through mbelib, VW through the built-in IMBE). V/D
+mode 1 voice hasn't been heard from a real radio yet.
 
 **DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 

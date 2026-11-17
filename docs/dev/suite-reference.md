@@ -575,7 +575,7 @@ decoders `kraken_doa_v2/plugins/`
   `mbe_processAmbe2450Dataf`, optional) - Fusion written from Yaesu's
   standard, which doesn't give the voice frames' bit order: the placement
   checked against dsdcc (VW's corrected to the on-air order then) and
-  against off-air DN / VW recordings; its AMBE+2 audio not run yet. TETRA
+  against off-air DN / VW recordings, whose voice decodes to speech. TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
   `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
   `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the
