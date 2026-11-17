@@ -100,7 +100,9 @@ countdown -, connection, and the scanner while one runs) above the live hardware
 stats. The antenna whose signal the spectrum shows is chosen on the spectrum's
 header. The rail at the right edge opens and closes the panels: **🗺 DoA & Map**
 (the right-hand pane with its MUSIC DoA / Map / Both tabs - hidden, MUSIC DoA
-is hidden too and the spectrum takes the room), **🔐 Decoders**,
+is hidden too and the spectrum takes the room; drag the pane's left edge to
+make it wider or narrower, double-click it for the default width - the DoA
+plots grow with it), **🔐 Decoders**,
 **🗣 Transcription** and the **🤖 Assistant**. Decoders and
 Transcription share the panel under the waterfall, which shows one of them at
 a time: the decoders with one tab each, or the transcripts by themselves.

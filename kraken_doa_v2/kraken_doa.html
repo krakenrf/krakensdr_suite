@@ -654,7 +654,8 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 .wf-controls input[type="range"] {width:60px}
 
 /* DoA panel */
-.doa-panel {width:280px;min-width:280px;max-width:430px;background:var(--s3);border:1px solid var(--l1);border-radius:4px;overflow-y:auto;display:flex;flex-direction:column}
+/* one width on every tab - MUSIC DoA, Map, Both: --map-w (rpApplyWidth; 42 % until dragged), the resizer on its left edge */
+.doa-panel {width:var(--map-w,42%);min-width:260px;max-width:none;background:var(--s3);border:1px solid var(--l1);border-radius:4px;overflow-y:auto;display:flex;flex-direction:column}
 .doa-header {background:var(--s4);padding:6px 10px;border-bottom:1px solid var(--l1)}
 .doa-header .title {font-size:14px;color:var(--ac-t);font-weight:bold}
 .doa-content {flex:1;overflow-y:auto;padding:6px}
@@ -673,9 +674,9 @@ body.map-on.mode-wideband .doa-panel, body.map-on.mode-independent .doa-panel {d
 body.rp-off .doa-panel, body.rp-off .rp-resizer {display:none !important}
 body.rp-map .doa-content {display:none}
 body.rp-map .map-pane {display:block}
-body.rp-map .doa-panel {width:var(--map-w,42%);min-width:260px;max-width:none;overflow:hidden}
-body.rp-map .rp-resizer {display:block;flex:0 0 6px;margin:0 -8px;cursor:col-resize;touch-action:none;border-radius:3px;z-index:3}
-body.rp-map .rp-resizer:hover, body.rp-map .rp-resizer.dragging {background:var(--l4)}
+body.rp-map .doa-panel {overflow:hidden}
+body.map-on .rp-resizer {display:block;flex:0 0 6px;margin:0 -8px;cursor:col-resize;touch-action:none;border-radius:3px;z-index:3}
+body.map-on .rp-resizer:hover, body.map-on .rp-resizer.dragging {background:var(--l4)}
 /* Both: MUSIC DoA on top (plots side by side), the map below, a divider between */
 body.rp-both .doa-content {display:block;flex:0 0 var(--doa-h,42%);min-height:80px}
 body.rp-both #doa-displays {flex-direction:row;flex-wrap:wrap;justify-content:center}
@@ -1101,6 +1102,18 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .doa-display .dp {width:100%;max-width:250px;aspect-ratio:1/1}
 .doa-display canvas {display:block;width:100%;height:100%}
 .doa-display .di {font-size:13px;text-align:center;margin-top:8px;color:var(--t5)}
+.doa-display .el canvas {height:auto;max-width:420px;margin:0 auto}
+/* Desktop layout (the opposite of the phone layout's query): the VFOs' plots
+   stand side by side in equal columns, and each is as large as its column and
+   the pane's height allow (container units: .doa-content is the container;
+   118 px = a card's title, array line, MUSIC line and paddings) */
+@media (min-width:1281px), (min-width:901px) and (pointer:fine), (min-width:901px) and (pointer:none) {
+  #doa-displays {display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:6px}
+  @supports (width:1cqh) {
+    .doa-content {container-type:size}
+    .doa-display .dp {max-width:min(100%,max(150px,calc(100cqh - 118px)))}
+  }
+}
 .doa-display .peak {color:var(--bad);font-weight:bold}
 .doa-display .ti {background:var(--l2);padding:4px 8px;border-radius:3px;margin:5px 0;text-align:center;font-size:12px;color:var(--ac-t)}
 
@@ -1156,15 +1169,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .scanner-lock-info {background:#195e2b;border:1px solid var(--ok-m);border-radius:3px;padding:8px;margin:8px 0;font-size:13px;color:var(--ok-t)}
 
 /* Responsive */
-@media(max-width:1200px) {
-  .doa-panel {width:230px;min-width:230px}
-  .doa-display .dp {max-width:200px}
-}
 @media(max-width:900px) {
   .spectrum-doa-container {flex-direction:column}
   .doa-panel {width:100%;max-width:none;max-height:350px}
   body.rp-map .doa-panel {width:100%;height:60vh;max-height:none;flex:none}
-  body.rp-map .rp-resizer {display:none}
+  body.map-on .rp-resizer {display:none}
   #doa-displays {flex-direction:row;flex-wrap:wrap;justify-content:center}
   .doa-display {width:calc(50% - 10px);min-width:280px}
 }
@@ -2732,7 +2741,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 
       <!-- Right-hand pane: MUSIC DoA (coherent mode) and the 🗺 Map (any
            mode, when switched on - tabs in coherent mode) -->
-      <div class="rp-resizer" id="rp-resizer" title="Drag to resize the map (double-click: default width)"></div>
+      <div class="rp-resizer" id="rp-resizer" title="Drag to resize this pane (double-click: default width)"></div>
       <div class="doa-panel" id="right-pane">
         <div class="doa-header">
           <span class="title rp-tab coh-only" id="rp-tab-doa" onclick="rpShow('doa')">MUSIC DoA</span>
@@ -4418,6 +4427,18 @@ class PolarPlot {
     this.drawBg();
   }
 
+  // The bitmap follows the canvas's size on screen (x devicePixelRatio), so
+  // the plot stays sharp at any pane width. The drawing code keeps its 250 x
+  // 250 units: a transform scales them (a resized canvas forgets it, so it is
+  // set here). Called by the display's ResizeObserver.
+  fit() {
+    const px=Math.round(this.c.clientWidth*(window.devicePixelRatio||1));
+    if(px<40||px===this.c.width) return;   // hidden, or nothing changed
+    this.c.width=px; this.c.height=px;
+    this.ctx.setTransform(px/250,0,0,px/250,0,0);
+    this.draw();
+  }
+
   setConvention(c) {
     this.convention = (c === 'compass') ? 'compass' : 'unit';
     this.draw();
@@ -4620,11 +4641,22 @@ class ElevationPlot {
     this.c=document.getElementById(canvasId);
     if(!this.c) return;
     this.ctx=this.c.getContext('2d');
+    this.W=this.c.width; this.H=this.c.height;   // the drawing units (250 x 80), whatever the bitmap's size
     this.data=new Array(181).fill(0);  // -90 to +90 at 1 degree resolution
     this.resolution=1.0;
     this.peakElevation=0;
     this.min=0;
     this.max=1;
+  }
+
+  // as PolarPlot.fit(): a sharp bitmap at the size shown
+  fit() {
+    if(!this.c) return;
+    const px=Math.round(this.c.clientWidth*(window.devicePixelRatio||1));
+    if(px<40||px===this.c.width) return;
+    this.c.width=px; this.c.height=Math.round(px*this.H/this.W);
+    this.ctx.setTransform(px/this.W,0,0,px/this.W,0,0);
+    this.draw();
   }
 
   updateData(spectrum,resolution,peakEl) {
@@ -4641,8 +4673,8 @@ class ElevationPlot {
   draw() {
     if(!this.c) return;
     const ctx=this.ctx;
-    const w=this.c.width;
-    const h=this.c.height;
+    const w=this.W;
+    const h=this.H;
     const margin={left:30,right:10,top:15,bottom:20};
     const plotW=w-margin.left-margin.right;
     const plotH=h-margin.top-margin.bottom;
@@ -8195,7 +8227,7 @@ function createDoaDisplay(decimatorId) {
     <div class="di">
       MUSIC: <span class="peak" id="dpk-${decimatorId}">---°</span>
     </div>
-    <div id="el-container-${decimatorId}" style="display:none;margin-top:8px;">
+    <div class="el" id="el-container-${decimatorId}" style="display:none;margin-top:8px;">
       <div style="font-size:10px;color:#7f8995;margin-bottom:4px;">Elevation: <span id="el-peak-${decimatorId}" class="peak" style="color:#c55553">--°</span></div>
       <canvas id="elcan-${decimatorId}" width="250" height="80"></canvas>
     </div>
@@ -8206,11 +8238,22 @@ function createDoaDisplay(decimatorId) {
   doaPlots[decimatorId] = new PolarPlot(`dcan-${decimatorId}`);
   doaPlots[decimatorId].setConvention(doaConvention);  // match current display setting
   elevationPlots[decimatorId] = new ElevationPlot(`elcan-${decimatorId}`);
+  // the plots are drawn at the size they have on screen (the pane's width is adjustable)
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => {
+      if (doaPlots[decimatorId]) doaPlots[decimatorId].fit();
+      if (elevationPlots[decimatorId]) elevationPlots[decimatorId].fit();
+    });
+    ro.observe(doaDiv.querySelector('.dp'));
+    ro.observe($id(`elcan-${decimatorId}`));
+    doaDiv._ro = ro;
+  }
 }
 
 function removeDoaDisplay(decimatorId) {
   const container = $id(`doa-container-${decimatorId}`);
   if (container) {
+    if (container._ro) container._ro.disconnect();
     container.remove();
   }
   delete doaPlots[decimatorId];

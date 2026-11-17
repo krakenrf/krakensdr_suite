@@ -72,9 +72,22 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `mapIsOn()` = `on` and `rpOpen()` - what "is the map open" checks use
   (`mapState.on` alone is true while a coherent pane is hidden). A state
   stored before `pane` existed is read as pane shown, on the DoA tab if the
-  map was off. Width
-  `--map-w` (42% default, `#rp-resizer` drag on its left edge, double-click
-  = default). The calibration greying applies to `.doa-content` only.
+  map was off.
+  **Width: one for every tab** (2026-11-17, the user's wish - the MUSIC DoA
+  tab was a fixed 280 px and the pane jumped when the tab changed):
+  `--map-w` (`rpApplyWidth`, `mapState.w`; 42 % of the room until dragged,
+  260 px .. the room less 420 px for the spectrum), `#rp-resizer` on its
+  left edge whenever the pane shows (drag; double-click = default). The
+  DoA plots fill the pane: `#doa-displays` is a grid of equal columns (one
+  per VFO while each gets 240 px, else they stack), and a plot is as large
+  as its column and the pane's height allow (`.doa-content` is a size
+  container, the plot's `max-width` is `100cqh - 118px` = the card's other
+  lines; without container units it stays 250 px). Desktop layout only - in
+  the phone layout the pane has no height of its own and nothing changed.
+  The plots are drawn at the size shown: `PolarPlot.fit()` /
+  `ElevationPlot.fit()` (from a ResizeObserver per display) set the bitmap
+  to the canvas's size on screen x devicePixelRatio and scale the drawing
+  code's fixed 250-unit space with a transform, so a large plot is sharp. The calibration greying applies to `.doa-content` only.
   localStorage `kraken_map` {on, pane, tab, w, layer, z, mx, my, trails} (the
   provider: `kraken_map_prov`, below); first
   open centres on the station (else the world) and fits the first markers
