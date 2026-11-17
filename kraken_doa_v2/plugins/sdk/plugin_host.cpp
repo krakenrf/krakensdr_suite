@@ -143,18 +143,23 @@ int print_info() {
               << ",\"array_burst_s\":" << i.array_burst_s << ",\"array_period_s\":" << i.array_period_s
               << ",\"tunes\":" << (i.tunes ? "true" : "false") << ",\"squelch_hold_s\":" << i.squelch_hold_s;
     // options twice: as JSON for people, and tab-separated for kraken_doa's
-    // flat reader (key, label, default, choices, help per line)
+    // flat reader (key, label, default, choices, help per line; a hidden option
+    // adds a sixth field "1" - a kraken_doa from before reads five and ignores
+    // it; other options' lines and JSON are as they always were)
     std::string tsv;
     std::cout << ",\"options\":[";
     for (size_t k = 0; k < i.options.size(); k++) {
         const kp::Option& o = i.options[k];
         std::cout << (k ? "," : "") << "{\"key\":\"" << jesc(o.key) << "\",\"label\":\"" << jesc(o.label)
                   << "\",\"default\":\"" << jesc(o.def) << "\",\"choices\":\"" << jesc(o.choices)
-                  << "\",\"help\":\"" << jesc(o.help) << "\"}";
-        for (const char* f : {o.key, o.label, o.def, o.choices, o.help}) {
-            for (const char* c = f; *c; c++) tsv += (*c == '\t' || *c == '\n') ? ' ' : *c;
-            tsv += f == o.help ? '\n' : '\t';
+                  << "\",\"help\":\"" << jesc(o.help) << "\"" << (o.hidden ? ",\"hidden\":true" : "") << "}";
+        // (by position: two fields may be the same "" literal)
+        const char* fields[5] = {o.key, o.label, o.def, o.choices, o.help};
+        for (int f = 0; f < 5; f++) {
+            for (const char* c = fields[f]; *c; c++) tsv += (*c == '\t' || *c == '\n') ? ' ' : *c;
+            tsv += f < 4 ? '\t' : o.hidden ? '\t' : '\n';
         }
+        if (o.hidden) tsv += "1\n";
     }
     std::cout << "],\"options_tsv\":\"" << jesc(tsv) << "\"}" << std::endl;
     return 0;

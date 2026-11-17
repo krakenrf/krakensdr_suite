@@ -159,6 +159,7 @@ void PluginRegistry::scan() {
                     if (json_find(js, "tunes", v)) pi.tunes = v == "true";
                     if (json_find(js, "squelch_hold_s", v)) pi.squelch_hold_s = std::clamp(atof(v.c_str()), 0.0, 10.0);
                     // options: one per line, tab-separated key/label/default/choices/help
+                    // [/hidden "1" - kp::Option::hidden; plugins from before have five]
                     if (json_find(js, "options_tsv", v)) {
                         std::stringstream ls(v);
                         std::string line;
@@ -167,11 +168,12 @@ void PluginRegistry::scan() {
                             std::stringstream fs(line);
                             std::string x;
                             while (std::getline(fs, x, '\t')) f.push_back(x);
+                            const bool hidden = f.size() > 5 && f[5] == "1";
                             f.resize(5);
                             bool ok = !f[0].empty() && f[0].size() <= 32;
                             for (char c : f[0])
                                 ok &= (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
-                            if (ok) pi.options.push_back({f[0], f[1], f[2], f[3], f[4]});
+                            if (ok) pi.options.push_back({f[0], f[1], f[2], f[3], f[4], hidden});
                         }
                     }
                     // 0 = the VFO's own rate (kp::Info::sample_rate)
@@ -262,8 +264,9 @@ std::string PluginRegistry::list_json() const {
         for (size_t k = 0; k < p.options.size(); k++) {
             const auto& op = p.options[k];
             o << (k ? "," : "") << "{\"key\":\"" << json_escape(op.key) << "\",\"label\":\"" << json_escape(op.label)
-              << "\",\"default\":\"" << json_escape(op.def) << "\",\"help\":\"" << json_escape(op.help)
-              << "\",\"choices\":[";
+              << "\",\"default\":\"" << json_escape(op.def) << "\",\"help\":\"" << json_escape(op.help) << "\""
+              << (op.hidden ? ",\"hidden\":true" : "")   // (only then: the others' JSON as before)
+              << ",\"choices\":[";
             // "v=Label|v=Label" -> [["v","Label"],...]
             std::stringstream cs(op.choices);
             std::string c;

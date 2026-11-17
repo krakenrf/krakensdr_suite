@@ -219,7 +219,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   decoder tab; persisted as `&m=1`; `DIGITAL_OPT:id:map:0|1` also asks for
   a full map push) + `plugin`
   {"<id>.<key>": value} - the plugins' declared options,
-  sent to the plugin as OPTION key=value ("" = back to its default).
+  sent to the plugin as OPTION key=value ("" = back to its default). An
+  option declared `hidden` (plugin list `"hidden":true`, 2026-11-17 - dab's
+  Programme) gets no control in `digVfoRowHtml` at any stage; it is still
+  saved and set by `DIGITAL_OPT` (a table row click, `digRowChoice`).
   `DIGITAL_OPT:id:verbose|invert|<id>.<key>:value` (old keys dmr_slot /
   p25_nac map to dmr.slot / p25.nac). Persisted as the snapshot field
   `v=1&i=0&dmr.slot=1` (values percent-encoded; the old `v/slot/nac/inv` form

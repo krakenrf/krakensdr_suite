@@ -21,9 +21,11 @@
 namespace dig {
 
 // A setting a plugin declares (kp::Option); choices "" = free text, else
-// "value=Label|value=Label|..."
+// "value=Label|value=Label|..."; hidden = the panel draws no control for it
+// (set by a table row click, kp::Option::hidden)
 struct PluginOption {
     std::string key, label, def, choices, help;
+    bool hidden = false;
 };
 
 struct PluginInfo {

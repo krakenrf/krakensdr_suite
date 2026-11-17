@@ -170,7 +170,7 @@ that order); pick one of them where it fits - case doesn't matter - or a
 name of your own (listed after those, by name). Without one the plugin is
 listed under `Other`, last.
 
-**Options** (`kp::Option`: key, label, default, choices, help) are the
+**Options** (`kp::Option`: key, label, default, choices, help, hidden) are the
 decoder's own settings. The panel shows them while the plugin is selected (in
 Auto detect: once it has locked onto this plugin) - `choices` = `"value=Label|..."`
 makes a list, `""` a text field; exactly two choices with the values `0`
@@ -180,12 +180,23 @@ in its tooltip). They arrive through `option(key, value)`:
 the default when the plugin starts, then whatever the user picks (`""` =
 back to the default). They are saved per VFO.
 
+`hidden = true` (the last field: `{"service", "Programme", "", "", "help",
+true}`) draws no control for the option. It is set another way: a click on
+a table row whose key is one of its run-time choices (below, *Tables*), a
+saved setting, a debug-playback catalogue's `opts`, the AI assistant's
+`set_decoder_option` (`DIGITAL_OPT` accepts any declared-or-not
+`<id>.<key>`). dab's Programme: the services table is the list, so a second
+control was redundant. Say in the plugin's `description` (shown under the
+settings row) how it is set. `decoder --info` marks it (`"hidden":true`, a
+sixth `options_tsv` field `1`); a kraken_doa from before reads five fields
+and shows the control as usual - fine, the option still works there.
+
 A list that is only known at run time - the programmes of the DAB ensemble
 being received - comes from `host.option_choices(key, {{value, label},
 ...})` instead: the panel then draws that option as a list of these
-choices, whatever its declaration says (dab's `service` is declared as a
-text field, so an older kraken_doa, or the panel before the first list,
-still offers one). Pairs rather than the `"value=Label|..."` text, so a
+choices, whatever its declaration says (unless it is `hidden`; dab's
+`service` is declared as a hidden text field, so an older kraken_doa still
+offers a text field / the list, the current one neither). Pairs rather than the `"value=Label|..."` text, so a
 label from the air with `|` or `=` in it can't add entries. A new list
 replaces the previous one; `{}` takes it back to the declaration. Limits:
 100 choices, values <= 100 bytes without control characters (others are
@@ -196,10 +207,11 @@ forgets it when the plugin restarts, on `reset()` (a retune) and when the
 decoder is switched - send it again then; nothing of it is saved. The
 setting itself stays whatever text the user or a saved setting gave: if it
 isn't one of the values (an older setting, a part of a name), the panel adds
-it as an entry of its own so the list shows what is set - better, give it an
-entry yourself that says what it selects (dab: `"jazz → Kraken Jazz"`). Use
-a choice's value as the key of its table row and the row becomes a way to
-pick it (*Tables* below).
+it as an entry of its own so the list shows what is set (you may give it an
+entry yourself that says what it selects; a hidden option needs none -
+say it in a fact instead, as dab's Programme fact does). Use a choice's
+value as the key of its table row and the row becomes a way to pick it
+(*Tables* below) - for a `hidden` option the only one in the panel.
 Choose values that stay valid (dab: the service's SId, not its position in
 the list). An older host ignores the message (wire `OPTION_CHOICES` 40); the
 offline test prints the final lists in its summary.

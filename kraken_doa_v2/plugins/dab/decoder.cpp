@@ -182,7 +182,7 @@ public:
             service_opt_ = value;
             sel_valid_ = false;
             select_service();
-            update_choices();   // (a setting outside the list gets its entry)
+            update_choices();
         } else if (key == "verbose") {
             verbose_ = value == "1";
         } else if (key == "log_raw") {
@@ -727,11 +727,14 @@ private:
         return c;
     }
 
-    // The Programme option's list in the panel (kp::Host::option_choices): "" = the first
-    // audio service, then every audio service by name, its SId as the value (stable, and what
-    // the option matches first). A setting that is none of these values (a part of a name, a
-    // SId in lower case, a service this ensemble doesn't carry) gets an entry of its own that
-    // says what it selects, so the list shows the programme being decoded. Sent on a change.
+    // The Programme option's run-time choices (kp::Host::option_choices): "" = the first
+    // audio service, then every audio service by name, its SId as the value (stable, what the
+    // option matches first, and the key of the service's table row - so a click on the row
+    // selects it; the option has no control of its own, kp::Option::hidden). Only the
+    // services: a setting that is none of them (a part of a name, a SId in lower case or of
+    // another ensemble) has no entry - the Programme fact says what it selects or that
+    // nothing matches, and a kraken_doa page from before hidden options, which still draws
+    // the list, adds the setting as an entry itself. Sent on a change.
     void update_choices() {
         std::vector<std::pair<std::string, std::pair<std::string, std::string>>> by_name;   // sort key, (value, label)
         const dab::Service* first = nullptr;
@@ -755,12 +758,6 @@ private:
         if (first) {
             std::sort(by_name.begin(), by_name.end());
             list.push_back({"", "First audio service (" + dab::utf8_truncate(name_of(*first), 48) + ")"});
-            bool listed = service_opt_.empty();
-            for (const auto& x : by_name) listed = listed || x.second.first == service_opt_;
-            if (!listed)
-                list.push_back({service_opt_, dab::utf8_truncate(kp::printable(service_opt_), 40) +
-                                                  (sel_label_.empty() ? std::string(" (no such service here)")
-                                                                      : " → " + dab::utf8_truncate(dab::printable_utf8(sel_label_), 36))});
             for (auto& x : by_name) list.push_back(std::move(x.second));
         }
         std::string all;
@@ -1138,7 +1135,9 @@ private:
     void update_programme_facts() {
         const dab::AudioStatus& st = audio_.status();
         if (sel_label_.empty()) {
-            host.fact("Programme", ens_.services.empty() ? "" : "no audio service matches \"" + kp::printable(service_opt_) + "\"");
+            host.fact("Programme", ens_.services.empty() ? ""
+                                                         : "no audio service matches \"" + kp::printable(service_opt_) +
+                                                               "\" - click a service in the table");
             clear_programme_facts();
             host.voice_state("");
             return;
@@ -1258,14 +1257,16 @@ KRAKEN_PLUGIN(DabDecoder,
                .description = "Digital radio ensembles (Eureka-147, transmission mode I, Band III / L-band): the ensemble and its "
                               "services (labels, programme types, languages, bit rates, protection), date and time, the selected "
                               "programme's audio and dynamic label, and the transmitters of the single frequency network from "
-                              "their TII codes - each with its own bearing",
+                              "their TII codes - each with its own bearing. Click a service's row in the table to listen to it",
                .version = "1.0",
                .sample_rate = 2400000,
                .min_vfo_rate = 2000000,
                .author = "KrakenSDR",
+               // (hidden: no control in the panel - a click on a service's row sets it to its SId)
                .options = {{"service", "Programme", "", "",
-                            "The service to decode: empty = the first audio service (lowest SId); a SId in hex (e.g. C221) or "
-                            "part of its label (case doesn't matter)"}},
+                            "The service to decode, set by clicking its row in the services table: empty = the first audio "
+                            "service (lowest SId); a SId in hex (e.g. C221) or part of its label (case doesn't matter)",
+                            true}},
                .map = true,
                .manual_only = true,
                .voice = true,

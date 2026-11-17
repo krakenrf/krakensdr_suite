@@ -13,8 +13,9 @@ generator's scene format are in `plugins/dab/README.md`.
   service, a SId in hex, or part of a label), shown in the panel as a list
   of the audio services (2026-11-16, `update_choices` ->
   `kp::Host::option_choices`: value = SId, label "name · DAB+ 144k", by
-  name; "" = "First audio service (name)"; a setting outside the list gets
-  its own entry "plus → Kraken Plus"; sent on a change only, emptied on
+  name; "" = "First audio service (name)"; a setting outside the list got
+  its own entry "plus → Kraken Plus" - dropped 2026-11-17 with the list
+  itself, below; sent on a change only, emptied on
   reset; the option is still declared as a text field, so an older
   kraken_doa shows that; through the debug playback: the list appears with
   the Services fact ~3 s after Play, all 6 picks of `dab-single-offset`
@@ -95,6 +96,31 @@ generator's scene format are in `plugins/dab/README.md`.
   (`noInfo` in `rdfRenderPanel`; the label, the same on every row plus
   " · N km", goes into the row's tooltip): with it the table was 377 px in
   the 370 px list and Nulls was cut off (end-to-end test, 2026-11-16)
+- NO PROGRAMME CONTROL (decision, 2026-11-17, the user's): a programme is
+  picked by clicking its row, so the Programme list in the settings row was
+  redundant and went. General mechanism, not a dab case in the page:
+  `kp::Option::hidden` (SDK, last field, default false) -> `--info`
+  (`"hidden":true`, sixth `options_tsv` field "1" only for such an option:
+  every other plugin's `--info` is byte-identical) -> `PluginOption::hidden`
+  -> the plugin list (`"hidden":true` only then) -> `digVfoRowHtml` skips
+  the option at every stage (no text field before the choices, none after
+  a retune). The option, its saving, `DIGITAL_OPT` (only the key's syntax
+  is checked, `dig::valid_option_key`) and the run-time choices (the row
+  rule needs them) are unchanged. Compatible: an older kraken_doa reads
+  five fields and shows the old control; an older page ignores the flag
+  and draws the list; a new page with an older receiver gets no flag and
+  draws the control. What the list told the user moved: "" resolves to -
+  the ▶ column and the Programme fact; no match - the Programme fact `no
+  audio service matches "X" - click a service in the table` (no ▶). The
+  "own entry" of a setting outside the list is no longer sent (only a
+  control used it; it could also have made a data service's row, whose
+  8-digit SId a setting might equal, a "choice"); an older page adds its
+  own `[v, v]` entry instead. The help sentence moved into the
+  description (shown under the settings row): "Click a service's row in
+  the table to listen to it". Test: rowclick/t_hidden.py (the real plugin
+  list from `PluginRegistry` and statuses from digi_test built from the
+  tree; cells' list / text / on-off and a synthetic run-time list render
+  byte-identical to the committed page)
 - A SERVICE ROW PLAYS IT (2026-11-17): the services table's row key is the
   SId as `update_choices` writes it (`hex(sid, 4)`, 8 digits for a data
   service), so an audio service's row key is one of the Programme list's

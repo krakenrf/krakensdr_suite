@@ -12140,6 +12140,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const vals = o.plugin || {};
     let opts = '';
     if (p && p.options) for (const op of p.options) {
+      // an option without a control of its own (kp::Option::hidden - dab's Programme: a click
+      // on a programme's row in the table sets it, digRowChoice); a receiver from before the
+      // flag sends none, and the control shows as it used to
+      if (op.hidden) continue;
       const key = p.id + '.' + op.key;
       const v = vals[key] !== undefined ? vals[key] : op.default;
       const tip = op.help ? ` title="${digEsc(op.help)}"` : '';

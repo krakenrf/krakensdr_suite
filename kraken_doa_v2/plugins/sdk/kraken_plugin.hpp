@@ -58,13 +58,17 @@ using cf = std::complex<float>;
 // choices "" = free text, else "value=Label|value=Label|..." (a list).
 // The value "" means "default" (the user cleared it). A list only known at
 // run time (the services of a DAB ensemble) comes from
-// Host::option_choices instead.
+// Host::option_choices instead. hidden: the panel draws no control for it -
+// it is set by clicking a table row whose key is one of its run-time choices
+// (dab: a programme's row), a saved setting or DIGITAL_OPT; kraken_doa from
+// before it shows the control as usual.
 struct Option {
     const char* key = "";           // [a-z0-9_], <= 32 chars
     const char* label = "";
     const char* def = "";           // default value
     const char* choices = "";
     const char* help = "";
+    bool hidden = false;            // (last: existing {key, label, def, choices, help} still compile)
 };
 
 // A position for the web UI's map (Host::map_point). Sending the same id again

@@ -206,31 +206,33 @@ then in the row's tooltip).
 
 | key | default | |
 |---|---|---|
-| `service` | "" | the programme to decode: "" = the first audio service (lowest SId); a SId in hex (`C221`) or a case-insensitive part of the label |
+| `service` | "" | the programme to decode: "" = the first audio service (lowest SId); a SId in hex (`C221`) or a case-insensitive part of the label. Hidden (`kp::Option::hidden`): no control in the panel - click a service's row |
 
-The panel shows `service` ("Programme") as a list of the ensemble's audio
-services once they are known (`kp::Host::option_choices`): "First audio
-service (<its name>)" for "", then every audio service by name
-(case-insensitive) as "BR-KLASSIK · DAB+ 144k", its SId as the value - the
-SId, not the name or a position, because it stays the same while labels and
-the line-up change. Data services aren't listed (there is nothing to play).
-A setting that is none of these values - a part of a name typed before the
-list existed, a test catalogue's `"service": "Plus"`, a SId in lower case or
-from another ensemble - keeps working as before (SId first, then a part of
-the label) and gets an entry of its own that says what it selects
-(`plus → Kraken Plus`, or `C221 (no such service here)`), so the list always
-shows the programme being decoded. The list is sent only when it changes
-(a service or label comes or goes, the setting changes; at most once a
-second from the facts update), replaced when another ensemble appears on the
-block, and emptied on a retune / reset (the receiver forgets it then too).
-Until the services are known the option is the text field, as it always is
-on a kraken_doa from before the list. An audio service's row in the services
-table has the same key as its entry (the SId), so a click on the row picks
-it too and turns Listen on (a data service's row only opens as before); the
-row of the programme set is highlighted once the setting is its SId. The
-table's own ▶ column (after Service) marks the service being decoded,
-whatever the setting's text is ("", a part of a name). Bounded by the database (64 services:
-at most 66 entries).
+A programme is picked by clicking its row in the services table: that sets
+`service` to its SId and turns Listen on (a data service's row only opens as
+before). The SId, not the name or a position, because it stays the same
+while labels and the line-up change. The option has no control of its own
+(the table is the list); a saved setting, a test catalogue's `"service":
+"Plus"` or the AI assistant's `set_decoder_option` still set it, and a part
+of a name or a SId in lower case keep working (SId first, then a part of the
+label). The table's ▶ column (after Service) marks the service being
+decoded, whatever the setting's text is; the row of the programme set is
+also highlighted once the setting is its SId. A setting that matches no
+audio service here (a SId from another ensemble) leaves no ▶, and the
+Programme fact says `no audio service matches "C221" - click a service in
+the table`.
+
+For that the plugin sends the ensemble's audio services as the option's
+run-time choices (`kp::Host::option_choices`): "First audio service (<its
+name>)" for "", then every audio service by name as "BR-KLASSIK · DAB+
+144k", its SId as the value - the row click needs only the values. Data
+services aren't in it (nothing to play). No entry for a setting outside
+the list any more (2026-11-17: nothing draws it; a kraken_doa page from
+before hidden options, which still draws the list, adds the setting as an
+entry itself). Sent only when it changes (a service or label comes or goes;
+at most once a second from the facts update), replaced when another
+ensemble appears on the block, emptied on a retune / reset. Bounded by the
+database (64 services: at most 65 entries).
 
 ## Facts, events, raw frames
 
