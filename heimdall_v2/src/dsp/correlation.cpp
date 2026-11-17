@@ -341,7 +341,11 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
     // Get number of active channels from actual data size
     const int num_channels = static_cast<int>(complex_set.size());
     if (num_channels < 2) {
-        return;  // Need at least 2 channels
+        // Need at least 2 channels (a single generic RTL-SDR with the FFT
+        // graphs switched on). The set goes back to the pool: dropped here,
+        // every one was lost and the conversion worker allocated anew.
+        l2_buffer_pool.release(std::move(complex_set));
+        return;
     }
 
     // RAII helper to return buffer to pool on function exit

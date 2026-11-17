@@ -17,6 +17,8 @@
 //   - operating_mode         : coherent / wideband / independent, re-entered once
 //                              the devices are open (restore_operating_mode)
 //   - tuner_freq<N> / tuner_gain<N> : independent mode's per-tuner tuning
+//   - generic_tuner_freq<N> / generic_tuner_gain<N> : the same in generic
+//                              RTL-SDR mode (kept apart from the KrakenSDR's)
 //
 // load() is called once at startup (before calibration begins) and applies the
 // saved values to the global state; save() is called whenever a persisted
@@ -55,6 +57,12 @@ void save_tuning_if_due();
 extern std::atomic<int> persisted_mode;
 extern std::atomic<uint32_t> persisted_tuner_freq[8];
 extern std::atomic<int> persisted_tuner_gain[8];
+// Generic RTL-SDR mode keeps its per-tuner tuning apart (generic_tuner_freq<N>
+// / generic_tuner_gain<N>): there note_mode() saves only these and never the
+// operating mode or the KrakenSDR's tuner_* keys, so a KrakenSDR plugged back
+// in starts as it did before.
+extern std::atomic<uint32_t> persisted_generic_tuner_freq[8];
+extern std::atomic<int> persisted_generic_tuner_gain[8];
 void note_mode();
 
 // Read the settings file (if present) and apply known keys to the globals.

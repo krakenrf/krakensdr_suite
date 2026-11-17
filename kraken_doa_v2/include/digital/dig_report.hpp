@@ -115,10 +115,13 @@ public:
     // table's keep time left out (with their details)
     std::string tables_json() const;
 
-    // --- Plots (kp::Host::plot): the latest per plugin, as JSON ---
-    void plot_set(const std::string& plugin, std::string json);
+    // --- Plots (kp::Host::plot): the latest per plugin and plot id, as JSON ---
+    // key: "<plugin>" (the plugin's one plot) or "<plugin>/<id>" (a named one,
+    // kp::Plot::id); a new named key past max_named of the plugin's is dropped
+    void plot_set(const std::string& plugin, const std::string& key, std::string json, size_t max_named = 0);
     void plot_clear();
-    // {"<plugin>":{t, xu, yu, x0, dx, ymin, ymax, thr, y:[..], mk:[[x, label, talker]..], age}}
+    // {"<key>":{t, xu, yu, x0, dx, ymin, ymax, thr, y:[..], mk:[[x, label, talker]..],
+    //  [id, pos, opt, also, snap, step,] age}}
     std::string plots_json() const;
 
 private:

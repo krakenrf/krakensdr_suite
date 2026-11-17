@@ -15,7 +15,8 @@ apps the way `run.sh` does on Linux.
    *Replace Driver* (or *Install Driver*). Repeat for each of the five entries
    (the list shows one per tuner). Do NOT replace the driver of interface 1, and
    on the KrakenSDR Wideband variant leave the moRFeus LO (`10C4 EAC9`) on
-   Windows' own HID driver.
+   Windows' own HID driver. Ordinary RTL-SDR dongles (no KrakenSDR, see
+   *Ordinary RTL-SDR dongles* in README.md) need the same driver, once each.
 2. **Build.** Double-click `build_windows.bat` (or run it in a terminal). The
    first run installs [MSYS2](https://www.msys2.org) into `C:\msys64` if it is
    not there (no administrator rights needed; ~1 GB with the compilers), then

@@ -326,9 +326,15 @@ void Report::table_clear() {
     for (auto& kv : tables_) kv.second.rows.clear();
 }
 
-void Report::plot_set(const std::string& plugin, std::string json) {
+void Report::plot_set(const std::string& plugin, const std::string& key, std::string json, size_t max_named) {
     std::lock_guard<std::mutex> lk(mu_);
-    plots_[plugin] = {std::move(json), now_ms()};
+    if (key != plugin && !plots_.count(key)) {
+        const std::string pre = plugin + "/";
+        size_t n = 0;
+        for (auto it = plots_.lower_bound(pre); it != plots_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it) n++;
+        if (n >= max_named) return;
+    }
+    plots_[key] = {std::move(json), now_ms()};
 }
 
 void Report::plot_clear() {

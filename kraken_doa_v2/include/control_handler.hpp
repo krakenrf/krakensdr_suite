@@ -37,13 +37,25 @@ public:
     // Thread-safe; returns whether the mode changed. ("wideband off" via
     // apply_wideband_mode_state(false) only leaves the wideband scan.)
     static bool apply_operating_mode_state(int mode);
-    static std::string build_operating_mode_json();
+    // {"operating_mode":{mode, tuners, generic_rtlsdr[, error]}}: error = why
+    // a mode change was refused (the pages show it)
+    static std::string build_operating_mode_json(const std::string& error = {});
 
     // Data receiver: heimdall's mode from the packet header (bits 10/11 of
     // the phase-state field). A mismatch that outlasts a client-initiated
     // change is adopted (heimdall restored its saved mode after a restart,
     // or another control client switched it). Thread-safe.
     static void note_server_mode(int mode);
+
+    // Generic RTL-SDR mode (server_generic_rtlsdr, header bit 12) switched
+    // on / off: tells the pages (operating_mode carries generic_rtlsdr).
+    // uWS loop only (the data receiver defers it).
+    static void on_generic_rtlsdr_changed();
+
+    // The tuner count (active_num_elements) shrank: VFOs on a tuner that is
+    // gone move to tuner 0, the pages are told. Not saved - the snapshot
+    // keeps the user's tuners for the array they came from. uWS loop only.
+    static void clamp_vfo_tuners();
 
     // Wideband variant: the antenna ring follows the RF (heimdall throws the
     // switches on every retune, from any source). Updates the ring state and,

@@ -53,6 +53,7 @@ These are not under the KrakenSDR Source Available Licence (its section 6):
 | Eigen | the system's (Debian 3.4, MSYS2 5.x), headers only, unmodified | kraken_doa | MPL-2.0 | https://gitlab.com/libeigen/eigen |
 | OpenSSL | 3.x | kraken_doa | Apache-2.0 | https://www.openssl.org/source/ |
 | Opus (libopus) | the system's | kraken_doa | BSD-3-Clause (text E) | https://opus-codec.org/ |
+| libjpeg-turbo | the system's (Debian/MSYS2; linked only when present, else the plugins send raw video) | decoder plugins (compresses `host.video_frame` pictures to JPEG; the main app does not link it) | IJG / BSD-3-Clause / zlib - Copyright (c) 2009-2024 D. R. Commander and contributors | https://libjpeg-turbo.org/ |
 | zlib | the system's | kraken_doa | zlib | https://zlib.net/ |
 | SQLite | the system's | kraken_doa | public domain | https://sqlite.org/ |
 | libuv | MSYS2's (Windows only) | kraken_doa.exe | MIT | https://github.com/libuv/libuv |
@@ -91,6 +92,12 @@ commercial product or service.
   https://operations.osmfoundation.org/policies/
 - **Esri World Imagery** (satellite layer): © Esri and its data providers;
   Esri's terms of use apply.
+- **Optional map providers** (⚙ Settings, only with the user's own API
+  key): Mapbox, Google Maps Platform (Map Tiles API), Azure Maps, MapTiler,
+  Thunderforest, Stadia Maps, HERE, or any tile server the user enters. The
+  browser fetches their tiles under the user's own account and terms; the
+  map shows each one's attribution (Google's and Azure's as their APIs send
+  it for the area shown).
 - **AWS Terrain Tiles** (viewshed / path loss terrain, Mapzen terrarium):
   attributions per data source -
   https://github.com/tilezen/joerd/blob/master/docs/attribution.md
