@@ -100,7 +100,7 @@ the dialogs. Each feature's own controls are in that feature's topic file.
 
 ## Hiding the whole sidebar
 
-The ☰ button at the left of the top bar (`#menu-btn`, `toggleSidebar()`)
+The menu button at the left of the top bar (`#menu-btn`, `toggleSidebar()`)
 hides and shows the whole sidebar on the desktop; in the phone layout the
 same button opens the drawer, as before.
 
@@ -158,6 +158,9 @@ page got the same treatment on 2026-11-16.
   idle and red while running (by id, their handlers also rewrite
   `className`).
 - Colours: only the palette's tokens (*theme.md*).
+- Pictograms: the page's icon set - `icon('name')`, an icon then the label
+  in a `<span>` - never an emoji (*icons.md*, 2026-11-18). The boxes'
+  titles, the rail and the tabs carry those icons.
 - Two CSS blocks hold the look: "Sidebar look" (scoped to `.sidebar`: the
   box chrome, the label column) and "Page look" (the same buttons, text
   boxes, sliders and switches for the top bar, the spectrum's header and its
@@ -196,18 +199,18 @@ page got the same treatment on 2026-11-16.
 The user asked for fewer boxes: three were folded away, and their `data-sb`
 keys (`gps`, `fft`, `digital-decoders`) are retired - never reuse them. Later
 the same day (2026-11-17) the user asked for "everything relating to setting
-up the software" to be in the top bar's cog dialog, now ⚙ Setup Settings:
-the 🗣 Voice to Text box went there, and its key `voice-to-text` is retired
+up the software" to be in the top bar's cog dialog, now Setup Settings:
+the Voice to Text box went there, and its key `voice-to-text` is retired
 too. A layout stored with any of them still loads (`sbBoxOrder` skips keys it
 has no box for; the next save drops them).
 
 - **GPS status** is the last part of *Station Information* (`#gps-sec`: the
   "GPS" row with the old box's `?`, then `#gps-details`; `updateGpsStatus`
-  is unchanged). It is shown for every Location source: "📍 From GPS" of a
+  is unchanged). It is shown for every Location source: "From GPS" of a
   static location uses the same fix.
 - **FFT size, Slow link, Points sent** are in *Display* (FFT size first).
-- **Digital Decoders** is the Decoders tab of ⚙ Setup Settings.
-- **Voice to Text** is the 🗣 Voice to Text tab of ⚙ Setup Settings (below).
+- **Digital Decoders** is the Decoders tab of Setup Settings.
+- **Voice to Text** is the Voice to Text tab of Setup Settings (below).
 
 ### Array diagrams (2026-11-17)
 
@@ -254,37 +257,37 @@ readout's dots (*operating-modes.md*).
 
 ### Setup Settings dialog (2026-11-17)
 
-`#set-dlg` (the top bar's ⚙, `setDlgOpen(tab)`) is "⚙ Setup Settings": the
+`#set-dlg` (the top bar's cog, `setDlgOpen(tab)`) is "Setup Settings": the
 user asked (2026-11-17) for everything relating to setting the software up
-to be in it, under that name ("⚙ Settings" before; the cog's tooltip and
+to be in it, under that name ("Settings" before; the cog's tooltip and
 aria-label say "Setup Settings" too). It has tabs (`.set-tabs` buttons and
 `.set-pane`s with the same `data-t`; `setDlgTab(t)`; the tab shown last is
 kept while the page is open, `setDlgTabId`). The dialog has a fixed size
 (540 x 540 px, less on a small screen) so the tabs stay put, and each pane
 scrolls by itself. The four tabs fit one line down to a 400 px phone (the
 tabs' side padding is 6 px below 560 px of window, 5 px below 420 px); on a
-narrower screen (320 px) the strip wraps and 🤖 Assistant goes to a second
+narrower screen (320 px) the strip wraps and Assistant goes to a second
 line. Wrapping was chosen over a sideways-scrolling strip, which would hide
 a tab behind the dialog's edge with nothing to show it is there.
 
-- **🗺 Map** (`map`): the tile provider and its key - *map.md*. Test /
+- **Map** (`map`): the tile provider and its key - *map.md*. Test /
   Cancel / Save belong to this tab only (Enter in one of its fields saves;
   Enter elsewhere in the dialog does nothing). The other tabs have nothing
   to save: what they show is the receiver's state, and a tick acts at once.
-- **🔐 Decoders** (`dec`): the voice codecs (`#dig-codecs-box`,
+- **Decoders** (`dec`): the voice codecs (`#dig-codecs-box`,
   `digOnCodecs`, ↻ Check = `PLUGIN_CODECS`) and the decoder plugins
   (`#ai-plugins`, `aiRenderPlugins`, ↻ Rescan = `PLUGINS_RESCAN`, the Auto
   detect ticks) - *digital-decoders.md*. The list is always open (the box
   had it collapsed); `#set-tab-dec-n` on the tab counts plugins that need
   attention.
-- **🗣 Voice to Text** (`v2t`; the sidebar box `voice-to-text` until
+- **Voice to Text** (`v2t`; the sidebar box `voice-to-text` until
   2026-11-17 - *voice-to-text.md*). On top a card in the codecs' look
   (`#v2t-card`, `v2tRenderSetup`) with the state from the voice2text
   status: *Checking…* / *Not set up* (`v2tInstallHtml()`: the command for
   the receiver's OS, or the Windows package's note) / *No speech model* /
   *Set up* (the model, how many are downloaded); the box's `?` is in the
   card's header. Then the box's controls in the dialog's own rows (`.lbl`
-  above, `.row`, `.sec` headings): *Speech model* - Model, Download + ⬇ Get
+  above, `.row`, `.sec` headings): *Speech model* - Model, Download + Get
   and its progress line, Language + → English (multilingual models only),
   CPU cores + speed, Words to expect + Apply; *Audio* - Skip non-speech and
   Keep the audio as switches (name left, switch right: `label.swr`; they
@@ -292,21 +295,21 @@ a tab behind the dialog's edge with nothing to show it is there.
   Waiting, Transcribed, To disk (`.set-dlg .kv`, the sidebar's look). The
   element ids are the box's, so `v2tRenderBox` drives them as before; each
   control sends its command when it changes. The box header's badge
-  (`#v2t-badge`: "N VFOs", or "⚠ state" while VFOs were ticked and Voice to
-  Text was not installed / had no model / failed) became a ⚠ on the tab
+  (`#v2t-badge`: "N VFOs", or "state" while VFOs were ticked and Voice to
+  Text was not installed / had no model / failed) became a warning on the tab
   (`#set-tab-v2t-n`, titled with the state) for the problem case; the VFO
   count is the VFOs row. The box's "⤢ Transcripts" button was dropped: the
-  rail's 🗣 Transcription opens the panel. A VFO card's "⚠ Not installed"
-  (or "⚠ Error") and the "⚙ Setup Settings" link in the Transcription
+  rail's Transcription opens the panel. A VFO card's "Not installed"
+  (or "Error") and the "Setup Settings" link in the Transcription
   panel's warning open the dialog on this tab (`setDlgOpen('v2t')`).
-- **🤖 Assistant** (`ai`, `setDlgAi()` -> `#set-ai`): set up on the
+- **Assistant** (`ai`, `setDlgAi()` -> `#set-ai`): set up on the
   receiver or not, from `ai_state`, in the codecs' look: *Not set up*
   (install Claude Code, then `kraken_ai.py setup`) / *Claude Code not found*
   (enabled, backend "claude", no CLI) / *Set up* (the CLI's version or the
   backend; the dock's two warnings - no API token, no sandbox). Drawn again
   when `ai_state` or the receiver's OS arrives (`aiOnState`, `setServerOs`),
   so a dialog left open follows a setup done meanwhile.
-- **🧩 Add-ons** (`addons`, `setDlgAddons`, `#set-addons`) was the third tab
+- **Add-ons** (`addons`, `setDlgAddons`, `#set-addons`) was the third tab
   until 2026-11-17: a card for the assistant and one for Voice to Text. It
   was split into the two tabs above - the Voice to Text card is the top of
   its tab, next to the controls it is about.
@@ -315,14 +318,14 @@ Tests (2026-11-17, scratch `test_v2t.py`, headless Chromium, real mouse,
 key and touch events; 96 checks): no Voice to Text box (17 keyed boxes),
 every moved control once and inside the tab; the cog's tooltip, the title,
 the four tabs in order, on one line inside the dialog at 1700 and 400 px
-and wrapped, uncut and inside at 320 px (also with the ⚠ on the tab); the
+and wrapped, uncut and inside at 320 px (also with the warning on the tab); the
 receiver's "not set up" card, the `?` on screen; simulated states (set up,
 no model, error with escaped text, multilingual, a download running,
 Windows source tree / package) with the receiver's messages held: card,
-rows, controls filled, the tab's ⚠ only while VFOs are ticked; every
+rows, controls filled, the tab's warning only while VFOs are ticked; every
 control's command from a click, Enter or a change (Enter in Words to expect
-doesn't close the dialog); a real 🗣 Transcribe tick on D0 -> the card's
-"⚠ Not installed" link and the panel's link open the tab; a stored layout
+doesn't close the dialog); a real Transcribe tick on D0 -> the card's
+"Not installed" link and the panel's link open the tab; a stored layout
 with `voice-to-text` loads and the next save drops it; nothing overflows its
 pane at any width; no JS errors. The other suites pass with outdated
 expectations updated (box count 18 -> 17, the tab list, the Assistant tab in
@@ -335,7 +338,7 @@ duplicated the Mode selector; "CH" did not say that it picks the displayed
 channel; and the panels' buttons should sit on the right-hand bar with the
 Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
 
-- **Order**: ☰, the frequency, then fields - Step, Gain, Audio, Mode - and at
+- **Order**: the menu button, the frequency, then fields - Step, Gain, Audio, Mode - and at
   the right `.tb-right`: the status chips above the telemetry chips. A
   field is a `.tb-group.fld`: a small upper-case label above its control
   (a grid; Gain's and Audio's value sits on the label's line). The
@@ -354,19 +357,19 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   selector stands next to them. Remove a chip's element only together with
   its script: the countdown's timer was inside `if (cooldownEl)`.
 - **`.tb-right`** is a grid: the chips on its first line, the telemetry on
-  its second, and the ⚙ Setup Settings button (`#settings-btn` - "Setup
+  its second, and the Setup Settings button (`#settings-btn` - "Setup
   Settings dialog" above) in a column of its own as tall as both lines (46 px wide, a
   26 px icon - the user asked for it "two rows big", 2026-11-17).
   `min-width:436px` reserves the room of one chip that comes and goes (the
   scanner's 95 px, or the RTL-SDR chip's 93 px: 95 + 170 + 104 + the gaps +
-  the ⚙ column), so such a chip can't wrap the bar or move a control. To
+  the cog's column), so such a chip can't wrap the bar or move a control. To
   keep the bar on one row at 1700 px with that, the bar's gap is 14 px and
   the Gain / Audio sliders are 120 / 80 px. With generic RTL-SDR dongles
   an "RTL-SDR" chip (`#status-generic`) stands first. The phone layout puts
-  ⚙ (42 px) at the end of the chips' line.
-- **Merged with main 2026-11-17** (map providers' ⚙ Settings dialog - ⚙ Setup Settings now -, generic
-  RTL-SDR mode): main had put ⚙ after the chips and "(RTL-SDR)" on the mode
-  chip - with ⚙ on the chips' line the scanner chip wrapped the bar at
+  the cog (42 px) at the end of the chips' line.
+- **Merged with main 2026-11-17** (map providers' Settings dialog - Setup Settings now -, generic
+  RTL-SDR mode): main had put the cog after the chips and "(RTL-SDR)" on the mode
+  chip - with the cog on the chips' line the scanner chip wrapped the bar at
   1700 px, hence its own place in the grid and the reserved width. Main's new lines
   were brought into the palette the way the page was converted (*theme.md*;
   only literals that the converted page didn't already hold), and the
@@ -387,14 +390,14 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   behind the header's **View** button, in a popover - "View button and
   popover" below.
 - **The rail** (`#rail`, at the right edge after the assistant's dock): one
-  button per panel - `#map-btn` (🗺 DoA & Map, `mapToggle`: the whole
-  right-hand pane, MUSIC DoA included - *map.md*), `#rail-dec` (🔐 Decoders) /
-  `#rail-voice` (🗣 Transcription - "Voice" until 2026-11-17)
+  button per panel - `#map-btn` (DoA & Map, `mapToggle`: the whole
+  right-hand pane, MUSIC DoA included - *map.md*), `#rail-dec` (Decoders) /
+  `#rail-voice` (Transcription - "Voice" until 2026-11-17)
   (`railPanel`: opens the panel under the waterfall on that feature, or
   closes it when it already shows it; the panel shows the decoders' tabs or
   the transcripts alone, never both - *voice-to-text.md*) - lit while their
   panel shows (`railSync`, called from `infoRenderTabs` and
-  `infoPanelClose`; 🗣 carries the count of unseen transcripts; on the
+  `infoPanelClose`; Transcription carries the count of unseen transcripts; on the
   phone the three share a row of the drawer's Panels box and wrap when it
   is too narrow), and `#rail-ai`, the assistant's, always there
   (`aiDockToggle`; lit while its dock is open - by CSS from the body
@@ -403,7 +406,7 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   the three buttons at the end of the old waterfall bar. The phone layout has
   no rail: `applyMobileRelocation` moves `#rail-panels` into the drawer's
   phone-only box `mobile-display` (where the buttons were before; titled
-  "🗂️ Panels" since 2026-11-17, when the display controls it also held
+  "Panels" since 2026-11-17, when the display controls it also held
   went behind the View button - the key stayed), the assistant keeps its
   floating button.
 - Tests (48 checks, headless Chromium, real mouse / touch): the bar's
@@ -412,13 +415,15 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   the calibration chip's texts at a fixed width, the cooldown in it, the
   bar's class; the antenna selector (place, wording, it switches the
   channel, rebuilt options, hidden in independent mode); the rail (Map,
-  Decoders, Voice toggle and light up, the panel's own ✕ and a panel opened
+  Decoders, Voice toggle and light up, the panel's own close button and a panel opened
   from elsewhere keep the buttons right, the assistant's button with the
   assistant enabled); no overflow at 1100 px; phone: no rail, the buttons in
   the drawer, a tap opens the map, back on the desktop they return to the
   rail; no JS errors. The other suites pass unchanged (53 + 78 + 35 + 33).
-- Not covered: heimdall's own page (`heimdall_v2/index.html`, a light page
-  of its own) and `array_calculator.html` (already in this style).
+- Not covered here: `array_calculator.html` (already in this style).
+  heimdall's own page (`heimdall_v2/index.html`) was a light page of its
+  own until 2026-11-18; it now follows these rules and the palette -
+  `heimdall_v2/docs/dev/web-ui.md`.
 
 ### View button and popover (2026-11-17)
 
@@ -433,7 +438,7 @@ per-tuner model is in *operating-modes.md*.
   `[Spectrum · WBFM] [Antenna 0] ...... [View] [?]`, one line again at every
   width down to the narrowest spectrum (400 px) and on a phone. A "sliders"
   icon (inline SVG in `currentColor`, three tracks with knobs; `VIEW_ICON`)
-  and the word View. Not the cog (that is ⚙ Setup Settings), and not
+  and the word View. Not the cog (that is Setup Settings), and not
   "Display": the sidebar's Display box holds other settings (FFT size,
   averaging, edge clip). In independent mode every tuner pane's header ends
   with the same button, icon only (`#tpane-vb-N`, title "View: scale, zoom,
@@ -486,7 +491,7 @@ per-tuner model is in *operating-modes.md*.
 - **Phone**: the same button (32 px) and popover (`min(300px, 100vw -
   24px)`, rows 38 px, 22 px thumbs). `wf-controls-bar` is no longer in
   `MOBILE_RELOCATIONS`; the drawer's phone-only box `mobile-display` (key
-  kept) holds only the three panel buttons and is titled "🗂️ Panels".
+  kept) holds only the three panel buttons and is titled "Panels".
 - **The waterfall contrast** (2026-11-17): the user asked to "make it
   clearer that "auto" and "min" "max" are for the waterfall contrast" -
   they were three bare rows. Now one group (`.vp-grp`, `role="group"`
@@ -556,7 +561,7 @@ sideways; phone layout (finger-sized buttons, a tap moves a box); no JS
 errors.
 
 2026-11-16, the rest of the page (35 checks, the same setup; live content
-from the 🧪 Debug Playback's ADS-B test transmission): the Audio switch
+from the Debug Playback's ADS-B test transmission): the Audio switch
 toggles and keeps its knob (also moved into the phone's sidebar); every new
 `?` opens inside the window and on top - spectrum header, both Viewshed
 modes, Range, Replay, a decoder's description; no long note left in those

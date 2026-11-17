@@ -3,7 +3,8 @@
 `kraken_doa.html` (and `array_calculator.html`) use one small palette,
 defined as CSS variables at the top of the page's CSS and, with the numbers
 behind it, in `tools/theme_palette.py`. This file says why it looks the way
-it does and how to use it. The layout and wording rules are in *sidebar.md*.
+it does and how to use it. The layout and wording rules are in *sidebar.md*,
+the icon set (monochrome, the text colour) in *icons.md*.
 
 ## Why it was changed (2026-11-16)
 
@@ -101,8 +102,10 @@ White on the fills: `--ac` 4.8, `--ok-m` 5.6, `--bad-m` 7.0, `--spec-m` 6.9.
   the top plus a 2 px line of it (`.top-bar.cal-*`); the calibration chip's
   colours are tokens (waiting grey, measuring / cooldown amber, applying
   azure, verifying violet, converged green).
-- heimdall's page (`heimdall_v2/index.html`) has its own light scheme and
-  is not covered.
+- heimdall's page (`heimdall_v2/index.html`) uses the same tokens with the
+  same values in its own `:root` since 2026-11-18 (it had a light scheme of
+  its own): a change to a token here must be made there too
+  (`heimdall_v2/docs/dev/web-ui.md`; its test compares the two).
 
 ## How the page was converted
 

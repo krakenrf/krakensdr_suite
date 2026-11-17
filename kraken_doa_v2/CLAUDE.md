@@ -109,6 +109,8 @@ The page (`kraken_doa.html`)
 - No explanations on the controls, anywhere on the page: short labels and
   states, the rest in a `?` help tip (`helpTip()` in JS) or a `title`; a new
   sidebar box needs its own `data-sb` key (`docs/dev/sidebar.md`).
+- Pictograms come from the page's icon set: `icon('name')` (inline SVG
+  sprite), never an emoji (`docs/dev/icons.md`).
 - Colours come from the palette: `var(--token)` in the CSS, the token's hex
   in JS / canvas code; data palettes (VFO colours, colour scales, category
   swatches) are never changed (`docs/dev/theme.md`,
@@ -199,6 +201,7 @@ the job's scratch directory (not committed). The established setup:
 | Operating modes, VFO cards, VFO tuning step, spectrum zoom, independent panes | `operating-modes.md` |
 | The sidebar's boxes (collapse, move, remembered layout); how controls and text are written on the whole page | `sidebar.md` |
 | The colour palette (tokens, the reasoning, rules, data colours that stay) | `theme.md` |
+| The icon set (one monochrome SVG sprite, `icon()`, the names; no emoji) | `icons.md` |
 | KrakenSDR Wideband (downconverter) variant | `wideband-variant.md` |
 | Patch / 3D topology; antenna array calculator | `patch-3d-topology.md`, `array-calculator.md` |
 | Spectrum views (FFT message type 7) | `spectrum-views.md` |
@@ -226,5 +229,5 @@ the job's scratch directory (not committed). The established setup:
 | Voice to Text | `voice-to-text.md` |
 | AI assistant (MCP server, bridge, lockdown, sandbox, map layers, IQ capture) | `ai-assistant.md` |
 | Web mapper output | `web-mapper.md` |
-| ↻ Restart / ⏻ Shut down from the page (power commands, platforms, privileges, safety) | `power.md` |
+| Restart / Shut down from the page (power commands, platforms, privileges, safety) | `power.md` |
 | Hot paths, DC correction, FFT dB, AM loops, MUSIC gates, dev tasks, key files, common issues | `reference.md` |

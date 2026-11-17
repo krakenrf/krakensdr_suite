@@ -15,7 +15,9 @@
 * { box-sizing:border-box }
 body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 Arial, Helvetica, sans-serif }
 header { background:var(--panel); border-bottom:1px solid var(--border); padding:10px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap }
-header h1 { font-size:18px; margin:0; font-weight:bold }
+header h1 { font-size:18px; margin:0; font-weight:bold; display:flex; align-items:center; gap:8px }
+/* the icon set of kraken_doa.html (docs/dev/icons.md): this page's copy of the symbols it uses */
+.ic { width:1em; height:1em; font-size:20px; flex:none; overflow:visible; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round }
 header .sub { color:var(--muted); font-size:12px }
 main { max-width:1180px; margin:0 auto; padding:16px }
 .bar { display:flex; flex-wrap:wrap; gap:14px 22px; align-items:flex-end; background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px 14px; margin-bottom:14px }
@@ -74,8 +76,12 @@ summary { cursor:pointer; color:var(--accent) }
 </style>
 </head>
 <body>
+<!-- the icons it uses, copied from kraken_doa.html's sprite (docs/dev/icons.md) -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<symbol id="i-array" viewBox="0 0 16 16"><circle cx="8" cy="8.4" r="5.2" stroke-width="1" stroke-dasharray="1.2 2"/><circle cx="8" cy="3.2" r="1.35" fill="currentColor"/><circle cx="12.95" cy="6.79" r="1.35" fill="currentColor"/><circle cx="11.06" cy="12.61" r="1.35" fill="currentColor"/><circle cx="4.94" cy="12.61" r="1.35" fill="currentColor"/><circle cx="3.05" cy="6.79" r="1.35" fill="currentColor"/></symbol>
+</svg>
 <header>
-  <h1>📐 Antenna Array Calculator</h1>
+  <h1><svg class="ic" aria-hidden="true"><use href="#i-array"/></svg><span>Antenna Array Calculator</span></h1>
   <span class="sub">Size a KrakenSDR antenna array for a frequency, check the frequency range of an existing array, and get the element coordinates.</span>
 </header>
 <main>

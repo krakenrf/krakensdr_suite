@@ -139,8 +139,8 @@ follows every `git pull` by itself; `heimdall_v2/heimdall --version` prints it
 too. Please include it when you report a problem.
 
 **Restart and shut down from the web page.** At the bottom of the DOA
-page's sidebar, **↻ Restart** restarts the software (both programs) or
-reboots the computer, and **⏻ Shut down** powers it off - unplug a Pi once
+page's sidebar, **Restart** restarts the software (both programs) or
+reboots the computer, and **Shut down** powers it off - unplug a Pi once
 its green LED has stopped blinking. Recordings are finished and settings
 saved first. The page shows only what works on your installation: the
 software restart needs `run.sh` (or Docker / `krakensdr.exe`); rebooting
@@ -201,7 +201,7 @@ ratio and an estimate in dBm at the receiver input.
 ### Decoders
 
 Tick **Digital decoder** on a VFO and pick a decoder, or **Auto detect**.
-Each decoder has a tab in the panel under the waterfall (the **🔐 Decoders**
+Each decoder has a tab in the panel under the waterfall (the **Decoders**
 button) with its settings, the decoded data and an event log. Any number of
 VFOs can decode at once.
 
@@ -249,7 +249,7 @@ Things to know:
 - **Digital squelch.** On a VFO with a decoder, set the squelch to
   **Digital**: it opens only while valid frames arrive, and the bearing is
   computed from those frames alone.
-- **On the map.** Tick **🗺 Plot on map** in a decoder's tab to show the
+- **On the map.** Tick **Plot on map** in a decoder's tab to show the
   positions it decodes.
 
 ### Direction finding
@@ -262,7 +262,7 @@ Direction finding needs Coherent mode.
   radio ID, callsign, aircraft address, ship, sonde serial, cell ID ...),
   each one gets a bearing from its own transmissions only. Several radios
   on one channel no longer blur into one bearing. Pick a transmitter in the
-  map's **📡 DF** panel. On a repeater's output every radio's bearing is the
+  map's **DF** panel. On a repeater's output every radio's bearing is the
   repeater's: listen on its input frequency to find the radios.
 - **Finding a transmitter while driving.** The map collects a bearing every
   15-60 m of driving and builds a heat map with the most likely position
@@ -274,25 +274,25 @@ Direction finding needs Coherent mode.
   transmitter probably is, using the terrain. It is only as good as the
   power estimate and the receiver's level calibration.
 - **Replay.** The map's **Replay** button plays back a drive logged by the
-  KrakenSDR Android app (CSV or SQLite) or by this receiver's **📝 DoA
+  KrakenSDR Android app (CSV or SQLite) or by this receiver's **DoA
   Recording**. The file is read in your browser and not uploaded.
 - **Array calibration from aircraft** (experimental). ADS-B aircraft report
   where they are, so they can calibrate the cable lengths, antenna positions
-  and rotation of the array: sidebar → **🧪 Experimental**.
+  and rotation of the array: sidebar → **Experimental**.
 
 ### Map
 
-The **🗺 DoA & Map** button on the rail at the right edge of the page shows
-or hides the right-hand pane; its **🗺 Map** tab is a street or satellite map
+The **DoA & Map** button on the rail at the right edge of the page shows
+or hides the right-hand pane; its **Map** tab is a street or satellite map
 (outside coherent mode the pane is only the map, and the button says "Map").
 
 - **Decoded positions**: aircraft, ships, APRS stations, radios sending
   GPS, sondes and more, with their tracks. Click a marker for its details.
 - **Your own markers**: right-click (long press on a touch screen) →
-  **📍 Add Marker**. A marker lists the saved frequencies at that place.
-- **Search** (🔍): coordinates in any usual form, UTM, MGRS, Maidenhead
+  **Add Marker**. A marker lists the saved frequencies at that place.
+- **Search** (the magnifier): coordinates in any usual form, UTM, MGRS, Maidenhead
   locators and map links work offline; addresses and places are looked up
-  online. 🏠 goes to the station, 🎯 to the estimated transmitter.
+  online. Home goes to the station, the target to the estimated transmitter.
 - **Masts**: the radio masts and towers mapped in OpenStreetMap.
 - **Viewshed**: the ground in line of sight of the station's antenna, over
   the terrain, up to 1000 km.
@@ -303,11 +303,11 @@ or hides the right-hand pane; its **🗺 Map** tab is a street or satellite map
 - **Incident map**: street addresses in pager messages, looked up online
   and shown as markers for 24 hours.
 - **The station**: click and drag it to move it, or right-click →
-  **📡 Set station here**.
+  **Set station here**.
 - **Map provider**: OpenStreetMap and Esri imagery need no key. With your
   own API key you can switch to Mapbox, Google Maps, Azure Maps, MapTiler,
-  Thunderforest, Stadia Maps, HERE or any tile URL: the **🗺 Map** tab of
-  **⚙ Setup Settings** (the cog at the right of the top bar). The provider
+  Thunderforest, Stadia Maps, HERE or any tile URL: the **Map** tab of
+  **Setup Settings** (the cog at the right of the top bar). The provider
   and key are kept in that browser only, and **Test** checks the key before
   you save it.
 
@@ -317,14 +317,14 @@ latitude / longitude grid.
 
 ### Saved frequencies and scanning
 
-The sidebar's **📻 Saved Frequencies** box keeps your list on the receiver
+The sidebar's **Saved Frequencies** box keeps your list on the receiver
 (`kraken_doa_v2/saved_frequencies.json`), so every browser sees it. An
 entry has a name and a frequency, and
 optionally a category, a location (a map marker), how to receive it (demod,
 bandwidth, gain, decoder), a tone or code and notes. Click an entry to tune
 the selected VFO to it. Entries are also marked on the spectrum.
 
-To scan, tick entries or whole categories and press **▶ Scan**. The
+To scan, tick entries or whole categories and press **Scan**. The
 selected VFO goes to each ticked frequency that is active and is heard until
 it ends. Every ticked frequency inside the band is watched at once; the
 receiver retunes only for other bands. The receiver does the scanning, so it
@@ -333,21 +333,21 @@ active frequency, so that all are heard, decoded and transcribed at once.
 
 ### Recording and logging
 
-- **📼 IQ & Audio Recorder**: the calibrated IQ samples of every antenna
+- **IQ & Audio Recorder**: the calibrated IQ samples of every antenna
   (the whole 2.4 MHz, or one VFO's band) as a [SigMF](https://sigmf.org)
-  recording, and VFO audio as WAV or Opus. **▶ Open** plays an IQ recording
+  recording, and VFO audio as WAV or Opus. **Open** plays an IQ recording
   back through the receiver as if the antennas picked it up again. The
   full band is 24 MB/s with 5 antennas, too fast for an SD card: use a USB
   SSD or record one VFO's band. IQ recordings include the station's position
   and GPS track; untick "Include the station position" before
   recording something you will share. Format:
   [SIGMF.md](kraken_doa_v2/SIGMF.md).
-- **🗂 Decoder Logging**: what the decoders report (events, messages,
+- **Decoder Logging**: what the decoders report (events, messages,
   positions, raw frames, incidents), one JSON-lines file per day in
   `kraken_doa_v2/decoder_logs/` (or a drive you pick), gzipped at midnight
   and kept 7 days by default.
-- **📝 DoA Recording**: the bearings to CSV or SQLite.
-- **🗣 Voice to Text**: tick **Transcribe** on a VFO and what is said there
+- **DoA Recording**: the bearings to CSV or SQLite.
+- **Voice to Text**: tick **Transcribe** on a VFO and what is said there
   is written down by a speech-to-text model running on the receiver. No
   account, nothing sent anywhere. It works on analog voice and on decoded
   digital voice, and keeps each transmission's time, radio ID, bearing and
@@ -355,7 +355,7 @@ active frequency, so that all are heard, decoded and transcribed at once.
 
 ### AI assistant
 
-The **🤖 Assistant** column on the right is a chat with an AI agent (Claude
+The **Assistant** column on the right is a chat with an AI agent (Claude
 Code) that sees and controls the receiver. It can:
 
 - answer questions about what the page shows: "what is the signal on D0?",
@@ -375,7 +375,7 @@ it up: [AI assistant setup](#ai-assistant-setup).
 
 ### Digital voice codecs
 
-A decoder can play the voice of a call: click **🔊 Listen** in its tab, or
+A decoder can play the voice of a call: click **Listen** in its tab, or
 set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 
 | System | Voice codec | Needs |
@@ -390,7 +390,7 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 The AMBE and TETRA codecs are not shipped with this software: AMBE+2 is
 commercially licensed (DVSI), and the ETSI codec may not be redistributed.
 You can build them yourself for personal use; whether that is allowed where
-you live is your responsibility. **⚙ Setup Settings → 🔐 Decoders** (the cog at the
+you live is your responsibility. **Setup Settings → Decoders** (the cog at the
 right of the top bar) shows which codecs are installed.
 
 **DMR, D-STAR and NXDN: mbelib**
@@ -456,7 +456,7 @@ make whisper
 ```
 
 This builds the helper and downloads the default model (base.en, 142 MB).
-No restart is needed: tick **🗣 Transcribe** on a VFO. `WHISPER=1 ./install.sh`
+No restart is needed: tick **Transcribe** on a VFO. `WHISPER=1 ./install.sh`
 does the same during the install.
 
 | Model | Download | On a Pi 5 | |
@@ -467,14 +467,14 @@ does the same during the install.
 | small.en / small.en-q5_1 | 466 / 181 MB | ~2x slower than real time | most accurate on a Pi; for quiet channels |
 | tiny, base, small (+ -q5_1) | as above | as above | any language, or translated to English |
 
-Get other models in **⚙ Setup Settings → 🗣 Voice to Text** (the cog at the
-right of the top bar; **⬇ Get**), or with
+Get other models in **Setup Settings → Voice to Text** (the cog at the
+right of the top bar; **Get**), or with
 `transcribe/setup.sh --models-only small.en` (`transcribe/setup.sh --list`
 shows them all). That tab also shows whether Voice to Text is set up (and
 what to run while it is not), and sets the CPU cores the model may use and
 the "Words to expect": callsigns and names spelled as you want them.
 
-- Transcripts appear in the **🗣 Transcription** panel (its button is on the
+- Transcripts appear in the **Transcription** panel (its button is on the
   rail at the right edge of the page) a few seconds after each
   transmission ends. Long transmissions and broadcasts come in parts.
 - In Coherent mode with DoA on, each transcript keeps its bearing. Click it
@@ -485,7 +485,7 @@ the "Words to expect": callsigns and names spelled as you want them.
   Decoder Logging folder, at most 2 GB, and follows that box's "Keep" days.
 - On a Mac with Apple Silicon the model runs on the GPU;
   `make whisper WHISPER_GPU=off` forces the CPU.
-- Docker: the image includes the helper. Get the models with **⬇ Get**.
+- Docker: the image includes the helper. Get the models with **Get**.
 
 Expect radio-quality transcripts: clear speech comes out well, weak signals
 and unusual names less so. The audio is kept so you can check.
@@ -510,7 +510,7 @@ Once, on the receiver:
    ```
 
 `python3 ai/kraken_ai.py disable` switches it off again. In the web page,
-**⚙ Setup Settings → 🤖 Assistant** shows whether the assistant is set up,
+**Setup Settings → Assistant** shows whether the assistant is set up,
 and the steps while it is not. The web page can't
 switch it on, because the assistant lets anyone using the page run an AI
 agent on the receiver that controls it and compiles code. **If other people
@@ -541,7 +541,7 @@ What it can and can't do:
 **Cost.** Usage counts against your Claude plan or API budget. A question
 about the screen costs a cent or two (API-equivalent), a search such as the
 weather balloon about $0.10-0.30, a decoder plugin about $1-5. The panel's
-⚙ picks the model and the effort.
+gear button picks the model and the effort.
 
 **Limits.** The assistant needs the native install; it is not available in
 Docker. On Windows it has no shell, so it can't build plugins there (see
@@ -569,7 +569,7 @@ make -j3                                # kraken_doa and every plugin
 make -C plugins PLUGIN=<id>             # or just one plugin
 ```
 
-Then press ↻ Rescan next to "Decoder plugins" in **⚙ Setup Settings → 🔐 Decoders**,
+Then press **Rescan** next to "Decoder plugins" in **Setup Settings → Decoders**,
 or restart the software. The same list picks which decoders take part in
 Auto detect; untick the ones you never need, since each costs CPU.
 
@@ -579,12 +579,12 @@ from people you trust.** To write one, see
 
 ### Debug playback
 
-The sidebar's **🧪 Debug Playback** box plays a decoder's synthetic test
+The sidebar's **Debug Playback** box plays a decoder's synthetic test
 transmission through the receiver: several transmitters with known IDs at
 known bearings, as if the antennas had picked them up. Use it to see what a
 decoder shows, or to check that it still finds every transmitter at the
-right bearing (**Check**). Press **⚙ Generate** once per test, then
-**▶ Play**. There is a test for every decoder.
+right bearing (**Check**). Press **Generate** once per test, then
+**Play**. There is a test for every decoder.
 
 While it plays, a red **DEBUG PLAYBACK - not live** banner is shown, the
 live signal is disconnected and nothing is logged or sent out. **Stop**

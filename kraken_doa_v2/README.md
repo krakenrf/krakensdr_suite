@@ -83,7 +83,7 @@ browsers stay in sync. The browser sends back short text commands (`FREQ:100.5`,
 
 ## Sidebar features
 
-The left sidebar groups all controls in boxes. The **☰** button at the left of the
+The left sidebar groups all controls in boxes. The **menu** button (three lines) at the left of the
 top bar hides the whole sidebar and brings it back (remembered in the browser),
 giving its room to the spectrum. Click a box's header to collapse or
 open it. To move a box, drag it by its header to a new place (with a mouse just
@@ -92,36 +92,36 @@ drag - a quick swipe still scrolls the sidebar; Esc cancels). While you drag,
 every box shows only its header, so the whole list fits; the sidebar scrolls when
 you reach its top or bottom edge. The order and the collapsed boxes are
 remembered in the browser (also over a
-restart). **Collapse all / Open all / ↺ Order** at the bottom of the sidebar act on
+restart). **Collapse all / Open all / Order** at the bottom of the sidebar act on
 every box. Explanations are behind the **?** icons and tooltips. Top bar (always visible) has the
 **center-frequency dial, tuning step, gain slider, audio on/off + volume and the
 operating mode**, and at the right the status chips (calibration - with the cooldown
 countdown -, connection, and the scanner while one runs) above the live hardware
 stats. The antenna whose signal the spectrum shows is chosen on the spectrum's
-header. The rail at the right edge opens and closes the panels: **🗺 DoA & Map**
+header. The rail at the right edge opens and closes the panels: **DoA & Map**
 (the right-hand pane with its MUSIC DoA / Map / Both tabs - hidden, MUSIC DoA
 is hidden too and the spectrum takes the room; drag the pane's left edge to
 make it wider or narrower, double-click it for the default width - the DoA
-plots grow with it), **🔐 Decoders**,
-**🗣 Transcription** and the **🤖 Assistant**. Decoders and
+plots grow with it), **Decoders**,
+**Transcription** and the **Assistant**. Decoders and
 Transcription share the panel under the waterfall, which shows one of them at
 a time: the decoders with one tab each, or the transcripts by themselves.
 
 | Section | What it does |
 |---------|--------------|
-| **⚙️ Decimators** | Add/remove **virtual decimators**. Each is an independent tuned "receiver" with its own frequency offset, bandwidth, and demod mode — run a narrowband DoA search on one while FM audio plays from another. |
-| **🎯 MUSIC DoA** | Toggle DoA; pick array **topology** (UCA / ULA / Custom with per-element X/Y/Z positions → 3D arrays unlock an elevation spectrum); set **radius/spacing**; **FB averaging** (ULA only) to decorrelate coherent multipath; an **Averaging** slider (exponential covariance smoothing across updates) for steadier bearings on weak signals; **Signal Sources** 1–4 or **Auto** (per-frame eigenvalue estimate); and tune **snapshots** and **snapshot length**. Bearings are read out with sub-degree precision via parabolic peak interpolation on the fixed 1° grid. |
-| **📡 Beamforming / Diversity** | Coherently combine all channels for ~7 dB SNR gain. Modes: **Delay-and-Sum**, **Freq-Domain DAS**, **MVDR** (adaptive null-steering, with regularization + condition number), and **Selection Diversity** (pick best-SNR channel, anti-multipath). Auto-steers to the DoA bearing or use **manual steering**. Shows live steering angle, confidence, and SNR boost. |
-| **📻 Wideband Mode** | Spread all tuners across the full 2.4 MHz for wide spectrum viewing (DoA disabled). Drag the spectrum to retune. Required for the discrete Scanner. |
-| **🖥️ Display** | FFT **size** (1024–65536): bigger = finer detail when zoomed in, more CPU. Spectrum **averaging** (smoothing) and **edge clip** (trim filter roll-off at band edges). The spectrum is sent at about one point per pixel of the plot (zoomed in: more detail, same data); **Slow link** halves that for a slow connection (per browser). Shows the points sent. |
-| **🔇 Squelch** | Per-decimator signal-present detection (in each decimator's panel): **FFT Peak** (the strongest FFT bin in the VFO's band vs a dB level, draggable on the spectrum) or, with the VFO's digital decoder on, **Digital** (opens only on frames the decoder confirms - FEC / CRC passed - and stays open 1.5 s after the last; the VFO's DoA is then computed from exactly the confirmed samples, so noise, other signals and interference between the frames never get into the bearing). Gates audio, scanner dwell, the web mapper and the DoA output (a closed squelch freezes the bearing display/logs at the last open frame, beamforming included; DoA is also frozen automatically whenever heimdall runs a calibration). The eigenvalue methods were removed (too hard to set up); saved settings fall back to FFT Peak. |
-| **📝 DoA Recording** | Logs the DoA results (bearing, confidence, lobe of every VFO) to a CSV / SQLite file on the receiver (was "Local Recording"). **🗺 Replay** plays a saved one back on the map (the map's ⏯ Replay, which also opens the KrakenSDR Android app's logs). |
-| **📼 IQ & Audio Recorder** | Records **IQ of every antenna** (coherent mode: the full 2.4 MHz or one VFO's band, as a SigMF collection - see `SIGMF.md`) or the **audio of one or more VFOs** (WAV / Opus), for 10 s .. 24 h or until the drive's reserve; refuses what can't fit. **Open** plays an IQ recording back through the receiver (spectrum, VFOs, decoders, DoA, map); download as one `.sigmf` archive, upload one from elsewhere. |
-| **📻 Scanner** | Discrete frequency-list scanner (needs wideband mode). Load/save/new scan files, per-frequency enable, squelch, dwell time; locks onto and reports active frequencies. Start / Next controls. |
-| **🔍 Continuous Scanner** | Sweeps for active signals automatically — either within the current bandwidth or across a **wideband MHz range** (e.g. 88–108). Adjustable squelch, dwell, and signal-decay; lists tracked signals as they appear. |
-| **📻 Saved Frequencies ▶ Scan** | Scans the saved frequencies you tick — one by one, or a whole category (also entries added to it later). The selected VFO goes to each active one with its demod / bandwidth / decoder / gain and is heard while it is (+ Delay). Every frequency in a tuner band is watched at once; coherent mode takes the bands in turn (recalibrating after each retune), independent mode watches a band on every free tuner, wideband mode one band as wide as the tuner spread (~10.8 MHz). Skip, Hold, Squelch, Dwell, Longest stay; "one VFO per active frequency" hears / transcribes everything active in the band at once (the extra VFOs are made and removed by the scan). Coherent, wideband or independent mode. |
+| **Decimators** | Add/remove **virtual decimators**. Each is an independent tuned "receiver" with its own frequency offset, bandwidth, and demod mode — run a narrowband DoA search on one while FM audio plays from another. |
+| **MUSIC DoA** | Toggle DoA; pick array **topology** (UCA / ULA / Custom with per-element X/Y/Z positions → 3D arrays unlock an elevation spectrum); set **radius/spacing**; **FB averaging** (ULA only) to decorrelate coherent multipath; an **Averaging** slider (exponential covariance smoothing across updates) for steadier bearings on weak signals; **Signal Sources** 1–4 or **Auto** (per-frame eigenvalue estimate); and tune **snapshots** and **snapshot length**. Bearings are read out with sub-degree precision via parabolic peak interpolation on the fixed 1° grid. |
+| **Beamforming / Diversity** | Coherently combine all channels for ~7 dB SNR gain. Modes: **Delay-and-Sum**, **Freq-Domain DAS**, **MVDR** (adaptive null-steering, with regularization + condition number), and **Selection Diversity** (pick best-SNR channel, anti-multipath). Auto-steers to the DoA bearing or use **manual steering**. Shows live steering angle, confidence, and SNR boost. |
+| **Wideband Mode** | Spread all tuners across the full 2.4 MHz for wide spectrum viewing (DoA disabled). Drag the spectrum to retune. Required for the discrete Scanner. |
+| **Display** | FFT **size** (1024–65536): bigger = finer detail when zoomed in, more CPU. Spectrum **averaging** (smoothing) and **edge clip** (trim filter roll-off at band edges). The spectrum is sent at about one point per pixel of the plot (zoomed in: more detail, same data); **Slow link** halves that for a slow connection (per browser). Shows the points sent. |
+| **Squelch** | Per-decimator signal-present detection (in each decimator's panel): **FFT Peak** (the strongest FFT bin in the VFO's band vs a dB level, draggable on the spectrum) or, with the VFO's digital decoder on, **Digital** (opens only on frames the decoder confirms - FEC / CRC passed - and stays open 1.5 s after the last; the VFO's DoA is then computed from exactly the confirmed samples, so noise, other signals and interference between the frames never get into the bearing). Gates audio, scanner dwell, the web mapper and the DoA output (a closed squelch freezes the bearing display/logs at the last open frame, beamforming included; DoA is also frozen automatically whenever heimdall runs a calibration). The eigenvalue methods were removed (too hard to set up); saved settings fall back to FFT Peak. |
+| **DoA Recording** | Logs the DoA results (bearing, confidence, lobe of every VFO) to a CSV / SQLite file on the receiver (was "Local Recording"). **Replay** plays a saved one back on the map (the map's Replay, which also opens the KrakenSDR Android app's logs). |
+| **IQ & Audio Recorder** | Records **IQ of every antenna** (coherent mode: the full 2.4 MHz or one VFO's band, as a SigMF collection - see `SIGMF.md`) or the **audio of one or more VFOs** (WAV / Opus), for 10 s .. 24 h or until the drive's reserve; refuses what can't fit. **Open** plays an IQ recording back through the receiver (spectrum, VFOs, decoders, DoA, map); download as one `.sigmf` archive, upload one from elsewhere. |
+| **Scanner** | Discrete frequency-list scanner (needs wideband mode). Load/save/new scan files, per-frequency enable, squelch, dwell time; locks onto and reports active frequencies. Start / Next controls. |
+| **Continuous Scanner** | Sweeps for active signals automatically — either within the current bandwidth or across a **wideband MHz range** (e.g. 88–108). Adjustable squelch, dwell, and signal-decay; lists tracked signals as they appear. |
+| **Saved Frequencies: Scan** | Scans the saved frequencies you tick — one by one, or a whole category (also entries added to it later). The selected VFO goes to each active one with its demod / bandwidth / decoder / gain and is heard while it is (+ Delay). Every frequency in a tuner band is watched at once; coherent mode takes the bands in turn (recalibrating after each retune), independent mode watches a band on every free tuner, wideband mode one band as wide as the tuner spread (~10.8 MHz). Skip, Hold, Squelch, Dwell, Longest stay; "one VFO per active frequency" hears / transcribes everything active in the band at once (the extra VFOs are made and removed by the scan). Coherent, wideband or independent mode. |
 
-**↻ Restart / ⏻ Shut down** (at the bottom of the sidebar, where the receiver offers
+**Restart / Shut down** (at the bottom of the sidebar, where the receiver offers
 them): restart the software (heimdall + this program; needs `run.sh`, Docker or
 `krakensdr.exe`, which start them again), reboot the computer, or power it off so a
 Pi can be unplugged safely. A running IQ / audio / DoA recording is finished and the
