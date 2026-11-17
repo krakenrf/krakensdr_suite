@@ -613,7 +613,8 @@ string MessageBuilders::build_system_status_message() {
     }
 
     // Per-decimator squelch states (+ MUSIC's auto source estimate, + 📏 the
-    // received level - vfo_level.hpp: the page's hover readout on each VFO)
+    // received level and the SNR on the spectrum - vfo_level.hpp: the page's
+    // hover readout on each VFO)
     json << ",\"decimator_squelch\":[";
     auto info_list = decimator_manager.getDecimatorInfoList();
     bool first = true;
@@ -634,6 +635,13 @@ string MessageBuilders::build_system_status_message() {
              << ",\"open\":" << (info.squelch_open ? "true" : "false")
              << ",\"est_sources\":" << est_sources
              << ",\"power_dbfs\":" << power;
+        // snr_db: the VFO's band as the spectrum shows it - its peak over the
+        // floor (the hover readout's SNR; there with or without a level)
+        if (float snr; vlvl::snr_db(info.id, &snr)) {
+            char b[24];
+            std::snprintf(b, sizeof(b), ",\"snr_db\":%.1f", snr);
+            json << b;
+        }
         vlvl::Level lv;
         if (vlvl::level(info.id, &lv)) vlvl::write_json(json, lv);
         json << "}";

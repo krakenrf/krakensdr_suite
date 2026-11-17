@@ -3218,15 +3218,26 @@ function hideBwTooltip() {
 // 📏 Each VFO's received level (system_status decimator_squelch[].lvl -
 // vfo_level.cpp: {dbfs, noise, total, gain, age, n}) and its readout next to
 // the mouse over the VFO's bar - main spectrum, waterfall, independent
-// panes: dBFS (the band's signal without its noise; 0 = a full-scale complex
-// tone), the SNR in the VFO's band, dBm by the 📏 range panel's calibration
-// (dBm = dBFS - gain + rgCal(gain, MHz): the nominal from published R820T
-// data + the user's correction). Updated live while shown
-let vfoLvl = {}, vfoLvlTipEl = null, vfoLvlTip = null;   // (vfoLvlTip: {id, cx, cy} while shown)
+// panes: the SNR as the spectrum shows it (decimator_squelch[].snr_db: the
+// highest point in the VFO's band over the noise floor = the plot's dB scale,
+// the squelch's number - live, for every VFO, however weak), dBFS (the band's
+// signal without its noise; 0 = a full-scale complex tone), dBm by the 📏
+// range panel's calibration (dBm = dBFS - gain + rgCal(gain, MHz): the nominal
+// from published R820T data + the user's correction). Updated live while
+// shown. The SNR was dbfs - noise (the level over the noise summed across the
+// whole VFO): a signal narrower than its VFO read far below what the plot
+// shows, and one without a level had no SNR at all - only a receiver from
+// before snr_db still gets that
+let vfoLvl = {}, vfoSnr = {}, vfoLvlTipEl = null, vfoLvlTip = null;   // (vfoLvlTip: {id, cx, cy} while shown)
 function vfoLvlNote(list) {
-  const now = Date.now(), m = {};
-  for (const sq of list || []) if (sq && sq.lvl) m[sq.id] = Object.assign({at: now}, sq.lvl);
+  const now = Date.now(), m = {}, s = {};
+  for (const sq of list || []) {
+    if (!sq) continue;
+    if (sq.lvl) m[sq.id] = Object.assign({at: now}, sq.lvl);
+    if (typeof sq.snr_db === 'number' && isFinite(sq.snr_db)) s[sq.id] = sq.snr_db;
+  }
   vfoLvl = m;
+  vfoSnr = s;
   if (vfoLvlTip) vfoLvlRender();
 }
 function vfoLvlHtml(id) {
@@ -3235,10 +3246,13 @@ function vfoLvlHtml(id) {
   const bwTxt = bw >= 1 ? bw.toFixed(1) + ' MHz' : bw >= 0.001 ? +(bw * 1000).toFixed(1) + ' kHz' : '';
   const mhz = dec ? vfoCenterMhz(dec) + dec.freq_offset_hz / 1e6 : 0;
   let h = `<b style="color:${getDecimatorColor(id)}">D${id}</b>` + (dec ? ` · ${mhz.toFixed(4)} MHz` : '') + (bwTxt ? ` · ${bwTxt}` : '');
-  if (!L) return h + '<br><span style="color:#8296b4">no level yet: measured while its signal is above the noise in its band' +
+  const snr = vfoSnr[id] !== undefined ? vfoSnr[id] : L ? L.dbfs - L.noise : null;
+  const snrTxt = snr === null ? '' : `SNR <b>${snr.toFixed(1)} dB</b>`;
+  if (!L) return h + (snrTxt ? '<br>' + snrTxt : '') +
+                     '<br><span style="color:#8296b4">no level (dBFS / dBm) yet: measured while the signal is above the noise of the VFO\'s whole band' +
                      (dec && dec.squelch_enabled ? ' and its squelch is open' : '') + '</span>';
   const age = L.age + (Date.now() - L.at) / 1000;
-  h += `<br><b>${L.dbfs.toFixed(1)} dBFS</b> · SNR ${(L.dbfs - L.noise).toFixed(1)} dB`;
+  h += `<br>${snrTxt} · <b>${L.dbfs.toFixed(1)} dBFS</b>`;
   if (L.gain < 0) h += '<br><span style="color:#ffcc80">dBm: the tuner AGC is on - its gain isn\'t known</span>';
   else {
     const f = mhz || 100, c = rgCal(L.gain, f), sd = rgCalSd(L.gain, f);
@@ -3247,7 +3261,7 @@ function vfoLvlHtml(id) {
          (!rgState.calHow && rgCalDc() ? `<br><span style="color:#ffcc80">${RG_CAL_DC_TXT}</span>` : '');
   }
   if (L.total > -8) h += `<br><span style="color:#ffcc80">⚠ near full scale (${L.total.toFixed(1)} dBFS in the tuner's band): reads low - lower the gain</span>`;
-  if (age > 2) h += `<br><span style="color:#8296b4">last heard ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} ago</span>`;
+  if (age > 2) h += `<br><span style="color:#8296b4">level last heard ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} ago</span>`;
   return h;
 }
 function vfoLvlRender() {
@@ -22695,7 +22709,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     else {
       const L = sn.lvl, age = !L ? 0 : sn.held ? L.age + (Date.now() - sn.t) / 1000 : rgLvlAge(L);
       src = `<span style="color:${sn.col}">■</span> <b>${digEsc(sn.name)}</b> · ${sn.mhz.toFixed(4)} MHz · lobe ${plF(sn.peak, 0)}°`;
-      if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgCal(L.gain, sn.mhz))} dBm</b> · SNR ${plF(L.dbfs - L.noise, 0)} dB`;
+      if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgCal(L.gain, sn.mhz))} dBm</b> · ${plF(L.dbfs - L.noise, 0)} dB over its band's noise`;
       if (sn.held || age > 3) src += ` <span class="w">(${sn.held ? 'held, ' : ''}level ${rgAgeTxt(age)} old)</span>`;
     }
     set('.rg-src', src);
@@ -22768,7 +22782,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       const L = E.sn.lvl;
       // (below ~10 dB only the moments the noise added to pass the level's significance test - a
       // narrow VFO's most: 1 kHz reads +1.2 dB at 6 dB, +3.6 at 3 dB)
-      if (E.inp.snr < 10) w.push(`weak (SNR ${plF(E.inp.snr, 0)} dB): the level may read high, the range short`);
+      if (E.inp.snr < 10) w.push(`weak (${plF(E.inp.snr, 0)} dB over the noise in the VFO's band): the level may read high, the range short`);
       if (L.total > -8) w.push(`the receiver is near full scale (${plF(L.total)} dBFS in the band): the level may read low - lower the gain`);
       if (!s.calHow) w.push(`uncalibrated: absolute levels ± ${plF(rgCalNomSd(E.sn.mhz))} dB (the nominal from published R820T data${rgCalDc() ? '; ' + RG_CAL_DC_TXT : ''})`);
       if (E.sn.held) w.push('held: the signal ended');
