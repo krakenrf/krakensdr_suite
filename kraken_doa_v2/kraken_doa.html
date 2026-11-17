@@ -463,6 +463,7 @@ body.ai-dk-off .ai-dk-hist,body.ai-dk-off .ai-dk-head .ai-on {display:none !impo
 .tp {border:1px solid var(--l1);border-radius:3px;padding:8px;margin:8px 0;background:var(--s4);font-size:13px}
 .array-diagram {width:100%;margin:8px 0;display:flex;justify-content:center}
 .array-diagram svg {background:var(--s0);border-radius:4px}
+.array-diagram canvas {display:block;max-width:100%;border-radius:7px}
 .bi {background:var(--warn-d);border:1px solid #6e4c01;color:var(--warn-t2);padding:6px;border-radius:3px;margin:8px 0;font-size:12px}
 .bi.info {background:var(--l2);border-color:#0068bb;color:var(--ac-t)}
 /* Inline help "?" icon + hover/tap popup (replaces the old light-blue info boxes) */
@@ -1149,7 +1150,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 #decimator-list .vfd:hover {color:var(--ac-t2)}
 #decimator-list .vfd.hover-top {background:linear-gradient(to bottom,rgba(122,184,247,0.28) 50%,transparent 50%)}
 #decimator-list .vfd.hover-bottom {background:linear-gradient(to top,rgba(122,184,247,0.28) 50%,transparent 50%)}
-#decimator-list .vfd-sep {color:var(--l4);font-size:24px;font-weight:600;width:5px;text-align:center}
+/* the "." between digit groups: the digits' own size and line, so it sits on
+   their baseline, and centred on its 6 px slot (a glyph wider than its box
+   starts at the box's left edge under text-align:center - the dot then
+   landed on the next digit; a flex container centres an overflowing item) */
+#decimator-list .vfd-sep {display:inline-flex;justify-content:center;flex:none;width:6px;color:var(--l5);font-size:28px;font-weight:600;line-height:36px;pointer-events:none}
 #decimator-list .vfd-unit {color:var(--l5);font-size:10px;margin-left:3px;font-family:sans-serif}
 #decimator-list .vfd-box.locked {opacity:.5}
 #decimator-list .vfd-box.locked .vfd {cursor:not-allowed;background:none}
@@ -3077,6 +3082,12 @@ let opMode = 'coherent';
 // heimdall runs plain RTL-SDR dongles, no KrakenSDR (operating_mode /
 // system_status generic_rtlsdr): no coherent mode, no wideband scan with one
 let genericRtl = false;
+// Array diagrams (see "Array diagrams"): the palette's colours they use, and each
+// container's last draw call. Up here: a diagram can be drawn before that section runs.
+const ARR_C = {bg0: '#171c23', bg1: '#0b0f14', edge: '#333b46', plate0: '#272e37', plate1: '#171c23', plateEdge: '#454f5c',
+               guide: '#5f6a77', cap: '#7f8995', text: '#b5bfcb', hi: '#dde4ec', ac: '#7ab8f7', acHi: '#cbe4ff',
+               up: '#e3a842', down: '#48a0f4', patch: '#12773d', base0: '#707883', base1: '#333b46', base2: '#11151b'};
+const arrLast = {};   // container id -> its last draw call (drawn again when the pixel density / the sidebar's zoom changes)
 let decListMode = null;      // opMode the VFO cards were built for
 let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 = none)
 let selTuner = 0;            // pane the top-bar frequency digits + gain edit
@@ -7434,54 +7445,39 @@ function updateCustomDiagram() {
 function drawCustomDiagram() {
   const container=$id('custom-diagram');
   if(!container) return;
-
-  const svgSize=160;
-  const centerX=svgSize/2;
-  const centerY=svgSize/2;
-
+  arrLast[container.id] = () => drawCustomDiagram();
+  const n = activeNumElements, W = 220, H = 204, cx = W / 2, cy = H / 2 + 4;
   // Find scale factor to fit all active elements
   let maxDist=0;
-  for(let i=0;i<activeNumElements;i++){
+  for(let i=0;i<n;i++){
     const dist=Math.sqrt(customPositions[i].x**2+customPositions[i].y**2);
     maxDist=Math.max(maxDist,dist);
   }
-  const scale=maxDist>0?55/maxDist:1;
-
-  let svg=`<svg width="${svgSize}" height="${svgSize}" viewBox="0 0 ${svgSize} ${svgSize}">`;
-
-  // Grid
-  svg+=`<line x1="0" y1="${centerY}" x2="${svgSize}" y2="${centerY}" stroke="#333b46" stroke-width="1"/>`;
-  svg+=`<line x1="${centerX}" y1="0" x2="${centerX}" y2="${svgSize}" stroke="#333b46" stroke-width="1"/>`;
-
-  // Axis labels
-  svg+=`<text x="${svgSize-10}" y="${centerY-5}" fill="#5f6a77" font-size="10">X</text>`;
-  svg+=`<text x="${centerX+5}" y="12" fill="#5f6a77" font-size="10">Y</text>`;
-
-  // Draw elements
-  const chColor='#7ab8f7';
-  for(let i=0;i<activeNumElements;i++){
-    const x=centerX+customPositions[i].x*scale;
-    const y=centerY-customPositions[i].y*scale;  // Invert Y for SVG
-    const r=12;
-
-    // Z indicator (ring if Z != 0)
-    if(Math.abs(customPositions[i].z)>0.01){
-      const zColor=customPositions[i].z>0?'#e3a842':'#48a0f4';
-      svg+=`<circle cx="${x}" cy="${y}" r="${r+3}" fill="none" stroke="${zColor}" stroke-width="2" stroke-dasharray="3,2"/>`;
+  const scale=maxDist>0?66/maxDist:1;
+  arrCanvas(container, W, H, `Custom array seen from above: ${n} antenna${n === 1 ? '' : 's'} at the X / Y positions below`, c => {
+    // the X / Y axes through the origin
+    c.strokeStyle = ARR_C.edge; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(8, cy); c.lineTo(W - 8, cy); c.moveTo(cx, 22); c.lineTo(cx, H - 8); c.stroke();
+    arrText(c, 'X', W - 13, cy - 8, {size: 10, col: ARR_C.cap});
+    arrText(c, 'Y', cx + 9, 28, {size: 10, col: ARR_C.cap});
+    for(let i=0;i<n;i++){
+      const x=cx+customPositions[i].x*scale;
+      const y=cy-customPositions[i].y*scale;  // screen y is down
+      const z=customPositions[i].z, r=10;
+      // raised / lowered: a dashed ring in the legend's colour
+      if(Math.abs(z)>0.01){
+        c.setLineDash([3, 2]); c.strokeStyle = z>0 ? ARR_C.up : ARR_C.down; c.lineWidth = 1.8;
+        c.beginPath(); c.arc(x, y, r + 3.5, 0, 2 * Math.PI); c.stroke(); c.setLineDash([]);
+      }
+      arrAntenna(c, x, y, r);
+      arrText(c, String(i), x + r + 7, y - r - 1, {size: 10, bold: true, col: ARR_C.ac});
     }
-
-    svg+=`<circle cx="${x}" cy="${y}" r="${r}" fill="${chColor}" fill-opacity="0.2" stroke="${chColor}" stroke-width="2"/>`;
-    svg+=`<text x="${x}" y="${y+4}" fill="${chColor}" font-size="9" font-weight="bold" text-anchor="middle">${i}</text>`;
-  }
-
-  // Legend for Z
-  if(is3DArray){
-    svg+=`<text x="5" y="${svgSize-5}" fill="#e3a842" font-size="8">+Z</text>`;
-    svg+=`<text x="25" y="${svgSize-5}" fill="#48a0f4" font-size="8">-Z</text>`;
-  }
-
-  svg+='</svg>';
-  container.innerHTML=svg;
+    arrCaption(c, 'TOP VIEW', 9, 13);
+    if(is3DArray){
+      arrText(c, '+Z', 9, H - 10, {size: 9, bold: true, col: ARR_C.up, align: 'left'});
+      arrText(c, '-Z', 29, H - 10, {size: 9, bold: true, col: ARR_C.down, align: 'left'});
+    }
+  });
 }
 
 function applyCustomPositions() {
@@ -7678,26 +7674,34 @@ function onLayoutSize() {
 function drawLayoutDiagram() {
   const box = $id('layout-diagram');
   if (!box) return;
+  arrLast[box.id] = () => drawLayoutDiagram();
   const L = arrayLayout, n = activeNumElements;
   if (!(L.size > 0) || layoutProblem(L.shape, n)) { box.innerHTML = ''; return; }
   const ps = layoutPositions(L.shape, n, L.size, L.height), patch = layoutIsPatch(L.shape);
-  const W = 160, c = W / 2;
+  const W = 220, H = 204, cx = W / 2, cy = H / 2 + 6;
   const u = p => -p.y, v = p => patch ? p.z : p.x;           // screen right, screen up
   const us = ps.map(u), vs = ps.map(v);
   const cu = (Math.max(...us) + Math.min(...us)) / 2, cv = (Math.max(...vs) + Math.min(...vs)) / 2;
   const ext = Math.max(...us.map(a => Math.abs(a - cu)), ...vs.map(a => Math.abs(a - cv)), 1e-6);
-  const k = 52 / ext;
-  let svg = `<svg width="${W}" height="${W}" viewBox="0 0 ${W} ${W}">`;
-  if (patch) svg += `<rect x="${c - ext * k - 16}" y="${c - ext * k - 16}" width="${2 * ext * k + 32}" height="${2 * ext * k + 32}" rx="3" fill="#12773d" fill-opacity="0.08" stroke="#12773d" stroke-opacity="0.5"/>`;
-  svg += `<text x="${W - 4}" y="11" fill="#5f6a77" font-size="9" text-anchor="end">${patch ? 'seen from behind' : 'top view'}</text>`;
-  svg += `<text x="4" y="11" fill="#7f8995" font-size="9">${patch ? '↑ up' : '↑ fwd'}</text>`;
-  ps.forEach((p, i) => {
-    const x = c + (u(p) - cu) * k, y = c - (v(p) - cv) * k, col = !patch && p.z > 0.01 ? '#e3a842' : '#7ab8f7';
-    svg += patch ? `<rect x="${x - 10}" y="${y - 10}" width="20" height="20" rx="2" fill="${col}" fill-opacity="0.2" stroke="${col}" stroke-width="2"/>`
-                 : `<circle cx="${x}" cy="${y}" r="10" fill="${col}" fill-opacity="0.2" stroke="${col}" stroke-width="2"/>`;
-    svg += `<text x="${x}" y="${y + 3.5}" fill="${col}" font-size="9" font-weight="bold" text-anchor="middle">${i}</text>`;
+  const k = 62 / ext, r = 10.5;
+  arrCanvas(box, W, H, patch ? `Patch panel seen from behind: ${n} patches` : `3D array seen from above: ${n} antennas, forward up`, c => {
+    if (patch) {   // the panel the patches are on
+      arrPlate(c, () => arrRound(c, cx - ext * k - 19, cy - ext * k - 19, 2 * ext * k + 38, 2 * ext * k + 38, 5));
+      const pg = c.createLinearGradient(0, cy - ext * k - 19, 0, cy + ext * k + 19);
+      pg.addColorStop(0, 'rgba(15,64,33,0.75)'); pg.addColorStop(1, 'rgba(15,64,33,0.45)');   // the palette's dark green (--ok-d) on the surface
+      c.fillStyle = pg; c.fill();
+      c.strokeStyle = ARR_C.patch; c.lineWidth = 1; c.stroke();
+    }
+    ps.forEach((p, i) => {
+      const x = cx + (u(p) - cu) * k, y = cy - (v(p) - cv) * k, col = !patch && p.z > 0.01 ? ARR_C.up : ARR_C.ac;
+      arrAntenna(c, x, y, r, {square: patch, col});
+      if (patch) arrText(c, String(i), x, y + 0.5, {size: 10, bold: true, col: ARR_C.acHi});
+      else arrText(c, String(i), x + r + 7, y - r - 1, {size: 10, bold: true, col});
+    });
+    arrCaption(c, patch ? 'SEEN FROM BEHIND' : 'TOP VIEW', 9, 13);
+    if (patch) arrText(c, '↑ up', W - 9, 13, {size: 9, col: ARR_C.text, align: 'right'});
+    else arrForward(c, W - 34, 7);
   });
-  box.innerHTML = svg + '</svg>';
 }
 
 // ---- Antenna array calculator (array_calculator.html) ----
@@ -7902,6 +7906,129 @@ function updateArrayOffset(val) {
   send('ARRAY_OFFSET:' + deg.toFixed(1));
 }
 
+// ---- Array diagrams -------------------------------------------------------
+// Each diagram is a rendered TOP VIEW on a canvas (a raster at the screen's
+// pixel density x the sidebar's zoom, so it is sharp): the antennas are drawn
+// as what you see looking down on them - a round magnetic base with the whip
+// end-on in its middle, lit from the upper left and casting a shadow on the
+// surface they stand on - with their channel beside them, the dimension that
+// the box's number sets, a "TOP VIEW" caption and, where the array has one,
+// an arrow for forward (the direction of 0 deg: CH0). The user asked for the
+// flat circles-with-labels sketch to be reworked (2026-11-17). Colours are
+// the palette's (docs/dev/theme.md).
+// (ARR_C, arrLast: in the globals block)
+// a canvas of w x h CSS px in the container; draw(c) works in those units
+function arrCanvas(container, w, h, label, draw) {
+  const sb = container.closest('.sidebar');
+  const k = Math.max(1, Math.min(4, (window.devicePixelRatio || 1) * (sb ? parseFloat(getComputedStyle(sb).zoom) || 1 : 1)));
+  let cv = container.querySelector(':scope > canvas');
+  if (!cv) {
+    container.innerHTML = '';
+    cv = document.createElement('canvas');
+    cv.setAttribute('role', 'img');
+    container.appendChild(cv);
+  }
+  const W = Math.round(w * k), H = Math.round(h * k);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  cv.setAttribute('aria-label', label);
+  cv.dataset.k = String(k);
+  const c = cv.getContext('2d');
+  c.setTransform(W / w, 0, 0, H / h, 0, 0);
+  c.clearRect(0, 0, w, h);
+  // the surface: a soft pool of light in the middle
+  const g = c.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.72);
+  g.addColorStop(0, ARR_C.bg0); g.addColorStop(1, ARR_C.bg1);
+  arrRound(c, 0.5, 0.5, w - 1, h - 1, 7);
+  c.fillStyle = g; c.fill();
+  c.strokeStyle = ARR_C.edge; c.lineWidth = 1; c.stroke();
+  draw(c);
+}
+function arrRound(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+function arrText(c, t, x, y, o = {}) {
+  c.font = (o.bold ? '600 ' : '') + (o.size || 10) + 'px "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif';
+  c.textAlign = o.align || 'center'; c.textBaseline = 'middle';
+  if ('letterSpacing' in c) c.letterSpacing = o.track ? o.track + 'px' : '0px';
+  if (o.pill) {   // a dark plate under the text, so it reads on top of lines
+    const m = c.measureText(t).width, px = 4, ph = (o.size || 10) + 5;
+    const x0 = c.textAlign === 'center' ? x - m / 2 : c.textAlign === 'right' ? x - m : x;
+    arrRound(c, x0 - px, y - ph / 2, m + 2 * px, ph, 3.5);
+    c.fillStyle = 'rgba(5,8,12,0.82)'; c.fill();
+  }
+  c.fillStyle = o.col || ARR_C.text;
+  c.fillText(t, x, y);
+}
+// the plate / rail the antennas stand on, with the shadow it casts
+function arrPlate(c, path) {
+  c.save();
+  c.translate(1.5, 3); path(); c.fillStyle = 'rgba(0,0,0,0.42)'; c.fill();
+  c.restore();
+  path();
+  return c;
+}
+// One antenna seen from above at (x, y): shadow, magnetic base, whip tip.
+// o.square: a patch antenna (a square); o.col: the rim's colour
+function arrAntenna(c, x, y, r, o = {}) {
+  const col = o.col || ARR_C.ac;
+  // its shadow on the surface (the light comes from the upper left)
+  const sx = x + r * 0.22, sy = y + r * 0.34;
+  const sh = c.createRadialGradient(sx, sy, r * 0.55, sx, sy, r * 1.55);
+  sh.addColorStop(0, 'rgba(0,0,0,0.62)'); sh.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = sh; c.beginPath(); c.arc(sx, sy, r * 1.55, 0, 2 * Math.PI); c.fill();
+  // the base: a dark metal disc, brighter where the light hits it
+  const g = c.createRadialGradient(x - r * 0.38, y - r * 0.42, r * 0.05, x, y, r);
+  g.addColorStop(0, ARR_C.base0); g.addColorStop(0.55, ARR_C.base1); g.addColorStop(1, ARR_C.base2);
+  if (o.square) arrRound(c, x - r, y - r, 2 * r, 2 * r, r * 0.22); else { c.beginPath(); c.arc(x, y, r, 0, 2 * Math.PI); }
+  c.fillStyle = g; c.fill();
+  c.strokeStyle = col; c.lineWidth = 1.6; c.stroke();
+  if (o.square) {   // the patch itself, a smaller square on the board
+    arrRound(c, x - r * 0.58, y - r * 0.58, r * 1.16, r * 1.16, r * 0.12);
+    c.fillStyle = 'rgba(122,184,247,0.16)'; c.fill();
+    c.strokeStyle = 'rgba(255,255,255,0.14)'; c.lineWidth = 1; c.stroke();
+    return;
+  }
+  // the step of the base's housing
+  c.beginPath(); c.arc(x, y, r * 0.62, 0, 2 * Math.PI);
+  c.strokeStyle = 'rgba(255,255,255,0.10)'; c.lineWidth = 1; c.stroke();
+  // the whip, end-on: a bright tip with a glow in the channel's colour
+  const gl = c.createRadialGradient(x, y, 0, x, y, r * 0.5);
+  gl.addColorStop(0, col); gl.addColorStop(1, 'rgba(122,184,247,0)');
+  c.globalAlpha = 0.55; c.fillStyle = gl; c.beginPath(); c.arc(x, y, r * 0.5, 0, 2 * Math.PI); c.fill(); c.globalAlpha = 1;
+  c.fillStyle = ARR_C.hi; c.beginPath(); c.arc(x, y, Math.max(1.6, r * 0.2), 0, 2 * Math.PI); c.fill();
+}
+// a dimension line from a to b with an arrowhead at b (and at a when both)
+function arrDim(c, ax, ay, bx, by, both) {
+  const a = Math.atan2(by - ay, bx - ax), hd = 5.5;
+  c.strokeStyle = ARR_C.hi; c.fillStyle = ARR_C.hi; c.lineWidth = 1.2; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(ax + (both ? hd * 0.7 * Math.cos(a) : 0), ay + (both ? hd * 0.7 * Math.sin(a) : 0));
+  c.lineTo(bx - hd * 0.7 * Math.cos(a), by - hd * 0.7 * Math.sin(a)); c.stroke();
+  const head = (x, y, ang) => {
+    c.beginPath(); c.moveTo(x, y);
+    c.lineTo(x - hd * Math.cos(ang - 0.42), y - hd * Math.sin(ang - 0.42));
+    c.lineTo(x - hd * Math.cos(ang + 0.42), y - hd * Math.sin(ang + 0.42));
+    c.closePath(); c.fill();
+  };
+  head(bx, by, a);
+  if (both) head(ax, ay, a + Math.PI);
+}
+function arrCaption(c, t, x, y, align) { arrText(c, t, x, y, {size: 8.5, bold: true, col: ARR_C.cap, track: 1.1, align: align || 'left'}); }
+// forward (0 deg): an arrow pointing up at (x, y), "fwd" beside it
+function arrForward(c, x, y) {
+  c.fillStyle = ARR_C.text; c.strokeStyle = ARR_C.text; c.lineWidth = 1.4; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(x, y + 9); c.lineTo(x, y + 3); c.stroke();
+  c.beginPath(); c.moveTo(x, y - 1); c.lineTo(x - 4, y + 5); c.lineTo(x + 4, y + 5); c.closePath(); c.fill();
+  arrText(c, 'fwd', x + 8, y + 4.5, {size: 9, col: ARR_C.text, align: 'left'});
+}
+function arrRedrawAll() { for (const k of Object.keys(arrLast)) { try { arrLast[k](); } catch (e) {} } }
+(() => {   // the pixel density or the sidebar's zoom changed: draw them again, sharp
+  let t = 0;
+  window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(arrRedrawAll, 150); });
+})();
+
 // Draw antenna array diagrams
 function drawArrayDiagrams() {
   drawUCADiagram();
@@ -7911,139 +8038,77 @@ function drawArrayDiagrams() {
 function drawUCADiagram(containerId, radiusOverride) {
   const container = $id(containerId || 'uca-diagram');
   if (!container) return;
-
-  const numElements = activeNumElements;
-  const svgSize = 140;
-  const centerX = svgSize / 2;
-  const centerY = svgSize / 2;
-  const arrayRadius = 45;
-  const elementRadius = 12;
-
+  arrLast[container.id] = () => drawUCADiagram(containerId, radiusOverride);
+  const n = activeNumElements;
   // Radius label: explicit override (Wideband topology's ring radius) or the
   // value from the UCA radius input
-  const radiusValue = radiusOverride !== undefined ? radiusOverride
-                      : ($id('arr') ? $id('arr').value : '50');
-
-  let svg = `<svg width="${svgSize}" height="${svgSize}" viewBox="0 0 ${svgSize} ${svgSize}">`;
-
-  // Define arrowhead marker (small)
-  svg += `<defs>
-    <marker id="arrowhead" markerWidth="5" markerHeight="4" refX="5" refY="2" orient="auto">
-      <polygon points="0 0, 5 2, 0 4" fill="#fff"/>
-    </marker>
-  </defs>`;
-
-  // Draw array circle (dashed)
-  svg += `<circle cx="${centerX}" cy="${centerY}" r="${arrayRadius}" fill="none" stroke="#333b46" stroke-width="1" stroke-dasharray="4,2"/>`;
-
-  // Draw center point
-  svg += `<circle cx="${centerX}" cy="${centerY}" r="3" fill="#fff"/>`;
-
-  // Draw radius arrow pointing at CH1 - one step clockwise from CH0 at the
-  // top, i.e. upper-right - with the same angle rule as the elements below
-  // (the old fixed "CH4" formula went counter-clockwise and only matched N=5)
-  const arrowDeg = 90 + UCA_ANGLE_SIGN * 360 / numElements;
-  const ch4Angle = arrowDeg * Math.PI / 180;
-  const ch4X = centerX + arrayRadius * Math.cos(ch4Angle);
-  const ch4Y = centerY - arrayRadius * Math.sin(ch4Angle);
-
-  // Arrow stops before the element circle
-  const arrowLen = arrayRadius - elementRadius - 4;
-  const arrowEndX = centerX + arrowLen * Math.cos(ch4Angle);
-  const arrowEndY = centerY - arrowLen * Math.sin(ch4Angle);
-  svg += `<line x1="${centerX}" y1="${centerY}" x2="${arrowEndX}" y2="${arrowEndY}" stroke="#fff" stroke-width="1.5" marker-end="url(#arrowhead)"/>`;
-
-  // Radius value label (rotated to match arrow angle, positioned near center, above arrow)
-  const textDist = -4;  // Slightly past center towards CH1
-  const perpOffset = 7;  // Offset perpendicular to arrow (above arrow)
-  const textX = centerX + textDist * Math.cos(ch4Angle) + perpOffset * Math.cos(ch4Angle + Math.PI/2);
-  const textY = centerY - textDist * Math.sin(ch4Angle) - perpOffset * Math.sin(ch4Angle + Math.PI/2);
-  const textRotation = -arrowDeg;  // along the arrow (SVG rotates clockwise)
-  svg += `<text x="${textX}" y="${textY}" fill="#fff" font-size="10" font-weight="bold" font-family="sans-serif" transform="rotate(${textRotation} ${textX} ${textY})" text-anchor="start">${radiusValue} mm</text>`;
-
-  // Draw antenna elements
-  // CH0 at right (0°), then clockwise: CH1 at -72°, CH2 at -144°, CH3 at -216°, CH4 at -288°
-  // This matches the MUSIC processor: elem_angle = dir * 2*PI/M * elem, x=r*cos, y=r*sin
-  const chColor = '#7ab8f7';  // Matches UI accent color
-  const chDir = UCA_ANGLE_SIGN;
-
-  for (let i = 0; i < numElements; i++) {
-    // Angle: start at 90° (top) and go clockwise
-    // Rotated 90° from the code's 0° start so CH0 is at top for easier visualization
-    // In SVG, Y is inverted, so we negate Y to keep the drawn rotation matching
-    const angle = (90 + chDir * i * 360 / numElements) * Math.PI / 180;
-    const x = centerX + arrayRadius * Math.cos(angle);
-    const y = centerY - arrayRadius * Math.sin(angle);  // Negate Y for SVG coords
-
-    // Element circle
-    svg += `<circle cx="${x}" cy="${y}" r="${elementRadius}" fill="${chColor}" fill-opacity="0.2" stroke="${chColor}" stroke-width="2"/>`;
-
-    // Channel label
-    svg += `<text x="${x}" y="${y + 4}" fill="${chColor}" font-size="9" font-weight="bold" font-family="sans-serif" text-anchor="middle">CH${i}</text>`;
-  }
-
-  svg += '</svg>';
-  container.innerHTML = svg;
+  const radiusValue = radiusOverride !== undefined ? radiusOverride : ($id('arr') ? $id('arr').value : '50');
+  const W = 240, H = 198, cx = W / 2, cy = 112, R = 50, r = n > 6 ? 9.5 : 11;
+  // CH0 at the top (forward), then clockwise - the MUSIC processor's order
+  // (elem_angle = dir * 2*PI/M * elem); screen y is down
+  const pos = i => { const a = (90 + UCA_ANGLE_SIGN * i * 360 / n) * Math.PI / 180; return [cx + R * Math.cos(a), cy - R * Math.sin(a), a]; };
+  arrCanvas(container, W, H, `Circular array seen from above: ${n} antenna${n === 1 ? '' : 's'}, CH0 forward, clockwise, radius ${radiusValue} mm`, c => {
+    // the round plate the array stands on
+    arrPlate(c, () => { c.beginPath(); c.arc(cx, cy, R + r + 7, 0, 2 * Math.PI); });
+    const pg = c.createRadialGradient(cx - 20, cy - 26, 4, cx, cy, R + r + 7);
+    pg.addColorStop(0, ARR_C.plate0); pg.addColorStop(1, ARR_C.plate1);
+    c.fillStyle = pg; c.fill();
+    c.strokeStyle = ARR_C.plateEdge; c.lineWidth = 1; c.stroke();
+    // the circle the antennas are on, and its centre
+    c.setLineDash([3, 3]); c.strokeStyle = ARR_C.guide; c.lineWidth = 1;
+    c.beginPath(); c.arc(cx, cy, R, 0, 2 * Math.PI); c.stroke();
+    c.setLineDash([]);
+    c.beginPath(); c.moveTo(cx - 4, cy); c.lineTo(cx + 4, cy); c.moveTo(cx, cy - 4); c.lineTo(cx, cy + 4); c.stroke();
+    // the radius: from the centre to CH1 (one step clockwise from CH0)
+    const [x1, y1, a1] = pos(n > 1 ? 1 : 0);
+    arrDim(c, cx, cy, x1 - (r + 2) * Math.cos(a1), y1 + (r + 2) * Math.sin(a1), false);
+    for (let i = 0; i < n; i++) {
+      const [x, y, a] = pos(i);
+      arrAntenna(c, x, y, r);
+      arrText(c, 'CH' + i, cx + (R + r + 17) * Math.cos(a), cy - (R + r + 16) * Math.sin(a), {size: 10, bold: true, col: ARR_C.ac});
+    }
+    // its value: under the centre - above it when the line itself goes down
+    // (2 or 3 antennas) -, where no antenna or label can be
+    arrText(c, radiusValue + ' mm', cx, cy + (Math.sin(a1) < -0.3 ? -17 : 17), {size: 10.5, bold: true, col: ARR_C.hi, pill: true});
+    arrCaption(c, 'TOP VIEW', 9, 13);
+    arrForward(c, cx, 7);
+  });
 }
 
 function drawULADiagram() {
   const container = $id('ula-diagram');
   if (!container) return;
-
+  arrLast[container.id] = () => drawULADiagram();
   // Get current spacing value from input
   const spacingValue = $id('els') ? $id('els').value : '30';
-
-  const numElements = activeNumElements;
-  const elementRadius = 12;
-  const spacing = 45;
-  const startX = 30;
-  const centerY = 28;
-  const svgWidth = startX * 2 + (numElements - 1) * spacing + 10;  // Dynamic width
-  const svgHeight = 80;
-
-  let svg = `<svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">`;
-
-  // Define arrowhead markers for bidirectional arrow (small)
-  svg += `<defs>
-    <marker id="arrowhead-right" markerWidth="4" markerHeight="3" refX="4" refY="1.5" orient="auto">
-      <polygon points="0 0, 4 1.5, 0 3" fill="#fff"/>
-    </marker>
-    <marker id="arrowhead-left" markerWidth="4" markerHeight="3" refX="0" refY="1.5" orient="auto">
-      <polygon points="4 0, 0 1.5, 4 3" fill="#fff"/>
-    </marker>
-  </defs>`;
-
-  // Draw baseline
-  svg += `<line x1="${startX - 10}" y1="${centerY}" x2="${startX + (numElements - 1) * spacing + 10}" y2="${centerY}" stroke="#333b46" stroke-width="1" stroke-dasharray="4,2"/>`;
-
-  // Draw spacing indicator between CH0 and CH1 with white arrows
-  const spY = centerY + 24;
-
-  // Vertical end caps
-  svg += `<line x1="${startX}" y1="${spY - 3}" x2="${startX}" y2="${spY + 3}" stroke="#fff" stroke-width="1.5"/>`;
-  svg += `<line x1="${startX + spacing}" y1="${spY - 3}" x2="${startX + spacing}" y2="${spY + 3}" stroke="#fff" stroke-width="1.5"/>`;
-
-  // Bidirectional arrow - extend to touch the vertical bars
-  svg += `<line x1="${startX}" y1="${spY}" x2="${startX + spacing}" y2="${spY}" stroke="#fff" stroke-width="1.5" marker-start="url(#arrowhead-left)" marker-end="url(#arrowhead-right)"/>`;
-
-  // Spacing value label
-  svg += `<text x="${startX + spacing/2}" y="${spY + 14}" fill="#fff" font-size="10" font-weight="bold" font-family="sans-serif" text-anchor="middle">${spacingValue} mm</text>`;
-
-  // Draw antenna elements
-  const chColor = '#7ab8f7';  // Matches UI accent color
-
-  for (let i = 0; i < numElements; i++) {
-    const x = startX + i * spacing;
-
-    // Element circle
-    svg += `<circle cx="${x}" cy="${centerY}" r="${elementRadius}" fill="${chColor}" fill-opacity="0.2" stroke="${chColor}" stroke-width="2"/>`;
-
-    // Channel label
-    svg += `<text x="${x}" y="${centerY + 4}" fill="${chColor}" font-size="9" font-weight="bold" font-family="sans-serif" text-anchor="middle">CH${i}</text>`;
-  }
-
-  svg += '</svg>';
-  container.innerHTML = svg;
+  const n = activeNumElements;
+  const W = 240, H = 104, y = 48;
+  const sp = n > 1 ? Math.min(42, (W - 44) / (n - 1)) : 0, r = Math.min(11, Math.max(7, sp / 2 - 3.5) || 11);
+  const x0 = (W - (n - 1) * sp) / 2;
+  arrCanvas(container, W, H, `Linear array seen from above: ${n} antenna${n === 1 ? '' : 's'} in a row, ${spacingValue} mm apart`, c => {
+    // the rail the row stands on
+    arrPlate(c, () => arrRound(c, x0 - r - 8, y - r - 7, (n - 1) * sp + 2 * r + 16, 2 * r + 14, r + 7));
+    const pg = c.createLinearGradient(0, y - r - 7, 0, y + r + 7);
+    pg.addColorStop(0, ARR_C.plate0); pg.addColorStop(1, ARR_C.plate1);
+    c.fillStyle = pg; c.fill();
+    c.strokeStyle = ARR_C.plateEdge; c.lineWidth = 1; c.stroke();
+    c.setLineDash([3, 3]); c.strokeStyle = ARR_C.guide;
+    c.beginPath(); c.moveTo(x0 - r - 3, y); c.lineTo(x0 + (n - 1) * sp + r + 3, y); c.stroke();
+    c.setLineDash([]);
+    for (let i = 0; i < n; i++) {
+      arrAntenna(c, x0 + i * sp, y, r);
+      arrText(c, n > 6 ? String(i) : 'CH' + i, x0 + i * sp, y + r + 15, {size: 10, bold: true, col: ARR_C.ac});
+    }
+    // the spacing: between CH0 and CH1, under their labels
+    if (n > 1) {
+      const dy = y + r + 31;
+      c.strokeStyle = ARR_C.hi; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(x0, dy - 4); c.lineTo(x0, dy + 4); c.moveTo(x0 + sp, dy - 4); c.lineTo(x0 + sp, dy + 4); c.stroke();
+      arrDim(c, x0, dy, x0 + sp, dy, true);
+      arrText(c, spacingValue + ' mm', x0 + sp + 8, dy, {size: 10.5, bold: true, col: ARR_C.hi, align: 'left'});
+    }
+    arrCaption(c, 'TOP VIEW', 9, 13);
+  });
 }
 
 function sec() {

@@ -94,7 +94,11 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   top bar; first 14 px, then "double the size" 2026-10-21): digits
   `G.MMM.kkk.hhh` down to 1 Hz (`.vfd-box` / `.vfd`, 28 px - the top bar's
   size - in 16 px cells, "MHz" inside the box; a row of its own without a
-  "Freq:" label, 236 of the card's 241 px with the ✎), click the
+  "Freq:" label, 239 of the card's 241 px with the ✎; the "." between the
+  groups, `.vfd-sep`, has the digits' size and line and is a flex container
+  6 px wide, which centres the glyph on its slot - with `text-align:center`
+  in a 5 px box the wider glyph started at the box's left edge and the dot
+  sat on the next digit, the user's report 2026-11-17), click the
   top / bottom half or a wheel notch = +- that digit (`vfdInit` / `vfdStep`,
   selects the VFO); clamped inside the VFO's band like a typed frequency
   (coherent: `maxOffsetHz`; independent: its OWN tuner - a typed one may move

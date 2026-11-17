@@ -205,6 +205,49 @@ for).
 - **FFT size, Slow link, Points sent** are in *Display* (FFT size first).
 - **Digital Decoders** is the Decoders tab of the Settings dialog.
 
+### Array diagrams (2026-11-17)
+
+The MUSIC DoA box's diagrams (`#uca-diagram`, `#wb-diagram`, `#ula-diagram`,
+`#custom-diagram`, `#layout-diagram`) were flat SVG sketches - circles with
+"CH0" inside. The user asked for something better looking that reads as a
+top-down view, "maybe an actual raster png". They are rendered pictures
+now, drawn on a canvas at run time rather than shipped as PNG files: the
+picture depends on the number of antennas (1-8), the topology, the custom
+positions and the dimension typed in the box, so no set of files could
+cover it, and the page stays one file that works offline.
+
+- `arrCanvas(container, w, h, label, draw)` makes / reuses the canvas (CSS
+  size w x h, bitmap x devicePixelRatio x the sidebar's `zoom`, capped at
+  4; `role="img"` + an `aria-label` that says what is shown) and paints the
+  surface; `draw(c)` works in CSS px. `arrLast[id]` keeps each diagram's
+  draw call and a debounced `resize` listener runs them again, so a
+  dragged-wider sidebar or another screen gets a sharp bitmap. `ARR_C` (the
+  palette's colours) and `arrLast` are in the globals block: a diagram can
+  be drawn before the diagram section is evaluated.
+- `arrAntenna()` is one antenna seen from above: the shadow it casts (the
+  light comes from the upper left), a dark metal magnetic base with a rim
+  in the channel's colour, and the whip end-on - a bright tip with a glow.
+  `{square:true}` is a patch antenna. `arrPlate()` is the plate / rail /
+  panel under them with its own shadow; `arrDim()` a dimension line;
+  `arrCaption()` the "TOP VIEW" caption; `arrForward()` the arrow for
+  forward (0 deg, the CH0 direction).
+- UCA (also the Wideband ring): CH0 on top under the forward arrow, the
+  others clockwise (`UCA_ANGLE_SIGN`), names outside the ring, the radius
+  from the centre to CH1 with its value under the centre (above it when
+  that line goes down: 2 or 3 antennas) - a place no antenna or name can
+  be. ULA: a row on a rail, the spacing between CH0 and CH1 under the
+  names (digits only from 7 antennas). Custom: X / Y axes, a dashed ring
+  for raised / lowered elements. Patch / 3D: the panel "SEEN FROM BEHIND"
+  with square patches, or the top view with forward marked.
+
+Tests (scratch `test_arr.py`, headless Chromium, 35 checks): a spy on
+`arrText` / `arrAntenna` for what is drawn and where (1-8 antennas: every
+name inside the picture, the dimension's value on no antenna, CH0 on top
+and clockwise, none touching), pixels (bright whip tips at the antennas and
+nowhere else), bitmap size at 1x, 2x and in a zoomed sidebar, the Radius
+box redrawing it, every topology tab, the phone drawer; and the VFO
+readout's dots (*operating-modes.md*).
+
 ### Settings dialog (2026-11-17)
 
 `#set-dlg` (the top bar's ⚙, `setDlgOpen(tab)`) has tabs (`.set-tabs`
