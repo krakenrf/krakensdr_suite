@@ -1169,8 +1169,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 }
 
 /* ===== Sidebar look =====
-   Boxes with a header bar (↑ ↓ move the box, the chevron / header collapses
-   it - sbBoxInit), one label column, compact controls. Explanations belong in
+   Boxes with a header bar (dragging it moves the box, a click on it or its
+   chevron collapses it - sbBoxInit), one label column, compact controls. Explanations belong in
    the "?" tips and titles, not on the controls. Scoped to .sidebar: .btn and
    .ctrl-row are also used by the dialogs and the panels. */
 .sidebar {background:var(--s2);padding:8px 6px}
@@ -1181,10 +1181,6 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .sidebar .sb-header h3 {flex:1 1 auto;min-width:0;display:flex;align-items:center;font-size:13.5px;font-weight:600;color:var(--t2)}
 .sb-title {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sidebar .sb-header .acal-badge,.sidebar .sb-header .v2t-badge,.sidebar .sb-header .sf-count {margin:0 2px 0 4px;flex:none;white-space:nowrap}
-.sb-tools {display:flex;flex:none;margin-right:3px}
-.sb-mv {display:flex;align-items:center;justify-content:center;width:18px;height:20px;padding:0;background:none;border:none;border-radius:4px;color:#4a709b;cursor:pointer}
-.sb-mv:hover:not(:disabled),.sb-mv:focus-visible {background:var(--l3);color:var(--t0);outline:none}
-.sb-mv:disabled {opacity:.3;cursor:default}
 .sidebar .sb-toggle {display:flex;align-items:center;justify-content:center;width:18px;height:20px;flex:none;color:var(--t4);transition:transform .15s}
 .sidebar .sb-section.collapsed .sb-toggle {transform:rotate(-90deg)}
 .sidebar .sb-content {margin-top:0;padding:8px 9px 9px}
@@ -1195,9 +1191,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
    where it lands */
 .sidebar .sb-section[data-sb] > .sb-header {position:relative;cursor:grab;-webkit-touch-callout:none}
 .sidebar .sb-section[data-sb] > .sb-header::before {content:"";position:absolute;left:2px;top:50%;width:5px;height:10px;margin-top:-5px;
-  background:radial-gradient(circle,#5c85b4 .8px,transparent 1.2px) 0 0/2.5px 3.34px;opacity:0;transition:opacity .15s;pointer-events:none}
+  background:radial-gradient(circle,#5c85b4 .8px,transparent 1.2px) 0 0/2.5px 3.34px;opacity:.55;transition:opacity .15s;pointer-events:none}
 .sidebar .sb-section[data-sb] > .sb-header:hover::before,.sidebar .sb-section.sb-drag-box > .sb-header::before {opacity:1}
-@media (hover:none) {.sidebar .sb-section[data-sb] > .sb-header::before {opacity:.6}}
 .sidebar .sb-header.sb-press {background:var(--l2);transition:background .4s ease-in}
 .sidebar.sb-dragging > .sb-section[data-sb] > .sb-content {display:none}
 .sidebar.sb-dragging > .sb-section[data-sb] > .sb-header {border-bottom-color:transparent;border-radius:6px}
@@ -1300,7 +1295,6 @@ input[type="checkbox"].sw:disabled {opacity:.45;cursor:default}
 #decimator-list .btn.dec-x {background:transparent;border-color:transparent;color:var(--t3);padding:2px 7px}
 #decimator-list .btn.dec-x:hover {background:#742f2c;border-color:var(--bad-m);color:#fff}
 @media (max-width:900px), (pointer:coarse) and (max-width:1280px) {
-  .sb-mv {width:32px;height:32px}
   .sidebar .sb-toggle {width:28px;height:32px}
   .sidebar input[type="range"] {height:6px}
   .sidebar input[type="range"]::-webkit-slider-thumb {width:22px;height:22px}
@@ -2505,7 +2499,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
         <div class="sb-layout">
           <button type="button" class="btn sm" onclick="sbBoxCollapseAll(true)" title="Collapse every box">Collapse all</button>
           <button type="button" class="btn sm" onclick="sbBoxCollapseAll(false)" title="Open every box">Open all</button>
-          <button type="button" class="btn sm" onclick="sbBoxReset()" title="Put the boxes back in their original order (↑ ↓ on a box or dragging its header moves it; the order and the collapsed boxes are remembered in this browser)">↺ Order</button>
+          <button type="button" class="btn sm" onclick="sbBoxReset()" title="Put the boxes back in their original order (dragging a box by its header moves it; the order and the collapsed boxes are remembered in this browser)">↺ Order</button>
         </div>
         <!-- the version (system_status.version, sbVersionRender); empty and hidden until a receiver sends one -->
         <div class="sb-version" id="sb-version"></div>
@@ -5280,16 +5274,17 @@ function applyUiSetting(rest) {
 }
 
 // ============================================================================
-// SIDEBAR BOXES: collapse, move up / down or drag, remembered per browser
+// SIDEBAR BOXES: collapse, drag to a new place, remembered per browser
 // ----------------------------------------------------------------------------
-// Every box (.sb-section) with a data-sb key gets ↑ / ↓ buttons in its header
-// (sbBoxInit), and a box can be dragged by its header (sbBoxDrag...). The
+// Every box (.sb-section) with a data-sb key can be dragged by its header to
+// a new place (sbBoxDrag...) - the only way to move one: its ↑ / ↓ buttons
+// were taken out on the user's wish (2026-11-17). The
 // order of the boxes and which ones are collapsed are kept in
 // localStorage (SB_KEY), like the sidebar's width: a layout is a per-screen
 // choice (a phone and a desktop want different ones) and it survives a
-// restart of the receiver and of the browser. A move swaps the box with the
-// nearest VISIBLE one - boxes hidden by the operating mode (.coh-only, ...)
-// keep their place in the order. A box this page doesn't know yet (added by a
+// restart of the receiver and of the browser. A drop counts only the VISIBLE
+// boxes - boxes hidden by the operating mode (.coh-only, ...) keep their
+// place in the order. A box this page doesn't know yet (added by a
 // later version) lands after the box it follows in the markup. The footer box
 // (no data-sb) is not movable.
 // ============================================================================
@@ -5321,35 +5316,6 @@ function sbBoxOrder(keys) {
   const end = sb.querySelector(':scope > .sb-section:not([data-sb])');   // the footer box
   want.forEach(k => sb.insertBefore(byKey[k], end));
 }
-// ↑ of the first and ↓ of the last visible box have nothing to swap with
-function sbBoxButtons() {
-  const vis = sbBoxes().filter(sbBoxShown);
-  vis.forEach((s, i) => {
-    const up = s.querySelector('.sb-mv[data-d="-1"]'), dn = s.querySelector('.sb-mv[data-d="1"]');
-    if (up) up.disabled = i === 0;
-    if (dn) dn.disabled = i === vis.length - 1;
-  });
-}
-function sbBoxMove(sec, dir) {
-  const vis = sbBoxes().filter(sbBoxShown), other = vis[vis.indexOf(sec) + dir];
-  if (!other || !vis.includes(sec)) return;
-  const sb = sec.parentElement, hdr = sec.querySelector('.sb-header');
-  const y0 = hdr.getBoundingClientRect().top;
-  const ref = dir < 0 ? other : other.nextSibling;
-  // moveBefore (Chromium 133+) keeps focus and the scroll position of lists
-  // inside the box; insertBefore elsewhere
-  try { if (sb.moveBefore) sb.moveBefore(sec, ref); else sb.insertBefore(sec, ref); }
-  catch (e) { sb.insertBefore(sec, ref); }
-  // keep the header - and the button just pressed - under the pointer, so it
-  // can be pressed again (the sidebar is zoomed: screen px -> its own px)
-  const z = parseFloat(getComputedStyle(sb).zoom) || 1;
-  sb.scrollTop += (hdr.getBoundingClientRect().top - y0) / z;
-  sec.classList.remove('sb-moved'); void sec.offsetWidth; sec.classList.add('sb-moved');
-  sbBoxSave();
-  sbBoxButtons();
-  const btn = sec.querySelector('.sb-mv[data-d="' + dir + '"]');
-  if (btn && !btn.disabled) btn.focus({preventScroll: true});
-}
 // ---- Drag a box by its header (pointer events: mouse, pen and touch) ----
 // Mouse / pen: the drag starts after SB_DRAG_PX of movement, so a click still
 // collapses the box. Touch: after a press of SB_DRAG_HOLD ms that doesn't move
@@ -5358,7 +5324,7 @@ function sbBoxMove(sec, dir) {
 // on the sidebar - their open / collapsed state is untouched), the box is
 // taken out of the flow (position:absolute in the sidebar's scrolled content)
 // and follows the pointer, and a placeholder (.sb-drop-ph) stands where it
-// will land. The drop position counts only VISIBLE boxes, like sbBoxMove:
+// will land. The drop position counts only VISIBLE boxes:
 // moving down puts the box right after the visible box above the gap, moving
 // up right before the one below it, so hidden boxes keep their order. The
 // footer box stays last. Escape, pointercancel and a lost window focus put
@@ -5373,8 +5339,8 @@ function sbBoxDragDown(e) {
   if (sbBoxDragState || !e.isPrimary || e.button !== 0) return;
   const hdr = e.target.closest('.sb-header'), sec = hdr && hdr.parentElement;
   if (!sec || !sec.matches('.sidebar > .sb-section[data-sb]')) return;
-  // the header's own controls (↑ ↓, the ? tip, a badge's link) are not handles
-  if (e.target.closest('button, input, select, textarea, a, label, .help, .sb-tools, [contenteditable]')) return;
+  // the header's own controls (the ? tip, a badge's link) are not handles
+  if (e.target.closest('button, input, select, textarea, a, label, .help, [contenteditable]')) return;
   sbBoxDragEat = 0;
   const d = sbBoxDragState = {sec, hdr, sb: sec.parentElement, id: e.pointerId, touch: e.pointerType === 'touch',
                               x0: e.clientX, y0: e.clientY, y: e.clientY, on: false, dead: false, timer: 0, raf: 0};
@@ -5515,7 +5481,6 @@ function sbBoxDragFinish(drop) {
     sb.scrollTop += (d.hdr.getBoundingClientRect().top - y0) / sbBoxDragZoom(sb);
     sec.classList.remove('sb-moved'); void sec.offsetWidth; sec.classList.add('sb-moved');
     sbBoxSave();
-    sbBoxButtons();
   } else sb.scrollTop = d.scroll0;
   d.on = false;
 }
@@ -5579,33 +5544,15 @@ function sbBoxInit() {
   const boxes = sbBoxes();
   sbBoxDefault = boxes.map(s => ({key: s.dataset.sb, collapsed: s.classList.contains('collapsed')}));
   boxes.forEach(sec => {
-    const hdr = sec.querySelector(':scope > .sb-header'), tog = hdr && hdr.querySelector('.sb-toggle');
-    if (!hdr || hdr.querySelector('.sb-tools')) return;
-    const tools = document.createElement('span');
-    tools.className = 'sb-tools';
-    tools.innerHTML =
-      `<button type="button" class="sb-mv" data-d="-1" title="Move this box up (or drag its header)" aria-label="Move up">${SB_ARROW('M5 8.5 V1.8 M2.2 4.6 L5 1.8 L7.8 4.6')}</button>` +
-      `<button type="button" class="sb-mv" data-d="1" title="Move this box down (or drag its header)" aria-label="Move down">${SB_ARROW('M5 1.5 V8.2 M2.2 5.4 L5 8.2 L7.8 5.4')}</button>`;
-    tools.addEventListener('click', e => {
-      e.stopPropagation();   // not a click on the header (that collapses)
-      const b = e.target.closest('.sb-mv');
-      if (b && !b.disabled) sbBoxMove(sec, +b.dataset.d);
-    });
-    hdr.insertBefore(tools, tog);
-    if (tog) tog.innerHTML = SB_ARROW('M2 3.5 L5 6.5 L8 3.5');
+    const tog = sec.querySelector(':scope > .sb-header .sb-toggle');
+    if (tog) tog.innerHTML = SB_ARROW('M2 3.5 L5 6.5 L8 3.5');   // the collapse chevron
   });
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(SB_KEY) || 'null'); } catch (e) {}
   if (saved && Array.isArray(saved.order)) sbBoxOrder(saved.order);
   if (saved && saved.closed && typeof saved.closed === 'object')
     sbBoxes().forEach(s => { if (s.dataset.sb in saved.closed) s.classList.toggle('collapsed', !!saved.closed[s.dataset.sb]); });
-  sbBoxButtons();
   sbBoxDragInit(sb);
-  // the operating mode / the wideband board / the phone layout show and hide boxes
-  new MutationObserver(sbBoxButtons).observe(document.body, {attributes: true, attributeFilter: ['class']});
-  const wb = $id('wb-section');
-  if (wb) new MutationObserver(sbBoxButtons).observe(wb, {attributes: true, attributeFilter: ['style']});
-  window.addEventListener('resize', sbBoxButtons);
 }
 // The footer's buttons: every box collapsed / open, and the order and the
 // collapsed boxes the page ships with
@@ -5617,7 +5564,6 @@ function sbBoxReset() {
   sbBoxOrder(sbBoxDefault.map(d => d.key));
   sbBoxes().forEach(s => { const d = sbBoxDefault.find(x => x.key === s.dataset.sb); s.classList.toggle('collapsed', !!(d && d.collapsed)); });
   try { localStorage.removeItem(SB_KEY); } catch (e) {}
-  sbBoxButtons();
   document.querySelector('.sidebar').scrollTop = 0;
 }
 // Collapse / open a box (a click on its header)

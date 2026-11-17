@@ -16,20 +16,20 @@ the dialogs. Each feature's own controls are in that feature's topic file.
   version line - `../../../docs/dev/version.md`) has no `data-sb`: it has no
   header and stays last.
 - `sbBoxInit()` (comment title "SIDEBAR BOXES", runs once at script load)
-  adds ↑ / ↓ buttons (`.sb-mv`) and the chevron to every keyed header, then
-  applies the stored layout and sets up the drag (`sbBoxDragInit`). A click on the header collapses / opens the box
-  (`toggleSection`); the buttons stop the click from reaching the header.
-- **Move** (`sbBoxMove`): the box swaps with the nearest *visible* box in
-  that direction. Boxes hidden by the operating mode (`.coh-only`,
-  `.wb-only`), the Wideband Board box and the phone-only boxes keep their
-  place in the order, so a layout made in one mode still makes sense in
-  another. After the move the sidebar scrolls by the distance the header
-  moved (divided by the sidebar's CSS `zoom`), so the button stays under the
-  pointer and can be pressed again. ↑ of the first and ↓ of the last visible
-  box are disabled (`sbBoxButtons`, re-run when the body class - the mode -
-  changes, the Wideband Board box appears, or the window is resized).
-  `moveBefore` is used where the browser has it (it keeps focus and inner
-  scroll positions), `insertBefore` elsewhere.
+  draws the chevron of every keyed header, then applies the stored layout
+  and sets up the drag (`sbBoxDragInit`). A click on the header collapses /
+  opens the box (`toggleSection`).
+- **Move**: by dragging the header, and only so. The headers had ↑ / ↓
+  buttons (`.sb-mv`, `sbBoxMove`, `sbBoxButtons`) until 2026-11-17, when the
+  user asked for them to go ("we will only move by click dragging"); a
+  header now holds its title, an optional `?` / badge and the chevron. A
+  move counts only *visible* boxes: boxes hidden by the operating mode
+  (`.coh-only`, `.wb-only`), the Wideband Board box and the phone-only boxes
+  keep their place in the order, so a layout made in one mode still makes
+  sense in another. `moveBefore` is used where the browser has it (it keeps
+  focus and inner scroll positions), `insertBefore` elsewhere. There is no
+  keyboard way to reorder the boxes any more (the drag is pointer-only);
+  "↺ Order" in the footer box still restores the shipped order.
 - **Drag** (`sbBoxDrag…`, added 2026-11-16): a box is dragged by its header.
   Pointer events on the sidebar (mouse, pen and touch), not HTML5
   drag-and-drop (no touch support, no control over the look).
@@ -45,7 +45,7 @@ the dialogs. Each feature's own controls are in that feature's topic file.
     non-passive `touchmove` listener stops the scroll; it sits on the headers
     only, so a swipe that starts in a box's content never waits for this
     page's busy main thread. The long press's context menu is suppressed.
-  - Not handles: the ↑ / ↓ buttons, the `?`, and any button, input, select,
+  - Not handles: the `?`, and any button, input, select,
     link or label in the header. The footer box has no header and can't be
     dragged.
   - While dragging, the sidebar has `.sb-dragging`: every keyed box shows
@@ -64,12 +64,12 @@ the dialogs. Each feature's own controls are in that feature's topic file.
     drawer's sticky header) it auto-scrolls, faster closer to the edge.
   - The placeholder goes where the middle of the dragged box is, counting
     only visible boxes. Moving down it lands right after the visible box above
-    the gap, moving up right before the one below - the same as `sbBoxMove`,
+    the gap, moving up right before the one below,
     so boxes hidden by the mode keep their relative order. Back at its own
     slot it returns to exactly where it was.
   - Drop: the box moves to the placeholder (`moveBefore`), the boxes open
     again and the sidebar scrolls so the dropped header stays where it was let
-    go, with the `sb-moved` flash; then `sbBoxSave()` and `sbBoxButtons()`.
+    go, with the `sb-moved` flash; then `sbBoxSave()`.
     A drop at the original slot changes nothing and restores the scroll
     position. Escape, `pointercancel` and the window losing focus cancel the
     same way. The click that the release makes on the header is swallowed (a
@@ -77,10 +77,10 @@ the dialogs. Each feature's own controls are in that feature's topic file.
     Escape while the button was still down); the next real click collapses as
     usual.
   - Look: `cursor:grab` on keyed headers, a six-dot grip in the header's left
-    padding that shows on hover (always, faint, on touch screens);
+    padding, always there (opacity .55, full on hover and while dragged):
+    with the buttons gone it is the only sign that a box can be moved;
     `grabbing` and no text selection on the whole page while dragging
-    (`html.sb-drag-on`). The ↑ / ↓ tooltips mention the drag; no text on the
-    controls.
+    (`html.sb-drag-on`). No text on the controls.
 - **Remembered**: the order and which boxes are collapsed, in
   `localStorage['kraken_sb']` = `{v:1, order:[keys], closed:{key:0|1}}`,
   written on every move and collapse. It is per browser, like the sidebar
@@ -347,9 +347,8 @@ flakes): drag down 5 places and up 4; the placeholder where the box lands
 while dragging; order saved and kept over a reload; the dropped box in view
 near where it was let go; footer last; no text selected; a plain click (also
 with 3 px of jitter) still collapses, the release after a drop doesn't, the
-next real click does; ↑ / ↓ and `?` still work, a press on them that moves is
-no drag; first / last ↑ / ↓ disabled states after dragging the first box down
-and the last one up; Escape mid-drag puts the box and the scroll position
+next real click does; `?` still works and a press on it that moves is
+no drag; the first box dragged down and the last one up; Escape mid-drag puts the box and the scroll position
 back and the release then doesn't collapse; independent mode: drag down and
 up across hidden boxes, which keep their relative order (down = right after
 the visible box above, up = right before the one below); auto-scroll in a

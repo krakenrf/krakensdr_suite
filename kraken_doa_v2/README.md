@@ -88,8 +88,7 @@ top bar hides the whole sidebar and brings it back (remembered in the browser),
 giving its room to the spectrum. Click a box's header to collapse or
 open it. To move a box, drag it by its header to a new place (with a mouse just
 drag; on a touch screen hold the header for a moment until the box lifts, then
-drag - a quick swipe still scrolls the sidebar; Esc cancels), or use the small
-↑ / ↓ buttons at its top right to move it one place up or down. While you drag,
+drag - a quick swipe still scrolls the sidebar; Esc cancels). While you drag,
 every box shows only its header, so the whole list fits; the sidebar scrolls when
 you reach its top or bottom edge. The order and the collapsed boxes are
 remembered in the browser (also over a
