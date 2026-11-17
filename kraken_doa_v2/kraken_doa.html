@@ -1657,6 +1657,8 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .rail-btn .n:empty {display:none}
 .rail-ai {margin-top:6px;padding-top:12px;border-top-color:var(--l2);border-radius:0 0 6px 6px}
 .rail-ai .ai-dot {font-size:9px;line-height:1}
+/* 🚗 Drive: a face of the page, not a panel - at the rail's foot */
+.rail-drive {margin-top:auto}
 body:not(.ai-dk-col):not(.ai-dk-off) .rail-ai,body.ai-dk-off.ai-dk-how .rail-ai {background:var(--ac);border-color:var(--ac-h);color:#fff;border-radius:6px}
 
 /* ===== Mobile / touch layout (small screens and touch tablets only) ===== */
@@ -1700,6 +1702,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   #mobile-display-slot .rail-btn {flex:1 1 auto;justify-content:center;flex-direction:row;gap:5px;padding:0 8px;min-height:34px;background:var(--l2);border-color:var(--l4);color:var(--t0);font-size:13px}
   #mobile-display-slot .rail-btn .v {writing-mode:horizontal-tb;transform:none;letter-spacing:0}
   #mobile-display-slot .rail-btn.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
+  #mobile-display-slot .rail-drive {width:100%;margin-top:5px}
   /* (the drawer is not the desktop's hidden sidebar) */
   body.sb-hidden .sidebar {display:flex}
   body.sb-hidden .menu-btn {background:var(--l2);border-color:var(--l4);color:var(--t0)}
@@ -1816,6 +1819,135 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 .wb-ev {max-height:132px;overflow-y:auto;font-family:'Consolas',ui-monospace,monospace;font-size:11px;line-height:1.5}
 .wb-ev .t {color:var(--t4)}.wb-ev .warn {color:var(--warn)}.wb-ev .alarm {color:var(--bad)}
 @media (max-width:820px) {.wb-charts {grid-template-columns:1fr}.wb-now {grid-template-columns:1fr 1fr}}
+/* ===== Drive mode (🚗 DRIVE MODE in the script; docs/dev/drive-mode.md) =====
+   body.drive: the page's own map full-window - #map-pane fixed over everything, the rest of the
+   page hidden but laid out as it was, so it comes back as it was - and the HUD over the map: the
+   readout card (the top of a portrait screen, the left of a landscape one) and the big buttons (the
+   bottom / the right edge). --dv-b: a button (>= 56 px, --dv-g 12 px apart), --dv-dial: the dial,
+   --dv-fs: the digits (>= 64 px of digit on a phone, >= 96 px from 900 x 600). The HUD's colours
+   are tokens; its Day look sets light ones on it (the block after these rules, from
+   tools/theme_palette.py --css-day) - the rest of the page keeps its dark palette. */
+body.drive {overflow:hidden}
+body.drive .app-container {visibility:hidden}
+body.drive #ai-fab,body.drive #help-banner,body.drive #sf-toast {display:none !important}
+body.drive #map-pane {visibility:visible;display:block;position:fixed;left:0;top:0;width:100vw;height:100vh;height:100dvh;z-index:900;border:0;border-radius:0}
+/* the map's own controls, panels and popups: the HUD stands in for them (the attribution and the
+   offline notice stay, inside the part of the map the HUD leaves free - driveLayout) */
+body.drive #map-pane > :not(#map-canvas):not(.map-attr):not(.map-offline) {display:none !important}
+body.drive .map-attr {right:var(--dv-ar,0px);bottom:var(--dv-ab,0px)}
+body.drive .map-offline {left:var(--dv-oc,50%);top:var(--dv-ot,40px);font-size:15px}
+.drive-hud {position:fixed;left:0;top:0;width:100vw;height:100vh;height:100dvh;z-index:950;pointer-events:none;color:var(--t0);font-family:Arial,sans-serif;
+  --dv-b:60px;--dv-g:12px;--dv-m:12px;--dv-dial:128px;--dv-fs:92px;--dv-rw:236px}
+.drive-hud[hidden] {display:none}
+.drive-hud > * {pointer-events:auto}
+/* the readout: the dial (the arrow from the vehicle's front, up = ahead), the compass bearing in
+   big digits and the word for the direction (or why there is none), the level and the confidence,
+   the VFO */
+.dv-read {position:absolute;left:var(--dv-m);right:var(--dv-m);top:var(--dv-m);box-sizing:border-box;display:grid;align-items:center;
+  grid-template-columns:var(--dv-dial) minmax(0,1fr);grid-template-areas:"dial num" "meta meta" "vfo vfo";column-gap:14px;row-gap:6px;
+  padding:10px 16px 12px;background:var(--s3);border:2px solid var(--l3);border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+.dv-dial {grid-area:dial;display:block;width:var(--dv-dial);height:var(--dv-dial)}
+.dv-ring {fill:var(--s1);stroke:var(--l4);stroke-width:5}
+.dv-ticks {fill:none;stroke:var(--t3);stroke-width:5;stroke-linecap:round}
+.dv-front {fill:var(--t1)}
+.dv-hub {fill:var(--t2)}
+.dv-arr {fill:var(--ac-t);stroke:var(--s3);stroke-width:3;stroke-linejoin:round;transition:transform .3s ease-out,opacity .3s}
+.dv-read.none .dv-arr {opacity:0 !important}
+.dv-num {grid-area:num;min-width:0;text-align:center}
+.dv-deg {font-size:var(--dv-fs);font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dv-deg .u {font-size:.5em;vertical-align:.75em;margin-left:.04em}
+.dv-deg .no {font-size:.55em;vertical-align:.25em;color:var(--t5)}
+.dv-rel {margin-top:4px;font-size:26px;font-weight:700;line-height:1.15;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dv-rel.why {font-size:20px;line-height:1.2;white-space:normal}
+.dv-rel.why .ic {font-size:22px;color:var(--warn-t);vertical-align:-.2em}
+.dv-meta {grid-area:meta;display:flex;align-items:center;gap:16px;font-size:22px;font-weight:700}
+.dv-lvl {flex:1;display:flex;align-items:center;gap:8px;min-width:0}
+.dv-cf {display:flex;align-items:center;gap:8px}
+.dv-k {font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--t3)}
+.dv-bar {flex:1;min-width:40px;height:14px;box-sizing:border-box;border:2px solid var(--l3);border-radius:8px;background:var(--s1);overflow:hidden}
+.dv-bar i {display:block;width:0;height:100%;background:var(--ok);transition:width .25s}
+.dv-v {font-variant-numeric:tabular-nums;white-space:nowrap}
+.dv-cf.low .dv-v {color:var(--warn-t)}
+.dv-vfo {grid-area:vfo;display:flex;align-items:center;gap:10px;min-width:0;font-size:22px;font-weight:700;white-space:nowrap;overflow:hidden}
+.dv-vfo i {flex:none;width:14px;height:14px;border-radius:3px;background:var(--l3)}
+/* the buttons: an icon with its word under it; lit = on (Audio, Follow, the open Layers) */
+.dv-ctl {position:absolute;left:50%;bottom:var(--dv-m);transform:translateX(-50%);display:grid;gap:var(--dv-g);
+  grid-template-columns:repeat(5,var(--dv-b));grid-auto-rows:var(--dv-b);grid-template-areas:"prev next aud rst exit" "fol out in lay day"}
+.dv-btn {display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;box-sizing:border-box;width:var(--dv-b);height:var(--dv-b);margin:0;padding:4px 2px;
+  background:var(--s4);border:2px solid var(--l4);border-radius:14px;color:var(--t0);font:700 12px/1.1 Arial,sans-serif;cursor:pointer;
+  box-shadow:0 4px 14px rgba(0,0,0,.4);touch-action:manipulation;-webkit-user-select:none;user-select:none}
+.dv-btn .ic {font-size:26px;stroke-width:2}
+.dv-btn .ic + span {margin-left:0}
+.dv-btn span {white-space:nowrap}
+.dv-i {display:flex}
+.dv-btn:hover {background:var(--s5)}
+.dv-btn:active {border-color:var(--l5)}
+.dv-btn:focus-visible {outline:3px solid var(--ac-l);outline-offset:2px}
+.dv-btn.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
+.dv-btn.dis {opacity:.4;cursor:default}
+/* Layers: the base map and the DF layers, big rows (mapLayHtml(['base', 'df'], 'drive')) */
+.view-pop.dv-lay-pop {width:min(340px, calc(100vw - 24px));padding:12px 18px 10px;color:var(--t2);font-size:18px;touch-action:pan-y;user-select:none;--ml-c:64px}
+.dv-lay-pop .vp-head {font-size:18px;color:var(--t0)}
+.dv-lay-pop .vp-sec {font-size:13px;color:var(--t3)}
+.dv-lay-pop .ml-row {min-height:56px;font-size:20px;font-weight:600;color:var(--t1)}
+.dv-lay-pop .ml-row input[type="radio"] {width:28px;height:28px;border-width:2px}
+.dv-lay-pop .ml-row input[type="radio"]:checked {background:radial-gradient(circle,#fff 0 6px,transparent 6.6px),var(--ac)}
+.dv-lay-pop input[type="checkbox"].sw {--sw-h:34px}
+/* a landscape screen: the card at the left, the buttons in two columns at the right */
+@media (orientation:landscape) {
+  .dv-read {right:auto;width:var(--dv-rw);grid-template-columns:minmax(0,1fr);grid-template-areas:"dial" "num" "meta" "vfo";justify-items:center;padding:10px 14px 12px}
+  .dv-meta {flex-direction:column;align-items:stretch;gap:4px;justify-self:stretch}
+  .dv-cf {justify-content:space-between}
+  .dv-lvl .dv-k,.dv-cf .dv-k {min-width:52px}
+  .dv-vfo {justify-self:stretch;justify-content:center}
+  .dv-ctl {left:auto;right:var(--dv-m);bottom:auto;top:50%;transform:translateY(-50%);grid-template-columns:repeat(2,var(--dv-b));
+    grid-template-areas:"day exit" "lay fol" "out in" "prev next" "aud rst"}
+}
+@media (orientation:landscape) and (max-height:520px) {
+  .drive-hud {--dv-dial:104px;--dv-rw:248px}
+  .dv-read {row-gap:4px;padding:8px 12px 10px}
+  .dv-rel {font-size:24px;margin-top:2px}
+  .dv-meta,.dv-vfo {font-size:20px}
+}
+/* the smallest phones (360 px): 56 px buttons, a smaller dial - the digits stay */
+@media (orientation:landscape) and (max-height:380px) {
+  .drive-hud {--dv-b:56px;--dv-m:10px;--dv-dial:80px}
+  .dv-btn {font-size:11px;padding:4px 1px}
+  .dv-rel {font-size:22px}
+  .dv-meta,.dv-vfo {font-size:18px}
+}
+@media (orientation:portrait) and (max-width:380px) {
+  .drive-hud {--dv-b:56px;--dv-m:10px;--dv-dial:100px}
+  .dv-btn {font-size:11px;padding:4px 1px}
+  .dv-read {column-gap:10px;padding:8px 12px 10px}
+  .dv-rel {font-size:22px}
+  .dv-meta,.dv-vfo {font-size:18px}
+  .dv-meta {gap:10px}
+}
+/* a wide portrait screen (a tablet upright): the card centred over the buttons, not stretched */
+@media (orientation:portrait) and (min-width:600px) {
+  .dv-read {right:auto;left:50%;transform:translateX(-50%);width:560px}
+}
+/* a tablet or a laptop: everything larger */
+@media (min-width:900px) and (min-height:600px) {
+  .drive-hud {--dv-b:72px;--dv-m:16px;--dv-dial:200px;--dv-fs:136px;--dv-rw:360px}
+  .dv-btn {font-size:13px}
+  .dv-btn .ic {font-size:30px}
+  .dv-rel {font-size:30px}
+  .dv-read {padding:14px 20px 16px}
+}
+/* Day: thicker strokes, lighter shadows (the colours: the token block below) */
+body.drive.drive-day .dv-btn .ic {stroke-width:2.4}
+body.drive.drive-day .dv-read,body.drive.drive-day .dv-btn {box-shadow:0 3px 12px rgba(0,0,0,.28)}
+body.drive.drive-day .drive-hud {
+  /* drive mode's Day look (tools/theme_palette.py --css-day): surfaces, lines, text */
+  --s0:#edf0f4; --s1:#f3f5f8; --s2:#eff2f6; --s3:#fcfdff; --s4:#eceff2; --s5:#dce0e5;
+  --l1:#cdd1d8; --l2:#989fa8; --l3:#6e757f; --l4:#565e69; --l5:#363e48;
+  --t6:#474e56; --t5:#424850; --t4:#383e46; --t3:#2d333b; --t2:#242930; --t1:#1b2026; --t0:#12161c;
+  /* the accent; states */
+  --ac-d:#bfdbf8; --ac:#004982; --ac-h:#003664; --ac-l:#005799; --ac-t:#004982; --ac-t2:#003e70;
+  --ok:#006732; --ok-t:#005729; --warn:#845a00; --warn-t:#674600; --bad:#9a3936; --bad-t:#822b2a;
+}
 </style>
 </head>
 <body class="ai-dk-off">
@@ -1865,6 +1997,10 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 <symbol id="i-spin" viewBox="0 0 16 16"><path d="M8 2.4a5.6 5.6 0 1 1-5.6 5.6"/></symbol>
 <symbol id="i-split" viewBox="0 0 16 16"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.2"/><path d="M8 2.8v10.4"/></symbol>
 <symbol id="i-arrow-l" viewBox="0 0 16 16"><path d="M13.5 8H2.6M6.2 4.4L2.6 8l3.6 3.6"/></symbol>
+<symbol id="i-minus" viewBox="0 0 16 16"><path d="M3 8h10"/></symbol>
+<symbol id="i-mute" viewBox="0 0 16 16"><path d="M2.2 6.1h2.6l3.6-3v9.8l-3.6-3H2.2z"/><path d="M10.7 6.1l3.6 3.8M14.3 6.1l-3.6 3.8"/></symbol>
+<symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.9"/><path d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.3 3.3l1.3 1.3M11.4 11.4l1.3 1.3M3.3 12.7l1.3-1.3M11.4 4.6l1.3-1.3"/></symbol>
+<symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.2 10.2A5.8 5.8 0 0 1 5.8 2.8a5.8 5.8 0 1 0 7.4 7.4z"/></symbol>
 <!-- features: boxes, panels, tabs -->
 <symbol id="i-tune" viewBox="0 0 16 16"><path d="M3.4 12.6a6.4 6.4 0 1 1 9.2 0"/><circle cx="8" cy="8.2" r="2.9"/><path d="M8 8.2l1.5-1.5"/></symbol>
 <symbol id="i-panels" viewBox="0 0 16 16"><rect x="1.6" y="2.4" width="12.8" height="11.2" rx="1.2"/><path d="M1.6 5.8h12.8M6.4 5.8v7.8"/></symbol>
@@ -1900,6 +2036,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 <symbol id="i-terminal" viewBox="0 0 16 16"><rect x="1.5" y="2.4" width="13" height="11.2" rx="1.2"/><path d="M4.4 6l2.4 2-2.4 2M8.6 10.6h3"/></symbol>
 <symbol id="i-tool" viewBox="0 0 16 16"><path d="M10.6 1.8a3.6 3.6 0 0 0-3.4 4.9l-5 5a1.4 1.4 0 0 0 2 2l5-5a3.6 3.6 0 0 0 4.9-3.4l-2.1 2.1-2-.5-.5-2z"/></symbol>
 <symbol id="i-package" viewBox="0 0 16 16"><path d="M8 1.7l6 3v6.6l-6 3-6-3V4.7zM2 4.7l6 3 6-3M8 7.7v6.6"/></symbol>
+<symbol id="i-wheel" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><circle cx="8" cy="8" r="1.7"/><path d="M1.8 7.6c1.6-.5 3-.6 4.5-.1M14.2 7.6c-1.6-.5-3-.6-4.5-.1M8 9.7v4.5"/></symbol>
 <!-- kinds of talkers and places (the map's DF panel, the map search) -->
 <symbol id="i-hash" viewBox="0 0 16 16"><path d="M6.3 2.2l-1.4 11.6M11.1 2.2L9.7 13.8M2.6 5.8h11.2M2.2 10.2h11.2"/></symbol>
 <symbol id="i-id" viewBox="0 0 16 16"><rect x="1.4" y="3.2" width="13.2" height="9.6" rx="1.3"/><circle cx="5.4" cy="7" r="1.5"/><path d="M3.4 10.6a2.1 2.1 0 0 1 4 0M9.4 6.4h3.2M9.4 9.4h3.2"/></symbol>
@@ -3153,9 +3290,52 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
       <button type="button" class="rail-btn" id="rail-voice" onclick="railPanel('voice')" title="Transcription (Voice to Text): what was said on the VFOs with Transcribe ticked"><span class="i"><svg class="ic" aria-hidden="true"><use href="#i-speech"/></svg></span><span class="v">Transcription</span><span class="n" id="rail-voice-n"></span></button>
     </span>
     <button type="button" class="rail-btn rail-ai" id="rail-ai" onclick="aiDockToggle()" title="AI assistant"><span class="i"><svg class="ic" aria-hidden="true"><use href="#i-bot"/></svg></span><span class="ai-dot" id="ai-strip-dot">&#9679;</span><span class="v">Assistant</span></button>
+    <!-- 🚗 Drive mode (🚗 DRIVE MODE): at the rail's foot - a face of the page, not a panel; in the
+         phone's drawer under the panel buttons (applyMobileRelocation) -->
+    <button type="button" class="rail-btn rail-drive" id="rail-drive" onclick="driveEnter()" title="Drive mode: the map full-window with one big bearing and a few big buttons - for direction finding from a vehicle (also the address #drive). Esc or Exit leaves it"><span class="i"><svg class="ic" aria-hidden="true"><use href="#i-wheel"/></svg></span><span class="v">Drive</span></button>
   </nav>
 </div>
 <button type="button" class="ai-fab" id="ai-fab" onclick="aiDockCollapse(false)" title="AI assistant"><svg class="ic" aria-hidden="true"><use href="#i-bot"/></svg></button>
+
+<!-- 🚗 Drive mode (🚗 DRIVE MODE; docs/dev/drive-mode.md): over the page's own map, full-window -
+     the selected VFO's bearing (the arrow: from the vehicle's front, up = straight ahead; the digits:
+     the compass bearing) and the big buttons. Day: its own tokens (body.drive-day, theme_palette.py) -->
+<div class="drive-hud" id="drive-hud" hidden>
+  <div class="dv-read" id="dv-read" role="group" aria-label="Bearing">
+    <svg class="dv-dial" viewBox="-110 -110 220 220" aria-hidden="true">
+      <circle class="dv-ring" r="92"/>
+      <path class="dv-ticks" d="M40 -69.3L46 -79.7M69.3 -40L79.7 -46M72 0L92 0M69.3 40L79.7 46M40 69.3L46 79.7M0 72L0 92M-40 69.3L-46 79.7M-69.3 40L-79.7 46M-72 0L-92 0M-69.3 -40L-79.7 -46M-40 -69.3L-46 -79.7"/>
+      <path class="dv-front" d="M0 -96L11 -76H-11Z"/>
+      <g class="dv-arr" id="dv-arrow"><path d="M0 -86L18 -50L6 -55V30H-6V-55L-18 -50Z"/></g>
+      <circle class="dv-hub" r="9"/>
+    </svg>
+    <div class="dv-num">
+      <div class="dv-deg" id="dv-deg" title="The compass bearing of the signal: degrees clockwise from north">—</div>
+      <div class="dv-rel" id="dv-rel" title="Where the signal comes from, seen from the vehicle's front (the arrow: up = straight ahead)"></div>
+    </div>
+    <div class="dv-meta">
+      <span class="dv-lvl" title="The signal's level: the strongest point in the VFO's passband, dBFS (0 = the receiver's full scale) - rising as you get closer"><span class="dv-k">Level</span><span class="dv-bar"><i id="dv-lvl-i"></i></span><span class="dv-v" id="dv-lvl-t">—</span></span>
+      <span class="dv-cf" title="Confidence: how clearly the bearing's peak stands out of the MUSIC spectrum (the arrow fades with it)"><span class="dv-k">Conf</span><span class="dv-v" id="dv-conf">—</span></span>
+    </div>
+    <div class="dv-vfo" title="The VFO whose bearing is shown - the selected VFO; Prev VFO / Next VFO pick another"><i id="dv-vfo-c"></i><span id="dv-vfo-t">—</span></div>
+  </div>
+  <div class="dv-ctl" id="dv-ctl" role="toolbar" aria-label="Drive mode">
+    <button type="button" class="dv-btn" id="dv-prev" style="grid-area:prev" onclick="driveStep(-1)" title="The previous VFO with DoA: it becomes the selected VFO"><svg class="ic" aria-hidden="true"><use href="#i-chev-l"/></svg><span>Prev VFO</span></button>
+    <button type="button" class="dv-btn" id="dv-next" style="grid-area:next" onclick="driveStep(1)" title="The next VFO with DoA: it becomes the selected VFO"><svg class="ic" aria-hidden="true"><use href="#i-chev-r"/></svg><span>Next VFO</span></button>
+    <button type="button" class="dv-btn" id="dv-audio" style="grid-area:aud" onclick="tfm(); driveSync()" aria-pressed="false" title="Audio on / off (the top bar's Audio switch)"><span class="dv-i" id="dv-audio-i"></span><span>Audio</span></button>
+    <button type="button" class="dv-btn" id="dv-reset" style="grid-area:rst" onclick="driveReset()" title="Reset bearings: forget the bearings collected for this VFO - its heat map and estimate (the DF panel's Reset; it asks first)"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg><span>Reset</span></button>
+    <button type="button" class="dv-btn" id="dv-exit" style="grid-area:exit" onclick="driveLeave()" title="Leave drive mode: the page as it was (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg><span>Exit</span></button>
+    <button type="button" class="dv-btn" id="dv-follow" style="grid-area:fol" onclick="driveFollowSet(true)" aria-pressed="true" title="Follow: keep the vehicle in the middle of the map (and the estimated transmitter in view). Moving the map by hand turns it off"><svg class="ic" aria-hidden="true"><use href="#i-crosshair"/></svg><span>Follow</span></button>
+    <button type="button" class="dv-btn" id="dv-out" style="grid-area:out" onclick="driveZoom(-1)" title="Zoom out (also two fingers, or the mouse wheel)"><svg class="ic" aria-hidden="true"><use href="#i-minus"/></svg><span>Zoom out</span></button>
+    <button type="button" class="dv-btn" id="dv-in" style="grid-area:in" onclick="driveZoom(1)" title="Zoom in (also two fingers, or the mouse wheel)"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg><span>Zoom in</span></button>
+    <button type="button" class="dv-btn" id="dv-lay" style="grid-area:lay" onclick="driveLayToggle()" aria-haspopup="dialog" aria-expanded="false" aria-controls="dv-lay-pop" title="Layers: the base map, and the DoA lobe, bearing lines and heat map on it (the map's Layers)"><svg class="ic" aria-hidden="true"><use href="#i-layers"/></svg><span>Layers</span></button>
+    <button type="button" class="dv-btn" id="dv-day" style="grid-area:day" onclick="driveDaySet(!driveDay())" title="Day / Night: a light, high-contrast look of these controls for daylight, or the dark one"><span class="dv-i" id="dv-day-i"></span><span id="dv-day-t">Day</span></button>
+  </div>
+  <div class="view-pop dv-lay-pop" id="dv-lay-pop" role="dialog" aria-label="Layers" title="" hidden>
+    <div class="vp-head">Layers</div>
+    <div class="vp-body" id="dv-lay-body"></div>
+  </div>
+</div>
 
 <!-- ⚙ Setup Settings (see ⚙ SETUP SETTINGS): everything about setting the
      software up, one tab each - the map provider, the digital decoders (voice
@@ -3446,6 +3626,12 @@ const mapState = (() => {
 })();
 // the map's Layers popover is open (mapLayOpen); its ResizeObserver on the map pane
 let mapLayOn = false, mapLayRO = null;
+// 🚗 drive mode (see 🚗 DRIVE MODE): on; what entering changed in memory and leaving puts back -
+// the map's view and DF selection (mapSave keeps the stored ones while it is on); Follow. Up here:
+// rpOpen / rpApply / mapSave read them, and they can run before that section is evaluated
+let driveOn = false, driveKeep = null, driveFollow = {on: true, fitTx: true};
+// each VFO's passband level, dBFS (system_status decimator_squelch[].power_dbfs; id -> {v, at})
+const vfoPow = {};
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
 // OpenStreetMap's attribution (HTML): a link to its copyright page wherever its
 // data shows - tiles, the masts layer, the incident addresses Nominatim found
@@ -5065,6 +5251,14 @@ function setDecimatorSquelchMethod(decId, method) {
 }
 
 // PolarPlot Class
+// The compass bearing of a MUSIC azimuth az (degrees counter-clockwise from ANT0) for an array whose
+// ANT0 points at heading hdg (degrees clockwise from north): hdg - az, in 0..360. The page's one
+// conversion - the receiver's mobile DF does the same (rdf_mapper.cpp: tau = heading - b): the DoA
+// plots' Compass labels (hdg 0: ANT0 taken as north), a talker's bearing at a static location
+// (rdfStaticCompass), drive mode's bearing relative to the vehicle's front (hdg 0) and its compass
+// bearing when the receiver's DF has none (see 🚗 DRIVE MODE)
+function doaToCompass(az, hdg) { return ((hdg - az) % 360 + 360) % 360; }
+
 class PolarPlot {
   constructor(canvasId) {
     this.c=document.getElementById(canvasId);
@@ -5121,7 +5315,7 @@ class PolarPlot {
   // compass bearing = (360 - azimuth) mod 360.
   displayAngle(azimuthDeg) {
     if (this.convention === 'compass') {
-      return ((360 - azimuthDeg) % 360 + 360) % 360;
+      return doaToCompass(azimuthDeg, 0);
     }
     return ((azimuthDeg % 360) + 360) % 360;
   }
@@ -5244,6 +5438,7 @@ class PolarPlot {
     }
     this.peakAngle=((peakIdx+delta)*this.resolution+360)%360;  // Interpolated degrees (float)
     this.peakIdx=peakIdx;  // Store raw index for drawing
+    this.at=performance.now();  // when a frame last came (drive mode: a plot that never got one has no bearing)
 
     this.draw();
   }
@@ -9855,7 +10050,7 @@ function connect() {
     setTimeout(() => send('GET_ARRAY_CAL'), 900);
 
     // 🗺 Map open: every point at once instead of only the changing ones
-    if (mapState.on) setTimeout(() => { send('GET_MAP'); send('GET_RDF'); }, 900);
+    if (mapState.on || driveOn) setTimeout(() => { send('GET_MAP'); send('GET_RDF'); }, 900);   // (🚗 drive mode: the map shows)
     // 📻 saved frequencies + map markers (then pushed when they change)
     setTimeout(() => send('GET_SF'), 880);
     setTimeout(() => send('GET_SFSCAN'), 885);
@@ -11755,6 +11950,7 @@ const MOBILE_RELOCATIONS = [
   {id: 'tb-step', slot: 'mobile-controls-slot'},
   {id: 'tb-audio', slot: 'mobile-controls-slot'},
   {id: 'rail-panels', slot: 'mobile-display-slot'},   // 🗺 Map / 🔐 Decoders / 🗣 Transcription (the phone has no rail)
+  {id: 'rail-drive', slot: 'mobile-display-slot'},    // 🚗 Drive: under them
 ];
 function applyMobileRelocation() {
   const mobile = mobileLayoutMQ.matches;
@@ -15611,7 +15807,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // (map state: see the globals block at the top of the script)
 
   function mapSave() {
-    try { localStorage.setItem('kraken_map', JSON.stringify(mapState)); } catch (e) {}
+    try {
+      // 🚗 drive mode: its own view and DF selection are not stored - the stored ones stay; nothing
+      // is written until something else (a layer) changes
+      const s = driveOn && driveKeep ? driveMapJson() : JSON.stringify(mapState);
+      if (s !== null) localStorage.setItem('kraken_map', s);
+    } catch (e) {}
   }
   function mapSet(k, v) { mapState[k] = v; mapSave(); mapUpdateControls(); mapDraw(); }
 
@@ -15623,7 +15824,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // too and the spectrum takes the room (the user's wish, 2026-11-17; before,
   // MUSIC DoA always showed and the button switched only the map). Other
   // modes: the pane is only the map, shown while mapState.on.
-  function rpOpen() { return opMode === 'coherent' ? mapState.pane !== false : !!mapState.on; }
+  // (🚗 drive mode shows the map in every mode without touching these preferences)
+  function rpOpen() { return driveOn || (opMode === 'coherent' ? mapState.pane !== false : !!mapState.on); }
   // the map is switched on and its pane is open (it may still be on the MUSIC DoA tab)
   function mapIsOn() { return !!mapState.on && rpOpen(); }
   // no argument: the rail's button - the pane as it was left, or hide it;
@@ -15654,8 +15856,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const b = document.body;
     const coh = opMode === 'coherent';
     const open = rpOpen();
-    const both = open && coh && mapState.tab === 'both';
-    const showMap = open && (!coh || mapState.tab === 'map' || both);
+    const both = open && coh && !driveOn && mapState.tab === 'both';
+    const showMap = open && (driveOn || !coh || mapState.tab === 'map' || both);
     const off = coh && !open;
     const changed = b.classList.contains('map-on') !== open || b.classList.contains('rp-map') !== showMap ||
                     b.classList.contains('rp-both') !== both || b.classList.contains('rp-off') !== off;
@@ -15784,6 +15986,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapState.mx = nx - (px - mapW / 2) / W1;
     mapState.my = ny - (py - mapH / 2) / W1;
     mapAutoFit = false;
+    if (driveOn) driveFollow.fitTx = false;   // (🚗 the user picked the zoom: Follow no longer zooms out to the transmitter)
     mapClampView();
     mapSaveSoon();
     mapDraw();
@@ -15858,9 +16061,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       lpFired = false;
       if (ptrs.size === 1) {
         // a selected station / viewshed point (or the station's heading handle) is dragged, not the map
-        mapObjDrag = mapObjDragStart(e.offsetX, e.offsetY);
+        // (🚗 drive mode: the map only pans and zooms - nothing is selected, dragged or added)
+        mapObjDrag = driveOn ? null : mapObjDragStart(e.offsetX, e.offsetY);
         pan = mapObjDrag ? null : {x: e.offsetX, y: e.offsetY, mx: mapState.mx, my: mapState.my};
-        if (e.pointerType === 'touch' && !mapObjDrag) {
+        if (e.pointerType === 'touch' && !mapObjDrag && !driveOn) {
           const x = e.offsetX, y = e.offsetY;
           lpT = setTimeout(() => { lpT = 0; if (!moved) { lpFired = true; mapMenuOpen(x, y); } }, 600);
         }
@@ -15913,6 +16117,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         mapState.mx = pan.mx - dx / W;
         mapState.my = pan.my - dy / W;
         mapAutoFit = false;
+        if (driveOn) driveFollowSet(false);   // (🚗 panned by hand: Follow is off)
         mapClampView();
         mapDraw();
       }
@@ -15934,7 +16139,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
           // the saved-frequency editor's Pick on map: a marker, or the spot
           const mk = mkHit(e.offsetX, e.offsetY);
           sfPickEnd(mk ? {loc: mk} : {ll: mapScreenToLatLon(e.offsetX, e.offsetY)});
-        } else if (pan && !moved && !lpFired && e.type === 'pointerup') {
+        } else if (pan && !moved && !lpFired && e.type === 'pointerup' && !driveOn) {
           // a click: a marker of the user's (its panel), the search result's
           // pin, a decoder's point or an OpenStreetMap mast (popup), or
           // nothing (closes both - an edit stays open)
@@ -15980,7 +16185,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       // or the link's place (the link) - unless typing somewhere
       if (e.key === 'Delete') {
         const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-        if (typing || mapObjDrag || !mapState.vs) return;
+        if (typing || mapObjDrag || !mapState.vs || driveOn) return;
         if (vsSel && vsGet(vsSel) && !vsGet(vsSel).st) { e.preventDefault(); vsRemove(vsSel); }
         else if (plSel === 'far' && plState.link) { e.preventDefault(); plLinkRemove(); }
         return;
@@ -17267,7 +17472,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function rdfStaticCompass(t) {
     const st = rdfStatus && rdfStatus.station;
     if (!st || st.src !== 'static' || st.hdg === null || st.hdg === undefined || t.doa === null || t.doa === undefined) return null;
-    return ((st.hdg - t.doa) % 360 + 360) % 360;
+    return doaToCompass(t.doa, st.hdg);
   }
   // the bearing the list sorts by: compass, else the DoA plot's angle
   function rdfBearingNum(t) {
@@ -17920,7 +18125,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // add a frequency to it, Edit / Delete
   function mapMenuOpen(x, y) {
     const el = $id('map-menu');
-    if (!el || !mapCv) return;
+    if (!el || !mapCv || driveOn) return;   // (🚗 drive mode: nothing that asks for typing)
     const [la, lo] = mapScreenToLatLon(x, y);
     mapMenuAt = {la, lo};
     let h = '<button type="button" onclick="mkAddAt()">' + icon('pin') + '<span>Add Marker</span></button>' +
@@ -27822,6 +28027,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       vfoLvlNote(status.decimator_squelch);   // (📏 each VFO's level: the hover readout)
       status.decimator_squelch.forEach(sq => {
         updateDecimatorSquelchStatus(sq.id, sq.open);
+        if (Number.isFinite(sq.power_dbfs)) vfoPow[sq.id] = {v: sq.power_dbfs, at: Date.now()};   // (🚗 drive mode's level bar)
         if (estSources < 0 && sq.est_sources !== undefined && sq.est_sources >= 0) {
           estSources = sq.est_sources;
         }
@@ -28519,6 +28725,401 @@ function pageTipInit() {
   document.addEventListener('selectstart', e => { if (tipHold || helpMode) e.preventDefault(); });
 }
 
+// ============================================================================
+// 🚗 DRIVE MODE (docs/dev/drive-mode.md)
+// ============================================================================
+// The user asked (2026-11-18): "a drive mode - direction finding is often done from a vehicle: a
+// simplified view with a large bearing readout and the map, big touch targets, and a light or
+// high-contrast theme for daylight". A second face of this page, not another page: body.drive
+// hides the top bar, the sidebar, the spectrum, the panels, the rail and the assistant (laid out
+// as they were, so they come back as they were), forces the page's own map visible full-window in
+// every mode (rpOpen / rpApply read driveOn - mapState.on / pane / tab are not touched) and lays
+// the HUD over it: the selected VFO's bearing and ten big buttons. Entered from the rail's Drive
+// button or the address #drive (a bookmark on the dash device); left by Exit, Esc or the address
+// losing #drive (the browser's Back). The map's view and DF selection while driving are its own:
+// mapSave keeps the stored ones (driveMapJson) and leaving puts them back. State the map code
+// reads (driveOn, driveKeep, driveFollow) is in the globals block.
+const DRIVE_DAY_KEY = 'kraken_drive_day';   // '1' Day, '0' Night; absent: the system's light / dark, once
+const DRIVE_TICK_MS = 250;                  // the readout and Follow: at most 4 updates a second
+// the direction of a bearing relative to the vehicle's front, in 8 sectors of 45 degrees
+const DRIVE_REL = ['ahead', 'ahead right', 'right', 'behind right', 'behind', 'behind left', 'left', 'ahead left'];
+let driveTimer = 0, driveWake = null, driveWakeBusy = false, driveLayOn = false;
+let driveArrow = null;   // the arrow's angle as drawn: continuous, so it turns the shortest way round
+let driveShown = '';     // what the readout shows (its DOM is written only when that changes)
+
+// --- Day / Night: per browser; until the user picks, the system's light / dark ---
+function driveDay() {
+  try { const v = localStorage.getItem(DRIVE_DAY_KEY); if (v === '1' || v === '0') return v === '1'; } catch (e) {}
+  return !!(window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
+}
+function driveDaySet(on) {
+  try { localStorage.setItem(DRIVE_DAY_KEY, on ? '1' : '0'); } catch (e) {}
+  driveSync();
+}
+
+// --- which VFO: the selected one, among those with DoA ---
+// the VFOs with DoA: coherent mode with DoA on - those the receiver runs MUSIC for (its DF
+// status' VFOs; before the first status: every VFO)
+function driveDoaIds() {
+  if (opMode !== 'coherent' || !doaEnabled) return [];
+  const ids = decimatorInfo.map(d => d.id);
+  return rdfStatus ? rdfVfos().map(v => v.id).filter(id => ids.includes(id)) : ids;
+}
+// the VFO shown: the selected one; if it has no DoA, the first that has
+function driveVfo() {
+  const ids = driveDoaIds();
+  return ids.includes(activeDecimatorId) || !ids.length ? activeDecimatorId : ids[0];
+}
+// Prev / Next: the VFO with DoA before / after the one shown becomes the selected VFO
+function driveStep(d) {
+  const ids = driveDoaIds();
+  if (ids.length < 2) return;
+  const i = Math.max(0, ids.indexOf(driveVfo()));
+  selectDecimator(ids[(i + d + ids.length) % ids.length]);
+  driveVfoApply();
+  driveRender(true);
+}
+// the map shows that VFO's lobe, lines, heat map and estimate (the DF panel's selection, in memory)
+function driveVfoApply() {
+  const v = String(driveVfo());
+  if (mapState.rdfVfo === v && !mapState.rdfTid) return;
+  mapState.rdfVfo = v;
+  mapState.rdfTid = '';
+  if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
+  mapDraw();
+}
+
+// --- the bearing ---
+// VFO id's bearing: {deg: the compass bearing (null without a heading), rel: from the vehicle's
+// front, clockwise (null: none), conf (0..1, null: not known), why: [text, tooltip] - why there is
+// no (compass) bearing, from the DF panel's state texts (RDF_STATE)}. The numbers are the page's:
+// the receiver's mobile DF status (rdf_mapper.cpp: each new MUSIC frame turned to north with the
+// heading at the frame's time - the map's lobes), else the MUSIC DoA plot's peak through
+// doaToCompass (heading 0 = from the front; the station's heading = the compass bearing)
+function driveBearing(id) {
+  if (opMode !== 'coherent') return {why: RDF_STATE.not_coherent};
+  if (!doaEnabled) return {why: RDF_STATE.doa_off};
+  const dec = decimatorInfo.find(d => d.id === id);
+  if (!dec) return {why: ['No VFO', 'Add a VFO (Decimators in the sidebar)']};
+  const S = rdfStatus, st = S && S.station;
+  if (S && S.state === 'calibrating') return {why: RDF_STATE.calibrating};
+  if (dec.squelch_enabled && !dec.squelch_open) return {why: ['Squelch closed', 'The VFO\'s squelch is closed: MUSIC runs only while it is open']};
+  const hdg = st && Number.isFinite(st.hdg) ? st.hdg : null;
+  const v = S && rdfVfos().find(x => x.id === id);
+  if (v && v.lobe && Number.isFinite(v.peak))
+    return {deg: v.peak, rel: hdg !== null ? (v.peak - hdg + 360) % 360 : null, conf: Number.isFinite(v.conf) ? v.conf : null};
+  // the receiver has no bearing for it: why, and the DoA plot's own angle if it has one
+  let why = null;
+  if (!S) why = ['Waiting for DoA data…', 'The receiver\'s direction-finding status has not come yet'];
+  else if (S.state === 'no_fix' || S.state === 'no_heading') why = RDF_STATE[S.state];
+  else if (!v) why = ['No DoA results yet', 'It needs DoA on, the coherent mode and a signal in the VFO'];
+  else if (hdg === null) why = RDF_STATE.no_heading;
+  else why = ['No DoA results yet', 'No MUSIC frame for a few seconds: no signal in the VFO?'];
+  const p = doaPlots[id];
+  const fresh = p && p.at && performance.now() - p.at < 3000 && p.peakIdx >= 0;
+  // the plot's angle is the array's: from the front without a heading - the compass needs one
+  if (fresh && why !== null && (!S || S.state === 'no_fix' || S.state === 'no_heading' || hdg === null))
+    return {deg: null, rel: doaToCompass(p.peakAngle, 0), conf: null, why};
+  return {why};
+}
+// what the readout shows for VFO id (driveRender; the tests read it)
+function driveModel(id = driveVfo()) {
+  const b = driveBearing(id), dec = decimatorInfo.find(d => d.id === id);
+  const lv = vfoPow[id] && Date.now() - vfoPow[id].at < 5000 ? vfoPow[id].v : null;
+  const rel = Number.isFinite(b.rel) ? b.rel : null;
+  return {id, deg: Number.isFinite(b.deg) ? Math.round(b.deg) % 360 : null, rel,
+          word: rel !== null ? DRIVE_REL[Math.round(rel / 45) % 8] : '', why: b.why || null,
+          conf: Number.isFinite(b.conf) ? b.conf : null, lvl: lv,
+          vfo: dec ? `D${id} · ${(vfoCenterMhz(dec) + dec.freq_offset_hz / 1e6).toFixed(4)} MHz` : '', col: dec ? getDecimatorColor(id) : ''};
+}
+// the readout, at most every DRIVE_TICK_MS (force: now); the DOM only where something changed
+function driveRender(force) {
+  if (!driveOn) return null;
+  const m = driveModel();
+  const key = JSON.stringify(m);
+  if (key !== driveShown || force) {
+    driveShown = key;
+    const card = $id('dv-read');
+    card.classList.toggle('none', m.rel === null);
+    const deg = $id('dv-deg');
+    deg.innerHTML = m.deg === null ? '<span class="no">—</span>' : m.deg + '<span class="u">°</span>';
+    const rel = $id('dv-rel');
+    // the direction's word; with no compass bearing, why (one line, its tooltip the rest)
+    const why = m.deg === null && m.why;
+    rel.classList.toggle('why', !!why);
+    rel.innerHTML = why ? icon('warn') + '<span>' + escapeHtml(why[0]) + '</span>' : escapeHtml(m.word);
+    rel.title = why ? (why[1] || why[0]) : 'Where the signal comes from, seen from the vehicle\'s front (the arrow: up = straight ahead)';
+    const cf = $id('dv-conf');
+    cf.textContent = m.conf === null ? '—' : Math.round(100 * m.conf) + ' %';
+    cf.parentElement.classList.toggle('low', m.conf !== null && m.conf < 0.25);
+    $id('dv-lvl-i').style.width = m.lvl === null ? '0' : Math.max(0, Math.min(100, m.lvl + 100)).toFixed(0) + '%';
+    $id('dv-lvl-t').textContent = m.lvl === null ? '—' : String(Math.round(m.lvl)).replace('-', '−') + ' dBFS';
+    $id('dv-vfo-t').textContent = m.vfo || '—';
+    $id('dv-vfo-c').style.background = m.col || '';
+    // the arrow: the shortest way round from where it is (359 -> 1 is +2, not -358); its opacity
+    // follows the confidence (not known: a middle one)
+    if (m.rel !== null) {
+      driveArrow = driveArrow === null ? m.rel : driveArrow + ((m.rel - driveArrow) % 360 + 540) % 360 - 180;
+      const a = $id('dv-arrow');
+      a.style.transform = `rotate(${driveArrow.toFixed(1)}deg)`;
+      a.style.opacity = (m.conf === null ? 0.7 : 0.3 + 0.7 * Math.max(0, Math.min(1, m.conf))).toFixed(2);
+    }
+  }
+  driveSync();
+  return m;
+}
+// the buttons' states
+function driveSync() {
+  if (!driveOn) return;
+  const day = driveDay(), b = document.body;
+  b.classList.toggle('drive-day', day);
+  const dt = $id('dv-day-t'), di = $id('dv-day-i');
+  // the button says what it switches to
+  if (dt.textContent !== (day ? 'Night' : 'Day')) { dt.textContent = day ? 'Night' : 'Day'; di.innerHTML = icon(day ? 'moon' : 'sun'); }
+  if (!di.innerHTML) di.innerHTML = icon(day ? 'moon' : 'sun');
+  const au = $id('dv-audio'), ai = $id('dv-audio-i'), on = !!fmEnabled;
+  if (au.classList.contains('on') !== on || !ai.innerHTML) {
+    au.classList.toggle('on', on);
+    au.setAttribute('aria-pressed', on ? 'true' : 'false');
+    ai.innerHTML = icon(on ? 'speaker' : 'mute');
+  }
+  const fo = $id('dv-follow');
+  fo.classList.toggle('on', !!driveFollow.on);
+  fo.setAttribute('aria-pressed', driveFollow.on ? 'true' : 'false');
+  const many = driveDoaIds().length > 1;
+  for (const id of ['dv-prev', 'dv-next']) { const e = $id(id); e.classList.toggle('dis', !many); e.setAttribute('aria-disabled', many ? 'false' : 'true'); }
+  const rs = $id('dv-reset'), can = driveCanReset();
+  rs.classList.toggle('dis', !can);
+  rs.setAttribute('aria-disabled', can ? 'false' : 'true');
+}
+
+// --- the buttons ---
+// Reset bearings: the DF panel's Reset (its confirmation) for the VFO shown - only when the
+// receiver collects for it (else the panel's Reset would forget every VFO's)
+function driveCanReset() { return opMode === 'coherent' && rdfVfos().some(v => v.id === driveVfo()); }
+function driveReset() {
+  if (!driveCanReset()) return;
+  driveVfoApply();
+  rdfReset();
+}
+// the map's middle for Follow and the zoom buttons: the part the HUD leaves free (CSS px)
+function driveFree() {
+  const W = innerWidth, H = innerHeight, r = $id('dv-read').getBoundingClientRect(), c = $id('dv-ctl').getBoundingClientRect();
+  const port = !(window.matchMedia && matchMedia('(orientation: landscape)').matches);
+  const f = port ? {l: 0, r: W, t: r.bottom, b: c.top} : {l: r.right, r: c.left, t: 0, b: H};
+  if (!(f.r - f.l > 40 && f.b - f.t > 40)) return {l: 0, r: W, t: 0, b: H};   // (a tiny window: the whole map)
+  return f;
+}
+function driveZoom(dz) {
+  const f = driveFree();
+  mapZoomAt(dz, (f.l + f.r) / 2, (f.t + f.b) / 2);
+  driveFollowTick(true);
+}
+// Follow: on = the vehicle stays in the middle of the free part of the map (and, until the user
+// zooms, the estimated transmitter in view - the map zooms out for it, never in); panning by hand
+// turns it off (the map's pan), the button on again
+function driveFollowSet(on) {
+  driveFollow.on = !!on;
+  if (on) driveFollow.fitTx = true;
+  driveSync();
+  if (on) driveFollowTick(true);
+}
+// where the vehicle is: the DF status' station (2 Hz, coherent mode), else the map's
+function driveStation() {
+  const st = opMode === 'coherent' && rdfStatus && rdfStatus.station;
+  if (st && Number.isFinite(st.lat) && Number.isFinite(st.lon)) return [st.lat, st.lon];
+  return mapStationPos();
+}
+// the estimated transmitter of the VFO shown (its heat map's), or null
+function driveEst() {
+  if (opMode !== 'coherent' || !rdfStatus) return null;
+  const G = rdfGrids[rdfGk(driveVfo(), '')], e = G && G.m && G.m.est;
+  return e && Number.isFinite(e.lat) && Number.isFinite(e.lon) ? e : null;
+}
+function driveFollowTick(force) {
+  if (!driveOn || !driveFollow.on || !mapCv || !mapW) return;
+  const s = driveStation();
+  if (!s) return;
+  const f = driveFree(), cx = (f.l + f.r) / 2, cy = (f.t + f.b) / 2, z0 = mapState.z;
+  const p = mapProj(s[0], s[1]);
+  const e = driveFollow.fitTx ? driveEst() : null;
+  if (e) {
+    const q = mapProj(e.lat, e.lon);
+    let dx = Math.abs(q[0] - p[0]);
+    dx = Math.min(dx, 1 - dx);
+    const dy = Math.abs(q[1] - p[1]), m = 60;   // (60 px: the cross and its label inside)
+    const fit = Math.min((Math.min(cx - f.l, f.r - cx) - m) / Math.max(dx, 1e-12), (Math.min(cy - f.t, f.b - cy) - m) / Math.max(dy, 1e-12));
+    const z = Math.log2(Math.max(1, fit) / 256);
+    if (mapState.z > z) mapState.z = Math.max(MAP_MIN_Z, Math.floor(z));   // (out to a whole zoom: the tiles sharp)
+  }
+  const W = mapWorld(), mx = p[0] - (cx - mapW / 2) / W, my = p[1] - (cy - mapH / 2) / W;
+  let dmx = mx - mapState.mx;
+  dmx -= Math.round(dmx);
+  if (!force && mapState.z === z0 && Math.abs(dmx * W) < 0.5 && Math.abs((my - mapState.my) * W) < 0.5) return;
+  mapState.mx = mx;
+  mapState.my = my;
+  mapClampView();
+  mapDraw();
+}
+function driveTick() {
+  if (!driveOn) return;
+  if (mapState.rdfVfo !== String(driveVfo()) || mapState.rdfTid) driveVfoApply();   // (the selection changed elsewhere)
+  driveRender(false);
+  driveFollowTick(false);
+}
+
+// --- Layers: the base map and the DF layers, in big rows (the map's Layers rows: mapLayHtml) ---
+function driveLayToggle() { if (driveLayOn) driveLayClose(false); else driveLayOpen(); }
+function driveLayOpen() {
+  const pop = $id('dv-lay-pop'), btn = $id('dv-lay');
+  driveLayOn = true;
+  driveLayDismiss.opened();
+  $id('dv-lay-body').innerHTML = mapLayHtml(['base', 'df'], 'drive');
+  mapLaySync();
+  btn.classList.add('on');
+  btn.setAttribute('aria-expanded', 'true');
+  pop.hidden = false;
+  driveLayPlace();
+}
+function driveLayClose(focusBtn) {
+  if (!driveLayOn) return;
+  driveLayOn = false;
+  $id('dv-lay-pop').hidden = true;
+  const btn = $id('dv-lay');
+  btn.classList.remove('on');
+  btn.setAttribute('aria-expanded', 'false');
+  if (focusBtn) btn.focus();
+}
+// beside the buttons: above the bottom row of a portrait screen, left of the right-hand column of
+// a landscape one (popPlace with the rect it should keep clear of)
+function driveLayPlace() {
+  const pop = $id('dv-lay-pop');
+  if (!driveLayOn || pop.hidden) return;
+  const b = $id('dv-lay').getBoundingClientRect(), c = $id('dv-ctl').getBoundingClientRect();
+  const land = window.matchMedia && matchMedia('(orientation: landscape)').matches;
+  const r = land ? {left: c.left - 1, right: c.left - 8, top: b.bottom + 4, bottom: b.top - 4}
+                 : {left: b.left, right: b.right, top: c.top - 4, bottom: innerHeight};
+  popPlace(pop, r, {align: 'right', m: 12});
+}
+const driveLayDismiss = popDismiss({pop: () => $id('dv-lay-pop'), btn: () => driveLayOn ? $id('dv-lay') : null,
+                                    close: driveLayClose, place: driveLayPlace});
+
+// --- the stored map state while driving (mapSave): the view and the DF selection as they were
+// stored; nothing written until something else changed (a layer picked in Layers) ---
+function driveMapJson() {
+  const k = driveKeep;
+  const s = JSON.stringify(Object.assign({}, mapState, {z: k.z, mx: k.mx, my: k.my, rdfVfo: k.rdfVfo, rdfTid: k.rdfTid}));
+  if (!k.wrote && s === k.json) return null;
+  k.wrote = true;
+  return s;
+}
+
+// --- the free part of the map: the attribution and the offline notice go there ---
+function driveLayout() {
+  if (!driveOn) return;
+  const f = driveFree(), r = document.documentElement.style;
+  r.setProperty('--dv-ar', Math.round(innerWidth - f.r) + 'px');
+  r.setProperty('--dv-ab', Math.round(innerHeight - f.b) + 'px');
+  r.setProperty('--dv-oc', Math.round((f.l + f.r) / 2) + 'px');
+  r.setProperty('--dv-ot', Math.round(f.t + 12) + 'px');
+}
+
+// --- the screen kept awake (Screen Wake Lock; HTTPS only - the page is): asked for on entering
+// and whenever the page is shown again (the browser lets go of it when the page is hidden),
+// let go on leaving. No fallback tricks: without the API the screen's own timeout applies ---
+function driveWakeReq() {
+  if (!driveOn || driveWake || driveWakeBusy || !navigator.wakeLock || document.visibilityState !== 'visible') return;
+  driveWakeBusy = true;
+  Promise.resolve().then(() => navigator.wakeLock.request('screen')).then(s => {
+    driveWakeBusy = false;
+    if (!driveOn) { s.release().catch(() => {}); return; }
+    driveWake = s;
+    if (s.addEventListener) s.addEventListener('release', () => { if (driveWake === s) driveWake = null; });
+  }, () => { driveWakeBusy = false; });   // (refused: a battery saver, no HTTPS - the screen may sleep)
+}
+function driveWakeRel() {
+  const s = driveWake;
+  driveWake = null;
+  if (s) Promise.resolve().then(() => s.release()).catch(() => {});
+}
+
+// --- entering and leaving ---
+function driveEnter() {
+  if (driveOn) return;
+  // what floats on the page closes: the popovers, the map's menu, help mode, a tooltip
+  if (viewTarget !== null) viewPopClose(false);
+  if (mapLayOn) mapLayClose(false);
+  if (decAllOn) decAllClose(false);
+  if (helpMode) helpModeSet(false);
+  tipHide();
+  mapMenuClose();
+  driveOn = true;
+  driveKeep = {z: mapState.z, mx: mapState.mx, my: mapState.my, rdfVfo: mapState.rdfVfo, rdfTid: mapState.rdfTid, fit: mapAutoFit,
+               json: JSON.stringify(mapState), wrote: false};
+  mapAutoFit = false;   // (the first data must not refit the map under Follow)
+  driveFollow.on = true;
+  driveFollow.fitTx = true;
+  driveArrow = null;
+  driveShown = '';
+  document.body.classList.add('drive');
+  $id('drive-hud').hidden = false;
+  if (location.hash !== '#drive') location.hash = 'drive';   // (the browser's Back leaves drive mode)
+  rpApply();   // the map, whatever the pane was
+  mapInit();
+  mapResize();
+  driveVfoApply();
+  send('GET_MAP');
+  send('GET_RDF');
+  driveLayout();
+  driveRender(true);
+  driveFollowTick(true);
+  clearInterval(driveTimer);
+  driveTimer = setInterval(driveTick, DRIVE_TICK_MS);
+  driveWakeReq();
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+}
+function driveLeave() {
+  if (!driveOn) return;
+  driveLayClose(false);
+  tipHide();
+  clearInterval(driveTimer);
+  driveTimer = 0;
+  driveWakeRel();
+  driveOn = false;
+  const k = driveKeep;
+  driveKeep = null;
+  if (k) {   // the map's view and DF selection as they were (the stored ones are)
+    mapState.z = k.z; mapState.mx = k.mx; mapState.my = k.my; mapState.rdfVfo = k.rdfVfo; mapState.rdfTid = k.rdfTid;
+    mapAutoFit = k.fit;
+  }
+  document.body.classList.remove('drive', 'drive-day');
+  $id('drive-hud').hidden = true;
+  if (location.hash === '#drive') history.replaceState(null, '', location.pathname + location.search);
+  rpApply();
+  if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
+  mapResize();
+  mapDraw();
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+}
+// (from the load handler)
+function driveInit() {
+  window.addEventListener('hashchange', () => {
+    if (location.hash === '#drive') driveEnter();
+    else if (driveOn) driveLeave();
+  });
+  document.addEventListener('keydown', e => {
+    // Esc leaves - unless something open takes it first (Layers, a tooltip: they stop it)
+    if (driveOn && e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); driveLeave(); }
+  });
+  document.addEventListener('visibilitychange', () => { if (driveOn && document.visibilityState === 'visible') driveWakeReq(); });
+  window.addEventListener('resize', () => {
+    if (!driveOn) return;
+    driveLayout();
+    if (mapW) driveFollowTick(true);
+  });
+  if (location.hash === '#drive') driveEnter();
+}
+
 window.addEventListener('load',()=>{
   // Check if opus-decoder loaded (it exports to window["opus-decoder"])
   if(window["opus-decoder"]?.OpusDecoder) {
@@ -28542,6 +29143,7 @@ window.addEventListener('load',()=>{
   initHelpTips();
   connect();
   setInterval(pbTick, 1000);
+  driveInit();   // (🚗 drive mode: #drive, Esc, the wake lock)
 
   // Start auto-range if enabled by default
   if (viewCommon.auto) {

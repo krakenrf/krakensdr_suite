@@ -193,7 +193,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 - Map: `map.md`, `map-search.md`, `station-on-map.md`, `osm-masts.md`,
   `viewshed.md`, `path-loss.md`, `range.md` (range from signal strength,
   a VFO's level on mouseover), `incident-map.md`, `mobile-df.md`,
-  `log-replay.md`
+  `log-replay.md`, `drive-mode.md` (DF from a vehicle: the map
+  full-window, one big bearing, big buttons, a Day look)
 - Recording and playback: `recorder.md` (`SIGMF.md`), `debug-playback.md`,
   `decoder-log.md`, `voice-to-text.md`
 - Other: `ai-assistant.md`, `web-mapper.md`, `array-calibration.md`

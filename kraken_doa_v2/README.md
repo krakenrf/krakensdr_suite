@@ -112,7 +112,13 @@ plots grow with it), **Decoders**,
 Transcription share the panel under the waterfall, which shows one of them at
 a time: the decoders - a tab for each decoder in use (a VFO runs it, or it
 has data to show) and **All decoders**, a filterable list of every installed
-one - or the transcripts by themselves.
+one - or the transcripts by themselves. **Drive** at the foot of the rail (on a phone: in
+the drawer's Panels box; or the address `#drive`) switches the page to drive mode for
+direction finding from a vehicle: the map full-window, following the vehicle, the
+selected VFO's bearing in large digits with an arrow from the vehicle's front, the
+level and the confidence, and big buttons - previous / next VFO, audio, Follow, reset
+bearings, zoom, layers, a Day / Night look for these controls, Exit (or Esc). It keeps
+the screen awake and gives the page back as it was (`docs/dev/drive-mode.md`).
 
 | Section | What it does |
 |---------|--------------|

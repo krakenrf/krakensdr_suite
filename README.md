@@ -270,6 +270,19 @@ Direction finding needs Coherent mode.
   and its 95 % ellipse. It needs the station's position and heading
   (Station Information → GPS, through gpsd), and the array's ANT0 must face
   the front of the vehicle.
+- **Drive mode.** For direction finding from a vehicle: the **Drive**
+  button at the foot of the rail (on a phone: in the sidebar's Panels box),
+  or the page's address with `#drive` at the end - bookmark it on the
+  phone or tablet on the dashboard. The map fills the screen and follows
+  the vehicle; one big readout shows the selected VFO's bearing - an arrow
+  from the vehicle's front (up = straight ahead), the compass bearing in
+  large digits and a word (ahead left, right, behind ...) - with the signal
+  level and the confidence, or why there is no bearing. Big buttons: the
+  previous / next VFO, audio on / off, Follow, reset the bearings, zoom,
+  the map's layers, **Day** (a light, high-contrast look for daylight) /
+  **Night**, and **Exit** (or Esc). The screen stays on while it is open
+  (browsers with the Screen Wake Lock API). The rest of the page comes back
+  as it was.
 - **Range from signal strength.** From one bearing, the signal's level and
   your estimate of the transmitter's power, the map shows how far away the
   transmitter probably is, using the terrain. It is only as good as the

@@ -97,6 +97,15 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   kraken_doa (from a scratch dir - its own doa_settings.json) fed by a fake
   heimdall streaming a synthetic 1090 MHz recording
 
+**Drive mode (2026-11-18, *drive-mode.md*):** this map, full-window
+(`#map-pane` fixed over the hidden page), with a bearing readout and big
+buttons over it. `rpOpen()` / `rpApply()` read `driveOn` (the map shows in
+every mode; `mapState.on / pane / tab` untouched); `mapSave` keeps the
+stored view and DF selection while it is on (`driveMapJson`); the pan /
+zoom code turns its Follow off / stops its zoom-out; clicks select
+nothing and the menu does not open. Its Layers are `mapLayHtml(['base',
+'df'], 'drive')`.
+
 **Layers popover (2026-11-18):**
 - The user asked to give the map the View popover's pattern: the layer and
   DF buttons (the base map's segment, Trails, Masts, Viewshed, Replay at the

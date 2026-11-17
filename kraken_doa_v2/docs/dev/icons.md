@@ -34,7 +34,8 @@ now.
   their own size are listed under "sizes by place" in the CSS (the rail 15,
   the top bar's cog 24 / 22 on a phone, its help-mode ? 17 / 22 (in the
   top bar's block, next to the cog's), the menu button 18 / 22, the
-  sidebar chevron 15, close crosses in headers 13, chevrons of folds 12).
+  sidebar chevron 15, close crosses in headers 13, chevrons of folds 12;
+  drive mode's buttons 26 / 30 with a 2 px stroke - 2.4 in its Day look).
 - **Icon + label**: the label is a `<span>` (or `<b>`) right after the icon;
   one rule, `.ic + span {margin-left:6px}`, gives the gap. Containers that
   space their items with a flex `gap` zero it (the map popups' headers). In
@@ -60,16 +61,19 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `sliders` | View (display settings) |
 | `gear` | settings: Setup Settings, Categories, scan settings, model and effort, Generate |
 | `refresh` | refresh, check, rescan, regenerate, restart |
-| `reset` | reset to defaults, the boxes' order |
+| `reset` | reset to defaults, the boxes' order; drive mode's Reset (bearings) |
 | `power` | shut down |
 | `edit` | edit (pencil) |
 | `trash` | delete |
 | `download` `upload` | download / get, upload |
-| `plus` | a new conversation |
+| `plus` `minus` | a new conversation; zoom in / out (drive mode) |
 | `search` | the map search |
 | `home` | the map back to the station |
+| `wheel` | drive mode (a steering wheel: the rail's Drive button) |
+| `sun` `moon` | drive mode's Day / Night (the button shows the look it switches to) |
+| `mute` | audio off (drive mode's Audio button) |
 | `target` | the estimated transmitter, the most likely spot |
-| `crosshair` | centre the map on something, a typed coordinate |
+| `crosshair` | centre the map on something, a typed coordinate; drive mode's Follow |
 | `fit` | show everything (fit the map) |
 | `enter` | run the search |
 | `play` `pause` `stop` `next` `first` | start / play, pause / hold, stop, skip / next, to the start |

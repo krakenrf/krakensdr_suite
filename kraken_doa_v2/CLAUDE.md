@@ -226,6 +226,7 @@ the job's scratch directory (not committed). The established setup:
 | Viewshed; path loss (P.1812, ITM, P.2108, coverage) | `viewshed.md`, `path-loss.md` |
 | Incident map (pager addresses) | `incident-map.md` |
 | Mobile direction finding; log replay | `mobile-df.md`, `log-replay.md` |
+| Drive mode (the map full-window, one big bearing, big buttons, Day / Night, wake lock) | `drive-mode.md` |
 | Range from signal strength (level -> dBm, calibration, the sweep, the posterior); a VFO's level on mouseover | `range.md` |
 | Array calibration from ADS-B (experimental) | `array-calibration.md` |
 | Debug playback | `debug-playback.md` |

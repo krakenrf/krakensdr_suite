@@ -143,6 +143,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   Reset
 
 
+**Drive mode (2026-11-18, *drive-mode.md*):** the page's second face for
+DF from a vehicle - the map full-window and one big bearing readout of the
+selected VFO, taken from this status: its `peak` (compass), `peak -
+station.hdg` (relative to the front), `conf`; the reasons there is none
+from `RDF_STATE`; Reset is this panel's `rdfReset`. Nothing in the
+collecting changed.
+
 **The KrakenSDR Android app's feeds (2026-11-12, PR #4 + `power_dbfs`):**
 - Two connection methods in the app (krakensdr_rdf_android): `legacy` polls
   `DOA_value.html` on 8081; `v2` (the default) is the 8080 WebSocket (DoA

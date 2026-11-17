@@ -498,6 +498,12 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   "Panels" since 2026-11-17, when the display controls it also held
   went behind the View button - the key stayed), the assistant keeps its
   floating button.
+- **Drive** (`#rail-drive`, 2026-11-18, *drive-mode.md*): at the rail's
+  foot (`margin-top:auto`), apart from the panels - it switches the whole
+  page to drive mode, it is not a panel; in the phone layout it goes into
+  the drawer's Panels box under the panel buttons, full width
+  (`MOBILE_RELOCATIONS`). The other rail buttons did not move
+  (`test_icons.py`'s baseline gained only its entries).
 - Tests (48 checks, headless Chromium, real mouse / touch): the bar's
   content and order, one row at 1700 px, labels above controls, the chips
   at rest; the scanner chip appearing and going without anything moving;

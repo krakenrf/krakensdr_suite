@@ -4,9 +4,16 @@
   tools/theme_palette.py              the tokens: name, hex, L C h, what for
   tools/theme_palette.py --css        the :root block as it stands in kraken_doa.html
   tools/theme_palette.py --contrast   WCAG contrast of the text and state tokens on the surfaces
+  tools/theme_palette.py --css-day    drive mode's Day look: the token block it sets on its HUD
   tools/theme_palette.py --check [kraken_doa.html]
-        the page's :root block equals this palette, every var(--name) it uses
-        is defined, and how many colour literals in its CSS are not tokens
+        the page's :root block and drive mode's Day block equal this palette,
+        every var(--name) it uses is defined, and how many colour literals in
+        its CSS are not tokens
+
+Drive mode (docs/dev/drive-mode.md) has a light, high-contrast Day look for
+its HUD only: the same token names with light values (DAY), set on
+`body.drive.drive-day .drive-hud` - so every colour the HUD uses is still a
+token, and its rules don't change between Night (the palette) and Day.
 
 The palette is designed in OKLCH because its three axes are what the eye
 judges: lightness (contrast, elevation), chroma (how loud) and hue. Change a
@@ -76,6 +83,43 @@ STATES = [
 ]
 ALL = NEUTRAL + ACCENT + [t for fam in STATES for t in fam]
 
+# Drive mode's Day look (2026-11-18): the tokens its HUD uses, light. Near-white surfaces, near-black
+# text (every text token >= 7:1 on the surfaces s1 - s4), lines that are >= 3:1 on them from l3 on
+# (control borders), the accent and the states darkened to >= 7:1 as text (white on --ac >= 7:1)
+DAY = [
+    ('s0', 0.955, 0.006, HB, 'day: wells'),
+    ('s1', 0.970, 0.005, HB, 'day: the dial, the level bar\'s track'),
+    ('s2', 0.960, 0.006, HB, 'day: boxes inside boxes'),
+    ('s3', 0.995, 0.002, HB, 'day: the cards, the popover'),
+    ('s4', 0.950, 0.006, HB, 'day: the buttons'),
+    ('s5', 0.905, 0.008, HB, 'day: pressed, hover; a switch that is off'),
+    ('l1', 0.860, 0.010, HB, 'day: lines between parts'),
+    ('l2', 0.700, 0.015, HB, 'day: faint borders'),
+    ('l3', 0.560, 0.018, HB, 'day: borders of controls (>= 3:1)'),
+    ('l4', 0.480, 0.020, HB, 'day: borders of the buttons, the dial'),
+    ('l5', 0.360, 0.020, HB, 'day: strong borders'),
+    ('t6', 0.420, 0.016, HB, 'day: faint text'),
+    ('t5', 0.400, 0.016, HB, 'day: muted text'),
+    ('t4', 0.360, 0.016, HB, 'day: labels'),
+    ('t3', 0.320, 0.016, HB, 'day: labels'),
+    ('t2', 0.280, 0.015, HB, 'day: secondary text'),
+    ('t1', 0.240, 0.014, HB, 'day: text'),
+    ('t0', 0.200, 0.014, HB, 'day: text, the digits'),
+    ('ac-d', 0.880, 0.050, HA, 'day: accent container'),
+    ('ac', 0.400, 0.140, HA, 'day: accent fill (white on it)'),
+    ('ac-h', 0.330, 0.120, HA, 'day: borders of selected'),
+    ('ac-l', 0.450, 0.150, HA, 'day: focus'),
+    ('ac-t', 0.400, 0.140, HA, 'day: accent text, the arrow'),
+    ('ac-t2', 0.360, 0.120, HA, 'day: accent text, strong'),
+    ('ok', 0.450, 0.120, 152, 'day: good (the level bar)'),
+    ('ok-t', 0.400, 0.110, 152, 'day: good: text'),
+    ('warn', 0.500, 0.120, 78, 'day: attention'),
+    ('warn-t', 0.420, 0.100, 78, 'day: attention: text'),
+    ('bad', 0.480, 0.130, 25, 'day: problem'),
+    ('bad-t', 0.420, 0.120, 25, 'day: problem: text'),
+]
+DAY_SEL = 'body.drive.drive-day .drive-hud'
+
 
 # ---- OKLCH -> sRGB (Björn Ottosson's OKLab), chroma reduced until inside sRGB ----
 def _linear(L, C, h):
@@ -124,6 +168,7 @@ def contrast(h1, h2):
 
 
 TOK = {n: oklch_hex(L, C, h) for n, L, C, h, _ in ALL}
+DAYTOK = {n: oklch_hex(L, C, h) for n, L, C, h, _ in DAY}
 
 
 def css_block():
@@ -140,6 +185,16 @@ def css_block():
     return '\n'.join(out)
 
 
+def css_day_block():
+    def row(names):
+        return '  ' + ' '.join('--%s:%s;' % (n, DAYTOK[n]) for n in names)
+    names = [n for n, *_ in DAY]
+    return '\n'.join([DAY_SEL + ' {',
+                      '  /* drive mode\'s Day look (tools/theme_palette.py --css-day): surfaces, lines, text */',
+                      row(names[:6]), row(names[6:11]), row(names[11:18]),
+                      '  /* the accent; states */', row(names[18:24]), row(names[24:]), '}'])
+
+
 def show_table():
     for n, L, C, h, what in ALL:
         print('--%-8s %s  L=%.3f C=%.3f h=%3.0f  %s' % (n, TOK[n], L, C, h, what))
@@ -151,6 +206,10 @@ def show_contrast():
     for n in ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 'ac-t', 'ac-t2', 'ok-t', 'warn-t', 'bad-t', 'spec-t', 'ok', 'warn', 'bad'):
         print('  %-8s %s  %s' % (n, TOK[n], '  '.join('%4.1f' % contrast(TOK[n], TOK[s]) for s in surf)))
     print('white on fills: ' + '  '.join('%s %.1f' % (n, contrast('#ffffff', TOK[n])) for n in ('ac', 'ac-h', 'ok-m', 'bad-m', 'spec-m')))
+    print('drive mode, Day: on %s (text >= 7, control borders >= 3)' % ' '.join(surf))
+    for n in ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 'ac-t', 'ac-t2', 'ok-t', 'warn-t', 'bad-t', 'l3', 'l4', 'ok', 'warn', 'bad'):
+        print('  %-8s %s  %s' % (n, DAYTOK[n], '  '.join('%4.1f' % contrast(DAYTOK[n], DAYTOK[s]) for s in surf)))
+    print('  white on --ac %.1f' % contrast('#ffffff', DAYTOK['ac']))
 
 
 def check(path):
@@ -158,6 +217,9 @@ def check(path):
     ok = True
     if css_block() not in text:
         print('FAIL: the :root block of %s differs from this palette (--css prints it)' % path)
+        ok = False
+    if os.path.basename(path) == 'kraken_doa.html' and css_day_block() not in text:
+        print('FAIL: drive mode\'s Day block of %s differs from this palette (--css-day prints it)' % path)
         ok = False
     start = text.index('/* SDR-style layout */')
     css = text[start:text.index('</style>', start)]
@@ -167,7 +229,7 @@ def check(path):
     if missing:
         print('FAIL: var() of undefined names: ' + ', '.join(missing))
         ok = False
-    body = css.replace(css_block(), '')
+    body = css.replace(css_block(), '').replace(css_day_block(), '')
     lits = re.findall(r'(?<![&\w])#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-zA-Z_-])', body)
     known = set(TOK.values()) | {'#fff', '#ffffff', '#000', '#000000'}
     stray = [c for c in lits if c.lower() not in known]
@@ -183,6 +245,8 @@ if __name__ == '__main__':
         show_table()
     elif a[0] == '--css':
         print(css_block())
+    elif a[0] == '--css-day':
+        print(css_day_block())
     elif a[0] == '--contrast':
         show_contrast()
     elif a[0] == '--check':
