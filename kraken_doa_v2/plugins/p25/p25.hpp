@@ -30,11 +30,32 @@ public:
     // now = the receiver's current sample index: ends a transmission whose
     // voice frames stopped without a terminator
     void tick(int64_t now);
+
+    // --- shared with the Phase 2 MAC layer (p25p2.cpp) ---
+    // A TSBK body: t[0] low 6 bits = opcode, t[1] = MFID, t[2..9] = the 8
+    // argument octets (Phase 2 partition-01 messages are these octets).
+    // tdma = from a Phase 2 channel: channel numbers also name their
+    // timeslot (chan_str); the Phase 1 decoder itself passes false.
+    void tsbk(const uint8_t* t, bool tdma = false);
+    // channel (identifier 4 + number 12) -> "8-602 (854.76250 MHz)", with
+    // tdma ", LCH n" for a TDMA identifier with several slots
+    std::string chan_str(uint32_t ch, bool tdma = false) const;
+    struct Iden { uint64_t base_hz = 0; uint32_t spacing_hz = 0; int64_t tx_offset_hz = 0; bool tdma = false; int slots = 1; };
+    const Iden* iden(int id) const {
+        auto it = iden_.find(id);
+        return it == iden_.end() ? nullptr : &it->second;
+    }
+    // network identity as learned so far (-1 = not yet): the NAC of the
+    // last valid frame, WACN / system ID from NET_STS_BCST
+    int nac() const { return last_nac_; }
+    int wacn() const { return wacn_; }
+    int sysid() const { return sysid_; }
+    static std::string algorithm_name(int alg);   // "clear", "AES-256", "alg 0x.."
 private:
     RxContext& ctx_;
-    struct Iden { uint64_t base_hz = 0; uint32_t spacing_hz = 0; int64_t tx_offset_hz = 0; bool tdma = false; int slots = 1; };
     std::map<int, Iden> iden_;
     int last_nac_ = -1;
+    int wacn_ = -1, sysid_ = -1;
     std::string call_desc_;
     int64_t last_voice_ms_ = 0;
     // voice: IMBE, muted while the call is encrypted
@@ -42,9 +63,7 @@ private:
     int alg_ = 0x80;                 // current call's algorithm (0x80 = clear)
     bool lc_encrypted_ = false;      // service options "protected" bit
     void voice_frames(const std::vector<uint8_t>& sf);
-    void tsbk(const uint8_t* t);
     void link_control(const uint8_t* lc, const char* where);
-    std::string chan_str(uint32_t ch) const;
     void voice_activity(const std::string& desc);
     // the talker of the voice transmission in progress (RxContext::talker),
     // in receiver sample indexes

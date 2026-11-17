@@ -86,6 +86,7 @@ void P25Proto::reset() {
     lc_encrypted_ = false;
     iden_.clear();
     last_nac_ = -1;
+    wacn_ = sysid_ = -1;
     call_desc_.clear();
     last_voice_ms_ = 0;
     // the host resets its own talker state together with ours
@@ -138,14 +139,19 @@ void P25Proto::tick(int64_t now) {
     call_start_ = -1;
 }
 
-std::string P25Proto::chan_str(uint32_t ch) const {
+std::string P25Proto::algorithm_name(int alg) { return alg_name(alg); }
+
+std::string P25Proto::chan_str(uint32_t ch, bool tdma) const {
     int id = static_cast<int>(ch >> 12);
     uint32_t num = ch & 0xFFF;
     auto it = iden_.find(id);
     std::string s = std::to_string(id) + "-" + std::to_string(num);
     if (it != iden_.end() && it->second.spacing_hz) {
         uint32_t n = it->second.tdma ? num / static_cast<uint32_t>(std::max(1, it->second.slots)) : num;
-        s += " (" + mhz(it->second.base_hz + static_cast<uint64_t>(n) * it->second.spacing_hz) + ")";
+        s += " (" + mhz(it->second.base_hz + static_cast<uint64_t>(n) * it->second.spacing_hz);
+        if (tdma && it->second.tdma && it->second.slots > 1)
+            s += ", LCH " + std::to_string(num % static_cast<uint32_t>(it->second.slots));
+        s += ")";
     }
     return s;
 }
@@ -200,7 +206,7 @@ void P25Proto::link_control(const uint8_t* lc, const char* where) {
     }
 }
 
-void P25Proto::tsbk(const uint8_t* t) {
+void P25Proto::tsbk(const uint8_t* t, bool tdma) {
     int op = t[0] & 0x3F;
     int mfid = t[1];
     uint64_t a = 0;
@@ -217,28 +223,28 @@ void P25Proto::tsbk(const uint8_t* t) {
     switch (op) {
         case 0x00: {   // GRP_V_CH_GRANT
             uint32_t opts = f(63, 8), ch = f(55, 16), grp = f(39, 16), src = f(23, 24);
-            std::string e = "Grant: TG " + std::to_string(grp) + " <- " + std::to_string(src) + " on " + chan_str(ch);
+            std::string e = "Grant: TG " + std::to_string(grp) + " <- " + std::to_string(src) + " on " + chan_str(ch, tdma);
             if (opts & 0x40) e += " [encrypted]";
             if (opts & 0x80) e += " [EMERGENCY]";
             r.event(Mode::P25, e, 3.0);
-            r.set(Mode::P25, "Last grant", "TG " + std::to_string(grp) + " on " + chan_str(ch));
+            r.set(Mode::P25, "Last grant", "TG " + std::to_string(grp) + " on " + chan_str(ch, tdma));
             break;
         }
         case 0x02: {   // GRP_V_CH_GRANT_UPDT
             uint32_t c1 = f(63, 16), g1 = f(47, 16), c2 = f(31, 16), g2 = f(15, 16);
-            r.event(Mode::P25, "Grant update: TG " + std::to_string(g1) + " on " + chan_str(c1) +
-                                   (g2 != g1 || c2 != c1 ? ", TG " + std::to_string(g2) + " on " + chan_str(c2) : ""),
+            r.event(Mode::P25, "Grant update: TG " + std::to_string(g1) + " on " + chan_str(c1, tdma) +
+                                   (g2 != g1 || c2 != c1 ? ", TG " + std::to_string(g2) + " on " + chan_str(c2, tdma) : ""),
                     10.0);
             break;
         }
         case 0x03: {   // GRP_V_CH_GRANT_UPDT_EXP
             uint32_t ch = f(47, 16), grp = f(15, 16);
-            r.event(Mode::P25, "Grant update: TG " + std::to_string(grp) + " on " + chan_str(ch), 10.0);
+            r.event(Mode::P25, "Grant update: TG " + std::to_string(grp) + " on " + chan_str(ch, tdma), 10.0);
             break;
         }
         case 0x04: {   // UU_V_CH_GRANT
             uint32_t ch = f(63, 16), dst = f(47, 24), src = f(23, 24);
-            r.event(Mode::P25, "Unit grant: " + std::to_string(src) + " -> " + std::to_string(dst) + " on " + chan_str(ch), 3.0);
+            r.event(Mode::P25, "Unit grant: " + std::to_string(src) + " -> " + std::to_string(dst) + " on " + chan_str(ch, tdma), 3.0);
             break;
         }
         case 0x28: {   // GRP_AFF_RSP
@@ -292,22 +298,24 @@ void P25Proto::tsbk(const uint8_t* t) {
             uint32_t sys = f(51, 12), rfss = f(39, 8), site = f(31, 8), ch = f(23, 16);
             r.set(Mode::P25, "System ID", hex(sys, 3));
             r.set(Mode::P25, "RFSS / Site", std::to_string(rfss) + " / " + std::to_string(site));
-            r.set(Mode::P25, "Control channel", chan_str(ch));
+            r.set(Mode::P25, "Control channel", chan_str(ch, tdma));
             r.event(Mode::P25, "RFSS status: sys " + hex(sys, 3) + " RFSS " + std::to_string(rfss) + " site " +
-                                   std::to_string(site) + " CC " + chan_str(ch), bcast);
+                                   std::to_string(site) + " CC " + chan_str(ch, tdma), bcast);
             break;
         }
         case 0x3B: {   // NET_STS_BCST
             uint32_t wacn = f(55, 20), sys = f(35, 12), ch = f(23, 16);
+            wacn_ = static_cast<int>(wacn);
+            sysid_ = static_cast<int>(sys);
             r.set(Mode::P25, "WACN", hex(wacn, 5));
             r.set(Mode::P25, "System ID", hex(sys, 3));
-            r.event(Mode::P25, "Network status: WACN " + hex(wacn, 5) + " sys " + hex(sys, 3) + " CC " + chan_str(ch), bcast);
+            r.event(Mode::P25, "Network status: WACN " + hex(wacn, 5) + " sys " + hex(sys, 3) + " CC " + chan_str(ch, tdma), bcast);
             break;
         }
         case 0x3C: {   // ADJ_STS_BCST
             uint32_t sys = f(51, 12), rfss = f(39, 8), site = f(31, 8), ch = f(23, 16);
-            std::string d = "sys " + hex(sys, 3) + " RFSS " + std::to_string(rfss) + " site " + std::to_string(site) + " on " + chan_str(ch);
-            r.set(Mode::P25, "Neighbour " + std::to_string(rfss) + "/" + std::to_string(site), chan_str(ch));
+            std::string d = "sys " + hex(sys, 3) + " RFSS " + std::to_string(rfss) + " site " + std::to_string(site) + " on " + chan_str(ch, tdma);
+            r.set(Mode::P25, "Neighbour " + std::to_string(rfss) + "/" + std::to_string(site), chan_str(ch, tdma));
             r.event(Mode::P25, "Adjacent site: " + d, bcast);
             break;
         }

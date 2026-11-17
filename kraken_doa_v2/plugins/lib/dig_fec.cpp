@@ -262,6 +262,96 @@ int rs64_decode(uint8_t* sym, int n, int nroots) {
     return L;
 }
 
+// Errors and erasures: Berlekamp-Massey started from the erasure locator,
+// Chien search, Forney (fcr 1: e = Omega(X^-1) / Lambda'(X^-1)), then the
+// syndromes of the corrected word re-checked. Fixed-size arrays, no heap.
+int rs64_decode_erasures(uint8_t* sym, int n, int nroots, const int* eras, int neras, int* errors) {
+    if (errors) *errors = 0;
+    if (n <= 0 || n > 63 || nroots <= 0 || nroots >= n || neras < 0 || neras > nroots) return -1;
+    const GF64& g = gf64();
+    bool erased[63] = {};
+    for (int k = 0; k < neras; k++) {
+        if (eras[k] < 0 || eras[k] >= n || erased[eras[k]]) return -1;
+        erased[eras[k]] = true;
+    }
+    uint8_t r[63];
+    for (int i = 0; i < n; i++) r[i] = erased[i] ? 0 : sym[i];
+    auto syndromes = [&](const uint8_t* w, uint8_t* S) {
+        bool clean = true;
+        for (int j = 0; j < nroots; j++) {
+            uint8_t s = 0, a = g.pw(j + 1);
+            for (int i = 0; i < n; i++) s = g.mul(s, a) ^ w[i];
+            S[j] = s;
+            if (s) clean = false;
+        }
+        return clean;
+    };
+    uint8_t S[63];
+    if (syndromes(r, S)) {
+        for (int i = 0; i < n; i++) sym[i] = r[i];   // erased symbols are 0 in this codeword
+        return 0;
+    }
+    // erasure locator Gamma(x) = prod (1 + X_k x), X_k = a^(n-1-pos)
+    uint8_t lam[64] = {1}, B[64] = {1}, T[64];
+    for (int k = 0; k < neras; k++) {
+        uint8_t X = g.pw(n - 1 - eras[k]);
+        for (int j = k + 1; j > 0; j--) lam[j] ^= g.mul(lam[j - 1], X);
+    }
+    for (int j = 0; j <= nroots; j++) B[j] = lam[j];
+    int L = neras;
+    for (int rr = neras + 1; rr <= nroots; rr++) {
+        uint8_t d = 0;
+        for (int i = 0; i < rr; i++) d ^= g.mul(lam[i], S[rr - 1 - i]);
+        if (d == 0) {
+            for (int j = nroots; j > 0; j--) B[j] = B[j - 1];
+            B[0] = 0;
+            continue;
+        }
+        T[0] = lam[0];
+        for (int j = 1; j <= nroots; j++) T[j] = lam[j] ^ g.mul(d, B[j - 1]);
+        if (2 * L <= rr + neras - 1) {
+            L = rr + neras - L;
+            for (int j = 0; j <= nroots; j++) B[j] = g.div(lam[j], d);
+        } else {
+            for (int j = nroots; j > 0; j--) B[j] = B[j - 1];
+            B[0] = 0;
+        }
+        for (int j = 0; j <= nroots; j++) lam[j] = T[j];
+    }
+    int deg = 0;
+    for (int j = 0; j <= nroots; j++) if (lam[j]) deg = j;
+    if (deg == 0 || 2 * (deg - neras) + neras > nroots) return -1;
+    // Chien search over the n positions
+    int pos[63], np = 0;
+    for (int i = 0; i < n; i++) {
+        uint8_t xinv = g.pw(-(n - 1 - i)), v = 0, p = 1;
+        for (int j = 0; j <= deg; j++) { v ^= g.mul(lam[j], p); p = g.mul(p, xinv); }
+        if (v == 0) pos[np++] = i;
+    }
+    if (np != deg) return -1;
+    // Forney
+    uint8_t om[63];
+    for (int i = 0; i < nroots; i++) {
+        om[i] = 0;
+        for (int j = 0; j <= std::min(i, deg); j++) om[i] ^= g.mul(lam[j], S[i - j]);
+    }
+    for (int k = 0; k < np; k++) {
+        int e = n - 1 - pos[k];
+        uint8_t xinv = g.pw(-e), num = 0, p = 1;
+        for (int j = 0; j < nroots; j++) { num ^= g.mul(om[j], p); p = g.mul(p, xinv); }
+        uint8_t den = 0;
+        for (int j = 1; j <= deg; j += 2) den ^= g.mul(lam[j], g.pw(-e * (j - 1)));
+        if (den == 0) return -1;
+        r[pos[k]] ^= g.div(num, den);
+    }
+    if (!syndromes(r, S)) return -1;
+    int nerr = 0;
+    for (int k = 0; k < np; k++) if (!erased[pos[k]]) nerr++;
+    for (int i = 0; i < n; i++) sym[i] = r[i];
+    if (errors) *errors = nerr;
+    return np;
+}
+
 // DMR RS(12,9), GF(256) poly 0x11D, generator x^3 + 14x^2 + 56x + 64
 bool rs129_check(const uint8_t* d) {
     static uint8_t exp_t[512], log_t[256];
@@ -329,6 +419,17 @@ uint32_t crc_bits_ones(const uint8_t* bits, int nbits, int width, uint32_t poly)
         if (fb) crc ^= poly;
     }
     return crc & mask;
+}
+
+uint32_t crc_bits(const uint8_t* bits, int nbits, int width, uint32_t poly, uint32_t init, uint32_t xorout) {
+    const uint32_t mask = width >= 32 ? 0xFFFFFFFFu : (1u << width) - 1, top = 1u << (width - 1);
+    uint32_t crc = init & mask;
+    for (int i = 0; i < nbits; i++) {
+        bool fb = ((crc & top) != 0) ^ (bits[i] & 1);
+        crc = (crc << 1) & mask;
+        if (fb) crc ^= poly;
+    }
+    return (crc ^ xorout) & mask;
 }
 
 int dmr_crc5(const uint8_t* lc) {
