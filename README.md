@@ -274,7 +274,7 @@ Direction finding needs Coherent mode.
   your estimate of the transmitter's power, the map shows how far away the
   transmitter probably is, using the terrain. It is only as good as the
   power estimate and the receiver's level calibration.
-- **Replay.** The map's **Replay** button plays back a drive logged by the
+- **Replay.** The map's **Layers** → **Replay** plays back a drive logged by the
   KrakenSDR Android app (CSV or SQLite) or by this receiver's **DoA
   Recording**. The file is read in your browser and not uploaded.
 - **Array calibration from aircraft** (experimental). ADS-B aircraft report
@@ -286,6 +286,9 @@ Direction finding needs Coherent mode.
 The **DoA & Map** button on the rail at the right edge of the page shows
 or hides the right-hand pane; its **Map** tab is a street or satellite map
 (outside coherent mode the pane is only the map, and the button says "Map").
+The map's **Layers** button (top left) picks the base map and turns on or off
+what is drawn on it - tracks, masts, the DoA lobes, bearing lines and heat
+map - and the tools with a panel of their own: Viewshed, Replay and Range.
 
 - **Decoded positions**: aircraft, ships, APRS stations, radios sending
   GPS, sondes and more, with their tracks. Click a marker for its details.

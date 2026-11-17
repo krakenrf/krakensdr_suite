@@ -112,6 +112,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `speech` | Voice to Text, Transcribe, Transcription |
 | `bot` | the AI assistant |
 | `map` | the map |
+| `layers` | the map's Layers (stacked sheets) |
 | `replay` | the DoA log replay |
 | `signal` | path loss / signal mode, TX antennas, links, paths |
 | `range` | range from signal strength |

@@ -39,7 +39,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (station, was ⌖) 🎯 (the estimated transmitter) ⤢ (fit all), Street (OSM
   tile.openstreetmap.org) / Satellite (Esri World_Imagery + the
   World_Boundaries_and_Places label layer) - or another provider's layers
-  (*Tile providers* below), attribution shown. Tiles: cache
+  (*Tile providers* below), picked in the Layers popover (*Layers popover*
+  below), attribution shown. Tiles: cache
   of 400 (LRU), a failed tile retried after 15 s doubling to 5 min, a missing
   tile drawn from a loaded lower-zoom tile; underneath always a lat/lon
   graticule, so with no internet the markers sit on a plain grid + an
@@ -95,6 +96,90 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   pointing the layers at a closed port) and an end-to-end run of the real
   kraken_doa (from a scratch dir - its own doa_settings.json) fed by a fake
   heimdall streaming a synthetic 1090 MHz recording
+
+**Layers popover (2026-11-18):**
+- The user asked to give the map the View popover's pattern: the layer and
+  DF buttons (the base map's segment, Trails, Masts, Viewshed, Replay at the
+  top left; Lobe, Lines, Heat, Range in the DF card's header) sat on top of
+  the map. Now the map's top left holds one button, **Layers**
+  (`#map-lay-btn`, the `layers` icon and the word, the View button's look
+  `.view-btn`, 26 px tall like the map's buttons), and they are rows of its
+  popover (`#map-lay-pop`, `.view-pop.map-lay-pop`, `role="dialog"`, its
+  button `aria-haspopup` / `aria-expanded`; lit while open). Groups, in the
+  View popover's style (small caps headings, one row each, the control at
+  the right): **Base map** - the provider's layers as a radio list (the
+  picked one's name in the accent colour; the old segment's tooltip);
+  **Show** - Trails, Masts; **Direction finding** (`.coh-only`) - Lobe,
+  Lines, Heat (`mapState.rdfLobe / rdfLines / rdfHeat`); **Tools** (a panel
+  of their own) - Viewshed, Replay, Range (Range `.coh-only`), a switch each,
+  on while its panel is open (`vsToggle`, `lrToggle`, `rgToggle`). Each row's
+  `title` is the text of the button it replaced. A row is a `<label>`: a
+  press on the name works the control.
+- **What stayed on the map**: the navigation column at the top right
+  (search, zoom, home, the estimated transmitter, fit all) - used while
+  looking at the map, one press each - and the DF card's live part: its
+  toggle (folds the card), the VFO and talker selectors, the body (status,
+  SFN profile, talker timeline, Collect, range km, centre, Reset). The card's
+  header is one line now (`.map-df-h` no longer wraps; its selectors give
+  way in a narrow pane).
+- **Code** (🗺 MAP, after `mapUpdateControls`): `mapLayHtml(groups, scope)`
+  draws the rows of any subset of the groups ('base', 'show', 'df',
+  'tools') - so another place (drive mode) can show some of them; `scope`
+  keeps the ids and the radio name of each copy apart. Every copy is kept
+  in sync by `mapLaySync()` (inputs `data-ml` = trails / masts / rdfLobe /
+  rdfLines / rdfHeat / vs / lr / rg, `data-ml-layer` = a layer key) and
+  works through `mapLaySet()` (`mapSet` - so `localStorage['kraken_map']`
+  as before - or the tool's own toggle). `mapLayRender()` (from
+  `mapUpdateControls`, so also after Setup Settings → Map saves another
+  provider) redraws the rows when the provider's layers change. The sync
+  runs from `mapUpdateControls`, `rdfRenderPanel` and `rgRender`, which
+  every path that changes these states already calls: the assistant's map
+  tools, the map's right-click menu (viewshed sites), a talker picked in the
+  DF panel (lobes on), a recording's Replay or a dropped log, the panels'
+  own closes. `mapLayOn` / `mapLayRO` are in the globals block, the rows'
+  table inside `mapLayHtml` (`mapUpdateControls` can run before the
+  section is evaluated).
+- **Placement and dismissal** are shared with the View popover and "All
+  decoders" (VIEW POPOVER: `popPlace`, `popDismiss` - *sidebar.md*): under
+  the button with the left edges aligned, inside the window AND the map
+  pane's visible part (6 px in, as the map's buttons); with no room below
+  (a short map in Both, a phone) it gets shorter and scrolls - never above
+  the button (that is outside the map) - and narrower than 220 px only in
+  a pane narrower than that. Placed again when the map pane changes size
+  (a ResizeObserver: the pane dragged, Both's divider) and on a page resize
+  event; closed by the button, Esc (focus back on the button), a press
+  outside it and its button, a change of the window's size, a scroll of
+  what holds the button (the phone's page) and the map being hidden (the
+  button has no box any more). Not modal: a switch acts at once and the
+  popover stays open. A press on a `?` help-mode button keeps it open; in
+  help mode a tap on a row shows its tip and does nothing (the page's help
+  code; press and hold works on the rows, they are not the canvas).
+- **Viewshed and Range got a close cross** (`.map-vs-h .x.cl`, right of
+  their fold): their buttons were one press away on the map, the switch is
+  two; the cross closes the tool in one (`vsToggle` / `rgToggle`), the
+  Replay strip already had one (`lrClose`). The switches follow all three.
+- **Phone**: the button 32 px tall, the popover `min(320px, 100vw - 16px)`
+  wide (inside the map pane), rows 42 px, 20 px radios, the switches at
+  their touch size.
+- Tests (scratch `test_layers.py`, headless Chromium with real mouse, key
+  and touch events, 138 checks): the removed ids nowhere in the source; the
+  top left holds only the Layers button (icon, word, aria, the right-hand
+  column's height); the DF card's header one line (with the talker
+  selector too, in a 260 px pane), its fold, VFO selector, Collect; the
+  popover under the button inside the map pane and the window, on top, at
+  1700 / 1300 px, with the pane dragged to 260 px, in Both with a short
+  map (it scrolls; placed again when the divider moves) and on a 400 px
+  phone (as wide as allowed, 42 px rows); the groups, rows, titles, one
+  column for the controls; a base map picked (state, storage, the tiles
+  redraw), also after Setup Settings saved Stadia Maps (four layers) and
+  the custom provider (one); each switch by its control and by its name,
+  stored, following a change made elsewhere; Viewshed / Replay / Range open
+  and close their panels and follow the panels' own closes and toggles
+  from code; every dismissal path, Tab into it, Enter; help mode and press
+  and hold; View and Layers closing each other; independent mode without
+  Direction finding and Range; no JS errors. `test_page.py` opens the
+  viewshed and the replay through the popover now, `test_merge.py` counts
+  the base map rows.
 
 **Tile providers (⚙ Setup Settings - "⚙ Settings" until 2026-11-17 -, 2026-10-25):**
 - The top bar's ⚙ (`#settings-btn`, at the right end, as tall as the chips' and the telemetry's lines;

@@ -577,6 +577,20 @@ per-tuner model is in *operating-modes.md*.
   not change the popover stays and is placed again under its button. Not
   modal, the page is not dimmed: the spectrum and waterfall change while a
   slider is dragged.
+- **Shared with the page's other popovers** (2026-11-18, when the map's
+  Layers popover made it the third - *map.md*): two helpers in VIEW
+  POPOVER. `popPlace(pop, rect, {align, within, m, shrink})` places by the
+  button - View aligns the right edges (as before), Layers the left edges
+  inside the map pane and, with `shrink`, gets shorter and scrolls rather
+  than going above its button. `popDismiss({btn, pop, close, place})`
+  installs the closing ways once per popover (a press outside it and its
+  button, Esc with the focus back, a scroll of what holds the button, a
+  window size change; a page resize event places it again) and returns
+  `opened()`, which records the window's size. View, All decoders
+  (*digital-decoders.md*; its placement stays its own - it fits the list's
+  height to the room above or below) and Layers use it; the behaviour of
+  the first two is unchanged (`test_view.py`, `test_hdr.py`,
+  `test_contrast.py`, `test_dectabs.py` pass as before).
 - **Phone**: the same button (32 px) and popover (`min(300px, 100vw -
   24px)`, rows 38 px, 22 px thumbs). `wf-controls-bar` is no longer in
   `MOBILE_RELOCATIONS`; the drawer's phone-only box `mobile-display` (key

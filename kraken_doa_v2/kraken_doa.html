@@ -758,13 +758,32 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .map-seg button {border-radius:0}
 .map-seg button:first-child {border-radius:3px 0 0 3px}
 .map-seg button:last-child {border-radius:0 3px 3px 0}
+/* the map's Layers button (top left, the View button's look, as tall as the map's buttons) and its
+   popover (mapLayOpen, 2026-11-18): the View popover's look, one row per layer / tool, switches on
+   the right; the base map's radio is centred in the switches' column (.ml-c) */
+.map-ctl .view-btn {height:26px;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.view-pop.map-lay-pop {width:220px;touch-action:pan-y;user-select:none;--ml-c:36px}
+.map-lay-pop .vp-head {margin-bottom:1px}
+.ml-row {display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:28px;color:var(--t2);cursor:pointer}
+.ml-row:hover {color:var(--t0)}
+.ml-row input {flex:none;margin:0}
+.ml-n {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ml-c {flex:none;display:flex;justify-content:center;width:var(--ml-c)}
+.ml-row input[type="radio"] {-webkit-appearance:none;appearance:none;width:16px;height:16px;box-sizing:border-box;border:1px solid var(--l3);border-radius:50%;
+  background:var(--s5);cursor:pointer}
+.ml-row input[type="radio"]:hover {border-color:#527bac}
+.ml-row input[type="radio"]:checked {border-color:var(--ac-h);background:radial-gradient(circle,#fff 0 3px,transparent 3.6px),var(--ac)}
+.ml-row input[type="radio"]:focus-visible {outline:2px solid var(--ac-l);outline-offset:1px}
+.ml-row:has(input[type="radio"]:checked) .ml-n {color:var(--ac-t);font-weight:600}
 .map-df {position:absolute;left:6px;bottom:30px;z-index:3;background:rgba(17,21,27,.9);border:1px solid var(--l4);border-radius:4px;padding:4px;max-width:min(380px,calc(100% - 60px));font-size:11px;color:var(--t0)}
-.map-df-h {display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+/* the header: the DF toggle, the VFO and the talker selectors - one line (the selectors give way) */
+.map-df-h {display:flex;gap:4px;align-items:center}
+.map-df-h select {min-width:0;flex:0 1 auto}
 .map-df select, .map-df input[type="number"] {background:var(--s3);border:1px solid var(--l4);color:var(--t0);border-radius:3px;font-size:11px;padding:2px 3px;height:24px}
 .map-df-body {margin-top:4px;line-height:1.45}
 .map-df-row {display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:3px}
 .map-df-row label {display:flex;align-items:center;gap:3px}
-.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-tid, .map-df.closed #map-df-lobe, .map-df.closed #map-df-lines, .map-df.closed #map-df-heat, .map-df.closed #map-df-rng {display:none}
+.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-tid {display:none}
 #map-df-txt .w {color:var(--warn-t2)}
 #map-df-txt .g {color:#a2d7aa}
 #map-df-tid {max-width:150px}
@@ -823,6 +842,10 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .map-vs-h .t {font-weight:bold;color:#fff}
 .map-vs-h .hint {color:var(--t4)}
 .map-vs-h .x {position:absolute;right:4px;top:4px;cursor:pointer;color:#8aa;padding:0 3px}
+/* Viewshed and Range: a close cross at the right, the fold beside it (2026-11-18: their buttons
+   went into the Layers popover - the cross closes them in one press, as the button did) */
+.map-vs-h:has(> .x.cl) {padding-right:38px}
+.map-vs-h:has(> .x.cl) > .x:not(.cl) {right:22px}
 .map-vs.closed .map-vs-body, .map-vs.closed .hint {display:none}
 .map-vs select, .map-vs input[type="number"] {background:var(--s3);border:1px solid var(--l4);color:var(--t0);border-radius:3px;font-size:11px;padding:1px 3px;height:22px;box-sizing:border-box}
 .map-vs input[type="number"] {width:52px}
@@ -1717,6 +1740,12 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .da-q {height:38px}
   .da-q input {font-size:16px}
   .da-row {min-height:42px;padding:2px 10px;font-size:13px}
+  /* the map's Layers: a finger-sized button and rows, the popover as wide as the screen allows */
+  .map-ctl .view-btn {height:32px}
+  .view-pop.map-lay-pop {width:min(320px, calc(100vw - 16px));padding:10px 14px 8px;--ml-c:47px}
+  .ml-row {min-height:42px;font-size:13px}
+  .ml-row input[type="radio"] {width:20px;height:20px}
+  .ml-row input[type="radio"]:checked {background:radial-gradient(circle,#fff 0 4px,transparent 4.6px),var(--ac)}
   /* Sidebar sections that host controls relocated from the top bar and the rail */
   .mobile-only {display:block}
   #mobile-controls-slot .tb-group {display:flex;align-items:center;gap:8px;margin:10px 0;width:100%}
@@ -1862,6 +1891,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 <symbol id="i-speech" viewBox="0 0 16 16"><path d="M2.6 2.8h10.8a1.1 1.1 0 0 1 1.1 1.1v6.6a1.1 1.1 0 0 1-1.1 1.1H7.2L4.2 14v-2.4H2.6a1.1 1.1 0 0 1-1.1-1.1V3.9a1.1 1.1 0 0 1 1.1-1.1zM4.4 5.9h7.2M4.4 8.5h4.6"/></symbol>
 <symbol id="i-bot" viewBox="0 0 16 16"><rect x="2.4" y="5" width="11.2" height="8.6" rx="2.2"/><path d="M8 5V3.2M.9 8.4v2.4M15.1 8.4v2.4"/><circle cx="8" cy="2.4" r="1.05" fill="currentColor"/><circle cx="5.6" cy="9" r="1.15" fill="currentColor"/><circle cx="10.4" cy="9" r="1.15" fill="currentColor"/></symbol>
 <symbol id="i-map" viewBox="0 0 16 16"><path d="M1.5 3.8l4.3-1.5 4.4 1.5 4.3-1.5v9.9l-4.3 1.5-4.4-1.5-4.3 1.5zM5.8 2.3v9.9M10.2 3.8v9.9"/></symbol>
+<symbol id="i-layers" viewBox="0 0 16 16"><path d="M8 1.9l6.3 3.4L8 8.7 1.7 5.3z"/><path d="M1.7 8.2L8 11.6l6.3-3.4M1.7 11.1L8 14.5l6.3-3.4"/></symbol>
 <symbol id="i-replay" viewBox="0 0 16 16"><path d="M13.45 9.98A5.8 5.8 0 0 0 2.55 6.02M4.67 4.89L2.55 6.02L1.65 3.79"/><path d="M6.6 5.6l3.6 2.4-3.6 2.4z" fill="currentColor"/></symbol>
 <symbol id="i-signal" viewBox="0 0 16 16"><path d="M2.6 13.6v-2.2M6.2 13.6V9M9.8 13.6V6.2M13.4 13.6V2.6" stroke-width="2.1"/></symbol>
 <symbol id="i-range" viewBox="0 0 16 16"><rect x="1.4" y="5" width="13.2" height="6" rx="0.9"/><path d="M4.2 5v2.4M6.8 5v1.5M9.4 5v2.4M12 5v1.5"/></symbol>
@@ -2990,12 +3020,15 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
         <div id="map-pane" class="map-pane">
           <canvas id="map-canvas"></canvas>
           <div class="map-v2t" id="map-v2t"></div>
+          <!-- Layers (2026-11-18): the base map, Trails, Masts, the DF layers and the tools with a
+               panel of their own, in a popover under this button (🗺 MAP: mapLayOpen, mapLayHtml) -->
           <div class="map-ctl map-ctl-tl">
-            <div class="map-seg" id="map-layers"></div>
-            <button type="button" class="map-btn" id="map-trails" onclick="mapSet('trails', !mapState.trails)" title="Show the tracks the markers left">Trails</button>
-            <button type="button" class="map-btn" id="map-masts" onclick="mapSet('masts', !mapState.masts)" title="Radio masts, towers and antennas mapped in OpenStreetMap, loaded online for the area shown (zoom in to see them). The colour says what OpenStreetMap lists them for; click one for everything it knows about it">Masts</button>
-            <button type="button" class="map-btn" id="map-vs-btn" onclick="vsToggle()" title="Viewshed: the ground in line of sight of an antenna at the station or any place you pick (right-click the map, a marker or a mast), over the terrain, anywhere in the world (terrain loaded online) - or, in its Signal mode, how reliably the signal gets there, also without line of sight (path loss over the terrain, link budget, clutter, fading)">Viewshed</button>
-            <button type="button" class="map-btn" id="map-lr-btn" onclick="lrToggle()" title="Replay a DoA log of a drive on the map: the KrakenSDR Android app's (.csv / .sqlite) or a DoA Recording of this receiver - its track, bearings, lobes and the heat map of where the transmitter is, at any speed, back and forth. Read in this browser - nothing is uploaded (or drop the file on the map)">Replay</button>
+            <button type="button" class="view-btn" id="map-lay-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="map-lay-pop"
+                    title="Layers: the base map, what is drawn on it, and the map's tools" onclick="mapLayToggle()"><svg class="ic" aria-hidden="true"><use href="#i-layers"/></svg><span>Layers</span></button>
+          </div>
+          <div class="view-pop map-lay-pop" id="map-lay-pop" role="dialog" aria-label="Layers" title="" hidden>
+            <div class="vp-head">Layers</div>
+            <div class="vp-body" id="map-lay-body"></div>
           </div>
           <div class="map-tl">
             <!-- 🔍 the search box (🔍 MAP SEARCH) + its results -->
@@ -3028,10 +3061,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
               <button type="button" class="map-btn" id="map-df-tog" onclick="mapSet('rdfOpen', !mapState.rdfOpen)" title="Direction finding on the map: DoA lobes and, while driving, a heat map of where the transmitter is"><svg class="ic" aria-hidden="true"><use href="#i-doa"/></svg><span>DF</span></button>
               <select id="map-df-vfo" onchange="mapSet('rdfVfo', this.value)" title="Which VFO's DoA to show"></select>
               <select id="map-df-tid" onchange="mapSet('rdfTid', this.value)" style="display:none" title="Which radio / aircraft / ship / SFN transmitter: a digital decoder that names who transmits (P25 / DMR / NXDN unit ID, D-STAR callsign, ADS-B aircraft, AIS ship) or the Digital TV decoder with Path separation on (every path a TV signal arrives on - reflections, other transmitters of a single frequency network - told apart by delay) or the LTE / 5G NR Cell Decoder (the cells on one carrier, told apart by their cell ID) splits the VFO's signal - each one's DoA comes only from its own transmissions / packets / delay / reference signals"></select>
-              <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobes around the station">Lobe</button>
-              <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="Bearing lines: from each lobe's peak to the edge of the map (one radio / aircraft: also its earlier bearings), and the bearings taken while driving">Lines</button>
-              <button type="button" class="map-btn" id="map-df-heat" onclick="mapSet('rdfHeat', !mapState.rdfHeat)" title="Where the transmitter probably is (one VFO at a time)">Heat</button>
-              <button type="button" class="map-btn" id="map-df-rng" onclick="rgToggle()" title="Range from signal strength: where the transmitter of the selected lobe probably is - its measured level against the path loss over the terrain (ITU-R P.1812) and your estimate of its EIRP">Range</button>
+              <!-- (Lobe, Lines, Heat and Range are in the Layers popover since 2026-11-18) -->
             </div>
             <div class="map-df-body">
               <div id="map-df-txt"></div>
@@ -3414,6 +3444,8 @@ const mapState = (() => {
     return Object.assign(d, st);
   } catch (e) { return d; }
 })();
+// the map's Layers popover is open (mapLayOpen); its ResizeObserver on the map pane
+let mapLayOn = false, mapLayRO = null;
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
 // OpenStreetMap's attribution (HTML): a link to its copyright page wherever its
 // data shows - tiles, the masts layer, the incident addresses Nominatim found
@@ -3489,9 +3521,9 @@ let fpHover = null;
 let v2tStatus = null, v2tList = [], v2tUnseen = 0;
 // The decoders' "All decoders" list (see decAllOpen): open or not, the plugin id of its
 // highlighted row (arrow keys / the mouse), the kind of pointer that last pressed its button
-// (touch: the filter box is not focused - no keyboard popping up), the window size it was opened
-// at. infoRenderTabs reads them
-let decAllOn = false, decAllAct = '', decAllPtr = '', decAllWin = '';
+// (touch: the filter box is not focused - no keyboard popping up), its dismissal (popDismiss).
+// infoRenderTabs reads them
+let decAllOn = false, decAllAct = '', decAllPtr = '', decAllDismiss = null;
 // The demod a VFO had before it was switched to Digital and whether it was
 // heard (🔊): VFO id -> {demod, audio}. setDecimatorDemodMode keeps it, the
 // decoder tab's "🔊 Listening" and the card's Demod list go back to it. Per
@@ -4769,7 +4801,6 @@ function viewPopToggle(btn, target) {
   if (viewBtn === btn) { viewPopClose(false); return; }
   viewPopOpen(btn, target);
 }
-let viewPopWin = '';
 function viewPopOpen(btn, target) {
   const pop = $id('view-pop');
   if (!pop || !btn || !btn.isConnected) return;
@@ -4777,7 +4808,7 @@ function viewPopOpen(btn, target) {
   if (typeof target === 'number' && !panes[target]) return;
   viewTarget = target;
   viewBtn = btn;
-  viewPopWin = innerWidth + 'x' + innerHeight;
+  viewDismiss.opened();
   btn.after(pop);   // next to its button: Tab goes from the button into it
   const title = viewTitleOf(target);
   $id('view-pop-title').textContent = title;
@@ -4805,46 +4836,74 @@ function viewPopClose(focusBtn) {
 function viewPopPlace() {
   const pop = $id('view-pop'), b = viewBtn;
   if (!pop || !b || pop.hidden) return;
-  const r = b.getBoundingClientRect(), m = 8, vw = innerWidth, vh = innerHeight;
+  const r = b.getBoundingClientRect();
   if (!r.width && !r.height) { viewPopClose(false); return; }   // the button is not shown any more
+  popPlace(pop, r, {align: 'right'});
+}
+// Dismissal (popDismiss): Esc (focus back to the button), a press outside the popover and its
+// button, a scroll of anything that holds the button (the tuner grid, the phone's page), a resize
+// of the window (a layout change in the same window only moves it along); also the mode change /
+// the panes being rebuilt (applyOpModeUI, panesTeardown), a second click of the button
+const viewDismiss = popDismiss({pop: () => $id('view-pop'), btn: () => viewBtn, close: viewPopClose, place: viewPopPlace});
+
+// --- What the page's popovers share (the View popover, All decoders, the map's Layers) ---
+// popPlace(pop, r, o): a position:fixed popover by its button's rect r - under it with the edges
+// aligned on o.align's side ('right': right edges, else left; the other side when that would leave
+// the room), above the button when there is no room below; always inside o.within (a rect, default
+// the window) less o.m (8 px). o.shrink: never above (a button at the top of its room) - the
+// popover's height is cut to the room below and it scrolls, its width to the room's.
+function popPlace(pop, r, o) {
+  o = o || {};
+  const m = o.m === undefined ? 8 : o.m, W = o.within || {left: 0, top: 0, right: innerWidth, bottom: innerHeight};
+  if (o.shrink) { pop.style.maxHeight = ''; pop.style.maxWidth = Math.max(0, W.right - W.left - 2 * m) + 'px'; }
   const w = pop.offsetWidth, h = pop.offsetHeight;
-  let left = r.right - w;
-  if (left < m) left = r.left;
-  left = Math.max(m, Math.min(vw - m - w, left));
+  let left;
+  if (o.align === 'right') { left = r.right - w; if (left < W.left + m) left = r.left; }
+  else { left = r.left; if (left + w > W.right - m) left = r.right - w; }
+  left = Math.max(W.left + m, Math.min(W.right - m - w, left));
   let top = r.bottom + 4;
-  if (top + h > vh - m) {
+  if (o.shrink) pop.style.maxHeight = Math.max(0, W.bottom - m - top) + 'px';
+  else if (top + h > W.bottom - m) {
     const up = r.top - 4 - h;
-    top = up >= m ? up : Math.max(m, vh - m - h);
+    top = up >= W.top + m ? up : Math.max(W.top + m, W.bottom - m - h);
   }
   pop.style.left = Math.round(left) + 'px';
   pop.style.top = Math.round(top) + 'px';
 }
-// Dismissal: Esc (focus back to the button), a press outside the popover and its button, a
-// scroll of anything that holds the button (the tuner grid, the phone's page), a resize of the
-// window (a layout change in the same window only moves it along), the mode change / the panes
-// being rebuilt (applyOpModeUI, panesTeardown), a second click of the button
-document.addEventListener('pointerdown', e => {
-  if (!viewBtn) return;
-  const pop = $id('view-pop');
-  if ((pop && pop.contains(e.target)) || viewBtn.contains(e.target)) return;
-  viewPopClose(false);
-}, true);
-document.addEventListener('keydown', e => {
-  if (!viewBtn || e.key !== 'Escape') return;
-  e.preventDefault();
-  e.stopPropagation();
-  viewPopClose(true);
-}, true);
-window.addEventListener('scroll', e => {
-  if (!viewBtn) return;
-  const t = e.target;
-  if (t === document || (t && t.nodeType === 1 && t.contains(viewBtn))) viewPopClose(false);
-}, true);
-window.addEventListener('resize', () => {
-  if (!viewBtn) return;
-  if (innerWidth + 'x' + innerHeight !== viewPopWin) viewPopClose(false);
-  else viewPopPlace();
-});
+// popDismiss(o): a popover's ways to close - a press outside it and its button, Esc (the focus
+// back to the button), a scroll of anything that holds the button, a change of the window's size
+// (a page resize event without one - a layout change - places it again). o: btn() = the open
+// popover's button (null while closed), pop(), close(focusBtn), place(). Returns {opened()}: call
+// it when the popover opens (the window's size then). A press on a ? help-mode button never gets
+// here (pageTipInit stops it on window first), so a popover stays open to be explained.
+function popDismiss(o) {
+  let win = '';
+  document.addEventListener('pointerdown', e => {
+    const b = o.btn();
+    if (!b) return;
+    const p = o.pop();
+    if ((p && p.contains(e.target)) || b.contains(e.target)) return;
+    o.close(false);
+  }, true);
+  document.addEventListener('keydown', e => {
+    if (!o.btn() || e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    o.close(true);
+  }, true);
+  window.addEventListener('scroll', e => {
+    const b = o.btn();
+    if (!b) return;
+    const t = e.target;
+    if (t === document || (t && t.nodeType === 1 && t.contains(b))) o.close(false);
+  }, true);
+  window.addEventListener('resize', () => {
+    if (!o.btn()) return;
+    if (innerWidth + 'x' + innerHeight !== win) o.close(false);
+    else o.place();
+  });
+  return {opened() { win = innerWidth + 'x' + innerHeight; }};
+}
 
 // Waterfall colour range from a spectrum: below the noise floor .. above the
 // peaks (percentiles), at least 30 dB, 5 dB steps. [min, max] or null.
@@ -13690,7 +13749,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const pop = $id('dec-all-pop'), btn = $id('dec-all-btn'), q = $id('dec-all-q');
     if (!pop || !btn || btn.hidden) return;
     decAllOn = true;
-    decAllWin = innerWidth + 'x' + innerHeight;
+    decAllDismiss.opened();
     q.value = '';
     decAllAct = digTabShown || '';
     btn.classList.add('on');
@@ -13836,26 +13895,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (r && r.dataset.id !== decAllAct) decAllSetAct(r.dataset.id, false);
     });
     lst.addEventListener('click', e => { const r = e.target.closest('.da-row'); if (r) decAllPick(r.dataset.id, false); });
-    document.addEventListener('pointerdown', e => {
-      if (!decAllOn || pop.contains(e.target) || btn.contains(e.target)) return;
-      decAllClose(false);
-    }, true);
-    document.addEventListener('keydown', e => {
-      if (!decAllOn || e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopPropagation();
-      decAllClose(true);
-    }, true);
-    window.addEventListener('scroll', e => {
-      if (!decAllOn) return;
-      const t = e.target;
-      if (t === document || (t && t.nodeType === 1 && t.contains(btn))) decAllClose(false);
-    }, true);
-    window.addEventListener('resize', () => {
-      if (!decAllOn) return;
-      if (innerWidth + 'x' + innerHeight !== decAllWin) decAllClose(false);
-      else decAllPlace(false);
-    });
+    // a press outside, Esc, a scroll of what holds the button, a resize of the window: popDismiss
+    decAllDismiss = popDismiss({pop: () => pop, btn: () => decAllOn ? btn : null, close: decAllClose, place: () => decAllPlace(false)});
   })();
 
   // An on / off option's button text after its name: nothing for plain On /
@@ -15953,21 +15994,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
 
   function mapUpdateControls() {
-    const seg = $id('map-layers');
-    if (seg) {
-      const P = mapProv(), lk = mapLayerKey(), tip = escapeHtml(P.name) + ' - change the map provider in Setup Settings (top right)';
-      const html = Object.entries(P.layers).map(([k, l]) =>
-        `<button type="button" class="${lk === k ? 'on' : ''}" onclick="mapSet('layer','${k}')" title="${tip}">${l.name}</button>`).join('');
-      if (seg.dataset.html !== html) { seg.dataset.html = html; seg.innerHTML = html; }
-    }
-    const tr = $id('map-trails');
-    if (tr) tr.classList.toggle('on', !!mapState.trails);
-    const ms = $id('map-masts');
-    if (ms) ms.classList.toggle('on', !!mapState.masts);
-    const vb = $id('map-vs-btn');
-    if (vb) vb.classList.toggle('on', !!mapState.vs);
-    const lb = $id('map-lr-btn');
-    if (lb) lb.classList.toggle('on', !!lrOpen);
+    mapLayRender();   // the Layers popover: the provider's base maps, every switch
     srchRender();   // 🔍 the box as saved
     vsRender();
     const lg = $id('map-legend');
@@ -15979,6 +16006,114 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
     rgRender();
   }
+
+  // --- Layers (2026-11-18, the user asked: the base map's segment, Trails, Masts, Viewshed and
+  // Replay sat on the map's top left and Lobe, Lines, Heat and Range in the DF card's header; now
+  // one Layers button opens them in a popover in the View popover's pattern - placed and
+  // dismissed by popPlace / popDismiss, VIEW POPOVER). The map keeps only what is navigation
+  // (top right) and the DF card's live part.
+  // mapLayHtml(groups, scope) draws the rows of any of the groups ('base', 'show', 'df', 'tools'),
+  // so another place can show a subset (scope: unique ids / radio names per copy). Every copy is
+  // kept in sync by mapLaySync() through data-ml / data-ml-layer, and works through mapLaySet().
+  // The rows' titles are those of the buttons they replace. mapLayOn: globals block.
+  function mapLayHtml(groups, scope) {
+    // (here, not in the section: mapUpdateControls can run before the section is evaluated)
+    const ML_ROWS = {
+      show: [['trails', 'Trails', 'Show the tracks the markers left'],
+             ['masts', 'Masts', 'Radio masts, towers and antennas mapped in OpenStreetMap, loaded online for the area shown (zoom in to see them). The colour says what OpenStreetMap lists them for; click one for everything it knows about it']],
+      df: [['rdfLobe', 'Lobe', 'The live DoA lobes around the station'],
+           ['rdfLines', 'Lines', 'Bearing lines: from each lobe\'s peak to the edge of the map (one radio / aircraft: also its earlier bearings), and the bearings taken while driving'],
+           ['rdfHeat', 'Heat', 'Where the transmitter probably is (one VFO at a time)']],
+      tools: [['vs', 'Viewshed', 'Viewshed: the ground in line of sight of an antenna at the station or any place you pick (right-click the map, a marker or a mast), over the terrain, anywhere in the world (terrain loaded online) - or, in its Signal mode, how reliably the signal gets there, also without line of sight (path loss over the terrain, link budget, clutter, fading)'],
+              ['lr', 'Replay', 'Replay a DoA log of a drive on the map: the KrakenSDR Android app\'s (.csv / .sqlite) or a DoA Recording of this receiver - its track, bearings, lobes and the heat map of where the transmitter is, at any speed, back and forth. Read in this browser - nothing is uploaded (or drop the file on the map)'],
+              ['rg', 'Range', 'Range from signal strength: where the transmitter of the selected lobe probably is - its measured level against the path loss over the terrain (ITU-R P.1812) and your estimate of its EIRP', 'coh-only']]
+    };
+    groups = groups || ['base', 'show', 'df', 'tools'];
+    scope = scope || 'pop';
+    const grp = (k, head, rows, cls, role) => `<div class="ml-grp${cls ? ' ' + cls : ''}" role="${role || 'group'}" aria-labelledby="ml-h-${k}-${scope}">` +
+      `<div class="vp-sec" id="ml-h-${k}-${scope}">${head}</div>${rows}</div>`;
+    const sw = ([k, name, title, cls]) => `<label class="ml-row${cls ? ' ' + cls : ''}" title="${escapeHtml(title)}"><span class="ml-n">${name}</span>` +
+      `<input type="checkbox" class="sw" data-ml="${k}" onchange="mapLaySet(this)"></label>`;
+    const out = [];
+    for (const g of groups) {
+      if (g === 'base') {
+        const P = mapProv(), tip = escapeHtml(P.name) + ' - change the map provider in Setup Settings (top right)';
+        out.push(grp('base', 'Base map', Object.entries(P.layers).map(([k, l]) =>
+          `<label class="ml-row" title="${tip}"><span class="ml-n">${escapeHtml(l.name)}</span><span class="ml-c">` +
+          `<input type="radio" name="ml-base-${scope}" data-ml-layer="${escapeHtml(k)}" onchange="mapLaySet(this)"></span></label>`).join(''), '', 'radiogroup'));
+      } else if (g === 'show') out.push(grp('show', 'Show', ML_ROWS.show.map(sw).join('')));
+      else if (g === 'df') out.push(grp('df', 'Direction finding', ML_ROWS.df.map(sw).join(''), 'coh-only'));
+      else if (g === 'tools') out.push(grp('tools', 'Tools', ML_ROWS.tools.map(sw).join('')));
+    }
+    return out.join('');
+  }
+  // a row's switch / radio changed: the state it stands for (the tools open / close their panels)
+  function mapLaySet(el) {
+    const L = el.dataset.mlLayer, k = el.dataset.ml;
+    if (L !== undefined) { if (el.checked && mapState.layer !== L) mapSet('layer', L); }
+    else if (k === 'vs') { if (!!mapState.vs !== el.checked) vsToggle(); }
+    else if (k === 'lr') { if (lrOpen !== el.checked) lrToggle(el.checked); }
+    else if (k === 'rg') { if (!!rgState.on !== el.checked) rgToggle(); }
+    else if (k) mapSet(k, el.checked);
+    mapLaySync();
+  }
+  // every copy of the rows shows the states (also when they were changed elsewhere)
+  function mapLaySync() {
+    const st = {trails: mapState.trails, masts: mapState.masts, rdfLobe: mapState.rdfLobe, rdfLines: mapState.rdfLines, rdfHeat: mapState.rdfHeat,
+                vs: mapState.vs, lr: lrOpen, rg: rgState.on};
+    for (const e of document.querySelectorAll('input[data-ml]')) { const v = !!st[e.dataset.ml]; if (e.checked !== v) e.checked = v; }
+    const lk = mapLayerKey();
+    for (const e of document.querySelectorAll('input[data-ml-layer]')) { const v = e.dataset.mlLayer === lk; if (e.checked !== v) e.checked = v; }
+  }
+  // the popover's rows (again when the provider changed its layers), then the states
+  function mapLayRender() {
+    const body = $id('map-lay-body');
+    if (body) {
+      const html = mapLayHtml();
+      if (body.dataset.html !== html) { body.dataset.html = html; body.innerHTML = html; if (mapLayOn) mapLayPlace(); }
+    }
+    mapLaySync();
+  }
+  function mapLayToggle() { if (mapLayOn) mapLayClose(false); else mapLayOpen(); }
+  function mapLayOpen() {
+    const pop = $id('map-lay-pop'), btn = $id('map-lay-btn');
+    if (!pop || !btn) return;
+    mapLayOn = true;
+    mapLayDismiss.opened();
+    btn.classList.add('on');
+    btn.setAttribute('aria-expanded', 'true');
+    mapLayRender();
+    pop.hidden = false;
+    mapLayPlace();
+    // the map pane resized (the right-hand pane dragged, Both's divider, the pane hidden): placed again
+    if (!mapLayRO && window.ResizeObserver) {
+      mapLayRO = new ResizeObserver(() => { if (mapLayOn) mapLayPlace(); });
+      mapLayRO.observe($id('map-pane'));
+    }
+  }
+  function mapLayClose(focusBtn) {
+    if (!mapLayOn) return;
+    mapLayOn = false;
+    const pop = $id('map-lay-pop'), btn = $id('map-lay-btn');
+    if (pop) pop.hidden = true;
+    if (!btn) return;
+    btn.classList.remove('on');
+    btn.setAttribute('aria-expanded', 'false');
+    if (focusBtn) btn.focus();
+  }
+  // under the button, left edges aligned; inside the window and the map pane's visible part (6 px
+  // in, as the map's buttons) - no room below: shorter, and it scrolls
+  function mapLayPlace() {
+    const pop = $id('map-lay-pop'), b = $id('map-lay-btn'), pane = $id('map-pane');
+    if (!pop || !b || !pane || pop.hidden) return;
+    const r = b.getBoundingClientRect();
+    if (!r.width && !r.height) { mapLayClose(false); return; }   // the map is not shown any more
+    const p = pane.getBoundingClientRect();
+    popPlace(pop, r, {align: 'left', shrink: true, m: 6,
+                      within: {left: Math.max(0, p.left), top: Math.max(0, p.top), right: Math.min(innerWidth, p.right), bottom: Math.min(innerHeight, p.bottom)}});
+  }
+  const mapLayDismiss = popDismiss({pop: () => $id('map-lay-pop'), btn: () => mapLayOn ? $id('map-lay-btn') : null,
+                                    close: mapLayClose, place: mapLayPlace});
 
   // the attribution line (bottom right): the layer's (+ the provider's for
   // the view: mapAttrDyn), + OpenStreetMap's for the masts / incident
@@ -17237,7 +17372,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     box.style.display = rdfStatus ? '' : 'none';   // until the receiver reports (coherent mode)
     box.classList.toggle('closed', !mapState.rdfOpen);
     $id('map-df-tog').classList.toggle('on', !!mapState.rdfOpen);
-    for (const k of ['Lobe', 'Lines', 'Heat']) $id('map-df-' + k.toLowerCase()).classList.toggle('on', !!mapState['rdf' + k]);
+    mapLaySync();   // (Lobe / Lines / Heat: the Layers popover's switches)
     const vs = rdfVfos();
     const sel = $id('map-df-vfo');
     const opts = `<option value="all">All VFOs</option>` + vs.map(v => `<option value="${v.id}">D${v.id} · ${(+v.mhz).toFixed(4)} MHz</option>`).join('');
@@ -22469,6 +22604,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       `<span class="vs-los">${helpTip('<b>Line of sight</b> from the station - or any place: right-click the map, a marker or a mast. Over the terrain only: buildings and trees ' +
         'aren\'t in the data, the sea counts as 0 m. Radio also reaches a little past it (diffraction).<br><br>Point at the map for details; at a row\'s "% in sight" for its cell size.', true)}</span>` +
       `<span class="hint vs-sig">right-click the map: add a TX</span>` +
+      `<span class="x cl" onclick="vsToggle()" role="button" title="Close the viewshed (Layers → Viewshed opens it again)">${icon('close')}</span>` +
       `<span class="x" id="map-vs-fold" onclick="mapSet('vsOpen', !mapState.vsOpen)" title="Fold / unfold"></span></div>` +
       `<div class="map-vs-body"><div class="map-vs-row"><div class="map-seg vs-mode" id="map-vs-mode">` +
       `<button type="button" data-m="los" onclick="vsSetMode('los')" title="Where an antenna at the target height is in sight of each site">${icon('eye')}<span>Line of sight</span></button>` +
@@ -24426,6 +24562,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         'the median distance can lie further out, as the lobe widens with distance.<br><br>Only as good as the EIRP guess (in watts) and the calibration: calibrate on a ' +
         'known transmitter (right-click it on the map) for absolute levels. Bare terrain: buildings and trees only through the clutter setting.', true) +
       `<span class="hint">the DF panel's lobe</span>` +
+      `<span class="x cl" onclick="rgToggle()" role="button" title="Close the range (Layers → Range opens it again)">${icon('close')}</span>` +
       `<span class="x rg-fold" onclick="rgSet('open', !rgState.open)" title="Fold / unfold"></span></div>` +
       `<div class="map-vs-body">` +
       `<div class="rg-src"></div><div class="rg-job pl-note"></div>` +
@@ -24495,8 +24632,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!el || !rgReady) return;
     const show = rgState.on && opMode === 'coherent' && document.body.classList.contains('rp-map');
     if (el.style.display !== (show ? '' : 'none')) el.style.display = show ? '' : 'none';
-    const bt = $id('map-df-rng');
-    if (bt) bt.classList.toggle('on', !!rgState.on);
+    mapLaySync();   // (the Layers popover's Range switch)
     if (!show) return;
     if (!el.dataset.built) rgPanelBuild(el);
     el.classList.toggle('closed', !rgState.open);

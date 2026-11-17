@@ -109,7 +109,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `mapState.dh` -> `--doa-h`, double-click = 42 %; `rpApplySplit`)
 - UI (kraken_doa.html "Mobile DF" block): "📡 DF" panel bottom-left of the
   map (coherent only, hidden until the first `rdf` message): VFO select (All
-  / Dn), Lobe / Lines / Heat toggles (`mapState.rdf*`, localStorage;
+  / Dn), Lobe / Lines / Heat toggles (`mapState.rdf*`, localStorage; in the
+  map's Layers popover, group Direction finding, since 2026-11-18 - they
+  were buttons in this panel's header: *map.md*, *Layers popover*;
   Lobe = the lobe shapes, Lines = EVERY bearing line: the lobes' peak lines,
   a talker's earlier bearings, the driving records' lines - the peak lines
   used to come with Lobe, so Lines did nothing at a fixed station),

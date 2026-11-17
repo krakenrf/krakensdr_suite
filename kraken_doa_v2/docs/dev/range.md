@@ -9,8 +9,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`).
 - The user's request (2026-10-20): from ONE DoA lobe + the received level +
   an estimate of the transmitter's EIRP and our antenna gain, a heat map of
   where the transmitter probably is - with the terrain through ITU-R P.1812
-  as the 📶 path loss does. "Range" in the 📡 DF panel's header
-  (`#map-df-rng`, `rgToggle`) -> the panel `#map-rg` (in `.map-tl`, the
+  as the 📶 path loss does. "Range" in the map's Layers popover (group
+  Tools, coherent mode; `rgToggle` - in the 📡 DF panel's header until
+  2026-11-18, *map.md*, *Layers popover*; the panel's ✕ closes it too)
+  -> the panel `#map-rg` (in `.map-tl`, the
   viewshed panels' look: `.map-vs.map-pl.map-rg`) + its layer (`rgDraw`,
   under the DF lobes). The source = the DF panel's selection (`rgSource`):
   one radio (a talker), else the selected VFO (all: the sidebar's selected

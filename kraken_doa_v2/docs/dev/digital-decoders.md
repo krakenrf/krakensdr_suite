@@ -273,7 +273,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     inside the window, not modal; closed by Esc (focus back to the
     button), a press outside, the button again, a pick, a scroll of what
     holds the button, a window resize, the panel closing or switching to
-    Transcription. A press on a help-mode `?` is no press outside, and in
+    Transcription (the closing ways are the shared `popDismiss` since
+    2026-11-18 - *sidebar.md*, *View button and popover*; the placement
+    stays its own: it fits the list's height). A press on a help-mode `?` is no press outside, and in
     help mode a tap on a row shows its tip instead of picking it. On top a
     filter box (`#dec-all-q`, a combobox; name or id, case-insensitive),
     focused when the list is opened with a mouse or the keyboard, not on
