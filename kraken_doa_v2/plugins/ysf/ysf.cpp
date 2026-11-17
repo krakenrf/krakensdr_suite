@@ -372,20 +372,29 @@ void YsfReceiver::csd(int id, const uint8_t* bits) {
     const int n = id < 4 ? 10 : 5;
     const std::string t = text(bits, n);
     switch (id) {
-        case 0:
-            call_.dest = t;
+        case 0: {
+            // A destination of nothing but asterisks is shown as "ALL": an
+            // off-air call to everyone sent five as its Radio ID mode
+            // destination. Yaesu's standard defines no all-stations form -
+            // this is the evident wildcard reading; ten asterisks as a
+            // callsign destination by analogy (not seen on air)
+            auto all = [](const std::string& s, size_t n) {
+                return s.size() == n && s.find_first_not_of('*') == std::string::npos;
+            };
             call_.have_dest = true;
             if (call_.cm == 1) {
                 // Radio ID mode: the field holds the destination and source radio IDs
                 const std::string rid = text(bits, 5);
-                call_.dest = rid.empty() ? "" : "ID " + rid;
+                call_.dest = all(rid, 5) ? "ALL" : rid.empty() ? "" : "ID " + rid;
                 fact("Destination", "");
-                fact("Destination radio ID", rid);
+                fact("Destination radio ID", all(rid, 5) ? rid + " (all)" : rid);
                 fact("Source radio ID", text(bits + 40, 5));
             } else {
-                fact("Destination", t);
+                call_.dest = all(t, 10) ? "ALL" : t;
+                fact("Destination", all(t, 10) ? t + " (all)" : t);
             }
             break;
+        }
         case 1:
             if (call_.have_src && !t.empty() && !call_.src.empty() && t != call_.src) {
                 // another station without a terminator in between: a new

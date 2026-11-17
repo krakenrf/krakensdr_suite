@@ -30,7 +30,11 @@ message route, VoIP, data, voice codec. Events: "Call: SRC → DST, DN, DG-ID
 n, via RPT" once per call (late entry: once the DCH cycle has named source,
 destination and repeater) and "Call ended" (terminator, or 1 s without
 frames). Two headers in a row (N0 > 1) are one call, a repeated terminator
-is no new one.
+is no new one. A destination of nothing but asterisks (five as a Radio ID
+mode destination - seen on air -, ten as a callsign) reads "ALL" in the
+event, label and voice status; the fact keeps what was sent (`***** (all)`).
+Yaesu's standard defines no all-stations form: that is the wildcard
+reading.
 
 Voice (only while someone listens): VW through the built-in IMBE decoder -
 the standard gives the VW frame only as 144 bits, 88 voice + 56 FEC, at 7200
@@ -144,7 +148,9 @@ voice bits).
   repo). DN: 86 / 86 frames (header, 84 Communication frames FN 0..7 / FT
   7, terminator), all 88 DCH units pass their CRC, one call start and end,
   narrow deviation, Radio ID mode (destination `*****` + the source radio
-  ID; Rem4 the same ID), DT1 / DT2 carry 20 data bytes (shown as hex). VW:
+  ID; Rem4 the same ID - shown as `<call> → ALL, DN`, label `ALL · DN`,
+  fact `Destination radio ID  ***** (all)`; until 2026-11-17 `→ ID *****`),
+  DT1 / DT2 carry 20 data bytes (shown as hex). VW:
   87 / 87 frames - header, sub header FT 1 / FN 0, FT 1 / FN 1, 83 x FT 0 /
   FN 0, terminator, the sequence `ysf_gen.py` sends; the source from the
   header. `dsdccx` on the same files reads the same (`YSF>C V2 RI 0:7

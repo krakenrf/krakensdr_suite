@@ -62,7 +62,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   included; two headers in a row are one, a repeated TC no new one);
   talker = the source callsign (CSD1 of HC / TC / V/D 1, V/D 2's FN 1
   Src), trailing spaces off, label "DST · DN" (+ " · via RPT" from CSD2,
-  or "via repeater" from MR); a late entry is reported from its first
+  or "via repeater" from MR; an all-asterisk DST - `*****` in Radio ID
+  mode, seen on air - reads "ALL"); a late entry is reported from its first
   frame once the DCH names it, a VW call joined after its header / sub
   header only by its TC (4.4: no CSD elsewhere). A new source without a TC
   ends the old talker where it was last named

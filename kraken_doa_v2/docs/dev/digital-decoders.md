@@ -159,7 +159,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     first P25's iW..iZ order, wrong - corrected 2026-11-16 after the dsdcc
     check). A call = valid frames < 1 s apart
     (two headers in a row = one; a repeated TC is no new call); its event
-    waits for source + destination + CSD2 (late entry: at most 8 frames);
+    waits for source + destination + CSD2 (late entry: at most 8 frames;
+    an all-asterisk destination - an off-air call to everyone sent `*****`
+    in Radio ID mode - is shown as "ALL", the fact keeps `***** (all)`);
     a lone FICH with no DCH and no second frame gives no call events.
     Ambiguities resolved: the FICH interleave (text "M = 5, N = 10",
     Figure 4-26: 20 rows and the air order - followed the figure); the CRC
