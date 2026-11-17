@@ -50,7 +50,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   a whole file - fixed 2026-11-18). Muted when encrypted (ALGID not 0x80,
   or the "protected" service option) AND until a call is known to be clear
   (a call joined after its MAC_PTT: its first bursts on real encrypted
-  calls came before the ESS and played as noise). Real recording: 1172 of
+  calls came before the ESS and played as noise). The audio's talker
+  channel (`voice_channel` -> `Host::audio_channel`, Voice to Text's
+  naming): Phase 1 0 (set before each IMBE block - before Phase 2 existed
+  it was never sent, = unknown, which named the same talker), Phase 2
+  outbound LCH + 1, inbound -1 (unknown: inbound radios are packets). With
+  Timeslot LCH 0 / LCH 1 an inbound call whose LCH isn't known yet is
+  neither shown nor played. Real recording: 1172 of
   1172 frames clean, 20 s of audio with no vocoder errors; one unit there
   was ~8 dB louder than the other and clips with the shared AMBE output
   scaling (open)

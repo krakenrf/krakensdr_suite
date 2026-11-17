@@ -28,7 +28,7 @@
 {
  "id": "p25p2-inbound-three-radios",
  "title": "P25 Phase 2: three radios' inbound bursts, two of them at the same time",
- "description": "P25 Phase 2 TDMA inbound (radios to the site, H-CPM bursts) on 453.6125 MHz, scrambled (WACN BEE00 / system 14C / NAC 293, recovered by the decoder from the bursts): unit 6001 -> TG 601 on logical channel 0 (40 deg, +200 Hz) and, at the same time, unit 6002 -> TG 602 encrypted (AES-256, muted) on logical channel 1 (160 deg, -150 Hz, 3 dB weaker) - their 28 ms bursts alternate every 30 ms; then unit 6003 -> TG 601 on logical channel 0 (280 deg, +50 Hz). Every checked burst is a packet of its radio. Expect talkers 6001, 6002 and 6003 at those bearings.",
+ "description": "P25 Phase 2 TDMA inbound (radios to the site, H-CPM bursts) on 453.6125 MHz, scrambled (WACN BEE00 / system 14C / NAC 293, recovered by the decoder from the bursts): unit 6001 -> TG 601 on logical channel 0 (40 deg, +200 Hz) and, at the same time, unit 6002 -> TG 602 encrypted (AES-256, muted) on logical channel 1 (160 deg, -150 Hz, 3 dB weaker) - their 28 ms bursts alternate every 30 ms; then unit 6003 -> TG 601 on logical channel 0 (280 deg, +50 Hz). Each radio names itself (MAC_PTT, voice channel user, MAC_END_PTT) and its bursts are its packets. Expect talkers 6001, 6002 and 6003 at those bearings.",
  "rf_hz": 453612500.0,
  "tuner_offset_hz": 300000,
  "seconds": 8,

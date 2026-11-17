@@ -6,9 +6,14 @@
 // scrambling, Reed-Solomon, MAC PDUs, voice). The receiver hands over one
 // timeslot at a time.
 
+#include <bit>
 #include <cstdint>
 
 namespace dig {
+
+// finite (not inf / NaN), by the bit pattern: right under any floating-point
+// flags (the repo's is_finite_value idiom, root CLAUDE.md "Numerics")
+inline bool p2_finite(float v) { return (std::bit_cast<uint32_t>(v) & 0x7F800000u) != 0x7F800000u; }
 
 constexpr int P25P2_SLOT_SYMS = 180;     // one timeslot: 30 ms, 360 bits
 constexpr int P25P2_SPS = 8;             // samples per symbol at the plugin's 48 kHz

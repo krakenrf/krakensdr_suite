@@ -21,9 +21,14 @@ namespace {
 
 struct Sink : dig::Fsk4Sink {
     explicit Sink(dig::RxContext& c) : p25(c) {}
-    bool p25_frame(const dig::SymSrc& s) override { return p25.decode(s); }
+    bool p25_frame(const dig::SymSrc& s) override {
+        const bool ok = p25.decode(s);
+        if (ok && p2) p2->phase1_frame();   // the facts both phases write
+        return ok;
+    }
     void reset() override { p25.reset(); }
     dig::P25Proto p25;
+    dig::P25p2Proto* p2 = nullptr;
 };
 
 // "" = not given; else hex up to max (a bad value counts as not given)
@@ -39,6 +44,7 @@ public:
     explicit P25Plugin(kp::Host& h)
         : Decoder(h), br_(h), sink_(br_.ctx), rx_(sink_, true, false), p2_(br_.ctx, sink_.p25), phy_(p2_) {
         br_.talkers(dig::FmFrontEnd::RATE);
+        sink_.p2 = &p2_;
         facts();
     }
     void process(const kp::cf* x, size_t n) override {

@@ -288,8 +288,10 @@ int rs64_decode_erasures(uint8_t* sym, int n, int nroots, const int* eras, int n
     };
     uint8_t S[63];
     if (syndromes(r, S)) {
-        for (int i = 0; i < n; i++) sym[i] = r[i];   // erased symbols are 0 in this codeword
-        return 0;
+        // already a codeword with the erased symbols 0: no errors, every
+        // erasure filled (with 0) - the count the caller is told
+        for (int i = 0; i < n; i++) sym[i] = r[i];
+        return neras;
     }
     // erasure locator Gamma(x) = prod (1 + X_k x), X_k = a^(n-1-pos)
     uint8_t lam[64] = {1}, B[64] = {1}, T[64];

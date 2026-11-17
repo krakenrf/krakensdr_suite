@@ -38,7 +38,7 @@ Two kinds of transmitter:
   p25p2_gen.py --selftest
 
 Per-call options (--lch --at --dur --src --dst --u2u --emergency --algid
---kid --sf3-src) belong to one call; giving one of them again starts the
+--kid --sf3-src --omit --listener) belong to one call; giving one of them again starts the
 next call. --lch, --src and --dst carry over to the next call unless given.
 Defaults: --lch 0 --dur 2.0 --src 1001 --dst 101 --algid 0x80 (clear) --kid 0.
   --at T        the call starts at the first suitable slot at or after T s
@@ -53,6 +53,11 @@ Defaults: --lch 0 --dur 2.0 --src 1001 --dst 101 --algid 0x80 (clear) --kid 0.
   --sf3-src U   (out) the unit named by the outbound SACCH VCU in superframe
                 3 of each ultraframe (the inbound talker; default = --src) -
                 a monitor takes the talker from superframes 0-2
+  --omit LIST   (in) leave out the call's ptt / sacch / end bursts (comma
+                list): a radio whose signalling a receiver missed, joined by
+                its voice alone - it names itself nowhere
+  --listener    (in) not a talker: only inbound SACCH bursts in superframe 3
+                of the call's span (a listener's, 2.2), MAC_SIGNAL naming nobody
 Global options:
   --wacn/--sysid/--nac  network identity (default 0xBEE00 / 0x14C / 0x293):
                 the scrambling seed WACN.SYSID.NAC (44 bits) and the NAC /
@@ -890,6 +895,21 @@ def inbound_slots(o, calls, n_first, n_last, rng):
     for L in (0, 1):
         for n, (what, c, arg) in plan[L].items():
             s = n % 12
+            if c['listener']:
+                # a listening radio: only the inbound SACCH of superframe 3
+                # (free for listeners while the talker listens, 2.2), with a
+                # MAC_SIGNAL that names nobody
+                if what != 'sacch' or (n // 12) % 4 != 3:
+                    continue
+                pdu = [header(MAC_SIGNAL, OFFSET_NA)] + [0] * 17
+                bu = in_iemi(DUID_SACCH_S if scr else DUID_SACCH, facch_info(pdu))
+                if scr:
+                    start = o['in_advance'] + (360 * s if o['in_pn_offset'] == 'slot' else 0)
+                    bu.scramble(pn_bits(seed, start, SLOT_BITS), o['voice_scramble'])
+                out[n] = bu
+                continue
+            if what in c['omit']:
+                continue                     # (--omit) a radio whose signalling the receiver missed
             if what == 'sacch':
                 if (n // 12) % 4 == 3:
                     continue                 # superframe 3: the talker listens to the outbound SACCH
@@ -971,15 +991,15 @@ def parse(argv):
          'slots': None, 'grid_offset': 0.0, 'scramble': True, 'voice_scramble': DEF_VOICE_SCRAMBLE,
          'in_advance': DEF_IN_ADVANCE, 'in_pn_offset': DEF_IN_PN_OFFSET, 'shaping': DEF_SHAPING, 'voice': 'ambe', 'hang': 1.0,
          'cch': set(), 'chan': 0x10C8, 'rfss': 1, 'site': 1, 'lra': 0x01, 'out': None, 'selftest': False}
-    per_call_val = {'lch', 'at', 'dur', 'src', 'dst', 'algid', 'kid', 'sf3-src'}
-    per_call_flag = {'emergency', 'u2u'}
+    per_call_val = {'lch', 'at', 'dur', 'src', 'dst', 'algid', 'kid', 'sf3-src', 'omit'}
+    per_call_flag = {'emergency', 'u2u', 'listener'}
     sticky = ('lch', 'src', 'dst')
     calls = []
     cur = None
 
     def new_call(prev):
         c = {'lch': 0, 'at': None, 'dur': 2.0, 'src': 1001, 'dst': 101, 'algid': 0x80, 'kid': 0,
-             'sf3_src': None, 'emergency': False, 'u2u': False, '_given': set()}
+             'sf3_src': None, 'emergency': False, 'u2u': False, 'omit': set(), 'listener': False, '_given': set()}
         if prev is not None:
             for k in sticky:
                 c[k] = prev[k]
@@ -1017,6 +1037,10 @@ def parse(argv):
                 cur[k] = float(v)
             elif k == 'sf3-src':
                 cur['sf3_src'] = int(v, 0)
+            elif k == 'omit':
+                cur['omit'] = set(x for x in v.split(',') if x)
+                if not cur['omit'] <= {'ptt', 'sacch', 'end'}:
+                    sys.exit('--omit ptt,sacch,end')
             elif k in ('algid', 'kid'):
                 cur[k] = int(v, 16)
             else:
@@ -1067,6 +1091,8 @@ def parse(argv):
         if c['lch'] in o['cch']:
             sys.exit('LCH %d is a control channel (--cch): no calls on it' % c['lch'])
         del c['_given']
+    if o['dir'] == 'out' and any(c['omit'] or c['listener'] for c in calls):
+        sys.exit('--omit / --listener are for --dir in')
     if o['dir'] == 'in' and o['cch']:
         sys.exit('--cch is for --dir out')
     if o['chan'] & 1:

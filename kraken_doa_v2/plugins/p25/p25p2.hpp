@@ -47,6 +47,10 @@ public:
     void set_lch(int which);
     // Phase 2 bursts passed their checks within the last 2 s (sample time)
     bool active() const;
+    // Phase 1 decoded a valid frame: it writes the facts both phases share
+    // (Encryption, Channel type, NAC / WACN / System ID) - Phase 2 writes
+    // its own again with its next burst instead of trusting what it showed
+    void phase1_frame();
 
 private:
     struct Impl;

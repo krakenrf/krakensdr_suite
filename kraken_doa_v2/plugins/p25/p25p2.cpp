@@ -47,6 +47,14 @@ constexpr int64_t CALL_TIMEOUT = 2 * RATE;          // no checked burst of a cal
 constexpr int64_t PENDING_MAX = RATE * 6 / 5;       // unnamed inbound bursts kept this long (host keeps 1.5 s)
 constexpr int64_t ACTIVE_FOR = 2 * RATE;
 constexpr int64_t STATE_FOR = 10 * RATE;            // channel state facts kept this long after the last checked burst
+// inbound attribution (in_named / in_burst): a radio's bursts are an unbroken
+// chain - at most this long from the end of one to the start of the next
+// (60 ms cadence, 120 ms across a superframe-3 SACCH gap, 2 lost bursts) ...
+constexpr int64_t CONT = RATE / 4;
+// ... at the carrier offset of the burst that named it. The receiver measures
+// it per burst to 2-13 Hz rms (generator scenes, 8-26 dB in 12.5 kHz, the
+// worst single burst 38 Hz off); radios' offsets differ by tens to hundreds of Hz
+constexpr float FTOL = 60.0f;
 
 // [SINGLE 8.2, Q4] inbound scrambler = the outbound seed advanced by this
 // many LFSR steps. Used only as a hypothesis to test (the inbound scrambler
@@ -532,6 +540,7 @@ struct P25p2Proto::Impl {
     int cur = -1;              // the seed that worked last (index into cand)
     uint64_t win[12] = {};     // its 12 slot windows' start states
     int shown_src = -1;        // the identity facts last reported
+    bool id_stale = false;     // Phase 1 has written WACN / System ID / NAC since
     uint64_t shown_seed = 0;
     bool scrambled_seen = false;
     // scrambled bursts in a row the known seed / inbound reference failed on:
@@ -567,7 +576,9 @@ struct P25p2Proto::Impl {
         std::string tid, tcall;
         bool treported = false;
         // inbound talker (packets)
-        uint32_t unit = 0;
+        uint32_t unit = 0;             // the radio the lane's recent bursts came from (0 = none)
+        float unit_f = 0;              // ... its carrier offset (Hz)
+        int64_t unit_last = -1;        // ... end of its last attributed burst
         int64_t last_burst = -1;
         struct Pend { int64_t a, b; float f; };
         Pend pend[48];
@@ -631,6 +642,9 @@ struct P25p2Proto::Impl {
             c.sacch_at = c.traffic_at = INT64_MIN;
         }
     }
+    // Takes effect at once (the host passes option changes while it runs):
+    // a complete identity replaces the seed in use; a partial one (a NAC
+    // alone) drops a seed in use, or a known one, that contradicts it
     void set_network(int w, int s, int n) {
         u_wacn = w;
         u_sysid = s;
@@ -638,10 +652,25 @@ struct P25p2Proto::Impl {
         cand_ok[SRC_OPTION] = w >= 0 && s >= 0 && n >= 0;
         if (cand_ok[SRC_OPTION]) {
             cand[SRC_OPTION] = make_seed(w, s, n);
-            if (cur < 0 || cur == SRC_OPTION) use_seed(SRC_OPTION);
-        } else if (cur == SRC_OPTION) {
+            use_seed(SRC_OPTION);
+            seed_fail = 0;
+        } else if (cur == SRC_OPTION || (cur >= 0 && !seed_allowed(cand[cur]))) {
             cur = -1;
         }
+        for (int k = 0; k < SRC_N; k++)
+            if (k != SRC_OPTION && cand_ok[k] && !seed_allowed(cand[k])) cand_ok[k] = false;
+    }
+    // a seed recovered from the signal: a known source with the same seed
+    // keeps its name ("Network ID from" does not change for nothing)
+    void adopt_seed(int src, uint64_t seed) {
+        for (int k = 0; k < SRC_N; k++)
+            if (cand_ok[k] && cand[k] == seed) {
+                if (cur != k) use_seed(k);
+                return;
+            }
+        cand[src] = seed;
+        cand_ok[src] = true;
+        use_seed(src);
     }
 
     void fact(const std::string& k, const std::string& v) {
@@ -669,15 +698,17 @@ struct P25p2Proto::Impl {
         static const char* from[SRC_N] = {"the options", "the TDMA control channel (network status)",
                                           "the Phase 1 control channel", "blind recovery from a scrambled traffic burst",
                                           "the inbound bursts' scrambling (243-step inbound offset assumed, NAC = colour code)"};
-        if (cur == shown_src && s == shown_seed) return;
+        if (cur == shown_src && s == shown_seed && !id_stale) return;
+        const bool changed = cur != shown_src || s != shown_seed;
         shown_src = cur;
         shown_seed = s;
+        id_stale = false;
         int wacn = static_cast<int>(s >> 24), sys = static_cast<int>((s >> 12) & 0xFFF), nac = static_cast<int>(s & 0xFFF);
         ctx.report->set(Mode::P25, "WACN", hex(static_cast<uint64_t>(wacn), 5));
         ctx.report->set(Mode::P25, "System ID", hex(static_cast<uint64_t>(sys), 3));
         ctx.report->set(Mode::P25, "NAC", "0x" + hex(static_cast<uint64_t>(nac), 3));
         fact("Network ID from", from[cur]);
-        event("Network: WACN " + hex(static_cast<uint64_t>(wacn), 5) + " sys " + hex(static_cast<uint64_t>(sys), 3) +
+        if (changed) event("Network: WACN " + hex(static_cast<uint64_t>(wacn), 5) + " sys " + hex(static_cast<uint64_t>(sys), 3) +
                   " NAC 0x" + hex(static_cast<uint64_t>(nac), 3) + " (from " + from[cur] + ")",
               30.0);
     }
@@ -719,7 +750,7 @@ struct P25p2Proto::Impl {
         scrambled_seen = true;
         if (!sl->inbound) {
             // the seed in use, then the other known ones
-            if (cur >= 0) {
+            if (cur >= 0 && seed_allowed(cand[cur])) {
                 if (slot >= 0) {
                     descramble(win[slot]);
                     if (decode_block(l, work, info, relp) >= 0) {
@@ -757,6 +788,9 @@ struct P25p2Proto::Impl {
             if (cur >= 0 && ++seed_fail < BLIND_AFTER) return false;
             uint64_t W;
             if (!blind(kind).solve(l, bits, &W, rel, alt)) return false;
+            // the zero state is no scrambler (make_seed never gives it): a
+            // clear burst whose DUID was miscorrected to a scrambled one
+            if (W == 0) return false;
             descramble(W);
             if (decode_block(l, work, info, relp) < 0) return false;
             *used_W = W;
@@ -766,9 +800,7 @@ struct P25p2Proto::Impl {
                 // user's NAC / WACN / system ID set, another system's burst
                 // is not decoded (as Phase 1's NAC option drops its frames)
                 if (!seed_allowed(seed)) return false;
-                cand[SRC_BLIND] = seed;
-                cand_ok[SRC_BLIND] = true;
-                use_seed(SRC_BLIND);
+                adopt_seed(SRC_BLIND, seed);
                 show_identity();
             } else if (u_nac >= 0 || u_wacn >= 0 || u_sysid >= 0) {
                 // superframe position unknown: some slot's window must give an allowed seed
@@ -860,17 +892,18 @@ struct P25p2Proto::Impl {
             S0 = pn_jump(in_W, -360LL * mod(in_i - p, 12));
         }
         std::string said;
-        if (cur >= 0) {
+        if (cur == SRC_INBOUND) {
+            // that seed was derived from these bursts assuming the 243 steps:
+            // comparing it with them would only confirm the assumption
+        } else if (cur >= 0) {
             bool ok = pn_jump(cand[cur], INBOUND_SEED_ADVANCE) == S0;
             said = ok ? "inbound scrambling = outbound seed + 243 steps (confirmed)"
                       : "inbound scrambling: NOT the outbound seed + 243 steps (solved from the bursts instead)";
             if (ok) show_identity();
         } else {
             uint64_t seed = pn_jump(S0, -INBOUND_SEED_ADVANCE);
-            if (checked_cc >= 0 && static_cast<int>(seed & 0xFFF) == checked_cc && seed_allowed(seed)) {
-                cand[SRC_INBOUND] = seed;
-                cand_ok[SRC_INBOUND] = true;
-                use_seed(SRC_INBOUND);
+            if (seed && checked_cc >= 0 && static_cast<int>(seed & 0xFFF) == checked_cc && seed_allowed(seed)) {
+                adopt_seed(SRC_INBOUND, seed);
                 show_identity();
                 said = "inbound scrambling: seed from the inbound bursts (243-step offset, NAC = the colour code)";
             }
@@ -912,6 +945,7 @@ struct P25p2Proto::Impl {
         }
         uint64_t W;
         if (!blind(kind).solve(l, bits, &W, nullptr, nullptr, true)) return false;
+        if (W == 0) return false;   // the zero state is no scrambler (see block())
         descramble(W);
         if (decode_block(l, work, info, relp) < 0) return false;
         *used_W = W;
@@ -941,7 +975,8 @@ struct P25p2Proto::Impl {
         if (!c.inbound) return "LCH " + std::to_string(c.lch);
         return c.lch >= 0 ? "Inbound LCH " + std::to_string(c.lch) : std::string("Inbound");
     }
-    bool wanted(const Chan& c) const { return lch_opt == 0 || c.lch < 0 || c.lch == lch_opt - 1; }
+    // an inbound lane whose LCH is not known yet is shown / played only with "Both"
+    bool wanted(const Chan& c) const { return lch_opt == 0 || c.lch == lch_opt - 1; }
     std::string tcall_of(const Chan& c) const {
         if (!c.dst_known) return "voice call";
         return (c.group ? "TG " : "unit call to ") + std::to_string(c.dst) + ((c.so & 0x80) ? " EMERGENCY" : "");
@@ -1025,7 +1060,7 @@ struct P25p2Proto::Impl {
         call_refresh(c);
         if (name_src && src) {
             if (!c.inbound) talker_set(c, src);
-            else unit_set(c, src);
+            else in_named(c, src, slot_ptt);
         } else if (!c.inbound && !c.tid.empty() && have_dst) {
             c.tcall = tcall_of(c) + " · LCH " + std::to_string(c.lch) + " · via site";
         }
@@ -1088,9 +1123,20 @@ struct P25p2Proto::Impl {
         c.t_start = -1;
     }
 
-    // inbound talkers: every checked burst is a packet of its radio, exactly
-    // the samples its modulated symbols 6..173 occupy; bursts whose radio is
-    // not named yet wait (up to PENDING_MAX) for its ID
+    // Inbound talkers: a checked burst is a packet of a radio only on positive
+    // evidence that this radio sent it (a lost packet costs a little
+    // averaging, a wrongly attributed one a wrong bearing):
+    //  - a MAC_PTT, voice channel user or MAC_END_PTT burst names its sender;
+    //  - a voice burst continues the lane's named radio when it follows that
+    //    radio's last burst within CONT at its carrier offset (FTOL);
+    //  - other voice bursts wait (up to PENDING_MAX): a voice channel user /
+    //    MAC_END_PTT burst takes the unbroken chain of them back from itself
+    //    at its own carrier offset; a radio named by its MAC_PTT takes none
+    //    (the MAC_PTT starts its transmission: whatever came before was
+    //    another radio's);
+    //  - a signalling burst that names nobody is nobody's (in superframe 3
+    //    a LISTENER may send on the talker's inbound SACCH, 2.2).
+    // A packet = exactly the samples of the burst's modulated symbols 6..173.
     void packet(const Chan& c, int64_t a, int64_t b, float f) {
         if (!ctx.packet || !c.unit) return;
         RxContext::Packet p;
@@ -1100,36 +1146,65 @@ struct P25p2Proto::Impl {
         if (!c.dst) p.label = c.lch >= 0 ? "inbound LCH " + std::to_string(c.lch) : "inbound";
         p.start = a;
         p.end = b;
-        p.freq_hz = std::isfinite(f) && std::fabs(f) < 6000 ? f : 0.0;
+        p.freq_hz = p2_finite(f) && std::fabs(f) < 6000 ? f : 0.0;
         p.bw_hz = 12500;
         p.keep_s = 1800;
         ctx.packet(p);
     }
+    static bool same_radio(float f, float ref) { return p2_finite(f) && p2_finite(ref) && std::fabs(f - ref) <= FTOL; }
+    void attribute(Chan& c, int64_t a, int64_t b, float f) {
+        packet(c, a, b, f);
+        c.unit_last = b;
+        if (p2_finite(f)) c.unit_f += 0.3f * (f - c.unit_f);
+    }
+    void lane_gap(Chan& c, int64_t a) {
+        if (c.last_burst >= 0 && a - c.last_burst > GAP) unit_end(c);
+    }
+    // a checked voice burst of the lane's call
     void in_burst(Chan& c) {
         const int64_t a = sl->start + 6 * P25P2_SPS, b = sl->start + 174 * P25P2_SPS;
-        if (c.last_burst >= 0 && a - c.last_burst > GAP) unit_end(c);
+        const float f = sl->freq_hz;
+        lane_gap(c, a);
         c.last_burst = b;
-        if (c.unit) {
-            packet(c, a, b, sl->freq_hz);
+        if (c.unit && a - c.unit_last <= CONT && same_radio(f, c.unit_f)) {
+            attribute(c, a, b, f);
             return;
         }
         if (c.npend == 48) {
             std::memmove(c.pend, c.pend + 1, sizeof(Chan::Pend) * 47);
             c.npend--;
         }
-        c.pend[c.npend++] = {a, b, sl->freq_hz};
+        c.pend[c.npend++] = {a, b, f};
     }
-    void unit_set(Chan& c, uint32_t u) {
-        if (c.unit == u) return;
-        if (c.unit) c.npend = 0;   // another radio without an end: the waiting bursts are nobody's for sure
-        c.unit = u;
-        const int64_t oldest = (sl ? sl->start : now) - PENDING_MAX;
-        for (int i = 0; i < c.npend; i++)
-            if (c.pend[i].a >= oldest) packet(c, c.pend[i].a, c.pend[i].b, c.pend[i].f);
+    // the burst in progress names its sender u (ptt: in its MAC_PTT)
+    void in_named(Chan& c, uint32_t u, bool ptt) {
+        if (slot_named || !u || u == 0xFFFFFF) return;
+        slot_named = true;
+        const int64_t a = sl->start + 6 * P25P2_SPS, b = sl->start + 174 * P25P2_SPS;
+        const float f = sl->freq_hz;
+        lane_gap(c, a);
+        c.last_burst = b;
+        if (u != c.unit) {
+            c.unit = u;
+            c.unit_f = p2_finite(f) ? f : 0.0f;
+        }
+        if (!ptt) {
+            int first = c.npend;
+            int64_t next = a;
+            for (int i = c.npend - 1; i >= 0; i--) {
+                const Chan::Pend& q = c.pend[i];
+                if (q.a < a - PENDING_MAX || next - q.b > CONT || !same_radio(q.f, f)) break;
+                next = q.a;
+                first = i;
+            }
+            for (int i = first; i < c.npend; i++) attribute(c, c.pend[i].a, c.pend[i].b, c.pend[i].f);
+        }
         c.npend = 0;
+        attribute(c, a, b, f);
     }
     void unit_end(Chan& c) {
         c.unit = 0;
+        c.unit_last = -1;
         c.npend = 0;
     }
 
@@ -1361,7 +1436,9 @@ struct P25p2Proto::Impl {
             if (c.ambe->decode(fr, pcm + 160 * f) <= 2) clean++;
         }
         if (clean == 0) return;
-        if (ctx.voice_channel) ctx.voice_channel(c.lch >= 0 ? c.lch + 1 : 0);
+        // the talker channel: outbound LCH n = n + 1; an inbound radio's
+        // bursts are packets (no channel): -1 = unknown, never Phase 1's 0
+        if (ctx.voice_channel) ctx.voice_channel(!c.inbound && c.lch >= 0 ? c.lch + 1 : -1);
         if (ctx.voice) ctx.voice(Mode::P25, pcm, static_cast<size_t>(160 * nf));
         if (ctx.voice_state)
             ctx.voice_state(who + ": playing (AMBE+2, " + std::to_string(clean) + "/" + std::to_string(nf) + " frames clean)");
@@ -1369,6 +1446,8 @@ struct P25p2Proto::Impl {
 
     // --- a slot that passed its checks ------------------------------------------
     bool slot_valid = false;
+    bool slot_named = false;      // inbound: the burst named its sender (in_named)
+    bool slot_ptt = false;        // ... in its MAC_PTT
     int64_t out_valid_end = -1;   // end of the last outbound slot that passed its checks
     int shown_mode = -1, shown_scr = -1, shown_type = -1;
     int found_slot = -1;
@@ -1437,7 +1516,14 @@ struct P25p2Proto::Impl {
                 int alg = by[10], kid = (by[11] << 8) | by[12];
                 uint32_t src = (static_cast<uint32_t>(by[13]) << 16) | (by[14] << 8) | by[15];
                 uint32_t grp = (static_cast<uint32_t>(by[16]) << 8) | by[17];
+                // a MAC_PTT starts its sender's transmission: another radio's
+                // call ended before it; what came before it unnamed (a call
+                // joined by its voice, a talkgroup announced without a source)
+                // is not its sender's - outbound the unnamed span closes where
+                // it stood, inbound the held bursts are dropped (in_named)
                 if (c->call && c->src_named && src && src != c->src) call_end(*c, nullptr);
+                else if (c->call && !c->src_named && !c->inbound) talker_end(*c, std::min(c->t_end, sl->start));
+                slot_ptt = true;
                 call_touch(*c);
                 c->alg = alg;
                 c->kid = kid;
@@ -1457,8 +1543,7 @@ struct P25p2Proto::Impl {
                 int cc = ((by[1] & 0x0F) << 8) | by[2];
                 checked_cc = cc;
                 uint32_t src = (static_cast<uint32_t>(by[13]) << 16) | (by[14] << 8) | by[15];
-                if (c->inbound && src && src != 0xFFFFFF && !c->unit) unit_set(*c, src);
-                if (c->inbound) in_burst(*c);   // its own burst, then the end
+                if (c->inbound) in_named(*c, src, false);   // its own burst, then the end
                 call_end(*c, "Call ended");
                 if (verbose()) event(name(*c) + " end of transmission, colour code 0x" + hex(static_cast<uint64_t>(cc), 3), 2.0);
                 break;
@@ -1629,16 +1714,20 @@ struct P25p2Proto::Impl {
     void slot(const P25p2Slot& s) {
         sl = &s;
         slot_valid = false;
+        slot_named = slot_ptt = false;
         now = std::max(now, s.end);
         if (s.grid_new) grid_lost();
         for (int k = 0; k < 180; k++) {
-            const float x = s.sym[k];
+            // a non-finite soft value (the receiver does not deliver one) is
+            // a symbol without reliability: 0, decided as +1
+            const bool ok = p2_finite(s.sym[k]);
+            const float x = ok ? s.sym[k] : 0.0f;
             uint8_t d = SymSrc::dibit(x);
             bits[2 * k] = d >> 1;
             bits[2 * k + 1] = d & 1;
             // nearest threshold (-2, 0, 2) and the level just across it
             const float t = x >= 1.0f ? 2.0f : (x >= -1.0f ? 0.0f : -2.0f);
-            rel[k] = std::fabs(x - t);
+            rel[k] = ok ? std::fabs(x - t) : 0.0f;
             alt[k] = SymSrc::dibit(x >= t ? t - 1.0f : t + 1.0f);
         }
         relp = s.inbound ? nullptr : rel;
@@ -1763,13 +1852,12 @@ struct P25p2Proto::Impl {
             return;
         }
         const int opc = info[0] << 2 | info[1] << 1 | info[2];
-        const int64_t a = s.start + 6 * P25P2_SPS;
-        if (c.last_burst >= 0 && a - c.last_burst > GAP) unit_end(c);
+        lane_gap(c, s.start + 6 * P25P2_SPS);
         mac_pdu(info, {kind, &c, -1, ord});
-        if (opc != 2) {   // END_PTT reported its burst itself
-            if (c.call || c.unit) in_burst(c);
-            if (c.call) call_touch(c);
-        }
+        // a burst that named its sender became that radio's packet
+        // (in_named); one that named nobody is nobody's and does not keep
+        // the call open
+        if (opc != 2 && slot_named && c.call) call_touch(c);
     }
     void in_cadence(int64_t sacch_index, int s) {
         int p = static_cast<int>(mod(sacch_index - s, 12));
@@ -1787,6 +1875,12 @@ struct P25p2Proto::Impl {
         in_resolve();
     }
 
+    void phase1_frame() {
+        facts.erase("Channel type");
+        facts.erase("Encryption");
+        shown_type = -1;
+        id_stale = true;
+    }
     void tick(int64_t t) {
         now = std::max(now, t);
         for (auto& c : ch) {
@@ -1826,5 +1920,6 @@ void P25p2Proto::tick(int64_t now) { d_->tick(now); }
 void P25p2Proto::set_network(int wacn, int sysid, int nac) { d_->set_network(wacn, sysid, nac); }
 void P25p2Proto::set_lch(int which) { d_->lch_opt = (which >= 0 && which <= 2) ? which : 0; }
 bool P25p2Proto::active() const { return d_->last_valid >= 0 && d_->now - d_->last_valid < ACTIVE_FOR; }
+void P25p2Proto::phase1_frame() { d_->phase1_frame(); }
 
 }  // namespace dig

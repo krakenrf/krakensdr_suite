@@ -230,8 +230,12 @@ void P25p2Phy::process(const kp::cf* x, size_t n) {
     const int nt = static_cast<int>(taps_.size()), half = nt / 2;
     const float* h = taps_.data();
     for (size_t i = 0; i < n; i++) {
-        fre_[fpos_] = fre_[fpos_ + nt] = x[i].real();
-        fim_[fpos_] = fim_[fpos_ + nt] = x[i].imag();
+        // a non-finite or absurdly large input sample (a broken source) is a
+        // zero: one would make every product it reaches inf / NaN
+        float xr = x[i].real(), xi = x[i].imag();
+        if (!p2_finite(xr) || !p2_finite(xi) || std::fabs(xr) > 1e15f || std::fabs(xi) > 1e15f) xr = xi = 0.0f;
+        fre_[fpos_] = fre_[fpos_ + nt] = xr;
+        fim_[fpos_] = fim_[fpos_ + nt] = xi;
         fpos_ = fpos_ + 1 == static_cast<size_t>(nt) ? 0 : fpos_ + 1;
         // symmetric taps, folded; 8 independent partial sums (vectorizable
         // without reassociation)
@@ -507,7 +511,12 @@ void P25p2Phy::out_slots() {
         oT_ = SPS + oper_ / P25P2_SLOT_SYMS;
         ot0_ += P25P2_SLOT_SYMS * oT_;
         omiss_ = synced ? 0 : omiss_ + 1;
-        sink_.p2_slot(sl);
+        // never a non-finite value to the MAC layer (the input was sanitised;
+        // this guards the loops' arithmetic): such a slot is not delivered
+        bool finite = p2_finite(sl.freq_hz) && p2_finite(sl.quality);
+        for (int k = 0; k < P25P2_SLOT_SYMS && finite; k++) finite = p2_finite(sl.sym[k]);
+        for (int k = 0; k < 10 && finite; k++) finite = p2_finite(sl.pre[k]);
+        if (finite) sink_.p2_slot(sl);
         if (omiss_ >= OUT_MISS_LIMIT) out_lose();
     }
 }
@@ -959,7 +968,7 @@ void P25p2Phy::in_slots() {
             tr->scale += 0.5f * (scale - tr->scale);
             tr->pol = pol;
             tr->last = gnext_;
-            sink_.p2_slot(sl);
+            if (p2_finite(sl.freq_hz) && p2_finite(sl.quality)) sink_.p2_slot(sl);
         } else if (inew_) {
             // the hit that started the grid held no burst: drop it; a later
             // hit may start the next grid

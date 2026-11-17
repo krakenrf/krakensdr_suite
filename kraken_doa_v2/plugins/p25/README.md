@@ -99,15 +99,22 @@ needs a nearly clean burst (at most about 2 wrong symbols); for weak signals
 the three options give the seed at once. Facts WACN / System ID / NAC and
 "Network ID from" (which source); from inbound bursts alone it says the
 identity is assumed (the 243-step inbound offset and the NAC as the colour
-code). The options also filter: a recovered or broadcast seed that
-contradicts a given NAC / WACN / system ID is not taken up, so another
-system's scrambled bursts are dropped (as Phase 1's `nac` drops frames).
+code; that offset is never reported as confirmed by its own bursts). The
+options also filter: a recovered or broadcast seed that contradicts a given
+NAC / WACN / system ID is not taken up, so another system's scrambled bursts
+(and MAC_END_PTTs naming another colour code) are dropped (as Phase 1's
+`nac` drops frames). They take effect at once while the decoder runs: a
+complete identity replaces the seed in use, a NAC alone drops a seed in use
+that contradicts it. A recovered scrambler state of all zeros (a clear burst
+whose DUID was miscorrected) is never taken for a seed.
 
 Facts: Mode ("Phase 2 TDMA", "(inbound)"), Scrambling, Channel type, LCH 0 /
 LCH 1 (or Inbound LCH n) state (Voice: TG n <- unit, Hangtime, Idle,
 Control channel, Call ended), Encryption, Last source / talkgroup, the
 control channel's system / site / neighbours / channel tables. Events: a
 call's start and end per LCH, grant updates, releases, the network identity.
+Encryption, Channel type and WACN / System ID / NAC are shared with Phase 1:
+whichever phase decoded last shows its value.
 
 ## Options
 
@@ -119,7 +126,10 @@ call's start and end per LCH, grant updates, releases, the network identity.
 - `lch` (Timeslot: Both / LCH 0 / LCH 1): which Phase 2 logical channel is
   shown and played. Both = the first to talk is heard until it has been
   quiet for a second (a muted call doesn't hold the audio against a clear
-  one)
+  one). With LCH 0 or LCH 1 an inbound call whose logical channel is not
+  known yet is not shown or played. The audio is tagged with its talker
+  channel for Voice to Text: Phase 1 channel 0, Phase 2 outbound LCH + 1,
+  inbound unknown (-1: inbound radios are packets, not transmissions)
 
 ## ID separation (DoA per radio)
 
@@ -141,11 +151,25 @@ carry different units the live host drops the frames that touch both spans
 (as on a DMR repeater with both slots busy), so each talker's bearing comes
 from the time it was alone.
 
-Phase 2 inbound (a radio): every checked burst is a PACKET of the radio
-that sent it - symbols 6-173 of its slot, 12.5 kHz wide at the burst's own
-carrier offset, label "TG n · inbound LCH k". Bursts are held up to 1.2 s
-until the radio's unit ID is known. Two radios whose 28 ms bursts alternate
-every 30 ms (one per timeslot) get separate bearings.
+Phase 2 inbound (a radio): a checked burst is a PACKET of a radio - symbols
+6-173 of its slot, 12.5 kHz wide at the burst's own carrier offset, label
+"TG n · inbound LCH k" - only on evidence that this radio sent it (a lost
+packet costs a little averaging, a wrongly attributed one a wrong bearing):
+- a MAC_PTT, voice channel user or MAC_END_PTT burst is the packet of the
+  unit it names;
+- a voice burst continues the lane's named radio when it follows that
+  radio's last burst within 0.25 s at its carrier offset (within 60 Hz; the
+  receiver measures each burst's offset to 2-13 Hz rms);
+- voice bursts before the radio is named wait up to 1.2 s: a voice channel
+  user / MAC_END_PTT takes the unbroken chain of them back from itself at
+  its own carrier offset; a radio named by its MAC_PTT takes none (the
+  MAC_PTT starts its transmission - what came before was another radio's);
+- a signalling burst that names nobody is nobody's (a LISTENER may send on
+  the talker's inbound SACCH in superframe 3).
+Bursts that pass none of these are not reported (a radio whose signalling
+was missed gets no talker at all, never the next radio's ID). Two radios
+whose 28 ms bursts alternate every 30 ms (one per timeslot) get separate
+bearings.
 
 ## Tests
 
@@ -189,9 +213,11 @@ Phase 2 (2026-11-18; SNR = signal power over the noise power in 12.5 kHz):
   MAC_HANGTIME, MAC_END_PTT from the system - and the measured transmit
   shaping) and inbound (one radio's bursts; `uca_scene.py` puts several at
   their bearings). Clear or encrypted calls, group or unit-to-unit, a
-  chosen network identity; `--slots` writes the bit-level slots,
-  `--selftest` checks the standard's test vectors and reproduces two real
-  over-the-air bursts bit for bit.
+  chosen network identity; inbound radios whose signalling a receiver
+  missed (`--omit ptt,sacch,end`: joined by voice alone) and listening
+  radios (`--listener`: only superframe-3 SACCH bursts naming nobody);
+  `--slots` writes the bit-level slots, `--selftest` checks the standard's
+  test vectors and reproduces two real over-the-air bursts bit for bit.
 - Generator signals through the plugin: outbound decodes fully down to 10
   dB and almost fully to 6 dB (identity recovered blindly: 276 of 285 slots
   and 97 % of the voice bursts at 6 dB; 144 slots at 5 dB; nothing at 4 dB;
@@ -217,6 +243,16 @@ Phase 2 (2026-11-18; SNR = signal power over the noise power in 12.5 kHz):
   used, 2 dropped at the loop wrap, none for overlap), 120.0 deg for the
   site scene's three talkers, `p25-three-units` still 60 / 200 / 300 deg.
   The page's own Check button (headless browser) was not run.
+- Inbound attribution (scratch scenes, 2026-11-18): a radio joined by its
+  voice alone (70 deg, signalling left out, 25 of its voice bursts decoded
+  in an open call) followed 0.35 s later on the same timeslot by another
+  radio (250 deg, named by its MAC_PTT, or with the MAC_PTT left out by its
+  SACCH): the first radio gets no talker at all and the second 40 (38)
+  packets at 250.0 deg - also with both at the same carrier offset and at a
+  scene SNR of 8 dB (before the fix the second radio took 11 of the first
+  one's bursts). A listener's superframe-3 SACCH bursts on a talker's
+  timeslot (200 deg) are nobody's packets; the talker stays at 30.0 deg
+  with 85 packets (before: 88, three of them the listener's).
 - Real recordings (public, not in this repo; all OUTBOUND - no inbound
   recording could be found anywhere): 21 files from 4 sources decode with
   no false events.

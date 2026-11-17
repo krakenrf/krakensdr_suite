@@ -132,7 +132,15 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     CRC-16, MAC PDUs + messages (partition-01 TSBK bodies through
     `P25Proto::tsbk()`, which shares its channel identifiers and network
     identity), voice + ESS. Options `wacn`, `sysid`, `lch` (Timeslot) next
-    to `nac`
+    to `nac`; they take effect at once while it runs (a complete identity
+    replaces the seed in use, a NAC alone drops a contradicting one). Facts
+    both phases write (Encryption, Channel type, WACN / System ID / NAC):
+    the phase that decoded last shows its value (`P25p2Proto::phase1_frame`
+    after every valid Phase 1 frame - Phase 2's cached values went stale
+    before). The receiver never hands on a non-finite symbol (non-finite /
+    absurd input samples are zeroed); the MAC treats one as no reliability
+    (`p2_finite`, a bit test, p25p2_slot.hpp). `rs64_decode_erasures`
+    returns errors + erasures also for a word that is a codeword already
   - `DmrProto` (plugins/dmr): CACH TACT (timeslot), slot type Golay(20,8)
     (max 2 corrections - a third of random words are within 3), BPTC(196,96)
     voice LC header / terminator (RS(12,9)), CSBK, PI and data headers, EMB

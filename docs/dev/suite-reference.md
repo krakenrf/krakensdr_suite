@@ -1031,7 +1031,8 @@ with the frames' exact sample times; `kp::Talker::channel` for concurrent
 transmissions - DMR timeslots; id "?" = a busy channel whose radio isn't
 named yet). p25: LDU1 / TDULC link control source (Phase 1); Phase 2 per
 timeslot on a site's output (MAC_PTT / voice channel user source, channel
-LCH + 1), and every checked inbound burst of a radio as its packet; dmr:
+LCH + 1), and an inbound burst as a packet of the radio it is proven to be
+from (named in it, or continuing its named bursts at its carrier offset); dmr:
 full / embedded LC source per timeslot; nxdn: VCALL source; ysf: the source callsign (CSD1 /
 V/D mode 2 DCH); dstar: MY callsign of the RF
 header (or its slow-data copy); adsb: every accepted message as a

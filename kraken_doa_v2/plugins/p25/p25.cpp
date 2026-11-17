@@ -356,6 +356,9 @@ void P25Proto::voice_frames(const std::vector<uint8_t>& sf) {
         }
         if (imbe_.decode(fr, pcm + 160 * f) >= 0) good++;
     }
+    // the talker channel of this audio: Phase 1's transmissions are channel 0
+    // (the plugin's Phase 2 LCHs are 1 / 2)
+    if (ctx_.voice_channel) ctx_.voice_channel(0);
     if (ctx_.voice) ctx_.voice(Mode::P25, pcm, 9 * 160);
     if (ctx_.voice_state)
         ctx_.voice_state((call_desc_.empty() ? std::string("Voice") : call_desc_) + ": playing (IMBE, " +

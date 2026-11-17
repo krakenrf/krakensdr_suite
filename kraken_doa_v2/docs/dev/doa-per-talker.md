@@ -101,18 +101,31 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   names the INBOUND talker - another unit or 0 on real calls) and from
   Motorola's MFID 0x90 message 0x80, so a call joined late is named too;
   another unit without an end in between ends the old talker where it was
-  last named. Both timeslots busy with different units: frames touching
+  last named; a MAC_PTT starts its sender's span (an unnamed "?" span
+  before it closes at the MAC_PTT burst). Both timeslots busy with different units: frames touching
   both spans are dropped (`TalkerDoa` below: a frame may touch no other
   talker's span), each bearing comes
-  from the time its talker was alone. INBOUND (a radio) = PACKETS: every
-  checked burst is one packet of its radio, exactly symbols 6-173 of its
-  slot (`freq_hz` = the burst's own carrier offset, `bw_hz` 12500), held up
-  to 1.2 s (`PENDING_MAX`, inside the host's 1.5 s RING_S) until the
-  radio's unit ID is known (MAC_PTT, voice channel user, MAC_END_PTT),
-  label "TG n · inbound LCH k", `keep_s` 1800 (kept 30 min like the
-  transmission talkers, not the packet default of 2 min). Two radios
-  on the two timeslots - 28 ms bursts alternating every 30 ms - get
-  separate bearings (packets of different talkers do not overlap)
+  from the time its talker was alone. INBOUND (a radio) = PACKETS, exactly
+  symbols 6-173 of a burst's slot (`freq_hz` = the burst's own carrier
+  offset, `bw_hz` 12500), label "TG n · inbound LCH k", `keep_s` 1800
+  (kept 30 min like the transmission talkers, not the packet default of 2
+  min) - and only on positive evidence that the radio sent the burst
+  (`in_named` / `in_burst`; review of 2026-11-18): a MAC_PTT / voice
+  channel user / MAC_END_PTT burst is the packet of the unit it names; a
+  voice burst continues the lane's named radio within 0.25 s (`CONT`) of
+  its last burst at its carrier offset (60 Hz, `FTOL`; measured per burst
+  to 2-13 Hz rms); voice bursts before the name wait up to 1.2 s
+  (`PENDING_MAX`, inside the host's 1.5 s RING_S) and go only to a radio
+  named by a voice channel user / MAC_END_PTT, as the unbroken chain back
+  from that burst at its offset - never to one named by its MAC_PTT (that
+  starts its transmission); a signalling burst that names nobody is
+  nobody's (a listener's superframe-3 SACCH). Unattributable bursts are not
+  reported. Found by review: before, a radio joined by its voice alone
+  handed its held bursts to the next radio that named itself on the lane
+  (11 wrong packets in a scratch scene), and a listener's SACCH became the
+  talker's packet. Two radios on the two timeslots - 28 ms bursts
+  alternating every 30 ms - get separate bearings (packets of different
+  talkers do not overlap)
 - Generators in the repo (2026-10-16): `plugins/p25/tools/p25_gen.py`
   (HDU, LDU1 link control / LDU2 encryption sync, placeholder IMBE frames
   with valid FEC, TDU / TDULC, status symbols, C4FM = raised cosine x
