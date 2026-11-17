@@ -212,7 +212,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   is a three-way list since v2.0), dme's DoA per beacon, cells' Cell
   information; other choice lists stay `<select>`s. The settings rows
   (`#info-dec-top`) are rebuilt only while no input / list in them has the
-  focus or a mode list is open (`ddOpenSel`); a focused BUTTON doesn't hold
+  focus or a mode list is open (`ddOpenSel` - wherever the focus is: the
+  list's filter field is in body, not in the rows); a focused BUTTON doesn't hold
   the rebuild back (a clicked button keeps the focus - the on / off button
   showed its new state only after a click elsewhere) and gets the focus
   back afterwards (the same button by position). Test: scratchpad
@@ -244,9 +245,32 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (`digFillSelect` and the tab rebuild do); `digFillSelect` leaves the value
   alone while that list is open (`ddOpenSel`). Keyboard: arrows / Home /
   End / Enter / Escape / Tab; a press elsewhere, a scroll or a resize closes
-  it. Tab labels and state lines use `digShort(name)` (without the
+  it. The pop-up has a filter field on top (`.dd-q`, the user's request
+  2026-11-16; `ddFilter`): the query is split into words and an option stays
+  when every word is a case-insensitive substring of its name + details,
+  group, description (`title`) and plugin id (`data-k`); groups left empty
+  hide, nothing left = a muted "No matching decoder" row; options are hidden
+  in place, not rebuilt. With a fine pointer (`(pointer: fine)`) the field
+  takes the focus at open; touch-only devices don't (it would raise the
+  on-screen keyboard at every open) - tap the field, and a character typed
+  while the button has the focus goes into it. Arrows / Enter work on the
+  visible options (highlight: the current value while the query is empty,
+  else the first visible option whose name or id starts with the query,
+  else the first with every word in its name / details / id (`data-n`),
+  else the first visible - "dm" is DMR, not D-STAR above it through its
+  description); Space types a space (on the closed button it still
+  opens); Home / End jump only while the field is empty; keys typed in the
+  field stop at the capture handler, so no page shortcut sees them. Width
+  and side (below / above the button) are fixed at open; one above is
+  placed by its `bottom`, so it stays on the button as the filter shrinks
+  it (`ddPlace`). A resize that changes only the height while the field has
+  the focus (a phone's on-screen keyboard) re-fits the list instead of
+  closing it. Tab labels and state lines use `digShort(name)` (without the
   "(details)"; the tab's tooltip has the whole name). Test (scratchpad
-  e2e/t_dd_ui.py, headless Chromium, the real plugin list). The bottom panel has one tab per decoder MODE
+  e2e/t_dd_ui.py, headless Chromium, the real plugin list; the filter:
+  t_dd_filter.py - headless Chromium reports `(pointer: none)`, so it
+  overrides matchMedia for the fine-pointer run and uses touch emulation
+  for the touch run). The bottom panel has one tab per decoder MODE
   (plugin), not per VFO: `infoTab` = `dig:<plugin>` (the AI tab is gone -
   the assistant has its own dock)
   (`infoPanelOpen('dec:<vfo>')` still works: the tab that VFO is in,

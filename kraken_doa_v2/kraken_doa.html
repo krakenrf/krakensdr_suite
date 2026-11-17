@@ -257,9 +257,14 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dd-btn .dd-arrow {position:absolute;right:6px;top:50%;transform:translateY(-50%);color:#7cb3f0;font-size:10px}
 .dd-n {white-space:normal;overflow-wrap:anywhere}
 .dd-d {display:block;font-size:10.5px;color:#8fa3bf;white-space:normal;overflow-wrap:anywhere}
-.dd-pop {position:fixed;z-index:10050;background:#10101e;border:1px solid #1f5a99;border-radius:3px;box-shadow:0 6px 18px rgba(0,0,0,.55);overflow:auto;padding:2px 0;font-size:12px;color:#e0e0e0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
+.dd-pop {position:fixed;z-index:10050;box-sizing:border-box;background:#10101e;border:1px solid #1f5a99;border-radius:3px;box-shadow:0 6px 18px rgba(0,0,0,.55);display:flex;flex-direction:column;overflow:hidden;font-size:12px;color:#e0e0e0}
+.dd-q {flex:none;display:block;box-sizing:border-box;width:calc(100% - 8px);min-width:0;margin:4px 4px 2px;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:3px 5px;border-radius:3px;font-size:12px;font-family:inherit}
+.dd-q:focus {outline:none;border-color:#4fc3f7}
+.dd-list {flex:1 1 auto;min-height:0;overflow:auto;padding:2px 0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
+.dd-pop [hidden] {display:none !important}
+.dd-none {padding:6px 12px;color:#8fa3bf;font-style:italic}
 .dd-grp {padding:4px 8px 2px;color:#7cb3f0;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
-.dd-grp:not(:first-child) {margin-top:3px;border-top:1px solid #23304d;padding-top:6px}
+.dd-grp:not(:first-child):not(.dd-top) {margin-top:3px;border-top:1px solid #23304d;padding-top:6px}
 .dd-it {padding:4px 10px 4px 12px;cursor:pointer;line-height:1.25;border-left:2px solid transparent}
 .dd-it.cur {border-left-color:#4fc3f7}
 .dd-it.hl {background:#1a4a7a}
@@ -8158,7 +8163,7 @@ function updateDecimatorList(info) {
         <button class="btn sm" type="button" id="dec-dig-open-${dec.id}" style="margin-left:auto;display:none" onclick="infoPanelOpen('dec:${dec.id}')" title="Show this VFO's decoder (data and settings) in the panel under the waterfall">⤢</button>
       </div>
       <div class="dec-row">
-        <select id="dec-dig-mode-${dec.id}" onchange="digSetModeFor(${dec.id}, this.value)" style="flex:1" title="Auto detect, or one decoder. Picking one switches the decoder on."></select>
+        <select id="dec-dig-mode-${dec.id}" onchange="digSetModeFor(${dec.id}, this.value)" style="flex:1" title="Auto detect, or one decoder (type in the open list to filter it). Picking one switches the decoder on."></select>
       </div>
       <div class="dec-row dec-dig-state" id="dec-dig-state-${dec.id}"></div>
       <div class="dec-row">
@@ -10893,9 +10898,12 @@ function addTouchHandlers(el, down, move, up) {
   // keeps its value, options and onchange - and a button + pop-up list show
   // it: an option "Name (details)" as the name with the details on a second,
   // smaller line, in the button and in the list. ddEnhance(sel) once (again
-  // is a no-op), ddSync(sel) after setting sel.value from code.
-  // var: digFillSelect may run before this part of the script is evaluated
-  var ddOpenSel = null, ddPop = null, ddHl = -1;
+  // is a no-op), ddSync(sel) after setting sel.value from code. A filter
+  // field at the top of the list narrows it to the options holding every
+  // typed word (ddFilter).
+  // var: digFillSelect may run before this part of the script is evaluated.
+  // ddUp: the list opened above its button; ddVw: the window width then
+  var ddOpenSel = null, ddPop = null, ddHl = -1, ddUp = false, ddVw = 0;
   function ddSplit(text) {
     const m = /^(.+?)\s*\((.+)\)\s*$/.exec(text || '');
     return m ? [m[1], m[2]] : [text || '', ''];
@@ -10932,13 +10940,59 @@ function addTouchHandlers(el, down, move, up) {
     b.title = (o && o.title) || sel.title || '';
     b.disabled = sel.disabled;
   }
-  function ddItems() { return ddPop ? [...ddPop.querySelectorAll('.dd-it')] : []; }
+  // the options the filter leaves (the keys walk only those)
+  function ddItems() { return ddPop ? [...ddPop.querySelectorAll('.dd-it:not([hidden])')] : []; }
   function ddSetHl(i) {
     const it = ddItems();
-    if (!it.length) return;
+    if (ddPop) ddPop.querySelectorAll('.dd-it.hl').forEach(x => x.classList.remove('hl'));
+    if (!it.length) { ddHl = -1; return; }
     ddHl = Math.max(0, Math.min(it.length - 1, i));
-    it.forEach((x, k) => x.classList.toggle('hl', k === ddHl));
+    it[ddHl].classList.add('hl');
     it[ddHl].scrollIntoView({block: 'nearest'});
+  }
+  // an option stays when every word of the query is in its data-k (name +
+  // details, group, description, plugin id); a group without one hides
+  function ddFilter() {
+    if (!ddPop) return;
+    const list = ddPop.querySelector('.dd-list');
+    const q = ddPop.querySelector('.dd-q').value.toLowerCase().split(/\s+/).filter(Boolean);
+    let grp = null, n = 0, top = null;
+    for (const el of list.children) {
+      el.classList.remove('dd-top');
+      if (el.classList.contains('dd-grp')) { grp = el; el.hidden = true; }
+      else if (el.classList.contains('dd-it')) {
+        el.hidden = !q.every(t => el.dataset.k.includes(t));
+        if (el.hidden) continue;
+        n++;
+        if (grp && grp.hidden) { grp.hidden = false; top = top || grp; }
+        top = top || el;
+      }
+    }
+    if (top) top.classList.add('dd-top');   // no rule above the first heading left
+    list.querySelector('.dd-none').hidden = n > 0;
+    if (q.length) list.scrollTop = 0;
+    // typed: the first option of the best tier - 0 its name or id starts
+    // with the query, 1 every word is in its name / details / id (data-n),
+    // 2 matched by group / description only - so "dm" is DMR, not D-STAR
+    const it = ddItems(), qs = q.join(' ');
+    const tier = x => {
+      const nm = x.dataset.n, v = x.dataset.v.toLowerCase(), id = v.startsWith('plugin:') ? v.slice(7) : v;
+      return nm.startsWith(qs) || id.startsWith(qs) ? 0 : q.every(t => nm.includes(t)) ? 1 : 2;
+    };
+    let c = q.length ? -1 : it.findIndex(x => x.classList.contains('cur'));
+    if (q.length) for (let i = 0, best = 3; i < it.length && best > 0; i++) { const t = tier(it[i]); if (t < best) { best = t; c = i; } }
+    ddSetHl(c >= 0 ? c : 0);
+  }
+  // below the button its top stays put; above it its bottom stays on the
+  // button, so a list the filter shrinks doesn't float away. fit: re-clamp
+  // the height to the room on that side (the window got shorter)
+  function ddPlace(fit) {
+    const b = ddOpenSel && ddOpenSel.__dd;
+    if (!ddPop || !b) return;
+    const z = parseFloat(ddPop.style.zoom) || 1, r = b.getBoundingClientRect(), m = 8, vh = window.innerHeight;
+    if (fit) ddPop.style.maxHeight = (Math.max(120, (ddUp ? r.top : vh - r.bottom) - 2 - m) / z) + 'px';
+    if (ddUp) { ddPop.style.top = ''; ddPop.style.bottom = ((vh - r.top + 2) / z) + 'px'; }
+    else { ddPop.style.bottom = ''; ddPop.style.top = ((r.bottom + 2) / z) + 'px'; }
   }
   function ddOpen(sel) {
     ddClose();
@@ -10946,18 +11000,21 @@ function addTouchHandlers(el, down, move, up) {
     if (!b || b.disabled) return;
     const pop = document.createElement('div');
     pop.className = 'dd-pop';
-    pop.setAttribute('role', 'listbox');
-    let html = '', idx = 0, cur = -1;
-    const item = o => {
-      if (o.value === sel.value) cur = idx;
-      idx++;
-      return `<div class="dd-it${o.value === sel.value ? ' cur' : ''}" role="option" data-v="${digEsc(o.value)}" title="${digEsc(o.title || '')}">${ddLabelHtml(o.textContent)}</div>`;
+    let html = '';
+    const item = (o, g) => {
+      const v = o.value, id = v.startsWith('PLUGIN:') ? v.slice(7) : v;
+      const n = (o.textContent + ' ' + id).toLowerCase(), k = [o.textContent, g, o.title, id].join(' ').toLowerCase();
+      return `<div class="dd-it${v === sel.value ? ' cur' : ''}" role="option" data-v="${digEsc(v)}" data-n="${digEsc(n)}" data-k="${digEsc(k)}" title="${digEsc(o.title || '')}">${ddLabelHtml(o.textContent)}</div>`;
     };
     for (const c of sel.children) {
-      if (c.tagName === 'OPTGROUP') html += `<div class="dd-grp">${digEsc(c.label)}</div>` + [...c.children].map(item).join('');
-      else if (c.tagName === 'OPTION') html += item(c);
+      if (c.tagName === 'OPTGROUP') html += `<div class="dd-grp">${digEsc(c.label)}</div>` + [...c.children].map(o => item(o, c.label)).join('');
+      else if (c.tagName === 'OPTION') html += item(c, '');
     }
-    pop.innerHTML = html;
+    // size="1": the field mustn't widen a narrow list
+    pop.innerHTML = '<input type="text" class="dd-q" size="1" placeholder="Type to filter…" autocomplete="off" spellcheck="false" aria-label="Filter the decoders">' +
+      `<div class="dd-list" role="listbox">${html}<div class="dd-none" hidden>No matching decoder</div></div>`;
+    const q = pop.querySelector('.dd-q');
+    q.addEventListener('input', ddFilter);
     pop.addEventListener('pointerdown', e => e.stopPropagation());
     pop.addEventListener('click', e => {
       const it = e.target.closest('.dd-it');
@@ -10979,14 +11036,20 @@ function addTouchHandlers(el, down, move, up) {
     pop.style.maxWidth = (Math.min(460, vw - 2 * m) / z) + 'px';
     pop.style.maxHeight = (Math.max(120, Math.max(vh - r.bottom, r.top) - 2 * m) / z) + 'px';
     const pr = pop.getBoundingClientRect();
-    let left = r.left, top = r.bottom + 2;
+    let left = r.left;
     if (left + pr.width > vw - m) left = vw - m - pr.width;
     if (left < m) left = m;
-    if (top + pr.height > vh - m && r.top - pr.height - 2 >= m) top = r.top - pr.height - 2;   // room above: open upwards
+    ddUp = r.bottom + 2 + pr.height > vh - m && r.top - pr.height - 2 >= m;   // room above: open upwards
+    ddVw = vw;
+    // width and side are fixed with the full list: filtering doesn't move it
+    pop.style.width = (pr.width / z) + 'px';
     pop.style.left = (left / z) + 'px';
-    pop.style.top = (top / z) + 'px';
-    ddSetHl(cur >= 0 ? cur : 0);
-    b.focus();
+    ddPlace(false);
+    ddFilter();
+    // a mouse / keyboard user just types; a touch-only device would raise
+    // its on-screen keyboard at every open - there a tap on the field does
+    if (matchMedia('(pointer: fine)').matches) q.focus({preventScroll: true});
+    else b.focus();
   }
   function ddClose() {
     if (ddPop) ddPop.remove();
@@ -10994,6 +11057,7 @@ function addTouchHandlers(el, down, move, up) {
     ddPop = null;
     ddOpenSel = null;
     ddHl = -1;
+    ddUp = false;
   }
   function ddPick(v) {
     const sel = ddOpenSel;
@@ -11010,20 +11074,39 @@ function addTouchHandlers(el, down, move, up) {
   document.addEventListener('pointerdown', e => {
     if (ddPop && !(ddOpenSel && ddOpenSel.__dd && ddOpenSel.__dd.contains(e.target))) ddClose();
   });
+  // the list's keys (capture: the page's shortcuts don't see them). Space
+  // types into the filter; Home / End move the caret once it holds text
   document.addEventListener('keydown', e => {
     if (!ddPop) return;
-    const it = ddItems();
-    if (e.key === 'ArrowDown') ddSetHl(ddHl + 1);
+    const q = ddPop.querySelector('.dd-q'), inQ = e.target === q, it = ddItems();
+    if (inQ && e.isComposing) { e.stopPropagation(); return; }
+    // a character typed with the focus on the button (touch: field not yet
+    // tapped) goes into the filter - the first one isn't lost
+    if (!inQ && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      q.focus({preventScroll: true});
+      q.setRangeText(e.key, q.selectionStart, q.selectionEnd, 'end');
+      ddFilter();
+    }
+    else if (e.key === 'ArrowDown') ddSetHl(ddHl + 1);
     else if (e.key === 'ArrowUp') ddSetHl(ddHl - 1);
-    else if (e.key === 'Home') ddSetHl(0);
-    else if (e.key === 'End') ddSetHl(it.length - 1);
-    else if (e.key === 'Enter' || e.key === ' ') { if (it[ddHl]) ddPick(it[ddHl].dataset.v); }
-    else if (e.key === 'Escape' || e.key === 'Tab') { const s = ddOpenSel; ddClose(); if (e.key === 'Escape' && s && s.__dd) s.__dd.focus(); if (e.key === 'Tab') return; }
-    else return;
+    else if ((e.key === 'Home' || e.key === 'End') && !q.value) ddSetHl(e.key === 'Home' ? 0 : it.length - 1);
+    else if (e.key === 'Enter') { if (it[ddHl]) ddPick(it[ddHl].dataset.v); }
+    else if (e.key === 'Escape' || e.key === 'Tab') {
+      // back on the button: Escape stays there, Tab goes on from it
+      const s = ddOpenSel; ddClose();
+      if (s && s.__dd && s.__dd.isConnected) s.__dd.focus();
+      if (e.key === 'Tab') return;
+    }
+    else { if (inQ) e.stopPropagation(); return; }   // typing: the text goes in, no page shortcut sees it
     e.preventDefault();
     e.stopPropagation();
   }, true);
-  window.addEventListener('resize', () => ddClose());
+  // a phone's on-screen keyboard (the filter focused) changes only the
+  // window's height: keep the list and fit it; any other resize closes it
+  window.addEventListener('resize', () => {
+    if (ddPop && window.innerWidth === ddVw && document.activeElement === ddPop.querySelector('.dd-q')) ddPlace(true);
+    else ddClose();
+  });
   // a scroll moves the button away from under the list - except the list's own
   window.addEventListener('scroll', e => { if (ddPop && !(e.target instanceof Node && ddPop.contains(e.target))) ddClose(); }, true);
 
@@ -12257,8 +12340,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // button showed its new state only after a click elsewhere. The focused
     // button gets the focus back (the same one by position)
     const ae = document.activeElement, inTop = ae && topEl.contains(ae);
-    // (a clicked link - the incidents' OpenStreetMap attribution - keeps the focus too)
-    const editing = inTop && ((ae.tagName !== 'BUTTON' && ae.tagName !== 'A') || (ddOpenSel && topEl.contains(ddOpenSel)));
+    // (a clicked link - the incidents' OpenStreetMap attribution - keeps the focus too).
+    // An open mode list holds it wherever the focus is (its filter is in body)
+    const editing = (ddOpenSel && topEl.contains(ddOpenSel)) || (inTop && ae.tagName !== 'BUTTON' && ae.tagName !== 'A');
     if (force || (topEl.dataset.html !== top && !editing)) {
       const btns = inTop ? [...topEl.querySelectorAll('button')] : [];
       const bi = btns.indexOf(ae);
