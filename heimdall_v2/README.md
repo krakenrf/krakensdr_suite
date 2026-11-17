@@ -165,7 +165,7 @@ stability cooldown.
 
 Scalar phase compensation aligns each channel at the band *center* only; residual
 IF-filter group-delay differences and sub-sample lag leave a few degrees of error at
-the band edges. The optional **Per-Bin Phase Calibration** mode (web UI checkbox,
+the band edges. The optional **Per-Bin Phase Calibration** mode (web UI switch "Per-bin EQ",
 **OFF by default**) fixes this band-wide: after scalar convergence it accumulates the
 per-bin cross-spectrum `⟨Xᵢ(f)·conj(X_ref(f))⟩` over an extra window (noise still on),
 designs a short complex **phase-only equalizing FIR** per channel
@@ -223,14 +223,17 @@ surfaced in the control-port status; a recovery that never converges is aborted 
 
 ### Web interface (port 8070)
 
-uWebSockets serves `index.html` (loaded at runtime — edit and refresh, no rebuild)
-on `GET /`, and a WebSocket that **broadcasts a binary correlation/state frame every
+uWebSockets serves `index.html` (read once at startup — edit and restart heimdall,
+no rebuild) on `GET /`, and a WebSocket that **broadcasts a binary correlation/state frame every
 50 ms (20 Hz)**: a header (num elements, correlation size, ref channel, compensation
 active, bias-tee state, per-bin enabled), current frequency/gain/RTL-TCP channel,
 then per-channel scale factors, lags, phases, compensation state, and decimated
-correlation traces. The UI gives frequency/gain control, bias-tee toggle, per-bin
-calibration toggle, RTL-TCP channel selection, and live correlation/compensation
-plots.
+correlation traces. The page (the same dark look as the DoA client's) shows the
+calibration state in its top bar and has cards for the channel table with Check
+Calibration / Full Recalibration, tuning, the noise source and periodic check,
+the element count and antenna bias tees, RTL-TCP, the Wideband board, forward
+compensation, and the live phase and correlation graphs
+(`docs/dev/web-ui.md`).
 
 **Incoming WebSocket commands (text):**
 

@@ -29,7 +29,7 @@ measurements and decisions; when they disagree with the code, the code wins.
 
 ```
 heimdall_v2/      server (C++20): dongles -> coherent, phase-compensated IQ
-  src/{core,sdr,dsp,net,web}/   config.h   index.html (web UI, read at runtime)
+  src/{core,sdr,dsp,net,web}/   config.h   index.html (web UI, read once at startup)
 kraken_doa_v2/    client: spectrum, VFOs, audio, MUSIC DoA, decoders, map, recorder, AI assistant
   src/  include/config.hpp  kraken_doa.html (web UI, read at runtime)
   plugins/<id>/   decoder plugins, each its own executable
@@ -62,7 +62,9 @@ build_windows.bat   run.bat   windows/package.sh                  # Windows buil
 
 - Use at most 3 parallel jobs on a Pi (`-j3`, never `-j4` / `nproc`): more
   can crash it (install.sh picks 1-3 jobs by RAM).
-- The web UIs are read at runtime: edit and refresh the browser, no rebuild.
+- The web UIs need no rebuild. kraken_doa reads its page per request (edit,
+  refresh the browser); heimdall reads `index.html` once at startup (edit,
+  restart heimdall).
 - Builds use `-march=native` / `-mcpu=native`, so build on the machine that
   runs the result (a Pi 5 build fails on a Pi 4 with illegal instruction). A
   flags stamp (`build/.flags`, `obj/.flags`, `plugins/lib/build/.flags`)

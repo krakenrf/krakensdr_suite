@@ -1628,9 +1628,9 @@ kraken_doa_v2/CLAUDE.md *Arbitrary VFO bandwidth*):
 ### Modifying Web UI
 
 **Server UI** (`heimdall_v2/index.html`):
-- Loaded at runtime by `html_loader.cpp`
+- Loaded once at startup by `html_loader.cpp` and kept in memory
 - Supports template variable substitution
-- No rebuild needed, just refresh browser
+- No rebuild needed, but heimdall must be restarted to serve an edited page
 
 **Client UI** (`kraken_doa_v2/kraken_doa.html`):
 - Loaded at runtime

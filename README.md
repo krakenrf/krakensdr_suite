@@ -132,8 +132,8 @@ shows the error (for missing packages, run `./install.sh` once).
 runs `run.sh` at every boot; `./install-pi-service.sh --uninstall` removes
 it. For a hardware variant: `VARIANT_FLAGS=--wideband ./install-pi-service.sh`.
 
-**Version.** The bottom of the KrakenSDR DOA sidebar and of Heimdall's page
-show the version of the code, e.g. `r294 · 63a4917` (commit count and commit;
+**Version.** The bottom of the KrakenSDR DOA sidebar and the top right of
+Heimdall's page show the version of the code, e.g. `r294 · 63a4917` (commit count and commit;
 `· modified` = files changed locally; hover for the date and branch). It
 follows every `git pull` by itself; `heimdall_v2/heimdall --version` prints it
 too. Please include it when you report a problem.

@@ -127,8 +127,9 @@ is injected (`appver::set_runner`).
   re-checked and the text rebuilt), sends it as `system_status.heimdall_version`
   (dropped after 30 s without one), and the tooltip says `heimdall: the same`,
   `heimdall r290 · abcdef1` or `heimdall: version not known`.
-- heimdall page: `heimdall r294 · 63a4917` as the last line of the page
-  (`#version-line`), details in its `title`, from the web `STATE` message.
+- heimdall page: `heimdall r294 · 63a4917` at the right of the top bar
+  (`#version-line`; the last line of the page until 2026-11-18), details in
+  its `title`, from the web `STATE` message.
 - heimdall 8092: `version` in the status broadcast and the `get_status` reply
   (`gr-krakensdr_v2/docs/heimdall_v2_control_protocol.md`).
 - `--version` on both programs: the text, then a detail line; exit 0.
