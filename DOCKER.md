@@ -196,7 +196,7 @@ docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordin
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
                                               cdecoder, sdecoder - README "Digital voice codecs")
 docker-data/whisper_models/                   Voice to Text speech models (the sidebar's "⬇ Get")
-docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (the 🗣 Voice tab)
+docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (🗣 Transcription)
 docker-data/kraken_doa/decoder_logs/          Decoder Logging files, and in voice_clips/ the
                                               transcripts' audio (Opus, kept as many days as the logs)
 ```

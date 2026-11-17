@@ -6,7 +6,7 @@ loaded automatically. *Italic* topic names refer to the other files in this
 folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
-**🗣 Voice to Text (`src/voice2text.cpp`, `include/voice2text*.hpp`, `transcribe/`, sidebar "🗣 Voice to Text", the 🗣 Voice tab):**
+**🗣 Voice to Text (`src/voice2text.cpp`, `include/voice2text*.hpp`, `transcribe/`, sidebar "🗣 Voice to Text", the 🗣 Transcription panel):**
 - What is said on a VFO, written down by a LOCAL, free model: whisper.cpp
   (MIT, pinned v1.9.4 = `WHISPER_COMMIT` in `transcribe/setup.sh`) with
   OpenAI's Whisper models (ggml-*.bin from huggingface.co/ggerganov/whisper.cpp)
@@ -217,15 +217,23 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   language row only for multilingual models, cores + speed, prompt, VAD /
   keep ticks, status, "To disk" + `v2tLogOn` = DECODER_LOG_TYPES + voice,
   DECODER_LOG:1), VFO cards (`dec-v2t-<id>` + state, `v2tRenderCards` from
-  updateDecimatorList and every status), info panel tab `infoTab = 'voice'`
+  updateDecimatorList and every status), the 🗣 Transcription panel - the
+  panel under the waterfall with `infoTab = 'voice'`. It is a feature of its
+  own there, not a tab beside the decoders' (it was one, "🗣 Voice", until
+  2026-11-17; the user: it is not a decoder): the rail's 🗣 Transcription
+  button (`#rail-voice`, `railPanel('voice')`) opens the panel with the
+  transcripts alone, under the name "🗣 Transcription" in place of the tab
+  strip (`infoRenderTabs`), and 🔐 Decoders shows the decoders' tabs without
+  it - *sidebar.md*, "Top bar and rail".
   (`#info-body-voice`, `v2tRenderTab`: newest first, 400 rows, search with
   `<mark>` on the raw text, VFO filter, ▶ `v2tPlay` - fetch with the token
   -> blob -> Audio; a browser without Ogg Opus (`canPlayType`, older
   Safari): `v2tDecodeOgg` (Ogg pages -> packets, pre-skip from OpusHead ->
   the live audio's opus-decoder.min.js) -> WebAudio; the box's clip line
   `#v2t-clips` (count, MB, Keep days, folder, low disk / errors), ⬇ CSV `v2tExport` - cells starting = + - @ get a ' so a
-  spreadsheet doesn't run them, Clear), tab label with a red dot while
-  recording and a count of transcripts that came while hidden
+  spreadsheet doesn't run them, Clear), the panel's name with a red dot while
+  recording; the count of transcripts that came while the panel was closed
+  or showed the decoders is on the rail's button (`#rail-voice-n`, `railSync`)
 - Lobes on the 🗺 map (kraken_doa.html, in the "🗣 VOICE TO TEXT" block;
   state `v2tLobes` (id -> {L, col, peak, el}) / `v2tLobeWant` in the globals
   block - mapDrawNow -> `v2tLobeDraw` runs before the section is

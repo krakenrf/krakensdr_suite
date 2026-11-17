@@ -464,7 +464,8 @@ shows them all). The box also sets the CPU
 cores the model may use and the "Words to expect": callsigns and names
 spelled as you want them.
 
-- Transcripts appear in the **🗣 Voice** tab a few seconds after each
+- Transcripts appear in the **🗣 Transcription** panel (its button is on the
+  rail at the right edge of the page) a few seconds after each
   transmission ends. Long transmissions and broadcasts come in parts.
 - In Coherent mode with DoA on, each transcript keeps its bearing. Click it
   to draw that transmission's lobe on the map.

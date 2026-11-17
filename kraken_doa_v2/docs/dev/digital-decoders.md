@@ -248,7 +248,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   "(details)"; the tab's tooltip has the whole name). Test (scratchpad
   e2e/t_dd_ui.py, headless Chromium, the real plugin list). The bottom panel has one tab per decoder MODE
   (plugin), not per VFO: `infoTab` = `dig:<plugin>` (the AI tab is gone -
-  the assistant has its own dock)
+  the assistant has its own dock; Voice to Text is no tab here either - it
+  has the panel to itself, *voice-to-text.md*)
   (`infoPanelOpen('dec:<vfo>')` still works: the tab that VFO is in,
   `digTabOfVfo`). A VFO is in tab P while it runs P fixed or Auto detect
   locked onto P (`digVfoPlugin`, `digTabVfos`). There is NO Auto detect tab:

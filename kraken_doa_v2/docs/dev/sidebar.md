@@ -177,7 +177,7 @@ page got the same treatment on 2026-11-16.
   function; `wide` for long texts - `initHelpTips` places the popup, also
   from inside the map's panels and the tabs under the waterfall).
 - **Panels with a long "how it works" note** (Viewshed's two modes, Range,
-  Replay, a decoder's description, the Voice tab) carry it in a `?` next to
+  Replay, a decoder's description, Transcription) carry it in a `?` next to
   the panel's title or first row - never as a paragraph in the panel.
 - **States** are two to five words with the reason in the `title`: the DF
   panel's `RDF_STATE` is `[text, tooltip]`, the range's `why` has a `tip`,
@@ -290,11 +290,15 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   the title, which is now "Spectrum · <demods heard>" (`updatePlotTitle`).
   Coherent mode only. The phone layout no longer moves it into the drawer.
 - **The rail** (`#rail`, at the right edge after the assistant's dock): one
-  button per panel - `#map-btn` (`mapToggle`), `#rail-dec` / `#rail-voice`
-  (`railPanel`: opens the panel under the waterfall on that tab, or closes
-  it when it already shows it) - lit while their panel shows (`railSync`,
-  called from `infoRenderTabs` and `infoPanelClose`; 🗣 carries the count of
-  unseen transcripts), and `#rail-ai`, the assistant's, always there
+  button per panel - `#map-btn` (`mapToggle`), `#rail-dec` (🔐 Decoders) /
+  `#rail-voice` (🗣 Transcription - "Voice" until 2026-11-17)
+  (`railPanel`: opens the panel under the waterfall on that feature, or
+  closes it when it already shows it; the panel shows the decoders' tabs or
+  the transcripts alone, never both - *voice-to-text.md*) - lit while their
+  panel shows (`railSync`, called from `infoRenderTabs` and
+  `infoPanelClose`; 🗣 carries the count of unseen transcripts; on the
+  phone the three share a row of the drawer's Display box and wrap when it
+  is too narrow), and `#rail-ai`, the assistant's, always there
   (`aiDockToggle`; lit while its dock is open - by CSS from the body
   classes; while the assistant is not set up on the receiver it opens a
   dock that only says how to set it up - *ai-assistant.md*). It replaces the collapsed assistant's strip (`#ai-strip`) and

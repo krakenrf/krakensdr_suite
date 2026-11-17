@@ -99,7 +99,9 @@ operating mode**, and at the right the status chips (calibration - with the cool
 countdown -, connection, and the scanner while one runs) above the live hardware
 stats. The antenna whose signal the spectrum shows is chosen on the spectrum's
 header. The rail at the right edge opens and closes the panels: **🗺 Map**,
-**🔐 Decoders**, **🗣 Voice** and, when enabled, the **🤖 Assistant**.
+**🔐 Decoders**, **🗣 Transcription** and the **🤖 Assistant**. Decoders and
+Transcription share the panel under the waterfall, which shows one of them at
+a time: the decoders with one tab each, or the transcripts by themselves.
 
 | Section | What it does |
 |---------|--------------|

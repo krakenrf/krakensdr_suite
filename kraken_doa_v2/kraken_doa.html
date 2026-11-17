@@ -348,7 +348,6 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .v2t-play {background:var(--s3);border:1px solid var(--l2);color:var(--t1);border-radius:3px;font-size:10px;padding:0 5px;cursor:pointer;line-height:16px}
 .v2t-play:hover {border-color:var(--ac);color:#fff}
 .v2t-play.on {background:#0068bb;border-color:var(--ac);color:#fff}
-.v2t-new {background:#0068bb;color:#fff;border-radius:8px;padding:0 5px;font-size:10px}
 .v2t-badge {font-size:10px;padding:1px 6px;border-radius:8px;margin-left:auto;margin-right:6px;background:#195e2b;color:var(--ok-t2)}
 .v2t-badge:empty {display:none}
 .v2t-badge.warn {background:#5a4520;color:var(--warn-t2)}
@@ -1381,6 +1380,8 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .info-tab.sel {background:var(--ac);border-color:var(--ac-h);color:#fff}
 .info-close {color:var(--t4);border-radius:4px;padding:1px 6px}
 .info-close:hover {background:var(--l3);color:var(--t0)}
+/* the panel's name while it shows the transcripts (no tabs then) */
+.info-title {font-size:12.5px;font-weight:600;color:var(--t1);padding:3px 2px;white-space:nowrap}
 .dig-log,.dig-table-wrap {background:var(--s2);border-color:var(--l1);border-radius:5px}
 /* map */
 .map-btn,.map-seg button {background:rgba(31,37,45,.92);border-color:var(--l4);color:var(--t0);border-radius:5px}
@@ -1502,8 +1503,9 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .top-bar .tb-cog {align-self:center;width:42px;height:42px;min-height:0;font-size:24px;justify-self:end}
   .top-bar .tb-group.fld {display:flex;flex-direction:row;align-items:center;gap:6px}
   .top-bar .tb-group.fld > .tb-label {font-size:13px;font-weight:normal;letter-spacing:0;text-transform:none;color:var(--t3)}
-  #mobile-display-slot .rail-panels {display:flex;flex-direction:row;justify-content:flex-end;gap:6px;margin-top:10px}
-  #mobile-display-slot .rail-btn {flex-direction:row;gap:6px;padding:0 12px;min-height:34px;background:var(--l2);border-color:var(--l4);color:var(--t0);font-size:13px}
+  /* the three share the row (they wrap on a very narrow phone) */
+  #mobile-display-slot .rail-panels {display:flex;flex-direction:row;flex-wrap:wrap;gap:5px;margin-top:10px}
+  #mobile-display-slot .rail-btn {flex:1 1 auto;justify-content:center;flex-direction:row;gap:5px;padding:0 8px;min-height:34px;background:var(--l2);border-color:var(--l4);color:var(--t0);font-size:13px}
   #mobile-display-slot .rail-btn .v {writing-mode:horizontal-tb;transform:none;letter-spacing:0}
   #mobile-display-slot .rail-btn.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
   /* (the drawer is not the desktop's hidden sidebar) */
@@ -2391,7 +2393,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
     <!-- 🗣 Voice to Text (voice2text.cpp, transcribe/) - all modes -->
     <div class="sb-section" data-sb="voice-to-text" id="v2t-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title">🗣 Voice to Text</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>🗣 Transcribe</b> box is ticked (on the VFO cards above) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>🗣 Voice</b> tab under the waterfall - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the <b>Decoder Logging</b> files when that is on (type "Voice transcripts").</span></span></h3>
+        <h3><span class="sb-title">🗣 Voice to Text</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>🗣 Transcribe</b> box is ticked (on the VFO cards above) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>🗣 Transcription</b> panel under the waterfall (its button is on the right-hand rail) - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the <b>Decoder Logging</b> files when that is on (type "Voice transcripts").</span></span></h3>
         <span class="v2t-badge" id="v2t-badge"></span>
         <span class="sb-toggle"></span>
       </div>
@@ -2423,7 +2425,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
           <button class="btn sm" type="button" onclick="v2tApplyPrompt()" title="Use these words">Apply</button>
         </div>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#cdd5df;margin-top:4px" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><input type="checkbox" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"> Skip non-speech</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#cdd5df;margin-top:2px" title="Keep each transcript's audio to play it back in the Voice tab: Opus files (~7 MB an hour of speech) in the Decoder Logging folder (voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><input type="checkbox" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"> Keep the audio</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#cdd5df;margin-top:2px" title="Keep each transcript's audio to play it back in the Transcription panel: Opus files (~7 MB an hour of speech) in the Decoder Logging folder (voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><input type="checkbox" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"> Keep the audio</label>
         <div id="v2t-clips" style="font-size:11px;color:#7f8995;margin:1px 0 0 22px;word-break:break-all"></div>
         <div id="v2t-status" style="margin-top:6px">
           <div class="kv"><span>Status</span><span id="v2t-state">&mdash;</span></div>
@@ -2864,7 +2866,8 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
     <div class="ai-dk-foot" id="ai-dk-foot"></div>
   </aside>
   <!-- The rail at the right edge: one button per panel - 🗺 Map (the right-hand
-       pane), 🔐 Decoders and 🗣 Voice (the panel under the waterfall), lit
+       pane), 🔐 Decoders and 🗣 Transcription (the panel under the waterfall,
+       which shows one or the other), lit
        while open - and 🤖 Assistant, always there: it opens / collapses the
        assistant's dock, or, while the assistant is not set up on the
        receiver, a dock that says how to set it up. The phone layout has no rail:
@@ -2874,7 +2877,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
     <span class="rail-panels" id="rail-panels">
       <button type="button" class="rail-btn" id="map-btn" onclick="mapToggle()" title="Street / satellite map in the right-hand pane: positions the decoders report (e.g. ADS-B aircraft)"><span class="i">🗺</span><span class="v">Map</span></button>
       <button type="button" class="rail-btn" id="rail-dec" onclick="railPanel('dec')" title="Digital decoders: one tab per decoder, in the panel under the waterfall"><span class="i">🔐</span><span class="v">Decoders</span></button>
-      <button type="button" class="rail-btn" id="rail-voice" onclick="railPanel('voice')" title="Voice to Text: what was said on the VFOs with Transcribe ticked"><span class="i">🗣</span><span class="v">Voice</span><span class="n" id="rail-voice-n"></span></button>
+      <button type="button" class="rail-btn" id="rail-voice" onclick="railPanel('voice')" title="Transcription (Voice to Text): what was said on the VFOs with Transcribe ticked"><span class="i">🗣</span><span class="v">Transcription</span><span class="n" id="rail-voice-n"></span></button>
     </span>
     <button type="button" class="rail-btn rail-ai" id="rail-ai" onclick="aiDockToggle()" title="AI assistant"><span class="i">🤖</span><span class="ai-dot" id="ai-strip-dot">&#9679;</span><span class="v">Assistant</span></button>
   </nav>
@@ -3149,7 +3152,7 @@ let sfSpecRects = [], sfMarkerConsumed = false;
 // drawBox keeps the hand cursor over a saved-frequency tag / AI badge with it
 let fpHover = null;
 // 🗣 Voice to Text (see 🗣 VOICE TO TEXT): the backend's status, the
-// transcripts (oldest first), how many came while the Voice tab wasn't shown
+// transcripts (oldest first), how many came while the Transcription panel wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
 let v2tStatus = null, v2tList = [], v2tUnseen = 0;
 // The demod a VFO had before it was switched to Digital and whether it was
@@ -8846,7 +8849,7 @@ function updateDecimatorList(info) {
       </div>
       <div class="dec-row dec-dig-state" id="dec-dig-state-${dec.id}"></div>
       <div class="dec-row">
-        <label class="dec-chk" title="Voice to Text: write down what is said on this VFO (its analog demod, or its digital decoder's voice). Transcripts: the 🗣 Voice tab under the waterfall.">
+        <label class="dec-chk" title="Voice to Text: write down what is said on this VFO (its analog demod, or its digital decoder's voice). Transcripts: 🗣 Transcription on the right-hand rail.">
           <input type="checkbox" id="dec-v2t-${dec.id}" ${dec.transcribe ? 'checked' : ''} onchange="v2tToggle(${dec.id}, this.checked)">
           <span>🗣 Transcribe</span>
         </label>
@@ -10958,7 +10961,7 @@ const MOBILE_RELOCATIONS = [
   {id: 'tb-step', slot: 'mobile-controls-slot'},
   {id: 'tb-audio', slot: 'mobile-controls-slot'},
   {id: 'wf-controls-bar', slot: 'mobile-display-slot'},
-  {id: 'rail-panels', slot: 'mobile-display-slot'},   // 🗺 Map / 🔐 Decoders / 🗣 Voice (the phone has no rail)
+  {id: 'rail-panels', slot: 'mobile-display-slot'},   // 🗺 Map / 🔐 Decoders / 🗣 Transcription (the phone has no rail)
 ];
 function applyMobileRelocation() {
   const mobile = mobileLayoutMQ.matches;
@@ -12786,7 +12789,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (tn) { tn.textContent = bad ? '⚠ ' + bad : ''; tn.title = bad ? bad + ' plugin(s) need attention' : ''; }
   }
 
-  // --- Bottom panel (under the waterfall): one tab per decoder mode + Voice --
+  // --- Bottom panel (under the waterfall): the decoders OR the transcripts ---
+  // Two features share the panel and it shows one of them: the digital
+  // decoders, one tab per decoder mode (rail: 🔐 Decoders), or Voice to
+  // Text's transcripts, by themselves under the name "🗣 Transcription"
+  // (rail: 🗣 Transcription). Transcription was a tab beside the decoders'
+  // until 2026-11-17; the user asked for it to stand apart - it is not a
+  // decoder.
   // infoTab: 'dig:<plugin id>' | 'voice'. Also accepted by
   // infoPanelOpen: 'dec' (the shown / first decoder tab), 'dec:<vfo id>' (the
   // tab that VFO's decoder is in)
@@ -12831,8 +12840,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     railSync();
   }
 
-  // The rail's 🔐 Decoders / 🗣 Voice: open the panel on that tab - or close
-  // it when it already shows it. railSync lights the button of what is shown
+  // The rail's 🔐 Decoders / 🗣 Transcription: open the panel on that feature
+  // - or close it when it already shows it. railSync lights the button of what is shown
   // and puts the count of unseen transcripts on 🗣.
   function railPanel(kind) {
     const p = $id('info-panel'), open = !!p && p.style.display !== 'none';
@@ -12860,12 +12869,18 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (ids.some(id => (digStatus[id] || {}).state === 'receiving')) return ['#40ae67', 'receiving'];
     return ['#f4c170', 'searching'];
   }
-  // tab buttons: one per decoder mode, then Voice
+  // The panel's top line: the decoders' tabs (one per decoder mode), or the
+  // transcripts' name - with a dot while a VFO's transmission is being
+  // collected. The count of transcripts that came while the panel showed
+  // something else is on the rail's button (railSync).
   function infoRenderTabs() {
     const el = $id('info-tab-list');
     if (!el) return;
     const list = digTabList();
-    let html = list.map(t => {
+    const v2tRec = v2tStatus && (v2tStatus.vfos || []).some(v => v.rec);
+    let html = infoTab === 'voice' ? '<span class="info-title" title="Voice to Text: what was said on the VFOs with Transcribe ticked">' +
+        (v2tRec ? '<span style="color:#d8625c">&#9679;</span> ' : '') + '🗣 Transcription</span>'
+      : list.map(t => {
       const ids = digTabVfos(t);
       const [col, what] = digTabState(t);
       const name = digName(t);
@@ -12874,16 +12889,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       return `<button type="button" class="info-tab${sel}${ids.length ? '' : ' idle'}" onclick="infoPanelOpen('dig:${digEsc(t)}')" title="${digEsc(name)}: ${what}">` +
              `<span style="color:${col}">&#9679;</span> ${digEsc(digShort(name))}${vfos}</button>`;
     }).join('');
-    if (!list.length) {
+    if (!list.length && infoTab !== 'voice') {
       const sel = infoTab.startsWith('dig:') ? ' sel' : '';
       html = `<button type="button" class="info-tab${sel}" onclick="infoPanelOpen('dec')">🔐 Decoders</button>`;
     }
-    // 🗣 Voice: a dot while a VFO's transmission is being collected, the
-    // count of transcripts that came while another tab was shown
-    const v2tRec = v2tStatus && (v2tStatus.vfos || []).some(v => v.rec);
-    html += `<button type="button" class="info-tab${infoTab === 'voice' ? ' sel' : ''}" onclick="infoPanelOpen('voice')" title="Voice to Text: transcripts">` +
-            (v2tRec ? '<span style="color:#d8625c">&#9679;</span> ' : '') + '🗣 Voice' +
-            (v2tUnseen && infoTab !== 'voice' ? ` <span class="v2t-new">${v2tUnseen}</span>` : '') + '</button>';
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
     railSync();
     // a newly selected tab scrolled into the strip (only on a change - the
@@ -13485,7 +13494,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // --- 🗣 VOICE TO TEXT (voice2text.cpp, {"voice2text":{status | history | new | error}}) ---
   // The backend transcribes the VFOs with Transcribe ticked; this shows its
   // settings (sidebar box), each VFO's tick + state (cards) and the
-  // transcripts (🗣 Voice tab). State: see the globals block.
+  // transcripts (the 🗣 Transcription panel). State: see the globals block.
   const V2T_MAX = 1000;
   const V2T_LANGS = [['auto', 'Detect'], ['en', 'English'], ['mi', 'Māori'], ['de', 'German'], ['fr', 'French'],
     ['es', 'Spanish'], ['it', 'Italian'], ['nl', 'Dutch'], ['pt', 'Portuguese'], ['pl', 'Polish'], ['cs', 'Czech'],

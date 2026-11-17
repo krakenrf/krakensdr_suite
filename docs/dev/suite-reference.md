@@ -892,7 +892,7 @@ leaves it out) with the models in `docker-data/whisper_models/`
   the quietest 100 ms with 0.3 s overlap) - the text follows a broadcast live.
   A pause = 240 ms under a tenth of the median energy, or twice the noise
   floor on hissy audio
-- Out: the 🗣 Voice tab under the waterfall (search, VFO filter, ▶ audio
+- Out: the 🗣 Transcription panel under the waterfall (search, VFO filter, ▶ audio
   clip, CSV), `transcripts.jsonl` (cwd), decoder log type "voice", the
   audio as Ogg Opus 16 kbit/s in the DECODER LOG FOLDER
   (`<dir>/voice_clips/YYYY-MM-DD/<id>.opus`, deleted with Decoder Logging's
