@@ -445,40 +445,39 @@ private:
             resample_field(origin_of(newer));
             std::copy(field_buf_.begin(), field_buf_.begin() + static_cast<std::ptrdiff_t>(active_field_lines) * OUT_W,
                       frame_buf_.begin());
-        } else {   // bob (and the weave fallback before a second field arrives): stretch the newest field to full height
-            video::RasterMap m;
-            m.width = OUT_W;
-            m.height = out_h;
-            m.samples_per_line = spl_use * static_cast<double>(active_field_lines) / out_h;
-            m.samples_per_pixel = spp;
-            m.h_offset = h_off;
-            m.origin = origin_of(newer);
-            video::resample(env_.data(), n, m, frame_buf_.data());
+        } else {   // bob (and the weave fallback before a second field arrives): line-double the newest field
+            // resample at the native line pitch (one row per field line - a
+            // shorter row pitch would start each row part-way through a line),
+            // then interpolate between the field lines to full height
+            resample_field(origin_of(newer));
+            line_double(active_field_lines, out_h);
         }
 
         // render with a per-frame percentile stretch; brightness inverted for
         // negative-AM broadcast (minimum envelope = white)
         acc_.add(frame_buf_.data());
-        video::StretchOpts so;
-        so.invert = !invert_;
-        so.gamma = static_cast<float>(gamma_);
-        if (contrast_ == "high") { so.lo_pct = 2.0f; so.hi_pct = 98.0f; }
-        else if (contrast_ == "full") { so.lo_pct = 0.0f; so.hi_pct = 100.0f; }
-        else { so.lo_pct = 0.5f; so.hi_pct = 99.5f; }
-        acc_.render(pix_, so);
-        if (static_cast<int>(pix_.size()) != OUT_W * out_h) return;
+        if (host.video_wanted()) {   // the render is only for the picture: skip it while nobody watches
+            video::StretchOpts so;
+            so.invert = !invert_;
+            so.gamma = static_cast<float>(gamma_);
+            if (contrast_ == "high") { so.lo_pct = 2.0f; so.hi_pct = 98.0f; }
+            else if (contrast_ == "full") { so.lo_pct = 0.0f; so.hi_pct = 100.0f; }
+            else { so.lo_pct = 0.5f; so.hi_pct = 99.5f; }
+            acc_.render(pix_, so);
+            if (static_cast<int>(pix_.size()) != OUT_W * out_h) return;
 
-        char label[48];
-        std::snprintf(label, sizeof label, "%s %s", st->name, st->system);
-        kp::VideoFrame vf;
-        vf.width = OUT_W;
-        vf.height = out_h;
-        vf.format = 0;   // GRAY8
-        vf.pixels = pix_.data();
-        vf.label = label;
-        vf.quality = quality_;     // host compresses the raw pixels to JPEG at this quality
-        vf.lossless = lossless_;
-        host.video_frame(vf);
+            char label[48];
+            std::snprintf(label, sizeof label, "%s %s", st->name, st->system);
+            kp::VideoFrame vf;
+            vf.width = OUT_W;
+            vf.height = out_h;
+            vf.format = 0;   // GRAY8
+            vf.pixels = pix_.data();
+            vf.label = label;
+            vf.quality = quality_;     // host compresses the raw pixels to JPEG at this quality
+            vf.lossless = lossless_;
+            host.video_frame(vf);
+        }
 
         // facts + lock event + a valid span over the samples that built the frame
         const double px_per_line = rate_ / line_rate;
@@ -539,6 +538,26 @@ private:
         }
     }
 
+    // stretch one resampled field (field_lines rows in field_buf_) to out_h
+    // frame rows: frame row r sits at field row r * field_lines / out_h,
+    // linearly interpolated between its two neighbouring field lines (for the
+    // usual out_h = 2 * field_lines: even rows are the field's lines, odd rows
+    // the mean of the lines above and below; the last row repeats)
+    void line_double(int field_lines, int out_h) {
+        if (field_lines < 1 || out_h < 1) return;
+        for (int r = 0; r < out_h && r < acc_h_; r++) {
+            const double y = static_cast<double>(r) * field_lines / out_h;
+            int k0 = static_cast<int>(y);
+            if (k0 > field_lines - 1) k0 = field_lines - 1;
+            const int k1 = std::min(k0 + 1, field_lines - 1);
+            const float f = static_cast<float>(y - k0);
+            const float* a = field_buf_.data() + static_cast<size_t>(k0) * OUT_W;
+            const float* b = field_buf_.data() + static_cast<size_t>(k1) * OUT_W;
+            float* o = frame_buf_.data() + static_cast<size_t>(r) * OUT_W;
+            for (int c = 0; c < OUT_W; c++) o[c] = a[c] + (b[c] - a[c]) * f;
+        }
+    }
+
     void lose_lock() {
         confirms_ = 0;
         pending_name_.clear();
@@ -561,6 +580,7 @@ private:
     // (negative-AM: sync dark, white bright; the invert option flips it). With
     // no sync the image rolls / tears - correct and expected.
     void emit_free_run() {
+        if (!host.video_wanted()) return;   // display only, and nobody is watching
         size_t cnt = 0;
         const video::TvStandard* tv = video::tv_standards(&cnt);
         const video::TvStandard* st = &tv[0];        // auto / pal / secam -> PAL geometry

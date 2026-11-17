@@ -33,6 +33,7 @@
 #include "video_raster.hpp"   // plugins/lib: the shared reconstruction backbone
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -52,6 +53,18 @@ constexpr double FRAME_PEAK_MIN = 0.20;   // frame autocorr peak (normalized)
 constexpr double LINE_PEAK_MIN = 0.12;    // line-comb autocorr peak
 constexpr int MIN_VTOTAL = 400;           // plausible total lines (blanking included)
 constexpr int MAX_VTOTAL = 2400;          // >= 4K's 2250 (3840x2160 CTA-861)
+// Manual mode's line-period search (manual_line_period): the comb score a line
+// count must reach, by how much it must beat the runner-up, and how many lines
+// off the true frame the period finder's frame peak may be
+constexpr double MAN_COMB_MIN = 0.02;
+constexpr double MAN_COMB_RATIO = 1.3;
+constexpr int MAN_ALIAS_LINES = 8;
+// a known timing fits when the measured line period gives its refresh to this
+// (about half a line per frame at 1000 lines; a display's clock is far closer)
+constexpr double MAN_FIT_TOL_HZ = 0.03;
+// Manual timing with nothing that gives the pixels per line (no resolution,
+// no pixel clock): htotal ~ this x vtotal (DMT / CVT / CTA rasters run 1.5 - 2.1)
+constexpr double MAN_HT_PER_VT = 1.8;
 constexpr double LINE_RATE_MIN = 30000;   // horizontal line rate search (Hz): the line
 constexpr double LINE_RATE_MAX = 140000;  // period lies in [fs/MAX, fs/MIN] (e.g. 17..80 @ 2.4 MHz)
 constexpr double REFRESH_GATE = 0.08;     // a mode's refresh must be this close to the coarse frame rate
@@ -66,20 +79,25 @@ constexpr double COV_WIN_S = 0.20;        // one DoA covariance packet per this 
 constexpr double BLANK_S = 0.5;           // re-find the blanking offset this often
 
 // Default longest-side cap for the EMITTED picture (option max_display_px).
-// Display / transmission ONLY: reconstruction and mode detection always use the
-// monitor's full geometry (htotal_ x vtotal_ / the active area), so a 4K display
-// is still fully received and reconstructed - send_video() box-downscales only
-// the OUTPUT frame when it exceeds this. 1280 keeps the transmitted picture small
-// and cheap to JPEG-encode; raise it (up to native 3840) for a sharper emitted
-// picture, lower it for less bandwidth / CPU. On a build without libjpeg the host
-// can only send RAW pixels under kp::wire::MAX_PAYLOAD (1 MiB), where a GRAY8
-// frame over ~1000x1000 is dropped - keep this modest on such a build.
+// Display / transmission ONLY: mode detection uses the full htotal_ x vtotal_
+// raster and the reconstruction every line and every envelope sample, so a 4K
+// display is still fully received and reconstructed - send_video() scales only
+// the OUTPUT frame down when it exceeds this. 1280 keeps the transmitted picture
+// small and cheap to JPEG-encode; raise it (up to native 3840) for a sharper
+// emitted picture, lower it for less bandwidth / CPU. On a build without libjpeg
+// the host can only send RAW pixels under kp::wire::MAX_PAYLOAD (1 MiB), where a
+// GRAY8 frame over ~1000x1000 is dropped - keep this modest on such a build.
 constexpr int DEFAULT_MAX_DISPLAY_PX = 1280;
 
-// Above ~1440p the per-frame resample/accumulate/render cost grows with the
-// output pixel count, so the accumulate and video cadences are stretched to keep
-// the per-second pixel work bounded; at or below this (~3.7 Mpx) the cadence is
-// unchanged, so the default-resolution performance does not regress.
+// The reconstruction's work raster has one row per display line but only this
+// many columns per envelope sample across the line (work_width()): at 2.4 MHz
+// a line holds ~18-60 samples whatever the display's width, so more columns
+// only repeat the linear interpolation between them.
+constexpr double RECON_OVERSAMPLE = 8.0;
+
+// Above ~1440p-worth of work-raster pixels the accumulate and video cadences are
+// stretched to keep the per-second pixel work bounded. With the sample-capped
+// work raster (RECON_OVERSAMPLE) no table mode comes near it - kept as a guard.
 constexpr double CADENCE_PX_REF = 2560.0 * 1440.0;
 
 // Free-run preview (display only): while NOT locked, map the raw magnitude
@@ -93,6 +111,55 @@ constexpr double FREE_RUN_S = 1.0 / 12.0;   // ~12 fps preview cadence
 constexpr int FREE_RUN_MAX_PX = 720;        // longest-side cap for the preview raster
 constexpr int FREE_RUN_QUALITY = 50;        // lower JPEG quality for the preview
 constexpr const char* FREE_RUN_DEFAULT_MODE = "1024x768@60";   // assumed geometry when none is chosen
+
+// Timing graphs beside the video display (Host::plot, PLOT_BESIDE_VIDEO): the
+// frame-period autocorrelation against refresh rate, and how well each total
+// line count explains the signal. A click on one sets the `fps` / `lines`
+// option (and Manual mode). Display only, and only while a viewer watches the
+// video (Host::video_wanted): they never change the detection or the lock.
+constexpr double PLOT_S = 0.5;            // send both graphs this often
+constexpr int PLOT_FPS_POINTS = 600;      // frame-rate graph resolution (<= 1000)
+constexpr int PLOT_LINES_MAX = 1000;      // total-lines graph: at most this many counts (one point each)
+// The total-lines graph folds a history of line energies (the envelope summed
+// over each line at the line period): ROWS_N of them, autocorrelated up to
+// ROWS_MAXLAG lines. A count V scores the mean of that autocorrelation at
+// V, 2V, 3V ... - the picture's vertical profile (blanking band, horizontal
+// edges) repeats every true frame and slips by (V - vtotal) lines a frame for
+// any other count. Unlike the envelope's own autocorrelation at one frame
+// lag, this doesn't depend on where the frame falls between two samples.
+constexpr int ROWS_N = 16384;             // 0.12 s (4K) .. 0.55 s (640x480) of lines
+constexpr int ROWS_MAXLAG = ROWS_N * 3 / 4;
+constexpr double ROWS_RESET_REL = 2e-5;   // a line period this much off the history's restarts it
+constexpr double LINE_EST_KEEP_S = 5.0;   // the line-period estimate is reused this long (same frame peak)
+constexpr double LINE_EST_PEAK_MIN = 0.05; // no estimate below this frame peak (noise: ~0.01)
+// ... nor below this lines_score (below Manual's MAN_COMB_MIN: the row
+// history checks the period - a wrong one gives no confident count - and the
+// frame peak stays on a whole-line tooth down to ~5 dB, scoring 0.009-0.015)
+constexpr double LINE_EST_COMB_MIN = 0.008;
+// ... nor below this fraction of the frame peak: a real line comb keeps in
+// proportion to it (measured 0.048 - 0.29 over every test signal and SNR,
+// lowest for the shortest lines, 24 samples), while 4K's ~18-sample lines
+// alias - 80 samples, 4.5 lines, at 0.022 - and the row history would then
+// count the frame in those (500) as consistently as in true lines
+constexpr double LINE_EST_COMB_REL = 0.035;
+constexpr double ROWS_HOLD_S = 2.0;       // without a line period this long, the row history stops
+
+// The measured total lines (measure_lines): the count V in the plausible
+// range whose row-history score (rows_score) is highest. It is trusted
+// ("confident") when the peak is inside the range, scores at least
+// MEAS_PEAK_MIN, beats both +-1 neighbours by MEAS_SIDE_MIN and every other
+// local peak in the range by MEAS_OTHER_MIN, and it is ACCEPTED once
+// MEAS_CONFIRM confident estimates in a row (each on at least half a fresh
+// history) give the same count. The detection then uses the accepted count:
+// Auto takes only a table mode with that count (and line period), else shows
+// the display as not listed; Manual takes it for the total lines.
+constexpr double MEAS_PEAK_MIN = 0.25;
+constexpr double MEAS_SIDE_MIN = 0.010;
+constexpr double MEAS_OTHER_MIN = 0.10;
+constexpr double MEAS_PROM = 0.05;        // a dip this deep makes another local maximum a competing peak
+constexpr int MEAS_CONFIRM = 2;
+constexpr double MEAS_WAIT_S = 2.0;       // a first lock waits at most this long for the measurement
+constexpr double MEAS_L_TOL = 0.005;      // line periods this close (relative) are the same line rate
 
 double pnum(const std::string& s) {
     if (s.empty()) return NAN;
@@ -147,7 +214,15 @@ public:
         env_ = video::Envelope{};
         drop_lock();
         acc_w_ = acc_h_ = 0;
-        next_detect_ = next_acc_ = next_video_ = next_blank_ = next_free_ = 0;
+        next_detect_ = next_acc_ = next_video_ = next_blank_ = next_free_ = next_plot_ = 0;
+        acf_have_ = false;
+        acf_frame_ = 0;
+        est_frame_ = -1;
+        rows_L_ = 0;
+        rows_cnt_ = 0;
+        rows_L_at_ = -1e9;
+        ra_seq_ = -1;
+        clear_meas();
         cov_m_ = 0;
         cov_n_ = 0;
         covR_.clear();
@@ -178,6 +253,12 @@ public:
             drop_lock();
         } else if (key == "samples_per_line") {
             man_spl_ = pnum(value);
+            drop_lock();
+        } else if (key == "width") {
+            man_w_ = pnum(value);
+            drop_lock();
+        } else if (key == "height") {
+            man_h_ = pnum(value);
             drop_lock();
         } else if (key == "h_offset") {
             const double v = pnum(value);
@@ -230,8 +311,11 @@ private:
 
     video::PeriodFinder pf_frame_;
     video::FrameAccumulator acc_;
-    std::vector<float> rbuf_;   // resample scratch (one frame)
+    std::vector<float> rbuf_;   // resample scratch (one work-raster frame)
     std::vector<uint8_t> gray_, out8_;
+    std::vector<double> bcol_, brow_;   // blanking search: the full raster's column / row sums
+    std::vector<int> col_j_;            // send_video: work column left of each output column
+    std::vector<float> col_f_;          // ... and the interpolation weight
 
     // lock state
     bool locked_ = false;
@@ -243,9 +327,14 @@ private:
     double pixel_clock_ = 0;
     std::string mode_label_;
     double nominal_refresh_ = 0;   // the matched mode's label refresh (for the event / facts)
-    double phase_ = 0;          // global sample phase of the frame boundary, mod frame_period
+    // global sample of a frame boundary (the true frame's first active pixel),
+    // kept near "now": add_frame rolls it forward and apply_geom re-anchors it
+    // before the frame period changes, so a period update moves the next frame
+    // start by ~one frame's worth of the change, not (frames since lock) x it
+    double anchor_ = 0;
     bool have_phase_ = false;
-    int acc_w_ = 0, acc_h_ = 0;
+    int acc_w_ = 0, acc_h_ = 0;   // the work raster (acc_)
+    int disp_w_ = 0;              // the display width it stands for (acc_h_ rows either way)
 
     // cadence markers (host.time())
     double next_detect_ = 0, next_acc_ = 0, next_video_ = 0, next_blank_ = 0;
@@ -260,6 +349,7 @@ private:
     std::string opt_mode_ = "auto";
     double refresh_lo_ = 50, refresh_hi_ = 90;
     double man_fps_ = NAN, man_lines_ = NAN, man_pclk_mhz_ = NAN, man_spl_ = NAN;
+    double man_w_ = NAN, man_h_ = NAN;   // manual active width / height (pixels); both needed
     int man_hoff_ = 0, man_voff_ = 0;
     bool invert_ = false;
     double gamma_ = 1.0;
@@ -278,6 +368,53 @@ private:
     std::vector<float> free_f_;      // free-run resample scratch (reused)
     std::vector<uint8_t> free_pix_;  // free-run GRAY8 output
 
+    // timing graphs (display only; see PLOT_S)
+    double next_plot_ = 0;
+    bool acf_have_ = false;          // pf_frame_.autocorr() holds the last search ...
+    int acf_flo_ = 0, acf_fhi_ = 0;  // ... over this lag window
+    double acf_frame_ = 0;           // ... and its frame peak (fractional lag; 0 = none)
+    double acf_peak_ = 0;            // ... and that peak's height
+    double est_frame_ = -1, est_line_ = 0, est_at_ = -1e9;   // line-period estimate from the signal (cached) ...
+    double est_score_ = 0;           // ... and its lines_score
+    double rows_L_ = 0;              // line period the row history is summed at (0 = off)
+    double row_next_ = 0;            // global sample position of the next row boundary
+    double row_acc_ = 0;             // the row being summed
+    std::vector<float> rows_;        // ring of ROWS_N line energies
+    size_t rows_head_ = 0, rows_cnt_ = 0;
+    std::vector<float> rows_lin_;    // the ring, oldest first
+    video::PeriodFinder pf_rows_;    // its autocorrelation (one fixed-length plan)
+    std::vector<double> msc_;        // measure_lines: the counts' scores
+    int64_t rows_seq_ = 0;          // rows completed since the history (re)started
+    int64_t ra_seq_ = -1;            // rows_seq_ when pf_rows_ last ran (-1: stale)
+    double rows_L_at_ = -1e9;        // when a line period last held the history up
+
+    // the measured total lines (measure_lines)
+    struct LineCount {
+        int v = 0;                   // the best count in range (0: none)
+        double L = 0;                // the line period the rows were summed at
+        double score = 0, side = 0, other = 0;   // its score, the higher +-1 neighbour, the best other peak
+        bool confident = false;
+        bool hyp = false;            // summed at a hypothesis' period, not the measured one (count +-1)
+    };
+    LineCount meas_now_;             // the latest estimate
+    int meas_v_ = 0;                 // the accepted count (0: none) ...
+    double meas_L_ = 0;              // ... and the line period it was measured at
+    bool meas_hyp_ = false;          // ... which was a hypothesis' (LineCount::hyp)
+    bool rows_hyp_ = false;          // the row history is summed at a hypothesis' period
+    int cand_v_ = 0, cand_n_ = 0;    // the run of confident estimates of one count
+    int64_t cand_seq_ = -1;          // rows_seq_ of the last estimate counted in the run
+    double search_t0_ = -1;          // when this search could first have locked (MEAS_WAIT_S)
+    bool relearn_ = false;           // locked, and a line-rate change cleared the count (update_rows)
+    bool unlisted_ = false;          // Auto: locked on a measured count no table mode has
+    bool announced_unlisted_ = false;
+    // Auto's table candidates of this search (auto_candidates), best comb first
+    struct AutoCand {
+        const video::DisplayMode* m;
+        double comb, spl;            // its line-comb score and refined samples per line
+    };
+    std::vector<AutoCand> cands_;
+    double man_spl0_ = 0;            // Manual: the line period measured by this search (manual_spl0)
+
     void ensure_fs() {
         if (!(fs_ > 0) || !std::isfinite(fs_)) {
             const double r = host.sample_rate();
@@ -292,6 +429,7 @@ private:
         etmp_.resize(n);
         env_.process(x, n, etmp_.data());
         ebuf_.insert(ebuf_.end(), etmp_.begin(), etmp_.end());
+        if (rows_L_ > 0) feed_rows(etmp_.data(), n, total_);   // the total-lines graph's history
         total_ += static_cast<int64_t>(n);
         const size_t cap = buf_cap();
         if (ebuf_.size() > cap + 65536) {   // compact rarely to amortise the erase
@@ -316,12 +454,31 @@ private:
         return static_cast<size_t>(std::clamp(want, 150000.0, 360000.0));
     }
 
-    void drop_lock() {
+    // An option change: the measured count is found again (from the history
+    // that is there - the range it was found in may have changed). A lost
+    // lock keeps it (keep_meas): the history goes on at the same line
+    // period, a different display changes the line rate (update_rows clears
+    // it then) or is confirmed as a new count, and a re-lock needn't wait.
+    void drop_lock(bool keep_meas = false) {
         locked_ = false;
         announced_ = false;
         matched_ = false;
+        unlisted_ = false;
+        announced_unlisted_ = false;
         have_phase_ = false;
         fails_ = 0;
+        search_t0_ = -1;
+        relearn_ = false;
+        if (!keep_meas) clear_meas();
+    }
+
+    void clear_meas() {
+        meas_v_ = 0;
+        meas_L_ = 0;
+        meas_hyp_ = false;
+        cand_v_ = cand_n_ = 0;
+        cand_seq_ = -1;
+        meas_now_ = LineCount{};
     }
 
     // -------- detection --------
@@ -333,6 +490,13 @@ private:
                 next_detect_ = t + (locked_ ? DETECT_LOCKED_S : DETECT_SEARCH_S);
             }
         }
+        // locked without an accepted count (a forced mode, Manual, a lock on
+        // the comb alone): estimate whenever half the row history is fresh,
+        // not only at the once-a-second re-detection, so a count measured at
+        // the lock's line period (4K: the only one there is) comes in ~0.2 s
+        if (locked_ && meas_v_ == 0 && rows_cnt_ == static_cast<size_t>(ROWS_N) &&
+            (cand_seq_ < 0 || rows_seq_ - cand_seq_ >= ROWS_N / 2))
+            measure_lines();
         if (locked_) {
             const double cad = cadence_factor();   // >1 for big (>1440p) rasters
             if (t >= next_blank_) { find_blanking(); next_blank_ = t + BLANK_S; }
@@ -342,6 +506,13 @@ private:
             // live preview while searching (display only; never affects detection)
             send_free_run();
             next_free_ = t + FREE_RUN_S;
+        }
+        // the timing graphs beside the picture - only for a viewer (the row
+        // history behind the total-lines graph runs regardless: the detection
+        // uses the count it measures)
+        if (host.video_wanted() && t >= next_plot_) {
+            send_plots();
+            next_plot_ = t + PLOT_S;
         }
         // DoA covariance window (end on the block boundary)
         if (doa_ && locked_ && cov_m_ >= 2 && std::isfinite(cwin_start_) && now_end(n) - cwin_start_ >= COV_WIN_S)
@@ -456,33 +627,57 @@ private:
     }
 
     void try_detect() {
-        const size_t n = ebuf_.size();
         int flo = 0, fhi = 0;
         frame_window(flo, fhi);
         if (flo < 1) flo = 1;
         if (fhi <= flo) return;
+        // the newest buf_cap() samples (or the ~2.1 periods a very slow refresh
+        // window needs, if more): a fixed length for the given settings, so the
+        // period finder keeps one FFT plan - ebuf_ itself drifts between cap and
+        // cap + 64 K samples as it is compacted
+        const size_t want = std::max(buf_cap(), static_cast<size_t>(fhi) * 21 / 10);
+        const size_t n = std::min(ebuf_.size(), want);
+        const float* x = ebuf_.data() + (ebuf_.size() - n);
         if (static_cast<size_t>(fhi) * 21 / 10 > n) return;   // need ~2.1 periods buffered
         if (static_cast<size_t>(fhi) >= n) fhi = static_cast<int>(n) - 1;
 
-        const video::PeriodResult fr = pf_frame_.find(ebuf_.data(), n, flo, fhi);
+        const video::PeriodResult fr = pf_frame_.find(x, n, flo, fhi);
+        acf_have_ = fr.ok;   // the frame-rate graph shows this search
+        acf_flo_ = flo;
+        acf_fhi_ = fhi;
+        acf_frame_ = fr.ok ? fr.period : 0;
+        acf_peak_ = fr.ok ? fr.peak : 0;
         const bool manual = opt_mode_ == "manual";
         const bool frame_ok = fr.ok && fr.confidence >= FRAME_CONF_MIN && fr.peak >= FRAME_PEAK_MIN;
-        if (!manual && !frame_ok) { on_fail(); return; }
         double frame_coarse = fr.ok ? fr.period : 0;
         if (!(frame_coarse > 0) && manual && std::isfinite(man_fps_) && man_fps_ > 0) frame_coarse = fs_ / man_fps_;
+        // the line period the total-lines measurement tests while unlocked:
+        // Auto's best table candidate's, Manual's measured one
+        cands_.clear();
+        if (opt_mode_ == "auto" && frame_ok) auto_candidates(fr.period, pf_frame_.autocorr());
+        man_spl0_ = manual && frame_coarse > 0 ? manual_spl0(frame_coarse, pf_frame_.autocorr()) : 0;
+        track_line_count(locked_ ? line_period_ : !cands_.empty() ? cands_.front().spl : man_spl0_);
+        if (!manual && !frame_ok) { on_fail(); return; }
         if (!(frame_coarse > 0)) { on_fail(); return; }
 
         // the mode is chosen from the line-rate comb of this same full-buffer
-        // autocorrelation (thousands of lines -> a sharp comb); the frame peak
-        // is only a coarse refresh gate (it is +-1 line ambiguous under vertical
-        // coherence, so it cannot fix the resolution on its own)
-        if (!resolve_geometry(frame_coarse, pf_frame_.autocorr())) { on_fail(); return; }
+        // autocorrelation (thousands of lines -> a sharp comb) and the measured
+        // total lines; the frame peak is only a coarse refresh gate (it is +-1
+        // line ambiguous under vertical coherence, so it cannot fix the
+        // resolution on its own)
+        const Geom g = resolve_geometry(frame_coarse, pf_frame_.autocorr());
+        if (g == Geom::wait) {   // waiting for the measured count (MEAS_WAIT_S at most); a lock stays as it is
+            host.fact("Status", "measuring the total lines...");
+            return;
+        }
+        if (g == Geom::fail) { on_fail(); return; }
 
         // success - resolve_geometry has set the geometry, frame_period_ and line_period_
         fails_ = 0;
         frame_rate_ = fs_ / frame_period_;
         if (!locked_) { next_blank_ = next_acc_ = next_video_ = host.time(); }   // start producing at once
         locked_ = true;
+        if (!(rows_L_ > 0)) track_line_count(line_period_);   // nothing measured a line period before the lock
         publish_facts();
         maybe_announce();
     }
@@ -490,66 +685,173 @@ private:
     void on_fail() {
         if (autolock_) return;   // frozen: ignore transient misses
         if (locked_ && ++fails_ >= LOSS_FAILS) {
-            drop_lock();
+            drop_lock(true);
             clear_facts();
         } else if (!locked_) {
             host.fact("Status", "searching for a display...");
         }
     }
 
-    // turn the coarse frame period + the line-rate comb into a concrete raster
-    // geometry, setting frame_period_ / line_period_ precisely
-    bool resolve_geometry(double frame_coarse, const std::vector<float>& acf) {
-        const std::string want = opt_mode_;
+    enum class Geom { fail, ok, wait };
 
-        if (want != "auto" && want != "manual") {   // a forced DMT mode: geometry fixed
-            const video::DisplayMode* dm = mode_by_name(want);
-            if (!dm || !(dm->line_rate_hz() > 0)) return false;
-            const double mlp = fs_ / dm->line_rate_hz();
-            set_mode(*dm, "forced", refine_spl_frame(acf, dm->vtotal, mlp));
-            matched_ = true;
-            match_err_ = 0;
-            return true;
-        }
-        if (want == "manual") return resolve_manual(frame_coarse, acf);
-
-        // auto: among the DMT modes whose refresh is near the coarse frame rate,
-        // the one whose LINE-rate comb best explains the autocorrelation. The
-        // line rate (pixel_clock/htotal) separates the modes cleanly.
+    // Auto's candidates: the table modes whose refresh is within REFRESH_GATE
+    // of the coarse frame rate and whose LINE-rate comb explains the
+    // autocorrelation (comb_score), best comb first, each with its refined
+    // samples per line. The line rate (pixel_clock/htotal) separates the modes
+    // cleanly; the measured total lines then checks the line count.
+    void auto_candidates(double frame_coarse, const std::vector<float>& acf) {
+        if (!(frame_coarse > 0)) return;
         const double frate_coarse = fs_ / frame_coarse;
         size_t nm = 0;
         const video::DisplayMode* modes = video::display_modes(&nm);
-        const video::DisplayMode* best = nullptr;
-        double bestsc = -1;
         for (size_t i = 0; i < nm; i++) {
             const video::DisplayMode& m = modes[i];
             const double mr = m.actual_refresh_hz();
             if (!(mr > 0) || std::fabs(mr - frate_coarse) / frate_coarse > REFRESH_GATE) continue;
             if (!(m.line_rate_hz() > 0)) continue;
             const double sc = comb_score(acf, fs_ / m.line_rate_hz());
-            if (sc > bestsc) { bestsc = sc; best = &m; }
+            if (sc < LINE_PEAK_MIN) continue;   // (comb_score is -1 below it)
+            cands_.push_back({&m, sc, refine_spl_frame(acf, m.vtotal, fs_ / m.line_rate_hz())});
         }
-        if (best && bestsc >= LINE_PEAK_MIN) {
-            const double mlp = fs_ / best->line_rate_hz();
-            const double spl = refine_spl_frame(acf, best->vtotal, mlp);
-            set_mode(*best, "auto", spl);
+        // the first of equal scores stays first, as the table order decided before
+        std::stable_sort(cands_.begin(), cands_.end(), [](const AutoCand& a, const AutoCand& b) { return a.comb > b.comb; });
+    }
+
+    // a table mode is the measured display when it has the measured count at
+    // the line period the rows were summed at (to the clock tolerance: a
+    // 59.94 Hz variant of a 60 Hz mode is 0.1 % off). Exactly that count -
+    // one line off rolls the picture - unless the rows were summed at a
+    // hypothesis' period: that is only as exact as the refinement (4K seen
+    // as 1280x720: 0.08 % off, which counts 749 lines for 750), so +-1
+    bool count_agrees(const video::DisplayMode& m, int v, double L, bool hyp) const {
+        if (v <= 0 || !(L > 0) || !(m.line_rate_hz() > 0)) return false;
+        return std::abs(m.vtotal - v) <= (hyp ? 1 : 0) && std::fabs(fs_ / m.line_rate_hz() - L) <= MEAS_L_TOL * L;
+    }
+
+    // a first lock waits for the measured count while one may still come
+    // (a line period to sum the rows at, and less than MEAS_WAIT_S of trying)
+    bool meas_pending() {
+        if (meas_v_ > 0 || !(rows_L_ > 0)) return false;
+        const double t = host.time();
+        if (search_t0_ < 0) search_t0_ = t;
+        return t - search_t0_ < MEAS_WAIT_S;
+    }
+
+    // v / L: the measured count agreeing with it and its line period, which
+    // the rows were summed at (0: none, or a hypothesis')
+    void use_auto_mode(const AutoCand& c, int v, double L) {
+        const double mlp = fs_ / c.m->line_rate_hz();
+        double spl = c.spl;
+        // the measured count agrees: the frame is v lines of L, so where the
+        // refinement lands more than a line per ~10 frames off (a display
+        // off its nominal clock, e.g. 1920x1080 at 59.94 Hz) the measured
+        // line period holds the picture still
+        if (v == c.m->vtotal && L > 0 && std::fabs(spl - L) > 1e-4 * L) spl = L;
+        set_mode(*c.m, "auto", spl);
+        matched_ = true;
+        unlisted_ = false;
+        match_err_ = std::fabs(spl - mlp) / mlp;
+    }
+
+    // Auto, a confident measured count that no table mode has: the full
+    // raster of that many lines at the measured line period (the active area
+    // is not known; Manual with the width and height gives it)
+    void use_unlisted(int vt, double spl) {
+        const int ht = std::max(8, static_cast<int>(std::lround(vt * MAN_HT_PER_VT)));
+        const double frate = fs_ / (spl * vt);
+        apply_geom(ht, vt, ht, vt, frate * vt * ht, spl);
+        matched_ = false;
+        unlisted_ = true;
+        match_err_ = 0;
+        mode_label_ = std::to_string(vt) + " lines @ " + f2(frate) + " Hz (not listed)";
+    }
+
+    // turn the coarse frame period + the line-rate comb into a concrete raster
+    // geometry, setting frame_period_ / line_period_ precisely
+    Geom resolve_geometry(double frame_coarse, const std::vector<float>& acf) {
+        const std::string want = opt_mode_;
+
+        if (want != "auto" && want != "manual") {   // a forced DMT mode: geometry fixed
+            const video::DisplayMode* dm = mode_by_name(want);
+            if (!dm || !(dm->line_rate_hz() > 0)) return Geom::fail;
+            const double mlp = fs_ / dm->line_rate_hz();
+            set_mode(*dm, "forced", refine_spl_frame(acf, dm->vtotal, mlp));
             matched_ = true;
-            match_err_ = std::fabs(spl - mlp) / mlp;
-            return true;
+            match_err_ = 0;
+            return Geom::ok;
+        }
+        if (want == "manual") return resolve_manual(frame_coarse, acf);
+
+        // auto. With an accepted measured count: the best-comb table mode that
+        // has it, else the display is not listed - never a table mode whose
+        // line count the signal contradicts
+        if (meas_v_ > 0) {
+            const double L = rows_L_ > 0 && std::fabs(rows_L_ - meas_L_) <= MEAS_L_TOL * meas_L_ ? rows_L_ : meas_L_;
+            for (const AutoCand& c : cands_)
+                if (count_agrees(*c.m, meas_v_, L, meas_hyp_)) {
+                    use_auto_mode(c, meas_v_, meas_hyp_ ? 0 : L);
+                    return Geom::ok;
+                }
+            // a table mode with the measured count and line rate whose comb
+            // missed the gate (a weak signal: 1920x1080 at 7 dB) - the two
+            // measurements are the line-rate check; the nearest line period.
+            // Not at a hypothesis' period: that count only confirms its own
+            // hypothesis
+            if (!meas_hyp_) {
+                size_t nm = 0;
+                const video::DisplayMode* modes = video::display_modes(&nm);
+                const video::DisplayMode* best = nullptr;
+                for (size_t i = 0; i < nm; i++)
+                    if (count_agrees(modes[i], meas_v_, L, false) &&
+                        (!best || std::fabs(fs_ / modes[i].line_rate_hz() - L) < std::fabs(fs_ / best->line_rate_hz() - L)))
+                        best = &modes[i];
+                if (best) {
+                    use_auto_mode({best, 0, L}, meas_v_, L);
+                    return Geom::ok;
+                }
+            }
+            if (!meas_hyp_) {
+                if (meas_v_ < MIN_VTOTAL || meas_v_ > MAX_VTOTAL) return Geom::fail;
+                use_unlisted(meas_v_, L);
+                return Geom::ok;
+            }
+            // counted at a hypothesis' period, which it contradicts: the rows
+            // give the frame in lines of the period they are summed at, so that
+            // says the hypothesis is wrong, not what the count is - the comb
+            // alone decides, as before (the estimate failed: a weak signal)
+        }
+        // not accepted yet: a confident estimate that agrees with the best comb
+        // is two independent observables saying the same - lock at once
+        if (!cands_.empty() && meas_now_.confident &&
+            count_agrees(*cands_.front().m, meas_now_.v, meas_now_.L, meas_now_.hyp)) {
+            use_auto_mode(cands_.front(), meas_now_.v, meas_now_.hyp ? 0 : meas_now_.L);
+            return Geom::ok;
+        }
+        if ((!locked_ || relearn_) && meas_pending()) return Geom::wait;
+        relearn_ = false;
+        // no measurement to go on (weak signal, no line structure): the line
+        // comb alone, as before the measurement existed
+        if (!cands_.empty()) {
+            use_auto_mode(cands_.front(), 0, 0);
+            return Geom::ok;
         }
         // no table mode fits: reconstruct at the native effective resolution,
         // with total lines from the (coarse) frame period and the strongest line
         // comb in the search band
         double lper = 0;
-        if (!fallback_line(acf, &lper)) return false;
+        if (!fallback_line(acf, &lper)) return Geom::fail;
         const int vt = static_cast<int>(std::lround(frame_coarse / lper));
-        if (vt < MIN_VTOTAL || vt > MAX_VTOTAL) return false;
-        const int spl = std::max(8, static_cast<int>(std::lround(lper)));
-        apply_geom(spl, vt, spl, vt, frate_coarse * vt * spl, lper);
+        if (vt < MIN_VTOTAL || vt > MAX_VTOTAL) return Geom::fail;
+        // a typical raster shape (as Manual's timing-only path), not one pixel
+        // per sample - that was a sliver many screens tall
+        const int ht = std::max(8, static_cast<int>(std::lround(vt * MAN_HT_PER_VT)));
+        const double frate_coarse = fs_ / frame_coarse;
+        apply_geom(ht, vt, ht, vt, frate_coarse * vt * ht, lper);
         matched_ = false;
+        unlisted_ = false;
         match_err_ = 0;
-        mode_label_ = "~" + std::to_string(spl) + "x" + std::to_string(vt) + " (estimate)";
-        return true;
+        mode_label_ = "~" + std::to_string(vt) + " lines @ " + f1(frate_coarse) + " Hz (estimate)";
+        return Geom::ok;
     }
 
     // strongest single comb peak in the line-rate band - only for the
@@ -566,26 +868,180 @@ private:
         return *out > 0;
     }
 
-    bool resolve_manual(double frame_coarse, const std::vector<float>& acf) {
+    // How well a line period of frame / lines explains acf: with the right
+    // period, frame * N / lines is a whole number of lines for every N, so the
+    // autocorrelation sits on a line-comb tooth at each of these lags; with a
+    // wrong one the lags sweep through every line phase and average to the
+    // level between the teeth. Every N across the middle of the frame is used
+    // (not near 0 or one frame, where every period agrees) - a sparse set of
+    // lags would also line up for particular wrong counts.
+    double lines_score(const std::vector<float>& acf, double frame, int lines) const {
+        if (lines < 16 || !(frame > 0)) return -1;
+        double s = 0;
+        int cnt = 0;
+        for (int n = lines / 8; n <= lines - lines / 8; n++) {
+            const double v = acf_interp(acf, frame * n / lines);
+            if (v < -1.5) continue;   // outside the autocorrelation
+            s += v;
+            cnt++;
+        }
+        return cnt >= lines / 2 ? s / cnt : -1;
+    }
+
+    // The precise line period (samples) for manual mode, from the frame peak
+    // the period finder returned and a range of plausible line counts. That
+    // peak is a whole number of lines, but not always the frame's own count:
+    // with a vertically coherent picture every line multiple correlates, and
+    // the strongest is the one nearest a whole number of samples - often a few
+    // lines off the true frame. So the frame period is not trusted, only that
+    // frame / (some count in [lo, hi]) is the line period: the count whose
+    // comb the autocorrelation follows best (lines_score) gives it. 0 = no
+    // clear answer (a weak signal, or no frame peak at all).
+    double manual_line_period(const std::vector<float>& acf, double frame, int lo, int hi) const {
+        int best = 0;
+        double bs = -1, second = -1;
+        for (int n = std::max(2, lo); n <= hi; n++) {
+            const double sc = lines_score(acf, frame, n);
+            if (sc > bs) { second = bs; bs = sc; best = n; }
+            else if (sc > second) second = sc;
+        }
+        if (best == 0 || bs < MAN_COMB_MIN || bs < MAN_COMB_RATIO * second) return 0;
+        return frame / best;
+    }
+
+    // the entered Manual resolution (both, else 0 x 0)
+    void manual_res(int& aw, int& ah) const {
+        const auto dim = [](double v, int max) {
+            return std::isfinite(v) && v >= 16 && v <= max ? static_cast<int>(std::lround(v)) : 0;
+        };
+        aw = dim(man_w_, 8192);
+        ah = dim(man_h_, MAX_VTOTAL - 1);
+        if (aw <= 0 || ah <= 0) aw = ah = 0;
+    }
+    // the plausible total lines for an active height: up to 20 % blanking
+    static int manual_vt_hi(int ah) { return ah + std::max(8, ah / 5) + MAN_ALIAS_LINES; }
+
+    // Manual mode. The timing comes from the entered fields; with the active
+    // width and height entered (both), whatever is missing is filled in:
+    //  - total lines: the measured count (measure_lines), unless a known
+    //    timing of that resolution - a built-in mode of that size, the VESA
+    //    CVT reduced- and standard-blanking timings - whose own refresh the
+    //    measured line period reproduces is one line from it (that settles
+    //    a +-1 tie). Without an accepted count (a weak signal; a first lock
+    //    waits up to MEAS_WAIT_S for one): that known timing; if none fits,
+    //    the count that gives the whole-number refresh (a custom timing at
+    //    60.00, 75.00 ...); without a measurable line period, the first
+    //    known timing.
+    //  - pixels per line: from the pixel clock, else the known timing whose
+    //    line count is nearest (an approximation for a custom timing).
+    // Without a resolution the total lines are required and the full raster is
+    // shown. Entered total lines always win.
+    // Manual's line period from the signal (manual_line_period): near the
+    // entered line count, else anywhere from the height up to 20 % vertical
+    // blanking; 0 without either, or with no clear answer
+    double manual_spl0(double frame_coarse, const std::vector<float>& acf) const {
+        int aw = 0, ah = 0;
+        manual_res(aw, ah);
         const int vt = std::isfinite(man_lines_) ? static_cast<int>(std::lround(man_lines_)) : 0;
-        if (vt < MIN_VTOTAL || vt > MAX_VTOTAL) return false;
+        if (vt > 0) return manual_line_period(acf, frame_coarse, vt - MAN_ALIAS_LINES, vt + MAN_ALIAS_LINES);
+        if (ah > 0) return manual_line_period(acf, frame_coarse, ah + 1 - MAN_ALIAS_LINES, manual_vt_hi(ah));
+        return 0;
+    }
+
+    Geom resolve_manual(double frame_coarse, const std::vector<float>& acf) {
+        int aw = 0, ah = 0;
+        manual_res(aw, ah);
+        const bool have_res = aw > 0 && ah > 0;
+        int vt = std::isfinite(man_lines_) ? static_cast<int>(std::lround(man_lines_)) : 0;
+        double spl0 = man_spl0_;   // manual_spl0 of this search
+
+        int ht_known = 0;   // pixels per line of the known timing nearest in line count
+        if (have_res) {
+            // the measured count: in this resolution's range and summed at
+            // (about) the line period measured here
+            // (and at the measured line period - one summed at the lock's own
+            // only says whether the lock's frame is right: the rows give the
+            // frame in lines of the period they are summed at)
+            const bool meas_ok = vt <= 0 && meas_v_ > ah && meas_v_ <= manual_vt_hi(ah) && meas_L_ > 0 && !meas_hyp_ &&
+                                 (!(spl0 > 0) || std::fabs(meas_L_ - spl0) <= MEAS_L_TOL * spl0);
+            // the refresh the known timings are looked up at: as entered, else
+            // the measured count's (the frame peak's is a coarse gate - 89 Hz
+            // for a 30 Hz display under the default 50-90 Hz window)
+            const double refresh = std::isfinite(man_fps_) && man_fps_ > 0 ? man_fps_
+                                   : meas_ok                                ? std::round(fs_ / (meas_v_ * meas_L_))
+                                                                            : std::round(fs_ / frame_coarse);
+            // the known timings of this resolution, most likely first
+            std::vector<video::DisplayMode> known;
+            size_t nm = 0;
+            const video::DisplayMode* modes = video::display_modes(&nm);
+            for (size_t i = 0; i < nm; i++)
+                if (modes[i].width == aw && modes[i].height == ah && std::fabs(modes[i].refresh_hz - refresh) <= 1.0)
+                    known.push_back(modes[i]);
+            known.push_back(video::cvt_mode(aw, ah, refresh, true));    // reduced blanking: what flat panels use
+            known.push_back(video::cvt_mode(aw, ah, refresh, false));
+            std::erase_if(known, [ah](const video::DisplayMode& m) { return m.vtotal <= ah || m.htotal <= 0; });
+            if (vt <= 0) {
+                int vt_fit = 0;   // the known timing the measured line period reproduces
+                if (spl0 > 0) {
+                    double be = MAN_FIT_TOL_HZ;
+                    for (const video::DisplayMode& m : known) {
+                        const double e = std::fabs(fs_ / (m.vtotal * spl0) - m.actual_refresh_hz());
+                        if (e < be) { be = e; vt_fit = m.vtotal; }
+                    }
+                }
+                if (meas_ok) {
+                    vt = vt_fit > 0 && std::abs(vt_fit - meas_v_) == 1 ? vt_fit : meas_v_;
+                    if (!(spl0 > 0)) spl0 = rows_L_ > 0 ? rows_L_ : meas_L_;
+                } else if (spl0 > 0 && !locked_ && meas_pending()) {
+                    return Geom::wait;
+                } else if (spl0 > 0) {
+                    vt = vt_fit;
+                    if (vt <= 0 && refresh > 0) vt = static_cast<int>(std::lround(fs_ / (refresh * spl0)));
+                    if (vt <= ah) vt = 0;   // fewer lines than the picture has: not a usable answer
+                }
+            }
+            if (vt <= 0 && !known.empty()) vt = known.front().vtotal;   // nothing measured
+            int bd = INT_MAX;
+            for (const video::DisplayMode& m : known)
+                if (std::abs(m.vtotal - vt) < bd) { bd = std::abs(m.vtotal - vt); ht_known = m.htotal; }
+        }
+        if (vt < MIN_VTOTAL || vt > MAX_VTOTAL) return Geom::fail;
+        // samples per line: as entered; else the measured line period (exact:
+        // the period finder's sub-sample frame peak over ~1000 lines); else the
+        // comb / frame-peak refinement from the coarse frame period
         double spl;
         if (std::isfinite(man_spl_) && man_spl_ > 0) spl = man_spl_;
+        else if (spl0 > 0) spl = spl0;
         else spl = refine_spl_frame(acf, vt, frame_coarse / vt);
         const double fperiod = spl * vt;
         const double frate = fs_ / fperiod;
         int ht = 0;
         if (std::isfinite(man_pclk_mhz_) && man_pclk_mhz_ > 0)
             ht = static_cast<int>(std::lround(man_pclk_mhz_ * 1e6 / (frate * vt)));
-        if (ht < 8) ht = std::max(8, static_cast<int>(std::lround(spl)));   // htotal not otherwise known
-        apply_geom(ht, vt, ht, vt, frate * vt * ht, spl);   // active unknown: show the full raster
+        else if (ht_known > 0)
+            ht = ht_known;
+        // htotal not otherwise known (only the line count): a typical raster
+        // shape, so the picture is shown at a sensible aspect - it used to be
+        // one pixel per sample (~50 x 806), a sliver many screens tall. The
+        // pixel clock that follows is a rough estimate (the fact says "est")
+        if (ht < 8) ht = std::max(8, static_cast<int>(std::lround(vt * MAN_HT_PER_VT)));
+        // the active area: as entered (never larger than the raster), else
+        // unknown - show the full raster
+        const int w = have_res ? std::min(aw, ht) : ht;
+        const int h = have_res ? std::min(ah, vt) : vt;
+        apply_geom(ht, vt, w, h, frate * vt * ht, spl);
         matched_ = false;
         match_err_ = 0;
-        mode_label_ = std::to_string(vt) + " lines @ " + f1(frate) + " Hz (manual)";
-        return true;
+        if (have_res) mode_label_ = std::to_string(w) + "x" + std::to_string(h) + " @ " + f1(frate) + " Hz (manual)";
+        else mode_label_ = std::to_string(vt) + " lines @ " + f1(frate) + " Hz (manual)";
+        return Geom::ok;
     }
 
     void apply_geom(int ht, int vt, int w, int h, double pclk, double spl) {
+        // re-anchor the frame boundary under the OLD period to the one add_frame
+        // renders next (~two frames back), so the new period only shifts frame
+        // starts by a frame or two's worth of the change
+        if (have_phase_ && frame_period_ > 0) roll_anchor(frame_period_);
         htotal_ = ht;
         vtotal_ = vt;
         width_ = w;
@@ -604,17 +1060,46 @@ private:
     }
 
     void maybe_announce() {
-        if (announced_ || !matched_) return;
         if (opt_mode_ == "manual") return;
-        char b[96];
+        char b[128];
+        if (unlisted_) {   // once per lock, also after a table mode was announced
+            if (announced_unlisted_) return;
+            std::snprintf(b, sizeof b, "Display not listed: %d lines @ %.2f Hz - enter its width and height in Manual",
+                          vtotal_, frame_rate_);
+            host.event(b, 10.0);
+            announced_unlisted_ = announced_ = true;
+            return;
+        }
+        if (announced_ || !matched_) return;
         std::snprintf(b, sizeof b, "Detected %dx%d @ %.0f Hz", width_, height_, std::round(nominal_refresh_));
         host.event(b, 10.0);
         announced_ = true;
     }
 
+    // the accepted measured count, and where it disagrees with the timing in
+    // use, what that is ("" while there is no accepted count)
+    std::string measured_text() const {
+        if (meas_v_ <= 0 || !(meas_L_ > 0)) return "";
+        char b[160];
+        const double fr = fs_ / (meas_v_ * meas_L_);
+        if (unlisted_) std::snprintf(b, sizeof b, "%d (%.2f Hz) - no listed mode has it", meas_v_, fr);
+        else if (std::abs(meas_v_ - vtotal_) <= (meas_hyp_ ? 1 : 0)) std::snprintf(b, sizeof b, "%d", vtotal_);
+        else if (meas_hyp_)   // summed at the lock's own period: only whether its frame fits
+            std::snprintf(b, sizeof b, "the frame repeats every %d lines of this timing, not %d: it does not fit",
+                          meas_v_, vtotal_);
+        else if (opt_mode_ == "manual")
+            std::snprintf(b, sizeof b, "%d (%.2f Hz) - %d in use", meas_v_, fr, vtotal_);
+        else
+            std::snprintf(b, sizeof b, "%d (%.2f Hz) - the forced mode has %d: try Auto, or Manual with the resolution",
+                          meas_v_, fr, vtotal_);
+        return b;
+    }
+
     // -------- facts --------
     void publish_facts() {
-        host.fact("Status", "");
+        host.fact("Status", unlisted_ ? "the display is not a listed mode - choose Manual and enter its width and height"
+                                      : "");
+        host.fact("Measured lines", measured_text());
         host.fact("Mode", mode_label_ + (matched_ ? ("  err " + f1(match_err_ * 100) + "%") : ""));
         host.fact("Frame rate", f2(frame_rate_) + " Hz");
         host.fact("Line rate", f1(frame_rate_ * vtotal_ / 1000.0) + " kHz");
@@ -627,8 +1112,8 @@ private:
     }
 
     void clear_facts() {
-        for (const char* k : {"Status", "Mode", "Frame rate", "Line rate", "Total lines", "Pixel clock",
-                              "Resolution limit", "Tune near", "Frames averaged"})
+        for (const char* k : {"Status", "Mode", "Frame rate", "Line rate", "Total lines", "Measured lines",
+                              "Pixel clock", "Resolution limit", "Tune near", "Frames averaged"})
             host.fact(k, "");
     }
 
@@ -662,48 +1147,78 @@ private:
 
     // -------- blanking phase --------
     // Locate the blanking in an arbitrary-phase raster, convert it to the GLOBAL
-    // sample of the true frame's first active pixel, and store its phase modulo
-    // the frame period. Every render then anchors to that phase (not to a
-    // per-call origin, whose sub-line phase changes as the buffer advances).
+    // sample of the true frame's first active pixel, and store it as the frame
+    // anchor. Every render then anchors to it (not to a per-call origin, whose
+    // sub-line phase changes as the buffer advances). Only the raster's column
+    // and row sums are needed, so they are formed at the full htotal x vtotal
+    // geometry without storing the raster (a 4K one would be ~40 MB).
     void find_blanking() {
         if (htotal_ <= 0 || vtotal_ <= 0) return;
         const int W = htotal_, H = vtotal_;
         // guard against an absurd manual pixel clock; a 4K full raster is
-        // 4400x2250 = 9.9M, so admit up to 12M (a ~40 MB float raster at 4K)
+        // 4400x2250 = 9.9M, so admit up to 12M pixels per search
         if (static_cast<size_t>(W) * H > 12000000) return;
         const double spl = frame_period_ / vtotal_;
         const double spp = spl / htotal_;
         const double origin = scan_origin();
-        rbuf_.assign(static_cast<size_t>(W) * H, 0.0f);
         video::RasterMap m;
         m.width = W;
         m.height = H;
         m.samples_per_line = spl;
         m.samples_per_pixel = spp;
         m.origin = origin;
-        video::resample(ebuf_.data(), ebuf_.size(), m, rbuf_.data());
+        video::raster_profiles(ebuf_.data(), ebuf_.size(), m, bcol_, brow_);
         const int bw = std::max(1, htotal_ - width_);
         const int bh = std::max(1, vtotal_ - height_);
-        const video::BlankOffset bo = video::find_blanking_offset(rbuf_.data(), W, H, bw, bh);
+        const video::BlankOffset bo = video::find_blanking_offset(bcol_, brow_, bw, bh);
         if (!bo.ok) return;
-        // true active (0,0) in this raster, then its global sample and phase
+        // true active (0,0) in this raster, then its global sample
         const int v_eff = ((bo.v_offset + bh) % vtotal_ + vtotal_) % vtotal_;
         const int h_eff = ((bo.h_offset + bw) % htotal_ + htotal_) % htotal_;
-        const double fs0 = static_cast<double>(buf_base_) + origin + v_eff * spl + h_eff * spp;
-        phase_ = fs0 - std::floor(fs0 / frame_period_) * frame_period_;   // in [0, frame_period)
+        anchor_ = static_cast<double>(buf_base_) + origin + v_eff * spl + h_eff * spp;   // near now
         have_phase_ = true;
     }
 
-    // the pixel count the reconstruction works on (what resample/render cost
-    // scales with): the active area when cropping, else the full raster
-    double recon_px() const {
-        const bool crop = crop_ && width_ > 0 && height_ > 0 && (width_ < htotal_ || height_ < vtotal_);
-        const double W = crop ? width_ : htotal_;
-        const double H = crop ? height_ : vtotal_;
-        return W * H;
+    // move anchor_ by whole periods `period` to the latest frame boundary at or
+    // before the frame add_frame renders (two frames and a few lines back)
+    void roll_anchor(double period) {
+        if (!(period > 0)) return;
+        const double spl = vtotal_ > 0 ? period / vtotal_ : 0;
+        const double target = static_cast<double>(total_) - 2 * period - 3 * spl;
+        anchor_ += std::floor((target - anchor_) / period) * period;
     }
-    // >1 stretches the accumulate / video cadence for large (>1440p) rasters so
-    // the per-second pixel work stays bounded; 1 at or below ~1440p (no change)
+
+    // The DISPLAY geometry the picture shows: the active area when cropping,
+    // else the full raster (what the emitted frame's aspect / size follow)
+    void recon_dims(int& W, int& H) const {
+        const bool crop = crop_ && width_ > 0 && height_ > 0 && (width_ < htotal_ || height_ < vtotal_);
+        W = crop ? width_ : htotal_;
+        H = crop ? height_ : vtotal_;
+    }
+    // Columns of the WORK raster the reconstruction runs on. Each row is one
+    // display line (the vertical detail is real), but a line holds only
+    // W * spp envelope samples (~18-60 at 2.4 MHz) however wide the display
+    // is, so the columns are capped at RECON_OVERSAMPLE per sample - a 4K
+    // line becomes ~124 columns, not 3840. send_video() maps it back to the
+    // display's width; the picture is the same (the envelope is linearly
+    // interpolated between samples either way), the memory / CPU are not.
+    int work_width(int W) const {
+        const double spl = frame_period_ / vtotal_;
+        const double span = W * spl / htotal_;   // envelope samples across W display pixels
+        if (!(span > 0)) return W;
+        const double rw = std::ceil(RECON_OVERSAMPLE * span);
+        return rw >= W ? W : std::max(2, static_cast<int>(rw));
+    }
+    // the pixel count the reconstruction works on (what resample/render cost
+    // scales with): the work raster
+    double recon_px() const {
+        int W = 0, H = 0;
+        recon_dims(W, H);
+        return W > 0 && H > 0 ? static_cast<double>(work_width(W)) * H : 0.0;
+    }
+    // >1 stretches the accumulate / video cadence for a large work raster so
+    // the per-second pixel work stays bounded; with the sample-capped columns
+    // even 4K stays far below the reference, so this is 1 for every mode
     double cadence_factor() const {
         const double f = recon_px() / CADENCE_PX_REF;
         return f > 1.0 ? f : 1.0;
@@ -712,79 +1227,93 @@ private:
     // -------- reconstruction --------
     void add_frame() {
         if (htotal_ <= 0 || vtotal_ <= 0 || !have_phase_) return;
-        const bool crop = crop_ && width_ > 0 && height_ > 0 && (width_ < htotal_ || height_ < vtotal_);
-        const int W = crop ? width_ : htotal_;
-        const int H = crop ? height_ : vtotal_;
+        int W = 0, H = 0;
+        recon_dims(W, H);
         if (W < 2 || H < 2) return;
-        if (acc_w_ != W || acc_h_ != H) {
-            acc_.configure(W, H, static_cast<float>(ema_));
-            acc_w_ = W;
+        const int RW = work_width(W);
+        if (acc_w_ != RW || acc_h_ != H || disp_w_ != W) {
+            acc_.configure(RW, H, static_cast<float>(ema_));
+            acc_w_ = RW;
             acc_h_ = H;
+            disp_w_ = W;
         }
         const double spl = frame_period_ / vtotal_;
-        const double spp = spl / htotal_;
+        const double spp = spl / htotal_;                     // samples per DISPLAY pixel
+        const double wspp = spp * W / RW;                     // ... per work-raster column
         // the most recent frame boundary at least two frames back
-        const double target = static_cast<double>(total_) - 2 * frame_period_ - 3 * spl;
-        const double k = std::floor((target - phase_) / frame_period_);
-        double framestart = phase_ + k * frame_period_ - static_cast<double>(buf_base_);   // buffer-local
+        roll_anchor(frame_period_);
+        double framestart = anchor_ - static_cast<double>(buf_base_);   // buffer-local
         if (framestart < 0) framestart = 0;
         video::RasterMap m;
-        m.width = W;
+        m.width = RW;
         m.height = H;
         m.samples_per_line = spl;
-        m.samples_per_pixel = spp;
+        m.samples_per_pixel = wspp;
         m.origin = framestart;
         m.h_offset = man_hoff_ * spp;
         m.v_offset = man_voff_;
-        rbuf_.assign(static_cast<size_t>(W) * H, 0.0f);
+        rbuf_.assign(static_cast<size_t>(RW) * H, 0.0f);
         video::resample(ebuf_.data(), ebuf_.size(), m, rbuf_.data());
-        acc_.add(rbuf_.data(), 3);   // small shift search to absorb residual phase creep
+        // small shift search to absorb residual phase creep: +-3 lines, and
+        // +-3 DISPLAY pixels (as many work columns as that spans, often 0)
+        const int sx = static_cast<int>(std::lround(3.0 * RW / W));
+        acc_.add_xy(rbuf_.data(), sx, 3);
     }
 
     void send_video() {
-        if (acc_.frames() == 0 || acc_w_ < 2 || acc_h_ < 2) return;
+        if (acc_.frames() == 0 || acc_w_ < 2 || acc_h_ < 2 || disp_w_ < 2) return;
+        host.fact("Frames averaged", std::to_string(acc_.frames()));
+        if (!host.video_wanted()) return;   // nobody is watching: skip the render
         video::StretchOpts so;
         so.lo_pct = lo_pct_;
         so.hi_pct = hi_pct_;
         so.invert = invert_;
         so.gamma = static_cast<float>(gamma_);
         acc_.render(gray_, so);
-        if (gray_.size() != static_cast<size_t>(acc_w_) * acc_h_) return;
+        const int RW = acc_w_, W = disp_w_, H = acc_h_;
+        if (gray_.size() != static_cast<size_t>(RW) * H) return;
 
-        int W = acc_w_, H = acc_h_;
-        const uint8_t* px = gray_.data();
-        // The host compresses to JPEG. max_display_px caps the LONGEST side of
-        // the EMITTED frame ONLY (display / transmission): the reconstruction
-        // above (gray_, acc_w_ x acc_h_) always ran at the display's full
-        // geometry, so a 4K monitor is still received and reconstructed in full -
-        // we box-downscale only this output. Default 1280; raise for a sharper
-        // picture, lower for less CPU / on a no-libjpeg build (raw pixels only,
-        // 1 MiB wire cap). Box-downscale past the cap.
+        // The host compresses to JPEG. The emitted frame has the display's
+        // geometry (W x H), its LONGEST side capped at max_display_px (display
+        // / transmission only): past the cap it is box-downscaled by d, as if
+        // the full-resolution raster were. Rows are box-averaged d at a time;
+        // each output column samples the work raster (linear interpolation) at
+        // the centre of the d display columns it covers. Default 1280; raise
+        // for a sharper picture, lower for less CPU / on a no-libjpeg build
+        // (raw pixels only, 1 MiB wire cap).
         const int cap = max_display_px_ > 0 ? max_display_px_ : DEFAULT_MAX_DISPLAY_PX;
-        if (std::max(W, H) > cap) {
-            const int d = (std::max(W, H) + cap - 1) / cap;
-            const int ow = (W + d - 1) / d, oh = (H + d - 1) / d;
-            out8_.assign(static_cast<size_t>(ow) * oh, 0);
-            for (int r = 0; r < oh; r++)
-                for (int c = 0; c < ow; c++) {
-                    unsigned sum = 0, cnt = 0;
-                    for (int dr = 0; dr < d; dr++)
-                        for (int dc = 0; dc < d; dc++) {
-                            const int sr = r * d + dr, sc = c * d + dc;
-                            if (sr < H && sc < W) { sum += gray_[static_cast<size_t>(sr) * W + sc]; cnt++; }
-                        }
-                    out8_[static_cast<size_t>(r) * ow + c] = cnt ? static_cast<uint8_t>(sum / cnt) : 0;
-                }
-            W = ow;
-            H = oh;
-            px = out8_.data();
+        const int d = std::max(W, H) > cap ? (std::max(W, H) + cap - 1) / cap : 1;
+        const int ow = (W + d - 1) / d, oh = (H + d - 1) / d;
+        col_j_.resize(static_cast<size_t>(ow));
+        col_f_.resize(static_cast<size_t>(ow));
+        for (int c = 0; c < ow; c++) {
+            const int x0 = c * d, x1 = std::min(W, x0 + d) - 1;
+            double u = 0.5 * (x0 + x1) * RW / W;   // display column -> work column
+            if (u > RW - 1) u = RW - 1;
+            const int j = std::min(static_cast<int>(u), RW - 2);
+            col_j_[static_cast<size_t>(c)] = j;
+            col_f_[static_cast<size_t>(c)] = static_cast<float>(u - j);
         }
-        host.fact("Frames averaged", std::to_string(acc_.frames()));
+        out8_.assign(static_cast<size_t>(ow) * oh, 0);
+        for (int r = 0; r < oh; r++) {
+            const int r0 = r * d, r1 = std::min(H, r0 + d);
+            const float inv = 1.0f / static_cast<float>(r1 - r0);
+            for (int c = 0; c < ow; c++) {
+                const size_t j = static_cast<size_t>(col_j_[static_cast<size_t>(c)]);
+                const float f = col_f_[static_cast<size_t>(c)];
+                float sum = 0;
+                for (int sr = r0; sr < r1; sr++) {
+                    const uint8_t* g = gray_.data() + static_cast<size_t>(sr) * RW;
+                    sum += g[j] + (static_cast<float>(g[j + 1]) - g[j]) * f;
+                }
+                out8_[static_cast<size_t>(r) * ow + c] = static_cast<uint8_t>(std::min(255.0f, sum * inv + 0.5f));
+            }
+        }
         kp::VideoFrame f;
-        f.width = W;
-        f.height = H;
+        f.width = ow;
+        f.height = oh;
         f.format = 0;   // GRAY8
-        f.pixels = px;
+        f.pixels = out8_.data();
         f.label = mode_label_;
         f.quality = quality_;     // host compresses raw pixels to JPEG at this quality
         f.lossless = lossless_;
@@ -799,6 +1328,7 @@ private:
     // never touches the lock / detection / DoA state. The brightness mapping is
     // the locked path's (invert / contrast / gamma options).
     void send_free_run() {
+        if (!host.video_wanted()) return;   // display only, and nobody is watching
         const video::DisplayMode* dm =
             (opt_mode_ != "auto" && opt_mode_ != "manual") ? mode_by_name(opt_mode_) : nullptr;
         if (!dm) dm = mode_by_name(FREE_RUN_DEFAULT_MODE);
@@ -848,10 +1378,327 @@ private:
         host.video_frame(f);
     }
 
+    // -------- the row history: measured total lines, and the timing graphs --------
+
+    // add envelope samples e[0..n) (global samples g0..) to the row history:
+    // each row is the envelope integrated over one line period, the boundary
+    // sample split by its fraction, so rows stay exact over thousands of lines
+    void feed_rows(const float* e, size_t n, int64_t g0) {
+        const double base = static_cast<double>(g0);
+        size_t i = 0;
+        while (i < n) {
+            const double b = row_next_ - base;   // the next boundary, in block samples
+            if (b >= static_cast<double>(n)) {
+                double s = 0;
+                for (size_t k = i; k < n; k++) s += e[k];
+                row_acc_ += s;
+                return;
+            }
+            const size_t kb = b > static_cast<double>(i) ? static_cast<size_t>(b) : i;   // the sample it falls in
+            double s = 0;
+            for (size_t k = i; k < kb; k++) s += e[k];
+            const double f = std::clamp(b - static_cast<double>(kb), 0.0, 1.0);
+            row_acc_ += s + f * e[kb];
+            rows_[rows_head_] = static_cast<float>(row_acc_);
+            rows_head_ = (rows_head_ + 1) % ROWS_N;
+            if (rows_cnt_ < ROWS_N) rows_cnt_++;
+            rows_seq_++;
+            row_acc_ = (1.0 - f) * e[kb];
+            row_next_ += rows_L_;
+            i = kb + 1;
+        }
+    }
+
+    // (re)start the row history at line period L when it isn't summed at it
+    // already (0 = no line period known: off)
+    void update_rows(double L) {
+        if (!(L > 1)) { rows_L_ = 0; rows_cnt_ = 0; ra_seq_ = -1; return; }
+        if (rows_L_ > 0 && std::fabs(L - rows_L_) <= ROWS_RESET_REL * rows_L_) return;
+        // another line rate altogether: what was measured at the old one no
+        // longer says anything about this one
+        if (meas_L_ > 0 && std::fabs(L - meas_L_) > MEAS_L_TOL * meas_L_) {
+            clear_meas();
+            // locked on the old line rate (the display changed): keep that
+            // geometry while the new count is measured, rather than take the
+            // comb's guess in between (meas_pending)
+            if (locked_) {
+                relearn_ = true;
+                search_t0_ = host.time();
+            }
+        }
+        rows_.assign(ROWS_N, 0.0f);
+        rows_head_ = rows_cnt_ = 0;
+        rows_seq_ = 0;
+        ra_seq_ = cand_seq_ = -1;
+        rows_L_ = L;
+        row_acc_ = 0;
+        row_next_ = static_cast<double>(total_) + L;   // the next block starts the first row
+    }
+
+    // The line period measured from the last frame search: the
+    // frame peak is a whole number of lines (not always the frame's own count),
+    // so frame / n is the line period for the count n whose comb the
+    // autocorrelation follows (lines_score) - and for its divisors, which
+    // score the same: the largest of those. 0 = no line structure. Cached
+    // while the frame peak stays put (the scan reads ~2 M autocorrelation values).
+    double estimate_line_period() {
+        if (!acf_have_ || !(acf_frame_ > 0) || acf_peak_ < LINE_EST_PEAK_MIN) return 0;
+        const double t = host.time();
+        if (std::fabs(acf_frame_ - est_frame_) < 0.5 && t - est_at_ < LINE_EST_KEEP_S) return est_line_;
+        est_frame_ = acf_frame_;
+        est_at_ = t;
+        est_line_ = est_score_ = 0;
+        const std::vector<float>& acf = pf_frame_.autocorr();
+        const int lo = std::max(MIN_VTOTAL - MAN_ALIAS_LINES, static_cast<int>(std::ceil(acf_frame_ * LINE_RATE_MIN / fs_)));
+        const int hi = std::min(MAX_VTOTAL + MAN_ALIAS_LINES, static_cast<int>(std::floor(acf_frame_ * LINE_RATE_MAX / fs_)));
+        if (hi < lo) return 0;
+        std::vector<double> sc(static_cast<size_t>(hi - lo + 1));
+        double mx = -1;
+        for (int k = lo; k <= hi; k++) {
+            sc[static_cast<size_t>(k - lo)] = lines_score(acf, acf_frame_, k);
+            mx = std::max(mx, sc[static_cast<size_t>(k - lo)]);
+        }
+        if (mx < LINE_EST_COMB_MIN || mx < LINE_EST_COMB_REL * acf_peak_) return 0;
+        est_score_ = mx;
+        for (int k = hi; k >= lo; k--)
+            if (sc[static_cast<size_t>(k - lo)] >= 0.8 * mx) { est_line_ = acf_frame_ / k; break; }
+        return est_line_;
+    }
+
+    // The line period the row history is summed at. It is MEASURED
+    // (estimate_line_period), so a hypothesis on the wrong mode doesn't skew
+    // the count - the lock's, or while searching Auto's best-comb mode's
+    // (hyp). The hypothesis is used instead when it is another line rate
+    // that explains the comb about as well: the estimate aliased (4K's
+    // ~18-sample lines estimate as 80). Within MEAS_L_TOL the two are the
+    // same line rate and the estimate (the frame peak / a whole count, exact)
+    // is the sharper. 0 = none known; *is_hyp: the hypothesis' was taken.
+    double rows_line_period(double hyp, bool* is_hyp) {
+        const double est = estimate_line_period();
+        *is_hyp = false;
+        if (!(hyp > 1)) return est;
+        if (est > 1 && std::fabs(hyp - est) <= MEAS_L_TOL * est) return est;
+        const double sc = est > 1 && acf_have_ && acf_frame_ > 0
+                              ? lines_score(pf_frame_.autocorr(), acf_frame_,
+                                            static_cast<int>(std::lround(acf_frame_ / hyp)))
+                              : -1;
+        if (est > 1 && sc < 0.5 * est_score_) return est;
+        *is_hyp = true;
+        // the frame peak is a whole number of lines, so divided by the nearest
+        // whole number of the hypothesis' lines it is the sharper period (the
+        // refinement alone: 2560x1440 at 8 dB 2e-4 off, a third of a line a
+        // frame; this moves it at most half a line a frame)
+        if (acf_have_ && acf_frame_ > hyp) return acf_frame_ / std::round(acf_frame_ / hyp);
+        return hyp;
+    }
+
+    // once per frame search: keep the row history at the line period to test
+    // and update the measured count. A history that loses its line period
+    // (the estimate gated off by a fade) keeps running ROWS_HOLD_S, so a
+    // brief dropout doesn't restart it
+    void track_line_count(double hyp) {
+        bool is_hyp = false;
+        const double L = rows_line_period(hyp, &is_hyp);
+        const double t = host.time();
+        if (L > 1) {
+            update_rows(L);
+            rows_hyp_ = is_hyp;
+            rows_L_at_ = t;
+        } else if (rows_L_ > 0 && t - rows_L_at_ > ROWS_HOLD_S) {
+            update_rows(0);
+        }
+        measure_lines();
+    }
+
+    // the row history's autocorrelation (pf_rows_), recomputed when rows have
+    // arrived since; false until the ring is full
+    bool rows_acf() {
+        if (!(rows_L_ > 0) || rows_cnt_ < static_cast<size_t>(ROWS_N)) return false;
+        if (ra_seq_ >= 0 && ra_seq_ == rows_seq_) return true;
+        rows_lin_.resize(ROWS_N);
+        for (size_t i = 0; i < static_cast<size_t>(ROWS_N); i++) rows_lin_[i] = rows_[(rows_head_ + i) % ROWS_N];
+        const video::PeriodResult rr = pf_rows_.find(rows_lin_.data(), ROWS_N, 1, ROWS_MAXLAG);
+        ra_seq_ = rr.ok && pf_rows_.autocorr().size() > static_cast<size_t>(ROWS_MAXLAG) ? rows_seq_ : -1;
+        return ra_seq_ >= 0;
+    }
+
+    // a count V's score: the mean of the line energies' autocorrelation at
+    // V, 2V, 3V ... up to ROWS_MAXLAG, each unbiased by its overlap (-1 = none)
+    double rows_score(int v) const {
+        const std::vector<float>& ra = pf_rows_.autocorr();
+        if (v < 1 || v > ROWS_MAXLAG || ra.size() <= static_cast<size_t>(ROWS_MAXLAG)) return -1;
+        double s = 0;
+        int m = 0;
+        for (int lag = v; lag <= ROWS_MAXLAG; lag += v, m++)
+            s += ra[static_cast<size_t>(lag)] * (static_cast<double>(ROWS_N) / (ROWS_N - lag));
+        return m ? s / m : -1;
+    }
+
+    // the counts the measurement considers: Manual with a resolution, the
+    // height + 1 up to 20 % blanking; else those whose frame (V lines of the
+    // rows' period) falls in the frame search window - the refresh window,
+    // or +-4 % around a forced / entered refresh. That keeps out 2x the true
+    // count (a half refresh), which repeats as well
+    bool meas_range(int& lo, int& hi) const {
+        if (!(rows_L_ > 1)) return false;
+        int aw = 0, ah = 0;
+        manual_res(aw, ah);
+        if (opt_mode_ == "manual" && ah > 0 && !std::isfinite(man_lines_)) {
+            lo = ah + 1;
+            hi = manual_vt_hi(ah);
+        } else {
+            int flo = 0, fhi = 0;
+            frame_window(flo, fhi);
+            lo = static_cast<int>(std::ceil(flo / rows_L_));
+            hi = static_cast<int>(std::floor(fhi / rows_L_));
+        }
+        lo = std::max(lo, 100);
+        hi = std::min({hi, MAX_VTOTAL + MAN_ALIAS_LINES, ROWS_MAXLAG / 3});   // >= 3 multiples per count
+        return hi - lo >= 2;
+    }
+
+    // The measured total lines from the row history (see MEAS_PEAK_MIN): the
+    // latest estimate (meas_now_) and, after MEAS_CONFIRM confident ones in a
+    // row with the same count, the accepted count (meas_v_ / meas_L_). An
+    // accepted count stays until a confirmed different one replaces it, the
+    // line rate changes or the lock is dropped - an unsure estimate doesn't
+    // undo it, so the mode doesn't flap at a marginal SNR.
+    void measure_lines() {
+        meas_now_ = LineCount{};
+        int lo = 0, hi = 0;
+        if (!meas_range(lo, hi) || !rows_acf()) return;
+        msc_.resize(static_cast<size_t>(hi - lo + 3));   // lo-1 .. hi+1
+        for (int v = lo - 1; v <= hi + 1; v++) msc_[static_cast<size_t>(v - lo + 1)] = rows_score(v);
+        const auto S = [&](int v) { return msc_[static_cast<size_t>(v - lo + 1)]; };
+        LineCount c;
+        c.L = rows_L_;
+        c.hyp = rows_hyp_;
+        c.score = -2;
+        for (int v = lo; v <= hi; v++)
+            if (S(v) > c.score) { c.score = S(v); c.v = v; }
+        if (c.v <= 0) return;
+        c.side = std::max(S(c.v - 1), S(c.v + 1));
+        // the best other peak: a local maximum with a dip of MEAS_PROM between
+        // it and the count (bumps on the count's own slope don't compete - a
+        // picture with large flat areas gives a broad, uneven hill)
+        c.other = -1;
+        for (const int dir : {-1, 1}) {
+            double dip = c.score;
+            for (int v = c.v + dir; v >= lo && v <= hi; v += dir) {
+                if (std::abs(v - c.v) > 1 && S(v) >= S(v - 1) && S(v) >= S(v + 1) && S(v) - dip >= MEAS_PROM)
+                    c.other = std::max(c.other, S(v));
+                dip = std::min(dip, S(v));
+            }
+        }
+        c.confident = c.v > lo && c.v < hi && c.score >= MEAS_PEAK_MIN && c.score - c.side >= MEAS_SIDE_MIN &&
+                      c.score - c.other >= MEAS_OTHER_MIN;
+        meas_now_ = c;
+        // the run: each estimate counted on at least half a fresh history
+        if (cand_seq_ >= 0 && rows_seq_ - cand_seq_ < ROWS_N / 2) return;
+        cand_seq_ = rows_seq_;
+        if (!c.confident) { cand_n_ = 0; return; }
+        if (c.v == cand_v_) cand_n_++;
+        else { cand_v_ = c.v; cand_n_ = 1; }
+        if (cand_n_ >= MEAS_CONFIRM) {
+            meas_v_ = c.v;
+            meas_L_ = c.L;
+            meas_hyp_ = c.hyp;
+        }
+    }
+
+    void send_plots() {
+        send_fps_plot(rows_L_ > 1 ? rows_L_ : estimate_line_period());
+        send_lines_plot();
+    }
+
+    // Frame rate: the frame-period autocorrelation over the search window, one
+    // point per refresh-rate bin (the highest lag in it, so the comb of
+    // one-line-apart peaks a vertically coherent picture gives isn't aliased
+    // away). Marker: the frame rate in use. A click sets `fps` (+ Manual).
+    void send_fps_plot(double L) {
+        kp::Plot p;
+        p.id = "fps";
+        p.title = "Frame rate";
+        p.x_unit = "Hz";
+        p.place = kp::PLOT_BESIDE_VIDEO;
+        p.click_option = "fps";
+        p.click_also = "mode=manual";
+        p.click_step = 0.001;
+        p.y_min = 0;
+        const std::vector<float>& acf = pf_frame_.autocorr();
+        if (acf_have_ && acf_fhi_ > acf_flo_ && acf_flo_ >= 1 && static_cast<size_t>(acf_fhi_) < acf.size()) {
+            const double f_lo = fs_ / acf_fhi_, f_hi = fs_ / acf_flo_;
+            const int np = PLOT_FPS_POINTS;
+            const double df = (f_hi - f_lo) / (np - 1);
+            p.x0 = f_lo;
+            p.dx = df;
+            p.y.resize(np);
+            for (int i = 0; i < np; i++) {
+                const double f = f_lo + i * df;
+                const int k0 = std::max(acf_flo_, static_cast<int>(std::ceil(fs_ / (f + 0.5 * df))));
+                const int k1 = std::min(acf_fhi_, static_cast<int>(std::floor(fs_ / std::max(1e-9, f - 0.5 * df))));
+                float v = -1;
+                for (int k = k0; k <= k1; k++) v = std::max(v, acf[static_cast<size_t>(k)]);
+                if (k0 > k1) v = static_cast<float>(std::max(-1.0, acf_interp(acf, fs_ / f)));   // a bin narrower than a lag
+                p.y[static_cast<size_t>(i)] = v;
+            }
+            // snap: to the highest peak within half a line period of the pointer
+            const double fc = 0.5 * (f_lo + f_hi);
+            p.click_snap = L > 1 ? 0.5 * fc * fc * L / fs_ : 0.03;
+        }
+        const double in_use = locked_ ? frame_rate_ : (opt_mode_ == "manual" && man_fps_ > 0 ? man_fps_ : NAN);
+        if (std::isfinite(in_use)) {
+            char b[24];
+            std::snprintf(b, sizeof b, "%.3f", in_use);
+            p.markers.push_back({in_use, b, ""});
+        }
+        host.plot(p);
+    }
+
+    // Total lines: for each count V, the mean autocorrelation of the line
+    // energies at V, 2V, 3V ... lines (rows_score). Markers: the count in use,
+    // and the accepted measured count where it differs (a forced mode or
+    // entered lines the signal contradicts). A click sets `lines` (+ Manual),
+    // snapped to the peak at whole lines.
+    void send_lines_plot() {
+        kp::Plot p;
+        p.id = "lines";
+        p.title = "Total lines";
+        p.x_unit = "lines";
+        p.place = kp::PLOT_BESIDE_VIDEO;
+        p.click_option = "lines";
+        p.click_also = "mode=manual";
+        p.click_snap = 12;
+        p.click_step = 1;
+        p.y_min = 0;
+        const double in_use = locked_ ? vtotal_ : (opt_mode_ == "manual" && man_lines_ > 0 ? std::round(man_lines_) : NAN);
+        // the counts shown: +-25 % around the count in use, else the frame
+        // peak's (a few lines off the true count at most); steps of 50 so the
+        // axis doesn't wander with the estimate
+        const double c = std::isfinite(in_use) ? in_use : (rows_L_ > 0 && acf_frame_ > 0 ? acf_frame_ / rows_L_ : 0);
+        if (rows_L_ > 0 && rows_cnt_ == static_cast<size_t>(ROWS_N) && c >= 100) {
+            int lo = std::max(100, static_cast<int>(std::floor(0.75 * c / 50)) * 50);
+            int hi = static_cast<int>(std::ceil(1.25 * c / 50)) * 50;
+            hi = std::min({hi, lo + PLOT_LINES_MAX - 1, ROWS_MAXLAG});
+            if (hi > lo && rows_acf()) {
+                p.x0 = lo;
+                p.dx = 1;
+                p.y.resize(static_cast<size_t>(hi - lo + 1));
+                for (int v = lo; v <= hi; v++) p.y[static_cast<size_t>(v - lo)] = static_cast<float>(rows_score(v));
+            }
+        }
+        if (std::isfinite(in_use)) p.markers.push_back({in_use, std::to_string(static_cast<int>(in_use)), ""});
+        if (meas_v_ > 0 && !(in_use == meas_v_)) p.markers.push_back({static_cast<double>(meas_v_), std::to_string(meas_v_) + " measured", ""});
+        host.plot(p);
+    }
+
     // -------- DoA (secondary, defensive) --------
     void accumulate_cov(const cf* const* x, int m, size_t n) {
-        if (!doa_ || m < 2 || m > 8 || n == 0) { cov_m_ = m; return; }
-        if (cov_m_ != m) { cov_m_ = m; covR_.assign(static_cast<size_t>(m) * m, cd{}); cov_n_ = 0; cwin_start_ = NAN; }
+        if (!doa_ || m < 2 || m > 8 || n == 0) { cov_m_ = 0; return; }   // nothing accumulated this stretch
+        // (re)size on the vector itself, not just cov_m_: DoA turned on later,
+        // or a reset(), leaves covR_ empty whatever cov_m_ says
+        const size_t mm = static_cast<size_t>(m) * m;
+        if (cov_m_ != m || covR_.size() != mm) { cov_m_ = m; covR_.assign(mm, cd{}); cov_n_ = 0; cwin_start_ = NAN; }
         if (!std::isfinite(cwin_start_)) cwin_start_ = host.time();
         if (!locked_) return;   // never accumulate on an unlocked (possibly noise) signal
 
@@ -930,7 +1777,7 @@ KRAKEN_PLUGIN(Tempest,
                             "2560x1080@60=2560x1080 @ 60 (ultrawide)|3440x1440@60=3440x1440 @ 60 (ultrawide)|"
                             "3840x2160@30=3840x2160 @ 30 (4K)|3840x2160@60=3840x2160 @ 60 (4K)|manual=Manual",
                             "Auto detect finds the mode from the signal; pick a mode to force it (incl. 1440p/4K/ultrawide), "
-                            "or Manual to set the timing fields below by hand. Force the high-res modes: 2560x1440 and "
+                            "or Manual to enter the display's resolution and / or timing below by hand. Force the high-res modes: 2560x1440 and "
                             "3440x1440 share a line rate so Auto can report either, 4K @60 has so few samples per line that "
                             "Auto can alias it to a lower mode, and 4K @30 sits below the default refresh window (force it or "
                             "lower Refresh search min). Auto is reliable for the 640x480..1920x1080 modes"},
@@ -943,11 +1790,20 @@ KRAKEN_PLUGIN(Tempest,
                             "Auto detect: the lowest frame rate to look for (the frame-period autocorrelation window)"},
                            {"refresh_hi", "Refresh search max (Hz)", "90", "",
                             "Auto detect: the highest frame rate to look for"},
+                           {"width", "Manual width (px)", "", "",
+                            "Manual mode: the display's active width in pixels (e.g. 1680). Set it together with the "
+                            "height: the picture is then cropped to that area and shown at its shape, and the total "
+                            "lines / pixels per line you leave empty are found from the signal or the standard (CVT) "
+                            "timing of that resolution"},
+                           {"height", "Manual height (px)", "", "",
+                            "Manual mode: the display's active height in pixels (e.g. 1050); see Manual width"},
                            {"fps", "Manual frame rate (Hz)", "", "", "Manual mode: the display's refresh rate"},
                            {"lines", "Manual total lines", "", "",
-                            "Manual mode: total lines per frame including blanking (vtotal)"},
+                            "Manual mode: total lines per frame including blanking (vtotal). Required unless the "
+                            "width and height are set (then leave it empty to have it found)"},
                            {"pixel_clock_mhz", "Manual pixel clock (MHz)", "", "",
-                            "Manual mode: the dot clock, if known (sets the pixels per line)"},
+                            "Manual mode: the dot clock, if known (sets the total pixels per line; else the standard "
+                            "timing of the entered resolution, or the samples per line)"},
                            {"samples_per_line", "Manual samples/line", "", "",
                             "Manual mode: samples per line at the VFO rate, instead of deriving it from the frame rate"},
                            {"h_offset", "Horizontal nudge", "0", "",
@@ -971,8 +1827,8 @@ KRAKEN_PLUGIN(Tempest,
                             "Larger than the quality slider's setting."},
                            {"max_display_px", "Max picture size", "1280",
                             "640=640 px|960=960 px|1280=1280 px|1920=1920 px|3840=3840 px (native 4K)",
-                            "Longest-side cap on the EMITTED picture only - reconstruction always uses the display's full "
-                            "geometry, so a 4K monitor is still fully received and reconstructed. Lower = less bandwidth/CPU; "
+                            "Longest-side cap on the EMITTED picture only - reconstruction always uses every line and "
+                            "sample of the display, so a 4K monitor is still fully received and reconstructed. Lower = less bandwidth/CPU; "
                             "3840 sends the native raster. On a build without libjpeg the raw picture is capped at ~1 MB and "
                             "larger frames are dropped."},
                            {"doa", "Bearing to source", "1", "0=Off|1=On",

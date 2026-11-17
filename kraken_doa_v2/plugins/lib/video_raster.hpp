@@ -69,8 +69,10 @@ private:
 // and its two neighbours; confidence is the peak's prominence above the
 // trough that precedes it (0 = none .. 1 = a clean periodic signal). Used for
 // the coarse frame period and the fine line period. Holds cached pffft plans
-// (one per transform size) and reusable work buffers, so repeated calls at
-// the same size allocate nothing.
+// (the two most recently used transform sizes; older ones are freed) and
+// reusable work buffers, so repeated calls at the same size allocate nothing -
+// pass a fixed-length window (not a buffer whose length drifts) to stay on
+// one plan.
 struct PeriodResult {
     bool ok = false;
     double period = 0;      // fractional samples (0 if !ok)
@@ -196,6 +198,13 @@ struct RasterMap {
 };
 // Fill out[0 .. width*height) (caller-owned, row-major). Allocation-free.
 void resample(const float* env, size_t n, const RasterMap& m, float* out);
+// The column sums (col[c] = sum over rows) and row sums (row[r] = sum over
+// columns) of the image resample() would produce for m, without storing it -
+// exactly the sums find_blanking_offset(img, ...) forms (non-finite pixels as
+// 0), for a big full raster that only needs its blanking located. col / row
+// are resized to width / height.
+void raster_profiles(const float* env, size_t n, const RasterMap& m, std::vector<double>& col,
+                     std::vector<double>& row);
 
 // === 5. Frame accumulator & 8-bit render ===================================
 // A running average of the reconstructed float frames (the picture is static,
@@ -229,6 +238,9 @@ public:
     // written to out_dx / out_dy when non-null. Before the first frame the
     // average is empty, so the frame is taken as-is.
     void add(const float* frame, int max_shift = 0, int* out_dx = nullptr, int* out_dy = nullptr);
+    // The same with separate search ranges: +-max_dx columns, +-max_dy rows
+    // (e.g. a raster whose columns are coarser than its rows).
+    void add_xy(const float* frame, int max_dx, int max_dy, int* out_dx = nullptr, int* out_dy = nullptr);
     // The current averaged float frame (width*height, row-major), or nullptr
     // before any frame was added.
     const float* average() const { return frames_ ? avg_.data() : nullptr; }
@@ -255,7 +267,7 @@ private:
     // scratch for the shifted frame (so add() allocates nothing after warm-up)
     std::vector<float> shifted_;
     // best integer (dx,dy) aligning frame to avg_ (coarse, zero-mean correlation)
-    void best_shift(const float* frame, int max_shift, int* dx, int* dy) const;
+    void best_shift(const float* frame, int max_dx, int max_dy, int* dx, int* dy) const;
     void push(const float* frame);
 };
 
@@ -328,6 +340,10 @@ struct BlankOffset {
     bool ok = false;
 };
 BlankOffset find_blanking_offset(const float* img, int width, int height, int band_w = 0, int band_h = 0);
+// The same from the image's column / row sums (raster_profiles): width =
+// col.size(), height = row.size().
+BlankOffset find_blanking_offset(const std::vector<double>& col, const std::vector<double>& row, int band_w = 0,
+                                 int band_h = 0);
 
 // === optional self-test ====================================================
 // Synthesizes a known raster, AM-carries it, then runs envelope -> period

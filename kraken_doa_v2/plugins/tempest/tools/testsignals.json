@@ -38,5 +38,44 @@
    {"bearing": 35}
   ],
   "tol_deg": 6
+ },
+ {
+  "id": "tempest-manual-1680x1050",
+  "title": "TEMPEST: 1680x1050 @ 60 Hz, manual width / height",
+  "description": "Synthetic unintended video emanation of a 1680x1050 @ 60 Hz display (VESA CVT timing: 2240x1089 total, 146.25 MHz pixel clock) at 2.4 MHz around 438.75 MHz - the 3rd harmonic of the pixel clock - with the leaking device at array bearing 35 deg. This mode is NOT in the plugin's list, so it is received in Manual mode with only the resolution entered (Manual width 1680, Manual height 1050): the total lines and pixels per line are found from the signal and the CVT timing. Expect the facts to show Mode '1680x1050 @ 60.0 Hz (manual)', Total lines 1089, Pixel clock 146.3 MHz (est), a reconstructed picture cropped to the active area, and a 'screen' talker near 35 deg. 3 s, looped.",
+  "rf_hz": 438750000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 3,
+  "vfo": {"bw_khz": 2400, "opts": {"mode": "manual", "width": "1680", "height": "1050"}},
+  "steps": [
+   ["{tools}/tempest_gen.py", "tempest1680.cu8",
+    "--mode", "1680x1050@60", "--bearing", "35", "--seconds", "3",
+    "--snr", "26", "--noise-lsb", "3", "--rf", "438750000", "--offset", "300000", "--seed", "7"]
+  ],
+  "output": "tempest1680.cu8",
+  "expect": [
+   {"bearing": 35}
+  ],
+  "tol_deg": 6
+ },
+ {
+  "id": "tempest-unlisted-1440x900",
+  "title": "TEMPEST: 1440x900 @ 60 Hz (CVT reduced blanking), not a listed mode",
+  "description": "Synthetic unintended video emanation of a 1440x900 @ 59.90 Hz display with VESA CVT reduced blanking (1600x926 total, 88.75 MHz pixel clock) at 2.4 MHz around 532.5 MHz - the 6th harmonic - with the leaking device at array bearing 35 deg. No listed mode has this timing (the list's 1440x900 is the 934-line standard-blanking one, and the line comb alone would pick 1600x900), so Auto detect measures the total lines and reports the display as not listed. Expect the event 'Display not listed: 926 lines @ 59.90 Hz - enter its width and height in Manual', Mode '926 lines @ 59.90 Hz (not listed)', the full raster as the picture, and a 'screen' talker near 35 deg. Then set Manual width 1440 / height 900 to see the picture cropped to the active area. 3 s, looped.",
+  "rf_hz": 532500000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 3,
+  "vfo": {"bw_khz": 2400},
+  "steps": [
+   ["{tools}/tempest_gen.py", "tempest1440rb.cu8",
+    "--mode", "1440x900rb@60", "--bearing", "35", "--seconds", "3",
+    "--snr", "26", "--noise-lsb", "3", "--rf", "532500000", "--offset", "300000", "--seed", "7"]
+  ],
+  "output": "tempest1440rb.cu8",
+  "expect": [
+   {"event": "Display not listed: 926 lines @ 59.90 Hz"},
+   {"bearing": 35}
+  ],
+  "tol_deg": 6
  }
 ]

@@ -135,7 +135,14 @@ the bandwidth limit. One-off lock event: `"Locked PAL 625/50"` /
 ## Output
 
 720 x 576 GRAY8 (PAL) / 720 x 480 (NTSC) in weave; bob = full height from one
-field; off = half height. ~15 fps, well under the 1 MiB wire cap.
+field (resampled at the native line pitch, then line-doubled - odd rows
+interpolated between the field lines; it used to resample at half a line's
+pitch, which started every other row half-way through a line: corr 0.15 / 0.13
+with the PAL / NTSC test card, now 0.91 / 0.91, like `off`); off = half
+height. The weave fallback before a second field uses the same path. ~15 fps,
+well under the 1 MiB wire cap. While no browser shows the picture
+(`host.video_wanted()` false) the render and the frame are skipped; the lock,
+facts and `valid()` spans are not.
 
 ## Tests
 

@@ -170,10 +170,23 @@ struct Spatial {
 // array plugins): x0 + i dx against y[i]. Markers can name a talker / spatial
 // id: clicking one shows that talker alone on the map. The latest plot
 // replaces the previous one; send at most a few per second.
+//
+// Several plots, beside the video, a click that sets an option: give the plot
+// an id (each id is its own plot; the latest with that id replaces it), place
+// it beside the video display (Info::video plugins) and name the option a
+// click sets - the page then shows the value under the pointer and a click
+// sends it through the decoder-option path (saved per VFO, every browser
+// sees it), as if typed into the option's field. Such a plot goes on the wire
+// as PLOT_EX; a kraken_doa older than these fields ignores it (it shows
+// nothing), while a plot without them is sent as before (PLOT).
 struct PlotMarker {
     double x = 0;
     std::string label;              // short, e.g. "#2"
     std::string talker;             // a Talker / Spatial id ("" = none)
+};
+enum PlotPlace : int {
+    PLOT_TAB = 0,                   // the decoder tab's row of plots (the default)
+    PLOT_BESIDE_VIDEO = 1,          // right of the video display, one column per VFO
 };
 struct Plot {
     std::string title;              // "Channel impulse response"
@@ -183,6 +196,15 @@ struct Plot {
     double y_min = NAN, y_max = NAN;   // NAN = from the data
     double threshold = NAN;         // a dashed horizontal line (NAN = none)
     std::vector<PlotMarker> markers;
+    // --- PLOT_EX (any of these set; older hosts ignore such a plot) ---
+    std::string id;                 // [A-Za-z0-9_.-], <= 32 chars; "" = the plugin's one plot. Shown in id order
+    int place = PLOT_TAB;           // PlotPlace
+    std::string click_option;       // a click sets this option (an Info::options key) to the x clicked
+    std::string click_also;         // "key=value": a click also sets this option, when it isn't so already
+                                    // (e.g. "mode=manual", so the clicked value takes effect)
+    double click_snap = 0;          // > 0: the value snaps to the curve's highest point within +- this many
+                                    // x units of the pointer (the page widens it to a few screen pixels)
+    double click_step = 0;          // > 0: the value is rounded to a multiple of this (1 = whole numbers)
 };
 
 // A reconstructed picture for the decoder's tab (Host::video_frame): a
@@ -396,12 +418,18 @@ public:
     // 📡 DF panel's entry - instead of 2 minutes after its last report.
     // id "" = every spatial talker of this plugin
     virtual void spatial_remove(const std::string& id) { (void)id; }
-    // A line plot for the decoder's tab (see Plot)
+    // A line plot for the decoder's tab, or beside the video display (see Plot)
     virtual void plot(const Plot& p) { (void)p; }
     // A reconstructed picture for the decoder's tab (see VideoFrame): the
     // latest frame is drawn on a canvas and replaces the previous one. Set
     // Info::video. The default (an older host) drops it.
     virtual void video_frame(const VideoFrame& f) { (void)f; }
+    // Someone is watching the picture (a browser shows the video display):
+    // while false, video_frame() drops frames at once, so a decoder can skip
+    // the render / scaling that only feeds it (keep reconstructing, so the
+    // picture is ready when a viewer opens the panel). true on a host that
+    // doesn't say (older hosts, offline tests).
+    virtual bool video_wanted() const { return true; }
     // Ask the host to retune so that rf_hz is at 0 Hz of the input (Info::tunes
     // plugins only): in coherent mode the receiver retunes - every VFO on it
     // moves along -, in independent mode the VFO's own tuner. Fire and
@@ -531,5 +559,13 @@ constexpr uint32_t SPATIAL_REMOVE = 39;  // id ("" = all of this plugin's): Host
 // is dropped, never truncated. width/height are the frame's own size (not
 // downscaled for the wire once compressed).
 constexpr uint32_t VIDEO = 40;
-// (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
+// A plot with any of Plot's PLOT_EX fields (id, place, click_*): E (the count
+// of extension fields that follow, decimal text) '\0' id '\0' place '\0'
+// click_option '\0' click_also '\0' click_snap '\0' click_step, then '\0' and
+// the PLOT payload as above. A reader takes the extension fields it knows
+// and skips the rest of the E (later SDKs may add some); older kraken_doa
+// builds ignore the message.
+constexpr uint32_t PLOT_EX = 41;
+// (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends; video_wanted()
+// the OPTION "video_wanted=0|1" it sends to Info::video plugins - 1 until then)
 }  // namespace kp::wire

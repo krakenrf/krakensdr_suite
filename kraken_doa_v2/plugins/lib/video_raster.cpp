@@ -87,9 +87,21 @@ struct PeriodFinder::Impl {
         acf = kfft_alloc_complex(static_cast<size_t>(N));
         cap = N;
     }
+    // a caller whose input length varies would otherwise plan (and keep) a new
+    // pair for every size: keep only the most recently used few
+    static constexpr size_t MAX_PLANS = 2;
     Plans& plans_for(int N) {
-        for (auto& p : cache)
-            if (p.N == N) return p;
+        for (size_t i = 0; i < cache.size(); i++)
+            if (cache[i].N == N) {
+                if (i + 1 != cache.size()) std::rotate(cache.begin() + static_cast<std::ptrdiff_t>(i),
+                                                       cache.begin() + static_cast<std::ptrdiff_t>(i) + 1, cache.end());
+                return cache.back();   // most recently used last
+            }
+        while (cache.size() >= MAX_PLANS) {   // evict the least recently used
+            kfft_destroy_plan(cache.front().fwd);
+            kfft_destroy_plan(cache.front().bwd);
+            cache.erase(cache.begin());
+        }
         Plans p;
         p.N = N;
         // bound arrays are irrelevant: executed with explicit-array execute,
@@ -362,26 +374,52 @@ std::vector<ModeMatch> match_display_modes(const ModeQuery& q, int max_results) 
 }
 
 // === 4. Raster resampler ===================================================
+namespace {
+// the source position of row r's first pixel, and one pixel's linear
+// interpolation - shared by resample() and raster_profiles() so both see
+// exactly the same values
+inline double line_start(const RasterMap& m, int r) {
+    const double drift = m.line_drift * (0.5 * r * (r - 1));   // accumulated shear
+    return m.origin + m.h_offset + (m.v_offset + r) * m.samples_per_line + drift;
+}
+inline float sample_at(const float* env, size_t n, double nmax, double pos) {
+    if (!(pos >= 0 && pos <= nmax)) return 0;
+    const int64_t i = static_cast<int64_t>(pos);
+    const double f = pos - static_cast<double>(i);
+    const float a = env[i];
+    const float b = (static_cast<size_t>(i) + 1 < n) ? env[i + 1] : a;
+    return static_cast<float>(a + (b - a) * f);
+}
+}  // namespace
+
 void resample(const float* env, size_t n, const RasterMap& m, float* out) {
     if (!env || !out || m.width <= 0 || m.height <= 0 || !(m.samples_per_line > 0)) return;
     const double spp = m.samples_per_pixel > 0 ? m.samples_per_pixel : m.samples_per_line / m.width;
     const double nmax = static_cast<double>(n) - 1.0;
     for (int r = 0; r < m.height; r++) {
-        const double drift = m.line_drift * (0.5 * r * (r - 1));   // accumulated shear
-        const double line_start = m.origin + m.h_offset + (m.v_offset + r) * m.samples_per_line + drift;
         float* row = out + static_cast<size_t>(r) * m.width;
-        double pos = line_start;
+        double pos = line_start(m, r);
+        for (int c = 0; c < m.width; c++, pos += spp) row[c] = sample_at(env, n, nmax, pos);
+    }
+}
+
+void raster_profiles(const float* env, size_t n, const RasterMap& m, std::vector<double>& col,
+                     std::vector<double>& row) {
+    col.assign(static_cast<size_t>(m.width > 0 ? m.width : 0), 0.0);
+    row.assign(static_cast<size_t>(m.height > 0 ? m.height : 0), 0.0);
+    if (!env || m.width <= 0 || m.height <= 0 || !(m.samples_per_line > 0)) return;
+    const double spp = m.samples_per_pixel > 0 ? m.samples_per_pixel : m.samples_per_line / m.width;
+    const double nmax = static_cast<double>(n) - 1.0;
+    for (int r = 0; r < m.height; r++) {
+        double pos = line_start(m, r);
+        double rs = 0;
         for (int c = 0; c < m.width; c++, pos += spp) {
-            float v = 0;
-            if (pos >= 0 && pos <= nmax) {
-                const int64_t i = static_cast<int64_t>(pos);
-                const double f = pos - static_cast<double>(i);
-                const float a = env[i];
-                const float b = (static_cast<size_t>(i) + 1 < n) ? env[i + 1] : a;
-                v = static_cast<float>(a + (b - a) * f);
-            }
-            row[c] = v;
+            const float p = sample_at(env, n, nmax, pos);
+            const float v = std::isfinite(p) ? p : 0.0f;   // as find_blanking_offset(img) sums it
+            col[static_cast<size_t>(c)] += v;
+            rs += v;
         }
+        row[static_cast<size_t>(r)] = rs;
     }
 }
 
@@ -410,11 +448,11 @@ void FrameAccumulator::reset() {
     }
 }
 
-void FrameAccumulator::best_shift(const float* frame, int max_shift, int* dx, int* dy) const {
+void FrameAccumulator::best_shift(const float* frame, int max_dx, int max_dy, int* dx, int* dy) const {
     *dx = 0;
     *dy = 0;
-    const int m = max_shift;
-    const int r0 = m, r1 = h_ - 1 - m, c0 = m, c1 = w_ - 1 - m;
+    const int mx = max_dx, my = max_dy;
+    const int r0 = my, r1 = h_ - 1 - my, c0 = mx, c1 = w_ - 1 - mx;
     if (r1 < r0 || c1 < c0) return;
     const int step = std::max(1, std::min(w_, h_) / 64);
     // reference (avg_) grid stats, constant over shifts
@@ -433,8 +471,8 @@ void FrameAccumulator::best_shift(const float* frame, int max_shift, int* dx, in
     if (!(avar > 0)) return;
 
     double best = -1e300;
-    for (int ddy = -m; ddy <= m; ddy++)
-        for (int ddx = -m; ddx <= m; ddx++) {
+    for (int ddy = -my; ddy <= my; ddy++)
+        for (int ddx = -mx; ddx <= mx; ddx++) {
             double sf = 0, sff = 0, sfa = 0;
             for (int r = r0; r <= r1; r += step)
                 for (int c = c0; c <= c1; c += step) {
@@ -478,9 +516,15 @@ void FrameAccumulator::push(const float* frame) {
 }
 
 void FrameAccumulator::add(const float* frame, int max_shift, int* out_dx, int* out_dy) {
+    add_xy(frame, max_shift, max_shift, out_dx, out_dy);
+}
+
+void FrameAccumulator::add_xy(const float* frame, int max_dx, int max_dy, int* out_dx, int* out_dy) {
     if (!frame || w_ <= 0 || h_ <= 0) return;
+    if (max_dx < 0) max_dx = 0;
+    if (max_dy < 0) max_dy = 0;
     int sdx = 0, sdy = 0;
-    if (frames_ > 0 && max_shift > 0) best_shift(frame, max_shift, &sdx, &sdy);
+    if (frames_ > 0 && (max_dx > 0 || max_dy > 0)) best_shift(frame, max_dx, max_dy, &sdx, &sdy);
     if (out_dx) *out_dx = sdx;
     if (out_dy) *out_dy = sdy;
 
@@ -723,11 +767,7 @@ int min_band_start(const std::vector<double>& axis, int band) {
 }  // namespace
 
 BlankOffset find_blanking_offset(const float* img, int width, int height, int band_w, int band_h) {
-    BlankOffset out;
-    if (!img || width <= 0 || height <= 0) return out;
-    if (band_w <= 0) band_w = std::max(1, width / 8);
-    if (band_h <= 0) band_h = std::max(1, height / 8);
-
+    if (!img || width <= 0 || height <= 0) return BlankOffset{};
     std::vector<double> col(width, 0.0), row(height, 0.0);
     for (int r = 0; r < height; r++) {
         const float* p = img + static_cast<size_t>(r) * width;
@@ -739,6 +779,16 @@ BlankOffset find_blanking_offset(const float* img, int width, int height, int ba
         }
         row[r] = rs;
     }
+    return find_blanking_offset(col, row, band_w, band_h);
+}
+
+BlankOffset find_blanking_offset(const std::vector<double>& col, const std::vector<double>& row, int band_w,
+                                 int band_h) {
+    BlankOffset out;
+    const int width = static_cast<int>(col.size()), height = static_cast<int>(row.size());
+    if (width <= 0 || height <= 0) return out;
+    if (band_w <= 0) band_w = std::max(1, width / 8);
+    if (band_h <= 0) band_h = std::max(1, height / 8);
     out.h_offset = min_band_start(col, band_w);
     out.v_offset = min_band_start(row, band_h);
     out.ok = true;

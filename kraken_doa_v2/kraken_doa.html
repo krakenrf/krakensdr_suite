@@ -252,6 +252,16 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-vid {flex:1 1 360px;min-width:240px;max-width:640px;border:1px solid #0f3460;border-radius:3px;background:#000;padding:3px 5px}
 .dig-vid .cap {color:#7cb3f0;font-size:11px;display:flex;gap:6px;align-items:baseline}
 .dig-vid canvas {display:block;width:100%;height:auto;image-rendering:pixelated;background:#000}
+/* a VFO's video + the plugin's plots beside it (kp::Plot PLOT_BESIDE_VIDEO): one
+   unit, the plots column as tall as the picture; below it in a narrow panel */
+.dig-vid-unit {display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;flex:1 1 360px;min-width:240px;max-width:1030px}
+.dig-vplots {flex:1 1 220px;min-width:220px;max-width:380px;display:flex;flex-direction:column;gap:6px}
+.dig-vplot {flex:1 1 0;min-height:112px;display:flex;flex-direction:column;border:1px solid #0f3460;border-radius:3px;background:#10101e;padding:3px 5px}
+.dig-vplot .cap {color:#7cb3f0;font-size:11px;display:flex;gap:6px;align-items:baseline;white-space:nowrap;overflow:hidden}
+.dig-vplot .cap .v {color:#ffcc80;margin-left:auto}
+.dig-vplot .cap .age {color:#8296b4}
+.dig-vplot .cvw {position:relative;flex:1 1 0;min-height:84px}
+.dig-vplot canvas {position:absolute;left:0;top:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 .dig-det-tog {display:inline-block;width:13px;margin-right:3px;color:#7cb3f0;cursor:pointer;user-select:none}
 /* two-line dropdowns (the decoder lists): "Name (details)" -> the name, the details on a smaller line */
 .dd-btn {position:relative;display:flex;flex-direction:column;align-items:flex-start;min-width:0;text-align:left;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;border-radius:3px;padding:3px 20px 3px 6px;font-size:12px;line-height:1.25;cursor:pointer;font-family:inherit}
@@ -2617,6 +2627,13 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
     contScannerRunning=false,contScannerState='IDLE',contScannerTrackedSignals=[],
     showContScannerSquelch=false,contScannerSquelchDb=15,
     contScanWidebandEnabled=false,contScanStartMhz=88,contScanEndMhz=108;
+
+// Plugin plots beside the video display (see digRenderVideo): canvas id ->
+// {vfo, tab, pl, geometry} as last drawn, the pointer over one ({id, px,
+// shift}) and a press waiting for its release ({id, x, y})
+const vplotGeo = new Map();
+let vplotHover = null, vplotPress = null;
+const VPLOT_SNAP_PX = 4;   // a click snaps across at least this many pixels (Plot::click_snap)
 
 // Operating mode + independent-mode tuner panes (see OPERATING MODE below).
 // Up here: functions defined above that block use them during page load.
@@ -8308,8 +8325,10 @@ function connect() {
     // a new connection has no spectrum views: ask again with the next frame
     specViewSent = {}; specMain = null;
     // the server resets subscriptions to the default (no VIDEO) on connect:
-    // forget our state so an open video panel re-subscribes on the next render
+    // forget our state so an open video panel re-subscribes (and keeps asking
+    // until the server confirms - it ignores a SUBSCRIBE before AUTH succeeds)
     videoSubOn = false;
+    videoSubReq = null;
     setTimeout(videoUpdateSub, 950);
     // API auth: send a remembered token first, so the server authenticates
     // before any command/stream. Without one, nothing is sent: a server with
@@ -8386,6 +8405,8 @@ function connect() {
             authFailed = true;
             return;
           }
+          // the answer to our SUBSCRIBE (sent only once authenticated)
+          if (msg.subscribed) { videoOnSubAck(msg.subscribed); return; }
 
           // Handle decimator info
           if(msg.decimator_info) {
@@ -9879,7 +9900,9 @@ function specOnFrame(v, buf) {
 const videoFrames = {};   // vfo id -> {w, h, label, t} (latest)
 const videoDecode = {};   // vfo id -> {busy, pending, since, gen} for the async JPEG decode (latest-only)
 const VIDEO_DECODE_WATCHDOG_MS = 3000;   // a decode stuck longer than this is treated as failed, so a hung createImageBitmap can't wedge the canvas
-let videoSubOn = false;   // are we subscribed to the VIDEO stream (a video panel is open)?
+let videoSubOn = false;   // has the server confirmed our VIDEO subscription (a video panel is open)?
+let videoSubReq = null;   // the SUBSCRIBE awaiting its {"subscribed"} answer: {want, t}
+const VIDEO_SUB_RETRY_MS = 3000;   // an unanswered SUBSCRIBE (sent before AUTH succeeded) is resent after this
 // the caption overlay (both code paths); canvas fillText is safe - the label
 // is never inserted into HTML
 function videoDrawLabel(ctx, h, label) {
@@ -9932,6 +9955,7 @@ function videoOnFrame(v, buf) {
 // copies the bytes synchronously, so the view into the WebSocket buffer is safe
 // to hand off. A bad blob is ignored.
 function videoOnJpeg(vfo, w, h, label, bytes) {
+  if (!document.getElementById('dvideo-' + vfo)) return;   // the panel isn't showing this VFO's video: no copy, no decode
   const blob = new Blob([bytes], {type: 'image/jpeg'});   // copies synchronously
   const st = videoDecode[vfo] || (videoDecode[vfo] = {busy: false, pending: null, since: 0, gen: 0});
   const job = {w, h, label, blob};
@@ -15329,26 +15353,241 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!box) return;
     const vid = !!(digPlugin(tab) || {}).video;
     const list = vid ? ids : [];
-    const key = list.join(',');
+    // each VFO: its picture and, right of it, the plugin's plots placed beside the video
+    const vps = list.map(id => vplotsOf(id, tab));
+    const key = list.map((id, i) => id + ':' + vps[i].map(x => x.k).join('+')).join(',');
     box.style.display = list.length ? '' : 'none';
     if (box.dataset.key !== key) {
       box.dataset.key = key;
-      box.innerHTML = list.map(id =>
-        `<div class="dig-vid"><div class="cap"><span class="dig-vfo-dot" style="background:${getDecimatorColor(id)}"></span>` +
+      box.innerHTML = list.map((id, i) =>
+        `<div class="dig-vid-unit"><div class="dig-vid"><div class="cap"><span class="dig-vfo-dot" style="background:${getDecimatorColor(id)}"></span>` +
         `<b>D${id}</b> ${digEsc(digName(tab))}</div>` +
-        `<canvas id="dvideo-${id}" width="2" height="2" title="The picture this decoder reconstructs from the signal"></canvas></div>`).join('');
+        `<canvas id="dvideo-${id}" width="2" height="2" title="The picture this decoder reconstructs from the signal"></canvas></div>` +
+        (vps[i].length ? `<div class="dig-vplots">${vps[i].map(x => vplotBoxHtml(id, tab, x)).join('')}</div>` : '') +
+        `</div>`).join('');
     }
+    vps.forEach((vp, i) => vp.forEach(x => vplotUpdate(list[i], tab, x)));
     videoUpdateSub();
+  }
+
+  // --- Plugin plots beside the video display (kp::Plot PLOT_BESIDE_VIDEO) ---
+  // In the VFO's digital status a named plot is keyed "<plugin>/<plot id>"
+  // and has pos "video" when it belongs beside the video: drawn in a column
+  // right of the VFO's picture (below it in a narrow panel), in key order.
+  // One that names an option (opt) shows what a click would set - the x under
+  // the pointer, snapped to the curve's highest point within `snap` x units
+  // (at least VPLOT_SNAP_PX pixels; Shift: no snapping), rounded to `step` -
+  // and a click sends it through DIGITAL_OPT like a typed value, then `also`
+  // ("key=value", e.g. the TEMPEST plugin's mode=manual) when that option
+  // isn't so already. Nothing changes here until the receiver's broadcast
+  // comes back (saved per VFO, every page follows). Only options the plugin
+  // declares are sent; the value is always a plain number.
+  function vplotsOf(id, tab) {
+    const out = [];
+    for (const [k, pl] of Object.entries(digPlots(id))) {
+      const sl = k.indexOf('/');
+      if (sl <= 0 || k.slice(0, sl) !== tab || !pl || pl.pos !== 'video') continue;
+      out.push({k, pid: k.slice(sl + 1), pl});
+    }
+    return out.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  }
+  function vplotCvId(vfo, x) { return 'dvplot-' + vfo + '-' + x.pid.replace(/[^A-Za-z0-9_-]/g, '_'); }
+  // the option a plot's click sets: {op (the plugin's), key "<plugin>.<opt>"} or null
+  function vplotOpt(tab, k) {
+    const op = k && ((digPlugin(tab) || {}).options || []).find(o => o.key === k);
+    return op ? {op, key: tab + '.' + k} : null;
+  }
+  function vplotBoxHtml(vfo, tab, x) {
+    const id = vplotCvId(vfo, x), o = vplotOpt(tab, x.pl.opt), a = /^([a-z0-9_]{1,32})=/.exec(x.pl.also || '');
+    const ao = a && vplotOpt(tab, a[1]);
+    const tip = o ? `Click: set ${o.op.label || o.op.key} to the value under the pointer` +
+                    (ao ? ` (and ${ao.op.label || ao.op.key} to ${x.pl.also.slice(a[0].length)}, so it takes effect)` : '') +
+                    (x.pl.snap > 0 ? ' - it snaps to the highest point nearby; Shift+click: exactly where you click' : '')
+                  : '';
+    return `<div class="dig-vplot"><div class="cap"><b>${digEsc(x.pl.t || x.pid)}</b><span class="age" id="${id}-age"></span>` +
+           `<span class="v" id="${id}-v"></span></div><div class="cvw"><canvas id="${id}" title="${digEsc(tip)}"` +
+           ` onpointermove="vplotMove(event)" onpointerleave="vplotLeave(event)" onpointerdown="vplotDown(event)"` +
+           ` onpointerup="vplotUp(event)" onpointercancel="vplotPress = null"></canvas></div></div>`;
+  }
+  // new data for one plot: the caption (the value in use = its first marker) + the curve
+  function vplotUpdate(vfo, tab, x) {
+    const id = vplotCvId(vfo, x), cv = $id(id);
+    if (!cv) return;
+    const mk = (x.pl.mk || []).find(m => Number.isFinite(m[0]));
+    const vt = mk ? 'in use ' + mk[1] + (x.pl.xu ? ' ' + x.pl.xu : '') : '';
+    const ve = $id(id + '-v'), ae = $id(id + '-age'), at = x.pl.age > 2 ? x.pl.age + ' s ago' : '';
+    if (ve && ve.textContent !== vt) ve.textContent = vt;
+    if (ae && ae.textContent !== at) ae.textContent = at;
+    vplotGeo.set(id, {vfo, tab, pl: x.pl});
+    vplotDraw(cv);
+  }
+  // what a click at canvas x px would set: {x (number), txt (as sent)} or null
+  function vplotPick(g, px, exact) {
+    const pl = g.pl, y = pl.y || [];
+    if (!g.pw || !y.length || !(pl.dx > 0)) return null;
+    let x = g.x0 + (px - g.L) / g.pw * (g.x1 - g.x0);
+    x = Math.min(g.x1, Math.max(g.x0, x));
+    if (!exact && pl.snap > 0) {
+      const r = Math.max(pl.snap, VPLOT_SNAP_PX * (g.x1 - g.x0) / g.pw);
+      const i0 = Math.max(0, Math.ceil((x - r - pl.x0) / pl.dx)), i1 = Math.min(y.length - 1, Math.floor((x + r - pl.x0) / pl.dx));
+      let bi = -1;
+      for (let i = i0; i <= i1; i++) if (bi < 0 || y[i] > y[bi]) bi = i;
+      if (bi >= 0) x = pl.x0 + bi * pl.dx;
+    }
+    let txt;
+    if (pl.step > 0) {
+      x = Math.round(x / pl.step) * pl.step;
+      txt = x.toFixed(Math.max(0, Math.min(9, Math.ceil(-Math.log10(pl.step) - 1e-9))));
+    } else {
+      txt = String(+x.toPrecision(7));
+    }
+    x = +txt;
+    return Number.isFinite(x) ? {x, txt} : null;
+  }
+  function vplotDraw(cv) {
+    const g = cv && vplotGeo.get(cv.id);
+    if (!g) return;
+    const pl = g.pl, y = pl.y || [];
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.max(60, cv.clientWidth), H = Math.max(40, cv.clientHeight);
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+    }
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    const L = 4, R = 4, T = 14, B = 13, pw = W - L - R, ph = H - T - B;
+    g.L = L; g.pw = 0;
+    if (!y.length || !(pl.dx > 0) || !Number.isFinite(pl.x0)) {
+      c.fillStyle = '#8296b4';
+      c.font = '11px sans-serif';
+      c.fillText('Nothing to show yet (searching)', L + 4, T + ph / 2);
+      return;
+    }
+    const x0 = pl.x0, x1 = pl.x0 + (y.length - 1) * pl.dx;
+    let lo = Number.isFinite(pl.ymin) ? pl.ymin : Math.min(...y), hi = Number.isFinite(pl.ymax) ? pl.ymax : Math.max(...y);
+    if (!(hi > lo)) hi = lo + 1;
+    else if (!Number.isFinite(pl.ymax)) hi += (hi - lo) * 0.08;
+    Object.assign(g, {x0, x1: x1 > x0 ? x1 : x0 + pl.dx, pw, T, ph});
+    const X = v => L + (v - x0) / (g.x1 - x0) * pw;
+    const Y = v => T + ph * (1 - (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo));
+    // x grid: about one tick per 60 px, in the plot's unit
+    const span = g.x1 - x0, want = span / Math.max(2, pw / 60);
+    const mag = Math.pow(10, Math.floor(Math.log10(want)));
+    const stp = [1, 2, 5, 10].map(m => m * mag).find(v => v >= want) || 10 * mag;
+    const dec = Math.max(0, -Math.floor(Math.log10(stp) + 1e-9));
+    c.font = '9px sans-serif';
+    c.textAlign = 'center';
+    c.lineWidth = 1;
+    for (let v = Math.ceil(x0 / stp) * stp; v <= g.x1 + 1e-9; v += stp) {
+      const x = X(v);
+      c.strokeStyle = '#1c2d4c';
+      c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + ph); c.stroke();
+      c.fillStyle = '#6f88ad';
+      const lb = v.toFixed(dec), hw = c.measureText(lb).width / 2;   // the end labels kept inside
+      c.textAlign = x - hw < 0 ? 'left' : x + hw > W ? 'right' : 'center';
+      c.fillText(lb, c.textAlign === 'left' ? 0 : c.textAlign === 'right' ? W : x, H - 2);
+    }
+    // the curve
+    c.beginPath();
+    c.moveTo(X(x0), Y(lo));
+    for (let i = 0; i < y.length; i++) c.lineTo(X(x0 + i * pl.dx), Y(y[i]));
+    c.lineTo(X(x1), Y(lo));
+    c.closePath();
+    c.fillStyle = 'rgba(79,195,247,0.22)';
+    c.fill();
+    c.strokeStyle = '#4fc3f7';
+    c.stroke();
+    // the markers (the value in use)
+    c.font = 'bold 10px sans-serif';
+    for (const m of pl.mk || []) {
+      if (!Number.isFinite(m[0]) || m[0] < x0 || m[0] > g.x1) continue;
+      const x = X(m[0]);
+      c.strokeStyle = '#ffcc80';
+      c.lineWidth = 1.5;
+      c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + ph); c.stroke();
+      c.fillStyle = '#ffcc80';
+      c.textAlign = x > L + pw - 40 ? 'right' : x < L + 40 ? 'left' : 'center';
+      c.fillText(m[1], x, T - 3);
+    }
+    // the pointer: what a click would set
+    const hv = vplotHover && vplotHover.id === cv.id ? vplotHover : null;
+    const pk = hv && vplotOpt(g.tab, pl.opt) ? vplotPick(g, hv.px, hv.shift) : null;
+    if (pk) {
+      const x = X(pk.x), yi = Math.round((pk.x - x0) / pl.dx), yv = yi >= 0 && yi < y.length ? y[yi] : lo;
+      c.setLineDash([3, 2]);
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + ph); c.stroke();
+      c.setLineDash([]);
+      c.fillStyle = '#ffffff';
+      c.beginPath(); c.arc(x, Y(yv), 2.5, 0, 2 * Math.PI); c.fill();
+      const t = (hv.shift || !(pl.snap > 0) ? '' : '⇥ ') + pk.txt + (pl.xu ? ' ' + pl.xu : '');
+      c.font = 'bold 11px sans-serif';
+      const tw = c.measureText(t).width + 8, bx = Math.min(Math.max(L, x - tw / 2), L + pw - tw);
+      c.fillStyle = 'rgba(16,16,30,0.9)';
+      c.fillRect(bx, T + 1, tw, 15);
+      c.fillStyle = '#ffffff';
+      c.textAlign = 'left';
+      c.fillText(t, bx + 4, T + 12);
+    }
+  }
+  function vplotMove(ev) {
+    const cv = ev.currentTarget, r = cv.getBoundingClientRect();
+    vplotHover = {id: cv.id, px: ev.clientX - r.left, shift: ev.shiftKey};
+    vplotDraw(cv);
+  }
+  function vplotLeave(ev) {
+    if (vplotHover && vplotHover.id === ev.currentTarget.id) vplotHover = null;
+    vplotDraw(ev.currentTarget);
+  }
+  // a click is a press + release within a few px (the plot is redrawn under it)
+  function vplotDown(ev) {
+    vplotPress = ev.button === 0 ? {id: ev.currentTarget.id, x: ev.clientX, y: ev.clientY} : null;
+  }
+  function vplotUp(ev) {
+    const p = vplotPress, cv = ev.currentTarget;
+    vplotPress = null;
+    const g = p && p.id === cv.id && vplotGeo.get(cv.id);
+    if (!g || Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8) return;
+    const o = vplotOpt(g.tab, g.pl.opt);
+    const pk = o && vplotPick(g, ev.clientX - cv.getBoundingClientRect().left, ev.shiftKey);
+    if (!pk) return;
+    digSetOptFor(g.vfo, o.key, pk.txt);
+    // and the option that makes it take effect (a value it offers), when it isn't set so
+    const a = /^([a-z0-9_]{1,32})=(.{0,100})$/.exec(g.pl.also || ''), ao = a && vplotOpt(g.tab, a[1]);
+    if (!ao) return;
+    const d = digDec(g.vfo), vals = (d && d.digital_opts && d.digital_opts.plugin) || {};
+    const cur = vals[ao.key] !== undefined ? vals[ao.key] : ao.op.default;
+    const ch = ao.op.choices || [];
+    if (cur !== a[2] && (!ch.length || ch.some(c => c[0] === a[2]))) digSetOptFor(g.vfo, ao.key, a[2]);
   }
   // Subscribe to the VIDEO stream only while the decoder panel shows a
   // video-capable plugin, so idle browsers never carry the frames. The default
   // (no SUBSCRIBE sent) already gives FFT/AUDIO/DOA; we send the full set so the
   // spectrum/audio/DoA streams stay on when we add or drop VIDEO.
+  // videoSubOn is what the SERVER confirmed ({"subscribed":{...,"video":}} -
+  // videoOnSubAck), not what we last asked: a SUBSCRIBE sent before AUTH has
+  // succeeded is ignored by the server, so an unanswered request is sent again
+  // after VIDEO_SUB_RETRY_MS (also from a timer, in case nothing re-renders).
+  // A SUBSCRIBE is per connection and never echoed to other browsers, so it
+  // goes out even while a remote change is applied (send() would drop it).
   function videoUpdateSub() {
     const want = infoOpen('dec') && !!(digPlugin(digTabShown) || {}).video;
-    if (want === videoSubOn) return;
-    videoSubOn = want;
-    send('SUBSCRIBE:FFT,AUDIO,DOA' + (want ? ',VIDEO' : ''));
+    if (want === videoSubOn) { videoSubReq = null; return; }
+    if (videoSubReq && videoSubReq.want === want && Date.now() - videoSubReq.t < VIDEO_SUB_RETRY_MS) return;   // answer pending
+    if (!ws || ws.readyState !== 1) return;   // not connected: onopen asks again
+    videoSubReq = {want, t: Date.now()};
+    ws.send('SUBSCRIBE:FFT,AUDIO,DOA' + (want ? ',VIDEO' : ''));
+    setTimeout(videoUpdateSub, VIDEO_SUB_RETRY_MS + 50);
+  }
+  function videoOnSubAck(s) {
+    videoSubOn = !!(s && s.video);
+    // an answer that matches the request closes it; one that doesn't (an older
+    // server without VIDEO) is left to the retry timer, not resent at once
+    if (videoSubReq && videoSubReq.want === videoSubOn) videoSubReq = null;
+    videoUpdateSub();
   }
   // the DF panel section: the one selected VFO's plot with talker markers
   function sfnSectionPlot() {

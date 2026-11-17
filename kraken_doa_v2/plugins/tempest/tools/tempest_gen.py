@@ -60,6 +60,12 @@ MODES = {
     "3440x1440@60": (3440, 1440, 3600, 1481, 319750000.0, 60),
     "3840x2160@30": (3840, 2160, 4400, 2250, 297000000.0, 30),
     "3840x2160@60": (3840, 2160, 4400, 2250, 594000000.0, 60),
+    # VESA CVT standard blanking: in video::display_modes (Auto finds it) but
+    # not in the plugin's mode list - the manual width / height test
+    "1680x1050@60": (1680, 1050, 2240, 1089, 146250000.0, 60),
+    # VESA CVT reduced blanking: in neither (the table's 1440x900@60 is the
+    # 934-line CVT standard timing) - Auto must report it as not listed
+    "1440x900rb@60": (1440, 900, 1600, 926, 88750000.0, 60),
 }
 
 

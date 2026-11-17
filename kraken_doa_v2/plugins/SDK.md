@@ -295,6 +295,7 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
 | `host.video_frame(f)` | a reconstructed picture (`kp::VideoFrame`: width, height, format, pixels, label) drawn on a canvas in the decoder's tab - analog TV, screen-leakage (TEMPEST); set `.video = true` (see below) |
+| `host.plot(p)` | a line plot (`kp::Plot`) in the decoder's tab, or several, beside the video display, and one a click on sets an option (see *Array plugins: ... plots* below) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.
@@ -517,8 +518,32 @@ running it) and, when its markers name talkers, in the 📡 DF panel of the
 map: `x0 + i dx` against `y[i]` (<= 1000 points), units, an optional
 dashed `threshold`, `markers` {x, label, talker} - clicking a marker with a
 talker shows that talker alone on the map. The latest plot replaces the
-previous; send at most a few a second. A table row whose key is a talker id
-selects that talker the same way.
+previous; send at most a few a second (the pages get them about once a
+second, with the tables). A table row whose key is a talker id selects
+that talker the same way.
+
+**Several plots, beside the video, set an option by clicking.** More
+fields of `kp::Plot` (any plugin, not only array ones):
+
+| field | effect |
+|---|---|
+| `id` | the plot's own name (`[A-Za-z0-9_.-]`, <= 32 chars): each id is a separate plot, replaced only by the next with the same id (at most 8 per plugin); shown in id order. `""` = the plugin's one plot, as before |
+| `place` | `kp::PLOT_TAB` (default: the decoder tab's row of plots) or `kp::PLOT_BESIDE_VIDEO`: in a column right of the VFO's video display (`.video` plugins, *Video frames* below), as tall as the picture, wrapping below it in a narrow panel |
+| `click_option` | the key of one of your `Info::options`: the page shows the value under the pointer and a click sets that option to it - through the same decoder-option path as typing it into the option's field (saved per VFO, shown in every browser, `option(key, value)` in the plugin). The value is sent as a plain number |
+| `click_also` | `"key=value"`: another option the click also sets, when it isn't so already - the one that makes the value take effect (the tempest plugin: `mode=manual`). For a list option the value must be one of its choices. Sent after the clicked value |
+| `click_snap` | > 0: the value snaps to the curve's highest point within +- this many x units of the pointer (the page widens it to at least 4 screen pixels); Shift+click takes the exact position |
+| `click_step` | > 0: the value is rounded to a multiple of this (`1` = whole numbers) and printed with that many decimals |
+
+The markers keep their meaning there; the first one's label is shown in
+the plot's caption as the value in use. Wire: such a plot goes as
+`PLOT_EX` (41, the extension fields first, then a PLOT payload); a
+kraken_doa older than it ignores the message (the plot just doesn't show),
+and a plot without the new fields is still sent as `PLOT`, so it shows on
+older and newer receivers alike. A page older than them never shows a
+named plot. Plots beside the video are only seen while the video display
+is: skip their work while `host.video_wanted()` is false. The tempest
+plugin is the reference (`send_fps_plot` / `send_lines_plot`: its frame
+rate and total-lines graphs, which set its `fps` / `lines` options).
 
 ### Video frames
 
@@ -551,6 +576,16 @@ keyframe (a few KB/s for a static screen), so a frame dropped in transit
 (back-pressure) self-heals within that interval and a newly-opened video panel
 fills in without waiting for the picture to change. A changed frame, or any
 geometry change, always sends immediately.
+
+Frames are only wanted while a browser shows the video display: kraken_doa
+tells the plugin (`host.video_wanted()`, the OPTION `video_wanted=0|1` on the
+wire), and while it is false `video_frame()` returns at once - no hash, no
+encode, no pipe traffic. A decoder can check `host.video_wanted()` to skip the
+render / scaling that only feeds the picture, but should keep reconstructing
+(averaging) so the picture is ready the moment someone opens the panel; when
+it turns true the host forgets its last-frame hash, so the next frame goes out
+immediately even if unchanged. It is true on a host that doesn't say (older
+kraken_doa builds, the offline `--file` test).
 
 If the host was built without libjpeg (the `make` note says so), it falls back
 to sending raw pixels unchanged; then the whole frame must stay under 1 MB (a
@@ -844,7 +879,13 @@ plugins/mydec/build/decoder --info        # what kraken_doa reads
 plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw]
 plugins/mydec/build/decoder --file scene.cf32 --channels 5 --uca 0.12 [--rf HZ]   # every antenna: each talker's bearing (ID separation)
 plugins/dtv/build/decoder --file sfn.cf32 [--channels M] [--all] [--uca RADIUS_M] [--opt separate=1]   # array plugins
+plugins/tempest/build/decoder --file screen.cf32 --plots plots.jsonl   # + the last plot of each id as JSON lines
 ```
+
+The summary lists each plot id's last plot (points, x range, markers, its
+highest point and, for a clickable one, the option it sets); `--plots FILE`
+also writes them (x0, dx, y, markers, the click fields) one JSON object per
+line.
 
 **Windows** (MSYS2 UCRT64 shell, see ../../WINDOWS.md): the same commands;
 the executable is `plugins/<id>/build/decoder.exe`. A plugin has to compile

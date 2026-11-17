@@ -16,6 +16,7 @@
 #include "voice2text.hpp"
 #include "scanner_manager.hpp"
 #include "decimator_manager.hpp"
+#include "digital/digital_decoder.hpp"
 #include "channel_manager.hpp"
 #include "networking/gpsd_client.hpp"
 #include "station_info.hpp"
@@ -236,6 +237,8 @@ void apply_subscriptions(WS* ws, uint32_t mask) {
     // subscribers in a set rather than relying on the topic alone
     if (mask & SUB_VIDEO) { ws->subscribe(TOPIC_VIDEO); g_video_sockets.insert(ws); }
     else { ws->unsubscribe(TOPIC_VIDEO); g_video_sockets.erase(ws); }
+    // the video plugins render / encode / send only while someone watches
+    dig::set_video_wanted(!g_video_sockets.empty());
 }
 
 // FFT_VIEW:<display>:<seq>:<lo Hz>:<hi Hz>:<points> (see .message). A bad one
@@ -907,6 +910,7 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             g_pending_auth.erase(ws);
             g_spec_sockets.erase(ws);
             g_video_sockets.erase(ws);
+            dig::set_video_wanted(!g_video_sockets.empty());
             int remaining = --ws_client_count;  // keep the live dashboard count in sync
             if (remaining < 0) { ws_client_count.store(0); remaining = 0; }
             std::cout << "[WS] Client DISCONNECTED! Code=" << code
@@ -1158,12 +1162,16 @@ void WebSocketServer::publish_video(string msg) {
     // A dedicated video frame can be ~1 MB - drop it for a socket whose send
     // buffer is already deep rather than queueing or closing the connection.
     constexpr unsigned VIDEO_MAX_BUFFERED = 512 * 1024;
-    loop->defer([msg = std::move(msg)]() {
+    // permessage-deflate only for raw pixels (type-8 byte 13 = encoding 0):
+    // a JPEG is already compressed, and deflating it again on the loop thread
+    // costs CPU for nothing
+    const bool compress = msg.size() > 13 && static_cast<uint8_t>(msg[13]) == 0;
+    loop->defer([msg = std::move(msg), compress]() {
         if (!global_ssl_app) return;
         for (ClientWS* ws : g_video_sockets) {
             PerSocketData* ud = ws->getUserData();
             if (!(ud->sub_mask & SUB_VIDEO) || ws->getBufferedAmount() > VIDEO_MAX_BUFFERED) continue;
-            ws->send(msg, uWS::BINARY, true);
+            ws->send(msg, uWS::BINARY, compress);
         }
     });
 }

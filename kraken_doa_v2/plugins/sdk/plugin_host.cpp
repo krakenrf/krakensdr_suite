@@ -29,6 +29,7 @@
 //   --rf HZ          RF of the file's centre (Host::rf_hz; default: the
 //                    REC.json "rf_hz" of ai/sigtool.py captures)
 //   --raw            raw frames on (Host::raw_wanted) and printed
+//   --plots OUT      write the last plot of each id (Host::plot) as JSON lines
 //   --quiet          only the summary
 //   --uca R          with --channels M: the antennas form kraken_doa's UCA of
 //                    radius R metres (clockwise, ANT0 on +x); antenna 0 is
@@ -75,6 +76,7 @@
 #include <csetjmp>
 #include <cstdio>
 #include <jpeglib.h>
+#include <jerror.h>   // ERREXIT / JERR_OUT_OF_MEMORY (the destination manager's failed grow)
 #endif
 #ifdef _WIN32
 #include <fcntl.h>
@@ -161,25 +163,72 @@ void jpeg_error_longjmp(j_common_ptr cinfo) {
     std::longjmp(reinterpret_cast<jpeg_err_jmp*>(cinfo->err)->jb, 1);
 }
 
+// A libjpeg destination manager writing into a std::vector the CALLER owns
+// (instead of jpeg_mem_dest, whose malloc'd buffer only reaches the caller at
+// termination - after it has grown, an error path holds a stale pointer). The
+// vector grows by doubling; on any error it is simply left for the caller to
+// reuse or drop, so nothing leaks and nothing is freed twice. A failed grow
+// raises a libjpeg error (longjmp to the encoder's handler) - outside the
+// catch block, so no C++ exception state is skipped.
+struct jpeg_vec_dest {
+    struct jpeg_destination_mgr pub;
+    std::vector<uint8_t>* buf;
+};
+void jpeg_vec_init(j_compress_ptr cinfo) {
+    jpeg_vec_dest* d = reinterpret_cast<jpeg_vec_dest*>(cinfo->dest);
+    bool ok = true;
+    try {
+        if (d->buf->size() < 65536) d->buf->resize(65536);
+    } catch (...) { ok = false; }
+    if (!ok) ERREXIT(cinfo, JERR_OUT_OF_MEMORY);
+    d->pub.next_output_byte = d->buf->data();
+    d->pub.free_in_buffer = d->buf->size();
+}
+boolean jpeg_vec_grow(j_compress_ptr cinfo) {
+    // libjpeg calls this with the WHOLE buffer full (next_output_byte and
+    // free_in_buffer are not meaningful here)
+    jpeg_vec_dest* d = reinterpret_cast<jpeg_vec_dest*>(cinfo->dest);
+    const size_t used = d->buf->size();
+    bool ok = true;
+    try {
+        d->buf->resize(used * 2);
+    } catch (...) { ok = false; }
+    if (!ok) ERREXIT(cinfo, JERR_OUT_OF_MEMORY);
+    d->pub.next_output_byte = d->buf->data() + used;
+    d->pub.free_in_buffer = d->buf->size() - used;
+    return TRUE;
+}
+void jpeg_vec_term(j_compress_ptr cinfo) {
+    jpeg_vec_dest* d = reinterpret_cast<jpeg_vec_dest*>(cinfo->dest);
+    d->buf->resize(d->buf->size() - d->pub.free_in_buffer);   // shrinking never throws
+}
+
 // Encode an interleaved 8-bit buffer to a baseline JPEG in memory. comp = 1
 // encodes GRAY8 natively (one plane, JCS_GRAYSCALE - the whole speed/size win,
-// no expand to RGB); comp = 3 encodes RGB24 (JCS_RGB). Returns the JPEG byte
-// count and sets *out to a malloc'd buffer the caller must free(); 0 on failure
-// (*out is then null). quality is 1..100.
-size_t jpeg_encode_mem(const uint8_t* pixels, int w, int h, int comp, int quality, uint8_t** out) {
-    *out = nullptr;
-    unsigned long outsize = 0;
+// no expand to RGB); comp = 3 encodes RGB24 (JCS_RGB). Writes the JPEG into out
+// (resized to it; the caller owns it and may reuse it frame to frame) and
+// returns its byte count; 0 on failure (out's contents are then meaningless).
+// quality is 1..100. Between setjmp and a longjmp only plain C structs live in
+// this frame (no C++ object with a destructor), and nothing modified after
+// setjmp is read after the jump.
+size_t jpeg_encode_mem(const uint8_t* pixels, int w, int h, int comp, int quality, std::vector<uint8_t>& out) {
     struct jpeg_compress_struct cinfo;
     struct jpeg_err_jmp jerr;
+    struct jpeg_vec_dest dest;
+    std::memset(&cinfo, 0, sizeof cinfo);   // jpeg_destroy_compress is safe even if create never ran
+    std::memset(&dest, 0, sizeof dest);
+    dest.buf = &out;
+    dest.pub.init_destination = jpeg_vec_init;
+    dest.pub.empty_output_buffer = jpeg_vec_grow;
+    dest.pub.term_destination = jpeg_vec_term;
     cinfo.err = jpeg_std_error(&jerr.pub);
     jerr.pub.error_exit = jpeg_error_longjmp;
     if (setjmp(jerr.jb)) {   // a libjpeg error lands here
         jpeg_destroy_compress(&cinfo);
-        if (*out) { free(*out); *out = nullptr; }
         return 0;
     }
     jpeg_create_compress(&cinfo);
-    jpeg_mem_dest(&cinfo, out, &outsize);   // libjpeg malloc/reallocs *out
+    cinfo.dest = &dest.pub;   // ours, not from libjpeg's pool: destroy leaves it alone
     cinfo.image_width = static_cast<JDIMENSION>(w);
     cinfo.image_height = static_cast<JDIMENSION>(h);
     cinfo.input_components = comp;
@@ -192,9 +241,9 @@ size_t jpeg_encode_mem(const uint8_t* pixels, int w, int h, int comp, int qualit
         JSAMPROW row = const_cast<JSAMPROW>(pixels + static_cast<size_t>(cinfo.next_scanline) * stride);
         jpeg_write_scanlines(&cinfo, &row, 1);
     }
-    jpeg_finish_compress(&cinfo);
+    jpeg_finish_compress(&cinfo);   // calls jpeg_vec_term: out is now exactly the JPEG
     jpeg_destroy_compress(&cinfo);
-    return static_cast<size_t>(outsize);
+    return out.size();
 }
 #endif
 
@@ -241,6 +290,22 @@ std::string plot_payload(const kp::Plot& pl) {
         }
     }
     return p;
+}
+// a plot that uses any PLOT_EX field (kp::Plot::id ...) goes as PLOT_EX
+bool plot_is_ex(const kp::Plot& pl) {
+    return !pl.id.empty() || pl.place != kp::PLOT_TAB || !pl.click_option.empty() || !pl.click_also.empty() ||
+           pl.click_snap > 0 || pl.click_step > 0;
+}
+std::string plot_ex_payload(const kp::Plot& pl) {
+    std::string p = "6";
+    for (const std::string& f : {pl.id.substr(0, 32), std::to_string(pl.place), pl.click_option.substr(0, 32),
+                                 pl.click_also.substr(0, 140), wnum(pl.click_snap > 0 ? pl.click_snap : NAN, 9),
+                                 wnum(pl.click_step > 0 ? pl.click_step : NAN, 9)}) {
+        p.push_back('\0');
+        p += f;
+    }
+    p.push_back('\0');
+    return p + plot_payload(pl);
 }
 
 // --------------------------------------------------------------------------
@@ -302,8 +367,10 @@ public:
     }
     void spatial_remove(const std::string& id) override { send(kp::wire::SPATIAL_REMOVE, id.data(), std::min<size_t>(id.size(), 32)); }
     void plot(const kp::Plot& pl) override {
-        const std::string p = plot_payload(pl);
-        send(kp::wire::PLOT, p.data(), p.size());
+        // a plot without the PLOT_EX fields exactly as before (older kraken_doa builds show it)
+        const bool ex = plot_is_ex(pl);
+        const std::string p = ex ? plot_ex_payload(pl) : plot_payload(pl);
+        send(ex ? kp::wire::PLOT_EX : kp::wire::PLOT, p.data(), p.size());
     }
     // kp::wire::VIDEO: uint16 width, height; uint8 format, encoding; uint16
     // label_len; label; then the image data (encoding 0 = width*height*bpp raw
@@ -317,7 +384,16 @@ public:
     // the frame (log once); never truncate a sent frame. width/height are
     // always the frame's own size (the compressed blob is small, so large
     // frames - up to 4K - now fit where the raw raster would not).
+    bool video_wanted() const override { return video_wanted_; }
+    // kraken_doa's OPTION video_wanted=0|1: is any browser showing the video?
+    // Turning it on forgets the last frame's hash, so the next frame - even an
+    // unchanged still - goes out at once and a new viewer gets a picture now.
+    void set_video_wanted(bool on) {
+        if (on && !video_wanted_) video_have_hash_ = false;
+        video_wanted_ = on;
+    }
     void video_frame(const kp::VideoFrame& f) override {
+        if (!video_wanted_) return;   // nobody watching: no hash, no encode, no pipe traffic
         const int w = f.width, h = f.height;
         if (w < 1 || h < 1 || w > 65535 || h > 65535 || !f.pixels) return;
         const uint8_t format = f.format == 1 ? 1 : 0;
@@ -341,7 +417,6 @@ public:
         size_t img_len = npix;
         uint8_t encoding = 0;
 #ifdef HAVE_JPEG
-        uint8_t* jpeg_out = nullptr;
         {
             // GRAY8 (format 0) encodes as native grayscale (1 component - no
             // expand to RGB); RGB24 (format 1) as 3 components. lossless frames
@@ -349,16 +424,12 @@ public:
             // has no true lossless mode.
             const int comp = format == 1 ? 3 : 1;
             const int q = f.lossless ? 100 : (f.quality < 0 ? 60 : std::clamp(f.quality, 1, 100));
-            const size_t sz = jpeg_encode_mem(f.pixels, w, h, comp, q, &jpeg_out);
+            const size_t sz = jpeg_encode_mem(f.pixels, w, h, comp, q, jpeg_buf_);
             // use JPEG if it fits and it is smaller than raw OR raw wouldn't fit
-            if (jpeg_out && sz > 0 && 8 + sz <= kp::wire::MAX_PAYLOAD &&
-                (sz < npix || 8 + npix > kp::wire::MAX_PAYLOAD)) {
+            if (sz > 0 && 8 + sz <= kp::wire::MAX_PAYLOAD && (sz < npix || 8 + npix > kp::wire::MAX_PAYLOAD)) {
                 encoding = 2;
-                img = jpeg_out;
+                img = jpeg_buf_.data();
                 img_len = sz;
-            } else if (jpeg_out) {
-                free(jpeg_out);
-                jpeg_out = nullptr;
             }
         }
 #endif
@@ -373,9 +444,6 @@ public:
                     std::cerr << "video_frame: " << (fixed + img_len) << " bytes exceeds the " << kp::wire::MAX_PAYLOAD
                               << " byte limit - dropping (downscale the raster, or build with libjpeg)" << std::endl;
                 }
-#ifdef HAVE_JPEG
-                if (jpeg_out) free(jpeg_out);
-#endif
                 return;
             }
         }
@@ -393,9 +461,6 @@ public:
         p.append(f.label.data(), label_len);
         p.append(reinterpret_cast<const char*>(img), img_len);
         send(kp::wire::VIDEO, p.data(), p.size());
-#ifdef HAVE_JPEG
-        if (jpeg_out) free(jpeg_out);
-#endif
         video_hash_ = hv;   // only a frame actually sent updates the change-detection state
         video_have_hash_ = true;
         video_last_send_ = now;   // reset the keyframe timer on every real send
@@ -562,6 +627,12 @@ private:
     // buffer directly - no scratch buffer needed)
     uint64_t video_hash_ = 0;
     bool video_have_hash_ = false;
+    // a viewer is watching (OPTION video_wanted); true until kraken_doa says,
+    // so an older kraken_doa that never sends it still gets every frame
+    bool video_wanted_ = true;
+#ifdef HAVE_JPEG
+    std::vector<uint8_t> jpeg_buf_;   // the encoded frame (reused frame to frame)
+#endif
     // Periodic keyframe: an unchanged frame is still re-sent once this long has
     // passed since the last ACTUAL send, so a frame lost to back-pressure heals
     // and a newly-subscribed browser gets the current picture. A static screen
@@ -720,6 +791,7 @@ int serve(int argc, char** argv) {
                     std::string k = s.substr(0, eq), v = eq == std::string::npos ? "" : s.substr(eq + 1);
                     if (k == "verbose") host.verbose_ = v == "1";
                     if (k == "log_raw") { host.raw_wanted_ = v == "1"; break; }   // host-side only
+                    if (k == "video_wanted") { host.set_video_wanted(v == "1"); break; }   // host-side only
                     // "" = back to the declared default
                     if (v.empty())
                         for (const auto& o : info.options)
@@ -863,11 +935,63 @@ public:
         spatial_removed_ += n;
         if (n && !quiet_) printf("[%9.3f s] (spatial removed) %s\n", time(), id.empty() ? "all" : id.c_str());
     }
-    kp::Plot plot_;
-    uint64_t plots_ = 0;
+    // the latest plot per id (kp::Plot::id; "" = the plugin's one plot) and how many came
+    std::map<std::string, std::pair<kp::Plot, uint64_t>> plots_;
+    std::string plots_path_;   // --plots FILE: the last plot of each id as JSON lines
     void plot(const kp::Plot& p) override {
-        plot_ = p;
-        plots_++;
+        auto& e = plots_[p.id];
+        e.first = p;
+        e.second++;
+    }
+    void print_plots() const {
+        for (const auto& kv : plots_) {
+            const kp::Plot& pl = kv.second.first;
+            printf("plot%s%s: %llu sent; last \"%s\" %zu points %s .. %s %s, %zu markers:", kv.first.empty() ? "" : " ",
+                   kv.first.c_str(), static_cast<unsigned long long>(kv.second.second), pl.title.c_str(), pl.y.size(),
+                   wnum(pl.x0).c_str(), wnum(pl.x0 + pl.dx * std::max<double>(0, pl.y.size() - 1.0)).c_str(),
+                   pl.x_unit.c_str(), pl.markers.size());
+            for (const auto& mk : pl.markers) printf(" %s@%.6g", mk.label.c_str(), mk.x);
+            // the highest point, and what a click would set (PLOT_EX)
+            size_t pk = 0;
+            for (size_t i = 1; i < pl.y.size(); i++)
+                if (pl.y[i] > pl.y[pk]) pk = i;
+            if (!pl.y.empty()) printf("; peak %.4g at %.9g", pl.y[pk], pl.x0 + pl.dx * static_cast<double>(pk));
+            if (pl.place == kp::PLOT_BESIDE_VIDEO) printf("; beside the video");
+            if (!pl.click_option.empty())
+                printf("; click sets %s%s%s (snap %g, step %g)", pl.click_option.c_str(), pl.click_also.empty() ? "" : " + ",
+                       pl.click_also.c_str(), pl.click_snap, pl.click_step);
+            printf("\n");
+        }
+        if (plots_path_.empty() || plots_.empty()) return;
+        FILE* f = fopen(plots_path_.c_str(), "w");
+        if (!f) {
+            fprintf(stderr, "--plots: can't write %s\n", plots_path_.c_str());
+            return;
+        }
+        auto num = [](double v) { return std::isfinite(v) ? wnum(v, 9) : std::string("null"); };
+        auto str = [](const std::string& s) {
+            std::string o = "\"";
+            for (unsigned char c : s) {
+                if (c == '"' || c == '\\') { o += '\\'; o += static_cast<char>(c); }
+                else if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", c); o += b; }
+                else o += static_cast<char>(c);
+            }
+            return o + "\"";
+        };
+        for (const auto& kv : plots_) {
+            const kp::Plot& pl = kv.second.first;
+            std::string o = "{\"id\":" + str(pl.id) + ",\"title\":" + str(pl.title) + ",\"x_unit\":" + str(pl.x_unit) +
+                            ",\"y_unit\":" + str(pl.y_unit) + ",\"x0\":" + num(pl.x0) + ",\"dx\":" + num(pl.dx) +
+                            ",\"place\":" + std::to_string(pl.place) + ",\"click_option\":" + str(pl.click_option) +
+                            ",\"click_also\":" + str(pl.click_also) + ",\"click_snap\":" + num(pl.click_snap) +
+                            ",\"click_step\":" + num(pl.click_step) + ",\"y\":[";
+            for (size_t i = 0; i < pl.y.size(); i++) o += (i ? "," : "") + num(pl.y[i]);
+            o += "],\"markers\":[";
+            for (size_t i = 0; i < pl.markers.size(); i++)
+                o += std::string(i ? "," : "") + "{\"x\":" + num(pl.markers[i].x) + ",\"label\":" + str(pl.markers[i].label) + "}";
+            fprintf(f, "%s]}\n", o.c_str());
+        }
+        fclose(f);
     }
     // a recording can't be retuned: shown, refused
     bool tune(double rf_hz) override {
@@ -1529,14 +1653,7 @@ int test_array(const std::string& path, std::string fmt, double rate, int channe
                    static_cast<unsigned long long>(k.n), k.delay, k.power, k.snr, k.ref ? " ref" : "    ", brg);
         }
     }
-    if (host.plots_) {
-        const kp::Plot& pl = host.plot_;
-        printf("plot: %llu sent; last \"%s\" %zu points %s .. %s %s, %zu markers:", static_cast<unsigned long long>(host.plots_),
-               pl.title.c_str(), pl.y.size(), wnum(pl.x0).c_str(), wnum(pl.x0 + pl.dx * std::max<double>(0, pl.y.size() - 1.0)).c_str(),
-               pl.x_unit.c_str(), pl.markers.size());
-        for (const auto& mk : pl.markers) printf(" %s@%.2f", mk.label.c_str(), mk.x);
-        printf("\n");
-    }
+    host.print_plots();
     host.print_table(1000);
     return 0;
 }
@@ -1559,7 +1676,7 @@ int test_file(int argc, char** argv) {
 #ifdef _WIN32
     console_utf8();
 #endif
-    std::string path, fmt, audio_path;
+    std::string path, fmt, audio_path, plots_path;
     double rate = 0, offset = 0, start = 0, seconds = 0, rf = NAN, uca_r = 0;
     int channels = 0, pick = -1;   // a recording of every antenna: how many / decode only this one
     bool all = false;              // array plugins: every sample, not bursts
@@ -1580,6 +1697,7 @@ int test_file(int argc, char** argv) {
         else if (a == "--start") start = atof(next().c_str());
         else if (a == "--seconds") seconds = atof(next().c_str());
         else if (a == "--audio") audio_path = next();
+        else if (a == "--plots") plots_path = next();
         else if (a == "--quiet") quiet = true;
         else if (a == "--verbose") verbose = true;
         else if (a == "--invert") invert = true;
@@ -1611,6 +1729,7 @@ int test_file(int argc, char** argv) {
         host.have_station_ = have_station;
         host.st_lat_ = st_lat;
         host.st_lon_ = st_lon;
+        host.plots_path_ = plots_path;
         if (!std::isfinite(rf) && !read_sidecar(path, "rf_hz", &rf)) rf = NAN;
         if (std::isfinite(rf) && rf > 0) host.rf_hz_ = rf + offset;
         auto dec = kp_plugin_create(host);
@@ -1671,6 +1790,7 @@ int test_file(int argc, char** argv) {
     host.raw_ = raw;
     host.st_lat_ = st_lat;
     host.st_lon_ = st_lon;
+    host.plots_path_ = plots_path;
     // RF of the file's centre (--rf, else the sidecar's "rf_hz"): the
     // decoder's 0 Hz is --offset away from it (mirrored with --invert)
     if (!std::isfinite(rf) && !read_sidecar(path, "rf_hz", &rf)) rf = NAN;
@@ -1770,6 +1890,7 @@ int test_file(int argc, char** argv) {
         }
     }
     host.print_table(30);
+    host.print_plots();
     if (host.map_updates_ || !host.map_.empty()) {
         printf("map: %llu updates, %zu points\n", static_cast<unsigned long long>(host.map_updates_), host.map_.size());
         for (const auto& kv : host.map_) {
@@ -1829,7 +1950,7 @@ int main(int argc, char** argv) {
             "%s (%s) - KrakenSDR decoder plugin\n"
             "usage: %s --info | --serve | --file REC [--rate HZ] [--format cf32|cu8|cs16|wav]\n"
             "          [--offset HZ] [--start S] [--seconds S] [--verbose] [--invert]\n"
-            "          [--opt key=value] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw] [--quiet]\n"
+            "          [--opt key=value] [--audio out.wav] [--plots out.jsonl] [--station LAT,LON] [--rf HZ] [--raw] [--quiet]\n"
             "          [--channels M (every antenna, interleaved) [--channel K (only that one)] [--uca RADIUS_M]]\n"
             "          array plugins: [--channels M] [--all] [--uca RADIUS_M]\n",
             info.name, info.description, argv[0]);

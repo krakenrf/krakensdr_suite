@@ -59,6 +59,10 @@ void set_record_handler(RecordHandler h);
 // Raw frames wanted (the log's "Raw frames" type is on): passed to the
 // plugins as the OPTION log_raw=0|1 (kp::Host::raw_wanted)
 void set_raw_wanted(bool on);
+// A browser shows decoder video (a page subscribed to VIDEO): passed to the
+// video plugins as the OPTION video_wanted=0|1 (kp::Host::video_wanted), and
+// while false their frames are dropped on arrival. Set from the uWS loop.
+void set_video_wanted(bool on);
 
 // 🗣 Voice to Text (voice2text.cpp): the decoded voice of decoders whose
 // voice tap is on (DigitalDecoder::set_voice_tap - the VFO's "Transcribe"),
