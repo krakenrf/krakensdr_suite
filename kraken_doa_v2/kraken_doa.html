@@ -616,10 +616,11 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 .pfd:hover {color:var(--ac-t2)}
 .pfd.hover-top {background:linear-gradient(to bottom,rgba(122,184,247,0.28) 50%,transparent 50%)}
 .pfd.hover-bottom {background:linear-gradient(to top,rgba(122,184,247,0.28) 50%,transparent 50%)}
-.pfd-sep {color:var(--ac-t);font-size:21px;width:7px;text-align:center}
+/* the "." between the groups: on the digits' line, centred on its slot (see .vfd-sep) */
+.pfd-sep {display:inline-flex;justify-content:center;flex:none;width:7px;color:var(--ac-t);font-size:22px;line-height:30px;pointer-events:none}
 .tpane.sel {border-color:var(--ac-t);box-shadow:inset 0 0 0 1px var(--ac-t)}
-.tpane-head {display:flex;align-items:center;gap:6px;padding:3px 6px;background:var(--s4);font-size:12px;color:var(--t3);flex-wrap:wrap;flex-shrink:0}
-.tpane-name {font-weight:bold;color:var(--ac-t);cursor:pointer;min-width:20px}
+.tpane-head {display:flex;align-items:center;gap:6px;padding:3px 6px;background:var(--s4);font-size:12px;color:var(--t3);flex-wrap:wrap;flex-shrink:0;cursor:pointer}
+.tpane-name {font-weight:bold;color:var(--ac-t);min-width:20px}
 .tpane-gain {width:70px}
 .tpane-vfos {margin-left:auto;font-weight:bold;white-space:nowrap}
 .tpane-body {position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
@@ -1387,6 +1388,7 @@ body.map-on .doa-header .rp-tab {color:var(--t4)}
 body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bottom-color:var(--ac-l)}
 .tpane {background:var(--s3);border-color:var(--l1);border-radius:7px}
 .tpane-head {background:var(--s4)}
+.tpane:not(.sel) > .tpane-head:hover {background:var(--s5)}
 .hsplit,.info-resize,body.rp-both .rp-vsplit {background:var(--l1)}
 /* the panel under the waterfall */
 .info-panel {background:var(--s3);border-top-color:var(--l1)}
@@ -9972,8 +9974,8 @@ function panesBuild(n) {
     const el = document.createElement('div');
     el.className = 'tpane' + (ch === selTuner ? ' sel' : '');
     el.id = 'tpane-' + ch;
-    el.innerHTML = `<div class="tpane-head">
-        <span class="tpane-name" onclick="paneSelect(${ch})" title="Tuner ${ch}">T${ch}</span>
+    el.innerHTML = `<div class="tpane-head" title="Select tuner ${ch}">
+        <span class="tpane-name" title="Tuner ${ch}">T${ch}</span>
         <span class="pfreq" id="tpane-f-${ch}" title="Tuner ${ch} frequency: click the top / bottom half of a digit, or use the mouse wheel on it">${
           [8, 7, 6, 's', 5, 4, 3, 's', 2, 1, 0].map(d => d === 's' ? '<span class="pfd-sep">.</span>'
             : `<span class="pfd" data-pos="${d}">0</span>`).join('')}</span><span>MHz</span>
@@ -9989,6 +9991,12 @@ function panesBuild(n) {
         <div class="tpane-split" id="tpane-sp-${ch}" title="Drag to change the spectrum / waterfall split of every pane (double-click: default)"></div>
       </div>`;
     grid.appendChild(el);
+    // A click anywhere in the header selects the pane: its empty space (the
+    // user's wish, 2026-11-17 - only the small "T0" did), the name, and its
+    // own controls too - working on a tuner makes it the selected one, as
+    // its frequency digits always did. A click, not a press: a swipe that
+    // starts on a header only scrolls the grid.
+    el.querySelector('.tpane-head').addEventListener('click', () => paneSelect(ch));
     const p = {ch, el, wf: new WaterfallDisplay('tpane-wc-' + ch, 'tpane-wo-' + ch),
                freqs: [], mags: [], freqMhz: 0, gainDb: 0, sr: 2.4e6, sw: 0, sh: 0, oh: 0, dpr: 1,
                L: 34, bars: [], ai: [], holdF: 0, holdG: 0, zoom: {level: 1, off: 0}};
