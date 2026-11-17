@@ -9,7 +9,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 **Digital voice/data decoders (one per VFO): engine `src/digital/`, decoders `plugins/`:**
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below);
   kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
-  nxdn, mpt1327, pagers (see *Pagers*; was pocsag), aprs, adsb (see *ADS-B* below), ais (see *AIS*),
+  nxdn, ysf, mpt1327, pagers (see *Pagers*; was pocsag), aprs, adsb (see *ADS-B* below), ais (see *AIS*),
   radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
   VOR / marker*), ism (see *ISM devices*), radar (see *Pulse radar*),
   ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
@@ -134,6 +134,59 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     FACCH1 counts alone. Layer 3: VCALL (unit/TG, cipher), TX_REL, DCALL,
     trunking CAC (site / service info, grants). Voice: 4 (or 2) AMBE+2
     frames per frame -> mbelib (nW..nZ)
+  - `YsfReceiver` (plugins/ysf, 2026-11): Yaesu System Fusion, written
+    from Yaesu's "Amateur Radio Digital Standards" 1.02 alone (section
+    numbers are that document's). 4800 Bd C4FM, RRC 0.2 (span 4, 10 sps);
+    20-symbol FS D471C9634D (0.75 normalized threshold, either polarity,
+    level / centre fitted on the FS). After a good frame the next one is
+    tried on the 100 ms grid (+-3 samples, the last good level when the FS
+    fit is off) even without a sync peak; 4 misses = out of sync (4.7).
+    FICH: 5 x 20 dibit deinterleave, K=5 G 0x19/0x17 soft Viterbi, 4 x
+    Golay(24,12) (Appendix A = `golay24()`, checked row by row), CRC-16
+    (init 0, inverted, S15 sent first) - nothing is reported unless it
+    passes (random input passes ~1 in 300000; ~3 sync candidates a second
+    in noise). DCH units: 9 (160 bits) or 5 (80 bits, V/D mode 2) x 20
+    deinterleave, Viterbi, CRC over the WHITENED data, PN(9,5) (init
+    111001001, out S00, S08 <- S00 ^ S04). Layout by FI / DT: HC / TC and
+    Data FR two 160-bit units in alternating 72-bit pieces (Data FR unit =
+    2 FN + slot), V/D 1 DCH + 5 x 72-bit AMBE+2 frames (rW..rZ, like DMR),
+    V/D 2 (DN) 40-bit DCH pieces + 5 x 104 voice bits (26 x 4 deinterleave,
+    de-whitened, 27 bits x 3 by soft majority + 22) -> 49 bits ->
+    mbelib's `mbe_processAmbe2450Dataf` (`MbeLib::decode49`, optional),
+    Voice FR (VW) 5 x 144 (sub header FT 1 / FN 0: CSD3 + VCH 3, 4) ->
+    `ImbeDecoder` in the YSF order (`vw_plain_index`: the plain IMBE
+    codewords c0..c7 as a 24 x 6 block, read two rows per 12 air bits; at
+    first P25's iW..iZ order, wrong - corrected 2026-11-16 after the dsdcc
+    check). A call = valid frames < 1 s apart
+    (two headers in a row = one; a repeated TC is no new call); its event
+    waits for source + destination + CSD2 (late entry: at most 8 frames;
+    an all-asterisk destination - an off-air call to everyone sent `*****`
+    in Radio ID mode - is shown as "ALL", the fact keeps `***** (all)`);
+    a lone FICH with no DCH and no second frame gives no call events.
+    Ambiguities resolved: the FICH interleave (text "M = 5, N = 10",
+    Figure 4-26: 20 rows and the air order - followed the figure); the CRC
+    bit order (not given - S15 first); whitening before the CRC (Figure
+    4-27; 4-30 / 4-31 omit it); "divided into 3 bits each" = each bit sent
+    three times in a row (Figure 4-32's arrows), its output order S0 S26
+    S52 S78 S1 ... taken over its contradictory direction labels; DG-ID =
+    the 7-bit SQL code; CS = 10 not enforced. NOT in the standard: the bit
+    order inside the voice frames (DN's 49 bits passed as received =
+    mbelib's u0 u1 u2 u3 order, the 27 triplicated bits then being u0, u1
+    and u2's top 3; V/D 1 as DMR's 72-bit frame; VW in the order the
+    reference decoders document). The plugin's generator
+    (`tools/ysf_gen.py`, written independently from the same document;
+    VW = real IMBE frames) agrees bit for bit; dsdcc (GPL, run in scratch
+    as a reference only, 2026-11-16) reads the generator's frames, CSD and
+    voice bits the same way (DN 174 / 175, V/D 1 100 / 100, VW 161 / 169
+    frames bit-exact - the rest its own symbol errors; plugin README).
+    Off-air IQ recordings of a DN and a VW call (2026-11-17): every
+    frame decoded, VW's IMBE codewords all valid as received (plugin
+    README); DN (mbelib) and VW audio of those recordings is speech,
+    V/D mode 1 voice not heard from a real radio yet. DN silence frames
+    (b0 124 / 125) are muted, the leading ones of a call also reset the
+    codec (`dn_lead_`) - they made a full-scale burst at the call's start
+    (*Digital voice*).
+    `KRAKEN_YSF_DUMP=1`: frames, DCH units, voice bits to stderr
   - `Mpt1327Receiver` (plugins/mpt1327): MPT1327 / MPT1343 analogue
     trunking signalling, 1200 bit/s FFSK (1 = 1200 Hz, 0 = 1800 Hz) on the
     FM discriminator. Two sliding one-bit (40-sample) tone correlators; each
@@ -286,7 +339,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (`digSetModeFor` / `digToggle` -> `infoPanelOpen('dec:<id>')`). A tab
   (`infoRenderDecoder`) shows: a settings row per VFO in it
   (`digVfoRowHtml`: coloured VFO + MHz + state, mode, Listen - only for
-  voice decoders, `kp::Info::voice` (p25 dmr dstar nxdn tetra; `digHasVoice`:
+  voice decoders, `kp::Info::voice` (p25 dmr dstar nxdn ysf tetra; `digHasVoice`:
   in AUTO the detected plugin, else any ticked one) -, the plugin's options -
   in AUTO those of the detected plugin -, verbose, invert, Plot on map,
   bandwidth / plugin problems), the incident row (messages plugins), the

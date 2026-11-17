@@ -18,7 +18,8 @@ namespace dig {
 
 // OFF, AUTO (every plugin that declares auto_detect runs and the one whose
 // frames pass their checks wins) or one fixed PLUGIN (plugins/<id>/; the
-// built-in protocols are plugins too: p25, dmr, tetra, dstar, nxdn, mpt1327)
+// built-in protocols are plugins too: p25, dmr, tetra, dstar, nxdn, ysf,
+// mpt1327)
 enum class Mode : int { OFF = 0, AUTO = 1, PLUGIN = 2 };
 const char* mode_name(Mode m);     // "OFF", "AUTO", "PLUGIN"
 // Wire / persisted form: "OFF", "AUTO" or "PLUGIN:<id>"

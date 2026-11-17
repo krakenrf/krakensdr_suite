@@ -3,8 +3,8 @@
 // Digital voice/data decoder attached to ONE decimator (VFO).
 //
 // Every decoder is a plugin (plugins/<id>/, dig_plugin.hpp) - the protocols
-// that ship with the suite (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX,
-// APRS) as well as ones written by hand or by the AI assistant. The
+// that ship with the suite (P25, DMR, TETRA, D-STAR, NXDN, YSF, MPT1327, POCSAG /
+// FLEX, APRS) as well as ones written by hand or by the AI assistant. The
 // decimation pipeline pushes this VFO's decimated samples (the listened-to
 // channel, or the beamformer output when beamforming runs) with push(); a
 // worker thread mixes them (AFC), resamples them to each plugin's rate and

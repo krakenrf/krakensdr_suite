@@ -6,7 +6,7 @@ a plugin may have a licence of its own - see *Licensing a plugin*.
 
 Every decoder in the receiver's **Digital Decoder** (sidebar → 🔐 Digital
 Decoder → Mode) is a plugin - the protocols that ship with the suite (P25,
-DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX pagers, APRS, ADS-B) as well as the ones you add.
+DMR, TETRA, D-STAR, NXDN, Yaesu System Fusion, MPT1327, POCSAG / FLEX pagers, APRS, ADS-B) as well as the ones you add.
 Plugins are written by hand or by the **🤖 AI assistant** (the web UI's
 right-hand column), which has an LLM agent capture and analyse a signal, then
 write, build and test a plugin for it - in Claude Code's sandbox; the receiver
@@ -36,7 +36,7 @@ plugins/
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
 │                         beam - radar, ssr1030), acars_msg.hpp (ACARS block fields -
 │                         acars, vdl2)
-├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
+├── p25/ dmr/ tetra/ dstar/ nxdn/ ysf/ mpt1327/   the shipped protocol decoders
 ├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
 │                         antenna combined, per-message MRC / MVDR beams, its own pulse covariances
@@ -380,7 +380,7 @@ decoded, which comes a frame or more later. Only the samples between
 `start_s` and the latest `end_s` are used, with a 40 ms guard at both ends,
 so an early or late boundary costs a frame, while a wrong one mixes radios.
 The p25 plugin is the reference (`p25/p25.cpp`: `voice_frame`,
-`set_talker`, `tick`); nxdn, dstar and dmr do the same. Plugins built on
+`set_talker`, `tick`); nxdn, ysf, dstar and dmr do the same. Plugins built on
 `plugins/lib` get the time conversion from `dig::Bridge::talkers(rate)` +
 `restart_clock()` (call it in `reset()`). The offline test prints the
 transmissions it would cut ("talkers:" in the summary).
@@ -688,7 +688,7 @@ at KNOWN bearings:
    same bearings.
 
 Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
-`dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `tetra/tools/tetra_gen.py`,
+`dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `ysf/tools/ysf_gen.py`, `tetra/tools/tetra_gen.py`,
 `mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`,
 `pagers/tools/pocsag_gen.py`, `pagers/tools/flex_gen.py`, `v23_telemetry/tools/v23_gen.py`,
 `p25/tools/p25_gen.py`, `dmr/tools/dmr_gen.py`,
@@ -1012,7 +1012,7 @@ against miscorrection, numeric and alphanumeric messages) and `flex.cpp`
 FLEX (1600 / 3200 / 6400 bit/s, 2- and 4-level FSK, interleaved blocks,
 fragmented messages; a symbol grid from the sync, timing followed per
 block) on one front end (`decoder.cpp`). The protocol plugins (`p25/`,
-`dmr/`, `nxdn/`, `dstar/`, `tetra/`, `mpt1327/`) show more advanced
+`dmr/`, `nxdn/`, `ysf/`, `dstar/`, `tetra/`, `mpt1327/`) show more advanced
 techniques: 4FSK sync correlation, soft-decision Viterbi, Reed-Solomon,
 interleaving, TDMA burst handling, vocoders; `aprs/` an AFSK modem with
 HDLC framing.

@@ -174,7 +174,7 @@ librtlsdr fork and its tools, libusb). Pass the folder on with the package
   steps below for a missing one). Build them in the MSYS2 UCRT64 shell
   (`C:\msys64\ucrt64.exe`) and put the results in the `kraken_doa_v2` folder,
   next to `kraken_doa.exe`:
-  - DMR / D-STAR / NXDN (AMBE, mbelib): `libmbe.dll` (or
+  - DMR / D-STAR / NXDN / Yaesu Fusion DN (AMBE, mbelib): `libmbe.dll` (or
     `KRAKEN_MBELIB=<path>`), as the `.so` on Linux:
 
     ```

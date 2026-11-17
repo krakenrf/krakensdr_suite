@@ -6,7 +6,7 @@ loaded automatically. *Italic* topic names refer to the other files in this
 folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI), ACARS and VDL Mode 2 aircraft / ground stations; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds,acars,vdl2}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR / Yaesu Fusion callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI), ACARS and VDL Mode 2 aircraft / ground stations; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds,acars,vdl2}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -15,7 +15,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   signals), v23_telemetry (proprietary payload, no known address), dtv
   (SFN copies are identical - separated by delay instead), radiosonde's
   iMet-4 (sends no serial), glide slopes / marker beacons (no ident)
-- Goal: a VFO on a P25 / DMR / NXDN / D-STAR channel carries many radios; the VFO's DoA
+- Goal: a VFO on a P25 / DMR / NXDN / D-STAR / YSF channel carries many radios; the VFO's DoA
   mixes them. The decoder names who transmits when, the VFO's signal is cut
   at those boundaries and each radio's own samples go through MUSIC - one
   bearing (+ history + mobile DF heat map) per unit ID, picked on the map
@@ -56,6 +56,17 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   UDCH) or a VCALL, < 0.5 s apart; talker = VCALL source (label "TG n" /
   "unit call to n", " · via repeater" when the LICH says outbound); TX_REL
   ends it (its frames included); `tick()` from process()
+- YSF (`YsfReceiver`): frame `frame_a_ = sync_end - 19.5 sps` minus the
+  RRC + channel filter delay (71 samples), 480 symbols. A transmission =
+  valid frames < 1 s apart from the header to the terminator (TC frames
+  included; two headers in a row are one, a repeated TC no new one);
+  talker = the source callsign (CSD1 of HC / TC / V/D 1, V/D 2's FN 1
+  Src), trailing spaces off, label "DST · DN" (+ " · via RPT" from CSD2,
+  or "via repeater" from MR; an all-asterisk DST - `*****` in Radio ID
+  mode, seen on air - reads "ALL"); a late entry is reported from its first
+  frame once the DCH names it, a VW call joined after its header / sub
+  header only by its TC (4.4: no CSD elsewhere). A new source without a TC
+  ends the old talker where it was last named
 - D-STAR (`DstarReceiver`, no FEC on voice frames): sync events in sample
   order from correlate(): a data sync in the 420 ms cadence (<= 2 missed)
   confirms everything up to it; the first sync of a transmission exactly
@@ -471,6 +482,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   dmr / dstar / nxdn on the dsd / dsdcc samples identical; the others only
   add their talker lines (+ the D-STAR fix). No live check: no AIS
   (162 MHz, 7 min) or APRS (144.575 MHz, 3 min) traffic at the station
+- Tests 2026-11-16 (YSF, generator `ysf/tools/ysf_gen.py` - its frames
+  and callsigns read the same by dsdcc -, no real recording): ZL1AAA (DN twice) 40°, ZL2BBB (VW) 160°, ZL3CCC (V/D mode 1)
+  280°, 20 dB, 0.3 s apart: 40.0 / 160.0 / 280.0 offline; catalogue
+  `ysf-three-radios` 50.0 / 170.0 / 285.0 offline and through a scratch
+  kraken_doa debug playback (45 s, Check 3 / 3, each +0.0, 0 packets
+  dropped)
 - Not split: MPT1327 voice (analogue). On a repeater OUTPUT every ID's
   bearing is the repeater's. A DMR repeater INPUT with both slots busy
   can't be split (MS bursts carry no slot) - the two radios' LCs land on

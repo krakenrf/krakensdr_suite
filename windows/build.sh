@@ -47,7 +47,7 @@ fi
 #   libusb - librtlsdr (heimdall) reaches the dongles through WinUSB with it
 #   libuv - uSockets' event loop on Windows (no epoll)
 #   eigen3 (both apps), openssl (uWS TLS, web mapper), opus, zlib, sqlite3
-#   dlfcn - dlopen() for the optional mbelib DLL (DMR / D-STAR / NXDN voice)
+#   dlfcn - dlopen() for the optional mbelib DLL (DMR / D-STAR / NXDN / YSF DN voice)
 #   libjpeg-turbo - the decoder plugins link it (static) to compress video
 #             frames; plugin-only and permissive (IJG/BSD-3-Clause/zlib), and
 #             static so no DLL is bundled (UNTESTED here: wired to match the

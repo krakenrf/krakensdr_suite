@@ -35,6 +35,30 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   the EMB/LC privacy bit; a burst with no clean frame is not played (false
   syncs). D-STAR: 21 AMBE frames per superframe (frame 0 is before the data
   sync), dW/dX tables, stops at the end pattern
+- YSF (2026-11): VW's 144-bit full-rate frames (88 + 56 bits at 7200 bit/s
+  = the IMBE frame) through `ImbeDecoder`, de-interleaved in the YSF order
+  (`vw_plain_index` in plugins/ysf/ysf.cpp - not P25's iW..iZ); V/D mode 1's
+  72-bit AMBE+2 frames through `AmbeStream` with rW..rZ (as DMR); DN's 49
+  bits (after the plugin's own majority / de-whitening) through mbelib's
+  `mbe_processAmbe2450Dataf` (`MbeLib::decode49` / `AmbeStream::decode49`,
+  dlsym'd as optional - without it the voice status says DN needs it; the
+  error count passed is the triplets that disagreed). Yaesu's standard
+  doesn't give the bit order inside any voice frame: all three placements
+  checked against dsdcc's recovered frames (2026-11-16; the VW order was
+  P25's before - wrong) and, 2026-11-17, on off-air recordings (VW: every
+  Golay word of 422 real frames valid as received; DN: the pitch parameter
+  runs in smooth tracks in this order only - plugin README); the audio
+  of both recordings is speech (2026-11-17, mbelib 1.3.0: Voice to Text
+  writes down the callsign spelled out, as dsdcc + mbelib's audio); V/D
+  mode 1 only with the generator's random frames. DN silence frames (b0
+  124 / 125) are muted (`voice_vd2`): mbelib 1.3.0 decodes their other
+  bits as gain / spectrum, and a call that opened with five of them went to
+  full scale 60-140 ms in, the speech after inheriting the gain (dsdcc +
+  mbelib the same). Leading ones (nothing else since the codec's reset)
+  also reset the codec, later ones (pauses) keep its state - the speech
+  after a pause as before. First 0.5 s peak 32767 -> 5919, whisper one of
+  two phrases (0.51) -> both (0.71); plugin README. The 49-bit DN path
+  only - the shared 72-bit path (DMR / NXDN / V/D 1) is unchanged
 - TETRA: `TetraCodec` runs the ETSI programs as `cdecoder /dev/stdin
   /dev/stdout | sdecoder ...` (posix_spawn, non-blocking pipes, 690-word
   test-frame blocks of descrambled type-4 soft bits). Full-slot traffic
