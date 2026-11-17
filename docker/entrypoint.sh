@@ -64,6 +64,19 @@ count_tuners() {
     echo "$n"
 }
 
+# Whether any attached RTL-SDR carries a KrakenSDR / KerberosSDR factory
+# serial (1000-1007). Without one, heimdall runs the dongles it finds as
+# generic RTL-SDRs (independent receivers), so there is no array to wait for.
+kraken_serial_present() {
+    local d
+    for d in /sys/bus/usb/devices/*; do
+        [[ -r $d/idVendor && -r $d/serial ]] || continue
+        [[ $(<"$d/idVendor") == 0bda && $(<"$d/idProduct") =~ ^283[28]$ && $(<"$d/serial") =~ ^100[0-7]$ ]] &&
+            return 0
+    done
+    return 1
+}
+
 link_files() {  # link_files <dir> <source dir> <file>...
     local dir="$1" src="$2"; shift 2
     local f
@@ -71,7 +84,7 @@ link_files() {  # link_files <dir> <source dir> <file>...
 }
 
 run_heimdall() {
-    local want="${KRAKEN_TUNERS:-5}" limit="${USB_WAIT:-45}" n i
+    local want="${KRAKEN_TUNERS:-5}" limit="${USB_WAIT:-45}" n i generic_s=0
     if [[ ! -d /dev/bus/usb ]]; then
         log "/dev/bus/usb is not mounted - heimdall cannot see the dongles (see DOCKER.md)"
     fi
@@ -79,6 +92,16 @@ run_heimdall() {
         for (( i = 0; ; i++ )); do
             n=$(count_tuners)
             (( n >= want )) && break
+            # Generic RTL-SDRs only (no factory serial for 10 s, no variant
+            # flag or --serials): heimdall runs them as independent receivers
+            if (( n > 0 )) && [[ ${#VARIANT[@]} -eq 0 && " $* " != *" --serials "* ]] && ! kraken_serial_present; then
+                if (( ++generic_s >= 10 )); then
+                    log "$n RTL-SDR dongle(s) without KrakenSDR serials - starting heimdall (generic RTL-SDR mode)"
+                    break
+                fi
+            else
+                generic_s=0
+            fi
             if (( i >= limit )); then
                 log "only $n of $want RTL-SDR dongles enumerated after ${limit}s; starting anyway"
                 break

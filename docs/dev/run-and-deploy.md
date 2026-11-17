@@ -399,6 +399,29 @@ automatically:
   `doa_settings.json` or `api_token` slipped through (bypass:
   `git push --no-verify`). Root commits and merge commits (including a
   secret added while resolving a merge) are scanned too.
+- **Map provider API keys** (the web UI's ⚙ Settings: Google, Mapbox,
+  Azure, MapTiler, ...) live only in the browser's localStorage, never in a
+  file of the tree. The pre-push hook still blocks an outgoing commit that
+  ADDS a recognisable one to any file (`MAP_KEY_AWK`): a Google `AIza…`
+  key or a Mapbox `pk.` / `sk.` / `tk.eyJ…` token anywhere; a key in a URL
+  query (`access_token=` / `apikey=` / `api_key=` / `subscription-key=` /
+  `key=` with 20+ key characters); a provider entry of a pasted
+  `kraken_map_prov` value, one-line or pretty-printed (`"azure": "…"`,
+  likewise `mapbox` / `google` / `maptiler` / `thunderforest` / `stadia` /
+  `here` / `custom`, 16+ key characters). A value counts only if it looks
+  random - a digit and a letter, not `YOUR…` / `EXAMPLE` / `XXXX` / an
+  ALL_CAPS or snake_case name - so placeholders and `${c.k}` / `{key}`
+  templates pass. NOT recognisable: a bare Azure / HERE / MapTiler /
+  Thunderforest / Stadia key in any other context (plain random strings).
+  The hook prints file:line and the first 6 characters only. A legitimate
+  line (a test vector) passes with the marker `map-key-ok` on the same line,
+  instead of `--no-verify`, which would skip every other check too. Only
+  lines new in the outgoing commits count, and a merge only for lines new
+  relative to all its parents (combined diff), so a key already on the
+  remote being pushed to blocks neither the push that deletes it nor a
+  merge of the branch that has it (a commit that is only on some other
+  remote is still scanned). A key that was ever pushed must be revoked at the provider, since
+  removing it from history doesn't make it secret again.
 - **Voice codecs / binaries** never go to the remote (licensing: the ETSI
   TETRA codec may not be redistributed, AMBE is DVSI's): `.gitignore`
   ignores the user-built codec programs / libraries (`cdecoder`,

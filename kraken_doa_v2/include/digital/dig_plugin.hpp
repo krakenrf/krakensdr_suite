@@ -48,6 +48,7 @@ struct PluginInfo {
     // array_burst_s every array_period_s, spatial covariances back
     bool array = false;
     double array_burst_s = 0.25, array_period_s = 1.0;
+    bool video = false;           // rebuilds a picture (kp::Info::video): the panel shows a video canvas
     bool tunes = false;           // kp::Info::tunes: may ask for retunes (kp::Host::tune)
     double squelch_hold_s = 0;    // kp::Info::squelch_hold_s: the Digital squelch's hold (0 = the host's)
     std::vector<PluginOption> options;

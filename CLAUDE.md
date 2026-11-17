@@ -132,7 +132,8 @@ the uWS loop thread; from any other thread, post it with `loop->defer`.
 
 **8091 phase-state field**: the low byte is the calibration state; higher
 bits are flags (0x100 KerberosSDR manual mode, 0x200 calibration stale,
-0x400 wideband scan, 0x800 independent). Every consumer masks the low byte.
+0x400 wideband scan, 0x800 independent, 0x1000 generic RTL-SDRs - coherent
+mode unavailable). Every consumer masks the low byte.
 
 ## Modes and hardware variants
 
@@ -157,6 +158,13 @@ bits are flags (0x100 KerberosSDR manual mode, 0x200 calibration stale,
 - **`--ext_noise`**: an add-on array's noise source, powered from the CH0
   bias tee (GPIO1), replaces the internal one (GPIO0); CH0's antenna bias tee
   is reserved. Refused together with `--wideband` or `--kerberos*`.
+- **Generic RTL-SDRs** (no flag): with no KrakenSDR / KerberosSDR attached
+  (fewer than 2 of its serials) and no `--serials` / variant flag, heimdall
+  runs whatever RTL-SDRs are attached (1-8, any serials, opened by USB index)
+  in independent mode: no coherent mode, no calibration, no GPIO write ever
+  (a generic dongle's GPIO0 is its antenna bias tee). The header channel
+  count can be 1; 8091 flag 0x1000, status `generic_rtlsdr`.
+  `heimdall_v2/docs/dev/operating-modes.md`.
 - UCA arrays are wired clockwise; `uca_angle_sign()`
   (`kraken_doa_v2/include/globals.hpp`) is the single chirality choke point.
 
@@ -281,8 +289,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 - `doa_settings.json`, `api_token` and `server.key` stay untracked. A clean
   filter (`scripts/git-secrets-clean`) blanks API keys and station
   coordinates in committed settings JSON, and `.githooks/pre-push` blocks
-  secrets, voice codecs and any `*.exe` / `*.dll`. install.sh registers both
-  per clone.
+  secrets, recognisable map provider API keys added to any file, voice
+  codecs and any `*.exe` / `*.dll`. install.sh registers both per clone.
 - Voice codecs (ETSI TETRA, AMBE / mbelib, libfdk-aac for DAB+) are never
   committed or packaged (licensing); users install them themselves.
 

@@ -251,6 +251,20 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-plot .cap {color:#7cb3f0;font-size:11px;display:flex;gap:6px;align-items:baseline}
 .dig-plot .cap .age {color:#8296b4;margin-left:auto}
 .dig-plot canvas {display:block;width:100%;height:120px;cursor:pointer;touch-action:none}
+.dig-video {display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px 0}
+.dig-vid {flex:1 1 360px;min-width:240px;max-width:640px;border:1px solid #0f3460;border-radius:3px;background:#000;padding:3px 5px}
+.dig-vid .cap {color:#7cb3f0;font-size:11px;display:flex;gap:6px;align-items:baseline}
+.dig-vid canvas {display:block;width:100%;height:auto;image-rendering:pixelated;background:#000}
+/* a VFO's video + the plugin's plots beside it (kp::Plot PLOT_BESIDE_VIDEO): one
+   unit, the plots column as tall as the picture; below it in a narrow panel */
+.dig-vid-unit {display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;flex:1 1 360px;min-width:240px;max-width:1030px}
+.dig-vplots {flex:1 1 220px;min-width:220px;max-width:380px;display:flex;flex-direction:column;gap:6px}
+.dig-vplot {flex:1 1 0;min-height:112px;display:flex;flex-direction:column;border:1px solid #0f3460;border-radius:3px;background:#10101e;padding:3px 5px}
+.dig-vplot .cap {color:#7cb3f0;font-size:11px;display:flex;gap:6px;align-items:baseline;white-space:nowrap;overflow:hidden}
+.dig-vplot .cap .v {color:#ffcc80;margin-left:auto}
+.dig-vplot .cap .age {color:#8296b4}
+.dig-vplot .cvw {position:relative;flex:1 1 0;min-height:84px}
+.dig-vplot canvas {position:absolute;left:0;top:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 .dig-det-tog {display:inline-block;width:13px;margin-right:3px;color:#7cb3f0;cursor:pointer;user-select:none}
 /* two-line dropdowns (the decoder lists): "Name (details)" -> the name, the details on a smaller line */
 .dd-btn {position:relative;display:flex;flex-direction:column;align-items:flex-start;min-width:0;text-align:left;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;border-radius:3px;padding:3px 20px 3px 6px;font-size:12px;line-height:1.25;cursor:pointer;font-family:inherit}
@@ -260,9 +274,14 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dd-btn .dd-arrow {position:absolute;right:6px;top:50%;transform:translateY(-50%);color:#7cb3f0;font-size:10px}
 .dd-n {white-space:normal;overflow-wrap:anywhere}
 .dd-d {display:block;font-size:10.5px;color:#8fa3bf;white-space:normal;overflow-wrap:anywhere}
-.dd-pop {position:fixed;z-index:10050;background:#10101e;border:1px solid #1f5a99;border-radius:3px;box-shadow:0 6px 18px rgba(0,0,0,.55);overflow:auto;padding:2px 0;font-size:12px;color:#e0e0e0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
+.dd-pop {position:fixed;z-index:10050;box-sizing:border-box;background:#10101e;border:1px solid #1f5a99;border-radius:3px;box-shadow:0 6px 18px rgba(0,0,0,.55);display:flex;flex-direction:column;overflow:hidden;font-size:12px;color:#e0e0e0}
+.dd-q {flex:none;display:block;box-sizing:border-box;width:calc(100% - 8px);min-width:0;margin:4px 4px 2px;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:3px 5px;border-radius:3px;font-size:12px;font-family:inherit}
+.dd-q:focus {outline:none;border-color:#4fc3f7}
+.dd-list {flex:1 1 auto;min-height:0;overflow:auto;padding:2px 0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
+.dd-pop [hidden] {display:none !important}
+.dd-none {padding:6px 12px;color:#8fa3bf;font-style:italic}
 .dd-grp {padding:4px 8px 2px;color:#7cb3f0;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
-.dd-grp:not(:first-child) {margin-top:3px;border-top:1px solid #23304d;padding-top:6px}
+.dd-grp:not(:first-child):not(.dd-top) {margin-top:3px;border-top:1px solid #23304d;padding-top:6px}
 .dd-it {padding:4px 10px 4px 12px;cursor:pointer;line-height:1.25;border-left:2px solid transparent}
 .dd-it.cur {border-left-color:#4fc3f7}
 .dd-it.hl {background:#1a4a7a}
@@ -497,6 +516,8 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .top-bar #wb-chip-val {min-width:18ch;text-align:left}
 .top-bar .status-badges {display:flex;gap:6px}
 .top-bar .status-badge {font-size:14px;padding:5px 12px;border-radius:4px;background:#2d4059;color:#fff;font-weight:500;text-align:center;white-space:nowrap}
+.top-bar .tb-cog {font-size:17px;line-height:1;padding:3px 8px;border-radius:4px;background:#2d4059;color:#fff;border:1px solid #3d5a80;cursor:pointer;font-family:'Segoe UI Symbol','DejaVu Sans',sans-serif}
+.top-bar .tb-cog:hover {background:#1a4a7a;border-color:#4fc3f7}
 .top-bar .gain-group {gap:8px}
 .top-bar .gain-slider {width:100px;height:6px;-webkit-appearance:none;background:linear-gradient(to right, #1a4a7a 0%, #4fc3f7 100%);outline:none;border-radius:3px;cursor:pointer}
 .top-bar .gain-slider::-webkit-slider-thumb {-webkit-appearance:none;width:16px;height:16px;background:#4fc3f7;cursor:pointer;border-radius:50%;border:2px solid #0a0a15;box-shadow:0 0 4px rgba(79,195,247,0.5)}
@@ -1022,6 +1043,12 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .sf-dlg .err:empty {display:none}
 .sf-dlg .b {display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
 .sf-dlg .b .sp {flex:1}
+.set-dlg {width:460px}
+.set-dlg .sec {font-weight:bold;color:#4fc3f7;font-size:13px;margin:8px 0 2px;padding-top:6px;border-top:1px solid #1d3a62}
+.set-dlg .info a {color:#4fc3f7}
+.set-dlg .ok {color:#81c784}
+.set-dlg .bad {color:#ff8a80}
+.set-dlg label.ck {display:flex;gap:5px;align-items:center;font-size:12px;margin-top:4px}
 .sf-toast {position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;max-width:90vw;box-sizing:border-box;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;color:#fff;border-radius:4px;padding:7px 14px;font-size:12px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.6);transition:opacity .3s;opacity:0}
 .sf-toast.show {opacity:1}
 .sf-toast.err {border-color:#ff8a80}
@@ -1127,6 +1154,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   .top-bar .tb-sep {display:none}
   .top-bar .hw-stats {display:none}
   .top-bar .status-badge {font-size:11px;padding:3px 8px}
+  .top-bar .tb-cog {font-size:14px;padding:2px 7px}
   .top-bar .status-badges .status-badge {min-width:0 !important}
   .top-bar #status-cooldown[style*="hidden"] {display:none}
   .top-bar .status-badges {flex-wrap:wrap}
@@ -2282,6 +2310,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <span class="status-badge" id="status-calibration">Calibrating</span>
         <span class="status-badge" id="status-cooldown" style="visibility:hidden">Cooldown</span>
         <span class="status-badge" id="status-scanner">Idle</span>
+        <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Settings: the map provider (OpenStreetMap, Mapbox, Google Maps, ...) and its API key" aria-label="Settings">⚙</button>
       </div>
     </div>
 
@@ -2355,6 +2384,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="dig-table-wrap" id="info-dec-table" style="display:none"></div>
             <!-- plugins' plots (kp::Host::plot, e.g. the SFN delay profile), one per VFO -->
             <div class="dig-plots" id="info-dec-plots" style="display:none"></div>
+            <!-- plugins' reconstructed pictures (kp::Host::video_frame, e.g. analog TV / TEMPEST), one canvas per VFO -->
+            <div class="dig-video" id="info-dec-video" style="display:none"></div>
             <div class="info-dec-cols" id="info-dec-cols">
               <div class="info-col info-dec-facts">
                 <div class="dig-status" id="info-dec-status" style="display:none"></div>
@@ -2525,6 +2556,42 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 </div>
 <button type="button" class="ai-fab" id="ai-fab" onclick="aiDockCollapse(false)" title="AI assistant">🤖</button>
 
+<!-- ⚙ Settings (see ⚙ SETTINGS) -->
+<div class="sf-dlg-bg" id="set-dlg-bg" style="display:none" onpointerdown="if(event.target===this)setDlgClose()">
+  <div class="sf-dlg set-dlg" id="set-dlg" role="dialog" aria-modal="true" aria-labelledby="set-dlg-title">
+    <div class="sf-dlg-h"><span id="set-dlg-title">⚙ Settings</span><span class="x" onclick="setDlgClose()" title="Close (Esc)">✕</span></div>
+    <div class="sec">🗺 Map</div>
+    <div class="info">Kept in this browser only: each browser (and device) has its own provider and key. The browser fetches the tiles itself, with the key in their URLs - it never goes to the receiver.</div>
+    <div class="lbl">Map provider</div>
+    <select id="set-mp-prov" onchange="setDlgProv()"></select>
+    <div id="set-mp-keyrow">
+      <div class="lbl" id="set-mp-keylbl">API key</div>
+      <div class="row">
+        <input type="password" id="set-mp-key" autocomplete="off" spellcheck="false" autocapitalize="off" oninput="setDlgEdit()">
+        <button type="button" class="btn sm" id="set-mp-show" onclick="setDlgShowKey()" title="Show / hide the key">Show</button>
+      </div>
+      <div class="info" id="set-mp-keyhelp"></div>
+    </div>
+    <div class="sub" id="set-mp-custom" style="display:none">
+      <div class="lbl">Tile URL <b>*</b> - {z} {x} {y}; also {-y} (TMS row), {s} (a / b / c), {key}. https:// - on an https page an http:// server only works on this machine (localhost / 127.0.0.1)</div>
+      <input type="text" id="set-mp-url" style="width:100%" spellcheck="false" autocapitalize="off" placeholder="https://tiles.example.com/{z}/{x}/{y}.png?key={key}" oninput="setDlgEdit()">
+      <div class="grid2">
+        <div><div class="lbl">Deepest zoom of its tiles</div><input type="number" id="set-mp-max" min="1" max="22" step="1" style="width:100%" oninput="setDlgEdit()"></div>
+        <div><div class="lbl">&nbsp;</div><label class="ck"><input type="checkbox" id="set-mp-dark" onchange="setDlgEdit()"> Dark map or imagery</label></div>
+      </div>
+      <div class="lbl">Attribution (shown on the map, as the provider asks)</div>
+      <input type="text" id="set-mp-attr" maxlength="200" style="width:100%" placeholder="© Example Maps · © OpenStreetMap contributors" oninput="setDlgEdit()">
+    </div>
+    <div class="info" id="set-mp-msg"></div>
+    <div class="b">
+      <button type="button" class="btn sm" onclick="setDlgTest()" title="Load a tile with these settings to check the key">Test</button>
+      <span class="sp"></span>
+      <button type="button" class="btn sm" onclick="setDlgClose()">Cancel</button>
+      <button type="button" class="btn sm primary" onclick="setDlgSave()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- 📻 Saved frequency editor (see 📻 SAVED FREQUENCIES) -->
 <div class="sf-dlg-bg" id="sf-dlg-bg" style="display:none" onpointerdown="if(event.target===this)sfDlgCancel()">
   <div class="sf-dlg" id="sf-dlg" role="dialog" aria-modal="true" aria-labelledby="sf-dlg-title">
@@ -2618,9 +2685,19 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
     showContScannerSquelch=false,contScannerSquelchDb=15,
     contScanWidebandEnabled=false,contScanStartMhz=88,contScanEndMhz=108;
 
+// Plugin plots beside the video display (see digRenderVideo): canvas id ->
+// {vfo, tab, pl, geometry} as last drawn, the pointer over one ({id, px,
+// shift}) and a press waiting for its release ({id, x, y})
+const vplotGeo = new Map();
+let vplotHover = null, vplotPress = null;
+const VPLOT_SNAP_PX = 4;   // a click snaps across at least this many pixels (Plot::click_snap)
+
 // Operating mode + independent-mode tuner panes (see OPERATING MODE below).
 // Up here: functions defined above that block use them during page load.
 let opMode = 'coherent';
+// heimdall runs plain RTL-SDR dongles, no KrakenSDR (operating_mode /
+// system_status generic_rtlsdr): no coherent mode, no wideband scan with one
+let genericRtl = false;
 let decListMode = null;      // opMode the VFO cards were built for
 let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 = none)
 let selTuner = 0;            // pane the top-bar frequency digits + gain edit
@@ -2661,7 +2738,27 @@ let mapTileOk = 0, mapTileErrAt = 0, mapAutoFit = !mapState.z;
 // while it is dragged and until the receiver reports it back
 let mapStSel = false, vsSel = null, mapObjDrag = null, mapStLocal = null;
 let mapSaveT = 0, mapFlashT = 0, mapFlashMsg = '';
-if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street';
+// the map's tile provider (⚙ Settings, per browser; MAP_PROVIDERS): p = its
+// id, keys = the API key entered for each provider, cu = the custom tile URL
+const mapProvCfg = (() => {
+  const d = {p: 'osm', keys: {}, cu: {url: '', max: 19, attr: '', dark: false}};
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_map_prov') || '{}');
+    if (typeof s.p === 'string') d.p = s.p;
+    if (s.keys && typeof s.keys === 'object') for (const [k, v] of Object.entries(s.keys)) if (typeof v === 'string') d.keys[k] = v;
+    if (s.cu && typeof s.cu === 'object') Object.assign(d.cu, s.cu);
+  } catch (e) {}
+  return d;
+})();
+let mapProvErr = '';           // why the provider's tiles can't load (Google's session), for the offline notice
+// the provider's attribution for the view (mapAttrDyn): the text fetched for
+// provider|layer k, the request wanted (its view), its debounce / retry timer
+let mapDynAttr = {k: '', h: ''}, mapDynWant = '', mapDynT = 0;
+let mapDynZ = {k: '', z: 0};   // Google's deepest zoom for the view, for provider|layer k (0 = the layer's max)
+let mapDynN = 0;               // bumped when the provider changes: an older reply applies nothing
+let mapDynFails = 0, mapDynRetry = 0, mapDynRetryMs = 15000;   // failed attribution fetches back off from mapDynRetryMs
+// Google's session tokens per map type (gmSession; localStorage kraken_map_gs)
+const gmSess = (() => { try { return JSON.parse(localStorage.getItem('kraken_map_gs') || '{}'); } catch (e) { return {}; } })();
 // 🔍 the map search (see 🔍 MAP SEARCH): the text searched, the rows listed
 // (+ the highlighted one, the list shown), OpenStreetMap's rows for srchOnlQ,
 // the status line, the online request running (for which text), the answers
@@ -3163,15 +3260,26 @@ function hideBwTooltip() {
 // 📏 Each VFO's received level (system_status decimator_squelch[].lvl -
 // vfo_level.cpp: {dbfs, noise, total, gain, age, n}) and its readout next to
 // the mouse over the VFO's bar - main spectrum, waterfall, independent
-// panes: dBFS (the band's signal without its noise; 0 = a full-scale complex
-// tone), the SNR in the VFO's band, dBm by the 📏 range panel's calibration
-// (dBm = dBFS - gain + rgCal(gain, MHz): the nominal from published R820T
-// data + the user's correction). Updated live while shown
-let vfoLvl = {}, vfoLvlTipEl = null, vfoLvlTip = null;   // (vfoLvlTip: {id, cx, cy} while shown)
+// panes: the SNR as the spectrum shows it (decimator_squelch[].snr_db: the
+// highest point in the VFO's band over the noise floor = the plot's dB scale,
+// the squelch's number - live, for every VFO, however weak), dBFS (the band's
+// signal without its noise; 0 = a full-scale complex tone), dBm by the 📏
+// range panel's calibration (dBm = dBFS - gain + rgCal(gain, MHz): the nominal
+// from published R820T data + the user's correction). Updated live while
+// shown. The SNR was dbfs - noise (the level over the noise summed across the
+// whole VFO): a signal narrower than its VFO read far below what the plot
+// shows, and one without a level had no SNR at all - only a receiver from
+// before snr_db still gets that
+let vfoLvl = {}, vfoSnr = {}, vfoLvlTipEl = null, vfoLvlTip = null;   // (vfoLvlTip: {id, cx, cy} while shown)
 function vfoLvlNote(list) {
-  const now = Date.now(), m = {};
-  for (const sq of list || []) if (sq && sq.lvl) m[sq.id] = Object.assign({at: now}, sq.lvl);
+  const now = Date.now(), m = {}, s = {};
+  for (const sq of list || []) {
+    if (!sq) continue;
+    if (sq.lvl) m[sq.id] = Object.assign({at: now}, sq.lvl);
+    if (typeof sq.snr_db === 'number' && isFinite(sq.snr_db)) s[sq.id] = sq.snr_db;
+  }
   vfoLvl = m;
+  vfoSnr = s;
   if (vfoLvlTip) vfoLvlRender();
 }
 function vfoLvlHtml(id) {
@@ -3180,10 +3288,13 @@ function vfoLvlHtml(id) {
   const bwTxt = bw >= 1 ? bw.toFixed(1) + ' MHz' : bw >= 0.001 ? +(bw * 1000).toFixed(1) + ' kHz' : '';
   const mhz = dec ? vfoCenterMhz(dec) + dec.freq_offset_hz / 1e6 : 0;
   let h = `<b style="color:${getDecimatorColor(id)}">D${id}</b>` + (dec ? ` · ${mhz.toFixed(4)} MHz` : '') + (bwTxt ? ` · ${bwTxt}` : '');
-  if (!L) return h + '<br><span style="color:#8296b4">no level yet: measured while its signal is above the noise in its band' +
+  const snr = vfoSnr[id] !== undefined ? vfoSnr[id] : L ? L.dbfs - L.noise : null;
+  const snrTxt = snr === null ? '' : `SNR <b>${snr.toFixed(1)} dB</b>`;
+  if (!L) return h + (snrTxt ? '<br>' + snrTxt : '') +
+                     '<br><span style="color:#8296b4">no level (dBFS / dBm) yet: measured while the signal is above the noise of the VFO\'s whole band' +
                      (dec && dec.squelch_enabled ? ' and its squelch is open' : '') + '</span>';
   const age = L.age + (Date.now() - L.at) / 1000;
-  h += `<br><b>${L.dbfs.toFixed(1)} dBFS</b> · SNR ${(L.dbfs - L.noise).toFixed(1)} dB`;
+  h += `<br>${snrTxt} · <b>${L.dbfs.toFixed(1)} dBFS</b>`;
   if (L.gain < 0) h += '<br><span style="color:#ffcc80">dBm: the tuner AGC is on - its gain isn\'t known</span>';
   else {
     const f = mhz || 100, c = rgCal(L.gain, f), sd = rgCalSd(L.gain, f);
@@ -3192,7 +3303,7 @@ function vfoLvlHtml(id) {
          (!rgState.calHow && rgCalDc() ? `<br><span style="color:#ffcc80">${RG_CAL_DC_TXT}</span>` : '');
   }
   if (L.total > -8) h += `<br><span style="color:#ffcc80">⚠ near full scale (${L.total.toFixed(1)} dBFS in the tuner's band): reads low - lower the gain</span>`;
-  if (age > 2) h += `<br><span style="color:#8296b4">last heard ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} ago</span>`;
+  if (age > 2) h += `<br><span style="color:#8296b4">level last heard ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} ago</span>`;
   return h;
 }
 function vfoLvlRender() {
@@ -5834,7 +5945,7 @@ function applyWbVariant(wb) {
     // downconverter variant parks all tuners at the IF - hide those controls.
     // Wideband / Independent need per-tuner retuning; the downconverter
     // variant parks every tuner at the IF - only Coherent exists there
-    document.querySelectorAll('#opmode option').forEach(o => { o.disabled = o.value !== 'coherent'; });
+    opModeOptionsSync();
     const csWb = $id('cont-scan-wideband-enable');
     if (csWb) {
       const sec = csWb.closest('.sec');
@@ -5843,7 +5954,7 @@ function applyWbVariant(wb) {
   } else {
     FREQ_MIN = 24; FREQ_MAX = 1766;
     // Restore the tuner-spread scan controls (e.g. backend restarted without --wideband)
-    document.querySelectorAll('#opmode option').forEach(o => { o.disabled = false; });
+    opModeOptionsSync();
     const csWb = $id('cont-scan-wideband-enable');
     if (csWb) {
       const sec = csWb.closest('.sec');
@@ -6432,6 +6543,9 @@ function onActiveElementsChanged(newCount) {
   // Patch / 3D: layout names/validity follow the count (positions are NOT
   // regenerated: the physical array didn't change - the panel warns instead)
   refreshLayoutPanel();
+
+  // the Mode selector: no wideband scan with one tuner (generic RTL-SDR)
+  opModeOptionsSync();
 }
 
 function updateSNRDisplaysHTML() {
@@ -8089,7 +8203,7 @@ function updateDecimatorList(info) {
           <option value="WBFM" ${dec.demod_mode === 'WBFM' ? 'selected' : ''}>WBFM</option>
           <option value="NBFM" ${dec.demod_mode === 'NBFM' ? 'selected' : ''}>NBFM</option>
           <option value="AM" ${dec.demod_mode === 'AM' ? 'selected' : ''}>AM</option>
-          <option value="DIGITAL" ${dec.demod_mode === 'DIGITAL' ? 'selected' : ''} title="Decoded digital voice (P25 / DMR / D-STAR / TETRA / NXDN) from this VFO's digital decoder">Digital</option>
+          <option value="DIGITAL" ${dec.demod_mode === 'DIGITAL' ? 'selected' : ''} title="Decoded digital voice (P25 / DMR / D-STAR / TETRA / NXDN / YSF) from this VFO's digital decoder">Digital</option>
         </select>
       </div>
       <div class="dec-row" style="border-top:1px solid #444;padding-top:6px;margin-top:4px">
@@ -8100,7 +8214,7 @@ function updateDecimatorList(info) {
         <button class="btn sm" type="button" id="dec-dig-open-${dec.id}" style="margin-left:auto;display:none" onclick="infoPanelOpen('dec:${dec.id}')" title="Show this VFO's decoder (data and settings) in the panel under the waterfall">⤢</button>
       </div>
       <div class="dec-row">
-        <select id="dec-dig-mode-${dec.id}" onchange="digSetModeFor(${dec.id}, this.value)" style="flex:1" title="Auto detect, or one decoder. Picking one switches the decoder on."></select>
+        <select id="dec-dig-mode-${dec.id}" onchange="digSetModeFor(${dec.id}, this.value)" style="flex:1" title="Auto detect, or one decoder (type in the open list to filter it). Picking one switches the decoder on."></select>
       </div>
       <div class="dec-row dec-dig-state" id="dec-dig-state-${dec.id}"></div>
       <div class="dec-row">
@@ -8315,6 +8429,12 @@ function connect() {
   ws.onopen=()=>{
     // a new connection has no spectrum views: ask again with the next frame
     specViewSent = {}; specMain = null;
+    // the server resets subscriptions to the default (no VIDEO) on connect:
+    // forget our state so an open video panel re-subscribes (and keeps asking
+    // until the server confirms - it ignores a SUBSCRIBE before AUTH succeeds)
+    videoSubOn = false;
+    videoSubReq = null;
+    setTimeout(videoUpdateSub, 950);
     // API auth: send a remembered token first, so the server authenticates
     // before any command/stream. Without one, nothing is sent: a server with
     // no token configured needs none, and one that has will ask (onmessage).
@@ -8390,6 +8510,8 @@ function connect() {
             authFailed = true;
             return;
           }
+          // the answer to our SUBSCRIBE (sent only once authenticated)
+          if (msg.subscribed) { videoOnSubAck(msg.subscribed); return; }
 
           // Handle decimator info
           if(msg.decimator_info) {
@@ -8659,6 +8781,7 @@ function connect() {
       const mt=v.getUint32(o,true);o+=4;
       if(mt===6) { indepOnFrame(v, e.data); return; }
       if(mt===7) { specOnFrame(v, e.data); return; }
+      if(mt===8) { videoOnFrame(v, e.data); return; }
       
       if(mt===1) {
         if(e.data.byteLength<16)return; // Minimum: 4 fields (msgType, sampleCount, sampleRate, opusSize)
@@ -8968,8 +9091,39 @@ window.addEventListener('resize',()=>{
 // (state declared with the globals at the top: opMode, indepTuners, selTuner,
 // panes, paneDrag)
 
+// Which modes the Mode selector offers: the Wideband (downconverter) variant
+// only coherent; generic RTL-SDRs (no KrakenSDR) no coherent, and no wideband
+// scan with one tuner. A disabled option keeps its place, with the reason
+let opSelTitle = null;
+function opModeOptionsSync() {
+  const sel = $id('opmode');
+  if (!sel) return;
+  if (opSelTitle === null) opSelTitle = sel.title;
+  const oneTuner = activeNumElements < 2;
+  sel.querySelectorAll('option').forEach(o => {
+    const v = o.value;
+    let why = '';
+    if (wbVariant.enabled) { if (v !== 'coherent') why = 'not on the KrakenSDR Wideband variant'; }
+    else if (genericRtl && v === 'coherent') why = 'needs a KrakenSDR';
+    else if (genericRtl && v === 'wideband' && oneTuner) why = 'needs two or more tuners';
+    o.disabled = !!why;
+    o.textContent = (v === 'coherent' ? 'Coherent' : v === 'wideband' ? 'Wideband' : 'Independent') +
+                    (why && genericRtl ? ' (' + why + ')' : '');
+  });
+  sel.title = genericRtl
+    ? 'Generic RTL-SDR dongles (no KrakenSDR): they run as independent receivers - coherent mode (DoA, ' +
+      'beamforming, calibration) needs a KrakenSDR' + (oneTuner ? ', and the wideband scan two or more tuners.' : '.')
+    : opSelTitle;
+}
+
 function setOpMode(m) {
   if (m === opMode) return;
+  if (genericRtl && (m === 'coherent' || (m === 'wideband' && activeNumElements < 2))) {
+    // (the option is disabled; a stale selector) - the receiver would refuse it
+    const sel = $id('opmode');
+    if (sel) sel.value = opMode;
+    return;
+  }
   const prev = opMode;
   if (m === 'wideband') channelBeforeWideband = activeChannel;
   send('OPERATING_MODE:' + m);
@@ -9027,8 +9181,16 @@ function opOnMessage(x) {
   opMsgAt = Date.now();
   opHintMode = null;
   if (Array.isArray(x.tuners)) indepTuners = x.tuners;
+  if (typeof x.generic_rtlsdr === 'boolean') opSetGeneric(x.generic_rtlsdr);
   applyOpModeUI(x.mode);
   panesSyncHeads();
+  if (x.error) pbNotice('Mode: ' + x.error);   // a refused change (another page, the assistant)
+}
+
+function opSetGeneric(on) {
+  if (on === genericRtl) return;
+  genericRtl = on;
+  opModeOptionsSync();
 }
 
 // MHz a VFO's offset is relative to: its tuner in independent mode
@@ -9872,6 +10034,111 @@ function specOnFrame(v, buf) {
   if (pendingScrollSync && Math.abs(center - pendingScrollSync.targetFreqMhz) < 0.01) finishScrollSync();
   if (!fftPlot) createPlot();
 }
+
+// A reconstructed decoder picture (binary type 8, kp::Host::video_frame):
+// uint32 vfo_id, uint16 width, height, uint8 format (0 GRAY8 / 1 RGB24),
+// uint8 encoding (0 = raw pixels, 2 = JPEG bitstream), uint16 label_len,
+// label, then the image data - width*height*bpp raw pixel bytes for encoding
+// 0, or a JPEG blob the browser decodes natively for encoding 2 (built-in, no
+// CDN) - all little-endian. Drawn on the panel's <canvas id="dvideo-${vfo_id}">.
+const videoFrames = {};   // vfo id -> {w, h, label, t} (latest)
+const videoDecode = {};   // vfo id -> {busy, pending, since, gen} for the async JPEG decode (latest-only)
+const VIDEO_DECODE_WATCHDOG_MS = 3000;   // a decode stuck longer than this is treated as failed, so a hung createImageBitmap can't wedge the canvas
+let videoSubOn = false;   // has the server confirmed our VIDEO subscription (a video panel is open)?
+let videoSubReq = null;   // the SUBSCRIBE awaiting its {"subscribed"} answer: {want, t}
+const VIDEO_SUB_RETRY_MS = 3000;   // an unanswered SUBSCRIBE (sent before AUTH succeeded) is resent after this
+// the caption overlay (both code paths); canvas fillText is safe - the label
+// is never inserted into HTML
+function videoDrawLabel(ctx, h, label) {
+  if (!label) return;
+  const fs = Math.max(9, Math.min(28, Math.round(h / 24)));
+  ctx.font = fs + 'px system-ui, sans-serif';
+  ctx.textBaseline = 'bottom';
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(2, h - fs - 5, tw + 8, fs + 5);
+  ctx.fillStyle = '#eaf2ff';
+  ctx.fillText(label, 6, h - 2);
+}
+function videoOnFrame(v, buf) {
+  if (buf.byteLength < 16) return;
+  const vfo = v.getUint32(4, true);
+  const w = v.getUint16(8, true), h = v.getUint16(10, true);
+  const format = v.getUint8(12), encoding = v.getUint8(13);
+  const labelLen = v.getUint16(14, true);
+  if (!w || !h || format > 1 || (encoding !== 0 && encoding !== 2)) return;
+  const dataOff = 16 + labelLen;
+  if (buf.byteLength < dataOff) return;
+  let label = '';
+  if (labelLen) { try { label = new TextDecoder().decode(new Uint8Array(buf, 16, labelLen)); } catch (e) { label = ''; } }
+  if (encoding === 2) { videoOnJpeg(vfo, w, h, label, new Uint8Array(buf, dataOff, buf.byteLength - dataOff)); return; }
+  const bpp = format === 1 ? 3 : 1, nbytes = w * h * bpp;
+  if (buf.byteLength < dataOff + nbytes) return;   // header and payload disagree
+  const cv = document.getElementById('dvideo-' + vfo);
+  if (!cv) return;   // the panel isn't showing this VFO's video
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return;
+  const src = new Uint8Array(buf, dataOff, nbytes);   // zero-copy view
+  const img = ctx.createImageData(w, h), px = new Uint32Array(img.data.buffer), n = w * h;
+  if (format === 1) {
+    for (let i = 0, j = 0; i < n; i++, j += 3)
+      px[i] = (0xff000000 | (src[j + 2] << 16) | (src[j + 1] << 8) | src[j]) >>> 0;   // A,B,G,R (little-endian RGBA)
+  } else {
+    for (let i = 0; i < n; i++) { const g = src[i]; px[i] = (0xff000000 | (g << 16) | (g << 8) | g) >>> 0; }
+  }
+  ctx.putImageData(img, 0, 0);
+  videoDrawLabel(ctx, h, label);
+  videoFrames[vfo] = {w, h, label, t: Date.now()};
+}
+// A JPEG frame: decode it with the browser's built-in createImageBitmap. That
+// is async, so keep only ONE decode in flight per canvas and remember just the
+// newest pending blob - a stale decode that finishes after a newer one arrived
+// is dropped, so the canvas always shows the latest frame. The Blob constructor
+// copies the bytes synchronously, so the view into the WebSocket buffer is safe
+// to hand off. A bad blob is ignored.
+function videoOnJpeg(vfo, w, h, label, bytes) {
+  if (!document.getElementById('dvideo-' + vfo)) return;   // the panel isn't showing this VFO's video: no copy, no decode
+  const blob = new Blob([bytes], {type: 'image/jpeg'});   // copies synchronously
+  const st = videoDecode[vfo] || (videoDecode[vfo] = {busy: false, pending: null, since: 0, gen: 0});
+  const job = {w, h, label, blob};
+  // watchdog: a decode that never settled (a hung / lost createImageBitmap)
+  // would leave busy=true forever and every later frame would pile into pending
+  // and never draw. If it has been busy too long, abandon it and start fresh -
+  // dropping any stale pending too, since THIS frame is the newest.
+  if (st.busy && Date.now() - st.since > VIDEO_DECODE_WATCHDOG_MS) { st.busy = false; st.pending = null; }
+  if (st.busy) { st.pending = job; return; }   // keep only the newest
+  videoRunJpeg(vfo, st, job);
+}
+function videoRunJpeg(vfo, st, job) {
+  const token = ++st.gen;   // identifies this run; a watchdog-abandoned run has a stale token and is ignored when it finally settles
+  st.busy = true;
+  st.since = Date.now();
+  let p;
+  try {
+    p = createImageBitmap(job.blob);   // a SYNC throw here must still clear busy, not wedge the canvas
+  } catch (e) { videoJpegNext(vfo, st, token); return; }
+  p.then(bmp => {
+    if (st.gen !== token) { bmp.close(); return; }   // superseded by the watchdog: drop this stale frame
+    try {
+      const cv = document.getElementById('dvideo-' + vfo);
+      const ctx = cv && cv.getContext('2d');
+      if (ctx) {
+        if (cv.width !== job.w) cv.width = job.w;
+        if (cv.height !== job.h) cv.height = job.h;
+        ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+        videoDrawLabel(ctx, job.h, job.label);
+        videoFrames[vfo] = {w: job.w, h: job.h, label: job.label, t: Date.now()};
+      }
+    } finally { bmp.close(); videoJpegNext(vfo, st, token); }
+  }).catch(() => videoJpegNext(vfo, st, token));   // bad blob: ignore the frame
+}
+function videoJpegNext(vfo, st, token) {
+  if (token !== undefined && st.gen !== token) return;   // this run was abandoned by the watchdog; a newer run owns the state now
+  st.busy = false;
+  if (st.pending) { const j = st.pending; st.pending = null; videoRunJpeg(vfo, st, j); }
+}
 // the window [w0, w1] (MHz) zoom z shows of the span lo1..hi1 (its 1x view);
 // keeps z.off inside it, like zoomSlice
 function zoomWindow(z, lo1, hi1, centerMhz) {
@@ -10557,10 +10824,14 @@ function addTouchHandlers(el, down, move, up) {
   // "Voice codec" fact: "not installed (libfdk-aac2)", "AMBE+2: not installed (see README...)",
   // "disabled (KRAKEN_AAC_LIB=none)", "... lacks the AMBE functions", "... - too old, not used)"
   // (not "built in", "libfdk-aac.so.2 (FDK AAC decoder 3.2.0)", "ACELP: <path> + <path>");
-  // its voice state: "<who>: AMBE+2 codec not installed (...)", dab's "<programme>: AAC codec
-  // disabled (...)" / "... codec not usable: ..."
-  function digCodecFactBad(v) { return /^(?:[^:]*: )?(?:not installed|disabled)\b|\blacks the\b|\bnot used\)$/.test(String(v)); }
-  function digVoiceStateBad(s) { return /\bcodec (?:not installed|disabled|not usable)\b/.test(String(s)); }
+  // ysf's fact names two codecs, "VW: IMBE (built in); DN, V/D mode 1: AMBE+2: not installed
+  // (...)" (red when the AMBE part is missing, or the mbelib is "..., without
+  // mbe_processAmbe2450Dataf (no DN voice)");
+  // its voice state: "<who>: AMBE+2 codec not installed (...)" (ysf: "<who>: this mbelib lacks
+  // mbe_processAmbe2450Dataf (DN voice)"), dab's "<programme>: AAC codec disabled (...)" /
+  // "... codec not usable: ..."
+  function digCodecFactBad(v) { return /(?:^|: )(?:not installed|disabled)\b|\blacks the\b|\bnot used\)$|\(no DN voice\)$/.test(String(v)); }
+  function digVoiceStateBad(s) { return /\bcodec (?:not installed|disabled|not usable)\b|\bmbelib lacks\b/.test(String(s)); }
 
   // Does the decoder send text messages (kp::Info::messages - pagers)? Their
   // street addresses become incidents (kraken_doa incidents.cpp)
@@ -10848,9 +11119,12 @@ function addTouchHandlers(el, down, move, up) {
   // keeps its value, options and onchange - and a button + pop-up list show
   // it: an option "Name (details)" as the name with the details on a second,
   // smaller line, in the button and in the list. ddEnhance(sel) once (again
-  // is a no-op), ddSync(sel) after setting sel.value from code.
-  // var: digFillSelect may run before this part of the script is evaluated
-  var ddOpenSel = null, ddPop = null, ddHl = -1;
+  // is a no-op), ddSync(sel) after setting sel.value from code. A filter
+  // field at the top of the list narrows it to the options holding every
+  // typed word (ddFilter).
+  // var: digFillSelect may run before this part of the script is evaluated.
+  // ddUp: the list opened above its button; ddVw: the window width then
+  var ddOpenSel = null, ddPop = null, ddHl = -1, ddUp = false, ddVw = 0;
   function ddSplit(text) {
     const m = /^(.+?)\s*\((.+)\)\s*$/.exec(text || '');
     return m ? [m[1], m[2]] : [text || '', ''];
@@ -10887,13 +11161,59 @@ function addTouchHandlers(el, down, move, up) {
     b.title = (o && o.title) || sel.title || '';
     b.disabled = sel.disabled;
   }
-  function ddItems() { return ddPop ? [...ddPop.querySelectorAll('.dd-it')] : []; }
+  // the options the filter leaves (the keys walk only those)
+  function ddItems() { return ddPop ? [...ddPop.querySelectorAll('.dd-it:not([hidden])')] : []; }
   function ddSetHl(i) {
     const it = ddItems();
-    if (!it.length) return;
+    if (ddPop) ddPop.querySelectorAll('.dd-it.hl').forEach(x => x.classList.remove('hl'));
+    if (!it.length) { ddHl = -1; return; }
     ddHl = Math.max(0, Math.min(it.length - 1, i));
-    it.forEach((x, k) => x.classList.toggle('hl', k === ddHl));
+    it[ddHl].classList.add('hl');
     it[ddHl].scrollIntoView({block: 'nearest'});
+  }
+  // an option stays when every word of the query is in its data-k (name +
+  // details, group, description, plugin id); a group without one hides
+  function ddFilter() {
+    if (!ddPop) return;
+    const list = ddPop.querySelector('.dd-list');
+    const q = ddPop.querySelector('.dd-q').value.toLowerCase().split(/\s+/).filter(Boolean);
+    let grp = null, n = 0, top = null;
+    for (const el of list.children) {
+      el.classList.remove('dd-top');
+      if (el.classList.contains('dd-grp')) { grp = el; el.hidden = true; }
+      else if (el.classList.contains('dd-it')) {
+        el.hidden = !q.every(t => el.dataset.k.includes(t));
+        if (el.hidden) continue;
+        n++;
+        if (grp && grp.hidden) { grp.hidden = false; top = top || grp; }
+        top = top || el;
+      }
+    }
+    if (top) top.classList.add('dd-top');   // no rule above the first heading left
+    list.querySelector('.dd-none').hidden = n > 0;
+    if (q.length) list.scrollTop = 0;
+    // typed: the first option of the best tier - 0 its name or id starts
+    // with the query, 1 every word is in its name / details / id (data-n),
+    // 2 matched by group / description only - so "dm" is DMR, not D-STAR
+    const it = ddItems(), qs = q.join(' ');
+    const tier = x => {
+      const nm = x.dataset.n, v = x.dataset.v.toLowerCase(), id = v.startsWith('plugin:') ? v.slice(7) : v;
+      return nm.startsWith(qs) || id.startsWith(qs) ? 0 : q.every(t => nm.includes(t)) ? 1 : 2;
+    };
+    let c = q.length ? -1 : it.findIndex(x => x.classList.contains('cur'));
+    if (q.length) for (let i = 0, best = 3; i < it.length && best > 0; i++) { const t = tier(it[i]); if (t < best) { best = t; c = i; } }
+    ddSetHl(c >= 0 ? c : 0);
+  }
+  // below the button its top stays put; above it its bottom stays on the
+  // button, so a list the filter shrinks doesn't float away. fit: re-clamp
+  // the height to the room on that side (the window got shorter)
+  function ddPlace(fit) {
+    const b = ddOpenSel && ddOpenSel.__dd;
+    if (!ddPop || !b) return;
+    const z = parseFloat(ddPop.style.zoom) || 1, r = b.getBoundingClientRect(), m = 8, vh = window.innerHeight;
+    if (fit) ddPop.style.maxHeight = (Math.max(120, (ddUp ? r.top : vh - r.bottom) - 2 - m) / z) + 'px';
+    if (ddUp) { ddPop.style.top = ''; ddPop.style.bottom = ((vh - r.top + 2) / z) + 'px'; }
+    else { ddPop.style.bottom = ''; ddPop.style.top = ((r.bottom + 2) / z) + 'px'; }
   }
   function ddOpen(sel) {
     ddClose();
@@ -10901,18 +11221,21 @@ function addTouchHandlers(el, down, move, up) {
     if (!b || b.disabled) return;
     const pop = document.createElement('div');
     pop.className = 'dd-pop';
-    pop.setAttribute('role', 'listbox');
-    let html = '', idx = 0, cur = -1;
-    const item = o => {
-      if (o.value === sel.value) cur = idx;
-      idx++;
-      return `<div class="dd-it${o.value === sel.value ? ' cur' : ''}" role="option" data-v="${digEsc(o.value)}" title="${digEsc(o.title || '')}">${ddLabelHtml(o.textContent)}</div>`;
+    let html = '';
+    const item = (o, g) => {
+      const v = o.value, id = v.startsWith('PLUGIN:') ? v.slice(7) : v;
+      const n = (o.textContent + ' ' + id).toLowerCase(), k = [o.textContent, g, o.title, id].join(' ').toLowerCase();
+      return `<div class="dd-it${v === sel.value ? ' cur' : ''}" role="option" data-v="${digEsc(v)}" data-n="${digEsc(n)}" data-k="${digEsc(k)}" title="${digEsc(o.title || '')}">${ddLabelHtml(o.textContent)}</div>`;
     };
     for (const c of sel.children) {
-      if (c.tagName === 'OPTGROUP') html += `<div class="dd-grp">${digEsc(c.label)}</div>` + [...c.children].map(item).join('');
-      else if (c.tagName === 'OPTION') html += item(c);
+      if (c.tagName === 'OPTGROUP') html += `<div class="dd-grp">${digEsc(c.label)}</div>` + [...c.children].map(o => item(o, c.label)).join('');
+      else if (c.tagName === 'OPTION') html += item(c, '');
     }
-    pop.innerHTML = html;
+    // size="1": the field mustn't widen a narrow list
+    pop.innerHTML = '<input type="text" class="dd-q" size="1" placeholder="Type to filter…" autocomplete="off" spellcheck="false" aria-label="Filter the decoders">' +
+      `<div class="dd-list" role="listbox">${html}<div class="dd-none" hidden>No matching decoder</div></div>`;
+    const q = pop.querySelector('.dd-q');
+    q.addEventListener('input', ddFilter);
     pop.addEventListener('pointerdown', e => e.stopPropagation());
     pop.addEventListener('click', e => {
       const it = e.target.closest('.dd-it');
@@ -10934,14 +11257,20 @@ function addTouchHandlers(el, down, move, up) {
     pop.style.maxWidth = (Math.min(460, vw - 2 * m) / z) + 'px';
     pop.style.maxHeight = (Math.max(120, Math.max(vh - r.bottom, r.top) - 2 * m) / z) + 'px';
     const pr = pop.getBoundingClientRect();
-    let left = r.left, top = r.bottom + 2;
+    let left = r.left;
     if (left + pr.width > vw - m) left = vw - m - pr.width;
     if (left < m) left = m;
-    if (top + pr.height > vh - m && r.top - pr.height - 2 >= m) top = r.top - pr.height - 2;   // room above: open upwards
+    ddUp = r.bottom + 2 + pr.height > vh - m && r.top - pr.height - 2 >= m;   // room above: open upwards
+    ddVw = vw;
+    // width and side are fixed with the full list: filtering doesn't move it
+    pop.style.width = (pr.width / z) + 'px';
     pop.style.left = (left / z) + 'px';
-    pop.style.top = (top / z) + 'px';
-    ddSetHl(cur >= 0 ? cur : 0);
-    b.focus();
+    ddPlace(false);
+    ddFilter();
+    // a mouse / keyboard user just types; a touch-only device would raise
+    // its on-screen keyboard at every open - there a tap on the field does
+    if (matchMedia('(pointer: fine)').matches) q.focus({preventScroll: true});
+    else b.focus();
   }
   function ddClose() {
     if (ddPop) ddPop.remove();
@@ -10949,6 +11278,7 @@ function addTouchHandlers(el, down, move, up) {
     ddPop = null;
     ddOpenSel = null;
     ddHl = -1;
+    ddUp = false;
   }
   function ddPick(v) {
     const sel = ddOpenSel;
@@ -10965,20 +11295,39 @@ function addTouchHandlers(el, down, move, up) {
   document.addEventListener('pointerdown', e => {
     if (ddPop && !(ddOpenSel && ddOpenSel.__dd && ddOpenSel.__dd.contains(e.target))) ddClose();
   });
+  // the list's keys (capture: the page's shortcuts don't see them). Space
+  // types into the filter; Home / End move the caret once it holds text
   document.addEventListener('keydown', e => {
     if (!ddPop) return;
-    const it = ddItems();
-    if (e.key === 'ArrowDown') ddSetHl(ddHl + 1);
+    const q = ddPop.querySelector('.dd-q'), inQ = e.target === q, it = ddItems();
+    if (inQ && e.isComposing) { e.stopPropagation(); return; }
+    // a character typed with the focus on the button (touch: field not yet
+    // tapped) goes into the filter - the first one isn't lost
+    if (!inQ && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      q.focus({preventScroll: true});
+      q.setRangeText(e.key, q.selectionStart, q.selectionEnd, 'end');
+      ddFilter();
+    }
+    else if (e.key === 'ArrowDown') ddSetHl(ddHl + 1);
     else if (e.key === 'ArrowUp') ddSetHl(ddHl - 1);
-    else if (e.key === 'Home') ddSetHl(0);
-    else if (e.key === 'End') ddSetHl(it.length - 1);
-    else if (e.key === 'Enter' || e.key === ' ') { if (it[ddHl]) ddPick(it[ddHl].dataset.v); }
-    else if (e.key === 'Escape' || e.key === 'Tab') { const s = ddOpenSel; ddClose(); if (e.key === 'Escape' && s && s.__dd) s.__dd.focus(); if (e.key === 'Tab') return; }
-    else return;
+    else if ((e.key === 'Home' || e.key === 'End') && !q.value) ddSetHl(e.key === 'Home' ? 0 : it.length - 1);
+    else if (e.key === 'Enter') { if (it[ddHl]) ddPick(it[ddHl].dataset.v); }
+    else if (e.key === 'Escape' || e.key === 'Tab') {
+      // back on the button: Escape stays there, Tab goes on from it
+      const s = ddOpenSel; ddClose();
+      if (s && s.__dd && s.__dd.isConnected) s.__dd.focus();
+      if (e.key === 'Tab') return;
+    }
+    else { if (inQ) e.stopPropagation(); return; }   // typing: the text goes in, no page shortcut sees it
     e.preventDefault();
     e.stopPropagation();
   }, true);
-  window.addEventListener('resize', () => ddClose());
+  // a phone's on-screen keyboard (the filter focused) changes only the
+  // window's height: keep the list and fit it; any other resize closes it
+  window.addEventListener('resize', () => {
+    if (ddPop && window.innerWidth === ddVw && document.activeElement === ddPop.querySelector('.dd-q')) ddPlace(true);
+    else ddClose();
+  });
   // a scroll moves the button away from under the list - except the list's own
   window.addEventListener('scroll', e => { if (ddPop && !(e.target instanceof Node && ddPop.contains(e.target))) ddClose(); }, true);
 
@@ -11093,6 +11442,23 @@ function addTouchHandlers(el, down, move, up) {
   }
 
   function digSetOptFor(id, key, val) { send('DIGITAL_OPT:' + id + ':' + key + ':' + val); }
+
+  // range-slider options (choices "range:MIN:MAX[:STEP]"): update the live
+  // value readout on every drag and send the option debounced (~150 ms) so a
+  // drag doesn't flood the receiver; the final onchange sends it at once.
+  const digSliderTimers = {};
+  function digSliderInput(id, el) {
+    const span = el.nextElementSibling;
+    if (span && span.classList.contains('dig-slider-val')) span.textContent = el.value;
+    const tk = id + ':' + el.dataset.key, val = el.value;
+    if (digSliderTimers[tk]) clearTimeout(digSliderTimers[tk]);
+    digSliderTimers[tk] = setTimeout(() => { delete digSliderTimers[tk]; digSetOptFor(id, el.dataset.key, val); }, 150);
+  }
+  function digSliderChange(id, el) {
+    const tk = id + ':' + el.dataset.key;
+    if (digSliderTimers[tk]) { clearTimeout(digSliderTimers[tk]); delete digSliderTimers[tk]; }
+    digSetOptFor(id, el.dataset.key, el.value);
+  }
 
   // The demod "🔊 Listening" goes back to: the one the VFO had before
   // Digital, else WBFM on a VFO as wide as an FM broadcast channel (Digital
@@ -11267,8 +11633,8 @@ function addTouchHandlers(el, down, move, up) {
   // mode, and the zip's sources and osmo-tetra's patches have CRLF lines),
   // found as tetra-*.exe in that folder (lib/dig_vocoder.cpp find_codec)
   const DIG_CODECS = [
-    {key: 'imbe', name: 'IMBE', used: 'P25'},
-    {key: 'ambe', name: 'AMBE / AMBE+2 (mbelib)', used: 'DMR, D-STAR, NXDN',
+    {key: 'imbe', name: 'IMBE', used: 'P25, Yaesu Fusion VW'},
+    {key: 'ambe', name: 'AMBE / AMBE+2 (mbelib)', used: 'DMR, D-STAR, NXDN, Yaesu Fusion DN / V/D 1',
      install: `sudo apt-get install -y git cmake build-essential
 git clone https://github.com/szechyjs/mbelib.git
 cd mbelib && mkdir build && cd build
@@ -12077,6 +12443,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (!p) return;
     p.style.display = 'none';
     try { localStorage.setItem('kraken_info_panel', JSON.stringify({open: false, tab: infoTab})); } catch (e) {}
+    videoUpdateSub();   // the panel is gone: drop the VIDEO subscription
     setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
   }
 
@@ -12153,6 +12520,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       // exactly the choices 0 / 1: an on / off button (dtv's Path separation...)
       const tog = !dyn && op.choices && op.choices.length === 2 && op.choices.every(c => c[0] === '0' || c[0] === '1') &&
                   op.choices[0][0] !== op.choices[1][0];
+      // a single choice "range:MIN:MAX[:STEP]": a slider (the quality knob...)
+      const isRange = !dyn && op.choices && op.choices.length === 1 && String(op.choices[0][0]).startsWith('range:');
       if (dyn) {
         // the value actually set always shows: one that is none of the choices (a part of a
         // name typed before, a catalogue entry's setting, a SId of another ensemble) gets an
@@ -12166,6 +12535,20 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         opts += `<button type="button" class="btn sm dig-opt-tog${on ? ' primary' : ''}" data-key="${digEsc(key)}" aria-pressed="${on}"` +
                 ` title="${digEsc((op.help ? op.help + '\n\n' : '') + 'Now: ' + cur + ' - click to turn ' + (on ? 'off' : 'on'))}"` +
                 ` onclick="digSetOptFor(${id}, this.dataset.key, '${on ? '0' : '1'}')">${on ? '●' : '○'} ${digEsc(op.label || op.key)}: ${digEsc(cur.replace(/\s*\(.*\)\s*$/, ''))}</button>`;
+      } else if (isRange) {
+        // range:MIN:MAX[:STEP] -> an <input type=range> with a live value readout
+        const parts = String(op.choices[0][0]).split(':');
+        let mn = Number(parts[1]), mx = Number(parts[2]);
+        if (!isFinite(mn)) mn = 0;
+        if (!isFinite(mx)) mx = 100;
+        const stp = parts.length > 3 && isFinite(Number(parts[3])) && Number(parts[3]) > 0 ? Number(parts[3]) : 1;
+        let cur = Number(v);
+        if (!isFinite(cur)) cur = Number(op.default);
+        if (!isFinite(cur)) cur = mn;
+        opts += `<label class="dig-opt-range"${tip}>${digEsc(op.label || op.key)}: ` +
+                `<input type="range" min="${mn}" max="${mx}" step="${stp}" value="${cur}" data-key="${digEsc(key)}"` +
+                ` oninput="digSliderInput(${id}, this)" onchange="digSliderChange(${id}, this)">` +
+                `<span class="dig-slider-val" style="margin-left:4px;min-width:2.4em;display:inline-block">${digEsc(String(cur))}</span></label>`;
       } else if (op.choices && op.choices.length)
         opts += `<label${tip}>${digEsc(op.label || op.key)}: <select data-key="${digEsc(key)}" onchange="digSetOptFor(${id}, this.dataset.key, this.value)">` +
                 op.choices.map(c => `<option value="${digEsc(c[0])}"${c[0] === v ? ' selected' : ''}>${digEsc(c[1])}</option>`).join('') + '</select></label>';
@@ -12213,7 +12596,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   // row (messages plugins), merged tables, per-VFO status + facts, and the
   // merged (filterable) event log
   function infoRenderDecoder(force) {
-    if (!infoOpen('dec')) return;
+    if (!infoOpen('dec')) { videoUpdateSub(); return; }
     const tab = infoTab.slice(4);
     const body = $id('info-body-dec');
     const empty = !tab;
@@ -12223,6 +12606,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       if ($id('info-dec-top').innerHTML !== t) $id('info-dec-top').innerHTML = t;
       $id('info-dec-cols').style.display = 'none';
       $id('info-dec-table').style.display = 'none';
+      videoUpdateSub();
       return;
     }
     $id('info-dec-cols').style.display = 'flex';
@@ -12246,8 +12630,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     // button showed its new state only after a click elsewhere. The focused
     // button gets the focus back (the same one by position)
     const ae = document.activeElement, inTop = ae && topEl.contains(ae);
-    // (a clicked link - the incidents' OpenStreetMap attribution - keeps the focus too)
-    const editing = inTop && ((ae.tagName !== 'BUTTON' && ae.tagName !== 'A') || (ddOpenSel && topEl.contains(ddOpenSel)));
+    // (a clicked link - the incidents' OpenStreetMap attribution - keeps the focus too).
+    // An open mode list holds it wherever the focus is (its filter is in body)
+    const editing = (ddOpenSel && topEl.contains(ddOpenSel)) || (inTop && ae.tagName !== 'BUTTON' && ae.tagName !== 'A');
     if (force || (topEl.dataset.html !== top && !editing)) {
       const btns = inTop ? [...topEl.querySelectorAll('button')] : [];
       const bi = btns.indexOf(ae);
@@ -12276,6 +12661,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     }
     if (tw.dataset.html !== th) { tw.dataset.html = th; tw.innerHTML = th; }
     digRenderPlots(tab, ids);
+    digRenderVideo(tab, ids);
     // each VFO's status + facts
     const facts = ids.map(id => digFactsHtml(id, tab)).join('');
     const ft = $id('info-dec-facts');
@@ -13525,14 +13911,296 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   // that changed and the keys of all live points; GET_MAP asks for all of
   // them. Each decoder's "Plot on map" (decoder tab, DIGITAL_OPT map) decides
   // whether its points are sent. Per-browser view settings in localStorage.
-  const MAP_LAYERS = {
-    // max: the deepest tile zoom (beyond it, up to MAP_MAX_Z, its tiles are scaled up)
-    street: {name: 'Street', max: 19, attr: OSM_ATTR,   // attr: HTML
-             url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`},
-    satellite: {name: 'Satellite', max: 19, attr: 'Imagery © Esri, Maxar, Earthstar Geographics · labels © Esri',
-                url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
-                labels: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/${z}/${y}/${x}`},
+  // Tile providers (⚙ Settings - per browser, mapProvCfg): OpenStreetMap +
+  // Esri need no key; the others take the user's own API key, which goes
+  // into the tile URLs the browser fetches (never to the receiver). The
+  // layer keys are shared, so Street / Satellite stays picked across
+  // providers. A layer: name; max = its deepest tile zoom (beyond it, up to
+  // MAP_MAX_Z, its tiles are scaled up); url(z, x, y, c) -> the tile's URL
+  // (c = {k: the encoded key, cu: the custom settings}; null = not ready -
+  // Google's session); labels = an overlay drawn on top; tile 512 = 512 px
+  // tiles, fetched from the zoom below; attr = HTML; osm = it already credits
+  // OpenStreetMap; light = a light map (rings drawn dark); bg = the colour
+  // under the tiles. A provider: key = {label, get (where to get one), help,
+  // optional}; attrq(lk, L, z, [w, s, e, n], c) -> a promise of the HTML
+  // attribution for the area shown (Google, Azure - their terms ask for it)
+  const mapA = (href, t) => `<a href="${href}" target="_blank" rel="noopener noreferrer">${t}</a>`;
+  const MAPBOX_ATTR = '© ' + mapA('https://www.mapbox.com/about/maps/', 'Mapbox') + ' ' + OSM_ATTR + ' ' +
+                      mapA('https://www.mapbox.com/map-feedback/', 'Improve this map');
+  const MAPTILER_ATTR = '© ' + mapA('https://www.maptiler.com/copyright/', 'MapTiler') + ' ' + OSM_ATTR;
+  const STADIA_ATTR = '© ' + mapA('https://stadiamaps.com/', 'Stadia Maps') + ' © ' + mapA('https://openmaptiles.org/', 'OpenMapTiles') + ' ' + OSM_ATTR;
+  const TF_ATTR = 'Maps © ' + mapA('https://www.thunderforest.com/', 'Thunderforest') + ', data ' + OSM_ATTR;
+  const AZ_ATTR = '© Microsoft, © TomTom';
+  const AZURE = (ts, z, x, y, c) => `https://atlas.microsoft.com/map/tile?api-version=2024-04-01&tilesetId=${ts}&zoom=${z}&x=${x}&y=${y}&tileSize=256&subscription-key=${c.k}`;
+  const mbx = (style, o) => Object.assign({max: 22, tile: 512, osm: true, attr: MAPBOX_ATTR,
+    url: (z, x, y, c) => `https://api.mapbox.com/styles/v1/mapbox/${style}/tiles/512/${z}/${x}/${y}?access_token=${c.k}`}, o);
+  const mtl = (id, ext, o) => Object.assign({max: 22, osm: true, attr: MAPTILER_ATTR,
+    url: (z, x, y, c) => `https://api.maptiler.com/maps/${id}/256/${z}/${x}/${y}.${ext}?key=${c.k}`}, o);
+  const stad = (id, ext, o) => Object.assign({max: 20, osm: true, attr: STADIA_ATTR,
+    url: (z, x, y, c) => `https://tiles.stadiamaps.com/tiles/${id}/${z}/${x}/${y}.${ext}` + (c.k ? `?api_key=${c.k}` : '')}, o);
+  const tfl = (id, name) => ({name, max: 22, osm: true, light: true, attr: TF_ATTR,
+    url: (z, x, y, c) => `https://tile.thunderforest.com/${id}/${z}/${x}/${y}.png?apikey=${c.k}`});
+  const here = (style, fmt, o) => Object.assign({max: 20, attr: 'Map data © ' + new Date().getFullYear() + ' ' + mapA('https://legal.here.com/terms', 'HERE'),
+    url: (z, x, y, c) => `https://maps.hereapi.com/v3/base/mc/${z}/${x}/${y}/${fmt}?style=${style}&size=256&apiKey=${c.k}`}, o);
+  const gml = (name, type, o) => Object.assign({name, max: 22, gm: type, attr: 'Google Maps',
+    url: (z, x, y, c) => { const s = gmSession(type, o && o.gmLayers, c); return s ? `https://tile.googleapis.com/v1/2dtiles/${z}/${x}/${y}?session=${s}&key=${c.k}` : null; }}, o);
+  const MAP_PROVIDERS = {
+    osm: {name: 'OpenStreetMap + Esri (no key)', layers: {
+      street: {name: 'Street', max: 19, attr: OSM_ATTR, osm: true, light: true,
+               url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`},
+      satellite: {name: 'Satellite', max: 19, bg: '#141a22', attr: 'Imagery © Esri, Maxar, Earthstar Geographics · labels © Esri',
+                  url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
+                  labels: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/${z}/${y}/${x}`},
+    }},
+    mapbox: {name: 'Mapbox', key: {label: 'Access token', get: 'https://account.mapbox.com/access-tokens/',
+               help: 'A public token (pk.…). If it has URL restrictions, add this page\'s address.'},
+      layers: {
+        street: mbx('streets-v12', {name: 'Street', light: true}),
+        satellite: mbx('satellite-streets-v12', {name: 'Satellite', bg: '#141a22', attr: MAPBOX_ATTR + ' © Maxar'}),
+        outdoors: mbx('outdoors-v12', {name: 'Outdoors', light: true}),
+        dark: mbx('dark-v11', {name: 'Dark'}),
+      }},
+    google: {name: 'Google Maps', key: {label: 'API key', get: 'https://console.cloud.google.com/google/maps-apis/',
+               help: 'Enable the Map Tiles API in the key\'s Google Cloud project (it needs a billing account). If the key has website restrictions, add this page\'s address.'},
+      layers: {
+        street: gml('Street', 'roadmap', {light: true}),
+        satellite: gml('Satellite', 'satellite', {gmLayers: ['layerRoadmap'], bg: '#141a22'}),
+        terrain: gml('Terrain', 'terrain', {gmLayers: ['layerRoadmap'], light: true}),
+      },
+      // the copyright for the view, and the deepest zoom there (it varies)
+      // (Google's viewport API takes west > east across the antimeridian).
+      // Tiles are <img> loads with no readable status, so this request is
+      // the probe of the session: refused (400 / 401 / 403 / 404) = Google
+      // dropped it before its expiry (revoked, or a wrong clock): make a new one
+      attrq: (lk, L, z, [w, s, e, n], c) => {
+        const sess = gmSession(L.gm, L.gmLayers, c);
+        if (!sess) return Promise.reject('wait');
+        return fetch(`https://tile.googleapis.com/tile/v1/viewport?session=${sess}&key=${c.k}&zoom=${z}&north=${n}&south=${s}&east=${e}&west=${w}`)
+          .then(r => {
+            if (r.ok) { gmSessOk(L.gm); return r.json(); }
+            if ([400, 401, 403, 404].includes(r.status) && gmReject(L.gm, sess, r.status)) return Promise.reject('wait');
+            return Promise.reject(r.status);
+          })
+          .then(j => ({h: j.copyright ? escapeHtml(j.copyright) : '', zr: Array.isArray(j.maxZoomRects) ? j.maxZoomRects : []}));
+      }},
+    azure: {name: 'Azure Maps (Microsoft)', key: {label: 'Subscription key', get: 'https://portal.azure.com/#create/Microsoft.Maps',
+              help: 'A key of an Azure Maps account. It opens every Azure Maps API of that account, so use an account kept for this.'},
+      layers: {
+        // attr: until (or while) the fetched credit for the view is missing
+        street: {name: 'Street', max: 22, light: true, attr: AZ_ATTR, attrFb: true, ts: 'microsoft.base.road', url: (z, x, y, c) => AZURE('microsoft.base.road', z, x, y, c)},
+        satellite: {name: 'Satellite', max: 19, bg: '#141a22', attr: AZ_ATTR, attrFb: true, ts: 'microsoft.imagery', url: (z, x, y, c) => AZURE('microsoft.imagery', z, x, y, c),
+                    labels: (z, x, y, c) => AZURE('microsoft.base.hybrid.road', z, x, y, c)},
+        dark: {name: 'Dark', max: 22, attr: AZ_ATTR, attrFb: true, ts: 'microsoft.base.darkgrey', url: (z, x, y, c) => AZURE('microsoft.base.darkgrey', z, x, y, c)},
+      },
+      // bounds across the antimeridian (west > east): the whole longitude range
+      attrq: (lk, L, z, [w, s, e, n], c) =>
+        fetch(`https://atlas.microsoft.com/map/attribution?api-version=2024-04-01&tilesetId=${L.ts}&zoom=${z}&bounds=${w > e ? -180 : w},${s},${w > e ? 180 : e},${n}&subscription-key=${c.k}`)
+          .then(r => r.ok ? r.json() : Promise.reject(r.status))
+          .then(j => (Array.isArray(j.copyrights) ? j.copyrights : [])
+            // HTML links: their text only (DOMParser runs nothing, loads nothing)
+            .map(h => new DOMParser().parseFromString(String(h), 'text/html').body.textContent.trim())
+            .filter(Boolean).map(escapeHtml).join(', '))},
+    maptiler: {name: 'MapTiler', key: {label: 'API key', get: 'https://cloud.maptiler.com/account/keys/',
+                 help: 'If the key has allowed HTTP origins, add this page\'s address.'},
+      layers: {
+        street: mtl('streets-v2', 'png', {name: 'Street', light: true}),
+        satellite: mtl('hybrid', 'jpg', {name: 'Satellite', max: 20, bg: '#141a22', attr: MAPTILER_ATTR + ' · imagery © MapTiler'}),
+        topo: mtl('topo-v2', 'png', {name: 'Topo', light: true}),
+        dark: mtl('streets-v2-dark', 'png', {name: 'Dark'}),
+      }},
+    thunderforest: {name: 'Thunderforest', key: {label: 'API key', get: 'https://manage.thunderforest.com/'},
+      layers: {outdoors: tfl('outdoors', 'Outdoors'), cycle: tfl('cycle', 'Cycle'), transport: tfl('transport', 'Transport'),
+               landscape: tfl('landscape', 'Landscape')}},
+    stadia: {name: 'Stadia Maps', key: {label: 'API key', get: 'https://client.stadiamaps.com/', optional: true,
+               help: 'Or leave it blank and add this page\'s address as a domain in the Stadia Maps dashboard. Satellite needs a paid plan.'},
+      layers: {
+        street: stad('alidade_smooth', 'png', {name: 'Street', light: true}),
+        satellite: stad('alidade_satellite', 'jpg', {name: 'Satellite', bg: '#141a22',
+                        attr: '© CNES, Distribution Airbus DS, © Airbus DS, © PlanetObserver (contains Copernicus data) · ' + STADIA_ATTR}),
+        terrain: stad('stamen_terrain', 'png', {name: 'Terrain', light: true, max: 18,
+                      attr: '© ' + mapA('https://stamen.com/', 'Stamen Design') + ' ' + STADIA_ATTR}),
+        dark: stad('alidade_smooth_dark', 'png', {name: 'Dark'}),
+      }},
+    here: {name: 'HERE', key: {label: 'API key', get: 'https://platform.here.com/admin/apps',
+             help: 'A HERE platform API key with access to the Raster Tile API v3.'},
+      layers: {
+        street: here('explore.day', 'png8', {name: 'Street', light: true}),
+        satellite: here('explore.satellite.day', 'jpeg', {name: 'Satellite', bg: '#141a22'}),
+        dark: here('explore.night', 'png8', {name: 'Night'}),
+      }},
+    custom: {name: 'Custom tile URL', key: {label: 'API key (fills {key} in the URL)', optional: true}, custom: true,
+      layers: {custom: {name: 'Custom', max: 19, url: (z, x, y, c) => mapMixedBlocked(c.cu.url) ? null : mapCustomUrl(c.cu.url, z, x, y, c.k)}}},
   };
+  const mapHas = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  // an http:// tile URL on an https page: the browser blocks it (mixed
+  // content) - unless it is on this machine (loopback is exempt)
+  function mapMixedBlocked(t, proto = location.protocol) {
+    const m = proto === 'https:' && /^http:\/\/(\[[^\]]*\]|[^\/:?#]*)/i.exec(t || '');
+    if (!m) return false;
+    const h = m[1].toLowerCase();
+    return !(h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(h));
+  }
+  // a {z} {x} {y} template: {-y} = the TMS row, {s} = a subdomain a / b / c, {key}
+  function mapCustomUrl(t, z, x, y, k) {
+    if (!/^https?:\/\//i.test(t || '')) return null;
+    return t.replace(/\{(z|x|y|-y|s|key|r)\}/g, (m, v) =>
+      v === 'z' ? z : v === 'x' ? x : v === 'y' ? y : v === '-y' ? (1 << z) - 1 - y : v === 's' ? 'abc'[(x + y) % 3] : v === 'key' ? k : '');
+  }
+  // the provider in use: the one picked, unless its key is missing (then OpenStreetMap)
+  function mapProvId(cfg = mapProvCfg) {
+    const id = mapHas(MAP_PROVIDERS, cfg.p) ? cfg.p : 'osm';
+    const P = MAP_PROVIDERS[id];
+    if (P.key && !P.key.optional && !(cfg.keys[id] || '').trim()) return 'osm';
+    if (P.custom && !mapCustomUrl(cfg.cu.url, 0, 0, 0, '')) return 'osm';
+    return id;
+  }
+  function mapProv() { return MAP_PROVIDERS[mapProvId()]; }
+  // the url functions' context: the key (URL-encoded) and the custom settings
+  function mapProvCtx(id = mapProvId(), cfg = mapProvCfg) {
+    return {k: encodeURIComponent((cfg.keys[id] || '').trim()), cu: cfg.cu};
+  }
+  // the layer shown: the one picked if this provider has it, else its first
+  function mapLayerKey() {
+    const ls = mapProv().layers;
+    return mapHas(ls, mapState.layer) ? mapState.layer : Object.keys(ls)[0];
+  }
+  function mapLayer() {
+    const P = mapProv(), L = P.layers[mapLayerKey()];
+    if (!P.custom) return L;
+    const cu = mapProvCfg.cu;   // the custom layer takes its settings
+    return Object.assign({}, L, {max: Math.max(1, Math.min(22, Math.round(+cu.max) || 19)), light: !cu.dark,
+                                 bg: cu.dark ? '#141a22' : undefined, attr: escapeHtml(cu.attr || '')});
+  }
+  // the deepest zoom with tiles (Google tells it for the view shown: mapDynZ)
+  function mapLayerMax(L) {
+    const z = mapDynZ.z && mapDynZ.k === mapProvId() + '|' + mapLayerKey() ? mapDynZ.z : 0;
+    return z ? Math.min(L.max, z) : L.max;
+  }
+  // the zoom limit from Google's maxZoomRects (they can nest: a deep city
+  // inside a shallower country): the deepest of the rects holding the view's
+  // centre - what the user looks at; none holds it - the shallowest of all,
+  // so no part of the view asks for tiles that don't exist. 0 = no limit
+  function mapZoomFor(rs, lat, lon) {
+    const ok = rs.filter(r => +r.maxZoom > 0);
+    if (!ok.length) return 0;
+    const inLon = r => +r.west <= +r.east ? lon >= +r.west && lon <= +r.east : lon >= +r.west || lon <= +r.east;
+    const at = ok.filter(r => lat >= +r.south && lat <= +r.north && inLon(r)).map(r => +r.maxZoom);
+    return at.length ? Math.max(...at) : Math.min(...ok.map(r => +r.maxZoom));
+  }
+
+  // Google Map Tiles API: the tiles need a session token (createSession, a
+  // POST), one per map type, valid about two weeks - kept in localStorage
+  // (kraken_map_gs, with a hash of the key it is for) so the browser's HTTP
+  // cache of the tiles survives a reload. Failures back off like tiles do.
+  // (gmSess: see the globals block)
+  function gmSessSave() {
+    try { localStorage.setItem('kraken_map_gs', JSON.stringify(gmSess, (k, v) => k === 'busy' ? undefined : v)); } catch (x) {}
+  }
+  // the viewport request refused session s: drop it so gmSession makes a new
+  // one - the first time at once, again only after a back-off (rej counts
+  // refusals until one is accepted; a bad key can't loop createSession).
+  // false = this session was already replaced
+  function gmReject(type, s, status) {
+    const e = gmSess[type];
+    if (!e || e.s !== s) return false;
+    e.rej = (e.rej || 0) + 1;
+    e.s = ''; e.exp = 0;
+    if (e.rej > 1) e.retry = Date.now() + Math.min(300000, 15000 * Math.pow(2, e.rej - 2));
+    mapProvErr = 'Google Maps refused the session (HTTP ' + status + '); a new one is being made';
+    mapTileErrAt = Date.now();
+    gmSessSave();
+    mapDraw();   // the tiles ask gmSession for the new one
+    return true;
+  }
+  function gmSessOk(type) { const e = gmSess[type]; if (e && e.rej) { e.rej = 0; gmSessSave(); } }
+  function gmHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36); }
+  function gmSession(type, layers, c) {
+    const kh = gmHash(c.k);
+    let e = gmSess[type];
+    if (!e || typeof e !== 'object' || e.kh !== kh) e = gmSess[type] = {kh, s: '', exp: 0};
+    if (e.s && e.exp - 600 > Date.now() / 1000) return e.s;
+    if (!e.busy && !(Date.now() < e.retry)) gmCreate(type, layers, c, e);
+    return null;
+  }
+  function gmLangRegion() {
+    const lang = navigator.language || 'en-US';
+    return [lang, ((lang.match(/-([A-Za-z]{2})(?:-|$)/) || [])[1] || 'US').toUpperCase()];
+  }
+  function gmCreateReq(type, layers, k) {
+    const [language, region] = gmLangRegion();
+    const body = {mapType: type, language, region};
+    if (layers) body.layerTypes = layers;
+    return fetch('https://tile.googleapis.com/v1/createSession?key=' + k,
+                 {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+      .then(r => r.json().catch(() => ({})).then(j => {
+        if (!r.ok || !j.session) throw new Error((j.error && j.error.message) || 'HTTP ' + r.status);
+        return j;
+      }));
+  }
+  function gmCreate(type, layers, c, e) {
+    e.busy = true;
+    gmCreateReq(type, layers, c.k).then(j => {
+      e.s = String(j.session); e.exp = +j.expiry || Date.now() / 1000 + 86400; e.fails = 0; e.retry = 0;
+      mapProvErr = '';
+      gmSessSave();
+    }, err => {
+      e.fails = (e.fails || 0) + 1;
+      e.retry = Date.now() + Math.min(300000, 15000 * Math.pow(2, e.fails - 1));
+      mapProvErr = 'Google Maps: ' + (err && err.message || err);
+      mapTileErrAt = Date.now();
+    }).finally(() => { e.busy = false; mapDraw(); });
+  }
+
+  // the provider's attribution for the area shown (attrq), fetched once the
+  // view has been still for a second; until then the layer's own attr only.
+  // A failed fetch is tried again after mapDynRetryMs, doubling to 5 min,
+  // even if the view stays. (mapDyn*: see the globals block)
+  function mapViewBounds() {
+    const W = mapWorld();
+    const [s, w] = mapUnproj(mapState.mx - mapW / 2 / W, mapState.my + mapH / 2 / W);
+    const [n, e] = mapUnproj(mapState.mx + mapW / 2 / W, mapState.my - mapH / 2 / W);
+    const wrap = v => ((v + 180) % 360 + 360) % 360 - 180;
+    const cl = v => +Math.max(-85, Math.min(85, v)).toFixed(4);
+    if (e - w >= 359) return [-179.9999, cl(s), 179.9999, cl(n)];
+    return [+wrap(w).toFixed(4), cl(s), +wrap(e).toFixed(4), cl(n)];
+  }
+  function mapAttrDyn() {
+    const id = mapProvId(), P = MAP_PROVIDERS[id];
+    if (!P.attrq || !mapW) return '';
+    const lk = mapLayerKey(), L = P.layers[lk], at = id + '|' + lk;
+    if (mapDynZ.k !== at) mapDynZ = {k: at, z: 0};   // another provider / layer: its own limit
+    // keyed on the view's own zoom, not the limited one: a limit that
+    // arrives must not make the same view ask again
+    const zv = Math.max(0, Math.min(L.max, Math.round(mapState.z)));
+    const b = mapViewBounds();
+    const want = at + '|' + zv + '|' + b.map(v => v.toFixed(2)).join(',');
+    if (want !== mapDynWant) {
+      mapDynWant = want;
+      clearTimeout(mapDynT);
+      const n = mapDynN, cen = mapUnproj(mapState.mx, mapState.my);
+      const live = () => mapDynWant === want && mapDynN === n;
+      mapDynT = setTimeout(() => {
+        P.attrq(lk, L, Math.min(zv, mapLayerMax(L)), b, mapProvCtx(id)).then(r => {
+          if (!live()) return;   // a reply for a view (or provider) already left
+          mapDynFails = 0; mapDynRetry = 0;
+          const h = typeof r === 'string' ? r : r.h;
+          mapDynAttr = {k: at, h};
+          if (r.zr) {
+            const zl = mapZoomFor(r.zr, cen[0], ((cen[1] + 180) % 360 + 360) % 360 - 180);
+            if (zl !== mapDynZ.z) { mapDynZ = {k: at, z: zl}; mapDraw(); }   // tiles at the new limit, unasked
+          }
+          mapAttrUpdate();
+        }, err => {
+          if (!live()) return;
+          if (err === 'wait') { mapDynWant = ''; return; }   // no session yet: again on the next draw
+          mapDynFails++;
+          mapDynRetry = Date.now() + Math.min(300000, mapDynRetryMs * Math.pow(2, mapDynFails - 1));
+          mapDynT = setTimeout(() => { if (live()) { mapDynWant = ''; mapDraw(); } }, mapDynRetry - Date.now());
+        });
+      }, Math.max(1000, mapDynRetry - Date.now()));
+    }
+    return mapDynAttr.k === at ? mapDynAttr.h : '';
+  }
   // (map state: see the globals block at the top of the script)
 
   function mapSave() {
@@ -13898,8 +14566,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   function mapUpdateControls() {
     const seg = $id('map-layers');
     if (seg) {
-      const html = Object.entries(MAP_LAYERS).map(([k, l]) =>
-        `<button type="button" class="${mapState.layer === k ? 'on' : ''}" onclick="mapSet('layer','${k}')">${l.name}</button>`).join('');
+      const P = mapProv(), lk = mapLayerKey(), tip = escapeHtml(P.name) + ' - change the map provider in ⚙ Settings (top right)';
+      const html = Object.entries(P.layers).map(([k, l]) =>
+        `<button type="button" class="${lk === k ? 'on' : ''}" onclick="mapSet('layer','${k}')" title="${tip}">${l.name}</button>`).join('');
       if (seg.dataset.html !== html) { seg.dataset.html = html; seg.innerHTML = html; }
     }
     const tr = $id('map-trails');
@@ -13922,19 +14591,20 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     rgRender();
   }
 
-  // the attribution line (bottom right): the layer's, + OpenStreetMap's for
-  // the masts / incident addresses on a layer that isn't OpenStreetMap's, +
-  // the terrain's with the viewshed / the 📏 range. Also from every draw -
-  // incidents come with the map pushes; the DOM is only touched when the
-  // text changes
+  // the attribution line (bottom right): the layer's (+ the provider's for
+  // the view: mapAttrDyn), + OpenStreetMap's for the masts / incident
+  // addresses on a layer that doesn't credit it, + the terrain's with the
+  // viewshed / the 📏 range. Also from every draw - incidents come with the
+  // map pushes; the DOM is only touched when the text changes
   function mapAttrUpdate() {
     const at = $id('map-attr');
     if (!at) return;
     const osm = [];
     if (mapState.masts) osm.push('masts');
     for (const p of mapPts.values()) if (p.k === 'incident') { osm.push('addresses'); break; }
-    const h = MAP_LAYERS[mapState.layer].attr +
-      (osm.length && mapState.layer !== 'street' ? ' · ' + osm.join(' + ') + ' ' + OSM_ATTR : '') +
+    const L = mapLayer(), dyn = mapAttrDyn();
+    const h = [dyn && L.attrFb ? '' : L.attr, dyn].filter(Boolean).join(' · ') +   // attrFb: attr only stands in for dyn
+      (osm.length && !L.osm ? ' · ' + osm.join(' + ') + ' ' + OSM_ATTR : '') +
       (mapState.vs || rgState.on ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 &amp; others' : '');
     if (at.dataset.html !== h) { at.dataset.html = h; at.innerHTML = h; }
   }
@@ -13997,7 +14667,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   function mapDrawTile(urlf, tz, x, y, sx, sy, size, fallback) {
     const n = 1 << tz;
     const xx = ((x % n) + n) % n;
-    const t = mapTile(urlf(tz, xx, y));
+    const url = urlf(tz, xx, y);
+    if (!url) return;   // not ready (Google's session): drawn once it is
+    const t = mapTile(url);
     const c = mapCtx;
     if (t.st === 'ok') { c.drawImage(t.img, sx, sy, size + 0.5, size + 0.5); return; }
     if (!fallback) return;
@@ -14006,7 +14678,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const px = Math.floor(xx / f), py = Math.floor(y / f);
       const pt = mapTiles.get(urlf(pz, px, py));
       if (pt && pt.st === 'ok') {
-        const sub = 256 / f;
+        const sub = (pt.img.naturalWidth || 256) / f;
         c.drawImage(pt.img, (xx % f) * sub, (y % f) * sub, sub, sub, sx, sy, size + 0.5, size + 0.5);
         pt.used = Date.now();
         return;
@@ -14057,7 +14729,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     let st = steps[steps.length - 1];
     for (const s of steps) if (s / kmPerPx >= 70) { st = s; break; }
     // darker on the light street map, light on the satellite / plain grid
-    const light = mapState.layer === 'street' && Date.now() - mapTileOk < 120000;
+    const light = mapLayer().light && Date.now() - mapTileOk < 120000;
     c.strokeStyle = light ? 'rgba(13,71,161,0.45)' : 'rgba(79,195,247,0.4)';
     c.fillStyle = light ? 'rgba(13,71,161,0.85)' : 'rgba(160,220,255,0.8)';
     c.lineWidth = 1;
@@ -14088,6 +14760,140 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     }
     c.restore();
   }
+
+  // --- ⚙ SETTINGS: the map provider and its API key (the top bar's ⚙) --------
+  // The dialog edits a copy of mapProvCfg - with the key of every provider,
+  // so going through the list loses none - and Save stores it in
+  // localStorage kraken_map_prov: per browser, like the map's view
+  let setDlgCfg = null, setDlgTestN = 0;
+  function setDlgOpen() {
+    setDlgCfg = JSON.parse(JSON.stringify(mapProvCfg));
+    if (!mapHas(MAP_PROVIDERS, setDlgCfg.p)) setDlgCfg.p = 'osm';
+    const sel = $id('set-mp-prov');
+    if (!sel.options.length)
+      sel.innerHTML = Object.entries(MAP_PROVIDERS).map(([k, P]) => `<option value="${k}">${escapeHtml(P.name)}</option>`).join('');
+    sel.value = setDlgCfg.p;
+    const cu = setDlgCfg.cu;
+    $id('set-mp-url').value = cu.url || '';
+    $id('set-mp-max').value = Math.round(+cu.max) || 19;
+    $id('set-mp-dark').checked = !!cu.dark;
+    $id('set-mp-attr').value = cu.attr || '';
+    $id('set-mp-key').type = 'password';
+    $id('set-mp-show').textContent = 'Show';
+    setDlgFill();
+    $id('set-dlg-bg').style.display = 'flex';
+    sel.focus();
+  }
+  function setDlgClose() {
+    $id('set-dlg-bg').style.display = 'none';
+    setDlgCfg = null;
+    setDlgTestN++;
+  }
+  function setDlgMsg(h, cls) {
+    const m = $id('set-mp-msg');
+    m.className = 'info' + (cls ? ' ' + cls : '');
+    m.innerHTML = h;
+  }
+  // the fields of the provider picked
+  function setDlgFill() {
+    const id = setDlgCfg.p, P = MAP_PROVIDERS[id];
+    $id('set-mp-keyrow').style.display = P.key ? '' : 'none';
+    $id('set-mp-custom').style.display = P.custom ? '' : 'none';
+    if (P.key) {
+      $id('set-mp-keylbl').textContent = P.key.label + (P.key.optional ? ' (optional)' : '');
+      $id('set-mp-key').value = setDlgCfg.keys[id] || '';
+      $id('set-mp-keyhelp').innerHTML = [P.key.help ? escapeHtml(P.key.help) : '',
+        P.key.get ? mapA(P.key.get, 'Get a key ↗') : '',
+        'This page\'s address: <code>' + escapeHtml(location.origin) + '</code>'].filter(Boolean).join(' ');
+    }
+    setDlgMsg(P.custom ? '' : 'Layers: ' + Object.values(P.layers).map(l => l.name).join(', '));
+  }
+  // the fields into the copy
+  function setDlgRead() {
+    const id = setDlgCfg.p, P = MAP_PROVIDERS[id];
+    if (P.key) setDlgCfg.keys[id] = $id('set-mp-key').value.trim();
+    if (P.custom) Object.assign(setDlgCfg.cu, {url: $id('set-mp-url').value.trim(), dark: $id('set-mp-dark').checked,
+      max: Math.max(1, Math.min(22, Math.round(+$id('set-mp-max').value) || 19)), attr: $id('set-mp-attr').value.trim().slice(0, 200)});
+  }
+  function setDlgProv() {
+    setDlgRead();
+    setDlgCfg.p = $id('set-mp-prov').value;
+    setDlgTestN++;   // a Test running was for the other provider
+    setDlgFill();
+  }
+  // a key / custom field edited: a Test running is no longer for these settings
+  function setDlgEdit() { setDlgTestN++; setDlgMsg(''); }
+  function setDlgShowKey() {
+    const k = $id('set-mp-key'), show = k.type === 'password';
+    k.type = show ? 'text' : 'password';
+    $id('set-mp-show').textContent = show ? 'Hide' : 'Show';
+  }
+  // what's missing for the provider picked ('' = nothing)
+  function setDlgCheck(proto = location.protocol) {
+    const id = setDlgCfg.p, P = MAP_PROVIDERS[id];
+    if (P.key && !P.key.optional && !setDlgCfg.keys[id]) return 'Enter the ' + P.key.label.toLowerCase() + ' - or pick OpenStreetMap, which needs none.';
+    if (P.custom && !mapCustomUrl(setDlgCfg.cu.url, 0, 0, 0, '')) return 'The tile URL must start with https:// (or http://).';
+    if (P.custom && mapMixedBlocked(setDlgCfg.cu.url, proto))
+      return 'This page is https, so the browser blocks tiles from an http:// server (mixed content) - serve the tiles over https, or from this machine (http://localhost or http://127.0.0.1).';
+    if (P.custom && !/\{z\}/.test(setDlgCfg.cu.url)) return 'The tile URL needs {z}, {x} and {y} (or {-y}).';
+    return '';
+  }
+  // Test: Google - create a session (its error says what's wrong with the
+  // key); the others - load one tile, and on failure ask the server why
+  // (where its CORS lets the page read the answer)
+  function setDlgTest() {
+    setDlgRead();
+    const bad = setDlgCheck();
+    if (bad) { setDlgMsg(escapeHtml(bad), 'bad'); return; }
+    const n = ++setDlgTestN, id = setDlgCfg.p, P = MAP_PROVIDERS[id], c = mapProvCtx(id, setDlgCfg);
+    const done = (ok, t) => { if (n === setDlgTestN) setDlgMsg((ok ? '✓ ' : '✗ ') + escapeHtml(t), ok ? 'ok' : 'bad'); };
+    setDlgMsg('Testing…');
+    if (id === 'google') {
+      gmCreateReq('roadmap', null, c.k).then(() => done(true, 'Google accepted the key - Save to use it.'), e => done(false, 'Google: ' + (e && e.message || e)));
+      return;
+    }
+    const L = P.layers[Object.keys(P.layers)[0]];
+    const [z, x, y] = L.tile === 512 ? [2, 2, 1] : [3, 4, 2];
+    const url = L.url(z, x, y, c);
+    const img = new Image();
+    const to = setTimeout(() => { img.onload = img.onerror = null; img.src = ''; done(false,'No answer in 15 s - is there an internet connection?'); }, 15000);
+    img.onload = () => { clearTimeout(to); done(true, 'A tile loaded - Save to use it.'); };
+    img.onerror = () => {
+      clearTimeout(to);
+      const why = 'The tile didn\'t load: no internet connection, or the key is wrong, not allowed for this page\'s address, or its plan lacks this map';
+      fetch(url).then(r => r.ok ? Promise.reject() : r.text().then(t => {
+        let m = t;
+        try { const j = JSON.parse(t); m = j.message || j.error && (j.error.message || j.error) || t; } catch (e) {}
+        done(false, 'The tile server said: HTTP ' + r.status + (m ? ' - ' + String(m).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) : ''));
+      })).catch(() => done(false, why + '.'));
+    };
+    img.src = url;
+  }
+  function setDlgSave() {
+    setDlgRead();
+    const bad = setDlgCheck();
+    if (bad) { setDlgMsg(escapeHtml(bad), 'bad'); return; }
+    for (const k of Object.keys(setDlgCfg.keys)) if (!setDlgCfg.keys[k]) delete setDlgCfg.keys[k];
+    mapProvCfg.p = setDlgCfg.p;
+    mapProvCfg.keys = setDlgCfg.keys;
+    mapProvCfg.cu = setDlgCfg.cu;
+    try { localStorage.setItem('kraken_map_prov', JSON.stringify(mapProvCfg)); } catch (e) {}
+    // a fresh start for the notices and the attribution of the new tiles
+    // (and of Google's sessions: a re-saved key starts with new ones)
+    mapTileErrAt = 0; mapProvErr = '';
+    clearTimeout(mapDynT); mapDynN++;   // the old provider's pending / running request applies nothing
+    mapDynAttr = {k: '', h: ''}; mapDynWant = ''; mapDynZ = {k: '', z: 0}; mapDynFails = 0; mapDynRetry = 0;
+    for (const k of Object.keys(gmSess)) delete gmSess[k];
+    try { localStorage.removeItem('kraken_map_gs'); } catch (e) {}
+    setDlgClose();
+    mapUpdateControls();
+    mapDraw();
+  }
+  document.addEventListener('keydown', e => {
+    if (!setDlgCfg) return;
+    if (e.key === 'Escape') { e.preventDefault(); setDlgClose(); }
+    else if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') { e.preventDefault(); setDlgSave(); }
+  });
 
   // --- 📡 STATION ON THE MAP: select, drag, heading; viewshed points too ------
   // A click on the station's mast selects it (cyan, in a ring; click elsewhere
@@ -14303,19 +15109,21 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     mapAttrUpdate();
     const c = mapCtx;
     c.setTransform(mapDpr, 0, 0, mapDpr, 0, 0);
-    c.fillStyle = mapState.layer === 'satellite' ? '#141a22' : '#1b2330';
+    const L = mapLayer(), ctx = mapProvCtx();
+    c.fillStyle = L.bg || '#1b2330';
     c.fillRect(0, 0, mapW, mapH);
     mapGraticule(c);
-    // tiles at the nearest integer zoom, scaled to the fractional one
-    const L = MAP_LAYERS[mapState.layer];
-    const tz = Math.max(0, Math.min(L.max, Math.round(mapState.z)));
+    // tiles at the nearest integer zoom (512 px tiles: the one below, as
+    // they cover twice the width), scaled to the fractional one
+    const tz = Math.max(0, Math.min(mapLayerMax(L), Math.round(mapState.z) - (L.tile === 512 ? 1 : 0)));
     const size = 256 * Math.pow(2, mapState.z - tz);
     const n = 1 << tz;
     const left = mapState.mx * n - mapW / 2 / size, top = mapState.my * n - mapH / 2 / size;
     const x0 = Math.floor(left), y0 = Math.max(0, Math.floor(top));
     const x1 = Math.floor(left + mapW / size), y1 = Math.min(n - 1, Math.floor(top + mapH / size));
-    for (const [urlf, fb] of [[L.url, true], [L.labels, false]]) {
-      if (!urlf) continue;
+    for (const [uf, fb] of [[L.url, true], [L.labels, false]]) {
+      if (!uf) continue;
+      const urlf = (z, x, y) => uf(z, x, y, ctx);
       for (let y = y0; y <= y1; y++)
         for (let x = x0; x <= x1; x++)
           mapDrawTile(urlf, tz, x, y, (x - left) * size, (y - top) * size, size, fb);
@@ -15282,6 +16090,251 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       plotDraw($id('dplot-' + x.id), x.id, x.pl);
     }
   }
+  // the decoder tab: a video display canvas per VFO, for a plugin that rebuilds
+  // a picture (kp::Info::video: analog TV, TEMPEST). videoOnFrame draws into
+  // <canvas id="dvideo-${id}"> as frames arrive; here we only create/remove the
+  // canvases to match the VFOs, and toggle the VIDEO subscription.
+  function digRenderVideo(tab, ids) {
+    const box = $id('info-dec-video');
+    if (!box) return;
+    const vid = !!(digPlugin(tab) || {}).video;
+    const list = vid ? ids : [];
+    // each VFO: its picture and, right of it, the plugin's plots placed beside the video
+    const vps = list.map(id => vplotsOf(id, tab));
+    const key = list.map((id, i) => id + ':' + vps[i].map(x => x.k).join('+')).join(',');
+    box.style.display = list.length ? '' : 'none';
+    if (box.dataset.key !== key) {
+      box.dataset.key = key;
+      box.innerHTML = list.map((id, i) =>
+        `<div class="dig-vid-unit"><div class="dig-vid"><div class="cap"><span class="dig-vfo-dot" style="background:${getDecimatorColor(id)}"></span>` +
+        `<b>D${id}</b> ${digEsc(digName(tab))}</div>` +
+        `<canvas id="dvideo-${id}" width="2" height="2" title="The picture this decoder reconstructs from the signal"></canvas></div>` +
+        (vps[i].length ? `<div class="dig-vplots">${vps[i].map(x => vplotBoxHtml(id, tab, x)).join('')}</div>` : '') +
+        `</div>`).join('');
+    }
+    vps.forEach((vp, i) => vp.forEach(x => vplotUpdate(list[i], tab, x)));
+    videoUpdateSub();
+  }
+
+  // --- Plugin plots beside the video display (kp::Plot PLOT_BESIDE_VIDEO) ---
+  // In the VFO's digital status a named plot is keyed "<plugin>/<plot id>"
+  // and has pos "video" when it belongs beside the video: drawn in a column
+  // right of the VFO's picture (below it in a narrow panel), in key order.
+  // One that names an option (opt) shows what a click would set - the x under
+  // the pointer, snapped to the curve's highest point within `snap` x units
+  // (at least VPLOT_SNAP_PX pixels; Shift: no snapping), rounded to `step` -
+  // and a click sends it through DIGITAL_OPT like a typed value, then `also`
+  // ("key=value", e.g. the TEMPEST plugin's mode=manual) when that option
+  // isn't so already. Nothing changes here until the receiver's broadcast
+  // comes back (saved per VFO, every page follows). Only options the plugin
+  // declares are sent; the value is always a plain number.
+  function vplotsOf(id, tab) {
+    const out = [];
+    for (const [k, pl] of Object.entries(digPlots(id))) {
+      const sl = k.indexOf('/');
+      if (sl <= 0 || k.slice(0, sl) !== tab || !pl || pl.pos !== 'video') continue;
+      out.push({k, pid: k.slice(sl + 1), pl});
+    }
+    return out.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  }
+  function vplotCvId(vfo, x) { return 'dvplot-' + vfo + '-' + x.pid.replace(/[^A-Za-z0-9_-]/g, '_'); }
+  // the option a plot's click sets: {op (the plugin's), key "<plugin>.<opt>"} or null
+  function vplotOpt(tab, k) {
+    const op = k && ((digPlugin(tab) || {}).options || []).find(o => o.key === k);
+    return op ? {op, key: tab + '.' + k} : null;
+  }
+  function vplotBoxHtml(vfo, tab, x) {
+    const id = vplotCvId(vfo, x), o = vplotOpt(tab, x.pl.opt), a = /^([a-z0-9_]{1,32})=/.exec(x.pl.also || '');
+    const ao = a && vplotOpt(tab, a[1]);
+    const tip = o ? `Click: set ${o.op.label || o.op.key} to the value under the pointer` +
+                    (ao ? ` (and ${ao.op.label || ao.op.key} to ${x.pl.also.slice(a[0].length)}, so it takes effect)` : '') +
+                    (x.pl.snap > 0 ? ' - it snaps to the highest point nearby; Shift+click: exactly where you click' : '')
+                  : '';
+    return `<div class="dig-vplot"><div class="cap"><b>${digEsc(x.pl.t || x.pid)}</b><span class="age" id="${id}-age"></span>` +
+           `<span class="v" id="${id}-v"></span></div><div class="cvw"><canvas id="${id}" title="${digEsc(tip)}"` +
+           ` onpointermove="vplotMove(event)" onpointerleave="vplotLeave(event)" onpointerdown="vplotDown(event)"` +
+           ` onpointerup="vplotUp(event)" onpointercancel="vplotPress = null"></canvas></div></div>`;
+  }
+  // new data for one plot: the caption (the value in use = its first marker) + the curve
+  function vplotUpdate(vfo, tab, x) {
+    const id = vplotCvId(vfo, x), cv = $id(id);
+    if (!cv) return;
+    const mk = (x.pl.mk || []).find(m => Number.isFinite(m[0]));
+    const vt = mk ? 'in use ' + mk[1] + (x.pl.xu ? ' ' + x.pl.xu : '') : '';
+    const ve = $id(id + '-v'), ae = $id(id + '-age'), at = x.pl.age > 2 ? x.pl.age + ' s ago' : '';
+    if (ve && ve.textContent !== vt) ve.textContent = vt;
+    if (ae && ae.textContent !== at) ae.textContent = at;
+    vplotGeo.set(id, {vfo, tab, pl: x.pl});
+    vplotDraw(cv);
+  }
+  // what a click at canvas x px would set: {x (number), txt (as sent)} or null
+  function vplotPick(g, px, exact) {
+    const pl = g.pl, y = pl.y || [];
+    if (!g.pw || !y.length || !(pl.dx > 0)) return null;
+    let x = g.x0 + (px - g.L) / g.pw * (g.x1 - g.x0);
+    x = Math.min(g.x1, Math.max(g.x0, x));
+    if (!exact && pl.snap > 0) {
+      const r = Math.max(pl.snap, VPLOT_SNAP_PX * (g.x1 - g.x0) / g.pw);
+      const i0 = Math.max(0, Math.ceil((x - r - pl.x0) / pl.dx)), i1 = Math.min(y.length - 1, Math.floor((x + r - pl.x0) / pl.dx));
+      let bi = -1;
+      for (let i = i0; i <= i1; i++) if (bi < 0 || y[i] > y[bi]) bi = i;
+      if (bi >= 0) x = pl.x0 + bi * pl.dx;
+    }
+    let txt;
+    if (pl.step > 0) {
+      x = Math.round(x / pl.step) * pl.step;
+      txt = x.toFixed(Math.max(0, Math.min(9, Math.ceil(-Math.log10(pl.step) - 1e-9))));
+    } else {
+      txt = String(+x.toPrecision(7));
+    }
+    x = +txt;
+    return Number.isFinite(x) ? {x, txt} : null;
+  }
+  function vplotDraw(cv) {
+    const g = cv && vplotGeo.get(cv.id);
+    if (!g) return;
+    const pl = g.pl, y = pl.y || [];
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.max(60, cv.clientWidth), H = Math.max(40, cv.clientHeight);
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+    }
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    const L = 4, R = 4, T = 14, B = 13, pw = W - L - R, ph = H - T - B;
+    g.L = L; g.pw = 0;
+    if (!y.length || !(pl.dx > 0) || !Number.isFinite(pl.x0)) {
+      c.fillStyle = '#8296b4';
+      c.font = '11px sans-serif';
+      c.fillText('Nothing to show yet (searching)', L + 4, T + ph / 2);
+      return;
+    }
+    const x0 = pl.x0, x1 = pl.x0 + (y.length - 1) * pl.dx;
+    let lo = Number.isFinite(pl.ymin) ? pl.ymin : Math.min(...y), hi = Number.isFinite(pl.ymax) ? pl.ymax : Math.max(...y);
+    if (!(hi > lo)) hi = lo + 1;
+    else if (!Number.isFinite(pl.ymax)) hi += (hi - lo) * 0.08;
+    Object.assign(g, {x0, x1: x1 > x0 ? x1 : x0 + pl.dx, pw, T, ph});
+    const X = v => L + (v - x0) / (g.x1 - x0) * pw;
+    const Y = v => T + ph * (1 - (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo));
+    // x grid: about one tick per 60 px, in the plot's unit
+    const span = g.x1 - x0, want = span / Math.max(2, pw / 60);
+    const mag = Math.pow(10, Math.floor(Math.log10(want)));
+    const stp = [1, 2, 5, 10].map(m => m * mag).find(v => v >= want) || 10 * mag;
+    const dec = Math.max(0, -Math.floor(Math.log10(stp) + 1e-9));
+    c.font = '9px sans-serif';
+    c.textAlign = 'center';
+    c.lineWidth = 1;
+    for (let v = Math.ceil(x0 / stp) * stp; v <= g.x1 + 1e-9; v += stp) {
+      const x = X(v);
+      c.strokeStyle = '#1c2d4c';
+      c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + ph); c.stroke();
+      c.fillStyle = '#6f88ad';
+      const lb = v.toFixed(dec), hw = c.measureText(lb).width / 2;   // the end labels kept inside
+      c.textAlign = x - hw < 0 ? 'left' : x + hw > W ? 'right' : 'center';
+      c.fillText(lb, c.textAlign === 'left' ? 0 : c.textAlign === 'right' ? W : x, H - 2);
+    }
+    // the curve
+    c.beginPath();
+    c.moveTo(X(x0), Y(lo));
+    for (let i = 0; i < y.length; i++) c.lineTo(X(x0 + i * pl.dx), Y(y[i]));
+    c.lineTo(X(x1), Y(lo));
+    c.closePath();
+    c.fillStyle = 'rgba(79,195,247,0.22)';
+    c.fill();
+    c.strokeStyle = '#4fc3f7';
+    c.stroke();
+    // the markers (the value in use)
+    c.font = 'bold 10px sans-serif';
+    for (const m of pl.mk || []) {
+      if (!Number.isFinite(m[0]) || m[0] < x0 || m[0] > g.x1) continue;
+      const x = X(m[0]);
+      c.strokeStyle = '#ffcc80';
+      c.lineWidth = 1.5;
+      c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + ph); c.stroke();
+      c.fillStyle = '#ffcc80';
+      c.textAlign = x > L + pw - 40 ? 'right' : x < L + 40 ? 'left' : 'center';
+      c.fillText(m[1], x, T - 3);
+    }
+    // the pointer: what a click would set
+    const hv = vplotHover && vplotHover.id === cv.id ? vplotHover : null;
+    const pk = hv && vplotOpt(g.tab, pl.opt) ? vplotPick(g, hv.px, hv.shift) : null;
+    if (pk) {
+      const x = X(pk.x), yi = Math.round((pk.x - x0) / pl.dx), yv = yi >= 0 && yi < y.length ? y[yi] : lo;
+      c.setLineDash([3, 2]);
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + ph); c.stroke();
+      c.setLineDash([]);
+      c.fillStyle = '#ffffff';
+      c.beginPath(); c.arc(x, Y(yv), 2.5, 0, 2 * Math.PI); c.fill();
+      const t = (hv.shift || !(pl.snap > 0) ? '' : '⇥ ') + pk.txt + (pl.xu ? ' ' + pl.xu : '');
+      c.font = 'bold 11px sans-serif';
+      const tw = c.measureText(t).width + 8, bx = Math.min(Math.max(L, x - tw / 2), L + pw - tw);
+      c.fillStyle = 'rgba(16,16,30,0.9)';
+      c.fillRect(bx, T + 1, tw, 15);
+      c.fillStyle = '#ffffff';
+      c.textAlign = 'left';
+      c.fillText(t, bx + 4, T + 12);
+    }
+  }
+  function vplotMove(ev) {
+    const cv = ev.currentTarget, r = cv.getBoundingClientRect();
+    vplotHover = {id: cv.id, px: ev.clientX - r.left, shift: ev.shiftKey};
+    vplotDraw(cv);
+  }
+  function vplotLeave(ev) {
+    if (vplotHover && vplotHover.id === ev.currentTarget.id) vplotHover = null;
+    vplotDraw(ev.currentTarget);
+  }
+  // a click is a press + release within a few px (the plot is redrawn under it)
+  function vplotDown(ev) {
+    vplotPress = ev.button === 0 ? {id: ev.currentTarget.id, x: ev.clientX, y: ev.clientY} : null;
+  }
+  function vplotUp(ev) {
+    const p = vplotPress, cv = ev.currentTarget;
+    vplotPress = null;
+    const g = p && p.id === cv.id && vplotGeo.get(cv.id);
+    if (!g || Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8) return;
+    const o = vplotOpt(g.tab, g.pl.opt);
+    const pk = o && vplotPick(g, ev.clientX - cv.getBoundingClientRect().left, ev.shiftKey);
+    if (!pk) return;
+    digSetOptFor(g.vfo, o.key, pk.txt);
+    // and the option that makes it take effect (a value it offers), when it isn't set so
+    const a = /^([a-z0-9_]{1,32})=(.{0,100})$/.exec(g.pl.also || ''), ao = a && vplotOpt(g.tab, a[1]);
+    if (!ao) return;
+    const d = digDec(g.vfo), vals = (d && d.digital_opts && d.digital_opts.plugin) || {};
+    const cur = vals[ao.key] !== undefined ? vals[ao.key] : ao.op.default;
+    const ch = ao.op.choices || [];
+    if (cur !== a[2] && (!ch.length || ch.some(c => c[0] === a[2]))) digSetOptFor(g.vfo, ao.key, a[2]);
+  }
+  // Subscribe to the VIDEO stream only while the decoder panel shows a
+  // video-capable plugin, so idle browsers never carry the frames. The default
+  // (no SUBSCRIBE sent) already gives FFT/AUDIO/DOA; we send the full set so the
+  // spectrum/audio/DoA streams stay on when we add or drop VIDEO.
+  // videoSubOn is what the SERVER confirmed ({"subscribed":{...,"video":}} -
+  // videoOnSubAck), not what we last asked: a SUBSCRIBE sent before AUTH has
+  // succeeded is ignored by the server, so an unanswered request is sent again
+  // after VIDEO_SUB_RETRY_MS (also from a timer, in case nothing re-renders).
+  // A SUBSCRIBE is per connection and never echoed to other browsers, so it
+  // goes out even while a remote change is applied (send() would drop it).
+  function videoUpdateSub() {
+    const want = infoOpen('dec') && !!(digPlugin(digTabShown) || {}).video;
+    if (want === videoSubOn) { videoSubReq = null; return; }
+    if (videoSubReq && videoSubReq.want === want && Date.now() - videoSubReq.t < VIDEO_SUB_RETRY_MS) return;   // answer pending
+    if (!ws || ws.readyState !== 1) return;   // not connected: onopen asks again
+    videoSubReq = {want, t: Date.now()};
+    ws.send('SUBSCRIBE:FFT,AUDIO,DOA' + (want ? ',VIDEO' : ''));
+    setTimeout(videoUpdateSub, VIDEO_SUB_RETRY_MS + 50);
+  }
+  function videoOnSubAck(s) {
+    videoSubOn = !!(s && s.video);
+    // an answer that matches the request closes it; one that doesn't (an older
+    // server without VIDEO) is left to the retry timer, not resent at once
+    if (videoSubReq && videoSubReq.want === videoSubOn) videoSubReq = null;
+    videoUpdateSub();
+  }
   // the DF panel section: the one selected VFO's plot with talker markers
   function sfnSectionPlot() {
     const ids = rdfSelIds();
@@ -15446,9 +16499,19 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     }
     if (st.textContent !== msg) st.textContent = msg;
     // offline: tiles failing and none loaded for a while
-    const off = mapTileErrAt && Date.now() - mapTileErrAt < 60000 && Date.now() - mapTileOk > 30000;
+    // (a blocked custom http:// URL requests nothing: say so at once)
+    const blk = mapProv().custom && mapMixedBlocked(mapProvCfg.cu.url);
+    const off = blk || mapTileErrAt && Date.now() - mapTileErrAt < 60000 && Date.now() - mapTileOk > 30000;
     const ob = $id('map-offline');
     if (ob.style.display !== (off ? 'block' : 'none')) ob.style.display = off ? 'block' : 'none';
+    if (off) {
+      const P = mapProv();
+      const t = (blk ? "Map tiles can't be loaded: the custom tile URL is http://, which this https page may not load (mixed content) - serve the tiles over https, or from this machine (⚙ Settings) - " :
+                 mapProvErr && P === MAP_PROVIDERS.google ? mapProvErr + ' - ' :
+                 P.key ? "Map tiles can't be loaded (no internet connection, or the " + P.name + ' key is wrong or not allowed for this page? See ⚙ Settings) - ' :
+                 "Map tiles can't be loaded (no internet connection?) - ") + 'positions are still shown on a plain grid.';
+      if (ob.textContent !== t) ob.textContent = t;
+    }
   }
 
   function mapDistKm(la1, lo1, la2, lo2) {
@@ -22263,7 +23326,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     else {
       const L = sn.lvl, age = !L ? 0 : sn.held ? L.age + (Date.now() - sn.t) / 1000 : rgLvlAge(L);
       src = `<span style="color:${sn.col}">■</span> <b>${digEsc(sn.name)}</b> · ${sn.mhz.toFixed(4)} MHz · lobe ${plF(sn.peak, 0)}°`;
-      if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgCal(L.gain, sn.mhz))} dBm</b> · SNR ${plF(L.dbfs - L.noise, 0)} dB`;
+      if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgCal(L.gain, sn.mhz))} dBm</b> · ${plF(L.dbfs - L.noise, 0)} dB over its band's noise`;
       if (sn.held || age > 3) src += ` <span class="w">(${sn.held ? 'held, ' : ''}level ${rgAgeTxt(age)} old)</span>`;
     }
     set('.rg-src', src);
@@ -22336,7 +23399,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const L = E.sn.lvl;
       // (below ~10 dB only the moments the noise added to pass the level's significance test - a
       // narrow VFO's most: 1 kHz reads +1.2 dB at 6 dB, +3.6 at 3 dB)
-      if (E.inp.snr < 10) w.push(`weak (SNR ${plF(E.inp.snr, 0)} dB): the level may read high, the range short`);
+      if (E.inp.snr < 10) w.push(`weak (${plF(E.inp.snr, 0)} dB over the noise in the VFO's band): the level may read high, the range short`);
       if (L.total > -8) w.push(`the receiver is near full scale (${plF(L.total)} dBFS in the band): the level may read low - lower the gain`);
       if (!s.calHow) w.push(`uncalibrated: absolute levels ± ${plF(rgCalNomSd(E.sn.mhz))} dB (the nominal from published R820T data${rgCalDc() ? '; ' + RG_CAL_DC_TXT : ''})`);
       if (E.sn.held) w.push('held: the signal ended');
@@ -25323,6 +26386,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         modeEl.style.background = '#1565c0';
         modeEl.style.color = '#fff';
       }
+      if (status.generic_rtlsdr) modeEl.textContent += ' (RTL-SDR)';
+      modeEl.title = status.generic_rtlsdr
+        ? 'Generic RTL-SDR dongles, no KrakenSDR: independent receivers only - no coherent array, DoA or calibration' : '';
     }
 
     // Update calibration indicator (also pushed on every change: cal_live)
@@ -25407,9 +26473,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     }
 
     // Update active elements count from server
-    if (status.active_elements !== undefined && status.active_elements >= 2) {
+    // (1: a single generic RTL-SDR dongle - independent mode only)
+    if (status.active_elements !== undefined && status.active_elements >= 1) {
       onActiveElementsChanged(status.active_elements);
     }
+    if (typeof status.generic_rtlsdr === 'boolean') opSetGeneric(status.generic_rtlsdr);
   }
 
   // ============================================================================

@@ -151,6 +151,15 @@ The mode is remembered across restarts. Switching back to Coherent retunes
 every tuner to the common frequency and recalibrates. The KrakenSDR Wideband
 hardware only has Coherent mode.
 
+**Ordinary RTL-SDR dongles.** Without a KrakenSDR or KerberosSDR, the suite
+also runs on one or more ordinary RTL-SDR dongles (any serial numbers): just
+plug them in and use `./run.sh` without options. Heimdall then starts in
+Independent mode, every dongle its own receiver (Wideband too, with two or
+more). Coherent mode, direction finding and calibration need a KrakenSDR /
+KerberosSDR and are not available, and Heimdall never switches a dongle's
+bias tee. Heimdall's page and terminal say "generic RTL-SDR" when this is
+the case.
+
 In every mode the mouse wheel zooms the spectrum (up to 32x), and the bar
 between spectrum and waterfall can be dragged to change the split. Levels
 are drawn in dB above the receiver's noise floor. The receiver remembers
@@ -176,7 +185,7 @@ VFOs can decode at once.
 
 | Decoder | What you get |
 |---|---|
-| [P25 Phase 1](kraken_doa_v2/plugins/p25/README.md), [DMR](kraken_doa_v2/plugins/dmr/README.md), [D-STAR](kraken_doa_v2/plugins/dstar/README.md), [NXDN](kraken_doa_v2/plugins/nxdn/README.md), [TETRA](kraken_doa_v2/plugins/tetra/README.md) | Networks, talkgroups, radio IDs, callsigns, call activity, GPS positions (DMR, D-STAR), and the voice (see [Digital voice codecs](#digital-voice-codecs)) |
+| [P25 Phase 1](kraken_doa_v2/plugins/p25/README.md), [DMR](kraken_doa_v2/plugins/dmr/README.md), [D-STAR](kraken_doa_v2/plugins/dstar/README.md), [NXDN](kraken_doa_v2/plugins/nxdn/README.md), [Yaesu System Fusion](kraken_doa_v2/plugins/ysf/README.md), [TETRA](kraken_doa_v2/plugins/tetra/README.md) | Networks, talkgroups, radio IDs, callsigns, call activity, GPS positions (DMR, D-STAR), and the voice (see [Digital voice codecs](#digital-voice-codecs)) |
 | [MPT1327](kraken_doa_v2/plugins/mpt1327/README.md) | Analogue trunking control channels |
 | [Analog FM IDs](kraken_doa_v2/plugins/analog_id/README.md) | CTCSS / DCS tones, MDC1200, FleetSync, 5-tone selcall, DTMF, 1750 Hz tone bursts |
 | [Pagers](kraken_doa_v2/plugins/pagers/README.md) | POCSAG and FLEX at every speed. Street addresses in the pages become incidents on the map |
@@ -272,6 +281,11 @@ The **🗺 Map** button under the waterfall opens a street or satellite map.
   and shown as markers for 24 hours.
 - **The station**: click and drag it to move it, or right-click →
   **📡 Set station here**.
+- **Map provider**: OpenStreetMap and Esri imagery need no key. With your
+  own API key you can switch to Mapbox, Google Maps, Azure Maps, MapTiler,
+  Thunderforest, Stadia Maps, HERE or any tile URL: **⚙** in the top bar,
+  next to the scanner badge. The provider and key are kept in that browser
+  only, and **Test** checks the key before you save it.
 
 Map tiles, terrain, masts and address lookups come from the internet,
 loaded by your browser. Without a connection the map still works on a plain
@@ -346,6 +360,7 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 | DMR | AMBE+2 | mbelib, installed by you |
 | D-STAR | AMBE | mbelib, installed by you |
 | NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
+| Yaesu System Fusion (C4FM) | DN and V/D mode 1: AMBE+2; VW: IMBE | DN / V/D mode 1: mbelib, installed by you; VW: nothing - built in |
 | TETRA | ACELP | the ETSI reference codec, built by you |
 | MPT1327 | analogue FM | nothing - listen to the traffic channel with NBFM |
 | DAB | MPEG Layer II | nothing - built in |
@@ -358,7 +373,13 @@ you live is your responsibility. Nor is the AAC decoder for DAB+ (Fraunhofer
 FDK AAC, libfdk-aac): install it from your system's packages. The sidebar's
 **🔐 Digital Decoders** box shows which codecs are installed.
 
-**DMR, D-STAR and NXDN: mbelib**
+The Yaesu System Fusion decoder was written from Yaesu's standard and
+checked against another decoder (dsdcc) and against off-air recordings of
+DN and VW calls: every frame decoded, and both voices come out as
+intelligible speech (DN through mbelib, VW through the built-in IMBE). V/D
+mode 1 voice hasn't been heard from a real radio yet.
+
+**DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 
 ```
 sudo apt-get install -y git cmake build-essential
@@ -371,7 +392,9 @@ sudo ldconfig
 ```
 
 kraken_doa finds `libmbe.so.1` in the system library path. Set
-`KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere.
+`KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere. Fusion's DN
+voice needs mbelib's `mbe_processAmbe2450Dataf`; a library without it plays
+no DN voice (the decoder's voice status says so).
 
 **TETRA: the ETSI codec, with osmo-tetra's patches**
 

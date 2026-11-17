@@ -340,6 +340,7 @@ void stop_pipeline_threads() {
 }
 
 void remember_num_elements(int n) {
+    if (generic_rtlsdr()) return;  // the saved count is the KrakenSDR's
     // Save an explicit element-count choice even when it is already the live
     // count: started with -n 4 against a saved 5, picking 4 used to leave 5
     // saved (both the web path and the control port's "already active").
@@ -349,7 +350,17 @@ void remember_num_elements(int n) {
     }
 }
 
+// Generic RTL-SDR mode: the dongles were opened once, by USB index - a
+// reopen by serial can't tell same-serial dongles apart, and the count is
+// what is attached (restart heimdall with -n to use fewer)
+static const char* const GENERIC_NUM_ELEMENTS_ERR =
+    "the element count is fixed with generic RTL-SDRs (every attached dongle, or -n at startup)";
+
 bool reconfigure_num_elements_precheck(int new_n, std::string& err) {
+    if (generic_rtlsdr()) {
+        err = GENERIC_NUM_ELEMENTS_ERR;
+        return false;
+    }
     const int max_n = static_cast<int>(expected_serials.size());
     if (new_n < 2 || new_n > max_n) {
         err = "num_elements must be between 2 and " + std::to_string(max_n);
@@ -374,6 +385,10 @@ bool reconfigure_num_elements_precheck(int new_n, std::string& err) {
 }
 
 bool reconfigure_num_elements(int new_n, std::string& err) {
+    if (generic_rtlsdr()) {
+        err = GENERIC_NUM_ELEMENTS_ERR;
+        return false;
+    }
     const int max_n = static_cast<int>(expected_serials.size());
     if (new_n < 2 || new_n > max_n) {
         err = "num_elements must be between 2 and " + std::to_string(max_n);

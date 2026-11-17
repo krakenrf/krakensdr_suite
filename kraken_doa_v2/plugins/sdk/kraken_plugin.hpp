@@ -177,10 +177,23 @@ struct Spatial {
 // array plugins): x0 + i dx against y[i]. Markers can name a talker / spatial
 // id: clicking one shows that talker alone on the map. The latest plot
 // replaces the previous one; send at most a few per second.
+//
+// Several plots, beside the video, a click that sets an option: give the plot
+// an id (each id is its own plot; the latest with that id replaces it), place
+// it beside the video display (Info::video plugins) and name the option a
+// click sets - the page then shows the value under the pointer and a click
+// sends it through the decoder-option path (saved per VFO, every browser
+// sees it), as if typed into the option's field. Such a plot goes on the wire
+// as PLOT_EX; a kraken_doa older than these fields ignores it (it shows
+// nothing), while a plot without them is sent as before (PLOT).
 struct PlotMarker {
     double x = 0;
     std::string label;              // short, e.g. "#2"
     std::string talker;             // a Talker / Spatial id ("" = none)
+};
+enum PlotPlace : int {
+    PLOT_TAB = 0,                   // the decoder tab's row of plots (the default)
+    PLOT_BESIDE_VIDEO = 1,          // right of the video display, one column per VFO
 };
 struct Plot {
     std::string title;              // "Channel impulse response"
@@ -190,6 +203,43 @@ struct Plot {
     double y_min = NAN, y_max = NAN;   // NAN = from the data
     double threshold = NAN;         // a dashed horizontal line (NAN = none)
     std::vector<PlotMarker> markers;
+    // --- PLOT_EX (any of these set; older hosts ignore such a plot) ---
+    std::string id;                 // [A-Za-z0-9_.-], <= 32 chars; "" = the plugin's one plot. Shown in id order
+    int place = PLOT_TAB;           // PlotPlace
+    std::string click_option;       // a click sets this option (an Info::options key) to the x clicked
+    std::string click_also;         // "key=value": a click also sets this option, when it isn't so already
+                                    // (e.g. "mode=manual", so the clicked value takes effect)
+    double click_snap = 0;          // > 0: the value snaps to the curve's highest point within +- this many
+                                    // x units of the pointer (the page widens it to a few screen pixels)
+    double click_step = 0;          // > 0: the value is rounded to a multiple of this (1 = whole numbers)
+};
+
+// A reconstructed picture for the decoder's tab (Host::video_frame): a
+// width x height raster of pixels, drawn on a <canvas> in the panel and
+// replaced by the next one. For decoders that rebuild an image from the
+// signal - analog TV (PAL/NTSC luma) and screen-leakage reconstruction
+// (TEMPEST). Send a few per second at most. The pixel buffer is row-major,
+// top-left first; format picks the bytes per pixel. Keep width*height*bpp
+// under kp::wire::MAX_PAYLOAD (1 MB) - downscale a bigger raster first (a
+// GRAY8 frame may be up to ~1000x1000, an RGB24 one ~590x590); a frame over
+// the limit is dropped, not truncated. Set Info::video so the panel shows
+// the display.
+struct VideoFrame {
+    int width = 0;
+    int height = 0;
+    // 0 = GRAY8 (1 byte/pixel, 0 black .. 255 white),
+    // 1 = RGB24 (3 bytes/pixel: R, G, B)
+    int format = 0;
+    const uint8_t* pixels = nullptr;   // width*height*bpp bytes, row-major
+    std::string label;                 // caption overlaid on the frame, e.g. "1024x768 @ 60 Hz" ("" = none)
+    // Encoding hints (the host compresses to JPEG before the wire; see the
+    // VIDEO wire note). quality: JPEG quality 1..100 for a lossy encode, -1 =
+    // host default (~60). lossless: encode this frame at max quality (JPEG has
+    // no true lossless mode) - for a frozen / heavily averaged still. Both are
+    // ignored when the host can't compress (it then sends raw pixels). You
+    // always pass raw pixels here regardless.
+    int quality = -1;
+    bool lossless = false;
 };
 
 // Array plugins: one block of every antenna's samples (process_array)
@@ -253,6 +303,9 @@ struct Info {
     bool array = false;
     double array_burst_s = 0.25;
     double array_period_s = 1.0;
+    // true: rebuilds a picture and sends it with Host::video_frame - the panel
+    // shows a video display canvas (analog TV, screen-leakage reconstruction)
+    bool video = false;
     // May ask the host to retune (Host::tune) - e.g. to search for a carrier
     // the VFO doesn't see yet. kraken_doa honours tune() only from plugins
     // that declare it
@@ -372,8 +425,18 @@ public:
     // 📡 DF panel's entry - instead of 2 minutes after its last report.
     // id "" = every spatial talker of this plugin
     virtual void spatial_remove(const std::string& id) { (void)id; }
-    // A line plot for the decoder's tab (see Plot)
+    // A line plot for the decoder's tab, or beside the video display (see Plot)
     virtual void plot(const Plot& p) { (void)p; }
+    // A reconstructed picture for the decoder's tab (see VideoFrame): the
+    // latest frame is drawn on a canvas and replaces the previous one. Set
+    // Info::video. The default (an older host) drops it.
+    virtual void video_frame(const VideoFrame& f) { (void)f; }
+    // Someone is watching the picture (a browser shows the video display):
+    // while false, video_frame() drops frames at once, so a decoder can skip
+    // the render / scaling that only feeds it (keep reconstructing, so the
+    // picture is ready when a viewer opens the panel). true on a host that
+    // doesn't say (older hosts, offline tests).
+    virtual bool video_wanted() const { return true; }
     // The choices of one of Info::options, known only at run time (the
     // services a DAB ensemble carries): the panel shows the option as a list
     // of these (value, label) pairs instead of its declared choices / text
@@ -510,11 +573,32 @@ constexpr uint32_t PLOT = 36;
 constexpr uint32_t TUNE = 37;          // rf_hz (decimal text): Host::tune
 constexpr uint32_t TABLE_DETAIL = 38;  // key '\0' label '\0' value '\0' label '\0' value ...
 constexpr uint32_t SPATIAL_REMOVE = 39;  // id ("" = all of this plugin's): Host::spatial_remove
+// A reconstructed picture (Host::video_frame). Payload, little-endian:
+// uint16 width, uint16 height, uint8 format (0 GRAY8, 1 RGB24), uint8 encoding
+// (0 = raw pixels, 2 = JPEG bitstream), uint16 label_len, label_len bytes
+// (UTF-8, no NUL), then the image data: for encoding 0, width*height*bpp raw
+// pixel bytes row-major (bpp = 1 GRAY8 / 3 RGB24); for encoding 2, a JPEG
+// bitstream of the width x height frame (the browser decodes it natively;
+// GRAY8 is a native grayscale JPEG, format still says whether the source was
+// gray or colour). The host encodes to JPEG when it was built with
+// libjpeg-turbo (and the result is smaller), otherwise it sends raw; either
+// way the payload stays under MAX_PAYLOAD and a frame that still would not fit
+// is dropped, never truncated. width/height are the frame's own size (not
+// downscaled for the wire once compressed).
+constexpr uint32_t VIDEO = 40;
+// A plot with any of Plot's PLOT_EX fields (id, place, click_*): E (the count
+// of extension fields that follow, decimal text) '\0' id '\0' place '\0'
+// click_option '\0' click_also '\0' click_snap '\0' click_step, then '\0' and
+// the PLOT payload as above. A reader takes the extension fields it knows
+// and skips the rest of the E (later SDKs may add some); older kraken_doa
+// builds ignore the message.
+constexpr uint32_t PLOT_EX = 41;
 // key '\0' value '\0' label '\0' value '\0' label ... (only the key = no
 // choices): Host::option_choices. Hosts before it ignore the type (as every
 // unknown type)
-constexpr uint32_t OPTION_CHOICES = 40;
+constexpr uint32_t OPTION_CHOICES = 42;
 // Host::option_choices limits (both ends enforce them)
 constexpr size_t CHOICES_MAX = 100, CHOICE_VALUE_MAX = 100, CHOICE_LABEL_MAX = 80;
-// (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
+// (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends; video_wanted()
+// the OPTION "video_wanted=0|1" it sends to Info::video plugins - 1 until then)
 }  // namespace kp::wire

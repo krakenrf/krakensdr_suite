@@ -43,6 +43,11 @@ extern std::atomic<int> active_num_elements;  // Synced from server (set via -n 
 // masked phase state.
 extern std::atomic<bool> server_kerberos_mode;
 extern std::atomic<bool> server_cal_stale;
+// heimdall found no KrakenSDR and runs whatever plain RTL-SDR dongles are
+// attached (one or more): phase-state flag bit 12 (0x1000), set on every
+// packet then. No coherent array - only independent mode (and wideband scan
+// with >= 2 tuners); OPERATING_MODE:coherent is refused while it is set
+extern std::atomic<bool> server_generic_rtlsdr;
 extern std::atomic<int> active_channel;
 
 // Per-channel frequency/gain state lives in ChannelManager (channel_manager.hpp)

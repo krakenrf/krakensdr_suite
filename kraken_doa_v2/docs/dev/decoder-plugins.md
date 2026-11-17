@@ -24,7 +24,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `send_settings` when it moves > 10 Hz and after a (re)start; offline
   `--rf HZ` or the sidecar's `rf_hz`) / option_choices (an option's list
   known only at run time - dab's programmes - as value / label pairs, wire
-  OPTION_CHOICES 40; *Digital decoders* has the host side; the offline test
+  OPTION_CHOICES 42; *Digital decoders* has the host side; the offline test
   prints the final lists); `kp::Option` key/label/default/choices "v=Label|..."/help/hidden
   - hidden: no control in the panel, set by a table row click; dab's Programme),
   helpers `plugins/sdk/kraken_dsp.hpp`, the shared library `plugins/lib/`,

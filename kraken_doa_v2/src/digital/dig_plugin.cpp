@@ -156,6 +156,7 @@ void PluginRegistry::scan() {
                     // "whole_band": the same lock, as cells / dtv builds from before the merge call it
                     if (json_find(js, "whole_band", v) && v == "true") pi.lock_vfo = true;
                     if (json_find(js, "multichannel", v)) pi.multichannel = v == "true";
+                    if (json_find(js, "video", v)) pi.video = v == "true";
                     if (json_find(js, "tunes", v)) pi.tunes = v == "true";
                     if (json_find(js, "squelch_hold_s", v)) pi.squelch_hold_s = std::clamp(atof(v.c_str()), 0.0, 10.0);
                     // options: one per line, tab-separated key/label/default/choices/help
@@ -260,7 +261,8 @@ std::string PluginRegistry::list_json() const {
           << ",\"fixed_freq_hz\":" << static_cast<long long>(p.fixed_freq_hz) << ",\"lock_vfo\":" << (p.lock_vfo ? "true" : "false")
           << ",\"voice\":" << (p.voice ? "true" : "false")
           << ",\"messages\":" << (p.messages ? "true" : "false") << ",\"talkers\":" << (p.talkers ? "true" : "false")
-          << ",\"array\":" << (p.array ? "true" : "false") << ",\"tunes\":" << (p.tunes ? "true" : "false") << ",\"options\":[";
+          << ",\"array\":" << (p.array ? "true" : "false") << ",\"video\":" << (p.video ? "true" : "false")
+          << ",\"tunes\":" << (p.tunes ? "true" : "false") << ",\"options\":[";
         for (size_t k = 0; k < p.options.size(); k++) {
             const auto& op = p.options[k];
             o << (k ? "," : "") << "{\"key\":\"" << json_escape(op.key) << "\",\"label\":\"" << json_escape(op.label)

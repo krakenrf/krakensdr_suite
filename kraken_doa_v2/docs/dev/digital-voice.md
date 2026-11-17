@@ -35,6 +35,30 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   the EMB/LC privacy bit; a burst with no clean frame is not played (false
   syncs). D-STAR: 21 AMBE frames per superframe (frame 0 is before the data
   sync), dW/dX tables, stops at the end pattern
+- YSF (2026-11): VW's 144-bit full-rate frames (88 + 56 bits at 7200 bit/s
+  = the IMBE frame) through `ImbeDecoder`, de-interleaved in the YSF order
+  (`vw_plain_index` in plugins/ysf/ysf.cpp - not P25's iW..iZ); V/D mode 1's
+  72-bit AMBE+2 frames through `AmbeStream` with rW..rZ (as DMR); DN's 49
+  bits (after the plugin's own majority / de-whitening) through mbelib's
+  `mbe_processAmbe2450Dataf` (`MbeLib::decode49` / `AmbeStream::decode49`,
+  dlsym'd as optional - without it the voice status says DN needs it; the
+  error count passed is the triplets that disagreed). Yaesu's standard
+  doesn't give the bit order inside any voice frame: all three placements
+  checked against dsdcc's recovered frames (2026-11-16; the VW order was
+  P25's before - wrong) and, 2026-11-17, on off-air recordings (VW: every
+  Golay word of 422 real frames valid as received; DN: the pitch parameter
+  runs in smooth tracks in this order only - plugin README); the audio
+  of both recordings is speech (2026-11-17, mbelib 1.3.0: Voice to Text
+  writes down the callsign spelled out, as dsdcc + mbelib's audio); V/D
+  mode 1 only with the generator's random frames. DN silence frames (b0
+  124 / 125) are muted (`voice_vd2`): mbelib 1.3.0 decodes their other
+  bits as gain / spectrum, and a call that opened with five of them went to
+  full scale 60-140 ms in, the speech after inheriting the gain (dsdcc +
+  mbelib the same). Leading ones (nothing else since the codec's reset)
+  also reset the codec, later ones (pauses) keep its state - the speech
+  after a pause as before. First 0.5 s peak 32767 -> 5919, whisper one of
+  two phrases (0.51) -> both (0.71); plugin README. The 49-bit DN path
+  only - the shared 72-bit path (DMR / NXDN / V/D 1) is unchanged
 - TETRA: `TetraCodec` runs the ETSI programs as `cdecoder /dev/stdin
   /dev/stdout | sdecoder ...` (posix_spawn, non-blocking pipes, 690-word
   test-frame blocks of descrambled type-4 soft bits). Full-slot traffic
@@ -80,17 +104,22 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens. The page
   shows a missing codec in red (#ef5350, the page's alarm red; 2026-11-17,
-  so it is noticed): the fact when its value, after an optional "NAME: "
-  prefix, starts with "not installed" / "disabled", or has "lacks the" /
-  ends in "not used)" (`digCodecFactBad`: mbelib's and TETRA's
-  "not installed (see README...)", "disabled (KRAKEN_MBELIB=none)", "...
-  lacks the AMBE functions", the AAC library's refusals); the voice state
-  when it has "codec not installed / disabled / not usable"
-  (`digVoiceStateBad`, only while listening); the sidebar box's missing
-  rows (✗ and status line). Only the "Voice codec" fact is looked at -
-  another fact with these words stays as it was - and a path (TETRA's
-  "ACELP: <path> + <path>", a Windows "C:\...") can't match the anchored
-  start. A new voice plugin keeps these wordings. The box's
+  so it is noticed): the fact when its value, at its start or after a
+  "NAME: " prefix, has "not installed" / "disabled", or has "lacks the" /
+  ends in "not used)" / "(no DN voice)" (`digCodecFactBad`: mbelib's and
+  TETRA's "not installed (see README...)", "disabled (KRAKEN_MBELIB=none)",
+  "... lacks the AMBE functions", the AAC library's refusals; ysf names two
+  codecs, "VW: IMBE (built in); DN, V/D mode 1: AMBE+2: not installed ..."
+  - since the merge with main 2026-11-17 the prefix may be any "...: ", so
+  its missing AMBE part is red too, and so is its mbelib without
+  mbe_processAmbe2450Dataf, "..., without ... (no DN voice)"); the voice
+  state when it has "codec not installed / disabled / not usable" or
+  "mbelib lacks" (ysf's DN) (`digVoiceStateBad`, only while listening);
+  the sidebar box's missing rows (✗ and status line). Only the "Voice
+  codec" fact is looked at - another fact with these words stays as it
+  was - and a path (TETRA's "ACELP: <path> + <path>", a Windows "C:\...")
+  can't match: the words must follow the start or a colon and a space. A
+  new voice plugin keeps these wordings. The box's
   data is `plugins/lib/build/codecs` (`lib/tools/codecs.cpp`): imbe / ambe
   / acelp always, and since 2026-11-16 `aac_ok` / `aac` ("HE-AAC v2
   (libfdk-aac)", DAB+) when the tool was built with `plugins/dab/` there -
