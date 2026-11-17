@@ -18,6 +18,7 @@
 #include <atomic>
 #include <complex>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -58,6 +59,10 @@ void set_record_handler(RecordHandler h);
 // Raw frames wanted (the log's "Raw frames" type is on): passed to the
 // plugins as the OPTION log_raw=0|1 (kp::Host::raw_wanted)
 void set_raw_wanted(bool on);
+// A browser shows decoder video (a page subscribed to VIDEO): passed to the
+// video plugins as the OPTION video_wanted=0|1 (kp::Host::video_wanted), and
+// while false their frames are dropped on arrival. Set from the uWS loop.
+void set_video_wanted(bool on);
 
 // 🗣 Voice to Text (voice2text.cpp): the decoded voice of decoders whose
 // voice tap is on (DigitalDecoder::set_voice_tap - the VFO's "Transcribe"),
@@ -123,6 +128,23 @@ struct SpatialReport {
     bool remove = false;
 };
 using SpatialHandler = std::function<void(const SpatialReport&)>;
+
+// A reconstructed picture a plugin sent (kp::Host::video_frame): a
+// width x height raster drawn on the decoder panel's canvas (analog TV,
+// screen-leakage reconstruction). format 0 = GRAY8 (1 byte/pixel), 1 = RGB24
+// (3 bytes/pixel). The host forwards the image data opaquely: encoding 0 =
+// width*height*bpp raw pixel bytes (row-major, top-left first), encoding 2 = a
+// JPEG bitstream the browser decodes natively (the main app never decodes it).
+// Delivered on the decoder's worker thread; unset = dropped.
+struct VideoFrameReport {
+    int width = 0, height = 0;
+    int format = 0;              // 0 GRAY8, 1 RGB24 (describes the source frame)
+    int encoding = 0;            // 0 raw pixels, 2 JPEG bitstream
+    std::string label;           // caption ("" = none)
+    std::vector<uint8_t> pixels; // the image data (raw pixels, or the JPEG blob)
+};
+using VideoHandler = std::function<void(const VideoFrameReport&)>;
+
 // A plugin's retune request (kp::Host::tune): the RF to put at 0 Hz of the
 // VFO. Returns "" when it was passed on, else why it was refused. Called on
 // the decoder's worker thread.
@@ -201,6 +223,11 @@ public:
     void set_array_wanted(bool on, double burst_s, double period_s, bool only);   // Engine
     void set_spatial_handler(SpatialHandler h);
     void deliver_spatial(const SpatialReport& s);
+    // Reconstructed pictures (kp::Info::video plugins, kp::Host::video_frame)
+    // go to h - the websocket server publishes them to the decoder panel.
+    // Called on the decoder's worker thread.
+    void set_video_handler(VideoHandler h);
+    void deliver_video(const VideoFrameReport& f);
     // Retune requests of plugins that declare kp::Info::tunes (DecimatorManager)
     void set_tune_handler(TuneHandler h);
     std::string deliver_tune(double rf_hz);
@@ -260,6 +287,7 @@ private:
     std::mutex talker_mu_;
     TalkerHandler talker_handler_;
     SpatialHandler spatial_handler_;
+    VideoHandler video_handler_;
     TuneHandler tune_handler_;
     std::atomic<bool> want_array_{false};
     std::atomic<bool> array_only_{false};   // nothing but array plugins: push() only ticks

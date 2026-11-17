@@ -1,0 +1,30 @@
+[
+{
+ "id": "analogtv-pal-testcard",
+ "title": "Analog TV: PAL 625/50 test card",
+ "description": "A synthetic PAL System B vision carrier filling the whole 2.4 MHz slice: a grayscale test card (gradient, centre disc, vertical bars, black/white squares) negative-AM modulated with full H-sync, vertical sync and two interlaced fields, at 183.25 MHz, one antenna's wave steered to bearing 40 deg across the 5-element array, 3 s looped. The decoder locks the line and field timing from the sync pulses, detects PAL 625/50 from the measured line rate (15625 Hz), and reconstructs a soft grayscale luma picture in the video panel (~150 samples per line at 2.4 MHz). Expect a one-off 'Locked PAL 625/50' event; the VFO's Digital squelch opens on the locked video. No talker or bearing (a TV transmitter is a single known source).",
+ "rf_hz": 183250000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 3,
+ "vfo": {
+  "bw_khz": 2400
+ },
+ "steps": [
+  [
+   "{tools}/analogtv_gen.py",
+   "out.cu8",
+   "--standard", "pal",
+   "--seconds", "3",
+   "--rate", "2400000",
+   "--channels", "5",
+   "--bearing", "40",
+   "--rf", "183250000"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {"event": "Locked PAL 625/50"}
+ ],
+ "tol_deg": 5
+}
+]

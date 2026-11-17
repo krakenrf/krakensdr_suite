@@ -83,6 +83,15 @@ plugins/
 │                         correction, every group type), RDS2 streams, the MPX's subcarriers classified
 │                         (SCA FM audio / FSK data / DARC), SCA or main-programme audio; a packet talker
 │                         per station (PI) per RDS group
+├── analogtv/             off-air analog TV (PAL 625/50, NTSC 525/60, SECAM=PAL geometry): negative-AM
+│                         envelope, broadcast H/V sync recovery, interlaced raster -> a grayscale luma
+│                         PICTURE on the decoder tab's video canvas (host.video_frame; lock_vfo, the
+│                         2.4 MHz slice gives a soft ~150 px/line image). Shares plugins/lib/video_raster
+├── tempest/              screen-leakage (TEMPEST / Van Eck) reconstruction: full-band AM-magnitude,
+│                         autocorrelation auto-detection of frame rate + line count snapped to VESA/CVT
+│                         modes (pixel_clock = htotal x vtotal x fps), manual overrides, heavy frame
+│                         averaging -> a PICTURE (host.video_frame); multichannel -> the source's bearing
+│                         as a "screen" talker packet. lock_vfo + manual_only. Shares video_raster
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -151,6 +160,7 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .talkers = false,               // true: reports who transmits (host.talker)
                           .lock_vfo = false,              // true: the VFO stays on its tuner's centre (below)
                           .multichannel = false,          // true: takes every antenna (process_multi, below)
+                          .video = false,                 // true: rebuilds a picture (host.video_frame, below)
                           .squelch_hold_s = 0})           // > 0: the Digital squelch's hold (below)
 ```
 
@@ -171,9 +181,14 @@ Auto detect: once it has locked onto this plugin) - `choices` = `"value=Label|..
 makes a list, `""` a text field; exactly two choices with the values `0`
 and `1` (`"0=Off|1=On"`) make an on / off button ("● Label: On"; a
 choice's text after its name in brackets is left off the button and shown
-in its tooltip). They arrive through `option(key, value)`:
-the default when the plugin starts, then whatever the user picks (`""` =
-back to the default). They are saved per VFO.
+in its tooltip). A `choices` of the form `"range:MIN:MAX[:STEP]"` (e.g.
+`"range:10:95:5"`, STEP defaults to 1) makes a **slider** (`<input
+type="range">`) with the live numeric value shown beside it; the default and
+saved value come from `default` / the stored value, and dragging it sends the
+number through `option(key, value)` like any other option (debounced while
+dragging). Use it for a numeric knob such as the video `quality`. They arrive
+through `option(key, value)`: the default when the plugin starts, then
+whatever the user picks (`""` = back to the default). They are saved per VFO.
 
 **Auto detect**: when a VFO's decoder is on "Auto detect", every plugin the
 user left ticked (sidebar plugin list, "Auto detect"; all are by default)
@@ -279,6 +294,8 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
+| `host.video_frame(f)` | a reconstructed picture (`kp::VideoFrame`: width, height, format, pixels, label) drawn on a canvas in the decoder's tab - analog TV, screen-leakage (TEMPEST); set `.video = true` (see below) |
+| `host.plot(p)` | a line plot (`kp::Plot`) in the decoder's tab, or several, beside the video display, and one a click on sets an option (see *Array plugins: ... plots* below) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.
@@ -501,8 +518,81 @@ running it) and, when its markers name talkers, in the 📡 DF panel of the
 map: `x0 + i dx` against `y[i]` (<= 1000 points), units, an optional
 dashed `threshold`, `markers` {x, label, talker} - clicking a marker with a
 talker shows that talker alone on the map. The latest plot replaces the
-previous; send at most a few a second. A table row whose key is a talker id
-selects that talker the same way.
+previous; send at most a few a second (the pages get them about once a
+second, with the tables). A table row whose key is a talker id selects
+that talker the same way.
+
+**Several plots, beside the video, set an option by clicking.** More
+fields of `kp::Plot` (any plugin, not only array ones):
+
+| field | effect |
+|---|---|
+| `id` | the plot's own name (`[A-Za-z0-9_.-]`, <= 32 chars): each id is a separate plot, replaced only by the next with the same id (at most 8 per plugin); shown in id order. `""` = the plugin's one plot, as before |
+| `place` | `kp::PLOT_TAB` (default: the decoder tab's row of plots) or `kp::PLOT_BESIDE_VIDEO`: in a column right of the VFO's video display (`.video` plugins, *Video frames* below), as tall as the picture, wrapping below it in a narrow panel |
+| `click_option` | the key of one of your `Info::options`: the page shows the value under the pointer and a click sets that option to it - through the same decoder-option path as typing it into the option's field (saved per VFO, shown in every browser, `option(key, value)` in the plugin). The value is sent as a plain number |
+| `click_also` | `"key=value"`: another option the click also sets, when it isn't so already - the one that makes the value take effect (the tempest plugin: `mode=manual`). For a list option the value must be one of its choices. Sent after the clicked value |
+| `click_snap` | > 0: the value snaps to the curve's highest point within +- this many x units of the pointer (the page widens it to at least 4 screen pixels); Shift+click takes the exact position |
+| `click_step` | > 0: the value is rounded to a multiple of this (`1` = whole numbers) and printed with that many decimals |
+
+The markers keep their meaning there; the first one's label is shown in
+the plot's caption as the value in use. Wire: such a plot goes as
+`PLOT_EX` (41, the extension fields first, then a PLOT payload); a
+kraken_doa older than it ignores the message (the plot just doesn't show),
+and a plot without the new fields is still sent as `PLOT`, so it shows on
+older and newer receivers alike. A page older than them never shows a
+named plot. Plots beside the video are only seen while the video display
+is: skip their work while `host.video_wanted()` is false. The tempest
+plugin is the reference (`send_fps_plot` / `send_lines_plot`: its frame
+rate and total-lines graphs, which set its `fps` / `lines` options).
+
+### Video frames
+
+A decoder that rebuilds a picture from the signal - analog TV (PAL/NTSC
+luma), screen-leakage reconstruction (TEMPEST) - sets `.video = true` and
+sends each frame with `host.video_frame(kp::VideoFrame)`: `width` x `height`
+pixels, `format` 0 = GRAY8 (1 byte/pixel, 0 black .. 255 white) or 1 = RGB24
+(3 bytes R, G, B), `pixels` row-major top-left first, and an optional `label`
+drawn as a caption (e.g. "1024x768 @ 60 Hz"). You always pass **raw pixels**;
+the host compresses them for you. The panel shows a canvas per VFO running the
+plugin; the latest frame replaces the previous one, so send at most a few a
+second.
+
+The host compresses each frame to **JPEG** (libjpeg-turbo) before it goes on
+the wire, and the browser decodes it natively (built in, no download). A GRAY8
+frame is encoded as a **native grayscale JPEG** (one plane - the fastest and
+smallest path), an RGB24 frame as a 3-component JPEG. This makes large frames
+practical: a compressed screen is a few KB, so pictures up to 4K (3840x2160)
+pass where the raw raster would be far over the 1 MB pipe limit
+(`kp::wire::MAX_PAYLOAD`). Two optional hints on `kp::VideoFrame` steer it:
+`quality` (1..100, -1 = the host default ~60) for the lossy encode, and
+`lossless = true`, which uses maximum JPEG quality for a frozen or heavily
+averaged still (JPEG has no truly lossless mode). A plugin that lets the user
+set the quality should expose it as a **slider** (see the `range:` option form
+below), feeding the value straight to `VideoFrame.quality`. The host also keeps
+a hash of the last frame it sent and **skips an identical one**, so a static
+screen costs ~no bandwidth - just keep sending frames. The skip is
+time-bounded: an unchanged frame is still re-sent about **every 1.5 s** as a
+keyframe (a few KB/s for a static screen), so a frame dropped in transit
+(back-pressure) self-heals within that interval and a newly-opened video panel
+fills in without waiting for the picture to change. A changed frame, or any
+geometry change, always sends immediately.
+
+Frames are only wanted while a browser shows the video display: kraken_doa
+tells the plugin (`host.video_wanted()`, the OPTION `video_wanted=0|1` on the
+wire), and while it is false `video_frame()` returns at once - no hash, no
+encode, no pipe traffic. A decoder can check `host.video_wanted()` to skip the
+render / scaling that only feeds the picture, but should keep reconstructing
+(averaging) so the picture is ready the moment someone opens the panel; when
+it turns true the host forgets its last-frame hash, so the next frame goes out
+immediately even if unchanged. It is true on a host that doesn't say (older
+kraken_doa builds, the offline `--file` test).
+
+If the host was built without libjpeg (the `make` note says so), it falls back
+to sending raw pixels unchanged; then the whole frame must stay under 1 MB (a
+GRAY8 raster up to ~1000x1000, RGB24 ~590x590) - downscale a bigger picture, as
+a frame that still won't fit is dropped (logged once), never truncated. Either
+way the hints are harmless to set. Older hosts without the video channel drop
+the frame.
 
 The offline test runs array plugins on multichannel recordings (cf32,
 sample-major: antenna 0..m-1 of sample 0, then of sample 1, ...; `channels`
@@ -789,7 +879,13 @@ plugins/mydec/build/decoder --info        # what kraken_doa reads
 plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw]
 plugins/mydec/build/decoder --file scene.cf32 --channels 5 --uca 0.12 [--rf HZ]   # every antenna: each talker's bearing (ID separation)
 plugins/dtv/build/decoder --file sfn.cf32 [--channels M] [--all] [--uca RADIUS_M] [--opt separate=1]   # array plugins
+plugins/tempest/build/decoder --file screen.cf32 --plots plots.jsonl   # + the last plot of each id as JSON lines
 ```
+
+The summary lists each plot id's last plot (points, x range, markers, its
+highest point and, for a clickable one, the option it sets); `--plots FILE`
+also writes them (x0, dx, y, markers, the click fields) one JSON object per
+line.
 
 **Windows** (MSYS2 UCRT64 shell, see ../../WINDOWS.md): the same commands;
 the executable is `plugins/<id>/build/decoder.exe`. A plugin has to compile
