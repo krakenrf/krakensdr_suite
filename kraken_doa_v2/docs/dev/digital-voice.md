@@ -18,7 +18,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   slow AGC (tanh limited) -> 6x interpolation -> 48 kHz FIFO; playback starts
   at 250 ms buffered (frames arrive in bursts, a P25 LDU = 180 ms) or once
   the input stops for 300 ms (a call's tail), re-prefills after an underrun
-- P25: `ImbeDecoder`, a port of mbelib's IMBE 7200x4400 (ISC; tables in
+- P25 Phase 1: `ImbeDecoder`, a port of mbelib's IMBE 7200x4400 (ISC; tables in
   `mbe_tables.hpp` with the notice) - Golay/Hamming + PN, parameter decoding,
   mbelib's synthesis with a per-instance RNG (mbelib uses rand()). Verified
   against libmbe on the same frames: correlation 0.9987 with the same random
@@ -35,6 +35,25 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   the EMB/LC privacy bit; a burst with no clean frame is not played (false
   syncs). D-STAR: 21 AMBE frames per superframe (frame 0 is before the data
   sync), dW/dX tables, stops at the end pattern
+- P25 Phase 2 (2026-11-18, plugins/p25/p25p2.cpp; plugins/p25/README.md):
+  AMBE+2 3600x2450 through `AmbeStream`, 4 frames per 4V burst and 2 per
+  2V, in DMR's bit order (rW..rZ - 93.4 % of real frames with no c0 error
+  in it), after descrambling (voice bursts are scrambled: 0.2 % of 18,398
+  real frames have a clean Golay c0 as received, 95.7 % descrambled; the
+  frames' c0 decides per burst). One `AmbeStream` per logical channel, the
+  4V 4V 4V 4V 2V cycle placed by MAC_PTT's offset field; ESS (ALGID / KID /
+  MI) by RS(44,16,29), the 4V segments collected over the cycle, missing
+  ones as erasures. Option `lch` (Timeslot) as DMR's `slot`: Both = the
+  first to talk until quiet for 1 s, but a muted call doesn't hold the
+  audio against a clear one; the hold runs on sample time, not the wall
+  clock (offline it followed the wall clock and stuck to one timeslot for
+  a whole file - fixed 2026-11-18). Muted when encrypted (ALGID not 0x80,
+  or the "protected" service option) AND until a call is known to be clear
+  (a call joined after its MAC_PTT: its first bursts on real encrypted
+  calls came before the ESS and played as noise). Real recording: 1172 of
+  1172 frames clean, 20 s of audio with no vocoder errors; one unit there
+  was ~8 dB louder than the other and clips with the shared AMBE output
+  scaling (open)
 - YSF (2026-11): VW's 144-bit full-rate frames (88 + 56 bits at 7200 bit/s
   = the IMBE frame) through `ImbeDecoder`, de-interleaved in the YSF order
   (`vw_plain_index` in plugins/ysf/ysf.cpp - not P25's iW..iZ); V/D mode 1's

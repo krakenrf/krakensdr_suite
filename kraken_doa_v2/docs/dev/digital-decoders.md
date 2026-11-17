@@ -109,6 +109,30 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     trellis + CRC), LDU1/LDU2 (Hamming(10,6) + RS(24,12)/(24,16)), HDU
     (Golay(18,6) + RS(36,20)), TDULC (Golay(24,12) + RS(24,12)), PDU header.
     IDEN_UP tables turn channel numbers into MHz. Option `nac`
+  - P25 Phase 2 (plugins/p25, 3.0, 2026-11-18; details, measurements and
+    sources: plugins/p25/README.md): `P25p2Phy` (p25p2_phy.cpp) runs on the
+    same 48 kHz complex input as the Phase 1 4FSK path (decoder.cpp feeds
+    both; no phase setting - a traffic channel can switch between Phase 1
+    and Phase 2 calls). 6000 symbols/s, 8 sps, one 41-tap low-pass (-6 dB at
+    5 kHz). Outbound H-DQPSK: differential detection at the symbol centres,
+    acquired on two S-ISCH syncs 180 / 540 symbols apart (either
+    polarity), timing / carrier / scale tracked per slot, grid dropped after
+    34 slots without a sync, re-anchored after sample slips. Inbound H-CPM
+    bursts: the discriminator integrated between symbol centres (a
+    duobinary-like response, 489 Hz x (I[n] + I[n+1])) into a 16-state
+    sequence detector, voice bursts (no sync) on each radio's own timing /
+    carrier / deviation track. It hands 30 ms slots (`P25p2Slot`,
+    p25p2_slot.hpp) to `P25p2Proto` (p25p2.cpp): I-ISCH (40,9,16) / DUID
+    (8,4,4) by nearest codeword, PN44 descrambling (seed = WACN | system ID
+    | NAC from the options, a control channel's network status or BLIND:
+    solved from one clean scrambled FACCH / SACCH burst by GF(2) linear
+    algebra on its RS parity relations), RS over GF(64) from the (63,35,29)
+    mother code with the punctured symbols as erasures
+    (`rs64_decode_erasures`, `crc_bits` added to lib/dig_fec), CRC-12 /
+    CRC-16, MAC PDUs + messages (partition-01 TSBK bodies through
+    `P25Proto::tsbk()`, which shares its channel identifiers and network
+    identity), voice + ESS. Options `wacn`, `sysid`, `lch` (Timeslot) next
+    to `nac`
   - `DmrProto` (plugins/dmr): CACH TACT (timeslot), slot type Golay(20,8)
     (max 2 corrections - a third of random words are within 3), BPTC(196,96)
     voice LC header / terminator (RS(12,9)), CSBK, PI and data headers, EMB

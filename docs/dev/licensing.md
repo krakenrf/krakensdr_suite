@@ -115,4 +115,24 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   under GPL-3.0 from glidernet/diy-tracker, flarm a GPL-3.0 plugin (above).
   kraken_doa_v2/CLAUDE.md *Radiosonde* / *FLARM / OGN* say how;
   the specs + audits were job scratch, not in the repo
+- P25 PHASE 2 (2026-11-18, `plugins/p25` 3.0: p25p2_phy, p25p2,
+  p25p2_slot, tools/p25p2_gen.py; `rs64_decode_erasures` / `crc_bits` in
+  `plugins/lib/dig_fec`): written CLEAN-ROOM like the rewrites above, but
+  new code - a spec writer's code-free fact sheet, separate implementers who
+  saw only it, a separate generator author. The fact sheet's sources:
+  TIA-102.BBAC-A (slot / burst structure, sync words, ISCH / DUID codes,
+  Reed-Solomon codes, bit maps), the Aeroflex / Viavi note "Understanding
+  and Testing P25 Phase 2 TDMA" and M. Simon's KTH thesis (2013) for the
+  modulations, measurements on public recordings. FACTS (numbers and
+  layouts, no code) from other projects: SDRTrunk (GPL-3.0) - MAC PDU
+  opcodes, MAC_PTT / MAC_END_PTT layouts, the MAC message length table,
+  the voice channel user / grant update / MAC_RELEASE / paging layouts
+  (TIA-102.BBAD-A was not available); OP25 - the CRC-12 polynomial 0x897;
+  GopherTrunk (Apache-2.0) PN44 notes - the scrambler polynomial and seed
+  layout, the inbound 243-step advance, the all-zero-seed rule. Most of
+  them confirmed on the real recordings since (list: plugins/p25/README.md
+  *Sources / limits*); in the code the SDRTrunk facts are marked
+  `[GPL-fact ...]`, the two unconfirmed GopherTrunk rules `[SINGLE ...]`
+  where they are used. NO similarity audit against SDRTrunk / OP25 /
+  GopherTrunk code was run
 

@@ -415,7 +415,8 @@ getting the old type 0 / 6 frames at 2048 points per tuner band
 **Digital voice/data decoders (per VFO)**: engine `kraken_doa_v2/src/digital/`,
 decoders `kraken_doa_v2/plugins/`
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):
-  p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), ysf (Yaesu System
+  p25 (Phase 1 and Phase 2 TDMA, told apart automatically), dmr, tetra
+  (downlink), dstar, nxdn (48 and 96), ysf (Yaesu System
   Fusion: DN, VW, V/D mode 1, Data FR), mpt1327 (analogue
   trunking signalling), pagers (POCSAG + FLEX; was pocsag), aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
@@ -569,10 +570,11 @@ decoders `kraken_doa_v2/plugins/`
   options, e.g. `dmr.slot`, `p25.nac`); persisted in the VFO snapshot. See
   `kraken_doa_v2/CLAUDE.md` for the design
 - Voice: Demod "Digital" (or the panel's Listen button) on a VFO heard (🔊)
-  plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC), also
-  used for Yaesu Fusion VW; DMR / D-STAR / NXDN / Fusion DN and V/D mode 1
-  AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`; DN through its
-  `mbe_processAmbe2450Dataf`, optional) - Fusion written from Yaesu's
+  plays the decoded voice. P25 Phase 1 IMBE is built in (port of mbelib,
+  ISC), also used for Yaesu Fusion VW; P25 Phase 2 / DMR / D-STAR / NXDN /
+  Fusion DN and V/D mode 1 AMBE use a user-installed mbelib (dlopen,
+  `KRAKEN_MBELIB`; DN through its `mbe_processAmbe2450Dataf`, optional) -
+  Fusion written from Yaesu's
   standard, which doesn't give the voice frames' bit order: the placement
   checked against dsdcc (VW's corrected to the on-air order then) and
   against off-air DN / VW recordings, whose voice decodes to speech. TETRA
@@ -1027,8 +1029,10 @@ copies identical: by delay), iMet-4 (no serial). A decoder plugin that knows who
 transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
 transmissions - DMR timeslots; id "?" = a busy channel whose radio isn't
-named yet). p25: LDU1 / TDULC link control source; dmr: full / embedded LC
-source per timeslot; nxdn: VCALL source; ysf: the source callsign (CSD1 /
+named yet). p25: LDU1 / TDULC link control source (Phase 1); Phase 2 per
+timeslot on a site's output (MAC_PTT / voice channel user source, channel
+LCH + 1), and every checked inbound burst of a radio as its packet; dmr:
+full / embedded LC source per timeslot; nxdn: VCALL source; ysf: the source callsign (CSD1 /
 V/D mode 2 DCH); dstar: MY callsign of the RF
 header (or its slow-data copy); adsb: every accepted message as a
 `kp::Talker::packet` (exact samples) - the VFO keeps per-16-sample
@@ -1245,9 +1249,10 @@ user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
 overlay. A playback never outruns the pipeline (a busy machine plays it
-slower than real time instead of dropping packets). 37 entries in 26
-catalogues - every decoder has its own (p25, dmr, radiosonde, then rds,
-then analog_id's `analog-ids-six`, then pagers' `flex-four-speeds` last)
+slower than real time instead of dropping packets). 47 entries in 31
+catalogues (2026-11-18) - every decoder has its own (p25, dmr, radiosonde,
+then rds, then analog_id's `analog-ids-six`, then pagers'
+`flex-four-speeds`, ...; p25's two Phase 2 entries 2026-11-18)
 
 **📼 IQ & audio recorder + playback of recordings (sidebar "📼 IQ & Audio
 Recorder")** (details: `kraken_doa_v2/CLAUDE.md` *📼 IQ & audio recorder*,
