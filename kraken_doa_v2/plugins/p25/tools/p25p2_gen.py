@@ -10,10 +10,13 @@ Two kinds of transmitter:
              (40,9,16) coset code before slots 0 1 4 5 8 9 with LCH type,
              channel, location, flag and ultraframe count; S-ISCH before
              2 3 6 7 10 11). Per LCH either a voice channel (VCH) - idle
-             MAC_IDLE FACCH (S-OEMI) / SACCH (I-OEMI) or voice calls: two
-             MAC_PTT (offset 1, 0), the 4V 4V 4V 4V 2V cycle with ESS-B /
-             ESS-A, a voice channel user message (MAC_ACTIVE) on the SACCH,
-             two MAC_END_PTT, MAC_HANGTIME for --hang s, then idle again - or
+             MAC_IDLE FACCH (S-OEMI) / SACCH (I-OEMI) or voice calls, in the
+             order real Phase 2 sites send them: two MAC_ACTIVE (voice
+             channel user), two MAC_PTT (offset 1, 0), the 4V 4V 4V 4V 2V
+             cycle with ESS-B / ESS-A and a voice channel user message
+             (MAC_ACTIVE) on the SACCH, one MAC_ACTIVE, MAC_HANGTIME for
+             --hang s, three MAC_END_PTT (source 0xFFFFFF, the system), then
+             idle again - or
              a TDMA control channel (--cch, OECI MAC_SIGNAL bursts cycling
              NET_STS, RFSS_STS, ADJ_STS, IDEN_UP, IDEN_UP_TDMA, SYNC_BCST,
              plus group voice grant updates while the other LCH has a call)
@@ -82,11 +85,14 @@ Global options:
                 valid FEC, fixed pitch, random other parameters (ambe, a
                 buzz), the silence code b0 = 124 (silence) or 72 raw random
                 bits without valid FEC (random)
-  --shaping nrz|impulse  (out) the RC alpha 1 / 3.6 kHz filter shapes the
-                phase-held NRZ signal (nrz, default; [KTH]'s equation, SINGLE -
-                some ISI: discriminator levels ~+-675 / +-2170 Hz) or one pulse
-                per symbol (impulse; less ISI, levels ~+-783 / +-2280 Hz)
-  --hang S      (out) MAC_HANGTIME after a call (default 1.0 s)
+  --shaping impulse|nrz  (out) the RC alpha 1 / 3.6 kHz filter shapes one
+                pulse per symbol (impulse, default: the spectrum of real sites,
+                -6 dB at 3.6 kHz, -13 dB at 5 kHz, -23 dB at 6 kHz; levels
+                ~+-783 / +-2280 Hz) or the phase-held NRZ signal (nrz, [KTH]'s
+                equation: 6-10 dB steeper than every real site measured)
+  --hang S      (out) MAC_HANGTIME between a call's last voice burst and its
+                MAC_END_PTTs (default 1.0 s; real sites: 0.2 - 1.5 s). A call
+                on the same LCH within it starts without the END_PTTs
   --cch LCH     (out) LCH 0 / 1 is a TDMA control channel (LCCH); give it
                 twice for a dual LCCH (I-ISCH OS flag 1)
   --chan HEX    (out) this RF channel's channel field, identifier 4 bits +
@@ -128,12 +134,28 @@ SLOT_SAMPLES = SLOT_SYMS * SPS            # 1440
 DEF_IN_ADVANCE = 243          # 8.2: inbound seed = outbound seed advanced 243 steps (SINGLE)
 DEF_IN_PN_OFFSET = 'slot'     # 8.3: inbound slot s -> PN bits 360 s (INFERRED)
 DEF_VOICE_SCRAMBLE = True     # 8.4: 4V / 2V voice + ESS bits scrambled (INFERRED)
-DEF_SHAPING = 'nrz'           # 1.2: RC filter on the phase-held NRZ signal (SINGLE, [KTH]) vs impulses
+# 1.2 / Q1: the RC filter on impulses, measured 2026-11-18 on three real sites'
+# IQ (PA-STARNet, two Victoria MMR channels): averaged spectrum -1.5 / -3.7 /
+# -5.4 / -7.7 / -10.0 / -13.0 / -22 dB at 2 / 3 / 3.6 / 4.05 / 4.5 / 5 / 6 kHz,
+# the impulse model -1.5 / -3.7 / -5.9 / -7.6 / -10.1 / -13.1 / -23.4 dB; the
+# NRZ reading of [KTH] (-3.1 / -7.5 / -11.7 / ... / -27 dB at 5 kHz) and an
+# RRC 0.35 (-34 dB at 4.05 kHz) do not fit
+DEF_SHAPING = 'impulse'
 FR_IDLE = 1                   # I-ISCH FR flag on an idle VCH (as the real idle VCH, 8.5)
 FR_CALL = 0                   # FR flag while a call holds the LCH (INFERRED: SACCH not free)
 OFFSET_NA = 7                 # MAC header offset "not applicable" (CONFIRMED-RF)
 N_PTT = 2                     # MAC_PTT bursts before the first 4V ([BBAC-A] Fig. 29)
-N_END_PTT = 2                 # MAC_END_PTT bursts after the last 2V (count INFERRED)
+N_END_PTT = 2                 # inbound: MAC_END_PTT bursts after the last voice burst (count INFERRED)
+# Outbound call framing as measured on real sites (2026-11-18: PA-STARNet,
+# Victoria MMR, three sigidwiki recordings - every call the same way):
+# MAC_ACTIVE FACCHs (voice channel user) before the two MAC_PTTs (2-8 seen),
+# one MAC_ACTIVE after the last voice burst, MAC_HANGTIME (0.2-1.5 s), then
+# 3-6 MAC_END_PTT FACCH / SACCH bursts with source 0xFFFFFF (the system
+# controller), then MAC_IDLE. The hang time's voice channel user names no
+# source (0).
+N_PRE_ACTIVE = 2              # outbound MAC_ACTIVE bursts before the MAC_PTTs
+N_END_PTT_OUT = 3             # outbound MAC_END_PTT FACCH bursts after the hang time
+END_PTT_SRC_OUT = 0xFFFFFF    # outbound MAC_END_PTT source address (measured)
 U2U_PTT_GROUP = 0             # MAC_PTT / END_PTT group address on a unit-to-unit call (INFERRED)
 RFSS_FLAGS = 0x3              # flags nibble before SYSID in RFSS_STS / ADJ_STS (as observed on [RF])
 SYNC_FLAGS = 0x090000         # top 24 bits of SYNC_BCST's body (as observed on [RF])
@@ -619,8 +641,8 @@ def mac_ptt(call, offset):
     return o
 
 
-def mac_end_ptt(call, nac):
-    s = call['src']
+def mac_end_ptt(call, nac, src=None):
+    s = call['src'] if src is None else src
     g = group_of(call)
     o = [header(MAC_END_PTT, OFFSET_NA), (nac >> 8) & 0x0F, nac & 0xFF] + [0] * 10
     o += [s >> 16, (s >> 8) & 0xFF, s & 0xFF, g >> 8, g & 0xFF]
@@ -726,43 +748,58 @@ def schedule(calls, direction, off, n_first, n_last, hang_s):
         ns = [n for n in range(n_first, n_last + 1) if lch_tab[n % 12] == L and n % 12 != sacch_tab[L]]
         start = [n for n in ns if slot_start_s(n, off) >= c['at'] - 1e-9]
         ncyc = max(1, int(round(c['dur'] / 0.36)))
-        need = N_PTT + 5 * ncyc + N_END_PTT
-        if len(start) < need:
+        out = direction == 'out'
+        pre = N_PRE_ACTIVE if out else 0
+        # outbound: MAC_ACTIVE x pre, PTT x2, voice, MAC_ACTIVE; the END_PTTs
+        # follow the hang time. Inbound: PTT x2, voice, END_PTT x2
+        need = pre + N_PTT + 5 * ncyc + (1 if out else N_END_PTT)
+        if len(start) < need + (N_END_PTT_OUT if out else 0):
             sys.exit('call at %.3f s on LCH %d does not fit into the file (--seconds)' % (c['at'], L))
         i0 = ns.index(start[0])
         seq = ns[i0:i0 + need]
         if spans[L] and seq[0] <= spans[L][-1][1]:
             sys.exit('call at %.3f s on LCH %d overlaps the previous call on that LCH' % (c['at'], L))
-        v1 = [seq[N_PTT + 5 * k] for k in range(ncyc)]
+        v1 = [seq[pre + N_PTT + 5 * k] for k in range(ncyc)]
         c['v1'] = v1
         c['ns'] = ns
+        for k in range(pre):
+            plan[L][seq[k]] = ('pre', c, None)
         for k in range(N_PTT):
-            plan[L][seq[k]] = ('ptt', c, N_PTT - 1 - k)
+            plan[L][seq[pre + k]] = ('ptt', c, N_PTT - 1 - k)
         for cy in range(ncyc):
             for p in range(5):
-                plan[L][seq[N_PTT + 5 * cy + p]] = ('voice', c, p)
-        for k in range(N_END_PTT):
-            plan[L][seq[N_PTT + 5 * ncyc + k]] = ('end', c, k)
+                plan[L][seq[pre + N_PTT + 5 * cy + p]] = ('voice', c, p)
+        if out:
+            plan[L][seq[-1]] = ('post', c, None)
+        else:
+            for k in range(N_END_PTT):
+                plan[L][seq[N_PTT + 5 * ncyc + k]] = ('end', c, k)
         first, last = seq[0], seq[-1]
         c['first'], c['last'] = first, last
         # SACCH slots of the call
         for n in range(first, last + 1):
             if n % 12 == sacch_tab[L]:
                 plan[L][n] = ('sacch', c, None)
-        # hang time (outbound only)
-        hang_end = last
-        if direction == 'out' and hang_s > 0:
-            nh = int(round(hang_s * 1000 / 30))
-            hang_end = min(n_last, last + nh)
+        # outbound: hang time, then the END_PTTs (also on a SACCH among them)
+        end_last = last
+        if out:
+            nh = int(round(max(0.0, hang_s) * 1000 / 30))
+            hang_end = last + nh
             for n in range(last + 1, hang_end + 1):
                 plan[L].setdefault(n, ('hang', c, None))
-        spans[L].append((first, last, hang_end, c))
-    # a later call cuts the previous call's hang time
+            ends = [n for n in ns if n > hang_end][:N_END_PTT_OUT]
+            if ends:
+                end_last = min(n_last, ends[-1])
+                for n in range(hang_end + 1, end_last + 1):
+                    if lch_tab[n % 12] == L or n % 12 == sacch_tab[L]:
+                        plan[L].setdefault(n, ('end', c, None))
+        spans[L].append((first, last, end_last, c))
+    # a later call on the LCH cuts the previous call's hang time and END_PTTs
     for L in (0, 1):
         for i in range(len(spans[L]) - 1):
             nxt_first = spans[L][i + 1][0]
             for n in range(nxt_first, spans[L][i][2] + 1):
-                if n in plan[L] and plan[L][n][0] == 'hang' and plan[L][n][1] is spans[L][i][3]:
+                if n in plan[L] and plan[L][n][0] in ('hang', 'end') and plan[L][n][1] is spans[L][i][3]:
                     del plan[L][n]
     return plan, spans
 
@@ -803,7 +840,7 @@ def outbound_slots(o, calls, cch, n_first, n_last, rng):
             busy = True
         else:
             what, c, arg = plan[L].get(n, ('idle', None, None))
-            busy = what in ('ptt', 'voice', 'end', 'sacch')
+            busy = what in ('pre', 'ptt', 'voice', 'post', 'end', 'sacch')
             if what == 'voice':
                 bu = voice_burst('out', c, arg, rng, o['voice'])
             elif sacch:
@@ -812,17 +849,21 @@ def outbound_slots(o, calls, cch, n_first, n_last, rng):
                     src = c['sf3_src'] if (uf_sf == 3 and c['sf3_src'] is not None) else c['src']
                     pdu = [header(MAC_ACTIVE, next_4v1_offset(n, c['ns'], c['v1']))] + pad_null(vcu_msg(c, src), 20)
                 elif what == 'hang':
-                    pdu = [header(MAC_HANGTIME, OFFSET_NA)] + pad_null(vcu_msg(c), 20)
+                    pdu = [header(MAC_HANGTIME, OFFSET_NA)] + pad_null(vcu_msg(c, 0), 20)
+                elif what == 'end':
+                    pdu = mac_end_ptt(c, o['nac'], END_PTT_SRC_OUT) + [0] * 3
                 else:
                     pdu = [header(MAC_IDLE, OFFSET_NA)] + [0] * 20
                 bu = out_oemi_i(DUID_SACCH_S if scr else DUID_SACCH, sacch_out_info(pdu))
             else:
-                if what == 'ptt':
+                if what in ('pre', 'post'):
+                    pdu = [header(MAC_ACTIVE, OFFSET_NA)] + pad_null(vcu_msg(c), 17)
+                elif what == 'ptt':
                     pdu = mac_ptt(c, arg)
                 elif what == 'end':
-                    pdu = mac_end_ptt(c, o['nac'])
+                    pdu = mac_end_ptt(c, o['nac'], END_PTT_SRC_OUT)
                 elif what == 'hang':
-                    pdu = [header(MAC_HANGTIME, OFFSET_NA)] + pad_null(vcu_msg(c), 17)
+                    pdu = [header(MAC_HANGTIME, OFFSET_NA)] + pad_null(vcu_msg(c, 0), 17)
                 else:
                     pdu = [header(MAC_IDLE, OFFSET_NA)] + [0] * 17
                 bu = out_oemi_s(DUID_FACCH_S if scr else DUID_FACCH, facch_info(pdu))
@@ -882,8 +923,8 @@ def rc_response(t):
 
 def hdqpsk(dibits, shaping):
     """pi/4-DQPSK; symbol k centred on sample 8k + 3.5.
-    nrz:     the phase-held NRZ phasor through the RC filter ([KTH]'s equation; default)
-    impulse: one RC pulse per symbol, centred on the symbol (Nyquist-like, less ISI)"""
+    impulse: one RC pulse per symbol, centred on the symbol (default: real sites' spectrum)
+    nrz:     the phase-held NRZ phasor through the RC filter ([KTH]'s equation)"""
     d = np.array([DQPSK_PHASE[v] for v in dibits])
     a = np.exp(1j * np.cumsum(d))
     if shaping == 'nrz':
@@ -1045,8 +1086,12 @@ def generate(o, calls):
             end = 0.0
             for c in calls:
                 ncyc = max(1, int(round(c['dur'] / 0.36)))
-                end = max(end, c['at'] + 0.072 * (N_PTT + 5 * ncyc + N_END_PTT) + 0.1)
-            o['seconds'] = end + (o['hang'] if o['dir'] == 'out' else 0) + 0.5
+                if o['dir'] == 'out':
+                    nb = N_PRE_ACTIVE + N_PTT + 5 * ncyc + 1 + N_END_PTT_OUT
+                    end = max(end, c['at'] + 0.072 * nb + o['hang'] + 0.1)
+                else:
+                    end = max(end, c['at'] + 0.072 * (N_PTT + 5 * ncyc + N_END_PTT) + 0.1)
+            o['seconds'] = end + 0.5
         else:
             o['seconds'] = 3.0
     nsamp = int(round(o['seconds'] * RATE))

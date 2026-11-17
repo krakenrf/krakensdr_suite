@@ -24,5 +24,55 @@
   {"tid": "1234567", "bearing": 300},
   {"event": "Call termination (TDULC)"}
  ]
+},
+{
+ "id": "p25p2-inbound-three-radios",
+ "title": "P25 Phase 2: three radios' inbound bursts, two of them at the same time",
+ "description": "P25 Phase 2 TDMA inbound (radios to the site, H-CPM bursts) on 453.6125 MHz, scrambled (WACN BEE00 / system 14C / NAC 293, recovered by the decoder from the bursts): unit 6001 -> TG 601 on logical channel 0 (40 deg, +200 Hz) and, at the same time, unit 6002 -> TG 602 encrypted (AES-256, muted) on logical channel 1 (160 deg, -150 Hz, 3 dB weaker) - their 28 ms bursts alternate every 30 ms; then unit 6003 -> TG 601 on logical channel 0 (280 deg, +50 Hz). Every checked burst is a packet of its radio. Expect talkers 6001, 6002 and 6003 at those bearings.",
+ "rf_hz": 453612500.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 8,
+ "vfo": {"bw_khz": 24},
+ "steps": [
+  ["{tools}/p25p2_gen.py", "r6001.cf32", "--dir", "in", "--seconds", "8", "--lch", "0", "--at", "0.3", "--dur", "2.5", "--src", "6001", "--dst", "601"],
+  ["{tools}/p25p2_gen.py", "r6002.cf32", "--dir", "in", "--seconds", "8", "--lch", "1", "--at", "0.4", "--dur", "2.5", "--src", "6002", "--dst", "602",
+   "--algid", "0x84", "--kid", "0x29"],
+  ["{tools}/p25p2_gen.py", "r6003.cf32", "--dir", "in", "--seconds", "8", "--lch", "0", "--at", "4.0", "--dur", "2.2", "--src", "6003", "--dst", "601"]
+ ],
+ "scene": {"rate": 48000, "snr_db": 20, "seed": 7, "sources": [
+  {"name": "6001", "file": "r6001.cf32", "rate": 48000, "at": 0, "bearing": 40, "gain_db": 0, "shift_hz": 200},
+  {"name": "6002", "file": "r6002.cf32", "rate": 48000, "at": 0, "bearing": 160, "gain_db": -3, "shift_hz": -150},
+  {"name": "6003", "file": "r6003.cf32", "rate": 48000, "at": 0, "bearing": 280, "gain_db": 2, "shift_hz": 50}
+ ]},
+ "expect": [
+  {"tid": "6001", "bearing": 40},
+  {"tid": "6002", "bearing": 160},
+  {"tid": "6003", "bearing": 280},
+  {"event": "TG 602 <- 6002 [AES-256]"}
+ ]
+},
+{
+ "id": "p25p2-site-two-timeslots",
+ "title": "P25 Phase 2: a site's traffic channel with calls on both timeslots, then a Phase 1 call",
+ "description": "A P25 Phase 2 TDMA traffic channel (H-DQPSK, the site at 120 deg, +140 Hz) on 854.7625 MHz, scrambled (WACN BEE00 / system 14C / NAC 293, recovered by the decoder from a traffic burst): unit 2101 -> TG 101 in the clear on logical channel 0, overlapping it unit 2102 -> unit 2103 encrypted (AES-256, muted) on logical channel 1; then the same channel carries a P25 Phase 1 call of unit 2104 -> TG 101. On the site's output every unit's bearing is the site's. Expect talkers 2101, 2102 and 2104 at 120 deg.",
+ "rf_hz": 854762500.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 10,
+ "vfo": {"bw_khz": 24},
+ "steps": [
+  ["{tools}/p25p2_gen.py", "site.cf32", "--dir", "out", "--lch", "0", "--at", "0.3", "--dur", "2.2", "--src", "2101", "--dst", "101",
+   "--lch", "1", "--at", "1.7", "--dur", "2.2", "--src", "2102", "--dst", "2103", "--u2u", "--algid", "0x84", "--kid", "0x29"],
+  ["{tools}/p25_gen.py", "p1site.cf32", "--at", "7.0", "--dur", "2.0", "--src", "2104", "--dst", "101"]
+ ],
+ "scene": {"rate": 48000, "snr_db": 20, "seed": 41, "sources": [
+  {"name": "site", "file": "site.cf32", "rate": 48000, "at": 0, "bearing": 120, "gain_db": 0, "shift_hz": 140},
+  {"name": "site-phase1", "file": "p1site.cf32", "rate": 48000, "at": 0, "bearing": 120, "gain_db": 0, "shift_hz": 140}
+ ]},
+ "expect": [
+  {"tid": "2101", "bearing": 120},
+  {"tid": "2102", "bearing": 120},
+  {"tid": "2104", "bearing": 120},
+  {"event": "LCH 0 voice: TG 101 <- 2101"}
+ ]
 }
 ]

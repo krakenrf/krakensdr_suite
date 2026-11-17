@@ -46,6 +46,7 @@ constexpr int64_t GAP = RATE / 2;                   // bursts of a transmission 
 constexpr int64_t CALL_TIMEOUT = 2 * RATE;          // no checked burst of a call for this long: it ended
 constexpr int64_t PENDING_MAX = RATE * 6 / 5;       // unnamed inbound bursts kept this long (host keeps 1.5 s)
 constexpr int64_t ACTIVE_FOR = 2 * RATE;
+constexpr int64_t STATE_FOR = 10 * RATE;            // channel state facts kept this long after the last checked burst
 
 // [SINGLE 8.2, Q4] inbound scrambler = the outbound seed advanced by this
 // many LFSR steps. Used only as a hypothesis to test (the inbound scrambler
@@ -559,6 +560,7 @@ struct P25p2Proto::Impl {
         uint32_t src = 0, dst = 0;
         bool group = true, src_named = false, dst_known = false;
         int so = 0, alg = -1, kid = 0;  // alg -1 = not known
+        bool so_known = false;          // so came from a voice channel user message
         std::string desc, state, state_key;
         // outbound talker (a transmission on channel lch + 1)
         int64_t t_start = -1, t_end = 0, lc_end = 0;
@@ -578,7 +580,7 @@ struct P25p2Proto::Impl {
         int64_t ess_cycle = INT64_MIN;
         int scr_vote = 0;              // voice: > 0 scrambled seen more often
         std::unique_ptr<AmbeStream> ambe;
-        int64_t last_voice_ms = 0;
+        int64_t last_voice = INT64_MIN / 2;   // sample index of its last voice burst played
     };
     Chan ch[4];
     int voice_ch = -1;
@@ -607,6 +609,7 @@ struct P25p2Proto::Impl {
         facts.clear();
         shown_mode = shown_scr = shown_type = -1;
         last_valid = -1;
+        out_valid_end = -1;
         now = 0;
     }
     void in_reset() {
@@ -684,7 +687,7 @@ struct P25p2Proto::Impl {
         if (p1.wacn() >= 0 && p1.sysid() >= 0 && p1.nac() >= 0) {
             cand[SRC_PHASE1] = make_seed(p1.wacn(), p1.sysid(), p1.nac());
             cand_ok[SRC_PHASE1] = true;
-            if (cur < 0) use_seed(SRC_PHASE1);
+            if (cur < 0 && seed_allowed(cand[SRC_PHASE1])) use_seed(SRC_PHASE1);
         }
     }
     bool seed_allowed(uint64_t s) const {
@@ -692,6 +695,14 @@ struct P25p2Proto::Impl {
         if (u_wacn >= 0 && static_cast<int>(s >> 24) != u_wacn) return false;
         if (u_sysid >= 0 && static_cast<int>((s >> 12) & 0xFFF) != u_sysid) return false;
         return true;
+    }
+
+    // The user's NAC option and a MAC_END_PTT naming another colour code
+    // (bits 12-23, = the NAC on every real call end seen) - an unscrambled
+    // burst says nothing else about its system
+    bool other_nac(const uint8_t* info) const {
+        if (u_nac < 0 || (info[0] << 2 | info[1] << 1 | info[2]) != 2) return false;
+        return static_cast<int>(bits_to_u32(info + 12, 12)) != u_nac;
     }
 
     // XOR the window starting at state W into bits -> work
@@ -731,7 +742,7 @@ struct P25p2Proto::Impl {
                 }
             }
             for (int src = 0; src < SRC_N; src++) {
-                if (!cand_ok[src] || src == cur || slot < 0) continue;
+                if (!cand_ok[src] || src == cur || slot < 0 || !seed_allowed(cand[src])) continue;
                 uint64_t W = pn_jump(cand[src], 360LL * slot);
                 descramble(W);
                 if (decode_block(l, work, info, relp) >= 0) {
@@ -751,12 +762,19 @@ struct P25p2Proto::Impl {
             *used_W = W;
             if (slot >= 0) {
                 uint64_t seed = pn_jump(W, -360LL * slot);
-                if (seed_allowed(seed)) {
-                    cand[SRC_BLIND] = seed;
-                    cand_ok[SRC_BLIND] = true;
-                    use_seed(SRC_BLIND);
-                    show_identity();
-                }
+                // the burst's own scrambling names its system: with the
+                // user's NAC / WACN / system ID set, another system's burst
+                // is not decoded (as Phase 1's NAC option drops its frames)
+                if (!seed_allowed(seed)) return false;
+                cand[SRC_BLIND] = seed;
+                cand_ok[SRC_BLIND] = true;
+                use_seed(SRC_BLIND);
+                show_identity();
+            } else if (u_nac >= 0 || u_wacn >= 0 || u_sysid >= 0) {
+                // superframe position unknown: some slot's window must give an allowed seed
+                bool any = false;
+                for (int k = 0; k < 12 && !any; k++) any = seed_allowed(pn_jump(W, -360LL * k));
+                if (!any) return false;
             }
             return true;
         }
@@ -929,6 +947,14 @@ struct P25p2Proto::Impl {
         return (c.group ? "TG " : "unit call to ") + std::to_string(c.dst) + ((c.so & 0x80) ? " EMERGENCY" : "");
     }
     bool encrypted(const Chan& c) const { return (c.alg >= 0 && c.alg != 0x80) || (c.so & 0x40); }
+    // Played only when known to be clear: ALGID 0x80 (MAC_PTT / ESS) or a
+    // voice channel user's service options without "protected". A call joined
+    // by its voice alone (or named by a vendor message without service
+    // options) stays muted until then - on real encrypted calls joined after
+    // their MAC_PTT the first voice bursts came before the ESS named the
+    // algorithm and played as noise
+    bool clear_known(const Chan& c) const { return c.alg == 0x80 || (c.alg < 0 && c.so_known && !(c.so & 0x40)); }
+    bool muted(const Chan& c) const { return encrypted(c) || !clear_known(c); }
     std::string make_desc(const Chan& c) const {
         if (!c.dst_known) return "";   // a call joined by its voice / ESS: who it is comes with the signalling
         std::string d = c.group ? "TG " + std::to_string(c.dst) + " <- " + std::to_string(c.src)
@@ -950,8 +976,13 @@ struct P25p2Proto::Impl {
     void call_refresh(Chan& c) {
         std::string d = make_desc(c);
         if (d != c.desc) {
+            // one event per talker: "[encrypted]" (service options) becoming
+            // the algorithm's name (MAC_PTT / ESS) changes the state, not the call
+            const std::string key = d.substr(0, d.find(" ["));
+            const bool same = !c.desc.empty() && key == c.desc.substr(0, c.desc.find(" [")) &&
+                              c.desc.find("[EMERGENCY]") == std::string::npos && d.find("[EMERGENCY]") == std::string::npos;
             c.desc = d;
-            if (wanted(c) && !d.empty()) event(name(c) + " voice: " + d, 5.0);
+            if (wanted(c) && !d.empty() && !same) event(name(c) + " voice: " + d, 5.0);
         }
         if (!c.desc.empty()) set_state(c, "Voice: " + c.desc);
         else set_state(c, encrypted(c) ? "Voice [" + (c.alg >= 0 && c.alg != 0x80 ? P25Proto::algorithm_name(c.alg) : std::string("encrypted")) + "]" : "Voice");
@@ -967,19 +998,23 @@ struct P25p2Proto::Impl {
             c.dst_known = false;
             c.group = true;
             c.so = 0;
+            c.so_known = false;
             c.alg = -1;
             c.desc.clear();
             if (c.ambe) c.ambe->reset();
         }
         c.call_last = sl ? sl->start : now;
     }
-    void call_user(Chan& c, uint32_t src, uint32_t dst, bool group, int so, bool name_src, bool have_dst = true) {
+    // so_valid: so is the message's own service options (false: c.so passed through)
+    void call_user(Chan& c, uint32_t src, uint32_t dst, bool group, int so, bool name_src, bool have_dst = true,
+                   bool so_valid = true) {
         call_touch(c);
         if (have_dst) {
             c.dst = dst;
             c.dst_known = true;
             c.group = group;
             c.so = so;
+            if (so_valid) c.so_known = true;
         }
         if (name_src && src) {
             c.src = src;
@@ -1287,12 +1322,19 @@ struct P25p2Proto::Impl {
         if (!ctx.voice_wanted || !ctx.voice_wanted()) return;
         if (!wanted(c)) return;
         const int idx = static_cast<int>(&c - ch);
-        int64_t t = now_ms();
+        // sample time, not the wall clock: an offline test runs far faster
+        // than real time (and the live input can stall)
+        const int64_t t = sl ? sl->start : now;
         if (lch_opt == 0) {
-            if (voice_ch >= 0 && voice_ch != idx && t - ch[voice_ch].last_voice_ms < 1000) return;
+            // the first to talk keeps the audio until it has been quiet for a
+            // second - except that a muted call (encrypted, or not known to
+            // be clear) does not hold it against a clear one
+            if (voice_ch >= 0 && voice_ch != idx && t - ch[voice_ch].last_voice < RATE &&
+                !(muted(ch[voice_ch]) && !muted(c)))
+                return;
             voice_ch = idx;
         }
-        c.last_voice_ms = t;
+        c.last_voice = t;
         std::string who = name(c) + (c.desc.empty() ? "" : " " + c.desc);
         if (!MbeLib::instance().available()) {
             if (ctx.voice_state) ctx.voice_state(who + ": AMBE+2 codec not installed (README: Digital voice codecs)");
@@ -1300,6 +1342,10 @@ struct P25p2Proto::Impl {
         }
         if (encrypted(c)) {
             if (ctx.voice_state) ctx.voice_state(who + ": encrypted, muted");
+            return;
+        }
+        if (!clear_known(c)) {
+            if (ctx.voice_state) ctx.voice_state(who + ": encryption not known yet, muted");
             return;
         }
         if (!c.ambe) c.ambe = std::make_unique<AmbeStream>(false);
@@ -1323,6 +1369,7 @@ struct P25p2Proto::Impl {
 
     // --- a slot that passed its checks ------------------------------------------
     bool slot_valid = false;
+    int64_t out_valid_end = -1;   // end of the last outbound slot that passed its checks
     int shown_mode = -1, shown_scr = -1, shown_type = -1;
     int found_slot = -1;
     void valid_slot(bool outbound) {
@@ -1330,6 +1377,7 @@ struct P25p2Proto::Impl {
         slot_valid = true;
         last_valid = sl->start;
         if (outbound) {
+            out_valid_end = std::max(out_valid_end, sl->end);
             report_valid(ctx, Mode::P25, sl->start, sl->end);
             if (ctx.freq_error) ctx.freq_error(Mode::P25, sl->freq_hz);
         } else {
@@ -1401,7 +1449,7 @@ struct P25p2Proto::Impl {
                 }
                 // a unit-to-unit call's MAC_PTT carries group address 0: the
                 // voice channel user message says who is called
-                call_user(*c, src, grp, true, c->so, true, grp != 0);
+                call_user(*c, src, grp, true, c->so, true, grp != 0, false);
                 break;
             }
             case 2: {   // MAC_END_PTT [GPL-fact layout, 9.2: colour code 12-23, source 104-127]
@@ -1455,6 +1503,11 @@ struct P25p2Proto::Impl {
             int len = L.len[op];
             if (op == 0x08 && i + 1 < noct) len = by[i + 1];
             else if (len < 0 && i + 2 < noct) len = by[i + 2] & 0x3F;
+            // [MEASURED on two Motorola systems' traffic channels, not in the
+            // fact sheet] MFID 0x90 opcodes 0x80 / 0x83 carry no length in
+            // octet 3 (0x00 / 0x40): they are 8 / 7 octets - after all 792
+            // seen the next octet was a null, 0x80 or 0x83
+            if (len == 0 && (op == 0x80 || op == 0x83) && i + 2 < noct && by[i + 1] == 0x90) len = op == 0x80 ? 8 : 7;
             if (len <= 0 || i + len > noct) {
                 if (verbose()) event("MAC message 0x" + hex(static_cast<uint64_t>(op), 2) + " (length unknown): " +
                                          hex_bytes(by + i, noct - i), 5.0);
@@ -1484,6 +1537,19 @@ struct P25p2Proto::Impl {
         // INBOUND talker (2.2): it does not relabel the outbound call
         const bool names = !(c && !c->inbound && w.kind == K_IOEMI && w.uf != 0 && w.uf != 1 && w.uf != 2);
         if (part == 2) {   // manufacturer specific
+            // [MEASURED, not in the fact sheet] Motorola (MFID 0x90) 0x80 =
+            // talkgroup (octets 4-5) + source unit (6-8) of the LCH's call:
+            // its unit matched the same LCH's MAC_PTT / voice channel user in
+            // 81 of 82 checkable cases on two systems (the other one came before
+            // the superframe position was known; source 0 in hang time and in
+            // the ultraframe's last superframe). Motorola systems send
+            // it on the SACCH where others send a voice channel user message,
+            // so it names the talker of a call joined after its MAC_PTT.
+            if (op == 0x80 && len == 8 && m[1] == 0x90 && (m[2] & 0x3F) == 0 && c && !c->inbound && !w.no_call) {
+                const uint32_t grp = (static_cast<uint32_t>(m[3]) << 8) | m[4];
+                const uint32_t src = (static_cast<uint32_t>(m[5]) << 16) | (m[6] << 8) | m[7];
+                if (src && grp && !just_ended(*c, src, grp)) call_user(*c, src, grp, true, c->so, names, true, false);
+            }
             if (verbose()) event("MAC manufacturer message MFID 0x" + hex(m[1], 2) + " opcode 0x" + hex(static_cast<uint64_t>(op), 2) +
                                      ": " + hex_bytes(m + 3, len - 3), 5.0);
             return;
@@ -1549,9 +1615,7 @@ struct P25p2Proto::Impl {
                 if (!cand_ok[SRC_CC] || cand[SRC_CC] != seed) {
                     cand[SRC_CC] = seed;
                     cand_ok[SRC_CC] = true;
-                    if (cur < 0 || cur == SRC_BLIND || cur == SRC_PHASE1 || cur == SRC_CC) {
-                        if (cur != SRC_OPTION) use_seed(SRC_CC);
-                    }
+                    if ((cur < 0 || cur == SRC_BLIND || cur == SRC_PHASE1 || cur == SRC_CC) && seed_allowed(seed)) use_seed(SRC_CC);
                 }
                 ctx.report->set(Mode::P25, "NAC", "0x" + hex(static_cast<uint64_t>(cc), 3));
                 if (cur == SRC_CC) show_identity();
@@ -1585,6 +1649,12 @@ struct P25p2Proto::Impl {
     }
     void outbound(const P25p2Slot& s) {
         isch(s);
+        // After a slip of the sample stream the receiver re-anchors its grid
+        // on the slot before the new sync, which it may already have
+        // delivered on the old grid: a slot that mostly lies inside one that
+        // already passed its checks is the same burst again (no second
+        // event, voice frame or talker extension)
+        if (s.start < out_valid_end - P25P2_SLOT_SAMPLES / 2) return;
         const int slot = cur_slot();
         uint8_t du = static_cast<uint8_t>((bits[20] << 7) | (bits[21] << 6) | (bits[94] << 5) | (bits[95] << 4) |
                                           (bits[264] << 3) | (bits[265] << 2) | (bits[338] << 1) | bits[339]);
@@ -1613,6 +1683,7 @@ struct P25p2Proto::Impl {
         uint64_t W = 0;
         found_slot = -1;
         if (!block(kind, scr, slot, info, &W)) return;
+        if (other_nac(info)) return;
         if (slot < 0 && found_slot >= 0) {
             // the scrambling window that worked says where the superframe is
             phase = static_cast<int>(mod(s.index - found_slot, 12));
@@ -1683,6 +1754,7 @@ struct P25p2Proto::Impl {
         uint8_t info[210];
         uint64_t W = 0;
         if (!block(kind, scr, -1, info, &W)) return;
+        if (other_nac(info)) return;
         cadence();
         valid_slot(false);
         if (kind == K_IECI) {
@@ -1721,6 +1793,19 @@ struct P25p2Proto::Impl {
             if (!c.inbound && c.t_start >= 0 && now - c.t_end > GAP) talker_end(c, c.t_end);
             if (c.inbound && c.last_burst >= 0 && now - c.last_burst > GAP && (c.unit || c.npend)) unit_end(c);
             if (c.call && c.call_last >= 0 && now - c.call_last > CALL_TIMEOUT) call_end(c, "Idle");
+        }
+        // no Phase 2 for a while (the carrier is gone, or the channel carries
+        // Phase 1 now): its channel state facts are no longer true; the
+        // network identity stays
+        if (shown_mode >= 0 && last_valid >= 0 && now - last_valid > STATE_FOR) {
+            fact("Mode", "");
+            fact("Scrambling", "");
+            for (auto& c : ch) {
+                if (!c.state_key.empty()) fact(c.state_key, "");
+                c.state.clear();
+                c.state_key.clear();
+            }
+            shown_mode = shown_scr = -1;
         }
     }
 };
