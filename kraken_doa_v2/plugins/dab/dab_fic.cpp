@@ -61,9 +61,113 @@ const Component* Service::primary() const {
     return comps.empty() ? nullptr : &comps[0];
 }
 
-std::string Ensemble::country() const {
-    if (eid < 0 || ecc < 0) return "";
-    return country_name(ecc, (eid >> 12) & 15);
+// ---------------------------------------------------------------- countries
+
+namespace {
+
+std::string hx(int v, int digits) {
+    char b[16];
+    snprintf(b, sizeof b, "%0*X", digits, static_cast<unsigned>(v));
+    return b;
+}
+
+int sid_country_id(const Service& s) { return static_cast<int>(s.data ? (s.sid >> 20) & 15 : (s.sid >> 12) & 15); }
+
+}   // namespace
+
+int own_ecc(const Ensemble& e, const Service& s) {
+    if (s.data) return static_cast<int>(s.sid >> 24);   // clause 6.3.1: ECC + country id + reference
+    const auto it = e.service_ecc.find(s.sid);
+    return it == e.service_ecc.end() ? -1 : it->second;
+}
+
+// By the standard: ECC (FIG 0/9) + the EId's country id. That is checked against the
+// services that carry the ensemble's ECC (clause 8.1.3.2: every programme service the
+// extended field doesn't list, and those whose own ECC is the ensemble's): when none of
+// them is in the EId's country while all of them agree on another one (at least
+// MIN_COUNTRY_SERVICES), the ensemble is in theirs - DAB Melbourne 1 (EId F003, ECC F0:
+// Malaysia by the EId) with 29 services in Australia (country id 1).
+EnsembleCountry ensemble_country(const Ensemble& e, const std::string& kept_base) {
+    EnsembleCountry c;
+    if (e.eid < 0 || e.ecc < 0) return c;
+    const int cid = (e.eid >> 12) & 15;
+    const std::string by_eid = country_name(e.ecc, cid);
+    const std::string eid_base = country_base(by_eid);
+    int n = 0, match = 0, foreign = 0;
+    bool agree = true;
+    std::string other;
+    std::vector<int> cids;
+    for (const auto& kv : e.services) {
+        const Service& s = kv.second;
+        if (s.comps.empty()) continue;
+        const int own = own_ecc(e, s);
+        if (own >= 0 && own != e.ecc) {
+            foreign++;
+            continue;
+        }
+        n++;
+        const int sc = sid_country_id(s);
+        const std::string b = country_base(country_name(e.ecc, sc));
+        if (!eid_base.empty() && b == eid_base) {
+            match++;
+            continue;
+        }
+        if (b.empty() || (!other.empty() && b != other)) agree = false;
+        else other = b;
+        if (std::find(cids.begin(), cids.end(), sc) == cids.end()) cids.push_back(sc);
+    }
+    const bool from_services = match == 0 && agree && !other.empty() && (n >= MIN_COUNTRY_SERVICES || (n >= 1 && other == kept_base));
+    if (!from_services) {
+        c.name = by_eid;
+        c.base = eid_base;
+        c.text = (by_eid.empty() ? std::string("unknown") : by_eid) + " (ECC " + hx(e.ecc, 2) + ", country id " + hx(cid, 1) + ")";
+        return c;
+    }
+    std::sort(cids.begin(), cids.end());
+    std::string ids;
+    for (int x : cids) ids += (ids.empty() ? "" : " / ") + hx(x, 1);
+    c.name = c.base = other;
+    c.from_services = true;
+    c.text = other + " (ECC " + hx(e.ecc, 2) + ", country id" + (cids.size() > 1 ? "s " : " ") + ids + " of " +
+             (n == 1 ? std::string("its service") : "all its " + std::to_string(n) + " services") + (foreign ? " with this ECC" : "") +
+             "; the EId's country id " + hx(cid, 1) +
+             (by_eid.empty() ? " names no country with this ECC)" : " would read " + by_eid + ")");
+    return c;
+}
+
+// A service's own ECC (32-bit SId, FIG 0/9 extended field) names its country. Without
+// one, clause 8.1.3.2 implies the ensemble's ECC; that is taken as fact when the
+// country id gives the ensemble's country, or when the multiplexer sends the extended
+// field at all (it lists the services of other ECCs). Otherwise (a country id of
+// another country, no extended field) the receiver can't tell: on 12D in South Tyrol
+// (ECC E0, no extended field) the Swiss programmes (country id 4) would read Israel.
+// Then the candidates of the ECC's series are shown, not a name as fact.
+std::string service_country(const Ensemble& e, const Service& s, const EnsembleCountry& ec) {
+    const int cid = sid_country_id(s);
+    const int own = own_ecc(e, s);
+    if (own >= 0) {
+        const std::string nm = country_name(own, cid);
+        return nm.empty() ? "unknown (ECC " + hx(own, 2) + ", country id " + hx(cid, 1) + ")" : nm;
+    }
+    if (e.ecc < 0) return "";
+    const std::string nm = country_name(e.ecc, cid);
+    if (!nm.empty() && (!e.service_ecc.empty() || (!ec.base.empty() && country_base(nm) == ec.base))) return nm;
+    const auto cand = country_candidates(e.ecc, cid);
+    if (cand.empty()) return "";   // (country id 0 is not used)
+    constexpr int MAX_SHOWN = 5;
+    std::string t = "not determined (country id " + hx(cid, 1) + ", no ECC of its own) - candidates: ";
+    int shown = 0, more = 0;
+    for (int pass = 0; pass < 2; pass++)   // the ensemble's ECC first
+        for (const auto& x : cand) {
+            if ((x.first == e.ecc) != (pass == 0)) continue;
+            if (shown >= MAX_SHOWN) {
+                more++;
+                continue;
+            }
+            t += (shown++ ? "; " : "") + x.second + " (" + hx(x.first, 2) + (x.first == e.ecc ? ", the ensemble's ECC)" : ")");
+        }
+    if (more) t += "; " + std::to_string(more) + " more";
+    return t;
 }
 
 namespace {
@@ -297,21 +401,26 @@ void FigParser::fig0(const uint8_t* d0, int n0, double now) {
             return;
         }
         case 9: {   // country, LTO and international table
+            // (OE and P/D are Rfu since V2.1.1. V1.x: OE = 1 described other ensembles - not
+            // this one's; P/D = 1 listed 32-bit SIds, which carry their ECC themselves; the low
+            // 6 bits of a sub-field's first byte were a per-service LTO, now Rfa2)
+            if (oe) return;
             if (n < 3) { malformed++; return; }
             const int lto = d[0] & 31;
             e_.lto = (d[0] & 32) ? -lto : lto;
             e_.ecc = d[1];
             e_.inter_table = d[2];
             const bool extf = d[0] >> 7;
+            // a single FIG 0/9 per ensemble (TS 101 756 D.3.1.3): its list replaces the last one
+            std::map<uint32_t, int> listed;
             for (int i = 3; extf && i + 2 <= n;) {
                 const int ns = d[i] >> 6, ecc = d[i + 1];
                 i += 2;
-                if (i + 2 * ns > n) { malformed++; return; }
-                for (int s = 0; s < ns; s++, i += 2) {
-                    auto it = e_.services.find(be16(d + i));
-                    if (it != e_.services.end()) it->second.ecc = ecc;
-                }
+                if (i + sidlen * ns > n) { malformed++; return; }
+                for (int s = 0; s < ns; s++, i += sidlen)
+                    if (!pd) listed[be16(d + i)] = ecc;
             }
+            if (!pd) e_.service_ecc.swap(listed);
             return;
         }
         case 10: {   // date and time

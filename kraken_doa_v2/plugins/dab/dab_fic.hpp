@@ -64,7 +64,6 @@ struct Service {
     bool pty_dynamic = false;
     unsigned asu = 0;            // FIG 0/18 announcement support flags
     std::vector<int> clusters;
-    int ecc = -1;                // FIG 0/9 extended field (else the ensemble's)
     int ca_id = 0;
     std::vector<Component> comps;
     double first_seen = 0, last_seen = 0;
@@ -82,6 +81,9 @@ struct Ensemble {
     std::string label, short_label;
     bool label2 = false;
     int ecc = -1;
+    // FIG 0/9 extended field (P/D = 0): the programme services whose ECC differs from the
+    // ensemble's, as the latest FIG 0/9 listed them (at most 12: the field has <= 25 bytes)
+    std::map<uint32_t, int> service_ecc;
     int lto = -999;              // local time offset, half hours
     int inter_table = 1;
     bool alarm = false;
@@ -100,8 +102,23 @@ struct Ensemble {
     std::map<int, std::pair<unsigned, int>> ann_active;
 
     void clear() { *this = Ensemble(); }
-    std::string country() const;                    // from the EId's country id + ECC
 };
+
+// Countries (README "Country"): what the FIC determines, and only that.
+struct EnsembleCountry {
+    std::string name;            // the country named ("" = none)
+    std::string base;            // name without a sub-area ("Australia"): what a service is compared with
+    std::string text;            // the "Country" fact ("" = no ECC / EId yet)
+    bool from_services = false;  // the EId's country id was contradicted by the services
+};
+// kept_base: the base of the previous result when it came from the services (it is
+// kept while no service contradicts it, with fewer than MIN_COUNTRY_SERVICES)
+EnsembleCountry ensemble_country(const Ensemble& e, const std::string& kept_base);
+constexpr int MIN_COUNTRY_SERVICES = 3;
+// a service's own ECC: in its 32-bit SId, or listed in the FIG 0/9 extended field (-1 = none)
+int own_ecc(const Ensemble& e, const Service& s);
+// the service's "Country" detail ("" = none)
+std::string service_country(const Ensemble& e, const Service& s, const EnsembleCountry& ec);
 
 // hooks for happenings while parsing
 struct FicEvents {

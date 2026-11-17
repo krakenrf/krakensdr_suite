@@ -101,6 +101,16 @@ generator's scene format are in `plugins/dab/README.md`.
   characters kept) - `kp::printable` (SDK) escapes every non-ASCII byte,
   which would turn "Tëst" into "T\xC3\xABst". The SDK was left as it is; a
   UTF-8-keeping variant there is a possible later change
+- COUNTRY ONLY WHERE THE FIC DETERMINES IT (decision, 2026-11-17; README
+  *Country*): a service's own ECC (32-bit SId, FIG 0/9 extended field) or
+  the ensemble's where the country id gives the ensemble's country (or the
+  multiplexer sends the extended field); otherwise "not determined" with
+  the candidates of the ECC series. The ensemble: ECC + EId country id,
+  unless >= 3 services with its ECC all agree on another country and none
+  has the EId's. From two recordings, both without an extended field: DAB
+  Melbourne 1 (9A, EId F003, ECC F0) read Malaysia while its 29 services
+  say Australia; RAS 12D in South Tyrol (ECC E0) carries Swiss programmes
+  (SIds 4xxx) that read Israel
 - AUDIO LAYER (`dab::SubchannelDecoder`): logical frames of the selected
   sub-channel -> 8 kHz mono, dynamic label, facts. DAB: Layer II frames
   played only after the header check, header CRC and ScF-CRC (the ScF-CRC

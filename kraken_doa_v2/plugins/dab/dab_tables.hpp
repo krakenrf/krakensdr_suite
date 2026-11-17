@@ -70,6 +70,11 @@ bool coding_profile(const Protection& p, Profile& out);
 
 // names (registered tables; "" = unknown)
 std::string country_name(int ecc, int cid);
+// the country without its sub-area: "Australia (regional Queensland)" -> "Australia"
+std::string country_base(const std::string& name);
+// the registered countries with this country id under the ECCs of ecc's series
+// (its first hex digit: E0-E5, F0-F3, ...), by ECC
+std::vector<std::pair<int, std::string>> country_candidates(int ecc, int cid);
 std::string language_name(int code);
 std::string pty_name(int code, int inter_table);
 std::string announcement_names(unsigned flags);   // "Road Traffic flash, News flash"

@@ -131,6 +131,9 @@ public:
         pv_ = false;
         found_ = false;
         found_at_ = 0;
+        country_settled_ = false;
+        ecc_at_ = label_at_ = -1;
+        ens_country_ = dab::EnsembleCountry();
         announced_.clear();
         rows_.clear();
         tx_announced_.clear();
@@ -248,6 +251,11 @@ private:
     uint64_t frames_ = 0;
     bool found_ = false;
     double found_at_ = 0, last_ui_ = -1e9, last_good_fic_ = -1e9;
+    // the countries (update_country)
+    bool country_settled_ = false;
+    double ecc_at_ = -1, label_at_ = -1;   // first update with the ECC / the ensemble label
+    dab::EnsembleCountry ens_country_;
+    static constexpr double COUNTRY_QUIET_S = 0.5, COUNTRY_WAIT_S = 3;
     std::set<uint32_t> announced_;
     // the services table as sent: key -> its text, label, when sent
     struct Row {
@@ -870,6 +878,32 @@ private:
     }
 
     // ---------------------------------------------------------------- facts, table, events
+    // The ensemble's country (dab::ensemble_country) is decided once the service list
+    // is complete by FIG 0/7, or has stopped growing for COUNTRY_QUIET_S with at least
+    // MIN_COUNTRY_SERVICES services (or COUNTRY_WAIT_S after the ECC came),
+    // so that it doesn't change while the FIGs arrive; then it follows the database (a
+    // change needs other services). Before that, no Country fact or service country.
+    void update_country(double now) {
+        if (ens_.ecc < 0 || ens_.eid < 0) return;
+        if (ecc_at_ < 0) ecc_at_ = now;
+        if (!country_settled_) {
+            int n = 0;
+            double newest = -1e9;
+            for (const auto& kv : ens_.services)
+                if (!kv.second.comps.empty()) {
+                    n++;
+                    newest = std::max(newest, kv.second.first_seen);
+                }
+            // (with fewer services than the ensemble verdict needs, a quiet list isn't enough:
+            // services trickling in through a poor FIC would change the verdict later)
+            const bool all = ens_.services_total > 0 && n >= ens_.services_total;
+            country_settled_ = (n > 0 && (all || (now - newest >= COUNTRY_QUIET_S && n >= dab::MIN_COUNTRY_SERVICES))) ||
+                               now - ecc_at_ >= COUNTRY_WAIT_S;
+            if (!country_settled_) return;
+        }
+        ens_country_ = dab::ensemble_country(ens_, ens_country_.from_services ? ens_country_.base : std::string());
+    }
+
     void update_ui(double now) {
         // purge what the MCI stopped describing (the current and the next configuration)
         for (auto* m : {&ens_.subch, &ens_.next_subch})
@@ -922,20 +956,20 @@ private:
             update_choices();   // (none)
             return;
         }
-        if (!found_ && fic_ok && !ens_.label.empty()) {
+        update_country(now);
+        if (!ens_.label.empty() && label_at_ < 0) label_at_ = now;
+        // (found once the country is decided, or COUNTRY_WAIT_S after the label without it)
+        if (!found_ && fic_ok && !ens_.label.empty() && (country_settled_ || now - label_at_ >= COUNTRY_WAIT_S)) {
             found_ = true;
             if (found_at_ == 0) found_at_ = now;
             std::string where;
             const double rf = host.rf_hz();
             if (std::isfinite(rf)) where = ", " + dab::band_block(rf + cfo_);
-            const std::string ctry = ens_.country();
+            const std::string ctry = country_settled_ ? ens_country_.name : std::string();
             host.event("📻 Ensemble found: " + ens_label() + (ctry.empty() ? "" : ", " + ctry) + where, 60);
         }
         host.fact("Ensemble", ens_label() + (ens_.short_label.empty() ? "" : " - short: " + dab::printable_utf8(ens_.short_label)));
-        const std::string ctry = ens_.country();
-        if (ens_.ecc >= 0)
-            host.fact("Country", (ctry.empty() ? std::string("unknown") : ctry) + " (ECC " + hex(static_cast<uint32_t>(ens_.ecc), 2) +
-                                     ", country id " + hex(static_cast<uint32_t>((ens_.eid >> 12) & 15), 1) + ")");
+        if (country_settled_) host.fact("Country", ens_country_.text);
         if (ens_.mjd >= 0) {
             int y, mo, d;
             mjd_to_date(ens_.mjd, &y, &mo, &d);
@@ -969,7 +1003,8 @@ private:
             const dab::Component* c = s.primary();
             if (c && c->tmid == 0) naudio++;
             update_row(s, row_budget);
-            if (!announced_.count(s.sid) && !s.label.empty() && (now - found_at_ <= 3 || ev_budget > 0)) {
+            // (announced with the ensemble: its event waits for the country)
+            if ((found_ || ens_.label.empty()) && !announced_.count(s.sid) && !s.label.empty() && (now - found_at_ <= 3 || ev_budget > 0)) {
                 announced_.insert(s.sid);
                 if (now - found_at_ > 3 && ev_budget-- > 0)
                     host.event("Service: " + dab::printable_utf8(s.label) + " (SId " + hex(s.sid, s.data ? 8 : 4) + ", " + type_of(s, c) +
@@ -1021,10 +1056,9 @@ private:
                                       (s.short_label.empty() ? "" : " (short: " + dab::printable_utf8(s.short_label) + ")") +
                                       (s.label2 ? " [extended label]" : "")});
         det.push_back({"SId", key + (s.data ? " (data service)" : " (programme service)")});
-        const int ecc = s.ecc >= 0 ? s.ecc : ens_.ecc;
-        if (ecc >= 0) {
-            const int cid = static_cast<int>(s.data ? (s.sid >> 20) & 15 : (s.sid >> 12) & 15);
-            const std::string cn = dab::country_name(ecc, cid);
+        // (a country that depends on the ensemble's waits until that is decided)
+        if (country_settled_ || dab::own_ecc(ens_, s) >= 0) {
+            const std::string cn = dab::service_country(ens_, s, ens_country_);
             if (!cn.empty()) det.push_back({"Country", cn});
         }
         if (s.pty >= 0)

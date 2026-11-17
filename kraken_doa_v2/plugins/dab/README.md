@@ -5,7 +5,8 @@ mode left in V2.x) in a 2.4 MHz VFO (`.lock_vfo`: the VFO is the tuner's whole
 band; tune the receiver to the block, e.g. 12C 227.360 MHz). One decoder shows
 
 - the **ensemble**: label (FIG 1/0, the extended FIG 2/0 label when sent), EId,
-  country (ECC + the EId's country id), block, SNR, frequency offset, FIC
+  country (ECC + the EId's country id, checked against the services - see
+  *Country*), block, SNR, frequency offset, FIC
   quality, date / time with the local time offset, number of services;
 - every **service** as a table row (label, SId, DAB / DAB+ / data, bit rate,
   protection, sub-channel, programme type, language) with the rest in the row's
@@ -93,8 +94,8 @@ vectorised; `dab_fec.cpp`), energy dispersal, 3 FIBs each with the CRC-16. The
 re-encoded bits of good FIB groups give the channel bit error rate ("FIC
 quality"). FIGs: 0/0 (EId, change flags, alarm, CIF count, occurrence change),
 0/1 (short and long form), 0/2, 0/3, 0/5, 0/7, 0/8, 0/9 (ECC, LTO, international
-table, extended field), 0/10 (short / long UTC), 0/13, 0/14, 0/17 (also the V1.x
-language / complementary code bytes), 0/18, 0/19 (V1.x region byte; alarms only
+table, the extended field's per-service ECCs - *Country*), 0/10 (short / long
+UTC), 0/13, 0/14, 0/17 (also the V1.x language / complementary code bytes), 0/18, 0/19 (V1.x region byte; alarms only
 when FIG 0/0 enables them), 0/22, 1/0, 1/1, 1/4, 1/5, 2/0, 2/1, 2/4, 2/5 (Ver 1,
 segments, UTF-8 / UTF-16). Every FIG and field length is checked against its
 FIB; a field that doesn't fit ends that FIG. Next-configuration MCI (C/N = 1) is
@@ -254,6 +255,51 @@ Raw frames (decoder log): one line per FIB that passed its CRC:
 passing their CRC - one frame late, and only when the input was contiguous
 through it (the frame's start and the next one's where the tracking expected
 them, CIF count +4): a frame that straddles samples the host dropped gives none.
+
+### Country
+
+A country is named only where the FIC determines it (`ensemble_country` /
+`service_country` in `dab_fic.cpp`; names from TS 101 756 tables 3-7):
+
+- **A service**: its own ECC - the one in a 32-bit (data) SId (EN 300 401
+  clause 6.3.1), or the FIG 0/9 extended field's for a programme service
+  (clause 8.1.3.2) - with the SId's country id names it. Without one, clause
+  8.1.3.2 implies the ensemble's ECC (the field lists the services whose ECC
+  *differs*). That is taken as fact when the country id gives the ensemble's
+  country (Germany's ids D and 1, Australia's 1-8 count as one country), or
+  when the multiplexer sends the extended field at all. Otherwise - a country
+  id of another country and no extended field - nothing tells the receiver
+  whether the multiplexer left out a foreign service's ECC, so the detail
+  says "not determined (country id 4, no ECC of its own) - candidates:
+  Israel (E0, the ensemble's ECC); Switzerland (E1); Vatican (E2)": every
+  registered country with that id in the ECC's series (its first hex digit,
+  E0-E5 here), the ensemble's ECC first, at most 5. RAS 12D in South Tyrol
+  (ECC E0, no extended field) carries Swiss programmes (SIds 4xxx), Austrian
+  (Axxx) and German (Dxxx) ones: by the ensemble's ECC the Swiss ones would be
+  Israel.
+- **The ensemble**: ECC (FIG 0/9) + the EId's country id, "Italy (ECC E0,
+  country id 5)" - unless the services that carry its ECC contradict it:
+  none of them has the EId's country while at least 3 agree on another
+  one. Then that one is named, with the reason: DAB Melbourne 1 (9A, EId
+  F003, ECC F0) reads Malaysia by its EId, its 29 services say Australia:
+  "Australia (ECC F0, country id 1 of all its 29 services; the EId's country
+  id F would read Malaysia)". Mixed services (12D: none Italian, but no two
+  countries agree) contradict nothing. Once decided this way it is kept
+  while no service contradicts it, even with fewer services left. Country id
+  0 is not used (TS 101 756 5.4): West-Vlaanderen (EId 0064) shows "unknown
+  (ECC E0, country id 0)" and its services (SIds 00xx) no country.
+- **Timing**: decided once the service list is complete by FIG 0/7, or has
+  not grown for 0.5 s with at least 3 services, or 3 s after FIG 0/9 came;
+  until then there is no Country fact or service country (a service with its
+  own ECC excepted), and the "Ensemble found" event waits for it (at most 3 s
+  after the label; without FIG 0/9 it comes without a country). After that
+  it follows the database: only other services change it.
+- FIG 0/9: one per ensemble (TS 101 756 D.3.1.3), its extended field
+  replaces the previous list (at most 12 SIds). V1.x forms: OE = 1 (other
+  ensembles) is ignored; P/D = 1 sub-fields (32-bit SIds) are skipped -
+  those SIds carry their ECC; the low 6 bits of a sub-field (V1.x per-service
+  LTO, Rfa2 now) are ignored. None of the eight recordings sends an extended
+  field.
 
 ## Audio layer
 
@@ -525,8 +571,11 @@ only by the generator; libfdk-aac is the user's (never shipped). All three in
 - A reconfiguration resets the selected sub-channel's de-interleaver (15 CIFs of
   audio). Reconfiguration and announcements are not verified (no test signal has
   them).
-- The country is looked up from the EId's country id + ECC as transmitted: DAB
-  Melbourne 1 (EId F003, ECC F0) reads "Malaysia" by table 7.
+- Country (*Country*): a foreign service whose ECC the multiplexer doesn't
+  send is "not determined" with candidates, never named. The FIG 0/9
+  extended field and its V1.x forms were tested with hand-made FIBs only
+  (none of the recordings sends one); the ensemble's "contradicted by the
+  services" rule on DAB Melbourne 1 and hand-made FIBs.
 - TII delay: shown only when the coarse and fine estimates agree; a strong
   multipath channel moves the coarse one (power-weighted mean delay).
 - FIG 0/22 is deprecated; ensembles rarely send it now.

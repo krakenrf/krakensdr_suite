@@ -136,6 +136,19 @@ std::string country_name(int ecc, int cid) {
     return "";
 }
 
+std::string country_base(const std::string& name) {
+    const size_t p = name.find(" (");
+    return p == std::string::npos ? name : name.substr(0, p);
+}
+
+std::vector<std::pair<int, std::string>> country_candidates(int ecc, int cid) {
+    std::vector<std::pair<int, std::string>> v;
+    for (int i = 0; i < gen::COUNTRIES_N; i++)   // (the table is sorted by ECC)
+        if ((gen::COUNTRIES[i].ecc >> 4) == ((ecc >> 4) & 15) && gen::COUNTRIES[i].cid == cid)
+            v.push_back({gen::COUNTRIES[i].ecc, gen::COUNTRIES[i].name});
+    return v;
+}
+
 std::string language_name(int code) {
     for (int i = 0; i < gen::LANGUAGES_N; i++)
         if (gen::LANGUAGES[i].code == code) return code == 0 ? "" : gen::LANGUAGES[i].name;
@@ -364,6 +377,18 @@ std::string self_test() {
     if (gen::EBU_LATIN[0x41] != 0x41 || gen::EBU_LATIN[0x24] != 0x142 || gen::EBU_LATIN[0xAB] != 0x24 ||
         gen::EBU_LATIN[0x5C] != 0x16E || gen::EBU_LATIN[0x80] != 0xE1)
         fail("EBU Latin table");
+    // countries (TS 101 756 tables 3-7): each (ECC, id) once, sorted, no id 0 ("not used"),
+    // and entries checked by hand against the tables
+    for (int i = 0; i < gen::COUNTRIES_N; i++) {
+        const auto& c = gen::COUNTRIES[i];
+        if (c.cid == 0 || c.cid > 15) fail("country table: id 0");
+        if (i > 0 && (gen::COUNTRIES[i - 1].ecc << 4 | gen::COUNTRIES[i - 1].cid) >= (c.ecc << 4 | c.cid)) fail("country table order");
+    }
+    if (country_name(0xE0, 0x4) != "Israel" || country_name(0xE1, 0x4) != "Switzerland" || country_name(0xE0, 0x5) != "Italy" ||
+        country_name(0xE0, 0xA) != "Austria" || country_name(0xE0, 0xD) != "Germany" || country_name(0xE0, 0x1) != "Germany" ||
+        country_name(0xF0, 0xF) != "Malaysia" || country_base(country_name(0xF0, 0x1)) != "Australia" ||
+        country_base(country_name(0xF0, 0x8)) != "Australia" || !country_name(0xE0, 0x0).empty())
+        fail("country table entries");
     return err;
 }
 
