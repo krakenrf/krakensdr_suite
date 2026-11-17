@@ -650,11 +650,32 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 #wf-container {width:100%;flex:1 1 auto;min-height:100px;position:relative;background:#000;border-top:1px solid var(--l1)}
 #wf-canvas {position:absolute;left:0;top:0}
 #wf-overlay {position:absolute;left:0;top:0;pointer-events:auto;z-index:10}
-.wf-controls {display:flex;align-items:center;gap:10px;padding:5px 10px;background:var(--s4);border-top:1px solid var(--l1);flex-wrap:wrap;flex-shrink:0}
-.wf-controls label {font-size:12px;color:var(--t5);display:flex;align-items:center;gap:5px}
-.wf-controls input,.wf-controls select {background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:3px 5px;border-radius:2px;font-size:12px}
-.wf-controls input[type="number"] {width:45px}
-.wf-controls input[type="range"] {width:60px}
+/* the "View" button (spectrum header, each tuner pane's header) and its popover: the display
+   settings of the spectrum and the waterfall (viewPopOpen; the popover is moved next to the
+   button it belongs to, so Tab goes from the button into it) */
+.view-btn {display:inline-flex;align-items:center;gap:5px;flex:none;height:24px;padding:0 9px 0 7px;box-sizing:border-box;background:var(--l2);
+  border:1px solid var(--l4);border-radius:5px;color:var(--t1);font-size:12px;line-height:1;cursor:pointer}
+.view-btn svg {flex:none;display:block}
+.view-btn:hover {background:var(--l4);border-color:var(--l5);color:var(--t0)}
+.view-btn:focus-visible {outline:2px solid var(--ac-l);outline-offset:1px}
+.view-btn.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
+.view-btn.icon {width:24px;height:22px;padding:0;justify-content:center}
+.view-pop {position:fixed;z-index:1500;left:0;top:0;width:250px;max-height:calc(100vh - 16px);overflow-y:auto;box-sizing:border-box;padding:8px 12px 10px;
+  background:var(--s3);border:1px solid var(--l4);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.55);color:var(--t3);font-size:12px;font-weight:normal;
+  line-height:1.3;text-align:left;cursor:default;white-space:normal}
+.view-pop[hidden] {display:none}
+.vp-head {font-size:12.5px;font-weight:600;color:var(--t1);padding-bottom:6px;border-bottom:1px solid var(--l1)}
+.vp-sec {font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--t5);margin:9px 0 3px}
+.vp-row {display:grid;grid-template-columns:46px minmax(0,1fr) 48px;align-items:center;column-gap:10px;min-height:26px}
+.vp-l {color:var(--t3)}
+.vp-v {text-align:right;color:var(--ac-t);font-variant-numeric:tabular-nums;white-space:nowrap}
+.vp-res {display:block;font-size:10px;line-height:1.2;color:var(--t6)}
+.vp-res:empty {display:none}
+.vp-row input[type="range"] {width:100%}
+.vp-row select {grid-column:2 / 4;width:100%;height:26px;padding:2px 6px;font-size:12px}
+.vp-row input.sw {justify-self:start}
+.vp-row input[type="range"]:disabled {opacity:.4;cursor:default}
+.vp-row:has(input:disabled) > .vp-l,.vp-row:has(input:disabled) > .vp-v {opacity:.55}
 
 /* DoA panel */
 /* one width on every tab - MUSIC DoA, Map, Both: --map-w (rpApplyWidth; 42 % until dragged), the resizer on its left edge */
@@ -1360,27 +1381,26 @@ input[type="checkbox"].sw:disabled {opacity:.45;cursor:default}
 .btn.danger:hover {background:#742f2c;border-color:var(--bad-m)}
 input[type="checkbox"],input[type="radio"] {accent-color:var(--ac-h)}
 /* text boxes and selects of the bars, panels and dialogs */
-.top-bar select,.top-bar input[type="number"],.wf-controls select,.wf-controls input[type="number"],.info-row input[type="text"],.info-row select,
+.top-bar select,.top-bar input[type="number"],.view-pop select,.info-row input[type="text"],.info-row select,
 .tpane-head select,.tpane-head input[type="number"],.sf-dlg input,.sf-dlg select,.sf-dlg textarea,.wb-sheet select,.wb-sheet input[type="number"],
 .ai-dk-set select,.ai-dk-in textarea,.map-vs select,.map-vs input[type="number"],.map-vs input[type="text"],.map-lr select,.map-lr input[type="number"],
 .map-df select,.map-df input[type="number"],.map-mk input,.map-mk textarea,.map-srch-row input,.dig-set select,.dig-set input[type="number"],.dig-set input[type="text"] {
   background:var(--s1);border:1px solid var(--l2);color:var(--t0);border-radius:5px}
-.top-bar select:focus,.top-bar input[type="number"]:focus,.wf-controls select:focus,.info-row input:focus,.info-row select:focus,.tpane-head select:focus,
+.top-bar select:focus,.top-bar input[type="number"]:focus,.view-pop select:focus,.info-row input:focus,.info-row select:focus,.tpane-head select:focus,
 .sf-dlg input:focus,.sf-dlg select:focus,.sf-dlg textarea:focus,.wb-sheet select:focus,.ai-dk-set select:focus,.ai-dk-in textarea:focus,.map-vs select:focus,
 .map-vs input:focus,.map-lr select:focus,.map-lr input:focus,.map-df select:focus,.map-df input:focus,.map-mk input:focus,.map-mk textarea:focus,.map-srch-row input:focus {
   border-color:var(--ac-l);outline:none;box-shadow:0 0 0 2px rgba(72,160,244,.22)}
 .top-bar select,.top-bar input[type="number"] {height:28px;padding:3px 7px;font-size:12.5px}
-.wf-controls select {height:26px;padding:2px 6px}
 .info-row input[type="text"],.info-row select {height:26px;padding:3px 7px}
 .sf-dlg input,.sf-dlg select {height:28px;padding:3px 8px;font-size:12.5px}
 .sf-dlg textarea {padding:6px 8px;font-size:12.5px}
 /* sliders */
-.wf-controls input[type="range"],.top-bar .tb-slider,.tpane-head input[type="range"],.map-pane input[type="range"],.info-panel input[type="range"],.wb-sheet input[type="range"] {
+.view-pop input[type="range"],.top-bar .tb-slider,.tpane-head input[type="range"],.map-pane input[type="range"],.info-panel input[type="range"],.wb-sheet input[type="range"] {
   -webkit-appearance:none;appearance:none;height:4px;padding:0;margin:0;border:none;background:var(--l3);border-radius:2px;outline:none;cursor:pointer}
-.wf-controls input[type="range"]::-webkit-slider-thumb,.top-bar .tb-slider::-webkit-slider-thumb,.tpane-head input[type="range"]::-webkit-slider-thumb,
+.view-pop input[type="range"]::-webkit-slider-thumb,.top-bar .tb-slider::-webkit-slider-thumb,.tpane-head input[type="range"]::-webkit-slider-thumb,
 .map-pane input[type="range"]::-webkit-slider-thumb,.info-panel input[type="range"]::-webkit-slider-thumb,.wb-sheet input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--ac-l);border:2px solid var(--s3);box-shadow:0 0 0 1px var(--ac-l);cursor:pointer}
-.wf-controls input[type="range"]::-moz-range-thumb,.top-bar .tb-slider::-moz-range-thumb,.tpane-head input[type="range"]::-moz-range-thumb,
+.view-pop input[type="range"]::-moz-range-thumb,.top-bar .tb-slider::-moz-range-thumb,.tpane-head input[type="range"]::-moz-range-thumb,
 .map-pane input[type="range"]::-moz-range-thumb,.info-panel input[type="range"]::-moz-range-thumb,.wb-sheet input[type="range"]::-moz-range-thumb {
   width:11px;height:11px;border-radius:50%;background:var(--ac-l);border:2px solid var(--s3);box-shadow:0 0 0 1px var(--ac-l);cursor:pointer}
 /* top bar */
@@ -1401,11 +1421,6 @@ input[type="checkbox"],input[type="radio"] {accent-color:var(--ac-h)}
 .spectrum-panel,.doa-panel {background:var(--s3);border-color:var(--l1);border-radius:7px}
 .spectrum-header,.doa-header {background:var(--s4);border-bottom-color:var(--l1)}
 .spectrum-header .title,.doa-header .title {font-size:13.5px;font-weight:600;color:var(--t2)}
-.spectrum-header .help {margin-left:auto}
-.wf-controls {background:var(--s4);border-top-color:var(--l1);gap:12px}
-.wf-controls label {color:var(--t3);gap:6px}
-.wf-controls .wf-sep {width:1px;height:18px;background:var(--l2)}
-.wf-controls .wf-val {color:var(--ac-t);font-variant-numeric:tabular-nums}
 .doa-display {background:var(--s2);border-color:var(--l1);border-radius:7px}
 .doa-display .ti {background:var(--s4);color:var(--ac-t);border-radius:5px}
 body.map-on .doa-header .rp-tab {color:var(--t4)}
@@ -1497,15 +1512,11 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar.cal-measuring {background:linear-gradient(to bottom,rgba(227,168,66,0.13) 0%,rgba(227,168,66,0) 100%),var(--s2);border-bottom-color:var(--warn);box-shadow:inset 0 -2px 0 var(--warn)}
 .top-bar.cal-calibrated {background:linear-gradient(to bottom,rgba(64,174,103,0.13) 0%,rgba(64,174,103,0) 100%),var(--s2);border-bottom-color:var(--ok);box-shadow:inset 0 -2px 0 var(--ok)}
 .top-bar.cal-cooldown {background:linear-gradient(to bottom,rgba(227,168,66,0.18) 0%,rgba(227,168,66,0) 100%),var(--s2);border-bottom-color:var(--warn);box-shadow:inset 0 -2px 0 var(--warn)}
-/* the antenna shown, on the spectrum's header */
-/* the header holds the title, the antenna selector and the display controls,
-   left to right, and wraps to a second line when the panel is narrow; ? ends
-   the last line. The controls' block is flattened so each control wraps on its own. */
+/* the spectrum's header: the title, the antenna shown (coherent mode), then at the right the
+   View button (its display settings are in the popover, .view-pop) and ? - one line */
 .spectrum-header {justify-content:flex-start;flex-wrap:wrap;gap:5px 14px;padding:5px 10px}
-.spectrum-header .wf-controls {display:contents}
-.spectrum-header .wf-controls .wf-sep {display:none}
-.wf-controls .wf-rng {display:flex;align-items:center;gap:8px}
-.spectrum-header .wf-controls .wf-rng {gap:14px}
+.spectrum-header .view-btn {margin-left:auto}
+.spectrum-header .view-btn + .view-pop + .help,.spectrum-header .view-btn + .help {margin-left:-6px}
 .spectrum-header .spec-ch {background:var(--s1);border:1px solid var(--l2);color:var(--t0);border-radius:5px;height:24px;padding:0 4px;font-size:12px}
 .spectrum-header .spec-ch:focus {border-color:var(--ac-l);outline:none;box-shadow:0 0 0 2px rgba(72,160,244,.22)}
 /* the rail */
@@ -1553,7 +1564,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .top-bar .tb-group.fld {display:flex;flex-direction:row;align-items:center;gap:6px}
   .top-bar .tb-group.fld > .tb-label {font-size:13px;font-weight:normal;letter-spacing:0;text-transform:none;color:var(--t3)}
   /* the three share the row (they wrap on a very narrow phone) */
-  #mobile-display-slot .rail-panels {display:flex;flex-direction:row;flex-wrap:wrap;gap:5px;margin-top:10px}
+  #mobile-display-slot .rail-panels {display:flex;flex-direction:row;flex-wrap:wrap;gap:5px}
   #mobile-display-slot .rail-btn {flex:1 1 auto;justify-content:center;flex-direction:row;gap:5px;padding:0 8px;min-height:34px;background:var(--l2);border-color:var(--l4);color:var(--t0);font-size:13px}
   #mobile-display-slot .rail-btn .v {writing-mode:horizontal-tb;transform:none;letter-spacing:0}
   #mobile-display-slot .rail-btn.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
@@ -1572,7 +1583,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .top-bar #status-cooldown[style*="hidden"] {display:none}
   .top-bar .status-badges {flex-wrap:wrap}
   .spectrum-header .hint {display:none}
-  .wf-controls select {max-width:120px}
   .freq-digit {font-size:24px;width:24px;height:42px}
   .freq-sep {font-size:24px}
   .freq-label {font-size:12px;margin-left:4px}
@@ -1583,8 +1593,16 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .slider::-webkit-slider-thumb,.top-bar .tb-slider::-webkit-slider-thumb,.top-bar .gain-slider::-webkit-slider-thumb {width:22px;height:22px}
   .slider::-moz-range-thumb,.top-bar .gain-slider::-moz-range-thumb {width:22px;height:22px}
   .ctrl-row input[type="number"],.ctrl-row select,.top-bar select,.top-bar input[type="number"] {min-height:32px}
-  .wf-controls input[type="range"] {width:80px;height:8px}
-  /* Sidebar sections that host controls relocated from the top bar / the spectrum's header */
+  /* the View button and its popover: finger-sized, the popover inside the window */
+  .view-btn {height:32px;padding:0 11px 0 9px}
+  .view-btn.icon {width:32px;height:30px;padding:0}
+  .view-pop {width:min(300px, calc(100vw - 24px));padding:10px 14px 12px}
+  .vp-row {min-height:38px;grid-template-columns:50px minmax(0,1fr) 52px}
+  .view-pop input[type="range"] {height:6px}
+  .view-pop input[type="range"]::-webkit-slider-thumb {width:22px;height:22px}
+  .view-pop input[type="range"]::-moz-range-thumb {width:18px;height:18px}
+  .vp-row select {height:32px}
+  /* Sidebar sections that host controls relocated from the top bar and the rail */
   .mobile-only {display:block}
   #mobile-controls-slot .tb-group {display:flex;align-items:center;gap:8px;margin:10px 0;width:100%}
   #mobile-controls-slot .tb-label {font-size:13px;color:var(--t5);min-width:48px}
@@ -1600,17 +1618,11 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   #mobile-controls-slot .gain-value {font-size:13px;color:var(--ac-t);min-width:55px;font-weight:500}
   #mobile-controls-slot .tb-vol {font-size:13px;color:var(--ac-t);min-width:38px}
   #mobile-controls-slot select {background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:6px;border-radius:3px;font-size:13px;min-height:32px}
-  #mobile-display-slot .wf-controls {flex-direction:column;align-items:stretch;background:transparent;border-top:none;padding:0;gap:10px}
-  #mobile-display-slot .wf-controls > span:not(.wf-panel-btns) {display:none}  /* the "|" separator */
-  #mobile-display-slot .wf-controls input[type="range"] {flex:1;width:auto !important;min-width:0}
-  #mobile-display-slot .wf-controls > div {flex-wrap:wrap;gap:8px}
-  #mobile-display-slot .wf-controls > div > label {width:100%}
 }
 
 /* Phone-size: stack spectrum above DoA in a scrollable column */
 @media (max-width:900px) {
   .top-bar .status-badges {margin-left:0;width:100%}
-  #wf-min,#wf-max {width:60px !important}  /* inline width:80px is too wide for phone rows */
   .spectrum-doa-container {overflow-y:auto;padding:6px;gap:6px}
   .spectrum-panel {flex:none;min-width:0}
   .spectrum-content {flex:none}
@@ -1679,10 +1691,12 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
       </div>
       <div class="sb-content" id="mobile-controls-slot"></div>
     </div>
-    <!-- Mobile-only: spectrum/waterfall display controls are moved here by applyMobileRelocation() -->
+    <!-- Mobile-only: the rail's panel buttons (DoA & Map / Decoders / Transcription) are moved here by
+         applyMobileRelocation(). The key stays "mobile-display" (it held the display controls until
+         2026-11-17; they are in the spectrum header's View popover now) -->
     <div class="sb-section mobile-only" data-sb="mobile-display" id="sb-mobile-display">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title">📊 Display</span></h3>
+        <h3><span class="sb-title">🗂️ Panels</span></h3>
         <span class="sb-toggle"></span>
       </div>
       <div class="sb-content" id="mobile-display-slot"></div>
@@ -2635,37 +2649,37 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
             <option value="3">Antenna 3</option>
             <option value="4">Antenna 4</option>
           </select>
-          <!-- the display controls of the spectrum and the waterfall (they were a bar under the
-               waterfall). The phone layout moves this block into the drawer's Display box. -->
-          <div class="wf-controls" id="wf-controls-bar">
-            <label title="Top of the spectrum's dB scale">Scale<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val" class="wf-val">60</span></label>
-            <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom<input type="range" id="zoom-sl" min="0" max="125" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" class="wf-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#7f8995;margin-left:4px;min-width:44px"></span></label>
-            <span class="wf-sep"></span>
-            <label title="Waterfall speed">Speed <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
-            <label title="Waterfall colours">Colors
-              <select id="wf-colormap" onchange="updateWaterfallColormap(this.value);sendUI('WF_COLORMAP',this.value)">
-                <option value="sdryoussef" selected>SDR# (Youssef)</option>
-                <option value="sdrpp">SDR++</option>
-                <option value="viridis">Viridis</option>
-                <option value="plasma">Plasma</option>
-                <option value="grayscale">Gray</option>
-              </select>
-            </label>
-            <div class="wf-rng">
-              <label style="display:flex;align-items:center;gap:4px">
-                <span>Min</span>
-                <input type="range" id="wf-min" min="-20" max="60" value="-10" oninput="updateWaterfallRange();sendUI('WF_MIN',this.value)" style="width:80px">
-                <span id="wf-min-val" class="wf-val" style="width:45px;text-align:right">-10 dB</span>
-              </label>
-              <label style="display:flex;align-items:center;gap:4px">
-                <span>Max</span>
-                <input type="range" id="wf-max" min="10" max="80" value="50" oninput="updateWaterfallRange();sendUI('WF_MAX',this.value)" style="width:80px">
-                <span id="wf-max-val" class="wf-val" style="width:45px;text-align:right">50 dB</span>
-              </label>
-              <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Set the waterfall's Min / Max from the signal levels">
-                <input type="checkbox" id="wf-autorange" checked onchange="toggleAutoRange(this.checked);sendUI('WF_AUTO',this.checked?1:0)">
-                <span>Auto</span>
-              </label>
+          <!-- the display settings of the spectrum and the waterfall (Scale, Zoom, Speed, Colors, Auto,
+               Min, Max): a popover under this button (VIEW POPOVER in the script). Each tuner pane of
+               independent mode has the same button; the popover is one element, moved next to the
+               button that opened it. Its home is right after this button. -->
+          <button type="button" class="view-btn" id="view-btn-main" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-pop"
+                  title="View: scale, zoom, waterfall" onclick="viewPopToggle(this, 'main')"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 4h7M12.5 4h2M1.5 8h2M7.5 8h7M1.5 12h8M13.5 12h1"/><circle cx="10.5" cy="4" r="1.9"/><circle cx="5.5" cy="8" r="1.9"/><circle cx="11.5" cy="12" r="1.9"/></svg><span>View</span></button>
+          <div class="view-pop" id="view-pop" role="dialog" aria-label="View" title="" hidden>
+            <div class="vp-head" id="view-pop-title">View</div>
+            <div class="vp-body" id="wf-controls-bar">
+              <div class="vp-sec">Spectrum</div>
+              <label class="vp-row" title="Top of the spectrum's dB scale"><span class="vp-l">Scale</span>
+                <input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="viewSet('y', this.value)"><span class="vp-v" id="fft-ymax-val">60 dB</span></label>
+              <label class="vp-row" title="Spectrum zoom - or the mouse wheel on the spectrum"><span class="vp-l">Zoom</span>
+                <input type="range" id="zoom-sl" min="0" max="125" value="0" oninput="zoomFromSlider(this.value)"><span class="vp-v"><span id="zoom-val">1.0x</span><span id="zoom-res" class="vp-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate"></span></span></label>
+              <div class="vp-sec">Waterfall</div>
+              <label class="vp-row" title="Waterfall speed"><span class="vp-l">Speed</span>
+                <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="viewSet('speed', this.value)"><span class="vp-v" id="wf-speed-val">5</span></label>
+              <label class="vp-row" title="Waterfall colours"><span class="vp-l">Colors</span>
+                <select id="wf-colormap" onchange="viewSet('cmap', this.value)">
+                  <option value="sdryoussef" selected>SDR# (Youssef)</option>
+                  <option value="sdrpp">SDR++</option>
+                  <option value="viridis">Viridis</option>
+                  <option value="plasma">Plasma</option>
+                  <option value="grayscale">Gray</option>
+                </select></label>
+              <label class="vp-row" title="Set the waterfall's Min / Max from the signal levels (Min / Max then follow by themselves)"><span class="vp-l">Auto</span>
+                <input type="checkbox" class="sw" id="wf-autorange" checked onchange="viewSet('auto', this.checked)"></label>
+              <label class="vp-row" title="Waterfall colour scale: the level drawn darkest"><span class="vp-l">Min</span>
+                <input type="range" id="wf-min" min="-20" max="60" value="-10" oninput="viewSet('min', this.value)"><span class="vp-v" id="wf-min-val">-10 dB</span></label>
+              <label class="vp-row" title="Waterfall colour scale: the level drawn brightest"><span class="vp-l">Max</span>
+                <input type="range" id="wf-max" min="10" max="80" value="50" oninput="viewSet('max', this.value)"><span class="vp-v" id="wf-max-val">50 dB</span></label>
             </div>
           </div>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
@@ -3123,6 +3137,20 @@ let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 =
 let selTuner = 0;            // pane the top-bar frequency digits + gain edit
 const panes = [];            // one per tuner, see panesBuild
 let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO bar
+// View settings (the "View" popover, see VIEW POPOVER). viewCommon: the single spectrum's - and
+// every tuner pane's that has none of its own; the receiver stores them (UI:FFT_Y, UI:WF_SPEED,
+// ...) and replays them to every browser. viewStore: this browser's per-tuner values in
+// independent mode (localStorage VIEW_STORE_KEY) - t: {"2": {y: 80, cmap: 'viridis'}}, and g: the
+// common values this browser last saw (a replayed value that equals it leaves the tuners' own
+// alone). viewTarget: what the open popover shows - 'main' or a tuner number; null = closed.
+// Up here: the pane drawing and the waterfall code read them during page load.
+const viewCommon = {y: 60, speed: 5, cmap: 'sdryoussef', auto: true, min: -10, max: 50};
+const VIEW_UI = {y: 'FFT_Y', speed: 'WF_SPEED', cmap: 'WF_COLORMAP', auto: 'WF_AUTO', min: 'WF_MIN', max: 'WF_MAX'};
+const VIEW_STORE_KEY = 'kraken_pane_view';
+let viewStore = {v: 1, g: {}, t: {}};
+let viewTarget = null, viewBtn = null;
+const VIEW_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">' +
+  '<path d="M1.5 4h7M12.5 4h2M1.5 8h2M7.5 8h7M1.5 12h8M13.5 12h1"/><circle cx="10.5" cy="4" r="1.9"/><circle cx="5.5" cy="8" r="1.9"/><circle cx="11.5" cy="12" r="1.9"/></svg>';
 
 // The receiver runs Windows (system_status.platform, see setServerOs): the
 // boxes that tell how to install / build something show its commands
@@ -3795,6 +3823,7 @@ class WaterfallDisplay {
     this.plotWidth = 0; // Width of plot area (matching uPlot)
 
     // Pre-generate default colormap (SDR# Youssef style)
+    this.scheme = 'sdryoussef';
     this.generateColormap('sdryoussef');
   }
 
@@ -4218,6 +4247,8 @@ class WaterfallDisplay {
   }
 
   setColormap(scheme) {
+    if (scheme === this.scheme) return;   // (the View settings re-apply it often)
+    this.scheme = scheme;
     this.generateColormap(scheme);
   }
 }
@@ -4225,58 +4256,152 @@ class WaterfallDisplay {
 // Global waterfall instance
 let waterfall = null;
 
-// Waterfall control functions
+// ============================================================================
+// VIEW POPOVER: the display settings of the spectrum and the waterfall
+// ----------------------------------------------------------------------------
+// The "View" button on the spectrum's header (and, in independent mode, one on
+// each tuner pane's header) opens one popover (#view-pop) under it: Scale,
+// Zoom, Speed, Colors, Auto, Min, Max (the user's wish, 2026-11-17: they were a
+// row in the header that wrapped to two or three lines, and in independent
+// mode each tuner should have its own). One set of controls with a target
+// (viewTarget): 'main' = the common values (the single spectrum; in
+// independent mode "all tuners"), a number = that tuner. The controls hold no
+// state: every reader goes to viewCommon / viewStore (globals block), and
+// viewPopSync() fills the controls from the target.
+//  - The common values are what they were: sendUI('FFT_Y' | 'WF_SPEED' | ...),
+//    stored by the receiver and replayed to every browser.
+//  - A tuner's own value is kept in this browser only (viewStore.t, localStorage
+//    kraken_pane_view): the receiver has no per-tuner display setting and the
+//    protocol stays as it is. Effective value = the tuner's own, else the
+//    common one.
+//  - "View · all tuners" (the header's button in independent mode) sets the
+//    common value AND drops that key's own value from every tuner.
+//  - A common value from the receiver drops the tuners' own values of that key
+//    only if it differs from the one this browser saw last (viewStore.g): the
+//    replay of an unchanged value at page load leaves them alone.
+//  - Zoom is not stored (as before): mainZoom, or each pane's p.zoom.
+// ============================================================================
+const VIEW_CMAPS = ['sdryoussef', 'sdrpp', 'viridis', 'plasma', 'grayscale'];
+// a value for key k, normalised, or undefined if it is not one
+function viewValid(k, v) {
+  if (k === 'auto') {
+    if (v === true || v === 1 || v === '1' || v === 'true') return true;
+    if (v === false || v === 0 || v === '0' || v === 'false') return false;
+    return undefined;
+  }
+  if (k === 'cmap') return VIEW_CMAPS.includes(v) ? v : undefined;
+  const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+  if (!Number.isFinite(n)) return undefined;
+  const lim = {y: [10, 100], speed: [1, 10], min: [-20, 60], max: [10, 80]}[k];
+  if (!lim) return undefined;
+  const r = k === 'y' ? Math.round(n / 10) * 10 : Math.round(n);
+  return r >= lim[0] && r <= lim[1] ? r : undefined;
+}
+function viewClean(o) {
+  const out = {};
+  if (o && typeof o === 'object' && !Array.isArray(o))
+    for (const k in VIEW_UI) { const v = viewValid(k, o[k]); if (v !== undefined) out[k] = v; }
+  return out;
+}
+// broken storage = no tuner values (and nothing seen)
+function viewLoad() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(VIEW_STORE_KEY) || 'null'); } catch (e) { s = null; }
+  const st = {v: 1, g: {}, t: {}};
+  if (s && typeof s === 'object' && s.v === 1) {
+    st.g = viewClean(s.g);
+    if (s.t && typeof s.t === 'object' && !Array.isArray(s.t))
+      for (const ch in s.t) {
+        if (!/^\d{1,2}$/.test(ch)) continue;
+        const o = viewClean(s.t[ch]);
+        if (Object.keys(o).length) st.t[ch] = o;
+      }
+  }
+  viewStore = st;
+}
+function viewSave() {
+  try { localStorage.setItem(VIEW_STORE_KEY, JSON.stringify(viewStore)); } catch (e) {}
+}
+viewLoad();
+// tuner ch's value of k: its own, else the common one. (Tuners that are not
+// there - fewer now - keep theirs in the store, unused.)
+function viewEff(ch, k) {
+  const o = viewStore.t[ch];
+  return o && o[k] !== undefined ? o[k] : viewCommon[k];
+}
+function viewDropOwn(k) {
+  for (const ch in viewStore.t) {
+    const o = viewStore.t[ch];
+    delete o[k];
+    if (!Object.keys(o).length) delete viewStore.t[ch];
+  }
+}
+function paneYMax(p) { return (p && viewEff(p.ch, 'y')) || 60; }
+function viewSafeRange(mn, mx) {
+  // the slider ranges overlap - keep min strictly below max, otherwise the colormap inverts
+  if (!Number.isFinite(mn)) mn = -10;
+  if (!Number.isFinite(mx)) mx = 50;
+  if (mn >= mx) mn = mx - 1;
+  return [mn, mx];
+}
+// a pane's waterfall and spectrum from its effective values
+function paneApplyView(p) {
+  if (!p || !p.wf) return;
+  p.wf.setSpeed(viewEff(p.ch, 'speed'));
+  p.wf.setColormap(viewEff(p.ch, 'cmap'));
+  // while Auto is on the pane ranges itself (the interval in the OPERATING MODE block)
+  if (!viewEff(p.ch, 'auto')) { const [a, b] = viewSafeRange(viewEff(p.ch, 'min'), viewEff(p.ch, 'max')); p.wf.setRange(a, b); }
+  paneDrawSpec(p);
+  paneDrawOverlay(p);
+}
+
+// Common values -> the main display (and the panes that take them)
 function updateWaterfallSpeed(value) {
-  if (waterfall) waterfall.setSpeed(parseInt(value));
-  panes.forEach(p => p.wf.setSpeed(parseInt(value)));
+  const v = viewValid('speed', value);
+  if (v !== undefined) viewCommon.speed = v;
+  if (waterfall) waterfall.setSpeed(viewCommon.speed);
+  panes.forEach(paneApplyView);
+  viewPopSync();
 }
 
 function updateWaterfallColormap(value) {
-  if (waterfall) waterfall.setColormap(value);
-  panes.forEach(p => p.wf.setColormap(value));
+  const v = viewValid('cmap', value);
+  if (v !== undefined) viewCommon.cmap = v;
+  if (waterfall) waterfall.setColormap(viewCommon.cmap);
+  panes.forEach(paneApplyView);
+  viewPopSync();
 }
-
-let fftYMax = 60;  // Current FFT Y-axis max value
 
 function updateFFTYAxis(value) {
-  fftYMax = parseInt(value);
-  $id('fft-ymax-val').textContent = fftYMax;
-  if (fftPlot) {
-    fftPlot.setScale('y', {min: 0, max: fftYMax});
-  }
-  panes.forEach(paneDrawSpec);
+  const v = viewValid('y', value);
+  if (v !== undefined) viewCommon.y = v;
+  if (fftPlot) fftPlot.setScale('y', {min: 0, max: viewCommon.y});
+  panes.forEach(p => { paneDrawSpec(p); paneDrawOverlay(p); });
+  viewPopSync();
 }
 
+// the main waterfall's colour range from viewCommon.min / max (Auto writes
+// them, as it wrote the sliders before); the panes that take the common range
 function updateWaterfallRange() {
-  const minDb = parseFloat($id('wf-min').value);
-  const maxDb = parseFloat($id('wf-max').value);
-  // Handle NaN with sensible defaults for 0dB noise floor scale
-  let safeMin = isNaN(minDb) ? -10 : minDb;
-  const safeMax = isNaN(maxDb) ? 50 : maxDb;
-  // The slider ranges overlap - keep min strictly below max, otherwise the
-  // colormap inverts
-  if (safeMin >= safeMax) safeMin = safeMax - 1;
-  // Update slider value labels
-  const minLabel = $id('wf-min-val');
-  const maxLabel = $id('wf-max-val');
-  if (minLabel) minLabel.textContent = safeMin + ' dB';
-  if (maxLabel) maxLabel.textContent = safeMax + ' dB';
-  if (waterfall) waterfall.setRange(safeMin, safeMax);
-  // tuner panes: the sliders apply while auto-range is off (each pane ranges itself otherwise)
-  if (!autoRangeEnabled) panes.forEach(p => p.wf.setRange(safeMin, safeMax));
+  const [a, b] = viewSafeRange(viewCommon.min, viewCommon.max);
+  if (waterfall) waterfall.setRange(a, b);
+  panes.forEach(p => {
+    if (viewEff(p.ch, 'auto')) return;
+    const [c, d] = viewSafeRange(viewEff(p.ch, 'min'), viewEff(p.ch, 'max'));
+    p.wf.setRange(c, d);
+  });
+  viewPopSync();
 }
 
-// Auto-range state
-let autoRangeEnabled = true;
 let autoRangeInterval = null;
 // Noise source state (updateCalIndicator: cal_live + system_status) for the
 // waterfall's calibration-burst marker and the auto-range hold
 let noiseLive = false, noiseOffAt = 0;
 
-// Toggle continuous auto-range
+// Toggle continuous auto-range (the common Auto: the main display's)
 function toggleAutoRange(enabled) {
-  autoRangeEnabled = enabled;
-  if (enabled) {
+  viewCommon.auto = !!enabled;
+  if (viewCommon.auto) {
     // Start continuous auto-ranging (every 500ms)
     if (!autoRangeInterval) {
       autoRangeInterval = setInterval(autoRangeWaterfall, 500);
@@ -4289,7 +4414,198 @@ function toggleAutoRange(enabled) {
       autoRangeInterval = null;
     }
   }
+  // the panes that take the common Auto: their range now comes from Min / Max
+  panes.forEach(paneApplyView);
+  viewPopSync();
 }
+
+// What a control of the popover changed: k = the viewCommon key
+function viewSet(k, raw) {
+  const v = viewValid(k, raw);
+  if (v === undefined) { viewPopSync(); return; }
+  const t = viewTarget;
+  if (typeof t === 'number') {
+    // this tuner's own value (this browser only)
+    const p = panes[t];
+    const o = viewStore.t[t] || (viewStore.t[t] = {});
+    // Auto off: the range stays where Auto left it (as the single spectrum's does)
+    if (k === 'auto' && !v && viewEff(t, 'auto') && p) {
+      o.min = viewValid('min', Math.round(p.wf.minDb)) ?? viewEff(t, 'min');
+      o.max = viewValid('max', Math.round(p.wf.maxDb)) ?? viewEff(t, 'max');
+    }
+    o[k] = v;
+    viewSave();
+    if (p) {
+      if (k === 'auto' && v) { const r = computeAutoRange(p.mags); if (r) p.wf.setRange(r[0], r[1]); }
+      paneApplyView(p);
+    }
+    viewPopSync();
+    return;
+  }
+  // the common value: as before, and in independent mode ("all tuners") no tuner keeps its own
+  viewStore.g[k] = v;
+  viewEchoNote(k, v);
+  if (opMode === 'independent') viewDropOwn(k);
+  viewSave();
+  viewApplyCommon(k, v);
+  sendUI(VIEW_UI[k], k === 'auto' ? (v ? 1 : 0) : v);
+}
+function viewApplyCommon(k, v) {
+  if (k === 'y') updateFFTYAxis(v);
+  else if (k === 'speed') updateWaterfallSpeed(v);
+  else if (k === 'cmap') updateWaterfallColormap(v);
+  else if (k === 'auto') toggleAutoRange(v);
+  else { viewCommon[k] = v; updateWaterfallRange(); }
+}
+// This browser's own sends come back (the receiver relays UI: to every page,
+// the sender too): an echo is not someone else's change - and an older one
+// arriving during a drag must not move the slider back. Kept 5 s per key.
+const viewEcho = {};
+function viewEchoNote(k, v) {
+  const now = Date.now();
+  const l = (viewEcho[k] || []).filter(e => now - e[1] < 5000);
+  l.push([v, now]);
+  viewEcho[k] = l;
+}
+function viewEchoIs(k, v) {
+  const now = Date.now();
+  const l = (viewEcho[k] || []).filter(e => now - e[1] < 5000);
+  const i = l.findIndex(e => e[0] === v);
+  viewEcho[k] = i >= 0 ? l.slice(i + 1) : l;
+  return i >= 0;
+}
+// A common value from the receiver (the replay at connect, another browser's change)
+function viewOnRemote(k, raw) {
+  const v = viewValid(k, raw);
+  if (v === undefined || viewEchoIs(k, v)) return;
+  const g = viewStore.g;
+  const changed = g[k] !== undefined && g[k] !== v;   // nothing seen yet = unchanged
+  g[k] = v;
+  if (changed) viewDropOwn(k);
+  viewSave();
+  // While auto-range is on, each browser derives min/max locally (as before)
+  if ((k === 'min' || k === 'max') && viewCommon.auto) { if (changed) panes.forEach(paneApplyView); viewPopSync(); return; }
+  if (viewCommon[k] !== v) viewApplyCommon(k, v);
+  else if (changed) { panes.forEach(paneApplyView); viewPopSync(); }
+}
+
+// the target's values, for the controls
+function viewPopVals() {
+  const t = viewTarget;
+  if (typeof t !== 'number') return Object.assign({}, viewCommon);
+  const o = {};
+  for (const k in VIEW_UI) o[k] = viewEff(t, k);
+  const p = panes[t];
+  if (o.auto && p && p.wf) { o.min = Math.round(p.wf.minDb); o.max = Math.round(p.wf.maxDb); }   // what Auto set
+  return o;
+}
+// fill the popover's controls from its target (nothing while it is closed)
+function viewPopSync() {
+  if (viewTarget === null) return;
+  const v = viewPopVals();
+  const set = (id, val) => { const e = $id(id); if (e && String(e.value) !== String(val)) e.value = val; };
+  const txt = (id, s) => { const e = $id(id); if (e && e.textContent !== s) e.textContent = s; };
+  set('fft-ymax', v.y); txt('fft-ymax-val', v.y + ' dB');
+  set('wf-speed', v.speed); txt('wf-speed-val', String(v.speed));
+  set('wf-colormap', v.cmap);
+  const a = $id('wf-autorange');
+  if (a && a.checked !== !!v.auto) a.checked = !!v.auto;
+  const [mn, mx] = viewSafeRange(v.min, v.max);
+  set('wf-min', mn); txt('wf-min-val', mn + ' dB');
+  set('wf-max', mx); txt('wf-max-val', mx + ' dB');
+  // Min / Max follow the signal while Auto is on
+  ['wf-min', 'wf-max'].forEach(id => { const e = $id(id); if (e && e.disabled !== !!v.auto) e.disabled = !!v.auto; });
+  zoomSyncSlider();
+  viewShowRes();
+}
+function viewTitleOf(t) {
+  return typeof t === 'number' ? 'View · T' + t : opMode === 'independent' ? 'View · all tuners' : 'View';
+}
+// the spectrum header's button: in independent mode it is every tuner's
+function viewBtnTitle() {
+  const b = $id('view-btn-main');
+  if (b) b.title = 'View: scale, zoom, waterfall' + (opMode === 'independent' ? ' - all tuners' : '');
+}
+function viewPopToggle(btn, target) {
+  if (viewBtn === btn) { viewPopClose(false); return; }
+  viewPopOpen(btn, target);
+}
+let viewPopWin = '';
+function viewPopOpen(btn, target) {
+  const pop = $id('view-pop');
+  if (!pop || !btn || !btn.isConnected) return;
+  if (viewBtn) viewPopClose(false);
+  if (typeof target === 'number' && !panes[target]) return;
+  viewTarget = target;
+  viewBtn = btn;
+  viewPopWin = innerWidth + 'x' + innerHeight;
+  btn.after(pop);   // next to its button: Tab goes from the button into it
+  const title = viewTitleOf(target);
+  $id('view-pop-title').textContent = title;
+  pop.setAttribute('aria-label', title);
+  btn.classList.add('on');
+  btn.setAttribute('aria-expanded', 'true');
+  pop.hidden = false;
+  viewPopSync();
+  viewPopPlace();
+}
+function viewPopClose(focusBtn) {
+  const pop = $id('view-pop'), btn = viewBtn;
+  viewTarget = null;
+  viewBtn = null;
+  if (btn) { btn.classList.remove('on'); btn.setAttribute('aria-expanded', 'false'); }
+  if (!pop) return;
+  pop.hidden = true;
+  // back home, after the spectrum header's button (a pane's header can be torn down)
+  const home = $id('view-btn-main');
+  if (home && pop.previousElementSibling !== home) home.after(pop);
+  if (focusBtn && btn && btn.isConnected) btn.focus();
+}
+// position:fixed from the button's rect: under it, right edges aligned; left-aligned when that
+// would leave the window, above when there is no room below; never off-screen
+function viewPopPlace() {
+  const pop = $id('view-pop'), b = viewBtn;
+  if (!pop || !b || pop.hidden) return;
+  const r = b.getBoundingClientRect(), m = 8, vw = innerWidth, vh = innerHeight;
+  if (!r.width && !r.height) { viewPopClose(false); return; }   // the button is not shown any more
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  let left = r.right - w;
+  if (left < m) left = r.left;
+  left = Math.max(m, Math.min(vw - m - w, left));
+  let top = r.bottom + 4;
+  if (top + h > vh - m) {
+    const up = r.top - 4 - h;
+    top = up >= m ? up : Math.max(m, vh - m - h);
+  }
+  pop.style.left = Math.round(left) + 'px';
+  pop.style.top = Math.round(top) + 'px';
+}
+// Dismissal: Esc (focus back to the button), a press outside the popover and its button, a
+// scroll of anything that holds the button (the tuner grid, the phone's page), a resize of the
+// window (a layout change in the same window only moves it along), the mode change / the panes
+// being rebuilt (applyOpModeUI, panesTeardown), a second click of the button
+document.addEventListener('pointerdown', e => {
+  if (!viewBtn) return;
+  const pop = $id('view-pop');
+  if ((pop && pop.contains(e.target)) || viewBtn.contains(e.target)) return;
+  viewPopClose(false);
+}, true);
+document.addEventListener('keydown', e => {
+  if (!viewBtn || e.key !== 'Escape') return;
+  e.preventDefault();
+  e.stopPropagation();
+  viewPopClose(true);
+}, true);
+window.addEventListener('scroll', e => {
+  if (!viewBtn) return;
+  const t = e.target;
+  if (t === document || (t && t.nodeType === 1 && t.contains(viewBtn))) viewPopClose(false);
+}, true);
+window.addEventListener('resize', () => {
+  if (!viewBtn) return;
+  if (innerWidth + 'x' + innerHeight !== viewPopWin) viewPopClose(false);
+  else viewPopPlace();
+});
 
 // Waterfall colour range from a spectrum: below the noise floor .. above the
 // peaks (percentiles), at least 30 dB, 5 dB steps. [min, max] or null.
@@ -4355,7 +4671,7 @@ function computeAutoRange(magnitudes) {
 
 // Auto-range: find min/max from current FFT data to maximize dynamic range
 function autoRangeWaterfall() {
-  if (!autoRangeEnabled) return;
+  if (!viewCommon.auto) return;
   // Hold the colour range through a calibration burst (+1 s): a frame with the
   // noise source on has no antenna signals, so ranging on it collapsed the
   // scale - the waterfall went red for up to 500 ms (the tick) past the burst,
@@ -4371,11 +4687,8 @@ function autoRangeWaterfall() {
 
   const r = computeAutoRange(magnitudes);
   if (!r) return;
-  const [newMin, newMax] = r;
-
-  // Update sliders and apply
-  $id('wf-min').value = newMin;
-  $id('wf-max').value = newMax;
+  // the common Min / Max follow (they were the sliders' values; not sent)
+  [viewCommon.min, viewCommon.max] = r;
   updateWaterfallRange();
 }
 
@@ -5332,40 +5645,28 @@ function applySyncCmdInner(cmd) {
   // VFO audio (🔊) and scanner changes have their own JSON broadcasts) is ignored.
 }
 
-// Display preferences relayed via the backend (UI:<KEY>:<value>)
+// Display preferences relayed via the backend (UI:<KEY>:<value>). The spectrum's
+// and the waterfall's (the View popover's common values) go through viewOnRemote,
+// which keeps them in viewCommon - the popover's controls may be showing a tuner
+// pane's own values, so nothing here reads or writes those controls.
 function applyUiSetting(rest) {
   const i = rest.indexOf(':');
   if (i < 0) return;
   const key = rest.substring(0, i), val = rest.substring(i + 1);
-  const ids = {FFT_Y:'fft-ymax', WF_SPEED:'wf-speed', WF_COLORMAP:'wf-colormap',
-               WF_MIN:'wf-min', WF_MAX:'wf-max', WF_AUTO:'wf-autorange',
-               DOA_CONV:'doa-convention'};
-  const el = $id(ids[key]);
-  if (!el || document.activeElement === el) return;
   switch (key) {
-    case 'FFT_Y':
-      if (el.value != val) { el.value = val; updateFFTYAxis(val); }
-      break;
-    case 'WF_SPEED':
-      if (el.value != val) { el.value = val; updateWaterfallSpeed(val); }
-      break;
-    case 'WF_COLORMAP':
-      if (el.value !== val) { el.value = val; updateWaterfallColormap(val); }
-      break;
-    case 'WF_MIN':
-    case 'WF_MAX':
-      // While auto-range is on, each browser derives min/max locally
-      if (!autoRangeEnabled && el.value != val) { el.value = val; updateWaterfallRange(); }
-      break;
-    case 'WF_AUTO': {
-      const en = (val === '1' || val === 'true');
-      if (el.checked !== en) { el.checked = en; toggleAutoRange(en); }
-      break;
-    }
-    case 'DOA_CONV':
+    case 'FFT_Y': viewOnRemote('y', val); break;
+    case 'WF_SPEED': viewOnRemote('speed', val); break;
+    case 'WF_COLORMAP': viewOnRemote('cmap', val); break;
+    case 'WF_MIN': viewOnRemote('min', val); break;   // (ignored while Auto is on: each browser ranges itself)
+    case 'WF_MAX': viewOnRemote('max', val); break;
+    case 'WF_AUTO': viewOnRemote('auto', val); break;
+    case 'DOA_CONV': {
+      const el = $id('doa-convention');
+      if (!el || document.activeElement === el) return;
       if (el.value !== val) el.value = val;
       setDoaConvention(val);  // updates all plots; send() is suppressed here
       break;
+    }
   }
 }
 
@@ -9062,7 +9363,7 @@ function createPlot() {
     title:"",
     width: containerWidth,
     height: containerHeight,
-    scales:{x:{time:false},y:{auto:false,range:()=>[0,fftYMax]}},
+    scales:{x:{time:false},y:{auto:false,range:()=>[0,viewCommon.y]}},
     cursor:{drag:{x:false,y:false},select:{show:false}},
     axes:[
       {stroke:'#5f6a77',grid:{stroke:'#333b46'},ticks:{stroke:'#454f5c'}},
@@ -9940,6 +10241,8 @@ function applyOpModeUI(m) {
   const dot = $id('dot');
   if (dot) dot.disabled = m !== 'coherent';
   if (!changed) return;
+  viewPopClose(false);
+  viewBtnTitle();
   if (m === 'independent') panesBuild(); else panesTeardown();
   if (typeof rpApply === 'function') rpApply();   // the right-hand pane: its tabs in coherent mode, the map alone outside
   zoomSyncSlider();
@@ -10011,6 +10314,8 @@ function panesBuild(n) {
                title="Tuner ${ch} gain" oninput="paneGainInput(${ch}, this.value)">
         <span id="tpane-gv-${ch}" style="min-width:44px"></span>
         <span class="tpane-vfos" id="tpane-v-${ch}"></span>
+        <button type="button" class="view-btn icon" id="tpane-vb-${ch}" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-pop"
+                title="View: scale, zoom, waterfall - tuner ${ch}" aria-label="View, tuner ${ch}">${VIEW_ICON}</button>
       </div>
       <div class="tpane-body">
         <canvas class="tpane-spec" id="tpane-s-${ch}"></canvas>
@@ -10025,12 +10330,13 @@ function panesBuild(n) {
     // its frequency digits always did. A click, not a press: a swipe that
     // starts on a header only scrolls the grid.
     el.querySelector('.tpane-head').addEventListener('click', () => paneSelect(ch));
+    // its View button (the click then selects the pane too, above)
+    const vb = $id('tpane-vb-' + ch);
+    vb.addEventListener('click', () => viewPopToggle(vb, ch));
     const p = {ch, el, wf: new WaterfallDisplay('tpane-wc-' + ch, 'tpane-wo-' + ch),
                freqs: [], mags: [], freqMhz: 0, gainDb: 0, sr: 2.4e6, sw: 0, sh: 0, oh: 0, dpr: 1,
                L: 34, bars: [], ai: [], holdF: 0, holdG: 0, zoom: {level: 1, off: 0}};
-    p.wf.setSpeed(parseInt(($id('wf-speed') || {}).value) || 5);
-    p.wf.setColormap(($id('wf-colormap') || {}).value || 'sdryoussef');
-    if (!autoRangeEnabled) p.wf.setRange(parseFloat($id('wf-min').value), parseFloat($id('wf-max').value));
+    paneApplyView(p);   // its View settings: its own, else the common ones
     paneFreqSelectorInit(p);
     splitDragInit($id('tpane-sp-' + ch), true);
     const ov = $id('tpane-ov-' + ch);
@@ -10054,6 +10360,7 @@ function panesBuild(n) {
 }
 
 function panesTeardown() {
+  viewPopClose(false);   // (it may sit in a pane's header, which goes)
   panes.length = 0;
   panesLastGrid = '';
   paneDrag = null;
@@ -10256,6 +10563,7 @@ function paneSelect(ch) {
   if (selTuner === ch) return;
   selTuner = ch;
   zoomSyncSlider();
+  viewShowRes();
   panesSyncHeads();
   const p = panes[ch];
   if (p && p.freqMhz > 0) updateFreqDisplay(p.freqMhz, true);
@@ -10319,7 +10627,7 @@ function paneDrawSpec(p) {
   const w = p.sw, h = p.sh, L = p.L, R = w - 4, top = 4, bot = h - 14;
   ctx.fillStyle = '#171c23';
   ctx.fillRect(0, 0, w, h);
-  const ymax = fftYMax || 60;
+  const ymax = paneYMax(p);
   ctx.font = '10px sans-serif';
   ctx.lineWidth = 1;
   const dbStep = ymax > 60 ? 20 : 10;
@@ -10439,7 +10747,7 @@ function paneDrawOverlay(p) {
     // spectrum (as drawBox does; the Digital squelch has no level)
     if (squelchIsFft(d)) {
       const lvl = d.squelch_level !== undefined ? d.squelch_level : 15;
-      const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;
+      const top = 4, bot = p.sh - 14, ymax = paneYMax(p);
       const sy = bot - lvl / ymax * (bot - top);
       if (sy >= top && sy <= bot) {
         p.bars[p.bars.length - 1].sqY = sy;   // grabbable (paneHit)
@@ -10566,7 +10874,7 @@ function paneMove(p, e) {
   }
   vfoLvlHide();
   if (paneDrag.squelch !== undefined) {
-    const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;
+    const top = 4, bot = p.sh - 14, ymax = paneYMax(p);
     squelchSetFromDrag(paneDrag.squelch, (bot - paneXY(e).y) / (bot - top) * ymax);
     return;
   }
@@ -10697,14 +11005,17 @@ function setDecimatorTuner(id, ch) {
   paneMoveVfo(p, d, p.freqMhz + (d.freq_offset_hz || 0) / 1e6);
 }
 
-// per-pane waterfall auto-range (each tuner sees a different band)
+// per-pane waterfall auto-range (each tuner sees a different band), for each
+// pane whose Auto is on (its own, else the common one - the View popover)
 setInterval(() => {
-  if (opMode !== 'independent' || !autoRangeEnabled) return;
+  if (opMode !== 'independent') return;
   if (noiseLive || Date.now() - noiseOffAt < 1000) return;
   for (const p of panes) {
+    if (!viewEff(p.ch, 'auto')) continue;
     const r = computeAutoRange(p.mags);
     if (r) p.wf.setRange(r[0], r[1]);
   }
+  if (typeof viewTarget === 'number') viewPopSync();   // a pane's popover shows what Auto set
 }, 500);
 
 
@@ -10723,8 +11034,14 @@ setInterval(() => {
 // ============================================================================
 const ZOOM_MAX = 32;
 const mainZoom = {level: 1, off: 0};
+// what the Zoom slider shows / sets: independent mode - the View popover's tuner,
+// or with "all tuners" (and with the popover closed) the selected one's level
+// (all: the slider sets every pane's)
 function zoomTarget() {
-  if (opMode === 'independent') { const p = panes[selTuner]; return p ? {z: p.zoom, center: p.freqMhz} : null; }
+  if (opMode === 'independent') {
+    const ch = typeof viewTarget === 'number' ? viewTarget : selTuner, p = panes[ch];
+    return p ? {z: p.zoom, center: p.freqMhz, all: viewTarget === 'main'} : null;
+  }
   return {z: mainZoom, center: displayCenterFreq ?? currentCenterFreq};
 }
 function zoomSlice(z, freqs, mags, centerMhz) {
@@ -10765,9 +11082,10 @@ function zoomSyncSlider() {
 function zoomFromSlider(v) {
   const t = zoomTarget();
   if (!t) return;
-  t.z.level = Math.max(1, Math.min(ZOOM_MAX, Math.pow(2, parseInt(v) / 25)));
-  if (t.z.level < 1.01) { t.z.level = 1; t.z.off = 0; }
-  $id('zoom-val').textContent = t.z.level.toFixed(1) + 'x';
+  let lvl = Math.max(1, Math.min(ZOOM_MAX, Math.pow(2, parseInt(v) / 25)));
+  if (lvl < 1.01) lvl = 1;
+  for (const z of t.all ? panes.map(p => p.zoom) : [t.z]) { z.level = lvl; if (lvl === 1) z.off = 0; }
+  $id('zoom-val').textContent = lvl.toFixed(1) + 'x';
   if (opMode !== 'independent') applyClip();
 }
 // main display: wheel on the spectrum or the waterfall (the containers - the
@@ -10868,6 +11186,8 @@ function specApplyMain(newFrame) {
   specViewWant(0, w0 - fr.center, w1 - fr.center, specBinsMain());
   specShowMain(newFrame);
   if (opMode !== 'independent') specShowRes(fr);
+  specMainRes = specResText(fr);
+  viewShowRes();
 }
 function specPaneFrame(ch, nch, fr, gd, aa) {
   opHint('independent');
@@ -10884,6 +11204,8 @@ function specPaneFrame(ch, nch, fr, gd, aa) {
   p.wf.addLine(p.freqs, p.mags, noiseLive);
   paneDrawSpec(p);
   paneDrawOverlay(p);
+  p.resText = specResText(fr);
+  if (ch === (typeof viewTarget === 'number' ? viewTarget : selTuner)) viewShowRes();
   if (ch === selTuner) {
     specShowRes(fr);
     if (p.freqMhz > 0 && Date.now() > p.holdF) updateFreqDisplay(p.freqMhz);
@@ -10942,15 +11264,24 @@ function specViewFlush(disp) {
   ws.send('FFT_VIEW:' + disp + ':' + (++specViewSeq) + ':' + w.lo + ':' + w.hi + ':' + w.bins);
   st.lo = w.lo; st.hi = w.hi; st.bins = w.bins; st.at = Date.now(); st.want = null;
 }
-// the zoom control's resolution readout: the displayed points' spacing; and
-// the Display box's "Points sent": the frame's points
+// the Display box's "Points sent": the frame's points (the main display's, or the selected pane's)
 function specShowRes(fr) {
-  const el = $id('zoom-res'), pe = $id('fft-points-sent');
+  const pe = $id('fft-points-sent');
   const n = String(fr.mags.length);
   if (pe && pe.textContent !== n) pe.textContent = n;
-  if (!el) return;
+}
+// the View popover's zoom readout: the displayed points' spacing - of the main
+// display (specMainRes), or of the popover's tuner (all tuners: the selected one)
+let specMainRes = '';
+function specResText(fr) {
   const hz = fr.step * 1e6;
-  const t = hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 0 : 1) + ' kHz' : Math.round(hz) + ' Hz';
+  return hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 0 : 1) + ' kHz' : Math.round(hz) + ' Hz';
+}
+function viewShowRes() {
+  const el = $id('zoom-res');
+  if (!el || viewTarget === null) return;
+  let t = specMainRes;
+  if (opMode === 'independent') { const p = panes[typeof viewTarget === 'number' ? viewTarget : selTuner]; t = (p && p.resText) || ''; }
   if (el.textContent !== t) el.textContent = t;
 }
 
@@ -11116,15 +11447,16 @@ if (mobileLayoutMQ.addEventListener) {
   });
 }
 
-// On mobile, move the gain / step / audio top-bar groups, the waterfall display
-// controls and the rail's panel buttons into the sidebar (and back on desktop). Moving the real DOM nodes
+// On mobile, move the gain / step / audio top-bar groups and the rail's panel
+// buttons into the sidebar (and back on desktop). The display settings stay
+// behind the spectrum header's View button (they were moved here until
+// 2026-11-17, in the drawer box now titled Panels). Moving the real DOM nodes
 // keeps element IDs and event handlers intact, so the JS that drives them
 // works unchanged in either location.
 const MOBILE_RELOCATIONS = [
   {id: 'tb-gain', slot: 'mobile-controls-slot'},
   {id: 'tb-step', slot: 'mobile-controls-slot'},
   {id: 'tb-audio', slot: 'mobile-controls-slot'},
-  {id: 'wf-controls-bar', slot: 'mobile-display-slot'},
   {id: 'rail-panels', slot: 'mobile-display-slot'},   // 🗺 Map / 🔐 Decoders / 🗣 Transcription (the phone has no rail)
 ];
 function applyMobileRelocation() {
@@ -17669,7 +18001,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function sfsPaneSquelch(ctx, p) {
     const lvl = sfsSqLevel();
     if (lvl === null || !(sfsSt.watch || []).some(b => b.ch === p.ch)) return;
-    const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;   // as the pane's own VFO squelch lines
+    const top = 4, bot = p.sh - 14, ymax = paneYMax(p);   // as the pane's own VFO squelch lines
     const y = bot - lvl / ymax * (bot - top);
     if (y >= top && y <= bot) sfsSqLine(ctx, p.L, p.sw - 4, y, lvl);
   }
@@ -27345,7 +27677,7 @@ window.addEventListener('load',()=>{
   setInterval(pbTick, 1000);
 
   // Start auto-range if enabled by default
-  if ($id('wf-autorange') && $id('wf-autorange').checked) {
+  if (viewCommon.auto) {
     toggleAutoRange(true);
   }
 });

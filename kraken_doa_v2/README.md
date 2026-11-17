@@ -132,8 +132,9 @@ and reconnects by itself after a restart. `KRAKEN_NO_POWER=1` hides the buttons,
 
 The main area shows the **spectrum + waterfall** (click/drag the tuning bar to set the
 listen frequency - it lands on a multiple of the top bar's **Step**, 1 Hz to 100 kHz;
-hold Shift while dragging to tune finely, to the Hz; waterfall has speed, colormap,
-and min/max/auto-range controls) and
+hold Shift while dragging to tune finely, to the Hz; the **View** button on its header
+opens the display settings - scale, zoom, waterfall speed, colours, min/max/auto-range;
+in Independent mode each tuner pane has its own View button and settings) and
 the **MUSIC DoA panel** (compass-style bearing display, one per active decimator).
 
 ---

@@ -168,7 +168,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   header only scrolls the grid; the pane readout's dots `.pfd-sep` are
   centred like the VFO cards' `.vfd-sep`; `sendFreqChange` / `sgn`
   still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
-  frequencies, per-pane waterfall auto-range (`computeAutoRange`)
+  frequencies, per-pane waterfall auto-range (`computeAutoRange`), a View button at the
+  header's right end (per-tuner View settings, below; its click selects the pane too)
 - Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..ZOOM_MAX, off}`
   per display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
   ZOOM_MAX 32 (16 until 2026-10-22, the user's request; the slider 0-125).
@@ -185,8 +186,42 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   BEFORE it reaches the plot / waterfall (`applyClip`, `indepOnFrame`), so
   spectrum, tuning bars and waterfall share it. Mouse wheel = x1.25 around the cursor (`zoomWheel`; on
   #fp / #wf-container, or a pane's overlay - which selects it); the Zoom
-  slider (in the spectrum's header - `.wf-controls`; log2 x 25) shows / sets the main or the selected
-  pane's zoom (`zoomSyncSlider`)
+  slider (in the View popover - *sidebar.md*; log2 x 25) shows / sets the main display's zoom,
+  in independent mode the popover's tuner's, and with "View · all tuners" every pane's (it
+  shows the selected pane's level) (`zoomTarget`, `zoomSyncSlider`)
+- Per-tuner View settings (2026-11-17; the user asked for each tuner to have its own display
+  settings in its own header): every pane header ends with a View button that opens the View
+  popover for that tuner (*sidebar.md*, script block "VIEW POPOVER"). Scale (the pane
+  spectrum's dB top - `paneYMax(p)` in `paneDrawSpec`, the VFO and scan squelch lines and the
+  squelch drag), Zoom (`p.zoom`, as before), Speed, Colors, Auto, Min and Max are each per
+  tuner. The model is "the tuner's own value, else the common one; the last change wins":
+  - The common values are the ones the page always had: `UI:FFT_Y`, `UI:WF_SPEED`,
+    `UI:WF_COLORMAP`, `UI:WF_MIN`, `UI:WF_MAX`, `UI:WF_AUTO` - stored by the receiver and
+    replayed to every browser (`viewCommon` in the globals block). Nothing changed on the
+    wire, no new command.
+  - A pane's popover sets the tuner's OWN value, kept in this browser:
+    `localStorage['kraken_pane_view']` = `{v:1, g:{...}, t:{"2":{y:80, cmap:"viridis"}}}`
+    (`viewStore`; keys y, speed, cmap, auto, min, max). Effective value = `viewEff(ch, k)`:
+    the tuner's own, else the common one. Per browser because the receiver has no per-tuner
+    display setting (adding one would change the protocol and every page), and which tuner
+    shows what at which scale is a choice for the screen in front of the user, like the
+    sidebar layout. Nothing is sent for a tuner's own value.
+  - "View · all tuners" (the spectrum header's button in independent mode) sets the common
+    value as before AND drops that key's own value from every tuner - "all tuners" really
+    sets all of them, nothing stays hidden behind an own value. The single spectrum's button
+    (coherent / wideband scan) sets the common value only and keeps the tuners' own values.
+  - A common value from the receiver (the replay at connect, another browser's change) drops
+    the tuners' own values of that key only if it differs from `g[key]`, the value this
+    browser saw last (sent or received); `g` is updated either way. The replay of an
+    unchanged value at page load therefore keeps them; with no `g` yet the value counts as
+    unchanged. The page's own echoes are recognised (`viewEcho`) and ignored.
+  - Auto per tuner: the pane auto-range tick (500 ms, `computeAutoRange`) ranges each pane
+    whose effective Auto is on. Turning a tuner's Auto off keeps the range where Auto left it
+    (it becomes the tuner's own Min / Max), as the single spectrum's Auto always did.
+  - Zoom is not stored (as before). Tuners that are not there (fewer now) keep their stored
+    values, unused; broken storage = no own values.
+  - In coherent and wideband-scan modes there is one spectrum and one popover with the
+    common values. Test: job scratch `test_view.py` (96 checks, *sidebar.md*)
 - `applyClip(newFrame)`: ONLY a frame from the receiver (`applyClip(true)`)
   adds a waterfall line; zoom / zoom slider / edge-clip slider redraw the
   last frame without one (the waterfall just takes the new range for its

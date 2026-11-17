@@ -177,7 +177,12 @@ bias tee. Heimdall's page and terminal say "generic RTL-SDR" when this is
 the case.
 
 In every mode the mouse wheel zooms the spectrum (up to 32x), and the bar
-between spectrum and waterfall can be dragged to change the split. Levels
+between spectrum and waterfall can be dragged to change the split. The
+**View** button on the spectrum's header opens its display settings: the
+dB scale, zoom, and the waterfall's speed, colours and range (Auto, or Min /
+Max). In Independent mode every tuner pane has its own View button, and its
+settings are that tuner's own (kept in the browser); the header's View
+button then sets all tuners at once. Levels
 are drawn in dB above the receiver's noise floor. The receiver remembers
 that floor, so a signal that fills the whole band (DVB-T, LTE) still shows
 at its real height.

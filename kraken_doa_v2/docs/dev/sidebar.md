@@ -160,8 +160,8 @@ page got the same treatment on 2026-11-16.
 - Colours: only the palette's tokens (*theme.md*).
 - Two CSS blocks hold the look: "Sidebar look" (scoped to `.sidebar`: the
   box chrome, the label column) and "Page look" (the same buttons, text
-  boxes, sliders and switches for the top bar, the spectrum's header (its
-  display controls were the waterfall bar), the
+  boxes, sliders and switches for the top bar, the spectrum's header and its
+  View popover (the display controls, once the waterfall bar), the
   panels, the map, the dialogs and the assistant; panels with a header bar,
   pill tabs and badges). Both sit before the phone rules. The phone layout
   moves top-bar controls into the sidebar (`#mobile-controls-slot`); their
@@ -380,16 +380,12 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   spectrum's header reading "Antenna N" (`updateChannelSelector`), next to
   the title, which is now "Spectrum · <demods heard>" (`updatePlotTitle`).
   Coherent mode only. The phone layout no longer moves it into the drawer.
-- **The display controls** (Scale, Zoom, Speed, Colors, Min, Max, Auto -
-  `#wf-controls-bar`, `.wf-controls`) are in the spectrum's header too,
-  after the antenna selector (2026-11-17, the user's wish; they were a bar
-  under the waterfall, which now reaches the panel's bottom). In the header
-  the block is `display:contents`, so each control is an item of the header
-  and wraps on its own: one line when the spectrum is wide (the right-hand
-  pane hidden), two at the default layout, three at the narrowest; the `?`
-  ends the last line. The phone layout still moves the whole block into the
-  drawer's Display box (`MOBILE_RELOCATIONS`) and the header keeps only the
-  title, the antenna selector and `?`.
+- **The display controls** (Scale, Zoom, Speed, Colors, Min, Max, Auto)
+  were moved from a bar under the waterfall into the spectrum's header on
+  2026-11-17 (the user's wish; the waterfall now reaches the panel's
+  bottom), where they wrapped to two or three lines. The same day they went
+  behind the header's **View** button, in a popover - "View button and
+  popover" below.
 - **The rail** (`#rail`, at the right edge after the assistant's dock): one
   button per panel - `#map-btn` (🗺 DoA & Map, `mapToggle`: the whole
   right-hand pane, MUSIC DoA included - *map.md*), `#rail-dec` (🔐 Decoders) /
@@ -399,14 +395,16 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   the transcripts alone, never both - *voice-to-text.md*) - lit while their
   panel shows (`railSync`, called from `infoRenderTabs` and
   `infoPanelClose`; 🗣 carries the count of unseen transcripts; on the
-  phone the three share a row of the drawer's Display box and wrap when it
+  phone the three share a row of the drawer's Panels box and wrap when it
   is too narrow), and `#rail-ai`, the assistant's, always there
   (`aiDockToggle`; lit while its dock is open - by CSS from the body
   classes; while the assistant is not set up on the receiver it opens a
   dock that only says how to set it up - *ai-assistant.md*). It replaces the collapsed assistant's strip (`#ai-strip`) and
   the three buttons at the end of the old waterfall bar. The phone layout has
   no rail: `applyMobileRelocation` moves `#rail-panels` into the drawer's
-  Display box (where the buttons were before), the assistant keeps its
+  phone-only box `mobile-display` (where the buttons were before; titled
+  "🗂️ Panels" since 2026-11-17, when the display controls it also held
+  went behind the View button - the key stayed), the assistant keeps its
   floating button.
 - Tests (48 checks, headless Chromium, real mouse / touch): the bar's
   content and order, one row at 1700 px, labels above controls, the chips
@@ -421,6 +419,95 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   rail; no JS errors. The other suites pass unchanged (53 + 78 + 35 + 33).
 - Not covered: heimdall's own page (`heimdall_v2/index.html`, a light page
   of its own) and `array_calculator.html` (already in this style).
+
+### View button and popover (2026-11-17)
+
+The user asked to "compress the Scale / Zoom / Speed / Colors / Waterfall
+min/max etc into a smaller space", because in independent mode each tuner
+should have its own settings in its own header - "a simple settings button
+to press to open these settings as a box that floats just underneath the
+button". Script block "VIEW POPOVER", CSS `.view-btn` / `.view-pop`; the
+per-tuner model is in *operating-modes.md*.
+
+- **The button**: `#view-btn-main` on the spectrum's header -
+  `[Spectrum · WBFM] [Antenna 0] ...... [View] [?]`, one line again at every
+  width down to the narrowest spectrum (400 px) and on a phone. A "sliders"
+  icon (inline SVG in `currentColor`, three tracks with knobs; `VIEW_ICON`)
+  and the word View. Not the cog (that is ⚙ Setup Settings), and not
+  "Display": the sidebar's Display box holds other settings (FFT size,
+  averaging, edge clip). In independent mode every tuner pane's header ends
+  with the same button, icon only (`#tpane-vb-N`, title "View: scale, zoom,
+  waterfall - tuner N"), after the VFO badges; its click also selects the
+  pane (the header's click handler). `aria-haspopup="dialog"`,
+  `aria-expanded`; lit (accent) while its popover is open.
+- **The popover** (`#view-pop`, `role="dialog"`, `aria-label` = its title):
+  "View" (single spectrum), "View · all tuners" (the header's button in
+  independent mode) or "View · T2". About 250 px wide: SPECTRUM - Scale,
+  Zoom (the points' spacing, `#zoom-res`, small under the zoom value);
+  WATERFALL - Speed, Colors, Auto (a `.sw` switch), Min, Max. A label
+  column, the control, the value right-aligned in a 48 px column with
+  tabular numbers, so nothing jitters while dragging. While Auto is on, Min
+  and Max are disabled (dimmed) and show what Auto set, moving with it -
+  before, they could be dragged and the next auto tick (500 ms) put them
+  back. The old element ids are kept (`fft-ymax`, `zoom-sl`, `wf-speed`,
+  `wf-colormap`, `wf-min`, `wf-max`, `wf-autorange`, their value spans,
+  `wf-controls-bar` on the popover's body).
+- **One set of controls with a target** (`viewTarget`: `'main'` or a tuner
+  number; null = closed). The controls hold no state: `viewCommon` (the
+  common values) and `viewStore` (the tuners' own) are in the globals block,
+  every reader goes there - the receiver's replay (`applyUiSetting` ->
+  `viewOnRemote`), `panesBuild`, `updateWaterfallRange`,
+  `autoRangeWaterfall` (it wrote the Min / Max sliders, now
+  `viewCommon.min / max`), the pane drawing (`paneYMax`) - and
+  `viewPopSync()` fills the controls from the target when it opens and when
+  a value changes. So a replayed value can never land in a control that
+  shows another tuner. The receiver relays every `UI:` command to every
+  page, the sender too: the page notes what it sent (`viewEcho`, 5 s) and
+  takes those echoes as its own, so an older echo arriving during a slider
+  drag no longer needs the focus guard the controls had.
+- **The element moves to its button** (`btn.after(pop)`), so Tab goes from
+  the button into the controls in order; it goes home after
+  `#view-btn-main` when it closes. Placed `position:fixed` from the
+  button's rect (the panes scroll inside `#indep-grid`, which clips; the help
+  tips work the same way): under it with the right edges aligned; left-
+  aligned when that would leave the window, above the button when there is
+  no room below (the bottom pane of a small window); always inside the
+  window (8 px margin). One open at a time.
+- **Closes** on a second click of the button, Esc (the focus goes back to
+  the button), a press outside the popover and its button, a scroll of
+  anything holding the button (the tuner grid; the phone's page), a change
+  of the window's size, an operating mode change and `panesTeardown` (the
+  panes rebuilt). The page dispatches `resize` itself after layout changes
+  (the right-hand pane, the sidebar, the mode): when the window's size did
+  not change the popover stays and is placed again under its button. Not
+  modal, the page is not dimmed: the spectrum and waterfall change while a
+  slider is dragged.
+- **Phone**: the same button (32 px) and popover (`min(300px, 100vw -
+  24px)`, rows 38 px, 22 px thumbs). `wf-controls-bar` is no longer in
+  `MOBILE_RELOCATIONS`; the drawer's phone-only box `mobile-display` (key
+  kept) holds only the three panel buttons and is titled "🗂️ Panels".
+
+Tests (2026-11-17, scratch `test_view.py`, headless Chromium with real
+mouse, key and touch events; 96 checks): the header's order and one line at
+1700 px with the right-hand pane open, without it, with a long title, at
+1300 and 1100 px; the button's icon, wording, aria; the popover under the
+button, right-aligned, on top, inside the window at 1700 / 1300 / 1100 px;
+its rows, columns and headings; every control by mouse or key with what it
+sends (a spy on `send`) and stores (`localStorage`); echoes and another
+browser's change; every way to close it, a page `resize` without a window
+change keeping it; Tab / Enter / Space / arrow keys / Esc; independent
+mode: the pane buttons, T2's Scale / Speed / Colors / Auto / Min / Zoom
+change T2 only and nothing is sent, the auto tick leaves its range alone,
+the popover's values follow the target, a replayed unchanged common value
+keeps T2's own values and a changed one drops that key's, T2's values over
+a reload, "all tuners" sets every pane and drops the own values, tuners
+that are not there, broken storage, the panes rebuilt, one popover at a
+time; a 1300 x 640 window: the right-most pane, the grid scrolled by the
+wheel closes it, the bottom pane opens it above its button; phone: the
+header, a tap opens it inside the screen, a finger drags a slider, a tap
+outside closes it, the Panels box; no JS errors. `test_hdr.py` (the
+header) was rewritten for the button (28 checks); `test_page.py` opens the
+popover before it drags Min.
 
 ## Tests (2026-11-15, headless Chromium, real mouse / touch events)
 
