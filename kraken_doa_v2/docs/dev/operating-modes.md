@@ -175,7 +175,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   BEFORE it reaches the plot / waterfall (`applyClip`, `indepOnFrame`), so
   spectrum, tuning bars and waterfall share it. Mouse wheel = x1.25 around the cursor (`zoomWheel`; on
   #fp / #wf-container, or a pane's overlay - which selects it); the Zoom
-  slider (wf-controls bar, log2 x 25) shows / sets the main or the selected
+  slider (in the spectrum's header - `.wf-controls`; log2 x 25) shows / sets the main or the selected
   pane's zoom (`zoomSyncSlider`)
 - `applyClip(newFrame)`: ONLY a frame from the receiver (`applyClip(true)`)
   adds a waterfall line; zoom / zoom slider / edge-clip slider redraw the

@@ -1467,7 +1467,14 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar.cal-calibrated {background:linear-gradient(to bottom,rgba(64,174,103,0.13) 0%,rgba(64,174,103,0) 100%),var(--s2);border-bottom-color:var(--ok);box-shadow:inset 0 -2px 0 var(--ok)}
 .top-bar.cal-cooldown {background:linear-gradient(to bottom,rgba(227,168,66,0.18) 0%,rgba(227,168,66,0) 100%),var(--s2);border-bottom-color:var(--warn);box-shadow:inset 0 -2px 0 var(--warn)}
 /* the antenna shown, on the spectrum's header */
-.spectrum-header {justify-content:flex-start;gap:10px}
+/* the header holds the title, the antenna selector and the display controls,
+   left to right, and wraps to a second line when the panel is narrow; ? ends
+   the last line. The controls' block is flattened so each control wraps on its own. */
+.spectrum-header {justify-content:flex-start;flex-wrap:wrap;gap:5px 14px;padding:5px 10px}
+.spectrum-header .wf-controls {display:contents}
+.spectrum-header .wf-controls .wf-sep {display:none}
+.wf-controls .wf-rng {display:flex;align-items:center;gap:8px}
+.spectrum-header .wf-controls .wf-rng {gap:14px}
 .spectrum-header .spec-ch {background:var(--s1);border:1px solid var(--l2);color:var(--t0);border-radius:5px;height:24px;padding:0 4px;font-size:12px}
 .spectrum-header .spec-ch:focus {border-color:var(--ac-l);outline:none;box-shadow:0 0 0 2px rgba(72,160,244,.22)}
 /* the rail */
@@ -1546,7 +1553,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .slider::-moz-range-thumb,.top-bar .gain-slider::-moz-range-thumb {width:22px;height:22px}
   .ctrl-row input[type="number"],.ctrl-row select,.top-bar select,.top-bar input[type="number"] {min-height:32px}
   .wf-controls input[type="range"] {width:80px;height:8px}
-  /* Sidebar sections that host controls relocated from the top bar / waterfall bar */
+  /* Sidebar sections that host controls relocated from the top bar / the spectrum's header */
   .mobile-only {display:block}
   #mobile-controls-slot .tb-group {display:flex;align-items:center;gap:8px;margin:10px 0;width:100%}
   #mobile-controls-slot .tb-label {font-size:13px;color:var(--t5);min-width:48px}
@@ -2647,6 +2654,39 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
             <option value="3">Antenna 3</option>
             <option value="4">Antenna 4</option>
           </select>
+          <!-- the display controls of the spectrum and the waterfall (they were a bar under the
+               waterfall). The phone layout moves this block into the drawer's Display box. -->
+          <div class="wf-controls" id="wf-controls-bar">
+            <label title="Top of the spectrum's dB scale">Scale<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val" class="wf-val">60</span></label>
+            <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom<input type="range" id="zoom-sl" min="0" max="125" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" class="wf-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#7f8995;margin-left:4px;min-width:44px"></span></label>
+            <span class="wf-sep"></span>
+            <label title="Waterfall speed">Speed <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
+            <label title="Waterfall colours">Colors
+              <select id="wf-colormap" onchange="updateWaterfallColormap(this.value);sendUI('WF_COLORMAP',this.value)">
+                <option value="sdryoussef" selected>SDR# (Youssef)</option>
+                <option value="sdrpp">SDR++</option>
+                <option value="viridis">Viridis</option>
+                <option value="plasma">Plasma</option>
+                <option value="grayscale">Gray</option>
+              </select>
+            </label>
+            <div class="wf-rng">
+              <label style="display:flex;align-items:center;gap:4px">
+                <span>Min</span>
+                <input type="range" id="wf-min" min="-20" max="60" value="-10" oninput="updateWaterfallRange();sendUI('WF_MIN',this.value)" style="width:80px">
+                <span id="wf-min-val" class="wf-val" style="width:45px;text-align:right">-10 dB</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:4px">
+                <span>Max</span>
+                <input type="range" id="wf-max" min="10" max="80" value="50" oninput="updateWaterfallRange();sendUI('WF_MAX',this.value)" style="width:80px">
+                <span id="wf-max-val" class="wf-val" style="width:45px;text-align:right">50 dB</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Set the waterfall's Min / Max from the signal levels">
+                <input type="checkbox" id="wf-autorange" checked onchange="toggleAutoRange(this.checked);sendUI('WF_AUTO',this.checked?1:0)">
+                <span>Auto</span>
+              </label>
+            </div>
+          </div>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
         </div>
         <div class="spectrum-content">
@@ -2659,37 +2699,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
           </div>
           <!-- Independent mode: one spectrum + waterfall per tuner -->
           <div id="indep-grid"></div>
-        </div>
-        <div class="wf-controls" id="wf-controls-bar">
-          <label title="Top of the spectrum's dB scale">Scale<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val" class="wf-val">60</span></label>
-          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom<input type="range" id="zoom-sl" min="0" max="125" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" class="wf-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#7f8995;margin-left:4px;min-width:44px"></span></label>
-          <span class="wf-sep"></span>
-          <label title="Waterfall speed">Speed <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
-          <label title="Waterfall colours">Colors
-            <select id="wf-colormap" onchange="updateWaterfallColormap(this.value);sendUI('WF_COLORMAP',this.value)">
-              <option value="sdryoussef" selected>SDR# (Youssef)</option>
-              <option value="sdrpp">SDR++</option>
-              <option value="viridis">Viridis</option>
-              <option value="plasma">Plasma</option>
-              <option value="grayscale">Gray</option>
-            </select>
-          </label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <label style="display:flex;align-items:center;gap:4px">
-              <span>Min</span>
-              <input type="range" id="wf-min" min="-20" max="60" value="-10" oninput="updateWaterfallRange();sendUI('WF_MIN',this.value)" style="width:80px">
-              <span id="wf-min-val" class="wf-val" style="width:45px;text-align:right">-10 dB</span>
-            </label>
-            <label style="display:flex;align-items:center;gap:4px">
-              <span>Max</span>
-              <input type="range" id="wf-max" min="10" max="80" value="50" oninput="updateWaterfallRange();sendUI('WF_MAX',this.value)" style="width:80px">
-              <span id="wf-max-val" class="wf-val" style="width:45px;text-align:right">50 dB</span>
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Set the waterfall's Min / Max from the signal levels">
-              <input type="checkbox" id="wf-autorange" checked onchange="toggleAutoRange(this.checked);sendUI('WF_AUTO',this.checked?1:0)">
-              <span>Auto</span>
-            </label>
-          </div>
         </div>
         <!-- Bottom panel: more room for the digital decoders' data and the
              Voice to Text transcripts (tabs) -->

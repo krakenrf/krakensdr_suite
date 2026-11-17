@@ -3,7 +3,7 @@
 The left sidebar of `kraken_doa.html` is a column of boxes (`.sb-section`),
 one per feature. This file covers the box chrome (collapse, move, what is
 remembered) and the rules every control and text on the page follows - the
-sidebar first, then the top bar, the waterfall bar, the panels, the map and
+sidebar first, then the top bar, the spectrum's header, the panels, the map and
 the dialogs. Each feature's own controls are in that feature's topic file.
 
 ## Boxes
@@ -160,7 +160,8 @@ page got the same treatment on 2026-11-16.
 - Colours: only the palette's tokens (*theme.md*).
 - Two CSS blocks hold the look: "Sidebar look" (scoped to `.sidebar`: the
   box chrome, the label column) and "Page look" (the same buttons, text
-  boxes, sliders and switches for the top bar, the waterfall bar, the
+  boxes, sliders and switches for the top bar, the spectrum's header (its
+  display controls were the waterfall bar), the
   panels, the map, the dialogs and the assistant; panels with a header bar,
   pill tabs and badges). Both sit before the phone rules. The phone layout
   moves top-bar controls into the sidebar (`#mobile-controls-slot`); their
@@ -289,6 +290,16 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   spectrum's header reading "Antenna N" (`updateChannelSelector`), next to
   the title, which is now "Spectrum · <demods heard>" (`updatePlotTitle`).
   Coherent mode only. The phone layout no longer moves it into the drawer.
+- **The display controls** (Scale, Zoom, Speed, Colors, Min, Max, Auto -
+  `#wf-controls-bar`, `.wf-controls`) are in the spectrum's header too,
+  after the antenna selector (2026-11-17, the user's wish; they were a bar
+  under the waterfall, which now reaches the panel's bottom). In the header
+  the block is `display:contents`, so each control is an item of the header
+  and wraps on its own: one line when the spectrum is wide (the right-hand
+  pane hidden), two at the default layout, three at the narrowest; the `?`
+  ends the last line. The phone layout still moves the whole block into the
+  drawer's Display box (`MOBILE_RELOCATIONS`) and the header keeps only the
+  title, the antenna selector and `?`.
 - **The rail** (`#rail`, at the right edge after the assistant's dock): one
   button per panel - `#map-btn` (🗺 DoA & Map, `mapToggle`: the whole
   right-hand pane, MUSIC DoA included - *map.md*), `#rail-dec` (🔐 Decoders) /
@@ -303,7 +314,7 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   (`aiDockToggle`; lit while its dock is open - by CSS from the body
   classes; while the assistant is not set up on the receiver it opens a
   dock that only says how to set it up - *ai-assistant.md*). It replaces the collapsed assistant's strip (`#ai-strip`) and
-  the three buttons at the end of the waterfall bar. The phone layout has
+  the three buttons at the end of the old waterfall bar. The phone layout has
   no rail: `applyMobileRelocation` moves `#rail-panels` into the drawer's
   Display box (where the buttons were before), the assistant keeps its
   floating button.
