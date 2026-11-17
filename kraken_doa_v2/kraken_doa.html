@@ -669,6 +669,8 @@ body.map-on #rp-tab-map, body.map-on #rp-tab-both, body.map-on .doa-header .rp-c
 body.map-on .doa-header .rp-tab {cursor:pointer;color:var(--t5);font-weight:normal;padding-bottom:1px;border-bottom:2px solid transparent}
 body.map-on .doa-header .rp-tab.sel {color:var(--ac-t);font-weight:bold;border-bottom-color:var(--ac-t)}
 body.map-on.mode-wideband .doa-panel, body.map-on.mode-independent .doa-panel {display:flex !important}
+/* coherent mode, the pane hidden with the rail's DoA & Map button: MUSIC DoA goes too */
+body.rp-off .doa-panel, body.rp-off .rp-resizer {display:none !important}
 body.rp-map .doa-content {display:none}
 body.rp-map .map-pane {display:block}
 body.rp-map .doa-panel {width:var(--map-w,42%);min-width:260px;max-width:none;overflow:hidden}
@@ -2736,7 +2738,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
           <span class="title rp-tab coh-only" id="rp-tab-doa" onclick="rpShow('doa')">MUSIC DoA</span>
           <span class="title rp-tab" id="rp-tab-map" onclick="rpShow('map')">🗺 Map</span>
           <span class="title rp-tab coh-only" id="rp-tab-both" onclick="rpShow('both')" title="MUSIC DoA and the map at once">⊞ Both</span>
-          <button type="button" class="info-close rp-close" onclick="mapToggle(false)" title="Close the map">✕</button>
+          <button type="button" class="info-close rp-close" onclick="mapToggle(false)" title="Close this pane (the rail's button opens it again)">✕</button>
         </div>
         <div class="doa-content">
           <div id="doa-displays">
@@ -2875,7 +2877,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
        (applyMobileRelocation), the assistant keeps its floating button. -->
   <nav class="rail" id="rail" aria-label="Panels">
     <span class="rail-panels" id="rail-panels">
-      <button type="button" class="rail-btn" id="map-btn" onclick="mapToggle()" title="Street / satellite map in the right-hand pane: positions the decoders report (e.g. ADS-B aircraft)"><span class="i">🗺</span><span class="v">Map</span></button>
+      <button type="button" class="rail-btn" id="map-btn" onclick="mapToggle()" title="The right-hand pane: MUSIC DoA and the street / satellite map (positions the decoders report, e.g. ADS-B aircraft)"><span class="i">🗺</span><span class="v"><span class="coh-only">DoA &amp; </span>Map</span></button>
       <button type="button" class="rail-btn" id="rail-dec" onclick="railPanel('dec')" title="Digital decoders: one tab per decoder, in the panel under the waterfall"><span class="i">🔐</span><span class="v">Decoders</span></button>
       <button type="button" class="rail-btn" id="rail-voice" onclick="railPanel('voice')" title="Transcription (Voice to Text): what was said on the VFOs with Transcribe ticked"><span class="i">🗣</span><span class="v">Transcription</span><span class="n" id="rail-voice-n"></span></button>
     </span>
@@ -3076,11 +3078,20 @@ let serverPkg = false;
 const MAP_MIN_Z = 2, MAP_MAX_Z = 22, MAP_TILE_CACHE = 400, MAP_TRAIL_MAX = 400, MAP_TRAIL_S = 900;
 // a weather balloon's whole flight (ascent ~1.5 h, descent ~40 min, then on the ground)
 const MAP_TRAIL_BALLOON_MAX = 4000, MAP_TRAIL_BALLOON_S = 4 * 3600;
+// on = the map is wanted (outside coherent mode: the pane - it is only the
+// map there - is shown); pane = in coherent mode the right-hand pane (MUSIC
+// DoA / Map / Both) is shown; tab = what it shows in coherent mode.
 const mapState = (() => {
-  const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true, masts: false,
+  const d = {on: false, pane: true, tab: 'doa', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true, masts: false,
              rdfVfo: 'all', rdfTid: '', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true,
              vs: false, vsOpen: true, srch: false};
-  try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
+  try {
+    const st = JSON.parse(localStorage.getItem('kraken_map') || '{}');
+    // stored before the pane could be hidden: MUSIC DoA always showed in
+    // coherent mode, and the tabs only while the map was on
+    if (st && typeof st === 'object' && !('pane' in st)) { st.pane = true; if (!st.on) st.tab = 'doa'; else if (!st.tab) st.tab = 'map'; }
+    return Object.assign(d, st);
+  } catch (e) { return d; }
 })();
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
 // OpenStreetMap's attribution (HTML): a link to its copyright page wherever its
@@ -9783,7 +9794,7 @@ function applyOpModeUI(m) {
   if (dot) dot.disabled = m !== 'coherent';
   if (!changed) return;
   if (m === 'independent') panesBuild(); else panesTeardown();
-  if (typeof rpApply === 'function') rpApply();   // map tab: always shown outside coherent
+  if (typeof rpApply === 'function') rpApply();   // the right-hand pane: its tabs in coherent mode, the map alone outside
   zoomSyncSlider();
   updatePlotTitle();
   if (decimatorInfo && decimatorInfo.length) updateDecimatorList(decimatorInfo.slice());
@@ -11506,7 +11517,7 @@ function addTouchHandlers(el, down, move, up) {
       if (tk) talkerPick(tk.vfo, tk.tid);
       return;
     }
-    if (!mapState.on) mapToggle(true);
+    if (!mapIsOn()) mapToggle(true);
     else rpShow('map');
     mapSel = k;
     mapAutoFit = false;
@@ -12343,7 +12354,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (infoOpen('dec')) v.bottom_tab = 'decoder: ' + (digTabShown || '');
       else if (infoOpen('voice')) v.bottom_tab = 'voice to text';
       const b = document.body.classList;
-      if (b.contains('map-on')) {
+      if (b.contains('rp-off')) v.right_pane = 'hidden (DoA & Map on the rail opens it)';
+      if (mapIsOn()) {
         const [la, lo] = mapUnproj(mapState.mx, mapState.my);
         v.map = {shown: true, tab: mapState.tab, center: [+la.toFixed(4), +lo.toFixed(4)], zoom: +mapState.z.toFixed(1)};
         if (mapState.rdfTid) v.map.df_selected = mapState.rdfTid;
@@ -12974,7 +12986,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         `<label title="For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR."><input type="checkbox" ${o.invert ? 'checked' : ''} onchange="digSetOptFor(${id}, 'invert', this.checked ? 1 : 0)"> Invert</label>` +
         (st && (st.map_capable || st.map_points > 0 || hasMessages)
           ? `<label title="Show this VFO's positions (e.g. aircraft) / incidents on the 🗺 Map in the right-hand pane"><input type="checkbox" ${o.map === true ? 'checked' : ''} onchange="digSetOptFor(${id}, 'map', this.checked ? 1 : 0); if (this.checked) mapToggle(true)"> 🗺 Plot on map${st.map_points ? ' (' + st.map_points + ')' : ''}</label>` +
-            (o.map === true && !mapState.on ? `<button class="btn sm" type="button" onclick="mapToggle(true)" title="Open the map in the right-hand pane">Show map</button>` : '')
+            (o.map === true && !mapIsOn() ? `<button class="btn sm" type="button" onclick="mapToggle(true)" title="Open the map in the right-hand pane">Show map</button>` : '')
           : '') +
       `</div>` + warn;
   }
@@ -13926,7 +13938,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     v2tRenderTab(true);
     // the map, with the place in view
     const org = v2tLobeOrigin(L);
-    const wasOff = !mapState.on;
+    const wasOff = !mapIsOn();
     if (wasOff) mapToggle(true);
     else if (opMode === 'coherent' && mapState.tab === 'doa') rpShow('map');
     if (!org) { mapStatusFlash('No station position - set it in the sidebar (Station Information) to place the lobe'); return; }
@@ -14599,28 +14611,51 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function mapSet(k, v) { mapState[k] = v; mapSave(); mapUpdateControls(); mapDraw(); }
 
   // --- pane: on/off, tabs, width -------------------------------------------
+  // The right-hand pane and the rail's button for it ("DoA & Map"; "Map"
+  // outside coherent mode, where there is no DoA). Coherent mode: the pane
+  // shows MUSIC DoA, the map or both (its tabs, mapState.tab) and the button
+  // shows / hides all of it (mapState.pane) - hidden, MUSIC DoA is hidden
+  // too and the spectrum takes the room (the user's wish, 2026-11-17; before,
+  // MUSIC DoA always showed and the button switched only the map). Other
+  // modes: the pane is only the map, shown while mapState.on.
+  function rpOpen() { return opMode === 'coherent' ? mapState.pane !== false : !!mapState.on; }
+  // the map is switched on and its pane is open (it may still be on the MUSIC DoA tab)
+  function mapIsOn() { return !!mapState.on && rpOpen(); }
+  // no argument: the rail's button - the pane as it was left, or hide it;
+  // true: open the pane on the map (every "show it on the map"); false: hide it
   function mapToggle(on) {
-    mapState.on = on === undefined ? !mapState.on : !!on;
-    if (mapState.on) mapState.tab = 'map';
+    const coh = opMode === 'coherent';
+    const want = on === undefined ? !rpOpen() : !!on;
+    if (on === true) { mapState.on = true; mapState.pane = true; mapState.tab = 'map'; }
+    else if (coh) mapState.pane = want;
+    else mapState.on = want;
     mapSave();
     rpApply();
-    if (mapState.on) { send('GET_MAP'); send('GET_RDF'); }
+    if (document.body.classList.contains('rp-map')) { send('GET_MAP'); send('GET_RDF'); }
   }
   function rpShow(tab) {
-    if (!mapState.on) return;
+    if (!rpOpen()) return;
+    const was = mapState.on;
+    if (tab !== 'doa') mapState.on = true;   // the map is wanted from now on (also in the other modes)
     mapState.tab = tab;
     mapSave();
     rpApply();
+    if (!was && mapState.on) { send('GET_MAP'); send('GET_RDF'); }
   }
-  // body classes: map-on (the pane shows in every mode, tabs in coherent),
-  // rp-map (the map tab is the one shown - outside coherent it always is)
+  // body classes: map-on (the pane shows: its tabs in coherent mode, the map
+  // alone in the others), rp-off (coherent mode, the pane hidden), rp-map
+  // (the map is what shows - outside coherent it always is), rp-both
   function rpApply() {
     const b = document.body;
-    const both = mapState.on && mapState.tab === 'both' && opMode === 'coherent';
-    const showMap = mapState.on && (mapState.tab === 'map' || both || opMode !== 'coherent');
-    const changed = b.classList.contains('map-on') !== mapState.on || b.classList.contains('rp-map') !== showMap ||
-                    b.classList.contains('rp-both') !== both;
-    b.classList.toggle('map-on', mapState.on);
+    const coh = opMode === 'coherent';
+    const open = rpOpen();
+    const both = open && coh && mapState.tab === 'both';
+    const showMap = open && (!coh || mapState.tab === 'map' || both);
+    const off = coh && !open;
+    const changed = b.classList.contains('map-on') !== open || b.classList.contains('rp-map') !== showMap ||
+                    b.classList.contains('rp-both') !== both || b.classList.contains('rp-off') !== off;
+    b.classList.toggle('map-on', open);
+    b.classList.toggle('rp-off', off);
     b.classList.toggle('rp-map', showMap);
     b.classList.toggle('rp-both', both);
     $id('rp-tab-doa').classList.toggle('sel', !showMap);
@@ -14628,7 +14663,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     $id('rp-tab-both').classList.toggle('sel', both);
     rpApplySplit();
     const btn = $id('map-btn');
-    if (btn) btn.classList.toggle('on', mapState.on);
+    if (btn) btn.classList.toggle('on', open);
     rpApplyWidth();
     // (shown again: draw it now - nothing drew while it was hidden, and the 📏 range's sweep starts from rgDraw)
     if (showMap) { mapInit(); mapResize(); if (changed) mapDraw(); }
@@ -16502,7 +16537,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
   // select a talker on the 🗺 Map's 📡 DF panel (again = the whole signal)
   function talkerPick(vfo, tid) {
-    if (!mapState.on) mapToggle(true);
+    if (!mapIsOn()) mapToggle(true);
     else if (opMode === 'coherent' && mapState.tab === 'doa') rpShow('map');
     const k = rdfGk(vfo, tid);
     if (rdfTidSel() === k) {
@@ -17291,7 +17326,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const f = sfGet(id), l = f && sfLoc(f.loc);
     if (!l) return;
     if (mobileLayoutMQ.matches) toggleSidebar(false);
-    if (!mapState.on) mapToggle(true); else rpShow('map');
+    if (!mapIsOn()) mapToggle(true); else rpShow('map');
     mapAutoFit = false;
     mkSelect(l.id);
     mapCenterOn(l.lat, l.lon, Math.max(mapState.z, 12));
@@ -17778,7 +17813,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     sfPicking = true;
     $id('sf-dlg-bg').style.display = 'none';
     if (mobileLayoutMQ.matches) toggleSidebar(false);
-    if (!mapState.on) mapToggle(true); else rpShow('map');
+    if (!mapIsOn()) mapToggle(true); else rpShow('map');
     const n = $id('sf-f-name').value.trim();
     const el = $id('map-pick');
     el.innerHTML = `<span>🗺 Click the map where ${n ? '“' + digEsc(n) + '”' : 'it'} is transmitted from (or a marker)</span>` +
@@ -22132,7 +22167,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // one job at a time; a newer link cancels the running one
   function plPump() {
     const key = plKey();
-    if (!key || (plRes && plRes.key === key) || !mapState.on) return;
+    if (!key || (plRes && plRes.key === key) || !mapIsOn()) return;
     if (plJob) {
       if (plJob.key !== key && !plJob.cancel) { plJob.cancel = true; plWorker.postMessage({cancel: plJob.job}); }
       return;
@@ -23956,7 +23991,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
   // the map pane open on the map tab
   function aiMapOpen() {
-    if (!mapState.on) mapToggle(true);
+    if (!mapIsOn()) mapToggle(true);
     else if (opMode === 'coherent' && mapState.tab === 'doa') rpShow('map');
   }
   const aiSleep = ms => new Promise(r => setTimeout(r, ms));
@@ -24025,7 +24060,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
   function aiVsStateJson(extra) {
     const s = plState, st = mapStationPos();
-    const o = {enabled: !!mapState.vs, map_open: !!mapState.on, mode: vsState.mode === 'sig' ? 'signal' : 'line_of_sight',
+    const o = {enabled: !!mapState.vs, map_open: mapIsOn(), mode: vsState.mode === 'sig' ? 'signal' : 'line_of_sight',
                target: {height_m: vsState.tgt, reference: vsState.amsl ? 'sea' : 'ground'}, refraction_k: aiR(vsK(), 4),
                station: st ? {lat: +st[0].toFixed(5), lon: +st[1].toFixed(5)} : null,
                sites: vsState.items.map(aiSiteJson), busy: aiVsBusy()};
@@ -25344,7 +25379,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function lrToggle(on) {
     lrOpen = on === undefined ? !lrOpen : !!on;
     if (!lrOpen) lrPlay(false);
-    if (lrOpen && !mapState.on) mapToggle(true);
+    if (lrOpen && !mapIsOn()) mapToggle(true);
     else if (lrOpen && mapState.tab === 'doa') rpShow('map');
     lrRender();
     mapUpdateControls();

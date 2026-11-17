@@ -737,9 +737,9 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   Thunderforest, Stadia Maps, HERE or a custom XYZ URL with the user's own
   API key (⚙ Settings in the top bar, per browser; `kraken_doa_v2/docs/dev/map.md`)
   (no map library, no CDN): without internet it keeps working on
-  a lat/lon grid with a notice. Opened with the 🗺 Map button on the right-hand
-  rail; a tab next to MUSIC DoA in coherent mode, the whole right pane
-  otherwise; resizable; view settings per browser (localStorage)
+  a lat/lon grid with a notice. Shown with the 🗺 DoA & Map button on the right-hand
+  rail (it shows / hides the whole right pane, MUSIC DoA included); a tab
+  next to MUSIC DoA in coherent mode, the whole right pane otherwise; resizable; view settings per browser (localStorage)
 - 🔍 Search (2026-10-21; kraken_doa_v2/CLAUDE.md *🔍 Map search*):
   coordinates in the usual forms, UTM, MGRS, grid locators, map links and
   the page's own places (markers, decoder points ...) read OFFLINE as typed;

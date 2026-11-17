@@ -290,7 +290,8 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   the title, which is now "Spectrum · <demods heard>" (`updatePlotTitle`).
   Coherent mode only. The phone layout no longer moves it into the drawer.
 - **The rail** (`#rail`, at the right edge after the assistant's dock): one
-  button per panel - `#map-btn` (`mapToggle`), `#rail-dec` (🔐 Decoders) /
+  button per panel - `#map-btn` (🗺 DoA & Map, `mapToggle`: the whole
+  right-hand pane, MUSIC DoA included - *map.md*), `#rail-dec` (🔐 Decoders) /
   `#rail-voice` (🗣 Transcription - "Voice" until 2026-11-17)
   (`railPanel`: opens the panel under the waterfall on that feature, or
   closes it when it already shows it; the panel shows the decoders' tabs or

@@ -52,13 +52,30 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   click = popup (the plugin's "key: value" info lines + position, distance
   / bearing from the station, age); status line = counts per VFO decoder
 - Right-hand pane: `.doa-panel#right-pane` holds the DoA displays and
-  `#map-pane`. `mapToggle()` (🗺 Map button on the right-hand rail, ✕, the
-  decoder tab's "Show map") / `rpShow('doa'|'map')` (header tabs, coherent
-  only) -> `rpApply()`: body classes `map-on` (pane shown in every mode)
-  and `rp-map` (map tab visible - always outside coherent); width
+  `#map-pane`. `mapToggle()` (the rail's button, the pane's ✕; `mapToggle(true)`
+  = "show it on the map": the decoder tab's "Show map" and every feature
+  that puts something on the map) / `rpShow('doa'|'map'|'both')` (header
+  tabs, coherent only) -> `rpApply()`: body classes `map-on` (the pane
+  shows), `rp-off` (coherent mode, the pane hidden), `rp-map` (the map is
+  what shows - always outside coherent) and `rp-both`.
+  **The rail's button is "DoA & Map" and shows / hides the whole pane
+  (2026-11-17, the user's wish; it was "Map" and switched only the map,
+  MUSIC DoA always showing).** Two stored flags, because the pane is two
+  different things: in coherent mode it is MUSIC DoA / Map / Both -
+  `mapState.pane` (default true) says whether it shows, `mapState.tab`
+  (default 'doa') what, and the tabs are always there while it shows; hidden,
+  MUSIC DoA is hidden too and the spectrum takes the room. Outside coherent
+  mode the pane is only the map, shown while `mapState.on` (default false:
+  no map until asked for), and the button's label drops "DoA & " (a
+  `.coh-only` span). `mapState.on` also means "the map is wanted": picking
+  the Map / Both tab sets it. `rpOpen()` = the pane shows in this mode;
+  `mapIsOn()` = `on` and `rpOpen()` - what "is the map open" checks use
+  (`mapState.on` alone is true while a coherent pane is hidden). A state
+  stored before `pane` existed is read as pane shown, on the DoA tab if the
+  map was off. Width
   `--map-w` (42% default, `#rp-resizer` drag on its left edge, double-click
   = default). The calibration greying applies to `.doa-content` only.
-  localStorage `kraken_map` {on, tab, w, layer, z, mx, my, trails} (the
+  localStorage `kraken_map` {on, pane, tab, w, layer, z, mx, my, trails} (the
   provider: `kraken_map_prov`, below); first
   open centres on the station (else the world) and fits the first markers
 - Tests: scratchpad mock-server test t_map (offline tiles forced by

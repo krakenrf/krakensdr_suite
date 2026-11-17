@@ -276,7 +276,9 @@ Direction finding needs Coherent mode.
 
 ### Map
 
-The **🗺 Map** button under the waterfall opens a street or satellite map.
+The **🗺 DoA & Map** button on the rail at the right edge of the page shows
+or hides the right-hand pane; its **🗺 Map** tab is a street or satellite map
+(outside coherent mode the pane is only the map, and the button says "Map").
 
 - **Decoded positions**: aircraft, ships, APRS stations, radios sending
   GPS, sondes and more, with their tracks. Click a marker for its details.
