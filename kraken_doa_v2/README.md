@@ -93,7 +93,12 @@ every box shows only its header, so the whole list fits; the sidebar scrolls whe
 you reach its top or bottom edge. The order and the collapsed boxes are
 remembered in the browser (also over a
 restart). **Collapse all / Open all / Order** at the bottom of the sidebar act on
-every box. Explanations are behind the **?** icons and tooltips. Top bar (always visible) has the
+every box. Explanations are behind the **?** icons and tooltips. Tooltips show when the
+mouse rests on a control or the keyboard moves to it; on a touch screen tap the **?** button
+at the right of the top bar (help mode), then tap any control to see what it does instead of
+working it (tap the **?** again, an empty spot or Esc to leave) - or press and hold a button
+for a moment.
+Dialogs and the phone's sidebar drawer have the same **?** in their headers. Top bar (always visible) has the
 **center-frequency dial, tuning step, gain slider, audio on/off + volume and the
 operating mode**, and at the right the status chips (calibration - with the cooldown
 countdown -, connection, and the scanner while one runs) above the live hardware

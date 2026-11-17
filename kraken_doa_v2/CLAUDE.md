@@ -109,6 +109,11 @@ The page (`kraken_doa.html`)
 - No explanations on the controls, anywhere on the page: short labels and
   states, the rest in a `?` help tip (`helpTip()` in JS) or a `title`; a new
   sidebar box needs its own `data-sb` key (`docs/dev/sidebar.md`).
+- A `title` is shown by the page's own tooltip (hover, focus; on touch
+  through help mode - the `?` button - or press and hold), with no setup;
+  it moves to `data-tip` on first use, so code reads help text with
+  `tipText(el)`, never `el.title` (`docs/dev/sidebar.md`, "How help is
+  shown").
 - Pictograms come from the page's icon set: `icon('name')` (inline SVG
   sprite), never an emoji (`docs/dev/icons.md`).
 - Colours come from the palette: `var(--token)` in the CSS, the token's hex

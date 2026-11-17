@@ -473,6 +473,28 @@ body.ai-dk-off .ai-dk-hist,body.ai-dk-off .ai-dk-head .ai-on {display:none !impo
 .help .tip{display:none;position:fixed;left:0;top:0;z-index:2000;width:max-content;max-width:240px;background:var(--l2);border:1px solid #0068bb;color:var(--t0);padding:8px 10px;border-radius:5px;font-size:12px;font-weight:normal;line-height:1.5;text-align:left;box-shadow:0 6px 20px rgba(0,0,0,0.55);white-space:normal;pointer-events:none}
 .help.tip-open .tip{display:block}
 .help.wide .tip{max-width:400px}
+/* The page's one tooltip (#page-tip, initHelpTips): the text of a `title` / data-tip, in the "?"
+   tips' look - on hover, keyboard focus, in help mode and on a press and hold. Plain text (line
+   breaks kept). On top of everything, dialogs and popovers included: it only ever shows for the
+   element under the pointer or the finger */
+.page-tip{display:none;position:fixed;left:0;top:0;z-index:10100;width:max-content;max-width:min(320px,calc(100vw - 16px));box-sizing:border-box;background:var(--l2);border:1px solid #0068bb;color:var(--t0);padding:7px 10px;border-radius:5px;font-size:12px;font-weight:normal;line-height:1.45;text-align:left;box-shadow:0 6px 20px rgba(0,0,0,0.55);white-space:pre-line;overflow-wrap:anywhere;pointer-events:none}
+.page-tip.on{display:block}
+/* help mode (the top bar's ? button, helpModeSet): the next tap / click on a control shows its
+   help instead of working it; the banner says so */
+body.help-mode,body.help-mode *{cursor:help !important}
+.help-banner{display:none;position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:10090;width:max-content;align-items:center;gap:0;max-width:calc(100vw - 24px);box-sizing:border-box;padding:7px 16px 7px 12px;border-radius:999px;background:var(--ac);border:1px solid var(--ac-h);color:#fff;font-size:13px;line-height:1.3;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+body.help-mode .help-banner{display:flex}
+.help-banner .ic{flex:none}
+/* the same ? in the headers of what covers the top bar: the dialogs, the phone drawer */
+.sf-dlg-h .hm-btn,.sidebar-mobile-header .hm-btn{margin-left:auto;display:flex;align-items:center;justify-content:center;flex:none;padding:0;border:0;border-radius:50%;background:none;cursor:pointer}
+.sf-dlg-h .hm-btn{width:24px;height:24px;color:#8aa}
+.sf-dlg-h .hm-btn .ic{font-size:16px}
+.sf-dlg-h .hm-btn + .x{margin-left:4px}
+.sidebar-mobile-header .hm-btn{width:34px;height:34px;margin-top:-6px;margin-bottom:-6px;color:var(--ac-t)}   /* finger-sized, the header as tall as before */
+.sidebar-mobile-header .hm-btn .ic{font-size:20px}
+.sf-dlg-h .hm-btn:hover,.sidebar-mobile-header .hm-btn:hover{background:var(--l3);color:#fff}
+.sf-dlg-h .hm-btn.on,.sidebar-mobile-header .hm-btn.on{background:var(--ac);color:#fff}
+.hm-btn:focus-visible{outline:2px solid var(--ac-l);outline-offset:1px}
 .sec {border-top:1px solid var(--l1);margin-top:10px;padding-top:10px}
 .hide {display:none}
 
@@ -1538,12 +1560,19 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 /* the right block: the chips above the telemetry, ⚙ beside both. Its width
    is reserved for a chip that comes and goes (the scanner's), so that one
    appearing never wraps the bar or moves a control */
-.top-bar .tb-right {margin-left:auto;min-width:436px;display:grid;grid-template-columns:1fr auto;grid-template-areas:"chips cog" "tele cog";justify-items:end;align-items:center;gap:4px 8px}
+.top-bar .tb-right {margin-left:auto;min-width:436px;display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"chips chips cog" "tele help cog";justify-items:end;align-items:center;gap:4px 8px}
 .top-bar .status-badges {grid-area:chips;margin-left:0;gap:6px;align-items:center}
 .top-bar .tele-group {grid-area:tele;margin-left:0;order:0}
 /* ⚙ Setup Settings: as tall as both lines of the block */
 .top-bar .tb-cog {grid-area:cog;align-self:stretch;width:46px;height:auto;min-height:46px;font-size:26px;border-radius:9px}
 .top-bar .tb-cog .ic {font-size:24px}
+/* ? help mode (helpModeToggle): small, at the end of the telemetry's line beside ⚙ (the chips'
+   line has no room: its width is the scanner chip's reserve); lit while on */
+.top-bar .tb-help {grid-area:help;flex:none;display:flex;align-items:center;justify-content:center;width:20px;height:20px;margin:-1px 0;padding:0;border:0;border-radius:50%;background:none;color:var(--ac-t);cursor:pointer}
+.top-bar .tb-help .ic {font-size:17px}
+.top-bar .tb-help:hover {background:var(--l3);color:#fff}
+.top-bar .tb-help:focus-visible {outline:2px solid var(--ac-l);outline-offset:1px}
+.top-bar .tb-help.on {background:var(--ac);color:#fff}
 .top-bar .tele-chip {padding-top:1px;padding-bottom:1px;font-size:11px}
 .top-bar .tele-chip .tele-lbl {padding-top:2px;padding-bottom:2px;margin:-1px 0;font-size:9px}
 .top-bar .status-badge {display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:.2px;
@@ -1604,9 +1633,14 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   body.sidebar-open .sidebar-backdrop {opacity:1;pointer-events:auto}
   .menu-btn {display:flex;width:42px;height:42px;font-size:20px}
   .menu-btn .ic {font-size:22px}
-  .top-bar .tb-right {margin-left:0;width:100%;min-width:0;grid-template-areas:"chips cog" "tele tele";justify-items:start}
+  .top-bar .tb-right {margin-left:0;width:100%;min-width:0;grid-template-areas:"chips help cog" "tele tele tele";justify-items:start}
   .top-bar .tb-cog {align-self:center;width:42px;height:42px;min-height:0;font-size:24px;justify-self:end}
   .top-bar .tb-cog .ic {font-size:22px}
+  /* ? beside ⚙, as big: on a touch screen help mode is how the tooltips are read */
+  .top-bar .tb-help {width:42px;height:42px;margin:0;border-radius:9px;background:var(--l2);border:1px solid var(--l4);color:var(--t0)}
+  .top-bar .tb-help .ic {font-size:22px}
+  .top-bar .tb-help:hover {background:var(--l3);border-color:var(--l5)}
+  .top-bar .tb-help.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
   .top-bar .tb-group.fld {display:flex;flex-direction:row;align-items:center;gap:6px}
   .top-bar .tb-group.fld > .tb-label {font-size:13px;font-weight:normal;letter-spacing:0;text-transform:none;color:var(--t3)}
   /* the three share the row (they wrap on a very narrow phone) */
@@ -1733,6 +1767,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 <symbol id="i-chev-d" viewBox="0 0 16 16"><path d="M4.5 6.2L8 9.8l3.5-3.6"/></symbol>
 <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M1.5 4h7M12.5 4h2M1.5 8h2M7.5 8h7M1.5 12h8M13.5 12h1"/><circle cx="10.5" cy="4" r="1.9"/><circle cx="5.5" cy="8" r="1.9"/><circle cx="11.5" cy="12" r="1.9"/></symbol>
 <symbol id="i-gear" viewBox="0 0 16 16"><path d="M6.89 3.23L6.92 1.49L9.08 1.49L9.11 3.23L10.59 3.84L11.84 2.63L13.37 4.16L12.16 5.41L12.77 6.89L14.51 6.92L14.51 9.08L12.77 9.11L12.16 10.59L13.37 11.84L11.84 13.37L10.59 12.16L9.11 12.77L9.08 14.51L6.92 14.51L6.89 12.77L5.41 12.16L4.16 13.37L2.63 11.84L3.84 10.59L3.23 9.11L1.49 9.08L1.49 6.92L3.23 6.89L3.84 5.41L2.63 4.16L4.16 2.63L5.41 3.84z"/><circle cx="8" cy="8" r="2"/></symbol>
+<symbol id="i-help" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M6.15 6.3a1.9 1.9 0 1 1 2.75 1.7c-.55.28-.9.72-.9 1.33v.37"/><circle cx="8" cy="11.45" r=".95" fill="currentColor" stroke="none"/></symbol>
 <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M10.7 3.52A5.4 5.4 0 1 1 5.3 3.52M2.76 2.98L5.3 3.52L4.5 6"/></symbol>
 <symbol id="i-reset" viewBox="0 0 16 16"><path d="M5.3 3.52A5.4 5.4 0 1 0 10.7 3.52M11.5 6L10.7 3.52L13.24 2.98"/></symbol>
 <symbol id="i-power" viewBox="0 0 16 16"><path d="M8 1.8v5.6M4.3 4.4a5.4 5.4 0 1 0 7.4 0"/></symbol>
@@ -1823,6 +1858,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
     <!-- Mobile-only drawer header -->
     <div class="sidebar-mobile-header">
       <span>Settings</span>
+      <button type="button" class="hm-btn sidebar-help" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button>
       <button class="sidebar-close" onclick="toggleSidebar(false)" aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></button>
     </div>
     <!-- Mobile-only: top-bar tuner/audio controls are moved here by applyMobileRelocation() -->
@@ -2772,6 +2808,8 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
         <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for the history charts, the log settings and the CSV download)" onclick="wbSheetOpen()">
           <span class="tele-lbl">WB board</span><span id="wb-chip-val"></span></span>
       </span>
+      <!-- ? help mode (helpModeToggle): the next tap / click on a control shows its tooltip instead of working it -->
+      <button type="button" class="tb-help hm-btn" id="help-btn" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does (Esc leaves it). On a touch screen, pressing and holding a button shows its help too."><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button>
       <!-- ⚙ Setup Settings (#set-dlg): as tall as the chips' and the telemetry's lines together; the phone layout puts it on the chips' line -->
       <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Setup Settings: the map provider and its key, the decoders, Voice to Text, the AI assistant" aria-label="Setup Settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></button>
       </div>
@@ -3051,7 +3089,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
      codecs, plugins), Voice to Text and the AI assistant -->
 <div class="sf-dlg-bg" id="set-dlg-bg" style="display:none" onpointerdown="if(event.target===this)setDlgClose()">
   <div class="sf-dlg set-dlg" id="set-dlg" role="dialog" aria-modal="true" aria-labelledby="set-dlg-title">
-    <div class="sf-dlg-h"><span id="set-dlg-title"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg><span>Setup Settings</span></span><span class="x" onclick="setDlgClose()" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
+    <div class="sf-dlg-h"><span id="set-dlg-title"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg><span>Setup Settings</span></span><button type="button" class="hm-btn" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button><span class="x" onclick="setDlgClose()" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
     <div class="set-tabs" role="tablist">
       <button type="button" role="tab" data-t="map" onclick="setDlgTab('map')"><svg class="ic" aria-hidden="true"><use href="#i-map"/></svg><span>Map</span></button>
       <button type="button" role="tab" data-t="dec" onclick="setDlgTab('dec')"><svg class="ic" aria-hidden="true"><use href="#i-decoder"/></svg><span>Decoders</span><span class="n" id="set-tab-dec-n"></span></button>
@@ -3159,7 +3197,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 <!-- 📻 Saved frequency editor (see 📻 SAVED FREQUENCIES) -->
 <div class="sf-dlg-bg" id="sf-dlg-bg" style="display:none" onpointerdown="if(event.target===this)sfDlgCancel()">
   <div class="sf-dlg" id="sf-dlg" role="dialog" aria-modal="true" aria-labelledby="sf-dlg-title">
-    <div class="sf-dlg-h"><span id="sf-dlg-title"><svg class="ic" aria-hidden="true"><use href="#i-star"/></svg><span>Save frequency</span></span><span class="x" onclick="sfDlgCancel()" title="Cancel (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
+    <div class="sf-dlg-h"><span id="sf-dlg-title"><svg class="ic" aria-hidden="true"><use href="#i-star"/></svg><span>Save frequency</span></span><button type="button" class="hm-btn" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button><span class="x" onclick="sfDlgCancel()" title="Cancel (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
     <div class="lbl">Name <b>*</b></div>
     <input type="text" id="sf-f-name" maxlength="80" style="width:100%" placeholder="e.g. Auckland Tower">
     <div class="lbl">Frequency <b>*</b></div>
@@ -3245,6 +3283,8 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   </div>
 </div>
 <div class="sf-toast" id="sf-toast"></div>
+<!-- help mode's banner (helpModeSet; a tap on it leaves the mode) -->
+<div class="help-banner" id="help-banner" role="status"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg><span id="help-banner-t">Tap a control to see what it does</span></div>
 
 <script>
 // Globals
@@ -9037,7 +9077,7 @@ function decSpkRender(dec) {
   }
   const t = (on ? `D${dec.id} is heard - click to mute it` : `D${dec.id} is muted - click to hear it`) +
             ' (several VFOs can be heard at once)' + (fmEnabled ? '' : '. The audio is off in the top bar');
-  if (b.title !== t) { b.title = t; b.setAttribute('aria-label', t); }
+  if (tipText(b) !== t) { b.title = t; b.setAttribute('aria-label', t); }
 }
 
 function decSpkRenderAll() { decimatorInfo.forEach(decSpkRender); }
@@ -10334,7 +10374,7 @@ let opSelTitle = null;
 function opModeOptionsSync() {
   const sel = $id('opmode');
   if (!sel) return;
-  if (opSelTitle === null) opSelTitle = sel.title;
+  if (opSelTitle === null) opSelTitle = tipText(sel);
   const oneTuner = activeNumElements < 2;
   sel.querySelectorAll('option').forEach(o => {
     const v = o.value;
@@ -11016,7 +11056,7 @@ function paneMove(p, e) {
     e.currentTarget.style.cursor = !ht ? 'default' : ht.kind === 'edge' ? 'ew-resize' : ht.kind === 'squelch' ? 'ns-resize' : 'grab';
     // a saved frequency's tag: what it is + a hand
     const sft = sfSpecAt(p.sf || [], x, paneXY(e).y, 2), tip = sft ? sfTagTip(sft) : '';
-    if (e.currentTarget.title !== tip) e.currentTarget.title = tip;
+    if (tipText(e.currentTarget) !== tip) e.currentTarget.title = tip;
     if (sft) e.currentTarget.style.cursor = 'pointer';
     // 📏 the level readout over a VFO's bar (not over a tag, nor its squelch line)
     if (ht && !sft && ht.kind !== 'squelch') vfoLvlShow(ht.bar.id, e); else vfoLvlHide();
@@ -12298,7 +12338,7 @@ function addTouchHandlers(el, down, move, up) {
     const o = sel.options[sel.selectedIndex];
     const html = ddLabelHtml(o ? o.textContent : '') + '<span class="dd-arrow">' + icon('chev-d') + '</span>';
     if (b.dataset.html !== html) { b.dataset.html = html; b.innerHTML = html; }
-    b.title = (o && o.title) || sel.title || '';
+    b.title = (o && o.title) || tipText(sel) || '';
     b.disabled = sel.disabled;
   }
   function ddItems() { return ddPop ? [...ddPop.querySelectorAll('.dd-it')] : []; }
@@ -13110,7 +13150,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const ctl = AI_CONTROL_TOOLS.includes(n);
     const map = /^map_|^viewshed_|^path_loss|^terrain_at/.test(n);
     const ic = ctl ? 'gear' : map ? 'map' : rx ? 'antenna' : n === 'WebSearch' || n === 'WebFetch' ? 'globe' : n === 'Bash' ? 'terminal' : 'tool';
-    const state = !res ? '<span class="ai-spin">' + icon('spin') + '</span>' : res.ok ? '<span style="color:#7ccd93">' + icon('ok') + '</span>' : '<span style="color:#fb8d85">' + icon('no') + '</span>';
+    const state = !res ? '<span class="ai-spin" role="img" aria-label="Running">' + icon('spin') + '</span>' : res.ok ? '<span style="color:#7ccd93" role="img" aria-label="Done">' + icon('ok') + '</span>' : '<span style="color:#fb8d85" role="img" aria-label="Failed">' + icon('no') + '</span>';
     const open = res && aiOpenSteps[key];
     return `<div class="ai-step${ctl ? ' ctl' : rx ? ' rx' : ''}${res && !res.ok ? ' err' : ''}" onclick="aiToggleStep('${digEsc(key)}')" title="${digEsc((e.detail || '') + (res ? '\n\n' + (res.detail || '') : ''))}">` +
            `<span class="n">${icon(ic)}<span>${digEsc(n)}</span></span><span class="d">${digEsc(e.detail || '')}</span><span class="r">${state}</span></div>` +
@@ -13372,7 +13412,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const r = c.getBoundingClientRect();
     const m = aiMarkerRects.length ? aiMarkerAt(e.clientX - r.left, e.clientY - r.top) : null;
     const tip = m ? `${m.name || 'AI identification'}${m.ids.length > 1 ? ` (+${m.ids.length - 1} more)` : ''} — click for what the assistant found` : '';
-    if (c.title !== tip) c.title = tip;
+    if (tipText(c) !== tip) c.title = tip;
     if (m) c.style.cursor = 'pointer';
     return !!m;
   }
@@ -14352,8 +14392,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (idle(vad)) vad.checked = !!s.vad;
     vad.disabled = !s.vad_model;
     const vl = vad.parentElement;
-    if (vl.dataset.tip === undefined) vl.dataset.tip = vl.title;
-    vl.title = s.vad_model ? vl.dataset.tip
+    if (vl.dataset.vadTip === undefined) vl.dataset.vadTip = tipText(vl);
+    vl.title = s.vad_model ? vl.dataset.vadTip
       : 'The voice detection model is not downloaded (Get any model' +
         (serverPkg ? '' : ', or run transcribe/setup.sh' + (serverWin ? ' in the MSYS2 UCRT64 shell' : '')) +
         '): every transmission goes to the speech model';
@@ -16401,7 +16441,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const tk = rdfPopupTalker(p);
     const trk = tk ? `<span class="trk${tk.on ? ' on' : ''}" data-v="${p.v}" data-t="${digEsc(p.i)}" ` +
       `onpointerdown="event.stopPropagation(); rdfTrackBtn(this)" title="${tk.on ? 'Its own DoA lobe is shown (DF panel) - press to go back to the whole signal' : 'Show its own DoA lobe on the map (DF panel: this ' + rdfKind(tk.t) + ' alone)'}">${icon('doa', 't')}<span>DoA${tk.on ? ' ' + icon('ok', 't') : ''}</span></span>` : '';
-    return `<div class="h"><span style="color:${getDecimatorColor(p.v)}">●</span>${digEsc(p.l || p.i)}${trk}<span class="x" onclick="mapSel=null;mapDraw()">${icon('close')}</span></div>` +
+    return `<div class="h"><span style="color:${getDecimatorColor(p.v)}">●</span>${digEsc(p.l || p.i)}${trk}<span class="x" onclick="mapSel=null;mapDraw()" role="button" title="Close">${icon('close')}</span></div>` +
            `<div class="s">D${p.v} · ${digEsc(digName(p.p))}</div><table>${rows}</table>`;
   }
 
@@ -17252,7 +17292,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
               : radar ? 'The radar\'s pulse level (dB above the noise) over one turn of its antenna: 0° = its main beam pointing here, the rest its sidelobes and reflections. The pulses above the dashed line in the main beam give its DoA - click the main-beam marker to show that DoA alone, again for the whole signal'
               : cells ? 'Sync correlation: each marked peak is a cell\'s synchronisation signal, at its timing against the strongest cell - click one to show its DoA alone, again for the whole signal'
                       : 'Delay profile: how strongly each delay is heard, counted from the main (strongest) path (dB above the noise of the estimate). Each marked peak is a path the signal arrives on - a reflection, or another transmitter of a single frequency network (one whose bearing points at a broadcast mast is likely a transmitter) - click one to show its DoA alone, again for the whole signal';
-    if (cv && cv.title !== tip) cv.title = tip;
+    if (cv && tipText(cv) !== tip) cv.title = tip;
     plotDraw(cv, sp.id, sp.pl);
   }
   // one plot: the curve over x0 + i dx, the threshold, the markers (a
@@ -18678,7 +18718,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const r = c.getBoundingClientRect();
     const g = sfSpecRects.length ? sfSpecAt(sfSpecRects, e.clientX - r.left, e.clientY - r.top, 3) : null;
     const tip = g ? sfTagTip(g) : '';
-    if (c.title !== tip) c.title = tip;
+    if (tipText(c) !== tip) c.title = tip;
     if (g) c.style.cursor = 'pointer';
     return !!g;
   }
@@ -18997,7 +19037,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const raw = Object.entries(t).filter(([k, v]) => !shown.has(k) && !/^(alt_|old_|official_)?name:/.test(k) &&
                                                      !(k.startsWith('communication:') && v === 'yes'));
     raw.forEach(([k, v], i) => { rows += `<tr class="raw${i ? '' : ' sep'}"><td>${digEsc(k)}</td><td>${digEsc(v)}</td></tr>`; });
-    return `<div class="h"><span style="color:${MAST_CATS[m.cat].col}">●</span>${digEsc(mastTitle(t))}<span class="x" onclick="mapSel=null;mapDraw()">${icon('close')}</span></div>` +
+    return `<div class="h"><span style="color:${MAST_CATS[m.cat].col}">●</span>${digEsc(mastTitle(t))}<span class="x" onclick="mapSel=null;mapDraw()" role="button" title="Close">${icon('close')}</span></div>` +
            `<div class="s">OpenStreetMap · ${m.type} ${m.id}</div><table>${rows}</table>` +
            `<div class="lnk"><button type="button" class="map-btn" onclick="mastToMarker('${m.k}')" title="Make it one of your markers, to add its frequencies and notes">${icon('pin')}<span>Add as marker</span></button>` +
            (plMenuOn() ? `<button type="button" class="map-btn" onclick="vsAddMast('${m.k}')" title="${vsAddTip(`at the top of this mast (its mapped height, else ${vsState.h} m)`)}">${vsAddShort()}</button>` : '') +
@@ -19662,7 +19702,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       const d = mapDistKm(mapStation[0], mapStation[1], s.lat, s.lon), b = mapBearing(mapStation[0], mapStation[1], s.lat, s.lon);
       rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(2) : d.toFixed(d < 100 ? 1 : 0)} km, ${b.toFixed(0)}°</td></tr>`;
     }
-    return `<div class="h"><span style="color:#d8625c">●</span>${digEsc(s.n)}<span class="x" onclick="mapSel=null;mapDraw()">${icon('close')}</span></div>` +
+    return `<div class="h"><span style="color:#d8625c">●</span>${digEsc(s.n)}<span class="x" onclick="mapSel=null;mapDraw()" role="button" title="Close">${icon('close')}</span></div>` +
            `<div class="s">${icon('search', 't')}<span>${digEsc(s.src || 'Search result')}</span></div><table>${rows}</table>` +
            `<div class="lnk"><button type="button" class="map-btn" onclick="srchToMarker()" title="Make it one of your markers (a saved location, every browser), to add frequencies and notes">${icon('pin')}<span>Add as marker</span></button>` +
            `<button type="button" class="map-btn" onclick="srchPinRemove()" title="Remove the search result's pin from the map">Remove pin</button>` +
@@ -22271,7 +22311,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         ` · ${res.tiles} tiles` + (res.loaded < res.tiles ? ` (${res.loaded} loaded, the rest in memory)` : '') + `, ${(res.ms / 1000).toFixed(1)} s` + (res.workers > 1 ? ` on ${res.workers} workers` : "") + (res.spikes ? ` · ${res.spikes} terrain spikes removed` : '') : '';
       if (st.dataset.html !== txt) { st.dataset.html = txt; st.innerHTML = txt; }
       st.className = 'st' + (cls ? ' ' + cls : '');
-      if (st.title !== tip) st.title = tip;
+      if (tipText(st) !== tip) st.title = tip;
     });
     plRenderSig(force);   // (📶 the signal mode's settings, legend, link)
     vsHoverRender();
@@ -24553,7 +24593,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°</td></tr>`;
     }
     const btn = f.g === 'pt' ? `<div style="margin-top:4px"><button type="button" class="map-btn" onclick="aimToMarker('${digEsc(p.key)}')" title="Make it one of your map markers (a saved location)">${icon('pin')}<span>Add as marker</span></button></div>` : '';
-    return `<div class="h"><span style="color:${col}">●</span>${digEsc(f.l || L.name)}<span class="x" onclick="mapSel=null;mapDraw()">${icon('close')}</span></div>` +
+    return `<div class="h"><span style="color:${col}">●</span>${digEsc(f.l || L.name)}<span class="x" onclick="mapSel=null;mapDraw()" role="button" title="Close">${icon('close')}</span></div>` +
            `<div class="s">${icon('bot', 't')}<span>${digEsc(L.name)}${L.src ? ' · ' + aiMd(L.src).replace(/^<p>|<\/p>$/g, '') : ''}</span></div><table>${rows}</table>${btn}`;
   }
   function aimToMarker(key) {
@@ -27755,32 +27795,44 @@ document.addEventListener('keydown', e => {
 // ============================================================================
 // HELP TOOLTIPS
 // ----------------------------------------------------------------------------
-// Each ".help" icon (a "?") owns a hidden ".tip" popup. On desktop it shows on
-// hover; on touch it toggles on tap and dismisses on a tap anywhere else. The
-// tip is position:fixed and positioned by JS so it escapes the sidebar's
-// overflow clipping and never runs off-screen. Event delegation is used so it
-// also covers any icons added later.
+// Two kinds of help (docs/dev/sidebar.md, "How help is shown"):
+// - Each ".help" icon (a "?") owns a hidden ".tip" popup. On desktop it shows
+//   on hover; on touch it toggles on tap and dismisses on a tap anywhere else.
+// - A `title` (or `data-tip`) on any element is shown in ONE page-wide bubble,
+//   #page-tip: on mouse hover (after TIP_HOVER_MS) and keyboard focus
+//   (:focus-visible); on touch through help mode (the top bar's ? button, then
+//   a tap on the control - which then does not act) or by pressing and holding
+//   the control (not where a long press already means something: HOLD_SKIP).
+//   The browser's own tooltip never shows: at the first hover / focus / press
+//   the title moves to data-tip and stays there (tipAdopt), and the element's
+//   accessible name or description is set from it. Code that sets `.title`
+//   later still works (a title present wins over data-tip); code that READS
+//   help text uses tipText(el).
+// Both tips are position:fixed and placed by tipPlace() so they escape the
+// sidebar's overflow clipping and never run off-screen. Event delegation (one
+// set of listeners on window / document, nothing per element) also covers
+// anything added later.
 // ============================================================================
 // A "?" icon with its popup, for text built in JS: helpTip(html) - `wide` for long texts
 function helpTip(html, wide) {
   return '<span class="help' + (wide ? ' wide' : '') + '" tabindex="0" role="button" aria-label="Help">?<span class="tip">' + html + '</span></span>';
 }
+// Put a fixed tip under the anchor's rect r (screen px), above it when there is no room below,
+// inside the window. Inside the zoomed sidebar a fixed tip's left / top are zoomed too.
+function tipPlace(tip, r) {
+  const tr = tip.getBoundingClientRect(), m = 8, vw = window.innerWidth, vh = window.innerHeight;
+  let left = r.left, top = r.bottom + 6;
+  if (left + tr.width > vw - m) left = vw - m - tr.width;
+  if (left < m) left = m;
+  if (top + tr.height > vh - m) top = r.top - tr.height - 6;   // flip above if no room below
+  if (top < m) top = m;
+  const sb = tip.closest('.sidebar'), z = sb ? (parseFloat(getComputedStyle(sb).zoom) || 1) : 1;
+  tip.style.left = (left / z) + 'px'; tip.style.top = (top / z) + 'px';
+}
 function initHelpTips(){
   let shown=null, pinned=null;
   const tipOf=(h)=>h.querySelector('.tip');
-  function place(h){
-    const tip=tipOf(h); if(!tip) return;
-    const ir=h.getBoundingClientRect(), tr=tip.getBoundingClientRect();
-    const m=8, vw=window.innerWidth, vh=window.innerHeight;
-    let left=ir.left, top=ir.bottom+6;
-    if(left+tr.width>vw-m) left=vw-m-tr.width;
-    if(left<m) left=m;
-    if(top+tr.height>vh-m) top=ir.top-tr.height-6;   // flip above if no room below
-    if(top<m) top=m;
-    // Inside the zoomed sidebar a fixed tip's left/top are zoomed too
-    const sb=h.closest('.sidebar'), z=sb ? (parseFloat(getComputedStyle(sb).zoom)||1) : 1;
-    tip.style.left=(left/z)+'px'; tip.style.top=(top/z)+'px';
-  }
+  function place(h){ const tip=tipOf(h); if(tip) tipPlace(tip, h.getBoundingClientRect()); }
   function show(h){ if(shown&&shown!==h) hide(shown); h.classList.add('tip-open'); place(h); shown=h; }
   function hide(h){ if(!h) return; h.classList.remove('tip-open'); if(shown===h) shown=null; }
   function closePinned(){ if(pinned){ hide(pinned); pinned=null; } }
@@ -27800,6 +27852,265 @@ function initHelpTips(){
   }, true);
   // A scroll moves the anchor out from under a fixed tip - just close it.
   window.addEventListener('scroll',()=>{ closePinned(); hide(shown); }, true);
+  pageTipInit();
+}
+
+// --- The page's tooltip: title / data-tip text in #page-tip ---
+const TIP_HOVER_MS = 400, TIP_HOLD_MS = 550, TIP_SLOP = 8;
+// where a long press already means something, it does not show help (help mode does):
+// canvases (the map's menu, the spectrum, waterfall and panes), the overlays over them,
+// text and number boxes (selecting text), sliders (a held thumb drags), the resizers
+const TIP_HOLD_SKIP = 'canvas, #fo, #wf-overlay, .tpane-ov, .u-over, textarea, [contenteditable], ' +
+  'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]), ' +
+  '.sidebar-resizer, .info-resize, .ai-dock-rs, .hsplit, .rp-resizer, .rp-vsplit, .lr-tl';
+let tipFor = null, tipHow = '', tipTimer = 0, tipPend = null, tipMuted = null, tipHold = null, tipEatClick = 0;
+let helpMode = false, helpPress = null, helpTail = 0;   // helpTail: until when the rest of the press that left help mode is eaten
+
+// The help text an element carries: its title (set by code after the move) or data-tip
+function tipText(el) {
+  return el.hasAttribute('title') ? el.getAttribute('title') : (el.getAttribute('data-tip') || '');
+}
+function tipNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+// The element that owns the help for a pointer / focus on el: the closest ancestor-or-self with a
+// title / data-tip (a <label title> counts for its control), as the browser's tooltip picks it - an
+// empty one, or one that only repeats the element's visible label, means none. The "?" tips are
+// their own help.
+function tipOwner(el) {
+  for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+    if (n.classList.contains('help') || n.id === 'page-tip') return null;
+    if (n.hasAttribute('title') || n.hasAttribute('data-tip')) {
+      const t = tipNorm(tipText(n));
+      return t && (n.tagName === 'SELECT' || t !== tipNorm(n.textContent)) ? n : null;
+    }
+  }
+  return null;
+}
+// The title moves to data-tip (no native tooltip next to ours). A screen reader keeps the text:
+// a control with no name of its own (an icon-only button) gets it as aria-label, anything else as
+// aria-description (on a <label>, on its control).
+function tipAdopt(el) {
+  const t = el.getAttribute('title') || '';
+  el.removeAttribute('title');
+  el.setAttribute('data-tip', t);
+  const s = t.trim();
+  if (el.hasAttribute('data-tip-al')) {          // the name came from the title: follow it
+    if (s) el.setAttribute('aria-label', s); else { el.removeAttribute('aria-label'); el.removeAttribute('data-tip-al'); }
+    return;
+  }
+  const field = /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+  const named = el.hasAttribute('aria-label') || el.hasAttribute('aria-labelledby') ||
+    (field ? !!(el.labels && [...el.labels].some(l => l.textContent.trim())) : el.textContent.trim() !== '');
+  if (s && !named && el.matches('button, a[href], input, select, textarea, [role], [tabindex]')) {
+    el.setAttribute('aria-label', s);
+    el.setAttribute('data-tip-al', '');
+    return;
+  }
+  const c = el.tagName === 'LABEL' && el.control && !el.control.hasAttribute('title') && !el.control.hasAttribute('data-tip') ? el.control : el;
+  if (s && tipNorm(s) !== tipNorm(el.textContent) && tipNorm(s) !== tipNorm(el.getAttribute('aria-label'))) c.setAttribute('aria-description', s);
+  else c.removeAttribute('aria-description');
+}
+// every title from el up (the browser's tooltip would fall back to an ancestor's)
+function tipAdoptUp(el) {
+  for (let n = el; n && n.nodeType === 1; n = n.parentElement) if (n.hasAttribute('title')) tipAdopt(n);
+}
+function tipBubble() {
+  let t = $id('page-tip');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'page-tip';
+    t.className = 'page-tip';
+    t.setAttribute('role', 'tooltip');
+    document.body.appendChild(t);
+  }
+  return t;
+}
+// how: 'hover' | 'focus' | 'pin' (help mode, press and hold: stays until the next press)
+function tipShow(owner, how) {
+  clearTimeout(tipTimer); tipTimer = 0; tipPend = null;
+  const text = tipText(owner).trim();
+  if (!text || !owner.isConnected) return false;
+  const tip = tipBubble();
+  tip.textContent = text;
+  tip.classList.add('on');
+  tipPlace(tip, owner.getBoundingClientRect());
+  tipFor = owner; tipHow = how;
+  return true;
+}
+function tipHide() {
+  clearTimeout(tipTimer); tipTimer = 0; tipPend = null;
+  tipFor = null; tipHow = '';
+  const tip = $id('page-tip');
+  if (tip) tip.classList.remove('on');
+}
+
+// Help mode: the ? buttons (.hm-btn: the top bar's; the phone drawer's and the dialogs' headers',
+// which cover the top bar), then a tap / click on a control shows its help and does not act
+function helpModeSet(on) {
+  helpMode = !!on;
+  helpPress = null;
+  tipHide();
+  document.body.classList.toggle('help-mode', helpMode);
+  document.querySelectorAll('.hm-btn').forEach(b => { b.classList.toggle('on', helpMode); b.setAttribute('aria-pressed', helpMode ? 'true' : 'false'); });
+  const t = $id('help-banner-t');
+  if (t) t.textContent = (window.matchMedia && matchMedia('(pointer:coarse)').matches ? 'Tap' : 'Click') + ' a control to see what it does';
+}
+function helpModeToggle() { helpModeSet(!helpMode); }
+// what still works in help mode: the ? buttons (leave it) and the "?" tips
+function helpFree(t) { return !!(t && t.closest && t.closest('.hm-btn, .help')); }
+function helpTap(t) {
+  tipAdoptUp(t);
+  const own = tipOwner(t);
+  if (!own) { helpModeSet(false); helpTail = performance.now() + 800; return; }   // nothing to explain there: leave (the press does nothing)
+  if (tipFor === own && tipHow === 'pin') tipHide();  // the next tap on it closes it
+  else tipShow(own, 'pin');
+}
+
+function tipHoldSkip(t) {
+  if (t.closest(TIP_HOLD_SKIP)) return true;
+  // a sidebar box's header: a long press lifts the box (sbBoxDragDown - its own controls are no handles)
+  const h = t.closest('.sb-header');
+  return !!(h && h.parentElement && h.parentElement.matches('.sidebar > .sb-section[data-sb]') &&
+            !t.closest('button, input, select, textarea, a, label, .help, [contenteditable]'));
+}
+function tipHoldEnd() { if (tipHold) clearTimeout(tipHold.timer); tipHold = null; }
+function tipHoldFire() {
+  const h = tipHold;
+  if (!h || h.fired) return;
+  clearTimeout(h.timer);
+  h.fired = tipShow(h.own, 'pin');
+  if (!h.fired) tipHoldEnd();
+}
+
+function pageTipInit() {
+  const W = window, cap = {capture: true}, capNP = {capture: true, passive: false};
+  const eat = e => { if (e.cancelable) e.preventDefault(); e.stopImmediatePropagation(); };
+  const far = (e, p) => Math.hypot(e.clientX - p.x, e.clientY - p.y) > TIP_SLOP;
+  const helpEats = t => (helpMode || performance.now() < helpTail) && !helpFree(t);
+
+  // --- mouse: hover (after a pause), the title moved out of the browser's way at once ---
+  const hoverAt = t => {
+    if (tipHow === 'pin') return;
+    const own = tipOwner(t);
+    if (own && own === tipFor) { if (tipHow === 'hover') tipShow(own, 'hover'); return; }   // (its text may have changed)
+    if (own && own === tipPend) return;
+    if (own !== tipMuted) tipMuted = null;
+    if (tipFor || tipTimer) tipHide();
+    if (own && !tipMuted) { tipPend = own; tipTimer = setTimeout(() => { tipTimer = 0; tipPend = null; tipShow(own, 'hover'); }, TIP_HOVER_MS); }
+  };
+  document.addEventListener('pointerover', e => {
+    if (e.pointerType !== 'mouse') return;
+    tipAdoptUp(e.target);
+    hoverAt(e.target);
+  });
+  // code that sets a title while the pointer rests there (a canvas naming what is under the
+  // pointer): moved again, and the tip follows it
+  document.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'mouse') return;
+    for (let n = e.target; n && n.nodeType === 1; n = n.parentElement) {
+      if (!n.hasAttribute('title')) continue;
+      tipAdoptUp(e.target);
+      hoverAt(e.target);
+      break;
+    }
+  }, {passive: true});
+  document.addEventListener('pointerout', e => {
+    if (e.pointerType === 'mouse' && !e.relatedTarget && tipHow !== 'pin') { tipMuted = null; tipHide(); }
+  });
+  // --- keyboard focus ---
+  document.addEventListener('focusin', e => {
+    const t = e.target;
+    if (!(t instanceof Element) || tipHow === 'pin') return;
+    let fv = false;
+    try { fv = t.matches(':focus-visible'); } catch (_) {}
+    tipAdoptUp(t);
+    const own = fv ? tipOwner(t) : null;
+    if (own) tipShow(own, 'focus'); else if (tipHow === 'focus') tipHide();
+  });
+  document.addEventListener('focusout', () => { if (tipHow === 'focus') tipHide(); });
+  W.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (helpMode) { helpModeSet(false); eat(e); }      // Esc only leaves help mode (a dialog stays open)
+    else if (tipFor) tipHide();
+  }, cap);
+  // the anchor moved away under the fixed bubble
+  W.addEventListener('scroll', e => {
+    if (tipFor && (e.target === document || e.target instanceof Node && e.target.contains(tipFor))) tipHide();
+  }, cap);
+  W.addEventListener('resize', () => { if (tipFor) tipHide(); });
+
+  // --- presses: help mode, press and hold; capture on window, ahead of every handler on the page ---
+  W.addEventListener('pointerdown', e => {
+    // a press on a ? button is no press "elsewhere": the View popover, a menu or a list stays
+    // open to be explained
+    helpTail = 0; tipEatClick = 0;     // (what was left of the last press is over)
+    if (e.target.closest && e.target.closest('.hm-btn')) { tipHide(); tipHoldEnd(); e.stopImmediatePropagation(); return; }
+    if (helpMode) {
+      if (helpFree(e.target)) { tipHide(); return; }
+      eat(e);
+      helpPress = e.isPrimary ? {id: e.pointerId, x: e.clientX, y: e.clientY, target: e.target, moved: false} : null;
+      return;
+    }
+    // a press closes the tip (a hovered one stays away until the pointer moves to something else)
+    if (tipFor || tipPend) { if (tipHow !== 'pin') tipMuted = tipFor || tipPend; tipHide(); }
+    tipHoldEnd();
+    if (e.pointerType !== 'touch' || !e.isPrimary || tipHoldSkip(e.target)) return;
+    tipAdoptUp(e.target);
+    const own = tipOwner(e.target);
+    if (own) tipHold = {id: e.pointerId, x: e.clientX, y: e.clientY, own, fired: false, timer: setTimeout(tipHoldFire, TIP_HOLD_MS)};
+  }, capNP);
+  W.addEventListener('pointermove', e => {
+    if (helpMode && helpPress && e.pointerId === helpPress.id && far(e, helpPress)) helpPress.moved = true;
+    if (tipHold && e.pointerId === tipHold.id && !tipHold.fired && far(e, tipHold)) tipHoldEnd();   // a swipe
+  }, {capture: true, passive: true});
+  W.addEventListener('pointerup', e => {
+    if (helpMode) {
+      if (helpFree(e.target) && !helpPress) return;
+      eat(e);
+      const p = helpPress;
+      helpPress = null;
+      if (p && p.id === e.pointerId && !p.moved) helpTap(p.target);
+      return;
+    }
+    if (tipHold && e.pointerId === tipHold.id) {
+      if (tipHold.fired) tipEatClick = performance.now() + 800;   // the release is no click
+      tipHoldEnd();
+    }
+  }, capNP);
+  W.addEventListener('pointercancel', e => {
+    if (helpPress && e.pointerId === helpPress.id) helpPress = null;      // the finger scrolled
+    if (tipHold && e.pointerId === tipHold.id) {
+      if (tipHold.fired) tipEatClick = performance.now() + 800;
+      tipHoldEnd();
+    }
+  }, cap);
+  // the rest of the press: in help mode nothing reaches the page (no click, no focus, no slider
+  // or select acting); after a hold the click is eaten
+  for (const type of ['mousedown', 'mouseup', 'click', 'dblclick', 'auxclick']) {
+    W.addEventListener(type, e => {
+      if (helpEats(e.target)) { eat(e); if (type === 'click' && !helpMode) helpTail = 0; return; }
+      if (helpMode) return;
+      if (type === 'click' && tipEatClick) { const t = tipEatClick; tipEatClick = 0; if (performance.now() < t) eat(e); }
+    }, capNP);
+  }
+  // touch: touchstart is not cancelled (a swipe still scrolls), only kept from the page's own
+  // handlers - except on a slider, which moves at the touch itself; touchend is (no click, no
+  // focus follows)
+  W.addEventListener('touchstart', e => {
+    if (!helpMode || helpFree(e.target)) return;
+    if (e.target.closest && e.target.closest('input[type="range"]')) eat(e); else e.stopImmediatePropagation();
+  }, capNP);
+  W.addEventListener('touchmove', e => { if (helpMode && !helpFree(e.target)) e.stopImmediatePropagation(); }, {capture: true, passive: true});
+  W.addEventListener('touchend', e => {
+    if (helpEats(e.target)) { eat(e); return; }
+    if (helpMode) return;
+    if (tipHold && tipHold.fired && e.cancelable) e.preventDefault();
+  }, capNP);
+  // a long press: Chrome's own long-press menu / text selection don't come with the help
+  W.addEventListener('contextmenu', e => {
+    if (helpMode && !helpFree(e.target)) { eat(e); return; }
+    if (tipHold) { eat(e); tipHoldFire(); }
+  }, capNP);
+  document.addEventListener('selectstart', e => { if (tipHold || helpMode) e.preventDefault(); });
 }
 
 window.addEventListener('load',()=>{

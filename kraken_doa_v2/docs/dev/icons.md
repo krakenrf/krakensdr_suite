@@ -32,7 +32,8 @@ now.
 - **Sizes**: 16 px by default; 14 px in buttons, 13 px in `.btn.sm`; `.ic.t`
   is 1.25 em of the text it sits in (notes, states, tables). Places with
   their own size are listed under "sizes by place" in the CSS (the rail 15,
-  the top bar's cog 24 / 22 on a phone, the menu button 18 / 22, the
+  the top bar's cog 24 / 22 on a phone, its help-mode ? 17 / 22 (in the
+  top bar's block, next to the cog's), the menu button 18 / 22, the
   sidebar chevron 15, close crosses in headers 13, chevrons of folds 12).
 - **Icon + label**: the label is a `<span>` (or `<b>`) right after the icon;
   one rule, `.ic + span {margin-left:6px}`, gives the gap. Containers that
@@ -53,6 +54,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | Name | Stands for |
 |---|---|
 | `close` | close, remove (x) |
+| `help` | help mode (the top bar's ?, the drawer's and the dialogs' headers) |
 | `menu` | the sidebar (top bar, three lines) |
 | `chev-r` `chev-l` `chev-d` | fold / unfold (sidebar boxes, map panels, table details, categories), step, the dropdown arrow, collapse the assistant |
 | `sliders` | View (display settings) |

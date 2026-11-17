@@ -134,8 +134,9 @@ page got the same treatment on 2026-11-16.
 
 - **No explanations on the controls.** A label is one to three words. What a
   control does, its limits ("0 = forever", "1 ms - 60 s") and advice go in a
-  `?` help tip (`<span class="help">?<span class="tip">…</span></span>`,
-  works on touch) or, for minor points, a `title`. Status text says the
+  `?` help tip (`<span class="help">?<span class="tip">…</span></span>`)
+  or, for minor points, a `title` (or `data-tip`) - both reach touch
+  screens (*How help is shown*, below). Status text says the
   state ("Idle", "Not playing", "No calibration in use"), not what to do
   about it. JS-built notes follow the same rule (the recorder's "Needs
   24.0 MB/s · drive not tested", the array's "Spacing 0.42λ · resolution
@@ -179,7 +180,8 @@ page got the same treatment on 2026-11-16.
 
 - **In JS-built text** use `helpTip(html, wide)` for the `?` (a global
   function; `wide` for long texts - `initHelpTips` places the popup, also
-  from inside the map's panels and the tabs under the waterfall).
+  from inside the map's panels and the tabs under the waterfall), or a
+  `title` for a minor point.
 - **Panels with a long "how it works" note** (Viewshed's two modes, Range,
   Replay, a decoder's description, Transcription) carry it in a `?` next to
   the panel's title or first row - never as a paragraph in the panel.
@@ -193,6 +195,91 @@ page got the same treatment on 2026-11-16.
   top bar's Audio is a switch (`data-sw` on the `.tb-btn`); a decoder
   option that is on / off is a button lit while on (its name only -
   `digOnOffText` adds ": state" for anything that isn't On / Off).
+
+### How help is shown (2026-11-18)
+
+The user asked to make help reachable on touch: much of the explanation
+lives in `title` tooltips, and the browser shows those on mouse hover only -
+on a phone, a tablet or a Pi touchscreen that text did not exist. The `?`
+tips already worked on touch (a tap pins them); the titles needed an
+equivalent. Now the page shows every `title` itself, in one tooltip for the
+whole page (`#page-tip`, the `?` tips' look), reached three ways:
+
+- **Mouse and keyboard**: on hover after 400 ms (`TIP_HOVER_MS`) and at
+  once on keyboard focus (`:focus-visible`), under the element (over it
+  when there is no room below), inside the window. It goes when the pointer
+  leaves, on Esc, on a press (and stays away until the pointer moves to
+  something else), on a scroll of what holds the element, on a resize.
+- **Help mode** (touch, discoverable): the `?` button at the end of the top
+  bar's right block (`#help-btn`, `helpModeToggle()`; on the desktop small,
+  on the telemetry line beside ⚙ - the chips' line has no room, its width
+  is the scanner chip's reserve; on touch layouts as big as ⚙, beside it).
+  While it is on, the button is lit, a banner says "Tap a control to see
+  what it does" ("Click ..." with a mouse) and the cursor is `help`. A tap
+  on a control with help shows its tip and does NOT work the control (a
+  capture-phase handler on `window` eats the whole press: pointer, mouse
+  and touch events and the click - no click, no focus, no slider moving, no
+  select opening, no switch flipping); the tip stays until the next tap (on
+  it: closed; on another control: that one's); a tap on something without
+  help leaves help mode and does nothing else. Esc or the button again
+  leaves it. A swipe still scrolls (touchstart is not cancelled, except on a
+  slider, which moves at the touch) and shows nothing. Dialogs and the phone
+  drawer cover the top bar, so the Setup Settings and Save frequency dialogs
+  and the drawer have the same `?` in their headers (`.hm-btn`; all of them
+  light together). A press on a `?` button is not a press "elsewhere": the
+  View popover, a menu or a list stays open to be explained.
+- **Press and hold** (touch, the shortcut): 550 ms without moving more than
+  8 px shows the tip; the click that follows the release is eaten, and
+  Chrome's long-press menu / text selection for that press are cancelled. A
+  quick tap still clicks; a swipe shows nothing. Not where a long press
+  already means something (`TIP_HOLD_SKIP`): a sidebar box's header (it
+  lifts the box, `sbBoxDrag…`), canvases (the map's long press opens its
+  menu; the spectrum, waterfall and panes), the overlays over them, text and
+  number boxes (text selection), sliders (a held thumb drags), the
+  resizers. There help mode is the way.
+
+Which help: the closest ancestor-or-self with a `title` / `data-tip`, as
+the browser's own tooltip picks it - a `<label title>` wrapping a control
+counts for the control; an empty one, or one that only repeats the
+element's visible text, means none. The `?` tips are left to their own code.
+
+How it works (the "HELP TOOLTIPS" section, `pageTipInit()`): one set of
+listeners on `window` / `document`, nothing per element and no
+MutationObserver, so markup built later (VFO cards, decoder tabs, map
+popups) is covered without setup. At the first hover, focus or press the
+`title` moves to `data-tip` and stays there (`tipAdopt`; every title up the
+tree, or the browser would fall back to an ancestor's), so the native
+tooltip never shows next to the page's. The accessible text is kept: a
+control with no name of its own (an icon-only button) gets it as
+`aria-label`, anything else as `aria-description` (on a `<label>`'s control).
+A title that code sets later still works - present, it wins over `data-tip`,
+and it is moved again while the pointer rests there (a canvas naming what
+is under the pointer) - but **code that reads help text uses
+`tipText(el)`**, not `el.title` (which is empty after the move). The bubble
+(`.page-tip`, z-index 10100) is on top of everything, dialogs (2050) and the
+View popover (1500) included: it only ever shows for the element under the
+pointer or the finger. Plain text (`textContent`, line breaks kept), at most
+320 px wide. Both kinds of tip are placed by `tipPlace()` (inside the zoomed
+sidebar a fixed `?` tip divides by the zoom; the page bubble lives in
+`<body>`).
+
+**So a control needs only a `title` (or `data-tip`)** - no setup, no
+per-element script - and its help works with a mouse, a keyboard and on
+touch. An icon-only control without one is a gap: give it a `title` or an
+`aria-label`. The audit on 2026-11-18 found the map popups' close crosses
+(now `title="Close"`, `role="button"`) and the assistant's step states
+(`role="img"` + Running / Done / Failed); every other icon-only control had
+a name.
+
+Tests: `test_tips.py` in the job's scratch directory (desktop: hover, the
+title gone, at every edge - top bar, rail, pane headers, the sidebar's
+bottom, Setup Settings, the View popover -, Tab, Esc / leave / scroll /
+press, the accessibility tree, a VFO card and the decoder panel built
+later, a title set by code; a phone and a touch tablet with real touch
+events: help mode on buttons, switches, a slider, a select, inside the
+dialog and the drawer, the backdrop, Esc; press and hold, a quick tap, a
+swipe; a box header still lifts, the map's menu still opens, a held slider
+still drags; no JS errors).
 
 ### What moved out of boxes of their own (2026-11-17)
 
