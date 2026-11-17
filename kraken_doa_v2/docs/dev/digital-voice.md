@@ -78,7 +78,19 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   RS / AU CRCs and the dynamic label run, only PCM is missing
 - Codec availability: the sidebar box (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
-  state says "... codec not installed" while someone listens. The box's
+  state says "... codec not installed" while someone listens. The page
+  shows a missing codec in red (#ef5350, the page's alarm red; 2026-11-17,
+  so it is noticed): the fact when its value, after an optional "NAME: "
+  prefix, starts with "not installed" / "disabled", or has "lacks the" /
+  ends in "not used)" (`digCodecFactBad`: mbelib's and TETRA's
+  "not installed (see README...)", "disabled (KRAKEN_MBELIB=none)", "...
+  lacks the AMBE functions", the AAC library's refusals); the voice state
+  when it has "codec not installed / disabled / not usable"
+  (`digVoiceStateBad`, only while listening); the sidebar box's missing
+  rows (✗ and status line). Only the "Voice codec" fact is looked at -
+  another fact with these words stays as it was - and a path (TETRA's
+  "ACELP: <path> + <path>", a Windows "C:\...") can't match the anchored
+  start. A new voice plugin keeps these wordings. The box's
   data is `plugins/lib/build/codecs` (`lib/tools/codecs.cpp`): imbe / ambe
   / acelp always, and since 2026-11-16 `aac_ok` / `aac` ("HE-AAC v2
   (libfdk-aac)", DAB+) when the tool was built with `plugins/dab/` there -

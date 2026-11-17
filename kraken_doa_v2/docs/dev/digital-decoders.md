@@ -187,7 +187,27 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   numbers, empty cells last; per plugin in localStorage
   `kraken_dig_table_sort`), "Seen" column from the row age, a row whose
   `vfo|plugin|key` is a map point is clickable (`digTableRowClick`: opens
-  the map, selects + centres the marker). A row with details gets a ▸
+  the map, selects + centres the marker); one whose key is a talker of that
+  VFO selects it in the 📡 DF panel; one whose key is a value of the
+  run-time choices of one of the plugin's options (below; 2026-11-17, dab:
+  an audio service's SId) selects that choice (`digRowChoice` /
+  `digPickChoice`: the dropdown's `DIGITAL_OPT:<vfo>:<id>.<key>:<value>`,
+  not sent when it is the value set; for a `voice` plugin also the tab's
+  Listen - `digListenFor` - when the VFO isn't heard, so a listener just
+  hears the new choice). The first that applies counts: map point, talker,
+  choice (the map / talker rules as before; a plugin wanting a selectable
+  row keeps that key out of its map points and talkers). A choice row:
+  `tr.choice` (pointer, green VFO cell, tooltip "Listen to this
+  (Programme: ...)" / "Select this (...)"), and `tr.sel` when its value is
+  the option's value as the receiver last reported it (no optimistic
+  mark; a second page follows the broadcast). A setting that is no row's
+  key - dab's "" (first audio service) or a part of a name - marks no row:
+  the page can't know which service it resolves to, and a wrong mark is
+  worse than none; after a row click or a list pick it is a SId (the dab
+  plugin marks the programme it decodes in a ▶ column of its own - a plain
+  cell, *plugin-dab*). Rows
+  without choices (older receiver, data services) as before. Test:
+  scratchpad rowclick/t_rowclick.py. A row with details gets a ▸
   toggle (`.dig-det-tog`, `digDetToggle` - stopPropagation, so the row's
   own click isn't fired; open rows in `digDetOpen`, this page only): the
   details render as a row of their own under it (`tr.dig-det`, a

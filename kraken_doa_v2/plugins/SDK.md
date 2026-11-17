@@ -197,7 +197,9 @@ decoder is switched - send it again then; nothing of it is saved. The
 setting itself stays whatever text the user or a saved setting gave: if it
 isn't one of the values (an older setting, a part of a name), the panel adds
 it as an entry of its own so the list shows what is set - better, give it an
-entry yourself that says what it selects (dab: `"jazz → Kraken Jazz"`).
+entry yourself that says what it selects (dab: `"jazz → Kraken Jazz"`). Use
+a choice's value as the key of its table row and the row becomes a way to
+pick it (*Tables* below).
 Choose values that stay valid (dab: the service's SId, not its position in
 the list). An older host ignores the message (wire `OPTION_CHOICES` 40); the
 offline test prints the final lists in its summary.
@@ -485,7 +487,13 @@ radios) can show them as a table above its facts: `table_columns()` once
 (the constructor), then `table_row(key, cells)` whenever an entry changes -
 at most every second or so per row; the page sorts by any column and adds a
 "Seen" column (time since the row's last update). Use the same key as the
-entry's map point: clicking the row then shows it on the map. kraken_doa
+entry's map point: clicking the row then shows it on the map (as the key of
+a talker: selects it in the DF panel). A row whose key is one of the values
+you sent with `option_choices` selects that choice when clicked - the same
+as picking it in the option's list - and, for a `voice` plugin, turns
+Listen on (dab: a programme's row, key = its SId); the page marks the row
+whose key is the option's current value. The first that applies counts:
+map point, talker, choice. kraken_doa
 empties the rows when the VFO is retuned or the decoder switched. The
 offline test prints the final table. Whatever doesn't fit the columns goes
 into the row's details: `table_detail(key, {{label, value}, ...})` after

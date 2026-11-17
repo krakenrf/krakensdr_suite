@@ -177,6 +177,9 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-info td {padding:2px 3px;border-bottom:1px solid #22304a;vertical-align:top;word-break:break-word}
 .dig-info td:first-child {color:#6f87a6;white-space:nowrap;width:40%}
 .dig-info tr.stale td:last-child {color:#7a8699}
+/* a voice codec that is missing: a voice plugin's "Voice codec" fact, its voice state
+   next to Listen (digCodecFactBad / digVoiceStateBad) and the sidebar's codec list */
+.dig-info td.dig-bad,.dig-info tr.stale td.dig-bad,.info-dec-settings .v.dig-bad,.dig-codec.missing .s {color:#ef5350}
 .dig-log {max-height:240px;overflow-y:auto;font-family:monospace;font-size:10.5px;background:#10101e;border:1px solid #0f3460;border-radius:3px;padding:3px 4px;line-height:1.35}
 .dig-log div {white-space:pre-wrap;word-break:break-word;border-bottom:1px solid #1b2238}
 .dig-log .t {color:#6f87a6}
@@ -274,6 +277,9 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-table tr.dig-det td td {border:none;padding:1px 0;white-space:normal;color:#e0e6ef;font-family:monospace}
 .dig-table tr.talker {cursor:pointer}
 .dig-table tr.talker td:first-child {color:#ffcc80}
+/* a row that is one of an option's run-time choices (dab: a programme): click = select it (+ Listen) */
+.dig-table tr.choice {cursor:pointer}
+.dig-table tr.choice td:first-child {color:#81c784}
 .dig-table-wrap > .cap {color:#7cb3f0;font-size:11px;padding:3px 7px;position:sticky;left:0}
 .dig-inc {display:flex;align-items:center;gap:5px;flex-wrap:wrap;width:100%}
 .dig-inc input {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:2px 4px;border-radius:3px;font-size:12px}
@@ -295,7 +301,7 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-codec .i {width:12px;text-align:center}
 .dig-codec.ok .i {color:#81c784}
 .dig-codec.missing {border-color:#5a4520}
-.dig-codec.missing .i {color:#ffb74d}
+.dig-codec.missing .i {color:#ef5350}
 .dig-codec .u {margin-left:auto;color:#6f87a6;font-size:11px;text-align:right}
 .dig-codec .s {color:#8aa8c7;font-size:11px;margin:2px 0 0 18px;word-break:break-word}
 .dig-codec details {margin:4px 0 0 18px}
@@ -10545,6 +10551,16 @@ function addTouchHandlers(el, down, move, up) {
     }
     return !!(digPlugin(digModePlugin(mode)) || {}).voice;
   }
+  // Is this VFO's decoded audio heard (the tab's "🔊 Listening")?
+  function digListening(d) { return !!(d && decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled); }
+  // A voice plugin's codec is missing (docs/dev/digital-voice.md) - shown in red. Its
+  // "Voice codec" fact: "not installed (libfdk-aac2)", "AMBE+2: not installed (see README...)",
+  // "disabled (KRAKEN_AAC_LIB=none)", "... lacks the AMBE functions", "... - too old, not used)"
+  // (not "built in", "libfdk-aac.so.2 (FDK AAC decoder 3.2.0)", "ACELP: <path> + <path>");
+  // its voice state: "<who>: AMBE+2 codec not installed (...)", dab's "<programme>: AAC codec
+  // disabled (...)" / "... codec not usable: ..."
+  function digCodecFactBad(v) { return /^(?:[^:]*: )?(?:not installed|disabled)\b|\blacks the\b|\bnot used\)$/.test(String(v)); }
+  function digVoiceStateBad(s) { return /\bcodec (?:not installed|disabled|not usable)\b/.test(String(s)); }
 
   // Does the decoder send text messages (kp::Info::messages - pagers)? Their
   // street addresses become incidents (kraken_doa incidents.cpp)
@@ -10619,9 +10635,14 @@ function addTouchHandlers(el, down, move, up) {
     });
     const head = cols.map((c, i) => `<th onclick="digTableSortBy('${digEsc(name)}', ${i})" title="Sort">${digEsc(c)}${s.c === i ? (s.d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
     const body = rows.map(r => {
+      // what a click does, the first that applies: a map point, a talker, one of an option's
+      // run-time choices (digTableRowClick)
       const tk = mapPts.has(r.k) ? null : digRowTalker(r.k);
-      const cls = (mapPts.has(r.k) ? 'onmap' : tk ? 'talker' : '') +
-                  (r.k === mapSel || (tk && rdfTidSel() === rdfGk(tk.vfo, tk.tid)) ? ' sel' : '');
+      const ch = mapPts.has(r.k) || tk ? null : digRowChoice(r.k);
+      const cls = (mapPts.has(r.k) ? 'onmap' : tk ? 'talker' : ch ? 'choice' : '') +
+                  (r.k === mapSel || (tk && rdfTidSel() === rdfGk(tk.vfo, tk.tid)) || (ch && ch.cur) ? ' sel' : '');
+      const tip = cls.includes('onmap') ? 'Show on the map' : tk ? 'Show its own DoA on the map (📡 DF panel) - again for the whole signal'
+        : ch ? (ch.voice ? 'Listen to this' : 'Select this') + ` (${ch.opt}: ${ch.label})` + (ch.cur ? ' - selected' : '') : '';
       // a row with details (kp::Host::table_detail): a ▸ toggle in front, the
       // details in a row of their own under it while open
       const open = r.det && digDetOpen.has(r.k);
@@ -10631,7 +10652,7 @@ function addTouchHandlers(el, down, move, up) {
         : `<td>${i === 0 ? tog : ''}${digEsc(i === cols.length - 1 ? r.age + ' s' : (r.cells[i] ?? ''))}</td>`).join('');
       const det = open ? `<tr class="dig-det"><td colspan="${cols.length}"><div class="dig-det-box"><table>${r.det.map(([k, v]) =>
         `<tr><th>${digEsc(k)}</th><td>${digEsc(v)}</td></tr>`).join('')}</table></div></td></tr>` : '';
-      return `<tr class="${cls}" data-k="${digEsc(r.k)}" onclick="digTableRowClick(this)"${cls.includes('onmap') ? ' title="Show on the map"' : tk ? ' title="Show its own DoA on the map (📡 DF panel) - again for the whole signal"' : ''}>${cells}</tr>${det}`;
+      return `<tr class="${cls}" data-k="${digEsc(r.k)}" onclick="digTableRowClick(this)"${tip ? ` title="${digEsc(tip)}"` : ''}>${cells}</tr>${det}`;
     }).join('');
     return `<div class="cap">${digEsc(caption)} · ${rows.length}</div>` +
            `<table class="dig-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
@@ -10673,11 +10694,39 @@ function addTouchHandlers(el, down, move, up) {
     const vfo = +f[0], tid = f.slice(2).join('|');
     return ((rdfStatus && rdfStatus.talkers) || []).some(t => t.vfo === vfo && t.tid === tid) ? {vfo, tid} : null;
   }
+  // a table row whose key is one of the run-time choices (kp::Host::option_choices) of an
+  // option of that VFO's plugin (dab: a programme's SId): {vfo, key, val, label, opt, cur =
+  // it is the value set, voice = the plugin plays audio}. The first such option counts
+  function digRowChoice(k) {
+    const f = String(k).split('|');
+    if (f.length < 3) return null;
+    const vfo = +f[0], pk = f.slice(2).join('|');
+    const p = digPlugin(f[1]), d = digDec(vfo), st = digStatus[vfo];
+    if (!p || !p.options || !d || !st || pk === '') return null;
+    const vals = (d.digital_opts && d.digital_opts.plugin) || {};
+    for (const op of p.options) {
+      const key = p.id + '.' + op.key;
+      const c = (digDynChoices(st, key) || []).find(c => c[0] === pk);
+      if (!c) continue;
+      const v = String(vals[key] !== undefined ? vals[key] : (op.default ?? ''));
+      return {vfo, key, val: pk, label: c[1], opt: op.label || op.key, cur: v === pk, voice: digHasVoice(digModeOf(vfo), st)};
+    }
+    return null;
+  }
+  // click on a choice's row: the same command as picking it in the option's list (not sent
+  // again when it is the value set); a voice plugin's Listen goes on if it is off - the
+  // tab's Listen button, so a listener hears the new choice
+  function digPickChoice(ch) {
+    if (!ch.cur) digSetOptFor(ch.vfo, ch.key, ch.val);
+    if (ch.voice && !digListening(digDec(ch.vfo))) digListenFor(ch.vfo);
+  }
   function digTableRowClick(tr) {
     const k = tr.dataset.k, p = mapPts.get(k);
     if (!p) {
       const tk = digRowTalker(k);
-      if (tk) talkerPick(tk.vfo, tk.tid);
+      if (tk) { talkerPick(tk.vfo, tk.tid); return; }
+      const ch = digRowChoice(k);
+      if (ch) digPickChoice(ch);
       return;
     }
     if (!mapState.on) mapToggle(true);
@@ -11061,7 +11110,7 @@ function addTouchHandlers(el, down, move, up) {
   function digListenFor(id) {
     const d = digDec(id);
     if (!d) return;
-    if (decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled) {
+    if (digListening(d)) {
       const p = digDemodBefore[d.id], back = digListenBack(d);
       if (back) {
         setDecimatorDemodMode(d.id, back, true);
@@ -11158,7 +11207,8 @@ function addTouchHandlers(el, down, move, up) {
     const info = st.info || {};
     for (const p of Object.keys(info).filter(p => p === tab)) {
       for (const [k, v, age] of info[p])
-        rows += `<tr class="${age > 30 ? 'stale' : ''}" title="updated ${age} s ago"><td>${digEsc(k)}</td><td>${digEsc(v)}</td></tr>`;
+        rows += `<tr class="${age > 30 ? 'stale' : ''}" title="updated ${age} s ago"><td>${digEsc(k)}</td>` +
+                `<td${k === 'Voice codec' && digCodecFactBad(v) ? ' class="dig-bad"' : ''}>${digEsc(v)}</td></tr>`;
     }
     return rows;
   }
@@ -12085,7 +12135,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
     const st = digStatus[id];
     const o = (d && d.digital_opts) || {};
-    const listening = d && decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled;
+    const listening = digListening(d);
     const p = digOptionsPlugin(mode, st);
     const vals = o.plugin || {};
     let opts = '';
@@ -12144,7 +12194,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         `<span class="dig-vfo" style="border-color:${getDecimatorColor(id)}" title="${digEsc(txt)}"><span style="color:${col}">●</span> D${id} · ${digMhzOf(id)} MHz</span>` +
         `<label>Mode: <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
         (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${digEsc(listenTip)}">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
-        (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
+        (voice ? `<span class="v${listening && vs && digVoiceStateBad(vs) ? ' dig-bad' : ''}">${digEsc(voice)}</span>` : '') +
         opts +
         `<label title="Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)"><input type="checkbox" ${o.verbose ? 'checked' : ''} onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Log all</label>` +
         `<label title="For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR."><input type="checkbox" ${o.invert ? 'checked' : ''} onchange="digSetOptFor(${id}, 'invert', this.checked ? 1 : 0)"> Invert</label>` +

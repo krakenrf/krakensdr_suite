@@ -89,7 +89,9 @@ public:
             if (verbose_) host.log(s);
         };
         figs_.ev.event = [this](const std::string& s) { host.event(s, 30); };
-        host.table_columns({"Service", "SId", "Type", "kbit/s", "Protection", "Sub-ch", "Programme type", "Language"});
+        // (▶: the programme being decoded - after Service, so the panel's default sort, by its
+        // first column, stays by name)
+        host.table_columns({"Service", "▶", "SId", "Type", "kbit/s", "Protection", "Sub-ch", "Programme type", "Language"});
         host.table_keep(3600);
         reset();
     }
@@ -344,6 +346,10 @@ private:
     }
 
     bool fic_decodes() const { return ens_.eid >= 0 && now_s() - last_good_fic_ < 1.0; }
+    // the services table's ▶: the service whose sub-channel the MSC decodes now, 0 = none
+    // (nothing matches, conditional access, no coding profile, no FIC for 3 s - the
+    // "Ensemble lost" limit). What is decoded, not the option's text ("" or a part of a name)
+    uint32_t decoded_sid() const { return msc_.active() && now_s() - last_good_fic_ <= 3 ? sel_sid_ : 0; }
 
     void on_frame(const dab::Frame& f) {
         const double tf = t_of(static_cast<double>(f.start));
@@ -995,6 +1001,7 @@ private:
         // services
         int naudio = 0, nall = 0;
         int row_budget = ROW_BUDGET;
+        const uint32_t dec_before = decoded_sid();
         std::vector<std::string> names;
         for (const auto& kv : ens_.services) {
             const dab::Service& s = kv.second;
@@ -1027,6 +1034,14 @@ private:
         // the programme
         if (!sel_valid_ || now - found_at_ > 0) select_service();
         sel_valid_ = true;
+        // the ▶ moved with this selection: its two rows now, not a second later (a change made
+        // in between - option(), a reconfiguration - the rows above have already sent)
+        const uint32_t dec = decoded_sid();
+        if (dec != dec_before)
+            for (uint32_t sid : {dec_before, dec}) {
+                auto it = ens_.services.find(sid);
+                if (sid && it != ens_.services.end() && !it->second.comps.empty()) update_row(it->second, row_budget);
+            }
         update_choices();
         update_programme_facts();
         update_tii_facts(now);
@@ -1042,6 +1057,7 @@ private:
         if (c && c->language >= 0) lang = dab::language_name(c->language);
         const std::vector<std::string> cells = {
             s.label.empty() ? std::string("?") : dab::printable_utf8(s.label),
+            !s.data && s.sid == decoded_sid() ? "▶" : "",
             key,
             type_of(s, c),
             sc ? std::to_string(sc->prot.kbps) : "",
@@ -1158,9 +1174,15 @@ private:
         host.fact("RS corrections", st.rs_corrected || st.rs_failed ? std::to_string(st.rs_corrected) + " code words corrected, " +
                                                                           std::to_string(st.rs_failed) + " failed"
                                                                     : "");
+        // (a DAB+ programme without a usable AAC library - "AAC codec not installed (libfdk-aac2)",
+        // "... disabled (KRAKEN_AAC_LIB=none)", "... not usable: <why>": the panel shows it in
+        // red. No decoder named = no stream configured yet (conditional access, a sub-channel
+        // without a coding profile): not a codec problem, nothing added)
         std::string vs = dab::printable_utf8(sel_label_);
-        if (host.voice_wanted() && !st.can_decode)
-            vs += st.decoder.empty() ? std::string(": codec not installed") : ": " + st.decoder;
+        if (host.voice_wanted() && !st.can_decode && !st.decoder.empty()) {
+            const bool missing = st.decoder.rfind("not installed", 0) == 0 || st.decoder.rfind("disabled", 0) == 0;
+            vs += (missing ? ": AAC codec " : ": AAC codec not usable: ") + st.decoder;
+        }
         host.voice_state(dab::utf8_truncate(vs, 120));
     }
 

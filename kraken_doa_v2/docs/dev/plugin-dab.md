@@ -95,6 +95,29 @@ generator's scene format are in `plugins/dab/README.md`.
   (`noInfo` in `rdfRenderPanel`; the label, the same on every row plus
   " · N km", goes into the row's tooltip): with it the table was 377 px in
   the 370 px list and Nulls was cut off (end-to-end test, 2026-11-16)
+- A SERVICE ROW PLAYS IT (2026-11-17): the services table's row key is the
+  SId as `update_choices` writes it (`hex(sid, 4)`, 8 digits for a data
+  service), so an audio service's row key is one of the Programme list's
+  values and the page's general rule (*Digital decoders*, tables: a row
+  whose key is a run-time choice) makes a click select it and turn Listen
+  on - no dab code in the page, no plugin change. Data services aren't in
+  the list, so their rows stay plain. The page highlights (`tr.sel`) the
+  row whose SId is the setting; "" and a part of a name highlight none
+  (the page would have to redo `select_service`'s matching). For those the
+  plugin marks the row itself: a ▶ column after Service (`decoded_sid()`:
+  `sel_sid_` while the MSC decodes it and the FIC came within 3 s - not
+  for no match, conditional access, no coding profile, an ensemble lost),
+  a plain cell, so the page needs nothing; after Service, not first,
+  because the page's default sort is by the first column (by name). The
+  ▶ is part of the row's text, so a move re-sends the two rows (at the
+  same update when `select_service` in `update_ui` moved it; otherwise
+  at the next one, <= 1 s), within the 32-rows-a-second budget. Tests:
+  rowclick/mark_harness.cpp (FIG-fed decoder: option "", SId, fragment,
+  no match, FIC lost > 3 s, ensemble change, 15 s refresh unchanged),
+  rowclick/t_marker.py (page, status recorded through digi_test). Test: scratchpad
+  rowclick/t_rowclick.py (real clicks: the option + Listen when off, only
+  the option when listening, nothing for the selected row, ▸ / sorting /
+  map / older receiver / hostile keys)
 - Text from the air: labels / dynamic label converted to UTF-8 (EBU Latin,
   UCS-2, UTF-8) and passed through the plugin's own `dab::printable_utf8`
   (`dab_tables.cpp`: controls and invalid bytes `\xNN`, valid multi-byte
@@ -134,7 +157,13 @@ generator's scene format are in `plugins/dab/README.md`.
   the few API functions it calls (from the public API documentation), and
   refuses decoder modules below 2.x or a library missing a function. GPL
   decoders (faad2) are out by the licensing rules. Without it DAB+ still
-  syncs and shows everything but PCM (*Digital voice*)
+  syncs and shows everything but PCM (*Digital voice*). The voice state
+  while listening then says "<programme>: AAC codec not installed (...)" /
+  "... AAC codec disabled (KRAKEN_AAC_LIB=none)" / "... AAC codec not
+  usable: <refusal>" (2026-11-17: the "codec" wording the page colours red,
+  *Digital voice*); with no stream configured (conditional access, no
+  coding profile) nothing is added - before, that case said "codec not
+  installed", which wasn't true
 - Codec check (2026-11-16): `plugins/lib/tools/codecs.cpp` prints `aac_ok`
   / `aac` when built with `-DKRAKEN_CODECS_AAC`, which `plugins/Makefile`
   passes - and adds `dab/audio_aaclib.cpp` (self-contained, for that reason)

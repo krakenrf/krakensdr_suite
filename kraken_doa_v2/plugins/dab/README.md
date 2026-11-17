@@ -224,7 +224,12 @@ shows the programme being decoded. The list is sent only when it changes
 second from the facts update), replaced when another ensemble appears on the
 block, and emptied on a retune / reset (the receiver forgets it then too).
 Until the services are known the option is the text field, as it always is
-on a kraken_doa from before the list. Bounded by the database (64 services:
+on a kraken_doa from before the list. An audio service's row in the services
+table has the same key as its entry (the SId), so a click on the row picks
+it too and turns Listen on (a data service's row only opens as before); the
+row of the programme set is highlighted once the setting is its SId. The
+table's own ▶ column (after Service) marks the service being decoded,
+whatever the setting's text is ("", a part of a name). Bounded by the database (64 services:
 at most 66 entries).
 
 ## Facts, events, raw frames
@@ -240,7 +245,10 @@ corrections, Text) are removed when the programme changes or no service matches
 the option, and set again once the new programme provides them.
 
 The services table: one row per service, an unchanged row sent again every 15 s
-(the page's "Seen"), at most 32 rows a second.
+(the page's "Seen"), at most 32 rows a second. ▶ = the service whose
+sub-channel is being decoded (none: no match, conditional access, no FIC for
+3 s); when it moves, the old and the new row go out with the next facts
+update (within a second).
 
 Events: ensemble found / lost (no FIC for 3 s, or another EId on the block), the
 services (one summary, then each new one), the programme, a service gone,
@@ -393,7 +401,10 @@ Install:
 The "Voice codec" fact and the sidebar's Digital Decoders box show its state,
 e.g. `libfdk-aac.so.2 (FDK AAC decoder 3.2.0)` - the decoder module's own
 version (fdk-aac 2.0.2 reports 3.2.0, 0.1.6 2.5.17, 0.1.2 2.4.7) - or `not
-installed (libfdk-aac2)`; then everything but the PCM still runs. Decoder
+installed (libfdk-aac2)`; then everything but the PCM still runs, and while
+someone listens the voice state says `<programme>: AAC codec not installed
+(libfdk-aac2)` (`... AAC codec disabled (KRAKEN_AAC_LIB=none)`, `... AAC codec
+not usable: <the refusal>`) - the panel shows both in red. Decoder
 versions below 2.x and libraries that lack a function or report no version
 are refused. Tested: fdk-aac 2.0.2 (the full test set), 0.1.6 and 0.1.2
 (bit-identical DAB+ decoding after alignment); six hostile stand-in
