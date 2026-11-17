@@ -201,9 +201,10 @@ ratio and an estimate in dBm at the receiver input.
 ### Decoders
 
 Tick **Digital decoder** on a VFO and pick a decoder, or **Auto detect**.
-Each decoder has a tab in the panel under the waterfall (the **Decoders**
-button) with its settings, the decoded data and an event log. Any number of
-VFOs can decode at once.
+Each decoder in use has a tab in the panel under the waterfall (the
+**Decoders** button) with its settings, the decoded data and an event log;
+**All decoders** at the end of the tabs lists every installed decoder (type
+to filter) and shows the one you pick. Any number of VFOs can decode at once.
 
 | Decoder | What you get |
 |---|---|

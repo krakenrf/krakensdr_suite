@@ -110,7 +110,9 @@ make it wider or narrower, double-click it for the default width - the DoA
 plots grow with it), **Decoders**,
 **Transcription** and the **Assistant**. Decoders and
 Transcription share the panel under the waterfall, which shows one of them at
-a time: the decoders with one tab each, or the transcripts by themselves.
+a time: the decoders - a tab for each decoder in use (a VFO runs it, or it
+has data to show) and **All decoders**, a filterable list of every installed
+one - or the transcripts by themselves.
 
 | Section | What it does |
 |---------|--------------|

@@ -482,7 +482,9 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   `#rail-voice` (Transcription - "Voice" until 2026-11-17)
   (`railPanel`: opens the panel under the waterfall on that feature, or
   closes it when it already shows it; the panel shows the decoders' tabs or
-  the transcripts alone, never both - *voice-to-text.md*) - lit while their
+  the transcripts alone, never both - *voice-to-text.md*; the decoders' tabs
+  are only those in use, with "All decoders" after them, a popover listing
+  every installed decoder - since 2026-11-18, *digital-decoders.md*) - lit while their
   panel shows (`railSync`, called from `infoRenderTabs` and
   `infoPanelClose`; Transcription carries the count of unseen transcripts; on the
   phone the three share a row of the drawer's Panels box and wrap when it

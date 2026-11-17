@@ -235,7 +235,10 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .info-row {display:flex;gap:4px;margin:4px 0 0 0;flex-shrink:0}
 .info-row:first-child {margin:0 0 4px 0}
 .info-row input[type="text"] {flex:1;min-width:0;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:4px 6px;border-radius:3px;font-size:12px}
-.info-tab-list {display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;min-width:0;max-width:70%}
+/* the decoders' tabs (only those in use) scroll sideways when there are many; "All decoders"
+   (#dec-all-btn) after them stays put, and the ✕ after that */
+.info-tab-list {display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;min-width:0;flex:0 1 auto}
+.info-tab-list:empty {display:none}
 /* position: Safari painted the strip (its own scrolling layer) where it was
    before the panel was resized - over the waterfall's buttons - until the
    next repaint. The scrollbar always shown: macOS hides overlay scrollbars
@@ -1504,6 +1507,32 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .info-close:hover {background:var(--l3);color:var(--t0)}
 /* the panel's name while it shows the transcripts (no tabs then) */
 .info-title {font-size:12.5px;font-weight:600;color:var(--t1);padding:3px 2px;white-space:nowrap}
+/* "All decoders" after the decoders' tabs and its list (decAllOpen): the View popover's look, a
+   filter box over one row per installed decoder */
+.info-all {display:inline-flex;align-items:center;flex:none;background:none;color:var(--t3);border:1px solid var(--l2);border-radius:5px;
+  padding:3px 7px 3px 10px;font-size:12px;font-family:inherit;line-height:normal;white-space:nowrap;cursor:pointer}
+.info-all:hover {background:var(--s3);color:var(--t0);border-color:var(--l4)}
+.info-all:focus-visible {outline:2px solid var(--ac-l);outline-offset:1px}
+.info-all.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
+.info-all[hidden] {display:none}
+.info-all .ic {font-size:12px;margin-left:5px}
+.view-pop.dec-all-pop {width:320px;max-height:min(460px, calc(100vh - 16px));display:flex;flex-direction:column;overflow:hidden;padding:8px 0 4px}
+.view-pop.dec-all-pop[hidden] {display:none}
+.da-q {display:flex;align-items:center;flex:none;margin:0 8px 2px;padding:0 8px;height:28px;background:var(--s2);border:1px solid var(--l2);border-radius:5px;color:var(--t5)}
+.da-q:focus-within {border-color:var(--ac-l)}
+.da-q .ic {font-size:13px;flex:none}
+.da-q input {flex:1;min-width:0;height:100%;margin-left:6px;padding:0;background:none;border:0;outline:none;color:var(--t0);font-size:12px;font-family:inherit}
+.da-list {flex:1 1 auto;min-height:0;overflow-y:auto;padding:0 4px 2px;scrollbar-width:thin;scrollbar-color:var(--l2) var(--s3)}
+.da-list .vp-sec {margin:8px 8px 2px}
+.da-row {display:flex;align-items:center;gap:7px;min-height:26px;padding:2px 8px;border-radius:4px;color:var(--t2);cursor:pointer}
+.da-row.act {background:var(--l2);color:var(--t0)}
+.da-row[aria-selected="true"] .da-nm {color:var(--ac-t);font-weight:600}
+.da-dot {flex:none;font-size:11px;line-height:1}
+.da-nm {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.da-x {flex:none;color:var(--t5);font-size:11px;white-space:nowrap}
+.da-x.warn {color:var(--warn-t)}
+.da-x.bad {color:var(--bad-t)}
+.da-none {padding:8px 12px 6px;color:var(--t5)}
 .dig-log,.dig-table-wrap {background:var(--s2);border-color:var(--l1);border-radius:5px}
 /* map */
 .map-btn,.map-seg button {background:rgba(31,37,45,.92);border-color:var(--l4);color:var(--t0);border-radius:5px}
@@ -1682,6 +1711,12 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .view-pop input[type="range"]::-webkit-slider-thumb {width:22px;height:22px}
   .view-pop input[type="range"]::-moz-range-thumb {width:18px;height:18px}
   .vp-row select {height:32px}
+  /* All decoders: finger-sized rows, the list as wide as the screen allows */
+  .info-all {min-height:32px;padding:0 9px 0 12px}
+  .view-pop.dec-all-pop {width:min(420px, calc(100vw - 16px));padding:10px 0 6px}
+  .da-q {height:38px}
+  .da-q input {font-size:16px}
+  .da-row {min-height:42px;padding:2px 10px;font-size:13px}
   /* Sidebar sections that host controls relocated from the top bar and the rail */
   .mobile-only {display:block}
   #mobile-controls-slot .tb-group {display:flex;align-items:center;gap:8px;margin:10px 0;width:100%}
@@ -2886,6 +2921,14 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
           <div class="info-resize" id="info-resize" title="Drag to resize"></div>
           <div class="info-tabs">
             <span id="info-tab-list" class="info-tab-list"></span>
+            <!-- every installed decoder, filterable (decAllOpen); the tabs are only those in use -->
+            <button type="button" class="info-all" id="dec-all-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="dec-all-pop"
+                    title="Every installed decoder: pick one to see its settings and data here" hidden><span id="dec-all-t">All decoders</span><svg class="ic" aria-hidden="true"><use href="#i-chev-d"/></svg></button>
+            <div class="view-pop dec-all-pop" id="dec-all-pop" role="dialog" aria-label="All decoders" title="" hidden>
+              <div class="da-q"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input type="text" id="dec-all-q" role="combobox" aria-autocomplete="list"
+                aria-expanded="true" aria-controls="dec-all-list" aria-label="Filter decoders" placeholder="Filter decoders…" autocomplete="off" spellcheck="false"></div>
+              <div class="da-list" id="dec-all-list" role="listbox" aria-label="Decoders"></div>
+            </div>
             <span class="info-sub"></span>
             <button type="button" class="info-close" onclick="infoPanelClose()" title="Close"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></button>
           </div>
@@ -3444,6 +3487,11 @@ let fpHover = null;
 // transcripts (oldest first), how many came while the Transcription panel wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
 let v2tStatus = null, v2tList = [], v2tUnseen = 0;
+// The decoders' "All decoders" list (see decAllOpen): open or not, the plugin id of its
+// highlighted row (arrow keys / the mouse), the kind of pointer that last pressed its button
+// (touch: the filter box is not focused - no keyboard popping up), the window size it was opened
+// at. infoRenderTabs reads them
+let decAllOn = false, decAllAct = '', decAllPtr = '', decAllWin = '';
 // The demod a VFO had before it was switched to Digital and whether it was
 // heard (🔊): VFO id -> {demod, audio}. setDecimatorDemodMode keeps it, the
 // decoder tab's "🔊 Listening" and the card's Demod list go back to it. Per
@@ -12449,8 +12497,9 @@ function addTouchHandlers(el, down, move, up) {
 
   function digOnPlugins(list) {
     digPlugins = list || [];
-    // the panel opened (page load) before the plugin list - now there are tabs
-    if (infoTab === 'dig:' && infoOpen('dec')) infoPanelOpen('dec');
+    // the panel opened (page load) before the plugin list: now there may be
+    // tabs - or the restored one is not installed here any more
+    if (infoOpen('dec') && !digTabList().includes(infoTab.slice(4))) infoPanelOpen('dec');
     digRenderAll();
     aiRenderPlugins();
   }
@@ -12473,18 +12522,30 @@ function addTouchHandlers(el, down, move, up) {
   function digTabVfos(tab) {
     return digActiveIds().filter(id => digVfoPlugin(id) === tab);
   }
-  // the tabs, always all of them: every installed decoder (+ one this
-  // receiver lacks that still has data here) - those a VFO is running first,
-  // then the rest, each group by name
-  function digTabList() {
-    const ids = new Set(digPlugins.filter(p => p.built).map(p => p.id));
-    for (const id of digActiveIds()) { const p = digVfoPlugin(id); if (p) ids.add(p); }
-    for (const k of Object.keys(digEvents)) for (const e of digEvents[k]) if (e.src) ids.add(e.src);
-    for (const a of digArchive) for (const e of a.ev) ids.add(e.src);
+  // The decoders in use (2026-11-18, the user asked: tabs only for those, a
+  // list for the rest): a VFO runs it now (fixed, or Auto detect locked onto
+  // it), or it has something to show - events not cleared (live VFOs, VFOs
+  // since switched, removed VFOs), incident rows. Those a VFO runs first, then
+  // the rest, each group by name
+  function digTabsInUse() {
+    const active = new Set(digActiveIds().map(digVfoPlugin).filter(Boolean));
+    const ids = new Set(active);
+    const fresh = e => e.src && e.t > (digCleared[e.src] || 0);
+    for (const k of Object.keys(digEvents)) for (const e of digEvents[k]) if (fresh(e)) ids.add(e.src);
+    for (const a of digArchive) for (const e of a.ev) if (fresh(e)) ids.add(e.src);
     for (const r of (incData && incData.rows) || []) ids.add(r[2]);
     ids.delete('incidents');
-    const active = new Set(digActiveIds().map(digVfoPlugin).filter(Boolean));
     return [...ids].sort((a, b) => (active.has(b) - active.has(a)) || digName(a).localeCompare(digName(b)));
+  }
+  // the tabs: the decoders in use, plus the shown one when it is not (picked
+  // from All decoders, or its VFO stopped meanwhile) - at the end, until
+  // another tab is picked. Before the plugin list has come any shown id
+  // counts (a restored tab); after it, only an installed one
+  function digTabList() {
+    const list = digTabsInUse();
+    const t = digTabShown;
+    if (t && !list.includes(t) && (!digPlugins.length || digPlugin(t))) list.push(t);
+    return list;
   }
 
   // decimator_info arrived (after updateDecimatorList built the cards)
@@ -12518,10 +12579,17 @@ function addTouchHandlers(el, down, move, up) {
     const mode = on ? (digWanted[id] || 'AUTO') : 'OFF';
     send('DIGITAL_MODE:' + id + ':' + mode);
     const d = digDec(id);
+    const was = digTabOfVfo(id);
     if (d) d.digital_mode = mode;
     if (on) digApplyFixedTune(id, mode);
     if (on) infoPanelOpen('dec:' + id);
-    else delete digStatus[id];
+    else {
+      delete digStatus[id];
+      // the panel showed this VFO's decoder and nothing is left in it: its tab
+      // goes, the panel moves to another decoder in use (or says none runs)
+      const t = infoTab.slice(4);
+      if (infoOpen('dec') && t && t === was && !digTabsInUse().includes(t)) { digTabShown = null; infoPanelOpen('dec'); }
+    }
     digRenderAll();
   }
 
@@ -12661,6 +12729,8 @@ function addTouchHandlers(el, down, move, up) {
   }
 
   function digRenderAll() {
+    // the panel said no decoder runs, and now one does (another page, the assistant)
+    if (infoTab === 'dig:' && infoOpen('dec') && digTabList().length) { infoPanelOpen('dec'); return digRenderCards(); }
     digRenderCards();
     infoRenderTabs();
     infoRenderDecoder();
@@ -13026,7 +13096,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                   window_mhz: [+currentFrequencies[0].toFixed(6), +currentFrequencies[currentFrequencies.length - 1].toFixed(6)]};
       }
       v.audio_on = !!fmEnabled;
-      if (infoOpen('dec')) v.bottom_tab = 'decoder: ' + (digTabShown || '');
+      if (infoOpen('dec')) v.bottom_tab = 'decoder: ' + (digTabShown || 'none in use');
       else if (infoOpen('voice')) v.bottom_tab = 'voice to text';
       const b = document.body.classList;
       if (b.contains('rp-off')) v.right_pane = 'hidden (DoA & Map on the rail opens it)';
@@ -13478,14 +13548,15 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
 
   // --- Bottom panel (under the waterfall): the decoders OR the transcripts ---
   // Two features share the panel and it shows one of them: the digital
-  // decoders, one tab per decoder mode (rail: 🔐 Decoders), or Voice to
+  // decoders, one tab per decoder mode in use + "All decoders" (every
+  // installed one, decAllOpen) (rail: 🔐 Decoders), or Voice to
   // Text's transcripts, by themselves under the name "🗣 Transcription"
   // (rail: 🗣 Transcription). Transcription was a tab beside the decoders'
   // until 2026-11-17; the user asked for it to stand apart - it is not a
   // decoder.
-  // infoTab: 'dig:<plugin id>' | 'voice'. Also accepted by
-  // infoPanelOpen: 'dec' (the shown / first decoder tab), 'dec:<vfo id>' (the
-  // tab that VFO's decoder is in)
+  // infoTab: 'dig:<plugin id>' | 'dig:' (no decoder in use: the panel says
+  // so) | 'voice'. Also accepted by infoPanelOpen: 'dec' (the shown / first
+  // decoder tab), 'dec:<vfo id>' (the tab that VFO's decoder is in)
   let infoTab = 'dec';
   function digMhzOf(id) {
     const d = digDec(id);
@@ -13497,15 +13568,16 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!p) return;
     tab = tab || infoTab;
     if (tab === 'ai') tab = 'dec';   // the AI Signal Lab's tab (saved by older pages): the assistant is the dock now
+    if (tab === 'dig:@auto' || tab === 'dig:') tab = 'dec';   // the old Auto detect tab / none chosen yet
     if (tab === 'dec' || tab.startsWith('dec:')) {
       const list = digTabList();
       let t = tab.startsWith('dec:') ? digTabOfVfo(parseInt(tab.slice(4))) : digTabShown;
       if (!t || !list.includes(t))
         t = list.includes(digTabShown) ? digTabShown : (list.find(x => digTabVfos(x).length) || list[0] || '');
-      tab = 'dig:' + t;
+      tab = 'dig:' + t;   // 'dig:' = no decoder in use: the panel says so
     }
-    if (tab === 'dig:@auto' || tab === 'dig:') tab = 'dec';   // the old Auto detect tab / none yet
     if (tab.startsWith('dig:')) digTabShown = tab.slice(4) || null;
+    else decAllClose(false);   // (Transcription has no decoders' strip)
     infoTab = tab;
     const was = p.style.display !== 'none';
     p.style.display = 'flex';
@@ -13521,6 +13593,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function infoPanelClose() {
     const p = $id('info-panel');
     if (!p) return;
+    decAllClose(false);
     p.style.display = 'none';
     try { localStorage.setItem('kraken_info_panel', JSON.stringify({open: false, tab: infoTab})); } catch (e) {}
     setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
@@ -13556,16 +13629,18 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (ids.some(id => (digStatus[id] || {}).state === 'receiving')) return ['#40ae67', 'receiving'];
     return ['#f4c170', 'searching'];
   }
-  // The panel's top line: the decoders' tabs (one per decoder mode), or the
-  // transcripts' name - with a dot while a VFO's transmission is being
-  // collected. The count of transcripts that came while the panel showed
-  // something else is on the rail's button (railSync).
+  // The panel's top line: the decoders' tabs (one per decoder mode in use -
+  // digTabList) and "All decoders" after them, or the transcripts' name -
+  // with a dot while a VFO's transmission is being collected. The count of
+  // transcripts that came while the panel showed something else is on the
+  // rail's button (railSync).
   function infoRenderTabs() {
     const el = $id('info-tab-list');
     if (!el) return;
-    const list = digTabList();
+    const voice = infoTab === 'voice';
+    const list = voice ? [] : digTabList();
     const v2tRec = v2tStatus && (v2tStatus.vfos || []).some(v => v.rec);
-    let html = infoTab === 'voice' ? '<span class="info-title" title="Voice to Text: what was said on the VFOs with Transcribe ticked">' +
+    const html = voice ? '<span class="info-title" title="Voice to Text: what was said on the VFOs with Transcribe ticked">' +
         (v2tRec ? '<span style="color:#d8625c">&#9679;</span> ' : '') + icon('speech') + '<span>Transcription</span></span>'
       : list.map(t => {
       const ids = digTabVfos(t);
@@ -13576,11 +13651,15 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       return `<button type="button" class="info-tab${sel}${ids.length ? '' : ' idle'}" onclick="infoPanelOpen('dig:${digEsc(t)}')" title="${digEsc(name)}: ${what}">` +
              `<span style="color:${col}">&#9679;</span> ${digEsc(digShort(name))}${vfos}</button>`;
     }).join('');
-    if (!list.length && infoTab !== 'voice') {
-      const sel = infoTab.startsWith('dig:') ? ' sel' : '';
-      html = `<button type="button" class="info-tab${sel}" onclick="infoPanelOpen('dec')">${icon('decoder')}<span>Decoders</span></button>`;
-    }
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+    const all = $id('dec-all-btn');
+    if (all) {
+      all.hidden = voice;
+      const n = digPlugins.length ? `All decoders (${digPlugins.length})` : 'All decoders';
+      const at = $id('dec-all-t');
+      if (at.textContent !== n) at.textContent = n;
+    }
+    if (decAllOn) decAllRender();
     railSync();
     // a newly selected tab scrolled into the strip (only on a change - the
     // strip stays where the user scrolled it otherwise)
@@ -13591,6 +13670,193 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         el.scrollLeft = Math.max(0, s.offsetLeft - 8);
     }
   }
+
+  // --- All decoders (2026-11-18, the user asked: tabs only for the decoders
+  // in use, a list for the rest). The button after the tabs opens every
+  // installed decoder in a popover in the View popover's pattern: anchored to
+  // the button (above it when there is no room below - the panel is low on
+  // the page), inside the window, not modal; closed by Esc (focus back to the
+  // button), a press outside it and its button, the button again, a pick, a
+  // scroll of what holds the button, a resize of the window, the panel closing
+  // or showing Transcription. A filter box on top (focused when opened with a
+  // mouse or the keyboard, not on touch: no keyboard popping up), then "In
+  // use" (the tabs' decoders) and "Not running" (the rest), a row each: the
+  // tabs' state dot, the name, the VFOs running it, a plugin problem (not
+  // built / error / out of date). Arrow keys move, Enter picks, typing
+  // filters (name or id). A pick shows that decoder in the panel - as a tab
+  // while it is the one shown (digTabList)
+  function decAllToggle() { if (decAllOn) decAllClose(false); else decAllOpen(); }
+  function decAllOpen() {
+    const pop = $id('dec-all-pop'), btn = $id('dec-all-btn'), q = $id('dec-all-q');
+    if (!pop || !btn || btn.hidden) return;
+    decAllOn = true;
+    decAllWin = innerWidth + 'x' + innerHeight;
+    q.value = '';
+    decAllAct = digTabShown || '';
+    btn.classList.add('on');
+    btn.setAttribute('aria-expanded', 'true');
+    pop.hidden = false;
+    decAllRender();
+    decAllPlace(true);
+    if (decAllPtr !== 'touch') q.focus({preventScroll: true});
+    decAllPtr = '';
+    decAllScroll();
+  }
+  function decAllClose(focusBtn) {
+    if (!decAllOn) return;
+    decAllOn = false;
+    const pop = $id('dec-all-pop'), btn = $id('dec-all-btn');
+    if (pop) pop.hidden = true;
+    if (!btn) return;
+    btn.classList.remove('on');
+    btn.setAttribute('aria-expanded', 'false');
+    if (focusBtn && !btn.hidden) btn.focus();
+  }
+  // position:fixed from the button's rect: left edges aligned (right edges when that would
+  // leave the window), below the button or above it - where there is room; with room on
+  // neither side (a short window) the list gets the larger one. fit (on opening): the height
+  // is set for the whole list and kept while filtering, so the filter box does not move
+  function decAllPlace(fit) {
+    const pop = $id('dec-all-pop'), b = $id('dec-all-btn');
+    if (!pop || !b || pop.hidden) return;
+    const r = b.getBoundingClientRect(), m = 8, vw = innerWidth, vh = innerHeight;
+    if (!r.width && !r.height) { decAllClose(false); return; }   // the button is not shown any more
+    if (fit) pop.style.height = 'auto';
+    const w = pop.offsetWidth;
+    let h = pop.offsetHeight;
+    const below = vh - m - (r.bottom + 4), above = r.top - 4 - m;
+    let top;
+    if (h <= below) top = r.bottom + 4;
+    else if (h <= above) top = r.top - 4 - h;
+    else if (Math.max(above, below) >= 160) {
+      h = Math.max(above, below);
+      top = above > below ? m : r.bottom + 4;
+    } else { h = Math.min(h, vh - 2 * m); top = Math.max(m, vh - m - h); }
+    if (fit) pop.style.height = Math.round(h) + 'px';
+    let left = r.left;
+    if (left + w > vw - m) left = r.right - w;
+    left = Math.max(m, Math.min(vw - m - w, left));
+    pop.style.left = Math.round(left) + 'px';
+    pop.style.top = Math.round(top) + 'px';
+  }
+  // the rows: in use (the tabs' order), then every other installed decoder by name
+  function decAllRender() {
+    const lst = $id('dec-all-list'), q = $id('dec-all-q');
+    if (!lst || !q) return;
+    const f = (q.value || '').trim().toLowerCase();
+    const hit = id => !f || id.toLowerCase().includes(f) || digName(id).toLowerCase().includes(f);
+    const inUse = digTabsInUse();
+    const rest = digPlugins.map(p => p.id).filter(id => !inUse.includes(id)).sort((a, b) => digName(a).localeCompare(digName(b)));
+    const used = inUse.filter(hit), other = rest.filter(hit);
+    const vis = used.concat(other);
+    if (!vis.includes(decAllAct)) decAllAct = vis[0] || '';
+    const row = id => {
+      const p = digPlugin(id), name = digName(id), ids = digTabVfos(id);
+      const [col, what] = digTabState(id);
+      let flag = '', cls = '', why = '';
+      if (!p) { flag = 'Not installed'; cls = 'warn'; why = 'Not installed on this receiver (its data is from this session or the log)'; }
+      else if (p.error) { flag = 'Error'; cls = 'bad'; why = p.error; }
+      else if (!p.built) { flag = 'Not built'; cls = 'warn'; why = 'Not built: run make in kraken_doa_v2 (Setup Settings → Decoders)'; }
+      else if (p.stale) { flag = 'Out of date'; cls = 'warn'; why = 'The source changed since the last build'; }
+      const vfos = ids.map(i => 'D' + i).join(' ');
+      const tip = name + ' (' + id + '): ' + (vfos ? vfos + ' · ' : '') + what + (why ? '\n' + why : '') + (p && p.description ? '\n\n' + p.description : '');
+      return `<div class="da-row${id === decAllAct ? ' act' : ''}" role="option" id="da-o-${digEsc(id)}" data-id="${digEsc(id)}"` +
+             ` aria-selected="${infoTab === 'dig:' + id}" title="${digEsc(tip)}">` +
+             `<span class="da-dot" style="color:${col}" aria-hidden="true">&#9679;</span><span class="da-nm">${digEsc(digShort(name))}</span>` +
+             (vfos ? `<span class="da-x">${vfos}</span>` : '') + (flag ? `<span class="da-x ${cls}">${flag}</span>` : '') + `</div>`;
+    };
+    const grp = (head, ids, k) => ids.length ? `<div role="group" aria-labelledby="da-h-${k}"><div class="vp-sec" id="da-h-${k}">${head}</div>` +
+                                              ids.map(row).join('') + `</div>` : '';
+    const html = vis.length ? grp('In use', used, 'u') + grp('Not running', other, 'n')
+      : `<div class="da-none">${f ? 'No decoder matches' : 'No decoder installed'}</div>`;
+    if (lst.dataset.html !== html) {
+      const st = lst.scrollTop;
+      lst.dataset.html = html;
+      lst.innerHTML = html;
+      lst.scrollTop = st;
+    }
+    if (decAllAct) q.setAttribute('aria-activedescendant', 'da-o-' + decAllAct); else q.removeAttribute('aria-activedescendant');
+  }
+  // the highlighted row (arrow keys, the mouse) - without rebuilding the rows
+  function decAllSetAct(id, scroll) {
+    decAllAct = id;
+    $id('dec-all-list').querySelectorAll('.da-row').forEach(r => r.classList.toggle('act', r.dataset.id === id));
+    const q = $id('dec-all-q');
+    if (id) q.setAttribute('aria-activedescendant', 'da-o-' + id); else q.removeAttribute('aria-activedescendant');
+    if (scroll) decAllScroll();
+  }
+  // the highlighted row into the list's view (only the list scrolls)
+  function decAllScroll() {
+    const lst = $id('dec-all-list'), r = lst && lst.querySelector('.da-row.act');
+    if (!r) return;
+    const a = lst.getBoundingClientRect(), b = r.getBoundingClientRect();
+    // (the group heading above the first row of a group comes along)
+    const head = r.previousElementSibling && r.previousElementSibling.classList.contains('vp-sec') ? r.previousElementSibling.getBoundingClientRect().height + 8 : 0;
+    if (b.top - head < a.top) lst.scrollTop -= a.top - (b.top - head);
+    else if (b.bottom > a.bottom) lst.scrollTop += b.bottom - a.bottom;
+  }
+  function decAllPick(id, byKey) {
+    if (!id) return;
+    decAllClose(!!byKey);
+    infoPanelOpen('dig:' + id);
+  }
+  (function () {
+    const btn = $id('dec-all-btn'), pop = $id('dec-all-pop'), q = $id('dec-all-q'), lst = $id('dec-all-list');
+    if (!btn || !pop || !q || !lst) return;
+    btn.addEventListener('pointerdown', e => { decAllPtr = e.pointerType; });
+    btn.addEventListener('click', () => decAllToggle());
+    q.addEventListener('input', () => { decAllAct = ''; decAllRender(); lst.scrollTop = 0; });
+    q.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const ids = [...lst.querySelectorAll('.da-row')].map(r => r.dataset.id);
+        if (!ids.length) return;
+        const i = ids.indexOf(decAllAct);
+        const n = i < 0 ? 0 : Math.max(0, Math.min(ids.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+        decAllSetAct(ids[n], true);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        decAllPick(decAllAct, true);
+      }
+    });
+    // the button or a row has the focus (opened by touch, then a keyboard): typing and the
+    // arrow keys go to the filter box
+    pop.addEventListener('keydown', e => {
+      if (e.target === q || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key.length === 1 || e.key === 'ArrowDown' || e.key === 'ArrowUp') q.focus({preventScroll: true});
+    });
+    btn.addEventListener('keydown', e => {
+      if (decAllOn && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); q.focus({preventScroll: true}); }
+    });
+    // a press on a row keeps the focus in the filter box
+    lst.addEventListener('mousedown', e => { if (e.target.closest('.da-row, .vp-sec')) e.preventDefault(); });
+    lst.addEventListener('pointermove', e => {
+      if (e.pointerType !== 'mouse') return;
+      const r = e.target.closest('.da-row');
+      if (r && r.dataset.id !== decAllAct) decAllSetAct(r.dataset.id, false);
+    });
+    lst.addEventListener('click', e => { const r = e.target.closest('.da-row'); if (r) decAllPick(r.dataset.id, false); });
+    document.addEventListener('pointerdown', e => {
+      if (!decAllOn || pop.contains(e.target) || btn.contains(e.target)) return;
+      decAllClose(false);
+    }, true);
+    document.addEventListener('keydown', e => {
+      if (!decAllOn || e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      decAllClose(true);
+    }, true);
+    window.addEventListener('scroll', e => {
+      if (!decAllOn) return;
+      const t = e.target;
+      if (t === document || (t && t.nodeType === 1 && t.contains(btn))) decAllClose(false);
+    }, true);
+    window.addEventListener('resize', () => {
+      if (!decAllOn) return;
+      if (innerWidth + 'x' + innerHeight !== decAllWin) decAllClose(false);
+      else decAllPlace(false);
+    });
+  })();
 
   // An on / off option's button text after its name: nothing for plain On /
   // Off (the button is lit while on), ": state" for anything else
@@ -13676,8 +13942,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const empty = !tab;
     body.classList.toggle('empty', empty);
     if (empty) {
-      const t = '<div class="dig-help" style="padding:8px">No VFO is decoding - tick <b>Digital decoder</b> on a VFO card.' +
-                helpTip('Each decoder gets a tab here, showing every VFO that runs it.') + '</div>';
+      // (a VFO in Auto detect that has found nothing yet is in no tab)
+      const searching = digActiveIds().filter(id => !digTabOfVfo(id));
+      const t = '<div class="dig-help" style="padding:8px">' +
+                (searching.length ? 'Auto detect: searching · ' + searching.map(id => 'D' + id).join(' ') : 'No decoder is running') +
+                helpTip((searching.length ? 'The decoder Auto detect finds gets a tab here. ' : 'Tick <b>Digital decoder</b> on a VFO card to run one. ') +
+                        'Pick a decoder from <b>All decoders</b> to see its settings. A decoder has a tab here while a VFO runs it or it has data to show.') + '</div>';
       if ($id('info-dec-top').innerHTML !== t) $id('info-dec-top').innerHTML = t;
       $id('info-dec-cols').style.display = 'none';
       $id('info-dec-table').style.display = 'none';

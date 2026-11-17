@@ -255,11 +255,64 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   locked onto P (`digVfoPlugin`, `digTabVfos`). There is NO Auto detect tab:
   a VFO in AUTO appears in the tab of the decoder it detected (its mode list
   there says Auto detect), and in none while it is still searching (its VFO
-  card shows "Searching…"). The tabs are ALWAYS all there (`digTabList`):
-  every built plugin (+ one this receiver lacks that still has events /
-  incidents here) - those a VFO runs first, then the rest, each group by name - selectable with no VFO running it and no
-  data yet; such an idle tab says so and offers "Start on D0 D1 ..."
-  (`digSetModeFor`). The panel follows a VFO whose mode is picked
+  card shows "Searching…"). Tabs only for the decoders in use, a list
+  for the rest (2026-11-18; the user accepted the recommendation to
+  "tame the decoder tabs" - the strip had a tab for every installed
+  decoder, 28 on the test build, in a sideways-scrolling strip - and
+  asked for it "with a list for the inactive ones"):
+  - **Which decoders get a tab** (`digTabsInUse`): a VFO runs it now
+    (fixed, or Auto detect locked onto it), or it has something to show -
+    events not hidden by Clear (live VFOs, VFOs since switched, removed
+    VFOs' `digArchive`) or incident rows. Those a VFO runs first, then the
+    rest, each group by name; the tabs' look, state dot and "· D0 D2" are
+    as before.
+  - **All decoders** (`#dec-all-btn`, "All decoders (28)" - the count of
+    installed plugins) after the tabs opens a popover in the View
+    popover's pattern (`decAllOpen` / `decAllClose` / `decAllPlace`): under
+    or above its button (the panel is low on the page, so usually above),
+    inside the window, not modal; closed by Esc (focus back to the
+    button), a press outside, the button again, a pick, a scroll of what
+    holds the button, a window resize, the panel closing or switching to
+    Transcription. A press on a help-mode `?` is no press outside, and in
+    help mode a tap on a row shows its tip instead of picking it. On top a
+    filter box (`#dec-all-q`, a combobox; name or id, case-insensitive),
+    focused when the list is opened with a mouse or the keyboard, not on
+    touch (no on-screen keyboard popping up); then every installed
+    decoder (`digPlugins`, plus a decoder in use this receiver lacks)
+    under "In use" (the tabs' decoders, in their order) and "Not running"
+    (by name): a row (`role="option"`) with the tabs' state dot, the short
+    name, the VFOs running it, and a plugin problem - "Not built",
+    "Error", "Out of date" (`built` / `error` / `stale`, as in Setup
+    Settings → Decoders), "Not installed"; the row's `title` has the whole
+    name, the id, the state, the reason and the plugin's description.
+    Arrow keys move the highlight (`aria-activedescendant`), Enter picks,
+    typing filters. While filtering the popover keeps the height it opened
+    with, so the filter box does not move. On a phone it is as wide as the
+    screen allows, rows 42 px.
+  - **A picked decoder that is not in use** is a tab while it is the shown
+    one (`digTabList` = the decoders in use + `digTabShown`, at the end, in
+    the idle look), so the strip always shows where you are; it leaves the
+    strip when another tab is picked. Nothing is stored for it beyond the
+    selected tab in `kraken_info_panel` (a reload restores it as the
+    shown tab; an id no longer installed falls back). Its body is the idle
+    one: "Not running" + "Start on D0 D1 ..." (`digSetModeFor`). The same
+    holds for a shown decoder whose VFO stops elsewhere (another page,
+    the assistant): the panel never leaves a shown decoder by itself; but unticking a VFO's
+    decoder here (`digToggle` off) moves the panel off a tab left with
+    nothing in it, to the first decoder in use or the empty state.
+  - **Nothing in use**: the strip shows only All decoders, `infoTab` is
+    `'dig:'` and the body says "No decoder is running" ("Auto detect:
+    searching · D0" while a VFO in Auto detect has found nothing) + a `?`;
+    as soon as a decoder is in use the panel shows it (`digRenderAll`).
+  - The strip (`#info-tab-list`) still scrolls sideways when many are in
+    use; All decoders stays visible right of it, the ✕ after it.
+  - Test: `test_dectabs.py` in the job's scratch directory (headless
+    Chromium: the empty strip, the list against `digPlugins`, groups,
+    filter by name and id, keys, Esc / outside / pick, help mode, an idle
+    pick as a tab, a VFO switched on / off, data keeping a tab - the ADS-B
+    debug playback -, `dec:0` and reloads, Transcription, 1700 / 1300 /
+    560-px-high windows, a 400 px phone with touch).
+  The panel follows a VFO whose mode is picked
   (`digSetModeFor` / `digToggle` -> `infoPanelOpen('dec:<id>')`). A tab
   (`infoRenderDecoder`) shows: a settings row per VFO in it
   (`digVfoRowHtml`: coloured VFO + MHz + state, mode, Listen - only for
