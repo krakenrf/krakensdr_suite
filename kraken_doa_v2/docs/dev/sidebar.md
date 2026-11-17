@@ -444,7 +444,8 @@ per-tuner model is in *operating-modes.md*.
   "View" (single spectrum), "View · all tuners" (the header's button in
   independent mode) or "View · T2". About 250 px wide: SPECTRUM - Scale,
   Zoom (the points' spacing, `#zoom-res`, small under the zoom value);
-  WATERFALL - Speed, Colors, Auto (a `.sw` switch), Min, Max. A label
+  WATERFALL - Speed, Colors, Contrast (its `.sw` switch is Auto), Min,
+  Max (the waterfall contrast, below). A label
   column, the control, the value right-aligned in a 48 px column with
   tabular numbers, so nothing jitters while dragging. While Auto is on, Min
   and Max are disabled (dimmed) and show what Auto set, moving with it -
@@ -486,6 +487,23 @@ per-tuner model is in *operating-modes.md*.
   24px)`, rows 38 px, 22 px thumbs). `wf-controls-bar` is no longer in
   `MOBILE_RELOCATIONS`; the drawer's phone-only box `mobile-display` (key
   kept) holds only the three panel buttons and is titled "🗂️ Panels".
+- **The waterfall contrast** (2026-11-17): the user asked to "make it
+  clearer that "auto" and "min" "max" are for the waterfall contrast" -
+  they were three bare rows. Now one group (`.vp-grp`, `role="group"`
+  named by its label): the row **Contrast** with the switch and the word
+  "Auto" beside it (the switch's meaning is unchanged: on = Auto), and Min
+  / Max under it in `.vp-sub`, indented, with a 1 px `--l3` rule down
+  their left side. The indent (`--vp-ind`, 12 px) comes out of their
+  label column, so their sliders and values stay in the columns of Scale /
+  Zoom / Speed; the popover's width is unchanged (250 px; phone
+  `min(300px, 100vw - 24px)`). The columns are CSS variables on
+  `.view-pop` (`--vp-lw` / `--vp-vw`: 46 / 48 px, 50 / 52 px on a phone).
+  The Contrast row's label column is `minmax(--vp-lw, max-content)`, so
+  a wider font pushes the switch right instead of clipping the word. The
+  wording is in the `title`s ("Waterfall contrast: the signal levels
+  shown as the darkest and the brightest colour. Auto sets them from the
+  signal levels."; Min / Max: "... the level shown as the darkest /
+  brightest colour"). Ids, behaviour and commands are as before.
 
 Tests (2026-11-17, scratch `test_view.py`, headless Chromium with real
 mouse, key and touch events; 96 checks): the header's order and one line at
@@ -508,6 +526,19 @@ header, a tap opens it inside the screen, a finger drags a slider, a tap
 outside closes it, the Panels box; no JS errors. `test_hdr.py` (the
 header) was rewritten for the button (28 checks); `test_page.py` opens the
 popover before it drags Min.
+
+The waterfall contrast (2026-11-17, scratch `test_contrast.py`, 62
+checks; `test_view.py` now expects the label Contrast and Min / Max's
+labels indented): on the desktop with Auto on and off, for T1 in
+independent mode and on a 400 px phone - the rows, the popover's width
+(250 / 300 px), nothing outside it and no clipped label, the switch and
+the word Auto on the Contrast row with the switch in the controls column,
+Min / Max in the group below it, indented 8-16 px, the `--l3` rule over
+their height inside the label column, their sliders' edges and values
+within 1 px of Scale / Zoom / Speed; the tooltips; a mouse click on the
+switch, on the word Auto and on the label toggles Auto (`UI:WF_AUTO`; T1's
+own value, nothing sent), Min / Max disabled and dimmed with Auto on; a
+tap on the phone; no JS errors.
 
 ## Tests (2026-11-15, headless Chromium, real mouse / touch events)
 

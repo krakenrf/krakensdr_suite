@@ -666,7 +666,9 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 .view-pop[hidden] {display:none}
 .vp-head {font-size:12.5px;font-weight:600;color:var(--t1);padding-bottom:6px;border-bottom:1px solid var(--l1)}
 .vp-sec {font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--t5);margin:9px 0 3px}
-.vp-row {display:grid;grid-template-columns:46px minmax(0,1fr) 48px;align-items:center;column-gap:10px;min-height:26px}
+/* --vp-lw / --vp-vw: the label and value columns (wider on a phone); --vp-ind: Min / Max's indent */
+.view-pop {--vp-lw:46px;--vp-vw:48px;--vp-ind:12px}
+.vp-row {display:grid;grid-template-columns:var(--vp-lw) minmax(0,1fr) var(--vp-vw);align-items:center;column-gap:10px;min-height:26px}
 .vp-l {color:var(--t3)}
 .vp-v {text-align:right;color:var(--ac-t);font-variant-numeric:tabular-nums;white-space:nowrap}
 .vp-res {display:block;font-size:10px;line-height:1.2;color:var(--t6)}
@@ -676,6 +678,14 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 .vp-row input.sw {justify-self:start}
 .vp-row input[type="range"]:disabled {opacity:.4;cursor:default}
 .vp-row:has(input:disabled) > .vp-l,.vp-row:has(input:disabled) > .vp-v {opacity:.55}
+/* the waterfall contrast (2026-11-17, the user's wish): the Contrast row - its switch is Auto,
+   the word beside it - and Min / Max indented under it with a rule down their left side. The
+   indent comes out of their label column, so their sliders and values stay in the columns of
+   the rows above. */
+.vp-grp-h {grid-template-columns:minmax(var(--vp-lw),max-content) minmax(0,1fr)}
+.vp-sw {display:flex;align-items:center;gap:6px;justify-self:start;color:var(--t3)}
+.vp-sub {margin-left:4px;padding-left:calc(var(--vp-ind) - 5px);border-left:1px solid var(--l3)}
+.vp-sub .vp-row {grid-template-columns:calc(var(--vp-lw) - var(--vp-ind)) minmax(0,1fr) var(--vp-vw)}
 
 /* DoA panel */
 /* one width on every tab - MUSIC DoA, Map, Both: --map-w (rpApplyWidth; 42 % until dragged), the resizer on its left edge */
@@ -1596,8 +1606,8 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   /* the View button and its popover: finger-sized, the popover inside the window */
   .view-btn {height:32px;padding:0 11px 0 9px}
   .view-btn.icon {width:32px;height:30px;padding:0}
-  .view-pop {width:min(300px, calc(100vw - 24px));padding:10px 14px 12px}
-  .vp-row {min-height:38px;grid-template-columns:50px minmax(0,1fr) 52px}
+  .view-pop {width:min(300px, calc(100vw - 24px));padding:10px 14px 12px;--vp-lw:50px;--vp-vw:52px}
+  .vp-row {min-height:38px}
   .view-pop input[type="range"] {height:6px}
   .view-pop input[type="range"]::-webkit-slider-thumb {width:22px;height:22px}
   .view-pop input[type="range"]::-moz-range-thumb {width:18px;height:18px}
@@ -2649,9 +2659,9 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
             <option value="3">Antenna 3</option>
             <option value="4">Antenna 4</option>
           </select>
-          <!-- the display settings of the spectrum and the waterfall (Scale, Zoom, Speed, Colors, Auto,
-               Min, Max): a popover under this button (VIEW POPOVER in the script). Each tuner pane of
-               independent mode has the same button; the popover is one element, moved next to the
+          <!-- the display settings of the spectrum and the waterfall (Scale, Zoom, Speed, Colors, the
+               waterfall contrast - Auto, Min, Max): a popover under this button (VIEW POPOVER in the
+               script). Each tuner pane of independent mode has the same button; the popover is one element, moved next to the
                button that opened it. Its home is right after this button. -->
           <button type="button" class="view-btn" id="view-btn-main" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-pop"
                   title="View: scale, zoom, waterfall" onclick="viewPopToggle(this, 'main')"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 4h7M12.5 4h2M1.5 8h2M7.5 8h7M1.5 12h8M13.5 12h1"/><circle cx="10.5" cy="4" r="1.9"/><circle cx="5.5" cy="8" r="1.9"/><circle cx="11.5" cy="12" r="1.9"/></svg><span>View</span></button>
@@ -2674,12 +2684,17 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
                   <option value="plasma">Plasma</option>
                   <option value="grayscale">Gray</option>
                 </select></label>
-              <label class="vp-row" title="Set the waterfall's Min / Max from the signal levels (Min / Max then follow by themselves)"><span class="vp-l">Auto</span>
-                <input type="checkbox" class="sw" id="wf-autorange" checked onchange="viewSet('auto', this.checked)"></label>
-              <label class="vp-row" title="Waterfall colour scale: the level drawn darkest"><span class="vp-l">Min</span>
-                <input type="range" id="wf-min" min="-20" max="60" value="-10" oninput="viewSet('min', this.value)"><span class="vp-v" id="wf-min-val">-10 dB</span></label>
-              <label class="vp-row" title="Waterfall colour scale: the level drawn brightest"><span class="vp-l">Max</span>
-                <input type="range" id="wf-max" min="10" max="80" value="50" oninput="viewSet('max', this.value)"><span class="vp-v" id="wf-max-val">50 dB</span></label>
+              <!-- the waterfall contrast: the Contrast row (its switch is Auto), Min / Max under it -->
+              <div class="vp-grp" role="group" aria-labelledby="wf-contrast-l">
+                <label class="vp-row vp-grp-h" title="Waterfall contrast: the signal levels shown as the darkest and the brightest colour. Auto sets them from the signal levels."><span class="vp-l" id="wf-contrast-l">Contrast</span>
+                  <span class="vp-sw"><input type="checkbox" class="sw" id="wf-autorange" checked onchange="viewSet('auto', this.checked)"><span>Auto</span></span></label>
+                <div class="vp-sub">
+                  <label class="vp-row" title="Waterfall contrast: the level shown as the darkest colour"><span class="vp-l">Min</span>
+                    <input type="range" id="wf-min" min="-20" max="60" value="-10" oninput="viewSet('min', this.value)"><span class="vp-v" id="wf-min-val">-10 dB</span></label>
+                  <label class="vp-row" title="Waterfall contrast: the level shown as the brightest colour"><span class="vp-l">Max</span>
+                    <input type="range" id="wf-max" min="10" max="80" value="50" oninput="viewSet('max', this.value)"><span class="vp-v" id="wf-max-val">50 dB</span></label>
+                </div>
+              </div>
             </div>
           </div>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
@@ -4261,9 +4276,9 @@ let waterfall = null;
 // ----------------------------------------------------------------------------
 // The "View" button on the spectrum's header (and, in independent mode, one on
 // each tuner pane's header) opens one popover (#view-pop) under it: Scale,
-// Zoom, Speed, Colors, Auto, Min, Max (the user's wish, 2026-11-17: they were a
-// row in the header that wrapped to two or three lines, and in independent
-// mode each tuner should have its own). One set of controls with a target
+// Zoom, Speed, Colors, Contrast (Auto, Min, Max) (the user's wish, 2026-11-17:
+// they were a row in the header that wrapped to two or three lines, and in
+// independent mode each tuner should have its own). One set of controls with a target
 // (viewTarget): 'main' = the common values (the single spectrum; in
 // independent mode "all tuners"), a number = that tuner. The controls hold no
 // state: every reader goes to viewCommon / viewStore (globals block), and

@@ -193,8 +193,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   settings in its own header): every pane header ends with a View button that opens the View
   popover for that tuner (*sidebar.md*, script block "VIEW POPOVER"). Scale (the pane
   spectrum's dB top - `paneYMax(p)` in `paneDrawSpec`, the VFO and scan squelch lines and the
-  squelch drag), Zoom (`p.zoom`, as before), Speed, Colors, Auto, Min and Max are each per
-  tuner. The model is "the tuner's own value, else the common one; the last change wins":
+  squelch drag), Zoom (`p.zoom`, as before), Speed, Colors and the waterfall contrast (Auto,
+  Min and Max) are each per tuner. The model is "the tuner's own value, else the common one; the last change wins":
   - The common values are the ones the page always had: `UI:FFT_Y`, `UI:WF_SPEED`,
     `UI:WF_COLORMAP`, `UI:WF_MIN`, `UI:WF_MAX`, `UI:WF_AUTO` - stored by the receiver and
     replayed to every browser (`viewCommon` in the globals block). Nothing changed on the
