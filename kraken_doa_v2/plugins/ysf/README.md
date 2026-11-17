@@ -169,13 +169,29 @@ voice bits).
   same words from both files, and the same DN level profile (the burst,
   the pauses and the speech onsets in the same 20 ms frames; log-envelope
   correlation 0.75 over the call, its output gain not being constant). The
-  DN audio starts with a loud burst: 60-140 ms into the call it reaches
-  full scale, then decays over the next 100 ms - the call's first five
-  frames are AMBE+2 silence frames (b0
-  124), whose other bits mbelib still decodes as gain and spectrum; dsdcc +
-  mbelib has the same burst, later silence frames in the call are quiet.
-  With the burst in, whisper gets one of the two phrases (confidence 0.51);
-  with the first 0.3 s cut, both (0.71; dsdcc's audio 0.69). V/D mode 1
+  DN audio started with a loud burst: 60-140 ms into the call it reached
+  full scale, then decayed over the next 100 ms (RMS per 20 ms frame 11 85
+  1032 7741 17348 23438 15143 5092 2203 1918 ...) - the call's first five
+  frames are AMBE+2 silence frames (b0 124), whose other bits mbelib still
+  decodes as gain and spectrum, and the speech after them inherited that
+  (differential) gain; dsdcc + mbelib has the same burst. With it, whisper
+  got one of the two phrases (confidence 0.51). Now (2026-11-17) the
+  plugin plays silence frames as silence and, while nothing but silence
+  frames has come since the codec's reset (call start, late entry),
+  resets the codec after each, so the first speech frame starts from its
+  initial state: 0 0 0 0 0 270 448 547 763 1036 ..., peak of the first
+  0.5 s 5919 (was 32767, clipped), whisper both phrases (0.71) without any
+  trimming. Silence frames later in the call (pauses, 140 of them, RMS <=
+  144 before) are muted but still go through mbelib, so the speech after
+  a pause starts as before (the voiced frames among the 10 after each
+  pause, >= 100 RMS: 0.94..1.04 of before, 5-95 %, extremes 0.84 / 1.17);
+  all voiced frames from 0.5 s on: 0.92..1.10 (median 1.000 - mbelib's
+  random unvoiced phases differ once the start differs), whole-call peak
+  9252 (9328). Tried and not taken:
+  muting only (the burst stays: 23438 in the first speech frame); muting
+  and skipping mbelib for every silence frame, or resetting it after every
+  one (the burst gone, but the onsets after pauses 2-4 x softer than
+  before, e.g. 599 -> 143). V/D mode 1
   through mbelib only with the generator's random 72-bit frames (runs, 1-3
   of 5 frames "clean" as random bits go): no real V/D mode 1 voice yet.
 
@@ -185,4 +201,6 @@ one radio, direct, at high SNR, in DN and VW: V/D mode 1, Data FR, calls
 through a repeater or over VoIP and non-zero DG-IDs were only checked with
 the generator and dsdcc. The data real DN calls carry in DT1 / DT2 (20
 bytes, probably the position) isn't in Yaesu's standard and is only shown
-as hex. Known: the burst at the start of a DN call's audio (above).
+as hex. The silence-frame handling (above) was set on this one DN call;
+V/D mode 1 (the same codec through the 72-bit path DMR and NXDN share) may
+open with silence frames too - not changed without a real recording.

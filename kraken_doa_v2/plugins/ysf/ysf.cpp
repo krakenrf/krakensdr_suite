@@ -222,6 +222,7 @@ void YsfReceiver::reset() {
     facts_.clear();
     imbe_.reset();
     if (ambe_) ambe_->reset();
+    dn_lead_ = true;
     // the host resets its own talker state together with ours
     call_start_ = -1;
     talker_id_.clear();
@@ -303,6 +304,7 @@ void YsfReceiver::begin_call() {
     voice_end_ = frame_a_;
     imbe_.reset();
     if (ambe_) ambe_->reset();
+    dn_lead_ = true;
 }
 
 void YsfReceiver::end_call(const char* why) {
@@ -564,6 +566,7 @@ void YsfReceiver::voice_vd1(const uint8_t* bits) {
         }
         if (ambe_->decode(fr, pcm.data() + 160 * k) <= 2) clean++;
     }
+    dn_lead_ = false;   // the codec state isn't the initial one any more (voice_vd2)
     voice_out(pcm, "AMBE+2", clean, 5);
 }
 
@@ -584,13 +587,35 @@ void YsfReceiver::voice_vd2(const float* soft) {
         if (ctx_.voice_state) ctx_.voice_state(who + ": this mbelib lacks mbe_processAmbe2450Dataf (DN voice)");
         return;
     }
-    if (!ambe_) ambe_ = std::make_unique<AmbeStream>(false);
+    if (!ambe_) {
+        ambe_ = std::make_unique<AmbeStream>(false);
+        dn_lead_ = true;
+    }
     std::vector<float> pcm(5 * 160);
     int clean = 0;
     for (int k = 0; k < 5; k++) {
         char d[49];
         for (int i = 0; i < 49; i++) d[i] = static_cast<char>(b[k][i]);
-        ambe_->decode49(d, dissent[k], pcm.data() + 160 * k);
+        float* out = pcm.data() + 160 * k;
+        ambe_->decode49(d, dissent[k], out);
+        // AMBE+2 silence frames (pitch index b0 = 124 / 125, mbelib's bits
+        // 0..3 + 37..39) are played as silence. mbelib 1.3.0 still decodes
+        // their other bits as gain / spectrum: on an off-air DN call that
+        // opened with five of them the output went to full scale 60-140 ms
+        // in and the following speech inherited the (differential) gain for
+        // ~150 ms. So silence frames before the first other frame since the
+        // codec's reset (a call's start, a late entry) also reset it - the
+        // first speech frame starts from the codec's initial state. Later
+        // ones (pauses) keep the state: their frames after a pause were fine
+        // and stay as they were. Erasure (120..123) / tone (126 / 127)
+        // frames stay mbelib's.
+        const int b0 = (d[0] << 6) | (d[1] << 5) | (d[2] << 4) | (d[3] << 3) | (d[37] << 2) | (d[38] << 1) | d[39];
+        if (b0 == 124 || b0 == 125) {
+            std::fill(out, out + 160, 0.0f);
+            if (dn_lead_) ambe_->reset();
+        } else {
+            dn_lead_ = false;
+        }
         if (dissent[k] <= 3) clean++;
     }
     voice_out(pcm, "AMBE+2 DN", clean, 5);

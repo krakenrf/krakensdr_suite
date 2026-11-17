@@ -180,7 +180,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     Off-air IQ recordings of a DN and a VW call (2026-11-17): every
     frame decoded, VW's IMBE codewords all valid as received (plugin
     README); DN (mbelib) and VW audio of those recordings is speech,
-    V/D mode 1 voice not heard from a real radio yet.
+    V/D mode 1 voice not heard from a real radio yet. DN silence frames
+    (b0 124 / 125) are muted, the leading ones of a call also reset the
+    codec (`dn_lead_`) - they made a full-scale burst at the call's start
+    (*Digital voice*).
     `KRAKEN_YSF_DUMP=1`: frames, DCH units, voice bits to stderr
   - `Mpt1327Receiver` (plugins/mpt1327): MPT1327 / MPT1343 analogue
     trunking signalling, 1200 bit/s FFSK (1 = 1200 Hz, 0 = 1800 Hz) on the

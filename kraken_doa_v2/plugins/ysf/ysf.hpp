@@ -114,6 +114,7 @@ private:
     // voice
     ImbeDecoder imbe_;                      // Voice FR
     std::unique_ptr<AmbeStream> ambe_;      // V/D mode 1 / 2 (mbelib)
+    bool dn_lead_ = true;                   // no DN frame but silence since the codec's reset
     void voice_vw(const uint8_t* bits, int nframes, int first);
     void voice_vd1(const uint8_t* bits);
     void voice_vd2(const float* soft);

@@ -49,10 +49,16 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   Golay word of 422 real frames valid as received; DN: the pitch parameter
   runs in smooth tracks in this order only - plugin README); the audio
   of both recordings is speech (2026-11-17, mbelib 1.3.0: Voice to Text
-  writes down the callsign spelled out, as dsdcc + mbelib's audio; a DN
-  call's first ~150 ms are a full-scale burst - mbelib decoding the gain
-  of the opening silence frames, dsdcc has it too); V/D mode 1 only with
-  the generator's random frames
+  writes down the callsign spelled out, as dsdcc + mbelib's audio); V/D
+  mode 1 only with the generator's random frames. DN silence frames (b0
+  124 / 125) are muted (`voice_vd2`): mbelib 1.3.0 decodes their other
+  bits as gain / spectrum, and a call that opened with five of them went to
+  full scale 60-140 ms in, the speech after inheriting the gain (dsdcc +
+  mbelib the same). Leading ones (nothing else since the codec's reset)
+  also reset the codec, later ones (pauses) keep its state - the speech
+  after a pause as before. First 0.5 s peak 32767 -> 5919, whisper one of
+  two phrases (0.51) -> both (0.71); plugin README. The 49-bit DN path
+  only - the shared 72-bit path (DMR / NXDN / V/D 1) is unchanged
 - TETRA: `TetraCodec` runs the ETSI programs as `cdecoder /dev/stdin
   /dev/stdout | sdecoder ...` (posix_spawn, non-blocking pipes, 690-word
   test-frame blocks of descrambled type-4 soft bits). Full-slot traffic
