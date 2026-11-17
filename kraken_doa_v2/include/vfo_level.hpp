@@ -14,6 +14,17 @@
 // retune (> RETUNE_HZ) starts it afresh; after the signal ends it is held,
 // its age goes out with it.
 //
+// Beside it each VFO's SNR AS THE SPECTRUM SHOWS IT (snr_db): the highest
+// point of the tuner's averaged spectrum in the VFO's band over the noise
+// floor - the display's 0 dB, the number the FFT squelch compares
+// (FFTProcessor::get_range_peak_db) -, sampled every SAMPLE_MS whether or not
+// there is a level: the hover readout's SNR. Not the level over the band's
+// noise (sig / noise above): that divides by the noise summed across the
+// whole VFO, so a signal narrower than its VFO reads far lower than it stands
+// on the screen - a ~10 kHz signal in a 63 kHz VFO 30 dB where the spectrum
+// shows 55 (the user's report, 2026-11-17) - and one below 2x that noise has
+// no level at all.
+//
 // Read by: the page's hover readout on each VFO (system_status,
 // decimator_squelch[].lvl - every page, 2 Hz) and the 📏 range estimate
 // (rdf_mapper.cpp: a VFO's level, and a talker's from the VFO's moments
@@ -61,6 +72,7 @@ int64_t now_ms();   // the clock of Level::t / Moment::t (steady)
 
 bool level(int vfo, Level* out);      // false: no moment yet
 bool moment(int vfo, Moment* out);    // false: no moment yet
+bool snr_db(int vfo, float* out);     // false: no spectrum yet (dB over the floor, as drawn)
 
 // ,"lvl":{"dbfs","noise","total","gain","age","n"} - nothing when L has no level
 void write_json(std::ostream& o, const Level& L);
