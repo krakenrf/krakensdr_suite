@@ -1,0 +1,31 @@
+{
+ "rf_hz": 227360000,
+ "seconds": 4.8,
+ "channels": 5,
+ "radius_m": 0.12,
+ "snr_db": 18,
+ "seed": 11,
+ "offset_khz": 24,
+ "cfo_hz": 370,
+ "sco_ppm": 12,
+ "station": [0.0, 0.0],
+ "ensemble": {"eid": "10C2", "ecc": "E0", "label": "Kraken Mux B", "short": "Mux B", "ext_label": "Kraken Mux B Ö",
+              "lto_half_hours": -10, "utc": "2026-11-16T23:59:57", "cif0": 4960},
+ "services": [
+  {"sid": "1201", "label": "Kraken One", "short": "One", "type": "dab", "kbps": 128, "protection": "3",
+   "pty": 1, "lang": 9, "tone_hz": 375, "dls": "Kraken One - Layer II 48 kHz - 375 Hz"},
+  {"sid": "1202", "label": "Kraken LSF", "short": "LSF", "type": "dab", "kbps": 64, "rate_hz": 24000, "protection": "2",
+   "pty": 15, "lang": 9, "tone_hz": 1312.5, "dls": "Kraken LSF - MPEG-2 Layer II 24 kHz 64 kbit/s UEP 2 - 1312.5 Hz"},
+  {"sid": "1203", "label": "Kraken Jazz", "short": "Jazz", "type": "dabplus", "kbps": 32, "protection": "1A",
+   "pty": 24, "lang": 9, "tone_hz": 500, "dls": "Kraken Jazz - DAB+ 32 kbit/s EEP 1-A - 500 Hz"},
+  {"sid": "1204", "label": "Kraken Rock", "short": "Rock", "type": "dabplus", "kbps": 48, "protection": "2A",
+   "pty": 11, "lang": 9, "tone_hz": 2250, "dls": "Kraken Rock - DAB+ 48 kbit/s EEP 2-A - 2250 Hz"},
+  {"sid": "1205", "label": "Kraken News", "short": "News", "type": "dabplus", "kbps": 72, "protection": "4A",
+   "pty": 1, "lang": 15, "tone_hz": 3000, "dls": "Kraken News - DAB+ 72 kbit/s EEP 4-A - 3000 Hz"},
+  {"sid": "1206", "label": "Kraken Pop", "short": "Pop", "type": "dabplus", "kbps": 64, "protection": "3B",
+   "pty": 10, "lang": 9, "tone_hz": 1500, "dls": "Kraken Pop - DAB+ 64 kbit/s EEP 3-B - 1500 Hz"}
+ ],
+ "transmitters": [
+  {"name": "Hill", "main": 5, "sub": 1, "bearing": 300, "delay_us": 0, "level_db": 0, "phase_deg": 45, "range_km": 15}
+ ]
+}

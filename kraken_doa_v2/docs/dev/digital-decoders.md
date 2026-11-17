@@ -15,7 +15,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
   *FLARM / OGN*), analog_id (see *Analog FM IDs*; was ctcss), beacon406 (see *406 MHz
   distress beacons*), lora (see *LoRa / Meshtastic / LoRaWAN*), wildlife (see
-  *Wildlife collars*), rds (see *RDS / RBDS + SCA*), acars (see *ACARS*), vdl2 (see *VDL Mode 2*), dtv and cells
+  *Wildlife collars*), rds (see *RDS / RBDS + SCA*), acars (see *ACARS*), vdl2 (see *VDL Mode 2*), dab (see
+  *DAB / DAB+*; multichannel, a talker per transmitter by its TII code), dtv and cells
   (ARRAY plugins - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
@@ -218,7 +219,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   running|starting|missing|not built|crashed|error, error, dropped, log}],
   `info` {id: facts}, `voice`, `opts`, `map_capable` (a running plugin
   declares `kp::Info::map`), `map_points`, `tables` (below; only in some
-  pushes)
+  pushes), `choices` (below; in every push, `{}` = none)
 - Tables (`kp::Host::table_columns / table_row / table_remove / table_keep`,
   wire 25-27, 32; `table_detail`, wire TABLE_DETAIL 38): one per plugin in
   `Report` (headings + rows by key, max 1000, a row not updated for the
@@ -239,7 +240,27 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   numbers, empty cells last; per plugin in localStorage
   `kraken_dig_table_sort`), "Seen" column from the row age, a row whose
   `vfo|plugin|key` is a map point is clickable (`digTableRowClick`: opens
-  the map, selects + centres the marker). A row with details gets a ▸
+  the map, selects + centres the marker); one whose key is a talker of that
+  VFO selects it in the 📡 DF panel; one whose key is a value of the
+  run-time choices of one of the plugin's options (below; 2026-11-17, dab:
+  an audio service's SId) selects that choice (`digRowChoice` /
+  `digPickChoice`: the dropdown's `DIGITAL_OPT:<vfo>:<id>.<key>:<value>`,
+  not sent when it is the value set; for a `voice` plugin also the tab's
+  Listen - `digListenFor` - when the VFO isn't heard, so a listener just
+  hears the new choice). The first that applies counts: map point, talker,
+  choice (the map / talker rules as before; a plugin wanting a selectable
+  row keeps that key out of its map points and talkers). A choice row:
+  `tr.choice` (pointer, green VFO cell, tooltip "Listen to this
+  (Programme: ...)" / "Select this (...)"), and `tr.sel` when its value is
+  the option's value as the receiver last reported it (no optimistic
+  mark; a second page follows the broadcast). A setting that is no row's
+  key - dab's "" (first audio service) or a part of a name - marks no row:
+  the page can't know which service it resolves to, and a wrong mark is
+  worse than none; after a row click or a list pick it is a SId (the dab
+  plugin marks the programme it decodes in a ▶ column of its own - a plain
+  cell, *plugin-dab*). Rows
+  without choices (older receiver, data services) as before. Test:
+  scratchpad rowclick/t_rowclick.py. A row with details gets a ▸
   toggle (`.dig-det-tog`, `digDetToggle` - stopPropagation, so the row's
   own click isn't fired; open rows in `digDetOpen`, this page only): the
   details render as a row of their own under it (`tr.dig-det`, a
@@ -251,7 +272,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   decoder tab; persisted as `&m=1`; `DIGITAL_OPT:id:map:0|1` also asks for
   a full map push) + `plugin`
   {"<id>.<key>": value} - the plugins' declared options,
-  sent to the plugin as OPTION key=value ("" = back to its default).
+  sent to the plugin as OPTION key=value ("" = back to its default). An
+  option declared `hidden` (plugin list `"hidden":true`, 2026-11-17 - dab's
+  Programme) gets no control in `digVfoRowHtml` at any stage; it is still
+  saved and set by `DIGITAL_OPT` (a table row click, `digRowChoice`).
   `DIGITAL_OPT:id:verbose|invert|<id>.<key>:value` (old keys dmr_slot /
   p25_nac map to dmr.slot / p25.nac). Persisted as the snapshot field
   `v=1&i=0&dmr.slot=1` (values percent-encoded; the old `v/slot/nac/inv` form
@@ -272,10 +296,42 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   back afterwards (the same button by position). Test: scratchpad
   e2e/t_dtv_toggle.py clicks with real mouse events (`.click()` doesn't
   focus, so the first test missed it)
+- Run-time choices (`kp::Host::option_choices`, wire OPTION_CHOICES 42,
+  2026-11-16 - the dab plugin's Programme list): key + value / label pairs
+  for one of the plugin's DECLARED options (others ignored). The engine
+  (`on_option_choices`) checks them again - it is a child process's text and
+  a DAB label is from the air: at most 100 pairs read, a value the page
+  couldn't set (`DIGITAL_OPT`: > 100 bytes, a control character) or a
+  repeated one dropped, a label's control characters made spaces and cut to
+  80 bytes at a character boundary ("" = the value) - and `Report` keeps
+  them per `"<id>.<key>"` (32 KB for all lists of a decoder; an empty list
+  removes them). Run-time state only, never persisted: cleared by
+  `clear_all()` (retune, mode change), for a plugin when its process
+  (re)starts or crashes and when the runner set is rebuilt. Status:
+  `"choices":{"<id>.<key>":[[value, label],..]}` in every push (the facts
+  are too; a list is small), keyed like `opts.plugin`. Page: `digDynChoices`
+  -> `digVfoRowHtml` draws such an option as a `<select class="dig-opt-dyn">`
+  of them (also when the declaration is a text field; no on / off button),
+  every value / label through `digEsc`; a set value that is none of them
+  gets an entry of its own first (`[v, v || 'Default']`), so the list
+  never silently shows its first choice. Without `choices` (older receiver,
+  no list yet) the declared list / text field as before. The focus rule
+  above keeps an open / focused list from being rebuilt; the next 4 Hz push
+  after it loses the focus redraws it. An older page ignores the key; an
+  older receiver ignores the message type (an unknown type has always been
+  dropped by `on_message`'s `default:` - only a payload > 1 MB is a
+  protocol error); an older plugin sends none. The AI assistant's
+  `get_decoder` returns the status, `choices` included (its note says so)
 - UI (kraken_doa.html, "Digital decoders" block): any number of VFOs decode
   at once. Each VFO card (Decimators box, `updateDecimatorList`) has a
-  "Digital decoder" tick (`digToggle`: DIGITAL_MODE AUTO or the mode picked
-  while off, remembered per VFO in localStorage) and a mode list
+  "Digital decoder" tick (`digToggle` -> `digOnMode`: DIGITAL_MODE with the
+  VFO's last mode other than Off as decimator_info reported it (`digLastOn`,
+  this page, dropped when the VFO goes), else the mode picked in this
+  browser (`digWanted`, per VFO in localStorage), else AUTO. Before
+  2026-11 it was only the latter two, so a mode set elsewhere - a debug
+  playback's entry, a saved frequency, another page, the AI assistant -
+  came back as AUTO after an untick / tick, and a manual-only decoder (dab,
+  adsb ...) silently stopped) and a mode list
   (`digSetModeFor`: picking a decoder also switches it on) plus a state line
   (`digRenderCards`, also run at the end of updateDecimatorList, which
   rebuilds the cards). The mode lists (VFO card + the tab's Mode) are

@@ -124,7 +124,19 @@ public:
     //  [id, pos, opt, also, snap, step,] age}}
     std::string plots_json() const;
 
+    // --- An option's choices sent at run time (kp::Host::option_choices) ---
+    // (checked by the caller); an empty list removes them. Run-time state
+    // only: cleared with clear_all() (retune, decoder switched) and per
+    // plugin when its process starts or crashes; never persisted
+    void choices_set(const std::string& plugin, const std::string& key, std::vector<std::pair<std::string, std::string>> list);
+    void choices_clear(const std::string& plugin);
+    // {"<plugin>.<key>":[[value, label],...]} (the keys as in the status's opts.plugin)
+    std::string choices_json() const;
+
 private:
+    // "<plugin>.<key>" -> (value, label) pairs
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> choices_;
+    static constexpr size_t MAX_CHOICES_BYTES = 32768;   // values + labels of all lists
     struct PlotEntry { std::string json; int64_t updated_ms; };
     std::map<std::string, PlotEntry> plots_;
     struct Fact { std::string key, value; int64_t updated_ms; };

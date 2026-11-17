@@ -188,7 +188,8 @@ docker-data/kraken_doa/server.crt/.key        TLS certificate (self-signed, made
 docker-data/kraken_doa/doa_recordings/        DoA recordings
 docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
-                                              cdecoder, sdecoder - README "Digital voice codecs")
+                                              cdecoder, sdecoder; libfdk-aac.so.2 for DAB+ -
+                                              README "Digital voice codecs")
 docker-data/whisper_models/                   Voice to Text speech models (the sidebar's "⬇ Get")
 docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (the 🗣 Voice tab)
 docker-data/kraken_doa/decoder_logs/          Decoder Logging files, and in voice_clips/ the

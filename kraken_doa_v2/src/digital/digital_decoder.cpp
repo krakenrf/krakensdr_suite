@@ -44,7 +44,9 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31,
                    W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_AUDIO_CHANNEL = 34, W_SAMPLES_MC = 8,
                    W_SAMPLES_ARRAY = 9, W_SPATIAL = 35, W_PLOT = 36, W_TUNE = 37, W_TABLE_DETAIL = 38,
-                   W_SPATIAL_REMOVE = 39, W_VIDEO = 40, W_PLOT_EX = 41;
+                   W_SPATIAL_REMOVE = 39, W_VIDEO = 40, W_PLOT_EX = 41, W_OPTION_CHOICES = 42;
+// kp::Host::option_choices limits (kp::wire::CHOICES_MAX ...)
+constexpr size_t CHOICES_MAX = 100, CHOICE_VALUE_MAX = 100, CHOICE_LABEL_MAX = 80;
 // named plots (kp::Plot::id) one plugin may keep
 constexpr size_t MAX_PLOTS_PER_PLUGIN = 8;
 // a plugin's retune requests (kp::Host::tune): at most one per this
@@ -545,6 +547,7 @@ private:
     }
 
     void rebuild_runners() {
+        for (const auto& r : runners_) report_.choices_clear(r->id);   // their processes stop
         stop_all();
         {
             std::lock_guard<std::mutex> lk(st_mu_);
@@ -767,6 +770,7 @@ private:
         }
         r.started_ms = t;
         close_talker(r);
+        report_.choices_clear(r.id);   // a new process: what the old one listed is gone
         r.audio_channel = -1;
         r.written = 0;
         r.pos_map.clear();
@@ -932,6 +936,7 @@ private:
             r.proc->stop();
             r.proc.reset();
             close_talker(r);
+            report_.choices_clear(r.id);   // (the restarted process sends its own)
             r.crashes++;
             int64_t delay = std::min<int64_t>(30000, 1000LL << std::min(r.crashes, 5));
             r.note.clear();
@@ -1113,6 +1118,9 @@ private:
             case W_VIDEO:
                 on_video(r, p, len);
                 break;
+            case W_OPTION_CHOICES:
+                on_option_choices(r, p, len);
+                break;
             case W_TUNE: {
                 // kp::Host::tune - only plugins that declare kp::Info::tunes
                 const double hz = num_or_nan(std::string(p, std::min<size_t>(len, 32)));
@@ -1145,6 +1153,38 @@ private:
             default:
                 break;
         }
+    }
+
+    // kp::wire::OPTION_CHOICES: key, then value / label pairs (kp::Host::option_choices).
+    // Only for an option the plugin declares; the text comes from a child process (and
+    // a DAB label from the air), so it is bounded and checked here again: a value the
+    // page couldn't set (DIGITAL_OPT: <= 100 bytes, no control characters) or that
+    // repeats is dropped, a label cut at a character boundary
+    void on_option_choices(Runner& r, const char* p, size_t len) {
+        auto f = split0(p, len, 1 + 2 * CHOICES_MAX);
+        if (f.empty() || !r.known) return;
+        bool declared = false;
+        for (const auto& o : r.info.options) declared = declared || o.key == f[0];
+        if (!declared) return;
+        std::vector<std::pair<std::string, std::string>> list;
+        for (size_t i = 1; i + 1 < f.size(); i += 2) {
+            std::string& v = f[i];
+            std::string& l = f[i + 1];
+            bool ok = v.size() <= CHOICE_VALUE_MAX;
+            for (unsigned char c : v) ok = ok && c >= 0x20 && c != 0x7F;
+            for (const auto& x : list) ok = ok && x.first != v;
+            if (!ok) continue;
+            for (char& c : l)
+                if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) c = ' ';
+            if (l.size() > CHOICE_LABEL_MAX) {
+                size_t e = CHOICE_LABEL_MAX;
+                while (e > 0 && (static_cast<unsigned char>(l[e]) & 0xC0) == 0x80) e--;
+                l.resize(e);
+            }
+            if (l.empty()) l = v;
+            list.emplace_back(std::move(v), std::move(l));
+        }
+        report_.choices_set(r.id, f[0], std::move(list));
     }
 
     // kp::wire::SPATIAL: id, label, start_s, end_s, delay_us, power_db, snr_db,
@@ -1978,6 +2018,9 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
         first = false;
     }
     o << "}}";
+    // the options' run-time choices (kp::Host::option_choices), keyed as opts.plugin;
+    // {} = none: the page draws the declared list / text field
+    o << ",\"choices\":" << report_.choices_json();
     // always when asked ({} = none): pages keep the last tables between pushes without them
     if (tables) {
         o << ",\"tables\":" << report_.tables_json() << ",\"plots\":" << report_.plots_json();

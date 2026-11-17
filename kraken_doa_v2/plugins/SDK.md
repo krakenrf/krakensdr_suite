@@ -83,6 +83,11 @@ plugins/
 │                         correction, every group type), RDS2 streams, the MPX's subcarriers classified
 │                         (SCA FM audio / FSK data / DARC), SCA or main-programme audio; a packet talker
 │                         per station (PI) per RDS group
+├── dab/                  DAB / DAB+ ensembles in the 2.4 MHz (lock_vfo): mode I OFDM at the native rate
+│                         (2400-point FFT, no resampler), FIC / MSC Viterbi, Layer II (vendored minimp3)
+│                         and DAB+ (the user's libfdk-aac, loaded at run time) audio; a packet talker
+│                         per transmitter of the single frequency network by its TII code, with a
+│                         spatial covariance of that code's own carriers (multichannel)
 ├── analogtv/             off-air analog TV (PAL 625/50, NTSC 525/60, SECAM=PAL geometry): negative-AM
 │                         envelope, broadcast H/V sync recovery, interlaced raster -> a grayscale luma
 │                         PICTURE on the decoder tab's video canvas (host.video_frame; lock_vfo, the
@@ -175,7 +180,7 @@ that order); pick one of them where it fits - case doesn't matter - or a
 name of your own (listed after those, by name). Without one the plugin is
 listed under `Other`, last.
 
-**Options** (`kp::Option`: key, label, default, choices, help) are the
+**Options** (`kp::Option`: key, label, default, choices, help, hidden) are the
 decoder's own settings. The panel shows them while the plugin is selected (in
 Auto detect: once it has locked onto this plugin) - `choices` = `"value=Label|..."`
 makes a list, `""` a text field; exactly two choices with the values `0`
@@ -189,6 +194,42 @@ number through `option(key, value)` like any other option (debounced while
 dragging). Use it for a numeric knob such as the video `quality`. They arrive
 through `option(key, value)`: the default when the plugin starts, then
 whatever the user picks (`""` = back to the default). They are saved per VFO.
+
+`hidden = true` (the last field: `{"service", "Programme", "", "", "help",
+true}`) draws no control for the option. It is set another way: a click on
+a table row whose key is one of its run-time choices (below, *Tables*), a
+saved setting, a debug-playback catalogue's `opts`, the AI assistant's
+`set_decoder_option` (`DIGITAL_OPT` accepts any declared-or-not
+`<id>.<key>`). dab's Programme: the services table is the list, so a second
+control was redundant. Say in the plugin's `description` (shown under the
+settings row) how it is set. `decoder --info` marks it (`"hidden":true`, a
+sixth `options_tsv` field `1`); a kraken_doa from before reads five fields
+and shows the control as usual - fine, the option still works there.
+
+A list that is only known at run time - the programmes of the DAB ensemble
+being received - comes from `host.option_choices(key, {{value, label},
+...})` instead: the panel then draws that option as a list of these
+choices, whatever its declaration says (unless it is `hidden`; dab's
+`service` is declared as a hidden text field, so an older kraken_doa still
+offers a text field / the list, the current one neither). Pairs rather than the `"value=Label|..."` text, so a
+label from the air with `|` or `=` in it can't add entries. A new list
+replaces the previous one; `{}` takes it back to the declaration. Limits:
+100 choices, values <= 100 bytes without control characters (others are
+dropped - they couldn't be set), labels <= 80 bytes (cut at a character
+boundary; `""` = the value), 32 KB for all of a decoder's lists. Send it
+when the list changes, not on every update. It is run-time state: the host
+forgets it when the plugin restarts, on `reset()` (a retune) and when the
+decoder is switched - send it again then; nothing of it is saved. The
+setting itself stays whatever text the user or a saved setting gave: if it
+isn't one of the values (an older setting, a part of a name), the panel adds
+it as an entry of its own so the list shows what is set (you may give it an
+entry yourself that says what it selects; a hidden option needs none -
+say it in a fact instead, as dab's Programme fact does). Use a choice's
+value as the key of its table row and the row becomes a way to pick it
+(*Tables* below) - for a `hidden` option the only one in the panel.
+Choose values that stay valid (dab: the service's SId, not its position in
+the list). An older host ignores the message (wire `OPTION_CHOICES` 42); the
+offline test prints the final lists in its summary.
 
 **Auto detect**: when a VFO's decoder is on "Auto detect", every plugin the
 user left ticked (sidebar plugin list, "Auto detect"; all are by default)
@@ -294,6 +335,7 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
+| `host.option_choices(key, choices)` | the choices of one of your options known only at run time (`{{value, label}, ...}`; dab: the ensemble's programmes): the panel shows the option as that list; `{}` = none (see Options above; wire OPTION_CHOICES 42, ignored by older hosts) |
 | `host.video_frame(f)` | a reconstructed picture (`kp::VideoFrame`: width, height, format, pixels, label) drawn on a canvas in the decoder's tab - analog TV, screen-leakage (TEMPEST); set `.video = true` (see below) |
 | `host.plot(p)` | a line plot (`kp::Plot`) in the decoder's tab, or several, beside the video display, and one a click on sets an option (see *Array plugins: ... plots* below) |
 
@@ -474,7 +516,13 @@ radios) can show them as a table above its facts: `table_columns()` once
 (the constructor), then `table_row(key, cells)` whenever an entry changes -
 at most every second or so per row; the page sorts by any column and adds a
 "Seen" column (time since the row's last update). Use the same key as the
-entry's map point: clicking the row then shows it on the map. kraken_doa
+entry's map point: clicking the row then shows it on the map (as the key of
+a talker: selects it in the DF panel). A row whose key is one of the values
+you sent with `option_choices` selects that choice when clicked - the same
+as picking it in the option's list - and, for a `voice` plugin, turns
+Listen on (dab: a programme's row, key = its SId); the page marks the row
+whose key is the option's current value. The first that applies counts:
+map point, talker, choice. kraken_doa
 empties the rows when the VFO is retuned or the decoder switched. The
 offline test prints the final table. Whatever doesn't fit the columns goes
 into the row's details: `table_detail(key, {{label, value}, ...})` after
@@ -601,7 +649,9 @@ in the `.json` sidecar or `--channels M`), in bursts like the live host
 antennas on kraken_doa's clockwise UCA and prints each spatial talker's
 MUSIC bearing at the end. `plugins/dtv/tools/sfn_gen.cpp` writes synthetic
 single frequency networks in that format, `plugins/cells/tools/cell_gen.cpp`
-LTE / NR cells.
+LTE / NR cells, `plugins/dab/tools/dab_gen.cpp` DAB networks (each
+transmitter with its own TII code - packet talkers with their own
+covariances, `t.cov`).
 
 ## ID separation (required when the signal has per-transmitter IDs)
 
@@ -699,8 +749,10 @@ writes its scene at known bearings itself, in 0.1 s pieces (so do
 `ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py`, `adsb/tools/adsb_gen.py`,
 `dme/tools/dme_gen.py`, `ism/tools/ism_gen.py`,
 `flarm/tools/flarm_gen.py` - the last two with simultaneous packets on
-different channels of one VFO - and `rds/tools/rds_gen.py`: FM stations,
-also at 480 kHz for an offline test).
+different channels of one VFO - `rds/tools/rds_gen.py`: FM stations,
+also at 480 kHz for an offline test - and `dab/tools/dab_gen.cpp`: a DAB
+single frequency network, every transmitter with its TII code, delay and
+level).
 
 **Who transmits, again**: a message ABOUT a transmitter isn't always FROM
 it - UAT's TIS-B / ADS-R messages describe aircraft but are sent by a
@@ -765,7 +817,8 @@ least recently played go).
   "{tools}/scene_x.json", "seconds": 6, "station": "{station}"}}` writes an
   in-repo scene with some keys replaced
 - A step that is a `.py` runs with python3 -I (numpy / scipy); a `.cpp` is
-  compiled once into `testsignal_cache/.bin/` (`g++ -std=c++20 -O2
+  compiled once into `testsignal_cache/.bin/` - again when it or a `*.h` /
+  `*.hpp` in its folder or your plugin folder is newer (`g++ -std=c++20 -O2
   -I<plugin> -Isdk -I../external/pffft ... lib/build/libkrakendig.a` - so
   a generator can use `kraken_fft.hpp`). Working directory = a scratch folder in
   the cache; placeholders `{tools}` (your tools/), `{sdk}`, `{plugins}`,
