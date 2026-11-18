@@ -10,6 +10,7 @@
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/music_processor.hpp"
+#include "signal_processing/bin_doa.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
 #include "continuous_scanner.hpp"
@@ -354,6 +355,7 @@ static bool is_replayed_command(string_view msg) {
         // only does while beamforming is on)
         "BEAMFORMING_MODE:", "MANUAL_STEERING:", "STEERING_ANGLE:",
         "MVDR_DIAGONAL_LOADING:",
+        "BIN_DOA:",   // 🎨 bearing spectrum
         "STATION_ID:", "LOCATION_SOURCE:", "STATIC_LOCATION:",
         "LOG_INTERVAL:", "LOG_FORMAT:",
         "WEB_MAPPER:", "WEB_MAPPER_MODE:", "WEB_MAPPER_KEY:",
@@ -2356,6 +2358,13 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message == "GET_ARRAY_CAL") {
         broadcast(array_cal::status_message());   // a page connecting
+    }
+    else if (message.starts_with("BIN_DOA:")) {
+        // 🎨 Bearing spectrum on / off (bin_doa.hpp; persisted, replayed);
+        // its state goes out as {"bin_doa":...}
+        const string_view v = message.substr(8);
+        if (v != "0" && v != "1") throw CommandRejected("format: BIN_DOA:0|1");
+        bin_doa::set_enabled(v == "1");
     }
     else if (message.starts_with("DIGITAL_CLEAR:")) {
         int id = parse_int(message, 14);

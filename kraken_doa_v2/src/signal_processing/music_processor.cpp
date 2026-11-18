@@ -1207,30 +1207,57 @@ bool MUSICProcessor::isCalibrationApplied() const {
 
 void MUSICProcessor::updateSteeringVectors() {
     try {
-        int M = num_elements_;
-
-        steering_vectors.resize(M, num_angles_);
-
-        if (M <= 0 || num_angles_ <= 0) {
-            cout << "ERROR: Invalid array parameters - M=" << M << " angles=" << num_angles_ << endl;
-            steering_vectors_valid = false;
+        cal_gen_ = array_cal::generation();
+        const char* err = nullptr;
+        steering_vectors_valid = buildAzimuthSteeringLocked(current_frequency, steering_vectors,
+                                                            &calibration_applied_, &err);
+        if (!steering_vectors_valid) {
+            if (err) cout << "ERROR: " << err << endl;
             return;
         }
+
+        const char* topo_name = (current_topology == ArrayTopology::UCA) ? "UCA" :
+                                (current_topology == ArrayTopology::ULA) ? "ULA" : "CUSTOM";
+        cout << "Steering vectors updated for " << topo_name
+             << " at " << (current_frequency/1e6) << " MHz" << endl;
+
+    } catch (const std::exception& e) {
+        cout << "ERROR: Exception in updateSteeringVectors: " << e.what() << endl;
+        steering_vectors_valid = false;
+    } catch (...) {
+        cout << "ERROR: Unknown exception in updateSteeringVectors" << endl;
+        steering_vectors_valid = false;
+    }
+}
+
+// The azimuth steering vectors (M x num_angles_, unit norm) at freq_hz with
+// the current topology, geometry, chirality and ✈ array calibration: MUSIC's
+// own (at its VFO frequency, updateSteeringVectors) and the 🎨 bearing
+// spectrum's (at the tuner centre, azimuthSteering). Caller holds
+// config_mutex_. false: none (*err says why)
+bool MUSICProcessor::buildAzimuthSteeringLocked(double freq_hz, Eigen::MatrixXcd& sv, bool* cal_applied,
+                                                const char** err) const {
+    {
+        int M = num_elements_;
+        *cal_applied = false;
+
+        if (M <= 0 || num_angles_ <= 0) {
+            *err = "Invalid array parameters";
+            return false;
+        }
+        sv.resize(M, num_angles_);
 
         // Element positions (metres) based on topology
         vector<double> x_pos(M), y_pos(M), z_unused(M), tau(M, 0.0);
-        double wavelength = 3e8 / current_frequency;  // meters
-        cal_gen_ = array_cal::generation();
+        double wavelength = 3e8 / freq_hz;  // meters
 
         if (current_topology == ArrayTopology::CUSTOM && !custom_positions_valid_) {
-            cout << "ERROR: Custom positions not set" << endl;
-            steering_vectors_valid = false;
-            return;
+            *err = "Custom positions not set";
+            return false;
         }
         if (current_topology == ArrayTopology::UCA && M < 3) {
-            cout << "ERROR: UCA requires at least 3 elements" << endl;
-            steering_vectors_valid = false;
-            return;
+            *err = "UCA requires at least 3 elements";
+            return false;
         }
         if (current_topology == ArrayTopology::ULA) {
             // Element 0 at origin (leftmost), subsequent elements to the right
@@ -1247,7 +1274,6 @@ void MUSICProcessor::updateSteeringVectors() {
         // ✈ Array calibration from aircraft (array_cal.hpp): the corrected
         // geometry and each element's extra delay - physical units, so they
         // hold at this frequency too
-        calibration_applied_ = false;
         if (current_topology != ArrayTopology::ULA) {
             vector<double> dx(M), dy(M);
             if (array_cal::corrections(M, x_pos.data(), y_pos.data(), dx.data(), dy.data(), tau.data())) {
@@ -1255,7 +1281,7 @@ void MUSICProcessor::updateSteeringVectors() {
                     x_pos[elem] += dx[elem];
                     y_pos[elem] += dy[elem];
                 }
-                calibration_applied_ = true;
+                *cal_applied = true;
             }
         }
         for (int elem = 0; elem < M; elem++) {   // to wavelengths
@@ -1277,7 +1303,7 @@ void MUSICProcessor::updateSteeringVectors() {
                     // UCA and CUSTOM: phase depends on both x and y positions (2D array);
                     // a calibrated element's cable delay lags it by 2 pi f tau
                     phase = 2.0 * M_PI * (x_pos[elem] * cos(theta_rad) + y_pos[elem] * sin(theta_rad)) -
-                            2.0 * M_PI * current_frequency * tau[elem];
+                            2.0 * M_PI * freq_hz * tau[elem];
                 }
 
                 steering_vector(elem) = complex<double>(cos(phase), sin(phase));
@@ -1288,23 +1314,33 @@ void MUSICProcessor::updateSteeringVectors() {
                 steering_vector = steering_vector / norm;
             }
 
-            steering_vectors.col(angle_idx) = steering_vector;
+            sv.col(angle_idx) = steering_vector;
         }
 
-        steering_vectors_valid = true;
-
-        const char* topo_name = (current_topology == ArrayTopology::UCA) ? "UCA" :
-                                (current_topology == ArrayTopology::ULA) ? "ULA" : "CUSTOM";
-        cout << "Steering vectors updated for " << topo_name
-             << " at " << (current_frequency/1e6) << " MHz" << endl;
-
-    } catch (const std::exception& e) {
-        cout << "ERROR: Exception in updateSteeringVectors: " << e.what() << endl;
-        steering_vectors_valid = false;
-    } catch (...) {
-        cout << "ERROR: Unknown exception in updateSteeringVectors" << endl;
-        steering_vectors_valid = false;
+        return true;
     }
+}
+
+static bool keepHalfPlane(ULAOutputMode mode, float angle);   // below
+
+bool MUSICProcessor::azimuthSteering(double freq_hz, AzimuthSteering* out) {
+    if (!out || !(freq_hz > 0.0)) return false;
+    lock_guard<mutex> config_lock(config_mutex_);
+    syncElementCount();   // DoA may be off: nobody else keeps the count current then
+    bool cal = false;
+    const char* err = nullptr;
+    if (!buildAzimuthSteeringLocked(freq_hz, out->A, &cal, &err)) return false;
+    out->M = num_elements_;
+    out->num_angles = num_angles_;
+    out->resolution_deg = angular_resolution_;
+    out->topology = current_topology;
+    out->half = activeOutputMode();
+    out->keep.resize(static_cast<size_t>(num_angles_));
+    for (int i = 0; i < num_angles_; i++) out->keep[i] = keepHalfPlane(out->half, i * angular_resolution_) ? 1 : 0;
+    out->offset_deg = array_offset_deg_;
+    out->is3d = current_topology == ArrayTopology::CUSTOM && is_3d_array_;
+    out->calibrated = cal;
+    return true;
 }
 
 float MUSICProcessor::getEigenvalueRatio() const {

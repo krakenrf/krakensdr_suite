@@ -175,7 +175,7 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 `kraken_doa_v2/plugins/<id>/README.md`.
 
 - Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7),
-  `noise-floor.md`
+  `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9)
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),
   `vfo-audio.md`, `operating-modes.md` (also VFO cards, the tuning step,
   zoom)

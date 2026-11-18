@@ -17,6 +17,7 @@
 #include "signal_processing/shared_decimator.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/noise_floor.hpp"
+#include "signal_processing/bin_doa.hpp"
 #include "decimator_manager.hpp"
 #include "doa_logger.hpp"
 #include "voice2text.hpp"
@@ -471,8 +472,10 @@ void DataReceiver::data_receiver_thread() {
                 // Use relaxed memory ordering for 5-10% faster atomic loads (flags don't need strict ordering)
                 int current_active = active_channel.load(std::memory_order_relaxed);
                 // a 📼 VFO-band IQ recording needs every antenna too
+                // (and 🎨 the bearing spectrum: bin_doa.hpp)
                 bool need_doa = (static_cast<int>(channels) >= current_elements &&
-                                 (doa_enabled.load(std::memory_order_relaxed) || rec::band_vfo() >= 0));
+                                 (doa_enabled.load(std::memory_order_relaxed) || rec::band_vfo() >= 0 ||
+                                  bin_doa::wanted()));
                 bool need_fm = (fm_enabled.load(std::memory_order_relaxed) && current_active < static_cast<int>(channels));
                 // Wideband / independent: every tuner is converted (one FFT each)
                 bool is_wideband = multi_tuner_mode();
@@ -1319,6 +1322,24 @@ void DataReceiver::decimation_processor_thread() {
                     }
                 }
             }
+        }
+
+        // 🎨 Bearing spectrum (bin_doa.hpp): the packet's antennas, which
+        // nothing here reads any more, moved to its worker - with the reason
+        // when this packet must not be used (parked like the DoA)
+        if (bin_doa::enabled()) {
+            const char* park = nullptr;
+            const int ne = packet_elements;
+            if (wideband_enabled) park = "only in coherent mode";
+            else if (server_generic_rtlsdr.load(std::memory_order_relaxed)) park = "generic RTL-SDRs: no coherent array";
+            else if (ne < 2 || static_cast<int>(raw_packet.channel_iq_data.size()) < ne ||
+                     raw_packet.channel_iq_data[ne - 1].empty()) park = "waiting for every antenna";
+            else if (raw_packet.noise_source_active != 0 || doa_is_calibrating()) park = "calibrating (noise source on)";
+            else if (doa_retune_hold_active()) park = "settling after a retune";
+            else if (server_cal_stale.load(std::memory_order_relaxed)) park = "calibration stale";
+            const uint64_t chz = coherent_tuner_hz();
+            bin_doa::on_packet(std::move(raw_packet.channel_iq_data), ne, raw_packet.seq,
+                               chz ? static_cast<double>(chz) : static_cast<double>(raw_packet.freq_hz[0]), park);
         }
 
         global_stats.increment_operations(thread_idx);

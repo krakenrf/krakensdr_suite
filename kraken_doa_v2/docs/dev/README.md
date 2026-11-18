@@ -26,6 +26,7 @@ every session needs and points here.
 | `map.md` | Map (right-hand pane) and decoder map points |
 | `mobile-df.md` | Mobile direction finding |
 | `noise-floor.md` | Noise floor (the spectrum's 0 dB) |
+| `bearing-spectrum.md` | Bearing spectrum: the spectrum coloured by direction (type 9) |
 | `operating-modes.md` | Operating modes, VFO cards, VFO tuning step, spectrum zoom |
 | `osm-masts.md` | OpenStreetMap masts layer |
 | `overview.md` | Overview: build, architecture, threads, components |

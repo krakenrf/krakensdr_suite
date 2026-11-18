@@ -184,6 +184,8 @@ are decimal; booleans are `1`/`0` unless noted.
 | `FFT_SIZE:<n>` | FFT size (power of 2, 1024–65536): the finest spacing a zoomed view can reach is 2.4 MHz / n. |
 | `FFT_VIEW:<display>:<seq>:<lo Hz>:<hi Hz>:<points>` | Ask for your own spectrum frames (type 7, §5.2) instead of type 0 / 6: `display` 0 = the main spectrum, 1 + ch = tuner ch in independent mode; `lo` / `hi` = the window in Hz from that display's centre (`lo >= hi` = the whole band); `points` = how many you want (your plot's width in pixels; 0 = 2048; at most 4096 are sent). `seq` is echoed in the frames. Per connection, not echoed or saved; the first one switches the connection to type 7. **The bandwidth lever:** fewer points = fewer bytes. |
 | `FFT_DECIMATION:<n>` | Removed (was the "Downsampling" setting). Accepted and ignored - use `FFT_VIEW`'s points. |
+| `BIN_DOA:<0\|1>` | Bearing spectrum ("Bearing colours"): the receiver estimates a bearing for every point of the main spectrum view (type 9, §5.2b). Saved, echoed and replayed like other settings; off by default. Costs receiver CPU while on and a connection takes it. |
+| `BIN_DOA_VIEW:<0\|1>` | This connection takes type 9 frames (sent just before each main type 7 frame while `BIN_DOA` is on). Per connection, not echoed or saved; answered with `{"bin_doa":{...}}` (§6). An older receiver doesn't answer (it echoes it as a `sync_cmd`). |
 | `GET_FFT_SETTINGS` | Query → replies `{"fft_settings":{"fft_size":n}}`. |
 
 ### Wideband / scanner
@@ -277,6 +279,30 @@ connection's main type 7 frame (zoomed in = finer), else that of type 0.
 | snr_boost | float32 | dB |
 | levels | uint8 × n | as type 7 |
 
+### 5.2b Bearing spectrum — type `9` (with the main type 7 frame, after `BIN_DOA_VIEW:1`)
+Coherent mode only, while `BIN_DOA:1` and not paused (calibration, retune,
+stale calibration - the `bin_doa` state says why). Sent just before the main
+display's type 7 frame and covering the same points (same `seq`, `start`,
+`step`, `n`): point j's bearing, from the summed cross-spectral covariances
+of the FFT bins behind it. 32-byte header:
+
+| Field | Type | Notes |
+|---|---|---|
+| type | uint32 | `9` |
+| display | uint8 | `0` (the main spectrum) |
+| flags | uint8 | bit 0 = a ULA without a half-plane setting: the front half assumed; bit 1 = a 3D custom array: bearings at the horizon |
+| elements | uint8 | antennas |
+| topology | uint8 | 0 UCA (also the Wideband topology), 1 ULA, 2 custom |
+| seq | uint32 | the `FFT_VIEW` it answers (as the type 7 frame) |
+| n | uint32 | points |
+| start | float64 | frequency of point 0, Hz |
+| step | float64 | point spacing, Hz |
+| confidence | uint8 × n | 0..255 = 0..1; 0 = no coherent signal (no bearing) |
+| azimuth | uint16 × n | × 360 / 65536 degrees: MUSIC's azimuth (counter-clockwise from ANT0, the array offset added - type 3's convention; compass = 360 − azimuth); 0 where confidence is 0 |
+
+Match points by frequency (`start + j × step`), not by index, if you redraw
+a frame for another zoom.
+
 ### 5.3 Audio — type `1` (topic `audio`, ~25/s)
 | Field | Type | Notes |
 |---|---|---|
@@ -345,6 +371,12 @@ Delivered on the always-on control channel:
   2026-10-10 with the eigenvalue squelch methods), `beamforming_status`, phase
   state, etc.
 - `{"decimator_info":[...]}` — reply to `GET_DECIMATOR_INFO`.
+- `{"bin_doa":{"on":bool,"state":"off|idle|running|parked","reason":"..","fft":n,"elements":m,"coverage":pct}}`
+  — the bearing spectrum (`BIN_DOA`): `parked` = paused (reason: not coherent
+  mode, calibrating, settling after a retune, calibration stale, array not set
+  up), `idle` = nothing to do (no connection takes type 9, no data), `fft` =
+  its FFT size, `coverage` = % of the samples used (below 100 when its CPU
+  limit is reached). Sent on every change and in answer to `BIN_DOA_VIEW`.
 
 ---
 

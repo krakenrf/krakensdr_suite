@@ -163,6 +163,8 @@ SIGNAL_PROCESSING_SRCS = \
 	$(SRCDIR)/signal_processing/music_processor.cpp \
 	$(SRCDIR)/signal_processing/shared_decimator.cpp \
 	$(SRCDIR)/signal_processing/beamformer.cpp
+# 🎨 bearing spectrum
+SIGNAL_PROCESSING_SRCS += $(SRCDIR)/signal_processing/bin_doa.cpp
 
 NETWORKING_SRCS = \
 	$(SRCDIR)/networking/binary_message.cpp \

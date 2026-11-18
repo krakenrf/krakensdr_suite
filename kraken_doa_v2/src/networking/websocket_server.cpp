@@ -21,6 +21,7 @@
 #include "networking/gpsd_client.hpp"
 #include "station_info.hpp"
 #include "signal_processing/fft_processor.hpp"
+#include "signal_processing/bin_doa.hpp"
 #include "doa_logger.hpp"
 #include "utils/status_dashboard.hpp"
 #include "utils/platform.hpp"
@@ -65,6 +66,7 @@ struct PerSocketData {
     };
     std::array<SpecView, 1 + MAX_CHANNELS> views{};  // 0 = main, 1 + ch = tuner ch
     double main_step_hz = 0;   // point spacing of its last main frame (beamformed overlays follow it)
+    bool bin_doa = false;      // 🎨 BIN_DOA_VIEW:1 - it takes type 9 frames (bin_doa.hpp)
 };
 
 // Data-stream subscription bits (the heavy/optional streams).
@@ -155,6 +157,7 @@ constexpr int64_t AUTH_FAILURE_WINDOW_MS = 60000;  // ...per window, then refuse
 std::unordered_map<ClientWS*, int64_t> g_pending_auth;           // socket -> opened (steady ms)
 std::unordered_set<ClientWS*> g_spec_sockets;  // sockets with spectrum views (uWS loop only)
 std::unordered_set<ClientWS*> g_video_sockets;  // sockets subscribed to decoder video (uWS loop only)
+std::unordered_set<ClientWS*> g_bin_doa_sockets;  // 🎨 sockets taking type 9 (uWS loop only)
 std::unordered_map<std::string, std::pair<int, int64_t>> g_auth_failures;  // ip -> (count, window start)
 
 int64_t steady_ms() {
@@ -302,8 +305,17 @@ void send_spectrum_views(const SpectrumSnapshot& snap, const vector<BeamformedSp
         if (!(ud->sub_mask & SUB_FFT) || ws->getBufferedAmount() > SPEC_MAX_BUFFERED) continue;
         for (int d = first; d <= last; d++) {
             const auto& v = ud->views[d];
+            // 🎨 the bearing spectrum (coherent mode): type 9 for the same
+            // points, sent first so the page colours the frame it draws
+            const bool brg = d == 0 && ud->bin_doa && !snap.independent && snap.marker != 0xFE && bin_doa::enabled();
+            SpectrumViewCut cut;
             const string m = MessageBuilders::build_spectrum_view(snap, d, v.lo_hz, v.hi_hz, v.bins, v.seq,
-                                                                  d == 0 ? &ud->main_step_hz : nullptr);
+                                                                  d == 0 ? &ud->main_step_hz : nullptr,
+                                                                  brg ? &cut : nullptr);
+            if (brg && !m.empty()) {
+                const string b = bin_doa::build_frame(snap.disp[0], cut, v.seq);
+                if (!b.empty()) ws->send(b, uWS::BINARY, true);
+            }
             if (!m.empty()) ws->send(m, uWS::BINARY, true);
         }
         for (const auto& bf : bfs) {
@@ -902,6 +914,17 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 handle_fft_view(ws, message.substr(9));
                 return;
             }
+            // 🎨 BIN_DOA_VIEW:1|0 (transport-level, this connection only):
+            // the page takes type 9 frames with its main view's frames
+            // (bin_doa.hpp); answered with the mode's state
+            if (message.starts_with("BIN_DOA_VIEW:")) {
+                const bool on = message.substr(13) == "1";
+                ws->getUserData()->bin_doa = on;
+                if (on) g_bin_doa_sockets.insert(ws); else g_bin_doa_sockets.erase(ws);
+                bin_doa::set_viewers(static_cast<int>(g_bin_doa_sockets.size()));
+                ws->send(bin_doa::state_json(), uWS::TEXT);
+                return;
+            }
 
             ControlHandler::handle_websocket_message(message);
         },
@@ -911,6 +934,7 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             g_spec_sockets.erase(ws);
             g_video_sockets.erase(ws);
             dig::set_video_wanted(!g_video_sockets.empty());
+            if (g_bin_doa_sockets.erase(ws)) bin_doa::set_viewers(static_cast<int>(g_bin_doa_sockets.size()));
             int remaining = --ws_client_count;  // keep the live dashboard count in sync
             if (remaining < 0) { ws_client_count.store(0); remaining = 0; }
             std::cout << "[WS] Client DISCONNECTED! Code=" << code
