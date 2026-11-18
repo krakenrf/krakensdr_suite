@@ -53,7 +53,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   decimator_info; refreshed in place (not part of updateDecimatorList's
   structure check). The top bar's audio off (its speaker button, crossed while off - an ON / OFF switch until 2026-11-18) dims them (`.mute-all`, said in
   the tooltip); clicking a muted speaker while it is off switches the audio
-  on too. The decoder tab's 🔊 Listen adds the VFO (Digital demod); "🔊
+  on too. The page's volume is the top bar's Volume value bar beside that
+  button (this page only: `uv` -> `audioEngine.setVolume`; drag in the box,
+  or the mouse wheel, 5 % a notch; dimmed while the audio is off but still
+  adjustable - *sidebar.md*, "Top bar and rail", 2026-11-18). The decoder tab's 🔊 Listen adds the VFO (Digital demod); "🔊
   Listening" goes back to the demod it had before Digital, heard or muted
   as it was then, the bandwidth kept (`digDemodBefore` in the globals
   block, set by `setDecimatorDemodMode` on entering Digital, localStorage

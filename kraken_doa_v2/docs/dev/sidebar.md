@@ -498,16 +498,81 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   each group's markup, hidden in the bar, shown in `#mobile-controls-slot`;
   the icons are hidden there). Mode stays in the phone's bar as icon +
   select.
-- **One centre line**: the selects, the speaker and the Bias tee button are
-  28 px high on the bar's centre line; a slider and its reading
-  (`.tb-pair`: the reading 12 px, 1 px, the slider in a 20 px room - the
-  Gain thumb's height) are centred on the same line, and so are the icons.
-- **Readings** (2026-11-18, the user: "they should be right aligned with the
-  slider"): Gain's "49.6 dB" and the volume's "50%" sit right above their
-  slider in a box as wide as the slider, the text at its right - the right
-  edges coincide (to the pixel, any value: "Auto", "0.0 dB", "5%", "100%"),
-  and a new value never moves the slider or a neighbour. They sat on the
-  caption's line before, ending wherever the grid put them.
+- **One centre line**: the selects, the value bars, the speaker and the
+  Bias tee button are 28 px high on the bar's centre line, and so are the
+  icons.
+- **Value bars for Gain and Volume** (2026-11-18). After the readings had
+  gone above the sliders (right-aligned with them, the same day) the user
+  wrote: "The dB and % text looks out of place, and the two sliders being
+  different lengths and designs looks odd." Shown a mock of three options -
+  A value bars, B the gain as a dropdown of its 29 steps (the volume a value
+  bar), C two identical thin sliders with the value only in a bubble while
+  hovered or dragged - they chose A: "ok change to value bars". So both are
+  now one control, `.vbar`: a box like the dropdowns (28 px, the `--l2`
+  border, radius 5, `--s1`, the dropdowns' 12.5 px text in `--t0`, tabular
+  numbers) with its value written inside, centred ("49.6 dB", "Auto",
+  "50%"), and a fill from the left up to the value (`--ac-d2` -> `--ac-d`)
+  with a 2 px `--ac-l` edge at its end. Nothing floats beside or above it;
+  both bars are 96 x 28 px. The text has a soft shadow; its contrast is
+  10.7 over the fill's dark end, 6.6 over its bright end, 15.0 over the
+  empty part (3.5 / 5.2 dimmed).
+  - **Built on the native range input** (`#gn-slider`, `#vsl`, the same ids,
+    `oninput` handlers, commands and rate limits as before), styled as the
+    whole box: `appearance:none`, laid over the box inside its border, no
+    track, the thumb the 2 px full-height edge, the fill the input's own
+    background, as wide as `calc((100% - 2px) * var(--p) / 100 + 2px)` - so
+    it ends exactly at the edge. Keyboard (arrows, Page Up / Down, Home /
+    End), screen readers (role slider, `aria-valuetext` = the shown text),
+    touch and every script that sets `.value` keep working. At the top
+    (`.max`) the edge is not drawn: it would double the box's right border.
+    At the bottom there is no fill and the edge sits at the left. Firefox
+    draws the fill with `::-moz-range-progress` (an `@supports
+    (-moz-appearance:none)` block; not tried in a Firefox, there was none at
+    hand). The text (`.vbar-t`, the old reading's id `#gn-value` / `#vv`)
+    lies over the input with `pointer-events:none`, `aria-hidden`.
+  - **One function shows a value**: `vbarShow(input, text)` sets `--p` (the
+    value in % of the range), `.max`, the text and `aria-valuetext`.
+    Callers: `updateGainDisplay` (the top bar's gain - so its own callers: a
+    drag / key press, the wheel, the receiver's header `specHeaderSync`, the
+    selected pane's gain in independent mode (two frame paths and
+    `paneSelect`), the saved frequencies' gain `sfApplyGain`), `uv` (the
+    volume), `panesSyncHeads` (each pane's gain), and `applyMobileRelocation`
+    through `vbarShowAll` (every bar's fill from its value: at start-up and
+    when the layout switches between the bar and the phone drawer). The
+    markup carries the start values (`--p:100` / `--p:50`, `.max`).
+  - **Operation**: press or drag anywhere inside the box - the value follows
+    the pointer and the edge lands under it (the input's travel is the box
+    less its 1 px border and the 2 px edge: 92 of 96 px, so a press at 10 %
+    of the box gives 8 %, at 90 % 92 %; the first pixel inside the border is
+    the minimum, the last the maximum). The **mouse wheel** (`vbarWheel`, a
+    non-passive listener on each bar, `preventDefault`: the page never
+    scrolls) steps one notch at a time like the frequency digits: the gain
+    one entry of its table, the volume 5 % onto the multiples of 5
+    (`data-wheel="5"`; 52 -> 55). A gain change costs the receiver a
+    recalibration pause, so the top bar's gain shows each notch at once
+    (the echo guard `gainUserChanging` set) but sends only when the wheel
+    has rested 250 ms (`GAIN_WHEEL_MS`), through `sgn` and its 100 ms rate
+    limit: several notches, one GAIN command for the last value. A drag
+    sends as before (`sgn`: every 100 ms and the final value). Cursor
+    `ew-resize`; focus ring as the dropdowns' (`--ac-l` border and a soft
+    ring) on keyboard focus (`:focus-visible`). Titles: "Gain - ...; drag,
+    or use the mouse wheel", "Volume - ...". Press-and-hold help stays off
+    sliders, so a bar on a touch screen is always a control.
+  - **Audio off**: the volume bar is dimmed (opacity .55, `.tb-spk.off +
+    .vbar`, no script) and still adjustable; the speaker button is
+    unchanged. Until the value bars it was not dimmed.
+  - **Phone drawer** (Tuner & Audio): the same bars, as wide as the row
+    allows and 34 px high (the speaker's height); the rows keep their text
+    labels. The readings above the sliders went with `.tb-pair` (which only
+    the Wideband mixer field still uses).
+  - **Independent mode's panes**: each header's gain is the same control,
+    84 x 22 px (the View button's height, 12 px text) in place of the 70 px
+    slider and the value beside it - the page has one gain control, not two
+    designs (*operating-modes.md*). The header stays on one line (38 px at
+    the 432 px panes of a 1700 px window; the bar saves 36 px), a click in
+    it still selects the pane, the wheel on a pane's bar selects it too.
+  - Not changed: the View popover's sliders (label / slider / value rows),
+    the sidebar's sliders, drive mode.
 - **The speaker button** (`#fmt`, 2026-11-18, the user: "change the audio
   mute button to a speaker symbol"): the audio on / off is a 30 x 28 icon
   button (`.tb-btn.tb-spk`) - the `speaker` symbol, lit (`--ac`) while the
@@ -517,17 +582,19 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   `FM:0` / `FM:1` and rewrites `className` (`tb-btn tb-spk on` / `off`), and
   now also the icon and `aria-pressed`; the receiver's echo
   (`applySyncCmd('FM:…')`), drive mode's Audio button and the VFO cards'
-  speakers (`.mute-all`) follow `fmEnabled` as before. The volume slider
-  stays as it was while the audio is off (not dimmed, still adjustable).
-  On the phone the drawer's Audio row has the same button, 42 x 34.
+  speakers (`.mute-all`) follow `fmEnabled` as before. The volume bar dims
+  while the audio is off (still adjustable - since the value bars). On the
+  phone the drawer's Audio row has the same button, 42 x 34.
 - **Width budget at 1700 px with the sidebar** (bar 1371 px, 1347 px of
-  content): ☰ 30, frequency 276, Gain 134 (icon 16 + 6 + a 112 px slider),
-  Audio 112 (speaker 30 + 6 + a 76 px slider), Step 108, Mode 128, Bias tee
-  30, seven 12 px gaps, the right block 436 (its reserve): 8.6 px to spare,
-  with or without the scanner chip. Removing the switch saved 25 px, the
-  three icons cost 66; the bar's gap went from 14 to 12 px, and the sliders
-  got back 12 / 4 of the 20 / 8 px the Bias tee button had taken (120 / 80
-  until then, 100 / 72 since the button). 120 / 80 would leave -3 px.
+  content): ☰ 30, frequency 276, Gain 118 (icon 16 + 6 + a 96 px value
+  bar), Audio 132 (speaker 30 + 6 + a 96 px value bar), Step 108, Mode 128,
+  Bias tee 30, seven 12 px gaps, the right block 436 (its reserve): 4.6 px
+  to spare, with or without the scanner chip (8.6 px with the 112 / 76 px
+  sliders before the value bars, 2026-11-18; two 98 px bars would leave
+  0.6 px). History: removing the switch saved 25 px, the three icons cost
+  66; the bar's gap went from 14 to 12 px, and the sliders got back 12 / 4
+  of the 20 / 8 px the Bias tee button had taken (120 / 80 until then,
+  100 / 72 since the button).
   Narrower, the bar wraps by whole fields (1500, 1300: the right block on a
   second row at the right; 1100: Mode and Bias tee move down beside it).
   The Wideband variant's mixer field (`#wbv-group`, ~253 px: its icon, the
@@ -536,21 +603,30 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   either (it needs ~250 px more, the WB board telemetry chip more still):
   the controls keep the first row and the right block wraps under them as
   a whole. Styled from a forced display only, no downconverter was at hand.
-- **Tests** (2026-11-18): `test_bar.py` in the job's scratch directory (94
-  checks, real mouse / key / touch events): no caption text in the bar; the
-  order by x, Step one gap left of Mode; every control's name and title,
-  the icons `aria-hidden`, resolved in the sprite, 16 px and 6 px from
-  their controls; one centre line (1 px) and one height; the readings'
-  right edges on the sliders' ends (0.5 px) at "Auto", "0.0 dB", "22.9 dB",
-  "49.6 dB", 0 / 5 / 50 / 100 % and after a mouse drag, nothing moving; the
+- **Tests** (2026-11-18): `test_bar.py` in the job's scratch directory (164
+  checks since the value bars, real mouse / key / wheel / touch events): no
+  caption text in the bar; the order by x, Step one gap left of Mode; every
+  control's name and title, the icons `aria-hidden`, resolved in the
+  sprite, 16 px and 6 px from their controls; one centre line (1 px) and
+  one height (28 px). The value bars: identical size; the dropdowns' box
+  and text; the range input covering the box, role slider,
+  `aria-valuetext`; the text centred and unclipped at "Auto", "0.0 dB",
+  "22.9 dB", "49.6 dB", 0 / 5 / 50 / 100 %, nothing moving; the fill and
+  edge read off screenshots (pixel rows) at the minimum, a middle value and
+  the maximum, in the top bar and in a pane; contrast; presses at 10 / 50 /
+  90 % and the far ends, a drag across (the GAIN commands, rate-limited);
+  the wheel (one step a notch, four quick notches = one GAIN for the last
+  value, the page not scrolled, the volume's 5 %); arrows / Home / End and
+  the focus ring; the receiver's header and `paneSelect` moving fill and
+  text; dimmed while the audio is off and still adjustable. Then the
   speaker (FM:0 / FM:1, icon, lit, `aria-pressed`; from the receiver; from
-  drive mode's button and back); help mode names each control and icon;
-  one row at 1700 px with the scanner chip; the Wideband field; the wraps
-  at 1500 / 1300 / 1100 px; independent mode; the phone bar, the drawer's
-  rows (labels, the speaker tapped, the readings aligned) and back to a
-  desktop width; no JS errors. `test_top`, `test_page`, `test_tips` and
-  `test_drive` got the new expectations (order, no captions, the speaker
-  instead of the switch).
+  drive mode's button and back); help mode names each control and icon
+  (and a help-mode tap on a bar changes nothing); one row at 1700 px with
+  the scanner chip; the Wideband field; the wraps at 1500 / 1300 / 1100
+  px; independent mode (the panes' bars: size, one line, a press, the
+  wheel - one TUNER_GAIN -, the header's click-to-select and View button);
+  the phone bar, the drawer's rows (34 px bars, a tap and a finger drag,
+  dimmed while off) and back to a desktop width; no JS errors.
 - **Chips** (`.status-badge`): a dark pill with a dot in the state's
   colour - the scripts still set the chip's `background` to that colour;
   an inset shadow darkens the pill and the dot (`::before`) inherits it.

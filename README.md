@@ -170,9 +170,10 @@ description, linked under [More documentation](#more-documentation).
 The **top bar** has no captions; an icon marks each control, and its name
 shows when the mouse rests on it (on a touch screen: the **?** button, then
 tap the control). Left to right: the frequency; **Gain** (an amplifier
-triangle, then the gain slider with its dB value above it); **Audio** (the
-speaker button - blue while the audio is on, a crossed speaker while it is
-off - then the volume slider); **Step**, the tuning step (two marks with a
+triangle, then the gain bar); **Audio** (the speaker button - blue while the
+audio is on, a crossed speaker while it is off - then the volume bar). The
+gain and volume bars show their value inside and fill up to it: drag in the
+box, or turn the mouse wheel over it; **Step**, the tuning step (two marks with a
 double arrow); **Mode** (a ring of dots); the **Bias tee** button. With the
 KrakenSDR Wideband the **mixer** (a circle with a cross) follows the
 frequency. On a phone,

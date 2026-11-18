@@ -527,9 +527,6 @@ body.help-mode .help-banner{display:flex}
 .top-bar .tb-btn:hover {background:var(--l4)}
 .top-bar .tb-btn.on {background:#195e2b;border-color:var(--ok-m);color:var(--ok-t)}
 .top-bar .tb-btn.off {background:var(--bad-m);border-color:#ae4a44;color:var(--bad-t)}
-.top-bar .tb-slider {width:80px;height:5px;-webkit-appearance:none;background:var(--l1);outline:none;border-radius:2px}
-.top-bar .tb-slider::-webkit-slider-thumb {-webkit-appearance:none;width:14px;height:14px;background:var(--ac);cursor:pointer;border-radius:50%}
-.top-bar .tb-vol {font-size:13px;color:var(--ac-t);min-width:32px}
 .top-bar .hw-stats {margin-left:auto;font-size:12px;color:var(--t3);white-space:nowrap;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;padding:0 8px;
   min-width:31ch;text-align:right}  /* fixed width: changing digits must not re-wrap the bar */
 /* Telemetry fields: one for the computer running the software, one for the Wideband board */
@@ -555,10 +552,6 @@ body.help-mode .help-banner{display:flex}
 .top-bar .tb-cog:hover {background:var(--l3);border-color:var(--l5)}
 .top-bar .tb-cog:focus-visible {outline:2px solid var(--ac-l);outline-offset:1px}
 .top-bar .gain-group {gap:8px}
-.top-bar .gain-slider {width:100px;height:6px;-webkit-appearance:none;background:linear-gradient(to right, var(--l4) 0%, var(--ac-t) 100%);outline:none;border-radius:3px;cursor:pointer}
-.top-bar .gain-slider::-webkit-slider-thumb {-webkit-appearance:none;width:16px;height:16px;background:var(--ac-t);cursor:pointer;border-radius:50%;border:2px solid var(--s0);box-shadow:0 0 4px rgba(122,184,247,0.5)}
-.top-bar .gain-slider::-moz-range-thumb {width:16px;height:16px;background:var(--ac-t);cursor:pointer;border-radius:50%;border:2px solid var(--s0)}
-.top-bar .gain-value {font-size:13px;color:var(--ac-t);min-width:55px;font-weight:500}
 
 /* Top bar calibration state colors */
 .top-bar.cal-uncalibrated {background:linear-gradient(to bottom, var(--bad-d) 0%, #3d1211 100%);border-bottom-color:#7f3430}
@@ -658,7 +651,9 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 .tpane.sel {border-color:var(--ac-t);box-shadow:inset 0 0 0 1px var(--ac-t)}
 .tpane-head {display:flex;align-items:center;gap:6px;padding:3px 6px;background:var(--s4);font-size:12px;color:var(--t3);flex-wrap:wrap;flex-shrink:0;cursor:pointer}
 .tpane-name {font-weight:bold;color:var(--ac-t);min-width:20px}
-.tpane-gain {width:70px}
+/* the pane's gain: a value bar (.vbar) as tall as the header's View button */
+.tpane-head .vbar {--vb-h:22px;width:84px}
+.tpane-head .vbar-t {font-size:12px}
 .tpane-vfos {margin-left:auto;font-weight:bold;white-space:nowrap}
 .tpane-body {position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 .tpane-spec {height:calc(var(--spec-frac, 0.42) * 100%);min-height:40px;display:block;width:100%;flex-shrink:0}
@@ -1527,12 +1522,12 @@ input[type="checkbox"],input[type="radio"] {accent-color:var(--ac-h)}
 .sf-dlg input,.sf-dlg select {height:28px;padding:3px 8px;font-size:12.5px}
 .sf-dlg textarea {padding:6px 8px;font-size:12.5px}
 /* sliders */
-.view-pop input[type="range"],.top-bar .tb-slider,.tpane-head input[type="range"],.map-pane input[type="range"],.info-panel input[type="range"],.wb-sheet input[type="range"] {
+.view-pop input[type="range"],.tpane-head input[type="range"],.map-pane input[type="range"],.info-panel input[type="range"],.wb-sheet input[type="range"] {
   -webkit-appearance:none;appearance:none;height:4px;padding:0;margin:0;border:none;background:var(--l3);border-radius:2px;outline:none;cursor:pointer}
-.view-pop input[type="range"]::-webkit-slider-thumb,.top-bar .tb-slider::-webkit-slider-thumb,.tpane-head input[type="range"]::-webkit-slider-thumb,
+.view-pop input[type="range"]::-webkit-slider-thumb,.tpane-head input[type="range"]::-webkit-slider-thumb,
 .map-pane input[type="range"]::-webkit-slider-thumb,.info-panel input[type="range"]::-webkit-slider-thumb,.wb-sheet input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--ac-l);border:2px solid var(--s3);box-shadow:0 0 0 1px var(--ac-l);cursor:pointer}
-.view-pop input[type="range"]::-moz-range-thumb,.top-bar .tb-slider::-moz-range-thumb,.tpane-head input[type="range"]::-moz-range-thumb,
+.view-pop input[type="range"]::-moz-range-thumb,.tpane-head input[type="range"]::-moz-range-thumb,
 .map-pane input[type="range"]::-moz-range-thumb,.info-panel input[type="range"]::-moz-range-thumb,.wb-sheet input[type="range"]::-moz-range-thumb {
   width:11px;height:11px;border-radius:50%;background:var(--ac-l);border:2px solid var(--s3);box-shadow:0 0 0 1px var(--ac-l);cursor:pointer}
 /* top bar */
@@ -1543,7 +1538,6 @@ input[type="checkbox"],input[type="radio"] {accent-color:var(--ac-h)}
 .top-bar .tb-btn:hover {background:var(--l4);border-color:#2e66a2}
 .top-bar .tb-btn.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
 .top-bar .tb-btn.off {background:var(--l2);border-color:var(--l4);color:var(--t0)}
-.top-bar .tb-vol,.top-bar .gain-value {font-size:12.5px;font-variant-numeric:tabular-nums}
 .top-bar .status-badge {font-size:12.5px;font-weight:600;padding:4px 12px;border-radius:999px;letter-spacing:.2px}
 .top-bar .tele-chip {border-color:var(--l4);border-radius:999px;background:rgba(11,15,20,.55);padding-right:11px}
 .top-bar .tele-chip .tele-lbl {border-radius:999px 0 0 999px;padding-left:10px;background:var(--l2)}
@@ -1624,8 +1618,8 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
    Top bar, left to right: ☰, the frequency, then the fields - Gain, Audio, Step, Mode -, the
    Bias tee button, and at the right the status chips and the telemetry. No captions in the bar
    (2026-11-18): an icon says what each field is (.tb-ic, 6 px from its control); the controls
-   carry their names (aria-label) and help (title). Selects, the speaker and the Bias tee button
-   are 28 px high on the bar's centre line; a slider's pair (.tb-pair) is centred on it too.
+   carry their names (aria-label) and help (title). Selects, the value bars (Gain, Volume), the
+   speaker and the Bias tee button are 28 px high on the bar's centre line.
    The spectrum's own controls are on the spectrum (the antenna shown: its header); the panels'
    buttons are on the rail. */
 .top-bar {gap:12px;padding:6px 12px;min-height:58px}
@@ -1634,13 +1628,40 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar .tb-group > .tb-label {display:none}   /* the phone drawer's row label (a drawer row keeps its text) */
 .tb-ic {display:flex;flex:none;color:var(--t3)}
 .tb-ic .ic {font-size:16px}
-/* a slider with its reading right above it: the reading's box is as wide as the slider and its
-   text sits at the right - the right edge on the slider's right end, and a new value never moves
-   the slider or a neighbour */
+/* Value bars (2026-11-18; the user chose them over the readings above two different sliders):
+   Gain and Volume here, in the phone drawer's rows and a tuner pane's header. A box like the
+   dropdowns (height, border, radius, background, text) with its value written inside and a fill
+   from the left up to the value, a bright 2 px edge at its end. The control is the native range
+   input (keyboard, screen readers, touch, scripts that set .value) laid over the whole box: no
+   track, the thumb the 2 px full-height edge, the fill its background, as wide as --p (0-100, set
+   by vbarShow) says - its right end on the edge's. At the top (.max) the edge is not drawn: it
+   would double the box's border. The text (.vbar-t) lies over the input, pointer-events:none;
+   the wheel: vbarWheel. Both bars 96 px wide: the bar's one row at 1700 px (sidebar.md). */
+.vbar {--vb-h:28px;position:relative;display:flex;flex:none;width:96px;height:var(--vb-h);box-sizing:border-box;
+  border:1px solid var(--l2);border-radius:5px;background:var(--s1);overflow:hidden}
+.vbar:has(> input:focus-visible) {border-color:var(--ac-l);box-shadow:0 0 0 2px rgba(72,160,244,.22)}
+.vbar > input.vbar-in[type="range"] {-webkit-appearance:none;appearance:none;position:absolute;left:0;top:0;width:100%;height:100%;margin:0;padding:0;
+  border:0;border-radius:0;outline:none;cursor:ew-resize;
+  background:linear-gradient(90deg,var(--ac-d2),var(--ac-d)) 0 0 / calc((100% - 2px) * var(--p, 0) / 100 + 2px) 100% no-repeat}
+.vbar > input.vbar-in[type="range"]::-webkit-slider-runnable-track {height:100%;border:0;background:none;box-shadow:none}
+.vbar > input.vbar-in[type="range"]::-webkit-slider-thumb {-webkit-appearance:none;appearance:none;width:2px;height:calc(var(--vb-h) - 2px);margin:0;
+  border:0;border-radius:0;background:var(--ac-l);box-shadow:none;cursor:ew-resize}
+.vbar > input.vbar-in[type="range"]::-moz-range-track {height:100%;border:0;background:none}
+.vbar > input.vbar-in[type="range"]::-moz-range-thumb {width:2px;height:calc(var(--vb-h) - 2px);border:0;border-radius:0;background:var(--ac-l);box-shadow:none;cursor:ew-resize}
+.vbar.max > input.vbar-in[type="range"]::-webkit-slider-thumb {background:transparent}
+.vbar.max > input.vbar-in[type="range"]::-moz-range-thumb {background:transparent}
+/* Firefox draws the fill itself (::-moz-range-progress, up to the thumb) */
+@supports (-moz-appearance:none) {
+  .vbar > input.vbar-in[type="range"] {background:none}
+  .vbar > input.vbar-in[type="range"]::-moz-range-progress {height:100%;background:linear-gradient(90deg,var(--ac-d2),var(--ac-d))}
+}
+.vbar-t {position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;white-space:nowrap;
+  font-size:12.5px;color:var(--t0);font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+/* the volume while the audio is off: dimmed, still adjustable */
+.tb-spk.off + .vbar {opacity:.55}
+/* a slider with its reading above it - only the Wideband variant's mixer field now (its ring / LO
+   readout above the side buttons, right edges together) */
 .tb-pair {display:flex;flex-direction:column;align-items:stretch;min-width:0}
-.top-bar .tb-pair > .gain-value,.top-bar .tb-pair > .tb-vol {min-width:0;height:12px;margin:0 0 1px;font-size:11.5px;line-height:12px;text-align:right;white-space:nowrap;color:var(--ac-t)}
-/* the sliders' room: 20 px, the Gain thumb's height (the Volume's 14 px thumb and its ring fit) */
-.top-bar #tb-gain .gain-slider {width:112px;margin:7px 0}
 /* (the Wideband downconverter variant's mixer: side, LO drive; ring and LO as its readout above them) */
 .top-bar #wbv-group .wbv-info {height:12px;margin-bottom:2px;text-align:right;font-size:11.5px;line-height:12px;color:var(--ac-t);white-space:nowrap}
 .top-bar #wbv-group .wbv-ctl {display:flex;align-items:center;gap:8px}
@@ -1649,7 +1670,6 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar .wbv-seg .tb-btn:first-child {border-radius:5px 0 0 5px;margin-left:0}
 .top-bar .wbv-seg .tb-btn:last-child {border-radius:0 5px 5px 0}
 .top-bar .wbv-seg .tb-btn.on {position:relative;z-index:1}
-.top-bar #tb-audio .tb-slider {width:76px;margin:8px 0}
 /* the audio on / off: a speaker button (tfm), as big as the Bias tee button; lit (.on) while the
    audio is on, the crossed speaker (.off) while it is off */
 .top-bar .tb-btn.tb-spk {display:inline-flex;align-items:center;justify-content:center;flex:none;width:30px;height:28px;padding:0;box-sizing:border-box}
@@ -1804,9 +1824,9 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   /* Bigger touch targets */
   .btn {min-height:34px}
   .top-bar .tb-btn {min-height:34px}
-  .slider,.top-bar .tb-slider,.top-bar .gain-slider {height:8px}
-  .slider::-webkit-slider-thumb,.top-bar .tb-slider::-webkit-slider-thumb,.top-bar .gain-slider::-webkit-slider-thumb {width:22px;height:22px}
-  .slider::-moz-range-thumb,.top-bar .gain-slider::-moz-range-thumb {width:22px;height:22px}
+  .slider {height:8px}
+  .slider::-webkit-slider-thumb {width:22px;height:22px}
+  .slider::-moz-range-thumb {width:22px;height:22px}
   .ctrl-row input[type="number"],.ctrl-row select,.top-bar select,.top-bar input[type="number"] {min-height:32px}
   /* the View button and its popover: finger-sized, the popover inside the window */
   .view-btn {height:32px;padding:0 11px 0 9px}
@@ -1841,20 +1861,11 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   #mobile-controls-slot .tb-btn {padding:6px 14px;background:var(--l1);color:var(--ac-t);border:1px solid var(--l4);border-radius:3px;cursor:pointer;font-size:13px;min-height:34px}
   #mobile-controls-slot .tb-btn.on {background:#195e2b;border-color:var(--ok-m);color:var(--ok-t)}
   #mobile-controls-slot .tb-btn.off {background:var(--bad-m);border-color:#ae4a44;color:var(--bad-t)}
-  #mobile-controls-slot .tb-slider,#mobile-controls-slot .gain-slider {flex:1;width:auto;min-width:0;height:8px;-webkit-appearance:none;appearance:none;background:var(--l1);outline:none;border-radius:4px;cursor:pointer}
-  #mobile-controls-slot .gain-slider {background:linear-gradient(to right,var(--l4) 0%,var(--ac-t) 100%)}
-  #mobile-controls-slot .tb-slider::-webkit-slider-thumb {-webkit-appearance:none;width:22px;height:22px;background:var(--ac);border-radius:50%;cursor:pointer}
-  #mobile-controls-slot .gain-slider::-webkit-slider-thumb {-webkit-appearance:none;width:22px;height:22px;background:var(--ac-t);border-radius:50%;cursor:pointer;border:2px solid var(--s0)}
-  #mobile-controls-slot .tb-slider::-moz-range-thumb {width:22px;height:22px;background:var(--ac);border-radius:50%;cursor:pointer;border:none}
-  #mobile-controls-slot .gain-slider::-moz-range-thumb {width:22px;height:22px;background:var(--ac-t);border-radius:50%;cursor:pointer;border:2px solid var(--s0)}
-  #mobile-controls-slot .gain-value {font-size:13px;color:var(--ac-t);min-width:55px;font-weight:500}
-  #mobile-controls-slot .tb-vol {font-size:13px;color:var(--ac-t);min-width:38px}
-  /* a drawer row keeps its text label (no icon); a slider's reading sits right above it, its right
-     edge on the slider's right end, as in the bar; the audio on / off is the speaker button */
+  /* a drawer row keeps its text label (no icon); Gain and Volume are the bar's value bars, as wide
+     as the row allows and finger-high (the speaker's 34 px); the audio on / off is the speaker button */
   #mobile-controls-slot .tb-ic {display:none}
-  #mobile-controls-slot .tb-pair {flex:1}
-  #mobile-controls-slot .tb-pair > input {flex:none;width:100%;margin:7px 0}
-  #mobile-controls-slot .tb-pair > .gain-value,#mobile-controls-slot .tb-pair > .tb-vol {min-width:0;height:15px;line-height:15px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  #mobile-controls-slot .vbar {--vb-h:34px;flex:1;width:auto;min-width:0}
+  #mobile-controls-slot .vbar-t {font-size:13px}
   #mobile-controls-slot .tb-btn.tb-spk {display:inline-flex;align-items:center;justify-content:center;flex:none;width:42px;height:34px;padding:0;box-sizing:border-box;
     background:var(--l2);border:1px solid var(--l4);border-radius:5px;color:var(--t2)}
   #mobile-controls-slot .tb-btn.tb-spk .ic {font-size:20px}
@@ -3065,28 +3076,26 @@ body.drive.drive-day .drive-hud {
       </div>
       <!-- The fields (sidebar.md, "Top bar and rail"): no caption in the bar - an icon (.tb-ic,
            aria-hidden; its title names the control) says what each is, the control carries the
-           name (aria-label) and the help (title). A slider's reading sits right above it, its
-           right edge on the slider's right end (.tb-pair). The .tb-label is the phone drawer's
-           row label only (the drawer keeps text labels; hidden in the bar). -->
+           name (aria-label) and the help (title). Gain and Volume are value bars (.vbar: the
+           native range input styled as the box, its value written inside - vbarShow). The
+           .tb-label is the phone drawer's row label only (the drawer keeps text labels; hidden
+           in the bar). -->
       <!-- Gain -->
       <div class="tb-group fld gain-group not-indep" id="tb-gain">
         <span class="tb-label">Gain</span>
         <span class="tb-ic" aria-hidden="true" title="Gain"><svg class="ic" aria-hidden="true"><use href="#i-gain"/></svg></span>
-        <span class="tb-pair">
-          <span class="gain-value" id="gn-value">49.6 dB</span>
-          <input type="range" id="gn-slider" class="gain-slider" min="0" max="29" value="29" oninput="updateGainDisplay(this.value);sgn()" aria-label="Gain"
-                 title="Gain: the tuners' RF gain, the same on every tuner (Auto: the tuners' own AGC)">
-        </span>
+        <span class="vbar max"><input type="range" id="gn-slider" class="vbar-in" min="0" max="29" value="29" style="--p:100" oninput="updateGainDisplay(this.value);sgn()"
+                 aria-label="Gain" aria-valuetext="49.6 dB" title="Gain - the tuners' RF gain, the same on every tuner (Auto: the tuners' own AGC); drag, or use the mouse wheel"><span
+                 class="vbar-t" id="gn-value" aria-hidden="true">49.6 dB</span></span>
       </div>
       <!-- Audio: the speaker button is the on / off (tfm; lit while on, the crossed speaker while
            off), then the volume -->
       <div class="tb-group fld" id="tb-audio">
         <span class="tb-label">Audio</span>
         <button type="button" id="fmt" class="tb-btn tb-spk on" onclick="tfm()" aria-label="Audio" aria-pressed="true" title="Audio on / off"><svg class="ic" aria-hidden="true"><use href="#i-speaker"/></svg></button>
-        <span class="tb-pair">
-          <span class="tb-vol" id="vv">50%</span>
-          <input type="range" id="vsl" class="tb-slider" min="0" max="100" value="50" oninput="uv(this.value)" aria-label="Volume" title="Volume: the audio's level on this page">
-        </span>
+        <span class="vbar"><input type="range" id="vsl" class="vbar-in" min="0" max="100" value="50" data-wheel="5" style="--p:50" oninput="uv(this.value)"
+                 aria-label="Volume" aria-valuetext="50%" title="Volume - the audio's level on this page; drag, or use the mouse wheel"><span
+                 class="vbar-t" id="vv" aria-hidden="true">50%</span></span>
       </div>
       <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
            click on the spectrum puts the VFO on a multiple of it. Right of Audio, left of Mode
@@ -7984,11 +7993,67 @@ let gainUserChangeTimeout = null;
 let lastGainSendTime = 0;
 const gainSendThrottleMs = 100;  // Throttle gain updates during sliding
 
+// The value bars (.vbar - sidebar.md, "Top bar and rail"): Gain and Volume in the top bar (and the
+// phone drawer's rows), a tuner pane's gain. Each is a native range input styled as the whole box,
+// with its value written inside (.vbar-t). vbarShow(inp, text) shows inp's value: the fill (--p, the
+// value in % of the range: the background's width), .max at the top (the edge would double the
+// box's border there) and, given a text, the text inside and aria-valuetext. Everything that changes
+// a bar's value calls it: updateGainDisplay (the top bar's gain: a drag, the wheel, the receiver's
+// sync, paneSelect, the saved frequencies' gain), uv (the volume), panesSyncHeads (a pane's gain),
+// applyMobileRelocation (every bar, the fill only: vbarShowAll).
+function vbarShow(inp, text) {
+  if (!inp) return;
+  const lo = parseFloat(inp.min) || 0, hi = inp.max === '' ? 100 : parseFloat(inp.max);
+  const p = hi > lo ? Math.max(0, Math.min(100, (parseFloat(inp.value) - lo) / (hi - lo) * 100)) : 0;
+  const ps = String(Math.round(p * 100) / 100);
+  if (inp.style.getPropertyValue('--p') !== ps) inp.style.setProperty('--p', ps);
+  const bar = inp.parentElement;
+  if (bar && bar.classList.contains('vbar')) {
+    bar.classList.toggle('max', p >= 100);
+    const t = bar.querySelector('.vbar-t');
+    if (text != null && t && t.textContent !== text) t.textContent = text;
+  }
+  if (text != null && inp.getAttribute('aria-valuetext') !== text) inp.setAttribute('aria-valuetext', text);
+}
+function vbarShowAll() { document.querySelectorAll('.vbar > input[type="range"]').forEach(i => vbarShow(i)); }
+
+// The mouse wheel over a value bar (a non-passive listener on the bar): one step per notch - a gain
+// table entry, or data-wheel (the volume: 5 %, onto the multiples of 5) -, the page does not scroll.
+// The volume and a pane's gain go through their input handler as a drag does (paneGainInput holds
+// its command until the wheel rests); the top bar's gain shows each notch and sends once the wheel
+// has rested (sgn, with its own rate limit): a gain change costs the receiver a recalibration.
+const GAIN_WHEEL_MS = 250;
+let gainWheelTimer = null;
+function vbarWheel(e) {
+  const inp = e.currentTarget.querySelector('input[type="range"]');
+  if (!inp || inp.disabled || !e.deltaY) return;
+  e.preventDefault();
+  const pane = inp.id.startsWith('tpane-g-') ? parseInt(inp.id.slice(8)) : -1;
+  if (pane >= 0) paneSelect(pane);   // working on a tuner selects its pane, as a click on its header does (first: it re-shows the bar)
+  const lo = parseFloat(inp.min) || 0, hi = inp.max === '' ? 100 : parseFloat(inp.max);
+  const st = parseFloat(inp.dataset.wheel || inp.step) || 1, v0 = parseFloat(inp.value);
+  const v = Math.max(lo, Math.min(hi, e.deltaY < 0 ? Math.floor(v0 / st) * st + st : Math.ceil(v0 / st) * st - st));
+  if (v === v0) return;
+  inp.value = v;
+  if (inp.id === 'gn-slider') {
+    updateGainDisplay(v);
+    gainUserChanging = true;   // a header from before must not pull the bar back meanwhile
+    clearTimeout(gainUserChangeTimeout);
+    gainUserChangeTimeout = setTimeout(() => { gainUserChanging = false; }, 3000);
+    clearTimeout(gainWheelTimer);
+    gainWheelTimer = setTimeout(sgn, GAIN_WHEEL_MS);
+  } else if (pane >= 0) {
+    paneGainInput(pane, v, GAIN_WHEEL_MS);
+  } else {
+    inp.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+}
+
 function updateGainDisplay(sliderValue) {
   const idx = parseInt(sliderValue);
   const gainDb = GAIN_VALUES[idx];
   const displayText = gainDb === -1 ? 'Auto' : gainDb.toFixed(1) + ' dB';
-  $id('gn-value').textContent = displayText;
+  vbarShow($id('gn-slider'), displayText);
 }
 
 let gainTrailingSendTimeout = null;
@@ -9348,7 +9413,7 @@ function specShowMain(newFrame) {
 
 function uv(v) {
   audioEngine.setVolume(v/100);
-  $id('vv').textContent=v+'%';
+  vbarShow($id('vsl'), v + '%');
 }
 
 let avgUserChanging=false, avgUserChangeTimeout=null;
@@ -11088,9 +11153,9 @@ function panesBuild(n) {
         <span class="pfreq" id="tpane-f-${ch}" title="Tuner ${ch} frequency: click the top / bottom half of a digit, or use the mouse wheel on it">${
           [8, 7, 6, 's', 5, 4, 3, 's', 2, 1, 0].map(d => d === 's' ? '<span class="pfd-sep">.</span>'
             : `<span class="pfd" data-pos="${d}">0</span>`).join('')}</span><span>MHz</span>
-        <input type="range" class="tpane-gain" id="tpane-g-${ch}" min="0" max="${GAIN_VALUES.length - 1}"
-               title="Tuner ${ch} gain" oninput="paneGainInput(${ch}, this.value)">
-        <span id="tpane-gv-${ch}" style="min-width:44px"></span>
+        <span class="vbar tpane-vbar"><input type="range" class="vbar-in tpane-gain" id="tpane-g-${ch}" min="0" max="${GAIN_VALUES.length - 1}" value="1"
+               aria-label="Gain, tuner ${ch}" title="Gain - tuner ${ch}'s RF gain (Auto: its own AGC); drag, or use the mouse wheel" oninput="paneGainInput(${ch}, this.value)"><span
+               class="vbar-t" id="tpane-gv-${ch}" aria-hidden="true"></span></span>
         <span class="tpane-vfos" id="tpane-v-${ch}"></span>
         <button type="button" class="view-btn icon" id="tpane-vb-${ch}" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-pop"
                 title="View: scale, zoom, waterfall - tuner ${ch}" aria-label="View, tuner ${ch}">${VIEW_ICON}</button>
@@ -11108,6 +11173,7 @@ function panesBuild(n) {
     // its frequency digits always did. A click, not a press: a swipe that
     // starts on a header only scrolls the grid.
     el.querySelector('.tpane-head').addEventListener('click', () => paneSelect(ch));
+    el.querySelector('.tpane-vbar').addEventListener('wheel', vbarWheel, {passive: false});   // its gain bar's wheel
     // its View button (the click then selects the pane too, above)
     const vb = $id('tpane-vb-' + ch);
     vb.addEventListener('click', () => viewPopToggle(vb, ch));
@@ -11326,7 +11392,8 @@ function panesSyncHeads() {
     if (gs && document.activeElement !== gs && now > p.holdG && parseInt(gs.value) !== gi) gs.value = gi;
     const shown = GAIN_VALUES[gs ? parseInt(gs.value) : gi];
     const gt = shown === -1 ? 'Auto' : shown.toFixed(1) + ' dB';
-    if (gv && gv.textContent !== gt) gv.textContent = gt;
+    if (gs) vbarShow(gs, gt);
+    else if (gv && gv.textContent !== gt) gv.textContent = gt;
     const vl = $id('tpane-v-' + p.ch);
     if (vl) {
       const h = (decimatorInfo || []).filter(d => (d.tuner || 0) === p.ch)
@@ -11370,13 +11437,14 @@ function paneSendFreq(ch, mhz, shift = true) {
 }
 
 let paneGainTimer = null;
-function paneGainInput(ch, idx) {
+// wait: how long the value must rest before it is sent (the wheel's is longer: vbarWheel)
+function paneGainInput(ch, idx, wait = 120) {
   const db = GAIN_VALUES[parseInt(idx)];
   const p = panes[ch];
   if (p) { p.holdG = Date.now() + 1500; p.gainDb = db; }
   panesSyncHeads();
   clearTimeout(paneGainTimer);
-  paneGainTimer = setTimeout(() => paneSendGain(ch, db), 120);
+  paneGainTimer = setTimeout(() => paneSendGain(ch, db), wait);
 }
 
 function paneSendGain(ch, db) {
@@ -12255,8 +12323,11 @@ function applyMobileRelocation() {
       el._homeAnchor.parentNode.insertBefore(el, el._homeAnchor.nextSibling);
     }
   });
+  vbarShowAll();   // the value bars' fills (the first call: as the markup's values)
 }
 applyMobileRelocation();
+// the value bars' wheel (by group: on a phone they are in the drawer by now; a pane's bar: panesBuild)
+document.querySelectorAll('#tb-gain .vbar, #tb-audio .vbar').forEach(b => b.addEventListener('wheel', vbarWheel, {passive: false}));
 
 // --- Touch support: map touch events onto the existing mouse drag handlers ---
 function addTouchHandlers(el, down, move, up) {

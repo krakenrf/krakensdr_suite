@@ -99,9 +99,10 @@ at the right of the top bar (help mode), then tap any control to see what it doe
 working it (tap the **?** again, an empty spot or Esc to leave) - or press and hold a button
 for a moment.
 Dialogs and the phone's sidebar drawer have the same **?** in their headers. Top bar (always visible), left
-to right: the **center-frequency dial**; **Gain** (the amplifier-triangle icon, the slider with its
-dB reading above it); **Audio** (the speaker button: blue while the audio is on, a crossed speaker
-while it is off; then the volume slider with its % above it); **Step** (the icon of two marks with
+to right: the **center-frequency dial**; **Gain** (the amplifier-triangle icon, then the gain bar);
+**Audio** (the speaker button: blue while the audio is on, a crossed speaker while it is off; then
+the volume bar) - the two bars show their value inside and fill up to it: drag in the box, or turn
+the mouse wheel over it (one gain step, or 5 % volume, per notch); **Step** (the icon of two marks with
 a double arrow, the tuning step); **Mode** (the ring-of-dots icon, the operating mode); the **Bias
 tee** button (with the KrakenSDR Wideband the **mixer**, a circle with a cross, follows the dial). The bar has no captions - each control's name shows when the mouse rests on it or
 on its icon, or in help mode. On a phone Gain, Audio and Step are rows with their names in the

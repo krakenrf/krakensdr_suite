@@ -174,14 +174,19 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   3 per row - 5 tuners = 3 + 2, 4 = 2 x 2 -, the last row centered, >= 360 px
   wide / 230 px tall; each head has a digit frequency selector like the top
   bar's - click top/bottom half or mouse wheel, `paneFreqSelectorInit`, own
-  `.pfd` class since the top bar queries `.freq-digit` page-wide - plus a gain
-  slider; canvas spectrum `paneDrawSpec`, a
+  `.pfd` class since the top bar queries `.freq-digit` page-wide - plus its
+  gain as a value bar, 84 x 22 px, the top bar's design (`.vbar.tpane-vbar`,
+  ids `tpane-g-N` / `tpane-gv-N` and `paneGainInput` as before; the value is
+  written inside, no reading beside it since 2026-11-18 - *sidebar.md*, "Top
+  bar and rail"; a press or drag sets it, the mouse wheel steps it and
+  selects the pane, and `paneGainInput` sends one TUNER_GAIN once the value
+  has rested 120 ms - 250 ms after a wheel notch); canvas spectrum `paneDrawSpec`, a
   `WaterfallDisplay` each, overlay `paneDrawOverlay` with VFO bars + AI
   badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (any width like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side keeps its edge `PANE_CLIP_EDGE_PX` 5 px inside the plot border (`bars[].xl / xr`; until 2026-10-21 a clipped side had none, and a 2.4 MHz VFO, wider than the pane's edge-clipped band, couldn't be resized at all: the user's report); since 2026-11-15 an edge drag is capped at the pane's band, keeps the edge on the plot and starts a clipped edge from where it is drawn (*VFO bandwidth*, `bwEdgeDragBegin` - the main display and waterfall do the same); an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
   digits and gain (`.not-indep`) are hidden in independent mode - each pane
   has its own (`selTuner` = the highlighted pane, `paneSelect`: a click
   anywhere in the pane's header - its empty space, the "T0" name, its
-  digits or gain slider - or a press / wheel in its spectrum selects it;
+  digits or gain bar - or a press / wheel in its spectrum selects it;
   until 2026-11-17 only the small name did in the header, the user asked
   for the whole header; a click, not a press, so a swipe that starts on a
   header only scrolls the grid; the pane readout's dots `.pfd-sep` are
