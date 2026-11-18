@@ -286,6 +286,14 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
     status_json << ",\"external_noise\":" << (external_noise_mode.load() ? "true" : "false");
     // generic RTL-SDRs, no KrakenSDR: no coherent mode, no calibration
     status_json << ",\"generic_rtlsdr\":" << (generic_rtlsdr() ? "true" : "false");
+    // per-port antenna bias tees (set_antenna_bias_tees): switchable at all
+    // (not with generic RTL-SDRs, not on the Wideband variant), the mask in
+    // effect (bit N = channel N; 0 when not available) and the channels that
+    // can't be switched (CH0 under --ext_noise, CH7) - a client draws its
+    // switches from these and num_channels
+    status_json << ",\"antenna_bias_tees_available\":" << (antenna_bias_tees_available() ? "true" : "false")
+                << ",\"antenna_bias_tee_mask\":" << antenna_bias_tees_in_effect()
+                << ",\"antenna_bias_tee_reserved\":" << antenna_bias_tee_reserved_mask();
     // a client's scan holds the calibration (hold_calibration)
     status_json << ",\"calibration_hold\":" << (calibration_held() ? "true" : "false");
     if (kerberos_mode.load()) {
@@ -725,6 +733,31 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         }).detach();
         return "{\"status\":\"success\",\"num_elements\":" + std::to_string(n) +
                ",\"message\":\"reconfiguration started (devices reopen + full recalibration)\"}";
+    }
+
+    // Per-port antenna bias tees (DC on the antenna ports, for active
+    // antennas and LNAs): {"command":"set_antenna_bias_tees","mask":N}, bit N
+    // = channel N - what heimdall's web page sends as ANT_BIAS_MASK, through
+    // the same request_antenna_bias_tees() (checks, GPIO writes, saved). Only
+    // the open channels take the new value; CH0 stays off under --ext_noise.
+    // Every reply carries the mask in effect, an error reply too (as a failed
+    // retune replies the frequency in effect).
+    if (json_str.find("\"set_antenna_bias_tees\"") != std::string::npos) {
+        constexpr uint32_t all_bits = NUM_DEVICES >= 32 ? ~0u : ((1u << (NUM_DEVICES % 32)) - 1);
+        auto reply = [](const char* status, const std::string& message) {
+            std::string r = std::string("{\"status\":\"") + status + "\"";
+            if (!message.empty()) r += ",\"message\":\"" + message + "\"";
+            return r + ",\"antenna_bias_tee_mask\":" + std::to_string(antenna_bias_tees_in_effect()) + "}";
+        };
+        double m = 0;
+        if (!num_field("mask", m) || m < 0 || m > all_bits || m != std::floor(m))
+            return reply("error", "mask must be a whole number 0-" + std::to_string(all_bits) + " (bit N = channel N)");
+        const uint32_t requested = static_cast<uint32_t>(m);
+        const std::string err = request_antenna_bias_tees(requested, devices);
+        if (!err.empty()) return reply("error", err);
+        if ((requested & 1u) && external_noise_mode.load())
+            return reply("success", "CH0 is reserved for the external noise source (--ext_noise) - left off");
+        return reply("success", "");
     }
 
     // Simple JSON parsing for command processing

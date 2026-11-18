@@ -199,7 +199,9 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   `decoder-log.md`, `voice-to-text.md`
 - Other: `ai-assistant.md`, `web-mapper.md`, `array-calibration.md`
   (experimental), `array-calculator.md`, `wideband-variant.md`,
-  `fft-pffft.md`, `liquid-dsp.md`, `power.md` (the page's Restart / Shut down)
+  `fft-pffft.md`, `liquid-dsp.md`, `power.md` (the page's Restart / Shut down),
+  `bias-tees.md` (the antenna bias tees from the top bar; heimdall's
+  `set_antenna_bias_tees`)
 
 ## Rules
 

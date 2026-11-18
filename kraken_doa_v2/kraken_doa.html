@@ -1632,7 +1632,7 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar #tb-step,.top-bar #tb-mode {grid-template-areas:"l" "c"}
 .top-bar #tb-step select,.top-bar #tb-mode select {grid-area:c}
 .top-bar #tb-gain {grid-template-columns:1fr auto;grid-template-areas:"l v" "c c"}
-.top-bar #tb-gain .gain-slider {grid-area:c;width:120px;margin:11px 0}
+.top-bar #tb-gain .gain-slider {grid-area:c;width:100px;margin:11px 0}   /* 120 until 2026-11-18: the Bias tee button needed the room */
 .top-bar #tb-gain .gain-value {grid-area:v;min-width:0;text-align:right;font-size:11.5px;line-height:12px}
 /* (the Wideband downconverter variant's mixer: side, LO drive; ring and LO as its readout) */
 .top-bar #wbv-group {grid-template-columns:auto 1fr;grid-template-areas:"l v" "c c"}
@@ -1645,7 +1645,7 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar .wbv-seg .tb-btn.on {position:relative;z-index:1}
 .top-bar #tb-audio {grid-template-columns:auto 1fr auto;grid-template-areas:"l l v" "s c c"}
 .top-bar #tb-audio #fmt {grid-area:s}
-.top-bar #tb-audio .tb-slider {grid-area:c;width:80px;margin:11px 0}
+.top-bar #tb-audio .tb-slider {grid-area:c;width:72px;margin:11px 0}   /* 80 until 2026-11-18 (the same) */
 .top-bar #tb-audio .tb-vol {grid-area:v;min-width:0;text-align:right;font-size:11.5px;line-height:12px;color:var(--ac-t)}
 /* status chips: a dark pill with a dot in the state's colour (the scripts set
    the chip's background to that colour; the inset shadow darkens the pill,
@@ -1678,6 +1678,38 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar.cal-measuring {background:linear-gradient(to bottom,rgba(227,168,66,0.13) 0%,rgba(227,168,66,0) 100%),var(--s2);border-bottom-color:var(--warn);box-shadow:inset 0 -2px 0 var(--warn)}
 .top-bar.cal-calibrated {background:linear-gradient(to bottom,rgba(64,174,103,0.13) 0%,rgba(64,174,103,0) 100%),var(--s2);border-bottom-color:var(--ok);box-shadow:inset 0 -2px 0 var(--ok)}
 .top-bar.cal-cooldown {background:linear-gradient(to bottom,rgba(227,168,66,0.18) 0%,rgba(227,168,66,0) 100%),var(--s2);border-bottom-color:var(--warn);box-shadow:inset 0 -2px 0 var(--warn)}
+/* Bias tee (2026-11-18, BIAS TEE in the script, docs/dev/bias-tees.md): one button right of Mode,
+   on the controls' line (no label above it), amber while a bias tee is on, with the count; its
+   popover (.view-pop) holds All and a switch per open antenna. aria-disabled, not disabled: the
+   reason stays in its title, which a disabled button would never show */
+.top-bar #tb-bias {align-self:flex-end;margin-bottom:3px}
+/* icon only, 30 px: the bar has no room for a wider one (one row at 1700 px with the sidebar); the
+   count ("2/5") is a badge on its corner, so the button's width never changes */
+.tb-bias-btn {position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:30px;height:28px;padding:0;box-sizing:border-box;
+  background:var(--l2);border:1px solid var(--l4);border-radius:5px;color:var(--t1);font-size:12.5px;line-height:1;cursor:pointer}
+.tb-bias-btn .ic {font-size:17px}
+.tb-bias-btn:hover {background:var(--l4);border-color:var(--l5);color:var(--t0)}
+.tb-bias-btn:focus-visible {outline:2px solid var(--ac-l);outline-offset:1px}
+.tb-bias-btn .bias-n {position:absolute;top:-7px;right:-9px;margin:0;padding:1px 3px;border-radius:6px;background:var(--warn);color:var(--s1);
+  font-size:9.5px;font-weight:700;line-height:10px;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
+.tb-bias-btn .bias-n:empty {display:none}
+.tb-bias-btn.lit {background:var(--warn-d);border-color:var(--warn-m);color:var(--warn-t)}
+.tb-bias-btn.lit:hover {border-color:var(--warn);color:var(--warn-t2)}
+.tb-bias-btn[aria-expanded="true"] {border-color:var(--ac-h);box-shadow:0 0 0 1px var(--ac-h)}
+.tb-bias-btn[aria-disabled="true"] {opacity:.5;cursor:default}
+.tb-bias-btn[aria-disabled="true"]:hover {background:var(--l2);border-color:var(--l4);color:var(--t1)}
+.tb-bias-btn.lit[aria-disabled="true"]:hover {background:var(--warn-d);border-color:var(--warn-m);color:var(--warn-t)}
+.view-pop.bias-pop {width:232px;touch-action:pan-y;user-select:none}
+.bias-warn {display:flex;align-items:flex-start;margin:8px 0 5px;color:var(--warn-t);font-size:11.5px;line-height:1.35}
+.bias-warn .ic {flex:none;font-size:14px;margin-top:1px}
+.bias-pop .bias-all {border-bottom:1px solid var(--l1);margin-bottom:2px}
+.bias-pop .ml-row.dis {cursor:default;color:var(--t5)}
+.bias-pop .ml-row.dis:hover {color:var(--t5)}
+.bias-pop .ml-row.pend .ml-n::after {content:' …';color:var(--t5)}
+.bias-pop .ml-row.pend input.sw {opacity:.6}
+.bias-err {display:flex;align-items:flex-start;margin-top:6px;color:var(--bad-t);font-size:11.5px;line-height:1.35}
+.bias-err .ic {flex:none;font-size:14px;margin-top:1px}
+.bias-err[hidden] {display:none}
 /* the spectrum's header: the title, the antenna shown (coherent mode), then at the right the
    View button (its display settings are in the popover, .view-pop) and ? - one line */
 .spectrum-header {justify-content:flex-start;flex-wrap:wrap;gap:5px 14px;padding:5px 10px}
@@ -1790,6 +1822,11 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .ml-row {min-height:42px;font-size:13px}
   .ml-row input[type="radio"] {width:20px;height:20px}
   .ml-row input[type="radio"]:checked {background:radial-gradient(circle,#fff 0 4px,transparent 4.6px),var(--ac)}
+  /* Bias tee: beside Mode on the bar's one line, finger-sized; its popover as wide as the screen allows */
+  .top-bar #tb-bias {align-self:center;margin-bottom:0}
+  .tb-bias-btn {height:34px;min-width:42px}
+  .view-pop.bias-pop {width:min(300px, calc(100vw - 24px));padding:10px 14px 10px}
+  .bias-warn {font-size:12.5px}
   /* Sidebar sections that host controls relocated from the top bar and the rail */
   .mobile-only {display:block}
   #mobile-controls-slot .tb-group {display:flex;align-items:center;gap:8px;margin:10px 0;width:100%}
@@ -2053,6 +2090,7 @@ body.drive.drive-day .drive-hud {
 <symbol id="i-tower" viewBox="0 0 16 16"><path d="M5.2 14.4L8 1.8l2.8 12.6M6.1 10.4h3.8M6.9 6.7h2.2M3.8 14.4h8.4"/></symbol>
 <symbol id="i-radar" viewBox="0 0 16 16"><path d="M2.4 4.6a7.4 7.4 0 0 0 9 9zM6.9 9.1l3.9-3.9"/><circle cx="11.3" cy="4.7" r="1.2" fill="currentColor"/><path d="M4.6 12.4l-1.4 2.2h3.6"/></symbol>
 <symbol id="i-plug" viewBox="0 0 16 16"><path d="M5.6 1.8v3M10.4 1.8v3M3.8 4.8h8.4v2.6a4.2 4.2 0 0 1-8.4 0zM8 11.6v2.8"/></symbol>
+<symbol id="i-biastee" viewBox="0 0 16 16"><path d="M1.6 12.6h12.8M1.6 10.9v3.4M14.4 10.9v3.4M9.6 1.6L6.3 6h3.4L8 8.7v3.9"/></symbol>
 <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 1.8c-3.4 3.3-3.4 9.1 0 12.4M8 1.8c3.4 3.3 3.4 9.1 0 12.4M1.8 8h12.4"/></symbol>
 <symbol id="i-doc" viewBox="0 0 16 16"><path d="M3.8 1.8h5.6l2.8 2.8v9.6H3.8zM9.2 1.8v3h3M6 8h4.2M6 10.6h4.2"/></symbol>
 <symbol id="i-log" viewBox="0 0 16 16"><path d="M6 4h7.5M6 8h7.5M6 12h7.5"/><circle cx="2.8" cy="4" r="1.05" fill="currentColor"/><circle cx="2.8" cy="8" r="1.05" fill="currentColor"/><circle cx="2.8" cy="12" r="1.05" fill="currentColor"/></symbol>
@@ -3032,6 +3070,19 @@ body.drive.drive-day .drive-hud {
           <option value="independent">Independent</option>
         </select>
       </div>
+      <!-- Antenna bias tees (BIAS TEE in the script, docs/dev/bias-tees.md): the button opens a popover
+           with a switch per open antenna - two presses put DC on a port, on purpose. Hidden where
+           heimdall's own page hides them (generic RTL-SDRs, the Wideband variant) -->
+      <div class="tb-group" id="tb-bias">
+        <button type="button" class="tb-bias-btn" id="bias-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="bias-pop"
+                aria-label="Bias tee" aria-disabled="true" title="Bias tee: no state from the receiver yet" onclick="biasToggle()"><svg class="ic" aria-hidden="true"><use href="#i-biastee"/></svg><span class="bias-n" id="bias-n"></span></button>
+        <div class="view-pop bias-pop" id="bias-pop" role="dialog" aria-label="Bias tee" title="" hidden>
+          <div class="vp-head">Bias tee</div>
+          <div class="bias-warn"><svg class="ic" aria-hidden="true"><use href="#i-warn"/></svg><span>DC on the antenna port - only for antennas / LNAs that take it</span></div>
+          <div class="vp-body" id="bias-body" role="group" aria-label="Antennas"></div>
+          <div class="bias-err" id="bias-err" role="status" hidden><svg class="ic" aria-hidden="true"><use href="#i-no"/></svg><span id="bias-err-t"></span></div>
+        </div>
+      </div>
       <!-- Status, pushed to the right: the chips that come and go first, then
            the ones that stay - a chip that appears or changes its text must
            not move a control. The operating mode has no chip: the Mode
@@ -3620,6 +3671,9 @@ let opMode = 'coherent';
 // heimdall runs plain RTL-SDR dongles, no KrakenSDR (operating_mode /
 // system_status generic_rtlsdr): no coherent mode, no wideband scan with one
 let genericRtl = false;
+// Antenna bias tees (BIAS TEE): heimdall's state as the receiver relays it (system_status.antenna_bias;
+// null = none yet), this page's request on its way ({mask, seq, at}), the popover open, its error line
+let biasSt = null, biasPend = null, biasOpen = false, biasErr = '';
 // Array diagrams (see "Array diagrams"): the palette's colours they use, and each
 // container's last draw call. Up here: a diagram can be drawn before that section runs.
 const ARR_C = {bg0: '#171c23', bg1: '#0b0f14', edge: '#333b46', plate0: '#272e37', plate1: '#171c23', plateEdge: '#454f5c',
@@ -5139,6 +5193,146 @@ function popDismiss(o) {
   });
   return {opened() { win = innerWidth + 'x' + innerHeight; }};
 }
+
+// BIAS TEE: the antenna bias tees (docs/dev/bias-tees.md). The top bar's Bias tee button (right of
+// Mode) opens a popover: All, then one switch per open antenna. heimdall owns the state; the
+// receiver relays it - system_status.antenna_bias, and {"antenna_bias":...} after a refusal:
+// {state: ok | none (no heimdall) | old (heimdall without the command) | generic | wideband |
+// unavailable, mask, reserved (can't be switched: CH0 under --ext_noise, CH7), channels (open),
+// external_noise, playback, error_seq, error}. A switch sends ANT_BIAS:<mask> and looks pending
+// until heimdall's state shows it, an error comes for it (error_seq moved) or BIAS_WAIT_MS pass -
+// no optimistic state. Two presses to put DC on a port (the button, then a switch): on purpose.
+const BIAS_WAIT_MS = 5000;
+// What the button can do now: {show, ok, why, n, open, res, mask, sw (switchable bits)}
+function biasView() {
+  const st = biasSt, v = {show: true, ok: false, why: '', n: 0, open: 0, res: 0, mask: 0, sw: 0, ext: false};
+  if (!st) { v.why = 'no state from the receiver yet'; return v; }
+  if (st.state === 'generic' || st.state === 'wideband') { v.show = false; return v; }   // as heimdall's own page: not there
+  v.n = Math.max(0, Math.min(8, st.channels | 0));
+  v.open = (1 << v.n) - 1;
+  v.res = (st.reserved | 0) & v.open;
+  v.sw = v.open & ~v.res;
+  v.ext = !!st.external_noise;
+  // (heimdall gone, too old: its state is not known - nothing is shown as on)
+  // cur: heimdall's (the button: count, colour, title); mask: what the switches show (this page's
+  // request while it is on its way, with the pending look)
+  v.cur = st.state !== 'ok' ? 0 : (st.mask | 0) & v.open;
+  v.mask = st.state !== 'ok' ? 0 : biasPend ? biasPend.mask & v.open : v.cur;
+  if (!ws || ws.readyState !== 1) v.why = 'not connected to the receiver';
+  else if (st.state === 'client') v.why = 'this kraken_doa is too old for it - rebuild and restart it';
+  else if (st.state === 'none') v.why = 'heimdall is not connected';
+  else if (st.state === 'old') v.why = 'heimdall is too old for this - update it (rebuild and restart heimdall)';
+  else if (st.state !== 'ok') v.why = 'heimdall has no switchable bias tees';
+  else if (st.playback) v.why = 'Playback: the bias tees are the real receiver\'s - stop the playback to switch them';
+  else if (!v.sw) v.why = 'no antenna open';
+  else v.ok = true;
+  return v;
+}
+const biasNames = m => { const a = []; for (let i = 0; i < 8; i++) if (m >> i & 1) a.push(i); return a.length ? 'Antenna ' + a.join(', ') : ''; };
+const biasCount = m => { let c = 0; for (; m; m &= m - 1) c++; return c; };
+// A state from the receiver (undefined: an older kraken_doa that has none): the request on its
+// way is done when heimdall shows it or answered an error for it
+function biasOnState(st) {
+  biasSt = st && typeof st === 'object' ? st : {state: 'client'};
+  if (biasPend) {
+    const open = ((1 << Math.max(0, Math.min(8, biasSt.channels | 0))) - 1);
+    if (biasSt.error_seq !== undefined && biasSt.error_seq !== biasPend.seq) { biasErr = biasSt.error || 'refused'; biasPend = null; }
+    else if (biasSt.state === 'ok' && ((biasSt.mask | 0) & open) === (biasPend.mask & open)) biasPend = null;
+    else if (Date.now() - biasPend.at > BIAS_WAIT_MS) { biasErr = 'no answer from heimdall'; biasPend = null; }
+  }
+  biasRender();
+}
+function biasRender() {
+  const btn = $id('bias-btn'), grp = $id('tb-bias');
+  if (!btn || !grp) return;
+  const v = biasView();
+  grp.style.display = v.show ? '' : 'none';
+  if (!v.show) { if (biasOpen) biasClose(false); return; }
+  const on = biasCount(v.cur);
+  btn.classList.toggle('lit', on > 0);
+  btn.setAttribute('aria-disabled', v.ok ? 'false' : 'true');
+  const n = $id('bias-n'), cnt = on ? on + '/' + v.n : '';
+  if (n.textContent !== cnt) n.textContent = cnt;
+  const tip = v.ok ? (on ? 'Bias tee on: ' + biasNames(v.cur) + ' (DC on ' + (on === 1 ? 'that port' : 'those ports') + ')'
+                         : 'Bias tee: DC on the antenna ports, for active antennas and LNAs - all off')
+                   : 'Bias tee: ' + v.why + (on ? ' - on now: ' + biasNames(v.cur) : '');
+  if (btn._tip !== tip) { btn._tip = tip; btn.title = tip; }
+  if (!v.ok) { if (biasOpen) biasClose(false); return; }
+  if (biasOpen) biasRows(v);
+}
+// The popover's rows: All, then Antenna 0..n-1 (rebuilt when the antennas change), their states
+function biasRows(v) {
+  const body = $id('bias-body');
+  const key = v.n + '|' + v.res + '|' + v.ext;
+  if (body.dataset.key !== key) {
+    body.dataset.key = key;
+    const row = (k, name, title, cls) => `<label class="ml-row${cls ? ' ' + cls : ''}" title="${escapeHtml(title)}"><span class="ml-n">${name}</span>` +
+      `<input type="checkbox" class="sw" data-bias="${k}" onchange="biasSet(this)"></label>`;
+    let h = row('all', 'All', 'Every antenna\'s bias tee on / off', 'bias-all');
+    for (let i = 0; i < v.n; i++) {
+      const res = v.res >> i & 1;
+      h += row(i, 'Antenna ' + i, !res ? 'DC on antenna port ' + i + ' (channel ' + i + '), for an active antenna or an LNA'
+        : i === 0 && v.ext ? 'Powers the external noise source (--ext_noise) - switched by calibration'
+        : 'No bias tee switch for this channel (the KrakenSDR\'s GPIOs end at channel 6)', res ? 'dis' : '');
+    }
+    body.innerHTML = h;
+  }
+  const pendBits = biasPend ? (v.mask ^ v.cur) : 0;
+  for (const e of body.querySelectorAll('input[data-bias]')) {
+    const k = e.dataset.bias, all = k === 'all';
+    const c = all ? (v.mask & v.sw) === v.sw : !!(v.mask >> k & 1);
+    if (e.checked !== c) e.checked = c;
+    e.disabled = !all && !!(v.res >> k & 1);
+    e.closest('.ml-row').classList.toggle('pend', all ? !!pendBits : !!(pendBits >> k & 1));
+  }
+  const er = $id('bias-err');
+  er.hidden = !biasErr;
+  if ($id('bias-err-t').textContent !== biasErr) $id('bias-err-t').textContent = biasErr;
+}
+// A switch: the mask it means goes to the receiver (heimdall's state then shows it)
+function biasSet(el) {
+  const v = biasView();
+  if (!v.ok) { biasRender(); return; }
+  let m;
+  if (el.dataset.bias === 'all') m = el.checked ? v.sw : 0;
+  else m = el.checked ? v.mask | (1 << el.dataset.bias) : v.mask & ~(1 << el.dataset.bias);
+  m &= v.sw;
+  biasPend = {mask: m, seq: biasSt.error_seq, at: Date.now()};
+  biasErr = '';
+  send('ANT_BIAS:' + m);
+  setTimeout(() => { if (biasPend && Date.now() - biasPend.at >= BIAS_WAIT_MS) biasOnState(biasSt); }, BIAS_WAIT_MS + 50);
+  biasRender();
+}
+function biasToggle() {
+  if (biasOpen) { biasClose(false); return; }
+  if (!biasView().ok) return;   // the reason is in the button's title
+  const pop = $id('bias-pop'), btn = $id('bias-btn');
+  biasOpen = true;
+  biasErr = '';
+  biasDismiss.opened();
+  btn.setAttribute('aria-expanded', 'true');
+  biasRows(biasView());
+  pop.hidden = false;
+  biasPlace();
+}
+function biasClose(focusBtn) {
+  if (!biasOpen) return;
+  biasOpen = false;
+  const pop = $id('bias-pop'), btn = $id('bias-btn');
+  if (pop) pop.hidden = true;
+  if (!btn) return;
+  btn.setAttribute('aria-expanded', 'false');
+  if (focusBtn) btn.focus();
+}
+// under the button, left edges aligned (the other side when that would leave the window)
+function biasPlace() {
+  const pop = $id('bias-pop'), b = $id('bias-btn');
+  if (!pop || !b || pop.hidden) return;
+  const r = b.getBoundingClientRect();
+  if (!r.width && !r.height) { biasClose(false); return; }
+  popPlace(pop, r, {align: 'left'});
+}
+const biasDismiss = popDismiss({pop: () => $id('bias-pop'), btn: () => biasOpen ? $id('bias-btn') : null, close: biasClose, place: biasPlace});
 
 // Waterfall colour range from a spectrum: below the noise floor .. above the
 // peaks (percentiles), at least 30 dB, 5 dB steps. [min, max] or null.
@@ -10075,6 +10269,7 @@ function connect() {
     // ⏻ / ↻ back after a restart / reboot: the notice goes (also with an
     // older receiver, which sends no power state)
     pwOnOpen();
+    biasRender();   // the Bias tee button: the receiver's state comes with its first status
 
     // The backend is the source of truth for settings: it replays current
     // state (sync_cmd messages) to us on connect, and the FFT header carries
@@ -10113,6 +10308,7 @@ function connect() {
   
   ws.onclose=()=>{
     pwOnClose();
+    biasRender();   // the Bias tee button: disabled while not connected
     const connEl = $id('status-connection');
     if (connEl) {
       connEl.textContent='Disconnected';
@@ -10197,6 +10393,7 @@ function connect() {
           }
           else if(msg.operating_mode) { opOnMessage(msg.operating_mode); }
           else if(msg.power) { pwOnState(msg.power); }
+          else if(msg.antenna_bias) { biasOnState(msg.antenna_bias); }
           else if(msg.decimator_freq_offset) {
             // Continuous scanner (or server) moved a tuning bar
             const dec = decimatorInfo.find(d => d.id === msg.decimator_freq_offset.id);
@@ -27969,6 +28166,8 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
   function updateSystemStatus(status) {
     setServerOs(status.platform || (status.hw && status.hw.os), status.source_tree);
     sbVersionRender(status.version, status.heimdall_version);
+    // the antenna bias tees (BIAS TEE; absent from an older kraken_doa)
+    biasOnState(status.antenna_bias);
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
     // server never recalibrates automatically there: warn when uncalibrated
     // or when a settings change made the calibration stale.

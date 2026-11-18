@@ -152,6 +152,16 @@ permission, without the boot service (e.g. a desktop PC started with
 password once; `--power-only --uninstall` takes it away again), then
 restart the software. `KRAKEN_NO_POWER=1 ./run.sh` hides the buttons.
 
+**Antenna bias tees from the web page.** The **Bias tee** button in the DOA
+page's top bar, right of Mode, opens a switch per antenna (and All): DC on
+that antenna port for an active antenna or an LNA - only for antennas that
+take it. The button turns amber and shows how many are on ("2/5"). heimdall
+keeps the setting across restarts (its own page on port 8070 has the same
+switches). Not with generic RTL-SDRs or the KrakenSDR Wideband. After
+updating, rebuild and restart **both** programs (`./run.sh stop`, then
+`./run.sh`): a heimdall that is still running has the old control port, and
+the button then says "heimdall is too old for this".
+
 ## Features
 
 Everything below is on the KrakenSDR DOA page. Each feature has a detailed

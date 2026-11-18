@@ -181,6 +181,43 @@ status JSON says `"generic_rtlsdr":true` (always present, `false` otherwise),
 `set_independent_tuner`, `set_frequency` / `set_gain` (every tuner),
 `set_rtl_tcp_channel` work as in independent mode.
 
+### 2.17 `set_antenna_bias_tees` (added 2026-11-18, checked right after `set_num_elements`)
+```json
+{"command":"set_antenna_bias_tees","mask":5}
+```
+The per-port antenna bias tees - DC on the antenna ports for active antennas
+and LNAs, bit N = channel N (GPIO N+1 of the channel-0 chip). Not the
+calibration noise source, which older names (`bias_tee_enabled`,
+`BIAS_TEE_ENABLE`) call "bias tee". The same as heimdall's web page's
+`ANT_BIAS_MASK:<mask>`; both go through `request_antenna_bias_tees()`
+(`src/sdr/sdr_init.cpp`): the GPIOs are written under `device_io_mutex` on
+the control thread, the mask is saved (`antenna_bias_tee_mask` in
+`heimdall_settings.conf`) and re-applied whenever the dongles are opened.
+- `mask`: a whole number 0-255 (`NUM_DEVICES` bits). Only the open channels
+  (`num_channels`) take the new value; the others keep their saved bit. CH7
+  has no GPIO and is always off.
+- Every reply carries the mask in effect, an error reply too (as a failed
+  retune replies the frequency in effect):
+  `{"status":"success","antenna_bias_tee_mask":5}`.
+- `--ext_noise`: CH0's bias tee powers the external noise source and is never
+  switched from here - bit 0 is cleared and the reply is a success with
+  `"message":"CH0 is reserved for the external noise source (--ext_noise) - left off"`.
+- Refused, `{"status":"error","message":...,"antenna_bias_tee_mask":0}`:
+  generic RTL-SDRs ("Antenna bias tees not available with generic RTL-SDRs
+  (independent receivers, no calibration, no GPIOs)" - nothing written, the
+  saved KrakenSDR mask kept), the Wideband variant ("... not available on the
+  Wideband variant (GPIO1-6 drive the RF path switches)"), a bad mask ("mask
+  must be a whole number 0-255 (bit N = channel N)"). Also an error: "channel
+  0 device unavailable", "some GPIO writes failed". During an element-count
+  change, like every command but `get_status`: "Element-count reconfiguration
+  in progress - retry shortly".
+- A heimdall from before 2026-11-18 answers `Unknown command` and its status
+  has none of the fields below: a client tells the two apart by
+  `antenna_bias_tees_available` and does not send the command to an older one
+  (kraken_doa: `kraken_doa_v2/docs/dev/bias-tees.md`).
+- KerberosSDR (`--kerberos*`): available, as on heimdall's page (the code
+  doesn't know whether that hardware has per-port bias tees).
+
 ---
 
 ## 3. The 2 Hz status broadcast (exact schema, `broadcast_status()` lines 53–147)
@@ -199,6 +236,11 @@ One line per broadcast, terminated `"}\n"`:
   "operating_mode": "coherent",      // "wideband" iff OperatingMode::WIDEBAND_SCAN, else "coherent"
   "wideband_enabled": false,         // wideband_config.enabled (tuner-spread scan)
   "generic_rtlsdr": false,           // true: generic RTL-SDRs, no coherent mode (§2.16)
+  // the antenna bias tees (§2.17, added 2026-11-18; absent from an older heimdall):
+  "antenna_bias_tees_available": true, // false: generic RTL-SDRs, the Wideband variant
+  "antenna_bias_tee_mask": 0,        // in effect, bit N = channel N; 0 when not available.
+                                     //   Bits past num_channels: the saved setting of channels not open
+  "antenna_bias_tee_reserved": 128,  // channels that can't be switched: bit 0 under --ext_noise, bit 7 (no GPIO)
 
   // ONLY when downconverter (--wideband variant) is enabled:
   "downconverter": {

@@ -26,6 +26,16 @@ how it is served, its layout and look, and how it was tested.
   `PERIODIC_RECAL_ENABLE` / `_DISABLE`, `PERIODIC_RECAL_PERIOD:<min>`,
   `CHECK_CAL`, `FORCE_RECAL`, `FWD_COMP_ENABLE` / `_DISABLE`,
   `FWD_COMP_AMP_ON` / `_OFF`, `FWD_COMP_FILE:<ch>:<file>`.
+- `ANT_BIAS_MASK:<mask>` and the control port's `set_antenna_bias_tees`
+  (2026-11-18, for the DoA client's top-bar Bias tee button) share one
+  path, `request_antenna_bias_tees()` in `sdr_init.cpp`: the generic
+  RTL-SDR refusal (its wording, `GENERIC_NO_GPIO_REASON`, is also
+  `generic_refused`'s), `apply_antenna_bias_tees()`, `settings::save()`.
+  STATE gained `antenna_bias_tees_available` and `antenna_bias_tee_reserved`
+  (as in the 8092 status; the page does not use them yet - it hides the
+  bias tees itself for generic RTL-SDRs and the Wideband variant).
+  `apply_antenna_bias_tees()` now also clears bit 7: an 8th channel has no
+  GPIO (GPIO8 doesn't exist), but its bit was stored and reported as on.
 - It must work without internet: uPlot is inlined (the first `<script>` and
   `<style>`, vendored unchanged), no fonts or files from elsewhere. Server
   text goes into the page with `textContent` only.

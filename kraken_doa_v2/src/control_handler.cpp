@@ -36,6 +36,7 @@
 #include "digital/dig_plugin.hpp"
 #include "utils/parse_num.hpp"
 #include "power.hpp"
+#include "antenna_bias.hpp"
 #include <string>
 #include <utility>
 #include <sstream>
@@ -577,6 +578,8 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     out.push_back(build_operating_mode_json());
     // ⏻ / ↻ the power actions this installation offers (and one in progress)
     out.push_back(power::state_message());
+    // the antenna bias tees as heimdall reports them (also in every system_status)
+    out.push_back(antbias::state_message());
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     for (const auto& [key, cmd] : sync_replay_store) {
         out.push_back(make_sync_cmd_json(cmd));
@@ -2808,6 +2811,11 @@ string ControlHandler::apply_command(string_view message) {
         // the settings schema), not echoed, never replayed
         if (power::is_command(message))
             return power::handle_command(message, from_page && !g_replaying_settings.load());
+        // Antenna bias tees (antenna_bias.cpp): the same - a page's own socket
+        // only, not persisted, not echoed (the pages draw heimdall's status);
+        // refused during a playback there
+        if (antbias::is_command(message))
+            return antbias::handle_command(message, from_page && !g_replaying_settings.load());
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
         if (playback::handle_command(message)) return "";

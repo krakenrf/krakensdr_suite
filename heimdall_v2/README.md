@@ -244,6 +244,7 @@ compensation, and the live phase and correlation graphs
 | `PER_BIN_ENABLE` / `PER_BIN_DISABLE` | Toggle per-bin phase calibration (persisted) |
 | `SDR_SETTINGS:{"frequency":F,"gain":G}` | Set center frequency / gain with cooldown handling |
 | `RTL_TCP_CHANNEL:<n>` | Select which channel the RTL-TCP server streams |
+| `ANT_BIAS_MASK:<mask>` | Antenna bias tees, bit N = channel N (saved; the control port's `set_antenna_bias_tees` does the same) |
 
 ### TCP control (port 8092, JSON)
 
@@ -270,6 +271,7 @@ echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
 | `hold_calibration` | `hold_ms` (0–30000) | Hold the calibration: retunes / gain changes enter the cooldown but don't recalibrate for `hold_ms` from now (a lease to renew); `0` releases and starts a pending calibration at once. Used by the DoA client's saved-frequency scan while it searches |
 | `set_operating_mode` | `mode` (`coherent`/`wideband`/`independent`) | Switch the operating mode (wideband spreads the tuners around the current frequency; coherent retunes all and recalibrates) |
 | `set_independent_tuner` | `channel`, `frequency?` (Hz), `gain?` (dB, `-1`=auto) | Independent mode: tune one tuner / set its gain |
+| `set_antenna_bias_tees` | `mask` (0–255, bit N = channel N) | Switch the antenna ports' bias tees (DC for active antennas / LNAs; the same as the web page's `ANT_BIAS_MASK`, saved); the reply and the status carry `antenna_bias_tee_mask`, the status also `antenna_bias_tees_available` and `antenna_bias_tee_reserved`. Refused with generic RTL-SDRs and on the Wideband variant |
 | `set_wideband_mode` | `enable`, `base_frequency?` | Enter/leave wideband scan mode (older form of `set_operating_mode`) |
 | `set_wideband_frequencies` | `base_frequency` | Per-tuner spacing in wideband |
 | `set_wideband_edge_clip` | `edge_clip` (0.1–1.0) | Usable bandwidth fraction/tuner |

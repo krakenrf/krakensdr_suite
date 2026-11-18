@@ -471,8 +471,13 @@ duplicated the Mode selector; "CH" did not say that it picks the displayed
 channel; and the panels' buttons should sit on the right-hand bar with the
 Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
 
-- **Order**: the menu button, the frequency, then fields - Step, Gain, Audio, Mode - and at
-  the right `.tb-right`: the status chips above the telemetry chips. A
+- **Order**: the menu button, the frequency, then fields - Step, Gain, Audio, Mode -, the
+  Bias tee button (2026-11-18, `#tb-bias`: icon only, on the controls' line, no
+  caption; *bias-tees.md*) and at
+  the right `.tb-right`: the status chips above the telemetry chips. For the
+  Bias tee button's 44 px (with the gap) the Gain slider went from 120 to 100 px and
+  the Audio slider from 80 to 72 px: the bar had only 22 px to spare at 1700 px
+  with the sidebar. A
   field is a `.tb-group.fld`: a small upper-case label above its control
   (a grid; Gain's and Audio's value sits on the label's line). The
   separators are gone. One row from about 1650 px of window (with the
@@ -497,7 +502,8 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   scanner's 95 px, or the RTL-SDR chip's 93 px: 95 + 170 + 104 + the gaps +
   the cog's column), so such a chip can't wrap the bar or move a control. To
   keep the bar on one row at 1700 px with that, the bar's gap is 14 px and
-  the Gain / Audio sliders are 120 / 80 px. With generic RTL-SDR dongles
+  the Gain / Audio sliders are 120 / 80 px (100 / 72 px since the Bias tee
+  button, 2026-11-18). With generic RTL-SDR dongles
   an "RTL-SDR" chip (`#status-generic`) stands first. The phone layout puts
   the cog (42 px) at the end of the chips' line.
 - **Merged with main 2026-11-17** (map providers' Settings dialog - Setup Settings now -, generic

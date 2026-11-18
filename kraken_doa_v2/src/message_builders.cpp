@@ -1,5 +1,6 @@
 #include "wb_board.hpp"
 #include "app_version.hpp"
+#include "antenna_bias.hpp"
 #include "utils/version_info.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
@@ -590,6 +591,9 @@ string MessageBuilders::build_system_status_message() {
     // heimdall's, from its control-port status (app_version.hpp; absent until heard)
     json << ",\"version\":" << appver::json();
     if (const std::string hv = heimdall_version_json(); !hv.empty()) json << ",\"heimdall_version\":" << hv;
+    // heimdall's antenna bias tees, from its control-port status (antenna_bias.hpp;
+    // state "none" / "old" when it isn't there or doesn't have them)
+    json << ",\"antenna_bias\":" << antbias::state_json();
 #ifdef _WIN32
     // running from the source folder (kraken_doa_v2/Makefile in the cwd) or
     // from a package (windows/package.sh: no sources, Makefile or MSYS2) -

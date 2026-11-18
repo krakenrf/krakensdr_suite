@@ -4,6 +4,7 @@
 
 #include "wb_board.hpp"
 #include "app_version.hpp"
+#include "antenna_bias.hpp"
 #include "networking/data_receiver.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
@@ -1514,8 +1515,9 @@ static mutex control_socket_mutex;
 // broadcasts a status JSON at 2 Hz to every control client. Channel metadata
 // arrives on the 8091 data stream instead; the only things taken from here are
 // the Wideband board's "downconverter" object (wb_board.cpp: board telemetry
-// for the UI and its log) and heimdall's "version" (app_version.cpp) -
-// everything else is discarded.
+// for the UI and its log), heimdall's "version" (app_version.cpp) and its
+// antenna bias tees (antenna_bias.cpp: the status fields and the replies to
+// set_antenna_bias_tees) - everything else is discarded.
 // Left unread it fills our 128 KB receive buffer in about two minutes, the
 // window closes, and heimdall's control server eventually wedges on a blocking
 // send() - taking its accept loop and command handling down with it.
@@ -1529,6 +1531,7 @@ static void drain_control_socket_locked() {
         if (n > 0) {
             wb_board_ingest(scratch, static_cast<size_t>(n));
             heimdall_version_ingest(scratch, static_cast<size_t>(n));
+            antbias::ingest(scratch, static_cast<size_t>(n));
             if (static_cast<size_t>(n) < sizeof(scratch)) break;  // drained
             continue;                                             // more waiting
         }
@@ -1543,6 +1546,18 @@ static void drain_control_socket_locked() {
 
 void DataReceiver::drain_control_socket() {
     lock_guard<mutex> lock(control_socket_mutex);
+    // heimdall's status (its antenna bias tees for the pages, its version) comes
+    // over this connection, which commands open lazily: open it here too - every
+    // 5 s at most while it is down - so the pages see that state before anything
+    // was sent. Not during a playback (nothing may reach heimdall).
+    if (!control_client.is_connected() && !playback::active()) {
+        static steady_clock::time_point last_try{};
+        const auto now = steady_clock::now();
+        if (now - last_try >= seconds(5)) {
+            last_try = now;
+            if (control_client.connect_to_port(TCP_CONTROL_PORT)) control_client.set_nonblocking(true);
+        }
+    }
     drain_control_socket_locked();
 }
 

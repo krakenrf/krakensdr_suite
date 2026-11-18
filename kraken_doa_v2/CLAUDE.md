@@ -171,7 +171,9 @@ Sandboxes and secrets
 - `POWER:` (restart / reboot / shutdown, `power.cpp`) is taken only from a
   page's own socket (`ControlHandler::handle_page_message`), never from
   the replay, the assistant, a test transmission's commands or the
-  scanners, and is never persisted (`docs/dev/power.md`).
+  scanners, and is never persisted (`docs/dev/power.md`). `ANT_BIAS:` (the
+  antenna bias tees, DC on the antenna ports) is kept the same way, and is
+  refused during a playback (`docs/dev/bias-tees.md`).
 
 ## Testing a change
 
@@ -236,4 +238,5 @@ the job's scratch directory (not committed). The established setup:
 | AI assistant (MCP server, bridge, lockdown, sandbox, map layers, IQ capture) | `ai-assistant.md` |
 | Web mapper output | `web-mapper.md` |
 | Restart / Shut down from the page (power commands, platforms, privileges, safety) | `power.md` |
+| Antenna bias tees from the top bar (ANT_BIAS -> heimdall's set_antenna_bias_tees, refusals, compatibility, why two presses) | `bias-tees.md` |
 | Hot paths, DC correction, FFT dB, AM loops, MUSIC gates, dev tasks, key files, common issues | `reference.md` |

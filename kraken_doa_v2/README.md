@@ -147,6 +147,14 @@ no boot service; `--power-only --uninstall` removes it), then restart the softwa
 `KRAKEN_NO_POWER=1` hides the buttons, `KRAKEN_POWER=restart` offers only the
 software restart; details in `docs/dev/power.md`.
 
+**Bias tee** (the top bar, right of Mode): a switch per open antenna and All, for
+the antenna ports' bias tees (DC for active antennas / LNAs - only for antennas that
+take it). Two presses on purpose: the button opens the switches. Amber with the count
+("2/5") while any is on; heimdall owns and remembers the setting (`ANT_BIAS:<mask>`
+-> its control port's `set_antenna_bias_tees`). Hidden with generic RTL-SDRs and on
+the Wideband variant; disabled during a debug playback. Needs this program AND
+heimdall rebuilt and restarted; details in `docs/dev/bias-tees.md`.
+
 The main area shows the **spectrum + waterfall** (click/drag the tuning bar to set the
 listen frequency - it lands on a multiple of the top bar's **Step**, 1 Hz to 100 kHz;
 hold Shift while dragging to tune finely, to the Hz; the **View** button on its header

@@ -101,6 +101,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `tower` | a mast (OSM masts), a site, a ground station |
 | `radar` | a radar, a ground interrogator |
 | `plug` | the Wideband board |
+| `biastee` | the antenna bias tees (the top bar's Bias tee button: a T on a coax line whose stem is a bolt; 2026-11-18, *bias-tees.md*) |
 | `globe` | Web Mapper, the online search, web tools |
 | `doc` | DoA Recording |
 | `log` | Decoder Logging |

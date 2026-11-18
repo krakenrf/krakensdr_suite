@@ -231,7 +231,8 @@ APP_SRCS = \
 	$(SRCDIR)/sigmf.cpp \
 	$(SRCDIR)/recorder.cpp \
 	$(SRCDIR)/recorder_audio.cpp \
-	$(SRCDIR)/power.cpp
+	$(SRCDIR)/power.cpp \
+	$(SRCDIR)/antenna_bias.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
