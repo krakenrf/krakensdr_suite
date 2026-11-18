@@ -505,6 +505,43 @@ Bits viterbi_decode(const float* soft, int nout, int K, const std::vector<uint32
     return out;
 }
 
+// --- P25 NID -------------------------------------------------------------------
+// Systematic BCH(63,16): the 47 parity bits are the remainder of m(x) x^47
+// divided by g(x); codeword bit 62 is the first bit sent
+static uint64_t p25_nid_codeword(uint32_t m) {
+    constexpr uint64_t G = 06331141367235453ULL;
+    uint64_t r = static_cast<uint64_t>(m) << 47;
+    for (int i = 62; i >= 47; i--)
+        if ((r >> i) & 1) r ^= G << (i - 47);
+    return (static_cast<uint64_t>(m) << 47) | r;
+}
+
+int p25_nid_decode(uint64_t rx, int hint_nac, uint32_t* msg) {
+    static const std::vector<uint64_t> tab = [] {
+        std::vector<uint64_t> t(65536);
+        for (uint32_t m = 0; m < 65536; m++) t[m] = p25_nid_codeword(m);
+        return t;
+    }();
+    static const int duids[7] = {0x0, 0x3, 0x5, 0x7, 0xA, 0xC, 0xF};
+    int best = 64;
+    uint32_t bm = 0;
+    if (hint_nac >= 0 && hint_nac <= 0xFFF) {
+        for (int d : duids) {
+            const uint32_t m = (static_cast<uint32_t>(hint_nac) << 4) | static_cast<uint32_t>(d);
+            const int e = popcount64(tab[m] ^ rx);
+            if (e < best) { best = e; bm = m; }
+        }
+    }
+    if (best > 4) {
+        for (uint32_t m = 0; m < 65536; m++) {
+            const int e = popcount64(tab[m] ^ rx);
+            if (e < best) { best = e; bm = m; }
+        }
+    }
+    if (msg) *msg = bm;
+    return best;
+}
+
 bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric_out) {
     static const uint8_t ilv[98] = {
         0, 1, 8, 9, 16, 17, 24, 25, 32, 33, 40, 41, 48, 49, 56, 57, 64, 65, 72, 73, 80, 81, 88, 89, 96, 97,

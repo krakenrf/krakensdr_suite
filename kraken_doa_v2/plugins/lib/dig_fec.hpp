@@ -108,6 +108,14 @@ Bits conv_encode(const uint8_t* bits, int n, int K, const std::vector<uint32_t>&
 // metric (0 = clean) via *metric.
 bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric);
 
+// P25 Phase 1 NID: BCH(63,16) (generator 6331141367235453 octal), decoded
+// to the nearest codeword. rx63 = the 63 received bits, bit 62 = the first
+// sent. hint_nac >= 0: the codewords of that NAC with a valid DUID are tried
+// first (taken if within 4 bits - the code's distance is 23, so such a
+// codeword is the nearest one); else, or failing that, all 65536. Returns
+// the bit errors (Hamming distance) and *msg = NAC << 4 | DUID.
+int p25_nid_decode(uint64_t rx63, int hint_nac, uint32_t* msg);
+
 // --- DMR ----------------------------------------------------------------------
 // BPTC(196,96): 196 info bits (both burst halves joined) -> 96 data bits.
 // Returns corrected bit count, or -1 if a row/column stayed uncorrectable.
