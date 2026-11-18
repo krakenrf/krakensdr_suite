@@ -13,19 +13,72 @@ all decoded).
 
 The 4FSK receiver (`plugins/lib/dig_fsk4.cpp`: integrate-and-dump filtered
 discriminator, frame sync correlation, levels / timing / carrier offset from
-the sync) hands each frame to `p25.cpp`:
+the sync) hands each frame to `p25.cpp` as soon as the frame's own length is
+in (HDU 396 dibits, TDU 72, TDULC 216, LDU 864, a trunking block once its own
+block is; before 2026-11-19 every frame waited for 864 dibits): a single
+trunking block about 33 ms after its sync instead of 180 ms, terminators
+100-165 ms earlier, frames in a recording's last 0.2 s decode; the frames'
+sample positions are unchanged. CQPSK (simulcast LSM's fast phase steps
+through the discriminator): the +-6 kHz per-sample limit on the
+discriminator (there against noise clicks) cut its steps near the envelope
+nulls (6 % of the on-air samples; the outer levels squeezed - scale 429
+instead of 601 Hz per level, eye rms error 0.120 instead of 0.029 of the
+level spacing - and more on one side as the carrier moved off centre, which
+biased the centre fit: the sync has 14 negative and 10 positive symbols). A
+second boxcar gets back what the limit took, modulo one turn (4800 Hz on
+the boxcar); sync detection and the fit stay on the limited one, and a frame
+is sliced from the restored one only when the limit squeezed its sync scale
+below 0.85 of the exact one (CQPSK 0.65-0.78; C4FM and LSM 0.91-1.0 down to 4
+dB SNR - restoring everywhere cost 0.11-0.16 dB on weak C4FM / LSM).
 
-- NID (NAC + DUID, BCH(63,16)); option `nac` = only one NAC
+- NID (NAC + DUID, BCH(63,16) by nearest codeword, the last NAC tried first;
+  `p25_nid_decode` in `plugins/lib/dig_fec`, one table shared with the
+  receiver); option `nac` = only one NAC
 - HDU (Golay(18,6) + RS(36,20,17)): talkgroup, algorithm, key
 - LDU1 link control (Hamming(10,6) + RS(24,12,13)): group / unit-to-unit
-  voice user (talkgroup, source unit ID, emergency, encrypted); LDU2
-  encryption sync (RS(24,16,9)); 9 IMBE frames each
-- TDU, TDULC (Golay(24,12) + RS(24,12,13)) - the call's end
+  voice user (talkgroup, source unit ID, emergency, encrypted); with the SF
+  bit (implicit MFID) the 8 octets after the LCO are the trunking-block body
+  of the same message, decoded by the TSBK parser: adjacent site status
+  (LCO 0x22 = TSBK 0x3C), RFSS status (0x23 = 0x3A), group voice channel
+  update (0x02 = 0x02). LDU2 encryption sync (RS(24,16,9)); 9 IMBE frames
+  each
+- TDU, TDULC (Golay(24,12) + RS(24,12,13)) - the call's end; a TDULC's link
+  control as LDU1's
 - TSDU: trunking signalling blocks (rate-1/2 trellis + CRC-16) - grants,
   channel identifiers (channel numbers -> MHz), RFSS / network / adjacent
-  site status, affiliations, registrations; PDU headers
-- Voice: IMBE, built in (port of mbelib, ISC); encrypted calls (ALGID not
-  0x80 or the LC "protected" bit) are muted, never decrypted
+  site status, secondary control channels (implicit 0x39 and explicit
+  0x29), SNDCP data channel grants (0x14) and announcements (0x16),
+  affiliations, registrations, location registrations (0x2B); PDU headers.
+  Others are shown raw with Verbose. The trellis decoder's branch metric is
+  each symbol's absolute error capped at 4 level units (2026-11-19; it was
+  the squared error): the receiver's soft symbols have heavy tails near
+  threshold (FM clicks, whole turns of phase through CQPSK), and one such
+  symbol steered the path. On every control-channel recording with added
+  noise the SNR at which half of the blocks decode is 0.3-0.6 dB lower
+  (C4FM and simulcast LSM; up to 1.6 dB on weak recordings), clean
+  recordings unchanged or better, CRC false accepts unchanged at 2^-16
+  (16 million random blocks per input kind)
+- Voice: IMBE, built in (port of mbelib, ISC). Played only once the call is
+  known to be clear: ALGID 0x80 (HDU or LDU2 encryption sync) or a voice
+  user link control without "protected" (on 13 real voice channels the bit
+  agreed with the ALGID every time). Encrypted calls are muted, never
+  decrypted. A call joined after its HDU at an LDU1 carrying another link
+  control (adjacent site status, a channel update) is held: up to 2 LDUs
+  wait for the next encryption sync and are then played in order (clear) or
+  dropped (encrypted, or the call ended first) - before 2026-11-19 they
+  played, and real encrypted calls joined late let 180 ms of noise through.
+  The host's voice FIFO starts at 250 ms buffered, so two LDUs released
+  together start playback at the same moment, with the same latency, as two
+  LDUs 180 ms apart (a model of `push_voice` / `pull_voice`, 20 and 100 ms
+  pulls): holding costs nothing, dropping would lose 180 ms
+- Events: one "Voice: TG n <- unit" per transmission (the first link control
+  that names a unit - a transmission's first LDU1 often names unit 0 -, or
+  "TG n" alone after two that name none) and one "Call ended" (the
+  terminator, a new HDU, 0.75 s without frames, another unit), no dedup, so
+  a unit calling back within seconds gets its own; a terminator's link
+  control in hang time (often "TG n <- 0") opens and ends nothing. They
+  agree with the talker list (below); "Call termination (TDULC)" is LCO
+  0x0F itself
 
 ## Phase 2 (two-slot TDMA)
 
@@ -71,10 +124,13 @@ MAC layer (`p25p2.cpp`), one slot at a time:
 - MAC PDUs: MAC_PTT, MAC_END_PTT, MAC_ACTIVE, MAC_HANGTIME, MAC_IDLE,
   MAC_SIGNAL and their messages (voice channel user, grant updates,
   MAC_RELEASE, Motorola's 0x80 / 0x83); the Phase 1 TSBK bodies inside them
-  (partition 01: network / RFSS / adjacent status, channel identifiers,
-  grants) go through the Phase 1 parser, which shares its channel identifier
-  table and network identity with Phase 2. Messages it doesn't parse are
-  shown raw with Verbose
+  (partition 01, the abbreviated forms: every opcode the Phase 1 parser
+  knows - network / RFSS / adjacent status, secondary control channels,
+  channel identifiers, grants, SNDCP grants / announcements, affiliations,
+  registrations) go through the Phase 1 parser, which shares its channel
+  identifier table and network identity with Phase 2. Partition 11 (the
+  explicit / extended forms) and messages it doesn't parse are shown raw
+  with Verbose
 - A TDMA control channel (LCCH on one or both LCHs) as well as traffic
   channels; fact "Channel type"
 - Voice: AMBE+2 3600x2450 frames (4 per 4V burst, 2 per 2V) in the same bit
@@ -86,7 +142,9 @@ MAC layer (`p25p2.cpp`), one slot at a time:
   "protected" service option) and muted, never decrypted. A call joined
   after its MAC_PTT stays muted until it is known to be clear (ALGID 0x80,
   or service options without "protected") - on real encrypted calls joined
-  late the first voice bursts came before the ESS and played as noise
+  late the first voice bursts came before the ESS and played as noise. Its
+  voice bursts until then are dropped, not held (unlike Phase 1's LDUs): a
+  clear call joined late loses them
 
 Network identity (the scrambling seed), in this order: the options (`wacn`
 + `sysid` + `nac`), a control channel's network status (a TDMA control
@@ -111,8 +169,20 @@ whose DUID was miscorrected) is never taken for a seed.
 Facts: Mode ("Phase 2 TDMA", "(inbound)"), Scrambling, Channel type, LCH 0 /
 LCH 1 (or Inbound LCH n) state (Voice: TG n <- unit, Hangtime, Idle,
 Control channel, Call ended), Encryption, Last source / talkgroup, the
-control channel's system / site / neighbours / channel tables. Events: a
-call's start and end per LCH, grant updates, releases, the network identity.
+control channel's system / site / neighbours / channel tables. Events: grant
+updates, releases, the network identity, and per talker (as Phase 1's) one
+"LCH k voice: TG n <- unit" when a transmission's unit is named (outbound:
+the LCH's talker; inbound: the lane's radio) and one "LCH k call ended:"
+when that talker ends (MAC_END_PTT / HANGTIME / IDLE, 0.5 s without bursts,
+the call timing out, another unit, the same unit keying up again), no
+dedup. A span nobody named ("?" in the talker list - on the real traffic
+channels 0-30 ms before the unit was named) has no events; a talker named
+only by its MAC_END_PTT gets "voice: unit n" and its end together (a
+repeated MAC_END_PTT is the same transmission's). Before 2026-11-19 the
+events followed the call, with 5 s / 2 s dedup: on 6 of 14 real traffic
+channels starts or ends were missing (a unit keying up again, a hang-time
+end within 2 s of the last end, a talker replaced inside one call) or an
+unnamed span had its own start.
 Encryption, Channel type and WACN / System ID / NAC are shared with Phase 1:
 whichever phase decoded last shows its value.
 
@@ -181,8 +251,11 @@ Phase 1:
 - Generator `tools/p25_gen.py` (HDU, LDU1 / LDU2 with link control and
   encryption sync, placeholder IMBE frames with valid FEC - Golay(23,12),
   Hamming(15,11), the PN whitening; TDU / TDULC; status symbols; C4FM with
-  the raised cosine x inverse sinc shaping filter, +-600 / +-1800 Hz) ->
-  debug playback entry `p25-three-units` (`tools/testsignals.json`): units
+  the raised cosine x inverse sinc shaping filter, +-600 / +-1800 Hz;
+  `--algid` / `--kid`: an encrypted call - ALGID and key in the HDU and
+  every LDU2, the LC "protected" bit set; `--adj K`: LDU1 number 0, K, 2K,
+  ... carries an adjacent site status link control instead of the voice
+  user's, as real systems interleave them) -> debug playback entry `p25-three-units` (`tools/testsignals.json`): units
   2010621 (60 deg, twice), 3250 (200 deg, ends with a TDULC) and 1234567
   (300 deg) taking turns on TG 101, each at its own carrier offset and
   level. Offline (`decoder --file scene.cf32 --channels 5 --uca 0.12 --rf
@@ -205,6 +278,63 @@ Phase 1:
   and summary before and after (58 frames, 60.0 / 200.0 / 300.0 deg), and
   40,000 random TSBKs parse byte-identically through the old and the
   refactored TSBK parser.
+- Out-of-sample test and fixes (2026-11-18 / 19): 13 further public
+  recordings (37 channels) the decoder had never been run on - Phase 1
+  control channels of six systems (97-100 % of frames, identities
+  consistent between a system's channels and with what the posters state;
+  on one system all 8 voice grants of a control channel were matched by a
+  call on the granted frequency in the same capture), clear and encrypted
+  Phase 1 voice (C4FM, CQPSK, wide-pulse), one more Phase 2 traffic channel
+  (encrypted: 331 of 333 slots, identity recovered blind, AES-256 muted). No
+  new Phase 2 clear-voice, TDMA control channel, simulcast Phase 2 or
+  inbound recording could be found. Plugin 2.0 and 3.0 gave identical
+  frames, events and audio on the Phase 1 files, so what they exposed were
+  old defects, all fixed:
+  - CQPSK frames lost to the discriminator limit (above): on the real CQPSK
+    voice channel 90 of 90 frames at every carrier offset from -1000 to
+    +1000 Hz (before 68-90), the SNR for half of the frames 16.9 -> 14.25
+    dB (C4FM 5.2 dB and LSM 7.05 dB unchanged), IMBE frames 684 -> 702,
+    unusable ones 39 -> 0. CQPSK through a discriminator stays about 9 dB
+    weaker than C4FM in noise. A simulcast control channel's periodic
+    "missing" frame (one about every 5.02 s) is not a decoder loss: a frame
+    with a perfect NID whose block position (its 98 dibits and 3 status
+    slots) holds one fixed waveform (constant and square-wave segments),
+    identical every time, 29 bit errors from any rate-1/2 path where random
+    data gives 22-32 and the neighbours 0 - nothing to decode, shown as
+    nothing.
+  - Encrypted audio before the encryption sync: on 3 encrypted calls joined
+    late (AES-256, ADP) 0.18 s of noise each -> 0.00 s; the 7 clear voice
+    recordings play exactly as long as before, sample-identical where not
+    limited. Generator cases (`--algid`, `--adj 2`; clear and encrypted,
+    whole and cut at an LDU2, a voice-user LDU1 and an adjacent-site LDU1):
+    encrypted 0.00 s in every case (before 0.18 s when cut at the
+    adjacent-site LDU1), clear as long as before and the held-then-released
+    call sample-identical to the same call not held.
+  - Call events: hang-time terminators ("TG n <- 0") opened and ended calls,
+    every call got an extra end, and the 5 s / 2 s dedup swallowed the
+    start of a unit calling back. Now on all real Phase 1 voice channels 41
+    talkers, 41 starts, 41 ends naming the talker's unit (before 62 starts,
+    90 ends).
+  - Messages decoded (layouts from their parsed siblings, checked on the
+    recordings): the link-control forms against the same site's control
+    channel (adjacent sites 2261 of 2261, RFSS status 289 of 289, channel
+    updates on one system 130 of 130 equal to its grants); 0x39: RFSS / site
+    equal the site's own RFSS status on 9 of 9 sites of 5 systems, several
+    of its channels announced as control channels by the system's
+    adjacent-site lists; 0x29 (one system): uplink and downlink exactly the
+    identifier's transmit offset apart; 0x14: every granted channel one 0x16
+    announces, and the granted units are the data packets' LLIDs on that
+    very channel (a data channel's recording: 5 of 5); 0x2B: RFSS / site
+    the broadcasting site's 64 of 64, its groups talkgroups the same system
+    grants. Still raw: 0x15 (one message seen), LCO 0x10, vendor LCs, the
+    flag / option octets of 0x14 / 0x16 / 0x2B / 0x29 and the service
+    classes (not shown)
+  - Loud talkers no longer clipped (the output limiter, *Limits* below)
+  - Regression (combined build, 2026-11-19): 63 recordings, none with fewer
+    frames, talker lists and bearings unchanged; the three P25 scenes 40 /
+    160 / 280, 120, 60 / 200 / 300 deg; DMR's scene the same output (180
+    frames, 300 / 300 / 60 / 200 deg; its audio limited, *Limits*); 120 s of
+    noise nothing; cost 1.03 -> 1.06 % of real time for the receiver change
 
 Phase 2 (2026-11-18; SNR = signal power over the noise power in 12.5 kHz):
 - Generator `tools/p25p2_gen.py` (numpy only; its docstring is the
@@ -291,6 +421,16 @@ Phase 2 (2026-11-18; SNR = signal power over the noise power in 12.5 kHz):
 - No false output: 300 s of noise, FM, a carrier and random 4FSK - nothing.
   Address / undefined-behaviour sanitizer runs over all recordings and
   generator cases clean.
+- Call events per talker (2026-11-19): on the 14 real traffic channels
+  (outbound) every named talker has one start and one end naming its unit,
+  except 6 talkers still open when their recording ends (no end yet); the
+  "?" spans (0-30 ms each, before the unit was named) have none. Inbound
+  (the scenes above and 30 scratch variants of the three-radio scene, the
+  second radio's level and the scene SNR varied): one start and one end per
+  radio; a radio heard only through its MAC_END_PTT (once: the second radio
+  10 dB weaker) now gets them too.
+  Talker spans, packets, valid slots and audio identical before and after
+  on every recording and scene.
 
 ## Sources / limits
 
@@ -343,8 +483,16 @@ Limits:
   Verbose), the inbound control channel.
 - Blind identity recovery needs a nearly clean burst; give the identity as
   options for weak signals.
-- One unit's audio in the best recording was about 8 dB louder than the
-  other's and clips with the shared AMBE output scaling.
+- Loud talkers: the vocoders run at mbelib's fixed gain (x7 into 16 bits,
+  no gain control), and one unit of the statewide recording was loud at the
+  source - its coded gain 12-18 dB above the other timeslot's talker, 149
+  of its 486 error-free AMBE+2 frames up to +18 dB over full scale, 5 % of
+  its samples clipped (mbelib's own 16-bit output clips the same 5 %). The
+  shared output limiter (`VoiceLimiter`, `plugins/lib/dig_vocoder`,
+  2026-11-19; also DMR, D-STAR, NXDN, YSF) now takes such frames to -1 dBFS
+  instead (that call: rms -10.0 -> -18.4 dBFS, 0 % clipped; the CQPSK voice
+  channel 0.09 % -> 0); frames within full scale pass bit for bit. The
+  host's AGC then levels it.
 - Not run on this change: the Windows (MinGW) build and the Linux-glibc
   cross-check (zig); gcc with the Makefile's flags is warning-free.
 - Not decoded: encrypted content.

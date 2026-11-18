@@ -24,8 +24,35 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   against libmbe on the same frames: correlation 0.9987 with the same random
   sequence (`-DDIG_IMBE_TEST_RAND` switches the RNG for that test). The 9
   frames of an LDU sit at status-free dibit offsets 56,128,220,...,768 and
-  are deinterleaved with DSD's iW..iZ (ISC). Muted when the HDU/LDU2 ALGID
-  isn't 0x80 or the LC "protected" bit is set
+  are deinterleaved with DSD's iW..iZ (ISC). Played only once the call is
+  known to be clear (2026-11-19): ALGID 0x80 (HDU / LDU2) or a voice-user
+  LC without "protected"; muted when the ALGID isn't 0x80 or the bit is
+  set. A call joined at an LDU1 with another LC holds up to 2 LDUs until
+  the next LDU2, then plays them in order (clear) or drops them - before,
+  real encrypted calls joined late played 180 ms of noise. Held and
+  released, two LDUs reach the voice FIFO together and start playback at
+  the same moment as two LDUs 180 ms apart (prefill 250 ms), so a clear
+  call joined late loses nothing (plugins/p25/README.md)
+- Output limiter (`VoiceLimiter`, 2026-11-19): `ImbeDecoder` and
+  `AmbeStream` (so P25 both phases, DMR, D-STAR, NXDN, YSF) pass every 20
+  ms frame through a per-stream peak limiter instead of clamping at +-1.
+  The codecs run at mbelib's fixed gain (x7 into 16 bits; mbelib itself
+  hard-clips at +-32760, no gain control), and a real loud P25 talker's
+  error-free frames reached +18 dB over full scale (5 % of samples
+  clipped). While idle a frame within +-1 passes bit for bit; a frame over
+  full scale sets the gain so that it peaks at -1 dBFS (ramped over up to 4
+  ms where the leading samples allow, else at the frame start), recovering
+  at 15 dB/s ramped over each frame - no clipping, no delay. Why in the
+  plugin: the AUDIO message is float32, but Voice to Text
+  (`voice2text.cpp`), the audio recorder (`recorder_audio.cpp`) and the
+  offline host's wav clamp the raw plugin audio at +-1, and the player's
+  AGC (Voice FIFO above: gain 0.5-30, tanh) can take off only 6 dB - the plugin must
+  deliver it within +-1. Checked: every catalogue scene of the five voice
+  plugins (their placeholder / random voice bits clipped 0.06-4.8 % of
+  samples before) and every P25 recording - all frames bit-identical except
+  stretches that start at a frame that clipped before; fuzz test (600,000
+  frames) never beyond +-1. `MbeLib::decode` / `decode49` return the scaled
+  but unlimited output (only `AmbeStream` calls them)
 - DMR / D-STAR / NXDN: `MbeLib` dlopens `$KRAKEN_MBELIB` / libmbe.so.1 at first use
   (`KRAKEN_MBELIB=none` disables it) - inside the plugin process
   (no AMBE code shipped or linked); `AmbeStream` keeps a per-stream state in
@@ -50,7 +77,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   a whole file - fixed 2026-11-18). Muted when encrypted (ALGID not 0x80,
   or the "protected" service option) AND until a call is known to be clear
   (a call joined after its MAC_PTT: its first bursts on real encrypted
-  calls came before the ESS and played as noise). The audio's talker
+  calls came before the ESS and played as noise); those bursts are dropped,
+  not held as Phase 1's LDUs are. The audio's talker
   channel (`voice_channel` -> `Host::audio_channel`, Voice to Text's
   naming): Phase 1 0 (set before each IMBE block - before Phase 2 existed
   it was never sent, = unknown, which named the same talker), Phase 2
@@ -58,8 +86,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   Timeslot LCH 0 / LCH 1 an inbound call whose LCH isn't known yet is
   neither shown nor played. Real recording: 1172 of
   1172 frames clean, 20 s of audio with no vocoder errors; one unit there
-  was ~8 dB louder than the other and clips with the shared AMBE output
-  scaling (open)
+  is loud at the source (coded gain 12-18 dB above the other timeslot's
+  talker) and clipped 5 % of its samples before the output limiter (above;
+  now rms -18.4 dBFS, nothing clipped)
 - YSF (2026-11): VW's 144-bit full-rate frames (88 + 56 bits at 7200 bit/s
   = the IMBE frame) through `ImbeDecoder`, de-interleaved in the YSF order
   (`vw_plain_index` in plugins/ysf/ysf.cpp - not P25's iW..iZ); V/D mode 1's
