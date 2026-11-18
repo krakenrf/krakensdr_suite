@@ -193,6 +193,11 @@ the `DAY` set of `tools/theme_palette.py` (`--css-day` prints the block,
 `--contrast` their contrast, `--check` fails if the page's block differs) -
 *theme.md*. The map's own street tiles are light anyway.
 
+The page's own dialog (Reset's "Reset bearings" question, 2026-11-18 -
+*sidebar.md*, "Dialogs") follows it: the Day block's selector also names
+`body.drive.drive-day .ui-dlg-bg`, and in drive mode the dialog is bigger,
+with buttons at least 56 px high like the HUD's.
+
 The rest of the page does not get a light theme: its canvases (spectrum,
 waterfall, the DoA plots, the map's overlays) are drawn in fixed colours,
 and a page-wide light theme was not asked for.

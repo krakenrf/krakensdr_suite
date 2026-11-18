@@ -116,6 +116,9 @@ The page (`kraken_doa.html`)
   shown").
 - Pictograms come from the page's icon set: `icon('name')` (inline SVG
   sprite), never an emoji (`docs/dev/icons.md`).
+- No browser dialogs: use `uiConfirm` / `uiAlert` / `uiPrompt` (promises;
+  the verb on the button), never `confirm` / `alert` / `prompt`
+  (`docs/dev/sidebar.md`, "Dialogs").
 - Colours come from the palette: `var(--token)` in the CSS, the token's hex
   in JS / canvas code; data palettes (VFO colours, colour scales, category
   swatches) are never changed (`docs/dev/theme.md`,

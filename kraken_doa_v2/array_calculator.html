@@ -73,12 +73,28 @@ tr.cur td { box-shadow:inset 3px 0 0 var(--accent) }
 details { margin-top:14px }
 summary { cursor:pointer; color:var(--accent) }
 .hide { display:none !important }
+/* the page's own dialog - never the browser's (kraken_doa.html's uiPrompt look; docs/dev/sidebar.md,
+   "Dialogs"): the text to copy by hand when the clipboard refuses it */
+.dlg-bg { position:fixed; inset:0; z-index:50; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; padding:12px }
+.dlg { width:420px; max-width:100%; max-height:100%; overflow-y:auto; background:var(--panel); border:1px solid #4f5a69; border-radius:9px; box-shadow:0 6px 30px rgba(0,0,0,0.6); padding:12px 14px; font-size:13px }
+.dlg-h { display:flex; align-items:center; font-weight:bold; font-size:14px; margin-bottom:6px }
+.dlg-h .ic { font-size:16px; margin-right:6px }
+.dlg-h .x { margin-left:auto; padding:0 4px; cursor:pointer; color:var(--muted) }
+.dlg-h .x .ic { font-size:13px; margin:0 }
+.dlg-t { color:#cdd5df; font-size:12.5px; margin:0 0 6px }
+.dlg textarea { width:100%; height:110px; resize:vertical; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:5px; padding:6px 8px; font:12px ui-monospace, Consolas, Menlo, monospace }
+.dlg textarea:focus { outline:1px solid var(--blue) }
+.dlg .b { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; margin-top:12px }
+.dlg .b .btn { min-width:76px }
+@media (pointer:coarse) { .dlg .b .btn { min-height:44px } }
 </style>
 </head>
 <body>
 <!-- the icons it uses, copied from kraken_doa.html's sprite (docs/dev/icons.md) -->
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
 <symbol id="i-array" viewBox="0 0 16 16"><circle cx="8" cy="8.4" r="5.2" stroke-width="1" stroke-dasharray="1.2 2"/><circle cx="8" cy="3.2" r="1.35" fill="currentColor"/><circle cx="12.95" cy="6.79" r="1.35" fill="currentColor"/><circle cx="11.06" cy="12.61" r="1.35" fill="currentColor"/><circle cx="4.94" cy="12.61" r="1.35" fill="currentColor"/><circle cx="3.05" cy="6.79" r="1.35" fill="currentColor"/></symbol>
+<symbol id="i-close" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+<symbol id="i-doc" viewBox="0 0 16 16"><path d="M3.8 1.8h5.6l2.8 2.8v9.6H3.8zM9.2 1.8v3h3M6 8h4.2M6 10.6h4.2"/></symbol>
 </svg>
 <header>
   <h1><svg class="ic" aria-hidden="true"><use href="#i-array"/></svg><span>Antenna Array Calculator</span></h1>
@@ -177,6 +193,15 @@ summary { cursor:pointer; color:var(--accent) }
     </div>
   </details>
 </main>
+<!-- copy by hand (copyDialog): the clipboard refused the text -->
+<div class="dlg-bg hide" id="dlg-bg">
+  <div class="dlg" id="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-describedby="dlg-text">
+    <div class="dlg-h"><svg class="ic" aria-hidden="true"><use href="#i-doc"/></svg><span id="dlg-title"></span><span class="x" id="dlg-x" title="Close (Esc)" role="button" aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
+    <div class="dlg-t" id="dlg-text"></div>
+    <textarea id="dlg-val" readonly spellcheck="false" aria-labelledby="dlg-title"></textarea>
+    <div class="b"><button type="button" class="btn" id="dlg-close">Close</button><button type="button" class="btn primary" id="dlg-copy">Copy</button></div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -687,8 +712,50 @@ function bindRotate(ps) {
 function positionsMm() { return geom(curSize(), hRatio()).ps.map(p => ({ x: +(p.x * 1000).toFixed(1), y: +(p.y * 1000).toFixed(1), z: +(p.z * 1000).toFixed(1) })); }
 async function copyText(t, what) {
   try { await navigator.clipboard.writeText(t); flash(`${what} copied`); }
-  catch (e) { window.prompt(`Copy the ${what}:`, t); }
+  catch (e) { copyDialog(t, what); }
 }
+// The clipboard refused (no permission, not a secure page): the page's own dialog - never the
+// browser's - with the text selected to copy by hand; its Copy tries the older copy command.
+// Esc / Close / the backdrop close it, Tab stays inside, the focus goes back.
+let dlgRet = null, dlgWhat = '', dlgDown = false;
+function copyDialog(t, what) {
+  const v = $('dlg-val');
+  dlgWhat = what;
+  $('dlg-title').textContent = `Copy the ${what}`;
+  $('dlg-text').textContent = 'The browser refused the clipboard - copy it from here.';
+  v.value = t;
+  if ($('dlg-bg').classList.contains('hide')) dlgRet = document.activeElement;
+  $('dlg-bg').classList.remove('hide');
+  v.focus(); v.select(); v.scrollTop = 0;
+}
+function dlgClose() {
+  if ($('dlg-bg').classList.contains('hide')) return;
+  $('dlg-bg').classList.add('hide');
+  $('dlg-val').value = '';
+  const r = dlgRet;
+  dlgRet = null;
+  if (r && r.isConnected && r.focus) r.focus();
+}
+$('dlg-x').onclick = $('dlg-close').onclick = dlgClose;
+$('dlg-copy').onclick = () => {
+  const v = $('dlg-val');
+  v.focus(); v.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  if (ok) { flash(`${dlgWhat} copied`); dlgClose(); }
+  else $('dlg-text').textContent = 'Not copied - select it and copy it with the keyboard.';
+};
+$('dlg-bg').addEventListener('pointerdown', e => { dlgDown = e.target === $('dlg-bg'); });
+$('dlg-bg').addEventListener('click', e => { if (e.target === $('dlg-bg') && dlgDown) dlgClose(); dlgDown = false; });
+window.addEventListener('keydown', e => {
+  if ($('dlg-bg').classList.contains('hide')) return;
+  if (e.key === 'Escape') { e.preventDefault(); dlgClose(); }
+  else if (e.key === 'Tab') {
+    const f = [$('dlg-val'), $('dlg-close'), $('dlg-copy')], i = f.indexOf(document.activeElement);
+    e.preventDefault();
+    f[e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i < 0 || i === f.length - 1 ? 0 : i + 1)].focus();
+  }
+}, true);
 function flash(t, bad) { const m = $('apply-msg'); m.textContent = t; m.style.color = bad ? '#fb8d85' : '#7ccd93'; clearTimeout(flash.t); flash.t = setTimeout(() => m.textContent = '', 4000); }
 function updateApply(g) {
   const btn = $('apply');

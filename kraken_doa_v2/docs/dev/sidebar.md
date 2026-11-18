@@ -321,6 +321,190 @@ dialog and the drawer, the backdrop, Esc; press and hold, a quick tap, a
 swipe; a box header still lifts, the map's menu still opens, a held slider
 still drags; no JS errors).
 
+### Dialogs: confirm, alert, prompt (2026-11-18)
+
+The user asked: "I don't like the browser popups we get for some options,
+like when I click on "reset" on the map DF box. Instead it should be a
+styled popup within the software itself, not from the browser." The page
+called the browser's `confirm` / `alert` / `prompt` in 46 places (20 / 21 /
+5) and the array calculator once (`prompt`). All of them are now the page's
+own dialog, and the page has no native dialog call left (a rule in
+`kraken_doa_v2/CLAUDE.md`).
+
+**One component, three functions** (the DIALOGS section at the top of the
+script, right after `icon()`; the markup `#ui-dlg-bg` / `#ui-dlg` is static,
+filled per request):
+
+- `uiConfirm({title, text, ok, danger, cancel, icon, tip})` -> `Promise<boolean>`
+- `uiAlert({title, text, kind, icon, tip, quiet})` -> `Promise<void>`;
+  `kind` 'error' (the `no` icon, red) | 'warn' (`warn`, amber) | 'info'
+  (the caller's icon)
+- `uiPrompt({title, text, fields, ok, icon, tip})` -> `Promise<{name: value}>`
+  or `null` (cancelled). `fields`: `[{name, label, value, placeholder (a
+  text, or values => text), type ('text' | 'number' | 'password'), unit,
+  maxlength, validate(value, values) -> '' or the error}]`. A number is
+  typed as text (`inputmode=decimal`) and checked by `validate`, as the
+  old prompts' `Number()` did; a password field has a Show / Hide button
+  like the Map tab's key.
+
+The look is the Restart dialog's (*power.md*): `.sf-dlg` on a `.sf-dlg-bg`
+backdrop, a title line with an icon from the set and a short name for the
+thing ("Reset bearings", "Delete recording"), under it one line with the
+specifics (which item, what is lost, "This cannot be undone"); a longer
+explanation goes behind a `?` (`tip`, `helpTip()` - constant HTML of the
+page only). Buttons right-aligned: Cancel, then the action **named by its
+verb** - Delete, Reset, Remove, Forget, Clear, Discard, "Use fixed
+location", Download, Create, Add, Unlock - never "OK" for a question (`cancel`
+renames Cancel: the editors' "Keep editing"). An alert has one button, OK.
+
+- **Focus**: a destructive action (`danger`: the button is `.btn.danger`)
+  opens with the focus on **Cancel**; a harmless one (`.btn.primary`) on the
+  action; a prompt on its first field (its text selected); an alert on OK.
+  Enter activates the focused button; in a prompt Enter in a field submits
+  if every field validates. Esc, the header's x and a press on the backdrop
+  are Cancel (an alert: closed) - a backdrop press counts only when it went
+  down and up there (its release must not land on the page under it) and
+  not within 350 ms of opening (the second click of a double click). Tab
+  stays inside; focus moved out by code comes back; on close the focus goes
+  back to what had it (if it is still there).
+- **Validation in place**: each field's error is a short line under it
+  (`.ferr`, `aria-invalid`, `aria-describedby`), shown on submit and gone as
+  soon as the field is right - never another dialog.
+- **Text is text**: the title, the text parts (`text` is a string or a list
+  of strings, `{b: text}` bold and `{code: text}` - a selectable line, e.g. a
+  path) and the field values are set with `textContent` / `.value`. Names
+  from the receiver, plugins, the assistant or the user show literally.
+  Typed values are emptied when the dialog closes (the access token is in
+  the field only while it is open, then in `localStorage` as before).
+- **A queue**: one dialog at a time; requests made meanwhile wait their turn
+  in the same dialog (several errors in a row: each shown, none lost). The
+  same question (type, title and text) asked again while it is open or
+  waiting is not shown twice - that request resolves as cancelled at once:
+  a second click on a button, or a guard called twice, can't act twice.
+- **quiet**: an alert nobody just asked for - the receiver's answer that
+  arrives later (the scanner configuration refused, no lobe for a
+  transcript) - waits while the user is typing in a field outside the
+  dialog and is shown when the field is left. The browser's alert took the
+  focus at once; this one doesn't take it more than that.
+- **ARIA**: `role="alertdialog"` (confirm, alert) / `role="dialog"`
+  (prompt), `aria-modal`, `aria-labelledby` the title, `aria-describedby`
+  the text.
+- **On top**: z-index 2200 - above the other dialogs (2050: a question
+  raised from the Save-frequency editor or Setup Settings), the toast, the
+  popovers (a press or Esc in the dialog is not "outside" for `popDismiss`:
+  the View popover under it stays open), the assistant's dock and drive
+  mode's map and HUD; under the power notice (3000), the help banner and
+  the page's tooltip (which shows for its own controls). Keys don't reach
+  the page's own handlers while it is open.
+- **Help**: the `?` in the text works as anywhere; help mode and press and
+  hold work on its controls (the x explains "Cancel (Esc)"); Esc in help
+  mode leaves help mode first and the dialog stays.
+- **Touch, drive mode, phones**: on touch layouts (`pointer:coarse`) the
+  buttons are at least 44 px high; in drive mode (`body.drive`) the dialog
+  is bigger (460 px, 18 px title, 15 px text, buttons at least 56 x 120 px,
+  like the HUD's) and follows drive mode's Day look - the Day token block
+  (`tools/theme_palette.py --css-day`) is set on `.ui-dlg-bg` too, with light
+  plain buttons, the accent and a red Reset with white text. On a phone it
+  fits 320 px (the backdrop's 12 px padding) and the buttons wrap rather
+  than overflow.
+
+**The callers are asynchronous now.** The browser's dialogs blocked the
+page; these don't. Every caller captures what the action needs before it
+asks (ids, names, the command) and checks on yes that the thing still
+exists (a marker, a saved frequency, a recording, a layer deleted from
+another page meanwhile: nothing is sent); what the question named is what
+goes, whatever is selected by then (the DF Reset of a radio, a scanner row:
+removed by identity, not by its old index). The two editors' guards -
+`mkLeaveEdit()` (a map marker) and `sfDlgLeave()` (a saved frequency) -
+return `true` when nothing changed, else the promise of "Discard changes?";
+their callers go on through `uiThen(v, f)` (at once for `true`, so nothing
+changes when there is no question): `mkSelect` (a click on another marker,
+the panel's Edit, search results, Show on map), `mkCreate` (Add Marker, a
+mast / search result / assistant item to a marker), `sfDlgOpen` (another
+entry while one is open) and `sfDlgCancel` (the x, Cancel, the backdrop,
+Esc). Inline handlers that built `onclick="if(confirm('...'))send('...')"`
+call a named function now (`incClearAsk()`, `aiMarkForget()`).
+
+The array calculator (`array_calculator.html`, its own page) has its own
+copy of the look for its one case (`copyDialog`): the clipboard refused
+(not a secure page, no permission) - "Copy the CSV" with the text selected
+in a read-only box, Close and Copy (the older copy command), Esc / the
+backdrop, Tab inside, the focus back. Its sprite carries `i-close` and
+`i-doc` for it.
+
+**Every converted site** (the old call -> the dialog: title, verb, what it
+sends):
+
+| Where | Old | Title | Text (the specifics) | Verb | Sends / does |
+|---|---|---|---|---|---|
+| API token (`askForToken`) | prompt | Access token (lock) | "This KrakenSDR requires an access token: the api_token file on the device"; after a refusal "Wrong access token - ..." | Unlock (password field, Show) | `AUTH:<token>`; Cancel = locked as before |
+| Scanner: the receiver's refusal | alert | Scanner configuration refused (quiet) | a frequency or bandwidth is out of range | OK | - |
+| Scanner: Load, not JSON | alert | Invalid scanner file | `<file>: not valid JSON` (or the field's error) | OK | - |
+| Scanner: Load, display failed | alert | Invalid scanner file | `<file>: not a scanner configuration` | OK | - |
+| Scanner: Save without one | alert | Nothing to save | create one with New first | OK | - |
+| Scanner: New | prompt | New scanner configuration | field Name (My Scanner, 64) | Create | the configuration, as before |
+| Scanner: Start without frequencies | alert | No frequencies to scan (warn) | at least one enabled frequency | OK | - |
+| Scanner: Start outside Wideband | alert | Wideband mode needed (warn) | pick Wideband as the Mode | OK | - |
+| Scanner: Next while stopped | alert | Scanner not running | start it first | OK | - |
+| Scanner: + Add without one | alert | No scanner configuration | create or load one first | OK | - |
+| Scanner: + Add | 3 x prompt + 2 alerts | Add frequency | fields Frequency (MHz, 24-1766), Bandwidth (kHz, 0.1-2400), Label (empty = the frequency) - the old error texts under the fields | Add | `SCANNER_LOAD_CONFIG:{...}` |
+| Scanner: Remove (a row) | confirm | Remove frequency | `<label> (<MHz>) from the scanner list?` | Remove | `SCANNER_LOAD_CONFIG:{...}` without it |
+| Decoder tab (Pagers): incidents' Clear | confirm (inline) | Clear incidents | Remove every incident (N)? | Clear | `INCIDENTS_CLEAR` |
+| Assistant: a conversation's x | confirm | Delete conversation | `"<title>" and its files?` | Delete | `AI_SESSION_DELETE:<id>` |
+| Assistant: an identification's Forget | confirm (inline) | Forget identification | `<name> at <MHz> MHz?` | Forget | `AI_MARK_DELETE:<id>` |
+| Array calibration: Reset | confirm | Reset array calibration | Forget the N aircraft packets collected so far? (nothing collected: no question) | Reset | `ARRAY_CAL_RESET` |
+| Array calibration: Remove | confirm | Remove array calibration | MUSIC and beamforming go back to the nominal array | Remove | `ARRAY_CAL_REMOVE` |
+| Transcription: a bearing's lobe, the receiver's answer | alert | No lobe (quiet) | the receiver's reason | OK | - |
+| Transcription: Play failed | alert | Cannot play the audio | the reason (e.g. the audio is gone) | OK | - |
+| Transcription: CSV with none shown | alert | Nothing to export | No transcripts to export (none shown) | OK | - |
+| Transcription: Clear | confirm | Delete transcripts | Delete all N transcripts and their audio on the receiver? The decoder log files keep theirs. | Delete | `VOICE2TEXT_CLEAR` |
+| DoA Recording: Download / Replay / Delete with none selected | 3 x alert | No recording selected | Select a recording first. | OK | - |
+| DoA Recording: Download failed (HTTP, error) | 2 x alert | Download failed | `<name>: HTTP <n>` / the error | OK | - |
+| DoA Recording: Replay failed (HTTP, error) | 2 x alert | Could not load the recording | `<name>: HTTP <n>` / the error | OK | - |
+| DoA Recording: Delete | confirm | Delete recording | `"<name>"? This cannot be undone.` | Delete | `LOG_DELETE:<name>` |
+| Map menu: Set station here (GPS / mobile) | confirm | Use a fixed location (harmless) | The station's position comes from the GPS / the mobile app now. Use a fixed location here instead? | Use fixed location | `LOCATION_SOURCE:static`, then `STATIC_LOCATION:...` |
+| DF panel Reset, drive mode's Reset | 2 x confirm | Reset bearings | Forget the bearings collected for `<kind> <radio>` / `D<n>` and its radios / every VFO and radio? | Reset | `RDF_RESET:<vfo>:<tid>` / `:<vfo>` / `:-1` |
+| Map marker: Delete | confirm | Delete marker | `"<name>"?` Its N saved frequencies stay in the list, without a location. | Delete | `SF_LOC_DEL:<id>` |
+| Map marker editor: leaving it changed | confirm (guard) | Discard changes | Discard the changes to the marker `"<name>"`? | Discard / Keep editing | the switch / new marker goes on |
+| Saved frequencies: a category's x | confirm | Delete category | `"<name>"?` Its N frequencies stay in the list, uncategorised. | Delete | `SF_CAT_DEL:<id>` |
+| Saved-frequency editor: leaving it changed | confirm (guard) | Discard changes | Discard the changes to the saved frequency `"<name>"`? | Discard / Keep editing | the editor closes / the other entry opens |
+| Saved-frequency editor: Delete | confirm | Delete saved frequency | `"<name>" (<MHz> MHz)?` | Delete | `SF_DEL:<id>` |
+| Map: an assistant's layer x | confirm | Remove map layer | `"<name>" (N items) for every page?` | Remove | `AI_MAP_DELETE:<id>` |
+| Continuous scanner: Start in Wideband | alert | Coherent mode needed (warn) | leave Wideband mode first | OK | - |
+| Settings: Reset Settings to Default | confirm | Reset settings | Reset all settings to their defaults? The page will reload. | Reset | `RESET_SETTINGS`, reload |
+| IQ & Audio Recorder: a recording's trash | confirm | Delete recording | `"<name>"` from the receiver? This cannot be undone. | Delete | `RECORDER_DELETE:<name>` |
+| IQ & Audio Recorder: > 1.5 GB without streaming | confirm | Download into memory (harmless) | the size held in memory; where to copy it from (a selectable line) | Download | the download, as before |
+| Array calculator: copy refused | prompt | Copy the CSV / positions | the text, selected | Copy / Close | the older copy command |
+
+Two of these can't be reached from the page as it is: Start outside
+Wideband mode and the continuous scanner's Start in Wideband mode - their
+boxes are hidden in those modes (`.wb-only`, `.coh-only`). The guards stay
+(converted), for a box shown some other day.
+
+No alert became a non-blocking notice. Candidates were the ones about the
+user's own click that only say "nothing to do" (Nothing to export, No
+recording selected, Scanner not running) and "No lobe" (the map's status
+flash is where the map talks), but each is the answer to something the user
+just did, and the user asked for styled popups - they are dialogs.
+
+Tests (2026-11-18, scratch `test_dlg.py`, headless Chromium, real mouse,
+key and touch events; 250 checks; `cdp.py`'s `watch_native_dialogs()`
+records and dismisses any native dialog and the suite fails on one): the
+component (destructive / harmless focus, Esc, backdrop, x, Cancel, Enter, a
+double click's second press, alert, prompt with one and three fields,
+validation in place, the queue of three, the same question twice, Tab and
+Shift+Tab, focus back, ARIA, `<img onerror>` shown as text, the `?` tip and
+help mode, over the Save-frequency dialog and the View popover, drive mode
+Night and Day at 1500 and 400 px with 56 px buttons, touch 44 px and press
+and hold, phones 400 and 320 px); every call site from the page's control
+(a list checked against a grep of the page's calls), Cancel sending nothing
+and the verb sending what the old code sent; the target gone while asked,
+the list changed under a Remove, the DF selection changed under a Reset; both
+editors' Discard guards on every path; the access token against the test
+receiver started with `KRAKEN_API_TOKEN` (first ask, empty, wrong, Cancel =
+locked, right one, remembered; the token nowhere in the DOM); the array
+calculator's copy dialog; no native call left in either page.
+
 ### What moved out of boxes of their own (2026-11-17)
 
 The user asked for fewer boxes: three were folded away, and their `data-sb`

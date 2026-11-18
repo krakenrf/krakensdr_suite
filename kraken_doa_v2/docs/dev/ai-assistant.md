@@ -251,8 +251,10 @@ the internet and writes / changes decoder plugins):
   selection clean-up leaves "ai:" (it closed the popup within a second).
   Panel `#map-ai` under the viewshed's (`.aim-it` rows - the viewshed's
   `.vs-it` are hidden by its line of sight mode): show / hide per browser
-  (localStorage `kraken_aim`), ⌖ fit, ✕ = `AI_MAP_DELETE:<id>` (confirm,
-  every page). Map tool steps get 🗺 in the dock
+  (localStorage `kraken_aim`), ⌖ fit, ✕ = `AI_MAP_DELETE:<id>` (every
+  page; after the page's own "Remove map layer" dialog - like a
+  conversation's "Delete conversation" and an identification's "Forget
+  identification", `uiConfirm`, *sidebar.md* "Dialogs"). Map tool steps get 🗺 in the dock
 - 🗺 Page commands (`page_call` in ai_mcp.cpp): the map's view and the
   Viewshed / path loss live in the browser, so these tools are carried
   out by A PAGE: pages announce a random id (`aiPageId`, `AI_PAGE:<id>` on

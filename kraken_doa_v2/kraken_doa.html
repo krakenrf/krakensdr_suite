@@ -1607,6 +1607,47 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .sf-dlg .lbl {color:var(--t3);font-size:11.5px}
 .sf-dlg .sub,.wb-sheet .sec {background:var(--s3);border-color:var(--l1);border-radius:6px}
 .sf-toast {border-radius:7px;border-color:var(--ac-h)}
+/* the page's own confirm / alert / prompt (uiConfirm / uiAlert / uiPrompt, #ui-dlg): the
+   Restart dialog's sibling. Above every other dialog (2050), the toast, the popovers and the
+   assistant's dock; under the power notice (3000), the help banner and the page's tooltip */
+.ui-dlg-bg {z-index:2200}
+.sf-dlg.ui-dlg {width:380px}
+#ui-dlg-title {display:flex;align-items:center;min-width:0;overflow-wrap:anywhere}
+.ui-dlg .sf-dlg-h .x {color:var(--t4);flex:none}
+.ui-dlg.k-error #ui-dlg-title .ic {color:var(--bad-t)}
+.ui-dlg.k-warn #ui-dlg-title .ic {color:var(--warn-t)}
+.ui-dlg-t {margin:6px 0 2px;font-size:12.5px;line-height:1.45;color:var(--t1);overflow-wrap:anywhere}
+.ui-dlg-t b {color:var(--t0)}
+.ui-dlg-code {margin:5px 0 2px;padding:5px 8px;background:var(--s1);border:1px solid var(--l1);border-radius:4px;font:11.5px ui-monospace,'Consolas','Menlo',monospace;color:var(--t0);overflow-wrap:anywhere;user-select:all}
+.ui-dlg-f .lbl {display:block}
+.ui-dlg-f .row > input {flex:1 1 auto}
+.ui-dlg-f .u {flex:none;min-width:26px;color:var(--t3);font-size:12px}
+.ui-dlg-f .btn {flex:none;height:28px}
+.ui-dlg-f .ferr {margin-top:3px;color:var(--bad-t);font-size:11.5px}
+.ui-dlg-f .ferr:empty {display:none}
+.ui-dlg-f input[aria-invalid="true"] {border-color:var(--bad)}
+.sf-dlg.ui-dlg .b {justify-content:flex-end;margin-top:14px}
+.ui-dlg .b .btn {min-width:76px}
+/* touch: finger-sized */
+@media (pointer:coarse) {
+  .ui-dlg .b .btn {min-height:44px;padding:6px 16px;font-size:14px}
+  .ui-dlg-f input,.ui-dlg-f .btn {height:40px}
+  .ui-dlg .sf-dlg-h .x {padding:6px 8px}
+}
+/* 🚗 drive mode (docs/dev/drive-mode.md): bigger, the HUD's sizes; Day: its light tokens
+   (the Day block below covers .ui-dlg-bg too) */
+body.drive .sf-dlg.ui-dlg {width:460px;padding:16px 18px}
+body.drive .ui-dlg .sf-dlg-h {font-size:18px}
+body.drive .ui-dlg .sf-dlg-h .ic {font-size:20px}
+body.drive .ui-dlg .sf-dlg-h .x {padding:8px 10px;margin:-8px -10px -8px auto}
+body.drive .ui-dlg-t {font-size:15px}
+body.drive .sf-dlg.ui-dlg .b {gap:12px;margin-top:18px}
+body.drive .ui-dlg .b .btn {min-height:56px;min-width:120px;padding:8px 18px;font-size:16px;border-radius:8px}
+body.drive.drive-day .ui-dlg-bg {background:rgba(0,0,0,.35)}
+body.drive.drive-day .sf-dlg.ui-dlg {box-shadow:0 6px 30px rgba(0,0,0,.35)}
+body.drive.drive-day .ui-dlg .btn {background:var(--s4);border-color:var(--l3);color:var(--t0)}
+body.drive.drive-day .ui-dlg .btn.primary {background:var(--ac);border-color:var(--ac-h);color:#fff}
+body.drive.drive-day .ui-dlg .btn.danger {background:var(--bad);border-color:var(--bad-t);color:#fff}
 /* AI assistant */
 .ai-dock {background:var(--s3);border-left-color:var(--l1)}
 .ai-dk-head {background:var(--s4);border-bottom-color:var(--l1)}
@@ -2045,7 +2086,7 @@ body.drive .map-offline {left:var(--dv-oc,50%);top:var(--dv-ot,40px);font-size:1
 /* Day: thicker strokes, lighter shadows (the colours: the token block below) */
 body.drive.drive-day .dv-btn .ic {stroke-width:2.4}
 body.drive.drive-day .dv-read,body.drive.drive-day .dv-btn {box-shadow:0 3px 12px rgba(0,0,0,.28)}
-body.drive.drive-day .drive-hud {
+body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
   /* drive mode's Day look (tools/theme_palette.py --css-day): surfaces, lines, text */
   --s0:#edf0f4; --s1:#f3f5f8; --s2:#eff2f6; --s3:#fcfdff; --s4:#eceff2; --s5:#dce0e5;
   --l1:#cdd1d8; --l2:#989fa8; --l3:#6e757f; --l4:#565e69; --l5:#363e48;
@@ -3680,6 +3721,16 @@ body.drive.drive-day .drive-hud {
     <div><button type="button" class="btn" id="pw-n-ok" onclick="pwNoticeHide()">OK</button></div>
   </div>
 </div>
+<!-- the page's own confirm / alert / prompt: uiConfirm / uiAlert / uiPrompt (see DIALOGS in the
+     script; docs/dev/sidebar.md, "Dialogs"). Filled per request, one at a time -->
+<div class="sf-dlg-bg ui-dlg-bg" id="ui-dlg-bg" style="display:none">
+  <div class="sf-dlg ui-dlg" id="ui-dlg" role="alertdialog" aria-modal="true" aria-labelledby="ui-dlg-title" aria-describedby="ui-dlg-text">
+    <div class="sf-dlg-h"><span id="ui-dlg-title"></span><span class="x" id="ui-dlg-x" title="Cancel (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
+    <div class="ui-dlg-t" id="ui-dlg-text"></div>
+    <div class="ui-dlg-fs" id="ui-dlg-fs"></div>
+    <div class="b" id="ui-dlg-b"></div>
+  </div>
+</div>
 <div class="sf-toast" id="sf-toast"></div>
 <!-- help mode's banner (helpModeSet; a tap on it leaves the mode) -->
 <div class="help-banner" id="help-banner" role="status"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg><span id="help-banner-t">Tap a control to see what it does</span></div>
@@ -3690,6 +3741,259 @@ body.drive.drive-day .drive-hud {
 // classes ('t': the size of the text around it). A label goes in a <span> right after it.
 function icon(name, cls) {
   return '<svg class="ic' + (cls ? ' ' + cls : '') + '" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
+}
+// ============================================================================
+// DIALOGS: the page's own confirm / alert / prompt - never the browser's (docs/dev/sidebar.md,
+// "Dialogs: confirm, alert, prompt"). Each returns a promise; requests wait in a queue and are
+// shown one at a time in #ui-dlg (the .sf-dlg look, above every other dialog and popover).
+//   uiConfirm({title, text, ok, danger, cancel, icon, tip})  -> Promise<boolean>
+//   uiAlert({title, text, kind, icon, tip, quiet})           -> Promise<void>   kind: 'error' | 'warn' | 'info'
+//   uiPrompt({title, text, fields, ok, icon, tip})           -> Promise<{name: value, ...} | null>
+//     fields: [{name, label, value, placeholder (a text, or values => text), type ('text' |
+//              'number' | 'password'), unit, maxlength, validate(value, values) -> '' or the
+//              error shown under the field}]
+// title: short, names the thing. text: one line with the specifics - a string or a list of parts:
+// strings, {b: text} (bold), {code: text} (a selectable line, e.g. a path) - always set as text,
+// so receiver, plugin and user text in it stays text. tip: a ? after it (helpTip; constant HTML of
+// this page only). ok: the action's verb ("Delete"), never "OK" for a question. danger: a
+// destructive action - a red button and the focus on Cancel (otherwise the focus is on the
+// action). quiet: an alert nobody just asked for (a receiver's answer arriving later) waits while
+// the user types in a field. The same question asked again while it is open or waiting is not
+// shown twice (that request resolves as cancelled). The browser's dialogs blocked; these don't:
+// a caller captures what the action needs before asking and checks it still exists after.
+// Up here, using nothing of later sections: the access-token prompt runs while the page connects.
+// ============================================================================
+const UI_DLG_KIND_IC = {error: 'no', warn: 'warn', info: 'warn'};
+let uiDlgQ = [], uiDlgCur = null, uiDlgRet = null, uiDlgInited = false, uiDlgWaiting = false;
+function uiConfirm(o) { return uiDlgReq('confirm', o); }
+function uiAlert(o) { return uiDlgReq('alert', o); }
+function uiPrompt(o) { return uiDlgReq('prompt', o); }
+// v: true, or a promise of a boolean (an editor's "Discard changes?" guard answers true at once
+// when nothing changed): f() now, or when the answer is yes
+function uiThen(v, f) { if (v === true) f(); else if (v && v.then) v.then(y => { if (y) f(); }); }
+function uiDlgPlain(t) {
+  return Array.isArray(t) ? t.map(p => p !== null && typeof p === 'object' ? String(p.b ?? p.code ?? '') : String(p ?? '')).join('') : String(t ?? '');
+}
+function uiDlgReq(type, o) {
+  o = o || {};
+  const none = type === 'confirm' ? false : type === 'prompt' ? null : undefined;
+  const key = type + '|' + (o.title || '') + '|' + uiDlgPlain(o.text);
+  if ((uiDlgCur && uiDlgCur.key === key) || uiDlgQ.some(r => r.key === key)) return Promise.resolve(none);
+  return new Promise(resolve => {
+    uiDlgQ.push({type, o, key, none, resolve, inputs: []});
+    uiDlgNext();
+  });
+}
+// the user is typing in a field outside the dialog (a quiet alert waits for that to end)
+function uiDlgTyping() {
+  const a = document.activeElement;
+  if (!a || a === document.body || (a.closest && a.closest('#ui-dlg-bg'))) return false;
+  return !!(a.isContentEditable || a.tagName === 'TEXTAREA' ||
+            (a.tagName === 'INPUT' && /^(text|search|number|password|email|url|tel)$/i.test(a.type || 'text')));
+}
+function uiDlgNext() {
+  if (uiDlgCur) return;
+  const typing = uiDlgTyping();
+  const i = uiDlgQ.findIndex(r => !(r.o.quiet && typing));
+  if (i < 0) {
+    uiDlgHide();
+    if (uiDlgQ.length && !uiDlgWaiting) {      // only quiet ones left: shown when the field is left
+      uiDlgWaiting = true;
+      document.addEventListener('focusout', function w() {
+        document.removeEventListener('focusout', w, true);
+        uiDlgWaiting = false;
+        setTimeout(uiDlgNext, 0);
+      }, true);
+    }
+    return;
+  }
+  uiDlgShow(uiDlgQ.splice(i, 1)[0]);
+}
+function uiDlgFocusables() {
+  return [...$id('ui-dlg').querySelectorAll('button, input, [tabindex]:not([tabindex="-1"])')]
+    .filter(e => !e.disabled && e.offsetParent !== null);
+}
+function uiDlgValues(r) {
+  const v = {};
+  for (const it of r.inputs) v[it.f.name] = it.el.value;
+  return v;
+}
+function uiDlgCheck(r, it) {
+  const msg = it.f.validate ? String(it.f.validate(it.el.value, uiDlgValues(r)) || '') : '';
+  it.err.textContent = msg;
+  it.el.setAttribute('aria-invalid', msg ? 'true' : 'false');
+  return !msg;
+}
+function uiDlgPlaceholders(r) {
+  const v = uiDlgValues(r);
+  for (const it of r.inputs) if (typeof it.f.placeholder === 'function') it.el.placeholder = String(it.f.placeholder(v) || '');
+}
+function uiDlgSubmit() {
+  const r = uiDlgCur;
+  if (!r || r.type !== 'prompt') return;
+  let bad = null;
+  for (const it of r.inputs) if (!uiDlgCheck(r, it) && !bad) bad = it;
+  if (bad) { bad.el.focus(); bad.el.select(); return; }
+  uiDlgEnd(uiDlgValues(r));
+}
+function uiDlgShow(r) {
+  uiDlgInit();
+  const o = r.o, bg = $id('ui-dlg-bg'), box = $id('ui-dlg');
+  uiDlgCur = r;
+  if (bg.style.display === 'none') {
+    const a = document.activeElement;
+    uiDlgRet = a && a !== document.body && !bg.contains(a) ? a : null;
+  }
+  const kind = r.type === 'alert' ? (o.kind || 'info') : '';
+  box.className = 'sf-dlg ui-dlg ui-' + r.type + (kind ? ' k-' + kind : '') + (o.danger ? ' danger' : '');
+  box.setAttribute('role', r.type === 'prompt' ? 'dialog' : 'alertdialog');
+  // the title: an icon, a name (as text)
+  const t = $id('ui-dlg-title'), ic = o.icon || (kind ? UI_DLG_KIND_IC[kind] : '');
+  t.innerHTML = ic ? icon(ic) : '';   // constants only
+  const ts = document.createElement('span');
+  ts.textContent = o.title || '';
+  t.appendChild(ts);
+  $id('ui-dlg-x').title = r.type === 'alert' ? 'Close (Esc)' : 'Cancel (Esc)';
+  // the text: parts, as text
+  const tx = $id('ui-dlg-text');
+  tx.textContent = '';
+  for (const p of Array.isArray(o.text) ? o.text : [o.text]) {
+    if (p === null || p === undefined || p === '') continue;
+    if (typeof p !== 'object') { tx.appendChild(document.createTextNode(String(p))); continue; }
+    const e = document.createElement(p.code !== undefined ? 'div' : 'b');
+    if (p.code !== undefined) e.className = 'ui-dlg-code';
+    e.textContent = String(p.code ?? p.b ?? '');
+    tx.appendChild(e);
+  }
+  if (o.tip) tx.insertAdjacentHTML('beforeend', ' ' + helpTip(o.tip, o.tip.length > 120));   // constant HTML of the caller
+  tx.style.display = tx.childNodes.length ? '' : 'none';
+  // a prompt's fields
+  const fs = $id('ui-dlg-fs');
+  fs.textContent = '';
+  r.inputs = [];
+  if (r.type === 'prompt') for (const f of o.fields || []) {
+    const id = 'ui-dlg-f' + r.inputs.length;
+    const w = document.createElement('div'), l = document.createElement('label'), row = document.createElement('div');
+    const inp = document.createElement('input'), err = document.createElement('div');
+    w.className = 'ui-dlg-f';
+    l.className = 'lbl'; l.htmlFor = id; l.textContent = f.label || '';
+    row.className = 'row';
+    inp.id = id;
+    inp.type = f.type === 'password' ? 'password' : 'text';   // a number too: typed as text, checked by validate
+    inp.autocomplete = 'off'; inp.spellcheck = false;
+    inp.setAttribute('autocapitalize', 'off');
+    if (f.type === 'number') inp.inputMode = 'decimal';
+    if (f.maxlength) inp.maxLength = f.maxlength;
+    inp.value = f.value === undefined || f.value === null ? '' : String(f.value);
+    err.className = 'ferr'; err.id = id + '-e';
+    err.setAttribute('aria-live', 'polite');
+    inp.setAttribute('aria-describedby', err.id);
+    row.appendChild(inp);
+    // (a field without a unit keeps the units' column too, so the boxes line up)
+    if (f.unit || (o.fields || []).some(x => x.unit)) { const u = document.createElement('span'); u.className = 'u'; u.textContent = f.unit || ''; row.appendChild(u); }
+    if (f.type === 'password') {
+      const s = document.createElement('button');
+      s.type = 'button'; s.className = 'btn sm'; s.textContent = 'Show'; s.title = 'Show / hide what is typed';
+      s.onclick = () => { const show = inp.type === 'password'; inp.type = show ? 'text' : 'password'; s.textContent = show ? 'Hide' : 'Show'; inp.focus(); };
+      row.appendChild(s);
+    }
+    w.append(l, row, err);
+    fs.appendChild(w);
+    const it = {f, el: inp, err};
+    r.inputs.push(it);
+    // validated in place: an error shown goes as soon as the field is right
+    inp.addEventListener('input', () => { if (it.err.textContent) uiDlgCheck(r, it); uiDlgPlaceholders(r); });
+  }
+  uiDlgPlaceholders(r);
+  if (r.type === 'prompt') for (const it of r.inputs) if (typeof it.f.placeholder === 'string') it.el.placeholder = it.f.placeholder;
+  fs.style.display = r.inputs.length ? '' : 'none';
+  // the buttons: Cancel, then the action named by its verb (an alert: OK)
+  const b = $id('ui-dlg-b');
+  b.textContent = '';
+  const mk = (text, cls, fn) => {
+    const e = document.createElement('button');
+    e.type = 'button'; e.className = 'btn' + (cls ? ' ' + cls : ''); e.textContent = text; e.onclick = fn;
+    b.appendChild(e);
+    return e;
+  };
+  let first;
+  if (r.type === 'alert') first = mk('OK', 'primary', () => uiDlgEnd(undefined));
+  else {
+    const c = mk(o.cancel || 'Cancel', '', () => uiDlgEnd(r.none));
+    const k = mk(o.ok || 'OK', o.danger ? 'danger' : 'primary', () => { if (r.type === 'prompt') uiDlgSubmit(); else uiDlgEnd(true); });
+    first = r.type === 'prompt' && r.inputs.length ? r.inputs[0].el : o.danger ? c : k;
+  }
+  r.at = performance.now();
+  bg.style.display = 'flex';
+  box.scrollTop = 0;
+  try { tipHide(); } catch (e) {}
+  const focus = () => { first.focus(); if (first.tagName === 'INPUT') first.select(); };
+  focus();
+  // opened by a pointerdown (the Save-frequency dialog's backdrop): that press's mousedown then
+  // takes the focus off - it comes back
+  setTimeout(() => { if (uiDlgCur === r && !box.contains(document.activeElement)) focus(); }, 0);
+}
+function uiDlgEnd(v) {
+  const r = uiDlgCur;
+  if (!r) return;
+  uiDlgCur = null;
+  for (const it of r.inputs) it.el.value = '';   // nothing typed stays in the page (the access token)
+  $id('ui-dlg-fs').textContent = '';
+  r.inputs = [];
+  uiDlgNext();      // the next request in the same dialog, or it closes and the focus goes back
+  r.resolve(v);
+}
+function uiDlgHide() {
+  const bg = $id('ui-dlg-bg');
+  if (!bg || bg.style.display === 'none') return;
+  bg.style.display = 'none';
+  $id('ui-dlg-text').textContent = '';
+  $id('ui-dlg-b').textContent = '';
+  const a = uiDlgRet;
+  uiDlgRet = null;
+  if (a && a.isConnected && a.focus) { try { a.focus({preventScroll: true}); } catch (e) {} }
+}
+// the listeners, once (at the first request: after pageTipInit, whose Esc leaves help mode first)
+function uiDlgInit() {
+  if (uiDlgInited) return;
+  uiDlgInited = true;
+  const bg = $id('ui-dlg-bg');
+  // a press on the backdrop = Cancel (an alert: closed): pressed and released there (the release
+  // must not land on the page under it), and not the second click of the press that opened it
+  let down = false;
+  bg.addEventListener('pointerdown', e => { down = e.target === bg && !!uiDlgCur && performance.now() - uiDlgCur.at > 350; });
+  bg.addEventListener('click', e => { if (e.target === bg && down && uiDlgCur) uiDlgEnd(uiDlgCur.none); down = false; });
+  $id('ui-dlg-x').addEventListener('click', () => { if (uiDlgCur) uiDlgEnd(uiDlgCur.none); });
+  // keys while it is open: Esc = Cancel, Enter in a field = the action (if it validates), Tab stays
+  // inside; none reaches the page's own key handlers
+  window.addEventListener('keydown', e => {
+    if (!uiDlgCur) return;
+    if (e.key === 'Escape') {
+      if (document.body.classList.contains('help-mode')) return;   // (Esc leaves help mode first)
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      uiDlgEnd(uiDlgCur.none);
+      return;
+    }
+    if (e.key === 'Tab') {
+      const f = uiDlgFocusables();
+      if (f.length) {
+        const i = f.indexOf(document.activeElement);
+        e.preventDefault();
+        f[e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i < 0 || i === f.length - 1 ? 0 : i + 1)].focus();
+      }
+    } else if (e.key === 'Enter' && uiDlgCur.type === 'prompt' && e.target.tagName === 'INPUT' && $id('ui-dlg').contains(e.target)) {
+      e.preventDefault();
+      uiDlgSubmit();
+    }
+    e.stopPropagation();
+  }, true);
+  // the focus stays inside (code elsewhere focusing something while it is open)
+  document.addEventListener('focusin', e => {
+    if (!uiDlgCur || bg.contains(e.target)) return;
+    const f = uiDlgFocusables();
+    if (f.length) f[0].focus();
+  }, true);
 }
 let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
     fmEnabled=true,doaEnabled=true,currentTopology='UCA',
@@ -5217,6 +5521,7 @@ function popDismiss(o) {
     if (!b) return;
     const p = o.pop();
     if ((p && p.contains(e.target)) || b.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('#ui-dlg-bg')) return;   // a press in the page's dialog over it (uiConfirm ...)
     o.close(false);
   }, true);
   document.addEventListener('keydown', e => {
@@ -10330,13 +10635,28 @@ function showLocked(text) {
   const connEl = $id('status-connection');
   if (connEl) { connEl.textContent = text; connEl.style.background = '#d8625c'; connEl.style.color = '#fff'; }
 }
+// The page's own prompt (uiPrompt), one password field. It doesn't block like the browser's did:
+// the receiver drops a socket that sends no token within 10 s, and the page reconnects meanwhile -
+// so the answer goes to the socket open then (or, stored, with the next connection's first
+// message), and a reconnect while it is open asks nothing more. The token is in the field only
+// (emptied when the dialog closes) and in localStorage - nowhere else in the DOM.
+let authAsking = false;
 function askForToken() {
   if (authDeclined) { showLocked('Locked - reload to enter the access token'); return; }
-  const t = (prompt((authFailed ? 'Wrong access token. ' : '') +
-                    'This KrakenSDR requires an access token (the api_token file on the device):') || '').trim();
-  if (!t) { authDeclined = true; showLocked('Locked - reload to enter the access token'); return; }
-  storeToken(t);
-  try { ws.send('AUTH:' + t); } catch (e) {}
+  if (authAsking) return;
+  authAsking = true;
+  uiPrompt({title: 'Access token', icon: 'lock', ok: 'Unlock',
+            text: authFailed ? 'Wrong access token - the one in the api_token file on the device'
+                             : 'This KrakenSDR requires an access token: the api_token file on the device',
+            tip: 'Or the <b>KRAKEN_API_TOKEN</b> environment variable the receiver was started with. This browser remembers it; a wrong token is forgotten and asked for again.',
+            fields: [{name: 'token', label: 'Access token', type: 'password',
+                      validate: v => v.trim() ? '' : 'Enter the token'}]}).then(r => {
+    authAsking = false;
+    const t = r ? String(r.token || '').trim() : '';
+    if (!t) { authDeclined = true; showLocked('Locked - reload to enter the access token'); return; }
+    storeToken(t);
+    try { if (ws && ws.readyState === 1) ws.send('AUTH:' + t); } catch (e) {}
+  });
 }
 
 function connect() {
@@ -10606,7 +10926,8 @@ function connect() {
           }
           else if(msg.scanner_config_loaded === false) {
             // The backend refused the config (e.g. a frequency outside the tuner range)
-            alert('The scanner configuration was refused by the receiver (a frequency or bandwidth is out of range).');
+            uiAlert({title: 'Scanner configuration refused', kind: 'error', quiet: true,
+                     text: 'The receiver refused it: a frequency or bandwidth is out of range.'});
           }
           else if(msg.scanner_started || msg.scanner_stopped) {
             // Started/stopped from another browser (or stopped by the backend)
@@ -12400,7 +12721,8 @@ function addTouchHandlers(el, down, move, up) {
         try {
           config = validateScannerConfig(JSON.parse(event.target.result));
         } catch (err) {
-          alert('Invalid scanner configuration file: ' + (err instanceof SyntaxError ? 'not valid JSON' : err));
+          uiAlert({title: 'Invalid scanner file', kind: 'error',
+                   text: [{b: file.name}, ': ' + (err instanceof SyntaxError ? 'not valid JSON' : String(err))]});
           return;
         }
         try {
@@ -12417,7 +12739,7 @@ function addTouchHandlers(el, down, move, up) {
           updateFrequencyList();
         } catch (err) {
           console.error('Failed to parse scanner config:', err);
-          alert('Invalid scanner configuration file');
+          uiAlert({title: 'Invalid scanner file', kind: 'error', text: [{b: file.name}, ': not a scanner configuration']});
         }
       };
       reader.readAsText(file);
@@ -12427,7 +12749,7 @@ function addTouchHandlers(el, down, move, up) {
 
   function saveScannerFile() {
     if (!scannerConfig) {
-      alert('No scanner configuration to save. Create a new configuration first.');
+      uiAlert({title: 'Nothing to save', icon: 'radio', text: 'No scanner configuration to save - create one with New first.'});
       return;
     }
 
@@ -12442,9 +12764,11 @@ function addTouchHandlers(el, down, move, up) {
   }
 
   function createNewScanner() {
-    const name = prompt('Enter scanner configuration name:', 'My Scanner');
-    if (!name) return;
-
+    uiPrompt({title: 'New scanner configuration', icon: 'radio', ok: 'Create',
+              fields: [{name: 'name', label: 'Name', value: 'My Scanner', maxlength: 64,
+                        validate: v => v.trim() ? '' : 'Enter a name'}]}).then(r => { if (r) createNewScannerNamed(r.name.trim()); });
+  }
+  function createNewScannerNamed(name) {
     scannerConfig = {
       name: name,
       version: 1,
@@ -12475,12 +12799,14 @@ function addTouchHandlers(el, down, move, up) {
 
     // Starting the scanner requires config and wideband mode
     if (!scannerConfig || !scannerConfig.frequencies.some(f => f.enabled !== false)) {
-      alert('Please load or create a scanner configuration with at least one enabled frequency.');
+      uiAlert({title: 'No frequencies to scan', kind: 'warn',
+               text: 'Load or create a scanner configuration with at least one enabled frequency.'});
       return;
     }
 
     if (!widebandEnabled) {
-      alert('Wideband mode must be enabled to use the discrete scanner.');
+      uiAlert({title: 'Wideband mode needed', kind: 'warn',
+               text: 'The discrete scanner runs in Wideband mode only - pick Wideband as the Mode first.'});
       return;
     }
 
@@ -12490,7 +12816,7 @@ function addTouchHandlers(el, down, move, up) {
 
   function continueScanner() {
     if (!scannerRunning) {
-      alert('Scanner is not running');
+      uiAlert({title: 'Scanner not running', icon: 'radio', text: 'Next skips a locked signal while the scanner runs - start it first.'});
       return;
     }
     // Continue scanning (skip current locked signal and resume scanning)
@@ -12531,33 +12857,29 @@ function addTouchHandlers(el, down, move, up) {
     }
   }
 
+  // one form: frequency, bandwidth, label (empty = the frequency), each checked in place
   function addScannerFrequency() {
     if (!scannerConfig) {
-      alert('Please create or load a scanner configuration first.');
+      uiAlert({title: 'No scanner configuration', icon: 'radio', text: 'Create or load a scanner configuration first.'});
       return;
     }
-
-    const freq = prompt('Enter frequency in MHz (e.g., 100.5):', '100.0');
-    if (!freq) return;
-
+    const cfg = scannerConfig;
     // Same limits as a loaded scanner file (validateScannerConfig)
-    const freqMhz = Number(freq);
-    if (!Number.isFinite(freqMhz) || freqMhz < FREQ_MIN || freqMhz > FREQ_MAX) {
-      alert('Invalid frequency - must be ' + FREQ_MIN + ' to ' + FREQ_MAX + ' MHz');
-      return;
-    }
-
-    const bw = prompt('Enter bandwidth in kHz (e.g., 25):', '25');
-    if (!bw) return;
-
-    const bwKhz = Number(bw);
-    if (!Number.isFinite(bwKhz) || bwKhz < 0.1 || bwKhz > 2400) {
-      alert('Invalid bandwidth - must be 0.1 to 2400 kHz');
-      return;
-    }
-
-    const label = String(prompt('Enter label (optional):', freqMhz.toFixed(3) + ' MHz') || freqMhz.toFixed(3) + ' MHz').slice(0, 64);
-
+    const num = v => String(v).trim() === '' ? NaN : Number(v);
+    const mhz = v => { const x = num(v); return Number.isFinite(x) && x >= FREQ_MIN && x <= FREQ_MAX ? x : null; };
+    uiPrompt({title: 'Add frequency', icon: 'radio', ok: 'Add',
+              fields: [{name: 'freq', label: 'Frequency', unit: 'MHz', type: 'number', value: '100.0',
+                        validate: v => mhz(v) !== null ? '' : 'Invalid frequency - must be ' + FREQ_MIN + ' to ' + FREQ_MAX + ' MHz'},
+                       {name: 'bw', label: 'Bandwidth', unit: 'kHz', type: 'number', value: '25',
+                        validate: v => { const x = num(v); return Number.isFinite(x) && x >= 0.1 && x <= 2400 ? '' : 'Invalid bandwidth - must be 0.1 to 2400 kHz'; }},
+                       {name: 'label', label: 'Label', maxlength: 64,
+                        placeholder: v => mhz(v.freq) !== null ? mhz(v.freq).toFixed(3) + ' MHz' : 'Optional'}]}).then(r => {
+      if (!r || scannerConfig !== cfg) return;   // cancelled, or another configuration came meanwhile
+      const freqMhz = mhz(r.freq);
+      addScannerFrequencyNow(freqMhz, num(r.bw), (r.label.trim() || freqMhz.toFixed(3) + ' MHz').slice(0, 64));
+    });
+  }
+  function addScannerFrequencyNow(freqMhz, bwKhz, label) {
     scannerConfig.frequencies.push({
       freq_mhz: freqMhz,
       bandwidth_khz: bwKhz,
@@ -12578,16 +12900,20 @@ function addTouchHandlers(el, down, move, up) {
 
   function removeScannerFrequency(index) {
     if (!scannerConfig || !scannerConfig.frequencies[index]) return;
-
-    if (confirm('Remove frequency ' + scannerConfig.frequencies[index].label + '?')) {
-      scannerConfig.frequencies.splice(index, 1);
+    const cfg = scannerConfig, f = cfg.frequencies[index];
+    uiConfirm({title: 'Remove frequency', icon: 'radio', ok: 'Remove', danger: true,
+               text: ['Remove ', {b: f.label || f.freq_mhz.toFixed(3) + ' MHz'}, ' (' + f.freq_mhz.toFixed(3) + ' MHz) from the scanner list?']}).then(yes => {
+      // the entry itself, wherever it is now (the list may have changed meanwhile)
+      const i = yes && scannerConfig === cfg ? cfg.frequencies.indexOf(f) : -1;
+      if (i < 0) return;
+      scannerConfig.frequencies.splice(i, 1);
       updateFrequencyList();
 
       // Update server if scanner is loaded
       if (scannerRunning || scannerConfig) {
         send('SCANNER_LOAD_CONFIG:' + JSON.stringify(scannerConfig));
       }
-    }
+    });
   }
 
   function toggleScannerFrequency(index) {
@@ -12747,8 +13073,14 @@ function addTouchHandlers(el, down, move, up) {
            ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="geoSetRadius(this.value)"> km of the station` +
            ` <span class="v">${digEsc(s)}</span>` +
            (n ? ` <span class="v">· addresses ${OSM_ATTR}</span>` : '') +
-           (n ? ` <button class="btn sm" type="button" onclick="if(confirm('Remove every incident?'))send('INCIDENTS_CLEAR')">Clear</button>` : '') +
+           (n ? ` <button class="btn sm" type="button" onclick="incClearAsk()">Clear</button>` : '') +
            `</span></div>`;
+  }
+  // Clear: every incident (of every decoder), after the page's question
+  function incClearAsk() {
+    const n = ((incData && incData.rows) || []).length;
+    uiConfirm({title: 'Clear incidents', icon: 'pin', ok: 'Clear', danger: true,
+               text: 'Remove every incident' + (n ? ' (' + n + ')' : '') + '?'}).then(yes => { if (yes) send('INCIDENTS_CLEAR'); });
   }
   function geoSetRadius(v) {
     const km = Math.round(parseFloat(v));
@@ -13816,8 +14148,21 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function aiDeleteSession(id, ev) {
     if (ev) ev.stopPropagation();
     const s = aiSessions.find(x => x.id === id);
-    if (!confirm('Delete the conversation "' + ((s && s.title) || id) + '" and its files?')) return;
-    send('AI_SESSION_DELETE:' + id);
+    uiConfirm({title: 'Delete conversation', icon: 'bot', ok: 'Delete', danger: true,
+               text: ['Delete ', {b: '"' + ((s && s.title) || id) + '"'}, ' and its files?']}).then(yes => {
+      // (gone meanwhile - deleted from another page: nothing to do)
+      if (yes && (!s || aiSessions.some(x => x.id === id))) send('AI_SESSION_DELETE:' + id);
+    });
+  }
+  // the identification card's Forget (aiMarkCardHtml): the mark shown when it was pressed
+  function aiMarkForget() {
+    const m = aiMarks.find(x => x.id === aiMarkShown);
+    if (!m) return;
+    const id = m.id;
+    uiConfirm({title: 'Forget identification', icon: 'pin', ok: 'Forget', danger: true,
+               text: ['Forget ', {b: m.name}, ' at ' + (m.hz / 1e6).toFixed(5) + ' MHz?']}).then(yes => {
+      if (yes && aiMarks.some(x => x.id === id)) send('AI_MARK_DELETE:' + id);
+    });
   }
 
   // --- rendering ---
@@ -13952,7 +14297,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
            `<div style="display:flex;gap:4px;margin-top:4px">` +
            (m.conv ? `<button type="button" class="btn sm" onclick="aiPickSession('${digEsc(m.conv)}')">Open its conversation</button>` : '') +
            `<button type="button" class="btn sm" onclick="aiSend('Tell me more about ${digEsc(m.name).replace(/'/g, '')} at ${(m.hz / 1e6).toFixed(5)} MHz.')">Ask about it</button>` +
-           `<button type="button" class="btn sm" onclick="if(confirm('Forget this identification?'))send('AI_MARK_DELETE:${digEsc(m.id)}')">Forget</button></div></div>`;
+           `<button type="button" class="btn sm" onclick="aiMarkForget()">Forget</button></div></div>`;
   }
   function aiRenderHistory() {
     const el = $id('ai-dk-hist');
@@ -14755,12 +15100,18 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   };
   const ACAL_VF = 0.66;   // the delays shown as coax length with this velocity factor
   function acalCollect() { send('ARRAY_CAL_COLLECT:' + (acal && acal.collecting ? 0 : 1)); }
-  function acalReset() { if (!acal || !acal.samples || confirm('Forget the aircraft packets collected so far?')) send('ARRAY_CAL_RESET'); }
+  function acalReset() {
+    if (!acal || !acal.samples) { send('ARRAY_CAL_RESET'); return; }
+    const n = acal.samples;
+    uiConfirm({title: 'Reset array calibration', icon: 'plane', ok: 'Reset', danger: true,
+               text: 'Forget the ' + n + ' aircraft packet' + (n === 1 ? '' : 's') + ' collected so far?'}).then(yes => { if (yes) send('ARRAY_CAL_RESET'); });
+  }
   function acalApply() { send('ARRAY_CAL_APPLY'); }
   function acalUse(on) { send('ARRAY_CAL_USE:' + (on ? 1 : 0)); }
   function acalRot(on) { send('ARRAY_CAL_ROTATION:' + (on ? 1 : 0)); }
   function acalRemove() {
-    if (confirm('Remove the array calibration? MUSIC and beamforming go back to the nominal array.')) send('ARRAY_CAL_REMOVE');
+    uiConfirm({title: 'Remove array calibration', icon: 'plane', ok: 'Remove', danger: true,
+               text: 'Remove the array calibration? MUSIC and beamforming go back to the nominal array.'}).then(yes => { if (yes) send('ARRAY_CAL_REMOVE'); });
   }
   function acalSigned(v, d) { return (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(d); }
   // bearing error median / 90 % (/ share more than 10° off)
@@ -15083,7 +15434,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     if (m.lobe && v2tLobeWant.has(m.lobe.id)) {
       v2tLobeWant.delete(m.lobe.id);
-      if (m.lobe.error) alert('No lobe: ' + m.lobe.error);
+      if (m.lobe.error) uiAlert({title: 'No lobe', kind: 'error', quiet: true, text: String(m.lobe.error)});   // (the receiver's answer: waits while typing)
       else v2tLobeAdd(m.lobe);
     }
     if (m.new) {
@@ -15467,7 +15818,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       v2tAudio = {src: '', paused: false, pause() { this.paused = true; try { src.stop(); } catch (e) {} try { ctx.close(); } catch (e) {} }};
     } catch (e) {
       if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); }
-      alert('Cannot play the audio: ' + (e && e.message ? e.message : e));
+      uiAlert({title: 'Cannot play the audio', kind: 'error', text: String(e && e.message ? e.message : e)});
     }
   }
 
@@ -15557,7 +15908,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
 
   // the transcripts shown (search / VFO filter), oldest first, as CSV
   function v2tExport() {
-    if (!v2tShown.length) { alert('No transcripts to export.'); return; }
+    if (!v2tShown.length) { uiAlert({title: 'Nothing to export', icon: 'speech', text: 'No transcripts to export (none shown).'}); return; }
     // a cell starting with = + - @ would be a formula in a spreadsheet: radio speech isn't
     const cell = v => {
       let s = v === undefined || v === null ? '' : String(v);
@@ -15582,8 +15933,11 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
 
   function v2tClear() {
     if (!v2tList.length) return;
-    if (!confirm(`Delete all ${v2tList.length} transcripts and their audio on the receiver? (The decoder log files keep theirs.)`)) return;
-    send('VOICE2TEXT_CLEAR');
+    const n = v2tList.length;
+    uiConfirm({title: 'Delete transcripts', icon: 'speech', ok: 'Delete', danger: true,
+               text: `Delete all ${n} transcript${n === 1 ? '' : 's'} and their audio on the receiver? The decoder log files keep theirs.`}).then(yes => {
+      if (yes) send('VOICE2TEXT_CLEAR');
+    });
   }
 
   function escapeHtml(s) {
@@ -15698,8 +16052,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     recSelected = (recFiles[i] && recFiles[i].name) || null;
     renderRecordings({files: recFiles});
   }
+  function recNoneSelected() { uiAlert({title: 'No recording selected', icon: 'doc', text: 'Select a recording first.'}); }
   async function downloadSelected() {
-    if (!recSelected) { alert('Select a recording first.'); return; }
+    if (!recSelected) { recNoneSelected(); return; }
     const name = recSelected;
     // Fetch in the page context (which already trusts the self-signed cert, the
     // same way the WebSocket does) and save from a blob: URL. A plain
@@ -15713,7 +16068,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       const token = storedToken();
       const resp = await fetch('recordings/' + encodeURIComponent(name),
                                { cache: 'no-store', headers: token ? { 'X-Kraken-Token': token } : {} });
-      if (!resp.ok) { alert('Download failed (HTTP ' + resp.status + ')'); return; }
+      if (!resp.ok) { uiAlert({title: 'Download failed', kind: 'error', text: [{b: name}, ': HTTP ' + resp.status]}); return; }
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -15721,7 +16076,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch (e) {
-      alert('Download error: ' + (e && e.message ? e.message : e));
+      uiAlert({title: 'Download failed', kind: 'error', text: [{b: name}, ': ' + (e && e.message ? e.message : e)]});
     } finally {
       if (btn) { btn.disabled = false; btn.innerHTML = label; }
     }
@@ -15730,26 +16085,30 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // like the download - a running SQLite recording reaches the file at its
   // next checkpoint, every 30 s)
   async function replaySelected() {
-    if (!recSelected) { alert('Select a recording first.'); return; }
+    if (!recSelected) { recNoneSelected(); return; }
     const name = recSelected, btn = $id('rec-replay-btn'), label = btn ? btn.innerHTML : null;
     if (btn) { btn.disabled = true; btn.innerHTML = '&#8987; Loading…'; }
     try {
       const token = storedToken();
       const resp = await fetch('recordings/' + encodeURIComponent(name),
                                { cache: 'no-store', headers: token ? { 'X-Kraken-Token': token } : {} });
-      if (!resp.ok) { alert('Could not load it (HTTP ' + resp.status + ')'); return; }
+      if (!resp.ok) { uiAlert({title: 'Could not load the recording', kind: 'error', text: [{b: name}, ': HTTP ' + resp.status]}); return; }
       lrLoadBuffer(name, await resp.arrayBuffer(), null);
     } catch (e) {
-      alert('Could not load it: ' + (e && e.message ? e.message : e));
+      uiAlert({title: 'Could not load the recording', kind: 'error', text: [{b: name}, ': ' + (e && e.message ? e.message : e)]});
     } finally {
       if (btn) { btn.disabled = false; btn.innerHTML = label; }
     }
   }
   function deleteSelected() {
-    if (!recSelected) { alert('Select a recording first.'); return; }
-    if (!confirm('Delete "' + recSelected + '"? This cannot be undone.')) return;
-    send('LOG_DELETE:' + recSelected);
-    recSelected = null;
+    if (!recSelected) { recNoneSelected(); return; }
+    const name = recSelected;
+    uiConfirm({title: 'Delete recording', icon: 'doc', ok: 'Delete', danger: true,
+               text: ['Delete ', {b: '"' + name + '"'}, '? This cannot be undone.']}).then(yes => {
+      if (!yes || !recFiles.some(f => f.name === name)) return;   // (gone meanwhile)
+      send('LOG_DELETE:' + name);
+      if (recSelected === name) recSelected = null;
+    });
   }
 
   // Latest GPS fix from system_status.gps (for the "📍 From GPS" button).
@@ -17227,10 +17586,17 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!at || !mkOnline()) return;
     const sel = $id('location-source');
     if (sel && sel.value !== 'static') {
-      if (!confirm(`The station's position comes from ${sel.value === 'gps' ? 'the GPS' : 'the mobile app'} now. Use a fixed location here instead?`)) return;
-      sel.value = 'static';
-      setLocationSource('static');
+      uiConfirm({title: 'Use a fixed location', icon: 'antenna', ok: 'Use fixed location',
+                 text: `The station's position comes from ${sel.value === 'gps' ? 'the GPS' : 'the mobile app'} now. Use a fixed location here instead?`}).then(yes => {
+        if (!yes || !mkOnline()) return;
+        if (sel.value !== 'static') { sel.value = 'static'; setLocationSource('static'); }
+        mapSetStationNow(at);
+      });
+      return;
     }
+    mapSetStationNow(at);
+  }
+  function mapSetStationNow(at) {
     stLocalSet(at.la, at.lo, mapStationHdg());
     stSend();
     mapSelectObj(null);
@@ -18174,17 +18540,24 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (km >= 1 && km <= 50) send('RDF_RANGE_KM:' + km);
     else rdfRenderPanel();
   }
+  // Reset (the DF panel's, drive mode's): what is shown when it is pressed - a radio, a VFO or
+  // all - is what the question names and what goes when the answer is yes, whatever is selected
+  // by then
   function rdfReset() {
     const tsel = rdfTidSel();
+    let what, cmd;
     if (tsel !== '' && tsel !== '*') {
       const t = rdfSelTalkers()[0];
-      if (!t || !confirm(`Forget the bearings collected for ${rdfKind(t)} ${rdfTalkerName(t)}?`)) return;
-      send('RDF_RESET:' + t.vfo + ':' + t.tid);
-      return;
+      if (!t) return;
+      what = [rdfKind(t) + ' ', {b: rdfTalkerName(t)}];
+      cmd = 'RDF_RESET:' + t.vfo + ':' + t.tid;
+    } else {
+      const ids = rdfSelIds(), all = ids.length !== 1;
+      what = all ? ['every VFO and radio'] : [{b: 'D' + ids[0]}, ' and its radios'];
+      cmd = 'RDF_RESET:' + (all ? -1 : ids[0]);
     }
-    const ids = rdfSelIds(), all = ids.length !== 1;
-    if (!confirm(all ? 'Forget the bearings collected for every VFO and radio?' : `Forget the bearings collected for D${ids[0]} and its radios?`)) return;
-    send('RDF_RESET:' + (all ? -1 : ids[0]));
+    uiConfirm({title: 'Reset bearings', icon: 'reset', ok: 'Reset', danger: true,
+               text: ['Forget the bearings collected for ', ...what, '?']}).then(yes => { if (yes) send(cmd); });
   }
   function rdfCentreEst() {
     const hk = rdfHeatKey();
@@ -18554,7 +18927,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // a new marker (name "Marker N" unless given), opened for editing once the
   // backend's list has it (sfOnMessage)
   function mkCreate(lat, lon, name, notes) {
-    if (!mkOnline() || !mkLeaveEdit()) return;
+    if (!mkOnline()) return;
+    uiThen(mkLeaveEdit(), () => { if (mkOnline()) mkCreateNow(lat, lon, name, notes); });
+  }
+  function mkCreateNow(lat, lon, name, notes) {
     if (!name) {
       let i = sfLocs.length + 1;
       while (sfLocs.some(m => m.name === 'Marker ' + i)) i++;
@@ -18566,11 +18942,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
   function mkSelect(id, edit) {
     if (!mkGet(id) || mkEdit === id) return;
-    if (!mkLeaveEdit()) return;
-    mkSel = id;
-    mkEdit = edit ? id : null;
-    mkRender();
-    mapDraw();
+    uiThen(mkLeaveEdit(), () => {
+      if (!mkGet(id)) return;   // (deleted while the question was open)
+      mkSel = id;
+      mkEdit = edit ? id : null;
+      mkRender();
+      mapDraw();
+    });
   }
   function mkClose() {
     mkSel = mkEdit = null;
@@ -18590,10 +18968,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const m = mkGet(id);
     if (!m || !mkOnline()) return;
     const n = sfFreqsAt(id).length;
-    if (!confirm(`Delete the marker "${m.name}"?` +
-                 (n ? `\n\nIts ${n} saved frequenc${n === 1 ? 'y stays' : 'ies stay'} in the list, without a location.` : ''))) return;
-    if (mkSel === id) mkClose();
-    send('SF_LOC_DEL:' + id);
+    uiConfirm({title: 'Delete marker', icon: 'pin', ok: 'Delete', danger: true,
+               text: ['Delete the marker ', {b: '"' + m.name + '"'}, '?' +
+                      (n ? ` Its ${n} saved frequenc${n === 1 ? 'y stays' : 'ies stay'} in the list, without a location.` : '')]}).then(yes => {
+      if (!yes || !mkGet(id) || !mkOnline()) return;   // (gone meanwhile, or the receiver)
+      if (mkSel === id) mkClose();
+      send('SF_LOC_DEL:' + id);
+    });
   }
 
   // --- drawing + hit test (pin: tip on the spot, round head 15 px above) ----
@@ -18709,11 +19090,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const v = id => ($id(id) || {}).value || '';
     return {name: v('mk-name'), lat: v('mk-lat'), lon: v('mk-lon'), notes: v('mk-notes')};
   }
-  // true = fine to drop the edit: nothing changed, or the user agreed
+  // true = fine to drop the edit (nothing changed), else a promise of the user's answer - callers
+  // go on through uiThen (at once when it is true)
   function mkLeaveEdit() {
     const el = $id('map-mk');
     if (!mkEdit || el.dataset.edit !== mkEdit || JSON.stringify(mkFormRaw()) === el.dataset.orig) return true;
-    return confirm('Discard the changes to this marker?');
+    return uiConfirm({title: 'Discard changes', icon: 'edit', ok: 'Discard', danger: true, cancel: 'Keep editing',
+                      text: ['Discard the changes to the marker ', {b: '"' + ((mkGet(mkEdit) || {}).name || '') + '"'}, '?']});
   }
   function mkSave() {
     const m = mkGet(mkEdit);
@@ -19269,9 +19652,11 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const c = sfCat(id);
     if (!c) return;
     const n = sfFreqs.filter(f => f.cat === id).length;
-    if (!confirm(`Delete the category "${c.name}"?` +
-                 (n ? `\n\nIts ${n} frequenc${n === 1 ? 'y stays' : 'ies stay'} in the list, uncategorised.` : ''))) return;
-    send('SF_CAT_DEL:' + id);
+    uiConfirm({title: 'Delete category', icon: 'star', ok: 'Delete', danger: true,
+               text: ['Delete the category ', {b: '"' + c.name + '"'}, '?' +
+                      (n ? ` Its ${n} frequenc${n === 1 ? 'y stays' : 'ies stay'} in the list, uncategorised.` : '')]}).then(yes => {
+      if (yes && sfCat(id)) send('SF_CAT_DEL:' + id);   // (not if gone meanwhile)
+    });
   }
 
   // --- the editor ------------------------------------------------------------------
@@ -19295,8 +19680,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const f = sfGet(id);
     if (f) sfDlgOpen(f, false);
   }
+  // another entry while one is open: after the editor's question (if it has changes)
   function sfDlgOpen(f, isNew, newLoc) {
-    if (sfDlg && !sfDlgLeave()) return;
+    if (sfDlg) { const d = sfDlg; uiThen(sfDlgLeave(), () => { if (sfDlg === d && (isNew || sfGet(f.id))) sfDlgOpenNow(isNew ? f : sfGet(f.id), isNew, newLoc); }); return; }
+    sfDlgOpenNow(f, isNew, newLoc);
+  }
+  function sfDlgOpenNow(f, isNew, newLoc) {
     if (sfPicking) sfPickEnd(null, true);
     sfDlg = {id: f.id, isNew, pending: null, snapped: null};
     $id('sf-dlg-title').innerHTML = icon('star') + '<span>' + (isNew ? 'Save frequency' : 'Edit saved frequency') + '</span>';
@@ -19397,12 +19786,20 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     sfDlg = null;
     $id('sf-dlg-bg').style.display = 'none';
   }
-  // true = fine to drop the editor: nothing changed, or the user agreed
+  // true = fine to drop the editor (nothing changed), else a promise of the user's answer -
+  // callers go on through uiThen (at once when it is true)
   function sfDlgLeave() {
     if (!sfDlg || sfDlg.pending || JSON.stringify(sfDlgRaw()) === sfDlg.orig) return true;
-    return confirm('Discard the changes to this saved frequency?');
+    const n = $id('sf-f-name').value.trim();
+    return uiConfirm({title: 'Discard changes', icon: 'edit', ok: 'Discard', danger: true, cancel: 'Keep editing',
+                      text: n ? ['Discard the changes to the saved frequency ', {b: '"' + n + '"'}, '?'] : 'Discard the changes to this saved frequency?'});
   }
-  function sfDlgCancel() { if (sfDlgLeave()) sfDlgClose(); }
+  // × / Cancel / the backdrop / Esc: closed - after the question when something was changed (the
+  // same editor still open then: not one opened or saved meanwhile)
+  function sfDlgCancel() {
+    const d = sfDlg;
+    uiThen(sfDlgLeave(), () => { if (sfDlg === d) sfDlgClose(); });
+  }
   function sfDlgFromVfo() {
     const v = sfVfoValues();
     if (!v) { sfDlgErr('No VFO - add one in the Decimators box'); return; }
@@ -19481,10 +19878,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
             gain: sfDlgGain() ?? null, dec: v('dec')});
   }
   function sfDlgDelete() {
-    const f = sfDlg && sfGet(sfDlg.id);
-    if (!f || !confirm(`Delete the saved frequency "${f.name}" (${mkFmtMhz(f.hz)} MHz)?`)) return;
-    send('SF_DEL:' + f.id);
-    sfDlgClose();
+    const d = sfDlg, f = d && sfGet(d.id);
+    if (!f) return;
+    uiConfirm({title: 'Delete saved frequency', icon: 'star', ok: 'Delete', danger: true,
+               text: ['Delete the saved frequency ', {b: '"' + f.name + '"'}, ` (${mkFmtMhz(f.hz)} MHz)?`]}).then(yes => {
+      if (!yes || sfDlg !== d || !sfGet(f.id)) return;   // (the editor or the entry gone meanwhile)
+      send('SF_DEL:' + f.id);
+      sfDlgClose();
+    });
   }
   // Enter in a field saves; Escape (anywhere - see below) cancels
   $id('sf-dlg').addEventListener('keydown', e => {
@@ -25637,7 +26038,11 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function aimShow(id) { aimUi.hide[id] ? delete aimUi.hide[id] : (aimUi.hide[id] = 1); aimSave(); aimRender(); mapDraw(); }
   function aimDelete(id) {
     const L = aimLayers.find(x => x.id === id);
-    if (L && confirm(`Remove the assistant's map layer "${L.name}" (${L.f.length} items) for every page?`)) send('AI_MAP_DELETE:' + id);
+    if (!L) return;
+    uiConfirm({title: 'Remove map layer', icon: 'layers', ok: 'Remove', danger: true,
+               text: ['Remove the assistant\'s map layer ', {b: '"' + L.name + '"'}, ` (${L.f.length} items) for every page?`]}).then(yes => {
+      if (yes && aimLayers.some(x => x.id === id)) send('AI_MAP_DELETE:' + id);   // (not if gone meanwhile)
+    });
   }
   // the panel under the viewshed's: one row per layer
   function aimRender() {
@@ -28459,7 +28864,8 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     }
 
     if (widebandEnabled) {
-      alert('Continuous scanner requires coherent mode. Please disable wideband mode first.');
+      uiAlert({title: 'Coherent mode needed', kind: 'warn',
+               text: 'The continuous scanner runs in Coherent mode only - leave Wideband mode first.'});
       return;
     }
 
@@ -28676,9 +29082,12 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
 // those defaults, then reloads the page so the whole UI reflects them.
 // ============================================================================
 function resetSettingsToDefault(){
-  if(!confirm('Reset all settings to their defaults? The page will reload.')) return;
-  send('RESET_SETTINGS');
-  setTimeout(() => location.reload(), 500);
+  uiConfirm({title: 'Reset settings', icon: 'reset', ok: 'Reset', danger: true,
+             text: 'Reset all settings to their defaults? The page will reload.'}).then(yes => {
+    if (!yes) return;
+    send('RESET_SETTINGS');
+    setTimeout(() => location.reload(), 500);
+  });
 }
 
 // Open the Heimdall server web UI (port 8070) on the same host as this page.
@@ -30133,8 +30542,10 @@ function recOpen(name) {
   send('PLAYBACK_OPEN:' + name + ':' + (v && v.checked ? 1 : 0) + ':1');
 }
 function recDelete(name) {
-  if (!confirm('Delete "' + name + '" from the receiver? This cannot be undone.')) return;
-  send('RECORDER_DELETE:' + name);
+  uiConfirm({title: 'Delete recording', icon: 'tape', ok: 'Delete', danger: true,
+             text: ['Delete ', {b: '"' + name + '"'}, ' from the receiver? This cannot be undone.']}).then(yes => {
+    if (yes && recItems.some(it => it.name === name)) send('RECORDER_DELETE:' + name);   // (not if gone meanwhile)
+  });
 }
 function recNote(html) { const el = $id('iqr-up'); if (el) el.innerHTML = html; }
 // a download streamed to a file where the browser can (File System Access:
@@ -30148,9 +30559,10 @@ async function recDownload(rel, filename, bytes) {
     try { handle = await window.showSaveFilePicker({suggestedName: filename}); }
     catch (e) { if (e && e.name === 'AbortError') return; handle = null; }
   }
-  if (!handle && bytes > 1.5e9 && !confirm('This browser can\'t stream a download into a file: ' + recFmtB(bytes) +
-      ' would first be held in its memory. Chrome / Edge stream it - or copy it from the receiver: ' +
-      ((recState && recState.disk && recState.disk.dir_abs) || '') + '/' + rel + '\n\nDownload anyway?')) return;
+  if (!handle && bytes > 1.5e9 && !await uiConfirm({title: 'Download into memory', icon: 'download', ok: 'Download',
+      text: ['This browser can\'t stream a download into a file: ' + recFmtB(bytes) +
+             ' would first be held in its memory. Chrome / Edge stream it - or copy it from the receiver:',
+             {code: ((recState && recState.disk && recState.disk.dir_abs) || '') + '/' + rel}]})) return;
   try {
     const resp = await fetch(url, {cache: 'no-store', headers});
     if (!resp.ok) { recNote('<span class="rec-bad">Download failed: HTTP ' + resp.status + ' ' + recEsc(await resp.text()) + '</span>'); return; }

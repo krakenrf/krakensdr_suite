@@ -163,8 +163,9 @@ search show for each kind of transmitter (`rdfIcon`, `SRCH_KIND_IC`).
 ## The array calculator
 
 `array_calculator.html` is its own page: it carries its own copy of the
-symbols it uses (`i-array` for its title) and the same `.ic` style. Keep the
-copy identical to the page's symbol.
+symbols it uses (`i-array` for its title; `i-doc` and `i-close` for its copy
+dialog, 2026-11-18) and the same `.ic` style. Keep the copy identical to the
+page's symbol.
 
 ## Rule
 

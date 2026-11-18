@@ -12,7 +12,8 @@
 
 Drive mode (docs/dev/drive-mode.md) has a light, high-contrast Day look for
 its HUD only: the same token names with light values (DAY), set on
-`body.drive.drive-day .drive-hud` - so every colour the HUD uses is still a
+`body.drive.drive-day .drive-hud` (and on the page's own dialogs, `.ui-dlg-bg`,
+which drive mode shows over the map) - so every colour the HUD uses is still a
 token, and its rules don't change between Night (the palette) and Day.
 
 The palette is designed in OKLCH because its three axes are what the eye
@@ -118,7 +119,8 @@ DAY = [
     ('bad', 0.480, 0.130, 25, 'day: problem'),
     ('bad-t', 0.420, 0.120, 25, 'day: problem: text'),
 ]
-DAY_SEL = 'body.drive.drive-day .drive-hud'
+# the HUD, and the page's own dialogs while drive mode shows them (uiConfirm: Reset's question)
+DAY_SEL = 'body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg'
 
 
 # ---- OKLCH -> sRGB (Björn Ottosson's OKLab), chroma reduced until inside sRGB ----
