@@ -291,7 +291,7 @@ the decoder's tab and, with "Plot on map", on the 🗺 Map. The plugin needs
 no map code (and must not use the network itself).
 
 **Decoder data log.** The user can log what every decoder reports to
-disk (sidebar → 🗂 Decoder Logging, one JSON Lines file per day): your
+disk (⚙ Setup Settings → Decoder Logging, one JSON Lines file per day): your
 events, text messages and map points are logged without any code in the
 plugin. Raw frames are the one thing to add: while `host.raw_wanted()` is
 true, pass each frame that passed its checks to `host.raw(text)` - one line,

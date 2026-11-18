@@ -1164,17 +1164,24 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .pw-box .pw-dry {display:inline-block;margin-top:10px;padding:2px 8px;border-radius:9px;background:var(--warn-d);color:var(--warn-t2);font-size:11px}
 .pw-box .btn {margin-top:14px;min-width:90px}
 .sf-toast {position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;max-width:90vw;box-sizing:border-box;background:rgba(17,21,27,.97);border:1px solid var(--ac-t);color:#fff;border-radius:4px;padding:7px 14px;font-size:12px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.6);transition:opacity .3s;opacity:0}
-/* ⚙ Setup Settings (the top bar's ⚙: map provider, decoders, Voice to Text, assistant, system) */
-/* a fixed size, so the tabs stay put; each pane scrolls by itself. The tabs
-   wrap onto a second line where they don't fit (a phone narrower than ~380 px) */
-.sf-dlg.set-dlg {width:540px;height:540px;display:flex;flex-direction:column;overflow:hidden;padding-bottom:0}
-.set-tabs {flex:none;display:flex;flex-wrap:wrap;gap:0 2px;margin:6px -14px 0;padding:0 14px;border-bottom:1px solid var(--l2)}
-.set-tabs button {background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:7px 11px;color:var(--t3);font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
-.set-tabs button:hover {color:var(--t0)}
-.set-tabs button.on {color:var(--ac-t);border-bottom-color:var(--ac)}
+/* ⚙ Setup Settings (the top bar's ⚙: map provider, decoders, decoder log, Voice to Text,
+   assistant, system). A fixed size, so the sections stay put; each pane scrolls by itself.
+   The sections are a list down the left side (2026-11-19: six did not fit a strip across,
+   and more will come); below 640 px of window they are the strip across the top again,
+   wrapping onto a second line where they don't fit */
+.sf-dlg.set-dlg {width:720px;height:560px;display:grid;grid-template-columns:154px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);overflow:hidden;padding-bottom:0}
+.set-dlg > .sf-dlg-h {grid-column:1 / -1;margin:0 -14px;padding:0 14px 10px;border-bottom:1px solid var(--l2)}
+.set-tabs {grid-column:1;grid-row:2;min-height:0;display:flex;flex-direction:column;gap:2px;margin:0 0 0 -14px;padding:8px 0;overflow:hidden auto;background:var(--s2);border-right:1px solid var(--l1)}
+.set-tabs button {flex:none;display:flex;align-items:center;height:34px;padding:0 10px 0 12px;background:none;border:0;border-left:2px solid transparent;color:var(--t3);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
+.set-tabs button > span:not(.n) {min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-tabs button:hover {color:var(--t0);background:var(--s3)}
+.set-tabs button.on {color:var(--ac-t);border-left-color:var(--ac);background:var(--s4)}
 .set-tabs button:focus-visible {outline:2px solid var(--ac);outline-offset:-2px}
-.set-tabs .n {color:var(--warn-t);margin-left:5px;font-size:11.5px}
-.set-pane {display:none;flex:1;min-height:0;overflow-y:auto;margin:0 -14px;padding:6px 14px 12px}
+.set-tabs .n {flex:none;display:inline-flex;align-items:center;margin-left:auto;padding-left:6px;color:var(--warn-t);font-size:11.5px}
+.set-tabs .n:empty {display:none}
+.set-tabs .n .ic {font-size:14px}
+.set-tabs .n .ic + span {margin-left:3px}
+.set-pane {grid-column:2;grid-row:2;display:none;min-height:0;overflow-y:auto;margin:0 -14px 0 0;padding:12px 14px 12px 18px}
 .set-pane.on {display:block}
 .set-pane[data-t="map"].on {display:flex;flex-direction:column}
 .set-pane[data-t="map"] > * {flex:none}
@@ -1196,12 +1203,55 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .set-dlg label.ck {display:flex;gap:5px;align-items:center;font-size:12px;margin-top:4px}
 /* a tick, not a text box: .sf-dlg input sizes every input of the dialog */
 .set-dlg label.ck input[type="checkbox"] {height:auto;margin:0;padding:0;border:0;background:none;box-shadow:none}
-@media (max-width:560px) {
-  .set-tabs {gap:0}
-  .set-tabs button {padding:7px 6px}
+/* the Decoder Logging section (dlOnStatus): the master switch and the state in a card, the
+   status below it; the ticks in two columns */
+.set-dlg .dl-card .h {flex-wrap:wrap;row-gap:4px}
+.set-dlg .dl-card .h label {color:var(--t0);font-weight:bold;cursor:pointer}
+.set-dlg .dl-card .h .u {display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.set-dlg .dl-card .h input.sw {flex:none;margin:0 0 0 2px}
+.set-dlg .dl-card.off .i {color:var(--t6)}
+.set-dlg .dl-card.bad {border-color:var(--bad-m)}
+.set-dlg .dl-card.bad .i {color:var(--bad-t)}
+.set-dlg .dl-card .wn {display:flex;align-items:flex-start;overflow-wrap:anywhere}
+.set-dlg .dl-card .wn > .ic {margin-top:1px}
+.set-dlg .dl-card .wn.bad {color:var(--bad-t)}
+.set-dlg .dl-card .wn:first-child {margin-top:6px}
+.set-dlg .dl-status {margin:6px 0 0 18px}
+.set-dlg .dl-status .kv.dim > span:last-child {color:var(--t6)}
+.set-dlg .dl-bar {height:6px;background:var(--s2);border:1px solid var(--l1);border-radius:3px;overflow:hidden;margin:1px 0 4px}
+.set-dlg .dl-bar > div {height:100%;width:0;background:var(--ac)}
+.set-dlg .dl-note {margin:2px 0 0 18px}
+.set-dlg .dl-note:empty {display:none}
+.set-dlg .dl-types {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px}
+.set-dlg .dl-types label.ck {margin:0;min-height:28px;color:var(--t1);cursor:pointer}
+.set-dlg .dl-types label.ck > .u {color:var(--t5);font-size:11.5px}
+.set-dlg .dl-types label.ck > input[type="checkbox"] {flex:none}
+.set-dlg .dl-types input[type="number"] {width:58px;flex:none}
+.set-dlg .row > .dl-days {flex:none;width:80px}
+.set-dlg .row > .u {color:var(--t3);font-size:12px}
+.set-dlg #dl-drive {margin-bottom:5px}
+.dig-log-warn .btn {flex:none;white-space:nowrap}
+/* phones: the sections across the top as the strip, wrapping */
+@media (max-width:639px) {
+  .sf-dlg.set-dlg {display:flex;flex-direction:column}
+  .set-dlg > .sf-dlg-h {margin:0 0 4px;padding:0;border-bottom:0}
+  .set-tabs {flex:none;flex-direction:row;flex-wrap:wrap;gap:0;margin:6px -14px 0;padding:0 14px;overflow:visible;background:none;border-right:0;border-bottom:1px solid var(--l2)}
+  .set-tabs button {height:auto;padding:7px 6px;border-left:0;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .set-tabs button:hover,.set-tabs button.on {background:none}
+  .set-tabs button.on {border-bottom-color:var(--ac)}
+  .set-tabs .n {margin-left:5px;padding-left:0}
+  .set-pane {flex:1;margin:0 -14px;padding:6px 14px 12px}
 }
 @media (max-width:420px) {
   .set-tabs button {padding:7px 5px}
+  .set-dlg .dl-types {grid-template-columns:minmax(0,1fr)}
+}
+/* touch: finger-sized sections, ticks and fields */
+@media (pointer:coarse) {
+  .set-tabs button {min-height:40px}
+  .set-dlg .dl-types label.ck {min-height:40px}
+  .set-pane[data-t="declog"] input:not([type="checkbox"]),.set-pane[data-t="declog"] select,.set-pane[data-t="declog"] .btn {height:40px}
+  .set-dlg .dl-types input[type="checkbox"] {width:18px;height:18px}
 }
 /* the Voice to Text tab (v2tRenderBox): rows of the dialog, switches with
    their name on the left, status lines name | value */
@@ -2934,56 +2984,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       </div>
     </div>
 
-    <!-- Digital voice/data decoder (one per VFO) -->
-    <!-- Decoder Logging (decoder_log.cpp) - all modes -->
-    <div class="sb-section" data-sb="decoder-logging" id="declog-section">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-log"/></svg><span>Decoder Logging</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span></h3>
-        <span class="sb-toggle"></span>
-      </div>
-      <div class="sb-content">
-        <div class="ctrl-row">
-          <label for="dl-enable">Log to disk</label>
-          <input type="checkbox" class="sw" id="dl-enable" onchange="dlSetEnabled(this.checked)">
-        </div>
-        <div class="sb-sub">What to log</div>
-        <div id="dl-types" style="font-size:12px;color:#cdd5df;line-height:1.9">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Each decoder's event log lines (calls, talkgroups, new aircraft, ...)"><input type="checkbox" data-t="event" onchange="dlSetTypes()"> Events</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Text messages, e.g. POCSAG / FLEX alphanumeric pages (sender + text)"><input type="checkbox" data-t="message" onchange="dlSetTypes()"> Text messages</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Positions the decoders put on the map (aircraft, APRS stations, DMR / D-STAR GPS) - each object at most this often"><input type="checkbox" data-t="position" onchange="dlSetTypes()"> Positions, every
-            <input type="number" id="dl-pos-s" min="1" max="3600" value="10" style="width:52px" onclick="event.stopPropagation()" onchange="dlSetPosS()"> s</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Raw frames: ADS-B Mode S messages (hex + level), APRS packets (TNC2), POCSAG / FLEX codewords"><input type="checkbox" data-t="raw" onchange="dlSetTypes()"> Raw frames <span style="color:#9aa6b4">(large)</span></label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Addresses found in pager messages (incident map)"><input type="checkbox" data-t="incident" onchange="dlSetTypes()"> Incidents</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="What was said on the VFOs with Transcribe ticked (Voice to Text): the text, talker, bearing"><input type="checkbox" data-t="voice" onchange="dlSetTypes()"> Voice transcripts</label>
-        </div>
-        <div class="ctrl-row" style="margin-top:6px">
-          <label title="Days of log files kept; 0 = forever">Keep</label>
-          <input type="number" id="dl-days" min="0" max="3650" value="7" title="0 = keep forever" onchange="dlSetDays()">
-          <span class="u">days</span>
-        </div>
-        <div class="sb-sub">Save to</div>
-        <div class="ctrl-row">
-          <select id="dl-drive" style="flex:1;min-width:0;max-width:none" onchange="dlPickDrive(this.value)" title="Drives on this device (free space)"></select>
-        </div>
-        <div class="ctrl-row" style="gap:6px">
-          <input type="text" id="dl-dir" style="flex:1;min-width:0" placeholder="decoder_logs" title="Folder on this device; a relative path is inside kraken_doa's folder. Created if missing." onkeydown="if(event.key==='Enter')dlApplyDir()">
-          <button class="btn sm" onclick="dlApplyDir()" title="Use this folder">Apply</button>
-        </div>
-        <div id="dl-dir-err" style="display:none;font-size:11px;color:#fb8d85;margin-top:2px"></div>
-        <div id="dl-status" style="margin-top:6px">
-          <div class="kv"><span>Status</span><span id="dl-state">&mdash;</span></div>
-          <div class="kv"><span>Folder</span><span id="dl-path">&mdash;</span></div>
-          <div class="kv"><span>Disk free</span><span id="dl-free">&mdash;</span></div>
-          <div title="Disk used" style="height:6px;background:#171c23;border:1px solid #333b46;border-radius:3px;overflow:hidden;margin:2px 0 4px"><div id="dl-free-bar" style="height:100%;width:0;background:#3c7ab8"></div></div>
-          <div class="kv"><span>Today</span><span id="dl-today">&mdash;</span></div>
-          <div class="kv"><span>Per day</span><span id="dl-perday">&mdash;</span></div>
-          <div class="kv"><span>All logs</span><span id="dl-all">&mdash;</span></div>
-          <div class="kv"><span>Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
-        </div>
-        <div id="dl-note" class="sb-note" style="margin-top:4px"></div>
-      </div>
-    </div>
-
+    <!-- (Decoder Logging, data-sb "decoder-logging", stood here until 2026-11-19: it is a
+         section of Setup Settings now - the key is retired, never reuse it) -->
     <!-- 🧪 Experimental: features still being developed (coherent mode for now - its only one is) -->
     <div class="sb-section coh-only collapsed" data-sb="experimental" id="exp-section">
       <div class="sb-header" onclick="toggleSection(this)">
@@ -3192,7 +3194,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       <!-- ? help mode (helpModeToggle): the next tap / click on a control shows its tooltip instead of working it -->
       <button type="button" class="tb-help hm-btn" id="help-btn" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does (Esc leaves it). On a touch screen, pressing and holding a button shows its help too."><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button>
       <!-- ⚙ Setup Settings (#set-dlg): as tall as the chips' and the telemetry's lines together; the phone layout puts it on the chips' line -->
-      <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Setup Settings: the map provider and its key, the decoders, Voice to Text, the AI assistant, restart and shut down" aria-label="Setup Settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></button>
+      <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Setup Settings: the map provider and its key, the decoders, Decoder Logging, Voice to Text, the AI assistant, restart and shut down" aria-label="Setup Settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></button>
       </div>
     </div>
 
@@ -3517,14 +3519,16 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
 </div>
 
 <!-- ⚙ Setup Settings (see ⚙ SETUP SETTINGS): everything about setting the
-     software up, one tab each - the map provider, the digital decoders (voice
-     codecs, plugins), Voice to Text and the AI assistant -->
+     software up, one section each, listed down the left - the map provider, the
+     digital decoders (voice codecs, plugins), Decoder Logging, Voice to Text, the
+     AI assistant and System -->
 <div class="sf-dlg-bg" id="set-dlg-bg" style="display:none" onpointerdown="if(event.target===this)setDlgClose()">
   <div class="sf-dlg set-dlg" id="set-dlg" role="dialog" aria-modal="true" aria-labelledby="set-dlg-title">
     <div class="sf-dlg-h"><span id="set-dlg-title"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg><span>Setup Settings</span></span><button type="button" class="hm-btn" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button><span class="x" onclick="setDlgClose()" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
-    <div class="set-tabs" role="tablist">
+    <div class="set-tabs" role="tablist" aria-orientation="vertical" aria-label="Sections" onkeydown="setDlgTabKey(event)">
       <button type="button" role="tab" data-t="map" onclick="setDlgTab('map')"><svg class="ic" aria-hidden="true"><use href="#i-map"/></svg><span>Map</span></button>
       <button type="button" role="tab" data-t="dec" onclick="setDlgTab('dec')"><svg class="ic" aria-hidden="true"><use href="#i-decoder"/></svg><span>Decoders</span><span class="n" id="set-tab-dec-n"></span></button>
+      <button type="button" role="tab" data-t="declog" onclick="setDlgTab('declog')"><svg class="ic" aria-hidden="true"><use href="#i-log"/></svg><span>Decoder Logging</span><span class="n" id="set-tab-declog-n"></span></button>
       <button type="button" role="tab" data-t="v2t" onclick="setDlgTab('v2t')"><svg class="ic" aria-hidden="true"><use href="#i-speech"/></svg><span>Voice to Text</span><span class="n" id="set-tab-v2t-n"></span></button>
       <button type="button" role="tab" data-t="ai" onclick="setDlgTab('ai')"><svg class="ic" aria-hidden="true"><use href="#i-bot"/></svg><span>Assistant</span></button>
       <button type="button" role="tab" data-t="sys" onclick="setDlgTab('sys')"><svg class="ic" aria-hidden="true"><use href="#i-power"/></svg><span>System</span></button>
@@ -3567,12 +3571,53 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         <button class="btn sm" type="button" onclick="send('PLUGINS_RESCAN')" title="Re-read the plugins folder (after copying a plugin in and running make)"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg><span>Rescan</span></button></div>
       <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
     </div>
+    <!-- 🗂 Decoder Logging (decoder_log.cpp; dlOnStatus): the master switch with its state,
+         the problems and the status; what to log; how long and where. Each control sends its
+         command at once. A sidebar box (data-sb "decoder-logging") until 2026-11-19 -->
+    <div class="set-pane" data-t="declog" role="tabpanel">
+      <div class="dig-codec dl-card off" id="dl-card">
+        <div class="h"><span class="i" id="dl-card-i">&#9679;</span><label for="dl-enable" title="Write what the decoders report (the types ticked under What to log) to files on this device's disk">Allow logging to disk</label><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span><span class="u" id="dl-state">&mdash;</span><input type="checkbox" class="sw" id="dl-enable" aria-label="Allow logging to disk" title="Write what the decoders report (the types ticked under What to log) to files on this device's disk" onchange="dlSetEnabled(this.checked)"></div>
+        <div id="dl-warn"></div>
+        <div id="dl-status" class="dl-status">
+          <div class="kv"><span>Folder</span><span id="dl-path">&mdash;</span></div>
+          <div class="kv"><span>Disk free</span><span id="dl-free">&mdash;</span></div>
+          <div class="dl-bar" title="Disk used"><div id="dl-free-bar"></div></div>
+          <div class="kv"><span>Today</span><span id="dl-today">&mdash;</span></div>
+          <div class="kv" id="dl-perday-row"><span>Per day</span><span id="dl-perday">&mdash;</span></div>
+          <div class="kv"><span>All logs</span><span id="dl-all">&mdash;</span></div>
+          <div class="kv" id="dl-lasts-row"><span title="How long the disk's free space lasts at this rate (finished days gzipped, about 6x smaller)">Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
+        </div>
+        <div id="dl-note" class="info dl-note"></div>
+      </div>
+      <div class="sec"><span>What to log</span></div>
+      <div id="dl-types" class="dl-types">
+        <label class="ck" title="Each decoder's event log lines (calls, talkgroups, new aircraft, ...)"><input type="checkbox" data-t="event" onchange="dlSetTypes()"><span>Events</span></label>
+        <label class="ck" title="Text messages, e.g. POCSAG / FLEX alphanumeric pages (sender + text)"><input type="checkbox" data-t="message" onchange="dlSetTypes()"><span>Text messages</span></label>
+        <label class="ck" title="Positions the decoders put on the map (aircraft, APRS stations, DMR / D-STAR GPS) - each object at most this often"><input type="checkbox" data-t="position" onchange="dlSetTypes()"><span>Positions, every</span><input type="number" id="dl-pos-s" min="1" max="3600" value="10" onclick="event.stopPropagation()" onchange="dlSetPosS()"><span>s</span></label>
+        <label class="ck" title="Raw frames: ADS-B Mode S messages (hex + level), APRS packets (TNC2), POCSAG / FLEX codewords"><input type="checkbox" data-t="raw" onchange="dlSetTypes()"><span>Raw frames</span><span class="u">(large)</span></label>
+        <label class="ck" title="Addresses found in pager messages (incident map)"><input type="checkbox" data-t="incident" onchange="dlSetTypes()"><span>Incidents</span></label>
+        <label class="ck" title="What was said on the VFOs with Transcribe ticked (Voice to Text): the text, talker, bearing"><input type="checkbox" data-t="voice" onchange="dlSetTypes()"><span>Voice transcripts</span></label>
+      </div>
+      <div class="sec"><span>Files</span></div>
+      <div class="lbl" title="Days of log files kept; 0 = forever">Keep</div>
+      <div class="row">
+        <input type="number" id="dl-days" class="dl-days" min="0" max="3650" value="7" title="0 = keep forever" onchange="dlSetDays()">
+        <span class="u">days</span>
+      </div>
+      <div class="lbl">Save to</div>
+      <select id="dl-drive" onchange="dlPickDrive(this.value)" title="Drives on this device (free space)"></select>
+      <div class="row">
+        <input type="text" id="dl-dir" placeholder="decoder_logs" title="Folder on this device; a relative path is inside kraken_doa's folder. Created if missing." onkeydown="if(event.key==='Enter')dlApplyDir()">
+        <button class="btn sm" type="button" onclick="dlApplyDir()" title="Use this folder">Apply</button>
+      </div>
+      <div id="dl-dir-err" class="info" style="display:none;color:#fb8d85"></div>
+    </div>
     <!-- 🗣 Voice to Text (voice2text.cpp, transcribe/; v2tRenderBox): set up or
          not and what to run, then its settings - each sends its command at once -
          and its state. It was a sidebar box (data-sb "voice-to-text") until 2026-11-17 -->
     <div class="set-pane" data-t="v2t" role="tabpanel">
       <div class="dig-codec" id="v2t-card">
-        <div class="h"><span class="i" id="v2t-card-i">…</span><b>Voice to Text</b><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>Transcribe</b> box is ticked (on the VFO cards in the <b>Decimators</b> box) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>Transcription</b> panel under the waterfall (its button is on the right-hand rail) - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the <b>Decoder Logging</b> files when that is on (type "Voice transcripts").</span></span><span class="u" id="v2t-card-u">Checking…</span></div>
+        <div class="h"><span class="i" id="v2t-card-i">…</span><b>Voice to Text</b><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>Transcribe</b> box is ticked (on the VFO cards in the <b>Decimators</b> box) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>Transcription</b> panel under the waterfall (its button is on the right-hand rail) - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the decoder log files while <b>Allow logging to disk</b> is on (the <b>Decoder Logging</b> section, type "Voice transcripts").</span></span><span class="u" id="v2t-card-u">Checking…</span></div>
         <div id="v2t-install"></div>
       </div>
       <div class="sec"><span>Speech model</span></div>
@@ -3609,7 +3654,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       </div>
       <div class="sec"><span>Audio</span></div>
       <label class="swr" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><span>Skip non-speech</span><input type="checkbox" class="sw" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"></label>
-      <label class="swr" title="Keep each transcript's audio to play it back in the Transcription panel: Opus files (~7 MB an hour of speech) in the Decoder Logging folder (voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><span>Keep the audio</span><input type="checkbox" class="sw" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"></label>
+      <label class="swr" title="Keep each transcript's audio to play it back in the Transcription panel: Opus files (~7 MB an hour of speech) in the decoder log's folder (Decoder Logging, Save to; voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><span>Keep the audio</span><input type="checkbox" class="sw" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"></label>
       <div class="info v2t-clips" id="v2t-clips"></div>
       <div class="sec"><span>Status</span></div>
       <div id="v2t-status">
@@ -14905,7 +14950,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       (decimatorInfo.length ? ' Start on ' + decimatorInfo.map(d =>
         `<button class="btn sm" type="button" onclick="digSetModeFor(${d.id}, 'PLUGIN:${digEsc(tab)}')" title="D${d.id} ${digMhzOf(d.id)} MHz${d.digital_mode && d.digital_mode !== 'OFF' ? ' (now ' + digEsc(digModeLabel(d.digital_mode)) + ')' : ''}">` +
         `<span class="dig-vfo-dot" style="background:${getDecimatorColor(d.id)}"></span>D${d.id}</button>`).join(' ') : '') + `</div>`;
-    const top = idle + ids.map((id, i) => digVfoRowHtml(id, tab, i ? '' : about)).join('') +
+    // (a decoder log problem: one line under the VFO rows, while a VFO runs this decoder)
+    const top = idle + ids.map((id, i) => digVfoRowHtml(id, tab, i ? '' : about)).join('') + (ids.length ? digLogWarnHtml() : '') +
       (plugin && plugin.messages ? digIncidentsRow(tab) : '');
     const topEl = $id('info-dec-top');
     // only an input / list being edited (or an open mode list) holds the
@@ -15247,7 +15293,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
 
   // --- 🗂 Decoder Logging (decoder_log.cpp, {"declog":{...}} every 2 s) ---
-  let dlState = null;
+  let dlState = null, dlProbKey = '';
   function dlBytes(b) {
     b = +b || 0;
     if (b < 1024) return b + ' B';
@@ -15257,6 +15303,28 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     return (b/1099511627776).toFixed(2) + ' TB';
   }
   function dlSetEnabled(on) { send('DECODER_LOG:' + (on ? 1 : 0)); }
+  // What is wrong while logging is on: not writing (the receiver's error: the folder can't be
+  // made / written, less than 100 MB free), records dropped, the disk nearly full (under
+  // 1 GB, the bar's red). Empty while off or fine. The sidebar box showed
+  // these at a glance until 2026-11-19; now the section's marker, the decoders panel's line
+  // (digLogWarnHtml) and the Transcription panel's head (voice transcripts logged) do.
+  // [{text, short, err}]: short = a few words for a state line, the text for its tooltip
+  function dlProblems(d) {
+    if (!d || !d.enabled) return [];
+    const out = [];
+    if (d.error) out.push({text: 'Not writing: ' + d.error, short: 'not writing', err: true});
+    if (d.dropped) out.push({text: `${d.dropped} record${d.dropped === 1 ? '' : 's'} dropped (disk not writable)`, short: `${d.dropped} record${d.dropped === 1 ? '' : 's'} dropped`});
+    if (d.total && d.free < 1073741824 && !d.error) out.push({text: `Disk nearly full: ${dlBytes(d.free)} free`, short: 'disk nearly full'});
+    return out;
+  }
+  // the decoders panel's line (a decoder's tab, under its VFO rows): the problem and the way
+  // to the section. Logging is one for all decoders, so one line per tab
+  function digLogWarnHtml() {
+    const p = dlProblems(dlState);
+    if (!p.length) return '';
+    return `<div class="dig-warn dig-log-warn"><span title="${escapeHtml(p.map(x => x.text).join('\n'))}">${icon('warn', 't')}<span>Decoder log: ${escapeHtml(p.map(x => x.short).join(' · '))}</span></span>` +
+           `<button class="btn sm" type="button" onclick="setDlgOpen('declog')" title="Setup Settings → Decoder Logging">${icon('log')}<span>Decoder Logging</span></button></div>`;
+  }
   function dlSetTypes() {
     const t = [...document.querySelectorAll('#dl-types input[data-t]')].filter(c => c.checked).map(c => c.dataset.t);
     send('DECODER_LOG_TYPES:' + t.join(','));
@@ -15356,11 +15424,34 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       const own = (d.mounts || []).find(m => drvKey(m.path) === drvKey(d.mount));
       if (d.mount) sel.value = own ? own.path : d.mount;
     }
-    let state;
-    if (d.error) state = `<span style="color:#fb8d85">${icon('warn', 't')}<span>${escapeHtml(d.error)}</span></span>`;
-    else if (d.enabled) state = '<span style="color:#40ae67">&#9679;</span> Logging';
-    else state = '<span style="color:#707883">&#9679;</span> Off';
-    $id('dl-state').innerHTML = state;
+    // the state beside the switch, the card's look, its warning lines (the error also while
+    // off, as the box's Status row showed it); the marker on the section and the decoders
+    // panel's line only while logging is on (dlProblems)
+    const probs = dlProblems(d);
+    const cls = d.enabled ? (d.error ? 'bad' : probs.length ? 'warn' : 'ok') : 'off';
+    const card = $id('dl-card');
+    if (card) card.className = 'dig-codec dl-card ' + cls;
+    v2tSetHtml($id('dl-card-i'), cls === 'ok' ? icon('ok') : cls === 'off' ? '&#9679;' : icon('warn'));
+    v2tSetHtml($id('dl-state'), !d.enabled ? '<span>Off</span>'
+      : d.error ? '<span style="color:#fb8d85">Not writing</span>' : '<span style="color:#7ccd93">Logging</span>');
+    const wn = [];
+    if (d.error) wn.push(['bad', escapeHtml(d.error)]);
+    for (const p of probs) if (!p.err) wn.push(['', escapeHtml(p.text)]);
+    v2tSetHtml($id('dl-warn'), wn.map(([c, t]) => `<div class="wn${c ? ' ' + c : ''}">${icon('warn', 't')}<span>${t}</span></div>`).join(''));
+    $id('dl-perday-row').classList.toggle('dim', !d.enabled);
+    $id('dl-lasts-row').classList.toggle('dim', !d.enabled);
+    const tn = $id('set-tab-declog-n');
+    if (tn) {
+      v2tSetHtml(tn, probs.length ? icon('warn') : '');
+      tn.title = probs.map(p => p.text).join('\n');
+    }
+    // the decoders panel and the Transcription panel say so too (redrawn only on a change)
+    const key = probs.map(p => p.err ? p.text : p.short).join('|');   // (not the free bytes: they change every time)
+    if (key !== dlProbKey) {
+      dlProbKey = key;
+      if (typeof infoRenderDecoder === 'function') infoRenderDecoder();
+      if (typeof v2tRenderHead === 'function' && infoOpen('voice')) v2tRenderHead();
+    }
     $id('dl-path').textContent = d.dir_abs || d.dir || '—';
     $id('dl-free').textContent = d.total ? `${dlBytes(d.free)} of ${dlBytes(d.total)}` : 'unknown';
     const used = d.total ? 1 - d.free / d.total : 0;
@@ -15381,7 +15472,6 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     $id('dl-lasts').textContent = lasts;
     const extra = [];
     if (d.buffered) extra.push(`${dlBytes(d.buffered)} waiting to be written`);
-    if (d.dropped) extra.push(`${d.dropped} records dropped (disk not writable)`);
     if (d.compressing) extra.push(`gzipping ${d.compressing} file${d.compressing === 1 ? '' : 's'}…`);
     $id('dl-note').textContent = extra.join(' · ');
   }
@@ -15618,7 +15708,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     let ch = '';
     if (s.clip_dir !== undefined) {
       const kept = s.clip_days > 0 ? `kept ${s.clip_days} day${s.clip_days > 1 ? 's' : ''}` : 'kept forever';
-      ch = `<span title="In ${digEsc(s.clip_dir || '')} (the Decoder Logging folder); kept as long as its log files (Keep)">` +
+      ch = `<span title="In ${digEsc(s.clip_dir || '')} (the decoder log's folder: Decoder Logging, Save to); kept as long as its log files (Keep)">` +
            `${s.clips} clip${s.clips === 1 ? '' : 's'}, ${s.clip_mb} MB · ${kept}</span>`;
       if (s.clip_low)
         ch += `<br><span style="color:#f4c170">${icon('warn', 't')}<span>less than 100 MB free there (${s.clip_free_mb} MB): audio not saved</span></span>`;
@@ -15643,8 +15733,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     v2tSetHtml($id('v2t-done'), `${s.done}` + (s.nospeech ? ` · <span title="Transmissions without speech (noise, tones, data) - skipped">${s.nospeech} no speech</span>` : '') +
       (s.failed ? ` · <span style="color:#fb8d85">${s.failed} failed</span>` : ''));
     v2tSetHtml($id('v2t-speed'), s.rtf > 0 ? `<span title="Audio seconds transcribed per second of work (last transmissions)">${(1 / s.rtf).toFixed(1)}× real time</span>` : '');
-    v2tSetHtml($id('v2t-log'), s.log && s.log.enabled ? '<span style="color:#7ccd93">' + icon('ok', 't') + '</span> decoder log files'
-      : '<span style="color:#7f8995">off</span> <a href="#" onclick="v2tLogOn();return false" title="Turn Decoder Logging on, with voice transcripts">turn on</a>');
+    // (the files' section is in this dialog: a link to it; a problem of the log shows here too)
+    const lp = s.log && s.log.enabled ? dlProblems(dlState) : [];
+    v2tSetHtml($id('v2t-log'), s.log && s.log.enabled
+      ? (lp.length ? `<a href="#" onclick="setDlgTab('declog');return false" style="color:#f4c170" title="${digEsc(lp.map(p => p.text).join('\n'))}">${icon('warn', 't')}<span>decoder log files</span></a>`
+                   : `<span style="color:#7ccd93">${icon('ok', 't')}</span> <a href="#" onclick="setDlgTab('declog');return false" title="Setup Settings → Decoder Logging">decoder log files</a>`)
+      : '<span style="color:#7f8995">off</span> <a href="#" onclick="v2tLogOn();return false" title="Allow logging to disk (Decoder Logging), with voice transcripts">turn on</a>');
     // on the tab: a problem while VFOs are set to transcribe (the box's
     // header badge until 2026-11-17; its VFO count is the VFOs line)
     const tn = $id('set-tab-v2t-n');
@@ -15668,6 +15762,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
           : `Listening on ${s.vfos.map(v => 'D' + v.id).join(', ')}`;
         if (s.queue) h += ` &nbsp;·&nbsp; ${s.queue} waiting`;
       }
+      // the transcripts go to the decoder log and it has a problem (the sidebar box showed it
+      // until 2026-11-19)
+      const lp = dlState && (dlState.types || '').split(',').includes('voice') ? dlProblems(dlState) : [];
+      if (lp.length && !['not installed', 'no model', 'error'].includes(s.state))
+        h += ` &nbsp;·&nbsp; <span style="color:#f4c170" title="${digEsc(lp.map(p => p.text).join('\n'))}">${icon('warn', 't')}<span>Decoder log: ${digEsc(lp.map(x => x.short).join(' · '))}</span></span> - ` +
+             `<a href="#" onclick="setDlgOpen('declog');return false" title="Setup Settings → Decoder Logging">Decoder Logging</a>`;
     }
     v2tSetHtml($id('v2t-tab-head'), h);
   }
@@ -17209,25 +17309,47 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // --- ⚙ SETUP SETTINGS (the top bar's ⚙; "⚙ Settings" until 2026-11-17):
   // everything about setting the software up, a tab each - the map provider
   // and its API key (below), the decoders' voice codecs and plugins
-  // (digOnCodecs, aiRenderPlugins), Voice to Text (v2tRenderBox, in the
-  // "🗣 VOICE TO TEXT" section), the assistant's setup state (setDlgAi) and
+  // (digOnCodecs, aiRenderPlugins), Decoder Logging (dlOnStatus), Voice to
+  // Text (v2tRenderBox, in the "🗣 VOICE TO TEXT" section), the assistant's
+  // setup state (setDlgAi) and
   // System: restart / shut down from the page (setDlgSys, ⏻ POWER) --
   // The dialog edits a copy of mapProvCfg - with the key of every provider,
   // so going through the list loses none - and Save stores it in
   // localStorage kraken_map_prov: per browser, like the map's view
   let setDlgCfg = null, setDlgTestN = 0;
-  let setDlgTabId = 'map';   // the tab shown; kept while the page is open
+  let setDlgTabId = 'map';   // the section shown; kept while the page is open
   function setDlgTab(t) {
     if (!document.querySelector('.set-pane[data-t="' + t + '"]')) t = 'map';
     setDlgTabId = t;
     for (const e of document.querySelectorAll('.set-tabs button, .set-pane')) {
       const on = e.dataset.t === t;
       e.classList.toggle('on', on);
-      if (e.tagName === 'BUTTON') e.setAttribute('aria-selected', on ? 'true' : 'false');
+      if (e.tagName === 'BUTTON') { e.setAttribute('aria-selected', on ? 'true' : 'false'); e.tabIndex = on ? 0 : -1; }
     }
     if (t === 'ai') setDlgAi();
     if (t === 'sys') setDlgSys();
   }
+  // the sections' keys: a list down the left (Up / Down) on the desktop, the strip across
+  // the top (Left / Right) on a phone - both pairs work in both; Home / End. The section
+  // follows the focus (ARIA tabs with automatic activation)
+  function setDlgTabKey(e) {
+    const btns = [...document.querySelectorAll('.set-tabs button[data-t]')];
+    const i = btns.indexOf(document.activeElement);
+    if (i < 0) return;
+    const step = {ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1}[e.key];
+    const n = step ? (i + step + btns.length) % btns.length : e.key === 'Home' ? 0 : e.key === 'End' ? btns.length - 1 : -1;
+    if (n < 0) return;
+    e.preventDefault();
+    setDlgTab(btns[n].dataset.t);
+    btns[n].focus();
+  }
+  // the list's orientation for screen readers: vertical, a strip below 640 px
+  (function () {
+    const mq = window.matchMedia('(max-width:639px)');
+    const set = () => { const l = document.querySelector('.set-tabs'); if (l) l.setAttribute('aria-orientation', mq.matches ? 'horizontal' : 'vertical'); };
+    set();
+    if (mq.addEventListener) mq.addEventListener('change', set); else if (mq.addListener) mq.addListener(set);
+  })();
   // Assistant: set up on the receiver or not (it can't be from the page), and
   // while it is not, what to run. Drawn again whenever ai_state or the
   // receiver's OS arrives. (Until 2026-11-17 a card of the Add-ons tab, next
@@ -17308,7 +17430,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
   }
-  // tab: 'map' | 'dec' | 'v2t' | 'ai' | 'sys'; none = the tab shown last
+  // tab: 'map' | 'dec' | 'declog' | 'v2t' | 'ai' | 'sys'; none = the section shown last
   function setDlgOpen(tab) {
     setDlgCfg = JSON.parse(JSON.stringify(mapProvCfg));
     if (!mapHas(MAP_PROVIDERS, setDlgCfg.p)) setDlgCfg.p = 'osm';

@@ -109,7 +109,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `mixer` | the Wideband variant's mixer field in the top bar (a circle with a cross, the RF mixer symbol; 2026-11-18) |
 | `globe` | Web Mapper, the online search, web tools |
 | `doc` | DoA Recording |
-| `log` | Decoder Logging |
+| `log` | Decoder Logging (its Setup Settings section, the decoder tabs' button to it) |
 | `tape` | IQ & Audio Recorder, playback of a recording |
 | `speaker` | audio, listen, heard; the top bar's audio on / off (its speaker button, lit while on) |
 | `display` | Display |

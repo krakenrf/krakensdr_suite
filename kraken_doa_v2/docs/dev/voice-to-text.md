@@ -222,7 +222,11 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   card `#v2t-card` (`v2tRenderSetup`, the box's `?` in its header), model +
   ⬇ Get list, language row only for multilingual models, cores + speed,
   prompt, VAD / keep switches, status rows, "To disk" + `v2tLogOn` =
-  DECODER_LOG_TYPES + voice, DECODER_LOG:1; the box header's badge is a ⚠
+  DECODER_LOG_TYPES + voice, DECODER_LOG:1 (since 2026-11-19 "decoder log
+  files" there is a link to the Decoder Logging section of the same dialog,
+  amber with a ⚠ while the log has a problem - *decoder-log.md*; the
+  Transcription panel's head says "Decoder log: not writing" etc. with a
+  link while transcripts are logged); the box header's badge is a ⚠
   on the tab, `#set-tab-v2t-n`, while VFOs are ticked and the state is not
   installed / no model / error - its VFO count is the VFOs row; the box's
   "⤢ Transcripts" button went, the rail opens the panel), VFO cards

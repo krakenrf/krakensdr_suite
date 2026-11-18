@@ -385,10 +385,11 @@ active frequency, so that all are heard, decoded and transcribed at once.
   and GPS track; untick "Include the station position" before
   recording something you will share. Format:
   [SIGMF.md](kraken_doa_v2/SIGMF.md).
-- **Decoder Logging**: what the decoders report (events, messages,
-  positions, raw frames, incidents), one JSON-lines file per day in
-  `kraken_doa_v2/decoder_logs/` (or a drive you pick), gzipped at midnight
-  and kept 7 days by default.
+- **Decoder Logging** (the ⚙ Setup Settings button, Decoder Logging;
+  switch on "Allow logging to disk"): what the decoders report (events,
+  messages, positions, raw frames, incidents, voice transcripts), one
+  JSON-lines file per day in `kraken_doa_v2/decoder_logs/` (or a drive you
+  pick), gzipped at midnight and kept 7 days by default.
 - **DoA Recording**: the bearings to CSV or SQLite.
 - **Voice to Text**: tick **Transcribe** on a VFO and what is said there
   is written down by a speech-to-text model running on the receiver. No
@@ -525,7 +526,8 @@ the "Words to expect": callsigns and names spelled as you want them.
 - While the model is busy, transmissions wait in a queue. If they pile up,
   give it more CPU cores, use a smaller model or transcribe fewer VFOs.
 - The audio is kept as Ogg Opus (about 7 MB per hour of speech) in the
-  Decoder Logging folder, at most 2 GB, and follows that box's "Keep" days.
+  Decoder Logging folder, at most 2 GB, and follows its "Keep" days
+  (⚙ Setup Settings, Decoder Logging).
 - On a Mac with Apple Silicon the model runs on the GPU;
   `make whisper WHISPER_GPU=off` forces the CPU.
 - Docker: the image includes the helper. Get the models with **Get**.

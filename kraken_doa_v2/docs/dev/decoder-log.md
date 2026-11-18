@@ -6,7 +6,7 @@ loaded automatically. *Italic* topic names refer to the other files in this
 folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
-**Decoder data log (`src/decoder_log.cpp`, sidebar "🗂 Decoder Logging"):**
+**Decoder data log (`src/decoder_log.cpp`, ⚙ Setup Settings → Decoder Logging; a sidebar box until 2026-11-19):**
 - Sources: the engine's record handler (`dig::set_record_handler`,
   `LogRecord{type, plugin, text, from, point, rf_hz}`, called on each
   decoder's worker thread): "event" (a Report event that passed the
@@ -64,12 +64,45 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   subscribers) and after each command. `mounts` = /, /media/*, /mnt/*,
   /run/media/*, /srv* (no pseudo / tmpfs) + always the folder's own mount
   (`mount`); statvfs of the folder or its nearest existing parent
-- UI (kraken_doa.html, "Decoder Logging" block, `dlOnStatus` etc.): enable,
-  type ticks + positions interval, Keep days, drive list (picking one fills
-  the folder field with `<mount>/kraken_decoder_logs`, `/` = the default
-  `decoder_logs`; Apply sends it), status (free / total + used bar, today,
-  est. per day = today's bytes over the time logged today, all logs,
-  "disk lasts" assuming ~6x gzip), buffered / dropped / gzipping note
+- UI (kraken_doa.html, the Decoder Logging section of ⚙ Setup Settings,
+  `.set-pane[data-t="declog"]`, `setDlgOpen('declog')`; `dlOnStatus` etc.).
+  It was a sidebar box (`#declog-section`, `data-sb` "decoder-logging")
+  until 2026-11-19, when the user asked for it to move into Setup Settings
+  ("everything relating to setting up the software", *sidebar.md*); the
+  element ids stayed, so the code that drives them did not change:
+  - a card on top: the master switch, renamed from "Log to disk" to
+    **"Allow logging to disk"** (the user's wording, 2026-11-19), with its
+    state beside it (`#dl-state`: Off / Logging / Not writing - the box's
+    Status row) and the box's `?`; under it the problems as warning lines
+    (`#dl-warn`), then the status (Folder, Disk free + used bar, Today,
+    Per day = today's bytes over the time logged today, All logs, Disk
+    lasts assuming ~6x gzip; Per day and Disk lasts dimmed while off) and
+    the buffered / gzipping note (`#dl-note`). The card's look follows the
+    state: grey dot while off, ✓ logging, ⚠ amber with a problem, red while
+    not writing;
+  - What to log: the type ticks in two columns (one below 420 px of
+    window), Positions with its seconds field inline;
+  - Files: Keep (days), Save to - the drive list (picking one fills the
+    folder field with `<mount>/kraken_decoder_logs`, `/` = the default
+    `decoder_logs`; Apply sends it, `declog_error` shows under the field).
+  Every control sends its command at once, as in the box.
+- Problems (`dlProblems(d)`, only while logging is on): not writing (the
+  receiver's `error`: the folder can't be created / written, less than
+  100 MB free), records dropped (`dropped`), the disk nearly full (under
+  1 GB free - the bar's red). The box showed them at a glance in the
+  sidebar; since the move they are noticed from outside the section: a ⚠
+  on its row in the dialog's list (`#set-tab-declog-n`, titled with the
+  problems), a warning line in every decoder tab under its VFO rows
+  (`digLogWarnHtml`: "Decoder log: not writing · 3 records dropped", the
+  receiver's reason in its tooltip, + a Decoder Logging button that opens
+  the section; one line per tab - the log is one for all decoders; not on
+  the tab's "Log all" tick, which is the decoder's `verbose` option and has
+  nothing to do with the disk log),
+  the Transcription panel's head while voice transcripts are logged, and
+  Voice to Text's "To disk" row (a link to the section). The error itself
+  also shows in the card while logging is off, as the box's Status row did.
+  `dlOnStatus` redraws the decoder tab and the panel head only when the
+  set of problems changes (not on every free-space figure)
 - Test (scratchpad h/t_declog.py + e2e3): a TEST build (ports 1808x) fed
   synthetic POCSAG, started with `TZ` set so local midnight came 2 min later:
   5 s write steps, rotation + gzip at midnight with the boundary records on

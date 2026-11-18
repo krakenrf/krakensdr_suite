@@ -847,7 +847,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   incident listing them; kept 24 h, incidents.tsv). Code:
   `kraken_doa_v2/src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`
 
-**🗂 Decoder Logging (sidebar, all modes)** (details: `kraken_doa_v2/CLAUDE.md`
+**🗂 Decoder Logging (⚙ Setup Settings - a sidebar box until 2026-11-19; all modes)** (details: `kraken_doa_v2/CLAUDE.md`
 *Decoder data log*): what every VFO's decoder reports - events, text
 messages, positions (throttled per object), raw frames (`kp::Host::raw`,
 only while ticked: OPTION `log_raw`), incidents, voice transcripts - to
@@ -856,7 +856,7 @@ every 5 s (SD card); at local midnight the day is closed + gzipped in the
 background; days older than the Keep setting (default 7, 0 = forever) are
 deleted - ONLY files named `decoders-YYYY-MM-DD.jsonl[.gz]`. Writing pauses
 below 100 MB free. Folder default `decoder_logs` (cwd-relative, so the
-Docker volume gets it); the box lists drives (/, /media, /mnt, /run/media,
+Docker volume gets it); the section lists drives (/, /media, /mnt, /run/media,
 /srv + the folder's own) with free space. `DECODER_LOG*:` commands,
 persisted. Code: `kraken_doa_v2/src/decoder_log.cpp`
 - Position records carry the map popup's details as `info` (ADS-B: squawk,

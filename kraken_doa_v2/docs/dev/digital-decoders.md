@@ -321,7 +321,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   voice decoders, `kp::Info::voice` (p25 dmr dstar nxdn tetra; `digHasVoice`:
   in AUTO the detected plugin, else any ticked one) -, the plugin's options -
   in AUTO those of the detected plugin -, verbose, invert, Plot on map,
-  bandwidth / plugin problems), the incident row (messages plugins), the
+  bandwidth / plugin problems), a decoder log problem (`digLogWarnHtml`,
+  one line under the rows while logging is on and not writing / dropping /
+  the disk is nearly full, with a button to Setup Settings' Decoder Logging
+  - *decoder-log.md*), the incident row (messages plugins), the
   tables (below), per VFO a status + facts block (`digFactsHtml(id, tab)`:
   only that plugin's facts / frames), the first
   plugin stderr, and ONE event log merged from every VFO (`digTabEvents`:

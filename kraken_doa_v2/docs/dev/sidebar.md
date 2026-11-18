@@ -512,8 +512,13 @@ keys (`gps`, `fft`, `digital-decoders`) are retired - never reuse them. Later
 the same day (2026-11-17) the user asked for "everything relating to setting
 up the software" to be in the top bar's cog dialog, now Setup Settings:
 the Voice to Text box went there, and its key `voice-to-text` is retired
-too. A layout stored with any of them still loads (`sbBoxOrder` skips keys it
-has no box for; the next save drops them).
+too. On 2026-11-19 the user asked for the Decoder Logging box to move there
+as well ("Move the "Decoder Logging" settings box in the left sidebar into
+the new "Setup Settings" cog icon settings area"): its key
+`decoder-logging` is retired, and the sidebar has 16 keyed boxes. A layout
+stored with any of them still loads (`sbBoxOrder` skips keys it has no box
+for; the next save drops them). The phone drawer is the same sidebar, so it
+lost the box too; the section is reached through the cog there as well.
 
 - **GPS status** is the last part of *Station Information* (`#gps-sec`: the
   "GPS" row with the old box's `?`, then `#gps-details`; `updateGpsStatus`
@@ -522,6 +527,8 @@ has no box for; the next save drops them).
 - **FFT size, Slow link, Points sent** are in *Display* (FFT size first).
 - **Digital Decoders** is the Decoders tab of Setup Settings.
 - **Voice to Text** is the Voice to Text tab of Setup Settings (below).
+- **Decoder Logging** is the Decoder Logging section of Setup Settings
+  (below; *decoder-log.md*).
 
 ### Array diagrams (2026-11-17)
 
@@ -571,17 +578,49 @@ readout's dots (*operating-modes.md*).
 `#set-dlg` (the top bar's cog, `setDlgOpen(tab)`) is "Setup Settings": the
 user asked (2026-11-17) for everything relating to setting the software up
 to be in it, under that name ("Settings" before; the cog's tooltip and
-aria-label say "Setup Settings" too). It has tabs (`.set-tabs` buttons and
-`.set-pane`s with the same `data-t`; `setDlgTab(t)`; the tab shown last is
-kept while the page is open, `setDlgTabId`). The dialog has a fixed size
-(540 x 540 px, less on a small screen) so the tabs stay put, and each pane
-scrolls by itself. The five tabs fit one line in the 540 px dialog (the
-tabs' side padding is 6 px below 560 px of window, 5 px below 420 px); on
-a phone the strip wraps onto a second line - with four tabs that happened
-below ~380 px, with System (2026-11-18) also on a 400 px phone: Assistant
-and System go to the second line. Wrapping was chosen over a
-sideways-scrolling strip, which would hide a tab behind the dialog's edge
-with nothing to show it is there.
+aria-label say "Setup Settings" too). It has sections (`.set-tabs` buttons
+and `.set-pane`s with the same `data-t`, ARIA tabs; `setDlgTab(t)`; the
+section shown last is kept while the page is open, `setDlgTabId`), in this
+order: Map, Decoders, Decoder Logging, Voice to Text, Assistant, System.
+The dialog has a fixed size so the sections stay put, and each pane scrolls
+by itself.
+
+**The navigation is a list down the left side (2026-11-19).** Until then
+the sections were a strip of tabs across the top of a 540 x 540 px dialog;
+five just fitted one line. Decoder Logging made six, which do not fit
+across 540 px, and the user's rule that everything about setting the
+software up goes into this dialog means more will come - a list grows
+downwards without a limit worth worrying about, a strip does not. So:
+
+- Desktop (window 640 px or wider): the dialog is 720 x 560 px (still at
+  most the window: `.sf-dlg`'s `max-width` / `max-height` 100 %, inside the
+  backdrop's 12 px padding). A CSS grid: the header across the top with a
+  line under it, the list (`.set-tabs`, 168 px from the dialog's edge: a
+  154 px column plus the 14 px of padding it reaches into; a darker
+  background, `--s2`, a line on its right) and the shown pane to its right.
+  A row is 34 px: the icon, then the name (cut with an ellipsis if a name
+  ever gets too long), the warning marker (`#set-tab-dec-n`,
+  `#set-tab-declog-n`, `#set-tab-v2t-n`) at its right end. The selected row
+  has the accent bar on its left edge (`--ac`), the lit text the strip had
+  (`--ac-t`) and a lighter background (`--s4`); a hovered row `--s3`. The
+  panes lost 168 px of width, not height; the Map pane's Test / Cancel /
+  Save stay at its bottom.
+- Keyboard: the list is a vertical `tablist` (`aria-orientation`
+  "vertical"; "horizontal" while it is the strip, a `matchMedia` listener);
+  Up / Down move to the previous / next section and show it (automatic
+  activation, wrapping at the ends), Left / Right do the same (the strip
+  had no arrow keys at all before), Home / End go to the first / last. Only
+  the selected row is in the Tab order (roving `tabindex`), so Tab goes
+  from the list into the pane.
+- Phones (window under 640 px): the list is the strip across the top again
+  (`flex-direction:row`), and it **wraps**: at 400 px Map, Decoders,
+  Decoder Logging on the first line and Voice to Text, Assistant, System on
+  the second; at 320 px the same two lines - three while a tab carries its ⚠ (the tabs' side padding is 6 px,
+  5 px below 420 px). Wrapping was kept over a sideways-scrolling strip,
+  which would hide a section behind the dialog's edge (a fade or an arrow
+  could show it, but six names in two lines are all visible at once, and
+  two lines cost ~30 px of a phone's height). With touch (`pointer:coarse`)
+  each tab is at least 40 px high.
 
 - **Map** (`map`): the tile provider and its key - *map.md*. Test /
   Cancel / Save belong to this tab only (Enter in one of its fields saves;
@@ -593,6 +632,22 @@ with nothing to show it is there.
   detect ticks) - *digital-decoders.md*. The list is always open (the box
   had it collapsed); `#set-tab-dec-n` on the tab counts plugins that need
   attention.
+- **Decoder Logging** (`declog`, the `log` icon; the sidebar box
+  `decoder-logging` until 2026-11-19 - *decoder-log.md*). The box's
+  controls in the dialog's patterns, with the box's element ids: on top a
+  card in the codecs' look (`#dl-card`) holding the master switch - renamed
+  from "Log to disk" to **"Allow logging to disk"**, the user's wording -
+  with its state beside it (`#dl-state`: Off / Logging / Not writing), the
+  box's `?`, the problems as warning lines and the status rows (Folder,
+  Disk free + its bar, Today, Per day, All logs, Disk lasts; `.kv`); then
+  *What to log* - the ticks in two columns (one on a phone), Positions with
+  its seconds field inline; then *Files* - Keep (days) and Save to (the
+  drive list, the folder + Apply) as labelled fields. Each control acts at
+  once, as in the box (Apply stays the folder's). A problem while logging
+  is on (not writing, records dropped, the disk nearly full) puts a ⚠ on
+  the section's row (`#set-tab-declog-n`) and a line with a Decoder
+  Logging button in the decoder tabs under the waterfall; the links and
+  tips that named the box point at the section (*decoder-log.md*).
 - **Voice to Text** (`v2t`; the sidebar box `voice-to-text` until
   2026-11-17 - *voice-to-text.md*). On top a card in the codecs' look
   (`#v2t-card`, `v2tRenderSetup`) with the state from the voice2text
@@ -649,6 +704,21 @@ with `voice-to-text` loads and the next save drops it; nothing overflows its
 pane at any width; no JS errors. The other suites pass with outdated
 expectations updated (box count 18 -> 17, the tab list, the Assistant tab in
 place of Add-ons, the dropped Transcripts button).
+
+Tests (2026-11-19, scratch `test_declog.py`, headless Chromium, real mouse,
+key and touch events): no Decoder Logging box (16 keyed boxes), every moved
+control once and inside the section, a stored layout with
+`decoder-logging` loads; each control's command; the status in each state
+(off, on, disk nearly full, an error) from fixtures; the list - six
+sections in order, vertical at 1700 and 1280 px, the dialog's size and that
+it fits a 1280 x 720 window, the selected marker, Up / Down / Home / End,
+ARIA, every pane without sideways overflow, the Map pane's buttons at its
+bottom, the section remembered, `setDlgOpen('declog')`; phones at 400 and
+320 px (the wrapped strip, every section reached by a tap, the pane usable
+with touch sizes); the pointers that named the box; the problem noticed
+from the decoder tab and the list; no JS errors, no native dialog. The
+suites that counted boxes, tabs or measured the dialog got new expectations
+(box count 17 -> 16, six sections, 720 x 560, the list's rows).
 
 ### Top bar and rail (2026-11-16)
 
