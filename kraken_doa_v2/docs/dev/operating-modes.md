@@ -94,11 +94,23 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   top bar; first 14 px, then "double the size" 2026-10-21): digits
   `G.MMM.kkk.hhh` down to 1 Hz (`.vfd-box` / `.vfd`, 28 px - the top bar's
   size - in 16 px cells, "MHz" inside the box; a row of its own without a
-  "Freq:" label, 239 of the card's 241 px with the ✎; the "." between the
-  groups, `.vfd-sep`, has the digits' size and line and is a flex container
-  6 px wide, which centres the glyph on its slot - with `text-align:center`
-  in a 5 px box the wider glyph started at the box's left edge and the dot
-  sat on the next digit, the user's report 2026-11-17), click the
+  "Freq:" label; the "." between the groups, `.vfd-sep`, has the digits'
+  size and line and is a flex container, which centres the glyph on its
+  slot - with `text-align:center` in a 5 px box the wider glyph started at
+  the box's left edge and the dot sat on the next digit, the user's report
+  2026-11-17). The row (`.dec-freq`) never wraps (2026-11-18, the user's
+  report: the ✎ dropped under the digits once the sidebar scrolled - the
+  row was 239 px and a scrollbar left 233): with the scrollbar's room always
+  kept (*sidebar.md*) the row is 233 px and takes 231 - 16 px cells, 5 px
+  separators, the box's padding 0 2 px, "MHz" 2 px from the digits, a 4 px
+  gap, the ✎ 23 px (padding 1 4 px). Where the row is narrower (a 320 px
+  phone's drawer: 215 px) the cells shrink with it - the row is a query
+  container and a cell is `min(16px, (100cqw - 58px) / 10.9375)` (58 px:
+  the box's border, padding and unit, the gap and the ✎; a separator is
+  5/16 of a cell), the font 1.75 and the line 2.25 cells, as at 16 px; never
+  larger. From a 340 px phone up the digits are full size; without
+  container queries they stay 16 px. The typed entry (✎: a 96 px box +
+  "MHz") fits the same row. Click the
   top / bottom half or a wheel notch = +- that digit (`vfdInit` / `vfdStep`,
   selects the VFO); clamped inside the VFO's band like a typed frequency
   (coherent: `maxOffsetHz`; independent: its OWN tuner - a typed one may move
@@ -116,7 +128,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (`dec-actual-freq-<id>`, Enter / blur = apply, Escape = cancel); locked
   with the Freq / BW fields by fixed-frequency / `lock_vfo` decoders
   (`digRenderCards`). Test: job scratch t_vfd.py (headless Chrome over CDP,
-  fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8)
+  fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8); the
+  one-line row (2026-11-18, test_sidefix.py with real scrollbars): the ✎
+  centred on the readout within 2 px and nothing past the row or the card -
+  sidebar short and long, zoomed to 420 and 230 px, two cards, independent
+  mode, the typed entry, the drawers of 400 / 360 / 320 px phones (full
+  16 px cells from 360 px, 14.3 px at 320)
 - VFO tuning STEP (the user's request 2026-10-22, "a global setting up on
   the top bar"; kraken_doa.html block "VFO tuning step"): the top bar's
   `Step:` (`#tb-step` / `#vfo-step`, every mode, moved into the sidebar on

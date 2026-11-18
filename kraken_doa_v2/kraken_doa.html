@@ -52,6 +52,16 @@ h3 {color:var(--ac-t);margin:0 0 10px 0;font-size:15px;border-bottom:1px solid v
 /* Left sidebar */
 .sidebar {width:290px;min-width:290px;background:var(--s4);border-right:1px solid var(--l1);overflow-y:auto;overflow-x:hidden;padding:8px 5px;display:flex;flex-direction:column}
 .sidebar::-webkit-scrollbar {width:8px}
+/* The scrollbar's room is always kept (the user's request 2026-11-18): opening
+   a box that makes the sidebar scroll no longer narrows every box by 8 px -
+   the VFO card's frequency row wrapped then. The track is the sidebar's own
+   background, so the empty gutter is no strip. Without scrollbar-gutter
+   (Safari before 18.2): always a scrollbar - overlay scrollbars (macOS, phones)
+   take no room either way */
+.sidebar {scrollbar-gutter:stable}
+@supports not (scrollbar-gutter:stable) {
+  .sidebar {overflow-y:scroll}
+}
 /* Draggable sidebar width (desktop, initSidebarResize): the sidebar keeps its
    290 px layout and is zoomed to the dragged width, so text, buttons and
    inputs scale with it */
@@ -59,13 +69,14 @@ h3 {color:var(--ac-t);margin:0 0 10px 0;font-size:15px;border-bottom:1px solid v
 .sidebar-resizer {flex:0 0 5px;width:5px;cursor:col-resize;background:transparent;touch-action:none;transition:background 0.15s}
 .sidebar-resizer:hover,.sidebar-resizer.dragging {background:var(--l4)}
 body.sb-resizing {cursor:col-resize;user-select:none}
-.sidebar::-webkit-scrollbar-track {background:var(--s3)}
+.sidebar::-webkit-scrollbar-track {background:transparent}
 .sidebar::-webkit-scrollbar-thumb {background:var(--l1);border-radius:4px}
 .sidebar::-webkit-scrollbar-thumb:hover {background:var(--l4)}
 /* Firefox has no ::-webkit-scrollbar: a thin dark one instead of the wide
    light default (Chromium would drop its 8 px styling for these, hence @supports) */
 @supports not selector(::-webkit-scrollbar) {
-  .sidebar,.doa-panel,.doa-content {scrollbar-width:thin;scrollbar-color:var(--l1) var(--s3)}
+  .doa-panel,.doa-content {scrollbar-width:thin;scrollbar-color:var(--l1) var(--s3)}
+  .sidebar {scrollbar-width:thin;scrollbar-color:var(--l1) transparent}
   .info-tab-list {scrollbar-width:thin;scrollbar-color:var(--l2) var(--s4)}
 }
 
@@ -1134,6 +1145,18 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .pw-dlg {width:340px}
 .pw-dlg .pw-q {margin:6px 0 2px;font-size:12.5px;color:var(--t1)}
 .pw-dlg .b .btn {flex:1 1 auto}
+/* an action the receiver can't do: visible, plainly not a working button (it
+   is focusable and says why when used); the reason under the dialog's buttons */
+.btn.pw-na,.sidebar .btn.pw-na {background:transparent;border-style:dashed;border-color:var(--l4);color:var(--t5)}
+.btn.pw-na:hover,.sidebar .btn.pw-na:hover {background:var(--s4);border-color:var(--l5);color:var(--t3)}
+.pw-why:empty {display:none}
+.pw-why {margin-top:10px;padding-top:8px;border-top:1px solid var(--l1)}
+.pw-why-l {display:flex;align-items:center;gap:5px;color:var(--t2);font-size:12px;margin:2px 0}
+.pw-why-l > span:not(.help) {flex:1 1 auto;min-width:0}
+.pw-cmd .nw,.set-dlg .pw-sys ~ .how pre .nw {white-space:nowrap}
+.pw-why-l .ic {color:var(--bad-t);flex:none}
+.pw-why-l .ic + span {margin-left:0}
+.pw-cmd {margin:4px 0 6px 21px;padding:5px 8px;background:var(--s1);border:1px solid var(--l1);border-radius:4px;font:11.5px ui-monospace,'Consolas','Menlo',monospace;color:var(--t0);overflow-wrap:anywhere;user-select:all}
 .pw-notice {position:fixed;inset:0;z-index:3000;background:rgba(5,8,12,.86);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}
 .pw-box {width:380px;max-width:100%;text-align:center;background:var(--s3);border:1px solid var(--l4);border-radius:9px;box-shadow:0 6px 30px rgba(0,0,0,.6);padding:22px 18px 18px;color:var(--t0)}
 .pw-box .pw-ic {font-size:34px;line-height:1;color:var(--ac-t);margin-bottom:10px}
@@ -1146,7 +1169,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .pw-box .pw-dry {display:inline-block;margin-top:10px;padding:2px 8px;border-radius:9px;background:var(--warn-d);color:var(--warn-t2);font-size:11px}
 .pw-box .btn {margin-top:14px;min-width:90px}
 .sf-toast {position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;max-width:90vw;box-sizing:border-box;background:rgba(17,21,27,.97);border:1px solid var(--ac-t);color:#fff;border-radius:4px;padding:7px 14px;font-size:12px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.6);transition:opacity .3s;opacity:0}
-/* ⚙ Setup Settings (the top bar's ⚙: map provider, decoders, Voice to Text, assistant) */
+/* ⚙ Setup Settings (the top bar's ⚙: map provider, decoders, Voice to Text, assistant, system) */
 /* a fixed size, so the tabs stay put; each pane scrolls by itself. The tabs
    wrap onto a second line where they don't fit (a phone narrower than ~380 px) */
 .sf-dlg.set-dlg {width:540px;height:540px;display:flex;flex-direction:column;overflow:hidden;padding-bottom:0}
@@ -1198,6 +1221,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .set-dlg .kv > span:first-child {flex:none;color:var(--t5)}
 .set-dlg .kv > span:last-child {min-width:0;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .set-dlg .kv a {color:var(--ac-t)}
+/* System: Restart / Shut down from the page (setDlgSys) */
+.set-dlg .pw-sys {margin:4px 0 0 18px}
+.set-dlg .pw-sys .kv > span:last-child {display:inline-flex;align-items:center;justify-content:flex-end}
+.set-dlg .pw-sys ~ .how pre {white-space:pre-wrap;overflow-wrap:anywhere}
+#set-sys .dig-codec .u {white-space:nowrap}
 .sf-toast.show {opacity:1}
 .sf-toast.err {border-color:var(--bad-t)}
 
@@ -1248,7 +1276,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
    click the top / bottom half of a digit or use the mouse wheel on it; ✎
    swaps in the text box to type one (vfdInit). A row of its own: at this
    size there's no room for a "Freq:" label in the 290 px sidebar */
-#decimator-list .vfd-box {display:inline-flex;align-items:center;background:var(--s0);border:1px solid var(--l1);border-radius:3px;padding:0 3px;
+#decimator-list .vfd-box {display:inline-flex;align-items:center;background:var(--s0);border:1px solid var(--l1);border-radius:3px;padding:0 2px;
   user-select:none;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace}
 #decimator-list .vfd {font-size:28px;font-weight:600;width:16px;text-align:center;color:var(--ac-t);cursor:pointer;line-height:36px}
 #decimator-list .vfd.lead {color:var(--l4)}
@@ -1259,11 +1287,24 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
    their baseline, and centred on its 6 px slot (a glyph wider than its box
    starts at the box's left edge under text-align:center - the dot then
    landed on the next digit; a flex container centres an overflowing item) */
-#decimator-list .vfd-sep {display:inline-flex;justify-content:center;flex:none;width:6px;color:var(--l5);font-size:28px;font-weight:600;line-height:36px;pointer-events:none}
-#decimator-list .vfd-unit {color:var(--l5);font-size:10px;margin-left:3px;font-family:sans-serif}
+#decimator-list .vfd-sep {display:inline-flex;justify-content:center;flex:none;width:5px;color:var(--l5);font-size:28px;font-weight:600;line-height:36px;pointer-events:none}
+#decimator-list .vfd-unit {color:var(--l5);font-size:10px;margin-left:2px;font-family:sans-serif}
 #decimator-list .vfd-box.locked {opacity:.5}
 #decimator-list .vfd-box.locked .vfd {cursor:not-allowed;background:none}
-#decimator-list .vfd-ed {padding:1px 5px;margin-left:auto}
+#decimator-list .vfd-ed {padding:1px 4px;margin-left:auto;flex:none}
+/* The row (.dec-freq) never wraps (2026-11-18: the ✎ dropped under the digits
+   when a scrollbar narrowed the card). In the 290 px sidebar - its scrollbar's
+   room always kept - the row is 233 px and digits + "MHz" + ✎ take 231: 16 px
+   cells, 5 px separators, 2 px paddings. Where the row is narrower (a 320 px
+   phone's drawer) the cells shrink with it (a query container: 100cqw = the
+   row; 58 px = the box's border, padding and unit, the gap and the ✎), the
+   digits keeping their 28 / 16 proportion; never larger than 16 px */
+#decimator-list .dec-freq {flex-wrap:nowrap;gap:4px;container-type:inline-size}
+@supports (width:1cqw) {
+  #decimator-list .dec-freq .vfd-box {--vfd-c:min(16px, calc((100cqw - 58px) / 10.9375))}
+  #decimator-list .dec-freq .vfd {width:var(--vfd-c);font-size:calc(var(--vfd-c) * 1.75);line-height:calc(var(--vfd-c) * 2.25)}
+  #decimator-list .dec-freq .vfd-sep {width:calc(var(--vfd-c) * .3125);font-size:calc(var(--vfd-c) * 1.75);line-height:calc(var(--vfd-c) * 2.25)}
+}
 #decimator-list .dec-row.typing .vfd-box, #decimator-list .dec-row.typing .vfd-ed,
 #decimator-list .dec-row:not(.typing) .vfd-in, #decimator-list .dec-row:not(.typing) .vfd-in-unit {display:none}
 /* the BW row: one number box in kHz (any width) */
@@ -2884,11 +2925,12 @@ body.drive.drive-day .drive-hud {
           <button onclick="resetSettingsToDefault()" class="btn danger" style="flex:1"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg><span>Reset Settings to Default</span></button>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Settings are saved automatically to a file on the device and restored when the program restarts (shared by all browsers). Reset reverts everything to factory defaults.</span></span>
         </div>
-        <!-- ⏻ / ↻ (see ⏻ POWER): only what the receiver offers ({"power":...}) -->
+        <!-- ⏻ / ↻ (see ⏻ POWER): what the receiver offers ({"power":...}); an action it
+             can't do (and why) in the unavailable look (.pw-na); titles and the tip by pwOnState -->
         <div class="sb-power" id="pw-row" style="display:none">
           <button type="button" class="btn" id="pw-restart" onclick="pwOpen('restart')" title="Restart the software (heimdall + this program) or reboot the computer"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg><span>Restart</span></button>
           <button type="button" class="btn danger" id="pw-shutdown" onclick="pwOpen('shutdown')" title="Power the receiver's computer off safely: recordings are finished and settings saved first"><svg class="ic" aria-hidden="true"><use href="#i-power"/></svg><span>Shut down</span></button>
-          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip"><b>Restart</b>: the software (heimdall and this program start again, the array recalibrates, ~30 s) or the whole computer.<br><b>Shut down</b>: powers the computer off - unplug it once it is off (Raspberry Pi: the green LED has stopped blinking).<br><br>First a running recording (IQ, audio, DoA) is finished and the settings and logs are written. Every open page shows what is happening and reconnects by itself after a restart.</span></span>
+          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip" id="pw-row-tip"></span></span>
         </div>
         <!-- the boxes' layout (sbBoxInit): kept in this browser, not a receiver setting -->
         <div class="sb-layout">
@@ -3013,7 +3055,7 @@ body.drive.drive-day .drive-hud {
       <!-- ? help mode (helpModeToggle): the next tap / click on a control shows its tooltip instead of working it -->
       <button type="button" class="tb-help hm-btn" id="help-btn" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does (Esc leaves it). On a touch screen, pressing and holding a button shows its help too."><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button>
       <!-- ⚙ Setup Settings (#set-dlg): as tall as the chips' and the telemetry's lines together; the phone layout puts it on the chips' line -->
-      <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Setup Settings: the map provider and its key, the decoders, Voice to Text, the AI assistant" aria-label="Setup Settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></button>
+      <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Setup Settings: the map provider and its key, the decoders, Voice to Text, the AI assistant, restart and shut down" aria-label="Setup Settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></button>
       </div>
     </div>
 
@@ -3348,6 +3390,7 @@ body.drive.drive-day .drive-hud {
       <button type="button" role="tab" data-t="dec" onclick="setDlgTab('dec')"><svg class="ic" aria-hidden="true"><use href="#i-decoder"/></svg><span>Decoders</span><span class="n" id="set-tab-dec-n"></span></button>
       <button type="button" role="tab" data-t="v2t" onclick="setDlgTab('v2t')"><svg class="ic" aria-hidden="true"><use href="#i-speech"/></svg><span>Voice to Text</span><span class="n" id="set-tab-v2t-n"></span></button>
       <button type="button" role="tab" data-t="ai" onclick="setDlgTab('ai')"><svg class="ic" aria-hidden="true"><use href="#i-bot"/></svg><span>Assistant</span></button>
+      <button type="button" role="tab" data-t="sys" onclick="setDlgTab('sys')"><svg class="ic" aria-hidden="true"><use href="#i-power"/></svg><span>System</span></button>
     </div>
     <div class="set-pane" data-t="map" role="tabpanel">
     <div class="lbl">Map provider<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Kept in this browser only: each browser (and device) has its own provider and key. The browser fetches the tiles itself, with the key in their URLs - it never goes to the receiver.</span></span></div>
@@ -3444,6 +3487,11 @@ body.drive.drive-day .drive-hud {
     <div class="set-pane" data-t="ai" role="tabpanel">
       <div id="set-ai"></div>
     </div>
+    <!-- System: Restart / Shut down from the page - what the receiver offers, and
+         for what it doesn't, why and the command (setDlgSys, the ⏻ POWER section) -->
+    <div class="set-pane" data-t="sys" role="tabpanel">
+      <div id="set-sys"></div>
+    </div>
   </div>
 </div>
 
@@ -3524,6 +3572,7 @@ body.drive.drive-day .drive-hud {
     <div class="sf-dlg-h"><span id="pw-dlg-title"></span><span class="x" onclick="pwDlgClose()" title="Cancel (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
     <div class="pw-q" id="pw-dlg-q"></div>
     <div class="b" id="pw-dlg-b"></div>
+    <div class="pw-why" id="pw-dlg-why"></div>
   </div>
 </div>
 <div class="pw-notice" id="pw-notice" style="display:none" role="alertdialog" aria-modal="true" aria-labelledby="pw-n-t">
@@ -9753,7 +9802,7 @@ function updateDecimatorList(info) {
           <button onclick="removeDecimator(${dec.id})" class="btn sm dec-x" title="Remove this VFO">${icon('close')}</button>
         </span>
       </div>
-      <div class="dec-row" id="dec-freq-row-${dec.id}">
+      <div class="dec-row dec-freq" id="dec-freq-row-${dec.id}">
         <span class="vfd-box" id="dec-freq-${dec.id}" title="${VFD_TIP}">${vfdDigitsHtml()}<span class="vfd-unit">MHz</span></span>
         <input type="text" class="vfd-in" id="dec-actual-freq-${dec.id}" value="${actualFreqMhz.toFixed(6)}"
                style="width:96px;font-family:monospace"
@@ -9802,7 +9851,7 @@ function updateDecimatorList(info) {
       <div class="dec-row">
         <label class="dec-chk" title="Voice to Text: write down what is said on this VFO (its analog demod, or its digital decoder's voice). Transcripts: Transcription on the right-hand rail.">
           <input type="checkbox" id="dec-v2t-${dec.id}" ${dec.transcribe ? 'checked' : ''} onchange="v2tToggle(${dec.id}, this.checked)">
-          ${icon('speech')}<span>Transcribe</span>
+          <span>Transcribe</span>
         </label>
         <span class="dec-v2t-state" id="dec-v2t-state-${dec.id}"></span>
       </div>
@@ -16494,7 +16543,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // everything about setting the software up, a tab each - the map provider
   // and its API key (below), the decoders' voice codecs and plugins
   // (digOnCodecs, aiRenderPlugins), Voice to Text (v2tRenderBox, in the
-  // "🗣 VOICE TO TEXT" section) and the assistant's setup state (setDlgAi) --
+  // "🗣 VOICE TO TEXT" section), the assistant's setup state (setDlgAi) and
+  // System: restart / shut down from the page (setDlgSys, ⏻ POWER) --
   // The dialog edits a copy of mapProvCfg - with the key of every provider,
   // so going through the list loses none - and Save stores it in
   // localStorage kraken_map_prov: per browser, like the map's view
@@ -16509,6 +16559,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (e.tagName === 'BUTTON') e.setAttribute('aria-selected', on ? 'true' : 'false');
     }
     if (t === 'ai') setDlgAi();
+    if (t === 'sys') setDlgSys();
   }
   // Assistant: set up on the receiver or not (it can't be from the page), and
   // while it is not, what to run. Drawn again whenever ai_state or the
@@ -16555,7 +16606,42 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
   }
-  // tab: 'map' | 'dec' | 'v2t' | 'ai'; none = the tab shown last
+  // System: the page's Restart / Shut down (the ⏻ POWER section) - each action
+  // offered or not and why; for what the user can allow, the command. Drawn
+  // again on every power state (pwOnState).
+  function setDlgSys() {
+    const el = $id('set-sys');
+    if (!el) return;
+    const acts = ['restart', 'reboot', 'shutdown'];
+    const line = a => {
+      const w = pwWhyInfo(a);
+      return '<div class="kv"><span>' + PW_NAME[a] + '</span><span>' +
+        (pwHas(a) ? '<span class="ok">Offered</span>' : w ? w.s + helpTip(w.tip(PW_VERB[a]), true) : 'Not offered') + '</span></div>';
+    };
+    let h;
+    if (!pwGot) {
+      h = '<div class="dig-codec"><div class="h"><span class="i">…</span><b>Restart and shut down from the page</b><span class="u">Checking…</span></div></div>';
+    } else {
+      const on = acts.filter(pwHas), why = acts.map(pwWhy);
+      const off = why.every(w => w === 'off');
+      const wanted = acts.filter((a, i) => why[i] !== 'config' && why[i] !== 'off');   // what the admin left in
+      const all = wanted.length && wanted.every(pwHas);
+      const cls = all ? 'ok' : on.length ? 'warn' : 'missing';
+      const state = off ? 'Turned off' : all ? 'Set up' : on.length ? 'Partly set up' : 'Not set up';
+      const lines = ['<div class="pw-sys">' + acts.map(line).join('') + '</div>'];
+      if (pwState.dry_run) lines.push('<div class="wn">' + icon('warn', 't') + '<span>Dry run: the commands are only logged</span>' +
+        helpTip('<code>KRAKEN_POWER_DRY_RUN=1</code> in the receiver\'s environment: everything runs (recordings finished, files written) but the command itself.') + '</div>');
+      const fix = acts.filter(a => pwWhy(a) === 'not_permitted');
+      if (fix.length) lines.push('<div class="how">To allow ' + (fix.length > 1 ? 'them' : 'it') + ', run once on the receiver, in the krakensdr_suite folder:' +
+        helpTip(PW_WHY.not_permitted.tip(fix.length > 1 ? 'reboot or power off' : PW_VERB[fix[0]]), true) +
+        '<pre>' + pwCmdHtml(PW_FIX) + '</pre>Then restart the software.</div>');
+      if (pwWhy('restart') === 'no_supervisor') lines.push('<div class="how">For Restart software, start the receiver with <code>./run.sh</code>.</div>');
+      h = '<div class="dig-codec ' + cls + '"><div class="h"><span class="i">' + icon(cls === 'ok' ? 'ok' : cls === 'warn' ? 'warn' : 'no') + '</span>' +
+        '<b>Restart and shut down from the page</b><span class="u">' + state + '</span></div>' + lines.join('') + '</div>';   // constants only
+    }
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+  }
+  // tab: 'map' | 'dec' | 'v2t' | 'ai' | 'sys'; none = the tab shown last
   function setDlgOpen(tab) {
     setDlgCfg = JSON.parse(JSON.stringify(mapProvCfg));
     if (!mapHas(MAP_PROVIDERS, setDlgCfg.p)) setDlgCfg.p = 'osm';
@@ -28294,12 +28380,21 @@ function openHeimdall(){
 // ⏻ POWER: Restart / Shut down (power.cpp, docs/dev/power.md)
 // ----------------------------------------------------------------------------
 // The receiver says what it offers - {"power":{actions:[restart, reboot,
-// shutdown], busy, phase, dry_run[, error][, note]}} in the hello and on every
-// change; an older receiver sends none and the buttons stay hidden. A button
-// opens a confirmation; POWER:<action> goes to the receiver, which finishes the
-// recordings, writes its files and tells every page (busy + phase): the notice
-// covers the page until the socket comes back (restart / reboot: the page
-// reconnects by itself and the notice goes; a failure shows why).
+// shutdown], unavailable:{<action>: <reason>}, busy, phase, dry_run[, error]
+// [, note]}} in the hello and on every change; an older receiver sends none and
+// the buttons stay hidden (and one without "unavailable": only what it offers).
+// Nothing on the page promises an action that is not in `actions`: the
+// buttons' titles, the row's tip and the dialogs are built from it. An action
+// not offered for a reason the user can do something about (or should know:
+// a container, Windows' privilege) stays visible in an unavailable look; using
+// it says why and, where there is one, the command that allows it. Left out
+// on purpose by the admin (KRAKEN_POWER / KRAKEN_NO_POWER: "config" / "off")
+// it is hidden, as before - the Setup Settings System tab still lists it.
+// A button opens a confirmation; POWER:<action> goes to the receiver, which
+// finishes the recordings, writes its files and tells every page (busy +
+// phase): the notice covers the page until the socket comes back (restart /
+// reboot: the page reconnects by itself and the notice goes; a failure shows
+// why).
 // ============================================================================
 // ic: the notice's icon
 const PW_TXT = {
@@ -28307,18 +28402,90 @@ const PW_TXT = {
   reboot:   {ic: 'refresh', t: 'Rebooting…', s: 'This page reconnects by itself', no: 'Not rebooted'},
   shutdown: {ic: 'power', t: 'Shutting down…', s: 'Safe to unplug when the green LED stops blinking', no: 'Not shut down'},
 };
+const PW_NAME = {restart: 'Restart software', reboot: 'Reboot computer', shutdown: 'Shut down'};
+// the command that allows reboot / shutdown on Linux (a sudo rule for exactly
+// systemctl reboot / poweroff; install-pi-service.sh, power.md)
+const PW_FIX = './install-pi-service.sh --power-only';
+const PW_UNFIX = './install-pi-service.sh --power-only --uninstall';
+// why an action is not offered (power.cpp reason_locked): s = the short line,
+// tip(verb) = the ? tip (verb: "reboot" / "power off" / "restart"), fix = the
+// command; show = visible in the row and the dialogs (else only in Setup Settings)
+const PW_WHY = {
+  not_permitted: {s: 'Not allowed without a password', show: true, fix: PW_FIX,
+    tip: v => 'The user that runs the receiver may not ' + v + ' the computer without a password: it runs outside a desktop session, and there is no sudo rule for it. ' +
+              'To allow it - only <code>systemctl reboot</code> and <code>poweroff</code>, nothing else - run <code>' + PW_FIX + '</code> on the receiver\'s computer, ' +
+              'in the krakensdr_suite folder, as that user (it asks for the sudo password once), then restart the software. To undo it: <code>' + PW_UNFIX + '</code>.'},
+  no_supervisor: {s: 'Not started by run.sh', show: true,
+    tip: () => 'Nothing would start the software again after it ends. Restart works when <code>./run.sh</code> (also under the boot service), Docker or krakensdr.exe started it.'},
+  container: {s: 'In a container', show: true,
+    tip: v => 'The receiver runs in a Docker container, which can\'t ' + v + ' its computer. Restart software restarts the container.'},
+  no_systemd: {s: 'Not a systemd system', show: true,
+    tip: v => 'The receiver can ' + v + ' the computer only through systemd (<code>systemctl</code>), which this computer doesn\'t use.'},
+  no_sudo_rule: {s: 'Needs a sudo rule', show: true,
+    tip: v => 'macOS: shutdown needs root. To allow it, add a sudo rule (<code>sudo visudo -f /etc/sudoers.d/krakensdr-power</code>) for the user that runs the receiver: ' +
+              '<code>NOPASSWD: /sbin/shutdown -r now, /sbin/shutdown -h now</code>, then restart the software.'},
+  no_privilege: {s: 'No shutdown privilege', show: true,
+    tip: v => 'The Windows user that runs the receiver has no right to shut the computer down (a policy setting: "Shut down the system").'},
+  unsupported: {s: 'Not on this system', show: true, tip: v => 'The receiver can\'t ' + v + ' this kind of computer.'},
+  pending: {s: 'Checking…', show: false, tip: () => 'The receiver is finding out what it may do.'},
+  config: {s: 'Turned off on the receiver', show: false,
+    tip: () => 'Left out by <code>KRAKEN_POWER</code> in the receiver\'s environment (the boot service: <code>POWER_BUTTONS=0 ./install-pi-service.sh</code>).'},
+  off: {s: 'Turned off on the receiver', show: false, tip: () => 'Switched off by <code>KRAKEN_NO_POWER=1</code> in the receiver\'s environment.'},
+};
+const PW_VERB = {restart: 'restart', reboot: 'reboot', shutdown: 'power off'};
 let pwState = {actions: [], busy: '', phase: '', dry_run: false};
+let pwGot = false;                     // a power state has arrived (an older receiver sends none)
 let pwAsked = 0, pwAskedAction = '';   // this page's request (its refusal is shown here only)
 let pwShown = '';                      // the action the notice is about ('' = hidden)
 let pwLost = false;                    // the socket closed while the notice was up
 function pwHas(a) { return (pwState.actions || []).includes(a); }
+// the reason code an action is not offered for ('' = offered, or an older receiver)
+function pwWhy(a) {
+  if (pwHas(a)) return '';
+  const u = pwState.unavailable;
+  return u && typeof u === 'object' && typeof u[a] === 'string' ? u[a] : '';
+}
+function pwWhyInfo(a) { const w = pwWhy(a); return w ? (PW_WHY[w] || PW_WHY.unsupported) : null; }
+// 'on' = offered | 'na' = shown, unavailable | '' = not shown
+function pwMode(a) { if (pwHas(a)) return 'on'; const w = pwWhyInfo(a); return w && w.show ? 'na' : ''; }
+function pwSetTip(el, t) { el.title = t; el.removeAttribute('data-tip'); }
 function pwOnState(p) {
   if (!p || typeof p !== 'object') return;
   pwState = p;
-  const rs = pwHas('restart') || pwHas('reboot'), sd = pwHas('shutdown');
-  $id('pw-restart').style.display = rs ? '' : 'none';
-  $id('pw-shutdown').style.display = sd ? '' : 'none';
+  pwGot = true;
+  const mr = pwMode('restart'), mb = pwMode('reboot'), ms = pwMode('shutdown');
+  const rs = !!(mr || mb), sd = !!ms;
+  const rb = $id('pw-restart'), sb = $id('pw-shutdown');
+  rb.style.display = rs ? '' : 'none';
+  sb.style.display = sd ? '' : 'none';
   $id('pw-row').style.display = rs || sd ? '' : 'none';
+  // the look and the titles: only what is offered
+  const rOn = mr === 'on' || mb === 'on', sOn = ms === 'on';
+  rb.classList.toggle('pw-na', !rOn);
+  rb.setAttribute('aria-disabled', rOn ? 'false' : 'true');
+  sb.classList.toggle('pw-na', !sOn);
+  sb.classList.toggle('danger', sOn);
+  sb.setAttribute('aria-disabled', sOn ? 'false' : 'true');
+  pwSetTip(rb, mr === 'on' && mb === 'on' ? 'Restart the software (heimdall + this program) or reboot the computer'
+    : mr === 'on' ? 'Restart the software (heimdall + this program)'
+    : mb === 'on' ? 'Reboot the computer'
+    : 'Restart: not available - ' + (pwWhyInfo(mr ? 'restart' : 'reboot') || PW_WHY.unsupported).s);
+  pwSetTip(sb, sOn ? 'Power the receiver\'s computer off safely: recordings are finished and settings saved first'
+    : 'Shut down: not available - ' + (pwWhyInfo('shutdown') || PW_WHY.unsupported).s);
+  // the row's ? tip: what each button does here
+  const tip = [];
+  if (mr === 'on') tip.push('<b>Restart</b>: the software (heimdall and this program start again, the array recalibrates, ~30 s)' + (mb === 'on' ? ' or the whole computer.' : '.'));
+  else if (mb === 'on') tip.push('<b>Restart</b>: reboots the whole computer.');
+  if (sOn) tip.push('<b>Shut down</b>: powers the computer off - unplug it once it is off (Raspberry Pi: the green LED has stopped blinking).');
+  const na = ['restart', 'reboot', 'shutdown'].filter(a => pwMode(a) === 'na');
+  if (na.length) tip.push('Not available here: ' + na.map(a => PW_NAME[a]).join(', ') + ' - the button says why (and Setup Settings → System).');
+  if (rOn || sOn) tip.push('First a running recording (IQ, audio, DoA) is finished and the settings and logs are written. Every open page shows what is happening' + (rOn ? ' and reconnects by itself after a restart.' : '.'));
+  const th = tip.join('<br>');
+  const te = $id('pw-row-tip');
+  if (te && te.dataset.html !== th) { te.dataset.html = th; te.innerHTML = th; }   // constants only
+  if (typeof setDlgSys === 'function') setDlgSys();
+  // an open dialog follows (a state that changed under it)
+  if ($id('pw-dlg-bg').style.display !== 'none' && pwDlgWhich && !p.busy) pwOpen(pwDlgWhich, true);
   if (!rs && !sd) pwDlgClose();
   if (p.busy) {
     pwAsked = 0;   // taken: a later refusal is someone else's
@@ -28353,38 +28520,73 @@ function pwNoticeHide() {
   pwLost = false;
   $id('pw-notice').style.display = 'none';
 }
-function pwDlgClose() { $id('pw-dlg-bg').style.display = 'none'; }
-// which = 'restart' (software / computer) | 'shutdown'
-function pwOpen(which) {
-  const b = $id('pw-dlg-b');
+let pwDlgWhich = '';   // the dialog shown: 'restart' | 'shutdown'
+function pwDlgClose() { $id('pw-dlg-bg').style.display = 'none'; pwDlgWhich = ''; }
+// a command to show: it breaks only between its words (not at the hyphens of
+// --power-only) where it doesn't fit; copied, it is the same text
+function pwCmdHtml(c) { return c.split(' ').map(w => '<span class="nw">' + w + '</span>').join(' '); }   // constants only
+// why `a` is not available: one line (name: reason ?) and the command that allows it
+function pwWhyHtml(a, named) {
+  const w = pwWhyInfo(a) || PW_WHY.unsupported;
+  return '<div class="pw-why-l">' + icon('no', 't') + '<span>' + (named ? '<b>' + PW_NAME[a] + '</b>: ' : '') + w.s + '</span>' +
+    helpTip(w.tip(PW_VERB[a]), true) + '</div>' +
+    (w.fix ? '<div class="pw-cmd" title="Run this on the receiver\'s computer, in the krakensdr_suite folder">' + pwCmdHtml(w.fix) + '</div>' : '');   // constants only
+}
+// which = 'restart' (software / computer) | 'shutdown'. again = redrawn for a new state (keeps focus)
+function pwOpen(which, again) {
+  const b = $id('pw-dlg-b'), why = $id('pw-dlg-why');
+  const shownWhy = again ? (why.dataset.a || '') : '';
   b.innerHTML = '';
-  const btn = (text, cls, title, action, ic) => {
+  why.innerHTML = '';
+  why.dataset.a = '';
+  const showWhy = (list) => {
+    why.innerHTML = list.map(a => pwWhyHtml(a, list.length > 1 || which === 'restart')).join('');
+    why.dataset.a = list.join(',');
+  };
+  const btn = (text, cls, title, action, ic, na) => {
     const e = document.createElement('button');
     e.type = 'button';
-    e.className = 'btn ' + cls;
+    e.className = 'btn ' + cls + (na ? ' pw-na' : '');
     e.innerHTML = ic ? icon(ic) + '<span>' + text + '</span>' : text;   // constants only
     if (title) e.title = title;
-    e.onclick = action ? () => pwSend(action) : pwDlgClose;
+    if (na) {
+      e.setAttribute('aria-disabled', 'true');
+      e.dataset.a = na;
+      e.onclick = () => showWhy([na]);
+    } else {
+      e.onclick = action ? () => pwSend(action) : pwDlgClose;
+    }
     b.appendChild(e);
     return e;
   };
   let first;
+  pwDlgWhich = which;
   if (which === 'shutdown') {
     $id('pw-dlg-title').innerHTML = icon('power') + '<span>Shut down</span>';
-    $id('pw-dlg-q').textContent = 'Power off the receiver’s computer?';
-    first = btn('Shut down', 'danger', 'Recordings are finished and settings saved first', 'shutdown', 'power');
+    if (pwHas('shutdown')) {
+      $id('pw-dlg-q').textContent = 'Power off the receiver’s computer?';
+      first = btn('Shut down', 'danger', 'Recordings are finished and settings saved first', 'shutdown', 'power');
+    } else {
+      $id('pw-dlg-q').textContent = 'Not available on this receiver';
+      showWhy(['shutdown']);
+    }
   } else {
     $id('pw-dlg-title').innerHTML = icon('refresh') + '<span>Restart</span>';
-    $id('pw-dlg-q').textContent = 'Restart what?';
-    if (pwHas('restart')) first = btn('Restart software', 'primary', 'heimdall and this program start again (~30 s; the array recalibrates)', 'restart');
-    if (pwHas('reboot')) {
+    const mr = pwMode('restart'), mb = pwMode('reboot');
+    $id('pw-dlg-q').textContent = mr === 'on' || mb === 'on' ? 'Restart what?' : 'Not available on this receiver';
+    if (mr === 'on') first = btn('Restart software', 'primary', 'heimdall and this program start again (~30 s; the array recalibrates)', 'restart');
+    else if (mr === 'na') btn('Restart software', '', 'Not available - ' + pwWhyInfo('restart').s, null, '', 'restart');
+    if (mb === 'on') {
       const r = btn('Reboot computer', first ? '' : 'primary', 'The whole computer restarts (1-2 min)', 'reboot');
       first = first || r;
-    }
+    } else if (mb === 'na') btn('Reboot computer', '', 'Not available - ' + pwWhyInfo('reboot').s, null, '', 'reboot');
+    // nothing to choose: every reason at once
+    if (!first) showWhy(['restart', 'reboot'].filter(a => pwMode(a) === 'na'));
+    else if (shownWhy) showWhy(shownWhy.split(',').filter(a => pwMode(a) === 'na'));
   }
-  btn('Cancel', '', '', null);
+  const c = btn(first ? 'Cancel' : 'Close', '', '', null);
   $id('pw-dlg-bg').style.display = 'flex';
-  if (first) first.focus();
+  if (!again) (first || c).focus();
 }
 function pwSend(action) {
   pwDlgClose();

@@ -126,6 +126,40 @@ same button opens the drawer, as before.
   layout untouched; phone: the stored state doesn't hide the drawer, the
   tap opens it, the button keeps its size and is not lit; no JS errors.
 
+## The scrollbar's room (2026-11-18)
+
+The user reported that the sidebar going from fitting to scrolling was
+"a little jarring" and asked for "the scroll bar always there, or at least
+the space for it". With an 8 px classic scrollbar (Windows, Linux desktops)
+every box lost 8 px of width the moment a box was opened far enough, and the
+VFO card's frequency row wrapped (*operating-modes.md*, "VFO card
+frequency").
+
+- `.sidebar {scrollbar-gutter:stable}`: the room is always kept, so the
+  content is 281 px of the 290 px sidebar (1 px border, 8 px gutter) whether
+  it scrolls or not, and nothing moves when the scrollbar comes or goes. The
+  boxes are laid out for that width: it is the only one now.
+- The track is transparent (`::-webkit-scrollbar-track`; Firefox's
+  `scrollbar-color: var(--l1) transparent`): the empty gutter is the
+  sidebar's own background, not a strip, and with a scrollbar only the
+  thumb shows. The gutter adds 8 px to the right padding's 6 px; left as it
+  is (a thumb right against the boxes looked cramped).
+- No `scrollbar-gutter` (Safari before 18.2): `overflow-y:scroll` instead
+  (`@supports not`), a scrollbar always. Overlay scrollbars (macOS, phones,
+  so the drawer) take no room either way - nothing changes there.
+- The zoomed sidebar keeps the gutter in its 290 px layout (zoomed with it).
+  The box drag positions the lifted box from its placeholder's
+  `offsetLeft` / `offsetWidth`, so it follows; the header-only list it shows
+  while dragging no longer changes the width either. The resizer strip is a
+  sibling, untouched; a hidden sidebar is `display:none` as before.
+- Headless Chromium's `--hide-scrollbars` still reserves the gutter, so the
+  suites' sidebar measurements are 8 px narrower than before (281 px).
+
+Tests (scratch `test_sidefix.py`, real classic scrollbars): the same
+content width with the sidebar short (no scrolling) and long; no box's
+left / right edge moves when opening a box starts the scrolling; the empty
+gutter's and the track's pixels equal the sidebar's background.
+
 ## Rules for controls and text
 
 The sidebar was reworked on 2026-11-15 at the user's request - it was too
@@ -174,7 +208,11 @@ page got the same treatment on 2026-11-16.
   shorthand there would drop the knob).
 - The sidebar is scaled with CSS `zoom` (dragged width): anything positioned
   from `getBoundingClientRect()` inside it divides by the zoom, and box
-  widths are designed for 290 px.
+  widths are designed for 290 px - 281 px of content, the scrollbar's room
+  always kept (*The scrollbar's room*).
+- A row of ticks looks alike: the VFO card's Digital decoder, Transcribe and
+  Squelch are a tick and a word each - Transcribe's speech icon went
+  (the user's report 2026-11-18: only it had one).
 
 ### Outside the sidebar
 
@@ -351,11 +389,13 @@ aria-label say "Setup Settings" too). It has tabs (`.set-tabs` buttons and
 `.set-pane`s with the same `data-t`; `setDlgTab(t)`; the tab shown last is
 kept while the page is open, `setDlgTabId`). The dialog has a fixed size
 (540 x 540 px, less on a small screen) so the tabs stay put, and each pane
-scrolls by itself. The four tabs fit one line down to a 400 px phone (the
-tabs' side padding is 6 px below 560 px of window, 5 px below 420 px); on a
-narrower screen (320 px) the strip wraps and Assistant goes to a second
-line. Wrapping was chosen over a sideways-scrolling strip, which would hide
-a tab behind the dialog's edge with nothing to show it is there.
+scrolls by itself. The five tabs fit one line in the 540 px dialog (the
+tabs' side padding is 6 px below 560 px of window, 5 px below 420 px); on
+a phone the strip wraps onto a second line - with four tabs that happened
+below ~380 px, with System (2026-11-18) also on a 400 px phone: Assistant
+and System go to the second line. Wrapping was chosen over a
+sideways-scrolling strip, which would hide a tab behind the dialog's edge
+with nothing to show it is there.
 
 - **Map** (`map`): the tile provider and its key - *map.md*. Test /
   Cancel / Save belong to this tab only (Enter in one of its fields saves;
@@ -396,6 +436,12 @@ a tab behind the dialog's edge with nothing to show it is there.
   backend; the dock's two warnings - no API token, no sandbox). Drawn again
   when `ai_state` or the receiver's OS arrives (`aiOnState`, `setServerOs`),
   so a dialog left open follows a setup done meanwhile.
+- **System** (`sys`, `setDlgSys()` -> `#set-sys`, the `power` icon;
+  2026-11-18): one card, "Restart and shut down from the page" - each of
+  Restart software / Reboot computer / Shut down offered or why not, and
+  for what the user can allow, the command (`./install-pi-service.sh
+  --power-only`) - *power.md*, "What the page shows". Drawn again on every
+  power state.
 - **Add-ons** (`addons`, `setDlgAddons`, `#set-addons`) was the third tab
   until 2026-11-17: a card for the assistant and one for Voice to Text. It
   was split into the two tabs above - the Voice to Text card is the top of

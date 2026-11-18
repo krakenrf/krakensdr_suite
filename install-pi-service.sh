@@ -23,6 +23,10 @@
 #                                               # Shut down / Reboot computer
 #   ./install-pi-service.sh --uninstall
 #
+#   ./install-pi-service.sh --power-only              # ONLY that sudo rule (any Linux
+#   ./install-pi-service.sh --power-only --uninstall  # with systemd, no boot service);
+#                                                     # removes only the rule
+#
 set -euo pipefail
 
 SESSION="${TMUX_SESSION:-krakensdr}"
@@ -69,8 +73,63 @@ strip_console_attach() {
     [[ "$rest" =~ [^[:space:]] ]] || rm -f "$p"
 }
 
+# ------------------------------------------ web page: Shut down / Reboot -----
+# kraken_doa's ⏻ Shut down and "Reboot computer" run `sudo -n systemctl
+# poweroff|reboot` when logind doesn't allow this user without a password -
+# which is the case for the service (no login session), and for a desktop PC
+# whose user runs run.sh outside a local session. This rule allows exactly
+# those two commands for $RUN_USER, nothing else (kraken_doa checks it with
+# `sudo -n -l` at startup and offers only the buttons that work). ↻ Restart
+# software needs no rule: run.sh's supervisors restart the apps.
+power_rule_install() {
+    local tmp_rule
+    tmp_rule="$(mktemp)"
+    cat >"$tmp_rule" <<EOF
+# KrakenSDR web page: Shut down / Reboot computer (install-pi-service.sh;
+# remove with: ./install-pi-service.sh --power-only --uninstall, or --uninstall)
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /bin/systemctl poweroff, /bin/systemctl reboot
+EOF
+    # a broken sudoers file locks sudo itself: check it before it goes in place
+    if sudo visudo -cf "$tmp_rule" >/dev/null; then
+        sudo install -m 0440 -o root -g root "$tmp_rule" "$POWER_SUDOERS"
+        ok "web page Shut down / Reboot allowed for $RUN_USER ($POWER_SUDOERS)"
+    else
+        warn "sudo rule for the web page's Shut down / Reboot not valid - not installed"
+    fi
+    rm -f "$tmp_rule"
+}
+power_rule_remove() {
+    sudo rm -f "$POWER_SUDOERS"
+    ok "no sudo rule for the web page's Shut down / Reboot"
+}
+
+UNINSTALL=0
+POWER_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --uninstall)  UNINSTALL=1 ;;
+        --power-only) POWER_ONLY=1 ;;
+        *) die "unknown option $arg (--uninstall, --power-only)" ;;
+    esac
+done
+
+# --------------------------------------------- only the web page's rule ------
+# For a computer that doesn't run the boot service (a desktop PC started with
+# run.sh): nothing else is installed or changed. kraken_doa checks once at
+# startup, so the buttons follow after the next restart of the software.
+if [[ "$POWER_ONLY" == "1" ]]; then
+    [[ "$RUN_USER" != "root" ]] || die "run it as the user that runs the KrakenSDR software (it asks for sudo itself)"
+    if [[ "$UNINSTALL" == "1" || "$POWER_BUTTONS" != "1" ]]; then
+        power_rule_remove
+    else
+        power_rule_install
+        echo "   Restart the software (the page's Restart, or ./run.sh) to get the buttons."
+    fi
+    exit 0
+fi
+
 # ---------------------------------------------------------------- uninstall --
-if [[ "${1:-}" == "--uninstall" ]]; then
+if [[ "$UNINSTALL" == "1" ]]; then
     sudo systemctl disable --now krakensdr.service 2>/dev/null || true
     sudo rm -f "$SVC" /usr/local/bin/kraken-term /usr/local/bin/kraken-wait-usb "$POWER_SUDOERS"
     # Only OUR drop-in: the directory may hold other packages' or the admin's
@@ -172,33 +231,14 @@ EOF
 ok "unit written"
 
 # ------------------------------------------ web page: Shut down / Reboot -----
-# kraken_doa's ⏻ Shut down and "Reboot computer" run `sudo -n systemctl
-# poweroff|reboot` when logind doesn't allow this user without a password -
-# which is the case for the service (no login session). This rule allows
-# exactly those two commands for $RUN_USER, nothing else (kraken_doa checks
-# it with `sudo -n -l` and shows only the buttons that work). ↻ Restart
-# software needs no rule: run.sh's supervisors restart the apps.
-# POWER_BUTTONS=0 removes the rule and sets KRAKEN_POWER=restart in the unit
-# (above), which hides the two computer buttons - also where the user has
-# sudo without a password anyway (the Raspberry Pi OS default).
+# The sudo rule (power_rule_install, above). POWER_BUTTONS=0 removes it and
+# sets KRAKEN_POWER=restart in the unit (above), which hides the two computer
+# buttons - also where the user has sudo without a password anyway (the
+# Raspberry Pi OS default).
 if [[ "$POWER_BUTTONS" == "1" ]]; then
-    tmp_rule="$(mktemp)"
-    cat >"$tmp_rule" <<EOF
-# KrakenSDR web page: Shut down / Reboot computer (install-pi-service.sh;
-# remove with: POWER_BUTTONS=0 ./install-pi-service.sh, or --uninstall)
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /bin/systemctl poweroff, /bin/systemctl reboot
-EOF
-    # a broken sudoers file locks sudo itself: check it before it goes in place
-    if sudo visudo -cf "$tmp_rule" >/dev/null; then
-        sudo install -m 0440 -o root -g root "$tmp_rule" "$POWER_SUDOERS"
-        ok "web page Shut down / Reboot allowed for $RUN_USER ($POWER_SUDOERS)"
-    else
-        warn "sudo rule for the web page's Shut down / Reboot not valid - not installed"
-    fi
-    rm -f "$tmp_rule"
+    power_rule_install
 else
-    sudo rm -f "$POWER_SUDOERS"
-    ok "no sudo rule for the web page's Shut down / Reboot (POWER_BUTTONS=0)"
+    power_rule_remove
 fi
 
 # ------------------------------------------------------- viewer (one only) ---

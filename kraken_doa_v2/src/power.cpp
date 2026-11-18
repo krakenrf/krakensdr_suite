@@ -49,6 +49,7 @@ struct State {
     bool probed = false;                   // reboot / shutdown found out
     std::vector<std::string> cmd[A_COUNT]; // reboot / shutdown: the command; empty = not possible
     std::string how[A_COUNT];              // how it is done / why not (the startup log line)
+    std::string why[A_COUNT];              // reboot / shutdown not possible: the reason code pages get
     int busy = -1;                         // the action in progress
     std::string phase;                     // "preparing" (recordings, files) | "running" (the command ran)
     long long last_ms = -1000000;          // when the last attempt ended (repeats)
@@ -88,18 +89,41 @@ bool available_locked(const State& s, int a) {
     return s.dry || (s.probed && !s.cmd[a].empty());
 }
 
-// {"power":{"actions":[...],"busy":"","phase":"","dry_run":false[,"error":..,"for":<action>][,"note":..]}}
-// "for" = the action the error is about (a page shows an error only for its own request)
+// why an action is not offered - a code the page explains (power.md, "Protocol"):
+//   off            KRAKEN_NO_POWER         config        not in KRAKEN_POWER (both: the admin's choice)
+//   no_supervisor  restart: nothing restarts kraken_doa (no KRAKEN_RESTART_EXIT)
+//   pending        reboot / shutdown: the startup check is still running
+//   not_permitted  Linux: this user may not without a password (no session, no sudo rule)
+//   container      Linux: in a container   no_systemd    Linux: not a systemd system
+//   no_sudo_rule   macOS: no sudo rule for /sbin/shutdown
+//   no_privilege   Windows: no SeShutdownPrivilege        unsupported   any other system
+// "" = offered
+std::string reason_locked(const State& s, int a) {
+    if (available_locked(s, a)) return "";
+    if (s.disabled) return "off";
+    if (!s.allowed[a]) return "config";
+    if (a == A_RESTART) return "no_supervisor";
+    if (!s.probed) return "pending";
+    return s.why[a].empty() ? "unsupported" : s.why[a];
+}
+
+// {"power":{"actions":[...],"unavailable":{<action>:<reason>,...},"busy":"","phase":"",
+//           "dry_run":false[,"error":..,"for":<action>][,"note":..]}}
+// "for" = the action the error is about (a page shows an error only for its own request);
+// "unavailable" (2026-11-18) = every action not in "actions", with the reason code
 std::string message_locked(const State& s, const std::string& error = "", const std::string& note = "",
                            const std::string& for_action = "") {
-    std::string m = "{\"power\":{\"actions\":[";
+    std::string m = "{\"power\":{\"actions\":[", un;
     bool first = true;
     for (int a = 0; a < A_COUNT; a++) {
-        if (!available_locked(s, a)) continue;
+        if (!available_locked(s, a)) {
+            un += std::string(un.empty() ? "" : ",") + "\"" + NAMES[a] + "\":\"" + reason_locked(s, a) + "\"";
+            continue;
+        }
         m += std::string(first ? "" : ",") + "\"" + NAMES[a] + "\"";
         first = false;
     }
-    m += "],\"busy\":\"" + std::string(s.busy >= 0 ? NAMES[s.busy] : "") + "\",\"phase\":\"" +
+    m += "],\"unavailable\":{" + un + "},\"busy\":\"" + std::string(s.busy >= 0 ? NAMES[s.busy] : "") + "\",\"phase\":\"" +
          (s.busy >= 0 ? s.phase : "") + "\",\"dry_run\":" + (s.dry ? "true" : "false");
     if (!error.empty()) m += ",\"error\":\"" + json_escape(error) + "\",\"for\":\"" + json_escape(for_action) + "\"";
     if (!note.empty()) m += ",\"note\":\"" + json_escape(note) + "\"";
@@ -213,7 +237,7 @@ std::string win_shutdown_exe() {
 // reboot / shutdown: the command each would run, or why not (worker thread)
 void probe() {
     std::vector<std::string> cmd[A_COUNT];
-    std::string how[A_COUNT];
+    std::string how[A_COUNT], why[A_COUNT];
     bool want[A_COUNT];
     {
         std::lock_guard<std::mutex> lk(S().mu);
@@ -230,6 +254,7 @@ void probe() {
             how[a] = "shutdown.exe";
         } else {
             how[a] = "this user has no shutdown privilege";
+            why[a] = "no_privilege";
         }
     }
 #elif defined(__APPLE__)
@@ -243,6 +268,7 @@ void probe() {
             how[a] = "sudo";
         } else {
             how[a] = "needs a sudo rule for /sbin/shutdown";
+            why[a] = "no_sudo_rule";
         }
     }
 #elif defined(__linux__)
@@ -253,8 +279,10 @@ void probe() {
         const char* verb = a == A_REBOOT ? "reboot" : "poweroff";
         if (in_container()) {
             how[a] = "in a container";
+            why[a] = "container";
         } else if (systemctl.empty() || !exists("/run/systemd/system")) {
             how[a] = "not a systemd system";
+            why[a] = "no_systemd";
         } else if (logind_allows(busctl, a == A_REBOOT ? "CanReboot" : "CanPowerOff")) {
             cmd[a] = {systemctl, verb};
             how[a] = "systemctl";
@@ -262,17 +290,22 @@ void probe() {
             cmd[a] = {sudo_path(), "-n", systemctl, verb};
             how[a] = "sudo";
         } else {
-            how[a] = "this user may not (install-pi-service.sh adds a sudo rule)";
+            how[a] = "this user may not (./install-pi-service.sh --power-only adds a sudo rule)";
+            why[a] = "not_permitted";
         }
     }
 #else
-    for (int a = A_REBOOT; a < A_COUNT; a++) how[a] = "not on this system";
+    for (int a = A_REBOOT; a < A_COUNT; a++) {
+        how[a] = "not on this system";
+        why[a] = "unsupported";
+    }
 #endif
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
     for (int a = A_REBOOT; a < A_COUNT; a++) {
         s.cmd[a] = cmd[a];
         s.how[a] = how[a];
+        s.why[a] = why[a];
     }
     s.probed = true;
     log_summary_locked(s);

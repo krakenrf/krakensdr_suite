@@ -139,9 +139,13 @@ them): restart the software (heimdall + this program; needs `run.sh`, Docker or
 `krakensdr.exe`, which start them again), reboot the computer, or power it off so a
 Pi can be unplugged safely. A running IQ / audio / DoA recording is finished and the
 settings and logs are written first, and every open page shows what is happening
-and reconnects by itself after a restart. `KRAKEN_NO_POWER=1` hides the buttons,
-`KRAKEN_POWER=restart` offers only the software restart; details in
-`docs/dev/power.md`.
+and reconnects by itself after a restart. What the installation can't do is shown
+greyed out, and using it says why (Setup Settings → System lists all three);
+rebooting / shutting down when this user may not without a password:
+`./install-pi-service.sh --power-only` (only the sudo rule for those two commands,
+no boot service; `--power-only --uninstall` removes it), then restart the software.
+`KRAKEN_NO_POWER=1` hides the buttons, `KRAKEN_POWER=restart` offers only the
+software restart; details in `docs/dev/power.md`.
 
 The main area shows the **spectrum + waterfall** (click/drag the tuning bar to set the
 listen frequency - it lands on a multiple of the top bar's **Step**, 1 Hz to 100 kHz;

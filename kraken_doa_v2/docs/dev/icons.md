@@ -62,7 +62,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `gear` | settings: Setup Settings, Categories, scan settings, model and effort, Generate |
 | `refresh` | refresh, check, rescan, regenerate, restart |
 | `reset` | reset to defaults, the boxes' order; drive mode's Reset (bearings) |
-| `power` | shut down |
+| `power` | shut down; Setup Settings' System tab (restart and shut down from the page) |
 | `edit` | edit (pencil) |
 | `trash` | delete |
 | `download` `upload` | download / get, upload |
@@ -113,7 +113,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `bug` | Debug Playback |
 | `plane` | aircraft, Array Calibration (from aircraft) |
 | `decoder` | the decoders |
-| `speech` | Voice to Text, Transcribe, Transcription |
+| `speech` | Voice to Text, Transcription (not the VFO card's Transcribe tick: 2026-11-18, like its neighbours it has none) |
 | `bot` | the AI assistant |
 | `map` | the map |
 | `layers` | the map's Layers (stacked sheets) |

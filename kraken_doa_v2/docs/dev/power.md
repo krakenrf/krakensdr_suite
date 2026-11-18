@@ -11,9 +11,10 @@ run.sh's supervisor / headless loop, `windows/krakensdr.cpp`,
 
 - **↻ Restart** opens a dialog with *Restart software* (heimdall and
   kraken_doa start again; the array recalibrates, ~30 s) and *Reboot
-  computer* - each only where it works. **⏻ Shut down** asks for a
-  confirmation and powers the computer off, so a Pi can be unplugged once its
-  green LED has stopped blinking.
+  computer*. **⏻ Shut down** asks for a confirmation and powers the
+  computer off, so a Pi can be unplugged once its green LED has stopped
+  blinking. What the installation can't do is shown as unavailable, with
+  the reason and the fix (*What the page shows*, below).
 - "Safe": before acting, kraken_doa stops a running IQ / audio recording
   (`RECORDER_STOP`, through the dispatcher, so every page sees it) and waits
   until its files are complete (`rec::writing()`, <= 20 s: the rest of the
@@ -38,14 +39,71 @@ run.sh's supervisor / headless loop, `windows/krakensdr.cpp`,
 
 - Page -> receiver: `POWER:restart` | `POWER:reboot` | `POWER:shutdown`.
 - Receiver -> pages: `{"power":{"actions":["restart","reboot","shutdown"],
-  "busy":"" | <action>, "phase":"" | "preparing" | "running",
-  "dry_run":bool[, "error":..., "for":<action>][, "note":...]}}` - in the hello
-  every connecting page gets (`get_connect_sync_messages`), when the startup
-  check finishes, and on every change. `actions` lists only what this
-  installation offers; the page shows the Restart button for `restart` or
-  `reboot`, Shut down for `shutdown`.
-- Compatibility: an older receiver sends no `power` -> no buttons. An older
-  page ignores the message (unknown key) and never sends `POWER:`.
+  "unavailable":{<action>:<reason>, ...}, "busy":"" | <action>,
+  "phase":"" | "preparing" | "running", "dry_run":bool[, "error":...,
+  "for":<action>][, "note":...]}}` - in the hello every connecting page gets
+  (`get_connect_sync_messages`), when the startup check finishes, and on
+  every change. `actions` lists only what this installation offers (its
+  meaning is unchanged); `unavailable` (2026-11-18) names every other action
+  with the reason (`reason_locked` in power.cpp):
+
+  | Reason | Why | The page |
+  |---|---|---|
+  | `off` | `KRAKEN_NO_POWER` | hidden; Setup Settings: "Turned off" |
+  | `config` | left out of `KRAKEN_POWER` (the boot service's `POWER_BUTTONS=0`) | hidden; Setup Settings: "Turned off on the receiver" |
+  | `pending` | reboot / shutdown: the startup check is still running (well under a second) | hidden until it is done |
+  | `no_supervisor` | restart: no `KRAKEN_RESTART_EXIT` (started by hand) | unavailable: "Not started by run.sh" |
+  | `not_permitted` | Linux: logind says no and there is no sudo rule | unavailable: "Not allowed without a password" + `./install-pi-service.sh --power-only` |
+  | `container` | Linux: Docker / podman | unavailable: "In a container" |
+  | `no_systemd` | Linux: no `/run/systemd/system` | unavailable: "Not a systemd system" |
+  | `no_sudo_rule` | macOS: no sudo rule for `/sbin/shutdown` | unavailable: "Needs a sudo rule" (the line in its tip) |
+  | `no_privilege` | Windows: no SeShutdownPrivilege | unavailable: "No shutdown privilege" |
+  | `unsupported` | any other system (also an unknown code from a newer receiver) | unavailable: "Not on this system" |
+
+  A dry run offers everything `KRAKEN_POWER` allows, so there `unavailable`
+  holds only `config` / `off`.
+- Compatibility: an older receiver sends no `power` -> no buttons; one
+  without `unavailable` -> only the buttons it offers, as before. An older
+  page ignores the message (unknown key) or the new field and never sends
+  `POWER:`.
+
+## What the page shows (2026-11-18)
+
+The user reported: "The restart button says it has an option to power off
+the computer, but it doesn't implement it." On a desktop PC started with
+`run.sh` (logind: `challenge`, no sudo rule) the receiver offered only
+`restart`, yet the Restart button's tooltip still read "... or reboot the
+computer", and Shut down was simply missing - nothing said why or what to
+do. Now (the ⏻ POWER section, `pwOnState`):
+
+- **Nothing promises what `actions` doesn't hold.** The buttons' titles,
+  the row's `?` tip (`#pw-row-tip`) and the dialogs are built from it:
+  Restart's title is "Restart the software (heimdall + this program)", "...
+  or reboot the computer" or "Reboot the computer" by what is offered.
+- **What is not offered stays visible, as unavailable** (`.pw-na`: dashed
+  border, no fill, grey text, no danger red; `aria-disabled`, still
+  focusable): Shut down in the row; *Restart software* / *Reboot computer*
+  as options in the Restart dialog. Using one shows, under the dialog's
+  buttons (`#pw-dlg-why`), one short line with a `?` tip and, where the
+  user can fix it, the command (`.pw-cmd`, selectable). The Shut down
+  button opens its dialog with "Not available on this receiver", the reason
+  and Close; with nothing to choose in the Restart dialog every reason shows
+  at once. The titles say "Shut down: not available - <reason>". An open
+  dialog follows a new state.
+- What the admin left out (`config`, `off`) and the startup check still
+  running (`pending`) stay hidden, as before - not advertised as fixable.
+- **Setup Settings → System** (a fifth tab, `power` icon, `setDlgSys`): one
+  card "Restart and shut down from the page" in the `.dig-codec` look - Set
+  up (everything the admin left in is offered) / Partly set up / Not set up
+  / Turned off; each action Offered or its reason (with the `?` tip); for
+  `not_permitted` "run once on the receiver, in the krakensdr_suite folder"
+  and the command, then restart the software; for `no_supervisor`
+  `./run.sh`; a dry-run note. Redrawn on every power state.
+- The command the page shows: `./install-pi-service.sh --power-only` (the
+  `?` tip also gives `./install-pi-service.sh --power-only --uninstall`).
+  The receiver checks once at startup, so the buttons follow after the next
+  restart of the software (a re-check from the page would run `sudo -n -l`
+  on demand; not done).
 
 ## Who may send it
 
@@ -126,7 +184,9 @@ run.sh's supervisor / headless loop, `windows/krakensdr.cpp`,
 `probe()` runs once at startup on a worker thread (pages get the buttons
 when it is done) and logs one line, e.g. `Power buttons: restart (exit
 status 75), reboot (sudo), shutdown (sudo)` or `... - not offered: reboot
-(this user may not (install-pi-service.sh adds a sudo rule))`. Linux order:
+(this user may not (./install-pi-service.sh --power-only adds a sudo rule))`.
+Each "not offered" also gets its reason code for the pages (`why[]`, the
+table under *Protocol*). Linux order:
 container -> no; no `/run/systemd/system` -> no; `busctl call
 org.freedesktop.login1 ... CanReboot / CanPowerOff` = `"yes"` -> plain
 `systemctl` (polkit allows an active local session: a desktop user running
@@ -138,7 +198,11 @@ outside a session, got `challenge`): that is why the Pi needs the sudo rule.
 
 `install-pi-service.sh` writes `/etc/sudoers.d/krakensdr-power` (validated
 with `visudo -cf` before it is installed, mode 0440, removed by
-`--uninstall`):
+`--uninstall`); `./install-pi-service.sh --power-only` (2026-11-18) writes
+only that rule - nothing else is installed or changed, for a computer
+without the boot service - and `--power-only --uninstall` removes only it
+(`power_rule_install` / `power_rule_remove`, shared with the full install;
+refused as root):
 
 ```
 <user> ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /bin/systemctl poweroff, /bin/systemctl reboot
@@ -229,6 +293,34 @@ sudo rule without running sudo. Nothing ran `sudo`, `systemctl` or
 - The existing suites against this build: sidebar 53/53, page 35/35.
 - `sudoers` line: `visudo -cf` "parsed OK" (run as the user on the file, no
   sudo).
+
+2026-11-18 (the reasons, the unavailable look, the System tab,
+`--power-only`; the job's scratch `test_sidefix.py`, headless Chromium,
+real mouse / key events; TEST build on 2808x, dry run): every state
+simulated through `pwOnState` - all three; restart only + `not_permitted`;
+none (`no_supervisor` + `not_permitted`); `config`; `off`; `container`; an
+older receiver without `unavailable`; busy - the buttons' look, titles, the
+row's tip, the dialogs' options, what a click on an unavailable one shows
+(nothing sent), the command, the Setup card, and that no text promises an
+action missing from `actions`; real clicks on available actions send
+`POWER:<action>` (a spy on `send`); the five tabs on one line at 540 px,
+inside the dialog (two lines) on 400 / 320 px phones. Against the real
+test server: the default (`unavailable {}`), `KRAKEN_POWER=restart`
+(`config` twice, Restart only), `KRAKEN_NO_POWER=1` (`off` three times, no
+row); a real click on Restart software, forwarded: "Restarting…", the
+dry-run log line, then "Dry run - nothing was done"; the startup log line
+names `--power-only`. `not_permitted` / `no_supervisor` can't be produced
+by a dry run (it offers everything `KRAKEN_POWER` allows): simulated only.
+`install-pi-service.sh --power-only`: a copy with the sudoers target moved
+into a temp directory and `sudo` / `install` / `rm` / `visudo` replaced by
+fakes (visudo running the real `visudo -cf`, check only;
+`systemctl` / `apt-get` / `tee` / `raspi-config` failing loudly): the
+documented rule for this user, mode 0440, checked before install,
+idempotent, `--power-only --uninstall` / `POWER_BUTTONS=0` remove only the
+rule, a refused check installs nothing, root and unknown options are
+refused, nothing else is called; `bash -n` (no shellcheck on the dev box).
+No MinGW / zig here: the Windows and glibc syntax checks of power.cpp were
+not run (the change is plain C++20, no new headers).
 
 Not tested: anything with real privileges (no real `systemctl poweroff` /
 `reboot`, no sudo rule installed, `install-pi-service.sh` not run), a

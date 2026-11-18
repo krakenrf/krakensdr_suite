@@ -82,7 +82,15 @@ git secret guards.
   login session, so logind refuses `systemctl poweroff` without it unless
   the user has sudo NOPASSWD ALL anyway (the Pi image default).
   `POWER_BUTTONS=0` removes the rule and puts `Environment=KRAKEN_POWER=restart`
-  in the unit; `--uninstall` removes it.
+  in the unit; `--uninstall` removes it. `--power-only` (2026-11-18) installs
+  ONLY that rule (`power_rule_install`, the same `visudo -cf` check) and
+  exits before the preflight: for a computer without the boot service, e.g.
+  a desktop PC started with `run.sh` outside a local session, where logind
+  answers `challenge`; `--power-only --uninstall` (or `POWER_BUTTONS=0
+  --power-only`) removes only the rule. Refused when run as root (the rule
+  is for the user that runs the apps); an unknown option is refused before
+  anything runs (it used to be ignored). The page shows the command when the
+  receiver reports `not_permitted`.
 
 ## Automatic build (run.sh + scripts/autobuild.sh)
 

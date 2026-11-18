@@ -142,11 +142,15 @@ too. Please include it when you report a problem.
 page's sidebar, **Restart** restarts the software (both programs) or
 reboots the computer, and **Shut down** powers it off - unplug a Pi once
 its green LED has stopped blinking. Recordings are finished and settings
-saved first. The page shows only what works on your installation: the
-software restart needs `run.sh` (or Docker / `krakensdr.exe`); rebooting
-and shutting down need the permission `install-pi-service.sh` sets up (on a
-desktop, a logged-in user usually has it already; not in Docker).
-`KRAKEN_NO_POWER=1 ./run.sh` hides the buttons.
+saved first. What your installation can't do is shown greyed out, with
+the reason (Setup Settings → System lists all three): the software restart
+needs `run.sh` (or Docker / `krakensdr.exe`); rebooting and shutting down
+need the permission `install-pi-service.sh` sets up (on a desktop, a
+logged-in user usually has it already; not in Docker). To give only that
+permission, without the boot service (e.g. a desktop PC started with
+`run.sh`), run `./install-pi-service.sh --power-only` (it asks for your sudo
+password once; `--power-only --uninstall` takes it away again), then
+restart the software. `KRAKEN_NO_POWER=1 ./run.sh` hides the buttons.
 
 ## Features
 
