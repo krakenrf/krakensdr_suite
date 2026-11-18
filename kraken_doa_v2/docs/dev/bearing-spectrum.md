@@ -13,9 +13,16 @@ kraken_doa.html "🎨 BEARING SPECTRUM":**
   the 2.4 MHz shows its direction at a glance - signals from one direction
   share a colour, a hopper or a short burst shows where it came from, an
   interferer stands out from its neighbours
-- Display > **Bearing colours** (`BIN_DOA:0|1`, the receiver's setting:
-  persisted - schema `bin_doa`, off by default -, echoed, replayed to new
-  pages; every page follows it). EVERY point of the main spectrum is drawn
+- MUSIC DoA > **Bearing colours**, the row under DoA ON / OFF, with the
+  legend ring and the state / park-reason line under it (moved there from
+  Display on 2026-11-19, the user's call). Its own switch: it works with
+  DoA off (nothing there greys it out). The MUSIC DoA box is coherent-only
+  (`.coh-only`, hidden in wideband scan / independent mode) - so is the
+  mode, which is parked there anyway; the reason then shows on the
+  spectrum's legend (wideband scan) - kept that way rather than giving the
+  row an exception. `BIN_DOA:0|1` is the receiver's setting (persisted -
+  schema `bin_doa`, off by default -, echoed, replayed to new pages; every
+  page follows it). EVERY point of the main spectrum is drawn
   in its bearing's colour at full strength: the trace line itself (uPlot's
   own stroke is made transparent while a fresh frame exists and the line is
   drawn point by point by the draw hook - each point's half segments to its
@@ -39,7 +46,7 @@ kraken_doa.html "🎨 BEARING SPECTRUM":**
   oriented like the DoA plots (`PolarPlot.azPos`: azimuth 0 = ANT0 at the
   top, 90 left) with N/E/S/W or 0/90/180/270 by the DOA Angles convention -
   top right of the spectrum (with the bearing under the cursor, or "paused"
-  and why), in the sidebar next to the tick, and as a thin ring around every
+  and why), in the MUSIC DoA box next to the tick, and as a thin ring around every
   VFO's DoA plot while the mode is on, so a VFO's lobe and the spectrum's
   colour can be compared directly
 - Parked - no valid bearing exists (no frames, the reason in `{"bin_doa"}`,

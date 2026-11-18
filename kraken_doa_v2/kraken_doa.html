@@ -1303,6 +1303,14 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <button id="dot" class="btn on" onclick="tdo()">ON</button>
           <span class="cv" id="dos">Active</span>
         </div>
+        <!-- 🎨 BEARING SPECTRUM: toggle, legend, state (see the 🎨 BEARING SPECTRUM script block). Its own switch,
+             independent of DoA ON/OFF; the box is coherent-only, as the mode is -->
+        <div class="ctrl-row">
+          <label for="bin-doa-cb">Bearing colours:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Colours the whole spectrum - the trace line, the area under it and the waterfall - by the direction each point's signal comes from: no VFO needed. The colour is the bearing on the ring (the same ring as on the DoA plots: the ring's top is the plot's top); it is the bearing a VFO's MUSIC would show there. Every point is coloured, the noise between signals too (its bearing is random, so it shows as a mix of colours). Hover the spectrum for the number. Uses the array settings below (topology, radius, offset, calibration); works with DoA on or off. Coherent mode only; paused while heimdall calibrates and after a retune. Costs CPU on the receiver while on (up to a quarter of a Raspberry Pi core).</span></span></label>
+          <input type="checkbox" id="bin-doa-cb" onchange="binDoaSet(this.checked)">
+          <canvas id="bin-doa-legend" width="48" height="48" style="width:48px;height:48px;margin-left:auto" title="Bearing colours: the colour of each direction"></canvas>
+        </div>
+        <div id="bin-doa-status" style="font-size:11px;color:#888;display:none;margin-bottom:4px"></div>
         <div class="ctrl-row">
           <label>Topology:</label>
           <div class="tb-group" id="topo-group">
@@ -1829,13 +1837,6 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <option value="compass" selected>Compass (N/E/S/W)</option>
           </select>
         </div>
-        <!-- 🎨 BEARING SPECTRUM: toggle, legend, state (see the 🎨 BEARING SPECTRUM script block) -->
-        <div class="ctrl-row">
-          <label for="bin-doa-cb">Bearing colours:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Colours the whole spectrum - the trace line, the area under it and the waterfall - by the direction each point's signal comes from: no VFO needed. The colour is the bearing on the ring (the same ring as on the DoA plots: the ring's top is the plot's top); it is the bearing a VFO's MUSIC would show there. Every point is coloured, the noise between signals too (its bearing is random, so it shows as a mix of colours). Hover the spectrum for the number. Uses the array settings of the MUSIC DoA (topology, radius, offset, calibration). Coherent mode only; paused while heimdall calibrates and after a retune. Costs CPU on the receiver while on (up to a quarter of a Raspberry Pi core).</span></span></label>
-          <input type="checkbox" id="bin-doa-cb" onchange="binDoaSet(this.checked)">
-          <canvas id="bin-doa-legend" width="48" height="48" style="width:48px;height:48px;margin-left:auto" title="Bearing colours: the colour of each direction"></canvas>
-        </div>
-        <div id="bin-doa-status" style="font-size:11px;color:#888;display:none"></div>
       </div>
     </div>
 
@@ -10296,7 +10297,7 @@ function specShowRes(fr) {
 // ============================================================================
 // 🎨 BEARING SPECTRUM (FFT message type 9, BIN_DOA:) - docs/dev/bearing-spectrum.md
 // ----------------------------------------------------------------------------
-// With "Bearing colours" on (Display; the receiver's setting, BIN_DOA:0|1,
+// With "Bearing colours" on (the MUSIC DoA box, under DoA ON/OFF; the receiver's setting, BIN_DOA:0|1,
 // synced to every page) the receiver estimates a bearing for every point of
 // the main spectrum view and sends it (type 9) just before that view's type
 // 7 frame: u32 9 | u8 display | u8 flags (1 ULA front half, 2 3D horizon,
