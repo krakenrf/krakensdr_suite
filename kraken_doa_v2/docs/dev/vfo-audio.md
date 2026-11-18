@@ -51,7 +51,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   SVG button `#dec-spk-<id>` (`.dec-spk.on` #4caf50 / `.off` #ef5350,
   aria-pressed, a tooltip), shown at once and confirmed by the receiver's
   decimator_info; refreshed in place (not part of updateDecimatorList's
-  structure check). The top bar's Audio off dims them (`.mute-all`, said in
+  structure check). The top bar's audio off (its speaker button, crossed while off - an ON / OFF switch until 2026-11-18) dims them (`.mute-all`, said in
   the tooltip); clicking a muted speaker while it is off switches the audio
   on too. The decoder tab's 🔊 Listen adds the VFO (Digital demod); "🔊
   Listening" goes back to the demod it had before Digital, heard or muted

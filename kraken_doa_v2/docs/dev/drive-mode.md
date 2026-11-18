@@ -145,7 +145,7 @@ VFO's lobe, heat map and estimate - not every VFO's.
 
 Ten, each an icon from the set with its word under it, 60 x 60 px on a
 phone (56 on the smallest, 360 px), 72 x 72 from 900 x 600 px, 12 px apart: Prev VFO, Next VFO,
-**Audio** (the top bar's Audio switch, `tfm()`; lit while on, the speaker /
+**Audio** (the top bar's speaker button - its Audio switch until 2026-11-18 -, `tfm()`; lit while on, the speaker /
 the muted speaker), **Reset** (the DF panel's Reset - `rdfReset`, with the
 page's own question - for the VFO shown; dimmed when the receiver collects
 nothing for it, where the panel's Reset would forget every VFO's), **Exit**,
@@ -248,7 +248,7 @@ arrow and word), 359° -> 1° turning +2° and 1° -> 357° -4°, low and high
 confidence, the level bar, the VFO line; each "no bearing" reason, and the
 DoA plot's relative arrow without a heading; Prev / Next cycling only VFOs
 with DoA and selecting them, dimmed with one; Audio toggling the page's
-audio (FM:0 / FM:1, the top bar's switch); Follow re-centring as the
+audio (FM:0 / FM:1, the top bar's speaker button); Follow re-centring as the
 station fixture moves, a mouse drag turning it off (and storing no view),
 the button turning it on, the estimate brought into view, zoom in / out;
 Reset sending RDF_RESET for the VFO shown after the page's question and

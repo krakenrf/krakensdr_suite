@@ -33,7 +33,9 @@ now.
   is 1.25 em of the text it sits in (notes, states, tables). Places with
   their own size are listed under "sizes by place" in the CSS (the rail 15,
   the top bar's cog 24 / 22 on a phone, its help-mode ? 17 / 22 (in the
-  top bar's block, next to the cog's), the menu button 18 / 22, the
+  top bar's block, next to the cog's), the menu button 18 / 22, the top
+  bar's field icons 16 (`.tb-ic`, in place of the captions) and its
+  speaker and Bias tee buttons 17 (20 in the phone drawer), the
   sidebar chevron 15, close crosses in headers 13, chevrons of folds 12;
   drive mode's buttons 26 / 30 with a 2 px stroke - 2.4 in its Day look).
 - **Icon + label**: the label is a `<span>` (or `<b>`) right after the icon;
@@ -71,7 +73,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `home` | the map back to the station |
 | `wheel` | drive mode (a steering wheel: the rail's Drive button) |
 | `sun` `moon` | drive mode's Day / Night (the button shows the look it switches to) |
-| `mute` | audio off (drive mode's Audio button) |
+| `mute` | audio off (the top bar's speaker button while off, drive mode's Audio button) |
 | `target` | the estimated transmitter, the most likely spot |
 | `crosshair` | centre the map on something, a typed coordinate; drive mode's Follow |
 | `fit` | show everything (fit the map) |
@@ -102,11 +104,14 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `radar` | a radar, a ground interrogator |
 | `plug` | the Wideband board |
 | `biastee` | the antenna bias tees (the top bar's Bias tee button: a T on a coax line whose stem is a bolt; 2026-11-18, *bias-tees.md*) |
+| `gain` | the top bar's Gain (an amplifier triangle with a line in and out; 2026-11-18, *sidebar.md* "Top bar and rail") |
+| `step` | the top bar's tuning Step (two marks with a double arrow between them; 2026-11-18) |
+| `mixer` | the Wideband variant's mixer field in the top bar (a circle with a cross, the RF mixer symbol; 2026-11-18) |
 | `globe` | Web Mapper, the online search, web tools |
 | `doc` | DoA Recording |
 | `log` | Decoder Logging |
 | `tape` | IQ & Audio Recorder, playback of a recording |
-| `speaker` | audio, listen, heard |
+| `speaker` | audio, listen, heard; the top bar's audio on / off (its speaker button, lit while on) |
 | `display` | Display |
 | `radio` | the Scanner, a station |
 | `sweep` | the Continuous Scanner |
@@ -121,7 +126,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `replay` | the DoA log replay |
 | `signal` | path loss / signal mode, TX antennas, links, paths |
 | `range` | range from signal strength |
-| `array` | the Array Calculator |
+| `array` | the Array Calculator; the top bar's operating Mode (how the array's tuners are used) |
 | `chart` | telemetry history |
 | `terminal` `tool` | the assistant's shell, other tools |
 | `package` | an archive recording |

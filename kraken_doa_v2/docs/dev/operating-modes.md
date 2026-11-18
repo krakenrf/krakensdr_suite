@@ -136,8 +136,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   16 px cells from 360 px, 14.3 px at 320)
 - VFO tuning STEP (the user's request 2026-10-22, "a global setting up on
   the top bar"; kraken_doa.html block "VFO tuning step"): the top bar's
-  `Step:` (`#tb-step` / `#vfo-step`, every mode, moved into the sidebar on
-  mobile like CH / Audio) - 1 / 10 / 100 / 500 Hz, 1 (default) / 2.5 / 5 /
+  Step (`#tb-step` / `#vfo-step`, every mode, moved into the sidebar on
+  mobile like Gain / Audio; since 2026-11-18 right of Audio, immediately
+  left of Mode, with the `step` icon in place of its caption - *sidebar.md*
+  "Top bar and rail") - 1 / 10 / 100 / 500 Hz, 1 (default) / 2.5 / 5 /
   6.25 / 8.33 (25/3) / 10 / 12.5 / 25 / 50 / 100 kHz, per browser
   (localStorage `kraken_vfo_step`, `vfoStepHz`). A tuning-bar drag (main
   spectrum + waterfall: `pointerMove`; panes: `paneMove`) or a click on the

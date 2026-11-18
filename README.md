@@ -167,9 +167,20 @@ the button then says "heimdall is too old for this".
 Everything below is on the KrakenSDR DOA page. Each feature has a detailed
 description, linked under [More documentation](#more-documentation).
 
+The **top bar** has no captions; an icon marks each control, and its name
+shows when the mouse rests on it (on a touch screen: the **?** button, then
+tap the control). Left to right: the frequency; **Gain** (an amplifier
+triangle, then the gain slider with its dB value above it); **Audio** (the
+speaker button - blue while the audio is on, a crossed speaker while it is
+off - then the volume slider); **Step**, the tuning step (two marks with a
+double arrow); **Mode** (a ring of dots); the **Bias tee** button. With the
+KrakenSDR Wideband the **mixer** (a circle with a cross) follows the
+frequency. On a phone,
+Gain, Audio and Step are in the sidebar drawer, with their names.
+
 ### Modes
 
-The **Mode** selector in the top bar picks how the tuners are used:
+The **Mode** selector in the top bar (the ring-of-dots icon) picks how the tuners are used:
 
 | Mode | Tuners | Use |
 |---|---|---|

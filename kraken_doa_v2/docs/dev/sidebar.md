@@ -186,6 +186,8 @@ page got the same treatment on 2026-11-16.
   handlers rewrite `className` to `btn on` / `btn off`, so the switch look
   hangs on the attribute, and the ON / OFF text stays for screen readers).
   Plain checkboxes are for lists of options with the text to their right.
+  Exceptions, icon buttons lit while on: the top bar's audio on / off (a
+  speaker, the user's wish 2026-11-18) and the VFO cards' speakers.
 - **Status lines**: `<div class="kv"><span>Name</span><span id=…>value</span></div>`.
   Sub-headings: `.sb-sub`. Small notes: `.sb-note` (hidden while empty).
 - **Buttons**: `.btn` (`.primary` for the box's main action, `.danger` for
@@ -471,20 +473,84 @@ duplicated the Mode selector; "CH" did not say that it picks the displayed
 channel; and the panels' buttons should sit on the right-hand bar with the
 Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
 
-- **Order**: the menu button, the frequency, then fields - Step, Gain, Audio, Mode -, the
-  Bias tee button (2026-11-18, `#tb-bias`: icon only, on the controls' line, no
-  caption; *bias-tees.md*) and at
-  the right `.tb-right`: the status chips above the telemetry chips. For the
-  Bias tee button's 44 px (with the gap) the Gain slider went from 120 to 100 px and
-  the Audio slider from 80 to 72 px: the bar had only 22 px to spare at 1700 px
-  with the sidebar. A
-  field is a `.tb-group.fld`: a small upper-case label above its control
-  (a grid; Gain's and Audio's value sits on the label's line). The
-  separators are gone. One row from about 1650 px of window (with the
-  sidebar); narrower, the right block wraps under the controls. The
-  Wideband variant's mixer (`#wbv-group`: side, LO drive, ring / LO as its
-  readout) is a field too - styled from a forced display only, no
-  downconverter was at hand.
+- **Order** (2026-11-18): the menu button, the frequency, then the fields -
+  **Gain, Audio, Step, Mode** -, the Bias tee button (`#tb-bias`: icon only,
+  *bias-tees.md*) and at the right `.tb-right`: the status chips above the
+  telemetry chips. The user asked for Step "just to the left of the mode"; it
+  was first (Step, Gain, Audio, Mode). The separators are gone.
+- **Icons, not captions** (2026-11-18): the user asked to "remove all text
+  like 'step', 'gain', 'audio', 'mode' on the top control bar, and do
+  everything with icons instead" - the controls' own values stay text (the
+  readings, the selects' options). A field is a `.tb-group.fld`: an icon
+  (`.tb-ic`, 16 px, `--t3`) 6 px left of its control, the fields 12 px apart
+  (the bar's gap), so a field reads as one object. Gain: `gain` (an
+  amplifier triangle with a line in and out); Audio: the speaker button
+  itself; Step: `step` (two marks with a double arrow between them); Mode:
+  `array` (the array's ring of elements - the mode is how its tuners are
+  used); the Wideband variant's mixer: `mixer` (a circle with a cross, the
+  RF mixer symbol). The icons are not buttons: `aria-hidden`, with a short
+  `title` naming the control (a hover or a help-mode tap on the icon says
+  "Gain", "Tuning step", "Operating mode"; the mixer's carries its whole
+  help). Each control carries its name (`aria-label`: Gain, Volume, Audio,
+  Tuning step, Operating mode, Bias tee) and a `title` that starts with it.
+  **This is the bar's rule, not the drawer's**: on the phone the relocated
+  fields are drawer rows and keep their text labels (`.tb-label` - still in
+  each group's markup, hidden in the bar, shown in `#mobile-controls-slot`;
+  the icons are hidden there). Mode stays in the phone's bar as icon +
+  select.
+- **One centre line**: the selects, the speaker and the Bias tee button are
+  28 px high on the bar's centre line; a slider and its reading
+  (`.tb-pair`: the reading 12 px, 1 px, the slider in a 20 px room - the
+  Gain thumb's height) are centred on the same line, and so are the icons.
+- **Readings** (2026-11-18, the user: "they should be right aligned with the
+  slider"): Gain's "49.6 dB" and the volume's "50%" sit right above their
+  slider in a box as wide as the slider, the text at its right - the right
+  edges coincide (to the pixel, any value: "Auto", "0.0 dB", "5%", "100%"),
+  and a new value never moves the slider or a neighbour. They sat on the
+  caption's line before, ending wherever the grid put them.
+- **The speaker button** (`#fmt`, 2026-11-18, the user: "change the audio
+  mute button to a speaker symbol"): the audio on / off is a 30 x 28 icon
+  button (`.tb-btn.tb-spk`) - the `speaker` symbol, lit (`--ac`) while the
+  audio is on, `mute` (the crossed speaker), unlit, while off;
+  `aria-label="Audio"`, `aria-pressed`, title "Audio on / off". Not a
+  switch any more (no `data-sw`, no ON / OFF text): `tfm()` still sends
+  `FM:0` / `FM:1` and rewrites `className` (`tb-btn tb-spk on` / `off`), and
+  now also the icon and `aria-pressed`; the receiver's echo
+  (`applySyncCmd('FM:…')`), drive mode's Audio button and the VFO cards'
+  speakers (`.mute-all`) follow `fmEnabled` as before. The volume slider
+  stays as it was while the audio is off (not dimmed, still adjustable).
+  On the phone the drawer's Audio row has the same button, 42 x 34.
+- **Width budget at 1700 px with the sidebar** (bar 1371 px, 1347 px of
+  content): ☰ 30, frequency 276, Gain 134 (icon 16 + 6 + a 112 px slider),
+  Audio 112 (speaker 30 + 6 + a 76 px slider), Step 108, Mode 128, Bias tee
+  30, seven 12 px gaps, the right block 436 (its reserve): 8.6 px to spare,
+  with or without the scanner chip. Removing the switch saved 25 px, the
+  three icons cost 66; the bar's gap went from 14 to 12 px, and the sliders
+  got back 12 / 4 of the 20 / 8 px the Bias tee button had taken (120 / 80
+  until then, 100 / 72 since the button). 120 / 80 would leave -3 px.
+  Narrower, the bar wraps by whole fields (1500, 1300: the right block on a
+  second row at the right; 1100: Mode and Bias tee move down beside it).
+  The Wideband variant's mixer field (`#wbv-group`, ~253 px: its icon, the
+  ring / LO readout right above the side buttons and the LO drive, right
+  edges together) does not fit on one row at 1700 px - it did not before
+  either (it needs ~250 px more, the WB board telemetry chip more still):
+  the controls keep the first row and the right block wraps under them as
+  a whole. Styled from a forced display only, no downconverter was at hand.
+- **Tests** (2026-11-18): `test_bar.py` in the job's scratch directory (94
+  checks, real mouse / key / touch events): no caption text in the bar; the
+  order by x, Step one gap left of Mode; every control's name and title,
+  the icons `aria-hidden`, resolved in the sprite, 16 px and 6 px from
+  their controls; one centre line (1 px) and one height; the readings'
+  right edges on the sliders' ends (0.5 px) at "Auto", "0.0 dB", "22.9 dB",
+  "49.6 dB", 0 / 5 / 50 / 100 % and after a mouse drag, nothing moving; the
+  speaker (FM:0 / FM:1, icon, lit, `aria-pressed`; from the receiver; from
+  drive mode's button and back); help mode names each control and icon;
+  one row at 1700 px with the scanner chip; the Wideband field; the wraps
+  at 1500 / 1300 / 1100 px; independent mode; the phone bar, the drawer's
+  rows (labels, the speaker tapped, the readings aligned) and back to a
+  desktop width; no JS errors. `test_top`, `test_page`, `test_tips` and
+  `test_drive` got the new expectations (order, no captions, the speaker
+  instead of the switch).
 - **Chips** (`.status-badge`): a dark pill with a dot in the state's
   colour - the scripts still set the chip's `background` to that colour;
   an inset shadow darkens the pill and the dot (`::before`) inherits it.
@@ -501,9 +567,9 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   `min-width:436px` reserves the room of one chip that comes and goes (the
   scanner's 95 px, or the RTL-SDR chip's 93 px: 95 + 170 + 104 + the gaps +
   the cog's column), so such a chip can't wrap the bar or move a control. To
-  keep the bar on one row at 1700 px with that, the bar's gap is 14 px and
-  the Gain / Audio sliders are 120 / 80 px (100 / 72 px since the Bias tee
-  button, 2026-11-18). With generic RTL-SDR dongles
+  keep the bar on one row at 1700 px with that, the bar's gap was 14 px and
+  the Gain / Audio sliders 120 / 80 px (12 px and 112 / 76 px since the
+  icons, 2026-11-18 - *Width budget* above). With generic RTL-SDR dongles
   an "RTL-SDR" chip (`#status-generic`) stands first. The phone layout puts
   the cog (42 px) at the end of the chips' line.
 - **Merged with main 2026-11-17** (map providers' Settings dialog - Setup Settings now -, generic

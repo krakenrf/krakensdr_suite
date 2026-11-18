@@ -25,6 +25,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   ring buttons and the `ARRAY:` command/persistence are gone; heimdall throws
   the switches itself on retunes, the client mirrors the rule for the
   toolbar ring indicator (`wbv-ring-ind`) and the Wideband topology radius
+- The top bar's mixer field (`#wbv-group`; since 2026-11-18 the `mixer`
+  icon - a circle with a cross - in place of its "Mixer" caption, the ring /
+  LO readout right above the High / Low / Below buttons and the LO drive,
+  right edges together; *sidebar.md* "Top bar and rail"). With it the bar
+  does not fit one row at 1700 px: the controls keep the first row and the
+  status block wraps under them
 - DoA topology `TOPOLOGY:WIDEBAND` (client-only, wb variant only, falls back
   to UCA otherwise): UCA steering math with the array radius auto-set from
   the active ring - `WB_RING_RADIUS_MM` = 127.5 / 51 / 20.4 mm (outer /

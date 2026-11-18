@@ -98,9 +98,14 @@ mouse rests on a control or the keyboard moves to it; on a touch screen tap the 
 at the right of the top bar (help mode), then tap any control to see what it does instead of
 working it (tap the **?** again, an empty spot or Esc to leave) - or press and hold a button
 for a moment.
-Dialogs and the phone's sidebar drawer have the same **?** in their headers. Top bar (always visible) has the
-**center-frequency dial, tuning step, gain slider, audio on/off + volume and the
-operating mode**, and at the right the status chips (calibration - with the cooldown
+Dialogs and the phone's sidebar drawer have the same **?** in their headers. Top bar (always visible), left
+to right: the **center-frequency dial**; **Gain** (the amplifier-triangle icon, the slider with its
+dB reading above it); **Audio** (the speaker button: blue while the audio is on, a crossed speaker
+while it is off; then the volume slider with its % above it); **Step** (the icon of two marks with
+a double arrow, the tuning step); **Mode** (the ring-of-dots icon, the operating mode); the **Bias
+tee** button (with the KrakenSDR Wideband the **mixer**, a circle with a cross, follows the dial). The bar has no captions - each control's name shows when the mouse rests on it or
+on its icon, or in help mode. On a phone Gain, Audio and Step are rows with their names in the
+sidebar drawer's Tuner & Audio box. At the right the status chips (calibration - with the cooldown
 countdown -, connection, and the scanner while one runs) above the live hardware
 stats. The antenna whose signal the spectrum shows is chosen on the spectrum's
 header. The rail at the right edge opens and closes the panels: **DoA & Map**

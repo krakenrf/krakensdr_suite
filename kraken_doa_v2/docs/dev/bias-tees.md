@@ -64,7 +64,10 @@ names say "antenna bias tee".
 - Room: the bar had 22 px to spare at 1700 px with the sidebar (measured; not
   the ~48 px expected), so the Gain slider went from 120 to 100 px and the
   Audio slider from 80 to 72 px - the bar keeps one row with the button
-  (6 px to spare). A later rework of the top bar may give them back.
+  (6 px to spare). The top bar's rework later that day (icons for its
+  captions, the speaker button, *sidebar.md* "Top bar and rail") gave them
+  back 112 / 76 px; the button stayed as it was, now on the bar's centre
+  line with the other controls.
 
 ## Protocol
 

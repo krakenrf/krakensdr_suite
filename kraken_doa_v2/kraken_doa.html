@@ -1621,32 +1621,41 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .ai-dk-in textarea {border-radius:6px}
 
 /* ===== Top bar and right-hand rail =====
-   Top bar, left to right: ☰, the frequency, then fields with a small label
-   above the control (Step, Gain, Audio, Mode), and at the right the status
-   chips and the telemetry. The spectrum's own controls are on the spectrum
-   (the antenna shown: its header); the panels' buttons are on the rail. */
-.top-bar {gap:14px;padding:6px 12px;min-height:58px}
+   Top bar, left to right: ☰, the frequency, then the fields - Gain, Audio, Step, Mode -, the
+   Bias tee button, and at the right the status chips and the telemetry. No captions in the bar
+   (2026-11-18): an icon says what each field is (.tb-ic, 6 px from its control); the controls
+   carry their names (aria-label) and help (title). Selects, the speaker and the Bias tee button
+   are 28 px high on the bar's centre line; a slider's pair (.tb-pair) is centred on it too.
+   The spectrum's own controls are on the spectrum (the antenna shown: its header); the panels'
+   buttons are on the rail. */
+.top-bar {gap:12px;padding:6px 12px;min-height:58px}
 .top-bar .tb-sep {display:none}
-.top-bar .tb-group.fld {display:grid;align-items:center;column-gap:8px;row-gap:3px}
-.top-bar .tb-group.fld > .tb-label {grid-area:l;font-size:10px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--t4);line-height:12px}
-.top-bar #tb-step,.top-bar #tb-mode {grid-template-areas:"l" "c"}
-.top-bar #tb-step select,.top-bar #tb-mode select {grid-area:c}
-.top-bar #tb-gain {grid-template-columns:1fr auto;grid-template-areas:"l v" "c c"}
-.top-bar #tb-gain .gain-slider {grid-area:c;width:100px;margin:11px 0}   /* 120 until 2026-11-18: the Bias tee button needed the room */
-.top-bar #tb-gain .gain-value {grid-area:v;min-width:0;text-align:right;font-size:11.5px;line-height:12px}
-/* (the Wideband downconverter variant's mixer: side, LO drive; ring and LO as its readout) */
-.top-bar #wbv-group {grid-template-columns:auto 1fr;grid-template-areas:"l v" "c c"}
-.top-bar #wbv-group .wbv-info {grid-area:v;text-align:right;font-size:11.5px;line-height:12px;color:var(--ac-t);white-space:nowrap}
-.top-bar #wbv-group .wbv-ctl {grid-area:c;display:flex;align-items:center;gap:8px}
+.top-bar .tb-group.fld {display:flex;align-items:center;gap:6px}
+.top-bar .tb-group > .tb-label {display:none}   /* the phone drawer's row label (a drawer row keeps its text) */
+.tb-ic {display:flex;flex:none;color:var(--t3)}
+.tb-ic .ic {font-size:16px}
+/* a slider with its reading right above it: the reading's box is as wide as the slider and its
+   text sits at the right - the right edge on the slider's right end, and a new value never moves
+   the slider or a neighbour */
+.tb-pair {display:flex;flex-direction:column;align-items:stretch;min-width:0}
+.top-bar .tb-pair > .gain-value,.top-bar .tb-pair > .tb-vol {min-width:0;height:12px;margin:0 0 1px;font-size:11.5px;line-height:12px;text-align:right;white-space:nowrap;color:var(--ac-t)}
+/* the sliders' room: 20 px, the Gain thumb's height (the Volume's 14 px thumb and its ring fit) */
+.top-bar #tb-gain .gain-slider {width:112px;margin:7px 0}
+/* (the Wideband downconverter variant's mixer: side, LO drive; ring and LO as its readout above them) */
+.top-bar #wbv-group .wbv-info {height:12px;margin-bottom:2px;text-align:right;font-size:11.5px;line-height:12px;color:var(--ac-t);white-space:nowrap}
+.top-bar #wbv-group .wbv-ctl {display:flex;align-items:center;gap:8px}
 .top-bar .wbv-seg {display:flex}
 .top-bar .wbv-seg .tb-btn {border-radius:0;margin-left:-1px;height:28px;padding:0 10px}
 .top-bar .wbv-seg .tb-btn:first-child {border-radius:5px 0 0 5px;margin-left:0}
 .top-bar .wbv-seg .tb-btn:last-child {border-radius:0 5px 5px 0}
 .top-bar .wbv-seg .tb-btn.on {position:relative;z-index:1}
-.top-bar #tb-audio {grid-template-columns:auto 1fr auto;grid-template-areas:"l l v" "s c c"}
-.top-bar #tb-audio #fmt {grid-area:s}
-.top-bar #tb-audio .tb-slider {grid-area:c;width:72px;margin:11px 0}   /* 80 until 2026-11-18 (the same) */
-.top-bar #tb-audio .tb-vol {grid-area:v;min-width:0;text-align:right;font-size:11.5px;line-height:12px;color:var(--ac-t)}
+.top-bar #tb-audio .tb-slider {width:76px;margin:8px 0}
+/* the audio on / off: a speaker button (tfm), as big as the Bias tee button; lit (.on) while the
+   audio is on, the crossed speaker (.off) while it is off */
+.top-bar .tb-btn.tb-spk {display:inline-flex;align-items:center;justify-content:center;flex:none;width:30px;height:28px;padding:0;box-sizing:border-box}
+.top-bar .tb-btn.tb-spk .ic {font-size:17px}
+.top-bar .tb-btn.tb-spk.off {color:var(--t2)}
+.top-bar .tb-btn.tb-spk:focus-visible {outline:2px solid var(--ac-l);outline-offset:1px}
 /* status chips: a dark pill with a dot in the state's colour (the scripts set
    the chip's background to that colour; the inset shadow darkens the pill,
    the dot inherits the colour) */
@@ -1679,10 +1688,10 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar.cal-calibrated {background:linear-gradient(to bottom,rgba(64,174,103,0.13) 0%,rgba(64,174,103,0) 100%),var(--s2);border-bottom-color:var(--ok);box-shadow:inset 0 -2px 0 var(--ok)}
 .top-bar.cal-cooldown {background:linear-gradient(to bottom,rgba(227,168,66,0.18) 0%,rgba(227,168,66,0) 100%),var(--s2);border-bottom-color:var(--warn);box-shadow:inset 0 -2px 0 var(--warn)}
 /* Bias tee (2026-11-18, BIAS TEE in the script, docs/dev/bias-tees.md): one button right of Mode,
-   on the controls' line (no label above it), amber while a bias tee is on, with the count; its
+   on the controls' centre line, amber while a bias tee is on, with the count; its
    popover (.view-pop) holds All and a switch per open antenna. aria-disabled, not disabled: the
    reason stays in its title, which a disabled button would never show */
-.top-bar #tb-bias {align-self:flex-end;margin-bottom:3px}
+.top-bar #tb-bias {align-self:center}
 /* icon only, 30 px: the bar has no room for a wider one (one row at 1700 px with the sidebar); the
    count ("2/5") is a badge on its corner, so the button's width never changes */
 .tb-bias-btn {position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:30px;height:28px;padding:0;box-sizing:border-box;
@@ -1768,8 +1777,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .top-bar .tb-help .ic {font-size:22px}
   .top-bar .tb-help:hover {background:var(--l3);border-color:var(--l5)}
   .top-bar .tb-help.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
-  .top-bar .tb-group.fld {display:flex;flex-direction:row;align-items:center;gap:6px}
-  .top-bar .tb-group.fld > .tb-label {font-size:13px;font-weight:normal;letter-spacing:0;text-transform:none;color:var(--t3)}
   /* the three share the row (they wrap on a very narrow phone) */
   #mobile-display-slot .rail-panels {display:flex;flex-direction:row;flex-wrap:wrap;gap:5px}
   #mobile-display-slot .rail-btn {flex:1 1 auto;justify-content:center;flex-direction:row;gap:5px;padding:0 8px;min-height:34px;background:var(--l2);border-color:var(--l4);color:var(--t0);font-size:13px}
@@ -1842,6 +1849,16 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   #mobile-controls-slot .gain-slider::-moz-range-thumb {width:22px;height:22px;background:var(--ac-t);border-radius:50%;cursor:pointer;border:2px solid var(--s0)}
   #mobile-controls-slot .gain-value {font-size:13px;color:var(--ac-t);min-width:55px;font-weight:500}
   #mobile-controls-slot .tb-vol {font-size:13px;color:var(--ac-t);min-width:38px}
+  /* a drawer row keeps its text label (no icon); a slider's reading sits right above it, its right
+     edge on the slider's right end, as in the bar; the audio on / off is the speaker button */
+  #mobile-controls-slot .tb-ic {display:none}
+  #mobile-controls-slot .tb-pair {flex:1}
+  #mobile-controls-slot .tb-pair > input {flex:none;width:100%;margin:7px 0}
+  #mobile-controls-slot .tb-pair > .gain-value,#mobile-controls-slot .tb-pair > .tb-vol {min-width:0;height:15px;line-height:15px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  #mobile-controls-slot .tb-btn.tb-spk {display:inline-flex;align-items:center;justify-content:center;flex:none;width:42px;height:34px;padding:0;box-sizing:border-box;
+    background:var(--l2);border:1px solid var(--l4);border-radius:5px;color:var(--t2)}
+  #mobile-controls-slot .tb-btn.tb-spk .ic {font-size:20px}
+  #mobile-controls-slot .tb-btn.tb-spk.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
   #mobile-controls-slot select {background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:6px;border-radius:3px;font-size:13px;min-height:32px}
 }
 
@@ -2091,6 +2108,9 @@ body.drive.drive-day .drive-hud {
 <symbol id="i-radar" viewBox="0 0 16 16"><path d="M2.4 4.6a7.4 7.4 0 0 0 9 9zM6.9 9.1l3.9-3.9"/><circle cx="11.3" cy="4.7" r="1.2" fill="currentColor"/><path d="M4.6 12.4l-1.4 2.2h3.6"/></symbol>
 <symbol id="i-plug" viewBox="0 0 16 16"><path d="M5.6 1.8v3M10.4 1.8v3M3.8 4.8h8.4v2.6a4.2 4.2 0 0 1-8.4 0zM8 11.6v2.8"/></symbol>
 <symbol id="i-biastee" viewBox="0 0 16 16"><path d="M1.6 12.6h12.8M1.6 10.9v3.4M14.4 10.9v3.4M9.6 1.6L6.3 6h3.4L8 8.7v3.9"/></symbol>
+<symbol id="i-gain" viewBox="0 0 16 16"><path d="M1.2 8h2.6M3.8 3v10l8.6-5zM12.4 8h2.4"/></symbol>
+<symbol id="i-step" viewBox="0 0 16 16"><path d="M2.4 3.4v9.2M13.6 3.4v9.2M4.6 8h6.8M6.5 6.1L4.6 8l1.9 1.9M9.5 6.1l1.9 1.9-1.9 1.9"/></symbol>
+<symbol id="i-mixer" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.8"/><path d="M3.9 3.9l8.2 8.2M12.1 3.9l-8.2 8.2"/></symbol>
 <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 1.8c-3.4 3.3-3.4 9.1 0 12.4M8 1.8c3.4 3.3 3.4 9.1 0 12.4M1.8 8h12.4"/></symbol>
 <symbol id="i-doc" viewBox="0 0 16 16"><path d="M3.8 1.8h5.6l2.8 2.8v9.6H3.8zM9.2 1.8v3h3M6 8h4.2M6 10.6h4.2"/></symbol>
 <symbol id="i-log" viewBox="0 0 16 16"><path d="M6 4h7.5M6 8h7.5M6 12h7.5"/><circle cx="2.8" cy="4" r="1.05" fill="currentColor"/><circle cx="2.8" cy="8" r="1.05" fill="currentColor"/><circle cx="2.8" cy="12" r="1.05" fill="currentColor"/></symbol>
@@ -3025,11 +3045,12 @@ body.drive.drive-day .drive-hud {
            the backend runs with --wideband. Frequency digits above are the true
            RF; these pick the mixing side and show the resulting LO. -->
       <div class="tb-group fld" id="wbv-group" style="display:none">
-        <span class="tb-label" title="Downconverter mixing side - follows the frequency automatically; pick an alternative here when more than one side can reach it (image dodging). High = LO above (LO = IF + RF), Low = LO = IF - RF, Below = LO under the RF (LO = RF - IF)">Mixer</span>
+        <span class="tb-ic" aria-hidden="true" title="Mixer: the downconverter's mixing side - follows the frequency automatically; pick an alternative here when more than one side can reach it (image dodging). High = LO above (LO = IF + RF), Low = LO = IF - RF, Below = LO under the RF (LO = RF - IF)"><svg class="ic" aria-hidden="true"><use href="#i-mixer"/></svg></span>
+        <span class="tb-pair">
         <span class="wbv-info"><span id="wbv-ring-ind" title="Active antenna ring - selected automatically by the tuned frequency: Outer below 1 GHz, Center 1-2.5 GHz, Inner above 2.5 GHz. Ring changes trigger a phase recalibration.">Ring: Outer</span> · <span id="wbv-readout" title="Downconverter LO and fixed IF">LO --</span></span>
         <span class="wbv-ctl">
-          <span class="wbv-seg"><button class="tb-btn" id="wbv-high" onclick="setMixerSide('high')" title="High-side injection: LO = IF + RF (spectrum inversion corrected in software). RF 24 - 4132 MHz.">High</button><button class="tb-btn" id="wbv-low" onclick="setMixerSide('low')" title="Low-side injection: LO = IF - RF (upright spectrum). RF 24 - 1183 MHz.">Low</button><button class="tb-btn" id="wbv-below" onclick="setMixerSide('below')" title="LO below the RF: LO = RF - IF (upright spectrum). The only side above 4.1 GHz; RF 1353 - 6668 MHz.">Below</button></span>
-          <select id="wbv-cur" onchange="setLoCurrent(this.value)" title="LO synthesizer output drive current (0 = lowest, 7 = highest)">
+          <span class="wbv-seg" role="group" aria-label="Mixer side"><button class="tb-btn" id="wbv-high" onclick="setMixerSide('high')" title="High-side injection: LO = IF + RF (spectrum inversion corrected in software). RF 24 - 4132 MHz.">High</button><button class="tb-btn" id="wbv-low" onclick="setMixerSide('low')" title="Low-side injection: LO = IF - RF (upright spectrum). RF 24 - 1183 MHz.">Low</button><button class="tb-btn" id="wbv-below" onclick="setMixerSide('below')" title="LO below the RF: LO = RF - IF (upright spectrum). The only side above 4.1 GHz; RF 1353 - 6668 MHz.">Below</button></span>
+          <select id="wbv-cur" onchange="setLoCurrent(this.value)" aria-label="LO drive" title="LO synthesizer output drive current (0 = lowest, 7 = highest)">
             <option value="0">Drive 0</option>
             <option value="1">Drive 1</option>
             <option value="2">Drive 2</option>
@@ -3040,31 +3061,46 @@ body.drive.drive-day .drive-hud {
             <option value="7">Drive 7</option>
           </select>
         </span>
+        </span>
       </div>
-      <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
-           click on the spectrum puts the VFO on a multiple of it -->
-      <div class="tb-group fld" id="tb-step">
-        <span class="tb-label">Step</span>
-        <select id="vfo-step" onchange="setVfoStep(this.value)" title="VFO tuning step: dragging a tuning bar or clicking the spectrum puts the VFO on a multiple of this - of its frequency, counted from 0 Hz (12.5 kHz: 446.0125, 446.0250 ... MHz). Hold Shift while dragging to tune finely: 1/100 of the movement, to the Hz, off the step. The VFO card's digits and typed or saved frequencies stay exact."></select>
-      </div>
+      <!-- The fields (sidebar.md, "Top bar and rail"): no caption in the bar - an icon (.tb-ic,
+           aria-hidden; its title names the control) says what each is, the control carries the
+           name (aria-label) and the help (title). A slider's reading sits right above it, its
+           right edge on the slider's right end (.tb-pair). The .tb-label is the phone drawer's
+           row label only (the drawer keeps text labels; hidden in the bar). -->
       <!-- Gain -->
       <div class="tb-group fld gain-group not-indep" id="tb-gain">
         <span class="tb-label">Gain</span>
-        <input type="range" id="gn-slider" class="gain-slider" min="0" max="29" value="29" oninput="updateGainDisplay(this.value);sgn()">
-        <span class="gain-value" id="gn-value">49.6 dB</span>
+        <span class="tb-ic" aria-hidden="true" title="Gain"><svg class="ic" aria-hidden="true"><use href="#i-gain"/></svg></span>
+        <span class="tb-pair">
+          <span class="gain-value" id="gn-value">49.6 dB</span>
+          <input type="range" id="gn-slider" class="gain-slider" min="0" max="29" value="29" oninput="updateGainDisplay(this.value);sgn()" aria-label="Gain"
+                 title="Gain: the tuners' RF gain, the same on every tuner (Auto: the tuners' own AGC)">
+        </span>
       </div>
-      <!-- Audio -->
+      <!-- Audio: the speaker button is the on / off (tfm; lit while on, the crossed speaker while
+           off), then the volume -->
       <div class="tb-group fld" id="tb-audio">
         <span class="tb-label">Audio</span>
-        <button id="fmt" class="tb-btn on" data-sw onclick="tfm()" title="Audio on / off">ON</button>
-        <input type="range" id="vsl" class="tb-slider" min="0" max="100" value="50" oninput="uv(this.value)">
-        <span class="tb-vol" id="vv">50%</span>
+        <button type="button" id="fmt" class="tb-btn tb-spk on" onclick="tfm()" aria-label="Audio" aria-pressed="true" title="Audio on / off"><svg class="ic" aria-hidden="true"><use href="#i-speaker"/></svg></button>
+        <span class="tb-pair">
+          <span class="tb-vol" id="vv">50%</span>
+          <input type="range" id="vsl" class="tb-slider" min="0" max="100" value="50" oninput="uv(this.value)" aria-label="Volume" title="Volume: the audio's level on this page">
+        </span>
+      </div>
+      <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
+           click on the spectrum puts the VFO on a multiple of it. Right of Audio, left of Mode
+           (the user asked for it beside Mode, 2026-11-18) -->
+      <div class="tb-group fld" id="tb-step">
+        <span class="tb-label">Step</span>
+        <span class="tb-ic" aria-hidden="true" title="Tuning step"><svg class="ic" aria-hidden="true"><use href="#i-step"/></svg></span>
+        <select id="vfo-step" onchange="setVfoStep(this.value)" aria-label="Tuning step" title="VFO tuning step: dragging a tuning bar or clicking the spectrum puts the VFO on a multiple of this - of its frequency, counted from 0 Hz (12.5 kHz: 446.0125, 446.0250 ... MHz). Hold Shift while dragging to tune finely: 1/100 of the movement, to the Hz, off the step. The VFO card's digits and typed or saved frequencies stay exact."></select>
       </div>
       <!-- Operating mode: Coherent (DoA array) / Wideband (tuners side by side,
            one stitched spectrum) / Independent (every tuner its own receiver) -->
       <div class="tb-group fld" id="tb-mode">
-        <span class="tb-label">Mode</span>
-        <select id="opmode" onchange="setOpMode(this.value)" title="Coherent: the tuners work as one phase-calibrated array (DoA, beamforming). Wideband: the tuners sit side by side for one wide stitched spectrum (no DoA). Independent: every tuner is its own receiver with its own frequency and gain, one spectrum + waterfall each (no DoA).">
+        <span class="tb-ic" aria-hidden="true" title="Operating mode"><svg class="ic" aria-hidden="true"><use href="#i-array"/></svg></span>
+        <select id="opmode" onchange="setOpMode(this.value)" aria-label="Operating mode" title="Operating mode - Coherent: the tuners work as one phase-calibrated array (DoA, beamforming). Wideband: the tuners sit side by side for one wide stitched spectrum (no DoA). Independent: every tuner is its own receiver with its own frequency and gain, one spectrum + waterfall each (no DoA).">
           <option value="coherent">Coherent</option>
           <option value="wideband">Wideband</option>
           <option value="independent">Independent</option>
@@ -3415,7 +3451,7 @@ body.drive.drive-day .drive-hud {
   <div class="dv-ctl" id="dv-ctl" role="toolbar" aria-label="Drive mode">
     <button type="button" class="dv-btn" id="dv-prev" style="grid-area:prev" onclick="driveStep(-1)" title="The previous VFO with DoA: it becomes the selected VFO"><svg class="ic" aria-hidden="true"><use href="#i-chev-l"/></svg><span>Prev VFO</span></button>
     <button type="button" class="dv-btn" id="dv-next" style="grid-area:next" onclick="driveStep(1)" title="The next VFO with DoA: it becomes the selected VFO"><svg class="ic" aria-hidden="true"><use href="#i-chev-r"/></svg><span>Next VFO</span></button>
-    <button type="button" class="dv-btn" id="dv-audio" style="grid-area:aud" onclick="tfm(); driveSync()" aria-pressed="false" title="Audio on / off (the top bar's Audio switch)"><span class="dv-i" id="dv-audio-i"></span><span>Audio</span></button>
+    <button type="button" class="dv-btn" id="dv-audio" style="grid-area:aud" onclick="tfm(); driveSync()" aria-pressed="false" title="Audio on / off (the top bar's speaker button)"><span class="dv-i" id="dv-audio-i"></span><span>Audio</span></button>
     <button type="button" class="dv-btn" id="dv-reset" style="grid-area:rst" onclick="driveReset()" title="Reset bearings: forget the bearings collected for this VFO - its heat map and estimate (the DF panel's Reset; it asks first)"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg><span>Reset</span></button>
     <button type="button" class="dv-btn" id="dv-exit" style="grid-area:exit" onclick="driveLeave()" title="Leave drive mode: the page as it was (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg><span>Exit</span></button>
     <button type="button" class="dv-btn" id="dv-follow" style="grid-area:fol" onclick="driveFollowSet(true)" aria-pressed="true" title="Follow: keep the vehicle in the middle of the map (and the estimated transmitter in view). Moving the map by hand turns it off"><svg class="ic" aria-hidden="true"><use href="#i-crosshair"/></svg><span>Follow</span></button>
@@ -7985,11 +8021,15 @@ function sgn() {
   restartCooldownCountdown();
 }
 
+// The top bar's audio on / off: a speaker button, lit while on, the crossed speaker while off
+// (2026-11-18; it was an ON / OFF switch). Drive mode's Audio button and the VFO cards' speakers
+// follow fmEnabled on their own.
 function tfm() {
   fmEnabled=!fmEnabled;
   const b=$id('fmt');
-  b.textContent=fmEnabled?'ON':'OFF';
-  b.className='tb-btn '+(fmEnabled?'on':'off');
+  b.className='tb-btn tb-spk '+(fmEnabled?'on':'off');
+  b.setAttribute('aria-pressed', fmEnabled ? 'true' : 'false');
+  b.innerHTML=icon(fmEnabled?'speaker':'mute');
   updatePlotTitle();
   decSpkRenderAll();   // the VFO speakers dim while the audio is off
   send('FM:'+(fmEnabled?'1':'0'));
@@ -12192,9 +12232,9 @@ if (mobileLayoutMQ.addEventListener) {
 // keeps element IDs and event handlers intact, so the JS that drives them
 // works unchanged in either location.
 const MOBILE_RELOCATIONS = [
-  {id: 'tb-gain', slot: 'mobile-controls-slot'},
-  {id: 'tb-step', slot: 'mobile-controls-slot'},
+  {id: 'tb-gain', slot: 'mobile-controls-slot'},     // the drawer's rows in the bar's order
   {id: 'tb-audio', slot: 'mobile-controls-slot'},
+  {id: 'tb-step', slot: 'mobile-controls-slot'},
   {id: 'rail-panels', slot: 'mobile-display-slot'},   // 🗺 Map / 🔐 Decoders / 🗣 Transcription (the phone has no rail)
   {id: 'rail-drive', slot: 'mobile-display-slot'},    // 🚗 Drive: under them
 ];
