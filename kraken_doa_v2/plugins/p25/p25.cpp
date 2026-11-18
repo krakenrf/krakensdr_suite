@@ -14,28 +14,6 @@ namespace dig {
 
 namespace {
 
-// NID: BCH(63,16), systematic - the 47 parity bits are the remainder of
-// m(x) x^47 divided by the generator polynomial g(x) = 6331141367235453
-// (octal, TIA-102.BAAA); codeword bit 62 is the first bit sent
-uint64_t nid_codeword(uint32_t m) {
-    constexpr uint64_t G = 06331141367235453ULL;
-    uint64_t r = static_cast<uint64_t>(m) << 47;
-    for (int i = 62; i >= 47; i--)
-        if ((r >> i) & 1) r ^= G << (i - 47);
-    return (static_cast<uint64_t>(m) << 47) | r;
-}
-
-std::vector<uint64_t> build_nid_table() {
-    std::vector<uint64_t> t(65536);
-    for (uint32_t m = 0; m < 65536; m++) t[m] = nid_codeword(m);
-    return t;
-}
-
-const std::vector<uint64_t>& nid_table() {
-    static const std::vector<uint64_t> t = build_nid_table();
-    return t;
-}
-
 const char* duid_name(int d) {
     switch (d) {
         case 0x0: return "HDU";
@@ -513,26 +491,11 @@ bool P25Proto::decode(const SymSrc& s) {
         return o;
     };
 
-    // NID
-    uint64_t rx = bits_to_u64(sf.data() + 48, 63);
-    const auto& tab = nid_table();
-    int best = 64;
+    // NID: BCH(63,16) (dig_fec, one table shared with the 4FSK receiver,
+    // which decodes it too for the frame's length), the last valid frame's
+    // NAC tried first
     uint32_t msg = 0;
-    // fast path: known NAC, valid DUIDs
-    static const int duids[7] = {0x0, 0x3, 0x5, 0x7, 0xA, 0xC, 0xF};
-    if (last_nac_ >= 0) {
-        for (int d : duids) {
-            uint32_t m = (static_cast<uint32_t>(last_nac_) << 4) | d;
-            int e = popcount64(tab[m] ^ rx);
-            if (e < best) { best = e; msg = m; }
-        }
-    }
-    if (best > 4) {
-        for (uint32_t m = 0; m < 65536; m++) {
-            int e = popcount64(tab[m] ^ rx);
-            if (e < best) { best = e; msg = m; }
-        }
-    }
+    const int best = p25_nid_decode(bits_to_u64(sf.data() + 48, 63), last_nac_, &msg);
     if (best > 9) return false;
     int nac = static_cast<int>(msg >> 4), duid = static_cast<int>(msg & 0xF);
     const char* dn = duid_name(duid);

@@ -571,6 +571,9 @@ struct P25p2Proto::Impl {
         int so = 0, alg = -1, kid = 0;  // alg -1 = not known
         bool so_known = false;          // so came from a voice channel user message
         std::string desc, state, state_key;
+        std::string ann;                // the talker's "voice:" event text ("" = not announced; announce())
+        std::string ann_end_id;         // the unit whose "call ended:" was the last one, and when
+        int64_t ann_end_at = INT64_MIN / 2;
         // outbound talker (a transmission on channel lch + 1)
         int64_t t_start = -1, t_end = 0, lc_end = 0;
         std::string tid, tcall;
@@ -1008,17 +1011,50 @@ struct P25p2Proto::Impl {
         c.state_key = key;
         if (wanted(c)) fact(key, st);
     }
+    // Call events follow the talkers (as Phase 1's): one "voice:" event when a
+    // transmission's unit is named (outbound: the LCH's talker, inbound: the
+    // lane's radio), one "call ended:" when that talker ends (MAC_END_PTT /
+    // HANGTIME / IDLE, 0.5 s without bursts, the call timing out, another
+    // unit, a new transmission of the same unit), no dedup - a unit keying up
+    // again within seconds is a new transmission. A span nobody named ("?")
+    // has no events. Before (2026-11-19) the events followed the call, with 5 s
+    // / 2 s dedup: on real traffic channels 9 of 10 files had starts or ends
+    // missing (a re-keyed unit, a hang-time end 2 s after the last one, a
+    // talker replaced inside one call) and unnamed calls their own start
+    static std::string desc_key(const std::string& d) { return d.substr(0, d.find(" [")); }
+    void announce(Chan& c) {
+        if (!c.ann.empty() || c.desc.empty() || !c.src_named || !wanted(c)) return;
+        if (!c.inbound ? c.tid != std::to_string(c.src) : c.unit != c.src) return;   // the desc must name this talker
+        c.ann = c.desc;
+        event(name(c) + " voice: " + c.ann, 0.0);
+    }
+    void announce_end(Chan& c) {
+        if (c.ann.empty()) {
+            // named, but its call never got a description (a radio heard only
+            // through its MAC_END_PTT; a unit-to-unit MAC_PTT whose voice
+            // channel user message was missed): its start now, by its unit
+            // - unless it is the unit whose call just ended (radios repeat
+            // their MAC_END_PTT: the second one is the same transmission's)
+            const std::string id = c.inbound ? (c.unit ? std::to_string(c.unit) : std::string()) : c.tid;
+            if (id.empty() || !wanted(c)) return;
+            if (id == c.ann_end_id && (sl ? sl->start : now) - c.ann_end_at < GAP) return;
+            c.ann = "unit " + id;
+            event(name(c) + " voice: " + c.ann, 0.0);
+        }
+        c.ann_end_id = c.inbound ? (c.unit ? std::to_string(c.unit) : std::string()) : c.tid;
+        c.ann_end_at = sl ? sl->start : now;
+        event(name(c) + " call ended: " + c.ann, 0.0);
+        c.ann.clear();
+    }
     void call_refresh(Chan& c) {
         std::string d = make_desc(c);
         if (d != c.desc) {
-            // one event per talker: "[encrypted]" (service options) becoming
-            // the algorithm's name (MAC_PTT / ESS) changes the state, not the call
-            const std::string key = d.substr(0, d.find(" ["));
-            const bool same = !c.desc.empty() && key == c.desc.substr(0, c.desc.find(" [")) &&
-                              c.desc.find("[EMERGENCY]") == std::string::npos && d.find("[EMERGENCY]") == std::string::npos;
             c.desc = d;
-            if (wanted(c) && !d.empty() && !same) event(name(c) + " voice: " + d, 5.0);
+            // "[encrypted]" (service options) becoming the algorithm's name
+            // (MAC_PTT / ESS) is the same talker: its end event says the latter
+            if (!c.ann.empty() && !d.empty() && desc_key(d) == desc_key(c.ann)) c.ann = d;
         }
+        announce(c);
         if (!c.desc.empty()) set_state(c, "Voice: " + c.desc);
         else set_state(c, encrypted(c) ? "Voice [" + (c.alg >= 0 && c.alg != 0x80 ? P25Proto::algorithm_name(c.alg) : std::string("encrypted")) + "]" : "Voice");
         if (c.alg >= 0)
@@ -1071,7 +1107,6 @@ struct P25p2Proto::Impl {
             c.ended_src = c.src;
             c.ended_dst = c.dst;
         }
-        if (c.call && !c.desc.empty() && wanted(c)) event(name(c) + " call ended: " + c.desc, 2.0);
         c.call = false;
         c.desc.clear();
         c.ess_have = 0;
@@ -1115,8 +1150,10 @@ struct P25p2Proto::Impl {
         c.tid = id;
         c.tcall = tcall_of(c) + " · LCH " + std::to_string(c.lch) + " · via site";   // the talker label
         c.lc_end = sl->end;
+        announce(c);
     }
     void talker_end(Chan& c, int64_t at) {
+        announce_end(c);
         if (c.treported && ctx.talker_end) ctx.talker_end(at, c.lch + 1);
         c.treported = false;
         c.tid.clear();
@@ -1185,9 +1222,11 @@ struct P25p2Proto::Impl {
         lane_gap(c, a);
         c.last_burst = b;
         if (u != c.unit) {
+            announce_end(c);   // another radio on the lane
             c.unit = u;
             c.unit_f = p2_finite(f) ? f : 0.0f;
         }
+        announce(c);
         if (!ptt) {
             int first = c.npend;
             int64_t next = a;
@@ -1203,6 +1242,7 @@ struct P25p2Proto::Impl {
         attribute(c, a, b, f);
     }
     void unit_end(Chan& c) {
+        announce_end(c);
         c.unit = 0;
         c.unit_last = -1;
         c.npend = 0;
