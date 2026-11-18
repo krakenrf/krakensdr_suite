@@ -105,7 +105,8 @@ Bits conv_encode(const uint8_t* bits, int n, int K, const std::vector<uint32_t>&
 
 // P25 rate-1/2 trellis (TSBK / PDU headers): 98 received symbols (soft, in
 // level units +-1/+-3, interleaved order) -> 12 bytes. Returns the path
-// metric (0 = clean) via *metric.
+// metric (sum of the symbols' absolute errors, each capped at 4 level units;
+// 0 = clean) via *metric.
 bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric);
 
 // P25 Phase 1 NID: BCH(63,16) (generator 6331141367235453 octal), decoded

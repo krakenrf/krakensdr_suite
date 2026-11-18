@@ -542,6 +542,25 @@ int p25_nid_decode(uint64_t rx, int hint_nac, uint32_t* msg) {
     return best;
 }
 
+// Branch metric: each symbol's absolute error, capped at 4 level units (half
+// a turn of phase per symbol at the nominal 600 Hz per unit). The soft
+// symbols of the 4FSK receiver (an FM discriminator) are not Gaussian near
+// threshold: clicks - and, through CQPSK's envelope nulls, whole turns of
+// phase (8 units) - give large errors far more often than a Gaussian tail
+// (measured on real C4FM / simulcast LSM channels with added noise at 4-6 dB:
+// kurtosis 9-12, |error| > 4 units 4-40x the Gaussian rate; through CQPSK
+// kurtosis 14-30). With the squared error one such symbol outweighs the rest
+// of its block and steers the path; the absolute error weighs it less, and
+// the cap - past half a turn the error no longer says which point was sent -
+// not at all. Chosen by measurement over squared (with and without clipping
+// the input to +-3, or capping), absolute (clipping at >= 3 changes nothing
+// there), caps of 2-6 units and hard decisions: the SNR at which half the
+// TSBK blocks decode is 0.3-0.6 dB lower on every C4FM / LSM control channel
+// tried, unchanged on clean recordings, and CRC false accepts stay at 2^-16.
+static inline float p25_trellis_cost(float x, int level) {
+    return std::min(std::fabs(x - static_cast<float>(level)), 4.0f);
+}
+
 bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric_out) {
     static const uint8_t ilv[98] = {
         0, 1, 8, 9, 16, 17, 24, 25, 32, 33, 40, 41, 48, 49, 56, 57, 64, 65, 72, 73, 80, 81, 88, 89, 96, 97,
@@ -552,8 +571,10 @@ bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric_out) {
     static const int8_t pts[16][2] = {
         {+1, -1}, {-1, -1}, {+3, -3}, {-3, -3}, {-3, -1}, {+3, -1}, {-1, -3}, {+1, -3},
         {-3, +3}, {+3, +3}, {-1, +1}, {+1, +1}, {+1, +3}, {-1, +3}, {+3, +1}, {-3, +1}};
-    float d[98];
-    for (int i = 0; i < 98; i++) d[ilv[i]] = sym98[i];
+    // c[k][l]: the cost of symbol k (trellis order) against level -3, -1, +1, +3
+    float c[98][4];
+    for (int i = 0; i < 98; i++)
+        for (int l = 0; l < 4; l++) c[ilv[i]][l] = p25_trellis_cost(sym98[i], 2 * l - 3);
     const float INF = 1e30f;
     float metric[4] = {0, INF, INF, INF};
     uint8_t prev[49][4];
@@ -564,8 +585,7 @@ bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric_out) {
             for (int in = 0; in < 4; in++) {
                 if (t == 48 && in != 0) continue;   // flush dibit
                 const int8_t* p = pts[enc[s * 4 + in]];
-                float e0 = d[2 * t] - p[0], e1 = d[2 * t + 1] - p[1];
-                float m = metric[s] + e0 * e0 + e1 * e1;
+                float m = metric[s] + c[2 * t][(p[0] + 3) / 2] + c[2 * t + 1][(p[1] + 3) / 2];
                 if (m < nm[in]) { nm[in] = m; prev[t][in] = static_cast<uint8_t>(s); }
             }
         }
