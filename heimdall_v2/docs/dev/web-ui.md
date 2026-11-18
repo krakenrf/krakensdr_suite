@@ -137,6 +137,50 @@ compensation is running (Compensating / All stable).
 Every element id of the old page is kept, so the script's logic is the old
 one; what changed is markup, CSS and the texts it writes.
 
+### Dialogs (2026-11-18)
+
+The page never uses the browser's `confirm` / `alert` / `prompt` (the user
+asked for styled popups in the software itself instead of the browser's).
+It has its own dialog in the page's look: a backdrop, a card with an icon
+and a title, one paragraph of text, the buttons at the right, and a `?`
+for a longer explanation.
+
+- `uiConfirm({title, text, ok, danger, help, icon, returnTo})` returns a
+  `Promise<boolean>`; `uiAlert({title, text, kind, help, icon, returnTo})`
+  (`kind` `info` / `warn` / `bad`) a `Promise<void>` with one **OK**.
+  The title names the thing, the text carries the specifics and
+  consequences, the buttons are **Cancel** and the action's verb - never OK
+  for a question. All text is set with `textContent`.
+- **Focus**: a `danger` action (it interrupts reception, needs hands on the
+  hardware or can't be undone) is drawn in `.btn.danger` and opens with the
+  focus on Cancel, so a stray Enter cancels; a harmless one opens on the
+  action. Esc and a press on the backdrop cancel, Enter presses the focused
+  button, Tab stays inside, the rest of the page is `inert` meanwhile, and
+  on close the focus goes back to the element that had it (`returnTo`
+  overrides: the frequency alert returns to the frequency box).
+- **Queue**: a request while one is open waits for it to close.
+- **Not blocking**: the browser's dialogs stopped the script; these don't.
+  A caller `await`s, so it decides what it asks for before opening (the
+  chosen element count, the file name, KerberosSDR or not), checks the
+  connection again after a yes, and restores a control on a no (the
+  element-count select goes back to the count in use; while its question is
+  open a STATE leaves the select alone). STATE and frames keep updating the
+  page underneath an open dialog.
+- It is the top layer (z-index 300, over the sticky bar); help tips inside
+  it still show (no `transform` on the card, the tips are
+  `position:fixed`). Phone: the card fits 320 px, buttons are at least
+  40 px high and wrap.
+
+The converted sites:
+
+| Where | Title | Buttons | On yes |
+|---|---|---|---|
+| Array Elements select | Change element count | Cancel / **Change** (danger) | `NUM_ELEMENTS:<n>` |
+| Forward Compensation, a file's delete | Delete file | Cancel / **Delete** (danger) | `POST s2p_delete?name=` |
+| Tuning, Set / Enter out of range | Frequency out of range | OK | nothing (as before) |
+| Full Recalibration, plain `--kerberos` | KerberosSDR calibration | Cancel / **Recalibrate** (danger) | `FORCE_RECAL` |
+| Full Recalibration, otherwise | Full recalibration | Cancel / **Recalibrate** (danger) | `FORCE_RECAL` |
+
 Small fixes made on the way: the phase graph's x axis was a time axis (it
 showed "1/1/70" times) and counts updates now; "No data" (was "Waiting for C
 program...") came up whenever the per-second frame counter had just
@@ -183,6 +227,23 @@ and touch events:
   inside the screen, a tapped switch sends its command; no JS errors.
 
 Looked at next to the client's screenshots: every fixture at 1280 px, the
-1900 px page, the phone page and its tips. Not seen: a real heimdall and
+1900 px page, the phone page and its tips.
+
+The dialogs (2026-11-18), same setup but without the `confirm` / `alert`
+stand-ins, so a native dialog would really open (a watchdog listens for
+`Page.javascriptDialogOpening`, dismisses it and fails the run; checked
+with a deliberate one). Scratch `test_hdlg.py`, 102 checks, and the 173
+above now pressing the dialog's buttons (178): the component (focus on
+Cancel / on the action, Esc, backdrop, Cancel, Enter, the alert, a queue of
+three, the Tab trap both ways, focus back on the opener, ARIA, `<img
+onerror>` shown as text, its own `?` on top); each site by real clicks,
+keys and taps - Esc / backdrop / Cancel send nothing and put the select
+back, the action sends exactly the old command, a dialog opened by Enter
+isn't answered by the same Enter, a lost connection sends nothing, STATE
+and frames while open break nothing; 400 and 320 px (inside the screen,
+40 px buttons, no sideways scroll); no source call to `alert(` /
+`confirm(` / `prompt(`. On the way: the correlation graphs' grid had a
+330 px minimum column, which made the page 353 px wide on a 320 px phone
+(`minmax(min(330px,100%),1fr)` now). Not seen: a real heimdall and
 real hardware states (only the fixtures above), Firefox / Safari, a Pi's
 display.

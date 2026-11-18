@@ -207,13 +207,31 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
 .alarm:empty {display:none}
 
 /* graphs */
-.plots {display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px}
+.plots {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:10px}
 .plot {min-width:0;overflow:hidden;background:var(--s2);border:1px solid var(--l1);border-radius:6px;padding:6px 6px 2px}
 .plot-title {margin:0 0 4px 4px;font-size:12px;font-weight:600;color:var(--t3)}
 #phase-plot {overflow:hidden}
 .uplot {margin:0 auto}
 .uplot .u-legend {font-size:12px;color:var(--t2)}
 .uplot .u-select {background:color-mix(in srgb,var(--ac-l) 18%,transparent)}
+
+/* ===== The page's own dialog (uiConfirm / uiAlert; never the browser's confirm / alert) =====
+   A backdrop over everything and a card like the page's: an icon and a title,
+   the text, the buttons at the right. No transform on it: the help tips
+   inside it are position:fixed. */
+.dlg-bd {position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;padding:16px;
+  background:color-mix(in srgb,var(--shadow) 55%,transparent)}
+.dlg-bd[hidden] {display:none}
+.dlg {width:min(440px,100%);max-height:calc(100vh - 32px);overflow:auto;background:var(--s3);border:1px solid var(--l2);border-radius:7px;
+  box-shadow:0 10px 32px color-mix(in srgb,var(--shadow) 60%,transparent);outline:none}
+.dlg-h {display:flex;align-items:center;gap:8px;padding:12px 14px 0}
+.dlg-h .ic {color:var(--ac-t)}
+.dlg.danger .dlg-h .ic {color:var(--bad-t)}
+.dlg.warn .dlg-h .ic {color:var(--warn-t)}
+.dlg-h h2 {margin:0;min-width:0;display:flex;align-items:center;font-size:14px;font-weight:700;color:var(--t0)}
+.dlg-t {margin:8px 14px 0;font-size:13px;line-height:1.5;color:var(--t1);overflow-wrap:anywhere}
+.dlg-b {display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:14px}
+.dlg-b .btn {min-width:76px}
 
 /* ===== Phone and narrow windows: one column, finger-sized controls ===== */
 @media (max-width:860px) {
@@ -241,6 +259,7 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
   .help::after {content:'';position:absolute;inset:-8px}
   input[type="file"]::file-selector-button {padding:7px 10px}
   input[type="file"] {min-height:34px}
+  .dlg-b .btn {min-height:40px;padding:8px 14px}
 }
     </style>
 </head>
@@ -501,7 +520,8 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
             upload: '<path d="M8 10.5V2.8"/><path d="M4.9 5.9L8 2.8l3.1 3.1"/><path d="M2.8 10.5v2.7h10.4v-2.7"/>',
             trash: '<path d="M2.8 4.4h10.4"/><path d="M6.2 4.4V2.8h3.6v1.6"/><path d="M4.3 4.4l.7 8.8h6l.7-8.8"/>',
             ext: '<path d="M9.4 2.6h4v4"/><path d="M13.4 2.6L7.6 8.4"/><path d="M11.8 9.6v3.8H2.6V4.2h3.8"/>',
-            warn: '<path d="M8 2.4l6.1 10.8H1.9z"/><path d="M8 6.6v3"/><path d="M8 11.5v.05"/>'
+            warn: '<path d="M8 2.4l6.1 10.8H1.9z"/><path d="M8 6.6v3"/><path d="M8 11.5v.05"/>',
+            info: '<circle cx="8" cy="8" r="5.8"/><path d="M8 7.4v3.8"/><path d="M8 4.9v.05"/>'
         };
         const ico = name => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
         document.querySelectorAll('[data-ico]').forEach(e => { e.innerHTML = ico(e.dataset.ico); });
@@ -554,6 +574,103 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
             if (r.bottom < 0 || r.top > innerHeight) { h.classList.remove('tip-open'); h.tipPinned = false; }
             else tipPlace(h);
         }), { passive: true });
+
+        // ---- The page's own dialog: uiConfirm / uiAlert ----
+        // Used instead of the browser's confirm / alert dialogs (the user asked for
+        // styled popups, 2026-11-18). They don't block: the caller awaits a
+        // promise, so it captures what the action needs before asking and
+        // restores a control the user changed when the answer is no. Requests
+        // queue: a second one opens when the first has closed. A disruptive
+        // action (danger) opens with the focus on Cancel, a harmless one on the
+        // action. Esc and a press on the backdrop cancel; Tab stays inside;
+        // the focus goes back to the opener. Text goes in with textContent only.
+        //   uiConfirm({title, text, ok, danger, cancel, help, icon, returnTo}) -> Promise<boolean>
+        //   uiAlert({title, text, kind: 'info' | 'warn' | 'bad', help, icon, returnTo}) -> Promise<void>
+        let dlgQueue = Promise.resolve(), dlgEl = null, dlgSeq = 0;
+        const dlgBuild = () => {
+            const bd = document.createElement('div');
+            bd.className = 'dlg-bd';
+            bd.hidden = true;
+            bd.innerHTML = '<div class="dlg" role="alertdialog" aria-modal="true" aria-labelledby="dlg-title" aria-describedby="dlg-text" tabindex="-1">' +
+                '<div class="dlg-h"><span class="ic"></span><h2 id="dlg-title"></h2></div>' +
+                '<p class="dlg-t" id="dlg-text"></p><div class="dlg-b"></div></div>';
+            document.body.appendChild(bd);
+            return bd;
+        };
+        const dlgShow = (o, opener) => new Promise(resolve => {
+            dlgEl = dlgEl || dlgBuild();
+            const bd = dlgEl, box = bd.firstChild, title = bd.querySelector('#dlg-title'), btns = bd.querySelector('.dlg-b');
+            const isAlert = o.isAlert;
+            const kind = o.danger || o.kind === 'bad' ? 'danger' : (o.kind === 'warn' ? 'warn' : '');
+            box.className = 'dlg' + (kind ? ' ' + kind : '');
+            bd.querySelector('.dlg-h .ic').innerHTML = ico(o.icon || (kind ? 'warn' : 'info'));
+            title.textContent = o.title || '';
+            if (o.help) {
+                const h = document.createElement('span'), t = document.createElement('span');
+                h.className = 'help'; h.tabIndex = 0; h.setAttribute('role', 'button'); h.setAttribute('aria-label', 'Help');
+                t.className = 'tip'; t.textContent = o.help;
+                h.append('?', t);
+                title.appendChild(h);
+            }
+            bd.querySelector('#dlg-text').textContent = o.text || '';
+            btns.textContent = '';
+            const mk = (label, cls, val) => {
+                const b = document.createElement('button');
+                b.type = 'button'; b.className = 'btn' + (cls ? ' ' + cls : ''); b.textContent = label;
+                b.addEventListener('click', () => close(val));
+                btns.appendChild(b);
+                return b;
+            };
+            const cancelBtn = isAlert ? null : mk(o.cancel || 'Cancel', '', false);
+            const okBtn = mk(isAlert ? 'OK' : o.ok || 'OK', !isAlert && o.danger ? 'danger' : 'primary', true);
+            const seq = ++dlgSeq;
+            bd.opener = opener;
+            // the rest of the page is out of reach while it is open
+            const others = Array.from(document.body.children).filter(e => e !== bd && e.tagName !== 'SCRIPT' && !e.inert);
+            const focusables = () => Array.from(box.querySelectorAll('button,.help')).filter(e => e.offsetParent);
+            const onKey = e => {
+                if (e.key === 'Escape') {
+                    e.preventDefault(); e.stopPropagation(); close(false);
+                } else if (e.key === 'Tab') {
+                    const f = focusables();
+                    if (!f.length) return;
+                    e.preventDefault();
+                    const i = f.indexOf(document.activeElement);
+                    f[i < 0 ? (e.shiftKey ? f.length - 1 : 0) : (i + (e.shiftKey ? f.length - 1 : 1)) % f.length].focus();
+                }
+            };
+            const onBackdrop = e => { if (e.target === bd) close(false); };
+            const close = val => {
+                if (seq !== dlgSeq || bd.hidden) return;
+                document.removeEventListener('keydown', onKey, true);
+                bd.removeEventListener('click', onBackdrop);
+                tipClose(null);
+                bd.hidden = true;
+                others.forEach(e => { e.inert = false; });
+                title.textContent = ''; btns.textContent = '';
+                bd.querySelector('#dlg-text').textContent = '';
+                const back = o.returnTo || opener;
+                if (back && back.isConnected && !back.disabled && back.focus) back.focus({ preventScroll: true });
+                resolve(isAlert ? undefined : val);
+            };
+            tipClose(null);
+            others.forEach(e => { e.inert = true; });
+            bd.hidden = false;
+            document.addEventListener('keydown', onKey, true);
+            bd.addEventListener('click', onBackdrop);
+            (o.danger && cancelBtn ? cancelBtn : okBtn).focus();
+        });
+        // the opener is the element that had the focus when the request was made
+        // (a request made from inside an open dialog inherits that one's opener)
+        const dlgRequest = o => {
+            const a = document.activeElement;
+            const opener = dlgEl && dlgEl.contains(a) ? dlgEl.opener : (a && a !== document.body ? a : null);
+            const p = dlgQueue.then(() => dlgShow(o, opener));
+            dlgQueue = p.catch(() => {});
+            return p;
+        };
+        const uiConfirm = o => dlgRequest(Object.assign({}, o, { isAlert: false, kind: undefined }));
+        const uiAlert = o => dlgRequest(Object.assign({}, o, { isAlert: true, danger: false }));
 
         // The DoA client on this receiver (its "Open Heimdall Server" button points here)
         document.getElementById('client-link').href = 'https://' + (location.hostname || 'localhost') + ':8080/';
@@ -651,17 +768,23 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
             select.value = activeElements;
         };
 
-        const handleNumElementsChange = () => {
+        let elementsAsking = false;    // the confirmation is open: a STATE leaves the select alone
+        const handleNumElementsChange = async () => {
             const select = $('num-elements-select');
             const n = parseInt(select.value);
-            if (n === activeElements) return;
+            if (n === activeElements || elementsAsking) return;
             if (ws?.readyState !== 1) { select.value = activeElements; return; }
-            const ok = confirm(
-                `Change the array to ${n} elements?\n\n` +
-                `All RTL-SDR devices will close and reopen, followed by a full ` +
-                `recalibration (~30-60 s). DF output is invalid until it completes.\n\n` +
-                `Devices beyond channel ${n - 1} are released for use by other programs.`);
-            if (!ok) { select.value = activeElements; return; }
+            elementsAsking = true;
+            const ok = await uiConfirm({
+                title: 'Change element count', icon: 'warn', ok: 'Change', danger: true,
+                text: `Change the array to ${n} elements? All RTL-SDR devices close and reopen, then a full ` +
+                      `recalibration runs (~30-60\u00a0s); DF output is invalid until it completes. ` +
+                      `Devices beyond channel ${n - 1} are released for other programs.`,
+                help: 'Choosing more channels than are attached fails and rolls back to the old count.' });
+            elementsAsking = false;
+            // no: back to the count in use; also when the connection dropped or
+            // a reconfiguration started meanwhile
+            if (!ok || ws?.readyState !== 1 || reconfiguring || n === activeElements) { select.value = activeElements; return; }
             ws.send(`NUM_ELEMENTS:${n}`);
             $('num-elements-status').textContent = 'Reconfiguring…';
             select.disabled = true;
@@ -680,7 +803,7 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
                 if (!reconfiguring && $('num-elements-status').textContent === 'Reconfiguring…')
                     $('num-elements-status').textContent = '';
             }
-            if (Number.isFinite(st.num_elements) && !reconfiguring &&
+            if (Number.isFinite(st.num_elements) && !reconfiguring && !elementsAsking &&
                 document.activeElement !== select) {
                 select.value = st.num_elements;
             }
@@ -1924,7 +2047,9 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
 
         const deleteFwdFile = async name => {
             if (!name) return;
-            if (!confirm(`Delete calibration file "${name}"?\nThis also clears it from any channel using it.`)) return;
+            if (!await uiConfirm({
+                title: 'Delete file', icon: 'trash', ok: 'Delete', danger: true,
+                text: `Delete calibration file "${name}" from the receiver? It is also cleared from any channel using it.` })) return;
             try {
                 const r = await fetch('s2p_delete?name=' + encodeURIComponent(name), { method: 'POST' });
                 const d = await r.json().catch(() => ({ ok: r.ok }));
@@ -1997,7 +2122,8 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
             const newFreq = parseFloat(input.value);
             const [lo, hi] = [parseFloat(input.min), parseFloat(input.max)];
             if (!isNaN(newFreq) && (newFreq < lo || newFreq > hi)) {
-                alert(`Frequency must be between ${lo} and ${hi} MHz`);
+                uiAlert({ title: 'Frequency out of range', kind: 'warn', returnTo: input,
+                          text: `The frequency must be between ${lo} and ${hi} MHz. Nothing was changed.` });
                 return;
             }
             if (!isNaN(newFreq)) {
@@ -2054,24 +2180,27 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
         $('recal-min-btn').addEventListener('click', sendRecalPeriod);
         $('recal-min-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendRecalPeriod(); });
         // "Full Recalibration": lag + phase from scratch via the watchdog
-        $('full-recal-btn').addEventListener('click', () => {
+        $('full-recal-btn').addEventListener('click', async () => {
             if (ws?.readyState === 1) {
                 // KerberosSDR has no noise-source RF switch: the calibration
                 // noise couples into the antenna path, so a calibration with
-                // antennas connected is invalid.
-                if (kerberosMode && !kerberosSw &&
-                    !confirm('KerberosSDR calibration:\n\n' +
-                             '1. DISCONNECT ALL ANTENNAS now (noise is coupled into the antenna path).\n' +
-                             '2. Calibration takes ~30-60 s with the noise source on.\n' +
-                             '3. Reconnect the antennas once the banner shows "calibrated".\n\n' +
-                             'Are the antennas disconnected?')) {
-                    return;
-                } else if (!(kerberosMode && !kerberosSw) &&
-                           !confirm('Full recalibration: rebuild lag and phase compensation from scratch?\n\n' +
-                                    'Takes ~30-60 s; DoA output is invalid until it finishes. ' +
-                                    '(Check Calibration verifies first and only recalibrates if needed.)')) {
-                    return;
-                }
+                // antennas connected is invalid. (Which question is decided
+                // now, before the dialog opens.)
+                const manual = kerberosMode && !kerberosSw;
+                const ok = await uiConfirm(manual ? {
+                    title: 'KerberosSDR calibration', icon: 'warn', ok: 'Recalibrate', danger: true,
+                    text: 'Disconnect ALL antennas first: the noise source is coupled into the antenna path. ' +
+                          'Calibration takes ~30-60\u00a0s with the noise source on; reconnect the antennas once ' +
+                          'the banner shows "calibrated". Are the antennas disconnected?',
+                    help: 'The KerberosSDR has no switch that takes the antennas off while the noise source is on, ' +
+                          'so a calibration with antennas connected measures the antennas too and is invalid.'
+                } : {
+                    title: 'Full recalibration', icon: 'recal', ok: 'Recalibrate', danger: true,
+                    text: 'Rebuild the lag and phase compensation from scratch? Takes ~30-60\u00a0s; ' +
+                          'DoA output is invalid until it finishes.',
+                    help: 'Check Calibration verifies first and recalibrates only if needed.'
+                });
+                if (!ok || ws?.readyState !== 1) return;
                 ws.send('FORCE_RECAL');
                 log('Full recalibration requested');
                 lockForRecal();  // Disable controls during recalibration

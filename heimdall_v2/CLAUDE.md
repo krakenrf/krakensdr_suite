@@ -178,7 +178,8 @@ Performance
 - A web feature: `src/web/web_server.cpp`, plus `index.html` (read once at
   startup: restart heimdall to see an edit, no rebuild). The page follows
   the client's palette and text rules - colours only as `var(--token)`, no
-  explanations on the controls (a `?` tip instead), no emoji
+  explanations on the controls (a `?` tip instead), no emoji, no browser
+  `confirm` / `alert` / `prompt` - the page's `uiConfirm` / `uiAlert`
   (`docs/dev/web-ui.md`).
 - A module: add its sources to the Makefile (`SOURCES`, the build dirs) and
   `CMakeLists.txt`, and keep the dependency order of the root file.
