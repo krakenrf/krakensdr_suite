@@ -290,15 +290,15 @@ of the FFT bins behind it. 32-byte header:
 |---|---|---|
 | type | uint32 | `9` |
 | display | uint8 | `0` (the main spectrum) |
-| flags | uint8 | bit 0 = a ULA without a half-plane setting: the front half assumed; bit 1 = a 3D custom array: bearings at the horizon |
+| flags | uint8 | bit 0 = a ULA without a half-plane setting: the front half assumed; bit 1 = a 3D custom array: bearings at the horizon; bit 2 = every point's azimuth is its bearing (confidence 0 too; always set by this receiver) |
 | elements | uint8 | antennas |
 | topology | uint8 | 0 UCA (also the Wideband topology), 1 ULA, 2 custom |
 | seq | uint32 | the `FFT_VIEW` it answers (as the type 7 frame) |
 | n | uint32 | points |
 | start | float64 | frequency of point 0, Hz |
 | step | float64 | point spacing, Hz |
-| confidence | uint8 × n | 0..255 = 0..1; 0 = no coherent signal (no bearing) |
-| azimuth | uint16 × n | × 360 / 65536 degrees: MUSIC's azimuth (counter-clockwise from ANT0, the array offset added - type 3's convention; compass = 360 − azimuth); 0 where confidence is 0 |
+| confidence | uint8 × n | 0..255 = 0..1, informational: how far the point's coherent part stands above noise. The page does NOT use it - it colours every point at full strength (the user's choice); a client may use it to dim noise |
+| azimuth | uint16 × n | × 360 / 65536 degrees: MUSIC's azimuth (counter-clockwise from ANT0, the array offset added - type 3's convention; compass = 360 − azimuth); every point has one (flag bit 2) |
 
 Match points by frequency (`start + j × step`), not by index, if you redraw
 a frame for another zoom.

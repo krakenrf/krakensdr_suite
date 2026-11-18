@@ -1831,7 +1831,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <!-- 🎨 BEARING SPECTRUM: toggle, legend, state (see the 🎨 BEARING SPECTRUM script block) -->
         <div class="ctrl-row">
-          <label for="bin-doa-cb">Bearing colours:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Colours the whole spectrum (and the waterfall) by the direction each signal comes from - no VFO needed. The colour is the bearing on the ring (the same ring as on the DoA plots: the ring's top is the plot's top); a signal without a clear direction keeps the normal colour. Hover the spectrum for the number. Uses the array settings of the MUSIC DoA (topology, radius, offset, calibration). Coherent mode only; paused while heimdall calibrates and after a retune. Costs CPU on the receiver while on (about a quarter of a Raspberry Pi core at most).</span></span></label>
+          <label for="bin-doa-cb">Bearing colours:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Colours the whole spectrum - the trace line, the area under it and the waterfall - by the direction each point's signal comes from: no VFO needed. The colour is the bearing on the ring (the same ring as on the DoA plots: the ring's top is the plot's top); it is the bearing a VFO's MUSIC would show there. Every point is coloured, the noise between signals too (its bearing is random, so it shows as a mix of colours). Hover the spectrum for the number. Uses the array settings of the MUSIC DoA (topology, radius, offset, calibration). Coherent mode only; paused while heimdall calibrates and after a retune. Costs CPU on the receiver while on (up to a quarter of a Raspberry Pi core).</span></span></label>
           <input type="checkbox" id="bin-doa-cb" onchange="binDoaSet(this.checked)">
           <canvas id="bin-doa-legend" width="48" height="48" style="width:48px;height:48px;margin-left:auto" title="Bearing colours: the colour of each direction"></canvas>
         </div>
@@ -8299,7 +8299,7 @@ function createPlot() {
     ],
     series:[
       {label:"Frequency (MHz)"},
-      {label:"Magnitude (dB)",stroke:"#4fc3f7",width:1.5,paths:uPlot.paths.linear()}
+      {label:"Magnitude (dB)",stroke:()=>binDoaFresh()?"rgba(0,0,0,0)":"#4fc3f7",width:1.5,paths:uPlot.paths.linear()}   // 🎨 bearing colours draw the line themselves
     ],
     hooks:{
       ready:[u=>{
@@ -10299,15 +10299,19 @@ function specShowRes(fr) {
 // With "Bearing colours" on (Display; the receiver's setting, BIN_DOA:0|1,
 // synced to every page) the receiver estimates a bearing for every point of
 // the main spectrum view and sends it (type 9) just before that view's type
-// 7 frame: u32 9 | u8 display | u8 flags (1 ULA front half, 2 3D horizon) |
-// u8 elements | u8 topology | u32 seq | u32 n | f64 start Hz | f64 step Hz |
-// u8 conf[n] | u16 az[n] (x 360/65536 deg, MUSIC azimuth incl. the array
-// offset). The page asks for it once per connection (BIN_DOA_VIEW:1); the
-// receiver answers with {"bin_doa":{on, state, reason, fft, elements,
-// coverage}} and sends that on every change. Hue = the direction (the ring:
-// the same orientation as the DoA plots - their ring shows it too), the
-// confidence fades it to the normal colour. Points are matched by frequency,
-// so a frame cut for another zoom still colours what it covers.
+// 7 frame: u32 9 | u8 display | u8 flags (1 ULA front half, 2 3D horizon,
+// 4 every point carries its bearing) | u8 elements | u8 topology | u32 seq |
+// u32 n | f64 start Hz | f64 step Hz | u8 conf[n] | u16 az[n] (x 360/65536
+// deg, MUSIC azimuth incl. the array offset). The page asks for it once per
+// connection (BIN_DOA_VIEW:1); the receiver answers with {"bin_doa":{on,
+// state, reason, fft, elements, coverage}} and sends that on every change.
+// Hue = the direction (the ring: the same orientation as the DoA plots -
+// their ring shows it too). Every point is coloured at full strength - the
+// trace line itself (uPlot's own stroke is transparent meanwhile), a column
+// under it and the waterfall; the confidence byte is not used (the user's
+// call, 2026-11-18: "ignore the confidence factor, and display everything").
+// Points are matched by frequency, so a frame cut for another zoom still
+// colours what it covers.
 // ============================================================================
 const BIN_DOA_FRESH_MS = 400;
 let binDoaHelloOk = false, binDoaHelloTries = 0, binDoaHelloTimer = null;
@@ -10427,30 +10431,35 @@ function binDoaFresh() {
   const f = binDoaFrame;
   return binDoaOn && f && opMode === 'coherent' && Date.now() - f.t < BIN_DOA_FRESH_MS ? f : null;
 }
-// the bearing at fMhz (MHz): {conf 0..1, az deg} or null
+// the bearing at fMhz (MHz): {conf 0..1, az deg} or null (no bearing there)
 function binDoaAt(fr, fMhz) {
   const j = Math.round((fMhz - fr.start) / fr.step);
   if (j < 0 || j >= fr.n) return null;
+  // (a receiver without flag 4 sent no bearing for confidence 0)
+  if (!(fr.flags & 4) && fr.conf[j] === 0) return null;
   return {conf: fr.conf[j] / 255, az: fr.az[j] * (360 / 65536)};
 }
-// the main waterfall's row: a function per row (WaterfallDisplay.addLine)
+// the main waterfall's row: a function per row (WaterfallDisplay.addLine);
+// every pixel: the bearing's hue at the level's brightness
 const binDoaWfOut = [0, 0, 0];
 function binDoaWfTint() {
   const fr = binDoaFresh();
   if (!fr) return null;
-  return (f, lvl, r, g, b) => {
+  return (f, lvl) => {
     const p = binDoaAt(fr, f);
-    if (!p || p.conf <= 0) return null;
-    const c = Math.min(1, p.conf * 1.2), v = 0.25 + 0.75 * lvl, [hr, hg, hb] = binDoaRgb(p.az);
-    binDoaWfOut[0] = r * (1 - c) + hr * v * c;
-    binDoaWfOut[1] = g * (1 - c) + hg * v * c;
-    binDoaWfOut[2] = b * (1 - c) + hb * v * c;
+    if (!p) return null;
+    const v = 0.2 + 0.8 * lvl, [hr, hg, hb] = binDoaRgb(p.az);
+    binDoaWfOut[0] = hr * v;
+    binDoaWfOut[1] = hg * v;
+    binDoaWfOut[2] = hb * v;
     return binDoaWfOut;
   };
 }
-// uPlot draw hook: each confident point's column (0 dB up to its level) and
-// its piece of the trace in the colour of its bearing; the legend ring with
-// the bearing under the cursor, or why the colours are paused
+// uPlot draw hook: the trace line itself, point by point in the colour of
+// its bearing (uPlot's own stroke is transparent while a frame is fresh -
+// createPlot), a translucent column from 0 dB up to each point; the legend
+// ring with the bearing under the cursor, or why the colours are paused
+const BIN_DOA_LINE = [79, 195, 247];   // the trace's normal colour (#4fc3f7)
 function binDoaDraw(u) {
   if (!binDoaOn) return;
   const ctx = u.ctx, bb = u.bbox, dpr = window.devicePixelRatio || 1;
@@ -10464,25 +10473,45 @@ function binDoaDraw(u) {
     const y0 = Math.min(bb.top + bb.height, u.valToPos(0, 'y', true));
     const n = xs.length, px = new Float32Array(n), py = new Float32Array(n);
     for (let i = 0; i < n; i++) { px[i] = u.valToPos(xs[i], 'x', true); py[i] = u.valToPos(ys[i], 'y', true); }
-    ctx.lineWidth = 2.5 * dpr;   // covers uPlot's 1.5 px trace
-    ctx.lineJoin = 'round';
+    // every point its bearing's colour (the normal one only where the frame
+    // has no bearing - outside it)
+    const col = new Array(n), has = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       const p = binDoaAt(fr, xs[i]);
-      if (!p || p.conf <= 0.02) continue;
-      const [r, g, b] = binDoaRgb(p.az);
-      // the point's share of the trace: half way to each neighbour
+      const [hr, hg, hb] = p ? binDoaRgb(p.az) : BIN_DOA_LINE;
+      has[i] = p ? 1 : 0;
+      col[i] = `rgb(${hr},${hg},${hb})`;
+    }
+    // the columns first, under the line
+    ctx.globalAlpha = 0.3;
+    for (let i = 0; i < n; i++) {
+      if (!has[i]) continue;
+      const a = i > 0 ? i - 1 : i, c = i + 1 < n ? i + 1 : i;
+      const xl = (px[a] + px[i]) / 2, xr = (px[c] + px[i]) / 2;
+      ctx.fillStyle = col[i];
+      ctx.fillRect(xl, Math.min(py[i], y0), Math.max(dpr, xr - xl), Math.abs(y0 - py[i]));
+    }
+    ctx.globalAlpha = 1;
+    // the line: each point's half segments to its neighbours in its colour;
+    // runs of one colour share a path
+    ctx.lineWidth = 1.75 * dpr;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'butt';
+    let run = null;
+    for (let i = 0; i < n; i++) {
       const a = i > 0 ? i - 1 : i, c = i + 1 < n ? i + 1 : i;
       const xl = (px[a] + px[i]) / 2, yl = (py[a] + py[i]) / 2, xr = (px[c] + px[i]) / 2, yr = (py[c] + py[i]) / 2;
-      const w = Math.max(dpr, xr - xl);
-      ctx.fillStyle = `rgba(${r},${g},${b},${(0.12 + 0.48 * p.conf).toFixed(3)})`;
-      ctx.fillRect(xl, Math.min(py[i], y0), w, Math.abs(y0 - py[i]));
-      ctx.strokeStyle = `rgba(${r},${g},${b},${Math.min(1, 0.3 + p.conf).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.moveTo(xl, yl);
+      if (run !== col[i]) {
+        if (run !== null) ctx.stroke();
+        run = col[i];
+        ctx.strokeStyle = run;
+        ctx.beginPath();
+        ctx.moveTo(xl, yl);
+      }
       ctx.lineTo(px[i], py[i]);
       ctx.lineTo(xr, yr);
-      ctx.stroke();
     }
+    if (run !== null) ctx.stroke();
   }
   ctx.restore();
   // the legend, top right
@@ -10500,7 +10529,7 @@ function binDoaDraw(u) {
   if (fr) {
     // the point under the mouse (fpHover: the overlay canvas over the plot area)
     const p = fpHover ? binDoaAt(fr, u.posToVal(fpHover.x, 'x')) : null;
-    t = p ? (p.conf > 0.02 ? binDoaShown(p.az).toFixed(0) + '°' : '-') : '';
+    t = p ? binDoaShown(p.az).toFixed(0) + '°' : '';
     ctx.fillStyle = '#eee';
   } else {
     t = 'paused';
