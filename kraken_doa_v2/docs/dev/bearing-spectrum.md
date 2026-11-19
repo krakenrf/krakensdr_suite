@@ -5,7 +5,7 @@ this folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`)
 
 **The spectrum coloured by direction - `src/signal_processing/bin_doa.cpp`
 (`include/signal_processing/bin_doa.hpp`), `MUSICProcessor::azimuthSteering`,
-kraken_doa.html "🎨 BEARING SPECTRUM":**
+kraken_doa.html "BEARING SPECTRUM":**
 
 - The user's request (2026-11-18): "a mode that colors the entire fft
   spectrum bins with different colors based on the doa result of that bin".
@@ -13,9 +13,14 @@ kraken_doa.html "🎨 BEARING SPECTRUM":**
   the 2.4 MHz shows its direction at a glance - signals from one direction
   share a colour, a hopper or a short burst shows where it came from, an
   interferer stands out from its neighbours
-- MUSIC DoA > **Bearing colours**, the row under DoA ON / OFF, with the
-  legend ring and the state / park-reason line under it (moved there from
-  Display on 2026-11-19, the user's call). Its own switch: it works with
+- MUSIC DoA > **Bearing colours**, the row under DoA on / off: a switch
+  (`.sw`) with a `?` tip, the legend ring at its right, and the state /
+  park-reason line under it (`.sb-note`, hidden while empty) - moved there
+  from Display on 2026-11-19, the user's call; written to the page rules
+  of *sidebar.md* since the merge with the redesigned page (no colon, no
+  emoji, palette tokens for the legend's box and text). It is inside the
+  box `data-sb="doa"`, so it moves, collapses and is remembered with it.
+  Its own switch: it works with
   DoA off (nothing there greys it out). The MUSIC DoA box is coherent-only
   (`.coh-only`, hidden in wideband scan / independent mode) - so is the
   mode, which is parked there anyway; the reason then shows on the
@@ -42,7 +47,14 @@ kraken_doa.html "🎨 BEARING SPECTRUM":**
   display everything". So: no gating, no fading by confidence, no slider.
   The confidence byte stays on the wire (informational, for native clients)
 - Colour: hue = the point's compass bearing (360 - MUSIC azimuth: N red, E
-  yellow-green, S cyan, W violet; `binDoaRgb`). Legend: a colour ring
+  yellow-green, S cyan, W violet; `binDoaRgb`). The hue scale is data, not
+  theme (*theme.md*: data colours are not part of the palette - a cyclic
+  scale depends on its exact steps), so it and the legend ring are the same
+  in every look; drive mode hides the spectrum and its Day look only
+  restyles the HUD, so nothing here changes with it. What is interface is
+  in the palette: the legend's backing (--s1 at 78 %), its labels (--t1),
+  the readout (--t0), "paused" (--warn-t), the line where a point has no
+  bearing (--ac-t, the trace's own colour since the redesign). Legend: a colour ring
   oriented like the DoA plots (`PolarPlot.azPos`: azimuth 0 = ANT0 at the
   top, 90 left) with N/E/S/W or 0/90/180/270 by the DOA Angles convention -
   top right of the spectrum (with the bearing under the cursor, or "paused"
@@ -204,6 +216,47 @@ kraken_doa.html "🎨 BEARING SPECTRUM":**
 - A noise flag trailing the samples by more than `HOLD_PACKETS` (3) packets
   would still let the noise source colour the band for a frame or two
   (measured below with a lag of 10); heimdall's trail is 0-2
+
+## Merged with main's redesigned page (2026-11-19)
+
+main (a4051dc) had the page redesigned (*sidebar.md*, *theme.md*,
+*icons.md*, drive mode, the page's own dialogs, a new top bar). Two textual
+conflicts: the README's feature table (main dropped the emoji; the row
+follows MUSIC DoA as "Bearing colours (in MUSIC DoA)") and the spectrum
+series (main's trace colour #7ab8f7 = --ac-t, now inside the bearing
+colours' stroke function, and `BIN_DOA_LINE` follows it). Brought to the
+page rules: the row's label without its colon, the tick a switch (`.sw`),
+the state line a `.sb-note`, no emoji in the section title, comments and
+markup (the section is "BEARING SPECTRUM"), the legend's box / text /
+"paused" colours tokens (above); the hue scale and the rings stay data.
+`tools/theme_palette.py --check`: OK. None of main's changes touched the
+hooks (data_receiver's conversion condition and hand-off, the type 9 send
+and `BIN_DOA_VIEW:`, `SpectrumViewCut`, the `BIN_DOA:` handler and replay
+entry, the schema row, the Makefile line; `music_processor` unchanged in
+main). Drive mode hides the spectrum (`visibility:hidden`) and leaves the
+receiver's work running; the dialogs and the top bar have nothing of it.
+
+Re-run on the merged tree (kraken_doa and all 32 plugins built; TEST
+builds of the merged tree and of main):
+
+- UI: ui_test.py 19 / 19, ui_move.py 11 / 11, ui_real.py 7 / 7 - updated
+  for the redesign: the trace's normal colour #7ab8f7 (was #4fc3f7) in the
+  "no plain trace left" checks; the noise-point check now samples every
+  confidence-0 vertex (483 of 500 within 10 deg - one pixel sampled at full
+  span hit a neighbour's colour); independent mode expects the reason in
+  the state but the line hidden (the MUSIC DoA box is coherent-only)
+- Colour vs a VFO's MUSIC: clean UCA worst 0.20 deg; realistic faults worst
+  0.25; real capture 3.7 / 3.1 / 0.1 / 2.0 deg (89.40, 90.20, 90.98 MHz,
+  the 91.04 carrier)
+- Burst: the burst's bearing in its frame and the next (15 of 149 frames,
+  3 random); noise-source leak (flag 3 packets late, 6 switches): 0
+- Compatibility: main's page against the merged receiver with the mode on -
+  no errors, no type 9 to a client that doesn't ask; the merged page
+  against main's receiver - "This receiver has no bearing colours", no
+  errors
+- Mode off (CPU time over 30 s, powersave governor): main 8.8 / 8.3 / 7.3 %,
+  merged 9.3 / 8.1 / 7.5 % - unchanged within the noise; on 16.3 % (the
+  worker 5.8 %)
 
 ## Measurements, round 2 (2026-11-18 evening, the user's report from the real array)
 
