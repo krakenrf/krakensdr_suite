@@ -48,7 +48,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   the retune arrived after the RESET (seen in the offline test: ~1.5 s of
   them). The offline test prints
   `(system)` / `(channel)` / `(control)` / `(grant)` / `(grant end)` /
-  `(call)` lines (repeats within 5 s quiet) and `trunk ...` summary lines;
+  `(call)` lines (a line equal to the last one printed for the same
+  system / channel / grant / call - an unchanged state - is quiet; every
+  change prints, a change back too) and `trunk ...` summary lines;
   `tools/digi_test.cpp` prints what the engine delivers (`[trunk] ...`,
   `--retune S:HZ`, `--stop S`); `sdk/tools/wide_scene.py` places
   narrowband files anywhere in the 2.4 MHz for wide playback entries
@@ -84,6 +86,24 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `freq_hz` / `bw_hz` channel or the plugin's band; > 0.25 s packets and
   same-channel overlaps dropped like TalkerDoa; the resampler's delay
   taken off) -> MUSIC, one source, kraken_doa's UCA (needs --rf)
+- Offline memory (2026-11-20): `--file` reads the recording as a stream
+  (`IqFile` / `McReader`: a 10 ms block read, converted, mixed, resampled
+  with the NCO / msresamp state carried on, handed on, dropped - liquid's
+  msresamp runs sample by sample, so the blocks give the samples of one
+  whole-buffer pass); `--audio` is written as it comes. Peak RSS 6.9 MB for
+  a 300 s one-antenna 2.4 MHz cu8 (was 1.4 GB per 60 s: the file + 8 bytes
+  per complex sample; the OOM killer fired when several ran on 5-20 GB
+  captures). `talker_bearings` already re-read its spans from the file
+  (fseeko, 64 k-sample chunks); array plugins read blocks (a WAV too now).
+  Still in memory: a pipe as `--file` (its raw bytes; one antenna of a
+  multichannel pipe as complex float - the length is printed before the
+  first block) and the result lists (spans, packets, events' dedup keys).
+  Byte-identical to the whole-file host on 86 old / new runs (every format,
+  `--offset`, `--uca`, `--audio`, `--plots`, `--verbose`, `--start` /
+  `--seconds`, pipes, the error paths, the trunk scenes, 60 s of a real
+  capture; only lora's / cells' own CPU-time figures differ, as between two
+  runs of one binary). `tools/digi_test` streams u8 / wav / cf32 the same
+  way (its `dis` input is still loaded whole; see its header)
 - Every antenna for `kp::Info::multichannel` plugins: `DigitalDecoder::push(..,
   mc, mc_m)` (the pipeline packs the block's channels as int16 x MC_SCALE
   only while `wants_multichannel()` and the block holds the coherent array:

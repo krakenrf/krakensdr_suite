@@ -18,6 +18,9 @@
 
 #include <liquid/liquid.h>
 
+// the wire's shared rules (kp::wire::clean_text, host_option): by path, so
+// every build line of this file (tools/digi_test's too) finds it
+#include "../../plugins/sdk/kraken_plugin.hpp"
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
@@ -1211,18 +1214,10 @@ private:
     void trunk_reset_if(const Runner& r) {
         if (trunk_from_ == r.id) trunk_reset();
     }
-    // text: control characters out, cut to max bytes at a character boundary
-    static std::string tk_text(const std::string& in, size_t max) {
-        std::string s;
-        for (unsigned char c : in)
-            if (c >= 0x20 && c != 0x7F) s.push_back(static_cast<char>(c));
-        if (s.size() > max) {
-            size_t e = max;
-            while (e > 0 && (static_cast<unsigned char>(s[e]) & 0xC0) == 0x80) e--;
-            s.resize(e);
-        }
-        return s;
-    }
+    // text: valid UTF-8 without C0 / DEL / C1 controls, cut to max bytes at
+    // a character boundary - the SDK's own rule (kp::wire::clean_text, the
+    // plugin side applied it already), so a name is the same bytes everywhere
+    static std::string tk_text(const std::string& in, size_t max) { return kp::wire::clean_text(in, max); }
     // a lowercase token ([a-z0-9_], with '-' if dash) of <= max bytes, else ""
     static std::string tk_token(const std::string& in, size_t max, bool dash) {
         if (in.size() > max) return "";
@@ -1309,8 +1304,10 @@ private:
                 for (size_t i = 1 + ne; i + 1 < f.size() && ev.options.size() < TRUNK_OPTIONS_MAX; i += 2) {
                     const std::string& k = f[i];
                     const std::string& v = f[i + 1];
-                    bool ok = !tk_token(k, 32, false).empty() && v.size() <= TRUNK_OPTION_VALUE_MAX;
-                    for (unsigned char c : v) ok = ok && c >= 0x20 && c != 0x7F;
+                    // not one of the host's own OPTION keys (verbose, log_raw,
+                    // video_wanted: kp::wire::host_option), the value clean text
+                    bool ok = !tk_token(k, 32, false).empty() && !kp::wire::host_option(k) &&
+                              v.size() <= TRUNK_OPTION_VALUE_MAX && kp::wire::clean_text(v, v.size()) == v;
                     for (const auto& o : ev.options) ok = ok && o.first != k;
                     if (ok) ev.options.emplace_back(k, v);
                 }

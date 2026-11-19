@@ -722,7 +722,8 @@ speech: MPT1327's traffic channels); `bw_hz` = the traffic channel's width
 decoder needs before it has heard it itself, by THAT decoder's
 `Info::options` keys - the timeslot, the colour code / NAC / RAN, the
 scrambling identity (TETRA's MCC / MNC / colour code, P25 Phase 2's WACN /
-system / NAC) - at most 16, keys `[a-z0-9_]{1,32}`, values <= 100 bytes
+system / NAC) - at most 16, keys `[a-z0-9_]{1,32}` (not the host's own
+`verbose`, `log_raw`, `video_wanted`), values <= 100 bytes of valid UTF-8
 without control characters. Repeats are expected: send `grant()` for every
 grant message you decode, also when the system repeats it every second for
 the length of the call - the host de-duplicates them and takes them as the
@@ -748,11 +749,16 @@ it is on a traffic channel unless an option says so - report what you hear
 (`call()`, `talker()`, and `grant()` for grants a traffic channel carries).
 
 Limits, both ends (the plugin side cuts or drops, kraken_doa checks
-everything again - a plugin is untrusted input): texts lose control
-characters and are cut at a character boundary (names 32, target / source
-32, system name / site 64, key 48 bytes), a frequency outside (0, 6 GHz] is
-NAN, a slot outside -1..15 is -1, a `decoder` that is no plugin id or a
-`demod` that is no `[a-z0-9_]{1,16}` is `""`, bad options are dropped.
+everything again with the same `kp::wire::clean_text` - a plugin is
+untrusted input): texts are made valid UTF-8 (malformed sequences, overlong
+forms, surrogates dropped), lose C0 / DEL / C1 control characters and are
+cut at a character boundary (names 32, target / source 32, system name /
+site 64, key 48 bytes), so a name is the same bytes everywhere; a frequency
+outside (0, 6 GHz] as sent (to 0.1 Hz) is NAN, a slot outside -1..15 is -1,
+a `decoder` that is no plugin id or a `demod` that is no `[a-z0-9_]{1,16}`
+is `""`, bad options are dropped - also an option with one of the host's
+own OPTION keys (`verbose`, `log_raw`, `video_wanted`:
+`kp::wire::HOST_OPTIONS`).
 Delivery: in Auto detect the host takes these only from the plugin it
 locked onto (as its voice) - reports before that are lost, so repeat the
 system now and then; with the plugin selected, all of them. When the VFO's
@@ -768,9 +774,14 @@ quoted - `ch` name, `num` number, `mhz` downlink ("?" = NAN), `slot`, `up`
 uplink (only when known), `target`, `group` / `unit`, `source`, `flags`
 (e encrypted, m emergency, d data, u update; "-" none), `decoder`, `demod`,
 `bw` (Hz), `opt.<key>` per option, `state` ACTIVE / ENDED / RELEASED. A line
-identical to one printed less than 5 s earlier is not printed again (a grant
-update every second for a minute prints once; `--verbose` prints every one),
-and the summary has every count:
+identical to the last one PRINTED for the same thing - the system; a channel
+(name + slot); the control channel; a grant (channel name + slot + target); a
+grant end (name + slot); a call (its slot) - repeats an unchanged state and
+is not printed again: a grant update every second for a minute prints once,
+but every change prints, a change back too (ACTIVE, ENDED, ACTIVE, ENDED of
+one slot: four lines), and a printed grant end makes the channel's next
+grant print again (a printed grant its next grant end). `--verbose` prints
+every one; the summary has every count:
 
 ```
 [    0.300 s] (system) key="BEE00.14C" name="P25 BEE00.14C" site="RFSS 5 site 9" control=1
@@ -794,7 +805,7 @@ trunk grant ends: 1 messages, 1 channels
   ch="1-0412" num=412 mhz=851.162500 slot=-1 up=806.162500  1 messages
 trunk calls: 7 messages, 1 calls (0 still active, 0 ended, 1 released)
   slot=0 target="1201" group source="2010621" flags=-  0.800 .. 4.300 s  RELEASED
-trunk lines not printed (repeated within 5 s; --verbose prints them): 20
+trunk lines not printed (an unchanged state repeated; --verbose prints them): 20
 ```
 
 Further summary lines: `trunk control channel: ...` (the last
@@ -1197,15 +1208,29 @@ clang 14 (macOS 12) can't capture a structured binding in a lambda - name it
 in the capture (`[&key = k]`).
 
 `--rf HZ` is the RF at the recording's centre (`host.rf_hz()` = it +
-`--offset`); `ai/sigtool.py` captures carry it in their `.json` sidecar
-(`rf_hz`), which is used when `--rf` isn't given.
+`--offset`). Without it the `.json` sidecar gives it: the `tuner_hz` of a
+wide `make_testsignal.py` playback scene (`"format": "cu8"`, 2.4 MHz - there
+`rf_hz` is the band's centre, where the entry's VFO goes, `band_offset_hz`
+from the file's centre), else its `rf_hz` (`ai/sigtool.py` captures,
+`wide_scene.py` scenes and the narrow `cf32` playback scenes, which are
+centred on the band: the file's centre). So a wide scene's control channel
+decodes with just `--offset <its offset_hz>`; `--rf` always wins.
 
 The offline test reads complex float32 (`.cf32`, rate from the `.json`
 sidecar that `ai/sigtool.py` writes, or `--rate`), rtl_sdr `.cu8`, `.cs16`
 or 2-channel IQ `.wav`; mixes the signal at `--offset` Hz to the centre,
 resamples to your `sample_rate` exactly like the live path and feeds it in
-10 ms blocks. It prints the events with their time in the recording, then a
-summary:
+10 ms blocks. The recording is read as a stream - a block read, converted,
+mixed, resampled, decoded and dropped - so the host's memory stays at a few
+MB however long it is, plus what your decoder keeps (a 300 s, 2.4 MHz cu8
+capture through p25 at `--offset`: 7 MB peak, 50-60 s on one desktop x86
+core; "decode time" includes the reading); the `--uca` bearings read their
+spans from the file again, and `--audio` is written as it comes. Only a pipe (`--file
+/dev/stdin`) is held in memory, because it can't be read twice: its raw
+bytes (one antenna of a multichannel pipe: that antenna as complex float).
+Large captures need no cutting: decode several channels of one
+capture side by side with `--offset`. It prints the events with their time
+in the recording, then a summary:
 
 ```
 === Pagers (POCSAG + FLEX) summary ===

@@ -414,8 +414,9 @@ struct Grant {
     double bw_hz = 0;
     // Options for the traffic channel's decoder, by ITS Info::options keys:
     // the timeslot, the colour code / NAC / scrambling identity it needs
-    // before it has heard them itself. Keys [a-z0-9_]{1,32}, values <= 100
-    // bytes without control characters, at most 16 (others are dropped)
+    // before it has heard them itself. Keys [a-z0-9_]{1,32} (not the host's
+    // own wire::HOST_OPTIONS), values <= 100 bytes of wire::clean_text (valid
+    // UTF-8 without control characters), at most 16 (others are dropped)
     std::vector<std::pair<std::string, std::string>> options;
 };
 
@@ -758,7 +759,8 @@ constexpr size_t CHOICES_MAX = 100, CHOICE_VALUE_MAX = 100, CHOICE_LABEL_MAX = 8
 constexpr uint32_t TRUNK_SYSTEM = 43;
 constexpr uint32_t TRUNK_CHANNEL = 44;     // CH: Host::trunk_channel
 constexpr uint32_t CONTROL_CHANNEL = 45;   // CH: Host::control_channel
-// E (the count of fixed fields that follow, decimal text) '\0' name '\0'
+// E (the count of fixed fields that follow, decimal text, < 100: a host
+// rejects a GRANT whose E has more than two digits) '\0' name '\0'
 // number '\0' freq_hz '\0' slot '\0' target '\0' group (0/1) '\0' source
 // '\0' flags (letters: e encrypted, m emergency, d data, u update) '\0'
 // decoder '\0' demod '\0' bw_hz '\0' uplink_hz, then option key '\0' value
@@ -781,7 +783,53 @@ constexpr size_t TRUNK_DEMOD_MAX = 16;     // Grant::demod ([a-z0-9_])
 constexpr size_t TRUNK_OPTIONS_MAX = 16;   // Grant::options (key [a-z0-9_]{1,32})
 constexpr size_t TRUNK_OPTION_VALUE_MAX = 100;   // no control characters
 constexpr int TRUNK_SLOT_MAX = 15;         // slot -1..15
-constexpr double TRUNK_FREQ_MAX_HZ = 6e9;  // freq_hz / uplink_hz in (0, 6 GHz], else NAN
+constexpr double TRUNK_FREQ_MAX_HZ = 6e9;  // freq_hz / uplink_hz in (0, 6 GHz] as sent ("%.1f"), else NAN
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends; video_wanted()
 // the OPTION "video_wanted=0|1" it sends to Info::video plugins - 1 until then)
+
+// The OPTION keys the host sends itself (Host::verbose, raw_wanted,
+// video_wanted): never a plugin's own option - a Grant's options drop them
+// (both ends)
+inline constexpr const char* HOST_OPTIONS[] = {"verbose", "log_raw", "video_wanted"};
+inline bool host_option(const std::string& key) {
+    for (const char* k : HOST_OPTIONS)
+        if (key == k) return true;
+    return false;
+}
+
+// The text of the trunk messages as both ends keep it (the plugin side
+// before sending, kraken_doa again on receipt), so a name is the same bytes
+// everywhere: valid UTF-8 (malformed sequences, overlong forms, surrogates
+// and code points past U+10FFFF dropped), without C0 controls, DEL and C1
+// controls (U+0080..U+009F), cut to at most max bytes at a character boundary
+inline std::string clean_text(const std::string& in, size_t max) {
+    std::string s;
+    s.reserve(in.size() < max ? in.size() : max);
+    const auto* p = reinterpret_cast<const unsigned char*>(in.data());
+    const size_t n = in.size();
+    for (size_t i = 0; i < n;) {
+        const unsigned char c = p[i];
+        size_t len = 0;   // the sequence's length, 0 = drop this byte
+        if (c < 0x80) {
+            len = c >= 0x20 && c != 0x7F ? 1 : 0;
+        } else if (c >= 0xC2 && c <= 0xF4) {
+            len = c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+            // the second byte's range excludes overlongs, surrogates and > U+10FFFF
+            const unsigned char lo = c == 0xE0 ? 0xA0 : c == 0xF0 ? 0x90 : 0x80;
+            const unsigned char hi = c == 0xED ? 0x9F : c == 0xF4 ? 0x8F : 0xBF;
+            if (i + len > n || p[i + 1] < lo || p[i + 1] > hi) len = 0;
+            for (size_t k = 2; len && k < len; k++)
+                if ((p[i + k] & 0xC0) != 0x80) len = 0;
+            if (len == 2 && c == 0xC2 && p[i + 1] < 0xA0) len = 0;   // U+0080..U+009F (C1)
+        }
+        if (!len) {
+            i++;
+            continue;
+        }
+        if (s.size() + len > max) break;   // cut at this character's start
+        s.append(in, i, len);
+        i += len;
+    }
+    return s;
+}
 }  // namespace kp::wire
