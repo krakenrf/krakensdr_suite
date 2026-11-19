@@ -13,7 +13,8 @@
 #   (VERSION, the image's version - docs/dev/version.md - is linked in too)
 #   /data/heimdall    heimdall_settings.conf, s2p_calibration/
 #   /data/kraken_doa  doa_settings.json, api_token, server.crt/.key,
-#                     fft_wisdom.dat, doa_recordings/
+#                     fft_wisdom.dat, doa_recordings/, saved_frequencies.json,
+#                     trunk_systems.json (trunk following), ...
 #
 # Environment:
 #   VARIANT_FLAGS   hardware variant for heimdall: --wideband, --kerberos,

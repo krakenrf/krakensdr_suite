@@ -230,6 +230,7 @@ the job's scratch directory (not committed). The established setup:
 | Station on the map; map search | `station-on-map.md`, `map-search.md` |
 | Saved frequencies and map markers | `saved-frequencies.md` |
 | Saved-frequency scan (plan, wideband mode, calibration hold, one VFO per frequency) | `saved-frequency-scan.md` |
+| Trunk following (control VFOs, grants -> voice VFOs, sites, the channel table, TRUNK_ commands, the trunk status, trunk_systems.json) | `trunk-following.md` |
 | OpenStreetMap masts layer | `osm-masts.md` |
 | Viewshed; path loss (P.1812, ITM, P.2108, coverage) | `viewshed.md`, `path-loss.md` |
 | Incident map (pager addresses) | `incident-map.md` |

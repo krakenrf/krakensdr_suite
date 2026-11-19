@@ -88,7 +88,8 @@
   "bw_khz": 12.5
  },
  "commands": [
-  "TRUNK_FOLLOW:1"
+  "TRUNK_FOLLOW:1",
+  "TRUNK_RULE_SET:{\"sys\":\"nxdn:global.123\",\"first\":1,\"last\":1023,\"base_hz\":451012500,\"step_hz\":12500}"
  ],
  "files": {
   "scene.json": {
