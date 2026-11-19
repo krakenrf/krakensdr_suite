@@ -355,7 +355,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     after a false SYNT has 18 bits of protection - ~400 false grants per
     VFO-year in noise at 11 000 SYNT candidates an hour); a CLEAR has 38
     (REVS, type). The system goes out at once after a reset, before any
-    grant. The discriminator's DC is
+    grant. 3.2 (after real calls, NZ 2026-11-20): a granted traffic channel's
+    carrier = the call ACTIVE (the radios' MAINT hardly ever reached the
+    downlink: 2 Pressel On in 24 calls; the carrier was up from before the
+    GTC to the CLEAR); control-channel slots on a traffic VFO count only with
+    that channel's CHAN4 (the site's control channel came onto 5 of its
+    traffic channels by intermodulation); ACKV QUAL 0 marks a unit; option
+    `undecided` (group / unit) for calls nothing shows to be unit calls; a
+    release forgets the call's parties. The discriminator's DC is
     removed before the correlators (an offset of 2 kHz lost most slots: the
     1.5 cycles of 1800 Hz don't reject DC) and reported as freq_error.
     Messages (field positions checked against MPT 1327 section 5,

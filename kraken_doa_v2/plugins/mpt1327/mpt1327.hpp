@@ -26,6 +26,7 @@ struct Mpt1327Options {
     std::string target, source;   // the grant's parties ("PPP-IIII"), "" = not known
     int group = -1;            // the grant's group flag, -1 = not known
     bool emergency = false;    // the grant's emergency flag
+    bool undecided_group = true;   // a called party nothing shows to be a unit: a group (else a unit)
 };
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,9 @@ private:
     int64_t last_tc_ = -1;           // sample of the last traffic channel message
     int tc_chan_ = -1;               // the channel number the traffic messages carry
     bool released_ = false;          // a clear-down since the reset: the granted call is over
+    int cc_chan4_ = -1;              // CHAN4 of the control channel slots heard (Aloha, MARK), -1 = none yet
+    int64_t carrier_since_ = -1;     // sample where the carrier came, -1 = none
+    int64_t ended_at_ = -1;          // sample of the last call(ENDED)
     uint64_t tc_gtc_ = 0;            // the last GTC after a SYNT (counts only when repeated)
     int64_t tc_gtc_at_ = -1;
     static constexpr size_t MAX_UNITS = 4096;

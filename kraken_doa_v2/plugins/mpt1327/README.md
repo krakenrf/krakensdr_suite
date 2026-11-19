@@ -71,8 +71,13 @@ the same): bit n of a codeword = bit n-1 of the 48 information bits.
   call), `demod = "nfm"`, `bw_hz` 12500, decoder = this plugin. Group or
   unit is NOT in the signalling (units and groups share idents 1-8100):
   `group = false` when the called party was checked with an AHY (POINT 0 -
-  only units answer) or called before itself (IDENT2 of a GTC is always a
-  unit or a gateway), true for ALLI and otherwise; a gateway is a unit. The
+  only units answer), got an ACKV QUAL 0 ("called unit not in radio
+  contact") or called before itself (IDENT2 of a GTC is always a unit or a
+  gateway), true for ALLI; any other: the option Calls not known as unit
+  calls (`undecided`, default "group"); a gateway is a unit. On air (NZ,
+  below) no call was ever shown to be a group call and a multi-site unit
+  call reaches the CALLING party's site without an AHY (the called unit is
+  checked on its own site): there set "unit". The
   units heard are kept for the life of the VFO's decoder (4096, the one heard
   longest ago gives way; emptied on every reset, as are the emergency and
   repeated-GTC memories). A wrong guess costs the call's label and the
@@ -94,6 +99,12 @@ the same): bit n of a codeword = bit n-1 of the 48 information bits.
   sub-band 2 (downlink 200.5 MHz + ..., uplink 8 MHz lower) (MPT 1343 4.1 /
   5.1); other fields NAN. Measured on air in NZ (Tests, below): 414.0000
   MHz + n x 12.5 kHz - enter it as the receiver's table.
+- Example (the NZ network measured below, four sites): Channel plan "none"
+  and the receiver's rule base 414.0000 MHz, step 12.5 kHz, numbers as the
+  channel number; System key "MPT 1343 network part" (the sites' SYS codes
+  0x42E1 / 0x42C1 / 0x4221 / 0x4201 are all MPT 1343's national form NET 0:
+  one key "NET-0", one channel table - right, the plan is the same on every
+  site); Calls not known as unit calls "unit".
 
 On a traffic channel (the plugin runs beside the host's FM demodulator; it
 can't hear speech, so `valid()` stays with real codewords):
@@ -118,6 +129,22 @@ can't hear speech, so `valid()` stays with real codewords):
   nothing). A CCSC on the channel (back to control signalling) and a GTC
   moving the call elsewhere (9.2.3.4: `grant()` too, heard twice) release it
   as well.
+- The granted channel's carrier (3.2): on an instance with the grant's
+  `target`, a carrier for 0.2 s before any clear-down = `call(ACTIVE)` with
+  the grant's parties (group: no source) - again when the carrier comes back
+  after an ENDED. On air the site keyed the downlink 0.12-0.58 s BEFORE the
+  GTC and held it to the clear-down, and the radios' call maintenance
+  reached the downlink in 2 of 24 calls (Pressel On only): without this the
+  call was RELEASED without ever being ACTIVE.
+- Control channel signalling on a traffic channel's VFO (`chan` set) is
+  another channel's unless its Aloha / MARK CHAN4 (the low 4 bits of the
+  channel it is sent on, MPT 1327's own breakthrough guard) is this
+  channel's: no system, no grants, no release from it (fact "Control
+  channel heard"). On air (3.2): the site's control channel came through on
+  5 of its traffic channels by intermodulation (CH 167 = 2 x CH 207 - CH
+  247), up to 304 slots in 600 s - 3.1 made those VFOs control channels (7
+  grants, 45 system reports on CH 167). 1 in 16 channels shares the control
+  channel's CHAN4: no guard there.
 - No Pressel Off: when the carrier goes (noise squelch on the
   discriminator: rms of its first difference over 10 ms, carrier < 2400 Hz,
   none > 3400 Hz - noise alone measured >= 4100, a carrier with speech at 6
@@ -221,8 +248,7 @@ audio - tone glides and filtered noise - between, two CLEARs) or its uplink
   (3474), 0x4201 on 417.7625 (193 in 300 s, weak). Every address codeword
   parsed: Aloha, BCAST (call maintenance parameters, registration
   parameters, vote now advice), ACK / ACKX for registrations - no GTC, MOVE
-  or CLEAR, no call (a quiet night): the GTC positions and the traffic
-  channel side are not confirmed on air yet. Channel plan, measured: the
+  or CLEAR, no call (a quiet night). Channel plan, measured: the
   sites name each other's control channels in their vote-now broadcasts
   (42E1 -> 42C1 214, 4201 301; 42C1 -> 42E1 207, 4221 220, 4201 301; 4221 ->
   42C1 214, 4201 301; 4201 -> 42C1 214) and give their own channel's low 4
@@ -231,6 +257,49 @@ audio - tone glides and filtered noise - between, two CLEARs) or its uplink
   = 416.7500, 301 = 417.7625). The SYS codes of one network differ per site
   (0x42E1, 0x42C1, 0x4221, 0x4201 ...): with the default key each site has
   its own channel table.
+- Real calls, VERIFIED ON AIR (the same network, 600 s from 06:30 local,
+  2026-11-20, one antenna, 416.5 MHz centre):
+  - Control channels: 42E1 5624 slots, 58 GTCs (29 calls, each GTC twice
+    in a row), 42C1 5138 slots, 16 GTCs (8 calls), 4221 weak (665 slots, no
+    GTC). Types: Aloha, BCAST 2 / 3 / 5, ACK / ACKI / ACKV / ACKX, AHY,
+    AHYX, GTC - none unparsed, no data codeword, no MOVE / CLEAR on a
+    control channel, no GTC off the slot grid (the grid check passes every
+    slot of a real control channel). GTC field positions and the channel
+    plan confirmed: each granted channel (15 ... 309 = 414.1875 ... 417.8625
+    MHz) keyed up 0.12-0.58 s (median 0.22 s) BEFORE the GTC's slot ended -
+    23 of the 24 in-span calls, the 24th was on already - and its CLEARs
+    name CONT 207 / 214 = the site's own control channel.
+  - Traffic channels (24 in-span calls on CH 114, 115, 154, 167, 187, 227,
+    247, 254, 267; 1339 s of calls): the downlink carrier is up from before
+    the GTC to the clear-down without a break (the site's talk-through; one
+    weak 42C1 channel faded once for ~2 s); the radios' call maintenance
+    almost never reaches the downlink - 2 Pressel On (from the grant's
+    calling unit, 5.3 and 14.7 s into the call), no Periodic, Pressel Off
+    or Disconnect, no other base-station signalling during the calls. The
+    end: 23 clear-downs (the 24th call ran past the capture), each 1-4
+    CLEARs - typically 3 back to back (0.10-0.11 s apart) and a 4th after
+    0.4-0.75 s; calls lasted 5.6-107 s, four 180-181 s (the system's
+    call time limit). With the grant's options (as the host runs it), 3.2:
+    ACTIVE in 24 / 24 calls (from the carrier; 3.1: 2 / 24, from the 2
+    Pressel On), RELEASED at the first CLEAR in 23 / 23, one ENDED + ACTIVE
+    again at the faded carrier; talkers only for the 2 Pressel On (0.07 s
+    each). CLEARs of OTHER channels (breakthrough, 9 on 2 VFOs) ignored by
+    the CHAN check; the control channel's intermodulation on 5 traffic
+    channels (above) ignored by the CHAN4 check in 3.2.
+  - Real speech: 4456 SYNT candidates in the 1339 s of calls (11 977 / h,
+    as in noise), 83 error-free address codewords - every one a CLEAR or
+    MAINT that was really sent (incl. the breakthrough CLEARs) - 0 others,
+    0 false grants / calls.
+  - Group or unit (37 first GTCs on both sites): 23 preceded by an AHY
+    (POINT 0) to the called unit 0.4-0.75 s before, the other 14 by an ACKI
+    (QUAL 1) to the caller only; reported unit 29, group 8 - of the 8, 3 were
+    later callers themselves (units) and 5 undecided; no called ident had
+    more than 2 callers, pairs called each other back and forth: a network
+    of unit calls, no call shown to be a group call. 5 calls were granted on
+    BOTH sites within 0.15 s (caller on one, called unit on the other: the
+    AHY only on the called unit's site) - one network, the same idents on
+    42E1 and 42C1. With `undecided=unit`: 29 / 29 unit on 42E1.
+  - No emergency call (no ACKE, every AHY with E = 0).
 - Decode time 0.6 % of real time at 48 kHz (2 % with the 1 h files on a
   busy machine).
 
