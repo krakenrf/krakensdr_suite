@@ -768,9 +768,14 @@ quoted - `ch` name, `num` number, `mhz` downlink ("?" = NAN), `slot`, `up`
 uplink (only when known), `target`, `group` / `unit`, `source`, `flags`
 (e encrypted, m emergency, d data, u update; "-" none), `decoder`, `demod`,
 `bw` (Hz), `opt.<key>` per option, `state` ACTIVE / ENDED / RELEASED. A line
-identical to one printed less than 5 s earlier is not printed again (a grant
-update every second for a minute prints once; `--verbose` prints every one),
-and the summary has every count:
+identical to the last one PRINTED for the same thing - the system; a channel
+(name + slot); the control channel; a grant (channel name + slot + target); a
+grant end (name + slot); a call (its slot) - repeats an unchanged state and
+is not printed again: a grant update every second for a minute prints once,
+but every change prints, a change back too (ACTIVE, ENDED, ACTIVE, ENDED of
+one slot: four lines), and a printed grant end makes the channel's next
+grant print again (a printed grant its next grant end). `--verbose` prints
+every one; the summary has every count:
 
 ```
 [    0.300 s] (system) key="BEE00.14C" name="P25 BEE00.14C" site="RFSS 5 site 9" control=1
@@ -794,7 +799,7 @@ trunk grant ends: 1 messages, 1 channels
   ch="1-0412" num=412 mhz=851.162500 slot=-1 up=806.162500  1 messages
 trunk calls: 7 messages, 1 calls (0 still active, 0 ended, 1 released)
   slot=0 target="1201" group source="2010621" flags=-  0.800 .. 4.300 s  RELEASED
-trunk lines not printed (repeated within 5 s; --verbose prints them): 20
+trunk lines not printed (an unchanged state repeated; --verbose prints them): 20
 ```
 
 Further summary lines: `trunk control channel: ...` (the last

@@ -1283,25 +1283,39 @@ public:
     }
 
     // --- trunked systems: each call as one line, cleaned as the live host
-    // sends it; a line identical to one printed within the last TRUNK_DEDUP_S
-    // (its repeats keep it quiet - a grant update every second prints once)
-    // is not printed again, except with --verbose; the summary counts all
-    static constexpr double TRUNK_DEDUP_S = 5.0;
-    std::map<std::string, double> trunk_last_;   // line -> last time it came
+    // sends it. A line identical to the LAST one printed for the same thing
+    // (the system; a channel: name + slot; the control channel: its name; a
+    // grant: channel name + slot + target; a grant end: name + slot; a call: its
+    // slot) repeats an unchanged state and is not printed again, except with
+    // --verbose - every change prints, a change back too (a grant update
+    // every second prints once; ACTIVE, ENDED, ACTIVE, ENDED all four). A
+    // printed grant end forgets its channel's grants, a printed grant its
+    // channel's grant end. The summary counts all
+    std::map<std::string, std::string> trunk_last_;   // tag '\0' key -> the last line printed
     uint64_t trunk_msgs_ = 0, trunk_quiet_ = 0, trunk_cut_ = 0, trunk_dropped_ = 0;
-    void trunk_line(const std::string& tag, const std::string& body) {
+    // true = printed (not a repeat)
+    bool trunk_line(const std::string& tag, const std::string& key, const std::string& body) {
         trunk_msgs_++;
         const std::string line = "(" + tag + ") " + body;
-        const double t = time();
-        auto it = trunk_last_.find(line);
-        const bool rep = it != trunk_last_.end() && t - it->second < TRUNK_DEDUP_S;
-        trunk_last_[line] = t;
-        if (rep && !verbose_) {
+        std::string& last = trunk_last_[tag + '\0' + key];
+        if (last == line && !verbose_) {
             trunk_quiet_++;
-            return;
+            return false;
         }
-        if (!quiet_) printf("[%9.3f s] %s\n", t, line.c_str());
+        last = line;
+        if (!quiet_) printf("[%9.3f s] %s\n", time(), line.c_str());
+        return true;
     }
+    // forget the lines of tag for channel name (slot -1: every slot)
+    void trunk_forget(const std::string& tag, const std::string& name, int slot) {
+        const std::string pre = tag + '\0' + name + '\0';
+        for (auto it = trunk_last_.lower_bound(pre); it != trunk_last_.end() && it->first.compare(0, pre.size(), pre) == 0;) {
+            const int s = atoi(it->first.c_str() + pre.size());
+            if (slot < 0 || s < 0 || s == slot) it = trunk_last_.erase(it);
+            else ++it;
+        }
+    }
+    static std::string tkey(const kp::TrunkChannel& c) { return c.name + '\0' + std::to_string(c.slot); }
     static std::string tq(const std::string& s) {   // "text", \" and \\ escaped
         std::string o = "\"";
         for (char c : s) {
@@ -1333,7 +1347,7 @@ public:
     }
     void trunk_drop(const char* what) {
         trunk_dropped_++;
-        trunk_line("trunk dropped", std::string(what) + ": channel without a name (kraken_doa drops it)");
+        trunk_line("trunk dropped", what, std::string(what) + ": channel without a name (kraken_doa drops it)");
     }
     kp::TrunkSystem sys_;
     uint64_t sys_n_ = 0;
@@ -1341,7 +1355,7 @@ public:
         const kp::TrunkSystem s = tr_system(s0, &trunk_cut_);
         sys_ = s;
         sys_n_++;
-        trunk_line("system", "key=" + tq(s.key) + " name=" + tq(s.name) + " site=" + tq(s.site) +
+        trunk_line("system", "", "key=" + tq(s.key) + " name=" + tq(s.name) + " site=" + tq(s.site) +
                                  " control=" + (s.control ? "1" : "0"));
     }
     std::map<std::string, kp::TrunkChannel> tchannels_;   // name/slot -> the latest
@@ -1349,7 +1363,7 @@ public:
         const kp::TrunkChannel c = tr_channel(c0, &trunk_cut_);
         if (c.name.empty()) return trunk_drop("channel");
         tchannels_[c.name + "/" + std::to_string(c.slot)] = c;
-        trunk_line("channel", tch(c));
+        trunk_line("channel", tkey(c), tch(c));
     }
     kp::TrunkChannel control_;
     uint64_t control_n_ = 0;
@@ -1358,7 +1372,7 @@ public:
         if (c.name.empty()) return trunk_drop("control");
         control_ = c;
         control_n_++;
-        trunk_line("control", tch(c));
+        trunk_line("control", c.name, tch(c));
     }
     struct TGrant {
         kp::Grant g;
@@ -1386,7 +1400,8 @@ public:
         k->last = time();
         k->n++;
         k->updates += g.update;
-        trunk_line("grant", grant_text(g));
+        if (trunk_line("grant", tkey(g.channel) + '\0' + g.target, grant_text(g)))
+            trunk_forget("grant end", g.channel.name, g.channel.slot);
     }
     static std::string grant_text(const kp::Grant& g) {
         std::string s = tch(g.channel) + " target=" + tq(g.target) + (g.group ? " group" : " unit") + " source=" +
@@ -1405,7 +1420,7 @@ public:
         auto& e = grant_ends_[c.name + "/" + std::to_string(c.slot)];
         e.first = c;
         e.second++;
-        trunk_line("grant end", tch(c));
+        if (trunk_line("grant end", tkey(c), tch(c))) trunk_forget("grant", c.name, c.slot);
     }
     // calls as the host would see them: per slot an open call; ACTIVE with
     // another known target (or source) starts a new one, ENDED / RELEASED
@@ -1455,7 +1470,7 @@ public:
                     break;
                 }
         }
-        trunk_line("call", std::string("state=") + call_state(c.state) + " target=" + tq(c.target) +
+        trunk_line("call", std::to_string(c.slot), std::string("state=") + call_state(c.state) + " target=" + tq(c.target) +
                                (c.group ? " group" : " unit") + " source=" + tq(c.source) + " slot=" +
                                std::to_string(c.slot) + " flags=" + tflags(c.encrypted, c.emergency, false, false));
     }
@@ -1500,7 +1515,7 @@ public:
                    x.end < 0 ? "open" : call_state(x.end));
         }
         if (trunk_quiet_)
-            printf("trunk lines not printed (repeated within %.0f s; --verbose prints them): %llu\n", TRUNK_DEDUP_S,
+            printf("trunk lines not printed (an unchanged state repeated; --verbose prints them): %llu\n",
                    static_cast<unsigned long long>(trunk_quiet_));
         if (trunk_cut_ || trunk_dropped_)
             printf("trunk fields cut / dropped by the wire limits: %llu, messages dropped: %llu (kraken_doa does the same)\n",

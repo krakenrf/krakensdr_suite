@@ -48,7 +48,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   the retune arrived after the RESET (seen in the offline test: ~1.5 s of
   them). The offline test prints
   `(system)` / `(channel)` / `(control)` / `(grant)` / `(grant end)` /
-  `(call)` lines (repeats within 5 s quiet) and `trunk ...` summary lines;
+  `(call)` lines (a line equal to the last one printed for the same
+  system / channel / grant / call - an unchanged state - is quiet; every
+  change prints, a change back too) and `trunk ...` summary lines;
   `tools/digi_test.cpp` prints what the engine delivers (`[trunk] ...`,
   `--retune S:HZ`, `--stop S`); `sdk/tools/wide_scene.py` places
   narrowband files anywhere in the 2.4 MHz for wide playback entries
