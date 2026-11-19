@@ -392,7 +392,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   - MPT1327: each control channel slot with a good CCSC = a packet of the
     SITE, id "SYS hhhh", CCSC + address codeword (107 ms) 2 ms inside both
     ends; 12.5 kHz. Mobiles' return channel isn't decoded (their idents:
-    not implemented); traffic channels name no transmitter
+    not implemented). Traffic channels (3.0): a transmission talker per
+    speech item, id = the call maintenance message's "PPP-IIII", from its
+    first message to its Pressel Off; on the downlink labelled "via site"
+    (the site repeats the radios: the bearing is the site's)
   - ILS / VOR (`plugins/ils`): id "<ident> LOC|VOR" while the ident was
     heard within 30 s on this carrier (within 50 Hz of where it was heard -
     another navaid on the channel doesn't inherit it); a packet = the middle
@@ -550,8 +553,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `ysf-three-radios` 50.0 / 170.0 / 285.0 offline and through a scratch
   kraken_doa debug playback (45 s, Check 3 / 3, each +0.0, 0 packets
   dropped)
-- Not split: MPT1327 voice (analogue). On a repeater OUTPUT every ID's
-  bearing is the repeater's. A DMR repeater INPUT with both slots busy
+- MPT1327 voice (analogue) is split by the radios' call maintenance
+  messages only; on a repeater OUTPUT (the downlink) every ID's bearing is
+  the repeater's. A DMR repeater INPUT with both slots busy
   can't be split (MS bursts carry no slot) - the two radios' LCs land on
   slot 0, so their frames mostly touch both and are dropped
 - Offline (plugin `--file`, recordings from dsdcc / szechyjs dsd-samples

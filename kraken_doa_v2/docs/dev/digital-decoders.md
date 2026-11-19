@@ -287,11 +287,37 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     channel system codeword (CCSC = 0, SYS 15 bits, CCS, 0xAAAA), so the
     CCSC starts 44 bits before the pattern; the address codeword (message)
     follows it. Codewords: 48 bits + BCH(63,48) g 0xE815 with the last check
-    bit inverted + even parity; single-bit errors corrected. Messages: GTC
-    grants (type < 256), Aloha variants, ACK*, AHOY*, status, CLEAR, MOVE,
-    BCAST (SYSDEF), data headers; idents shown prefix-ident. Validated on
-    a live NZ control channel (SYS 0x42E1, ~96 % of slots); GTC field
-    positions follow sdrtrunk and have not been seen live yet
+    bit inverted + even parity; on the control channel single-bit errors
+    corrected (facts, events, valid slots), after a SYNT and for every trunk
+    report error-free only. A CCSC counts only on the 128-bit slot grid of
+    another with the same SYS (a lone one passed 7 times in 1 h of noise, 8
+    in 1 h of FM speech; with the check none). The discriminator's DC is
+    removed before the correlators (an offset of 2 kHz lost most slots: the
+    1.5 cycles of 1800 Hz don't reject DC) and reported as freq_error.
+    Messages (field positions checked against MPT 1327 section 5,
+    2026-11-20): GTC (bit 22 = 0: PFIX, IDENT1, D, CHAN, IDENT2), Aloha
+    (CHAN4), ACK*, AHY (POINT, E), AHYX / AHYP / AHYQ / AHYC, MARK, MAINT
+    (CHAN bits 31-40, OPER), CLEAR (CHAN, CONT, REVS), MOVE (CONT, (M)),
+    BCAST SYSDEF 0-5 (CHAN, SYS, ADJSITE; PER / IVAL / PON / ID), data
+    headers; idents shown prefix-ident. Before 3.0 MAINT / MOVE read their
+    channel from bits 16-25 (wrong). Trunk following (version 3.0): the
+    system (key = SYS hex, or MPT 1343's OPID / NET with the System key
+    option), grants per GTC (target IDENT1, source IDENT2, D = data,
+    emergency from ACKE / AHY E, unit vs group only from an AHY or an
+    earlier call by that ident - not in the GTC -, update = the same GTC
+    within 5 s, demod nfm, options chan / sys / target / source / group),
+    BCAST channels as trunk channels, MOVE (M) = 0 as control channel. Channel
+    numbers -> Hz only with the Channel plan option (MPT 1343 Band III;
+    else the receiver's table). On a traffic channel: MAINT Pressel On /
+    Periodic -> call ACTIVE, Pressel Off / Disconnect -> ENDED, CLEAR (REVS,
+    CHAN) -> RELEASED (one is enough), a CCSC or a replacement GTC releases
+    too; no Pressel Off: ENDED 1 s after the carrier goes (noise squelch on
+    the discriminator's first difference); a talker per speech item named
+    by the MAINT ident ("via site" on the downlink). Validated on live NZ
+    control channels (SYS 0x42E1 ~96 % of slots; 2026-11-19 capture: 0x42E1
+    / 0x42C1 / 0x4221 / 0x4201, channel plan 414.0000 MHz + n x 12.5 kHz
+    from their own CHAN4 and each other's vote-now channel numbers); details
+    and tests in the plugin README
   - `TetraReceiver` (plugins/tetra, 72 kHz RRC 0.35 input): differential
     detection, 4th-power frequency estimate, slot sync from the training
     sequences (both spectral orientations tried), BSCH (MCC/MNC/colour code
