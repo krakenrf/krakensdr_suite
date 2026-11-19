@@ -67,6 +67,7 @@ from scipy.signal import firwin, resample_poly
 RATE = 2.4e6
 BLOCK = 240000          # output samples per block (0.1 s)
 NOISE_TABLE = 1 << 21   # complex Gaussian samples drawn once (16 MB), read at random offsets
+NOISE_SEP = 8192        # the antennas' offsets into it at least this far apart (> any channel filter's span)
 C = 299792458.0
 
 
@@ -114,13 +115,14 @@ class Source:
         b += self.a
         if self.kind == 'c':
             return np.asarray(self.raw[a:b:step], dtype=np.complex128)
-        d = np.asarray(self.raw[2 * a:2 * b], dtype=np.float64)
+        # the I / Q pairs taken with the stride BEFORE the conversion (a whole
+        # 8 s 2.4 MHz cu8 as float64 was 700 MB for the power estimate)
+        d = np.asarray(self.raw[2 * a:2 * b].reshape(-1, 2)[::step], dtype=np.float64)
         if self.kind == 'u8':
             d = (d - 127.5) / 127.5
         else:
             d = d / 32768.0
-        x = d[0::2] + 1j * d[1::2]
-        return x[::step]
+        return d[:, 0] + 1j * d[:, 1]
 
     def get(self, a, b):
         """samples a .. b of the part (zero outside it; looped if loop)"""
@@ -204,8 +206,15 @@ def main():
             o1 = min(N, o0 + BLOCK)
             B = o1 - o0
             y = blk[:, :B]
-            # noise over the whole band, every antenna its own
-            for k, off in enumerate(rng.integers(0, NOISE_TABLE - B, M)):
+            # noise over the whole band, every antenna its own: the offsets at
+            # least NOISE_SEP apart (closer, two antennas' noise is the same
+            # samples a few lags apart - correlated after a channel filter);
+            # one that is too close is drawn again
+            offs = [int(v) for v in rng.integers(0, NOISE_TABLE - B, M)]
+            for k in range(1, M):
+                while any(abs(offs[k] - offs[j]) < NOISE_SEP for j in range(k)):
+                    offs[k] = int(rng.integers(0, NOISE_TABLE - B))
+            for k, off in enumerate(offs):
                 y[k] = table[off:off + B]
             for src in srcs:
                 lo, hi = max(o0, src.n0), min(o1, src.n0 + src.len)
