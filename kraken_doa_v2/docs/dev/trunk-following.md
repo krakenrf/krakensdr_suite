@@ -34,6 +34,10 @@ The decoder on the traffic channel reports what it carries
   never saved); when its key arrives the temporary one is folded into the
   keyed one (channels, talkgroups, units, counters, calls) and disappears; a
   temporary system with no control VFO left is dropped with its calls.
+  Calls that waited in the temporary system (`no_freq` before the key was
+  known) move with it and are resolved again against the keyed system's
+  table and rules at once (seen in the NXDN scene: grants heard before the
+  system identity became followable by the rule at the merge).
   Channel table, talkgroup names / modes, "listed only": per system, shared
   by its sites. Counters and "receives": per system and per control VFO.
 - **Site**: the control VFO a grant came from.
@@ -51,11 +55,18 @@ The decoder on the traffic channel reports what it carries
 
 ### Events
 `trunk::on_plugin_event` (decoder worker threads) only queues: a bounded
-deque (`QUEUE_MAX` 4096; more are dropped and counted, `events_dropped`),
-and posts one `loop->defer` drain when the queue goes non-empty - a grant
-reaches the loop within a few ms, not at the next tick. Each event carries
-the decoder's address: events of a decoder that is gone (VFO removed, id
-reused) are dropped. A timer on the loop (`trunk::tick`, `TICK_MS` 50) drains
+deque (`QUEUE_MAX` 4096) and one `loop->defer` drain posted when the queue
+goes non-empty - a grant reaches the loop within a few ms, not at the next
+tick. When the queue is full every kind but RESET is dropped (SYSTEM,
+CHANNEL, CONTROL, GRANT, GRANT_END, CALL; counted in the status'
+`events_dropped`); a RESET is never dropped - one more is queued past the
+bound unless one for the same VFO and decoder is pending already
+(`resets_coalesced`): a lost RESET would keep stale calls or a stale control
+VFO. Each event carries its decoder's **serial**
+(`DecimatorInstance::digital_serial`, given when `ensureDigital` makes the
+decoder, never repeated - an address can be reused by the next decoder made
+for the same VFO id): events of a decoder that is gone (VFO removed, id
+reused) are dropped. (`KRAKEN_TRUNK_QUEUE_MAX` shrinks the bound for tests.) A timer on the loop (`trunk::tick`, `TICK_MS` 50) drains
 too and runs the state machine. Everything the manager owns lives on the
 loop; `is_trunk_vfo()` / `vfo_info_json()` (the snapshot builder,
 `decimator_info`, the saved-frequency scan) read a small mutex-guarded map.
@@ -151,7 +162,10 @@ centre** per system (below) for the page's "centre on the system".
 Set up, in this order, so the traffic decoder has the grant's options
 before (or with) its first samples on the channel: the options directly
 through `DecimatorManager::setDigitalOptions` (one call, no broadcast:
-the grant's `options` as `<decoder>.<key>`; options of the previous call that
+the grant's `options` as `<decoder>.<key>` - only keys the traffic plugin
+declares in its `Info::options` (hidden ones included; the engine checks
+only their form): others are dropped, counted (`options_dropped`) and
+logged once a minute per plugin; options of the previous call that
 this grant doesn't set go back to their default because the whole map is
 replaced; Logging / Plot on map / Positions every / Show all messages copied
 from the control VFO), then through `apply_command` (`trunk::dispatching()`
@@ -409,7 +423,9 @@ renamed.
 - `learn`: `{learned, refused, dropped}`; `lat`: `{place_ms, place_max_ms,
   active_ms, active_max_ms, n}` (median / max over the last 50: a grant's
   arrival on the loop -> its VFO placed / -> ACTIVE); `events`,
-  `events_dropped`, `calls_dropped` (grants refused a row: 64 calls already),
+  `events_dropped` (queue full: every kind but RESET), `resets_coalesced`,
+  `options_dropped` (grant options the traffic plugin doesn't declare),
+  `calls_dropped` (grants refused a row: 64 calls already),
   `now` (epoch ms).
 
 ## Lists `{"trunk_sys":{...}}`
@@ -680,7 +696,12 @@ the broadcasts:
   past the spread, no retune).
 - `t10_log` 2: one `call` record in the decoder log with the control VFO at
   Log, none at Off.
-- 209 checks, all passing on the final build. Found on the way: a
+- `t11_queue` 8: the queue bound shrunk to 64, VFO 0 flooding 3000 grants / s:
+  events dropped, VFO 1 (another system's control VFO, following a call)
+  retuned in the middle - its RESET arrives, its call ends `control_reset`; a
+  grant option the traffic plugin doesn't declare dropped (counted, one log
+  line), the declared ones set.
+- 217 checks, all passing on the final build. Found on the way: a
   temporary system merged into its keyed one erased the KEYED one (merge_temp
   took the Track's system id by reference and rewrote it) - the keyed system
   came back empty and the temporary one stayed as a ghost with a stale

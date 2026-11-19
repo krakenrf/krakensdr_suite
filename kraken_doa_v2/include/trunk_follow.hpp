@@ -19,11 +19,13 @@
 namespace trunk {
 
 // Any thread (DecimatorManager wires it to every VFO's DigitalDecoder): the
-// plugin `plugin_id` running on VFO `vfo` (its decoder `decoder` - only
-// compared, never dereferenced: ids are reused) reported this, already
-// checked by the engine. In Auto detect only the lead plugin's reports
-// arrive. Queues it (bounded) for the loop and returns at once.
-void on_plugin_event(int vfo, const void* decoder, const std::string& plugin_id, PluginEvent&& ev);
+// plugin `plugin_id` running on VFO `vfo` (its decoder `decoder_serial` -
+// DecimatorInstance::digital_serial, never repeated: ids are reused) reported
+// this, already checked by the engine. In Auto detect only the lead plugin's
+// reports arrive. Queues it for the loop and returns at once (bounded: when
+// full, everything but a RESET is dropped - a RESET is coalesced per VFO and
+// decoder instead)
+void on_plugin_event(int vfo, uint64_t decoder_serial, const std::string& plugin_id, PluginEvent&& ev);
 
 // Tests: the last RECENT_MAX events of a VFO, oldest first (each with the
 // plugin id that sent it), and forgetting them all. Any thread

@@ -277,7 +277,7 @@ std::string call_key(const std::string& sys, int site, bool group, const std::st
 struct Voice {
     int vfo = -1;
     std::weak_ptr<Inst> inst;
-    const void* dec = nullptr;              // its DigitalDecoder (RESETs of ours told apart)
+    uint64_t dec = 0;                       // its decoder's serial (DecimatorInstance::digital_serial)
     uint64_t call = 0;                      // 0 = parked
     uint64_t last_call = 0;                 // the call it had last (its next over gets it back)
     int64_t parked_ms = 0;
@@ -298,7 +298,7 @@ void park(Voice& v);
 
 // --- the VFOs that report (control / traffic) -------------------------------
 struct Track {
-    const void* dec = nullptr;
+    uint64_t dec = 0;                       // the decoder's serial (DecimatorInstance::digital_serial)
     std::string plugin, sys;
     bool control = false;
     bool system_said = false;               // a SYSTEM came (its control flag decides)
@@ -329,7 +329,9 @@ bool g_pb = false;                          // playback last seen
 std::map<std::string, System> g_pb_saved;   // the systems before the playback
 std::string g_hold_sys, g_hold_tg;          // TRUNK_HOLD
 std::deque<int64_t> g_lat_place, g_lat_active;   // ms: grant reached the loop -> VFO placed / -> ACTIVE
-std::atomic<uint64_t> g_events_in{0}, g_events_dropped{0};
+std::atomic<uint64_t> g_events_in{0}, g_events_dropped{0}, g_resets_coalesced{0};
+std::map<std::string, int64_t> g_opt_drop_logged;   // plugin -> last "options dropped" log line (steady ms)
+uint64_t g_opts_dropped = 0;
 int64_t g_fence_until = 0;   // a playback started / ended: what the decoders report till then is the other side's
 int64_t g_status_sent = 0;
 std::string g_status_last;
@@ -359,7 +361,7 @@ std::vector<Restore> g_restore;
 // --- the queue from the decoders (any thread) ---------------------------------
 struct QEv {
     int vfo;
-    const void* dec;
+    uint64_t dec;
     std::string plugin;
     PluginEvent ev;
     int64_t t_rx;
@@ -1052,13 +1054,13 @@ void apply_voice(Voice& v, Call& c, const Place& p) {
     else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", v.vfo, p.off_hz / 1000.0);
     cmds.push_back(f);
     // a retune > 100 Hz resets the decoder: that RESET is ours
-    v.dec = inst->getDigital().get();
+    v.dec = inst->digital_serial.load();
     g_tracks[v.vfo].expect_reset_until = now + RESET_EXPECT_MS;
     // heard first: a VFO heard first moves the audio channel with it (independent)
     set_heard(v.vfo, g_set.audio);
     dispatch(cmds);
     inst->enabled = true;
-    v.dec = inst->getDigital().get();
+    v.dec = inst->digital_serial.load();
     v.plugin = c.decoder;
     v.demod = demod;
     v.bw = inst->bandwidth_hz.load();
@@ -1599,8 +1601,35 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
     c->data = ev.data;
     c->demod = ev.demod;
     c->bw = ev.bw_hz;
-    const bool opts_changed = c->options != ev.options || c->decoder != decoder;
-    c->options = ev.options;
+    // the grant's options: only keys the traffic plugin declares (Info::options,
+    // hidden ones too) - the engine checked only their form
+    std::vector<std::pair<std::string, std::string>> opts;
+    {
+        dig::PluginInfo pi;
+        const bool known = plugin_info(decoder, &pi);
+        size_t dropped = 0;
+        std::string first;
+        for (const auto& kv : ev.options) {
+            bool ok = false;
+            if (known)
+                for (const auto& o : pi.options)
+                    if (o.key == kv.first) ok = true;
+            if (ok) opts.push_back(kv);
+            else if (!dropped++) first = kv.first;
+        }
+        if (dropped && known) {
+            g_opts_dropped += dropped;
+            int64_t& last = g_opt_drop_logged[decoder];
+            if (now_ms() - last > 60000) {
+                last = now_ms();
+                std::cerr << "Trunk following: a grant for " << decoder << " carries option(s) it doesn't declare (\"" << first
+                          << "\"" << (dropped > 1 ? " +" + std::to_string(dropped - 1) : "") << ") - dropped (logged once a minute)"
+                          << std::endl;
+            }
+        }
+    }
+    const bool opts_changed = c->options != opts || c->decoder != decoder;
+    c->options = opts;
     c->decoder = decoder;
     if (c->group) {
         auto it = s.tgs.find(c->target);
@@ -1994,8 +2023,10 @@ void apply_event(QEv& q) {
     // the VFO as it is now: an event of a decoder that is gone (removed VFO, id reused) is dropped
     auto inst = decimator_manager.getDecimator(q.vfo);
     if (!inst) return;
+    // (by the serial, not the address: a decoder made after the one that sent
+    // this - a removed VFO's id reused - can sit at the same address)
     auto dd = inst->getDigital();
-    if (!dd || dd.get() != q.dec) return;
+    if (!dd || inst->digital_serial.load() != q.dec) return;
     Track& t = g_tracks[q.vfo];
     if (t.dec != q.dec) {
         // a new decoder on this id: its earlier state is not this one's
@@ -2297,6 +2328,7 @@ std::string build_status(bool ages) {
       << "},\"lat\":{\"place_ms\":" << median(g_lat_place) << ",\"place_max_ms\":" << maxof(g_lat_place)
       << ",\"active_ms\":" << median(g_lat_active) << ",\"active_max_ms\":" << maxof(g_lat_active) << ",\"n\":" << g_lat_place.size()
       << "},\"events\":" << g_events_in.load() << ",\"events_dropped\":" << g_events_dropped.load()
+      << ",\"resets_coalesced\":" << g_resets_coalesced.load() << ",\"options_dropped\":" << g_opts_dropped
       << ",\"calls_dropped\":" << g_dropped_calls;
     if (ages) o << ",\"now\":" << wall_ms();
     o << "}}";
@@ -2667,7 +2699,7 @@ void tick_tracks() {
     for (auto it = g_tracks.begin(); it != g_tracks.end();) {
         auto inst = decimator_manager.getDecimator(it->first);
         auto dd = inst ? inst->getDigital() : nullptr;
-        if (!dd || dd.get() != it->second.dec) {
+        if (!dd || inst->digital_serial.load() != it->second.dec) {
             if (voice_of_vfo(it->first)) { ++it; continue; }
             const int vfo = it->first;
             if (System* s = sys_of(it->second.sys)) s->ctl.erase(vfo);
@@ -2770,7 +2802,7 @@ void release_everything(const std::string& why) {
 // Public
 // ============================================================================
 
-void on_plugin_event(int vfo, const void* decoder, const std::string& plugin_id, PluginEvent&& ev) {
+void on_plugin_event(int vfo, uint64_t decoder, const std::string& plugin_id, PluginEvent&& ev) {
     {
         std::lock_guard<std::mutex> lk(g_recent_mu);
         auto& q = g_recent[vfo];
@@ -2781,9 +2813,23 @@ void on_plugin_event(int vfo, const void* decoder, const std::string& plugin_id,
     bool post = false;
     {
         std::lock_guard<std::mutex> lk(g_qmu);
-        if (g_queue.size() >= QUEUE_MAX) {
-            g_events_dropped.fetch_add(1, std::memory_order_relaxed);
-            return;
+        // full: dropped (counted, events_dropped) - except a RESET: it says the
+        // VFO's earlier state is stale, and losing it would keep stale calls / a
+        // stale control VFO. One pending per VFO + decoder is enough (coalesced)
+        static const size_t qmax = [] {
+            const char* e = getenv("KRAKEN_TRUNK_QUEUE_MAX");   // tests: a smaller bound
+            const long v = e ? atol(e) : 0;
+            return v >= 8 && v <= 100000 ? static_cast<size_t>(v) : QUEUE_MAX;
+        }();
+        if (g_queue.size() >= qmax) {
+            bool pending = false;
+            if (ev.kind == PluginEvent::RESET)
+                for (const auto& q : g_queue)
+                    if (q.vfo == vfo && q.dec == decoder && q.ev.kind == PluginEvent::RESET) pending = true;
+            if (ev.kind != PluginEvent::RESET || pending) {
+                (ev.kind == PluginEvent::RESET ? g_resets_coalesced : g_events_dropped).fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
         }
         g_queue.push_back(QEv{vfo, decoder, plugin_id, std::move(ev), now_ms()});
         if (!g_drain_posted) {
