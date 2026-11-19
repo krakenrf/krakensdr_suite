@@ -389,8 +389,11 @@ void DecimatorManager::ensureDigital(DecimatorInstance& inst) {
     inst.digital->set_tune_handler([id](double rf_hz) { return ControlHandler::request_plugin_tune(id, rf_hz); });
     // what a plugin reports about a trunked system (kp::Host::grant ...) and
     // the decoder's RESETs -> the trunk manager (trunk_follow.cpp)
-    inst.digital->set_trunk_handler(
-        [id](const std::string& plugin, trunk::PluginEvent&& ev) { trunk::on_plugin_event(id, plugin, std::move(ev)); });
+    // (the decoder's address: the manager tells a reused id's events apart)
+    const void* dp = inst.digital.get();
+    inst.digital->set_trunk_handler([id, dp](const std::string& plugin, trunk::PluginEvent&& ev) {
+        trunk::on_plugin_event(id, dp, plugin, std::move(ev));
+    });
     // reconstructed pictures (kp::Info::video plugins) -> the decoder panel's
     // canvas, as a binary frame carrying this VFO's id (type 8)
     inst.digital->set_video_handler([id](const dig::VideoFrameReport& f) {

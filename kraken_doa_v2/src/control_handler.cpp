@@ -21,6 +21,7 @@
 #include "incidents.hpp"
 #include "saved_freqs.hpp"
 #include "sf_scanner.hpp"
+#include "trunk_follow.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
@@ -331,6 +332,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
            msg.starts_with("SF_") ||           // 📻 saved frequencies + map markers: {"savedfreq":...} broadcasts
            msg.starts_with("SFSCAN_") ||       // 📻 saved-frequency scan: {"sfscan":...} broadcasts (saves its settings itself)
+           msg.starts_with("TRUNK_") ||        // trunk following: {"trunk":...} broadcasts (saves its settings itself)
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
            msg.starts_with("RECORDER_") ||     // 📼 recorder: {"recorder":...} / {"recordings":...} broadcasts
            msg.starts_with("AUDIO_VFO:") ||    // 🔊 VFOs heard: decimator_info broadcasts
@@ -429,6 +431,11 @@ static void store_for_replay(string_view msg, size_t key_len) {
 // (12) the bandwidth in Hz (arbitrary bandwidths; a file without it: the index).
 static string build_decimator_snapshot() {
     auto info = decimator_manager.getDecimatorInfoList();
+    // the trunk manager's voice VFOs are never part of the user's setup: left
+    // out, the positions of the VFOs heard counted without them
+    info.erase(std::remove_if(info.begin(), info.end(),
+                              [](const DecimatorManager::DecimatorInfo& d) { return trunk::is_trunk_vfo(d.id); }),
+               info.end());
     string heard;
     for (size_t i = 0; i < info.size(); i++)
         if (info[i].audio_out) heard += (heard.empty() ? "" : ",") + to_string(i);
@@ -456,6 +463,8 @@ static string build_decimator_snapshot() {
 // would capture their transient state.
 static void record_decimator_snapshot() {
     if (g_replaying_settings.load()) return;
+    // the trunk manager setting up its voice VFOs: the snapshot leaves them out anyway
+    if (trunk::dispatching()) return;
     // While a scanner runs, the live VFO set is the scan's (offsets, VFOs heard,
     // bandwidths it moved) - saving it made the scan state the user's setup
     // after a restart. Edits made during a scan are therefore not persisted.
@@ -534,6 +543,9 @@ static bool apply_decimator_snapshot(const string& snap) {
     }
     if (vfos.empty()) return false;
 
+    // the snapshot works by list position: the trunk manager's voice VFOs go
+    // first (a replay after a playback, RESET_SETTINGS)
+    trunk::release_all_vfos("settings");
     auto info = decimator_manager.getDecimatorInfoList();
     while (info.size() < vfos.size()) {
         if (decimator_manager.addDecimator() < 0) break;
@@ -2390,6 +2402,15 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message == "GET_SFSCAN") {
         broadcast(sfscan::status_json());   // a page connecting
     }
+    // Trunk following (trunk_follow.hpp, docs/dev/trunk-following.md): every
+    // command answered with {"trunk":...} to every page, a refusal also with
+    // {"trunk_error":...}; its settings saved here (TRUNK_ is a query command)
+    else if (message.starts_with("TRUNK_") || message == "GET_TRUNK" || message.starts_with("GET_TRUNK_SYS:")) {
+        string err, persist;
+        if (!trunk::handle_command(string(message), &err, &persist)) throw CommandRejected("unknown trunk command");
+        if (!err.empty()) throw CommandRejected(err);
+        if (!persist.empty() && !g_replaying_settings.load()) SettingsStore::record(persist);
+    }
     // ✈ Array calibration from ADS-B aircraft (array_cal.hpp; array_cal.json, not
     // the settings file). Collecting is not remembered across restarts (the
     // packets aren't either)
@@ -2940,7 +2961,7 @@ string ControlHandler::apply_command(string_view message) {
             }
             // Persist remembered settings to disk (the schema decides which;
             // skipped while we are replaying the saved file ourselves).
-            if (!g_replaying_settings.load() && !sfscan::dispatching()) {
+            if (!g_replaying_settings.load() && !sfscan::dispatching() && !trunk::dispatching()) {
                 SettingsStore::record(applied);
             }
             broadcast(make_sync_cmd_json(sync_msg));
