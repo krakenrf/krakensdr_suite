@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 namespace dig {
 
@@ -28,13 +30,15 @@ const char* data_type_name(int dt) {
     return n[dt & 15];
 }
 
-const char* csbk_name(int op) {
+// standard CSBK opcodes (TS 102 361-2 / -4 annex B.1); bs = sent by the TS
+const char* csbk_name(int op, bool bs) {
     switch (op) {
         case 0x04: return "UU_V_Req";
         case 0x05: return "UU_Ans_Rsp";
         case 0x07: return "CT_CSBK";
         case 0x19: return "C_ALOHA";
-        case 0x1A: return "C_UDT_DHDR";
+        case 0x1A: return "C_UDTHD";
+        case 0x1B: return "C_UDTHU";
         case 0x1C: return "C_AHOY";
         case 0x1E: return "C_ACKVIT";
         case 0x1F: return "C_RAND";
@@ -42,10 +46,12 @@ const char* csbk_name(int op) {
         case 0x21: return "C_ACKU";
         case 0x22: return "P_ACKD";
         case 0x23: return "P_ACKU";
+        case 0x24: return "C_DGNAHD";
+        case 0x25: return "C_DGNAHU";
         case 0x28: return "C_BCAST";
         case 0x2A: return "P_MAINT";
-        case 0x2E: return "C_MOVE";
-        case 0x2F: return "P_CLEAR";
+        case 0x2E: return "P_CLEAR";
+        case 0x2F: return "P_PROTECT";
         case 0x30: return "PV_GRANT";
         case 0x31: return "TV_GRANT";
         case 0x32: return "BTV_GRANT";
@@ -53,7 +59,10 @@ const char* csbk_name(int op) {
         case 0x34: return "TD_GRANT";
         case 0x35: return "PV_GRANT_DX";
         case 0x36: return "PD_GRANT_DX";
-        case 0x38: return "BS_Dwn_Act";
+        case 0x37: return "PD_GRANT_MI";
+        // 0x38: TD_GRANT_MI from the TS (-4), BS_Dwn_Act from an MS (-2)
+        case 0x38: return bs ? "TD_GRANT_MI" : "BS_Dwn_Act";
+        case 0x39: return "C_MOVE";
         case 0x3D: return "Preamble";
         default: return nullptr;
     }
@@ -78,9 +87,18 @@ void DmrProto::reset() {
     for (auto& s : slots_) s = Slot();   // the host resets its talkers together with ours
     voice_slot_ = -1;
     last_tc_ = -1;
-    cc_ = -1;
+    cc_ = cc_filter_;
     ext_bs_ = true;
     ext_slot_ = 0;
+    // the host forgot what we reported: the system is sent again once heard
+    syscode_ = -1;
+    sys_control_ = false;
+    sys_sent_ = tscc_t_ = -1e9;
+    lcn_freq_.clear();
+    chan_sent_.clear();
+    slc_n_ = -1;
+    cp_rest_ = -1;
+    cp_seen_ = false;
 }
 
 // --- talkers (RxContext::talker) ----------------------------------------------
@@ -104,7 +122,10 @@ void DmrProto::talker_burst(int slot) {
     sl.voice_end = std::max(sl.voice_end, burst_b_);
     sl.tbs = burst_bs_;
     if (!ctx_.talker) return;
-    if (sl.tid.empty()) {
+    if (sl.tid.empty() || !slot_wanted(slot)) {
+        // (a timeslot the "slot" option leaves out - a trunked payload
+        // channel's other call: its radio isn't ours to report, but "?"
+        // still keeps its samples out of the wanted slot's talker)
         // a timeslot in use, its radio not named yet: "?" keeps these samples
         // out of the other slot's talker (slot 0 has no other slot)
         if (slot != 0) {
@@ -149,6 +170,7 @@ void DmrProto::talker_end(int slot, int64_t at) {
 void DmrProto::tick(int64_t now) {
     for (int i = 0; i < 3; i++)
         if (slots_[i].call_start >= 0 && now - slots_[i].voice_end > gap()) talker_end(i, slots_[i].voice_end);
+    call_tick(now);
 }
 
 std::string DmrProto::slot_name(int slot) const {
@@ -210,6 +232,18 @@ void DmrProto::full_lc(int slot, const uint8_t* lc, const char* what) {
     slots_[slot].src = src;
     talker_set(slot, src, (flco == 0 ? "TG " : "unit call to ") + std::to_string(dst) + (so & 0x80 ? " EMERGENCY" : ""));
     call_update(slot, d);
+    if (burst_bs_ || slot != 0) {
+        if (std::strcmp(what, "terminator") != 0) {
+            call_lc(slot, flco == 0, dst, src, so);
+        } else if (slots_[slot].cstate == kp::Call::ACTIVE) {
+            // the terminator's LC names the transmission that ends (the
+            // decoder reports ENDED right after)
+            Slot& sl = slots_[slot];
+            sl.ctarget = std::to_string(dst);
+            sl.csource = std::to_string(src);
+            sl.cgroup = flco == 0;
+        }
+    }
     ctx_.report->set(Mode::DMR, "Last talkgroup", flco == 0 ? std::to_string(dst) : "-");
     ctx_.report->set(Mode::DMR, "Last source", std::to_string(src));
 }
@@ -316,41 +350,39 @@ void DmrProto::voice_burst(int slot, const uint8_t* bits) {
         ctx_.voice_state(who + ": playing (AMBE+2, " + std::to_string(clean) + "/3 frames clean)");
 }
 
-void DmrProto::csbk(int slot, const uint8_t* c) {
+void DmrProto::csbk(int slot, const uint8_t* c, const uint8_t* const* cont, int ncont) {
     int op = c[0] & 0x3F, fid = c[1];
     uint32_t dst = (c[4] << 16) | (c[5] << 8) | c[6];
     uint32_t src = (c[7] << 16) | (c[8] << 8) | c[9];
     uint64_t raw = 0;
     for (int i = 2; i < 10; i++) raw = (raw << 8) | c[i];
     std::string e;
-    const char* name = fid == 0 ? csbk_name(op) : nullptr;
+    const char* name = fid == 0 ? csbk_name(op, burst_bs_) : nullptr;
     const double chatter = ctx_.opts->verbose ? 2.0 : 60.0;
     if (fid == 0 && op == 0x3D) {
         bool data = c[2] & 0x80, grp = c[2] & 0x40;
         e = std::string("Preamble for ") + (data ? "data" : "CSBK") + " to " + (grp ? "TG " : "unit ") +
             std::to_string(dst) + " from " + std::to_string(src);
         ctx_.report->event(Mode::DMR, slot_name(slot) + " " + e, 3.0);
-    } else if (fid == 0 && op >= 0x30 && op <= 0x36) {
-        uint32_t lpcn = (c[2] << 4) | (c[3] >> 4);
-        int ts = (c[3] >> 3) & 1;
-        bool group = op == 0x31 || op == 0x32 || op == 0x34;
-        e = std::string(name) + ": " + std::to_string(src) + " -> " + (group ? "TG " : "unit ") + std::to_string(dst) +
-            " on channel " + std::to_string(lpcn) + " slot " + std::to_string(ts + 1);
-        ctx_.report->event(Mode::DMR, slot_name(slot) + " " + e, 3.0);
-        ctx_.report->set(Mode::DMR, "Last grant", (group ? "TG " : "unit ") + std::to_string(dst) + " on channel " +
-                                                       std::to_string(lpcn) + "/" + std::to_string(ts + 1));
     } else if (fid == 0 && op == 0x04) {
         e = "Unit-to-unit voice request " + std::to_string(src) + " -> " + std::to_string(dst);
         ctx_.report->event(Mode::DMR, slot_name(slot) + " " + e, 3.0);
-    } else {
+    } else if (!trunk_csbk(slot, c, cont, ncont)) {
         // control-channel chatter (Aloha, broadcasts, acks...): verbose only
-        if (fid == 0 && (op == 0x19 || op == 0x28)) ctx_.report->set(Mode::DMR, "System", "Tier III trunking (control channel)");
+        // (the trunking PDUs above have reported themselves)
+        if (fid == 0 && (op == 0x19 || op == 0x28) && syscode_ < 0)
+            ctx_.report->set(Mode::DMR, "System", "Tier III trunking (control channel)");
         else if (fid == 0x10 && op == 0x3E) ctx_.report->set(Mode::DMR, "System", "Motorola Capacity Plus");
         else if (fid == 0x06) ctx_.report->set(Mode::DMR, "System", "Motorola Connect Plus");
         if (ctx_.opts->verbose) {
             std::string n = name ? std::string(name) : "opcode 0x" + hex(op, 2);
             const char* fn = fid_name(fid);
-            e = "CSBK " + n + " (" + (fn ? std::string(fn) : "FID 0x" + hex(fid, 2)) + ") " + hex(raw, 16);
+            e = std::string(ncont ? "MBC " : "CSBK ") + n + " (" + (fn ? std::string(fn) : "FID 0x" + hex(fid, 2)) + ") " +
+                hex(raw, 16);
+            for (int k = 0; k < ncont; k++) {
+                e += " +";
+                for (int i = 0; i < 10; i++) e += (i ? "" : " ") + hex(cont[k][i], 2);
+            }
             ctx_.report->event(Mode::DMR, slot_name(slot) + " " + e, chatter);
         }
     }
@@ -393,14 +425,30 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         uint32_t tact = 0;
         for (int p : tact_pos) tact = (tact << 1) | cach[p];
         uint32_t m;
-        if (hamming_7_4().decode(tact, &m, 1) >= 0) {
-            slot = ((m >> 2) & 1) + 1;
+        const bool tact_ok = hamming_7_4().decode(tact, &m, 1) >= 0;
+        // a repeater's bursts alternate between the slots every 30 ms: the
+        // slot this burst must have from the last one whose TACT decoded
+        int expect = 0;
+        if (last_tc_ > 0) {
+            const int64_t per = 144 * static_cast<int64_t>(sps_), d = burst_a_ - last_tc_at_;
+            const int64_t k = (d + per / 2) / per;
+            if (d >= 0 && k <= 8 && std::llabs(d - k * per) <= 3 * sps_) expect = k % 2 == 0 ? last_tc_ : 3 - last_tc_;
+        }
+        const int tact_slot = tact_ok ? static_cast<int>((m >> 2) & 1) + 1 : 0;
+        // An extrapolated burst (no sync of its own) takes the alternation:
+        // its TACT is 7 bits that Hamming(7,4) maps to SOME codeword half the
+        // time - on a slot without a burst (one transmitter per slot in a
+        // test scene, a fade) a miscorrected TACT named the other slot and
+        // cut its voice superframe short. A burst with a sync trusts its TACT.
+        if (tact_ok && (expect == 0 || tact_slot == expect || sync != NONE)) {
+            slot = tact_slot;
             last_tc_ = slot;
-            last_tc_ms_ = t;
-        } else if (last_tc_ > 0 && t - last_tc_ms_ < 200) {
-            slot = last_tc_ == 1 ? 2 : 1;   // bursts alternate
+            last_tc_at_ = burst_a_;
+            cach_short_lc(cach, static_cast<int>(m & 3));
+        } else if (expect) {
+            slot = expect;
             last_tc_ = slot;
-            last_tc_ms_ = t;
+            last_tc_at_ = burst_a_;
         } else {
             slot = 0;
         }
@@ -457,6 +505,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             sl.emb_state = 0;
         }
         talker_burst(slot);
+        if (burst_bs_ || slot != 0) call_voice(slot);
         sl.last_ms = t;
         call_update(slot, "");
         if (cc_ >= 0) report_valid(ctx_, Mode::DMR, burst_a_, burst_b_);
@@ -472,6 +521,9 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
     int ge = golay20().decode(st, &stm, 3);
     if (ge < 0 || ge > 2) return false;
     int cc = stm >> 4, dt = stm & 15;
+    // a traffic channel set up by trunk following: another colour code is a
+    // co-channel repeater, not ours
+    if (cc_filter_ >= 0 && cc != cc_filter_) return false;
     sl.voice_idx = -1;
 
     uint8_t info[196];
@@ -498,6 +550,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
                 full_lc(slot, by, "terminator");
                 talker_burst(slot);
                 if (talker_slot(slot)) talker_end(slot, sl.voice_end);
+                if (sl.cstate == kp::Call::ACTIVE) call_report(slot, kp::Call::ENDED);
                 if (!sl.call.empty() && slot_wanted(slot))
                     r.event(Mode::DMR, slot_name(slot) + " call ended: " + sl.call, 2.0);
                 sl.call.clear();
@@ -513,7 +566,20 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             by[10] ^= 0xA5;
             by[11] ^= 0xA5;
             if (crc16_ccitt_bytes(by, 10, 0x0000) != ((by[10] << 8) | by[11])) { ok = false; break; }
+            slots_[slot].mbc_n = 0;
             csbk(slot, by);
+            break;
+        }
+        case 4:   // MBC header (CRC mask 0xAAAA)
+        case 5: { // MBC continuation (the last block's CRC covers every block after the header)
+            if (bptc_196_96(info, d96) < 0) { ok = false; break; }
+            pack_bits(d96, 96, by);
+            if (dt == 4) {
+                by[10] ^= 0xAA;
+                by[11] ^= 0xAA;
+                if (crc16_ccitt_bytes(by, 10, 0x0000) != ((by[10] << 8) | by[11])) { ok = false; slots_[slot].mbc_n = 0; break; }
+            }
+            mbc_block(slot, dt, by);
             break;
         }
         case 0: { // privacy indicator header

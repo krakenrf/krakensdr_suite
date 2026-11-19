@@ -32,8 +32,16 @@ public:
     // now = the receiver's current sample index: ends transmissions whose
     // bursts stopped without a terminator
     void tick(int64_t now);
+    // Trunked systems (dmr_trunk.cpp): the host the structured reports go to
+    // (kp::Host::trunk_system / grant / call ...), nullptr = none
+    void set_host(kp::Host* h) { host_ = h; }
+    // Hidden option "cc": only bursts of this colour code (-1 = any) - a
+    // traffic channel set up by trunk following ignores a co-channel repeater
+    void set_cc_filter(int cc) { cc_filter_ = cc; if (cc >= 0) cc_ = cc; }
 private:
     RxContext& ctx_;
+    kp::Host* host_ = nullptr;
+    int cc_filter_ = -1;
     struct Slot {
         int voice_idx = -1;          // burst A=0 .. F=5 within a superframe
         uint8_t emb_raw[128] = {0};
@@ -55,13 +63,62 @@ private:
         std::string tid, tcall;      // radio ID ("" = not known yet), "TG 9" / "unit call to 123"
         bool tbs = false;            // sent by a repeater (BS sync)
         bool treported = false;      // the host knows of the transmission (by its ID, or as "?")
+        // multi block control (MBC header + continuation blocks) being assembled
+        uint8_t mbc[4][12] = {{0}};
+        int mbc_n = 0;               // blocks held (0 = none)
+        int64_t mbc_at = 0;          // burst start of the last block
+        // the call this slot carries (kp::Host::call), from its own signalling
+        int cstate = -1;             // -1 none reported, else kp::Call::State
+        std::string ctarget, csource;
+        bool cgroup = true, cenc = false, cemerg = false;
+        int64_t clast = 0;           // end of its last voice burst (receiver samples)
+        double csent = -1e9;         // host time of the last call() sent
+        double cleared = -1e9;       // host time of the last P_CLEAR reported
     };
     Slot slots_[3];                  // [0] = unknown (MS/direct), 1, 2
-    int last_tc_ = -1;
-    int64_t last_tc_ms_ = 0;
+
+    // --- trunking (dmr_trunk.cpp) ---
+    // Tier III system identity code (C_SYScode) heard on this carrier, -1 none
+    int syscode_ = -1;
+    bool sys_control_ = false;       // heard from a TSCC (C_ALOHA / C_BCAST / C_SYS_Parms)
+    double sys_sent_ = -1e9;         // host time trunk_system() was last sent
+    double tscc_t_ = -1e9;           // host time of the last TSCC-only PDU
+    // logical channel -> absolute downlink / uplink (Hz) as the system
+    // announced them (C_BCAST Chan_Freq, grants with appended parameters)
+    std::map<int, std::pair<double, double>> lcn_freq_;
+    std::map<int, std::pair<double, double>> chan_sent_;   // LCN -> host time sent, downlink sent (-1 none)
+    void announce_channel(int lcn);
+    // CACH short LC assembly (4 CACH bursts)
+    uint8_t slc_[4][17] = {{0}};
+    int slc_n_ = -1;                 // fragments held, -1 = not started
+    int64_t slc_at_ = 0;             // burst start of the last fragment
+    // Motorola Capacity Plus rest channel (FID 0x10), -1 unknown
+    int cp_rest_ = -1;
+    bool cp_seen_ = false;
+    void cach_short_lc(const uint8_t* cach24, int lcss);
+    void short_lc(uint32_t slc28);
+    void system_seen(int syscode, bool control, bool from_slc);
+    void send_system(bool force);
+    // a CSBK / MBC (all blocks, CRC-checked): returns true if it was a trunking PDU
+    bool trunk_csbk(int slot, const uint8_t* c, const uint8_t* const* cont, int ncont);
+    void tier3_grant(int slot, const uint8_t* c, const uint8_t* ap);
+    void tier3_bcast(int slot, const uint8_t* c, const uint8_t* ap);
+    void tier3_move(int slot, const uint8_t* c, const uint8_t* ap);
+    void tier3_payload(int slot, const uint8_t* c);
+    void capplus(int slot, const uint8_t* c);
+    void mbc_block(int slot, int dt, const uint8_t* by);
+    kp::TrunkChannel lcn_channel(int lcn, int ts) const;
+    void call_report(int slot, int state);
+    void call_lc(int slot, bool group, uint32_t dst, uint32_t src, int so);
+    void call_voice(int slot);       // a confirmed voice burst on the slot
+    void call_tick(int64_t now);
+    int call_slot(int slot) const { return slot >= 1 ? slot - 1 : -1; }
+    int last_tc_ = -1;               // slot of the last BS burst whose slot is known
+    int64_t last_tc_at_ = 0;         // its burst start (receiver samples)
     int cc_ = -1;
     void full_lc(int slot, const uint8_t* lc96, const char* what);
-    void csbk(int slot, const uint8_t* c);
+    // a CSBK, or an MBC header with its continuation blocks (cont[0..ncont))
+    void csbk(int slot, const uint8_t* c, const uint8_t* const* cont = nullptr, int ncont = 0);
     void talker_alias(int slot, int block, const uint8_t* lc);
     void gps_point(int slot, double lat, double lon, const char* text);
     // the burst being decoded: first / one past its last sample, sent by a repeater

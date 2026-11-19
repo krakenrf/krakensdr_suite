@@ -24,5 +24,41 @@
   {"tid": "3100011", "bearing": 60},
   {"tid": "3100012", "bearing": 200}
  ]
+},
+{
+ "id": "dmr-tier3-trunk-three-calls",
+ "title": "DMR Tier III trunking: a control channel and three calls on two payload channels",
+ "description": "Made-up DMR Tier III system Small network 37 site 5. The TSCC on 439.5125 MHz (timeslot 1, colour code 1, bearing 300 deg) sends C_ALOHA, call timers, an adjacent site (6 on channel 320) and a Chan_Freq announcement of channel 301 = 438.7125 MHz (uplink 433.7125). Grants: TG 1201 from 3100001 on channel 301 slot 1 at 1.0 s; TG 1305 from 3100003 on channel 301 slot 2 at 5.3 s (the call is encrypted: privacy indication); TG 1400 from 3100002 on channel 302 slot 1 at 7.5 s with appended absolute parameters (439.1125 MHz, uplink 434.1125, colour code 2); each repeated once a second as a late-entry grant. The calls start 0.35 s after their grants, end with a terminator and are cleared with P_CLEAR 0.6 s (TG 1201) / 1 s later. On channel 301 each timeslot comes from its own transmitter (slot 1 at 40 deg, slot 2 at 160 deg: the per-slot path, one call after the other), channel 302 at 220 deg. Expect (system) / (grant) on VFO 0 and with trunk following a voice VFO per call: talkers 3100001 at 40, 3100003 at 160, 3100002 at 220 deg.",
+ "rf_hz": 439512500.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 14,
+ "vfo": {"bw_khz": 24},
+ "commands": ["TRUNK_FOLLOW:1"],
+ "files": {"scene.json": {"rf_hz": 439212500.0, "seconds": 14, "snr_db": 20, "seed": 37, "sources": [
+   {"name": "TSCC", "file": "cc.cf32", "rate": 48000, "at": 0, "offset_hz": 300000, "bearing": 300},
+   {"name": "3100001", "file": "t1.cf32", "rate": 48000, "at": 0, "offset_hz": -500000, "bearing": 40, "shift_hz": 150},
+   {"name": "3100003", "file": "t2.cf32", "rate": 48000, "at": 0, "offset_hz": -500000, "bearing": 160, "shift_hz": 150},
+   {"name": "3100002", "file": "t3.cf32", "rate": 48000, "at": 0, "offset_hz": -100000, "bearing": 220, "gain_db": -3, "shift_hz": -200}]}},
+ "steps": [
+  ["{tools}/dmr_gen.py", "cc.cf32", "--mode", "tscc", "--sys", "small.37.5", "--cc", "1", "--seconds", "14",
+   "--chanfreq", "301,438.7125,433.7125", "--adjacent", "6,320",
+   "--grant", "1.0,tv,301,1,1201,3100001,3.5", "--grant", "5.3,tv,301,2,1305,3100003,3.5",
+   "--grant", "7.5,tv,302@439.1125/434.1125/2,1,1400,3100002,4"],
+  ["{tools}/dmr_gen.py", "t1.cf32", "--mode", "bs", "--cc", "1", "--key-slot", "1",
+   "--at", "1.35", "--slot", "1", "--dur", "3.0", "--src", "3100001", "--dst", "1201", "--clear", "0.6"],
+  ["{tools}/dmr_gen.py", "t2.cf32", "--mode", "bs", "--cc", "1", "--key-slot", "2",
+   "--at", "5.65", "--slot", "2", "--dur", "3.0", "--src", "3100003", "--dst", "1305", "--pi", "1", "--clear", "1.0"],
+  ["{tools}/dmr_gen.py", "t3.cf32", "--mode", "bs", "--cc", "2", "--sys", "small.37.5",
+   "--at", "7.85", "--slot", "1", "--dur", "3.5", "--src", "3100002", "--dst", "1400", "--clear", "1.0"],
+  ["{sdk}/wide_scene.py", "scene.json", "out.cu8"]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {"tid": "3100001", "bearing": 40},
+  {"tid": "3100003", "bearing": 160},
+  {"tid": "3100002", "bearing": 220},
+  {"event": "TV_GRANT"}
+ ],
+ "tol_deg": 5
 }
 ]
