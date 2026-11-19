@@ -300,7 +300,7 @@ What each protocol needs:
 |---|---|---|
 | P25 Phase 1 / 2 | a control channel | announced by the system: nothing to enter |
 | TETRA | the site's main carrier | announced by the system: nothing to enter |
-| DMR Tier III | a control channel (TSCC) | usually sent as numbers only: enter them (one rule like "base + (n - 1) x 12.5 kHz" often covers all) |
+| DMR Tier III | a control channel (TSCC) | usually sent as numbers only: enter them (one rule like "base + (n - 1) x 12.5 kHz" often covers all). Two networks that send the same network code look like one system: set the DMR decoder's **Network tag** option on one network's control VFOs to keep them apart |
 | NXDN (Type-C) | a control channel | always numbers only: enter them |
 | MPT1327 | a control channel | numbers only (Band III with the decoder's `plan=mpt1343` option): enter them; the calls are analogue FM |
 

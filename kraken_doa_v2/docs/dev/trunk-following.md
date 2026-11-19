@@ -640,6 +640,20 @@ next burst of its header's slot, 60 ms +- 3 symbols after the previous block.
 Capacity Plus: `control_channel` only after 3 status CSBKs in a row name the
 same new rest channel, at most once per 5 s (a move can take up to ~6 s on an
 idle system).
+Two unrelated Tier III networks can send the same network code - private
+networks choose their own, and Tier III puts nothing else network-wide on
+air. Here the 455 MHz network (plan 455.30625 MHz + LCN x 12.5 kHz) and a
+Tait network at 414-418 MHz (plan 414.0000 MHz + LCN x 12.5 kHz) are both
+`Huge.1`. The dmr plugin's option `net_tag` (Network tag, set by the user on
+the control-channel VFOs of one network) makes the key `<model>.<NET>.<tag>`
+(e.g. `dmr:Huge.1.tait`), so that network's channel table, learnt channels
+and talkgroups are kept apart. Every grant passes `opt.net_tag`, and the
+traffic instance reports the same key; Capacity Plus keys (`CapPlus.CC<n>`)
+take the tag too. Grants and calls name a gateway / special address by its
+alias (target `PSTNI` = a telephone call: unit, voice, followable; `ALLMSID`
+etc. = all-call talkgroups). Grant options are now `slot`, `traffic=1`,
+`net_tag` when set and `cc` with absolute parameters. A message-trunked
+private call (PV_GRANT) can take about 1.4 s from grant to first voice.
 
 **NXDN** (plugin nxdn, 2.1; Type-C trunking from TS 1-A / 1-C 1.3). System
 key = Location ID category + system code (`global.123`, `regional.4000`,
@@ -878,6 +892,14 @@ rows), 6 `decimator_info` in 102 s; the suggested centre at the default edge
 clip 0.8 keeps 2 of the 3 control VFOs (455.756 - 457.681 MHz don't fit
 1.92 MHz together): the partial one, `controls` 2 / `controls_of` 3.
 
+Live on the KrakenSDR, 2026-11-20 about 05:00 local - P25 (three control
+VFOs on three sites of one system): 150 s, 22 grants, 13 calls followed, all
+ended by the network's release, 9 cross-site duplicates, none missed, ACTIVE
+a median 112 ms after the grant; DMR Tier III (three sites, the one-line
+rule): 300 s, 50 voice grants, 32 followed (31 released by P_CLEAR), 14
+duplicates, 92 data grants counted, 6 out of span, none missed; bearings of
+the voice VFOs cluster per transmitting site.
+
 AddressSanitizer + UndefinedBehaviorSanitizer (`-fsanitize=address,undefined`,
 the whole TEST build and the scratch plugin) over t1 / t2 / t3 / t5 / t8: no
 report. Under the sanitizers (3-5 x slower plugins) t1-t3 and t8 pass; t5's
@@ -909,6 +931,15 @@ broadcasts the lists again when they change.
   settings (the saved-frequency scan's pattern): Voice VFOs, Hang time,
   Encrypted calls, Unit-to-unit calls, Hear calls, Every site, and "System
   ahead: Add…". The header's badge: "N calls" followed, or "Paused".
+- **The systems file not loaded** (`systems_file.ok` false): a dialog once
+  per kept file in this browser (`localStorage` `kraken_tk_sysfile`) - the
+  receiver's reason and the dated name it kept the file under, as a
+  selectable line, and that the user's entries are in it, not lost - and a
+  note at the top of the box for as long as the status says so.
+- **Systems refused** (`sys_refused` > 0): "N systems heard but not added: 32
+  systems of yours are kept" (what to do in its tooltip: Forget one). An
+  edit refused for the same reason shows the receiver's `trunk_error` text
+  plus "(a system's Edit, then Forget this system)".
 - The hold line ("Holding on TG … · system", Release) while `hold` is set.
 - Notes - why nothing happens, each with the action that fixes it: Paused
   (which scanner); a control VFO a scan moved, put back or not (the
@@ -925,7 +956,16 @@ broadcasts the lists again when they change.
   Channels; the call's decoder not built; "No speech: the X codec is not
   installed" + Decoders (Setup Settings, from `{"codecs"}`: p25 IMBE, dmr /
   nxdn AMBE, tetra ACELP; the existing codec warnings stay as they are); a
-  control VFO's `note`. Counts come from the receiver's `calls` (they stay
+  control VFO's `note` (any reason the receiver gives: not moved because
+  following is off / paused, no frequency, outside the span, waiting, in a
+  playback); DMR only: "N calls on channels over 10 MHz from its control
+  channel" - calls whose frequency came from the table / rules (`fsrc` not
+  `grant`) more than 10 MHz from every control VFO of the system (a site's
+  traffic channels are within a few MHz of its control channel; the two
+  networks with one code here are ~40 MHz apart) - pointing
+  at the decoder's Network tag (two networks with one network code sharing
+  one key and one plan). The editor's System pane has the same in a `?` next
+  to a DMR system's key. Counts come from the receiver's `calls` (they stay
   30 s after their end), so a note does not flash with each call; a note
   about the traffic stays 20 s after its last cause (`TK_NOTE_HOLD_MS`), and
   while the pointer is on what lies below the notes (systems, calls,
@@ -1030,7 +1070,17 @@ search for the rest.
 - Units: heard units (not saved), searchable.
 A refusal (`trunk_error`) is shown only by the page that sent that command
 (the first 64 bytes matched, 10 s): in the editor's error line, else a
-quiet `uiAlert`.
+quiet `uiAlert`. Every `TRUNK_*` command the box and the editor send goes
+through `tkSend`, which records it for that match (the receiver refuses,
+e.g., an edit or a hold on a temporary system - "this system has no key
+yet" - which the page doesn't offer anyway, and a 33rd system).
+
+**Time between statuses.** The status may come once a second, or less when
+nothing changes. What depends on time is computed from the last status'
+ages plus the time since it arrived (`tkStAt`), and a 1 s timer draws the
+calls and the notes again when no status came for 0.9 s: an ended call's
+6 s dimmed row, the notes' 20 s hold and the 15 s hover cap run on without
+statuses.
 
 **Trunk VFOs elsewhere.** The VFO card gets a line under its header
 (`tkRenderCards`, called from `digRenderCards`): a voice VFO "TG 1201 Fire

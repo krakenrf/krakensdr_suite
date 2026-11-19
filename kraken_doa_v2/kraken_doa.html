@@ -21744,6 +21744,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   let tkDrawKey = '';
   const tkListsAsked = new Set();
   let tkPbSince = 0;   // while a playback runs: when this page first saw it (receiver's epoch ms)
+  let tkStAt = 0;      // when the last status arrived (its ages are from then)
+  // the status may come once a second or less when nothing changes: what depends on time (an ended
+  // call's dimmed row, the notes' hold, the hover cap) is drawn again every second meanwhile
+  setInterval(() => { if (tkSt && Date.now() - tkStAt > 900) { tkRenderCalls(); tkRenderNotes(); } }, 1000);
 
   function tkSend(cmd) {
     tkSent.push({c: cmd.slice(0, 64), t: Date.now()});
@@ -21821,6 +21825,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   function tkOnStatus(m) {
     const t0 = performance.now();
     tkSt = m;
+    tkStAt = Date.now();
+    tkSysFileTell(m.systems_file);
     // a playback: the receiver's time it was first seen (its own systems and calls from before are not the scene's)
     if (m.playback && !tkPbSince) tkPbSince = m.now || Date.now();
     if (!m.playback) tkPbSince = 0;
@@ -21920,6 +21926,13 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const note = (key, hold, cls, ic, html, tip, btn) => cur.set(key, {hold, order: order++,
       h: `<div class="tk-note ${cls}" data-k="${digEsc(key)}"${tip ? ` title="${digEsc(tip)}"` : ''}>${icon(ic)}<span>${html}</span>${btn || ''}</div>`});
     if (m.playback) note('pb', false, 'p', 'tape', 'Playback: nothing found is kept', 'While a debug playback or a recording plays, the systems, talkgroups and channels it brings are a sandbox: gone when it ends. Meanwhile only the playback\'s systems and calls are shown here; yours (and their recent calls) are back when it ends');
+    const sf = m.systems_file;
+    if (sf && sf.ok === false)
+      note('sysfile', false, 'b', 'no', 'Trunk systems not loaded' + (sf.kept_as ? ': kept as ' + tkBdi(sf.kept_as, 60) : '') + (sf.note ? ' (' + tkBdi(sf.note, 80) + ')' : ''),
+        'Your names, talkgroups and channel tables are in that file on the receiver, not lost; the receiver started without it and writes a new trunk_systems.json as you edit');
+    if (m.sys_refused > 0)
+      note('sysfull', false, 'w', 'warn', `${m.sys_refused} system${m.sys_refused === 1 ? '' : 's'} heard but not added: 32 systems of yours are kept`,
+        'A new system heard on the air is not added while all 32 places hold systems you edited (or ones on the air now). Forget one you no longer need: its Edit, then Forget this system');
     if (m.paused) note('paused', false, 'w', 'pause', 'Paused: the ' + tkBdi(m.paused_why || 'scanner', 40) + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
     // control VFOs a scanner moved, put back (or not) when it stopped - the receiver lists them for 60 s
     for (const r of m.scan_restore || [])
@@ -21968,6 +21981,16 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const ns = count('no_signal');
       if (ns) note('nosig:' + s.id, true, 'w', 'warn', `${name}: nothing received on ${ns} call${ns === 1 ? '' : 's'}`, TK_WHY.no_signal[1],
         `<button type="button" class="btn sm" onclick="tkDlgOpen('${digEsc(s.id)}','ch')">Channels</button>`);
+      // DMR: calls resolved (by the table / rules) far from every control channel - two unrelated
+      // networks sending the same network code share one key, and one's plan is applied to the other's.
+      // A site's traffic channels are within a few MHz of its control channel; the two networks with
+      // one code here are ~40 MHz apart (455 / 414-418 MHz): 10 MHz
+      if (s.plugin === 'dmr') {
+        const cc = (s.control || []).map(c => c.hz).filter(h => h > 0);
+        const far = calls.filter(c => c.hz > 0 && c.fsrc && c.fsrc !== 'grant' && cc.length && cc.every(h => Math.abs(c.hz - h) > 10e6));
+        if (far.length) note('nettag:' + s.id, true, 'w', 'warn', `${name}: ${far.length} call${far.length === 1 ? '' : 's'} on channels over 10 MHz from its control channel`,
+          'Two DMR networks that send the same network code share one system here, and one network\'s channel plan is applied to the other\'s grants. Set the DMR decoder\'s Network tag (its option, in the decoder\'s tab) on one network\'s control VFOs: it becomes a system of its own with its own channel table');
+      }
       const nd = count('no_decoder');
       if (nd) note('nodec:' + s.id, true, 'b', 'no', `${name}: the call's decoder is not built`, TK_WHY.no_decoder[1]);
       // the speech codec its decoder needs
@@ -21978,7 +22001,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
           '<button type="button" class="btn sm" onclick="setDlgOpen(\'dec\')">Decoders</button>');
       }
       for (const c of s.control || []) {
-        if (c.note) note('cnote:' + c.vfo, true, 'w', 'warn', `D${c.vfo}: ${tkBdi(c.note, 120)}`, 'The control channel moved and its VFO could not follow');
+        if (c.note) note('cnote:' + c.vfo, true, 'w', 'warn', `D${c.vfo}: ${tkBdi(c.note, 120)}`, 'The system said its control channel moved, and this VFO was not moved there (the note says why)');
       }
     }
     for (const [k, n] of cur) tkNoteKeep.set(k, {h: n.h, order: n.order, until: n.hold ? now + TK_NOTE_HOLD_MS : 0});
@@ -21996,6 +22019,20 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const has = L ? new Set((L.chans || []).filter(c => c.hz > 0).map(c => c.ch)) : null;
     const u = (s.unresolved || []).filter(x => !has || !has.has(x.ch));
     return u;
+  }
+  // The systems file couldn't be loaded at start: the receiver kept it under a dated name and started
+  // without it - the user's names, talkgroups and channel tables are in that file, not lost. Said once
+  // per kept file in this browser (a dialog), and in the box while the status says so
+  function tkSysFileTell(f) {
+    if (!f || f.ok !== false || !f.kept_as) return;
+    let seen = '';
+    try { seen = localStorage.getItem('kraken_tk_sysfile') || ''; } catch (e) {}
+    if (seen === f.kept_as) return;
+    try { localStorage.setItem('kraken_tk_sysfile', f.kept_as); } catch (e) {}
+    uiAlert({title: 'Trunk systems not loaded', kind: 'warn', quiet: true,
+             text: ['The receiver could not load its trunked systems (' + (f.note || 'unreadable') + ') and started without them. ',
+                    'Your names, talkgroups and channel tables are kept in this file on the receiver:', {code: f.kept_as}],
+             tip: 'Nothing in it is lost: it sits next to the program\'s other files (kraken_doa_v2, or the data folder in Docker). The receiver writes a new trunk_systems.json as you edit; to get the old entries back, mend the kept file (it is JSON) and put it back as trunk_systems.json while the program is stopped, or enter them again.'});
   }
   function tkCentre(id) {
     const s = tkSys(id), c = s && s.centre;
@@ -22117,7 +22154,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const calls = (m.calls || []).filter(c => !c.data);
     const now = new Map();
     for (const c of calls) {
-      if (c.state !== 'recent' || (c.state_ms || 0) < TK_LINGER_MS) now.set(String(c.id), c);
+      if (c.state !== 'recent' || (c.state_ms || 0) + (Date.now() - tkStAt) < TK_LINGER_MS) now.set(String(c.id), c);
       tkCallLast.set(String(c.id), c);
     }
     // frozen: a row that would leave stays, as it last was (ended)
@@ -22329,7 +22366,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   // The key is the identity the decoder reads off the air (docs/dev/trunk-following.md, Protocols;
   // each plugin's README): the record is made by the first edit (TRUNK_SYS_SET) and used as soon as
   // its control channel is heard
-  const TK_KEYHINT = {p25: 'WACN.SYSID in hex, e.g. BEE00.14C', dmr: 'model.NET, e.g. Small.37', nxdn: 'category.system code, e.g. global.123',
+  const TK_KEYHINT = {p25: 'WACN.SYSID in hex, e.g. BEE00.14C', dmr: 'model.NET[.tag], e.g. Small.37 or Huge.1.tait', nxdn: 'category.system code, e.g. global.123',
                       tetra: 'MCC-MNC, e.g. 530-1', mpt1327: 'SYS in 4 hex digits, e.g. 42E1 (NET-n with network=mpt1343)'};
   let tkAddWant = '';
   function tkAddSys() {
@@ -22467,7 +22504,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const kv = (k, v, tip) => `<div class="kv"${tip ? ` title="${digEsc(tip)}"` : ''}><span>${k}</span><span>${v}</span></div>`;
       let h = '<div class="sec">On the air</div>' +
         kv('Decoder', digEsc(tkPlugName(s.plugin))) +
-        kv('System', digEsc(s.key ? s.key : 'not identified yet'), 'The identity the decoder reads from the control channel (the key the receiver keeps it under)') +
+        kv('System', digEsc(s.key ? s.key : 'not identified yet') + (s.plugin === 'dmr' ? helpTip('DMR Tier III: two unrelated networks can send the same network code (private networks choose their own) and so share one key here. Set the DMR decoder\'s <b>Network tag</b> option (in the decoder\'s tab) on the control VFOs of one of them: its key becomes &lt;model&gt;.&lt;NET&gt;.&lt;tag&gt; (e.g. Huge.1.tait), with its own channel table, learnt channels and talkgroups.', true) : ''),
+           'The identity the decoder reads from the control channel (the key the receiver keeps it under)') +
         (s.name ? kv('Reported name', digEsc(s.name)) : '') +
         (s.site ? kv('Site', digEsc(s.site)) : '');
       h += (s.control || []).length ? (s.control || []).map(c => kv(`Control D${c.vfo}`,
@@ -22507,7 +22545,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const now = Date.now();
     const mine = tkSent.find(s => now - s.t < 10000 && (x.cmd === s.c || s.c.startsWith(x.cmd) || x.cmd.startsWith(s.c)));
     if (!mine) return;
-    const text = x.error || 'refused';
+    let text = x.error || 'refused';
+    if (/too many systems/.test(text)) text += ' (a system\'s Edit, then Forget this system)';
     if (tkDlgId) $id('tk-dlg-err').textContent = 'Not changed: ' + text;
     else uiAlert({title: 'Trunk following', text: ['Not changed: ' + text, mine.c], kind: 'error', quiet: true});
   }
