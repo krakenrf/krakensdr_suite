@@ -171,19 +171,38 @@ void TetraReceiver::reset() {
     have_cell_ = false;
     cell_from_bsch_ = false;
     tn_ = fn_ = mn_ = 0;
-    last_sysinfo_.clear();
-    have_sys_ = false;
-    have_la_ = false;
-    carrier_.clear();
     packet_slot_ = -1;
-    for (int& u : slot_usage_) u = -1;
-    for (bool& e : slot_e2e_) e = false;
+    own_ok_ = -1000000000;
+    foreign_bsch_ = 0;
     voice_tn_ = 0;
     voice_tn_ms_ = 0;
     voice_ch_sent_ = -2;
     encrypted_ms_ = -1000000;
     last_tch_ms_ = 0;
     if (codec_) codec_->stop();
+    tr_ = Traffic();   // (the host forgets the call with the RESET)
+    clear_cell();
+    // the statistics are the channel's: a retune starts them again
+    n_alloc_ = n_alloc_parsed_ = n_alloc_call_ = n_alloc_enc_ = n_grants_ = 0;
+    unparsed_.clear();
+    stats_s_ = -1e9;
+    for (const char* k : {"Channel allocations", "Grants", "Not parsed", "Trunk following"})
+        ctx_.report->erase(Mode::TETRA, k);
+    // the grant's identity stays: the next carrier descrambles at once
+    set_identity(opt_mcc_, opt_mnc_, opt_cc_);
+}
+
+// Everything learned from one cell: on a RESET and when the BSCH names
+// another cell (a VFO without the grant's identity: the user's own)
+void TetraReceiver::clear_cell() {
+    if (tr_.active || tr_.talker_on) traffic_end(kp::Call::ENDED, slot_start_ < 0 ? tr_.last_tch : slot_start_);
+    tr_ = Traffic();
+    last_sysinfo_.clear();
+    have_sys_ = false;
+    have_la_ = false;
+    carrier_.clear();
+    for (int& u : slot_usage_) u = -1;
+    for (bool& e : slot_e2e_) e = false;
     for (Frag& f : frag_) f = Frag();
     labels_.clear();
     calls_.clear();
@@ -193,10 +212,13 @@ void TetraReceiver::reset() {
     main_sent_.clear();
     control_sent_.clear();
     air_enc_noted_ = false;
-    tr_ = Traffic();
-    stats_s_ = -1e9;
-    // the grant's identity stays: the next carrier descrambles at once
-    set_identity(opt_mcc_, opt_mnc_, opt_cc_);
+}
+
+// a CRC-valid block / BSCH of the cell in force within the last 1.5 s (the
+// AACH, not CRC-protected, decides a traffic instance's call only then:
+// under a stronger co-channel cell its words are the other cell's)
+bool TetraReceiver::own_recent() const {
+    return slot_start_ >= 0 && slot_start_ - own_ok_ < static_cast<int64_t>(1.5 * RATE);
 }
 
 void TetraReceiver::set_traffic_slot(int tn) {
@@ -208,7 +230,14 @@ void TetraReceiver::set_identity(int64_t mcc, int64_t mnc, int64_t cc) {
     opt_mcc_ = mcc >= 0 && mcc <= 1023 ? mcc : -1;
     opt_mnc_ = mnc >= 0 && mnc <= 16383 ? mnc : -1;
     opt_cc_ = cc >= 0 && cc <= 63 ? cc : -1;
-    if (cell_from_bsch_ || opt_mcc_ < 0 || opt_mnc_ < 0 || opt_cc_ < 0) return;
+    if (!locked_identity()) return;
+    if (have_cell_ && (mcc_ != static_cast<uint32_t>(opt_mcc_) || mnc_ != static_cast<uint32_t>(opt_mnc_) ||
+                       cc_ != static_cast<uint32_t>(opt_cc_))) {
+        // another cell was in force: forget it, this one is the only one now
+        clear_cell();
+        cell_from_bsch_ = false;
+    }
+    if (cell_from_bsch_) return;
     // the grant's scrambling identity: blocks decode (and prove it with their
     // CRC) before the first BSCH; the TDMA time (timeslot numbers) still
     // comes from the BSCH, at most one multiframe (1.02 s) later
@@ -224,8 +253,10 @@ void TetraReceiver::set_call_hint(int cid, int group) {
     opt_group_ = group == 0 || group == 1 ? group : -1;
 }
 
-double TetraReceiver::now_s() const { return slot_start_ < 0 ? 0.0 : static_cast<double>(slot_start_) / RATE; }
-int64_t TetraReceiver::now_ms_s() const { return slot_start_ < 0 ? 0 : slot_start_ * 1000 / static_cast<int64_t>(RATE); }
+double TetraReceiver::now_s() const { return static_cast<double>(slot_start_ < 0 ? hist_base_ : slot_start_) / RATE; }
+int64_t TetraReceiver::now_ms_s() const {
+    return (slot_start_ < 0 ? hist_base_ : slot_start_) * 1000 / static_cast<int64_t>(RATE);
+}
 
 // Differential detection of one slot whose symbol 0 sits at sample `start`.
 // bits/soft: 510 entries, soft > 0 means bit 0. Returns false if the samples
@@ -299,20 +330,28 @@ void TetraReceiver::search() {
                 bits[2 * k + 1] = z.real() < 0;
             }
             const int nb = static_cast<int>(bits.size());
+            // a training sequence anywhere in the first 550 bits (more than
+            // a slot: every alignment of the window to the slot grid has one)
             for (int b = 0; b + 510 + 40 < nb; b += 2) {
-                int slot_bit = -1;
-                if (b + 38 <= nb && hamming(bits.data() + b, Y_BITS, 38) <= 3) slot_bit = b - Y_POS;
+                int pos = -1;
+                if (b + 38 <= nb && hamming(bits.data() + b, Y_BITS, 38) <= 3) pos = Y_POS;
                 else if (hamming(bits.data() + b, N_BITS, 22) <= 1 || hamming(bits.data() + b, P_BITS, 22) <= 1)
-                    slot_bit = b - NP_POS;
-                if (slot_bit < 0) continue;
-                // confirm with the next slot's training sequence
-                int nxt = slot_bit + 510;
+                    pos = NP_POS;
+                if (pos < 0) continue;
+                // its slot may have begun before the window; the next slot's
+                // training sequence confirms, and that slot is taken then
+                const int slot_bit = b - pos;
+                const int nxt = slot_bit + 510;
                 bool conf = false;
-                if (nxt + Y_POS + 38 <= nb && hamming(bits.data() + nxt + Y_POS, Y_BITS, 38) <= 4) conf = true;
-                if (nxt + NP_POS + 22 <= nb && (hamming(bits.data() + nxt + NP_POS, N_BITS, 22) <= 2 ||
-                                                 hamming(bits.data() + nxt + NP_POS, P_BITS, 22) <= 2)) conf = true;
+                if (nxt + Y_POS >= 0 && nxt + Y_POS + 38 <= nb && hamming(bits.data() + nxt + Y_POS, Y_BITS, 38) <= 4)
+                    conf = true;
+                if (nxt + NP_POS >= 0 && nxt + NP_POS + 22 <= nb &&
+                    (hamming(bits.data() + nxt + NP_POS, N_BITS, 22) <= 2 ||
+                     hamming(bits.data() + nxt + NP_POS, P_BITS, 22) <= 2))
+                    conf = true;
                 if (!conf) continue;
-                slot_start_ = hist_base_ + SPS + best_p + static_cast<int64_t>(slot_bit / 2) * SPS;
+                const int first = slot_bit >= 0 ? slot_bit : nxt;
+                slot_start_ = hist_base_ + SPS + best_p + static_cast<int64_t>(first / 2) * SPS;
                 dphi_ = best_d;
                 locked_slots_ = 0;
                 miss_ = 0;
@@ -322,13 +361,14 @@ void TetraReceiver::search() {
         }
         conj_ = false;
     }
-    // nothing: drop half a slot of history and wait for more. (A whole slot
-    // kept the window's place in the slot grid: the training sequences are
-    // only looked for where a slot starts in its first ~300 bits, so a
-    // window that started unluckily - after a RESET, 2026-11-20 - never
-    // found them on a clean carrier. Half a slot alternates two places
-    // that cover every start.)
-    size_t drop = SLOT_SAMPLES / 2;
+    // nothing: drop one slot of history (process() calls again until less
+    // than a window is left, so the backlog stays bounded). Before
+    // 2026-11-20 a training sequence only counted where its slot began
+    // inside the window: a window that kept an unlucky place in the slot
+    // grid (one slot dropped each time) never found a clean carrier after
+    // a RESET; half a slot dropped per 10 ms block instead let the history
+    // grow without limit while no carrier was there (review, 2026-11-20)
+    size_t drop = SLOT_SAMPLES;
     hist_.erase(hist_.begin(), hist_.begin() + static_cast<long>(drop));
     hist_base_ += static_cast<int64_t>(drop);
 }
@@ -342,6 +382,7 @@ bool TetraReceiver::decode_block(const float* soft5, int n, int k1, int a, uint3
     Bits t2 = tetra_rcpc23_decode(t3.data(), n, k1 + 16 + 4);
     if (!tetra_crc_ok(t2.data(), k1)) return false;
     type1.assign(t2.begin(), t2.begin() + k1);
+    if (scr != 3) own_ok_ = slot_start_;   // a block under the cell's own code (3 = the BSCH's, any cell)
     return true;
 }
 
@@ -351,20 +392,32 @@ void TetraReceiver::bsch(const uint8_t* t) {
     int fn = static_cast<int>(bits_to_u32(t + 12, 5));
     int mn = static_cast<int>(bits_to_u32(t + 17, 6));
     uint32_t mcc = bits_to_u32(t + 31, 10), mnc = bits_to_u32(t + 41, 14);
+    // An instance given the grant's identity (a traffic instance) accepts
+    // that cell only: another cell's BSCH (a co-channel cell in frequency
+    // reuse) changes nothing - not the TDMA time, not the scrambling, no
+    // report. Under a stronger such cell the wanted one may simply not
+    // decode (its blocks fail their CRC), but the other's calls are never
+    // reported as this channel's.
+    if (locked_identity() && (mcc != static_cast<uint32_t>(opt_mcc_) || mnc != static_cast<uint32_t>(opt_mnc_) ||
+                              cc != static_cast<uint32_t>(opt_cc_))) {
+        if (++foreign_bsch_ == 1 || foreign_bsch_ % 50 == 0)
+            ctx_.report->event(Mode::TETRA, "Another cell on this carrier (MCC " + std::to_string(mcc) + " MNC " +
+                                                std::to_string(mnc) + " colour code " + std::to_string(cc) +
+                                                ") ignored: following " + std::to_string(opt_mcc_) + "-" +
+                                                std::to_string(opt_mnc_) + " CC" + std::to_string(opt_cc_), 60.0);
+        return;
+    }
     tn_ = tn;
     fn_ = fn;
     mn_ = mn;
+    own_ok_ = slot_start_;
     Report& r = *ctx_.report;
     if (!cell_from_bsch_ || mcc != mcc_ || mnc != mnc_ || cc != cc_) {
         if (cell_from_bsch_ || (have_cell_ && (mcc != mcc_ || mnc != mnc_ || cc != cc_))) {
-            // another cell: its own SYSINFO, allocations and calls follow
-            have_la_ = false;
-            have_sys_ = false;
-            carrier_.clear();
-            last_sysinfo_.clear();
-            calls_.clear();
-            labels_.clear();
-            for (Frag& f : frag_) f = Frag();
+            // another cell (a VFO without the grant's identity): its own
+            // SYSINFO, allocations and calls follow - nothing of this one
+            // carries over (a call in progress ends here)
+            clear_cell();
         }
         have_cell_ = true;
         cell_from_bsch_ = true;
@@ -480,7 +533,7 @@ void TetraReceiver::aach(const uint8_t* b30) {
         if (hdr != 0 && f1 == 0) slot_e2e_[tn_] = false;
         // the main carrier's timeslot 1 in frames 1-17 carries the MCCH
         if (tn_ == 1 && (hdr == 0 || f1 == 2 || f1 == 3)) mcch_seen_ = true;
-        if (tslot_ && tn_ == tslot_) {
+        if (tslot_ && tn_ == tslot_ && own_recent()) {
             if (hdr != 0 && f1 == 0) {
                 // the slot is free again: the call is over (released)
                 if (++tr_.unalloc >= 2 && (tr_.known || tr_.active)) traffic_end(kp::Call::RELEASED, slot_start_);
@@ -967,6 +1020,19 @@ TetraReceiver::CallRec& TetraReceiver::call_rec(int cid) {
     return calls_.back();
 }
 
+// A call record lives CALL_KEEP_S after it was last heard. EN 300 392-2
+// sets no "call heard" timer the receiver could use (T310, the call
+// time-out, runs to 30 min or without limit); back-up D-SETUPs came every
+// ~15 s on air, and the longest set-up timer (T301 / T302) is 60 s - a
+// record silent for 60 s belongs to a call released where this VFO
+// doesn't hear it (on its traffic carrier). Bounded to 64 besides.
+void TetraReceiver::expire_calls() {
+    const double t = now_s();
+    calls_.erase(std::remove_if(calls_.begin(), calls_.end(),
+                                [t](const CallRec& k) { return t - k.last_s > CALL_KEEP_S; }),
+                 calls_.end());
+}
+
 void TetraReceiver::forget_call(int cid) {
     calls_.erase(std::remove_if(calls_.begin(), calls_.end(), [cid](const CallRec& k) { return k.cid == cid; }),
                  calls_.end());
@@ -1009,6 +1075,8 @@ kp::TrunkChannel TetraReceiver::channel_of(const TetraChanAlloc& a, int* first_t
 void TetraReceiver::send_grant(CallRec& k, const TetraMacInfo& m, int first_tn, const kp::TrunkChannel& ch, bool data) {
     if (!trunk || !first_tn) return;
     (void)m;
+    // the system first: never a grant the host can't file under its system
+    if (sys_sent_ != sys_state()) send_system();
     kp::Grant g;
     g.channel = ch;
     g.target = k.target ? ssi_str(k.target) : "";
@@ -1072,7 +1140,23 @@ void TetraReceiver::on_cmce(const TetraCmce& c, const TetraMacInfo& m, const cha
         if (tslot_ && tn_ == tslot_) traffic_end(kp::Call::RELEASED, slot_start_);
         return;
     }
+    expire_calls();
     CallRec& k = call_rec(c.cid);
+    if (c.type == D_SETUP) {
+        // a D-SETUP describes the whole call: the record starts from it
+        // alone. It stays "granted" (its next grant an update) only as the
+        // back-up of the same call - same called party, or a record of
+        // this call identifier without one yet (its D-CONNECT came first,
+        // within the 60 s a record lives) - on the same channel
+        const bool same = k.target == 0 || k.target == m.ssi;
+        CallRec fresh;
+        fresh.cid = c.cid;
+        if (same) {
+            fresh.granted = k.granted;
+            fresh.ch = k.ch;
+        }
+        k = fresh;
+    }
     k.last_s = now_s();
     if (c.bsi >= 0) {
         // basic service information: circuit mode type (3), end-to-end
@@ -1082,7 +1166,7 @@ void TetraReceiver::on_cmce(const TetraCmce& c, const TetraMacInfo& m, const cha
         k.group = comm != 0 ? 1 : 0;
         k.data = cmt != 0;
     }
-    if (c.priority == 15) k.emerg = true;   // pre-emptive priority 4 (emergency)
+    if (c.priority >= 0) k.emerg = c.priority == 15;   // pre-emptive priority 4 (emergency), when the PDU says
     switch (c.type) {
         case D_SETUP:
             // sent to the called party: the GSSI of a group call, the called ISSI
@@ -1101,8 +1185,10 @@ void TetraReceiver::on_cmce(const TetraCmce& c, const TetraMacInfo& m, const cha
             break;
         case D_TX_GRANTED:
             if (c.txgrant == 0 || c.txgrant == 3) {
+                // a new transmission: its party, else (granted to the
+                // addressee) the addressee, else unknown - never the last talker
                 if (c.party >= 0) k.source = static_cast<uint32_t>(c.party);
-                else if (c.txgrant == 0 && m.ssi) k.source = m.ssi;   // granted to the addressee
+                else k.source = c.txgrant == 0 ? m.ssi : 0;
                 // granted to another user: sent to the others (the group)
                 if (c.txgrant == 3 && m.ssi && !k.target) k.target = m.ssi;
             }
@@ -1120,8 +1206,9 @@ void TetraReceiver::on_cmce(const TetraCmce& c, const TetraMacInfo& m, const cha
     switch (c.type) {
         case D_TX_GRANTED:
             if (c.txgrant == 0 || c.txgrant == 3) {
+                // another party (or an unnamed one after a named one): a new transmission
                 uint32_t src = k.source;
-                if (tr_.active && src && tr_.source && src != tr_.source) traffic_end(kp::Call::ENDED, slot_start_);
+                if (tr_.active && src != tr_.source) traffic_end(kp::Call::ENDED, slot_start_);
                 tr_.known = true;
                 tr_.cid = c.cid;
                 tr_.source = src;
@@ -1307,7 +1394,7 @@ void TetraReceiver::decode_slot(const uint8_t* bits, const float* soft) {
         frag_abandon(tk);
         // full-slot traffic (TCH/S): the AACH (Reed-Muller checked) names it
         // traffic - on a traffic instance's own timeslot that is its call
-        if (tslot_ && tk == tslot_ && aach_ok_) {
+        if (tslot_ && tk == tslot_ && aach_ok_ && own_recent()) {
             if (!tr_.active) traffic_start(slot_start_);
             tr_.last_tch = slot_start_ + SLOT_SAMPLES;
             report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
@@ -1339,7 +1426,7 @@ void TetraReceiver::decode_slot(const uint8_t* bits, const float* soft) {
                 frag_abandon(tk);   // the second half of a stolen traffic slot is speech unless stolen too
             }
         }
-        if (traffic && tslot_ && tk == tslot_ && tr_.active) {
+        if (traffic && tslot_ && tk == tslot_ && tr_.active && own_recent()) {
             // a stolen slot is part of the transmission
             tr_.last_tch = slot_start_ + SLOT_SAMPLES;
             traffic_talker(slot_start_ + SLOT_SAMPLES);
@@ -1352,7 +1439,7 @@ void TetraReceiver::decode_slot(const uint8_t* bits, const float* soft) {
 // own timeslot only.
 void TetraReceiver::voice_slot(const uint8_t* bits) {
     int64_t t = now_ms_s();
-    if (tslot_ && tn_ != tslot_) return;
+    if (tslot_ && (tn_ != tslot_ || !own_recent())) return;
     if (!ctx_.voice_wanted || !ctx_.voice_wanted()) { voice_idle(); return; }
     if (!tslot_ && voice_tn_ != tn_ && voice_tn_ != 0 && t - voice_tn_ms_ < 2000) return;
     voice_tn_ = tn_;
@@ -1406,9 +1493,12 @@ void TetraReceiver::voice_idle() {
 
 void TetraReceiver::process(const std::complex<float>* x, size_t n) {
     hist_.insert(hist_.end(), x, x + n);
-    if (slot_start_ < 0) {
+    // no slot sync: search until less than a window is left (each failed
+    // search drops a slot) - the backlog stays bounded whatever the block size
+    while (slot_start_ < 0) {
+        const int64_t base = hist_base_;
         search();
-        return;
+        if (slot_start_ < 0 && hist_base_ == base) return;   // not enough samples yet
     }
     uint8_t bits[510];
     float soft[510];

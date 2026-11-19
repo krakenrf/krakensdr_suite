@@ -582,7 +582,9 @@ carrier is continuous: the traffic instance reports valid frames only from
 its timeslot while assigned; the manager relies on `call()` (CALL ENDED
 moves an active call to hang even while frames go on). Limits: timeslot
 numbers only after the carrier's first BSCH (up to 1.02 s; `mcc` / `mnc` /
-`cc` descramble before); air-interface encryption hides the allocations
+`cc` descramble before, and with them the traffic instance accepts that
+cell only - a stronger co-channel cell's calls are never reported, the
+wanted call just stops being heard); air-interface encryption hides the allocations
 (nothing can be followed; the plugin's "Trunk following" fact says so);
 downlink bearings are the base station's; the control VFO still plays the
 first traffic timeslot (listening to it too hears the call twice). Verified

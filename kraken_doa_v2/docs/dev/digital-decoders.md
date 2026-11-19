@@ -372,9 +372,16 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     per-transmission talkers for that timeslot only, valid frames only
     while its AACH says assigned (`tr_`: ACTIVE at TCH
     or D-TX GRANTED, ENDED at D-TX CEASED / hang time / 1 s without
-    traffic, RELEASED at D-RELEASE / the AACH unallocated twice). Search
-    window moved by half a slot after a miss (a whole slot never
-    re-acquired an unluckily aligned carrier after a RESET). Real
+    traffic, RELEASED at D-RELEASE / the AACH unallocated twice); with the
+    identity options it accepts that cell only (another cell's BSCH is
+    ignored, the AACH counts only within 1.5 s of a CRC-valid block of the
+    wanted cell). Call records start anew at each D-SETUP and go 60 s
+    after last heard. Search (review fixes 2026-11-20): a training
+    sequence counts anywhere in the window (2.1 missed carriers that kept
+    an unlucky place in the slot grid - after a RESET, after silence),
+    one slot dropped per failed search, repeated in `process()` until
+    less than a window is left (bounded history; a half-slot drop per
+    10 ms block grew it without limit); a RESET clears the statistics. Real
     sigidwiki recording: 8 allocations, all parsed, all pointing to the
     timeslot the AACH marks as traffic. Details and tests:
     plugins/tetra/README.md
