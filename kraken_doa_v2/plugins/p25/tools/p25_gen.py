@@ -11,7 +11,16 @@ its frame sync, NID (NAC + DUID, BCH(63,16) + parity) and a status symbol
 after every 35 dibits.
 
   p25_gen.py OUT.cf32 [--rate 48000] --at T --dur S --src UNIT --dst TG [--nac 0x293]
-             [--end tdu|tdulc] [--voice imbe|random] [--at ... (next call)]
+             [--end tdu|tdulc] [--voice imbe|random] [--algid 0x80] [--kid 0]
+             [--adj K] [--at ... (next call)]
+
+--algid / --kid: the call's algorithm and key in the HDU and every LDU2; an
+ALGID other than 0x80 also sets the link control's "protected" service
+option (an encrypted call - its voice frames are whatever --voice says, the
+decoder must mute them). --adj K: LDU1 number 0, K, 2K, ... carries an
+adjacent site status link control (LCO 0x22, implicit MFID: RFSS 1 site 2 of
+system 0x1AE on channel 0x20B4) instead of the voice user's, as real systems
+interleave them (K = 2: the first LDU1 after the HDU is one).
 
 The IMBE frames are placeholders with valid FEC (Golay(23,12) / Hamming(15,11)
 + the PN whitening seeded by u0, a fixed pitch, random spectral bits) - they
@@ -255,12 +264,17 @@ def ldu(nac, duid, payload72, imbe):
     return with_status(sf, 864)
 
 
-def lc_group(tg, src):
-    return hexbits(bytes_bits([0x00, 0x00, 0x00, 0x00, tg >> 8, tg & 0xFF, src >> 16, (src >> 8) & 0xFF, src & 0xFF]))
+def lc_group(tg, src, so=0x00):
+    return hexbits(bytes_bits([0x00, 0x00, so, 0x00, tg >> 8, tg & 0xFF, src >> 16, (src >> 8) & 0xFF, src & 0xFF]))
 
 
-def es_clear():
-    return hexbits(bytes_bits([0] * 9 + [0x80, 0, 0]))
+def lc_adjacent():
+    # LCO 0x22 with the SF bit: the ADJ_STS_BCST body (LRA, sys, RFSS, site, channel, service class)
+    return hexbits(bytes_bits([0x62, 0x00, 0x31, 0xAE, 0x01, 0x02, 0x20, 0xB4, 0x70]))
+
+
+def es(algid=0x80, kid=0):
+    return hexbits(bytes_bits([0] * 9 + [algid, kid >> 8, kid & 0xFF]))
 
 
 def tdu(nac):
@@ -278,15 +292,17 @@ def tdulc(nac, src):
     return with_status(sf, 216)
 
 
-def call(src, tg, nac, dur, end, voice, rng):
-    syms = hdu(nac, tg)
+def call(src, tg, nac, dur, end, voice, rng, algid=0x80, kid=0, adj=0):
+    syms = hdu(nac, tg, algid, kid)
     n = max(2, int(round(dur / 0.18)))
+    so = 0x40 if algid != 0x80 else 0x00
     for k in range(n):
         im = [imbe_frame(rng, voice) for _ in range(9)]
         if k % 2 == 0:
-            syms += ldu(nac, 0x5, lc_group(tg, src), im)
+            lc = lc_adjacent() if adj and (k // 2) % adj == 0 else lc_group(tg, src, so)
+            syms += ldu(nac, 0x5, lc, im)
         else:
-            syms += ldu(nac, 0xA, es_clear(), im)
+            syms += ldu(nac, 0xA, es(algid, kid), im)
     syms += tdulc(nac, src) if end == 'tdulc' else tdu(nac)
     return syms
 
@@ -339,7 +355,8 @@ def main():
         if k == 'rate':
             rate = float(v)
         elif k == 'at':
-            cur = {'at': float(v), 'dur': 3.0, 'src': 1001, 'dst': 101, 'nac': 0x293, 'end': 'tdu', 'voice': 'imbe'}
+            cur = {'at': float(v), 'dur': 3.0, 'src': 1001, 'dst': 101, 'nac': 0x293, 'end': 'tdu', 'voice': 'imbe',
+                   'algid': 0x80, 'kid': 0, 'adj': 0}
             txs.append(cur)
         elif k in ('end', 'voice'):
             cur[k] = v
@@ -351,7 +368,8 @@ def main():
     rng = np.random.default_rng(25)
     parts = []
     for tx in txs:
-        y = modulate(call(tx['src'], tx['dst'], tx['nac'], tx['dur'], tx['end'], tx['voice'], rng), rate)
+        y = modulate(call(tx['src'], tx['dst'], tx['nac'], tx['dur'], tx['end'], tx['voice'], rng, tx['algid'], tx['kid'],
+                          tx['adj']), rate)
         parts.append((tx, y))
         print('%8.3f .. %8.3f s  unit %d -> TG %d  NAC 0x%03X  end %s' % (
             tx['at'], tx['at'] + len(y) / rate, tx['src'], tx['dst'], tx['nac'], tx['end']))

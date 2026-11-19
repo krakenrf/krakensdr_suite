@@ -168,6 +168,8 @@ public:
     int64_t end() const { return base_ + static_cast<int64_t>(buf_.size()); }
     bool has(int64_t abs) const { return abs >= base_ && abs < end(); }
     void trim_before(int64_t abs);
+    // empty, the next push() lands at absolute index abs
+    void restart(int64_t abs) { buf_.clear(); base_ = abs; }
 private:
     std::vector<float> buf_;
     int64_t base_ = 0;

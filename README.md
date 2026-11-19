@@ -185,7 +185,7 @@ VFOs can decode at once.
 
 | Decoder | What you get |
 |---|---|
-| [P25 Phase 1](kraken_doa_v2/plugins/p25/README.md), [DMR](kraken_doa_v2/plugins/dmr/README.md), [D-STAR](kraken_doa_v2/plugins/dstar/README.md), [NXDN](kraken_doa_v2/plugins/nxdn/README.md), [Yaesu System Fusion](kraken_doa_v2/plugins/ysf/README.md), [TETRA](kraken_doa_v2/plugins/tetra/README.md) | Networks, talkgroups, radio IDs, callsigns, call activity, GPS positions (DMR, D-STAR), and the voice (see [Digital voice codecs](#digital-voice-codecs)) |
+| [P25 Phase 1 and Phase 2](kraken_doa_v2/plugins/p25/README.md), [DMR](kraken_doa_v2/plugins/dmr/README.md), [D-STAR](kraken_doa_v2/plugins/dstar/README.md), [NXDN](kraken_doa_v2/plugins/nxdn/README.md), [Yaesu System Fusion](kraken_doa_v2/plugins/ysf/README.md), [TETRA](kraken_doa_v2/plugins/tetra/README.md) | Networks, talkgroups, radio IDs, callsigns, call activity, GPS positions (DMR, D-STAR), and the voice (see [Digital voice codecs](#digital-voice-codecs)) |
 | [MPT1327](kraken_doa_v2/plugins/mpt1327/README.md) | Analogue trunking control channels |
 | [Analog FM IDs](kraken_doa_v2/plugins/analog_id/README.md) | CTCSS / DCS tones, MDC1200, FleetSync, 5-tone selcall, DTMF, 1750 Hz tone bursts |
 | [Pagers](kraken_doa_v2/plugins/pagers/README.md) | POCSAG and FLEX at every speed. Street addresses in the pages become incidents on the map |
@@ -357,6 +357,7 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 | System | Voice codec | Needs |
 |---|---|---|
 | P25 Phase 1 | IMBE | nothing - built in |
+| P25 Phase 2 (TDMA) | AMBE+2 | mbelib, installed by you |
 | DMR | AMBE+2 | mbelib, installed by you |
 | D-STAR | AMBE | mbelib, installed by you |
 | NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
@@ -379,7 +380,13 @@ DN and VW calls: every frame decoded, and both voices come out as
 intelligible speech (DN through mbelib, VW through the built-in IMBE). V/D
 mode 1 voice hasn't been heard from a real radio yet.
 
-**DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
+The P25 decoder tells Phase 1 and Phase 2 apart by itself, on the same VFO.
+Phase 2 was checked against off-air recordings of sites (traffic and
+control channels); what the radios themselves send on Phase 2 has only been
+tested with the decoder's own test signals, as no recording of it could be
+found.
+
+**P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 
 ```
 sudo apt-get install -y git cmake build-essential

@@ -12,11 +12,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 47 entries in 32 catalogues (2026-11-17) - EVERY decoder:
+  playback*). 49 entries in 32 catalogues (2026-11-19) - EVERY decoder:
   acars, vdl2, ais, aprs, dstar, nxdn, ysf, tetra, mpt1327, ils (VOR), analog_id (two: the
   CTCSS tones + `analog-ids-six`, radio IDs), radar,
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
-  adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last
+  adsb, dme, ism, pocsag, v23_telemetry, p25 (three: Phase 1
+  `p25-three-units`, Phase 2 `p25p2-inbound-three-radios` and
+  `p25p2-site-two-timeslots` since 2026-11-18), dmr, radiosonde (the last
   three since 2026-10-16 - their earlier tests used public recordings),
   rds (2026-10-22), dab (2026-11-16: two WIDE entries, `dab-sfn-three` /
   `dab-single-offset` - the generator writes the 5-antenna cu8 itself;
@@ -176,4 +178,11 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   running with 0 dropped, every call's start / end event in the decoder log
   (generator then still with random VW voice bits; regenerated with real
   IMBE frames the same 50.0 / 170.0 / 285.0 offline)
+- Test 2026-11-18 (p25 3.0, Phase 2, a scratch TEST build of kraken_doa):
+  `p25p2-inbound-three-radios` - talkers 6001 40.0, 6002 160.0, 6003
+  280.0 deg, 718 packets, 716 used, 2 dropped at the loop wrap, none for
+  overlap; `p25p2-site-two-timeslots` - 2101, 2102
+  and 2104 (the Phase 1 call) at 120.0 deg; `p25-three-units` still 60 /
+  200 / 300 deg. The page's own Check button (headless browser) was not
+  run
 

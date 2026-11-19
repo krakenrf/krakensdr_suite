@@ -105,11 +105,82 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     their timing; a sequence a bare voice sync started is not confirmed
     (any sync re-anchors it, as before - a real MS recording has a false BS
     voice sync 10 ms after a radio's real one) (2026-10-16, found with the
-    dmr generator)
-  - `P25Proto` (plugins/p25): NID BCH(63,16) by table search, TSBK (rate 1/2
-    trellis + CRC), LDU1/LDU2 (Hamming(10,6) + RS(24,12)/(24,16)), HDU
-    (Golay(18,6) + RS(36,20)), TDULC (Golay(24,12) + RS(24,12)), PDU header.
-    IDEN_UP tables turn channel numbers into MHz. Option `nac`
+    dmr generator). P25 (2026-11-19): a frame goes to the sink as soon as its
+    own length is in (the NID, `p25_nid_decode` in dig_fec, gives the DUID:
+    HDU 396 dibits, TDU 72, TDULC 216, LDU 864, a TSDU once its own block
+    is) instead of after 864 dibits - a lone trunking block ~33 ms after its
+    sync instead of 180 ms, terminators 100-165 ms earlier, a recording's
+    last 0.2 s decoded; sample positions unchanged. CQPSK read through the
+    discriminator: the +-6 kHz per-sample limit (against noise clicks) cut
+    its fast phase steps near the envelope nulls (6 % of on-air samples,
+    outer levels squeezed, the centre fit biased as the carrier moved), so a
+    second boxcar keeps what the limit took (modulo one turn, 4800 Hz on
+    the boxcar); sync detection and the fit stay on the limited one, and a
+    frame is sliced from the restored one only when its sync scale was
+    squeezed below 0.85 of the exact one (CQPSK 0.65-0.78, C4FM / LSM
+    0.91-1.0 down to 4 dB SNR; restoring everywhere cost 0.11-0.16 dB on
+    weak C4FM / LSM). Real CQPSK voice channel: 90 of 90 frames at any
+    carrier offset within +-1 kHz (before 68-90), half-frame SNR 16.9 ->
+    14.25 dB; C4FM / LSM unchanged; cost 1.03 -> 1.06 % of real time
+    (plugins/p25/README.md)
+  - `P25Proto` (plugins/p25): NID BCH(63,16) (`p25_nid_decode`, dig_fec:
+    the last NAC first, else all 65536 - one 512 KB table per process,
+    shared with the receiver), TSBK (rate 1/2 trellis + CRC; the trellis'
+    branch metric = absolute error capped at 4 level units since 2026-11-19,
+    `p25_trellis_half` - the soft symbols' noise is heavy-tailed near
+    threshold, kurtosis 9-12 on real C4FM / LSM and 14-30 through CQPSK,
+    and a squared error let one click steer the path: half of the blocks
+    at 0.3-0.6 dB less SNR, false accepts unchanged), LDU1/LDU2
+    (Hamming(10,6) + RS(24,12)/(24,16)), HDU (Golay(18,6) + RS(36,20)),
+    TDULC (Golay(24,12) + RS(24,12)), PDU header. IDEN_UP tables turn
+    channel numbers into MHz. Option `nac`. Link controls with the SF bit
+    (LCO 0x02 / 0x22 / 0x23) are the trunking-block bodies of TSBK 0x02 /
+    0x3C / 0x3A and go through `tsbk()`; TSBKs also decoded: secondary
+    control channel (0x39, explicit 0x29), SNDCP data channel grant /
+    announcement (0x14 / 0x16), location registration (0x2B) - layouts
+    checked on real control channels (README). A call (2026-11-19): played
+    only once known to be clear (ALGID 0x80 or an unprotected voice-user
+    LC), up to 2 LDUs held until then; one "Voice:" / "Call ended" event per
+    transmission (the talker logic's), no dedup, nothing from hang-time
+    terminators
+  - P25 Phase 2 (plugins/p25, 3.0, 2026-11-18; details, measurements and
+    sources: plugins/p25/README.md): `P25p2Phy` (p25p2_phy.cpp) runs on the
+    same 48 kHz complex input as the Phase 1 4FSK path (decoder.cpp feeds
+    both; no phase setting - a traffic channel can switch between Phase 1
+    and Phase 2 calls). 6000 symbols/s, 8 sps, one 41-tap low-pass (-6 dB at
+    5 kHz). Outbound H-DQPSK: differential detection at the symbol centres,
+    acquired on two S-ISCH syncs 180 / 540 symbols apart (either
+    polarity), timing / carrier / scale tracked per slot, grid dropped after
+    34 slots without a sync, re-anchored after sample slips. Inbound H-CPM
+    bursts: the discriminator integrated between symbol centres (a
+    duobinary-like response, 489 Hz x (I[n] + I[n+1])) into a 16-state
+    sequence detector, voice bursts (no sync) on each radio's own timing /
+    carrier / deviation track. It hands 30 ms slots (`P25p2Slot`,
+    p25p2_slot.hpp) to `P25p2Proto` (p25p2.cpp): I-ISCH (40,9,16) / DUID
+    (8,4,4) by nearest codeword, PN44 descrambling (seed = WACN | system ID
+    | NAC from the options, a control channel's network status or BLIND:
+    solved from one clean scrambled FACCH / SACCH burst by GF(2) linear
+    algebra on its RS parity relations), RS over GF(64) from the (63,35,29)
+    mother code with the punctured symbols as erasures
+    (`rs64_decode_erasures`, `crc_bits` added to lib/dig_fec), CRC-12 /
+    CRC-16, MAC PDUs + messages (partition-01 TSBK bodies through
+    `P25Proto::tsbk()`, which shares its channel identifiers and network
+    identity), voice + ESS. Options `wacn`, `sysid`, `lch` (Timeslot) next
+    to `nac`; they take effect at once while it runs (a complete identity
+    replaces the seed in use, a NAC alone drops a contradicting one). Facts
+    both phases write (Encryption, Channel type, WACN / System ID / NAC):
+    the phase that decoded last shows its value (`P25p2Proto::phase1_frame`
+    after every valid Phase 1 frame - Phase 2's cached values went stale
+    before). The receiver never hands on a non-finite symbol (non-finite /
+    absurd input samples are zeroed); the MAC treats one as no reliability
+    (`p2_finite`, a bit test, p25p2_slot.hpp). `rs64_decode_erasures`
+    returns errors + erasures also for a word that is a codeword already.
+    Call events (2026-11-19) follow the talkers, as Phase 1's: one "voice:"
+    when a transmission's unit is named, one "call ended:" when that
+    talker ends (`announce` / `announce_end` from `talker_set` /
+    `talker_end`, inbound `in_named` / `unit_end`), no dedup; before they
+    followed the call with 5 s / 2 s dedup and lost starts / ends on 6 of
+    14 real traffic channels
   - `DmrProto` (plugins/dmr): CACH TACT (timeslot), slot type Golay(20,8)
     (max 2 corrections - a third of random words are within 3), BPTC(196,96)
     voice LC header / terminator (RS(12,9)), CSBK, PI and data headers, EMB

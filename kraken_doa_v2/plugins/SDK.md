@@ -432,9 +432,9 @@ each its own `t.channel` (0..7) and end it with `host.talker_end(at_s,
 channel)`; a new id ends only its own channel's talker. Frames holding two
 channels' radios go to neither. On such a channel, report a transmission
 whose radio isn't known yet with `t.id = "?"` (the dmr plugin does until
-the LC names it): its samples then stay out of the other channel's talker,
-and the real id later takes over from the same start. A protocol with one
-transmission at a time needs neither.
+the LC names it, p25 on a Phase 2 timeslot too): its samples then stay out
+of the other channel's talker, and the real id later takes over from the
+same start. A protocol with one transmission at a time needs neither.
 
 Short packets from many talkers at once (ADS-B / Mode S: 64-120 us per
 message, dozens of aircraft) don't fit that model - a MUSIC frame holds
@@ -741,7 +741,9 @@ Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
 `dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `ysf/tools/ysf_gen.py`, `tetra/tools/tetra_gen.py`,
 `mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`,
 `pagers/tools/pocsag_gen.py`, `pagers/tools/flex_gen.py`, `v23_telemetry/tools/v23_gen.py`,
-`p25/tools/p25_gen.py`, `dmr/tools/dmr_gen.py`,
+`p25/tools/p25_gen.py`, `p25/tools/p25p2_gen.py` (P25 Phase 2: a site's
+TDMA channel, or one radio's inbound bursts - several radios placed by
+uca_scene.py), `dmr/tools/dmr_gen.py`,
 `radiosonde/tools/sonde_gen.py`; a 2.4 MHz
 scene of several transmitters is too big for uca_scene.py's in-memory
 mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
@@ -1032,7 +1034,7 @@ named in each file.
 
 ## The shared library (`lib/`)
 
-The shipped protocol decoders are thin plugins around `lib/` (`p25/decoder.cpp`
+The shipped protocol decoders are thin plugins around `lib/` (`dstar/decoder.cpp`
 is ~50 lines). Their receivers were written against an `RxContext` /
 `Report` interface; `dig::Bridge` (dig_common.hpp) maps it onto `kp::Host`,
 and `dig::FmFrontEnd` (48 kHz -> 12.5 kHz channel filter -> discriminator in
