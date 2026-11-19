@@ -51,6 +51,9 @@ public:
         mutable std::mutex digital_mu;
         std::shared_ptr<dig::DigitalDecoder> digital;
         std::atomic<int> digital_mode{0};   // dig::Mode, mirrors digital->mode()
+        // a number given to the decoder when it is made, never repeated (the trunk
+        // manager tells a reused VFO id's decoder apart by it; an address can repeat)
+        std::atomic<uint64_t> digital_serial{0};
         std::shared_ptr<dig::DigitalDecoder> getDigital() const {
             std::lock_guard<std::mutex> lk(digital_mu);
             return digital;
