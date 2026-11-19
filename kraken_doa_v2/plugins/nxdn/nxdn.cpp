@@ -176,6 +176,8 @@ void NxdnReceiver::reset() {
     sys_sent_ = -1;
     sys_control_ = false;
     chan_sent_.clear();
+    frame_a_ = frame_b_ = 0;   // (the throttles' clock: the new sample index)
+    frame_rfct_ = -1;
     crep_ = CallRep();
 }
 
@@ -240,19 +242,29 @@ NxdnReceiver::Location NxdnReceiver::split_location(uint32_t id) {
 }
 
 // The network = category + system code (the same on every site); the site
-// code goes in `site`. Sent when it changes and every 10 s.
+// code goes in `site`. Sent at once when it is first known after a reset()
+// or changes, then every 5 s - and before a grant (send_system). The host
+// can forget it without our reset() (Auto detect locking onto another
+// plugin and back), so it is never sent only once.
 void NxdnReceiver::trunk_system(const Location& loc, bool control) {
     if (!host_ || loc.cat < 0 || loc.sys == 0) return;
     const bool changed = loc.cat != site_.cat || loc.sys != site_.sys || loc.site != site_.site || control != sys_control_;
-    if (!changed && sys_sent_ >= 0 && frame_b_ - sys_sent_ < 10 * RATE) return;
+    if (!changed && sys_sent_ >= 0 && frame_b_ - sys_sent_ < 5 * RATE) return;
     site_ = loc;
     sys_control_ = control;
+    // a new identity: announce its channels again too
+    if (changed) chan_sent_.clear();
+    send_system();
+}
+
+void NxdnReceiver::send_system() {
+    if (!host_ || site_.cat < 0) return;
     sys_sent_ = frame_b_;
     kp::TrunkSystem s;
-    s.key = std::string(category_name(loc.cat)) + "." + std::to_string(loc.sys);
-    s.name = std::string("NXDN ") + category_name(loc.cat) + " system " + std::to_string(loc.sys);
-    s.site = "site " + std::to_string(loc.site);
-    s.control = control;
+    s.key = std::string(category_name(site_.cat)) + "." + std::to_string(site_.sys);
+    s.name = std::string("NXDN ") + category_name(site_.cat) + " system " + std::to_string(site_.sys);
+    s.site = "site " + std::to_string(site_.site);
+    s.control = sys_control_;
     host_->trunk_system(s);
 }
 
@@ -312,6 +324,10 @@ void NxdnReceiver::grant(const uint8_t* m, int type, bool on_traffic) {
     if (ran_ >= 0) g.options.push_back({"ran", std::to_string(ran_)});
     if (mode == 0) g.options.push_back({"rate", "4800"});
     else if (mode == 2 || mode == 3) g.options.push_back({"rate", "9600"});
+    // the grant's system first, so the host files it under the right one
+    // (its channel table): if the identity is known and wasn't sent in the
+    // last 0.5 s
+    if (site_.cat >= 0 && (sys_sent_ < 0 || frame_b_ - sys_sent_ >= RATE / 2)) send_system();
     host_->grant(g);
 }
 
@@ -707,8 +723,14 @@ void NxdnReceiver::decode_frame(const Branch& b, const SymSrc& s) {
         r.set(Mode::NXDN, "RAN", std::to_string(ran));
         // SR structure (6.3.1, Table 6.3-1): bit 0 = dual message format
         if (cac[1]) {
-            cac_message(cac.data() + 8, 72);
-            cac_message(cac.data() + 8 + 72, 72);
+            // a SITE_INFO / SRV_INFO second goes first: the system ahead of
+            // a grant in the same CAC (after a reset)
+            const uint8_t* m1 = cac.data() + 8;
+            const uint8_t* m2 = cac.data() + 8 + 72;
+            const uint32_t t2 = bits_to_u32(m2 + 2, 6);
+            if (t2 == 0x18 || t2 == 0x19) std::swap(m1, m2);
+            cac_message(m1, 72);
+            cac_message(m2, 72);
         } else {
             cac_message(cac.data() + 8, 144);
         }
