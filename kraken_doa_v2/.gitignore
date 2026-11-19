@@ -69,6 +69,10 @@ incidents.tsv.tmp
 saved_frequencies.json
 saved_frequencies.json.tmp
 saved_frequencies.json.bad
+# trunk following: what the user knows about the trunked systems heard (talkgroups, channels)
+trunk_systems.json
+trunk_systems.json.tmp
+trunk_systems.json.bad
 # the map markers before they became saved-frequency locations (migrated once)
 map_markers.json
 map_markers.json.tmp

@@ -1042,8 +1042,8 @@ scene's `rf_hz` = the entry's `rf_hz` - `tuner_offset_hz`.
  "steps": [
   ["{tools}/p25_gen.py", "cc.cf32", "--control", "--wacn", "BEE00", "--sysid", "14C", "--seconds", "20",
    "--grant", "2.0:1-0412:1201:2010621", "--grant", "9.0:1-0444:1305:2010622"],
-  ["{tools}/p25_gen.py", "call1.cf32", "--at", "2.3", "--dur", "4", "--src", "2010621", "--tg", "1201"],
-  ["{tools}/p25_gen.py", "call2.cf32", "--at", "9.3", "--dur", "5", "--src", "2010622", "--tg", "1305"],
+  ["{tools}/p25_gen.py", "call1.cf32", "--at", "2.3", "--dur", "4", "--src", "2010621", "--dst", "1201"],
+  ["{tools}/p25_gen.py", "call2.cf32", "--at", "9.3", "--dur", "5", "--src", "2010622", "--dst", "1305"],
   ["{sdk}/wide_scene.py", "scene.json", "out.cu8"]
  ],
  "output": "out.cu8",

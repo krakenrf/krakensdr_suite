@@ -65,7 +65,8 @@ constexpr size_t MAX_CALLS = 64;              // calls in progress (followed or 
 constexpr size_t HISTORY_MAX = 50;
 constexpr size_t MAX_SOURCES = 8;             // sources kept per call
 constexpr int VFO_LIMIT = 16;                 // = DecimatorManager::MAX_DECIMATORS (private there)
-constexpr int64_t SETUP_GIVEUP_MS = 3000;     // SETUP: nothing received for this long -> over (no_signal)
+constexpr int64_t SETUP_GIVEUP_MS = 3000;     // SETUP: nothing received for this long -> no_signal ...
+constexpr int64_t SETUP_MAX_MS = 6000;        // ... or up to this long while its grant updates still come (late entry)
 constexpr int64_t FRAMES_ACTIVE_MS = 400;     // the decoder's valid frames this recent = ACTIVE
 constexpr int64_t STALE_FRAMES_MS = 100;      // frames this soon after a (re)placement may be the old channel's
 constexpr int64_t CALL_ACTIVE_MS = 1500;      // a CALL ACTIVE from the voice VFO counts this long
@@ -73,6 +74,8 @@ constexpr int64_t GRANT_FRESH_MS = 2000;      // a grant this recent keeps a cal
 constexpr int64_t MAX_SILENT_MS = 10000;      // ... but never past this long without activity
 constexpr int64_t WAIT_EXPIRE_MS = 3000;      // a call not followed: over this long after its last grant
 constexpr int64_t RECENT_MS = 30000;          // an over call stays listed ("recent") this long - the next over's grant revives it
+constexpr int64_t REVIVE_UPDATE_MS = 2500;    // ... a grant UPDATE on the same channel + slot only this long after its end (the trailing repeats of the
+                                              // over just ended don't bring it back; a first grant always does)
 constexpr int64_t CONTROL_LOST_MS = 5000;     // a control VFO without any report this long: not receiving
 constexpr int64_t PARK_KEEP_MS = 30000;       // a parked voice VFO is removed after this long unused
 constexpr int64_t RESET_EXPECT_MS = 2000;     // our own retune of a VFO: its RESET within this is expected
@@ -145,6 +148,7 @@ struct Chan {
     double learned_hz = NAN;                  // passive learning
     int learn_fail = 0;                       // calls on the learned frequency that received nothing (not saved)
     uint64_t grants = 0;                      // calls granted on it
+    uint64_t data = 0;                        // data grants on it (counted only: no call rows)
     int64_t last = 0;                         // last granted (epoch ms)
 };
 
@@ -169,7 +173,7 @@ struct Unresolved {
 struct Ctl {
     int64_t last_ms = 0;      // last report (steady)
     std::string site;
-    uint64_t grant_msgs = 0, grants = 0, followed = 0, duplicate = 0;
+    uint64_t grant_msgs = 0, grants = 0, followed = 0, duplicate = 0, data = 0, skip = 0;
 };
 
 struct System {
@@ -185,14 +189,16 @@ struct System {
     std::map<int, Ctl> ctl;                // control VFOs
     // counters (this run)
     uint64_t grant_msgs = 0, grants = 0, followed = 0, no_signal = 0, moves = 0, preempted = 0;
-    std::map<std::string, uint64_t> notf;  // calls not followed, by their first reason
+    std::map<std::string, uint64_t> notf;  // calls not followed, by their first reason (data / skip: grants)
+    std::unordered_map<std::string, int64_t> quiet;   // data / skip grants counted lately (key -> steady ms)
+    bool heard = false;                    // an event of it has arrived (ever: saved) - false = the user's record only
     // the big lists changed: what is in them / only counters
     bool lists_struct = true, lists_stats = false;
     int64_t lists_sent = 0;
     // the suggested centre (status), recomputed every 2 s
     struct CentreCache {
         double hz = 0, w = 0, total = 0, now_w = 0;
-        int n = 0, of = 0;
+        int n = 0, of = 0, ctl = 0, ctl_of = 0;
     } centre;
     bool centre_ok = false;
     int64_t centre_t = 0;
@@ -253,6 +259,7 @@ struct Call {
     std::string end;                        // RECENT: how it ended
     int64_t t_end = 0;                      // RECENT: when (steady)
     int overs = 0;                          // grants that started it again (transmission trunking)
+    bool guard = false;                     // RECENT: it was followed (or a duplicate of a followed one): trailing updates ignored
 };
 std::map<uint64_t, Call> g_calls;
 std::unordered_map<std::string, uint64_t> g_call_by_key;
@@ -284,6 +291,7 @@ struct Voice {
     double rf_hz = 0;
     int64_t t_placed = 0;
     bool dirty = false;
+    bool reset_seen = false;                // its decoder's RESET after the latest placement came
 };
 std::vector<Voice> g_voices;
 void park(Voice& v);
@@ -315,17 +323,38 @@ uint64_t g_learned_n = 0, g_learn_refused = 0, g_learn_dropped = 0;
 // --- other --------------------------------------------------------------
 bool g_dispatching = false;
 bool g_paused = false;
-std::string g_pause_why;
+std::string g_pause_why, g_pause_why_last;
 int g_mode = -1;                            // operating mode last seen
 bool g_pb = false;                          // playback last seen
 std::map<std::string, System> g_pb_saved;   // the systems before the playback
 std::string g_hold_sys, g_hold_tg;          // TRUNK_HOLD
 std::deque<int64_t> g_lat_place, g_lat_active;   // ms: grant reached the loop -> VFO placed / -> ACTIVE
 std::atomic<uint64_t> g_events_in{0}, g_events_dropped{0};
+int64_t g_fence_until = 0;   // a playback started / ended: what the decoders report till then is the other side's
 int64_t g_status_sent = 0;
 std::string g_status_last;
 bool g_status_now = false;
 std::string g_last_err;
+
+// Scanners move the user's VFOs, control VFOs included: where each control VFO
+// was (kept up to date while not paused; frozen while paused), put back when
+// the pause ends - and what was done, for the status (scan_restore, 60 s)
+struct Home {
+    std::weak_ptr<Inst> inst;
+    double rf = 0;
+    int bw = 0, tuner = 0;
+    std::string mode;   // dig::mode_string
+    std::string sys;
+};
+std::map<int, Home> g_home;
+struct Restore {
+    int vfo;
+    std::string sys, note;
+    double hz;
+    bool restored;
+    int64_t t;
+};
+std::vector<Restore> g_restore;
 
 // --- the queue from the decoders (any thread) ---------------------------------
 struct QEv {
@@ -507,10 +536,11 @@ void set_heard(int vfo, bool on) {
     if (is == on) return;
     if (on) heard.push_back(vfo);
     else heard.erase(std::remove(heard.begin(), heard.end(), vfo), heard.end());
-    const bool was = g_dispatching;
-    g_dispatching = true;
-    ControlHandler::set_audio_vfos(heard);
-    g_dispatching = was;
+    // not ControlHandler::set_audio_vfos: its decimator_info broadcast would make
+    // every page rebuild its VFO cards at each over (the trunk status carries "heard")
+    decimator_manager.setAudioVfos(heard);
+    audio_mixer.retain(decimator_manager.audioVfoIds());
+    g_status_now = true;
 }
 
 // the plugin's facts the manager needs; false = no such plugin
@@ -552,12 +582,12 @@ void meta_voice(const Voice& v) {
     std::string j;
     auto it = v.call ? g_calls.find(v.call) : g_calls.end();
     if (it == g_calls.end()) {
-        j = ",\"trunk\":{\"role\":\"voice\",\"state\":\"parked\",\"call\":0}";
+        j = ",\"trunk\":{\"role\":\"voice\",\"call\":0}";
     } else {
         const Call& c = it->second;
         const System* s = sys_of(c.sys);
-        j = ",\"trunk\":{\"role\":\"voice\",\"state\":\"" + std::string(cstate_name(c.st)) + "\",\"call\":" +
-            std::to_string(c.id) + ",\"sys\":" + js(c.sys) + ",\"ctl\":" + std::to_string(c.ctl_vfo) +
+        // (as placed: the call's state, heard / parked come with the trunk status' vfos)
+        j = ",\"trunk\":{\"role\":\"voice\",\"call\":" + std::to_string(c.id) + ",\"sys\":" + js(c.sys) + ",\"ctl\":" + std::to_string(c.ctl_vfo) +
             ",\"label\":" + js(s ? label_of(*s, c) : c.target) + ",\"target\":" + js(c.target) +
             ",\"group\":" + jb(c.group) + ",\"ch\":" + js(c.ch.name) + ",\"slot\":" + std::to_string(c.ch.slot) + "}";
     }
@@ -688,7 +718,8 @@ void note_unit(System& s, const std::string& id, bool call) {
 }
 
 // A temporary system (no key yet) becomes the keyed one: what it gathered moves there
-void merge_temp(const std::string& from, const std::string& to, const std::string& plugin, const std::string& key) {
+// (by value: a caller passes a Track's sys, which the loop below rewrites)
+void merge_temp(const std::string from, const std::string to, const std::string plugin, const std::string key) {
     if (from == to || !g_sys.count(from)) return;
     System& d = ensure_system(to, plugin, key);
     auto it = g_sys.find(from);
@@ -756,11 +787,16 @@ void merge_temp(const std::string& from, const std::string& to, const std::strin
 }
 
 // The centre that keeps every control VFO of s in span and covers the most
-// known channel frequencies, weighted by their grants. false = none (no
-// channels, or the control VFOs don't fit one span)
+// known channel frequencies (an entry of the table or resolved by a rule),
+// weighted by their grants. When the control VFOs don't fit one span
+// together, the one that keeps the most of them (then the most channels): the
+// best partial centre, ctl < ctl_of. "Fits" = the whole channel (12.5 kHz;
+// a control VFO: its own bandwidth) plus PLACE_GUARD_HZ inside the usable
+// band (edge clip x 2.4 MHz) - the rule placement uses. false = nothing known
 using Centre = System::CentreCache;
 bool suggest_centre(const System& s, Centre* out) {
     const double half = usable_half_hz();
+    const double need_ch = 12500.0 / 2 + PLACE_GUARD_HZ;   // (a narrowband channel)
     std::vector<std::pair<double, double>> ch;   // (hz, weight)
     for (const auto& kv : s.chans) {
         double hz, up;
@@ -771,32 +807,31 @@ bool suggest_centre(const System& s, Centre* out) {
         if (!resolve(s, c, &hz, &up, &src)) continue;
         ch.push_back({hz, static_cast<double>(std::max<uint64_t>(1, kv.second.grants))});
     }
-    if (ch.empty()) return false;
-    // the control VFOs: every one in span (their own bandwidth)
-    double lo = -1e18, hi = 1e18;
+    // the control VFOs (their own bandwidth)
+    std::vector<std::pair<double, double>> ctl;   // (hz, need)
     for (const auto& kv : s.ctl) {
         auto inst = decimator_manager.getDecimator(kv.first);
         if (!inst) continue;
         const double f = vfo_rf(*inst);
-        if (f <= 0) continue;
-        const double need = inst->bandwidth_hz.load() / 2.0 + PLACE_GUARD_HZ;
-        lo = std::max(lo, f - (half - need));
-        hi = std::min(hi, f + (half - need));
+        if (f > 0) ctl.push_back({f, inst->bandwidth_hz.load() / 2.0 + PLACE_GUARD_HZ});
     }
-    if (lo > hi) return false;
-    const double need_ch = 12500.0 / 2 + PLACE_GUARD_HZ;   // (a narrowband channel)
-    const double reach = half - need_ch;                    // a channel this far from the centre still fits
+    if (ch.empty() && ctl.empty()) return false;
+    const double reach = half - need_ch;   // a channel this far from the centre still fits
     std::sort(ch.begin(), ch.end());
     std::vector<double> pre(ch.size() + 1, 0.0);
     for (size_t i = 0; i < ch.size(); i++) pre[i + 1] = pre[i] + ch[i].second;
-    // every window edge on a channel: the best centres are among those
+    // candidates: every window edge on a channel or a control VFO
     std::vector<double> cands;
     for (const auto& c : ch) {
         cands.push_back(c.first - (reach - 500));   // (whole kHz below)
         cands.push_back(c.first + (reach - 500));
+        cands.push_back(c.first);
     }
-    if (lo > -1e17) cands.push_back(lo);
-    if (hi < 1e17) cands.push_back(hi);
+    for (const auto& c : ctl) {
+        cands.push_back(c.first - (half - c.second - 500));
+        cands.push_back(c.first + (half - c.second - 500));
+        cands.push_back(c.first);
+    }
     const double cur = coherent_tuner_hz();
     auto weigh = [&](double c, int* n) {
         auto a = std::lower_bound(ch.begin(), ch.end(), std::make_pair(c - reach - 0.5, -1e300));
@@ -805,25 +840,34 @@ bool suggest_centre(const System& s, Centre* out) {
         *n = static_cast<int>(ib - ia);
         return pre[ib] - pre[ia];
     };
+    auto ctls = [&](double c) {
+        int k = 0;
+        for (const auto& x : ctl)
+            if (std::fabs(x.first - c) + x.second <= half) k++;
+        return k;
+    };
     Centre best;
     bool any = false;
     for (double c : cands) {
-        c = std::clamp(c, lo, hi);
         c = std::round(c / 1000.0) * 1000.0;
-        if (c < lo - 1 || c > hi + 1) c = std::clamp(c, std::ceil(lo / 1000) * 1000, std::floor(hi / 1000) * 1000);
         if (c < RTL_TUNER_MIN_HZ && !wb_variant_enabled.load()) continue;
         int n;
         const double w = weigh(c, &n);
-        if (!any || w > best.w + 1e-9 || (std::fabs(w - best.w) < 1e-9 && std::fabs(c - cur) < std::fabs(best.hz - cur))) {
+        const int k = ctls(c);
+        const bool better = !any || k > best.ctl || (k == best.ctl && (w > best.w + 1e-9 ||
+                            (std::fabs(w - best.w) < 1e-9 && std::fabs(c - cur) < std::fabs(best.hz - cur))));
+        if (better) {
             best.hz = c;
             best.w = w;
             best.n = n;
+            best.ctl = k;
             any = true;
         }
     }
     if (!any) return false;
-    for (const auto& x : ch) best.total += x.second;
+    best.total = pre.back();
     best.of = static_cast<int>(ch.size());
+    best.ctl_of = static_cast<int>(ctl.size());
     int n_now;
     best.now_w = cur > 0 ? weigh(cur, &n_now) : 0;
     *out = best;
@@ -836,12 +880,29 @@ bool suggest_centre(const System& s, Centre* out) {
 
 std::string call_json(const Call& c, bool ages, int64_t now);
 
+// Not-followed calls the user can do something about go to the history (and
+// the decoder log) as well as the followed ones: no frequency (enter it), out
+// of span (retune), no free VFO / the VFO limit, encrypted / unit / unlisted
+// (a setting), no decoder, no signal (a wrong channel table). Not: off, paused,
+// hold, ended (the user's own doing), duplicate (the followed copy is there).
+bool history_worthy(const Call& c) {
+    if (c.ever_followed) return true;
+    static const char* act[] = {"no_freq", "out_of_span", "no_vfo", "vfo_limit", "encrypted", "unit", "unlisted",
+                                "no_decoder", "no_signal"};
+    for (const char* a : act)
+        if (c.why == a) return true;
+    return false;
+}
+
 void record_history(const Call& c, const std::string& end) {
+    if (!history_worthy(c)) return;
     const int64_t now = now_ms();
-    std::string j = call_json(c, false, now);
-    // + how it ended, how long it lasted
+    Call e = c;
+    e.end = end;   // (call_json writes "end")
+    std::string j = call_json(e, false, now);
+    // + how long it lasted
     j.pop_back();
-    j += ",\"end\":" + js(end) + ",\"dur_ms\":" + std::to_string(now - c.t_start) +
+    j += ",\"dur_ms\":" + std::to_string(now - c.t_start) +
          ",\"t_end\":" + std::to_string(wall_ms()) + ",\"followed\":" + jb(c.ever_followed) + "}";
     g_history.push_back(j);
     while (g_history.size() > HISTORY_MAX) g_history.pop_front();
@@ -909,7 +970,7 @@ void park(Voice& v) {
         inst->enabled = false;
     }
     meta_voice(v);
-    broadcast(MessageBuilders::build_decimator_info_message());
+    g_status_now = true;   // (no decimator_info: a page takes a voice VFO's state from the trunk status' vfos)
 }
 
 // A voice VFO for a call: a parked one (the one the call had at its last
@@ -1008,6 +1069,7 @@ void apply_voice(Voice& v, Call& c, const Place& p) {
     v.rf_hz = c.hz;
     v.t_placed = now;
     v.dirty = false;
+    v.reset_seen = false;
     v.call = c.id;
     c.vfo = v.vfo;
     c.t_placed = now;
@@ -1033,7 +1095,7 @@ int rank(const Call& c) { return c.prio ? 1 : 0; }
 std::string policy_why(const System& s, const Call& c) {
     if (!g_set.follow) return "off";
     if (g_paused) return "paused";
-    if (c.user_ended) return "ended";
+    if (c.user_ended) return "stopped";
     if (c.setup_failed) return "no_signal";
     if (c.data) return "data";
     if (c.group) {
@@ -1101,6 +1163,28 @@ void unfollow(Call& c, const std::string& why) {
     else c.why = why;
 }
 
+// a followed call received nothing (SETUP gave up, or it was released while
+// still in SETUP after SETUP_GIVEUP_MS): counted - a wrong channel table shows
+// up here -, and a learned entry that leads nowhere twice is dropped
+void note_no_signal(System& s, Call& c) {
+    const int64_t now = now_ms();
+    s.no_signal++;
+    std::cout << "Trunk following: " << c.sys << " " << c.target << " on " << c.ch.name << " (" << c.hz / 1e6 << " MHz, "
+              << c.fsrc << "): nothing received in " << (now - c.t_placed) / 1000.0 << " s" << std::endl;
+    c.setup_failed = true;
+    if (c.fsrc != "learned") return;
+    auto ci = s.chans.find(c.ch.name);
+    if (ci != s.chans.end() && ++ci->second.learn_fail >= 2) {
+        std::cout << "Trunk following: " << c.sys << " channel " << c.ch.name << " - the learned "
+                  << ci->second.learned_hz / 1e6 << " MHz received nothing twice: dropped" << std::endl;
+        ci->second.learned_hz = NAN;
+        ci->second.learn_fail = 0;
+        g_learn_dropped++;
+        s.lists_struct = true;
+        mark_dirty(SAVE_LEARN_MS);
+    }
+}
+
 // the call is gone from the list (RECENT expired, its system forgotten, a playback)
 void drop_call(uint64_t id) {
     auto it = g_calls.find(id);
@@ -1119,15 +1203,34 @@ void end_call(uint64_t id, const std::string& why) {
     auto it = g_calls.find(id);
     if (it == g_calls.end() || it->second.st == RECENT) return;
     Call& c = it->second;
+    const bool was_followed = c.vfo >= 0;
+    if (was_followed && c.st == SETUP && now_ms() - c.t_placed >= SETUP_GIVEUP_MS)
+        if (System* sy = sys_of(c.sys)) note_no_signal(*sy, c);   // (released before SETUP gave up)
     if (Voice* v = voice_of_call(c)) park(*v);
     record_history(c, why);
     c.vfo = -1;
     c.pending_place = false;
     c.end = why;
+    c.guard = was_followed || why == "duplicate";
     c.t_end = now_ms();
     c.st = RECENT;
     c.t_state = c.t_end;
     g_status_now = true;
+    // the followed copy of a conversation ended normally: its copies waiting on
+    // other sites ("duplicate") end with it - they would get a VFO only after the
+    // transmission ended everywhere. (A copy that received nothing - no_signal -,
+    // or lost its control channel / VFO, lets a duplicate take over instead)
+    if (was_followed && (why == "released" || why == "ended" || why == "reassigned")) {
+        std::vector<uint64_t> dup;
+        for (const auto& kv : g_calls) {
+            const Call& o = kv.second;
+            if (o.id != c.id && o.st == WAIT && o.why == "duplicate" && o.sys == c.sys && o.group == c.group &&
+                o.target == c.target && o.ctl_vfo != c.ctl_vfo)
+                dup.push_back(o.id);
+        }
+        const std::string sys = c.sys;
+        for (uint64_t d : dup) end_call(d, "duplicate");
+    }
 }
 
 // the lowest-ranked call holding a VFO that call c (of rank r) may take: the
@@ -1157,6 +1260,8 @@ std::string try_follow(Call& c) {
         if (!resolve(*s, c.ch, &hz, &up, &src)) {
             why = "no_freq";
         } else {
+            // (whatever gave it a frequency - a grant, an announcement, a rule, learning, an entry)
+            if (s->unresolved.erase(c.ch.name)) g_status_now = true;
             c.hz = hz;
             c.up_hz = up;
             c.fsrc = src;
@@ -1359,8 +1464,11 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
     // grant updates) belongs to its call's system
     std::string sid = t.sys;
     if (Voice* v = voice_of_vfo(vfo)) {
-        auto it = g_calls.find(v->call);
-        if (it != g_calls.end()) sid = it->second.sys;
+        // (a parked one: its last call's system; none = nothing to file it under)
+        auto it = g_calls.find(v->call ? v->call : v->last_call);
+        if (it == g_calls.end()) return;
+        sid = it->second.sys;
+        if (!sys_of(sid)) return;
     }
     if (sid.empty()) {
         sid = plugin + ":@" + std::to_string(vfo);
@@ -1388,12 +1496,13 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
             s.lists_struct = true;
             if (!temp_id(s.id)) mark_dirty(SAVE_LEARN_MS);
         }
+        if (fin(ev.ch.freq_hz) && s.unresolved.erase(ev.ch.name)) g_status_now = true;
     }
     const std::string decoder = ev.decoder.empty() ? plugin : ev.decoder;
     // the site = the control VFO that granted it (a voice VFO's grant: its call's site)
     int site = vfo;
     if (Voice* v = voice_of_vfo(vfo)) {
-        auto it = g_calls.find(v->call);
+        auto it = g_calls.find(v->call ? v->call : v->last_call);
         if (it != g_calls.end()) site = it->second.ctl_vfo;
     }
     auto cit = s.ctl.find(site);
@@ -1402,6 +1511,42 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
     const std::string key = call_key(s.id, site, ev.group, ev.target);
     auto kit = g_call_by_key.find(key);
     Call* c = kit == g_call_by_key.end() ? nullptr : &g_calls[kit->second];
+
+    // data grants and talkgroups set to skip: counters only - no call rows, no
+    // history (a busy system's data channel would fill both). Counted once per
+    // grant sequence (repeats within WAIT_EXPIRE_MS are the same one)
+    bool skip_tg = false;
+    if (ev.group) {
+        auto ti = s.tgs.find(ev.target);
+        skip_tg = ti != s.tgs.end() && ti->second.mode == TG_SKIP;
+    }
+    if ((ev.data || skip_tg) && (!c || c->vfo < 0)) {
+        if (c) drop_call(c->id);
+        const std::string qk = key + "\x1f" + ev.ch.name + (ev.data ? "\x1fd" : "\x1fs");
+        const int64_t now = now_ms();
+        auto q = s.quiet.find(qk);
+        const bool fresh = q == s.quiet.end() || now - q->second > WAIT_EXPIRE_MS;
+        s.quiet[qk] = now;
+        if (s.quiet.size() > 4096)
+            for (auto i = s.quiet.begin(); i != s.quiet.end();) i = now - i->second > WAIT_EXPIRE_MS ? s.quiet.erase(i) : std::next(i);
+        if (fresh) {
+            s.notf[ev.data ? "data" : "skip"]++;
+            if (cl) (ev.data ? cl->data : cl->skip)++;
+            if (Chan* ch = ensure_chan(s, ev.ch.name)) {
+                if (ev.data) ch->data++;
+                ch->last = wall_ms();
+                s.lists_stats = true;
+            }
+            if (ev.group && !ev.data) {
+                if (Tg* g = ensure_tg(s, ev.target)) {
+                    g->calls++;
+                    g->last = wall_ms();
+                }
+            }
+            g_status_now = true;
+        }
+        return;
+    }
 
     // the channel given to another target on this site: the call that had it
     // is over there - its VFO goes to this one (no retune) when this one may be followed
@@ -1420,7 +1565,11 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
         if (!c) return;
         started = true;
     } else if (c->st == RECENT) {
-        // the next over of the conversation: the same call (the same row) again
+        // the next over of the conversation: the same call (the same row) again -
+        // not the repeats of the over just ended (updates within REVIVE_UPDATE_MS)
+        if (ev.update && c->guard && now_ms() - c->t_end < REVIVE_UPDATE_MS && c->ch.name == ev.ch.name &&
+            c->ch.slot == ev.ch.slot)
+            return;
         revive(s, *c, ev);
         started = true;
     } else if (c->ch.name != ev.ch.name || c->ch.slot != ev.ch.slot) {
@@ -1715,13 +1864,22 @@ void on_voice_call(Voice& v, const PluginEvent& ev) {
     System* s = sys_of(c.sys);
     if (!s) return;
     const int64_t now = now_ms();
+    // its tuner retuned / the mode changed since it was placed: what it hears isn't the call's
+    {
+        const int mode = operating_mode_index();
+        if (mode != v.mode || std::fabs(tuner_centre(mode, mode == 0 ? 0 : v.tuner) - v.centre_hz) > 1000) return;
+    }
+    // another timeslot's call on the same carrier (DMR, P25 Phase 2, TETRA): not this one's
+    if (ev.call_slot >= 0 && c.ch.slot >= 0 && ev.call_slot != c.ch.slot) return;
+    // (an empty target = not known yet: the grant's stays)
     if (!ev.target.empty() && (ev.target != c.target || ev.group != c.group)) {
         // (only an ACTIVE one says what the channel carries now: an ENDED / RELEASED of another
         // target is the previous call's end, late)
         if (ev.call_state != 1) return;
         // the channel carries a different call: re-labelled when that one may
         // be followed, else the VFO is freed
-        if (now - c.t_placed < STALE_FRAMES_MS * 3) return;   // (the previous channel's, still in the pipe)
+        // (the previous channel's, still in the pipe: not before its decoder's RESET for this placement - or 2 s)
+        if (now - c.t_placed < STALE_FRAMES_MS * 3 || (!v.reset_seen && now - c.t_placed < 2000)) return;
         const std::string key = call_key(c.sys, c.ctl_vfo, ev.group, ev.target);
         auto kit = g_call_by_key.find(key);
         Call probe = c;
@@ -1808,6 +1966,7 @@ void on_reset(int vfo, Track& t) {
     if (Voice* v = voice_of_vfo(vfo)) {
         // our own retune of it: expected; else the user changed it - taken back at the next grant
         if (now > t.expect_reset_until) v->dirty = true;
+        else v->reset_seen = true;   // (its decoder dropped the previous channel: what it says now is this one's)
         return;
     }
     if (now <= t.expect_reset_until) return;   // our CONTROL move
@@ -1821,6 +1980,14 @@ void on_reset(int vfo, Track& t) {
     t.control = t.system_said = false;
     meta_erase(vfo, false);
     g_status_now = true;
+}
+
+void note_heard(const std::string& sys) {
+    if (System* s = sys_of(sys); s && !s->heard) {
+        s->heard = true;
+        if (!temp_id(s->id)) mark_dirty(SAVE_LEARN_MS);
+        g_status_now = true;
+    }
 }
 
 void apply_event(QEv& q) {
@@ -1869,6 +2036,7 @@ void apply_event(QEv& q) {
             break;
         case PluginEvent::RESET: on_reset(q.vfo, t); break;
     }
+    if (ev.kind != PluginEvent::RESET) note_heard(g_tracks[q.vfo].sys);
 }
 
 void drain() {
@@ -1878,7 +2046,9 @@ void drain() {
         q.swap(g_queue);
         g_drain_posted = false;
     }
+    const int64_t now = now_ms();
     for (auto& e : q) {
+        if (now < g_fence_until) continue;
         try {
             apply_event(e);
         } catch (const std::exception& ex) {
@@ -1900,6 +2070,7 @@ std::string serialise() {
         if (temp_id(s.id)) continue;
         o << (first ? "\n " : ",\n ") << "{\"id\":" << js(s.id) << ",\"plugin\":" << js(s.plugin) << ",\"key\":" << js(s.key)
           << ",\"name\":" << js(s.user_name) << ",\"reported_name\":" << js(s.name) << ",\"listed_only\":" << jb(s.listed_only)
+          << ",\"heard\":" << jb(s.heard)
           << ",\"tgs\":[";
         first = false;
         bool f1 = true;
@@ -2028,13 +2199,34 @@ std::string build_status(bool ages) {
       << ",\"mode\":\"" << (mode == 1 ? "wideband" : mode == 2 ? "independent" : "coherent") << "\",\"hold\":";
     if (g_hold_sys.empty()) o << "null";
     else o << "{\"sys\":" << js(g_hold_sys) << ",\"tg\":" << js(g_hold_tg) << "}";
-    o << ",\"vfos\":[";
+    // control VFOs put back (or not) after a scanner, the last 60 s
+    o << ",\"scan_restore\":[";
+    {
+        bool f0 = true;
+        for (const auto& r : g_restore) {
+            if (now - r.t > 60000) continue;
+            o << (f0 ? "" : ",") << "{\"vfo\":" << r.vfo << ",\"sys\":" << js(r.sys) << ",\"hz\":" << num_json(r.hz)
+              << ",\"restored\":" << jb(r.restored) << ",\"note\":" << js(r.note) << "}";
+            f0 = false;
+        }
+    }
+    o << "],\"vfos\":[";
     for (size_t i = 0; i < g_voices.size(); i++) {
         const Voice& v = g_voices[i];
         auto it = v.call ? g_calls.find(v.call) : g_calls.end();
+        auto inst = live(v);
         o << (i ? "," : "") << "{\"vfo\":" << v.vfo << ",\"call\":" << (it == g_calls.end() ? 0 : v.call) << ",\"state\":\""
           << (it == g_calls.end() ? "parked" : cstate_name(it->second.st)) << "\",\"hz\":" << num_json(v.rf_hz)
-          << ",\"plugin\":" << js(v.plugin) << "}";
+          << ",\"plugin\":" << js(v.plugin) << ",\"tuner\":" << v.tuner
+          << ",\"heard\":" << jb(inst && inst->audio_out.load()) << ",\"enabled\":" << jb(inst && inst->enabled.load());
+        if (it != g_calls.end()) {
+            const Call& c = it->second;
+            const System* sy = sys_of(c.sys);
+            o << ",\"sys\":" << js(c.sys) << ",\"ctl\":" << c.ctl_vfo << ",\"label\":" << js(sy ? label_of(*sy, c) : c.target)
+              << ",\"target\":" << js(c.target) << ",\"group\":" << jb(c.group) << ",\"ch\":" << js(c.ch.name)
+              << ",\"slot\":" << c.ch.slot;
+        }
+        o << "}";
     }
     o << "],\"systems\":[";
     bool first = true;
@@ -2042,7 +2234,8 @@ std::string build_status(bool ages) {
         const System& s = kv.second;
         o << (first ? "" : ",") << "{\"id\":" << js(s.id) << ",\"plugin\":" << js(s.plugin) << ",\"key\":" << js(s.key)
           << ",\"name\":" << js(s.name) << ",\"user_name\":" << js(s.user_name) << ",\"site\":" << js(s.site)
-          << ",\"saved\":" << jb(!temp_id(s.id)) << ",\"listed_only\":" << jb(s.listed_only) << ",\"control\":[";
+          << ",\"saved\":" << jb(!temp_id(s.id)) << ",\"heard\":" << jb(s.heard) << ",\"listed_only\":" << jb(s.listed_only)
+          << ",\"control\":[";
         first = false;
         bool f1 = true;
         for (const auto& c : s.ctl) {
@@ -2054,7 +2247,8 @@ std::string build_status(bool ages) {
               << ",\"rx\":" << jb(now - c.second.last_ms < CONTROL_LOST_MS) << ",\"site\":" << js(c.second.site)
               << ",\"note\":" << js(note) << ",\"counts\":{\"grant_msgs\":" << c.second.grant_msgs
               << ",\"grants\":" << c.second.grants << ",\"followed\":" << c.second.followed
-              << ",\"duplicate\":" << c.second.duplicate << "}";
+              << ",\"duplicate\":" << c.second.duplicate << ",\"data\":" << c.second.data
+              << ",\"skip\":" << c.second.skip << "}";
             if (ages) o << ",\"last_ms\":" << (now - c.second.last_ms);
             o << "}";
             f1 = false;
@@ -2083,7 +2277,8 @@ std::string build_status(bool ages) {
         const Centre& ce = sm.centre;
         if (sm.centre_ok) {
             o << "{\"hz\":" << num_json(ce.hz) << ",\"weight\":" << num_json(ce.w) << ",\"total\":" << num_json(ce.total)
-              << ",\"now_weight\":" << num_json(ce.now_w) << ",\"channels\":" << ce.n << ",\"of\":" << ce.of << "}";
+              << ",\"now_weight\":" << num_json(ce.now_w) << ",\"channels\":" << ce.n << ",\"of\":" << ce.of
+              << ",\"controls\":" << ce.ctl << ",\"controls_of\":" << ce.ctl_of << "}";
         } else {
             o << "null";
         }
@@ -2132,7 +2327,7 @@ std::string lists_json(const System& s) {
           << ",\"up_hz\":" << num_json(ok ? up : NAN) << ",\"src\":" << js(ok ? src : "") << ",\"user_hz\":" << num_json(c.second.user_hz)
           << ",\"user_up\":" << num_json(c.second.user_up) << ",\"ann_hz\":" << num_json(c.second.ann_hz)
           << ",\"ann_up\":" << num_json(c.second.ann_up) << ",\"learned_hz\":" << num_json(c.second.learned_hz)
-          << ",\"grants\":" << c.second.grants << ",\"last\":" << c.second.last << "}";
+          << ",\"grants\":" << c.second.grants << ",\"data\":" << c.second.data << ",\"last\":" << c.second.last << "}";
         f = false;
     }
     o << "],\"rules\":[";
@@ -2174,13 +2369,141 @@ void send_err(const std::string& cmd, const std::string& err) {
 // The state machine
 // ============================================================================
 
+// while not paused: where the control VFOs are now
+void note_homes() {
+    std::map<int, Home> h;
+    for (const auto& kv : g_sys)
+        for (const auto& c : kv.second.ctl) {
+            auto inst = decimator_manager.getDecimator(c.first);
+            auto dd = inst ? inst->getDigital() : nullptr;
+            if (!inst || !dd) continue;
+            const double rf = vfo_rf(*inst);
+            if (rf <= 0) continue;
+            Home& m = h[c.first];
+            m.inst = inst;
+            m.rf = rf;
+            m.bw = inst->bandwidth_hz.load();
+            m.tuner = inst->tuner_channel.load();
+            m.mode = dig::mode_string(dd->mode(), dd->plugin_id());
+            m.sys = kv.first;
+        }
+    g_home.swap(h);
+}
+
+// The pause ended: the control VFOs the scan moved go back (normal commands:
+// the user's VFOs, saved where they were) - from 1 s after the scan stopped
+// (a scanner resets the VFOs it used as it stops), retried every 0.5 s for
+// RESTORE_MS while the VFO stays as the scan left it and its place isn't in
+// the span (the receiver tuned back by hand). Moved meanwhile by the user:
+// left as it is
+constexpr int64_t RESTORE_MS = 30000;
+struct Pending {
+    Home home;
+    float left_off = 0;
+    int left_bw = 0, left_tuner = 0;
+    std::string left_mode;
+    int64_t from = 0, until = 0;
+};
+std::map<int, Pending> g_pending;
+int64_t g_pending_t = 0;
+
+std::string vfo_mode(const Inst& inst) {
+    auto dd = inst.getDigital();
+    return dd ? dig::mode_string(dd->mode(), dd->plugin_id()) : "OFF";
+}
+
+void note_restore(int vfo, const Home& m, bool ok, const std::string& note) {
+    Restore r{vfo, m.sys, note, m.rf, ok, now_ms()};
+    std::cout << "Trunk following: control VFO D" << vfo << " " << note << std::endl;
+    for (auto it = g_restore.begin(); it != g_restore.end();)
+        it = it->vfo == vfo ? g_restore.erase(it) : std::next(it);
+    g_restore.push_back(r);
+    while (g_restore.size() > 16) g_restore.erase(g_restore.begin());
+    g_status_now = true;
+}
+
+void restore_homes() {
+    const int64_t now = now_ms();
+    for (const auto& kv : g_home) {
+        const Home& m = kv.second;
+        auto inst = decimator_manager.getDecimator(kv.first);
+        if (!inst || inst != m.inst.lock()) continue;   // removed meanwhile (an id reused: not ours)
+        Pending& pd = g_pending[kv.first];
+        pd.home = m;
+        pd.left_off = inst->frequency_offset_hz.load();
+        pd.left_bw = inst->bandwidth_hz.load();
+        pd.left_tuner = inst->tuner_channel.load();
+        pd.left_mode = vfo_mode(*inst);
+        pd.from = now + 1000;
+        pd.until = now + RESTORE_MS;
+    }
+}
+
+void tick_restore() {
+    const int64_t now = now_ms();
+    if (g_pending.empty() || g_paused || now - g_pending_t < 500) return;
+    g_pending_t = now;
+    for (auto it = g_pending.begin(); it != g_pending.end();) {
+        const int vfo = it->first;
+        Pending& pd = it->second;
+        const Home& m = pd.home;
+        if (now < pd.from) { ++it; continue; }
+        auto inst = decimator_manager.getDecimator(vfo);
+        if (!inst || inst != m.inst.lock()) { it = g_pending.erase(it); continue; }
+        const std::string mode = vfo_mode(*inst);
+        const double rf = vfo_rf(*inst);
+        if (std::fabs(rf - m.rf) < 100 && inst->bandwidth_hz.load() == m.bw && mode == m.mode) {
+            it = g_pending.erase(it);   // where it was (the scan didn't move it, or it is back)
+            continue;
+        }
+        const bool as_left = std::fabs(inst->frequency_offset_hz.load() - pd.left_off) < 1.0f &&
+                             inst->bandwidth_hz.load() == pd.left_bw && mode == pd.left_mode &&
+                             inst->tuner_channel.load() == pd.left_tuner;
+        if (!as_left) {
+            note_restore(vfo, m, false, "moved by the " + g_pause_why_last + ", then set by hand - left as it is");
+            it = g_pending.erase(it);
+            continue;
+        }
+        const Place p = place_for(m.rf, m.bw, m.tuner);
+        if (!p.ok) {
+            if (now > pd.until) {
+                note_restore(vfo, m, false, "moved by the " + g_pause_why_last + " - " + num_json(m.rf / 1e6, "%.6f") +
+                                                " MHz is outside the receiver's span: tune back (or move the VFO) to follow again");
+                it = g_pending.erase(it);
+            } else {
+                ++it;
+            }
+            continue;
+        }
+        std::vector<std::string> cmds;
+        const std::string sid = std::to_string(vfo);
+        if (inst->bandwidth_hz.load() != m.bw) cmds.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(m.bw));
+        if (mode != m.mode) cmds.push_back("DIGITAL_MODE:" + sid + ":" + m.mode);
+        char f[96];
+        if (operating_mode_index() == 2) snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", vfo, p.off_hz / 1000.0, p.tuner);
+        else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", vfo, p.off_hz / 1000.0);
+        cmds.push_back(f);
+        std::string err;
+        for (const auto& c : cmds) {
+            const std::string why = ControlHandler::apply_command(c);
+            if (!why.empty()) err = "'" + c + "' refused: " + why;
+        }
+        note_restore(vfo, m, err.empty(), err.empty() ? "put back on " + num_json(m.rf / 1e6, "%.6f") + " MHz after the " +
+                                                          g_pause_why_last : err);
+        it = g_pending.erase(it);
+    }
+}
+
 void pause_check() {
     std::string why;
     if (sfscan::running()) why = "saved-frequency scan";
     else if (scanner_manager.isRunning()) why = "discrete scanner";
     else if (continuous_scanner.isRunning()) why = "continuous scanner";
     const bool p = !why.empty();
+    if (!p && !g_paused) note_homes();
+    if (p) g_pause_why_last = why;
     if (p == g_paused && why == g_pause_why) return;
+    const bool resumed = g_paused && !p;
     g_paused = p;
     g_pause_why = why;
     g_status_now = true;
@@ -2191,6 +2514,10 @@ void pause_check() {
         remove_all_voices();
     } else {
         std::cout << "Trunk following: resumed" << std::endl;
+        if (resumed && !playback::active()) restore_homes();
+    }
+    if (p) {
+        g_pending.clear();   // (a scan again: its own end decides)
     }
 }
 
@@ -2232,7 +2559,7 @@ void tick_calls() {
             c.vfo = -1;
             c.user_ended = true;
             set_state(c, WAIT);
-            set_why(c, *s, "ended");
+            set_why(c, *s, "stopped");
             continue;
         }
         if (c.pending_place && now - v->t_placed >= PLACE_MIN_MS) {
@@ -2264,26 +2591,10 @@ void tick_calls() {
                         g_lat_active.push_back(now - c.t_rx_grant);
                         while (g_lat_active.size() > 50) g_lat_active.pop_front();
                     }
-                } else if (now - c.t_placed > SETUP_GIVEUP_MS) {
+                } else if (now - c.t_placed > SETUP_GIVEUP_MS &&
+                           (now - c.t_grant > 1000 || now - c.t_placed > SETUP_MAX_MS)) {
                     // a wrong channel table shows up here
-                    s->no_signal++;
-                    std::cout << "Trunk following: " << c.sys << " " << c.target << " on " << c.ch.name << " ("
-                              << c.hz / 1e6 << " MHz, " << c.fsrc << "): nothing received in "
-                              << SETUP_GIVEUP_MS / 1000 << " s" << std::endl;
-                    c.setup_failed = true;
-                    if (c.fsrc == "learned") {
-                        // a learned entry that leads nowhere twice: dropped
-                        auto ci = s->chans.find(c.ch.name);
-                        if (ci != s->chans.end() && ++ci->second.learn_fail >= 2) {
-                            std::cout << "Trunk following: " << c.sys << " channel " << c.ch.name << " - the learned "
-                                      << ci->second.learned_hz / 1e6 << " MHz received nothing twice: dropped" << std::endl;
-                            ci->second.learned_hz = NAN;
-                            ci->second.learn_fail = 0;
-                            g_learn_dropped++;
-                            s->lists_struct = true;
-                            mark_dirty(SAVE_LEARN_MS);
-                        }
-                    }
+                    note_no_signal(*s, c);
                     unfollow(c, "no_signal");
                 }
                 break;
@@ -2371,13 +2682,50 @@ void tick_tracks() {
         }
         ++it;
     }
-    // temporary systems without a control VFO or a call: gone
-    for (auto it = g_sys.begin(); it != g_sys.end();) {
-        bool used = !it->second.ctl.empty();
+    // control entries of VFOs that report another system now (or nothing): gone
+    for (auto& kv : g_sys)
+        for (auto c = kv.second.ctl.begin(); c != kv.second.ctl.end();) {
+            auto tr = g_tracks.find(c->first);
+            if (tr == g_tracks.end() || tr->second.sys != kv.first) {
+                c = kv.second.ctl.erase(c);
+                g_status_now = true;
+            } else {
+                ++c;
+            }
+        }
+    // a temporary system (no key yet): folded into the keyed one its VFO reports
+    // now; dropped, with its calls, once it has no control VFO left
+    std::vector<std::pair<std::string, std::string>> fold;
+    std::vector<std::string> drop;
+    for (const auto& kv : g_sys) {
+        if (!temp_id(kv.first)) continue;
+        const System& t = kv.second;
+        int vfo = -1;
+        try {
+            vfo = std::stoi(kv.first.substr(kv.first.find(":@") + 2));
+        } catch (const std::exception&) {}
+        auto tr = g_tracks.find(vfo);
+        if (tr != g_tracks.end() && !tr->second.sys.empty() && !temp_id(tr->second.sys) && sys_of(tr->second.sys) &&
+            tr->second.plugin == t.plugin)
+            fold.push_back({kv.first, tr->second.sys});
+        else if (t.ctl.empty())
+            drop.push_back(kv.first);
+    }
+    for (const auto& f : fold) {
+        const System* d = sys_of(f.second);
+        if (d) merge_temp(f.first, f.second, d->plugin, d->key);
+        g_status_now = true;
+    }
+    for (const auto& id : drop) {
+        std::vector<uint64_t> ids;
         for (const auto& kv : g_calls)
-            if (kv.second.sys == it->first) used = true;
-        if (temp_id(it->first) && !used) it = g_sys.erase(it);
-        else ++it;
+            if (kv.second.sys == id) ids.push_back(kv.first);
+        for (uint64_t c : ids) {
+            end_call(c, "no_system");
+            drop_call(c);
+        }
+        g_sys.erase(id);
+        g_status_now = true;
     }
 }
 
@@ -2508,6 +2856,7 @@ void tick() {
                 g_meta.clear();
             }
             g_learn.clear();
+            g_fence_until = now_ms() + 1500;
             g_hold_sys.clear();
             g_hold_tg.clear();
             if (pb) {
@@ -2532,6 +2881,7 @@ void tick() {
         }
         g_mode = mode;
         pause_check();
+        tick_restore();
         tick_tracks();
         tick_calls();
         tick_voices();
@@ -2574,6 +2924,7 @@ void load() {
         s.user_name = clean(x.str("name"), 64);
         s.name = clean(x.str("reported_name"), 64);
         s.listed_only = jbool(x, "listed_only");
+        s.heard = jbool(x, "heard", true);   // (a file from before the flag: they were all heard)
         if (const geo::Json* t = x.get("tgs"); t && t->type == geo::Json::ARR)
             for (const auto& g : t->a) {
                 const std::string tid = clean(g.str("id"), 32);
@@ -2646,10 +2997,25 @@ bool parse_obj(const std::string& body, geo::Json* j, std::string* err) {
     }
     return true;
 }
-System* parse_sys(const geo::Json& j, std::string* err) {
-    System* s = sys_of(j.str("sys"));
-    if (!s) *err = "no such system";
-    return s;
+System* parse_sys(const geo::Json& j, std::string* err, bool create = false) {
+    const std::string id = j.str("sys");
+    System* s = sys_of(id);
+    if (s || !create) {
+        if (!s) *err = "no such system";
+        return s;
+    }
+    // "<plugin>:<key>" of a system not heard yet: its entry is made (a channel
+    // table entered before the first grant, a debug playback's commands)
+    const size_t c = id.find(':');
+    if (c == std::string::npos || !dig::valid_plugin_id(id.substr(0, c)) || id.size() - c - 1 == 0 || !valid_key(id.substr(c + 1))) {
+        *err = "no such system (sys: <plugin id>:<system key>)";
+        return nullptr;
+    }
+    if (g_sys.size() >= MAX_SYSTEMS) {
+        *err = "too many systems (" + std::to_string(MAX_SYSTEMS) + ")";
+        return nullptr;
+    }
+    return &ensure_system(id, id.substr(0, c), id.substr(c + 1));
 }
 bool parse_bool01(const std::string& v, bool* out) {
     if (v == "1" || v == "true") { *out = true; return true; }
@@ -2793,8 +3159,8 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         Call& c = it->second;
         c.user_ended = true;
         std::cout << "Trunk following: " << c.sys << " " << c.target << " ended by the user" << std::endl;
-        if (c.vfo >= 0) unfollow(c, "ended");
-        else if (System* s = sys_of(c.sys)) set_why(c, *s, "ended");
+        if (c.vfo >= 0) unfollow(c, "stopped");
+        else if (System* s = sys_of(c.sys)) set_why(c, *s, "stopped");
         return done();
     }
     if (cmd == "TRUNK_HOLD") {
@@ -2826,7 +3192,8 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         cmd == "TRUNK_CH_SET" || cmd == "TRUNK_CH_DEL" || cmd == "TRUNK_RULE_SET" || cmd == "TRUNK_RULE_DEL") {
         geo::Json j;
         if (!parse_obj(arg, &j, err)) return done();
-        System* s = parse_sys(j, err);
+        const bool creates = cmd == "TRUNK_SYS_SET" || cmd == "TRUNK_TG_SET" || cmd == "TRUNK_CH_SET" || cmd == "TRUNK_RULE_SET";
+        System* s = parse_sys(j, err, creates);
         if (!s) return done();
         if (cmd == "TRUNK_SYS_SET") {
             if (j.get("name")) {
