@@ -675,7 +675,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   still needs them) ⚙ Setup Settings → Decoders
   (a sidebar box, "🔐 Digital Decoders", until 2026-11-17 - *sidebar.md*,
   "Setup Settings dialog") shows the plugin list (`aiRenderPlugins` -> `#ai-plugins`:
-  Auto detect tick, ↻ = `PLUGINS_RESCAN` after a manual copy + make; no
+  Auto detect tick, a "Trunk following" tag on the plugins whose list entry
+  has `trunking` (2026-11-20; *trunk-following.md*), ↻ = `PLUGINS_RESCAN` after a manual copy + make; no
   export / import / rebuild in the web UI - plugins move as folders + `make`;
   a plugin is put on a VFO with the VFO card's decoder list; the
   heading shows the count, the Decoders tab a ⚠ count of plugins with an

@@ -78,10 +78,10 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `crosshair` | centre the map on something, a typed coordinate; drive mode's Follow |
 | `fit` | show everything (fit the map) |
 | `enter` | run the search |
-| `play` `pause` `stop` `next` `first` | start / play, pause / hold, stop, skip / next, to the start |
+| `play` `pause` `stop` `next` `first` | start / play, pause / hold (also a trunk talkgroup hold), stop (also stop following a trunk call), skip / next, to the start |
 | `star` | saved frequencies, save a frequency |
 | `eye` | viewshed / line of sight, show or hide (marks, a key) |
-| `lock` | a locked signal |
+| `lock` | a locked signal; an encrypted call (trunk following's call rows) |
 | `pin` | a marker, From GPS, incidents |
 | `clock` | time (auto-name, earlier conversations) |
 | `timer` | the drive's write-speed test |
@@ -119,6 +119,8 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `bug` | Debug Playback |
 | `plane` | aircraft, Array Calibration (from aircraft) |
 | `decoder` | the decoders |
+| `trunk` | trunk following (a trunk forking into three branches: one control channel handing out many calls; the box, its editor, the VFO cards' line; 2026-11-20, *trunk-following.md*) |
+| `more` | more actions on a row (three dots: a trunk call's / talkgroup's menu) |
 | `speech` | Voice to Text, Transcription (not the VFO card's Transcribe tick: 2026-11-18, like its neighbours it has none) |
 | `bot` | the AI assistant |
 | `map` | the map |

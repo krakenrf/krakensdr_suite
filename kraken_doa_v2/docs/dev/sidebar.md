@@ -530,6 +530,16 @@ lost the box too; the section is reached through the cog there as well.
 - **Decoder Logging** is the Decoder Logging section of Setup Settings
   (below; *decoder-log.md*).
 
+**Trunk Following** (`trunk`, the `trunk` icon, 2026-11-20 -
+*trunk-following.md*, "Page") was added after Saved Frequencies, in every
+operating mode: 17 keyed boxes. It is `display:none` until the receiver
+answers `GET_TRUNK` with its status, so an older receiver leaves the sidebar
+as it was (a hidden box keeps its place in a stored order, as the Wideband
+Board box does). Its rarely used settings fold out under the ⚙ in its first
+row (the saved-frequency scan's pattern); a system's names, talkgroups and
+channel table are in its own dialog (the Setup Settings look, sections as a
+strip across the top on every width).
+
 ### Array diagrams (2026-11-17)
 
 The MUSIC DoA box's diagrams (`#uca-diagram`, `#wb-diagram`, `#ula-diagram`,
