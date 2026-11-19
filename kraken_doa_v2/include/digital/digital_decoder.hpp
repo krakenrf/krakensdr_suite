@@ -173,6 +173,8 @@ public:
     // Options::log (LOG_*) without the lock and copy - the decoder log's
     // record handler asks it per record
     int log_mode() const { return log_mode_.load(std::memory_order_relaxed); }
+    // Options::pos_s the same way (the record handler's "one position per object every N s")
+    int pos_interval_s() const { return pos_s_.load(std::memory_order_relaxed); }
 
     // Decimation pipeline: queue a block (copied; never blocks). rf_hz = the
     // VFO's RF centre - a change of more than 100 Hz resets the decoders.
@@ -248,6 +250,7 @@ private:
     mutable std::mutex opt_mu_;
     Options opts_;
     std::atomic<int> log_mode_{LOG_OFF};   // = opts_.log
+    std::atomic<int> pos_s_{POS_S_DEFAULT};  // = opts_.pos_s
     std::string plugin_id_;            // Mode::PLUGIN (opt_mu_)
     Report report_;
     std::unique_ptr<Engine> engine_;   // only touched by the worker (or process())

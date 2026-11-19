@@ -68,7 +68,11 @@ the internet and writes / changes decoder plugins):
     (VFOs + talkers - `rdfmap::status_message(true)`: a peek that doesn't
     change its every-2.5 s counters; MUSIC bearings without a station),
     `get_map_points`, `get_transcripts` (`v2t::history_json`),
-    `search_decoder_log` (gzip days too, <= 31), `get_saved_frequencies`,
+    `search_decoder_log` (gzip days too, <= 31; every decoder folder,
+    `transcripts/` and the old combined files - `declog::day_files`; an
+    optional `decoder` = only that decoder's folder plus the lines with its
+    `dec` in the transcripts and the old combined files, 2026-11-19),
+    `get_saved_frequencies`,
     `get_incidents`, `list_decoders`, `wait_for` (new decoder events, <= 300
     s, optional text), `find_identifications`
   - records: `capture_iq` (captured INSIDE kraken_doa - `ai_capture.cpp`,

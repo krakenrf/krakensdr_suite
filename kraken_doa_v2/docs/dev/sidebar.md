@@ -641,8 +641,12 @@ downwards without a limit worth worrying about, a strip does not. So:
   box's `?`, the problems as warning lines and the status rows (Logging -
   what is logging now, "D0, D2 · transcripts" -, Folder, Disk free + its
   bar, Today, Per day, All logs, Disk lasts; `.kv`); then *Files* -
-  Positions every (s), Keep (days) and Save to (the drive list, the folder
-  + Apply) as labelled fields. *What to log* (the type ticks in two
+  Keep (days) and Then compressed (days) side by side, then Save to (the
+  drive list, the folder + Apply) as labelled fields. Positions every (s)
+  was the first field until 2026-11-19, when the user asked for it to move
+  into the decoders that need it (a field in their row; shown here only for
+  an older receiver); Then compressed came the same day (plain files for
+  Keep days, gzip for Then compressed days, then deleted - *decoder-log.md*). *What to log* (the type ticks in two
   columns, one on a phone) was removed on 2026-11-19 at the user's request:
   the switch is a permission and what is written is chosen where the data
   is - each decoder's Logging (Off / Log / Log All) in its tab, the

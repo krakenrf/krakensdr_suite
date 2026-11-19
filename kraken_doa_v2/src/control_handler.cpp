@@ -511,10 +511,13 @@ static bool apply_decimator_snapshot(const string& snap) {
             if (getline(es, tok, ',') && !dig::parse_mode_string(tok, &v.digital, &v.plugin)) v.digital = dig::Mode::OFF;
             if (getline(es, tok, ',')) {
                 // options stored before the logging mode (2026-11-19) get Log; Log All where the
-                // old log types had raw frames (DECODER_LOG_TYPES is replayed before DECIMATORS)
-                bool no_log_key = false;
-                v.dopts = dig::options_from_string(tok, &no_log_key);
+                // old log types had raw frames (DECODER_LOG_TYPES is replayed before DECIMATORS).
+                // Stored before the per-VFO Positions every: the old global DECODER_LOG_POS_S
+                // (also replayed before), so nothing changes for an updated receiver
+                bool no_log_key = false, no_pos_key = false;
+                v.dopts = dig::options_from_string(tok, &no_log_key, &no_pos_key);
                 if (no_log_key && declog::legacy_raw()) v.dopts.log = dig::LOG_ALL;
+                if (no_pos_key) v.dopts.pos_s = declog::pos_interval();
             }
             // optional (newer files): the VFO's tuner (wideband / independent mode)
             if (getline(es, tok, ',') && !tok.empty()) v.tuner = std::clamp(stoi(tok), 0, MAX_CHANNELS - 1);
@@ -2034,7 +2037,8 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("DIGITAL_OPT:")) {
         // Format: DIGITAL_OPT:id:key:value - verbose 0|1 (Show all messages), log 0|1|2 (Logging:
-        // Off / Log / Log All; also the words off, log, all), invert 0|1, map 0|1 (Plot on map), or a
+        // Off / Log / Log All; also the words off, log, all), pos_s 1-3600 (Positions every N s:
+        // the decoder log's position rate), invert 0|1, map 0|1 (Plot on map), or a
         // plugin's own option "<plugin id>.<key>" (value "" = its default;
         // the plugin checks the value). Old keys: dmr_slot, p25_nac
         string params = string(message.substr(12));
@@ -2058,6 +2062,12 @@ void ControlHandler::handle_message_impl(string_view message) {
             if (m < 0) throw CommandRejected("log must be 0 (Off), 1 (Log) or 2 (Log All)");
             o.log = m;
             g_applied_cmd = "DIGITAL_OPT:" + to_string(id) + ":log:" + to_string(m);
+        }
+        else if (key == "pos_s") {
+            const int n = dig::parse_pos_s(val);
+            if (n < 0) throw CommandRejected("pos_s must be 1-3600 (seconds)");
+            o.pos_s = n;
+            g_applied_cmd = "DIGITAL_OPT:" + to_string(id) + ":pos_s:" + to_string(n);
         }
         else if (key == "invert") o.invert = val == "1";
         else if (key == "map") {
@@ -2126,15 +2136,42 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_DAYS:")) {
+        // Keep: the days a finished day stays plain (0 = keep forever: nothing compressed or deleted)
         const int d = parse_int(message, 17);
         if (d < 0 || d > 3650) throw CommandRejected("days must be 0-3650");
         declog::set_days(d);
         broadcast(declog::status_message());
     }
+    else if (message.starts_with("DECODER_LOG_ZIP_DAYS:")) {
+        // Then compressed: the days after Keep a day is kept gzipped, then deleted (0 = none)
+        const int d = parse_int(message, 21);
+        if (d < 0 || d > 3650) throw CommandRejected("compressed days must be 0-3650");
+        declog::set_zip_days(d);
+        broadcast(declog::status_message());
+    }
     else if (message.starts_with("DECODER_LOG_POS_S:")) {
+        // the old global Positions every (an older page; the stored value): what a VFO stored
+        // without its own pos_s gets - and, from a page, every VFO decoder's pos_s (2026-11-19)
         const int sec = parse_int(message, 18);
         if (sec < 1 || sec > 3600) throw CommandRejected("position interval must be 1-3600 s");
         declog::set_pos_interval(sec);
+        if (!g_replaying_settings.load()) {
+            bool any = false;
+            for (const auto& d : decimator_manager.getDecimatorInfoList()) {
+                auto inst = decimator_manager.getDecimator(d.id);
+                auto dd = inst ? inst->getDigital() : nullptr;
+                if (!dd) continue;
+                dig::Options o = dd->options();
+                if (o.pos_s == sec) continue;
+                o.pos_s = sec;
+                decimator_manager.setDigitalOptions(d.id, o);
+                any = true;
+            }
+            if (any) {
+                broadcast(MessageBuilders::build_decimator_info_message());
+                record_decimator_snapshot();
+            }
+        }
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_DIR:")) {
@@ -2917,7 +2954,10 @@ void ControlHandler::send_control_command(const string& cmd) {
 
 void ControlHandler::apply_persisted_settings() {
     auto commands = SettingsStore::apply_commands();
-    if (commands.empty()) return;
+    if (commands.empty()) {
+        declog::settings_restored();
+        return;
+    }
     cout << "Restoring " << commands.size() << " persisted setting(s)" << endl;
     g_replaying_settings.store(true);
     for (const auto& cmd : commands) {
@@ -2926,4 +2966,6 @@ void ControlHandler::apply_persisted_settings() {
         handle_websocket_message(cmd);
     }
     g_replaying_settings.store(false);
+    // the decoder log's retention pass waited for the stored Keep / Then compressed days
+    declog::settings_restored();
 }

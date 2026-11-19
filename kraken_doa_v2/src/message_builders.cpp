@@ -926,6 +926,9 @@ string MessageBuilders::build_decimator_info_message() {
              // the logging mode 0 Off / 1 Log / 2 Log All (a page that finds it
              // shows the Logging select; an older receiver has none)
              << ",\"log\":" << info.digital_opts.log
+             // Positions every (s) of the decoder log (a page that finds it shows the field
+             // in the decoder's row; an older receiver has the global one)
+             << ",\"pos_s\":" << info.digital_opts.pos_s
              << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false")
              << ",\"map\":" << (info.digital_opts.map ? "true" : "false") << ",\"plugin\":{";
         bool fo = true;

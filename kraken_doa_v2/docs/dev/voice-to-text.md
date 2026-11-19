@@ -204,7 +204,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `clips_tick` (2 s): a changed folder = rescan (`scan_clips`: only
   `<digits>.opus` in YYYY-MM-DD dirs; clips in the old folder stay there,
   no longer in the index - the tab says "the audio is gone"); retention
-  (`clip_retention`: day dirs older than `declog::keep_days()`, 0 = keep;
+  (`clip_retention`: day dirs older than `declog::keep_days()` - Decoder
+  Logging's Keep, the plain days; Then compressed does not apply to clips,
+  which are Opus already (2026-11-19) -, 0 = keep;
   clip-named files only, then rmdir - a foreign file keeps its dir) every
   10 min and when the days / date change; free space (statvfs of the
   nearest existing parent) < `MIN_FREE_BYTES` 100 MB -> `clip_low`, clips
@@ -248,7 +250,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (2026-11-19, the user: "Add a logging drop down to transcriptions too";
   `#v2t-lsel`, `v2tRenderLogSel` / `v2tSetLog`: the transcripts to the
   decoder log or not - the `voice` member of DECODER_LOG_TYPES, stored as
-  before; no Log All, transcription has no repeated messages; greyed with
+  before; written to `<log folder>/transcripts/transcripts-YYYY-MM-DD.jsonl`
+  since 2026-11-19, every source in that one folder - *decoder-log.md*; no Log All, transcription has no repeated messages; greyed with
   a Decoder Logging button beside it while logging to disk is not allowed -
   *decoder-log.md*), ▶ `v2tPlay` - fetch with the token
   -> blob -> Audio; a browser without Ogg Opus (`canPlayType`, older

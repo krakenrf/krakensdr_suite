@@ -276,7 +276,7 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.table_keep(seconds)` | how long a row stays without an update (60 s .. 7 days, default 10 min) - things that report rarely want long (ism: its "Keep devices" option, 24 h) |
 | `host.table_detail(key, lines)` | a row's details: label / value pairs the panel shows when the row is opened (▸) |
 | `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
-| `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the VFO's Logging is "Log All") |
+| `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the VFO's Logging is "Log All"; written to `decoder_logs/<plugin id>/<plugin id>-YYYY-MM-DD.jsonl`) |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
 

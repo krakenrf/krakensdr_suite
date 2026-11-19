@@ -851,10 +851,13 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
 *Decoder data log*): what every VFO's decoder reports - events, text
 messages, positions (throttled per object), raw frames (`kp::Host::raw`,
 only while ticked: OPTION `log_raw`), incidents, voice transcripts - to
-`<dir>/decoders-YYYY-MM-DD.jsonl` (local date). Buffered in memory, written
-every 5 s (SD card); at local midnight the day is closed + gzipped in the
-background; days older than the Keep setting (default 7, 0 = forever) are
-deleted - ONLY files named `decoders-YYYY-MM-DD.jsonl[.gz]`. Writing pauses
+`<dir>/<decoder>/<decoder>-YYYY-MM-DD.jsonl` (local date; transcripts in
+`<dir>/transcripts/`; one combined `<dir>/decoders-YYYY-MM-DD.jsonl` before
+2026-11-19, still read and aged). Buffered in memory, written every 5 s (SD
+card). A finished day stays plain for Keep days (default 7, 0 = forever),
+then gzipped for Then compressed days (default 30), then deleted - ONLY
+files named like ours. Positions every N s is a per-VFO decoder option
+(`DIGITAL_OPT:<vfo>:pos_s:N`). Writing pauses
 below 100 MB free. Folder default `decoder_logs` (cwd-relative, so the
 Docker volume gets it); the section lists drives (/, /media, /mnt, /run/media,
 /srv + the folder's own) with free space. `DECODER_LOG*:` commands,
@@ -899,7 +902,7 @@ leaves it out) with the models in `docker-data/whisper_models/`
   clip, CSV), `transcripts.jsonl` (cwd), decoder log type "voice", the
   audio as Ogg Opus 16 kbit/s in the DECODER LOG FOLDER
   (`<dir>/voice_clips/YYYY-MM-DD/<id>.opus`, deleted with Decoder Logging's
-  Keep days, none written below 100 MB free, 2 GB backstop),
+  Keep days - not its Then compressed days -, none written below 100 MB free, 2 GB backstop),
   `GET /voice_clip/<id>.opus` (audio/ogg, token like /recordings). Commands
   `VOICE2TEXT_*` (settings persisted before DECIMATORS; the per-VFO flag
   is DECIMATORS snapshot field 11), `VOICE2TEXT_DOWNLOAD:` = a catalogue

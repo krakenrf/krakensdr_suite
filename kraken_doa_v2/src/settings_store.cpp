@@ -136,6 +136,7 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"decoder_log_dir",          "DECODER_LOG_DIR:",          VType::STRING, "decoder_logs"},
         {"decoder_log_types",        "DECODER_LOG_TYPES:",        VType::STRING, "event,message,position,incident,voice"},
         {"decoder_log_days",         "DECODER_LOG_DAYS:",         VType::NUMBER, "7"},
+        {"decoder_log_zip_days",     "DECODER_LOG_ZIP_DAYS:",     VType::NUMBER, "30"},
         {"decoder_log_pos_s",        "DECODER_LOG_POS_S:",        VType::NUMBER, "10"},
         {"decoder_log",              "DECODER_LOG:",              VType::BOOL,   "0"},
         // 🗣 Voice to Text (voice2text.cpp) - before DECIMATORS, whose VFOs may

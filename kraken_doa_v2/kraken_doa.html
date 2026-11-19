@@ -319,6 +319,10 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .dig-log-l + .dig-log-go {margin-left:-8px}
 .dig-log-go {flex:none;padding:0 5px}
 .dig-log-go[hidden] {display:none}
+/* the decoder log's Positions every (digLogCtlHtml; decoders that report positions): greyed while
+   it has no effect (Logging Off / not allowed), the value still shown */
+.info-dec-settings input.dig-pos-s {width:52px;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:2px 4px;border-radius:3px;font-size:12px}
+.dig-pos-l.na,.dig-pos-l.na input.dig-pos-s {color:var(--t5)}
 .info-dec-settings label:has(> input[type="checkbox"]:disabled) {color:var(--t5)}
 .v2t-log-l {display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:12px;color:var(--t3)}
 .v2t-log-l + .dig-log-go {height:26px;margin-left:-2px}
@@ -1238,6 +1242,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .set-dlg .dl-types label.ck > input[type="checkbox"] {flex:none}
 .set-dlg .dl-types input[type="number"] {width:58px;flex:none}
 .set-dlg .row > .dl-days {flex:none;width:80px}
+/* Files: Keep | Then compressed side by side (wrapping on a phone) */
+.set-dlg .dl-keep {display:flex;flex-wrap:wrap;align-items:flex-end;gap:0 28px}
+.set-dlg .dl-keep > div[hidden] {display:none}
+.set-dlg .dl-keep .lbl {display:flex;align-items:center;gap:4px;min-height:20px}
+.set-dlg #dl-zip-wrap.na .lbl,.set-dlg #dl-zip-wrap.na .u {color:var(--t5)}
 .set-dlg .row > .u {color:var(--t3);font-size:12px}
 .set-dlg #dl-drive {margin-bottom:5px}
 .dig-log-warn .btn {flex:none;white-space:nowrap}
@@ -3585,14 +3594,15 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
     </div>
     <!-- 🗂 Decoder Logging (decoder_log.cpp; dlOnStatus): the master switch - a permission - with
-         its state, the problems and the status (what is logging now); the positions rate, how
-         long and where. What is written is chosen where the data is (2026-11-19): each decoder's
+         its state, the problems and the status (what is logging now); how long (Keep plain days,
+         Then compressed gzip days - 2026-11-19) and where. The positions rate is each decoder's
+         since 2026-11-19 (its row; #dl-pos-wrap only for an older receiver). What is written is chosen where the data is (2026-11-19): each decoder's
          Logging in its tab, the transcripts' in the Transcription panel. "What to log" (#dl-types-sec)
          only for an older receiver, which still obeys it. Each control sends its command at once.
          A sidebar box (data-sb "decoder-logging") until 2026-11-19 -->
     <div class="set-pane" data-t="declog" role="tabpanel">
       <div class="dig-codec dl-card off" id="dl-card">
-        <div class="h"><span class="i" id="dl-card-i">&#9679;</span><label for="dl-enable" title="Lets the decoders and transcripts set to Log write to files on this device's disk; nothing is written while it is off">Allow logging to disk</label><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Allows the <b>digital decoders</b> and the <b>transcripts</b> to be saved to files <b>on this device's disk</b>; nothing is written while it is off. What is written is chosen where the data is: each decoder's <b>Logging</b> in its tab under the waterfall (<b>Log</b>: its events, text messages, positions and incidents; <b>Log All</b>: those plus raw frames and the messages a control channel repeats constantly), and the <b>Logging</b> of the Transcription panel. One JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (Log All: ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span><span class="u" id="dl-state">&mdash;</span><input type="checkbox" class="sw" id="dl-enable" aria-label="Allow logging to disk" title="Lets the decoders and transcripts set to Log write to files on this device's disk; nothing is written while it is off" onchange="dlSetEnabled(this.checked)"></div>
+        <div class="h"><span class="i" id="dl-card-i">&#9679;</span><label for="dl-enable" title="Lets the decoders and transcripts set to Log write to files on this device's disk; nothing is written while it is off">Allow logging to disk</label><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Allows the <b>digital decoders</b> and the <b>transcripts</b> to be saved to files <b>on this device's disk</b>; nothing is written while it is off. What is written is chosen where the data is: each decoder's <b>Logging</b> in its tab under the waterfall (<b>Log</b>: its events, text messages, positions and incidents; <b>Log All</b>: those plus raw frames and the messages a control channel repeats constantly), and the <b>Logging</b> of the Transcription panel. A folder per decoder with a JSON Lines file per day (<code>adsb/adsb-YYYY-MM-DD.jsonl</code>; the transcripts in <code>transcripts/</code>). Finished days stay plain for <b>Keep</b> days, then gzipped (<code>.jsonl.gz</code>, read with <code>zcat</code> / <code>zgrep</code>) for <b>Then compressed</b> days, then they are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (Log All: ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span><span class="u" id="dl-state">&mdash;</span><input type="checkbox" class="sw" id="dl-enable" aria-label="Allow logging to disk" title="Lets the decoders and transcripts set to Log write to files on this device's disk; nothing is written while it is off" onchange="dlSetEnabled(this.checked)"></div>
         <div id="dl-warn"></div>
         <div id="dl-old" class="wn" hidden><svg class="ic t" aria-hidden="true"><use href="#i-warn"/></svg><span title="The program running on this receiver is older than this page: it logs by the types under What to log. Rebuild it (make in kraken_doa_v2, or install.sh) for a Logging choice on each decoder">Per-decoder logging needs the updated program</span></div>
         <div id="dl-status" class="dl-status">
@@ -3603,7 +3613,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <div class="kv"><span>Today</span><span id="dl-today">&mdash;</span></div>
           <div class="kv" id="dl-perday-row"><span>Per day</span><span id="dl-perday">&mdash;</span></div>
           <div class="kv"><span>All logs</span><span id="dl-all">&mdash;</span></div>
-          <div class="kv" id="dl-lasts-row"><span title="How long the disk's free space lasts at this rate (finished days gzipped, about 6x smaller)">Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
+          <div class="kv" id="dl-lasts-row"><span title="Whether the log fits on this disk at today's rate, once it holds every day it keeps: today and the Keep days as plain files, the Then compressed days gzipped - or how long until the disk is full. An estimate: the rate is today's so far">Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
         </div>
         <div id="dl-note" class="info dl-note"></div>
       </div>
@@ -3619,15 +3629,29 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       </div>
       </div>
       <div class="sec"><span>Files</span></div>
+      <!-- an older receiver only (no per-decoder Positions every; dlOnStatus): its global field -->
+      <div id="dl-pos-wrap" hidden>
       <div class="lbl" title="A decoder's position of one object (an aircraft, a ship, a station) is written at most this often">Positions every</div>
       <div class="row">
         <input type="number" id="dl-pos-s" class="dl-days" min="1" max="3600" value="10" title="1 - 3600 s" onchange="dlSetPosS()">
         <span class="u">s</span>
       </div>
-      <div class="lbl" title="Days of log files kept; 0 = forever">Keep</div>
-      <div class="row">
-        <input type="number" id="dl-days" class="dl-days" min="0" max="3650" value="7" title="0 = keep forever" onchange="dlSetDays()">
-        <span class="u">days</span>
+      </div>
+      <div class="dl-keep">
+        <div>
+          <div class="lbl" title="Finished days kept as plain files (.jsonl); 0 = everything is kept, plain, forever">Keep<span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Each finished day of each decoder stays a plain file (<code>.jsonl</code>) for <b>Keep</b> days, then is gzipped in the same folder (<code>.jsonl.gz</code>, read with <code>zcat</code> / <code>zgrep</code>) and kept for <b>Then compressed</b> days more, then deleted.<br>Keep 7, Then compressed 30: the last 7 days plain, the 30 days before those (days 8 - 37) compressed, older days deleted.<br>Then compressed 0: deleted after the Keep days. Keep 0: nothing is compressed or deleted, ever.<br>The transcripts' audio clips are kept for the Keep days only.</span></span></div>
+          <div class="row">
+            <input type="number" id="dl-days" class="dl-days" min="0" max="3650" value="7" title="Days a finished day stays a plain file: 0 - 3650; 0 = keep everything forever (nothing compressed or deleted)" onchange="dlSetDays()">
+            <span class="u">days</span>
+          </div>
+        </div>
+        <div id="dl-zip-wrap">
+          <div class="lbl" title="Then kept gzipped (.jsonl.gz) for this many more days, then deleted; 0 = deleted after the Keep days">Then compressed</div>
+          <div class="row">
+            <input type="number" id="dl-zip-days" class="dl-days" min="0" max="3650" value="30" title="Days after the Keep days a day is kept gzipped, then it is deleted: 0 - 3650; 0 = deleted after the Keep days" onchange="dlSetZipDays()">
+            <span class="u">days</span>
+          </div>
+        </div>
       </div>
       <div class="lbl">Save to</div>
       <select id="dl-drive" onchange="dlPickDrive(this.value)" title="Drives on this device (free space)"></select>
@@ -3679,7 +3703,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       </div>
       <div class="sec"><span>Audio</span></div>
       <label class="swr" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><span>Skip non-speech</span><input type="checkbox" class="sw" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"></label>
-      <label class="swr" title="Keep each transcript's audio to play it back in the Transcription panel: Opus files (~7 MB an hour of speech) in the decoder log's folder (Decoder Logging, Save to; voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><span>Keep the audio</span><input type="checkbox" class="sw" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"></label>
+      <label class="swr" title="Keep each transcript's audio to play it back in the Transcription panel: Opus files (~7 MB an hour of speech) in the decoder log's folder (Decoder Logging, Save to; voice_clips/, one folder a day), deleted after the Keep days of the log files (the plain days - Then compressed does not apply: they are compressed already). Not saved while that disk has less than 100 MB free."><span>Keep the audio</span><input type="checkbox" class="sw" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"></label>
       <div class="info v2t-clips" id="v2t-clips"></div>
       <div class="sec"><span>Status</span></div>
       <div id="v2t-status">
@@ -14890,7 +14914,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // setting beside it. The decoder gets verbose = the tick OR Log All in effect - the tick is
   // then shown ticked and disabled. An older receiver (no `log` in the options): only the tick.
   // (DIG_LOG_MODES, DIG_VERBOSE_TIP: the globals block)
-  function digLogCtlHtml(id, o) {
+  // pos: the decoder reports positions (its plugin's map capability) - "Positions every" after the
+  // select, the decoder log's position rate (a receiver without per-VFO pos_s: none)
+  function digLogCtlHtml(id, o, pos) {
     const verb = (dis, tip) => `<label title="${digEsc(tip)}"><input type="checkbox" data-key="verbose" ${o.verbose || dis ? 'checked' : ''}${dis ? ' disabled' : ''}` +
                                ` onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Show all messages</label>`;
     if (o.log === undefined) return verb(false, DIG_VERBOSE_TIP);   // an older receiver
@@ -14905,9 +14931,25 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                 DIG_LOG_MODES.map(([v, t]) => `<option value="${v}"${+v === shown ? ' selected' : ''}${!allowed && v !== '0' ? ' disabled' : ''}>${t}</option>`).join('') +
                 '</select></label>' +
                 (allowed ? '' : `<button class="btn sm dig-log-go" type="button" onclick="setDlgOpen('declog')" aria-label="Decoder Logging" title="Logging to disk is not allowed - Setup Settings → Decoder Logging">${icon('log')}</button>`);
+    let ps = '';
+    if (pos && o.pos_s !== undefined) {
+      const na = !allowed || !m;
+      const ptip = 'The decoder log keeps at most one position per aircraft / vessel / station in this time (1 - 3600 s); smaller = larger files. ' +
+                   'Only the log: the map shows every position' +
+                   (!allowed ? '\n\nNo effect now: logging to disk is not allowed (Setup Settings → Decoder Logging)'
+                     : !m ? '\n\nNo effect now: this decoder\'s Logging is Off' : '');
+      ps = `<label class="dig-pos-l${na ? ' na' : ''}" title="${digEsc(ptip)}">Positions every <input type="number" class="dig-pos-s" data-key="pos_s" min="1" max="3600" step="1"` +
+           ` value="${+o.pos_s || 10}"${na ? ' disabled' : ''} aria-label="Positions every (seconds)" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetPosS(${id}, this)"> s</label>`;
+    }
     const all = allowed && m === 2;
-    return sel + verb(all, all ? 'Log All includes the messages a control channel repeats: shown and written while this decoder logs everything' +
+    return sel + ps + verb(all, all ? 'Log All includes the messages a control channel repeats: shown and written while this decoder logs everything' +
                                  (o.verbose ? '' : ' (with Log or Off this is unticked again)') : DIG_VERBOSE_TIP);
+  }
+  // a VFO decoder's Positions every: whole seconds 1 - 3600 (the field shows what the receiver took)
+  function digSetPosS(id, el) {
+    const v = Math.max(1, Math.min(3600, Math.round(+el.value || 10)));
+    el.value = v;
+    digSetOptFor(id, 'pos_s', v);
   }
   // logging to disk allowed ("Allow logging to disk"); the receiver knows per-VFO Logging
   function dlAllowed() { return !!(dlState && dlState.enabled); }
@@ -14920,8 +14962,15 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     return o.log === undefined ? 1 : (+o.log || 0);
   }
 
+  // The decoder of a tab reports positions (map points): its plugin's static capability (kp::Info::map,
+  // "map" in the plugin list - ADS-B, AIS, APRS, UAT, FLARM, radiosonde, VDL2, DMR / D-STAR GPS ...),
+  // else the receiver's word for the plugins running (the status' map_capable) - not "a point was seen"
+  function digReportsPositions(tab, st) {
+    const p = digPlugin(tab);
+    return p ? !!p.map : !!(st && st.map_capable);
+  }
   // One VFO's settings row in a tab: VFO + state, mode, Listen, the plugin's
-  // options, Logging, Show all messages, Invert, Plot on map, bandwidth / plugin problems
+  // options, Logging, Positions every, Show all messages, Invert, Plot on map, bandwidth / plugin problems
   function digVfoRowHtml(id, tab, about = '') {
     const d = digDec(id);
     const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
@@ -14978,7 +15027,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         `<label>Mode <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
         (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${digEsc(listenTip)}">${icon('speaker')}<span>${listening ? 'Listening' : 'Listen'}</span></button>` : '') +
         (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
-        opts + digLogCtlHtml(id, o) +
+        opts + digLogCtlHtml(id, o, digReportsPositions(tab, st)) +
         `<label title="For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR."><input type="checkbox" ${o.invert ? 'checked' : ''} onchange="digSetOptFor(${id}, 'invert', this.checked ? 1 : 0)"> Invert</label>` +
         (st && (st.map_capable || st.map_points > 0 || hasMessages)
           ? `<label title="Show this VFO's positions (e.g. aircraft) / incidents on the Map in the right-hand pane"><input type="checkbox" ${o.map === true ? 'checked' : ''} onchange="digSetOptFor(${id}, 'map', this.checked ? 1 : 0); if (this.checked) mapToggle(true)"> ${icon('map', 't')}<span>Plot on map${st.map_points ? ' (' + st.map_points + ')' : ''}</span></label>` +
@@ -15412,6 +15461,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     el.value = v;
     send('DECODER_LOG_DAYS:' + v);
   }
+  function dlSetZipDays() {
+    const el = $id('dl-zip-days');
+    const v = Math.max(0, Math.min(3650, Math.round(+el.value || 0)));
+    el.value = v;
+    send('DECODER_LOG_ZIP_DAYS:' + v);
+  }
   // The drive lists of the folder pickers (here and the 📼 Recorder's): mount
   // points on Linux ("/", "/media/usb"), drives on Windows ("C:/",
   // "//srv/share" - '/'-separated, diskutil::mounts_json). The system disk is
@@ -15490,6 +15545,30 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       : `<span title="Pick Log or Log All in a decoder's Logging (its tab under the waterfall), or Log in the Transcription panel">nothing</span>`);
     row.classList.toggle('dim', !on || !parts.length);
   }
+  // "Disk lasts": the log at steady state at today's rate - today + the Keep days plain, the Then
+  // compressed days gzipped (the ratio measured on the .gz files there, else ~6x) - against the
+  // free space plus what the log holds now; or the days until that is full. [text, tooltip]
+  function dlDiskLasts(d) {
+    if (!(d.per_day > 0 && d.total)) return ['—', ''];
+    const fmtDays = t => t > 3650 ? '> 10 years' : `≈ ${t < 2 ? t.toFixed(1) : Math.floor(t)} days`;
+    if (d.zip_days === undefined) {
+      // an older receiver: every finished day gzipped at midnight, deleted after Keep
+      const kept = d.days > 0 ? d.per_day * (1 + d.days / 6) : 0;
+      if (d.days > 0 && kept < d.free) return [`fits (${d.days} days ≈ ${dlBytes(kept)})`, 'Finished days gzipped, about 6x smaller (assumed)'];
+      return [fmtDays(d.free / (d.per_day / 6)), 'Finished days gzipped, about 6x smaller (assumed)'];
+    }
+    const measured = d.gz_ratio > 1, r = measured ? d.gz_ratio : 6;
+    const how = measured ? `gzip ≈ ${r.toFixed(1)}x smaller, measured on the ${d.gz_measured} compressed file${d.gz_measured === 1 ? '' : 's'} there`
+                         : 'gzip assumed about 6x smaller (no compressed day yet to measure)';
+    const room = d.free + (d.total_bytes || 0), pd = d.per_day, plainDays = 1 + d.days;
+    if (!d.days) return [fmtDays(d.free / pd), 'Keep 0: every day is kept, plain, forever - the disk fills at today\'s rate'];
+    const kept = pd * plainDays + pd / r * d.zip_days;
+    const tip = `At today's rate: today + ${d.days} plain day${d.days === 1 ? '' : 's'} ≈ ${dlBytes(pd * plainDays)}` +
+                (d.zip_days ? `, ${d.zip_days} compressed ≈ ${dlBytes(pd / r * d.zip_days)}` : '') + ` (${how})`;
+    if (kept <= room) return [`fits (${d.days}${d.zip_days ? ' + ' + d.zip_days : ''} days ≈ ${dlBytes(kept)})`, tip];
+    const t = room < pd * plainDays ? room / pd : plainDays + (room - pd * plainDays) / (pd / r);
+    return [fmtDays(t), tip + ' - more than the disk holds'];
+  }
   function dlOnStatus(d) {
     dlState = d;
     const idle = (el) => el && document.activeElement !== el;
@@ -15499,6 +15578,19 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     document.querySelectorAll('#dl-types input[data-t]').forEach(c => { if (idle(c)) c.checked = types.includes(c.dataset.t); });
     if (idle($id('dl-days'))) $id('dl-days').value = d.days;
     if (idle($id('dl-pos-s'))) $id('dl-pos-s').value = d.pos_s;
+    // Then compressed: a receiver that has it (zip_days); disabled while Keep is 0 (forever: nothing
+    // is compressed); the global Positions every only for a receiver without the per-decoder one
+    const hasZip = d.zip_days !== undefined;
+    $id('dl-zip-wrap').hidden = !hasZip;
+    if (hasZip) {
+      const z = $id('dl-zip-days');
+      if (idle(z)) z.value = d.zip_days;
+      z.disabled = !d.days;
+      $id('dl-zip-wrap').classList.toggle('na', !d.days);
+      z.title = d.days ? 'Days after the Keep days a day is kept gzipped, then it is deleted: 0 - 3650; 0 = deleted after the Keep days'
+                       : 'Keep 0 keeps everything forever, uncompressed - nothing is compressed or deleted (set Keep to use this)';
+    }
+    $id('dl-pos-wrap').hidden = !!d.pos_per_vfo;
     const dir = $id('dl-dir');
     if (idle(dir) && $id('dl-dir-err').style.display === 'none') dir.value = d.dir;
     // drive list: path - free of total. Windows' "system disk" (drive letters,
@@ -15561,14 +15653,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     $id('dl-today').textContent = `${dlBytes(d.today_bytes)} (${d.today})`;
     $id('dl-perday').textContent = d.per_day ? '≈ ' + dlBytes(d.per_day) + ' (before gzip)' : (d.enabled ? 'measuring…' : '—');
     $id('dl-all').textContent = `${d.files} file${d.files === 1 ? '' : 's'}, ${dlBytes(d.total_bytes)}`;
-    // gzip makes the finished days ~5-10x smaller; estimate with 1/6
-    let lasts = '—';
-    if (d.per_day > 0 && d.total) {
-      const kept = d.days > 0 ? d.per_day * (1 + d.days / 6) : 0;
-      if (d.days > 0 && kept < d.free) lasts = `fits (${d.days} days ≈ ${dlBytes(kept)})`;
-      else { const days = d.free / (d.per_day / 6); lasts = days > 3650 ? '> 10 years' : `≈ ${days < 2 ? days.toFixed(1) : Math.floor(days)} days`; }
-    }
+    const [lasts, lastsTip] = dlDiskLasts(d);
     $id('dl-lasts').textContent = lasts;
+    $id('dl-lasts').title = lastsTip;
     const extra = [];
     if (d.buffered) extra.push(`${dlBytes(d.buffered)} waiting to be written`);
     if (d.compressing) extra.push(`gzipping ${d.compressing} file${d.compressing === 1 ? '' : 's'}…`);

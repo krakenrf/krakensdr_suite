@@ -1627,6 +1627,7 @@ void DigitalDecoder::set_options(const Options& o) {
     std::lock_guard<std::mutex> lk(opt_mu_);
     opts_ = o;
     log_mode_.store(o.log, std::memory_order_relaxed);
+    pos_s_.store(o.pos_s, std::memory_order_relaxed);
 }
 
 Options DigitalDecoder::options() const {
@@ -1858,7 +1859,8 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
           << ",\"state\":\"" << json_escape(voice_state_) << "\"}";
     }
     Options op = options();
-    o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"log\":" << op.log << ",\"invert\":" << (op.invert ? "true" : "false")
+    o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"log\":" << op.log << ",\"pos_s\":" << op.pos_s
+      << ",\"invert\":" << (op.invert ? "true" : "false")
       << ",\"map\":" << (op.map ? "true" : "false")
       << ",\"plugin\":{";
     first = true;

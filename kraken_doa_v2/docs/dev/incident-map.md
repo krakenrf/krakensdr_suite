@@ -67,7 +67,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   saved to incidents.tsv (cwd; reloaded at start; written <= every 10 s and
   at shutdown via `incidents::save_now()`). A new incident logs "📍
   Incident: ..." in the decoder's event log, and goes to the decoder data
-  log (`declog::record_incident`, type "incident") when logging to disk is
+  log (`declog::record_incident`, type "incident"; in the file of the
+  decoder whose message it was, e.g. `pagers/pagers-YYYY-MM-DD.jsonl`) when logging to disk is
   allowed and the Logging of the VFO whose decoder sent the message is Log
   or Log All at the time the lookup finishes (2026-11-19, the per-VFO
   Logging - *decoder-log.md*; the "Incidents" type tick before). A page

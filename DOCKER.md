@@ -197,8 +197,9 @@ docker-data/codecs/                           optional self-built voice codecs (
                                               cdecoder, sdecoder - README "Digital voice codecs")
 docker-data/whisper_models/                   Voice to Text speech models ("⬇ Get" in ⚙ Setup Settings → 🗣 Voice to Text)
 docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (🗣 Transcription)
-docker-data/kraken_doa/decoder_logs/          Decoder Logging files, and in voice_clips/ the
-                                              transcripts' audio (Opus, kept as many days as the logs)
+docker-data/kraken_doa/decoder_logs/          Decoder Logging files (a folder per decoder, transcripts/),
+                                              and in voice_clips/ the transcripts' audio (Opus, kept
+                                              for the logs' Keep days)
 ```
 
 **Voice to Text** (⚙ Setup Settings → 🗣 Voice to Text): the image includes the

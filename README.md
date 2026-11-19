@@ -390,9 +390,15 @@ active frequency, so that all are heard, decoded and transcribed at once.
   keep where the data is: a decoder's **Logging** in its tab under the
   waterfall - **Log** (its events, messages, positions, incidents) or
   **Log All** (also raw frames and the messages a control channel repeats)
-  - and the Transcription panel's **Logging** for voice transcripts. One
-  JSON-lines file per day in `kraken_doa_v2/decoder_logs/` (or a drive you
-  pick), gzipped at midnight and kept 7 days by default.
+  - and the Transcription panel's **Logging** for voice transcripts. A
+  folder per decoder in `kraken_doa_v2/decoder_logs/` (or a drive you pick)
+  with one JSON-lines file per day (`adsb/adsb-2026-11-19.jsonl`; the
+  transcripts in `transcripts/`). A finished day stays a plain file for
+  **Keep** days (7 by default), is then gzipped and kept for **Then
+  compressed** days (30 by default: days 8 - 37), then deleted. Read a
+  compressed day with `zcat adsb/adsb-2026-11-01.jsonl.gz` (or `zgrep`).
+  How often an aircraft's or a ship's position is written is the decoder's
+  **Positions every** (in its tab, beside Logging).
 - **DoA Recording**: the bearings to CSV or SQLite.
 - **Voice to Text**: tick **Transcribe** on a VFO and what is said there
   is written down by a speech-to-text model running on the receiver. No
@@ -530,7 +536,8 @@ the "Words to expect": callsigns and names spelled as you want them.
   give it more CPU cores, use a smaller model or transcribe fewer VFOs.
 - The audio is kept as Ogg Opus (about 7 MB per hour of speech) in the
   Decoder Logging folder, at most 2 GB, and follows its "Keep" days
-  (⚙ Setup Settings, Decoder Logging).
+  (⚙ Setup Settings, Decoder Logging; the audio is not kept for the "Then
+  compressed" days).
 - On a Mac with Apple Silicon the model runs on the GPU;
   `make whisper WHISPER_GPU=off` forces the CPU.
 - Docker: the image includes the helper. Get the models with **Get**.

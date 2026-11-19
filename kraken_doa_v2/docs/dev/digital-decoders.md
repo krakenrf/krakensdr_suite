@@ -342,7 +342,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   of the "Log all" tick; greyed while logging to disk is not allowed: Log /
   Log All disabled options, the select showing Off whatever is stored, a
   small Decoder Logging button beside it, the tooltip naming the stored
-  mode) and **Show all messages** (the verbose tick, "Log all" until then;
+  mode), **Positions every [N] s** (2026-11-19, only for a decoder whose
+  plugin reports positions - `kp::Info::map`, `digReportsPositions`; the
+  per-VFO option `pos_s`, `DIGITAL_OPT:<vfo>:pos_s:N`, 1-3600, default 10:
+  the decoder log keeps at most one position per object in that time -
+  greyed while the VFO's Logging is Off or logging is not allowed;
+  *decoder-log.md*) and **Show all messages** (the verbose tick, "Log all" until then;
   ticked and disabled while Log All is in effect, its tooltip saying why;
   the stored value comes back after), then Invert, Plot on map,
   bandwidth / plugin problems; an older receiver - no `log` in the options

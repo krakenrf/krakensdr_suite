@@ -7,6 +7,149 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
 **Decoder data log (`src/decoder_log.cpp`, ⚙ Setup Settings → Decoder Logging; a sidebar box until 2026-11-19):**
+- **The files (2026-11-19).** The user: "I want to change it so that each
+  decoder logs to its own file in its own folder, in the decoder_logs
+  folder. The X days of logging will be kept in individual files in each
+  folder. Secondly, add a feature with setting that asks to keep log files
+  longer than X days, but in compressed format. So for example we can keep
+  7 days of uncompressed logs, and up to 30 days of compressed logs. Where
+  each time the expiring uncompressed log file is moved into a zip file or
+  similar. Thirdly, move the "POsitions every" setting into the decoders
+  itself that need it (like ads-b, AIS etc)." So:
+  - **A folder per decoder**: `<dir>/<name>/<name>-YYYY-MM-DD.jsonl`, `<name>`
+    = the record's `dec` (the plugin id: `adsb/adsb-2026-11-19.jsonl`,
+    `ais/`, `pagers/` ...). Per decoder, not per VFO: two VFOs running ADS-B
+    write one file, told apart by each line's `vfo` / `mhz` (the record
+    format did not change; `dec` stays in every line, files get copied
+    around). **Incidents** go to the file of the decoder whose page it was
+    (their `dec`). **Transcripts** (type voice; `dec` = a plugin id or NBFM /
+    AM / WBFM) all go to ONE folder, `transcripts/transcripts-YYYY-MM-DD.jsonl`:
+    a transcript belongs to Voice to Text, and a user looks for them in one
+    place. The clips stay where they were (`voice_clips/YYYY-MM-DD/`; the
+    lines point at them).
+  - **The folder name is made safe by the writer** whatever the id
+    (`declog::safe_folder_name`, `include/decoder_log_names.hpp` - pure,
+    header-only, so a harness tests it): only `[a-z0-9_-]` (A-Z lowered,
+    anything else `_`), at most 32 characters, `other` when no letter or
+    digit is left (`""`, `..`, `/`), and a `dec-` prefix on the names Windows
+    reserves (con, prn, aux, nul, com1-9, lpt1-9) and on our own folders
+    (`transcripts`, `voice_clips`) so a plugin of that name can't mix with
+    them. No path can leave `<dir>`. Folders are created with
+    `diskutil::mkdirs` (the compat layer's call: `create_directories` on
+    Windows).
+  - **The old combined files** (`<dir>/decoders-YYYY-MM-DD.jsonl[.gz]`,
+    written before this) stay where they are, are not split, stay
+    searchable, and age by the same rule (below). Today's, if the program is
+    updated mid-day, is no longer appended to and is treated like a finished
+    day (not counted in Today / Per day).
+  - **Several files are open at once**: a buffer per file (a map folder ->
+    text, `State::bufs`); every `FLUSH_S` one append + fflush per file with
+    records, nothing written per record; the 32 MB cap and the dropped
+    counter are for all buffers together (a dropped flush now counts its
+    lines); the free-space floor as before (checked once per flush). A file
+    without a record for 10 min is closed at the next flush tick (an idle
+    decoder holds no handle; `KRAKEN_DECLOG_IDLE_S` = 1-3600 s, read at
+    startup, shortens it for tests - not a user setting). The day change
+    writes every buffer into its file of the finished day and closes them
+    all. The status' `open_files` counts the open ones.
+  - **One function knows the layout**: `declog::day_files(dir, date)` - the
+    plain and gz files of one day in every decoder folder, `transcripts/`
+    and the old combined file (folder `""`). The assistant's search uses it;
+    no other file builds log paths. Only folders whose name
+    `safe_folder_name` would give back (plus `transcripts`; never
+    `voice_clips`) and only names `<folder>-YYYY-MM-DD.jsonl`, `.jsonl.gz`,
+    `.jsonl.gz.part` (and `decoders-...` in `<dir>`) are ever listed - so
+    nothing else in the folder is ever touched.
+- **Plain for N days, then compressed for M more (2026-11-19).** Two
+  settings: **Keep** (`DECODER_LOG_DAYS`, N, default 7, 0-3650) and **Then
+  compressed** (`DECODER_LOG_ZIP_DAYS`, M, new, default 30, 0-3650). The
+  rule, by the age of a file's date (today 0, yesterday 1;
+  `declog::retention_action`, pure):
+  - a finished day stays **plain** while its age <= N (this replaced the
+    gzip at midnight: yesterday is plain now), is **gzipped** in its folder
+    (`<name>-YYYY-MM-DD.jsonl.gz`: one gzip per day and decoder - the
+    existing zlib code, `zcat` / `zgrep` read it, a damaged file costs one
+    day; no archive library, no growing archive rewritten) when N < age <=
+    N + M, and **deleted** when age > N + M (a plain one is deleted, not
+    compressed first);
+  - the user's example "7 days of uncompressed logs, and up to 30 days of
+    compressed logs" = **N 7, M 30**: plain for days 1-7, compressed for
+    days 8-37, deleted after day 37 - the 30 is counted after the 7, not
+    including them (the page's `?` tip says it with these numbers);
+  - **M = 0**: deleted when it leaves the plain window (the old rule);
+  - **N = 0** keeps its old meaning, keep forever: nothing is ever
+    compressed or deleted (and Then compressed is shown disabled). M has no
+    "forever" (not offered: 3650 days is the most; an empty field would have
+    needed a third state in the command and the status);
+  - a day the old version already gzipped (younger than N) **stays gz** -
+    never decompressed; gz files are kept until N + M, then deleted;
+  - a `.gz.part` (a gzip a crash interrupted: the plain file is still
+    there) is removed and the plain file compressed again; today's files
+    (age <= 0, also a clock set back) are never touched;
+  - the old combined files follow the same ages.
+  The **pass** (`run_pass`, a detached thread, one at a time - a request
+  during a pass runs another after it, `request_pass`): deletions first,
+  then the compressions one file at a time (`.gz.part` -> `fs_replace` ->
+  unlink; a crash leaves the plain file, retried at the next pass). It runs
+  at startup, at the day change, on Keep / Then compressed / folder
+  changes and every 10 min - **but not before the settings replay**
+  (`declog::settings_restored()`, called at the end of
+  `ControlHandler::apply_persisted_settings`, which runs once heimdall
+  connects): the stored Keep days must be known first. (Before, retention
+  ran a second after startup with the default 7 days, so a stored Keep 0 or
+  30 could lose days while heimdall was not yet connected.)
+- **Voice clips** keep following `keep_days()` = N, the plain window only,
+  as before: they are Opus already (gzip gains nothing) and they are the
+  bulky part; Then compressed does not apply to them (the "Keep the audio"
+  tooltip and the Keep `?` tip say so). N = 0 keeps them forever, as before.
+- **The status' size rows** sum over everything: every folder, plain and
+  gz, the old combined files (`files`, `total_bytes`); `today_bytes` = today's
+  files in the decoder folders (not today's old combined file - no longer
+  written). New: `zip_days`, `gz_ratio` (uncompressed / compressed size of
+  the .gz files there, from each file's ISIZE trailer - cached by path and
+  size; files whose ISIZE is smaller than the file, tiny or wrapped at 4
+  GiB, are not counted; 0 = none), `gz_measured` (how many were),
+  `steady_bytes` (the receiver's own steady-state estimate), `pos_per_vfo`
+  (true: Positions every is per decoder), `layout` ("folders"),
+  `open_files`. **Disk lasts** (`dlDiskLasts`): what the log occupies at
+  steady state at today's rate = (today + N) plain days + M days / ratio
+  (the measured ratio, else ~6x, said in the tooltip), compared with the
+  free space plus what the log holds now (its own files are reused):
+  "fits (7 + 30 days ≈ 1.1 GB)", else the days until full (the plain days
+  first, then the compressed ones); N = 0: free / per day (plain forever).
+  The label's tooltip says it is an estimate from today's rate. An older
+  receiver (no `zip_days`): the old formula and wording.
+- **Positions every is the decoder's (2026-11-19).** A per-VFO decoder
+  option **`pos_s`** (1-3600 s, default 10) beside `log`: `dig::Options::pos_s`,
+  `DIGITAL_OPT:<vfo>:pos_s:N` (anything else refused: "pos_s must be 1-3600
+  (seconds)"), the option string's new key `ps=` (an older kraken_doa
+  ignores it), `digital_opts.pos_s` and the decoder status' `opts.pos_s`,
+  `DigitalDecoder::pos_interval_s()` (an atomic copy, like `log_mode()`).
+  The record handler's "one position per object every N s" uses the
+  option of the VFO the record came from (keyed vfo|plugin|id as before).
+  It affects only the log: the map gets every point.
+  - The page shows it in the decoder's head row right after the Logging
+    select, **only for decoders that report positions**: the plugin's
+    static capability `kp::Info::map` ("map" in the plugin list; the same
+    capability that offers "Plot on map" - ADS-B, AIS, APRS, UAT, FLARM,
+    radiosonde, VDL2, DMR / D-STAR GPS, LoRa, 406 MHz), not "a point was
+    seen" (`digReportsPositions(tab, st)`; the status' `map_capable` only
+    when the plugin isn't in the list). "Positions every [10] s", the
+    meaning in its tooltip; greyed and disabled (the value still shown)
+    while the VFO's Logging is Off or logging is not allowed - the tooltip
+    says which.
+  - It left Setup Settings (the field under Files).
+  - **Migration**: a VFO stored without `ps` gets the stored global
+    `DECODER_LOG_POS_S` (`options_from_string(.., &no_pos_key)`, the
+    DECIMATORS replay - DECODER_LOG_POS_S is replayed before it), so nothing
+    changes for an updated receiver; new VFOs / decoders get 10.
+  - **Compatibility**: `DECODER_LOG_POS_S:N` (an older page) is still
+    accepted and persisted: it sets the global (what a VFO without a key
+    uses) and, from a page, every VFO decoder's `pos_s`. This page with an
+    older receiver (no `pos_per_vfo` in the declog status, no `pos_s` in the
+    options): no field in the rows, the global field in Setup Settings
+    (`#dl-pos-wrap`), no Then compressed (`#dl-zip-wrap`, shown only with
+    `zip_days`). The assistant's `set_decoder_option` takes `pos_s`.
 - **What is written (2026-11-19).** The user: "Change it so that Log all is
   replaced with a drop down that has "Logging 'Off / Log / Log All'".
   Logging can then be enabled per decoder, and then we can remove the
@@ -55,7 +198,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     ticks) and stored as sent; only `voice` decides anything. A list stored
     by an older version can therefore not switch categories off unseen.
   - **Positions every N s** (`DECODER_LOG_POS_S`) is a rate, not a choice:
-    a field of its own in the section's Files block.
+    a field of its own in the section's Files block - per decoder since
+    2026-11-19 (above).
 - **Migration** (`options_from_string(s, &no_log_key)`, control_handler's
   DECIMATORS replay): a VFO whose stored options have no `l` (written by an
   older version) gets **Log**, its `v` (the old "Log all", now Show all
@@ -102,7 +246,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `kp::Host::raw_wanted()`. ADS-B: Mode S hex + level dB; APRS: TNC2;
   pagers: "POCSAG RIC n Ff baud" + message codewords' 20 data bits, "FLEX
   <speed> <cycle.frame> <phase> capcode n V<type>" + vector + message words
-- File: `<dir>/decoders-YYYY-MM-DD.jsonl` (LOCAL date), one JSON object per
+- File: `<dir>/<decoder>/<decoder>-YYYY-MM-DD.jsonl` (LOCAL date;
+  `<dir>/decoders-YYYY-MM-DD.jsonl` before 2026-11-19), one JSON object per
   line: `t` (local ISO 8601 with ms + UTC offset), `vfo`, `mhz` (VFO RF; not
   on incidents), `dec` (plugin id), `type`, then per type: text / from+text
   / id, label, kind, lat, lon, alt_m, kmh, hdg (finite only) + `info` (the
@@ -111,34 +256,36 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   precision, confidence, text / voice: text, src (= dec: plugin id or NBFM /
   AM / WBFM), dur, conf, from + to (talker id + label), doa / brg, lang (not
   "en"), clip (`voice_clips/YYYY-MM-DD/<id>.opus`, relative to the log folder)
-- SD card: records go to a string buffer (cap 32 MB, then counted as
-  dropped); the worker (1 s tick) appends it every `FLUSH_S` (5 s) with one
-  fwrite + fflush, keeping the file open. Below `MIN_FREE_MB` (100) free the
-  buffer is kept and an error shown instead of writing
-- Midnight (local date change seen by the worker): the rest of the buffer
-  goes to the finished day's file (records stamped up to the tick), it is
-  closed, then `compress_old()` gzips every finished uncompressed day on a
-  detached thread (zlib level 6 -> `.gz.part` -> rename, then unlink; also at
-  startup and on a folder change - a crash across midnight leaves one) and
-  `retention()` deletes days older than `days` (by the file name's date;
-  also every 10 min, on DECODER_LOG_DAYS and on a folder change). Only names
-  matching `decoders-YYYY-MM-DD.jsonl[.gz]` are ever touched
+- SD card: records go to a buffer per file (cap 32 MB for all, then counted
+  as dropped); the worker (1 s tick) appends each every `FLUSH_S` (5 s) with
+  one fwrite + fflush, keeping the files open (closed after 10 min without
+  a record). Below `MIN_FREE_MB` (100) free the buffers are kept and an
+  error shown instead of writing
+- Midnight (local date change seen by the worker): the rest of the buffers
+  goes to the finished day's files (records stamped up to the tick), they
+  are closed, then the retention pass (above: plain for Keep, gzip for Then
+  compressed, then deleted; zlib level 6 -> `.gz.part` -> rename, then
+  unlink). Until 2026-11-19 every finished day was gzipped at once and days
+  older than Keep deleted. Only our names are ever touched
 - Commands (control_handler.cpp; persisted, schema after GEO_RADIUS_KM -
   DIR first, DECODER_LOG last): `DECODER_LOG:0|1`,
   `DECODER_LOG_TYPES:event,message,position,raw,incident,voice` (any
   subset, kept as sent; the default has all but raw; only `voice` - the
   transcripts' Logging - counts since 2026-11-19, `raw` only for the
   migration),
-  `DECODER_LOG_DAYS:0-3650`, `DECODER_LOG_POS_S:1-3600`,
+  `DECODER_LOG_DAYS:0-3650`, `DECODER_LOG_ZIP_DAYS:0-3650` (default 30;
+  after DAYS in the schema), `DECODER_LOG_POS_S:1-3600` (the old global,
+  above),
   `DECODER_LOG_DIR:path` (created if missing, write-tested; refused ->
   `{"declog_error":"..."}` and the old folder stays; the same folder again
   is a no-op, so the replay creates nothing while logging is off),
   `GET_DECODER_LOG`. Status `{"declog":{enabled, types, voice (the
   transcripts' Logging; its presence tells a page that the VFO decoders
-  have their own Logging), days, pos_s,
-  flush_s, dir, dir_abs, free, total, today, today_bytes, per_day, files,
-  total_bytes, buffered, dropped, compressing, error, mounts:[{path, dev,
-  type, free, total}], mount}}` every 2 s (websocket_server, only with
+  have their own Logging), days, zip_days, pos_s, pos_per_vfo,
+  flush_s, layout, dir, dir_abs, free, total, today, today_bytes, per_day,
+  steady_bytes, gz_ratio, gz_measured, files,
+  total_bytes, buffered, dropped, compressing, open_files, error,
+  mounts:[{path, dev, type, free, total}], mount}}` every 2 s (websocket_server, only with
   subscribers) and after each command. `mounts` = /, /media/*, /mnt/*,
   /run/media/*, /srv* (no pseudo / tmpfs) + always the folder's own mount
   (`mount`); statvfs of the folder or its nearest existing parent
@@ -167,10 +314,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     (what is written is chosen per decoder and for the transcripts, above);
     the block stays in the page (`#dl-types-sec`, hidden) for an older
     receiver only;
-  - Files: Positions every N s (the old Positions tick's seconds), Keep
-    (days), Save to - the drive list (picking one fills the
+  - Files: Keep [7] days and Then compressed [30] days side by side
+    (`.dl-keep`; the rule with the user's example in Keep's `?` tip, each
+    field's meaning in its title; Then compressed disabled while Keep is 0;
+    hidden for an older receiver), Save to - the drive list (picking one fills the
     folder field with `<mount>/kraken_decoder_logs`, `/` = the default
     `decoder_logs`; Apply sends it, `declog_error` shows under the field).
+    Positions every N s was here (`#dl-pos-wrap`) until 2026-11-19 - now
+    shown only for an older receiver.
   Every control sends its command at once, as in the box.
 - Problems (`dlProblems(d)`, only while logging is on): not writing (the
   receiver's `error`: the folder can't be created / written, less than
@@ -236,4 +387,35 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   with `raw` -> Log All with raw frames, the stored master switch off ->
   nothing written. Incidents were checked by reading only (no pager signal
   with a geocodable address on the test receiver)
+- Test of the files, retention and Positions every (2026-11-19, scratch
+  `test_logfiles.py` + two C++ harnesses). Harness 1 (`names_test.cpp`,
+  64): `safe_folder_name` on plugin ids, odd ids (`..`, slashes, `/abs`,
+  Windows reserved names, `transcripts`, `voice_clips`, empty, non-ASCII,
+  every 1-2 byte id), the file-name parser, `retention_action` for every
+  age 0-60 at (7, 30), (7, 0), (0, any), (1, 1), young gz, parts, today,
+  and the option string's `ps` (missing / bad / round trip). Harness 2
+  (`declog_harness.cpp`, 29): the real decoder_log.cpp with the decoder
+  and playback calls stubbed - transcripts from NBFM and dmr in
+  `transcripts/` only, an incident in its plugin's folder, the odd ids'
+  folders and nothing outside the log folder, idle files closed (fds read
+  from /proc), a playback / not allowed / Logging Off writing nothing,
+  `day_files`, and no pass before `settings_restored()`. End to end, the
+  TEST build behind the fake heimdall streaming the ADS-B test transmission
+  (then the AIS one, converted to 2.4 MS/s cu8): ADS-B on two VFOs -> one
+  file `adsb/adsb-<today>.jsonl` with both VFOs, nothing combined; AIS on a
+  third -> `ais/ais-<today>.jsonl`; D0 at 1 s and D1 at 10 s -> per aircraft
+  positions >= 0.99 s / >= 9.9 s apart and D0 >= 3x D1; the file open while
+  logging and closed 20 s after the last record (`KRAKEN_DECLOG_IDLE_S=20`);
+  nothing written during a debug playback; retention on fabricated day
+  files (decoder folders, old combined files plain and gz, a young gz, a
+  `.gz.part` beside its plain file, an orphan part, foreign files) for
+  (7, 30), (7, 0), (0, 30), (0, 0), (1, 1) and M / N changed at once - the
+  exact plain / gz / gone set, compressed content equal to the original
+  (`zcat`), foreign files untouched; the status' files / total / today /
+  gz ratio for that set; Disk lasts for known numbers; the assistant's
+  search (decoder folders plain and gz, transcripts, old combined plain and
+  gz, the decoder filter); the page's field (only for decoders with
+  positions - Pagers has none -, greyed states, real typing, clamping),
+  the Files block, the old receiver, the old command, the migration of a
+  stored global (25) and a stored `ps` winning over it.
 

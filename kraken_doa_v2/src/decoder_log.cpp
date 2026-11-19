@@ -1,4 +1,5 @@
 #include "decoder_log.hpp"
+#include "decoder_log_names.hpp"
 #include "playback.hpp"
 
 #include "digital/digital_decoder.hpp"
@@ -15,6 +16,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -42,7 +44,9 @@ enum : unsigned { T_EVENT = 1, T_MESSAGE = 2, T_POSITION = 4, T_RAW = 8, T_INCID
 const std::pair<const char*, unsigned> TYPE_NAMES[] = {
     {"event", T_EVENT}, {"message", T_MESSAGE}, {"position", T_POSITION}, {"raw", T_RAW}, {"incident", T_INCIDENT},
     {"voice", T_VOICE}};
-constexpr size_t MAX_BUFFER = 32u << 20;   // records kept while the disk can't be written (then dropped)
+constexpr size_t MAX_BUFFER = 32u << 20;   // records kept while the disk can't be written (then dropped) - all files together
+constexpr int64_t IDLE_CLOSE_MS = 600000;  // a file without a record for 10 min is closed (KRAKEN_DECLOG_IDLE_S: tests)
+constexpr double GZ_RATIO_ASSUMED = 6;     // the page's estimate while no .gz file exists to measure
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -70,33 +74,6 @@ std::string iso_time(int64_t ms) {
     return out;
 }
 
-// days since 1970-01-01 of a civil date (no time zone involved)
-long day_number(int y, int m, int d) {
-    y -= m <= 2;
-    const long era = (y >= 0 ? y : y - 399) / 400;
-    const long yoe = y - era * 400;
-    const long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-    const long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + doe - 719468;
-}
-long day_number(const std::string& ymd) {
-    int y, m, d;
-    return sscanf(ymd.c_str(), "%d-%d-%d", &y, &m, &d) == 3 ? day_number(y, m, d) : -1;
-}
-
-// decoders-YYYY-MM-DD.jsonl[.gz] -> its date, "" for any other name
-std::string log_date(const std::string& name, bool* gz) {
-    static const char pre[] = "decoders-";
-    if (name.size() < 25 || name.compare(0, 9, pre) != 0) return "";
-    const std::string d = name.substr(9, 10);
-    for (size_t i = 0; i < 10; i++)
-        if (i == 4 || i == 7 ? d[i] != '-' : (d[i] < '0' || d[i] > '9')) return "";
-    const std::string rest = name.substr(19);
-    if (rest == ".jsonl") { *gz = false; return d; }
-    if (rest == ".jsonl.gz") { *gz = true; return d; }
-    return "";
-}
-
 // gzip file -> file.gz (then the original is removed); false keeps the original
 bool gzip_file(const std::string& path) {
     FILE* in = fopen(path.c_str(), "rb");
@@ -116,13 +93,25 @@ bool gzip_file(const std::string& path) {
     // fs_replace: a .gz left by an earlier try is replaced (Windows' rename()
     // refused it, so that day was never compressed). Windows also can't
     // delete a .jsonl another program has open: it stays, and the next
-    // compress_old() gzips it again
+    // pass gzips it again
     if (!ok || fs_replace(part.c_str(), (path + ".gz").c_str()) != 0) {
         unlink(part.c_str());
         return false;
     }
     unlink(path.c_str());
     return true;
+}
+
+// a gzip file's uncompressed size (its ISIZE trailer, mod 4 GiB); 0 = unknown
+uint64_t gz_isize(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return 0;
+    unsigned char b[4] = {0, 0, 0, 0};
+    uint64_t n = 0;
+    if (fseek(f, -4, SEEK_END) == 0 && fread(b, 1, 4, f) == 4)
+        n = b[0] | (static_cast<uint64_t>(b[1]) << 8) | (static_cast<uint64_t>(b[2]) << 16) | (static_cast<uint64_t>(b[3]) << 24);
+    fclose(f);
+    return n;
 }
 
 std::string num(double v, const char* f) {
@@ -132,42 +121,107 @@ std::string num(double v, const char* f) {
     return b;
 }
 
+bool is_dir(const std::string& p) {
+    struct stat st{};
+    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+struct LogFile {
+    std::string path, folder, date;   // folder "" = an old combined file in <dir>
+    Kind kind = Kind::NONE;
+};
+
+// every file of ours in dir (only_date "" = all days): <dir>/<name>/<name>-D.jsonl[.gz[.part]] in the
+// folders whose name the writer could have made, and the old <dir>/decoders-D.jsonl[.gz[.part]].
+// Anything else in the folder is never listed - so never touched
+std::vector<LogFile> list_files(const std::string& dir, const std::string& only_date = "") {
+    std::vector<LogFile> v;
+    std::vector<std::string> subs;
+    if (DIR* d = opendir(dir.c_str())) {
+        while (dirent* e = readdir(d)) {
+            const std::string name = e->d_name;
+            if (name.empty() || name[0] == '.') continue;
+            Kind k;
+            const std::string date = log_file_date(COMBINED, name, &k);
+            if (!date.empty()) {
+                if (only_date.empty() || date == only_date) v.push_back({dir + "/" + name, "", date, k});
+            } else if (name == TRANSCRIPTS || (name != CLIPS && safe_folder_name(name) == name)) {
+                subs.push_back(name);
+            }
+        }
+        closedir(d);
+    }
+    for (const auto& sub : subs) {
+        const std::string sp = dir + "/" + sub;
+        if (!is_dir(sp)) continue;
+        if (DIR* d = opendir(sp.c_str())) {
+            while (dirent* e = readdir(d)) {
+                Kind k;
+                const std::string date = log_file_date(sub, e->d_name, &k);
+                if (!date.empty() && (only_date.empty() || date == only_date)) v.push_back({sp + "/" + e->d_name, sub, date, k});
+            }
+            closedir(d);
+        }
+    }
+    return v;
+}
+
+struct OpenFile {
+    FILE* f = nullptr;
+    std::string day, path;
+    int64_t last_ms = 0;   // last written (idle files are closed)
+};
+
 struct State {
-    // settings + the buffer (record handler, commands, status)
+    // settings + the buffers (record handler, commands, status)
     std::mutex mu;
     bool enabled = false;   // "Allow logging to disk"
     // DECODER_LOG_TYPES as last set: only T_VOICE (the transcripts' Logging)
     // decides anything; T_RAW migrates the VFOs stored before the per-VFO
     // logging mode (legacy_raw); the rest is kept for the status / an older page
     unsigned types = T_EVENT | T_MESSAGE | T_POSITION | T_INCIDENT | T_VOICE;
-    int days = 7;
+    int days = 7;       // Keep: plain days (0 = forever)
+    int zip_days = 30;  // Then compressed: gzip days after those (0 = none)
+    // DECODER_LOG_POS_S: the old global position interval - what a VFO stored
+    // without its own pos_s gets (control_handler's DECIMATORS replay)
     int pos_s = 10;
     std::string dir = DEFAULT_DIR;
-    std::string buf;
+    std::map<std::string, std::string> bufs;   // folder name -> its records not yet written
+    size_t buf_bytes = 0;                       // all of bufs (the MAX_BUFFER cap is for all together)
     uint64_t dropped = 0;
     std::unordered_map<std::string, int64_t> last_pos;   // vfo|plugin|id -> last logged
     std::string error;
-    // the file (the worker; set_dir / stop with io lock)
+    bool restored = false;      // the settings replay ran (retention waits for the stored Keep days)
+    bool pass_running = false, pass_again = false;
+    // the files (the worker; flush / set_dir / stop with the io lock)
     std::mutex io;
-    FILE* f = nullptr;
-    std::string file_day, file_path;
+    std::map<std::string, OpenFile> open;   // folder name -> its file of the day
+    int64_t idle_ms = IDLE_CLOSE_MS;
+    std::atomic<int> open_n{0};   // files open now (the status; the worker counts them)
     // status cache (worker)
-    uint64_t today_bytes = 0;     // on disk, today's file
+    uint64_t today_bytes = 0;     // on disk, today's files
     int64_t since_ms = 0;         // logging (today) since - for the per-day estimate
     int files = 0;
     uint64_t total_bytes = 0;
+    int gz_files = 0;             // gz files measured for gz_ratio
+    double gz_ratio = 0;          // their uncompressed / compressed size (0 = none)
     int compressing = 0;
     int64_t retention_ms = 0, scan_ms = 0;
+    std::atomic<bool> rescan{false};
+    std::unordered_map<std::string, std::pair<uint64_t, uint64_t>> isize_cache;   // gz path -> (size, isize)
 };
 State& S() {
     static State* s = new State;   // never destroyed: the worker may run while the process exits
     return *s;
 }
 
-void append_locked(State& s, const std::string& line) {
-    if (s.buf.size() + line.size() > MAX_BUFFER) { s.dropped++; return; }
-    s.buf += line;
-    s.buf += '\n';
+// mu held
+void append_locked(State& s, const std::string& folder, const std::string& line) {
+    if (s.buf_bytes + line.size() + 1 > MAX_BUFFER) { s.dropped++; return; }
+    std::string& b = s.bufs[folder];
+    b += line;
+    b += '\n';
+    s.buf_bytes += line.size() + 1;
 }
 
 // t_ms: the record's time (0 = now)
@@ -177,185 +231,239 @@ std::string head(int vfo, double rf_hz, const std::string& plugin, const char* t
     return h + ",\"dec\":\"" + json_escape(plugin) + "\",\"type\":\"" + type + "\"";
 }
 
-// the day's file names in dir: date -> gz?
-std::vector<std::pair<std::string, bool>> list_logs(const std::string& dir) {
-    std::vector<std::pair<std::string, bool>> v;
-    if (DIR* d = opendir(dir.c_str())) {
-        while (dirent* e = readdir(d)) {
-            bool gz = false;
-            const std::string date = log_date(e->d_name, &gz);
-            if (!date.empty()) v.emplace_back(date, gz);
-        }
-        closedir(d);
-    }
-    return v;
+void close_file(OpenFile& of) {
+    if (of.f) fclose(of.f);
+    of.f = nullptr;
 }
 
-std::string path_of(const std::string& dir, const std::string& date, bool gz) {
-    return dir + "/decoders-" + date + ".jsonl" + (gz ? ".gz" : "");
+void close_all_locked(State& s) {
+    for (auto& kv : s.open) close_file(kv.second);
+    s.open.clear();
+    s.open_n = 0;
 }
 
-// gzip the finished days (a crash across midnight leaves one) - in the background
-void compress_old(const std::string& dir) {
-    const std::string today = local_date(time(nullptr));
-    std::vector<std::string> todo;
-    for (const auto& lf : list_logs(dir))
-        if (!lf.second && lf.first < today) todo.push_back(path_of(dir, lf.first, false));
-    if (todo.empty()) return;
-    State& s = S();
-    {
-        std::lock_guard<std::mutex> lk(s.mu);
-        s.compressing += static_cast<int>(todo.size());
+// write data to folder's file of `day` (opened as needed); io lock held
+bool write_locked(State& s, const std::string& dir, const std::string& folder, const std::string& day,
+                  const std::string& data, std::string* err) {
+    OpenFile& of = s.open[folder];
+    if (!of.f || of.day != day) {
+        close_file(of);
+        const std::string fd = dir + "/" + folder;
+        if (!mkdirs(fd)) { *err = "cannot create the folder " + fd; return false; }
+        of.path = fd + "/" + log_file_name(folder, day, Kind::PLAIN);
+        of.f = fopen(of.path.c_str(), "ab");
+        if (!of.f) { *err = "cannot write " + of.path + ": " + strerror(errno); return false; }
+        of.day = day;
     }
-    std::thread([todo] {
-        for (const auto& p : todo) {
-            if (!gzip_file(p)) std::cerr << "Decoder log: cannot gzip " << p << std::endl;
-            std::lock_guard<std::mutex> lk(S().mu);
-            S().compressing--;
-        }
-    }).detach();
-}
-
-// delete the days older than `days` (only decoders-YYYY-MM-DD.jsonl[.gz])
-void retention(const std::string& dir, int days) {
-    if (days <= 0) return;
-    const long today = day_number(local_date(time(nullptr)));
-    for (const auto& lf : list_logs(dir)) {
-        const long dn = day_number(lf.first);
-        if (dn >= 0 && today - dn > days) {
-            const std::string p = path_of(dir, lf.first, lf.second);
-            if (unlink(p.c_str()) == 0) std::cout << "Decoder log: deleted " << p << " (older than " << days << " days)" << std::endl;
-        }
-    }
-}
-
-// write data to the day's file (opened as needed); io lock held
-bool write_locked(State& s, const std::string& dir, const std::string& data, std::string* err) {
-    const std::string today = local_date(time(nullptr));
-    if (!s.f || s.file_day != today) {
-        if (s.f) fclose(s.f);
-        s.f = nullptr;
-        if (!mkdirs(dir)) { *err = "cannot create the folder " + dir; return false; }
-        s.file_path = path_of(dir, today, false);
-        s.f = fopen(s.file_path.c_str(), "ab");
-        if (!s.f) { *err = "cannot write " + s.file_path + ": " + strerror(errno); return false; }
-        s.file_day = today;
-    }
-    if (fwrite(data.data(), 1, data.size(), s.f) != data.size() || fflush(s.f) != 0) {
-        *err = "writing " + s.file_path + " failed: " + strerror(errno);
-        fclose(s.f);
-        s.f = nullptr;
+    if (fwrite(data.data(), 1, data.size(), of.f) != data.size() || fflush(of.f) != 0) {
+        *err = "writing " + of.path + " failed: " + strerror(errno);
+        close_file(of);
         return false;
     }
+    of.last_ms = now_ms();
     return true;
 }
 
-// buffer -> disk (worker / set_dir / stop); io lock held
-void flush_locked(State& s) {
-    std::string data, dir;
+// the buffers -> their files of `day` (worker / set_dir / stop / flush), one append + fflush per
+// file; io lock held
+void flush_locked(State& s, const std::string& day) {
+    std::map<std::string, std::string> bufs;
+    std::string dir;
     {
         std::lock_guard<std::mutex> lk(s.mu);
-        data.swap(s.buf);
+        bufs.swap(s.bufs);
+        s.buf_bytes = 0;
         dir = s.dir;
     }
-    if (data.empty()) return;
+    if (bufs.empty()) return;
     uint64_t fr = 0, tot = 0;
     std::string err;
+    std::map<std::string, std::string> left;   // not written: kept for the next try
     if (disk_space(dir, &fr, &tot) && fr < static_cast<uint64_t>(MIN_FREE_MB) << 20) {
         err = "less than " + std::to_string(MIN_FREE_MB) + " MB free on the disk - not writing";
-    } else if (write_locked(s, dir, data, &err)) {
-        std::lock_guard<std::mutex> lk(s.mu);
+        left.swap(bufs);
+    } else {
+        for (auto& kv : bufs) {
+            std::string e;
+            if (!write_locked(s, dir, kv.first, day, kv.second, &e)) {
+                if (err.empty()) err = e;
+                left[kv.first].swap(kv.second);
+            }
+        }
+    }
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (left.empty()) {
         if (s.error.rfind("writing", 0) == 0 || s.error.rfind("cannot", 0) == 0 || s.error.rfind("less than", 0) == 0)
             s.error.clear();
         return;
     }
-    // not written: keep it for the next try (up to the buffer limit)
-    std::lock_guard<std::mutex> lk(s.mu);
     if (s.error != err) std::cerr << "Decoder log: " << err << std::endl;
     s.error = err;
-    if (data.size() + s.buf.size() <= MAX_BUFFER) s.buf.insert(0, data);
-    else s.dropped++;
+    // (up to the buffer limit, ahead of what came meanwhile)
+    for (auto& kv : left) {
+        std::string& b = s.bufs[kv.first];
+        if (kv.second.size() + s.buf_bytes <= MAX_BUFFER) {
+            s.buf_bytes += kv.second.size();
+            b.insert(0, kv.second);
+        } else {
+            s.dropped += static_cast<uint64_t>(std::count(kv.second.begin(), kv.second.end(), '\n'));
+        }
+        if (b.empty()) s.bufs.erase(kv.first);
+    }
 }
 
-void close_locked(State& s) {
-    if (s.f) fclose(s.f);
-    s.f = nullptr;
+// The retention pass (background, one at a time): each finished day of each file by its age -
+// plain for `days`, gzip for `zip_days` more, then deleted (retention_action). Deletions first,
+// then the compressions one by one
+void run_pass(const std::string& dir, int keep, int zip) {
+    const long today = day_number(local_date(time(nullptr)));
+    std::vector<std::string> todo;
+    for (const auto& f : list_files(dir)) {
+        const long dn = day_number(f.date);
+        if (dn < 0) continue;
+        const Action a = retention_action(today - dn, f.kind, keep, zip);
+        if (a == Action::DELETE) {
+            if (unlink(f.path.c_str()) == 0 && f.kind != Kind::PART)
+                std::cout << "Decoder log: deleted " << f.path << " (older than " << keep << " + " << zip << " days)" << std::endl;
+        } else if (a == Action::COMPRESS) {
+            todo.push_back(f.path);
+        }
+    }
+    State& s = S();
+    if (!todo.empty()) {
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.compressing += static_cast<int>(todo.size());
+    }
+    for (const auto& p : todo) {
+        if (gzip_file(p)) std::cout << "Decoder log: gzipped " << p << std::endl;
+        else std::cerr << "Decoder log: cannot gzip " << p << std::endl;
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.compressing--;
+    }
+    s.rescan = true;
+}
+
+// a pass with the settings as they are now: at startup (once the settings are replayed), the day
+// change, a Keep / Then compressed / folder change and every 10 min. A request during a pass
+// runs another after it
+void request_pass() {
+    State& s = S();
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        if (!s.restored) return;   // not before the stored Keep days are known
+        if (s.pass_running) { s.pass_again = true; return; }
+        s.pass_running = true;
+        s.pass_again = false;
+    }
+    std::thread([] {
+        State& st = S();
+        for (;;) {
+            std::string dir;
+            int keep, zip;
+            {
+                std::lock_guard<std::mutex> lk(st.mu);
+                dir = st.dir;
+                keep = st.days;
+                zip = st.zip_days;
+                st.pass_again = false;
+            }
+            run_pass(dir, keep, zip);
+            std::lock_guard<std::mutex> lk(st.mu);
+            if (!st.pass_again) { st.pass_running = false; return; }
+        }
+    }).detach();
 }
 
 void worker() {
     State& s = S();
     int64_t last_flush = now_ms();
     std::string last_day = local_date(time(nullptr));
-    {
-        std::string dir;
-        {
-            std::lock_guard<std::mutex> lk(s.mu);
-            dir = s.dir;
-        }
-        compress_old(dir);
-    }
     for (;;) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         const int64_t t = now_ms();
         bool enabled;
         std::string dir;
-        int days;
         {
             std::lock_guard<std::mutex> lk(s.mu);
             enabled = s.enabled;
             dir = s.dir;
-            days = s.days;
         }
         const std::string today = local_date(time(nullptr));
         std::lock_guard<std::mutex> io(s.io);
-        // midnight: the rest of yesterday into yesterday's file, then gzip it
+        // midnight: the rest of yesterday into yesterday's files, they are closed, then the pass
+        // (yesterday stays plain while Keep >= 1; the older days move on by one)
         if (today != last_day) {
-            if (s.f && s.file_day == last_day) {
-                std::string data;
-                {
-                    std::lock_guard<std::mutex> lk(s.mu);
-                    data.swap(s.buf);
-                }
-                if (!data.empty()) {
-                    fwrite(data.data(), 1, data.size(), s.f);
-                    fflush(s.f);
-                }
-            }
-            close_locked(s);
+            flush_locked(s, last_day);
+            close_all_locked(s);
             last_day = today;
             {
                 std::lock_guard<std::mutex> lk(s.mu);
                 s.since_ms = 0;
             }
-            compress_old(dir);
-            retention(dir, days);
+            s.retention_ms = t;
+            request_pass();
             s.scan_ms = 0;
         }
         if (t - last_flush >= FLUSH_S * 1000) {
             last_flush = t;
-            flush_locked(s);
-            if (!enabled) close_locked(s);
+            flush_locked(s, today);
+            if (!enabled) {
+                close_all_locked(s);
+            } else {
+                // an idle decoder holds no file open
+                for (auto it = s.open.begin(); it != s.open.end();) {
+                    if (!it->second.f || t - it->second.last_ms >= s.idle_ms) {
+                        close_file(it->second);
+                        it = s.open.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+        }
+        {
+            int n = 0;
+            for (const auto& kv : s.open) n += kv.second.f != nullptr;
+            s.open_n = n;
         }
         if (t - s.retention_ms >= 600000) {
             s.retention_ms = t;
-            retention(dir, days);
+            request_pass();
         }
-        // status: today's size, all logs
+        // status: today's size, all logs, the measured gzip ratio
+        if (s.rescan.exchange(false)) s.scan_ms = 0;
         if (t - s.scan_ms >= 15000) {
             s.scan_ms = t;
-            int files = 0;
-            uint64_t total = 0, today_b = 0;
-            for (const auto& lf : list_logs(dir)) {
+            int files = 0, gzn = 0;
+            uint64_t total = 0, today_b = 0, gz_c = 0, gz_u = 0;
+            std::unordered_map<std::string, std::pair<uint64_t, uint64_t>> cache;
+            for (const auto& lf : list_files(dir)) {
+                if (lf.kind != Kind::PLAIN && lf.kind != Kind::GZ) continue;
                 struct stat st{};
-                if (stat(path_of(dir, lf.first, lf.second).c_str(), &st) != 0) continue;
+                if (stat(lf.path.c_str(), &st) != 0) continue;
+                const uint64_t sz = static_cast<uint64_t>(st.st_size);
                 files++;
-                total += static_cast<uint64_t>(st.st_size);
-                if (lf.first == today && !lf.second) today_b = static_cast<uint64_t>(st.st_size);
+                total += sz;
+                // (today's old combined file is no longer written to: not today's growth)
+                if (lf.date == today && lf.kind == Kind::PLAIN && !lf.folder.empty()) today_b += sz;
+                if (lf.kind == Kind::GZ && sz > 0) {
+                    auto c = s.isize_cache.find(lf.path);
+                    const uint64_t u = c != s.isize_cache.end() && c->second.first == sz ? c->second.second : gz_isize(lf.path);
+                    cache[lf.path] = {sz, u};
+                    if (u >= sz) {   // (an ISIZE that wrapped at 4 GiB, or a damaged file: not measured)
+                        gzn++;
+                        gz_c += sz;
+                        gz_u += u;
+                    }
+                }
             }
+            s.isize_cache.swap(cache);
             std::lock_guard<std::mutex> lk(s.mu);
             s.files = files;
             s.total_bytes = total;
             s.today_bytes = today_b;
+            s.gz_files = gzn;
+            s.gz_ratio = gz_c ? static_cast<double>(gz_u) / static_cast<double>(gz_c) : 0;
         }
     }
 }
@@ -363,6 +471,10 @@ void worker() {
 }  // namespace
 
 void start() {
+    if (const char* e = getenv("KRAKEN_DECLOG_IDLE_S")) {   // tests: close idle files sooner
+        const int v = atoi(e);
+        if (v >= 1 && v <= 3600) S().idle_ms = static_cast<int64_t>(v) * 1000;
+    }
     dig::set_record_handler([](dig::DigitalDecoder* d, const dig::LogRecord& r) {
         if (playback::active()) return;   // debug playback: test transmissions aren't logged
         State& s = S();
@@ -375,15 +487,16 @@ void start() {
         const int mode = d ? d->log_mode() : dig::LOG_OFF;
         if (mode == dig::LOG_OFF || !bit || (bit == T_RAW && mode != dig::LOG_ALL)) return;
         const int vfo = d ? d->vfo() : -1;
+        const int pos_s = d ? d->pos_interval_s() : 0;
         std::lock_guard<std::mutex> lk(s.mu);
         if (!s.enabled) return;
         std::string line = head(vfo, r.rf_hz, r.plugin, r.type);
         if (bit == T_POSITION && r.point) {
             const dig::MapPoint& p = *r.point;
-            // at most one per object every pos_s
+            // at most one per object every pos_s - the VFO decoder's "Positions every"
             const int64_t t = now_ms();
             int64_t& last = s.last_pos[std::to_string(vfo) + "|" + r.plugin + "|" + p.id];
-            if (t - last < static_cast<int64_t>(s.pos_s) * 1000) return;
+            if (t - last < static_cast<int64_t>(pos_s > 0 ? pos_s : s.pos_s) * 1000) return;
             last = t;
             if (s.last_pos.size() > 20000) s.last_pos.clear();
             line += ",\"id\":\"" + json_escape(p.id) + "\",\"label\":\"" + json_escape(p.label) + "\",\"kind\":\"" +
@@ -411,7 +524,7 @@ void start() {
         } else {
             line += ",\"text\":\"" + json_escape(r.text) + "\"";
         }
-        append_locked(s, line + "}");
+        append_locked(s, safe_folder_name(r.plugin), line + "}");
     });
     std::thread(worker).detach();
 }
@@ -419,14 +532,23 @@ void start() {
 void stop() {
     State& s = S();
     std::lock_guard<std::mutex> io(s.io);
-    flush_locked(s);
-    close_locked(s);
+    flush_locked(s, local_date(time(nullptr)));
+    close_all_locked(s);
 }
 
 void flush() {
     State& s = S();
     std::lock_guard<std::mutex> io(s.io);
-    flush_locked(s);
+    flush_locked(s, local_date(time(nullptr)));
+}
+
+void settings_restored() {
+    {
+        State& s = S();
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.restored = true;
+    }
+    request_pass();
 }
 
 void set_enabled(bool on) {
@@ -462,22 +584,32 @@ bool legacy_raw() {
 
 void set_days(int days) {
     State& s = S();
-    std::string dir;
     {
         std::lock_guard<std::mutex> lk(s.mu);
         s.days = std::clamp(days, 0, 3650);
-        dir = s.dir;
-        days = s.days;
     }
-    std::lock_guard<std::mutex> io(s.io);
-    retention(dir, days);
-    s.scan_ms = 0;
+    request_pass();
+}
+
+void set_zip_days(int days) {
+    State& s = S();
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.zip_days = std::clamp(days, 0, 3650);
+    }
+    request_pass();
 }
 
 void set_pos_interval(int seconds) {
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
     s.pos_s = std::clamp(seconds, 1, 3600);
+}
+
+int pos_interval() {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return s.pos_s;
 }
 
 bool set_dir(const std::string& path_in, std::string* err) {
@@ -520,19 +652,16 @@ bool set_dir(const std::string& path_in, std::string* err) {
     if (!f) { *err = "cannot write to " + path + ": " + strerror(errno); return false; }
     fclose(f);
     unlink(probe.c_str());
-    std::lock_guard<std::mutex> io(s.io);
-    flush_locked(s);   // what is buffered still goes to the old folder
-    close_locked(s);
-    int days;
     {
+        std::lock_guard<std::mutex> io(s.io);
+        flush_locked(s, local_date(time(nullptr)));   // what is buffered still goes to the old folder
+        close_all_locked(s);
         std::lock_guard<std::mutex> lk(s.mu);
         s.dir = path;
         s.error.clear();
-        days = s.days;
+        s.scan_ms = 0;
     }
-    compress_old(path);
-    retention(path, days);
-    s.scan_ms = 0;
+    request_pass();
     return true;
 }
 
@@ -543,10 +672,12 @@ void record_incident(int vfo, int log_mode, const std::string& plugin, const std
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
     if (!s.enabled) return;
-    append_locked(s, head(vfo, 0, plugin, "incident") + ",\"address\":\"" + json_escape(address) + "\",\"lat\":" +
-                         num(lat, "%.6f") + ",\"lon\":" + num(lon, "%.6f") + ",\"precision\":\"" +
-                         json_escape(precision) + "\",\"confidence\":\"" + json_escape(confidence) +
-                         "\",\"text\":\"" + json_escape(text) + "\"}");
+    // (in the file of the decoder whose message it was)
+    append_locked(s, safe_folder_name(plugin),
+                  head(vfo, 0, plugin, "incident") + ",\"address\":\"" + json_escape(address) + "\",\"lat\":" +
+                      num(lat, "%.6f") + ",\"lon\":" + num(lon, "%.6f") + ",\"precision\":\"" +
+                      json_escape(precision) + "\",\"confidence\":\"" + json_escape(confidence) +
+                      "\",\"text\":\"" + json_escape(text) + "\"}");
 }
 
 void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source, const std::string& fields) {
@@ -554,7 +685,16 @@ void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
     if (!s.enabled || !(s.types & T_VOICE)) return;
-    append_locked(s, head(vfo, rf_hz, source, "voice", t_ms) + fields + "}");
+    // every transcript in one folder, whichever decoder / demod it came from
+    append_locked(s, TRANSCRIPTS, head(vfo, rf_hz, source, "voice", t_ms) + fields + "}");
+}
+
+std::vector<DayFile> day_files(const std::string& dir, const std::string& date) {
+    std::vector<DayFile> out;
+    for (const auto& f : list_files(dir, date))
+        if (f.kind == Kind::PLAIN || f.kind == Kind::GZ) out.push_back({f.path, f.folder, f.kind == Kind::GZ});
+    std::sort(out.begin(), out.end(), [](const DayFile& a, const DayFile& b) { return a.path < b.path; });
+    return out;
 }
 
 std::string folder() {
@@ -599,20 +739,28 @@ std::string status_message() {
     localtime_r(&tt, &tm);
     const int64_t since_midnight = (tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec) * 1000LL;
     if (s.enabled && s.since_ms == 0) s.since_ms = t;
-    const uint64_t today_b = s.today_bytes + s.buf.size();
+    const uint64_t today_b = s.today_bytes + s.buf_bytes;
     const int64_t elapsed = std::min<int64_t>(since_midnight, t - (s.since_ms ? s.since_ms : t));
     const double per_day = s.enabled && elapsed > 60000 ? static_cast<double>(today_b) / elapsed * 86400000.0 : 0;
+    // what the log holds at steady state with these settings: today + Keep plain days + Then
+    // compressed gzip days (the measured ratio, else the assumed ~6x); 0 = no end (Keep 0)
+    const double ratio = s.gz_ratio > 1 ? s.gz_ratio : GZ_RATIO_ASSUMED;
+    const double steady = s.days > 0 ? per_day * (1 + s.days) + per_day / ratio * s.zip_days : 0;
     std::ostringstream o;
     // voice: the transcripts' Logging (a page that finds it knows the VFO decoders have a
-    // Logging of their own - an older receiver filtered by the types instead)
+    // Logging of their own - an older receiver filtered by the types instead). zip_days /
+    // pos_per_vfo: a page that finds them shows "Then compressed" and the per-decoder
+    // "Positions every" (an older receiver: the global field)
     o << "{\"declog\":{\"enabled\":" << (s.enabled ? "true" : "false") << ",\"types\":\"" << types
-      << "\",\"voice\":" << ((s.types & T_VOICE) ? "true" : "false") << ",\"days\":" << s.days << ",\"pos_s\":" << s.pos_s << ",\"flush_s\":" << FLUSH_S << ",\"dir\":\""
-      << json_escape(s.dir) << "\",\"dir_abs\":\"" << json_escape(dir_abs) << "\",\"free\":" << (have_space ? fr : 0)
-      << ",\"total\":" << (have_space ? tot : 0) << ",\"today\":\"" << local_date(tt) << "\",\"today_bytes\":" << today_b
-      << ",\"per_day\":" << static_cast<uint64_t>(per_day) << ",\"files\":" << s.files << ",\"total_bytes\":"
-      << s.total_bytes + s.buf.size() << ",\"buffered\":" << s.buf.size() << ",\"dropped\":" << s.dropped
-      << ",\"compressing\":" << s.compressing << ",\"error\":\"" << json_escape(s.error) << "\",\"mounts\":"
-      << mounts << "}}";
+      << "\",\"voice\":" << ((s.types & T_VOICE) ? "true" : "false") << ",\"days\":" << s.days
+      << ",\"zip_days\":" << s.zip_days << ",\"pos_s\":" << s.pos_s << ",\"pos_per_vfo\":true,\"flush_s\":" << FLUSH_S
+      << ",\"layout\":\"folders\",\"dir\":\"" << json_escape(s.dir) << "\",\"dir_abs\":\"" << json_escape(dir_abs)
+      << "\",\"free\":" << (have_space ? fr : 0) << ",\"total\":" << (have_space ? tot : 0) << ",\"today\":\""
+      << local_date(tt) << "\",\"today_bytes\":" << today_b << ",\"per_day\":" << static_cast<uint64_t>(per_day)
+      << ",\"steady_bytes\":" << static_cast<uint64_t>(steady) << ",\"gz_ratio\":" << num(s.gz_ratio, "%.2f")
+      << ",\"gz_measured\":" << s.gz_files << ",\"files\":" << s.files << ",\"total_bytes\":" << s.total_bytes + s.buf_bytes
+      << ",\"buffered\":" << s.buf_bytes << ",\"dropped\":" << s.dropped << ",\"compressing\":" << s.compressing
+      << ",\"open_files\":" << s.open_n.load() << ",\"error\":\"" << json_escape(s.error) << "\",\"mounts\":" << mounts << "}}";
     return o.str();
 }
 

@@ -35,6 +35,7 @@
 #include "power.hpp"
 #include "decimator_manager.hpp"
 #include "decoder_log.hpp"
+#include "decoder_log_names.hpp"
 #include "digital/dig_plugin.hpp"
 #include "digital/digital_decoder.hpp"
 #include "doa_logger.hpp"
@@ -878,18 +879,25 @@ void t_search_log(const Json& a, Reply r) {
     const int only = static_cast<int>(num_arg(a, "vfo", -1));
     const int days = static_cast<int>(std::clamp(num_arg(a, "days", 1), 1.0, 31.0));
     const size_t lim = static_cast<size_t>(std::clamp(num_arg(a, "limit", 100.0), 1.0, 500.0));
+    // optional: one decoder's records (its folder; the transcripts and the old combined files by
+    // their "dec")
+    const std::string decoder = lower(str_arg(a, "decoder"));
+    const std::string dfolder = decoder.empty() ? "" : declog::safe_folder_name(decoder);
     const std::string dir = declog::folder();
     later([=](bool*) {
         std::vector<std::string> hits;   // oldest first, the newest lim kept
         size_t matched = 0, files = 0;
         const std::string tneedle = type.empty() ? "" : "\"type\":\"" + type + "\"";
         const std::string vneedle = only < 0 ? "" : "\"vfo\":" + std::to_string(only) + ",";
+        const std::string dneedle = decoder.empty() ? "" : "\"dec\":\"" + json_escape(decoder) + "\"";
         for (int k = days - 1; k >= 0; k--) {
             time_t t = time(nullptr) - static_cast<time_t>(k) * 86400;
             char day[16];
             strftime(day, sizeof day, "%Y-%m-%d", localtime(&t));
-            for (const char* ext : {".jsonl", ".jsonl.gz"}) {
-                const std::string path = dir + "/decoders-" + day + ext;
+            // every decoder's folder, transcripts/, the old combined file - plain and gz
+            for (const auto& df : declog::day_files(dir, day)) {
+                if (!dfolder.empty() && !df.folder.empty() && df.folder != dfolder && df.folder != declog::TRANSCRIPTS) continue;
+                const std::string& path = df.path;
                 if (access(path.c_str(), R_OK) != 0) continue;
                 gzFile f = gzopen(path.c_str(), "rb");   // reads plain files too
                 if (!f) continue;
@@ -901,6 +909,7 @@ void t_search_log(const Json& a, Reply r) {
                     if (line.empty() || line[0] != '{') continue;
                     if (!tneedle.empty() && line.find(tneedle) == std::string::npos) continue;
                     if (!vneedle.empty() && line.find(vneedle) == std::string::npos) continue;
+                    if (!dneedle.empty() && lower(line).find(dneedle) == std::string::npos) continue;
                     if (!query.empty() && lower(line).find(query) == std::string::npos) continue;
                     matched++;
                     if (line.size() > 3000) continue;
@@ -1380,7 +1389,7 @@ void t_set_option(const Json& a, Reply r) {
     if (!find_vfo(id, &v)) return r("No VFO D" + std::to_string(id), true);
     std::string key = str_arg(a, "key");
     if (key.empty() || key.find(':') != std::string::npos) return r("key needed (an option of the VFO's decoder)", true);
-    if (key.find('.') == std::string::npos && key != "verbose" && key != "log" && key != "invert" && key != "map") {
+    if (key.find('.') == std::string::npos && key != "verbose" && key != "log" && key != "pos_s" && key != "invert" && key != "map") {
         std::string p = v.d.digital_plugin;
         if (p.empty()) {
             Json st;
@@ -1504,9 +1513,13 @@ std::vector<Tool>& tools() {
         {"search_decoder_log", "Decoder data log",
          "Searches the decoder data log of the last `days` days (every decoded event, message, position, incident, "
          "transcript - of the VFO decoders set to Log / Log All and the transcripts set to Log, while logging to "
-         "disk is allowed): the newest matching records.",
+         "disk is allowed): the newest matching records. The files: a folder per decoder (decoder_logs/<id>/"
+         "<id>-YYYY-MM-DD.jsonl, finished days gzipped after the Keep days), transcripts/, and the older combined "
+         "decoders-YYYY-MM-DD files - all searched.",
          OBJ(STRP("query", "text the record must contain (case-insensitive)") "," NUMP("days", "1-31 (1 = today)")
                  "," STRP("type", "event | message | position | raw | incident | voice") "," INTP("vfo", "only this VFO")
+                 "," STRP("decoder", "only this decoder's records (plugin id: adsb, ais, pagers ...; NBFM / AM / WBFM for "
+                          "analog transcripts)")
                  "," INTP("limit", "records (100)"),
              ""),
          false, true, t_search_log},
@@ -1662,8 +1675,9 @@ std::vector<Tool>& tools() {
          "list_decoders), value as text ('' = its default); or one of the decoder tab's own: log = Logging, what "
          "the VFO's decoder writes to the decoder log while logging to disk is allowed (0 / off, 1 / log: events, "
          "messages, positions, incidents; 2 / all: Log All, also raw frames and the repeated control-channel "
-         "messages); verbose = Show all messages (1 / 0: also report the messages a control channel repeats); "
-         "invert, map (Plot on map) 1 / 0.",
+         "messages); pos_s = Positions every, 1-3600 s: the log keeps at most one position per aircraft / "
+         "vessel / station in that time (decoders that report positions); verbose = Show all messages (1 / 0: "
+         "also report the messages a control channel repeats); invert, map (Plot on map) 1 / 0.",
          OBJ(INTP("vfo", "VFO number") "," STRP("key", "option key") "," STRP("value", "value"), REQ("\"vfo\",\"key\",\"value\"")),
          true, false, t_set_option},
         {"remove_vfo", "Remove a VFO", "Removes a VFO (not the last one).", OBJ(INTP("vfo", "VFO number"), REQ("\"vfo\"")),

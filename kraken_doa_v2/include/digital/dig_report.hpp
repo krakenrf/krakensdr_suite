@@ -39,6 +39,8 @@ enum : int {
     LOG_ALL = 2,   // "Log All": Log + the repeated control-channel messages (the plugin's verbose) + raw frames
 };
 
+constexpr int POS_S_DEFAULT = 10, POS_S_MIN = 1, POS_S_MAX = 3600;
+
 // Options of one VFO's decoder (the decoder tab's settings)
 struct Options {
     // "Show all messages" (the "Log all" tick until 2026-11-19): the plugin
@@ -48,18 +50,26 @@ struct Options {
     bool verbose = false;
     // logging mode (LOG_*); a new VFO / decoder starts at Off
     int log = LOG_OFF;
+    // "Positions every" (2026-11-19; the global DECODER_LOG_POS_S before): the
+    // decoder log keeps at most one position per object in this many seconds,
+    // 1 .. 3600 (POS_S_*). Only the log - the map gets every point
+    int pos_s = POS_S_DEFAULT;
     bool invert = false;       // spectrum inverted (I/Q swapped source)
     bool map = false;          // plot the decoder's map points on the web UI's 🗺 Map (the decoder tab's "Plot on map")
     // the plugins' own options, "<plugin id>.<key>" -> value
     std::map<std::string, std::string> plugin;
 };
-// Persisted form "v=1&i=0&l=2&dmr.slot=1" (values percent-encoded; an older
-// kraken_doa ignores "l"). Also reads the old "verbose/slot/nac/invert" form.
-// Options stored before the logging mode existed (no "l") get Log, and
-// *no_log_key is set (the caller migrates: Log All where the old log types
-// had raw frames)
+// Persisted form "v=1&i=0&l=2&ps=10&dmr.slot=1" (values percent-encoded; an
+// older kraken_doa ignores "l" and "ps"). Also reads the old
+// "verbose/slot/nac/invert" form. Options stored before the logging mode
+// existed (no "l") get Log, and *no_log_key is set (the caller migrates: Log
+// All where the old log types had raw frames); stored before the per-VFO
+// "Positions every" (no "ps"): *no_pos_key is set and pos_s is the default -
+// the caller gives it the old global DECODER_LOG_POS_S
 std::string options_to_string(const Options& o);
-Options options_from_string(const std::string& s, bool* no_log_key = nullptr);
+Options options_from_string(const std::string& s, bool* no_log_key = nullptr, bool* no_pos_key = nullptr);
+// "1" .. "3600" (whole seconds) -> the interval; -1 = not one
+int parse_pos_s(const std::string& v);
 // "0" | "1" | "2" | "off" | "log" | "all" | "log all" | "log_all" (any case) -> LOG_*; -1 = not a mode
 int parse_log_mode(const std::string& v);
 bool valid_option_key(const std::string& k);   // "<plugin id>.<[a-z0-9_]{1,32}>"
