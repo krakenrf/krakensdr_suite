@@ -722,7 +722,8 @@ speech: MPT1327's traffic channels); `bw_hz` = the traffic channel's width
 decoder needs before it has heard it itself, by THAT decoder's
 `Info::options` keys - the timeslot, the colour code / NAC / RAN, the
 scrambling identity (TETRA's MCC / MNC / colour code, P25 Phase 2's WACN /
-system / NAC) - at most 16, keys `[a-z0-9_]{1,32}`, values <= 100 bytes
+system / NAC) - at most 16, keys `[a-z0-9_]{1,32}` (not the host's own
+`verbose`, `log_raw`, `video_wanted`), values <= 100 bytes of valid UTF-8
 without control characters. Repeats are expected: send `grant()` for every
 grant message you decode, also when the system repeats it every second for
 the length of the call - the host de-duplicates them and takes them as the
@@ -748,11 +749,16 @@ it is on a traffic channel unless an option says so - report what you hear
 (`call()`, `talker()`, and `grant()` for grants a traffic channel carries).
 
 Limits, both ends (the plugin side cuts or drops, kraken_doa checks
-everything again - a plugin is untrusted input): texts lose control
-characters and are cut at a character boundary (names 32, target / source
-32, system name / site 64, key 48 bytes), a frequency outside (0, 6 GHz] is
-NAN, a slot outside -1..15 is -1, a `decoder` that is no plugin id or a
-`demod` that is no `[a-z0-9_]{1,16}` is `""`, bad options are dropped.
+everything again with the same `kp::wire::clean_text` - a plugin is
+untrusted input): texts are made valid UTF-8 (malformed sequences, overlong
+forms, surrogates dropped), lose C0 / DEL / C1 control characters and are
+cut at a character boundary (names 32, target / source 32, system name /
+site 64, key 48 bytes), so a name is the same bytes everywhere; a frequency
+outside (0, 6 GHz] as sent (to 0.1 Hz) is NAN, a slot outside -1..15 is -1,
+a `decoder` that is no plugin id or a `demod` that is no `[a-z0-9_]{1,16}`
+is `""`, bad options are dropped - also an option with one of the host's
+own OPTION keys (`verbose`, `log_raw`, `video_wanted`:
+`kp::wire::HOST_OPTIONS`).
 Delivery: in Auto detect the host takes these only from the plugin it
 locked onto (as its voice) - reports before that are lost, so repeat the
 system now and then; with the plugin selected, all of them. When the VFO's

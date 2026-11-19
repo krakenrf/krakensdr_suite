@@ -357,19 +357,11 @@ std::string plot_ex_payload(const kp::Plot& pl) {
 // kraken_doa enforces them again (kp::wire::TRUNK_*). Every helper counts
 // what it had to cut or drop in *n (the offline summary reports it).
 // --------------------------------------------------------------------------
-void cut_utf8(std::string& s, size_t max) {
-    if (s.size() <= max) return;
-    size_t e = max;
-    while (e > 0 && (static_cast<unsigned char>(s[e]) & 0xC0) == 0x80) e--;
-    s.resize(e);
-}
-// text: control characters (and NULs, the wire's separator) removed, cut at a character boundary
+// text: valid UTF-8 without C0 / DEL / C1 controls (and NULs, the wire's
+// separator), cut at a character boundary - kp::wire::clean_text, which
+// kraken_doa applies again
 std::string tr_text(const std::string& in, size_t max, uint64_t* n) {
-    std::string s;
-    s.reserve(std::min(in.size(), max + 4));
-    for (unsigned char c : in)
-        if (c >= 0x20 && c != 0x7F) s.push_back(static_cast<char>(c));
-    cut_utf8(s, max);
+    std::string s = kp::wire::clean_text(in, max);
     if (s != in) (*n)++;
     return s;
 }
@@ -389,9 +381,16 @@ std::string tr_token(const std::string& in, size_t max, bool dash, uint64_t* n) 
     (*n)++;
     return "";
 }
+// valid as it goes on the wire ("%.1f": kraken_doa takes (0, 6 GHz] of that
+// text, so 0.04 Hz - "0.0" - is NAN there and here)
 double tr_freq(double f, uint64_t* n) {
     if (std::isnan(f)) return NAN;
-    if (std::isfinite(f) && f > 0 && f <= kp::wire::TRUNK_FREQ_MAX_HZ) return f;
+    if (std::isfinite(f) && f > 0 && f <= 2 * kp::wire::TRUNK_FREQ_MAX_HZ) {
+        char b[48];
+        snprintf(b, sizeof b, "%.1f", f);
+        const double w = strtod(b, nullptr);
+        if (w > 0 && w <= kp::wire::TRUNK_FREQ_MAX_HZ) return f;
+    }
     (*n)++;
     return NAN;
 }
@@ -429,13 +428,14 @@ kp::Grant tr_grant(const kp::Grant& g, uint64_t* n) {
         o.bw_hz = 0;
         if (!(g.bw_hz == 0)) (*n)++;
     }
-    // options: a valid key, a value without control characters <= 100 bytes,
-    // the first of a repeated key, at most 16
+    // options: a valid key that is not one of the host's own OPTIONs
+    // (kp::wire::host_option), a value <= 100 bytes that is clean text
+    // (kp::wire::clean_text leaves it as it is), the first of a repeated
+    // key, at most 16
     o.options.clear();
     for (const auto& [k, v] : g.options) {
-        bool ok = option_key_ok(k) && v.size() <= kp::wire::TRUNK_OPTION_VALUE_MAX &&
-                  o.options.size() < kp::wire::TRUNK_OPTIONS_MAX;
-        for (unsigned char c : v) ok = ok && c >= 0x20 && c != 0x7F;
+        bool ok = option_key_ok(k) && !kp::wire::host_option(k) && v.size() <= kp::wire::TRUNK_OPTION_VALUE_MAX &&
+                  o.options.size() < kp::wire::TRUNK_OPTIONS_MAX && kp::wire::clean_text(v, v.size()) == v;
         for (const auto& x : o.options) ok = ok && x.first != k;
         if (ok) o.options.emplace_back(k, v);
         else (*n)++;
