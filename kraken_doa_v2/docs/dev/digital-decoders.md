@@ -181,6 +181,24 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     `talker_end`, inbound `in_named` / `unit_end`), no dedup; before they
     followed the call with 5 s / 2 s dedup and lost starts / ends on 6 of
     14 real traffic channels
+  - P25 trunk following (3.1, 2026-11-20; plugins/p25/README.md *Trunk
+    following*): `P25Trunk` (p25_trunk.cpp), one for both phases, fed by
+    `P25Proto::tsbk()` (so the TSBK, link-control and Phase 2 abbreviated
+    forms share it) and the Phase 2 MAC: `trunk_system` (WACN.SYSID, RFSS /
+    site, control = trunking blocks / LCCH in the last 10 s; sent at most
+    once per input block from `tick()`, before any grant / channel / call),
+    `trunk_channel` (site / neighbour / secondary control channels, data
+    channels; again when the identifier arrives), `control_channel` (the
+    RFSS status names a control channel > 4 kHz from the VFO's RF), `grant`
+    for every grant form (TSBK 0x00 0x02 0x03 0x04 0x06 0x08 0x09 0x14, MFID
+    0x90 0x02 / 0x03, Phase 2 0x05 0x25 0xC0 0xC3 0xC4 0xC6 and the 0x4x
+    abbreviated ones; `phase1_parses` now also 0x06 0x14 0x39) with options
+    nac / wacn / sysid / lch / phase (new hidden option: which receiver runs),
+    channel -> downlink / uplink / slot through the identifier tables (TDMA:
+    number / slots, slot = number % slots), and `call` per slot (Phase 1 -1,
+    Phase 2 LCH; ACTIVE / ENDED / RELEASED - README). Generator: `p25_gen.py
+    --control` (TSDUs, its TSBK coding reproduces 361 real blocks of three
+    sites bit for bit), scene `p25-trunk-three-calls`
   - `DmrProto` (plugins/dmr): CACH TACT (timeslot), slot type Golay(20,8)
     (max 2 corrections - a third of random words are within 3), BPTC(196,96)
     voice LC header / terminator (RS(12,9)), CSBK, PI and data headers, EMB

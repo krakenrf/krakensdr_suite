@@ -7,7 +7,8 @@ H-DQPSK and the radios' H-CPM) on one 12-24 kHz VFO. Version 3.0
 the time, so the two phases are told apart without a setting: a trunked
 system's traffic channel can carry Phase 1 and Phase 2 calls in turn
 (tested: a Phase 1 call, a Phase 2 call and a Phase 1 call on one channel,
-all decoded).
+all decoded). Version 3.1 (2026-11-20) reports trunked systems to kraken_doa's
+trunk following (*Trunk following* below).
 
 ## Phase 1
 
@@ -44,11 +45,14 @@ dB SNR - restoring everywhere cost 0.11-0.16 dB on weak C4FM / LSM).
   each
 - TDU, TDULC (Golay(24,12) + RS(24,12,13)) - the call's end; a TDULC's link
   control as LDU1's
-- TSDU: trunking signalling blocks (rate-1/2 trellis + CRC-16) - grants,
-  channel identifiers (channel numbers -> MHz), RFSS / network / adjacent
-  site status, secondary control channels (implicit 0x39 and explicit
-  0x29), SNDCP data channel grants (0x14) and announcements (0x16),
-  affiliations, registrations, location registrations (0x2B); PDU headers.
+- TSDU: trunking signalling blocks (rate-1/2 trellis + CRC-16) - grants
+  (group 0x00, its updates 0x02 / explicit 0x03, unit-to-unit 0x04 / update
+  0x06, telephone interconnect 0x08 / update 0x09, Motorola patch
+  supergroups MFID 0x90 0x02 / 0x03), channel identifiers (channel numbers
+  -> MHz), RFSS / network / adjacent site status, secondary control
+  channels (implicit 0x39 and explicit 0x29), SNDCP data channel grants
+  (0x14) and announcements (0x16), affiliations, registrations, location
+  registrations (0x2B); PDU headers.
   Others are shown raw with Verbose. The trellis decoder's branch metric is
   each symbol's absolute error capped at 4 level units (2026-11-19; it was
   the squared error): the receiver's soft symbols have heavy tails near
@@ -124,13 +128,17 @@ MAC layer (`p25p2.cpp`), one slot at a time:
 - MAC PDUs: MAC_PTT, MAC_END_PTT, MAC_ACTIVE, MAC_HANGTIME, MAC_IDLE,
   MAC_SIGNAL and their messages (voice channel user, grant updates,
   MAC_RELEASE, Motorola's 0x80 / 0x83); the Phase 1 TSBK bodies inside them
-  (partition 01, the abbreviated forms: every opcode the Phase 1 parser
-  knows - network / RFSS / adjacent status, secondary control channels,
-  channel identifiers, grants, SNDCP grants / announcements, affiliations,
-  registrations) go through the Phase 1 parser, which shares its channel
-  identifier table and network identity with Phase 2. Partition 11 (the
-  explicit / extended forms) and messages it doesn't parse are shown raw
-  with Verbose
+  (partition 01, the abbreviated forms whose message is the 9-octet TSBK
+  body - network / RFSS / adjacent status, secondary control channels
+  0x79, channel identifiers, grants 0x40 / 0x42 / 0x44 / 0x46, SNDCP grants
+  0x54, acknowledge / deny, de-registration) go through the Phase 1
+  parser, which shares its channel identifier table and network identity
+  with Phase 2; the longer abbreviated forms (telephone grants 0x48 / 0x49,
+  0x68, 0x6B) differ from their TSBKs and stay raw. Explicit / extended
+  grants (0xC0, 0xC3, 0xC4, 0xC6) and the explicit multiple grant update
+  0x25 are parsed since 3.1 (layouts inferred, *Sources / limits*); the
+  rest of partition 11 and messages it doesn't parse are shown raw with
+  Verbose
 - A TDMA control channel (LCCH on one or both LCHs) as well as traffic
   channels; fact "Channel type"
 - Voice: AMBE+2 3600x2450 frames (4 per 4V burst, 2 per 2V) in the same bit
@@ -200,6 +208,71 @@ whichever phase decoded last shows its value.
   known yet is not shown or played. The audio is tagged with its talker
   channel for Voice to Text: Phase 1 channel 0, Phase 2 outbound LCH + 1,
   inbound unknown (-1: inbound radios are packets, not transmissions)
+- `phase` (hidden, 3.1): which receiver runs - `1` Phase 1 only, `2` Phase
+  2 only, empty (default) both. Set by trunk following from the granted
+  channel's identifier (an IDEN_UP_TDMA identifier with 2 or 4 slots = Phase
+  2); it saves the other receiver's CPU. A change while running restarts
+  the decoder (both receivers count samples from the same reset)
+
+## Trunk following (3.1)
+
+`Info::trunking`; the structured reports of SDK.md *Trunked systems*, from
+`p25_trunk.cpp` (one `P25Trunk` shared by both phases). The events and
+facts are unchanged.
+
+- System: key = WACN.SYSID in hex ("BEE00.14C") from the network status
+  broadcast (TSBK 0x3B, Phase 2 0x7B), name "P25 <key>", site "RFSS r site
+  s" from the RFSS status (0x3A, also its link-control form on traffic
+  channels); `control` = a trunking block or a TDMA LCCH burst passed its
+  checks within the last 10 s. Before the network status the key is ""; a
+  traffic channel without one takes the identity of the `wacn` / `sysid`
+  options or of its Phase 2 scrambling (not the inbound-only guess). Sent
+  when it changes and every 4 s, at most once per input block
+- Channels (`trunk_channel`): the site's control channel (0x3A, 0x3B),
+  neighbours' control channels (0x3C, same system ID only), secondary
+  control channels (0x39, 0x29 with its uplink), SNDCP data channels (0x16);
+  again when their identifier arrives later or a minute passed.
+  `control_channel` when, on a control channel, the RFSS status names a
+  control channel more than 4 kHz from the VFO's RF (at most every 30 s)
+- Channel -> frequency: name "<identifier>-<number>" (as the events write
+  it), number = the 12-bit channel number; downlink = base + number x
+  spacing, for an IDEN_UP_TDMA identifier with N slots base + (number / N)
+  x spacing on slot number % N (checked on air: a real update granted
+  1-212 and 1-213 of a 6.25 kHz-step TDMA identifier to two talkgroups at
+  once - one carrier, both slots); uplink = downlink + the identifier's
+  transmit offset, or the explicit forms' channel R; NAN until the
+  identifier is heard (the grant still goes out, name + number)
+- Grants (every one heard, `update` for the update forms): TSBK 0x00, 0x02
+  (two calls = two grants), 0x03 (channel T = the downlink), 0x04, 0x06,
+  0x08 / 0x09 (telephone: target = the unit, no source), 0x14 (`data`),
+  MFID 0x90 0x02 / 0x03 (target = the patch supergroup); link control 0x02
+  on a traffic channel (= TSBK 0x02); Phase 2 0x40-0x46 (via the TSBK
+  parser), 0x05 (up to three updates), 0x25, 0xC0, 0xC3, 0xC4, 0xC6.
+  `encrypted` / `emergency` from the service options where the message has
+  them (0x40 / 0x80). Each passed its FEC and CRC first: TSBK rate-1/2
+  trellis + CRC-16, link control RS(24,12,13) after Hamming / Golay, Phase
+  2 RS(GF 64) + CRC-12 / CRC-16. Multi-block (MBT) explicit grants are not
+  decoded: the receiver hands a PDU over after its header block. P25 has
+  no control-channel clear-down: no `grant_end`
+- Grant options (all five every time, "" = the default): `nac` = the
+  control channel's NAC (the system's on its traffic channels, checked on
+  air), `wacn` / `sysid` (the Phase 2 scrambling identity: a TDMA traffic
+  channel descrambles from its first burst), `lch` = slot + 1 for a TDMA
+  identifier else 0, `phase` = 2 / 1 from the identifier, "" when it is not
+  known yet. `bw` 12.5 kHz
+- Calls (`call`, a traffic channel's own signalling): Phase 1 (slot -1)
+  ACTIVE from the HDU (its talkgroup) and the voice user link control
+  (target, source, emergency; encrypted = the muting's decision: ALGID /
+  "protected"), repeated at most once a second; ENDED at the TDU / TDULC and
+  0.75 s without frames; RELEASED at a TDULC with the call termination LCO
+  0x0F, or when the channel carries trunking blocks. Phase 2 (slot = LCH;
+  with `lch` only that one): ACTIVE from MAC_PTT and the voice channel user
+  messages, ENDED at MAC_END_PTT, MAC_HANGTIME and the call timeout,
+  RELEASED at MAC_IDLE and MAC_RELEASE. Inbound bursts are radios, not a
+  traffic channel: no calls. Another known target on the same slot =
+  RELEASED for the old call, then ACTIVE. A clear-down heard before any
+  call of this instance releases nothing (it may be the previous call's on
+  a channel just granted again)
 
 ## ID separation (DoA per radio)
 

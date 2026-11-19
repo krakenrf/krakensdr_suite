@@ -28,6 +28,7 @@
 #include "p25p2.hpp"
 #include "dig_fec.hpp"
 #include "mbe_tables.hpp"
+#include "p25_trunk.hpp"
 
 #include <algorithm>
 #include <array>
@@ -489,11 +490,14 @@ const char* msg_name(int op) {
     }
 }
 // Phase 1 TSBK opcodes whose 8-octet bodies P25Proto::tsbk() parses (9.4:
-// partition 01 = the Phase 1 body); the others are shown raw (verbose)
+// partition 01 = the Phase 1 body); the others are shown raw (verbose).
+// Only opcodes whose abbreviated message is 9 octets (the length table) -
+// the TSBK body exactly: 0x48 / 0x49 (telephone grants) and 0x68 / 0x6B are
+// longer, their layouts differ from the TSBK's
 bool phase1_parses(int op) {
     switch (op) {
-        case 0x00: case 0x02: case 0x04: case 0x20: case 0x27: case 0x2F: case 0x30: case 0x33: case 0x34:
-        case 0x35: case 0x38: case 0x3A: case 0x3B: case 0x3C: case 0x3D: return true;
+        case 0x00: case 0x02: case 0x04: case 0x06: case 0x14: case 0x20: case 0x27: case 0x2F: case 0x30:
+        case 0x33: case 0x34: case 0x35: case 0x38: case 0x39: case 0x3A: case 0x3B: case 0x3C: case 0x3D: return true;
         default: return false;
     }
 }
@@ -711,6 +715,12 @@ struct P25p2Proto::Impl {
         ctx.report->set(Mode::P25, "System ID", hex(static_cast<uint64_t>(sys), 3));
         ctx.report->set(Mode::P25, "NAC", "0x" + hex(static_cast<uint64_t>(nac), 3));
         fact("Network ID from", from[cur]);
+        if (p1.trunk) {
+            // trunk following: the NAC for the grants' options; the
+            // identity is the system's key when no network status says it
+            p1.trunk->nac(nac);
+            if (cur != SRC_INBOUND) p1.trunk->network_hint(wacn, sys);
+        }
         if (changed) event("Network: WACN " + hex(static_cast<uint64_t>(wacn), 5) + " sys " + hex(static_cast<uint64_t>(sys), 3) +
                   " NAC 0x" + hex(static_cast<uint64_t>(nac), 3) + " (from " + from[cur] + ")",
               30.0);
@@ -1059,6 +1069,19 @@ struct P25p2Proto::Impl {
         else set_state(c, encrypted(c) ? "Voice [" + (c.alg >= 0 && c.alg != 0x80 ? P25Proto::algorithm_name(c.alg) : std::string("encrypted")) + "]" : "Voice");
         if (c.alg >= 0)
             fact("Encryption", c.alg == 0x80 ? "clear" : P25Proto::algorithm_name(c.alg) + ", key 0x" + hex(static_cast<uint64_t>(c.kid), 4));
+        if (c.call) trunk_call(c, kp::Call::ACTIVE);
+    }
+    // trunk following (P25Trunk::call): an outbound LCH's call, slot = LCH;
+    // with the lch option only the selected one's. Inbound lanes are radios'
+    // uplink bursts, not a traffic channel's downlink: not reported
+    void trunk_call(const Chan& c, int state) {
+        if (!p1.trunk || c.inbound || c.lch < 0 || !wanted(c)) return;
+        p1.trunk->call(state, c.dst_known && c.dst ? std::to_string(c.dst) : "", c.group,
+                       c.src_named && c.src ? std::to_string(c.src) : "", c.lch, encrypted(c), (c.so & 0x80) != 0);
+    }
+    // a grant a Phase 2 channel carries (control channel or traffic channel)
+    void trunk_grant(uint32_t chn, uint32_t target, bool group, uint32_t src, int so, bool update, uint32_t chr = 0xFFFF) {
+        if (p1.trunk) p1.trunk->grant(chn, std::to_string(target), group, src ? std::to_string(src) : "", so, update, false, chr);
     }
     // a checked burst of the channel's call (opens it)
     void call_touch(Chan& c) {
@@ -1101,7 +1124,11 @@ struct P25p2Proto::Impl {
             c.tcall = tcall_of(c) + " · LCH " + std::to_string(c.lch) + " · via site";
         }
     }
-    void call_end(Chan& c, const char* st) {
+    // tstate: what it means for trunk following - ENDED (the transmission is
+    // over; the channel may stay assigned for the hang time) or RELEASED
+    // (MAC_IDLE / MAC_RELEASE: the system cleared the LCH)
+    void call_end(Chan& c, const char* st, int tstate = kp::Call::ENDED) {
+        if (c.call) trunk_call(c, tstate);
         if (c.call) {
             c.ended_at = sl ? sl->start : now;
             c.ended_src = c.src;
@@ -1428,6 +1455,7 @@ struct P25p2Proto::Impl {
         if (!ok || !c.call) return false;
         valid_slot(!in);
         call_touch(c);
+        trunk_call(c, kp::Call::ACTIVE);   // keep-alive (P25Trunk repeats an unchanged call at most once a second)
         if (!in) talker_burst(c);
         else in_burst(c);
         play(c, b, vf, nf);
@@ -1534,6 +1562,9 @@ struct P25p2Proto::Impl {
         Chan* c = w.c;
         const bool lcch = w.kind == K_OECI || w.kind == K_IECI;
         if (lcch && c) set_state(*c, "Control channel");
+        // trunk following: an outbound LCCH is a control channel (its
+        // grants are the system's)
+        if (p1.trunk && w.kind == K_OECI) p1.trunk->control_seen();
         if (c && !c->inbound) lch_cc[c->lch] = lcch ? 1 : 0;
         {
             // per carrier: an LCCH on one or both LCHs, or two voice channels
@@ -1590,8 +1621,12 @@ struct P25p2Proto::Impl {
             }
             case 3:     // MAC_IDLE
                 if (c && !lcch) {
-                    if (c->call) call_end(*c, "Idle");
-                    else set_state(*c, "Idle");
+                    if (c->call) call_end(*c, "Idle", kp::Call::RELEASED);
+                    else {
+                        set_state(*c, "Idle");
+                        // the hang time is over: a call reported on this LCH is released
+                        if (p1.trunk && !c->inbound && wanted(*c)) p1.trunk->release(c->lch);
+                    }
                 }
                 {
                     Where w2 = w;
@@ -1709,8 +1744,64 @@ struct P25p2Proto::Impl {
                     e += std::string(k ? "," : "") + " TG " + std::to_string(grp) + " on " + p1.chan_str(chn, true);
                     if (q[0] & 0x40) e += " [encrypted]";
                     if (q[0] & 0x80) e += " [EMERGENCY]";
+                    trunk_grant(chn, grp, true, 0, q[0], true);
                 }
                 event(e, 10.0);
+                return;
+            }
+            // Explicit / extended grant forms (partition 11): [INFERRED] the
+            // layouts from the length table's lengths [GPL-fact] and the
+            // Phase 1 explicit siblings' fields (TIA-102.AABC: service
+            // options, channel T = the downlink, channel R, group; the
+            // extended unit-to-unit forms' source as a full SUID - WACN 20,
+            // system 12, unit 24 bits) - every length adds up exactly.
+            // [UNVERIFIED] not seen on air
+            case 0x25: {   // group voice channel grant update, multiple, explicit: 2 x (options, T, R, group)
+                if (len < 15) return raw(m, len);
+                std::string e = "Grant update:";
+                for (int k = 0; k < 2; k++) {
+                    const uint8_t* q = m + 1 + 7 * k;
+                    uint32_t ct = (static_cast<uint32_t>(q[1]) << 8) | q[2], cr = (static_cast<uint32_t>(q[3]) << 8) | q[4];
+                    uint32_t grp = (static_cast<uint32_t>(q[5]) << 8) | q[6];
+                    if (!ct && !grp) continue;
+                    e += std::string(k ? "," : "") + " TG " + std::to_string(grp) + " on " + p1.chan_str(ct, true);
+                    if (q[0] & 0x40) e += " [encrypted]";
+                    if (q[0] & 0x80) e += " [EMERGENCY]";
+                    trunk_grant(ct, grp, true, 0, q[0], true, cr);
+                }
+                event(e, 10.0);
+                return;
+            }
+            case 0xC0: {   // group voice channel grant, explicit: options, T, R, group, source
+                if (len < 11) return raw(m, len);
+                uint32_t ct = (static_cast<uint32_t>(m[2]) << 8) | m[3], cr = (static_cast<uint32_t>(m[4]) << 8) | m[5];
+                uint32_t grp = (static_cast<uint32_t>(m[6]) << 8) | m[7];
+                uint32_t src = (static_cast<uint32_t>(m[8]) << 16) | (m[9] << 8) | m[10];
+                std::string e = "Grant: TG " + std::to_string(grp) + " <- " + std::to_string(src) + " on " + p1.chan_str(ct, true);
+                if (m[1] & 0x40) e += " [encrypted]";
+                if (m[1] & 0x80) e += " [EMERGENCY]";
+                event(e, 3.0);
+                trunk_grant(ct, grp, true, src, m[1], false, cr);
+                return;
+            }
+            case 0xC3: {   // group voice channel grant update, explicit: options, T, R, group
+                if (len < 8) return raw(m, len);
+                uint32_t ct = (static_cast<uint32_t>(m[2]) << 8) | m[3], cr = (static_cast<uint32_t>(m[4]) << 8) | m[5];
+                uint32_t grp = (static_cast<uint32_t>(m[6]) << 8) | m[7];
+                event("Grant update: TG " + std::to_string(grp) + " on " + p1.chan_str(ct, true), 10.0);
+                trunk_grant(ct, grp, true, 0, m[1], true, cr);
+                return;
+            }
+            case 0xC4:     // unit-to-unit voice channel grant, extended: T, R, target, source SUID
+            case 0xC6: {   // ... its update
+                if (len < 15) return raw(m, len);
+                uint32_t ct = (static_cast<uint32_t>(m[1]) << 8) | m[2], cr = (static_cast<uint32_t>(m[3]) << 8) | m[4];
+                uint32_t dst = (static_cast<uint32_t>(m[5]) << 16) | (m[6] << 8) | m[7];
+                uint32_t src = (static_cast<uint32_t>(m[12]) << 16) | (m[13] << 8) | m[14];
+                event(std::string(op == 0xC4 ? "Unit grant: " : "Unit grant update: ") + std::to_string(src) + " -> " +
+                          std::to_string(dst) + " on " + p1.chan_str(ct, true),
+                      op == 0xC4 ? 3.0 : 10.0);
+                trunk_grant(ct, dst, false, src, -1, op == 0xC6, cr);
                 return;
             }
             case 0x31: {   // MAC_RELEASE
@@ -1719,6 +1810,11 @@ struct P25p2Proto::Impl {
                 checked_cc = cc;
                 event("Release: unit " + std::to_string(tgt) + ((m[1] & 0x80) ? " (forced)" : "") +
                           ((m[1] & 0x40) ? " (talker preemption)" : ""), 5.0);
+                // the system takes this LCH back ([GPL-fact] layout, not seen on air)
+                if (c && !c->inbound) {
+                    if (c->call) call_end(*c, "Released", kp::Call::RELEASED);
+                    else if (p1.trunk && wanted(*c)) p1.trunk->release(c->lch);
+                }
                 return;
             }
             default: break;
@@ -1743,6 +1839,7 @@ struct P25p2Proto::Impl {
                     if ((cur < 0 || cur == SRC_BLIND || cur == SRC_PHASE1 || cur == SRC_CC) && seed_allowed(seed)) use_seed(SRC_CC);
                 }
                 ctx.report->set(Mode::P25, "NAC", "0x" + hex(static_cast<uint64_t>(cc), 3));
+                if (p1.trunk) p1.trunk->nac(cc);
                 if (cur == SRC_CC) show_identity();
             }
             return;

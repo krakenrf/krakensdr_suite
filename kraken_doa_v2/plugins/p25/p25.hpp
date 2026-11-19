@@ -16,6 +16,8 @@
 
 namespace dig {
 
+class P25Trunk;
+
 // ---------------------------------------------------------------------------
 // P25 Phase 1
 // ---------------------------------------------------------------------------
@@ -51,6 +53,9 @@ public:
     int wacn() const { return wacn_; }
     int sysid() const { return sysid_; }
     static std::string algorithm_name(int alg);   // "clear", "AES-256", "alg 0x.."
+    // trunk following (p25_trunk.hpp): the system, grants and this
+    // channel's calls in the plugin API's structured form; nullptr = none
+    P25Trunk* trunk = nullptr;
 private:
     RxContext& ctx_;
     std::map<int, Iden> iden_;
@@ -62,6 +67,12 @@ private:
     uint32_t call_src_ = 0;          // the unit that event named (0 = none)
     int call_zero_lcs_ = 0;          // voice user link controls naming no unit so far
     bool call_voice_ = false;        // it has voice frames (a terminator's LC alone opens no call)
+    // its identity for trunk following (P25Trunk::call): the talkgroup /
+    // called unit (0 = not known yet), the source unit (0 = not named)
+    uint32_t call_tgt_ = 0, call_from_ = 0;
+    bool call_grp_ = true, call_emerg_ = false, call_reported_ = false;
+    bool release_lc_ = false;        // this frame's link control is the call termination (LCO 0x0F)
+    void report_call();              // ACTIVE with what is known
     // voice: IMBE, played only once the call is known to be clear
     ImbeDecoder imbe_;
     int alg_ = -1;                   // ALGID (HDU / encryption sync), -1 = not known yet
