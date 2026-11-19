@@ -54,8 +54,17 @@ at the start, the SACCH superframe for late entry; target / group / source,
 `encrypted` = a cipher type, `emergency`), repeated once a second; ENDED at
 TX_REL, at TX_REL_EX (the TC's hang time - talk-back permitted or not, TS
 1-C 16.4) or when no VCALL / voice frame came for 1 s; RELEASED at DISC (the
-TC releases the channel, TS 1-C 5.5.2). A new VCALL with other IDs is a new
-call. Conventional channels (RDCH) report no calls.
+TC releases the channel, TS 1-C 5.5.2) - only for a call this instance
+reported since its `reset()`: a DISC heard first may be the previous call's
+(the TC repeats it, and the channel is often granted again to the same
+talkgroup), so it reports nothing; a call whose VCALL was never decoded
+(arrived mid-call, encrypted with a weak SACCH) reports nothing and ends on
+the host's no-frames timer. A new VCALL with other IDs is a new call. A
+SACCH superframe message counts only when its 4 fragments (SR 3..0) passed
+CRC-6 in 4 consecutive frames: a superframe whose head fragment failed no
+longer completes with the previous superframe's head (2026-11-20: a unit
+call after an emergency group call was reported once as an emergency group
+call). Conventional channels (RDCH) report no calls.
 
 Hidden options (set by a grant): `ran` - only frames whose SR names this RAN
 (a frame without one takes the verdict of the frames right before it), so a
@@ -132,6 +141,13 @@ grants, all right), 200 random cuts of the file. Every grant comes from a
 message that passed its CRC: CAC CRC-16, FACCH1 CRC-12, FACCH2 CRC-15, or a
 SACCH superframe whose 4 fragments passed CRC-6 each and came from 4
 consecutive frames in order. Decode time 1.5-1.8 % of real time (x86).
+Review fixes (2026-11-20): a recording that starts on a call's DISC
+repeats and then carries a new call to the same talkgroup gave RELEASED for
+the call never heard, before the new call's ACTIVE - now only the new
+call's ACTIVE / ENDED. Emergency group call -> normal unit call, and group
+-> unit (late entry), with the second call's first 3 head fragments
+damaged: 1 of 3-4 call lines of the second call said group / emergency,
+now 0. All the results above unchanged.
 
 No NXDN control channel or trunked traffic channel has been received off
 air for these tests (none on air at the receiver, 2026-11-20); no published

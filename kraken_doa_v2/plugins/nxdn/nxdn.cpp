@@ -158,7 +158,6 @@ void NxdnReceiver::reset() {
     jobs_.clear();
     ran_ = -1;
     sacch_have_ = 0;
-    sacch_run_ = false;
     last_frame_[0] = last_frame_[1] = -1;
     last_locked_[0] = last_locked_[1] = false;
     ran_seen_[0] = ran_seen_[1] = -1;
@@ -439,24 +438,15 @@ void NxdnReceiver::layer3(const uint8_t* m, int nbits, const char* via) {
         case 0x10:     // IDLE
             break;
         case 0x11: {   // DISC: the TC releases the traffic channel (TS 1-C 5.5.2)
-            uint32_t src = (b[3] << 8) | b[4], dst = (b[5] << 8) | b[6];
+            const uint32_t dst = (b[5] << 8) | b[6];
             const bool group = call_type_group(b[2] >> 5);
             r.event(Mode::NXDN, "Disconnect: " + std::string(group ? "TG " : "unit ") + id_str(dst), 3.0);
             if (call_start_ >= 0) end_talker(voice_end_);
-            if (!traffic_channel()) break;
-            if (crep_.known || crep_.active) {
-                crep_.sent = frame_b_;
-                call_report(kp::Call::RELEASED);
-            } else if (crep_.sent < 0 || frame_b_ - crep_.sent > 2 * RATE) {
-                // a channel released before we heard its call (the TC sends
-                // DISC more than once): say so once, with the DISC's IDs
-                crep_.target = id_str(dst);
-                crep_.group = group;
-                crep_.source = src ? id_str(src) : "";
-                crep_.encrypted = crep_.emergency = false;
-                crep_.sent = frame_b_;
-                call_report(kp::Call::RELEASED);
-            }
+            // only a call this instance reported: a DISC heard first may be
+            // the PREVIOUS call's (the TC repeats it while the channel is
+            // granted again - often to the same talkgroup). A call whose
+            // VCALL we never decoded ends on the host's no-frames timer.
+            if (traffic_channel() && (crep_.known || crep_.active)) call_report(kp::Call::RELEASED);
             break;
         }
         case 0x19:     // SRV_INFO
@@ -806,23 +796,26 @@ void NxdnReceiver::decode_frame(const Branch& b, const SymSrc& s) {
         }
         r.set(Mode::NXDN, "RAN", std::to_string(ran));
         if (usc == 2) {
-            // superframe: 4 fragments, SR 3 (first) .. 0 (last)
+            // superframe: 4 fragments, SR 3 (first) .. 0 (last). A message
+            // is put together only from the fragments of 4 consecutive
+            // frames in order: a fragment that doesn't follow the previous
+            // one exactly one frame later starts over - else a superframe
+            // whose head fragment failed would complete with the previous
+            // superframe's (its message type, CC Option, call type)
             int idx = 3 - sr;
-            if (idx == 0) {
+            if (idx == 0 || !(sacch_have_ & (1 << (idx - 1))) ||
+                std::llabs(s.sync_end - sacch_t_[idx - 1] - period) > b.sps)
                 sacch_have_ = 0;
-                sacch_run_ = true;
-            } else if (!(sacch_have_ & (1 << (idx - 1))) ||
-                       std::llabs(s.sync_end - sacch_t_[idx - 1] - period) > b.sps) {
-                sacch_run_ = false;
+            if (idx == 0 || sacch_have_) {
+                sacch_t_[idx] = s.sync_end;
+                std::copy(sa.begin() + 8, sa.begin() + 26, sacch_sf_ + 18 * idx);
+                sacch_have_ |= 1 << idx;
             }
-            sacch_t_[idx] = s.sync_end;
-            std::copy(sa.begin() + 8, sa.begin() + 26, sacch_sf_ + 18 * idx);
-            sacch_have_ |= 1 << idx;
             if (sr == 0 && sacch_have_ == 15) {
-                // 4 CRC-6 + the fragments of 4 consecutive frames in order:
-                // strong enough for a grant
-                frame_strong_ = sacch_run_;
+                // 4 CRC-6 in sequence: strong enough for a grant too
+                frame_strong_ = true;
                 layer3(sacch_sf_, 72, "SACCH");
+                sacch_have_ = 0;
             }
         }
     }

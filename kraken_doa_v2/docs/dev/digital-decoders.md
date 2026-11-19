@@ -250,8 +250,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     site), grant (VCALL_ASSGN / _DUP, DCALL_ASSGN / _DUP; channel `CH n`,
     no frequency - Type-C channel plans live in the radios; options `ran`,
     `rate`), call (VCALL ACTIVE, TX_REL / TX_REL_EX / 1 s gap ENDED, DISC
-    RELEASED; RTCH / RTCH_C only). A grant from a traffic channel's SACCH
-    superframe needs its 4 fragments from 4 consecutive frames. Hidden
+    RELEASED only for a call this instance reported - a DISC heard first
+    may be the previous call's; RTCH / RTCH_C only). Any SACCH superframe
+    message needs its 4 fragments from 4 consecutive frames in order (a
+    failed head fragment once let the previous superframe's complete it:
+    message type, CC Option, call type). The system is sent every 5 s and
+    ahead of a grant (the engine can drop it without a RESET: Auto
+    detect's lead changing). Hidden
     options `ran` (a frame's SR RAN, inherited by frames that name none)
     and `rate` (one branch only). VCALL Transmission Mode 011 (EFR) is not
     played. Not decoded: direct frequency assignment (not in 1.3), Type-D.
