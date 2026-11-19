@@ -1709,6 +1709,9 @@ void on_voice_call(Voice& v, const PluginEvent& ev) {
     if (!s) return;
     const int64_t now = now_ms();
     if (!ev.target.empty() && (ev.target != c.target || ev.group != c.group)) {
+        // (only an ACTIVE one says what the channel carries now: an ENDED / RELEASED of another
+        // target is the previous call's end, late)
+        if (ev.call_state != 1) return;
         // the channel carries a different call: re-labelled when that one may
         // be followed, else the VFO is freed
         if (now - c.t_placed < STALE_FRAMES_MS * 3) return;   // (the previous channel's, still in the pipe)
@@ -2980,6 +2983,10 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         }
         edited(*s);
         return done();
+    }
+    if (cmd.rfind("TRUNK_", 0) == 0) {
+        *err = "unknown trunk command";
+        return done(false);
     }
     return false;
 }
