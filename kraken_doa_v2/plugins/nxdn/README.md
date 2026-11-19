@@ -21,7 +21,10 @@ reports, besides its facts and events:
 - `trunk_system`: key = category + system code of the Location ID
   (`global.123`, `regional.4000`, `local.70001` - the same on every site),
   site = `site <code>`, `control` on an RCCH or a composite control channel;
-  from SITE_INFO / SRV_INFO, again every 10 s.
+  from SITE_INFO / SRV_INFO: at once after a `reset()` or a change, again
+  every 5 s, and ahead of a grant when it wasn't sent in the last 0.5 s
+  (the host may have dropped it - Auto detect's lead changing - without a
+  reset; a dual-format CAC's SRV_INFO is handled before its grant).
 - `trunk_channel`: the site's 1st / 2nd control channel (SITE_INFO), the
   control channels CCH_INFO announces (Curr / Add) and the adjacent sites'
   control channels (ADJ_SITE_INFO, same system only).
