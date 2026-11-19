@@ -56,15 +56,24 @@ carrier x 25 kHz + offset (+ the augmented bandwidth's centre) with
 SYSINFO's band / offset or the element's extended ones (NAN before
 SYSINFO), `uplink_hz` from the duplex spacing table of ETSI TS 100 392-15
 (band x code; normal = minus, reverse = plus; NAN for 0 MHz / reserved
-codes), `slot` 0-based. A call table by call identifier (64 calls, the
-least recently heard go first) carries the call across PDUs: `target` =
+codes), `slot` 0-based. A call table by call identifier carries the call
+across PDUs (a record goes 60 s after it was last heard - the standard has
+no such timer: T310, the call time-out, runs to 30 min or without limit;
+back-up D-SETUPs came every ~15 s on air and the longest set-up timer,
+T301 / T302, is 60 s - and at most 64, the least recently heard first; a
+call released on its traffic carrier is never heard released here). A
+D-SETUP starts its record anew: every field from that PDU or empty, only a
+back-up of the same call (same called party) keeps "granted" on the same
+channel. `target` =
 the SSI the D-SETUP is addressed to (the GSSI of a group call; a D-CONNECT
 ACKNOWLEDGE's addressee for an individual call), `group` from the
 communication type (unknown: group), `source` = the D-SETUP's calling
 party, the D-CONNECT's addressee (the caller), or the D-TX GRANTED's
-transmitting party; `encrypted` = the basic service's end-to-end encryption
-flag or D-TX GRANTED's encryption control; `emergency` = call priority 15
-(pre-emptive 4); `data` = circuit mode data. `update` = the call was
+transmitting party (granted to the addressee: the addressee; "granted to
+another user" without the element: unknown, never the previous talker);
+`encrypted` = the basic service's end-to-end encryption flag or D-TX
+GRANTED's encryption control; `emergency` = call priority 15 (pre-emptive
+4) of the latest PDU that carries a priority; `data` = circuit mode data. `update` = the call was
 granted on this channel before (back-up D-SETUPs, late entry, a D-TX
 GRANTED for the next talker). `grant_end` at D-RELEASE of a granted call.
 Options for the traffic instance (hidden): `timeslot` (1-4), `mcc` / `mnc` /
@@ -97,7 +106,17 @@ D-RELEASE on the timeslot or two AACHs "unallocated". Target / source only
 from what it decodes itself (a call it heard set up on the MCCH - a
 traffic slot of the main carrier - by the `call` option). The scrambling
 options let it decode before its first BSCH; the timeslot NUMBERS come
-from the BSCH (frame 18 of every carrier, at most 1.02 s). Without the
+from the BSCH (frame 18 of every carrier, at most 1.02 s). With them the
+instance accepts that cell only: another cell's BSCH on the carrier (a
+co-channel cell in frequency reuse) changes nothing - timing, scrambling,
+reports - beyond one event "Another cell on this carrier ... ignored", and
+the AACH (not CRC-protected) decides its call only while a CRC-valid block
+of the wanted cell came within the last 1.5 s. Under a stronger co-channel
+cell the wanted call is simply not heard any more (ENDED once its traffic
+stops decoding); the other cell's calls are never reported. Without the
+identity options (a user's own VFO) a BSCH of another cell switches to it
+as before, and everything learned from the old cell - calls, the call on
+the timeslot (ENDED), SYSINFO, timeslot usage - is dropped. Without the
 option (a user VFO, the control VFO) the decoder plays the first timeslot
 carrying traffic as before - with trunk following on, the control VFO does
 not mute itself (it cannot see the host's switch); it is only heard while
@@ -156,9 +175,40 @@ SNR in 25 kHz): all 10 grants down to 12 dB, 9 at 10-9 dB, 6-8 at 8-6 dB,
 none at 5 dB (no sync); never a wrong channel, target or frequency. +-1 kHz
 offset: all 10. Noise only: nothing. `--truncate 1..24` (every CMCE PDU cut
 inside a valid block): 0 grants, 0 grant ends, the PDUs counted as "Not
-parsed". A RESET part-way (a retune): the 2.1 receiver did not re-acquire
-the clean generated carrier at all (the search window kept its place in the
-slot grid; fixed: it moves half a slot).
+parsed".
+
+Acquisition (review fixes 2026-11-20): a training sequence now counts
+wherever it lies in the search window (its slot may have begun before it -
+the next slot is taken then), a failed search drops one slot, and
+`process()` searches until less than a window is left. 2.1 kept the
+window's place in the slot grid and never found a carrier that started
+unluckily - after a RESET, or after 10 / 600 s of noise -; the first fix
+(half a slot dropped per 10 ms block) let the history grow by ~21 000
+samples a second with no carrier. Now, noise and then a carrier at 20 dB:
+first valid frame 0.390 s after the carrier starts after 0 / 10 / 60 / 600
+s of noise alike (2.1: 0.390 s / never / 0.390 s / never; the half-slot
+build 0.390 / 4.15 s / never / never, 403 s CPU for the 605 s file); the
+review's `--at 40 --dur 20` file: the cell at 40.17 s (was 56.5 s). An hour
+of noise into `decoder --serve` in 10 ms blocks: RSS 4216 kB at 1, 10, 30
+and 60 min (2.1: 4184 kB; the half-slot build: 14 MB after 1 min, 102 MB
+after 10 min, with 437 s of CPU). CPU with no carrier as 2.1: 60 s of noise
+offline, 7 runs each on a shared machine, user time min 0.41 / median 0.72
+s against 2.1's 0.39 / 0.70 s. The co-channel scene (carrier 3580, call 102 on timeslot 2 + a CC33
+cell with its own call 10 dB stronger from 8 s), traffic instance with
+`timeslot=2 mcc=530 mnc=1 cc=12 call=102`: call 102 ACTIVE 6.31 s, ENDED
+8.98 s (drowned), the CC33 BSCHs ignored, nothing of the CC33 call (before:
+site "LA 2002 CC 33", the CC33 call ACTIVE with its target / source,
+RELEASED at 14.42 s); without the identity options the switch to CC33 ends
+call 102 at 8.34 s and the CC33 call starts with no carried-over IDs. Call
+table: a call identifier reused for a second group right after an emergency
+call released on its traffic carrier - before: the new call's grant
+`flags=mu` with the old caller as source; now `flags=-`, source "" until
+its D-CONNECT names the caller; a second transmission whose STCH D-TX
+GRANTED names no party - before: the first radio's talker again, no new
+ACTIVE; now ACTIVE with source "" and talker "?". A RESET clears the
+"Channel allocations" / "Grants" / "Not parsed" facts (they counted on from
+the previous channel). After a retune (digi_test `--retune`, also at 3.5
+s) the system is sent again with the first BSCH heard, before any grant.
 
 Real recordings (verified against them, not in this repo):
 sigidwiki's "TETRA" IQ (SDR#, 48 kHz, 41.7 s, a downlink): MCC 228 / MNC

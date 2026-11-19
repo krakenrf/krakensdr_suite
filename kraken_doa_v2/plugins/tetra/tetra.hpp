@@ -142,6 +142,12 @@ private:
     void aach(const uint8_t* bits30);
     void sysinfo(const uint8_t* t1);
     int64_t now_ms_s() const;     // the sample clock in ms (slot start)
+    // the grant's identity (mcc / mnc / cc options) is set: only that cell counts
+    bool locked_identity() const { return opt_mcc_ >= 0 && opt_mnc_ >= 0 && opt_cc_ >= 0; }
+    int64_t own_ok_ = -1000000000;   // the last slot with a CRC-valid block / BSCH of the cell in force
+    bool own_recent() const;
+    uint64_t foreign_bsch_ = 0;   // BSCHs of another cell ignored (locked identity)
+    void clear_cell();
     double now_s() const;
     // valid frames and cell packets: a traffic instance reports only its own
     // timeslot's, and only while the AACH says it is assigned (assigned
@@ -188,6 +194,8 @@ private:
         double last_s = 0;
     };
     std::vector<CallRec> calls_;  // bounded (64), the least recently heard go first
+    static constexpr double CALL_KEEP_S = 60.0;
+    void expire_calls();
     CallRec& call_rec(int cid);
     CallRec* find_call(int cid);
     void forget_call(int cid);

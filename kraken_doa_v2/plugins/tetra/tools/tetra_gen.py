@@ -25,7 +25,11 @@ A TRUNKED SITE (one carrier of it per file, the same calls in every file):
          tx=SSI@T0-T1[+SSI@T0-T1...] (the transmissions), enc=1 (end-to-end
          encrypted), release=T (D-RELEASE on the assigned slot's SCH/F after
          the hang time) or release=stolen (D-TX CEASED + D-RELEASE in the two
-         stolen halves of the last traffic slot)
+         stolen halves of the last traffic slot); for the decoder's
+         call table tests: prio=P (the D-SETUP's call priority, 15 =
+         emergency), nocalling=1 (D-SETUP without a calling party),
+         noparty=K (the STCH D-TX GRANTEDs of transmission K on, 0-based,
+         without a transmitting party)
   --truncate B   (a robustness test) every CMCE PDU loses its last B bits
                  inside a correctly coded block (CRC valid, MAC length right)
 
@@ -197,11 +201,12 @@ def party(ssi):
     return [1] + u(1, 2) + u(ssi, 24)
 
 
-def d_setup(cid, enc, calling, proprietary=0):
+def d_setup(cid, enc, calling, proprietary=0, prio=0):
     # call time-out infinite, no hook signalling, simplex, the BSI, transmission
-    # granted to another user, priority not defined
-    b = u(7, 5) + u(cid, 14) + u(0, 4) + [0] + [0] + u(bsi(enc), 8) + u(3, 2) + [0] + u(0, 4)
-    b += [1] + [0] + [0] + party(calling)          # O-bit, notification, temporary address, calling party
+    # granted to another user, the call priority (15 = emergency)
+    b = u(7, 5) + u(cid, 14) + u(0, 4) + [0] + [0] + u(bsi(enc), 8) + u(3, 2) + [0] + u(prio, 4)
+    # O-bit, notification, temporary address, calling party (None: not given)
+    b += [1] + [0] + [0] + (party(calling) if calling is not None else [0])
     if proprietary:
         b += [1] + u(15, 4) + u(proprietary, 11) + [i & 1 for i in range(proprietary)]
     return b + [0]                                  # the last M-bit
@@ -215,7 +220,7 @@ def d_connect(cid):
 
 def d_tx_granted(cid, grant, enc, src):
     b = u(11, 5) + u(cid, 14) + u(grant, 2) + [0] + [enc & 1] + [0]
-    return b + [1] + [0] + party(src) + [0]
+    return b + [1] + [0] + (party(src) if src is not None else [0]) + [0]   # src None: no transmitting party
 
 
 def d_tx_ceased(cid):
@@ -315,21 +320,24 @@ class Site:
         q = []
         for c in calls:
             src0, cid, al1 = c['tx'][0][0], c['cid'], chan_alloc(c['carrier'], c['tn'], 1)
-            q.append((c['at'], [mac_resource(c['gssi'], llc_mle_cmce(d_setup(cid, c['enc'], src0)), al1, um=c['um'])]))
+
+            def ds(prop=0, c=c, cid=cid, src0=src0):
+                return d_setup(cid, c['enc'], None if c.get('nocalling') else src0, proprietary=prop,
+                               prio=c.get('prio', 0))
+            q.append((c['at'], [mac_resource(c['gssi'], llc_mle_cmce(ds()), al1, um=c['um'])]))
             q.append((c['at'] + 0.001, [mac_resource(src0, llc_mle_cmce(d_connect(cid)),
                                                      chan_alloc(c['carrier'], c['tn'], 3), um=c['um'])]))
             end, k, t = self.call_end(c), 0, c['at'] + 2.0
             while t < end:
                 if k == 0:
                     # a back-up D-SETUP in two fragments, its TM-SDU with an FCS
-                    sdu = llc_mle_cmce(d_setup(cid, c['enc'], src0, proprietary=230), fcs=True)
+                    sdu = llc_mle_cmce(ds(230), fcs=True)
                     first, _ = mac_resource(c['gssi'], [], al1, um=c['um'], li=0x3F)
                     cut = 268 - len(first)
                     q.append((t, [(first + sdu[:cut], False)]))
                     q.append((t + 0.001, [(mac_end(sdu[cut:]), False)]))
                 else:
-                    q.append((t, [mac_resource(c['gssi'], llc_mle_cmce(d_setup(cid, c['enc'], src0)), al1,
-                                               um=c['um'])]))
+                    q.append((t, [mac_resource(c['gssi'], llc_mle_cmce(ds()), al1, um=c['um'])]))
                 k += 1
                 t += 2.0
             for ssi, t0, _ in c['tx'][1:]:
@@ -364,7 +372,8 @@ class Site:
                         return ('stch', [mac_resource(gssi, llc_mle_cmce(d_tx_ceased(cid)))], None, c['um'])
                     # the 4 slots of a frame: one D-TX GRANTED in the first and every 2 s
                     if first or int((t - t0) / 2.0) != int((t - t0 - 4 * dt) / 2.0):
-                        g = mac_resource(gssi, llc_mle_cmce(d_tx_granted(cid, 3, c['enc'], ssi)))
+                        g = mac_resource(gssi, llc_mle_cmce(d_tx_granted(cid, 3, c['enc'],
+                                                                         None if i >= c.get('noparty', 99) else ssi)))
                         return ('stch', [g], None, c['um'])
                     return ('tch', c['um'])
             if c['release'] != 'stolen' and c['release'] <= t < c['release'] + 8 * dt:
