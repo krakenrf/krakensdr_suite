@@ -1148,6 +1148,156 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 /* the speaker of the icon set (i-speaker) as a mask: a pseudo-element can't <use> the sprite */
 .sf-row.sfs-cur .nm::before {content:'';display:inline-block;width:12px;height:12px;margin-right:4px;vertical-align:-2px;background:currentColor;
   -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.2 6.1h2.6l3.6-3v9.8l-3.6-3H2.2z'/%3E%3Cpath d='M10.8 5.6a3.4 3.4 0 0 1 0 4.8M12.7 3.7a6 6 0 0 1 0 8.6'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.2 6.1h2.6l3.6-3v9.8l-3.6-3H2.2z'/%3E%3Cpath d='M10.8 5.6a3.4 3.4 0 0 1 0 4.8M12.7 3.7a6 6 0 0 1 0 8.6'/%3E%3C/svg%3E") center/contain no-repeat}
+/* 📡 Trunk following (the box, the VFO cards' line, the system editor - see 📡 TRUNK FOLLOWING).
+   Rows have a fixed height (one line each part, cut with an ellipsis): calls come and go
+   several times a second, and nothing may jump or wrap when one changes */
+.tk-badge {font-size:10px;padding:1px 6px;border-radius:8px;margin-left:auto;margin-right:6px;background:var(--ok-d);color:var(--ok-t2);white-space:nowrap}
+.tk-badge:empty {display:none}
+.tk-badge.w {background:var(--warn-d);color:var(--warn-t2)}
+.tk-bar {display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.tk-bar .tk-sw {display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--t0);cursor:pointer}
+.tk-bar .tk-sw input {margin:0}
+.tk-bar .tk-state {flex:1;min-width:0;font-size:11px;color:var(--t4);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-bar .tk-state.on {color:var(--ok-t)}
+.tk-bar .tk-state.w {color:var(--warn-t)}
+.tk-set {background:var(--s3);border:1px solid var(--l1);border-radius:3px;padding:2px 6px;margin:2px 0 6px}
+.tk-set .ctrl-row {margin:5px 0;flex-wrap:nowrap;gap:6px}
+.tk-set .ctrl-row label:first-child {font-size:12px;min-width:0;flex:1}
+.tk-set .ctrl-row input[type="number"] {width:54px;font-size:12px;padding:3px 5px;flex:none}
+.tk-set .u {font-size:10px;color:var(--t3);width:12px;flex:none}
+.tk-note {display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--t2);background:var(--s3);border:1px solid var(--l1);border-radius:3px;padding:4px 6px;margin:0 0 4px;line-height:1.35}
+.tk-note > .ic {flex:none}
+.tk-note > span {flex:1;min-width:0;overflow-wrap:anywhere}
+.tk-note .btn {flex:none}
+.tk-note.w {border-color:#5a4520}
+.tk-note.w > .ic {color:var(--warn-t)}
+.tk-note.b {border-color:var(--bad-m)}
+.tk-note.b > .ic {color:var(--bad-t)}
+.tk-note.i > .ic {color:var(--ac-t)}
+.tk-note.p {border-color:var(--spec-m)}
+.tk-note.p > .ic {color:var(--spec-t)}
+.tk-sys {background:var(--s3);border:1px solid var(--l1);border-radius:3px;padding:4px 6px;margin:0 0 4px;font-size:11.5px}
+.tk-sys .l1 {display:flex;align-items:center;gap:6px;height:22px}
+.tk-sys .nm {flex:1;min-width:0;color:var(--t0);font-weight:bold;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-sys .pl {color:var(--t5);font-size:11px;white-space:nowrap}
+.tk-sys .l2 {color:var(--t3);line-height:17px;min-height:17px}
+.tk-sys .l3 {color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:17px;line-height:17px}
+.tk-sys.off .nm {color:var(--t3);font-weight:normal}
+.tk-cc {display:inline-flex;align-items:center;gap:3px;margin-right:6px;cursor:pointer;white-space:nowrap}
+.tk-cc .d {font-weight:bold}
+.tk-cc .rx {font-size:9px;color:var(--ok)}
+.tk-cc.lost .rx {color:var(--bad)}
+.tk-cc.lost {color:var(--bad-t)}
+.tk-hold {display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ac-t2);background:var(--ac-d2);border:1px solid var(--ac-d);border-radius:3px;padding:3px 6px;margin:0 0 4px}
+.tk-hold:empty {display:none}
+.tk-hold > span {flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-list {background:var(--s0);border:1px solid var(--l1);border-radius:3px;max-height:260px;overflow-y:auto;overflow-anchor:auto}
+.tk-list.hist {max-height:220px}
+.tk-empty {font-size:11px;color:var(--t5);padding:5px 6px}
+.tk-call {padding:3px 4px 3px 6px;border-bottom:1px solid rgba(51,59,70,.6);border-left:3px solid transparent;font-size:11.5px;cursor:default}
+.tk-call:last-child {border-bottom:0}
+.tk-call .l1 {display:flex;align-items:center;gap:5px;height:20px}
+.tk-call .l2 {color:var(--t4);font-size:10.5px;height:15px;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-call .st {flex:none;font-size:10px;width:50px;color:var(--t4);white-space:nowrap;overflow:hidden}
+.tk-call .nm {flex:1;min-width:0;color:var(--t0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-call .mk {flex:none;display:inline-flex;gap:3px;align-items:center;color:var(--t3)}
+.tk-call .mk .em {color:var(--bad-t)}
+.tk-call .mk .pr {font-size:9.5px;color:var(--warn-t2);border:1px solid var(--warn-m);border-radius:6px;padding:0 4px;line-height:13px}
+.tk-call .vf {flex:none;font-weight:bold;font-size:11px;cursor:pointer}
+.tk-call .vf:empty {display:none}
+.tk-call .ab {flex:none;display:inline-flex;gap:1px}
+.tk-call .ab button {background:none;border:1px solid transparent;color:var(--t3);cursor:pointer;padding:0 3px;height:18px;border-radius:3px;display:inline-flex;align-items:center}
+.tk-call .ab button:hover {border-color:var(--ac-t);color:#fff}
+.tk-call .ab button[hidden] {display:none}
+.tk-call .ab .ic {font-size:13px}
+.tk-call .why {color:var(--warn-t)}
+.tk-call .why.q {color:var(--t4)}
+.tk-call a.why {cursor:pointer;text-decoration:underline dotted}
+.tk-call.s-active {border-left-color:var(--ok)}
+.tk-call.s-active .st {color:var(--ok-t)}
+.tk-call.s-setup {border-left-color:var(--warn)}
+.tk-call.s-setup .st {color:var(--warn-t)}
+.tk-call.s-hang {border-left-color:var(--ok-m)}
+.tk-call.s-hang .st {color:var(--ok-t2)}
+.tk-call.s-recent {opacity:.55}
+.tk-call.hist {opacity:1}
+.tk-call.hist .st {color:var(--t5);font-variant-numeric:tabular-nums}
+.tk-call.hist.fol {border-left-color:var(--ok-m)}
+.tk-menu {position:fixed;z-index:1600;min-width:180px;background:var(--s4);border:1px solid var(--l3);border-radius:5px;box-shadow:0 6px 20px rgba(0,0,0,.55);padding:4px 0;font-size:12px}
+.tk-menu .h {padding:3px 10px 4px;color:var(--t4);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+.tk-menu button {display:flex;align-items:center;width:100%;gap:6px;background:none;border:0;color:var(--t0);font:inherit;text-align:left;padding:5px 10px;cursor:pointer}
+.tk-menu button:hover, .tk-menu button:focus-visible {background:var(--s5);outline:none}
+.tk-menu button .ck {width:14px;flex:none;color:var(--ac-t)}
+.tk-menu hr {border:0;border-top:1px solid var(--l1);margin:3px 0}
+@media (pointer:coarse) { .tk-menu button {min-height:40px} .tk-call .ab button {height:26px;padding:0 6px} }
+#decimator-list .dec-row.dec-tk {font-size:11px;color:var(--ac-t2);display:flex;flex-wrap:nowrap;align-items:center;gap:0;white-space:nowrap;overflow:hidden;margin:-2px 0 4px}
+#decimator-list .dec-row.dec-tk:empty {display:none}
+#decimator-list .dec-row.dec-tk > span {min-width:0;overflow:hidden;text-overflow:ellipsis}
+#decimator-list .dec-row.dec-tk.lost {color:var(--bad-t)}
+#decimator-list .dec-item.tk-parked {opacity:.6}
+.tk-tag {display:inline-block;font-size:10px;color:var(--ac-t2);border:1px solid var(--ac-d);border-radius:6px;padding:0 5px;margin-left:4px;vertical-align:1px;white-space:nowrap}
+/* the system editor: a dialog in the Setup Settings look, sections as a strip across the top */
+.sf-dlg.tk-dlg {width:680px;height:580px;display:flex;flex-direction:column;overflow:hidden;padding-bottom:8px}
+.tk-dlg > .sf-dlg-h {flex:none;min-width:0}
+.tk-dlg > .sf-dlg-h #tk-dlg-title {min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-tabs {flex:none;display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--l2);margin:2px -12px 0;padding:0 12px}
+.tk-tabs button {background:none;border:0;border-bottom:2px solid transparent;color:var(--t3);font:inherit;font-size:12.5px;padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:5px}
+.tk-tabs button:hover {color:var(--t0)}
+.tk-tabs button.on {color:var(--ac-t);border-bottom-color:var(--ac)}
+.tk-tabs button:focus-visible {outline:2px solid var(--ac);outline-offset:-2px}
+.tk-tabs .n {color:var(--warn-t);font-size:11px;display:inline-flex;align-items:center;gap:2px}
+.tk-tabs .n:empty {display:none}
+.tk-pane {flex:1;min-height:0;overflow-y:auto;display:none;padding:8px 2px 4px}
+.tk-pane.on {display:block}
+.tk-dlg .sec {font-weight:bold;color:var(--ac-t);font-size:12.5px;margin:12px 0 5px;padding-top:8px;border-top:1px solid var(--l1);display:flex;align-items:center;gap:6px}
+.tk-pane > .sec:first-child {margin-top:0;padding-top:0;border-top:0}
+.tk-dlg .kv {display:flex;justify-content:space-between;gap:10px;font-size:12px;line-height:1.7;color:var(--t2)}
+.tk-dlg .kv > span:first-child {flex:none;color:var(--t5)}
+.tk-dlg .kv > span:last-child {min-width:0;text-align:right;overflow-wrap:anywhere}
+.tk-dlg .tk-form {display:flex;flex-wrap:wrap;gap:6px 8px;align-items:flex-end}
+.tk-dlg .tk-form > div {display:flex;flex-direction:column;gap:2px}
+.tk-dlg .tk-form .lbl {margin:0}
+.tk-dlg .tk-form input {width:110px}
+.tk-dlg .tk-form input.s {width:64px}
+.tk-dlg .tk-form .ferr {color:var(--bad-t);font-size:11px;min-height:0;max-width:150px}
+.tk-dlg .tk-form .ferr:empty {display:none}
+.tk-dlg .tk-tw {overflow-x:auto;border:1px solid var(--l1);border-radius:3px;background:var(--s2)}
+.tk-dlg table.tk-t {width:100%;border-collapse:collapse;font-size:11.5px}
+.tk-dlg .tk-t th {position:sticky;top:0;background:var(--s4);color:var(--t4);font-weight:normal;text-align:left;padding:3px 6px;white-space:nowrap}
+.tk-dlg .tk-t td {padding:2px 6px;border-top:1px solid rgba(51,59,70,.6);white-space:nowrap;color:var(--t1)}
+.tk-dlg .tk-t td.n {text-align:right;font-variant-numeric:tabular-nums}
+.tk-dlg .tk-t td.d {color:var(--t5)}
+.tk-dlg .tk-t input, .tk-dlg .tk-t select {padding:2px 4px;font-size:11.5px}
+.tk-dlg .tk-t input.nm {width:150px}
+.tk-dlg .tk-t select {width:auto}
+.tk-dlg .tk-t tr.miss td {background:rgba(227,168,66,.08)}
+.tk-dlg .tk-t tr.miss td.f {color:var(--warn-t)}
+.tk-dlg .tk-t tr.heard td.id {color:var(--t4)}
+.tk-dlg .tk-t button {background:none;border:1px solid transparent;color:var(--t3);cursor:pointer;padding:1px 4px;border-radius:3px}
+.tk-dlg .tk-t button:hover {border-color:var(--ac-t);color:#fff}
+.tk-src {display:inline-block;font-size:10px;border-radius:6px;padding:0 5px;margin-left:5px;border:1px solid var(--l3);color:var(--t3)}
+.tk-src.user {border-color:var(--ac-d);color:var(--ac-t2)}
+.tk-src.rule {border-color:var(--ac-d);color:var(--ac-t)}
+.tk-src.learned {border-color:var(--spec-m);color:var(--spec-t)}
+.tk-miss {border:1px solid #5a4520;background:rgba(227,168,66,.06);border-radius:4px;padding:6px 8px;margin:0 0 8px}
+.tk-miss .h {display:flex;align-items:center;gap:6px;color:var(--warn-t);font-weight:bold;margin-bottom:4px}
+.tk-miss .mrow {display:flex;align-items:center;gap:6px;margin:3px 0}
+.tk-miss .mrow .c {width:110px;flex:none;color:var(--t0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-miss .mrow .g {width:70px;flex:none;color:var(--t5);font-size:11px}
+.tk-miss .mrow input {width:110px}
+.tk-miss .or {color:var(--t3);margin:8px 0 4px}
+.tk-prev {font-size:11.5px;color:var(--ok-t);margin-top:5px;min-height:15px;overflow-wrap:anywhere}
+.tk-prev.w {color:var(--warn-t)}
+.tk-more {font-size:11px;color:var(--t5);padding:4px 6px}
+.tk-rule {display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 0}
+.tk-rule > span {flex:1;min-width:0;font-family:monospace;overflow-wrap:anywhere}
+@media (max-width:639px) {
+  .sf-dlg.tk-dlg {width:100%;height:100%}
+  .tk-dlg .tk-form input {width:96px}
+  .tk-miss .mrow .c {width:80px}
+  .tk-miss .mrow input {width:90px}
+}
+@media (pointer:coarse) { .tk-tabs button {min-height:40px} }
 .sf-cats {background:var(--s3);border:1px solid var(--l1);border-radius:3px;padding:6px;margin:4px 0 6px}
 .sf-cat-row {display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:12px}
 .sf-cat-row:last-child {margin-bottom:0}
@@ -2298,6 +2448,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
 <symbol id="i-mic" viewBox="0 0 16 16"><rect x="5.8" y="1.4" width="4.4" height="8" rx="2.2"/><path d="M3.4 7.4a4.6 4.6 0 0 0 9.2 0M8 12v2.6M5.4 14.6h5.2"/></symbol>
 <symbol id="i-car" viewBox="0 0 16 16"><path d="M1.6 11.2V8.6l1.7-3.9h9.4l1.7 3.9v2.6zM1.6 8.6h12.8M3.4 11.2v2h2.2v-2M10.4 11.2v2h2.2v-2"/></symbol>
 <symbol id="i-person" viewBox="0 0 16 16"><circle cx="8" cy="2.9" r="1.5"/><path d="M8 5.6v4.6l-2.6 4M8 10.2l2.6 4M4.6 7.6h6.8"/></symbol>
+<symbol id="i-trunk" viewBox="0 0 16 16"><path d="M8 14.4V8.6M8 8.6 4.1 4.9M8 8.6l3.9-3.7M8 8.6V3.9"/><circle cx="3.3" cy="4.1" r="1.25"/><circle cx="12.7" cy="4.1" r="1.25"/><circle cx="8" cy="2.6" r="1.25"/></symbol>
+<symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.4" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.6" cy="8" r=".9" fill="currentColor"/></symbol>
 </svg>
 <div class="app-container">
   <!-- LEFT SIDEBAR -->
@@ -2976,6 +3128,38 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <div id="sf-cats" class="sf-cats" style="display:none"></div>
         <div id="sf-list" class="sf-list"></div>
+      </div>
+    </div>
+
+    <!-- 📡 Trunk following (trunk_follow.cpp; see 📡 TRUNK FOLLOWING) - all modes. Hidden until the
+         receiver answers GET_TRUNK with its status: an older receiver has none -->
+    <div class="sb-section" data-sb="trunk" id="tk-section" style="display:none">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-trunk"/></svg><span>Trunk Following</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Follows the calls of a <b>trunked radio system</b> (P25, DMR Tier III, NXDN, TETRA, MPT1327): its control channel hands out a traffic channel for each call, and the receiver puts a <b>voice VFO</b> with the right decoder on it for as long as the call lasts - inside the band shown, without retuning.<br><br><b>To start:</b> tune a VFO to the system's <b>control channel</b> and pick its decoder (the decoders marked "Trunk following" in Setup Settings → Decoders). The system appears here; switch <b>Follow calls</b> on. Several control VFOs (two systems, or two sites of one) work at once.<br><br>DMR Tier III, NXDN and MPT1327 systems usually send only channel <b>numbers</b>: enter the frequencies (one rule like "channel n = base + (n - 1) x 12.5 kHz" is often enough) with the system's <b>Edit</b> - the box says when it is needed. P25 and TETRA announce their frequencies.<br><br>Voice VFOs are the receiver's own: they are marked on their cards and on the spectrum, set up for each call, and never saved. Following pauses while a scanner runs.</span></span></h3>
+        <span class="tk-badge" id="tk-badge"></span>
+        <span class="sb-toggle"></span>
+      </div>
+      <div class="sb-content">
+        <div class="tk-bar">
+          <label class="tk-sw" title="Put a voice VFO on each call the systems below grant (as the settings allow). Off: the calls are still listed, nothing is followed"><input type="checkbox" class="sw" id="tk-follow" onchange="tkSend('TRUNK_FOLLOW:' + (this.checked ? 1 : 0))"><span>Follow calls</span></label>
+          <span class="tk-state" id="tk-state"></span>
+          <button type="button" class="btn sm" id="tk-set-btn" onclick="tkToggleSet()" title="Trunk following settings" aria-expanded="false"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></button>
+        </div>
+        <div class="tk-set" id="tk-set" style="display:none">
+          <div class="ctrl-row"><label for="tk-max" title="The most calls followed at once: each one gets a VFO of its own (at most 16 VFOs in all). More calls than this wait - a Priority talkgroup takes a VFO from a normal one">Voice VFOs</label><input type="number" id="tk-max" min="1" max="8" step="1" value="2" onchange="tkSend('TRUNK_MAX_VFOS:' + this.value)"><span class="u"></span></div>
+          <div class="ctrl-row"><label for="tk-hang" title="How long a voice VFO stays on a call after its last transmission (for the answer on the same channel)">Hang time</label><input type="number" id="tk-hang" min="0.5" max="10" step="0.5" value="2" onchange="tkSend('TRUNK_HANG:' + this.value)"><span class="u">s</span></div>
+          <div class="ctrl-row"><label for="tk-enc" title="Follow encrypted calls too: they are not heard (never decrypted), but who talks to whom - and from where - still shows">Encrypted calls</label><input type="checkbox" class="sw" id="tk-enc" onchange="tkSend('TRUNK_ENCRYPTED:' + (this.checked ? 1 : 0))"></div>
+          <div class="ctrl-row"><label for="tk-unit" title="Follow calls between two radios, not only talkgroup calls">Unit-to-unit calls</label><input type="checkbox" class="sw" id="tk-unit" onchange="tkSend('TRUNK_UNIT:' + (this.checked ? 1 : 0))"></div>
+          <div class="ctrl-row"><label for="tk-audio" title="Hear the followed calls (each voice VFO's speaker on while its call is active). Off: followed silently - decoded, listed, logged">Hear calls</label><input type="checkbox" class="sw" id="tk-audio" onchange="tkSend('TRUNK_AUDIO:' + (this.checked ? 1 : 0))"></div>
+          <div class="ctrl-row" id="tk-all-row"><label for="tk-all" title="A talkgroup granted on two sites at once (one conversation, two carriers): follow it on every site. Off: on one site only, which saves voice VFOs">Every site</label><input type="checkbox" class="sw" id="tk-all" onchange="tkSend('TRUNK_ALL_SITES:' + (this.checked ? 1 : 0))"></div>
+        </div>
+        <div class="tk-hold" id="tk-hold"></div>
+        <div id="tk-notes"></div>
+        <div id="tk-systems"></div>
+        <div class="sb-sub">Calls<span class="sf-count" id="tk-calls-n"></span></div>
+        <div class="tk-list" id="tk-calls"></div>
+        <div class="sb-sub">Recent<span class="sf-count" id="tk-hist-n"></span></div>
+        <div class="tk-list hist" id="tk-hist"></div>
       </div>
     </div>
 
@@ -3761,6 +3945,60 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
   </div>
 </div>
 
+<!-- 📡 Trunk following: a system's editor (see 📡 TRUNK FOLLOWING); the panes are filled by tkDlgOpen -->
+<div class="sf-dlg-bg" id="tk-dlg-bg" style="display:none" onpointerdown="if(event.target===this)tkDlgClose()">
+  <div class="sf-dlg tk-dlg" id="tk-dlg" role="dialog" aria-modal="true" aria-labelledby="tk-dlg-title">
+    <div class="sf-dlg-h"><span id="tk-dlg-title"><svg class="ic" aria-hidden="true"><use href="#i-trunk"/></svg><span id="tk-dlg-name">System</span></span><button type="button" class="hm-btn" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button><span class="x" onclick="tkDlgClose()" title="Close (Esc)" role="button" aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
+    <div class="tk-tabs" role="tablist" aria-label="Sections" onkeydown="tkDlgTabKey(event)">
+      <button type="button" role="tab" data-t="gen" onclick="tkDlgTab('gen')"><span>System</span></button>
+      <button type="button" role="tab" data-t="tg" onclick="tkDlgTab('tg')"><span>Talkgroups</span><span class="n" id="tk-tab-tg-n"></span></button>
+      <button type="button" role="tab" data-t="ch" onclick="tkDlgTab('ch')"><span>Channels</span><span class="n" id="tk-tab-ch-n"></span></button>
+      <button type="button" role="tab" data-t="unit" onclick="tkDlgTab('unit')"><span>Units</span><span class="n" id="tk-tab-unit-n"></span></button>
+    </div>
+    <div class="tk-pane" data-t="gen" role="tabpanel">
+      <div class="sec">Name</div>
+      <div class="row"><input type="text" id="tk-name" maxlength="64" placeholder="" title="Your name for this system (empty: the name it reports). Enter or leaving the field saves it" onkeydown="if(event.key==='Enter')this.blur()" onchange="tkDlgName(this.value)"></div>
+      <label class="ck" title="Follow only the talkgroups in this system's list (Talkgroups: the ones you added or named). Calls to the others are listed, not followed"><input type="checkbox" class="sw" id="tk-listed" onchange="tkDlgSys({listed_only: this.checked})"> Listed talkgroups only</label>
+      <div id="tk-gen-info"></div>
+      <div class="sec">Forget</div>
+      <div class="row"><button type="button" class="btn danger sm" onclick="tkDlgForget()"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg><span>Forget this system</span></button><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Removes everything the receiver keeps about the system: your name for it, the talkgroup list and the channel table (your entries and the learned and announced ones). Calls in progress end. If its control channel is still received, it comes back unnamed with an empty list.</span></span></div>
+    </div>
+    <div class="tk-pane" data-t="tg" role="tabpanel">
+      <div class="tk-form" style="margin-bottom:8px">
+        <div><span class="lbl">Talkgroup</span><input type="text" id="tk-tg-id" class="s" maxlength="32" placeholder="1234" title="The talkgroup's number (as the calls show it)" onkeydown="if(event.key==='Enter')tkTgAdd()"></div>
+        <div><span class="lbl">Name</span><input type="text" id="tk-tg-name" maxlength="32" title="Shown in the calls in place of the number" onkeydown="if(event.key==='Enter')tkTgAdd()"></div>
+        <div><span class="lbl">Mode</span><select id="tk-tg-mode" title="Priority: followed first, and takes a voice VFO from a normal call when none is free. Skip: never followed"><option value="normal">Normal</option><option value="priority">Priority</option><option value="skip">Skip</option></select></div>
+        <div><span class="lbl">&nbsp;</span><button type="button" class="btn sm primary" onclick="tkTgAdd()"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg><span>Add</span></button></div>
+        <div class="ferr" id="tk-tg-err"></div>
+      </div>
+      <div class="row" style="margin-bottom:6px"><input type="search" id="tk-tg-q" placeholder="Search number or name…" oninput="tkDlgRender('tg')" style="flex:1"></div>
+      <div id="tk-tg-list"></div>
+    </div>
+    <div class="tk-pane" data-t="ch" role="tabpanel">
+      <div id="tk-ch-miss"></div>
+      <div class="sec" id="tk-rule-h">Channel numbers to frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A rule gives every channel <b>number</b> from First to Last a frequency: <b>Base + (n - First) x Step</b>. Systems with one evenly spaced band need one rule (e.g. First 1, Base 455.31875 MHz, Step 12.5 kHz); add more for gaps or a second band. A frequency you enter for a single channel wins over a rule; a frequency the system sends with its grants wins over both.<br><br>Last empty: up to 4096 channels. The uplink offset (the radios' transmit frequency minus the downlink) is only shown, not used.</span></span></div>
+      <div class="tk-form" id="tk-rule-form">
+        <div><span class="lbl">First</span><input type="text" inputmode="numeric" id="tk-r-first" class="s" placeholder="1" oninput="tkRulePreview()" title="The first channel number of the rule"><div class="ferr" id="tk-r-first-e"></div></div>
+        <div><span class="lbl">Last</span><input type="text" inputmode="numeric" id="tk-r-last" class="s" placeholder="all" oninput="tkRulePreview()" title="The last channel number (empty: up to 4096 channels)"><div class="ferr" id="tk-r-last-e"></div></div>
+        <div><span class="lbl">Base (MHz)</span><input type="text" inputmode="decimal" id="tk-r-base" placeholder="455.31875" oninput="tkRulePreview()" title="The downlink frequency of channel First"><div class="ferr" id="tk-r-base-e"></div></div>
+        <div><span class="lbl">Step (kHz)</span><input type="text" inputmode="decimal" id="tk-r-step" class="s" placeholder="12.5" oninput="tkRulePreview()" title="From one channel number to the next (negative: going down)"><div class="ferr" id="tk-r-step-e"></div></div>
+        <div><span class="lbl">Uplink (MHz)</span><input type="text" inputmode="decimal" id="tk-r-up" class="s" placeholder="none" oninput="tkRulePreview()" title="Optional: the uplink offset, radio transmit minus downlink (e.g. -5 or 10)"><div class="ferr" id="tk-r-up-e"></div></div>
+        <div><span class="lbl">&nbsp;</span><span style="display:flex;gap:4px"><button type="button" class="btn sm primary" id="tk-r-ok" onclick="tkRuleSave()"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg><span>Add rule</span></button><button type="button" class="btn sm" id="tk-r-cancel" onclick="tkRuleEdit(-1)" style="display:none">Cancel</button></span></div>
+      </div>
+      <div class="tk-prev" id="tk-r-prev"></div>
+      <div id="tk-ch-rules"></div>
+      <div class="sec">Channel table<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Every channel the system granted or announced, with the frequency it is followed on and where that comes from: <b>user</b> (you entered it), <b>rule</b> (one of the rules above), <b>announced</b> (the system sent it), <b>learned</b> (seen: a VFO received the call on that frequency twice). Edit a row to enter or override its frequency; clear it to go back to the rule, announced or learned one.</span></span></div>
+      <div class="row" style="margin-bottom:6px"><input type="search" id="tk-ch-q" placeholder="Search channel or MHz…" oninput="tkDlgRender('ch')" style="flex:1"></div>
+      <div id="tk-ch-list"></div>
+    </div>
+    <div class="tk-pane" data-t="unit" role="tabpanel">
+      <div class="row" style="margin-bottom:6px"><input type="search" id="tk-unit-q" placeholder="Search unit…" oninput="tkDlgRender('unit')" style="flex:1"><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The radios heard talking on this system since the receiver started (not saved).</span></span></div>
+      <div id="tk-unit-list"></div>
+    </div>
+    <div class="err" id="tk-dlg-err"></div>
+  </div>
+</div>
+
 <!-- 📻 Saved frequency editor (see 📻 SAVED FREQUENCIES) -->
 <div class="sf-dlg-bg" id="sf-dlg-bg" style="display:none" onpointerdown="if(event.target===this)sfDlgCancel()">
   <div class="sf-dlg" id="sf-dlg" role="dialog" aria-modal="true" aria-labelledby="sf-dlg-title">
@@ -4278,6 +4516,11 @@ let sfCats = [], sfLocs = [], sfFreqs = [];
 // 📻 the scan list's "Uncategorised" tick, and the scan's status ({"sfscan"});
 // its squelch while the slider is dragged (the spectrum line follows it)
 let sfScanUncat = false, sfsSt = null, sfsSqDrag = null;
+// 📡 trunk following (see 📡 TRUNK FOLLOWING): the receiver's status ({"trunk"}, null = none yet -
+// an older receiver never sends one) and each system's big lists ({"trunk_sys"}) by system id.
+// Here because the VFO cards and drawBox read them (tkVoiceDec)
+let tkSt = null;
+const tkLists = {};
 let mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
 const sfUi = (() => {
   const d = {spec: true, col: {}, hide: {}};
@@ -5208,6 +5451,13 @@ class WaterfallDisplay {
     this.drawLockedLines(decimatorInfo, centerFreq);
     decimatorInfo.forEach((dec) => {
       if (vfoLocked(dec)) return;   // drawn as a line above, not grabbable
+      if (tkVoiceDec(dec)) {   // 📡 a trunk voice VFO: drawn, not grabbable; parked: not drawn
+        if (tkHideBar(dec)) return;
+        const sc = centerFreq + dec.freq_offset_hz / 1e6, hb = decBwMhz(dec) / 2, pl = this.plotLeft, pr = pl + this.plotWidth;
+        const x0 = pl + ((sc - hb - minFreq) / freqRange) * this.plotWidth, x1 = pl + ((sc + hb - minFreq) / freqRange) * this.plotWidth;
+        if (x1 >= pl && x0 <= pr) tkDrawBar(ctx, Math.max(pl, x0), Math.min(pr, x1), h, dec, '11px monospace');
+        return;
+      }
       const color = typeof getDecimatorColor === 'function' ? getDecimatorColor(dec.id) : '#4169e1';
       const bwMhz = decBwMhz(dec);
       const selCenter = centerFreq + (dec.freq_offset_hz / 1000000);
@@ -7458,6 +7708,13 @@ function drawBox() {
       if (x >= 0 && x <= w) drawLockedVfoLine(ctx, x, h, dec);
       return;
     }
+    if (tkVoiceDec(dec)) {   // 📡 a trunk voice VFO: drawn, not grabbable (the receiver tunes it); parked: not drawn
+      if (tkHideBar(dec)) return;
+      const sc = center + dec.freq_offset_hz / 1e6, hb = decBwMhz(dec) / 2;
+      const x0 = u.valToPos(sc - hb, 'x'), x1 = u.valToPos(sc + hb, 'x');
+      if (x1 >= 0 && x0 <= w) tkDrawBar(ctx, Math.max(0, x0), Math.min(w, x1), h, dec);
+      return;
+    }
     const color = getDecimatorColor(dec.id);
     const bw = decBwMhz(dec);
     const selCenter = center + (dec.freq_offset_hz / 1000000); // Convert Hz to MHz
@@ -7567,7 +7824,7 @@ function drawBox() {
 
   // Draw center lines for decimators
   decimatorInfo.forEach((dec) => {
-    if (vfoLocked(dec)) return;   // already a solid line
+    if (vfoLocked(dec) || tkHideBar(dec)) return;   // already a solid line; a parked trunk voice VFO
     const color = getDecimatorColor(dec.id);
     const selCenter = center + (dec.freq_offset_hz / 1000000);
     const pxCenter = fftPlot.valToPos(selCenter, 'x');
@@ -7783,7 +8040,7 @@ function vfoSnapOffset(centreMhz, offHz, maxOff, stepHz = vfoStepHz) {
 // the VFO step's grid). Returns false when there is no active decimator.
 function centerActiveBarAt(freqMhz) {
   const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-  if (!activeDec || vfoLocked(activeDec)) return false;   // fixed-frequency decoder (ADS-B)
+  if (!activeDec || vfoNoTune(activeDec)) return false;   // fixed-frequency decoder (ADS-B), a trunk voice VFO
   const newOffsetHz = (freqMhz - barCenterFreq()) * 1000000;  // freqMhz is on the displayed axis
   const bw = decBwMhz(activeDec);
   const maxOffset = maxOffsetHz(bw);
@@ -10378,7 +10635,7 @@ function vfdHeld(id) { const s = vfdTx[id]; return !!s && Date.now() < s.hold; }
 
 function vfdStep(id, pos, up) {
   const d = decimatorInfo.find(z => z.id === id);
-  if (!d || vfoLocked(d)) return;
+  if (!d || vfoNoTune(d)) return;
   if (activeDecimatorId !== id) selectDecimator(id, false);
   const hz = Math.round((vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6) * 1e6) + (up ? 1 : -1) * Math.pow(10, pos);
   let off;
@@ -10583,6 +10840,7 @@ function updateDecimatorList(info) {
           <button onclick="removeDecimator(${dec.id})" class="btn sm dec-x" title="Remove this VFO">${icon('close')}</button>
         </span>
       </div>
+      <div class="dec-row dec-tk" id="dec-tk-${dec.id}"></div>
       <div class="dec-row dec-freq" id="dec-freq-row-${dec.id}">
         <span class="vfd-box" id="dec-freq-${dec.id}" title="${VFD_TIP}">${vfdDigitsHtml()}<span class="vfd-unit">MHz</span></span>
         <input type="text" class="vfd-in" id="dec-actual-freq-${dec.id}" value="${actualFreqMhz.toFixed(6)}"
@@ -10909,6 +11167,8 @@ function connect() {
     // 📻 saved frequencies + map markers (then pushed when they change)
     setTimeout(() => send('GET_SF'), 880);
     setTimeout(() => send('GET_SFSCAN'), 885);
+    // 📡 trunk following's status (then pushed on changes; an older receiver doesn't answer: the box stays hidden)
+    setTimeout(() => { tkListsAsked.clear(); send('GET_TRUNK'); }, 887);
 
     // Request FFT settings on connection
     setTimeout(() => requestFFTSettings(), 600);
@@ -10963,6 +11223,9 @@ function connect() {
           else if(msg.map) { mapOnMessage(msg.map); }
           else if(msg.savedfreq) { sfOnMessage(msg.savedfreq); }
           else if(msg.sfscan) { sfsOnMessage(msg.sfscan); }
+          else if(msg.trunk) { tkOnStatus(msg.trunk); }
+          else if(msg.trunk_sys) { tkOnLists(msg.trunk_sys); }
+          else if(msg.trunk_error) { tkOnError(msg.trunk_error); }
           else if(msg.incidents) { incOnMessage(msg.incidents); }
           else if(msg.rdf) { rdfOnStatus(msg.rdf, false); }
           else if(msg.rdf_part) { rdfOnStatus(msg.rdf_part, true); }
@@ -12061,6 +12324,12 @@ function paneDrawOverlay(p) {
       if (x >= p.L && x <= p.sw - 4) drawLockedVfoLine(ctx, x, H, d);
       continue;
     }
+    if (tkVoiceDec(d)) {   // 📡 a trunk voice VFO: drawn, not grabbable; parked: not drawn
+      if (tkHideBar(d)) continue;
+      const hb = decBwMhz(d) / 2, a0 = paneX(p, cm - hb), a1 = paneX(p, cm + hb);
+      if (a1 >= p.L && a0 <= p.sw - 4) tkDrawBar(ctx, Math.max(p.L, a0), Math.min(p.sw - 4, a1), H, d);
+      continue;
+    }
     const bw = decBwMhz(d);
     let x0 = paneX(p, cm - bw / 2), x1 = paneX(p, cm + bw / 2);
     // clipped to the plot area (zoomed in, or a VFO wider than the band the
@@ -12314,7 +12583,7 @@ function paneUp(p, e) {
   }
   // a click: the selected VFO goes there (and onto this tuner)
   const d = (decimatorInfo || []).find(z => z.id === activeDecimatorId);
-  if (d && !vfoLocked(d) && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x), 'step');
+  if (d && !vfoNoTune(d) && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x), 'step');
 }
 
 // Put VFO d at mhz on pane p (clamped into the visible band). snap: 'step' =
@@ -14410,9 +14679,15 @@ function addTouchHandlers(el, down, move, up) {
       if (open) open.style.display = on ? '' : 'none';
       // a fixed-frequency decoder (ADS-B) / one of the whole band (ism)
       // holds the VFO's tuning
-      const lock = vfoLocked(d), lp = lock ? digFixedPlugin(d.digital_mode) : null;
-      const why = !lock ? '' : lp.fixed_freq_hz > 0 ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth'
+      // ... and trunk following holds a voice VFO's whole setup (📡 TRUNK FOLLOWING: it is set for each call)
+      const tk = tkVoiceDec(d);
+      const lock = vfoLocked(d) || tk, lp = vfoLocked(d) ? digFixedPlugin(d.digital_mode) : null;
+      const why = tk ? 'Trunk following sets this voice VFO for each call' : !lock ? '' : lp.fixed_freq_hz > 0 ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth'
         : digModeLabel(d.digital_mode) + ' keeps this VFO on its tuner\'s centre with the full bandwidth - tune the receiver instead';
+      for (const k of ['dec-demod-', 'dec-dig-en-', 'dec-dig-mode-', 'dec-v2t-', 'dec-squelch-enable-', 'dec-squelch-method-', 'dec-squelch-level-']) {
+        const el = $id(k + d.id);
+        if (el && el.disabled !== tk) { el.disabled = tk; if (el.__dd) ddSync(el); }
+      }
       for (const k of ['dec-actual-freq-', 'dec-tuner-']) {
         const el = $id(k + d.id);
         if (el && el.disabled !== lock) { el.disabled = lock; el.title = why; }
@@ -14424,6 +14699,7 @@ function addTouchHandlers(el, down, move, up) {
       if (fd && fd.classList.contains('locked') !== lock) { fd.classList.toggle('locked', lock); fd.title = lock ? why : VFD_TIP; }
       if (fe && fe.disabled !== lock) { fe.disabled = lock; fe.title = lock ? why : VFD_ED_TIP; }
     }
+    tkRenderCards();   // 📡 the trunk line of each card
   }
 
   // ⚙ Setup Settings, Decoders tab: the voice codecs the decoders can use,
@@ -15208,7 +15484,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     } else {
       html = digPlugins.map(p => `<div class="ai-plugin">
           <div style="display:flex;align-items:center;gap:6px">
-            <span style="flex:1;min-width:0"><span class="nm">${digEsc(p.name)}</span> <span style="color:#7f8995">${digEsc(p.id)}${p.version ? ' v' + digEsc(p.version) : ''}</span></span>
+            <span style="flex:1;min-width:0"><span class="nm">${digEsc(p.name)}</span> <span style="color:#7f8995">${digEsc(p.id)}${p.version ? ' v' + digEsc(p.version) : ''}</span>${p.trunking ? '<span class="tk-tag" title="Reports a trunked system\'s calls: on a control channel, the receiver can follow them (the Trunk Following box)">Trunk following</span>' : ''}</span>
             ${p.manual_only ? '' : `<label class="ai-auto" title="Run this decoder when a VFO's Digital Decoder is on Auto detect. Untick decoders you never need: each one costs CPU on every VFO in Auto detect.">
               <input type="checkbox" ${p.auto ? 'checked' : ''} onchange="send('PLUGIN_AUTO:${p.id}:' + (this.checked ? 1 : 0))"> Auto detect</label>`}
           </div>
@@ -21193,6 +21469,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const err = !(ws && ws.readyState === 1) ? 'Not connected to the receiver'
       : !fixed && !(f.hz / 1e6 >= FREQ_MIN && f.hz / 1e6 <= FREQ_MAX) ? `${mkFmtMhz(f.hz)} MHz is outside the receiver's range (${FREQ_MIN}-${FREQ_MAX} MHz)`
       : d && sfFixedLock(d) && !f.dec ? `D${d.id} is locked to its decoder's frequency - select another VFO`
+      : d && tkVoiceDec(d) ? `D${d.id} is a voice VFO of trunk following - select another VFO`
       : '';
     if (err) { sfFlash(err, true); return; }
     if (d && f.dec && f.dec !== (d.digital_mode || 'OFF')) {
@@ -21400,6 +21677,984 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   }
   $id('sf-spec').checked = sfUi.spec;
   sfRenderList();
+
+  // ===========================================================================
+  // 📡 TRUNK FOLLOWING (trunk_follow.cpp; docs/dev/trunk-following.md, "Page")
+  // ---------------------------------------------------------------------------
+  // The receiver follows the calls (it goes on with no page open); the page
+  // shows its status and sends its commands - no optimistic updates, every
+  // page redraws from the broadcasts. On connect GET_TRUNK; {"trunk":{...}}
+  // comes on every change and at least once a second while anything is
+  // active (tkOnStatus), {"trunk_sys":{...}} per system on GET_TRUNK_SYS and
+  // when its lists change (tkOnLists), {"trunk_error":{cmd,error}} after a
+  // refused command (tkOnError: shown only by the page that sent it). An
+  // older receiver sends none of them: the box stays hidden.
+  // Calls and recent calls are KEYED rows (tkSyncRows): a row is made once
+  // and only its text changes - a call every 1-2 s must not make rows jump
+  // or flicker. In progress: in first-seen order, new ones at the bottom; a
+  // call that ended stays (dimmed) for TK_LINGER_MS, so the next over of a
+  // conversation (the receiver keeps it as the same call) lights the same
+  // row again; while the pointer is on the list or a row's menu is open, no
+  // row leaves (tkFreeze). Recent: newest first, made once.
+  // ===========================================================================
+  const TK_LINGER_MS = 6000;
+  const TK_STATE = {wait: 'Waiting', setup: 'Setup', active: 'Active', hang: 'Hang', recent: 'Ended'};
+  // why a call is not followed: [short, what to do]
+  const TK_WHY = {
+    off: ['Following off', 'Following is off: switch Follow calls on'],
+    paused: ['Paused', 'A scanner is running: following waits until it stops'],
+    ended: ['Stopped by you', 'You stopped following this conversation'],
+    no_signal: ['Nothing received', 'The voice VFO received nothing on this channel within 3 s: check its frequency in the channel table'],
+    data: ['Data call', 'Data calls are not followed'],
+    skip: ['Skipped', 'This talkgroup is set to Skip'],
+    unlisted: ['Not listed', '"Listed talkgroups only" is on and this talkgroup is not in the list'],
+    encrypted: ['Encrypted', '"Encrypted calls" is off in the settings'],
+    unit: ['Unit call', '"Unit-to-unit calls" is off in the settings'],
+    hold: ['Held elsewhere', 'Following is held on one talkgroup: release the hold'],
+    duplicate: ['Other site', 'This talkgroup is followed on another site of the system already ("Every site" in the settings follows it on each)'],
+    no_decoder: ['No decoder', 'The decoder for this call is not built on the receiver'],
+    no_freq: ['No frequency', 'The channel has no frequency: enter it in the system\'s channel table'],
+    out_of_span: ['Out of span', 'The channel is outside the receiver\'s span: retune the receiver'],
+    no_vfo: ['No free VFO', 'Every voice VFO is busy: more Voice VFOs in the settings, or make the talkgroups you want Priority'],
+    vfo_limit: ['16 VFOs in use', 'The receiver has 16 VFOs already: remove one'],
+    no_system: ['No system', 'The system is gone']
+  };
+  const TK_END = {
+    released: 'Released', ended: 'Ended', reassigned: 'Channel reassigned', preempted: 'Taken by a priority call',
+    expired: 'Grants stopped', wrong_call: 'Channel carried another call', relabelled: 'Relabelled', control_reset: 'Control channel reset',
+    control_removed: 'Control VFO removed', mode: 'Mode changed', retuned: 'Receiver retuned', playback: 'Playback started',
+    playback_end: 'Playback ended', forgotten: 'System forgotten', settings: 'Settings applied', no_signal: 'Nothing received'
+  };
+  // the voice codec each protocol's speech needs (DIG_CODECS keys)
+  const TK_CODEC = {p25: 'imbe', dmr: 'ambe', nxdn: 'ambe', tetra: 'acelp'};
+  let tkSetOpen = false, tkFreeze = false;
+  const tkSeq = new Map();      // call id -> first-seen order (the row's place)
+  let tkSeqN = 0;
+  const tkCallLast = new Map(); // call id -> its last status (a frozen row that left keeps it)
+  const tkSent = [];            // [{c: command (first 64), t}] - this page's commands, for trunk_error
+  const tkPerf = [];            // ms per status handled (tests)
+  let tkDrawKey = '';
+  const tkListsAsked = new Set();
+
+  function tkSend(cmd) {
+    tkSent.push({c: cmd.slice(0, 64), t: Date.now()});
+    while (tkSent.length > 40) tkSent.shift();
+    send(cmd);
+  }
+  function tkSys(id) { return tkSt && (tkSt.systems || []).find(s => s.id === id) || null; }
+  function tkTemp(s) { return !s.saved || (s.id || '').includes(':@'); }
+  function tkSysName(s) {
+    if (!s) return '';
+    if (s.user_name) return s.user_name;
+    if (s.name && s.key) return s.name.includes(s.key) ? s.name : s.name + ' ' + s.key;
+    if (s.key) return s.key;
+    const c = (s.control || [])[0];
+    return 'Unidentified' + (c ? ' (D' + c.vfo + ')' : '');
+  }
+  function tkPlugName(id) { return digShort(digName(id)) || id; }
+  function tkMhz(hz) { return hz > 0 ? mkFmtMhz(hz) : ''; }
+  // the talkgroup / unit as the calls show it: the name, else "TG 1234" / "Unit 1234"
+  function tkLabel(c) {
+    if (!c.group) return 'Unit ' + c.target;
+    return c.target_name ? c.target_name : 'TG ' + c.target;
+  }
+  function tkWhy(code) { return TK_WHY[code] || [code ? code.replace(/_/g, ' ') : '', '']; }
+  // a talkgroup's mode from the system's lists (null = not known yet)
+  function tkTgMode(sys, tg) {
+    const L = tkLists[sys];
+    const t = L && (L.tgs || []).find(x => x.id === tg);
+    return t ? t.mode : L ? 'normal' : null;
+  }
+  // the VFO is a voice VFO of the manager (its card and bar are the receiver's)
+  function tkVoiceDec(d) { return !!(d && d.trunk && d.trunk.role === 'voice'); }
+  // a voice VFO's live state: the status (decimator_info may come later), else decimator_info's
+  function tkVoiceState(d) {
+    const v = tkSt && (tkSt.vfos || []).find(x => x.vfo === d.id);
+    return v ? v.state : d.trunk ? d.trunk.state : '';
+  }
+  function tkVoiceCall(d) {
+    const v = tkSt && (tkSt.vfos || []).find(x => x.vfo === d.id);
+    if (!v || !v.call) return null;
+    return (tkSt.calls || []).find(c => c.id === v.call) || null;
+  }
+  // the VFO's tuning is not the user's: a fixed-frequency decoder holds it, or the trunk manager does
+  function vfoNoTune(d) { return vfoLocked(d) || tkVoiceDec(d); }
+  // a voice VFO waiting for its next call is not drawn on the spectrum (it receives nothing)
+  function tkHideBar(d) { return tkVoiceDec(d) && tkVoiceState(d) === 'parked'; }
+  // A voice VFO's bar: its colour, a dashed outline, no grab handles (the
+  // receiver tunes it), the call's label at the top
+  function tkDrawBar(ctx, x0, x1, H, d, font) {
+    const col = getDecimatorColor(d.id), st = tkVoiceState(d), c = tkVoiceCall(d);
+    if (x1 - x0 < 8) { const xc = (x0 + x1) / 2; x0 = xc - 4; x1 = xc + 4; }
+    ctx.save();
+    ctx.fillStyle = col + (st === 'active' ? '40' : '22');
+    ctx.fillRect(x0, 0, x1 - x0, H);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = d.id === activeDecimatorId ? 2.5 : 1.5;
+    ctx.setLineDash(st === 'active' ? [] : [5, 3]);
+    ctx.strokeRect(x0, 0.5, x1 - x0, H - 1);
+    ctx.setLineDash([]);
+    ctx.fillStyle = col;
+    ctx.font = font || '12px monospace';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    const lbl = 'D' + d.id + ' ' + (c ? tkLabel(c) : d.trunk && d.trunk.label ? d.trunk.label : 'trunk');
+    ctx.fillText(lbl.length > 28 ? lbl.slice(0, 27) + '…' : lbl, x0 + 4, 14);
+    ctx.restore();
+  }
+
+  // --- the status --------------------------------------------------------------
+  function tkOnStatus(m) {
+    const t0 = performance.now();
+    tkSt = m;
+    const sec = $id('tk-section');
+    if (sec && sec.style.display === 'none') sec.style.display = '';
+    // each system on the air: its lists once (talkgroup names and modes, the channel table);
+    // the receiver sends them again to every page when they change
+    for (const s of m.systems || []) if ((s.control || []).length && !tkTemp(s) && !tkListsAsked.has(s.id)) { tkListsAsked.add(s.id); send('GET_TRUNK_SYS:' + s.id); }
+    tkRenderTop();
+    tkRenderNotes();
+    tkRenderSystems();
+    tkRenderCalls();
+    tkRenderHist();
+    tkRenderCards();
+    // the spectrum: only when what it shows of the voice VFOs changed
+    const k = (m.vfos || []).map(v => v.vfo + ':' + v.state + ':' + v.call + ':' + ((m.calls || []).find(c => c.id === v.call) || {}).target_name).join('|');
+    if (k !== tkDrawKey) { tkDrawKey = k; drawBox(); if (typeof paneDrawAllOverlays === 'function') paneDrawAllOverlays(); }
+    if (tkDlgId) tkDlgStatus();
+    tkPerf.push(performance.now() - t0);
+    if (tkPerf.length > 300) tkPerf.shift();
+  }
+  function tkToggleSet() {
+    tkSetOpen = !tkSetOpen;
+    $id('tk-set').style.display = tkSetOpen ? '' : 'none';
+    $id('tk-set-btn').classList.toggle('on', tkSetOpen);
+    $id('tk-set-btn').setAttribute('aria-expanded', tkSetOpen ? 'true' : 'false');
+  }
+  function tkRenderTop() {
+    const m = tkSt || {};
+    const idle = e => e && document.activeElement !== e;
+    const fol = $id('tk-follow');
+    if (fol) fol.checked = !!m.follow;
+    for (const [id, k] of [['tk-enc', 'encrypted'], ['tk-unit', 'unit'], ['tk-audio', 'audio'], ['tk-all', 'all_sites']]) {
+      const e = $id(id);
+      if (e && typeof m[k] === 'boolean') e.checked = m[k];
+    }
+    const ar = $id('tk-all-row');
+    if (ar) ar.style.display = typeof m.all_sites === 'boolean' ? '' : 'none';
+    const mx = $id('tk-max'), hg = $id('tk-hang');
+    if (idle(mx) && typeof m.max_vfos === 'number') mx.value = m.max_vfos;
+    if (idle(hg) && typeof m.hang_s === 'number') hg.value = m.hang_s;
+    const calls = (m.calls || []).filter(c => c.vfo >= 0 && c.state !== 'recent');
+    const st = $id('tk-state'), badge = $id('tk-badge');
+    let txt = '', cls = '', tip = '', b = '', bw = false;
+    if (m.playback) { txt = 'Playback'; tip = 'A playback runs: what is found now is not kept'; }
+    if (m.paused) { txt = 'Paused'; cls = 'w'; tip = 'Paused while the ' + (m.paused_why || 'scanner') + ' runs'; b = 'Paused'; bw = true; }
+    else if (m.follow) {
+      txt = calls.length ? calls.length + ' followed' : (txt || 'Following');
+      cls = 'on';
+      tip = tip || 'Following: ' + calls.length + ' of at most ' + m.max_vfos + ' voice VFOs in use';
+      if (calls.length) b = calls.length + (calls.length === 1 ? ' call' : ' calls');
+    } else if (!txt) { txt = 'Off'; tip = 'Calls are listed, not followed'; }
+    if (st) {
+      if (st.textContent !== txt) st.textContent = txt;
+      st.className = 'tk-state' + (cls ? ' ' + cls : '');
+      st.title = tip;
+    }
+    if (badge) {
+      if (badge.textContent !== b) badge.textContent = b;
+      badge.className = 'tk-badge' + (bw ? ' w' : '');
+      badge.title = tip;
+    }
+    // the hold
+    const hd = $id('tk-hold');
+    if (hd) {
+      let h = '';
+      if (m.hold) {
+        const s = tkSys(m.hold.sys);
+        const L = tkLists[m.hold.sys], t = L && (L.tgs || []).find(x => x.id === m.hold.tg);
+        h = icon('pause', 't') + `<span>Holding on <b>${digEsc(t && t.name ? t.name : 'TG ' + m.hold.tg)}</b>${s ? ' · ' + digEsc(tkSysName(s)) : ''}</span>` +
+            '<button type="button" class="btn sm" onclick="tkSend(\'TRUNK_HOLD:\')" title="Follow every talkgroup again">Release</button>';
+      }
+      if (hd.dataset.html !== h) { hd.dataset.html = h; hd.innerHTML = h; }
+      hd.title = m.hold ? 'Only this talkgroup is followed until you release the hold' : '';
+    }
+  }
+
+  // --- what keeps calls from being followed (shown above the systems) ----------
+  function tkRenderNotes() {
+    const el = $id('tk-notes');
+    if (!el) return;
+    const m = tkSt || {}, notes = [];
+    const note = (cls, ic, html, tip, btn) => notes.push(`<div class="tk-note ${cls}"${tip ? ` title="${digEsc(tip)}"` : ''}>${icon(ic)}<span>${html}</span>${btn || ''}</div>`);
+    if (m.playback) note('p', 'tape', 'Playback: nothing found is kept', 'While a debug playback or a recording plays, the systems, talkgroups and channels it brings are a sandbox: gone when it ends');
+    if (m.paused) note('w', 'pause', 'Paused: the ' + digEsc(m.paused_why || 'scanner') + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
+    const systems = tkShownSystems();
+    const live = systems.filter(s => (s.control || []).length);
+    if (!live.length) {
+      const plugs = (typeof digPlugins !== 'undefined' ? digPlugins : []).filter(p => p.trunking).map(p => tkPlugName(p.id));
+      // VFOs that run such a decoder and have not reported a system yet
+      const waiting = decimatorInfo.filter(d => !d.trunk && digPlugin(digModePlugin(d.digital_mode || '')) && digPlugin(digModePlugin(d.digital_mode)).trunking);
+      if (waiting.length) note('i', 'hourglass', waiting.map(d => 'D' + d.id + ' ' + digEsc(tkPlugName(digModePlugin(d.digital_mode)))).join(', ') + ': no control channel heard yet',
+        'The decoder has not seen a trunked system\'s control channel on this frequency yet. Check the frequency, the bandwidth (12.5 kHz or more; TETRA 25 kHz) and the gain');
+      else note('i', 'trunk', 'No control channel: tune a VFO to one and pick its decoder',
+        'A trunked system is recognised by the decoder on its control channel. Decoders that can follow: ' + (plugs.length ? plugs.join(', ') : 'none on this receiver') +
+        '. DMR, NXDN and MPT1327 systems need their channel frequencies entered (the system\'s Edit, once it shows)');
+    }
+    for (const s of live) {
+      const name = digEsc(tkSysName(s));
+      // the calls the receiver still lists (up to 30 s after their end): the
+      // notes stay while calls keep running into the same problem, they don't
+      // flash on and off with each call
+      const calls = (m.calls || []).filter(c => c.sys === s.id && !c.data);
+      const count = w => calls.filter(c => (c.vfo < 0 && c.why === w) || (c.state === 'recent' && !c.why && c.end === w)).length;
+      // channels without a frequency (less those the channel table has one for by now)
+      const un = tkUnresolved(s), nu = un.length;
+      if (nu) {
+        const list = un.slice(0, 4).map(u => digEsc(u.ch)).join(', ') + (nu > 4 ? ' …' : '');
+        note('w', 'warn', `${name}: ${nu} channel${nu === 1 ? '' : 's'} without a frequency (${list})`,
+          'The system grants these channels by number only. Enter their frequencies - one rule often covers all - and their calls are followed',
+          `<button type="button" class="btn sm" onclick="tkDlgOpen('${digEsc(s.id)}','ch')">Enter</button>`);
+      }
+      const oos = count('out_of_span');
+      if (oos) {
+        const c = s.centre, cur = currentCenterFreq * 1e6;
+        const can = c && c.hz > 0 && opMode === 'coherent' && !m.playback && Math.abs(c.hz - cur) >= 1000 && c.weight > (c.now_weight || 0);
+        note('w', 'warn', `${name}: ${oos} call${oos === 1 ? '' : 's'} outside the span`,
+          'Their channels are outside the band the receiver takes in now. ' + (can ? 'Centre retunes it to the frequency that holds the control channels and the most-used channels' :
+            opMode !== 'coherent' ? 'Retune a tuner so the channels are in its band' : 'No centre holds the control channels and more of the channels'),
+          can ? `<button type="button" class="btn sm" onclick="tkCentre('${digEsc(s.id)}')" title="Retune to ${mkFmtMhz(c.hz)} MHz (asks first)">Centre</button>` : '');
+      }
+      const nv = count('no_vfo'), nl = count('vfo_limit');
+      if (nv) note('w', 'warn', `${nv} call${nv === 1 ? '' : 's'} waiting for a voice VFO (${m.max_vfos} in use)`, TK_WHY.no_vfo[1],
+        m.max_vfos < 8 ? `<button type="button" class="btn sm" onclick="tkSend('TRUNK_MAX_VFOS:${m.max_vfos + 1}')" title="Allow ${m.max_vfos + 1} voice VFOs">+1 VFO</button>` : '');
+      if (nl) note('w', 'warn', `${nl} call${nl === 1 ? '' : 's'} waiting: 16 VFOs in use`, TK_WHY.vfo_limit[1]);
+      const ns = count('no_signal');
+      if (ns) note('w', 'warn', `${name}: nothing received on ${ns} call${ns === 1 ? '' : 's'}`, TK_WHY.no_signal[1],
+        `<button type="button" class="btn sm" onclick="tkDlgOpen('${digEsc(s.id)}','ch')">Channels</button>`);
+      const nd = count('no_decoder');
+      if (nd) note('b', 'no', `${name}: the call's decoder is not built`, TK_WHY.no_decoder[1]);
+      // the speech codec its decoder needs
+      const ck = TK_CODEC[s.plugin], cs = typeof digCodecsLast !== 'undefined' ? digCodecsLast : null;
+      if (ck && cs && cs.checked && (ck + '_ok') in cs && !cs[ck + '_ok']) {
+        const cn = (DIG_CODECS.find(k => k.key === ck) || {}).name || ck;
+        note('w', 'warn', `No speech: the ${digEsc(cn)} codec is not installed`, 'Calls are followed and their IDs shown, but nothing is heard without it',
+          '<button type="button" class="btn sm" onclick="setDlgOpen(\'dec\')">Decoders</button>');
+      }
+      for (const c of s.control || []) {
+        if (c.note) note('w', 'warn', `D${c.vfo}: ${digEsc(c.note)}`, 'The control channel moved and its VFO could not follow');
+      }
+    }
+    const h = notes.join('');
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+  }
+  // the system's channels without a frequency: the status' list, less those
+  // the channel table resolves (when this page has it)
+  function tkUnresolved(s) {
+    const L = tkLists[s.id];
+    const has = L ? new Set((L.chans || []).filter(c => c.hz > 0).map(c => c.ch)) : null;
+    const u = (s.unresolved || []).filter(x => !has || !has.has(x.ch));
+    return u;
+  }
+  function tkCentre(id) {
+    const s = tkSys(id), c = s && s.centre;
+    if (!c || !(c.hz > 0)) return;
+    const mhz = Math.round(c.hz / 1000) / 1000;
+    const pct = c.total > 0 ? Math.round(100 * c.weight / c.total) : 0;
+    uiConfirm({title: 'Retune for the system', icon: 'trunk', ok: 'Retune',
+               text: [`Retune the receiver to ${mhz.toFixed(3)} MHz?`,
+                      `${c.channels} of the ${c.of} known channels of ${tkSysName(s)} are then in the span (${pct} % of its calls), and its control channels stay in it.`,
+                      'The array recalibrates; the calls followed now end.'],
+               tip: 'The receiver suggests the centre that keeps every control VFO of the system in the band and holds the most-used channels (weighted by how often each was granted).'}).then(ok => {
+      if (!ok) return;
+      const s2 = tkSys(id);
+      if (!s2 || !s2.centre || opMode !== 'coherent') return;
+      sendFreqChange(mhz);
+    });
+  }
+
+  // --- the systems ----------------------------------------------------------------
+  // a temporary system (no identity yet) whose control VFOs a known one has
+  // too is the same control channel before it named its system: not shown
+  function tkShownSystems() {
+    const all = (tkSt && tkSt.systems) || [];
+    const keyed = new Set();
+    for (const s of all) if (!tkTemp(s)) for (const c of s.control || []) keyed.add(c.vfo);
+    return all.filter(s => !(tkTemp(s) && (s.control || []).length && (s.control || []).every(c => keyed.has(c.vfo))) &&
+                           !(tkTemp(s) && !(s.control || []).length));
+  }
+  function tkRenderSystems() {
+    const el = $id('tk-systems');
+    if (!el) return;
+    const all = tkShownSystems();
+    // on the air first (control VFOs), then the rest
+    const on = all.filter(s => (s.control || []).length), off = all.filter(s => !(s.control || []).length);
+    const rows = on.concat(off);
+    tkSyncRows(el, rows.map(s => s.id), id => {
+      const r = document.createElement('div');
+      r.className = 'tk-sys';
+      r.dataset.id = id;
+      r.innerHTML = '<div class="l1"><span class="nm"></span><span class="pl"></span>' +
+        `<button type="button" class="btn sm" title="Name, talkgroups, channel table">${icon('edit')}<span>Edit</span></button></div><div class="l2"></div><div class="l3"></div>`;
+      r.querySelector('button').onclick = () => tkDlgOpen(id);
+      return r;
+    }, (r, id) => {
+      const s = rows.find(x => x.id === id);
+      const ctl = s.control || [];
+      r.classList.toggle('off', !ctl.length);
+      tkText(r.querySelector('.nm'), tkSysName(s), s.user_name && s.name ? s.name + ' (' + s.id + ')' : s.id);
+      tkText(r.querySelector('.pl'), tkPlugName(s.plugin) + (s.site && ctl.length === 1 ? ' · ' + s.site : ''));
+      let l2;
+      if (ctl.length) {
+        l2 = ctl.map(c => `<span class="tk-cc${c.rx ? '' : ' lost'}" data-vfo="${c.vfo}" title="D${c.vfo}: control channel${c.site ? ' · ' + digEsc(c.site) : ''} · ` +
+          `${c.rx ? 'received' : 'nothing received for ' + Math.round((c.last_ms || 0) / 1000) + ' s'}${c.counts ? ' · ' + c.counts.grants + ' calls granted, ' + c.counts.followed + ' followed' : ''}">` +
+          `<span class="d" style="color:${getDecimatorColor(c.vfo)}">D${c.vfo}</span>${c.hz > 0 ? tkMhz(c.hz) : ''}<span class="rx">&#9679;</span></span>`).join('');
+      } else {
+        l2 = s.counts && s.counts.grants ? 'No control channel now' : 'Not heard yet';
+      }
+      if (r.dataset.l2 !== l2) { r.dataset.l2 = l2; r.querySelector('.l2').innerHTML = l2; }
+      r.querySelector('.l2').onclick = e => { const c = e.target.closest('.tk-cc'); if (c) selectDecimator(+c.dataset.vfo); };
+      const n = s.counts || {}, not = n.not || {};
+      const notN = Object.values(not).reduce((a, b) => a + b, 0);
+      const temp = tkTemp(s) && ctl.length;
+      tkText(r.querySelector('.l3'), temp ? 'Waiting for the system\'s identity' :
+        (n.grants || 0) + ' calls · ' + (n.followed || 0) + ' followed' + (notN ? ' · ' + notN + ' not' : '') + (s.n_tgs ? ' · ' + s.n_tgs + ' TGs' : ''),
+        notN ? 'Not followed:\n' + Object.entries(not).map(([k, v]) => tkWhy(k)[0] + ': ' + v).join('\n') : '');
+    });
+  }
+  function tkText(e, t, title) {
+    if (!e) return;
+    if (e.textContent !== t) e.textContent = t;
+    if (title !== undefined) tkTitle(e, title);
+  }
+  // a title the page's tooltip may have adopted already (it moves title to data-tip on first use)
+  function tkTitle(e, t) {
+    if ('tip' in e.dataset) { if (e.dataset.tip !== t) e.dataset.tip = t; if (e.title) e.title = ''; }
+    else if (e.title !== t) e.title = t;
+  }
+  // keyed rows: the container's children follow ids (made by make(id) once,
+  // brought up to date by upd(row, id) every time), in that order - moved
+  // only where the order changed, so the rest stay put
+  function tkSyncRows(el, ids, make, upd) {
+    const have = new Map();
+    for (const c of [...el.children]) { if (c.dataset && c.dataset.id !== undefined) have.set(c.dataset.id, c); else c.remove(); }
+    const want = new Set(ids.map(String));
+    for (const [id, c] of have) if (!want.has(id)) { c.remove(); have.delete(id); }
+    let prev = null;
+    for (const raw of ids) {
+      const id = String(raw);
+      let r = have.get(id);
+      if (!r) r = make(id);
+      upd(r, id);
+      const at = prev ? prev.nextSibling : el.firstChild;
+      if (r !== at) el.insertBefore(r, at);
+      prev = r;
+    }
+  }
+
+  // --- calls in progress ----------------------------------------------------------
+  function tkRenderCalls() {
+    const el = $id('tk-calls');
+    if (!el) return;
+    const m = tkSt || {};
+    const calls = (m.calls || []).filter(c => !c.data);
+    const now = new Map();
+    for (const c of calls) {
+      if (c.state !== 'recent' || (c.state_ms || 0) < TK_LINGER_MS) now.set(String(c.id), c);
+      tkCallLast.set(String(c.id), c);
+    }
+    // frozen: a row that would leave stays, as it last was (ended)
+    if (tkFreeze) for (const r of el.querySelectorAll('.tk-call')) {
+      const id = r.dataset.id;
+      if (!now.has(id) && tkCallLast.has(id)) now.set(id, Object.assign({}, tkCallLast.get(id), {state: 'recent', vfo: -1}));
+    }
+    for (const id of tkCallLast.keys()) if (!now.has(id) && !calls.some(c => String(c.id) === id)) tkCallLast.delete(id);
+    for (const id of now.keys()) if (!tkSeq.has(id)) tkSeq.set(id, ++tkSeqN);
+    for (const id of [...tkSeq.keys()]) if (!now.has(id)) tkSeq.delete(id);
+    const ids = [...now.keys()].sort((a, b) => tkSeq.get(a) - tkSeq.get(b));
+    const empty = el.querySelector('.tk-empty');
+    if (!ids.length) {
+      if (!empty) { el.innerHTML = '<div class="tk-empty">No calls</div>'; }
+    } else if (empty) empty.remove();
+    if (ids.length) tkSyncRows(el, ids, id => tkMakeCallRow(id, false), (r, id) => tkUpdCallRow(r, now.get(id), false));
+    const n = $id('tk-calls-n');
+    const live = calls.filter(c => c.state !== 'recent').length;
+    if (n) tkText(n, live ? String(live) : '', live ? live + ' calls in progress' : '');
+  }
+  function tkMakeCallRow(id, hist) {
+    const r = document.createElement('div');
+    r.className = 'tk-call' + (hist ? ' hist' : '');
+    r.dataset.id = id;
+    r.innerHTML = '<div class="l1"><span class="st"></span><span class="nm"></span><span class="mk"></span><span class="vf"></span><span class="ab">' +
+      (hist ? '' : `<button type="button" class="tk-stop" title="Stop following this call (its voice VFO is freed; the conversation is not followed again)" aria-label="Stop following">${icon('stop')}</button>`) +
+      `<button type="button" class="tk-more" title="Talkgroup: hold, name, priority / skip" aria-label="More" aria-haspopup="menu">${icon('more')}</button></span></div><div class="l2"></div>`;
+    return r;
+  }
+  // a row's text from call c (a status call, or a history entry)
+  function tkUpdCallRow(r, c, hist) {
+    r.tkCall = c;
+    if (!hist) {
+      const st = c.state || 'wait';
+      const cls = 'tk-call s-' + st;
+      if (r.className !== cls) r.className = cls;
+    }
+    const s = tkSys(c.sys);
+    const why = !hist && c.vfo < 0 && c.state !== 'recent' ? c.why : '';
+    tkText(r.querySelector('.st'), hist ? tkClock(c.t_end) : TK_STATE[c.state] || c.state,
+      hist ? new Date(c.t_end).toLocaleString() : why ? tkWhy(why)[1] : '');
+    tkText(r.querySelector('.nm'), tkLabel(c), (c.group ? 'Talkgroup ' : 'Unit ') + c.target + (c.target_name ? ' · ' + c.target_name : '') + (s ? ' · ' + tkSysName(s) : ''));
+    let mk = '';
+    if (c.enc) mk += `<span title="Encrypted: not heard (never decrypted)">${icon('lock', 't')}</span>`;
+    if (c.emerg) mk += `<span class="em" title="Emergency">${icon('warn', 't')}</span>`;
+    if (c.prio) mk += '<span class="pr" title="A priority talkgroup">P</span>';
+    const mke = r.querySelector('.mk');
+    if (mke.dataset.html !== mk) { mke.dataset.html = mk; mke.innerHTML = mk; }
+    const vfo = hist ? (c.followed && c.vfo >= 0 ? c.vfo : -1) : c.vfo;
+    const vf = r.querySelector('.vf');
+    const vt = vfo >= 0 ? 'D' + vfo : '';
+    if (vf.textContent !== vt) { vf.textContent = vt; vf.style.color = vfo >= 0 ? getDecimatorColor(vfo) : ''; }
+    vf.title = vfo >= 0 ? (hist ? 'Followed on D' + vfo : 'Its voice VFO: select it') : '';
+    vf.onclick = vfo >= 0 && !hist ? () => selectDecimator(vfo) : null;
+    const stop = r.querySelector('.tk-stop');
+    if (stop) {
+      const can = c.state !== 'recent' && !(c.why === 'ended');
+      if (stop.hidden === can) stop.hidden = !can;
+      stop.onclick = () => tkSend('TRUNK_END:' + c.id);
+    }
+    r.querySelector('.tk-more').onclick = e => { e.stopPropagation(); tkMenuOpen(e.currentTarget, c, hist); };
+    // the second line: who talks, the channel, its frequency, and what keeps it
+    const parts = [];
+    if (c.source) parts.push(digEsc('from ' + c.source + ((c.sources || []).length > 1 ? ' +' + (c.sources.length - 1) : '')));
+    parts.push(digEsc(c.ch + (c.slot >= 0 ? ' / ' + (c.slot + 1) : '')) + (c.hz > 0 ? ' · ' + tkMhz(c.hz) + ' MHz' : ''));
+    if (hist) {
+      parts.push((c.dur_ms >= 0 ? (c.dur_ms / 1000).toFixed(1) + ' s · ' : '') +
+        (c.followed ? digEsc(TK_END[c.end] || tkWhy(c.end)[0] || c.end) : `<span class="why" title="${digEsc(tkWhy(c.why || c.end)[1])}">Not followed: ${digEsc(tkWhy(c.why || c.end)[0])}</span>`));
+    } else if (why === 'no_freq') {
+      parts.push(`<a class="why" data-sys="${digEsc(c.sys)}" title="${digEsc(TK_WHY.no_freq[1])}">Set its frequency</a>`);
+    } else if (why) {
+      parts.push(`<span class="why${why === 'off' || why === 'duplicate' || why === 'ended' ? ' q' : ''}" title="${digEsc(tkWhy(why)[1])}">${digEsc(tkWhy(why)[0])}</span>`);
+    } else if (c.state === 'recent') {
+      parts.push(digEsc(TK_END[c.end] || c.end || ''));
+    } else if (c.site) parts.push(digEsc(c.site));
+    const l2 = parts.join(' · ');
+    const le = r.querySelector('.l2');
+    if (le.dataset.html !== l2) {
+      le.dataset.html = l2;
+      le.innerHTML = l2;
+      const a = le.querySelector('a.why');
+      if (a) a.onclick = () => tkDlgOpen(a.dataset.sys, 'ch');
+    }
+    le.title = [c.sources && c.sources.length > 1 ? 'Talkers: ' + c.sources.join(', ') : '', c.up_hz > 0 ? 'Uplink ' + tkMhz(c.up_hz) + ' MHz' : '',
+                c.site ? 'Site: ' + c.site : '', c.fsrc ? 'Frequency from: ' + c.fsrc : ''].filter(Boolean).join('\n');
+  }
+  function tkClock(ms) {
+    const d = new Date(ms);
+    return [d.getHours(), d.getMinutes(), d.getSeconds()].map(x => String(x).padStart(2, '0')).join(':');
+  }
+  // no row leaves while the pointer is on the list (a click must not land on another call)
+  (function () {
+    const el = $id('tk-calls');
+    if (!el) return;
+    el.addEventListener('pointerenter', () => { tkFreeze = true; });
+    el.addEventListener('pointerleave', () => { if (!tkMenu) { tkFreeze = false; tkRenderCalls(); } });
+  })();
+
+  // --- recent calls -----------------------------------------------------------------
+  function tkRenderHist() {
+    const el = $id('tk-hist');
+    if (!el) return;
+    const h = ((tkSt && tkSt.history) || []).filter(c => !c.data).slice().reverse();
+    const key = c => c.id + ':' + c.t_end;
+    const byKey = new Map(h.map(c => [key(c), c]));
+    if (!h.length) {
+      if (!el.querySelector('.tk-empty')) el.innerHTML = '<div class="tk-empty">None yet</div>';
+    } else {
+      const e = el.querySelector('.tk-empty');
+      if (e) e.remove();
+      tkSyncRows(el, h.map(key), id => {
+        const r = tkMakeCallRow(id, true);
+        tkUpdCallRow(r, byKey.get(id), true);
+        if (byKey.get(id).followed) r.classList.add('fol');
+        return r;
+      }, () => {});
+    }
+    const n = $id('tk-hist-n');
+    if (n) tkText(n, h.length ? String(h.length) : '', h.length ? 'The last ' + h.length + ' calls (newest first)' : '');
+  }
+
+  // --- a call's / talkgroup's menu ----------------------------------------------------
+  let tkMenu = null, tkMenuBtn = null;
+  const tkMenuPop = popDismiss({btn: () => tkMenuBtn, pop: () => tkMenu, close: f => tkMenuClose(f), place: () => tkMenuPlace()});
+  function tkMenuClose(focus) {
+    if (tkMenu) tkMenu.remove();
+    const b = tkMenuBtn;
+    tkMenu = null; tkMenuBtn = null;
+    if (focus && b && b.isConnected) b.focus();
+    tkFreeze = !!($id('tk-calls') && $id('tk-calls').matches(':hover'));
+    tkRenderCalls();
+  }
+  function tkMenuPlace() {
+    if (!tkMenu || !tkMenuBtn) return;
+    const r = tkMenuBtn.getBoundingClientRect(), w = tkMenu.offsetWidth, h = tkMenu.offsetHeight;
+    let x = Math.min(innerWidth - w - 6, Math.max(6, r.right - w)), y = r.bottom + 3;
+    if (y + h > innerHeight - 6) y = Math.max(6, r.top - h - 3);
+    tkMenu.style.left = x + 'px';
+    tkMenu.style.top = y + 'px';
+  }
+  function tkMenuOpen(btn, c, hist) {
+    if (tkMenuBtn === btn) { tkMenuClose(false); return; }
+    if (tkMenu) tkMenuClose(false);
+    if (!tkLists[c.sys]) send('GET_TRUNK_SYS:' + c.sys);   // the talkgroup's mode
+    tkFreeze = true;
+    tkMenuBtn = btn;
+    tkMenu = document.createElement('div');
+    tkMenu.className = 'tk-menu';
+    tkMenu.setAttribute('role', 'menu');
+    tkMenuFill(c, hist);
+    document.body.appendChild(tkMenu);
+    tkMenuPlace();
+    tkMenuPop.opened();
+    const first = tkMenu.querySelector('button');
+    if (first) first.focus();
+  }
+  function tkMenuFill(c, hist) {
+    const items = [];
+    const item = (ic, text, fn, ck, tip) => items.push({ic, text, fn, ck, tip});
+    const live = !hist && c.state !== 'recent' && c.why !== 'ended';
+    if (live) item('stop', 'Stop following this call', () => tkSend('TRUNK_END:' + c.id), false, 'Its voice VFO is freed; the conversation is not followed again');
+    if (c.group) {
+      const held = tkSt && tkSt.hold && tkSt.hold.sys === c.sys && tkSt.hold.tg === c.target;
+      if (held) item('play', 'Release the hold', () => tkSend('TRUNK_HOLD:'), false, 'Follow every talkgroup again');
+      else item('pause', 'Hold on this talkgroup', () => tkSend('TRUNK_HOLD:' + JSON.stringify({sys: c.sys, tg: c.target})), false, 'Only this talkgroup is followed until you release the hold');
+      item('edit', 'Name…', () => tkTgNameAsk(c.sys, c.target, c.target_name || ''));
+      const mode = tkTgMode(c.sys, c.target) || (c.prio ? 'priority' : null);
+      items.push('-');
+      for (const [k, t, tip] of [['priority', 'Priority', 'Followed first; takes a voice VFO from a normal call when none is free'], ['normal', 'Normal', ''], ['skip', 'Skip', 'Never followed']])
+        item('', t, () => tkSend('TRUNK_TG_SET:' + JSON.stringify({sys: c.sys, tg: c.target, mode: k})), mode === k, tip);
+      items.push('-');
+    }
+    item('gear', 'System…', () => tkDlgOpen(c.sys, c.group ? 'tg' : 'unit'));
+    tkMenu.innerHTML = `<div class="h">${digEsc(tkLabel(c))}${c.group && c.target_name ? ' · TG ' + digEsc(c.target) : ''}</div>` +
+      items.map((it, i) => it === '-' ? '<hr>' : `<button type="button" role="menuitem${it.ck !== undefined && it.ic === '' ? 'radio' : ''}" data-i="${i}"` +
+        `${it.tip ? ` title="${digEsc(it.tip)}"` : ''}${it.ic === '' ? ` aria-checked="${it.ck ? 'true' : 'false'}"` : ''}>` +
+        `<span class="ck">${it.ic ? icon(it.ic) : it.ck ? icon('ok') : ''}</span><span>${digEsc(it.text)}</span></button>`).join('');
+    tkMenu.querySelectorAll('button').forEach(b => b.onclick = () => { const it = items[+b.dataset.i]; tkMenuClose(false); it.fn(); });
+    tkMenu.addEventListener('keydown', e => {
+      const bs = [...tkMenu.querySelectorAll('button')], i = bs.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length].focus(); }
+    });
+  }
+  function tkTgNameAsk(sys, tg, cur) {
+    const s = tkSys(sys);
+    uiPrompt({title: 'Name the talkgroup', icon: 'trunk', ok: 'Save', text: `TG ${tg}${s ? ' · ' + tkSysName(s) : ''}`,
+              tip: 'Shown in the calls in place of the number. A named talkgroup is in the system\'s list (Listed talkgroups only follows the list).',
+              fields: [{name: 'name', label: 'Name', value: cur, maxlength: 32, placeholder: 'e.g. Fire dispatch'}]}).then(r => {
+      if (!r || !tkSys(sys)) return;
+      tkSend('TRUNK_TG_SET:' + JSON.stringify({sys, tg, name: String(r.name).trim()}));
+    });
+  }
+
+  // --- the VFO cards ----------------------------------------------------------------------
+  // a voice VFO: the call it has (live, from the status) and that its tuning is
+  // the receiver's; a control VFO: its system; a traffic VFO (one the user put
+  // on a traffic channel): its system. Called after every card build / refresh
+  function tkRenderCards() {
+    for (const d of decimatorInfo) {
+      const el = $id('dec-tk-' + d.id);
+      if (!el) continue;
+      const t = d.trunk;
+      let h = '', tip = '', lost = false, parked = false;
+      if (t && t.role === 'voice') {
+        const st = tkVoiceState(d), c = tkVoiceCall(d);
+        parked = st === 'parked' || (!c && !t.call);
+        if (parked) { h = 'Trunk VFO · parked'; tip = 'A voice VFO of trunk following, waiting for the next call (muted, not decoding). It is removed after 30 s without one'; }
+        else {
+          const lbl = c ? tkLabel(c) : t.label || ('TG ' + t.target);
+          h = lbl + ' · ' + (TK_STATE[st] || st) + ' · ' + (c ? c.ch : t.ch || '');
+          const s = tkSys(c ? c.sys : t.sys);
+          tip = 'A voice VFO of trunk following' + (s ? ' (' + tkSysName(s) + ')' : '') + ': the receiver sets its frequency, bandwidth, demod, decoder and squelch for each call - they are locked here. The speaker, Save and × (stops following the call) work';
+        }
+      } else if (t && (t.role === 'control' || t.role === 'traffic')) {
+        const s = tkSys(t.sys);
+        const cc = s && (s.control || []).find(c => c.vfo === d.id);
+        lost = !!(cc && !cc.rx);
+        h = (t.role === 'control' ? 'Control · ' : 'Traffic · ') + (s ? tkSysName(s) : t.sys) + (cc && cc.site ? ' · ' + cc.site : '') + (lost ? ' · no signal' : '');
+        tip = t.role === 'control' ? 'The control channel of this trunked system: trunk following takes its grants from here' : 'A traffic channel of this trunked system';
+      }
+      const html = h ? icon('trunk', 't') + '<span>' + digEsc(h) + '</span>' : '';
+      if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+      tkTitle(el, tip);
+      el.classList.toggle('lost', lost);
+      const card = $id('dec-item-' + d.id);
+      if (card) {
+        card.classList.toggle('tk-voice', !!(t && t.role === 'voice'));
+        card.classList.toggle('tk-parked', parked);
+        const x = card.querySelector('.dec-x');
+        if (x) tkTitle(x, t && t.role === 'voice' ? 'Remove this voice VFO: its call is not followed any more' : 'Remove this VFO');
+      }
+    }
+  }
+
+  // --- the system editor -------------------------------------------------------------------
+  let tkDlgId = null, tkDlgTabId = 'gen', tkRuleI = -1, tkDlgPend = {};
+  function tkDlgOpen(id, tab) {
+    if (!id) return;
+    tkDlgId = id;
+    $id('tk-dlg-err').textContent = '';
+    for (const q of ['tk-tg-q', 'tk-ch-q', 'tk-unit-q']) $id(q).value = '';
+    tkRuleEdit(-1);
+    send('GET_TRUNK_SYS:' + id);
+    $id('tk-dlg-bg').style.display = 'flex';
+    tkDlgTab(tab || 'gen');
+    tkDlgStatus();
+    tkDlgRender();
+  }
+  function tkDlgClose() {
+    $id('tk-dlg-bg').style.display = 'none';
+    tkDlgId = null;
+  }
+  function tkDlgTab(t) {
+    tkDlgTabId = t;
+    for (const e of document.querySelectorAll('#tk-dlg .tk-tabs button, #tk-dlg .tk-pane')) {
+      const on = e.dataset.t === t;
+      e.classList.toggle('on', on);
+      if (e.tagName === 'BUTTON') { e.setAttribute('aria-selected', on ? 'true' : 'false'); e.tabIndex = on ? 0 : -1; }
+    }
+  }
+  function tkDlgTabKey(e) {
+    const bs = [...document.querySelectorAll('#tk-dlg .tk-tabs button')], i = bs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const step = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[e.key];
+    const n = step ? (i + step + bs.length) % bs.length : e.key === 'Home' ? 0 : e.key === 'End' ? bs.length - 1 : -1;
+    if (n < 0) return;
+    e.preventDefault();
+    tkDlgTab(bs[n].dataset.t);
+    bs[n].focus();
+  }
+  document.addEventListener('keydown', e => {
+    if (!tkDlgId || e.key !== 'Escape') return;
+    if ($id('ui-dlg-bg') && $id('ui-dlg-bg').style.display !== 'none' && $id('ui-dlg-bg').offsetParent !== null) return;
+    e.preventDefault();
+    tkDlgClose();
+  });
+  // what comes with the status: the title, the counters, the control VFOs, the unresolved channels
+  function tkDlgStatus() {
+    const s = tkSys(tkDlgId);
+    if (!s) {
+      // forgotten (here or on another page), or gone
+      if (!tkLists[tkDlgId]) { tkDlgClose(); return; }
+    }
+    const L = tkLists[tkDlgId] || {};
+    tkText($id('tk-dlg-name'), s ? tkSysName(s) : (L.user_name || L.name || tkDlgId), tkDlgId);
+    const nm = $id('tk-name');
+    if (nm && document.activeElement !== nm) {
+      const v = (s ? s.user_name : L.user_name) || '';
+      if (nm.value !== v) nm.value = v;
+      nm.placeholder = (s && s.name) || L.name || (s && s.key) || '';
+    }
+    const lo = $id('tk-listed');
+    if (lo) lo.checked = !!(s ? s.listed_only : L.listed_only);
+    const info = $id('tk-gen-info');
+    if (info && s) {
+      const n = s.counts || {}, not = n.not || {};
+      const kv = (k, v, tip) => `<div class="kv"${tip ? ` title="${digEsc(tip)}"` : ''}><span>${k}</span><span>${v}</span></div>`;
+      let h = '<div class="sec">On the air</div>' +
+        kv('Decoder', digEsc(tkPlugName(s.plugin))) +
+        kv('System', digEsc(s.key ? s.key : 'not identified yet'), 'The identity the decoder reads from the control channel (the key the receiver keeps it under)') +
+        (s.name ? kv('Reported name', digEsc(s.name)) : '') +
+        (s.site ? kv('Site', digEsc(s.site)) : '');
+      h += (s.control || []).length ? (s.control || []).map(c => kv(`Control D${c.vfo}`,
+            `${tkMhz(c.hz)} MHz${c.site ? ' · ' + digEsc(c.site) : ''} · <span class="${c.rx ? 'ok' : 'bad'}">${c.rx ? 'received' : 'no signal'}</span>`)).join('')
+        : kv('Control', 'none now');
+      h += '<div class="sec">Calls since the start</div>' + kv('Granted', n.grants || 0, 'Calls (and new transmissions of a conversation) the system granted') +
+        kv('Followed', n.followed || 0) +
+        Object.entries(not).sort((a, b) => b[1] - a[1]).map(([k, v]) => kv('Not followed: ' + digEsc(tkWhy(k)[0]), v, tkWhy(k)[1])).join('') +
+        (n.no_signal ? kv('Nothing received', n.no_signal, TK_WHY.no_signal[1]) : '') +
+        (n.moves ? kv('Moved to another channel', n.moves) : '') + (n.preempted ? kv('Taken by priority calls', n.preempted) : '');
+      if (info.dataset.html !== h) { info.dataset.html = h; info.innerHTML = h; }
+    }
+    const miss = tkMissing();
+    const tn = $id('tk-tab-ch-n');
+    const mh = miss.length ? icon('warn', 't') + '<span>' + miss.length + '</span>' : '';
+    if (tn && tn.dataset.html !== mh) { tn.dataset.html = mh; tn.innerHTML = mh; tn.title = miss.length ? miss.length + ' channels without a frequency' : ''; }
+    tkDlgRender('miss');
+  }
+  // the channels that lack a frequency: the status' unresolved list + the channel table's entries without one
+  function tkMissing() {
+    const s = tkSys(tkDlgId), L = tkLists[tkDlgId] || {};
+    const m = new Map();
+    for (const u of s ? tkUnresolved(s) : []) m.set(u.ch, {ch: u.ch, num: u.num, n: u.n});
+    for (const c of L.chans || []) {
+      if (c.hz > 0) { m.delete(c.ch); continue; }
+      if (!m.has(c.ch) && c.grants > 0) m.set(c.ch, {ch: c.ch, num: c.num, n: c.grants});
+    }
+    return [...m.values()].sort((a, b) => b.n - a.n || (a.num - b.num));
+  }
+  function tkOnLists(L) {
+    tkLists[L.id] = L;
+    if (tkSt && tkSt.hold && tkSt.hold.sys === L.id) tkRenderTop();
+    if (L.id === tkDlgId) { tkDlgStatus(); tkDlgRender(); }
+  }
+  function tkOnError(x) {
+    const now = Date.now();
+    const mine = tkSent.find(s => now - s.t < 10000 && (x.cmd === s.c || s.c.startsWith(x.cmd) || x.cmd.startsWith(s.c)));
+    if (!mine) return;
+    const text = x.error || 'refused';
+    if (tkDlgId) $id('tk-dlg-err').textContent = 'Not changed: ' + text;
+    else uiAlert({title: 'Trunk following', text: ['Not changed: ' + text, mine.c], kind: 'error', quiet: true});
+  }
+  function tkDlgSys(o) { tkSend('TRUNK_SYS_SET:' + JSON.stringify(Object.assign({sys: tkDlgId}, o))); }
+  function tkDlgName(v) { tkDlgSys({name: String(v).trim()}); }
+  function tkDlgForget() {
+    const id = tkDlgId, s = tkSys(id);
+    if (!id) return;
+    const L = tkLists[id] || {};
+    uiConfirm({title: 'Forget system', icon: 'trash', danger: true, ok: 'Forget',
+               text: [`"${s ? tkSysName(s) : id}"?`, `Its name, ${(L.tgs || []).length} talkgroups and ${(L.chans || []).length} channel entries (${(L.rules || []).length} rules) go. This cannot be undone.`]}).then(ok => {
+      if (!ok || !tkSys(id)) return;
+      tkSend('TRUNK_SYS_DEL:' + JSON.stringify({sys: id}));
+      delete tkLists[id];
+      tkDlgClose();
+    });
+  }
+  // a pane's lists (not while the user is typing in it: drawn when the field is left)
+  function tkDlgRender(only) {
+    if (!tkDlgId) return;
+    const L = tkLists[tkDlgId] || {tgs: [], chans: [], rules: [], units: []};
+    const busy = id => { const e = $id(id); return e && e.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON'; };
+    const set = (id, h) => { const e = $id(id); if (e && e.dataset.html !== h) { e.dataset.html = h; e.innerHTML = h; } };
+    const CAP = 200;
+    const ago = ms => {
+      if (!ms) return '';
+      const s = Math.max(0, (Date.now() - ms) / 1000);
+      return s < 90 ? Math.round(s) + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 172800 ? Math.round(s / 3600) + ' h ago' : new Date(ms).toLocaleDateString();
+    };
+    if (only === 'miss') { if (!busy('tk-ch-miss')) set('tk-ch-miss', tkMissHtml()); tkRulePreview(); return; }
+    const words = q => String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const match = (ws, hay) => ws.every(w => hay.includes(w));
+    // talkgroups
+    if (!only || only === 'tg') {
+      const ws = words($id('tk-tg-q').value);
+      const all = (L.tgs || []).slice().sort((a, b) => (b.listed - a.listed) || (b.last - a.last) || (a.id < b.id ? -1 : 1));
+      const rows = all.filter(t => match(ws, (t.id + ' ' + t.name).toLowerCase()));
+      const tt = $id('tk-tab-tg-n');
+      if (tt) tkText(tt, all.length ? String(all.length) : '', all.length + ' talkgroups (' + all.filter(t => t.listed).length + ' listed)');
+      tt && (tt.style.color = 'var(--t5)');
+      const h = !all.length ? '<div class="tk-more">No talkgroups yet: they appear as they are heard, or add one above</div>' :
+        '<div class="tk-tw"><table class="tk-t"><thead><tr><th>Talkgroup</th><th>Name</th><th>Mode</th><th>Last heard</th><th>Calls</th><th></th></tr></thead><tbody>' +
+        rows.slice(0, CAP).map(t => `<tr class="${t.listed ? '' : 'heard'}" data-tg="${digEsc(t.id)}"><td class="id" title="${t.listed ? 'In the list' : 'Heard, not in the list'}">${digEsc(t.id)}</td>` +
+          `<td><input type="text" class="nm" maxlength="32" value="${digEsc(t.name)}" placeholder="${t.listed ? '' : 'heard'}" title="Its name (Enter saves; a named talkgroup is in the list)"></td>` +
+          `<td><select title="Priority: followed first, takes a VFO from a normal call. Skip: never followed">${['normal', 'priority', 'skip'].map(k => `<option value="${k}"${t.mode === k ? ' selected' : ''}>${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select></td>` +
+          `<td class="d">${ago(t.last)}</td><td class="n">${t.calls}</td><td><button type="button" class="del" title="${t.listed ? 'Remove from the list (it comes back as heard when it is)' : 'Forget it'}" aria-label="Delete">${icon('trash')}</button></td></tr>`).join('') +
+        '</tbody></table></div>' + (rows.length > CAP ? `<div class="tk-more">${CAP} of ${rows.length} shown: search to find the others</div>` : !rows.length ? '<div class="tk-more">None matches</div>' : '');
+      if (!busy('tk-tg-list')) set('tk-tg-list', h);
+    }
+    if (!only || only === 'ch') {
+      if (!busy('tk-ch-miss')) set('tk-ch-miss', tkMissHtml());
+      const rules = L.rules || [];
+      set('tk-ch-rules', rules.length ? rules.map(r => `<div class="tk-rule"><span>CH ${r.first}–${r.last} = ${mkFmtMhz(r.base_hz)} MHz + (n − ${r.first}) × ${tkKhz(r.step_hz)} kHz` +
+          `${r.up_off_hz !== null && r.up_off_hz !== undefined ? ' · uplink ' + (r.up_off_hz >= 0 ? '+' : '') + (r.up_off_hz / 1e6) + ' MHz' : ''}</span>` +
+          `<button type="button" class="btn sm" onclick="tkRuleEdit(${r.i})" title="Edit this rule">${icon('edit')}</button>` +
+          `<button type="button" class="btn sm" onclick="tkRuleDel(${r.i})" title="Delete this rule">${icon('trash')}</button></div>`).join('') : '');
+      const ws = words($id('tk-ch-q').value);
+      const all = (L.chans || []).slice().sort((a, b) => ((b.hz > 0 ? 0 : 1) - (a.hz > 0 ? 0 : 1)) || (a.num - b.num) || (a.ch < b.ch ? -1 : 1));
+      const rows = all.filter(c => match(ws, (c.ch + ' ' + (c.num >= 0 ? c.num : '') + ' ' + (c.hz > 0 ? mkFmtMhz(c.hz) : '') + ' ' + c.src).toLowerCase()));
+      const h = !all.length ? '<div class="tk-more">No channels yet: they appear as the system grants or announces them</div>' :
+        '<div class="tk-tw"><table class="tk-t"><thead><tr><th>Channel</th><th>No.</th><th>Frequency</th><th>Uplink</th><th>Calls</th><th>Last</th><th></th></tr></thead><tbody>' +
+        rows.slice(0, CAP).map(c => {
+          const has = c.hz > 0;
+          const srcTip = {user: 'You entered it', rule: 'From a rule', announced: 'The system sent it', learned: 'Learned: a VFO received this channel\'s calls there'}[c.src] || '';
+          return `<tr class="${has ? '' : 'miss'}" data-ch="${digEsc(c.ch)}"><td>${digEsc(c.ch)}</td><td class="n">${c.num >= 0 ? c.num : ''}</td>` +
+            `<td class="f">${has ? mkFmtMhz(c.hz) + ' MHz' : 'none'}${c.src ? `<span class="tk-src ${c.src}" title="${srcTip}">${c.src}</span>` : ''}</td>` +
+            `<td class="d">${c.up_hz > 0 ? mkFmtMhz(c.up_hz) : ''}</td><td class="n">${c.grants}</td><td class="d">${ago(c.last)}</td><td>` +
+            `<button type="button" class="ed" title="${has ? 'Enter your own frequency for it' : 'Enter its frequency'}" aria-label="Edit">${icon('edit')}</button>` +
+            (c.user_hz > 0 ? `<button type="button" class="clr" data-src="user" title="Clear your frequency (the rule, announced or learned one is used again)" aria-label="Clear">${icon('reset')}</button>` : '') +
+            (c.learned_hz > 0 ? `<button type="button" class="clr" data-src="learned" title="Forget the learned frequency" aria-label="Forget learned">${icon('no')}</button>` : '') +
+            `<button type="button" class="clr" data-src="all" title="Delete the entry (it comes back when granted again)" aria-label="Delete">${icon('trash')}</button></td></tr>`;
+        }).join('') + '</tbody></table></div>' + (rows.length > CAP ? `<div class="tk-more">${CAP} of ${rows.length} shown: search to find the others</div>` : !rows.length ? '<div class="tk-more">None matches</div>' : '');
+      if (!busy('tk-ch-list')) set('tk-ch-list', h);
+      tkRulePreview();
+    }
+    if (!only || only === 'unit') {
+      const ws = words($id('tk-unit-q').value);
+      const all = (L.units || []).slice().sort((a, b) => b.last - a.last);
+      const rows = all.filter(u => match(ws, String(u.id).toLowerCase()));
+      const un = $id('tk-tab-unit-n');
+      if (un) { tkText(un, all.length ? String(all.length) : '', all.length + ' units heard'); un.style.color = 'var(--t5)'; }
+      set('tk-unit-list', !all.length ? '<div class="tk-more">No units heard yet</div>' :
+        '<div class="tk-tw"><table class="tk-t"><thead><tr><th>Unit</th><th>Last heard</th><th>Calls</th></tr></thead><tbody>' +
+        rows.slice(0, CAP).map(u => `<tr><td>${digEsc(u.id)}</td><td class="d">${ago(u.last)}</td><td class="n">${u.calls}</td></tr>`).join('') +
+        '</tbody></table></div>' + (rows.length > CAP ? `<div class="tk-more">${CAP} of ${rows.length} shown: search to find the others</div>` : ''));
+    }
+  }
+  function tkKhz(hz) { return String(+(hz / 1000).toFixed(4)); }
+  function tkMissHtml() {
+    const miss = tkMissing();
+    if (!miss.length) return '';
+    const n = miss.length;
+    return `<div class="tk-miss"><div class="h">${icon('warn')}<span>${n} channel${n === 1 ? '' : 's'} without a frequency</span>` +
+      helpTip('The system granted calls on these channels but sends only their numbers (the radios have the frequencies programmed in). Enter each one\'s downlink frequency here - or one rule below for all of them. Their calls are followed as soon as they have one.', true) + '</div>' +
+      miss.slice(0, 12).map(m => `<div class="mrow" data-ch="${digEsc(m.ch)}" data-num="${m.num}"><span class="c" title="${digEsc(m.ch)}${m.num >= 0 ? ' (number ' + m.num + ')' : ''}">${digEsc(m.ch)}</span>` +
+        `<span class="g">${m.n} call${m.n === 1 ? '' : 's'}</span><input type="text" inputmode="decimal" placeholder="MHz" aria-label="Frequency of ${digEsc(m.ch)} (MHz)">` +
+        '<button type="button" class="btn sm">Set</button></div>').join('') +
+      (n > 12 ? `<div class="tk-more">and ${n - 12} more (the channel table)</div>` : '') +
+      '<div class="or">Or one rule for all of them, below.</div></div>';
+  }
+  // the editor's clicks and edits, delegated (its lists are redrawn)
+  (function () {
+    const dlg = $id('tk-dlg');
+    if (!dlg) return;
+    dlg.addEventListener('change', e => {
+      const t = e.target, tr = t.closest('tr[data-tg]');
+      if (tr && t.matches('input.nm')) tkSend('TRUNK_TG_SET:' + JSON.stringify({sys: tkDlgId, tg: tr.dataset.tg, name: t.value.trim()}));
+      else if (tr && t.matches('select')) tkSend('TRUNK_TG_SET:' + JSON.stringify({sys: tkDlgId, tg: tr.dataset.tg, mode: t.value}));
+    });
+    dlg.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.target.matches('tr[data-tg] input.nm')) e.target.blur();
+      if (e.key === 'Enter' && e.target.closest('.tk-miss .mrow')) { const b = e.target.closest('.mrow').querySelector('button'); if (b) b.click(); }
+      if (e.key === 'Enter' && e.target.closest('#tk-rule-form')) tkRuleSave();
+    });
+    dlg.addEventListener('focusout', () => setTimeout(() => { if (tkDlgId && !$id('tk-dlg').contains(document.activeElement)) tkDlgRender(); }, 0));
+    dlg.addEventListener('click', e => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      const tg = b.closest('tr[data-tg]'), ch = b.closest('tr[data-ch]'), mr = b.closest('.tk-miss .mrow');
+      if (tg && b.classList.contains('del')) {
+        const id = tg.dataset.tg, L = tkLists[tkDlgId], t = L && L.tgs.find(x => x.id === id);
+        const go = () => tkSend('TRUNK_TG_DEL:' + JSON.stringify({sys: tkDlgId, tg: id}));
+        if (t && (t.name || t.mode !== 'normal')) uiConfirm({title: 'Delete talkgroup', icon: 'trash', danger: true, ok: 'Delete',
+          text: `TG ${id}${t.name ? ' "' + t.name + '"' : ''}: its name and mode go.`}).then(ok => { if (ok) go(); });
+        else go();
+      } else if (ch && b.classList.contains('ed')) tkChEdit(ch.dataset.ch);
+      else if (ch && b.classList.contains('clr')) {
+        const src = b.dataset.src, name = ch.dataset.ch;
+        const go = () => tkSend('TRUNK_CH_DEL:' + JSON.stringify({sys: tkDlgId, ch: name, src}));
+        if (src === 'all') uiConfirm({title: 'Delete channel entry', icon: 'trash', danger: true, ok: 'Delete',
+          text: `${name}: your frequency and the announced and learned ones go (the entry comes back when it is granted again).`}).then(ok => { if (ok) go(); });
+        else go();
+      } else if (mr) {
+        const inp = mr.querySelector('input'), v = tkParseMhz(inp.value);
+        if (v === null) { inp.setAttribute('aria-invalid', 'true'); $id('tk-dlg-err').textContent = 'Enter the frequency in MHz (e.g. 455.40625)'; inp.focus(); return; }
+        $id('tk-dlg-err').textContent = '';
+        const num = +mr.dataset.num;
+        tkSend('TRUNK_CH_SET:' + JSON.stringify({sys: tkDlgId, ch: mr.dataset.ch, hz: v, num: num >= 0 ? num : null}));
+      }
+    });
+  })();
+  // MHz typed -> Hz (null = not a frequency the receiver takes)
+  function tkParseMhz(t) {
+    const s = String(t || '').trim().replace(',', '.');
+    if (!/^\d+(\.\d+)?$/.test(s)) return null;
+    const hz = Math.round(parseFloat(s) * 1e6);
+    return hz > 0 && hz <= 6e9 ? hz : null;
+  }
+  function tkChEdit(name) {
+    const L = tkLists[tkDlgId] || {}, c = (L.chans || []).find(x => x.ch === name) || {ch: name, num: -1};
+    const sys = tkDlgId;
+    uiPrompt({title: 'Channel frequency', icon: 'trunk', ok: 'Save', text: `${name}${c.num >= 0 ? ' (number ' + c.num + ')' : ''}` + (c.hz > 0 ? ` · now ${mkFmtMhz(c.hz)} MHz (${c.src})` : ''),
+              tip: 'Your frequency for this channel wins over a rule and over announced and learned ones (not over a frequency the system sends with a grant).',
+              fields: [{name: 'hz', label: 'Downlink (MHz)', value: c.user_hz > 0 ? mkFmtMhz(c.user_hz) : '', placeholder: c.hz > 0 ? mkFmtMhz(c.hz) : '455.40625',
+                        validate: v => tkParseMhz(v) === null ? 'A frequency in MHz, up to 6000' : ''},
+                       {name: 'up', label: 'Uplink (MHz, optional)', value: c.user_up > 0 ? mkFmtMhz(c.user_up) : '', placeholder: 'none',
+                        validate: v => v.trim() && tkParseMhz(v) === null ? 'A frequency in MHz, or empty' : ''}]}).then(r => {
+      if (!r || tkDlgId !== sys) return;
+      tkSend('TRUNK_CH_SET:' + JSON.stringify({sys, ch: name, hz: tkParseMhz(r.hz), up_hz: r.up.trim() ? tkParseMhz(r.up) : null, num: c.num >= 0 ? c.num : null}));
+    });
+  }
+  // --- the rule form: channel n = base + (n - first) x step --------------------------
+  // read and check it: {rule} or {errs: {field: text}}; empty fields keep their placeholder out
+  function tkRuleRead() {
+    const v = id => $id(id).value.trim().replace(',', '.');
+    const errs = {}, r = {};
+    const f = v('tk-r-first'), l = v('tk-r-last'), b = v('tk-r-base'), s = v('tk-r-step'), u = v('tk-r-up');
+    if (!/^\d+$/.test(f)) errs.first = 'A channel number';
+    else r.first = +f;
+    if (l && !/^\d+$/.test(l)) errs.last = 'A channel number, or empty';
+    else if (l && r.first !== undefined && +l < r.first) errs.last = 'Not below First';
+    if (!/^\d+(\.\d+)?$/.test(b) || !(+b > 0 && +b <= 6000)) errs.base = 'MHz, up to 6000';
+    else r.base_hz = Math.round(+b * 1e6);
+    if (!/^-?\d+(\.\d+)?$/.test(s) || +s === 0 || Math.abs(+s) > 10000) errs.step = 'kHz, not 0';
+    else r.step_hz = Math.round(+s * 1000 * 1000) / 1000;
+    if (u && (!/^-?\d+(\.\d+)?$/.test(u) || Math.abs(+u) > 1000)) errs.up = 'MHz, or empty';
+    else if (u) r.up_off_hz = Math.round(+u * 1e6);
+    if (Object.keys(errs).length) return {errs, filled: !!(f || b || s)};
+    // Last empty: up to 4096 channels, inside 0 - 6 GHz
+    const room = r.step_hz > 0 ? Math.floor((6e9 - r.base_hz) / r.step_hz) : Math.floor((r.base_hz - 1) / -r.step_hz);
+    r.last = l ? +l : r.first + Math.max(0, Math.min(4095, room));
+    const top = r.base_hz + (r.last - r.first) * r.step_hz;
+    if (!(top > 0 && top <= 6e9)) return {errs: {last: 'The last channel would be outside 0 - 6 GHz'}, filled: true};
+    return {rule: r};
+  }
+  function tkRuleErrs(errs, show) {
+    for (const k of ['first', 'last', 'base', 'step', 'up']) {
+      const e = $id('tk-r-' + k + '-e'), i = $id('tk-r-' + k);
+      const t = show && errs[k] ? errs[k] : '';
+      if (e.textContent !== t) e.textContent = t;
+      if (t) i.setAttribute('aria-invalid', 'true'); else i.removeAttribute('aria-invalid');
+    }
+  }
+  // the preview: what the missing channels (else the first channels of the rule) get
+  function tkRulePreview() {
+    const p = $id('tk-r-prev');
+    if (!p || !tkDlgId) return;
+    const x = tkRuleRead();
+    let t = '', w = false;
+    if (x.rule) {
+      const r = x.rule, f = n => mkFmtMhz(r.base_hz + (n - r.first) * r.step_hz) + ' MHz';
+      const miss = tkMissing().filter(m => m.num >= 0);
+      const inR = miss.filter(m => m.num >= r.first && m.num <= r.last), outR = miss.filter(m => !(m.num >= r.first && m.num <= r.last));
+      if (inR.length) t = inR.slice(0, 5).map(m => m.ch + ' → ' + f(m.num)).join(' · ') + (inR.length > 5 ? ` · and ${inR.length - 5} more` : '') +
+        (outR.length ? ` (${outR.length} missing outside it)` : '');
+      else {
+        t = `CH ${r.first} → ${f(r.first)} · CH ${r.first + 1} → ${f(r.first + 1)} · … · CH ${r.last} → ${f(r.last)}`;
+        if (outR.length) { t += ` - none of the ${outR.length} missing channels is in it`; w = true; }
+      }
+      tkRuleErrs({}, false);
+    } else if (x.filled) {
+      tkRuleErrs(x.errs, true);
+    } else tkRuleErrs({}, false);
+    if (!x.rule && !x.filled && tkMissing().some(m => m.num < 0)) { t = 'These channels have no number: enter their frequencies one by one'; w = true; }
+    if (p.textContent !== t) p.textContent = t;
+    p.classList.toggle('w', w);
+  }
+  function tkRuleSave() {
+    const x = tkRuleRead();
+    if (!x.rule) { tkRuleErrs(x.errs, true); return; }
+    const r = Object.assign({sys: tkDlgId}, x.rule);
+    if (tkRuleI >= 0) r.i = tkRuleI;
+    if (r.up_off_hz === undefined) r.up_off_hz = null;
+    tkSend('TRUNK_RULE_SET:' + JSON.stringify(r));
+    tkRuleEdit(-1);
+  }
+  function tkRuleEdit(i) {
+    tkRuleI = i;
+    const L = tkLists[tkDlgId] || {}, r = i >= 0 ? (L.rules || []).find(x => x.i === i) : null;
+    const set = (id, v) => { $id(id).value = v; };
+    if (r) {
+      set('tk-r-first', r.first); set('tk-r-last', r.last); set('tk-r-base', mkFmtMhz(r.base_hz)); set('tk-r-step', tkKhz(r.step_hz));
+      set('tk-r-up', r.up_off_hz !== null && r.up_off_hz !== undefined ? r.up_off_hz / 1e6 : '');
+    } else for (const k of ['first', 'last', 'base', 'step', 'up']) set('tk-r-' + k, '');
+    $id('tk-r-ok').innerHTML = r ? icon('ok') + '<span>Save rule</span>' : icon('plus') + '<span>Add rule</span>';
+    $id('tk-r-cancel').style.display = r ? '' : 'none';
+    tkRuleErrs({}, false);
+    tkRulePreview();
+  }
+  function tkRuleDel(i) {
+    const L = tkLists[tkDlgId] || {}, r = (L.rules || []).find(x => x.i === i), sys = tkDlgId;
+    if (!r) return;
+    uiConfirm({title: 'Delete rule', icon: 'trash', danger: true, ok: 'Delete',
+               text: `CH ${r.first}–${r.last} = ${mkFmtMhz(r.base_hz)} MHz + (n − ${r.first}) × ${tkKhz(r.step_hz)} kHz`}).then(ok => {
+      if (ok && tkDlgId === sys) tkSend('TRUNK_RULE_DEL:' + JSON.stringify({sys, i}));
+    });
+  }
+  function tkTgAdd() {
+    const id = $id('tk-tg-id').value.trim(), name = $id('tk-tg-name').value.trim(), mode = $id('tk-tg-mode').value;
+    const err = $id('tk-tg-err');
+    if (!id || id.length > 32 || /[\x00-\x1f\x7f]/.test(id)) { err.textContent = 'The talkgroup\'s number'; $id('tk-tg-id').focus(); return; }
+    err.textContent = '';
+    tkSend('TRUNK_TG_SET:' + JSON.stringify({sys: tkDlgId, tg: id, name, mode}));
+    $id('tk-tg-id').value = ''; $id('tk-tg-name').value = ''; $id('tk-tg-mode').value = 'normal';
+    $id('tk-tg-id').focus();
+  }
 
   // --- 📡 OSM MASTS: radio masts, towers and antennas from OpenStreetMap ------
   // Optional layer (Masts button, mapState.masts - per browser like the
