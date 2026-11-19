@@ -584,13 +584,13 @@ void DmrProto::tier3_payload(int slot, const uint8_t* c) {
         if (slot_wanted(slot))
             ctx_.report->event(Mode::DMR, slot_name(slot) + " P_CLEAR: " + (gi ? "TG " : "") + id_text(dst) +
                                               " back to the " + (lpcn == 0 ? std::string("control channel") : "TSCC on channel " + std::to_string(lpcn)),
-                               3.0);
+                               ctx_.opts->verbose ? 0.01 : 3.0);   // verbose: every repeat
         Slot& sl = slots_[slot];
         const double now = host_ ? host_->time() : 0;
         // the TS repeats it: one RELEASED per clear-down
         if (now - sl.cleared > 2.0 || sl.cstate != kp::Call::RELEASED) {
-            if (sl.cstate < 0 && gateway_name(dst) == nullptr) {
-                // nothing heard of the call yet: the P_CLEAR names it
+            if (sl.ctarget.empty() && gateway_name(dst) == nullptr) {
+                // no call heard (a grant whose radio never keyed up): the P_CLEAR names it
                 sl.ctarget = std::to_string(dst);
                 sl.cgroup = gi;
             }
@@ -671,13 +671,49 @@ void DmrProto::call_tick(int64_t now) {
 }
 
 // --- Motorola Capacity Plus (FID 0x10) -------------------------------------------------
+// Capacity Plus has no public standard. Idle radios wait on the REST
+// channel; its CSBKO 0x3E ("channel status") says which channel is the rest
+// channel. What is used here:
+//   [GPL-fact DSD-FME / SDRTrunk] octet 2 = fragment(2) timeslot(1)
+//   reserved(1) rest channel(4) - the timeslot bit CONFIRMED-RF (one 30 s
+//   rest-channel recording: 0x3E on slot 1 carried 0, on slot 2 1, both
+//   fragment bits set); [UNVERIFIED] that the low nibble is the rest
+//   channel's number (that recording showed 1 on both slots and no traffic).
+// Only a CRC-clean BS-sourced CSBK with FID 0x10 / CSBKO 0x3E whose timeslot
+// bit matches the slot it came on is used. Not used (no recording with
+// traffic here to check them against): the active-channel bitmap and group
+// list that follow - so no grants; the host follows the calls of a Capacity
+// Plus system only through the rest channel moving (control_channel).
 void DmrProto::capplus(int slot, const uint8_t* c) {
     const int op = c[0] & 0x3F;
-    if (op == 0x3E) {
-        cp_seen_ = true;
-        ctx_.report->set(Mode::DMR, "System", "Motorola Capacity Plus");
+    if (op != 0x3E || !burst_bs_ || slot < 1) return;
+    cp_seen_ = true;
+    ctx_.report->set(Mode::DMR, "System", "Motorola Capacity Plus");
+    const int ts = (c[2] >> 5) & 1, rest = c[2] & 15;
+    if (ts != slot - 1 || rest == 0) return;
+    ctx_.report->set(Mode::DMR, "Rest channel", std::to_string(rest));
+    if (!host_) return;
+    const double now = host_->time();
+    // no network identity on air: the colour code is the best key there is
+    // (stable, but two Capacity Plus systems on one colour code in reach
+    // share it)
+    if (cc_ >= 0 && (now - sys_sent_ >= 5.0 || sys_key_cp_ != cc_)) {
+        kp::TrunkSystem t;
+        t.key = "CapPlus.CC" + std::to_string(cc_);
+        t.name = "Motorola Capacity Plus, colour code " + std::to_string(cc_);
+        t.control = true;   // the rest channel: where idle radios wait and calls start
+        host_->trunk_system(t);
+        sys_sent_ = now;
+        sys_key_cp_ = cc_;
     }
-    (void)slot;
+    if (cp_rest_ >= 0 && rest != cp_rest_) {
+        kp::TrunkChannel ch;
+        ch.name = "LCN " + std::to_string(rest);
+        ch.number = rest;
+        host_->control_channel(ch);
+        ctx_.report->event(Mode::DMR, "Capacity Plus: the rest channel moved to channel " + std::to_string(rest), 5.0);
+    }
+    cp_rest_ = rest;
 }
 
 }  // namespace dig

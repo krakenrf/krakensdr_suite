@@ -12,9 +12,62 @@ bursts B..F extrapolated from the last sync) hands each burst to `dmr.cpp`:
 - voice superframes: EMB (QR(16,7)) + the embedded LC over bursts B..E
   (Hamming(16,11) + column parity + 5-bit checksum); GPS and talker alias LCs
 - CSBK (grants, preambles, Tier III control-channel chatter with verbose),
-  PI and data headers, idle bursts
+  MBC (header + continuation blocks, the last block's CRC), PI and data
+  headers, idle bursts; the CACH short LC (4 CACH bursts, Hamming(17,12)
+  rows + column parity + CRC-8): C_SYS_Parms / P_SYS_Parms
+- Tier III trunking (`dmr_trunk.cpp`, ETSI TS 102 361-4) for trunk
+  following - see below; Motorola Capacity Plus: the rest channel
 - Voice: AMBE+2 through a user-installed mbelib (README "Digital voice
-  codecs"); privacy calls are muted, never decrypted. Option `slot`
+  codecs"); privacy calls are muted, never decrypted. Option `slot` (talkers,
+  calls, events and audio of that timeslot only; the other slot's radio is
+  reported as "?" so its samples stay out of the DoA); hidden option `cc`
+  (only bursts of that colour code - set by trunk following)
+
+## Trunk following (Tier III)
+
+`Info::trunking`. On a TSCC (trunked station control channel):
+
+- System: the C_SYScode of C_ALOHA / C_BCAST, or of the CACH short LC
+  (C_SYS_Parms on a TSCC, P_SYS_Parms on a payload channel - so a payload
+  channel names its system too). `trunk_system` key = the NETWORK: model +
+  network code (`Huge.1`, `Small.37`; the model sets the NET / SITE split,
+  table 6.5), site = `site <SITE>` (raw value), `control` while TSCC PDUs
+  were heard in the last 5 s. Sent on a change and every 5 s
+- Grants: PV / TV / BTV / PD / TD / PV_DX / PD_DX / PD_MI / TD_MI (CSBKO
+  0x30-0x38; 0x38 from an MS is BS_Dwn_Act) on a TSCC or a payload channel
+  -> `grant`: channel `LCN <n>` / number n, slot = the LCN bit, group (TV,
+  BTV, TD, TD_MI), emergency, `update` = Late_Entry (TV / BTV), `data` for
+  the data grants, a duplex grant's Call Direction turned into called /
+  calling, options `slot` = 1 / 2 and - with absolute parameters - `cc`.
+  Logical channel 0xFFF = an MBC with the CG_AP block: downlink = its RX
+  (the MS receive) frequency, uplink = its TX, the payload channel's colour
+  code. The grant PDUs carry no privacy flag: `encrypted` comes only from
+  the payload channel's own LC
+- Channel numbers -> Hz only where the system says: C_BCAST Chan_Freq (MBC
+  with BC_AP), CG_AP / MV_AP / VN_AP blocks; the plugin keeps them
+  (`trunk_channel` with downlink and uplink) and uses them for later grants
+  of that channel. The fixed / flexible channel plans of annex C are
+  personalisation data, never on air: otherwise `freq_hz` NAN, and the
+  user's channel table (or the host's learning) maps `LCN <n>`
+- C_BCAST: call timers, adjacent sites and vote-now advice (facts +
+  `trunk_channel` of the neighbour's TSCC), announce / withdraw TSCC,
+  local time, general site parameters, mass registration (verbose)
+- C_MOVE with Mask 0 (every radio) -> `control_channel`; a C_MOVE for some
+  radios only is an event
+- Payload channel, per timeslot: `call(ACTIVE)` from the voice LC header /
+  embedded LC (late entry: a voice burst without an LC yet gives an ACTIVE
+  with no target) - group or unit from the FLCO, encrypted = the privacy
+  bit of the LC's service options or the EMB's PI; `ENDED` at the
+  terminator with LC (its hang-time repeats every 60 ms are skipped) or
+  1 s without voice; `RELEASED` at P_CLEAR (repeated P_CLEARs: one per 2 s).
+  P_PROTECT is an event. With `slot` set only that timeslot is reported
+- Motorola Capacity Plus (no public standard): CSBKO 0x3E FID 0x10 on the
+  rest channel -> `trunk_system` key `CapPlus.CC<colour code>` (nothing
+  better is on air: two systems on one colour code in reach share it),
+  `control_channel` `LCN <n>` when the rest channel number changes. Its
+  active-channel / group list is not decoded (no recording with traffic),
+  so there are no Capacity Plus grants. Connect Plus (FID 0x06) and Hytera
+  XPT: only named
 
 ## ID separation (DoA per radio)
 

@@ -63,6 +63,7 @@ private:
         std::string tid, tcall;      // radio ID ("" = not known yet), "TG 9" / "unit call to 123"
         bool tbs = false;            // sent by a repeater (BS sync)
         bool treported = false;      // the host knows of the transmission (by its ID, or as "?")
+        bool hang = false;           // a terminator ended the transmission; repeats of it follow
         // multi block control (MBC header + continuation blocks) being assembled
         uint8_t mbc[4][12] = {{0}};
         int mbc_n = 0;               // blocks held (0 = none)
@@ -95,6 +96,7 @@ private:
     // Motorola Capacity Plus rest channel (FID 0x10), -1 unknown
     int cp_rest_ = -1;
     bool cp_seen_ = false;
+    int sys_key_cp_ = -1;            // the colour code of the Capacity Plus key sent
     void cach_short_lc(const uint8_t* cach24, int lcss);
     void short_lc(uint32_t slc28);
     void system_seen(int syscode, bool control, bool from_slc);

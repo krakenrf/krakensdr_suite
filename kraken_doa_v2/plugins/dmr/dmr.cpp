@@ -99,6 +99,7 @@ void DmrProto::reset() {
     slc_n_ = -1;
     cp_rest_ = -1;
     cp_seen_ = false;
+    sys_key_cp_ = -1;
 }
 
 // --- talkers (RxContext::talker) ----------------------------------------------
@@ -483,6 +484,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         // 4: accept only near-clean EMBs carrying the channel's colour code
         if (ee < 0 || ee > 1 || (cc_ >= 0 && cc != cc_)) { sl.voice_idx = -1; return false; }
         sl.voice_idx++;
+        sl.hang = false;
         sl.privacy = pi;
         voice_burst(slot, bits);
         // embedded LC: LCSS 1 = first, 3 = continuation, 2 = last fragment
@@ -542,11 +544,17 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             for (int i = 9; i < 12; i++) by[i] ^= mask;
             if (!rs129_check(by)) { ok = false; break; }
             if (dt == 1) {
+                sl.hang = false;
                 sl.privacy = (by[2] & 0x40) != 0;
                 if (sl.ambe) sl.ambe->reset();
                 full_lc(slot, by, "LC header");
                 talker_burst(slot);
+            } else if (sl.hang) {
+                // the repeater repeats the terminator every 60 ms through its
+                // hang time (a Tier III payload channel until P_CLEAR): the
+                // transmission it ended is over - no talker, no call, no event
             } else {
+                sl.hang = true;
                 full_lc(slot, by, "terminator");
                 talker_burst(slot);
                 if (talker_slot(slot)) talker_end(slot, sl.voice_end);
@@ -595,7 +603,8 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             sl.privacy = true;
             break;
         }
-        case 6: { // data header
+        case 6: { // data header (a data transmission: its terminator is not a repeat)
+            sl.hang = false;
             if (bptc_196_96(info, d96) < 0) { ok = false; break; }
             pack_bits(d96, 96, by);
             by[10] ^= 0xCC;

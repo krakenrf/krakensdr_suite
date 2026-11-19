@@ -191,7 +191,21 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     false direct-mode data sync inside a repeater's burst made the next
     burst B..F skip its CACH, on the wrong slot (2026-10-16). Real
     recordings: dmr_1 263 -> 269 valid bursts, dmr_it_8 604 -> 605, dmr_2
-    identical, talkers unchanged
+    identical, talkers unchanged.
+    Trunking (2026-11-20, plugin 2.1, `dmr_trunk.cpp`): Tier III TSCC ->
+    `trunk_system` (C_SYScode: model + NET = key, SITE), every grant form
+    (0x30-0x38; MBC with CG_AP = absolute downlink / uplink + colour code),
+    C_BCAST (Chan_Freq / adjacent site / vote now -> `trunk_channel`), C_MOVE
+    mask 0 -> `control_channel`; payload channels -> `call()` per slot
+    (LC -> ACTIVE, terminator -> ENDED, P_CLEAR -> RELEASED), the CACH short
+    LC (C_ / P_SYS_Parms) for the system on either; Capacity Plus rest
+    channel only (README). Opcode names corrected: 0x2E is P_CLEAR, 0x2F
+    P_PROTECT, 0x39 C_MOVE (were C_MOVE / P_CLEAR / -). An extrapolated
+    burst takes its slot from the 30 ms alternation (by sample position;
+    was a wall-clock window) when its TACT disagrees: a miscorrected TACT on
+    an empty or weak slot named the other slot and cut its superframe short.
+    A terminator's hang-time repeats (every 60 ms until P_CLEAR on a Tier
+    III payload channel) no longer make a 27 ms talker each
   - `DstarReceiver` (plugins/dstar): RF header (scrambler, 24-column
     interleaver, K=3 Viterbi, CRC-16/X.25), slow data (text message, GPS /
     DPRS, header copy), end pattern
