@@ -143,6 +143,7 @@ struct Chan {
     double user_hz = NAN, user_up = NAN;      // the user's entry
     double ann_hz = NAN, ann_up = NAN;        // announced by the system (CHANNEL, or a grant's frequency)
     double learned_hz = NAN;                  // passive learning
+    int learn_fail = 0;                       // calls on the learned frequency that received nothing (not saved)
     uint64_t grants = 0;                      // calls granted on it
     int64_t last = 0;                         // last granted (epoch ms)
 };
@@ -304,6 +305,7 @@ std::map<int, Track> g_tracks;
 struct LearnObs {
     double hz = NAN;
     uint64_t call = 0;
+    int over = 0;
     int64_t t = 0;
     int n = 0;
 };
@@ -1623,8 +1625,9 @@ void on_control(int vfo, Track& t, const PluginEvent& ev) {
 // plugin within LEARN_WINDOW_MS: that VFO's frequency is the channel's. Two
 // such observations from separate grants (>= LEARN_SEPARATE_MS apart, the
 // same frequency within LEARN_TOL_HZ, one VFO reporting) make it a learned
-// entry; a learned entry contradicted twice is dropped. Never over a user
-// entry, never a frequency another channel of the system already has.
+// entry. A learned entry whose calls receive nothing twice (SETUP gives up)
+// is dropped. Never over a user entry, never a frequency another channel of
+// the system already has.
 void on_learn_call(int vfo, const Track& t, const std::string& plugin, const PluginEvent& ev) {
     if (ev.call_state != 1 || ev.target.empty()) return;
     auto inst = decimator_manager.getDecimator(vfo);
@@ -1670,31 +1673,13 @@ void on_learn_call(int vfo, const Track& t, const std::string& plugin, const Plu
     // a second VFO with the same target at the same time: ambiguous
     const std::string lk = c.sys + "\x1f" + c.ch.name;
     LearnObs& o = g_learn[lk];
-    if (o.call == c.id) {
+    if (o.call == c.id && o.over == c.overs) {
         if (std::fabs(o.hz - rf) > LEARN_TOL_HZ) {
             // two VFOs with this call at once: nothing learned from it
             o = LearnObs{};
             g_learn_refused++;
         }
         return;   // (one observation per grant)
-    }
-    if (fin(ch->learned_hz) && std::fabs(ch->learned_hz - rf) > LEARN_TOL_HZ) {
-        // a learned entry contradicted: twice = dropped
-        if (fin(o.hz) && std::fabs(o.hz - rf) < LEARN_TOL_HZ && now - o.t >= LEARN_SEPARATE_MS) {
-            std::cout << "Trunk following: " << c.sys << " channel " << c.ch.name << " - the learned "
-                      << ch->learned_hz / 1e6 << " MHz contradicted twice (" << rf / 1e6 << " MHz): dropped" << std::endl;
-            ch->learned_hz = NAN;
-            g_learn_dropped++;
-            s->lists_struct = true;
-            mark_dirty(SAVE_LEARN_MS);
-            o = LearnObs{};
-            return;
-        }
-        o.hz = rf;
-        o.call = c.id;
-        o.t = now;
-        o.n = 1;
-        return;
     }
     if (fin(o.hz) && std::fabs(o.hz - rf) < LEARN_TOL_HZ && now - o.t >= LEARN_SEPARATE_MS) {
         o.n++;
@@ -1703,6 +1688,7 @@ void on_learn_call(int vfo, const Track& t, const std::string& plugin, const Plu
         o.n = 1;
     }
     o.call = c.id;
+    o.over = c.overs;
     o.t = now;
     if (o.n < 2) {
         std::cout << "Trunk following: " << c.sys << " channel " << c.ch.name << " seen on D" << vfo << " ("
@@ -1710,6 +1696,7 @@ void on_learn_call(int vfo, const Track& t, const std::string& plugin, const Plu
         return;
     }
     ch->learned_hz = std::round(rf);
+    ch->learn_fail = 0;
     g_learned_n++;
     s->lists_struct = true;
     s->unresolved.erase(c.ch.name);
@@ -2284,6 +2271,19 @@ void tick_calls() {
                               << c.hz / 1e6 << " MHz, " << c.fsrc << "): nothing received in "
                               << SETUP_GIVEUP_MS / 1000 << " s" << std::endl;
                     c.setup_failed = true;
+                    if (c.fsrc == "learned") {
+                        // a learned entry that leads nowhere twice: dropped
+                        auto ci = s->chans.find(c.ch.name);
+                        if (ci != s->chans.end() && ++ci->second.learn_fail >= 2) {
+                            std::cout << "Trunk following: " << c.sys << " channel " << c.ch.name << " - the learned "
+                                      << ci->second.learned_hz / 1e6 << " MHz received nothing twice: dropped" << std::endl;
+                            ci->second.learned_hz = NAN;
+                            ci->second.learn_fail = 0;
+                            g_learn_dropped++;
+                            s->lists_struct = true;
+                            mark_dirty(SAVE_LEARN_MS);
+                        }
+                    }
                     unfollow(c, "no_signal");
                 }
                 break;
