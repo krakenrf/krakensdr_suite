@@ -356,7 +356,7 @@ private:
         if (!txt.empty()) ev += ": " + txt;
         if (b.etb) ev += " …";
         if (repaired) ev += " (" + std::to_string(repaired) + (repaired == 1 ? " bit" : " bits") + " repaired)";
-        // blocks without text (acknowledgements) only with "Log all messages";
+        // blocks without text (acknowledgements) only with "Show all messages";
         // a retransmission (no acknowledgement came) once in 30 s
         if (!b.text.empty() || host.verbose()) host.event(ev, 30);
 

@@ -25,13 +25,13 @@ proprietary: the decoder shows it as hex.
 
 - event per packet that passed UART framing, parity and CRC:
   `packet L=39 8O2 dev 2.0 kHz CRC ok: 27 00 7A 50 ...` (L + payload, CRC
-  omitted; 48 bytes at most unless "Log all messages" is on).
+  omitted; 48 bytes at most unless "Show all messages" is on).
   `(1 char repaired)` marks a packet that needed the single-error repair.
 - facts: packet counter, repaired packets, character format (8O1 / 8O2 /
   8E1 / 8N1), deviation of the last packet (lets you tell the transmitters
   apart), last packet, a histogram of packet lengths, carrier offset
   (`freq_error`)
-- with "Log all messages": packets whose CRC failed go to the plugin log
+- with "Show all messages": packets whose CRC failed go to the plugin log
   (stderr) only - never to events or facts
 
 Nothing is reported for data that failed a check.

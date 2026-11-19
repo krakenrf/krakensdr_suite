@@ -104,7 +104,7 @@ constexpr double CONT_MIN_S = 5.0, CONT_SOFT_S = 8.0, CONT_MAX_S = 15.0;
 constexpr size_t FRAME = 320;
 constexpr size_t PAUSE_FRAMES = 12;
 constexpr double OVERLAP_S = 0.3;
-// Each transcript's lobe (the 🗺 map shows it from the 🗣 Voice tab): the MUSIC
+// Each transcript's lobe (the 🗺 map shows it from the Transcription panel): the MUSIC
 // pseudospectra published during it, each min..max -> 0..1, averaged with the
 // bearing's weights; LOBE_BINS of 0.5 deg clockwise from north (as the map's
 // live lobe, rdf_mapper.cpp display_lobe) - or from the array's front when

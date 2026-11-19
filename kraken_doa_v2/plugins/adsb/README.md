@@ -113,7 +113,7 @@ last one, is rejected.
   pulses), bit repair (how many messages, with 2-3 bits, replies, all-calls,
   refused by the signature)
 - Events: new aircraft, its callsign, its first position, emergencies (7500,
-  7600, 7700 or the emergency state); every message with "Log all"
+  7600, 7700 or the emergency state); every message with "Show all messages"
 - Map: one marker per aircraft (ttl 60 s), details in its popup - once
   "🗺 Plot on map" is ticked in the decoder tab
 - Options (the decoder tab): `range` (300 / 500 / 1000 km / no limit),
