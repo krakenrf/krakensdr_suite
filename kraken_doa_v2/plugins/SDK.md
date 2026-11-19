@@ -27,6 +27,8 @@ plugins/
 │   │                     clock recovery, sync words, CRC, block codes, Viterbi)
 │   ├── plugin_host.cpp   main() of every plugin (live + offline test modes)
 │   └── tools/uca_scene.py  test transmissions at known bearings on the array (ID separation)
+│       tools/wide_scene.py  narrowband transmitters anywhere in the 2.4 MHz, at known bearings
+│                            (a trunked system's control + traffic channels; wide playback entries)
 │       tools/make_testsignal.py  builds a <id>/tools/testsignals.json entry for the debug playback
 ├── lib/                  shared digital-radio library (libkrakendig.a, linked into
 │                         every plugin; only what a plugin uses ends up in it):
@@ -166,7 +168,8 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .lock_vfo = false,              // true: the VFO stays on its tuner's centre (below)
                           .multichannel = false,          // true: takes every antenna (process_multi, below)
                           .video = false,                 // true: rebuilds a picture (host.video_frame, below)
-                          .squelch_hold_s = 0})           // > 0: the Digital squelch's hold (below)
+                          .squelch_hold_s = 0,            // > 0: the Digital squelch's hold (below)
+                          .trunking = false})             // true: reports a trunked system (host.grant, below)
 ```
 
 The fields of `kp::Info` must be given **in this order** (C++20 designated
@@ -338,6 +341,10 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.option_choices(key, choices)` | the choices of one of your options known only at run time (`{{value, label}, ...}`; dab: the ensemble's programmes): the panel shows the option as that list; `{}` = none (see Options above; wire OPTION_CHOICES 42, ignored by older hosts) |
 | `host.video_frame(f)` | a reconstructed picture (`kp::VideoFrame`: width, height, format, pixels, label) drawn on a canvas in the decoder's tab - analog TV, screen-leakage (TEMPEST); set `.video = true` (see below) |
 | `host.plot(p)` | a line plot (`kp::Plot`) in the decoder's tab, or several, beside the video display, and one a click on sets an option (see *Array plugins: ... plots* below) |
+| `host.trunk_system(s)` | the trunked system this VFO hears (`kp::TrunkSystem`: network key, name, site, control channel or not) - see *Trunked systems* below (wire TRUNK_SYSTEM 43) |
+| `host.trunk_channel(c)` / `host.control_channel(c)` | a channel the system announced (`kp::TrunkChannel`: name, number, downlink / uplink frequency, slot) / the system's control channel is now there (wire 44 / 45) |
+| `host.grant(g)` / `host.grant_end(c)` | a channel grant heard (`kp::Grant`: channel, talkgroup / unit, source, flags, the traffic decoder and its options) / the system took the channel back (wire 46 / 47): kraken_doa can follow the call |
+| `host.call(c)` | on a traffic channel: the call it carries now (`kp::Call`: ACTIVE / ENDED / RELEASED, target, source, slot, flags; wire 48) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.
@@ -655,6 +662,165 @@ LTE / NR cells, `plugins/dab/tools/dab_gen.cpp` DAB networks (each
 transmitter with its own TII code - packet talkers with their own
 covariances, `t.cov`).
 
+## Trunked systems (grants, calls: trunk following)
+
+A trunked radio system (P25, DMR Tier III / Capacity Plus, NXDN, TETRA,
+MPT1327) hands out its traffic channels call by call on a control channel.
+A plugin that reads such a control channel reports what it hears there in
+a structured form - besides its usual events and facts, which stay as they
+are - and kraken_doa's **trunk following** puts a temporary voice VFO with
+the right decoder on each granted channel (inside the receiver's 2.4 MHz)
+for the length of the call, so every call gets heard, transcribed and
+direction-found. How the host does it (the VFOs, the user's channel table,
+its commands) is in `kraken_doa_v2/docs/dev/trunk-following.md`; this is
+the plugin's side. Set `.trunking = true` (the plugin list shows it), then:
+
+| call | when |
+|---|---|
+| `host.trunk_system(s)` | the system's identity is known or changed - and again every few seconds (the host keeps the latest) |
+| `host.trunk_channel(c)` | the system announced a channel (a band-plan / channel-list entry, a neighbour's channel): the host keeps it in the system's channel table |
+| `host.control_channel(c)` | the control channel is (now) somewhere else - a rest channel that moved, an announced change: the host moves this VFO there when it can |
+| `host.grant(g)` | once per grant message HEARD - first grants, grant updates, late-entry messages alike |
+| `host.grant_end(c)` | the control channel says the channel is free again (a release / deassignment) |
+| `host.call(c)` | on a TRAFFIC channel: a call starts, its target / source / encryption become known or change, it ends |
+
+**`kp::TrunkChannel`** (in all of them): `name` = the channel as the system
+numbers it, the SAME text every time for the same physical channel ("1-0412"
+for P25 identifier 1 / channel 412, "LCN 5", "412") - the host's key for it,
+also to look its frequency up in the user's table: ALWAYS fill it (a message
+without one is dropped); `number` = the number alone when the system has
+one (-1 none: a "base + n x step" plan the user enters works on it);
+`freq_hz` = the DOWNLINK, what a receiver near the site hears - give it
+whenever the signalling or a standard band plan determines it (P25
+identifier updates, TETRA carrier numbers with the band / offset / duplex
+from the system information, DMR absolute parameters), else NAN: never a
+guess, the user's channel table then decides; `uplink_hz` = what the radios
+transmit on (the repeater's input), only when the signalling or a standard
+plan gives it, NAN = not known or simplex - `freq_hz` stays the downlink
+(a DF receiver gets the site's bearing on the downlink, the radio's own on
+the uplink); `slot` = the TDMA timeslot on it, 0-based (DMR timeslot 1 =
+0, TETRA timeslot 1 = 0), -1 = the whole channel.
+
+**`kp::TrunkSystem`**: `key` = the NETWORK's identity, the same on every
+site and after a restart (P25 WACN.system "BEE00.14C", TETRA MCC-MNC
+"228-8889", an MPT1327 system code), `[A-Za-z0-9._-]` <= 48 (other
+characters become `_`), `""` until known - kraken_doa files what the user
+knows about the system (channel frequencies, talkgroup names) under your
+plugin id + this key, so nothing site- or day-specific goes in; `name`
+how to show it, `site` this site ("RFSS 5 site 9", `""` none), `control` =
+this VFO is on a control channel.
+
+**`kp::Grant`**: `channel`; `target` = the talkgroup or the called unit as
+the system writes it ("1201", "32-1201"), `group` false for a unit-to-unit
+(private) call; `source` = the calling unit (`""` if the message lacks it);
+`encrypted`, `emergency`, `data` (a data channel - the host doesn't follow
+it), `update` = the repeat of a call in progress rather than its start;
+`decoder` = the plugin for the traffic channel (`""` = this one); `demod`
+= `""` (the decoder's own voice, Demod Digital) or `"nfm"` (analogue FM
+speech: MPT1327's traffic channels); `bw_hz` = the traffic channel's width
+(0 = the decoder's `min_vfo_rate`); `options` = what the traffic channel's
+decoder needs before it has heard it itself, by THAT decoder's
+`Info::options` keys - the timeslot, the colour code / NAC / RAN, the
+scrambling identity (TETRA's MCC / MNC / colour code, P25 Phase 2's WACN /
+system / NAC) - at most 16, keys `[a-z0-9_]{1,32}`, values <= 100 bytes
+without control characters. Repeats are expected: send `grant()` for every
+grant message you decode, also when the system repeats it every second for
+the length of the call - the host de-duplicates them and takes them as the
+call's keep-alive.
+
+**`kp::Call`** (traffic channels): `state` = `Call::ACTIVE` while a
+transmission is on, `Call::ENDED` when it is over (its terminator, or frames
+stopped - the channel may stay assigned for the hang time),
+`Call::RELEASED` when the system cleared the channel (clear-down, call
+release); `target` / `group` / `source` as in the grant (`""` = not known
+yet), `slot`, `encrypted`, `emergency`. Call it when a call starts, when
+its target / source / encryption become known or change, and when it ends;
+repeating it (once per superframe) is fine. `talker()` and `valid()` stay as
+they are - the DoA per radio and the Digital squelch come from them, not
+from `call()`.
+
+What a TRAFFIC-channel instance may rely on: kraken_doa starts it as any
+VFO's decoder (`decoder = ""`: your own plugin) on the granted frequency and
+width; the grant's `options` arrive through `Decoder::option()` before, or
+with, its first samples; when the host moves that VFO to another channel
+you get `reset()` (as on every retune) and the new options. It doesn't know
+it is on a traffic channel unless an option says so - report what you hear
+(`call()`, `talker()`, and `grant()` for grants a traffic channel carries).
+
+Limits, both ends (the plugin side cuts or drops, kraken_doa checks
+everything again - a plugin is untrusted input): texts lose control
+characters and are cut at a character boundary (names 32, target / source
+32, system name / site 64, key 48 bytes), a frequency outside (0, 6 GHz] is
+NAN, a slot outside -1..15 is -1, a `decoder` that is no plugin id or a
+`demod` that is no `[a-z0-9_]{1,16}` is `""`, bad options are dropped.
+Delivery: in Auto detect the host takes these only from the plugin it
+locked onto (as its voice) - reports before that are lost, so repeat the
+system now and then; with the plugin selected, all of them. When the VFO's
+decoder is reset (a retune > 100 Hz), stopped, switched, or its process
+dies or is rebuilt, the host drops what it had from it - send the system
+again once you know it. Older kraken_doa builds ignore all six (wire
+TRUNK_SYSTEM 43, TRUNK_CHANNEL 44, CONTROL_CHANNEL 45, GRANT 46, GRANT_END
+47, CALL 48); plugins from before send none.
+
+**Offline test.** `decoder --file` prints each call on one line, as the
+host receives it (cleaned to the limits), key=value tokens with the texts
+quoted - `ch` name, `num` number, `mhz` downlink ("?" = NAN), `slot`, `up`
+uplink (only when known), `target`, `group` / `unit`, `source`, `flags`
+(e encrypted, m emergency, d data, u update; "-" none), `decoder`, `demod`,
+`bw` (Hz), `opt.<key>` per option, `state` ACTIVE / ENDED / RELEASED. A line
+identical to one printed less than 5 s earlier is not printed again (a grant
+update every second for a minute prints once; `--verbose` prints every one),
+and the summary has every count:
+
+```
+[    0.300 s] (system) key="BEE00.14C" name="P25 BEE00.14C" site="RFSS 5 site 9" control=1
+[    0.300 s] (channel) ch="1-0400" num=400 mhz=851.012500 slot=-1 up=806.012500
+[    0.300 s] (grant) ch="1-0412" num=412 mhz=851.162500 slot=-1 up=806.162500 target="1201" group source="2010621" flags=- decoder="" demod="" bw=0 opt.nac="293"
+[    0.800 s] (grant) ch="1-0412" num=412 mhz=851.162500 slot=-1 up=806.162500 target="1201" group source="2010621" flags=u decoder="" demod="" bw=0 opt.nac="293"
+[    0.800 s] (call) state=ACTIVE target="1201" group source="" slot=0 flags=-
+[    1.300 s] (call) state=ACTIVE target="1201" group source="2010621" slot=0 flags=-
+[    1.800 s] (grant) ch="2-0007" num=7 mhz=851.250000 slot=1 target="2010999" unit source="2010621" flags=e decoder="" demod="" bw=0 opt.slot="1" opt.nac="293"
+[    3.300 s] (call) state=ENDED target="1201" group source="2010621" slot=0 flags=-
+[    4.300 s] (grant end) ch="1-0412" num=412 mhz=851.162500 slot=-1 up=806.162500
+[    4.300 s] (call) state=RELEASED target="1201" group source="2010621" slot=0 flags=-
+...
+trunk system: key="BEE00.14C" name="P25 BEE00.14C" site="RFSS 5 site 9" control=1 (12 reports)
+trunk channels: 1
+  ch="1-0400" num=400 mhz=851.012500 slot=-1 up=806.012500
+trunk grants: 9 messages (7 updates, 0 data, 1 encrypted, 0 emergency), 2 distinct channel+target
+  ch="1-0412" num=412 mhz=851.162500 slot=-1 up=806.162500 target="1201" group source="2010621" flags=u decoder="" demod="" bw=0 opt.nac="293"  0.300 .. 3.800 s  8 messages
+  ch="2-0007" num=7 mhz=851.250000 slot=1 target="2010999" unit source="2010621" flags=e decoder="" demod="" bw=0 opt.slot="1" opt.nac="293"  1.800 .. 1.800 s  1 messages
+trunk grant ends: 1 messages, 1 channels
+  ch="1-0412" num=412 mhz=851.162500 slot=-1 up=806.162500  1 messages
+trunk calls: 7 messages, 1 calls (0 still active, 0 ended, 1 released)
+  slot=0 target="1201" group source="2010621" flags=-  0.800 .. 4.300 s  RELEASED
+trunk lines not printed (repeated within 5 s; --verbose prints them): 20
+```
+
+Further summary lines: `trunk control channel: ...` (the last
+`control_channel()`), `(trunk dropped)` lines and `trunk fields cut /
+dropped by the wire limits: N, messages dropped: M` when the limits changed
+something (fix that in the plugin: kraken_doa does the same). The summary's
+calls are counted as the host would: per slot, an ACTIVE with another known
+target or source is a new call; a RELEASED after an ENDED releases that
+call. The live round trip is checked with `tools/digi_test.cpp` (kraken_doa_v2),
+which prints every report the real engine hands over (`[trunk] <plugin> GRANT
+t=... ch=...`) and the engine's RESETs (`--retune S:HZ`, `--stop S`).
+
+**Testing a trunking plugin** (besides *ID separation* below): its
+generator writes a control channel (system information, channel
+announcements, grants and grant updates timed BEFORE each call) and traffic
+channel calls; the offline test of the control channel must give the
+`(system)` / `(grant)` lines - every channel name, frequency, target and
+option the generator put in - and of each traffic channel the `(call)`
+lines, ACTIVE to ENDED / RELEASED, besides its talkers. Then a WIDE
+debug-playback entry (*Test transmissions* below): the control channel AND
+calls on traffic channels several hundred kHz away inside one 2.4 MHz
+capture, each transmitter at its own bearing, made with
+`sdk/tools/wide_scene.py`. (In a real system the traffic downlinks come
+from the site, at its bearing; a scene may give each call its own bearing
+to check that each VFO's DoA comes from its own channel.)
+
 ## ID separation (required when the signal has per-transmitter IDs)
 
 If the signal carries a coded ID per TRANSMITTER - a callsign, MMSI, ICAO
@@ -748,7 +914,10 @@ TDMA channel, or one radio's inbound bursts - several radios placed by
 uca_scene.py), `dmr/tools/dmr_gen.py`,
 `radiosonde/tools/sonde_gen.py`; a 2.4 MHz
 scene of several transmitters is too big for uca_scene.py's in-memory
-mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
+mixing (5 antennas x 12 s = 2.3 GB complex128) - narrowband transmitters
+spread over the 2.4 MHz go through `sdk/tools/wide_scene.py` (in 0.1 s
+blocks, below), while signals made at 2.4 MHz are written by their
+generators: `radar/tools/radar_gen.py`
 writes its scene at known bearings itself, in 0.1 s pieces (so do
 `ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py`, `adsb/tools/adsb_gen.py`,
 `dme/tools/dme_gen.py`, `ism/tools/ism_gen.py`,
@@ -820,6 +989,72 @@ least recently played go).
   fits the loop helps). `"files": {"scene.json": {"$from":
   "{tools}/scene_x.json", "seconds": 6, "station": "{station}"}}` writes an
   in-repo scene with some keys replaced
+- WIDE scenes of NARROW transmitters (a trunked system's control channel and
+  its traffic channels, neighbouring channels, several systems): your
+  generator writes each transmitter as a narrowband file (cf32 at 48 / 72 /
+  96 kHz ...), and the last step `["{sdk}/wide_scene.py", "scene.json",
+  "out.cu8"]` places them anywhere in the 2.4 MHz - each with its own
+  `offset_hz`, start, bearing and level, a `loop` for a control channel
+  that runs the whole scene - adds noise over the whole band and writes the
+  5-antenna cu8 + `out.json` the entry's `"output"` takes (see *A wide
+  trunking scene* below)
+
+**`sdk/tools/wide_scene.py SCENE.json OUT.cu8`.** SCENE: `rf_hz` (the 2.4
+MHz's centre = the tuner; each source's wavelength is taken at its own
+frequency), `channels` (5), `radius_m` (0.12), `seconds`, `snr_db` (a
+source at gain_db 0 against the noise in `snr_bw_hz`, default 48 kHz),
+`seed`, `rms` (the 8-bit level of noise + every source at once, default
+0.15 of full scale, like heimdall's), `sources`: `name`, `file` (cf32 / cu8 /
+cs16 IQ, or `"format": "disc_s16"` + `dev_hz` / `rms_hz` / `invert` as in
+uca_scene.py), `rate` (any ratio of 2.4 MHz with a denominator <= 1000),
+`from` / `dur` (the part of the file), `loop` (repeat it to the scene's
+end), `at` (s), `offset_hz` (from the centre), `bearing` (array-relative,
+CCW from ANT0), `gain_db`, `shift_hz` (an extra carrier error). Each source
+is scaled to unit power over the part on the air. It works in 0.1 s blocks
+(sources read through memory maps), so memory stays ~140 MB whatever the
+length: a 20 s scene of four 48 kHz sources took 5 s and 139 MB on a
+desktop x86 core (0.25 x real time; a Pi is a few times slower). Check it
+offline - the sidecar gives the rate and the RF, `--offset` = the source's
+`offset_hz`: `decoder --file out.cu8 --channels 5 --uca 0.12 --offset
+-400000`. A playback entry's `rf_hz` is where VFO 0 goes (the control
+channel) and `tuner_offset_hz` its offset from the scene's centre, so the
+scene's `rf_hz` = the entry's `rf_hz` - `tuner_offset_hz`.
+
+**A wide trunking scene** (the generator's options are the plugin's own;
+`commands` may carry the trunk manager's WebSocket commands such as
+`TRUNK_FOLLOW:1` - they are documented in
+`kraken_doa_v2/docs/dev/trunk-following.md`):
+
+```json
+[{
+ "id": "p25-trunk-two-calls",
+ "title": "P25 trunking: a control channel and two calls on traffic channels",
+ "description": "Site BEE00.14C RFSS 5 site 9: control channel 1-0400 on 851.0125 MHz (bearing 300 deg), grants for TG 1201 on 1-0412 (850.5125 MHz, 2.0 s) and TG 1305 on 1-0444 (850.9125 MHz, 9.0 s), each repeated as grant updates during its call; the calls' traffic channels at 40 and 200 deg. Expect (system) / (grant) on VFO 0, a voice VFO per call, talkers 2010621 at 40 deg and 2010622 at 200 deg.",
+ "rf_hz": 851012500.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 20,
+ "vfo": {"bw_khz": 12.5},
+ "commands": ["TRUNK_FOLLOW:1"],
+ "files": {"scene.json": {"rf_hz": 850712500.0, "seconds": 20, "snr_db": 20, "seed": 5, "sources": [
+   {"name": "site", "file": "cc.cf32", "rate": 48000, "loop": true, "at": 0, "offset_hz": 300000, "bearing": 300},
+   {"name": "2010621", "file": "call1.cf32", "rate": 48000, "at": 0, "offset_hz": -200000, "bearing": 40},
+   {"name": "2010622", "file": "call2.cf32", "rate": 48000, "at": 0, "offset_hz": 200000, "bearing": 200, "gain_db": -3}]}},
+ "steps": [
+  ["{tools}/p25_gen.py", "cc.cf32", "--control", "--wacn", "BEE00", "--sysid", "14C", "--seconds", "20",
+   "--grant", "2.0:1-0412:1201:2010621", "--grant", "9.0:1-0444:1305:2010622"],
+  ["{tools}/p25_gen.py", "call1.cf32", "--at", "2.3", "--dur", "4", "--src", "2010621", "--tg", "1201"],
+  ["{tools}/p25_gen.py", "call2.cf32", "--at", "9.3", "--dur", "5", "--src", "2010622", "--tg", "1305"],
+  ["{sdk}/wide_scene.py", "scene.json", "out.cu8"]
+ ],
+ "output": "out.cu8",
+ "expect": [{"tid": "2010621", "bearing": 40}, {"tid": "2010622", "bearing": 200}],
+ "tol_deg": 5
+}]
+```
+
+Time the scene so every grant precedes its call (here 0.3 s), and keep
+every source well inside the 2.4 MHz (`|offset_hz|` + half its width under
+~1 MHz: wide_scene.py warns past the band).
 - A step that is a `.py` runs with python3 -I (numpy / scipy); a `.cpp` is
   compiled once into `testsignal_cache/.bin/` - again when it or a `*.h` /
   `*.hpp` in its folder or your plugin folder is newer (`g++ -std=c++20 -O2

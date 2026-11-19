@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "digital/dig_report.hpp"
+#include "digital/trunk_event.hpp"
 
 namespace dig {
 
@@ -153,6 +154,15 @@ using VideoHandler = std::function<void(const VideoFrameReport&)>;
 // the decoder's worker thread.
 using TuneHandler = std::function<std::string(double rf_hz)>;
 
+// What a plugin reports about a trunked system (kp::Host::trunk_system ...
+// call, checked against the kp::wire::TRUNK_* limits), and the engine's own
+// RESET when that state goes stale - trunk_event.hpp. plugin = the plugin
+// that sent it (RESET: the one whose state is stale). Only the lead plugin's
+// (Auto detect: the detected one). Called on the decoder's worker thread
+// (or, for a RESET, wherever the decoder is stopped / destroyed); unset =
+// dropped. DecimatorManager passes them to trunk::on_plugin_event
+using TrunkHandler = std::function<void(const std::string& plugin, trunk::PluginEvent&& ev)>;
+
 class DigitalDecoder {
 public:
     // threaded = false: offline tests - process() runs synchronously and
@@ -239,6 +249,9 @@ public:
     // Retune requests of plugins that declare kp::Info::tunes (DecimatorManager)
     void set_tune_handler(TuneHandler h);
     std::string deliver_tune(double rf_hz);
+    // Trunked-system reports (TrunkHandler)
+    void set_trunk_handler(TrunkHandler h);
+    void deliver_trunk(const std::string& plugin, trunk::PluginEvent&& ev);
     // Offline tests: wait until the plugins have processed all input
     void drain(int timeout_ms = 30000);
 
@@ -299,6 +312,7 @@ private:
     SpatialHandler spatial_handler_;
     VideoHandler video_handler_;
     TuneHandler tune_handler_;
+    TrunkHandler trunk_handler_;
     std::atomic<bool> want_array_{false};
     std::atomic<bool> array_only_{false};   // nothing but array plugins: push() only ticks
     uint64_t tick_pos_ = NO_POS;            // the last tick (pipeline thread)

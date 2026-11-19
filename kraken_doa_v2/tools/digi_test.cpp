@@ -4,6 +4,7 @@
 // KRAKEN_PLUGIN_DIR.
 //   digi_test MODE FORMAT FILE [--fs HZ] [--offset HZ] [--vfo-rate HZ] [--conj] [--verbose] [--seconds S]
 //                              [--opt plugin.key=value] [--voice out.wav] [--station LAT,LON]
+//                              [--rf HZ] [--retune S:HZ] [--stop S]
 // MODE: AUTO, PLUGIN:<id>, or an old protocol name (P25 DMR TETRA DSTAR NXDN MPT1327)
 // FORMAT: u8 (rtl_sdr interleaved uint8 IQ, --fs required), wav (PCM IQ, 16/24 bit),
 //         u8mc (every antenna of an array, uint8 IQ sample by sample, --channels M
@@ -11,6 +12,14 @@
 //         SAMPLES_MC -, the others antenna 0; --rf HZ the RF of its centre),
 //         dis (S16LE discriminator samples at 48 kHz, DSDcc test files - FM
 //         modulated again for the plugins), cf32
+// Trunked systems: every report the engine hands over (kp::Host::grant ...,
+// after its checks, and its own RESETs) is printed as it comes, one line
+//   [trunk] p25 GRANT t=1.234 ch="1-0412" num=412 mhz=851.012500 up=? slot=-1 ...
+// (text escaped: \xNN = a byte < 0x20 / 0x7F - there must be none). The
+// regression hook of the plugin wire protocol. --retune S:HZ moves the VFO's
+// RF at S seconds (the engine resets the plugins: a RESET follows), --stop S
+// turns the decoder off at S seconds (RESET too); --rf HZ = the RF of the
+// input (default 100 MHz)
 // Build (from kraken_doa_v2, liquid-dsp built by `make` first):
 //   g++ -std=c++20 -O2 -Iinclude -isystem liquid-dsp/build-kraken/include tools/digi_test.cpp src/digital/*.cpp
 //       src/utils/process_posix.cpp src/utils/fs_compat.cpp src/ai_sandbox.cpp src/geo_address.cpp
@@ -35,6 +44,68 @@
 #include <vector>
 #include <algorithm>
 using cf = std::complex<float>;
+
+// a delivered trunk event as one line
+static std::string tq(const std::string& s) {
+    std::string o = "\"";
+    for (unsigned char c : s) {
+        if (c < 0x20 || c == 0x7F) {
+            char b[8];
+            snprintf(b, sizeof b, "\\x%02x", c);
+            o += b;
+        } else {
+            if (c == '"' || c == '\\') o += '\\';
+            o += static_cast<char>(c);
+        }
+    }
+    return o + "\"";
+}
+static std::string tmhz(double f) {
+    if (!std::isfinite(f)) return "?";
+    char b[40];
+    snprintf(b, sizeof b, "%.6f", f / 1e6);
+    return b;
+}
+static void print_trunk(const std::string& plugin, const trunk::PluginEvent& e) {
+    static const char* kinds[] = {"SYSTEM", "CHANNEL", "CONTROL", "GRANT", "GRANT_END", "CALL", "RESET"};
+    char t[32];
+    snprintf(t, sizeof t, "%.3f", e.t_s);
+    std::string o = "  [trunk] " + plugin + " " + kinds[e.kind] + " t=" + t;
+    auto ch = [&]() {
+        o += " ch=" + tq(e.ch.name) + " num=" + std::to_string(e.ch.number) + " mhz=" + tmhz(e.ch.freq_hz) +
+             " up=" + tmhz(e.ch.uplink_hz) + " slot=" + std::to_string(e.ch.slot);
+    };
+    switch (e.kind) {
+        case trunk::PluginEvent::SYSTEM:
+            o += " key=" + tq(e.sys_key) + " name=" + tq(e.sys_name) + " site=" + tq(e.sys_site) +
+                 " control=" + (e.control ? "1" : "0");
+            break;
+        case trunk::PluginEvent::CHANNEL:
+        case trunk::PluginEvent::CONTROL:
+        case trunk::PluginEvent::GRANT_END:
+            ch();
+            break;
+        case trunk::PluginEvent::GRANT: {
+            ch();
+            std::string fl = std::string(e.encrypted ? "e" : "") + (e.emergency ? "m" : "") + (e.data ? "d" : "") + (e.update ? "u" : "");
+            o += " target=" + tq(e.target) + (e.group ? " group" : " unit") + " source=" + tq(e.source) +
+                 " flags=" + (fl.empty() ? "-" : fl) + " decoder=" + tq(e.decoder) + " demod=" + tq(e.demod) +
+                 " bw=" + std::to_string(static_cast<long long>(std::llround(e.bw_hz))) +
+                 " options=" + std::to_string(e.options.size());
+            for (const auto& [k, v] : e.options) o += " opt." + k + "=" + tq(v);
+            break;
+        }
+        case trunk::PluginEvent::CALL: {
+            std::string fl = std::string(e.encrypted ? "e" : "") + (e.emergency ? "m" : "");
+            o += " state=" + std::to_string(e.call_state) + " target=" + tq(e.target) + (e.group ? " group" : " unit") +
+                 " source=" + tq(e.source) + " slot=" + std::to_string(e.call_slot) + " flags=" + (fl.empty() ? "-" : fl);
+            break;
+        }
+        case trunk::PluginEvent::RESET:
+            break;
+    }
+    std::cout << o << "\n" << std::flush;
+}
 
 static bool read_wav(const char* fn, std::vector<cf>& out, float& fs) {
     std::ifstream f(fn, std::ios::binary);
@@ -74,6 +145,7 @@ int main(int argc, char** argv) {
     double rf_hz = 100e6;
     std::string voice_out;
     bool conj = false;
+    double retune_at = -1, retune_hz = 0, stop_at = -1;
     dig::Options opt;
     for (int i = 4; i < argc; i++) {
         std::string a = argv[i];
@@ -86,6 +158,10 @@ int main(int argc, char** argv) {
         else if (a == "--channels") channels = atoi(argv[++i]);
         else if (a == "--rf") rf_hz = atof(argv[++i]);
         else if (a == "--voice") voice_out = argv[++i];
+        else if (a == "--retune") {
+            if (sscanf(argv[++i], "%lf:%lf", &retune_at, &retune_hz) != 2) { fprintf(stderr, "--retune S:HZ\n"); return 2; }
+        }
+        else if (a == "--stop") stop_at = atof(argv[++i]);
         else if (a == "--station") {
             double la = 0, lo = 0;
             if (sscanf(argv[++i], "%lf,%lf", &la, &lo) == 2) dig::set_station_location(true, la, lo);
@@ -99,6 +175,16 @@ int main(int argc, char** argv) {
     dig::PluginRegistry::instance().scan();
     dig::DigitalDecoder dec(false);
     dec.set_options(opt);
+    dec.set_trunk_handler([](const std::string& plugin, trunk::PluginEvent&& e) { print_trunk(plugin, e); });
+    // the input's RF at time t (--retune), the decoder stopped after --stop
+    bool stopped = false;
+    auto rf_at = [&](double t) {
+        if (stop_at >= 0 && t >= stop_at && !stopped) {
+            stopped = true;
+            dec.set_mode(dig::Mode::OFF);
+        }
+        return retune_at >= 0 && t >= retune_at ? retune_hz : rf_hz;
+    };
     dig::Mode m;
     std::string plugin;
     if (!dig::parse_mode_string(mode, &m, &plugin)) { fprintf(stderr, "unknown mode %s\n", mode.c_str()); return 2; }
@@ -152,7 +238,7 @@ int main(int argc, char** argv) {
             x[i] = std::polar(1.0f, float(ph));
         }
         for (size_t i = 0; i < x.size() && i < seconds * 48000; i += 480) {
-            dec.process(x.data() + i, std::min<size_t>(480, x.size() - i), 48000, 100e6);
+            dec.process(x.data() + i, std::min<size_t>(480, x.size() - i), 48000, rf_at(i / 48000.0));
             pull(0.01);
             flush_events();
         }
@@ -174,7 +260,7 @@ int main(int argc, char** argv) {
                     mc[i * m + k] = {static_cast<int16_t>(std::lround(re * dig::DigitalDecoder::MC_SCALE)),
                                      static_cast<int16_t>(std::lround(im * dig::DigitalDecoder::MC_SCALE))};
                 }
-            dec.process(x0.data(), got, fs, rf_hz, dig::DigitalDecoder::NO_POS, mc.data(), channels);
+            dec.process(x0.data(), got, fs, rf_at(done / fs), dig::DigitalDecoder::NO_POS, mc.data(), channels);
             pull(0.01);
             flush_events();
         }
@@ -210,7 +296,7 @@ int main(int argc, char** argv) {
         } else y = x;
         size_t blk = vfo_rate / 100;
         for (size_t i = 0; i < y.size() && i < seconds * vfo_rate; i += blk) {
-            dec.process(y.data() + i, std::min(blk, y.size() - i), vfo_rate, 100e6);
+            dec.process(y.data() + i, std::min(blk, y.size() - i), vfo_rate, rf_at(i / vfo_rate));
             pull(0.01);
             flush_events();
         }

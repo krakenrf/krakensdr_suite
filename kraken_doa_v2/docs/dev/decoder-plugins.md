@@ -26,7 +26,33 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `--rf HZ` or the sidecar's `rf_hz`) / option_choices (an option's list
   known only at run time - dab's programmes - as value / label pairs, wire
   OPTION_CHOICES 42; *Digital decoders* has the host side; the offline test
-  prints the final lists); `kp::Option` key/label/default/choices "v=Label|..."/help/hidden
+  prints the final lists) / trunked systems, for trunk following
+  (2026-11-20; `Info::trunking`, `--info` "trunking", `list_json`
+  "trunking"): trunk_system (`kp::TrunkSystem` key / name / site / control,
+  wire TRUNK_SYSTEM 43), trunk_channel / control_channel / grant_end
+  (`kp::TrunkChannel` name / number / freq_hz = downlink / slot /
+  uplink_hz, wire 44 / 45 / 47: name, number, freq_hz, slot, uplink_hz),
+  grant (`kp::Grant`, wire GRANT 46: E fixed fields - 12: name .. bw_hz,
+  uplink_hz - then option pairs, the PLOT_EX pattern), call (`kp::Call`
+  ACTIVE / ENDED / RELEASED on a traffic channel, wire CALL 48); limits
+  `kp::wire::TRUNK_*`, enforced by the SDK and again by `Engine::on_trunk`
+  (digital_decoder.cpp), which hands them, the lead plugin's only, as
+  `trunk::PluginEvent` (`include/digital/trunk_event.hpp`) to
+  `DigitalDecoder::set_trunk_handler` -> `trunk::on_plugin_event`
+  (`trunk_follow.cpp`, wired in `DecimatorManager::ensureDigital`), plus a
+  RESET of its own after a VFO's reports went stale (`reset_all`,
+  `stop_all`, a plugin restarted / rebuilt / crashed, Auto detect's lead
+  changed; only after at least one report). `reset_all` sends each plugin a
+  SYNC after its RESET and drops its trunk reports until the SYNC_DONE
+  (`Runner::trunk_fence`): without it, grants still in the pipe from before
+  the retune arrived after the RESET (seen in the offline test: ~1.5 s of
+  them). The offline test prints
+  `(system)` / `(channel)` / `(control)` / `(grant)` / `(grant end)` /
+  `(call)` lines (repeats within 5 s quiet) and `trunk ...` summary lines;
+  `tools/digi_test.cpp` prints what the engine delivers (`[trunk] ...`,
+  `--retune S:HZ`, `--stop S`); `sdk/tools/wide_scene.py` places
+  narrowband files anywhere in the 2.4 MHz for wide playback entries
+  (`plugins/SDK.md` *Trunked systems*); `kp::Option` key/label/default/choices "v=Label|..."/help/hidden
   - hidden: no control in the panel, set by a table row click; dab's Programme),
   helpers `plugins/sdk/kraken_dsp.hpp`, the shared library `plugins/lib/`,
   guide `plugins/SDK.md` (written for LLMs too)

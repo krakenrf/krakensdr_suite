@@ -50,6 +50,7 @@
 #include "kraken_dsp.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -157,7 +158,8 @@ int print_info() {
               << ",\"multichannel\":" << (i.multichannel ? "true" : "false") << ",\"array\":" << (i.array ? "true" : "false")
               << ",\"video\":" << (i.video ? "true" : "false")
               << ",\"array_burst_s\":" << i.array_burst_s << ",\"array_period_s\":" << i.array_period_s
-              << ",\"tunes\":" << (i.tunes ? "true" : "false") << ",\"squelch_hold_s\":" << i.squelch_hold_s;
+              << ",\"tunes\":" << (i.tunes ? "true" : "false") << ",\"squelch_hold_s\":" << i.squelch_hold_s
+              << ",\"trunking\":" << (i.trunking ? "true" : "false");
     // options twice: as JSON for people, and tab-separated for kraken_doa's
     // flat reader (key, label, default, choices, help per line; a hidden option
     // adds a sixth field "1" - a kraken_doa from before reads five and ignores
@@ -348,6 +350,175 @@ std::string plot_ex_payload(const kp::Plot& pl) {
 }
 
 // --------------------------------------------------------------------------
+// Trunked systems (kp::Host::trunk_system ... call): the wire limits, as
+// kraken_doa enforces them again (kp::wire::TRUNK_*). Every helper counts
+// what it had to cut or drop in *n (the offline summary reports it).
+// --------------------------------------------------------------------------
+void cut_utf8(std::string& s, size_t max) {
+    if (s.size() <= max) return;
+    size_t e = max;
+    while (e > 0 && (static_cast<unsigned char>(s[e]) & 0xC0) == 0x80) e--;
+    s.resize(e);
+}
+// text: control characters (and NULs, the wire's separator) removed, cut at a character boundary
+std::string tr_text(const std::string& in, size_t max, uint64_t* n) {
+    std::string s;
+    s.reserve(std::min(in.size(), max + 4));
+    for (unsigned char c : in)
+        if (c >= 0x20 && c != 0x7F) s.push_back(static_cast<char>(c));
+    cut_utf8(s, max);
+    if (s != in) (*n)++;
+    return s;
+}
+// TrunkSystem::key: [A-Za-z0-9._-], others '_', <= 48
+std::string tr_key(const std::string& in, uint64_t* n) {
+    std::string s = in.substr(0, kp::wire::TRUNK_KEY_MAX);
+    for (char& c : s)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '_' || c == '-')) c = '_';
+    if (s != in) (*n)++;
+    return s;
+}
+// a plugin id / demod name: lowercase token or "" (dropped)
+std::string tr_token(const std::string& in, size_t max, bool dash, uint64_t* n) {
+    bool ok = in.size() <= max;
+    for (char c : in) ok = ok && ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || (dash && c == '-'));
+    if (ok) return in;
+    (*n)++;
+    return "";
+}
+double tr_freq(double f, uint64_t* n) {
+    if (std::isnan(f)) return NAN;
+    if (std::isfinite(f) && f > 0 && f <= kp::wire::TRUNK_FREQ_MAX_HZ) return f;
+    (*n)++;
+    return NAN;
+}
+int tr_slot(int s, uint64_t* n) {
+    if (s >= -1 && s <= kp::wire::TRUNK_SLOT_MAX) return s;
+    (*n)++;
+    return -1;
+}
+kp::TrunkChannel tr_channel(const kp::TrunkChannel& c, uint64_t* n) {
+    kp::TrunkChannel o;
+    o.name = tr_text(c.name, kp::wire::TRUNK_NAME_MAX, n);
+    o.number = c.number >= 0 ? c.number : -1;
+    if (c.number < -1) (*n)++;
+    o.freq_hz = tr_freq(c.freq_hz, n);
+    o.uplink_hz = tr_freq(c.uplink_hz, n);
+    o.slot = tr_slot(c.slot, n);
+    return o;
+}
+kp::TrunkSystem tr_system(const kp::TrunkSystem& s, uint64_t* n) {
+    kp::TrunkSystem o;
+    o.key = tr_key(s.key, n);
+    o.name = tr_text(s.name, kp::wire::TRUNK_TEXT_MAX, n);
+    o.site = tr_text(s.site, kp::wire::TRUNK_TEXT_MAX, n);
+    o.control = s.control;
+    return o;
+}
+kp::Grant tr_grant(const kp::Grant& g, uint64_t* n) {
+    kp::Grant o = g;
+    o.channel = tr_channel(g.channel, n);
+    o.target = tr_text(g.target, kp::wire::TRUNK_ID_MAX, n);
+    o.source = tr_text(g.source, kp::wire::TRUNK_ID_MAX, n);
+    o.decoder = tr_token(g.decoder, kp::wire::TRUNK_ID_MAX, true, n);
+    o.demod = tr_token(g.demod, kp::wire::TRUNK_DEMOD_MAX, false, n);
+    if (!(std::isfinite(g.bw_hz) && g.bw_hz >= 0 && g.bw_hz <= 2.4e6)) {
+        o.bw_hz = 0;
+        if (!(g.bw_hz == 0)) (*n)++;
+    }
+    // options: a valid key, a value without control characters <= 100 bytes,
+    // the first of a repeated key, at most 16
+    o.options.clear();
+    for (const auto& [k, v] : g.options) {
+        bool ok = option_key_ok(k) && v.size() <= kp::wire::TRUNK_OPTION_VALUE_MAX &&
+                  o.options.size() < kp::wire::TRUNK_OPTIONS_MAX;
+        for (unsigned char c : v) ok = ok && c >= 0x20 && c != 0x7F;
+        for (const auto& x : o.options) ok = ok && x.first != k;
+        if (ok) o.options.emplace_back(k, v);
+        else (*n)++;
+    }
+    return o;
+}
+kp::Call tr_call(const kp::Call& c, uint64_t* n) {
+    kp::Call o = c;
+    if (c.state < kp::Call::ENDED || c.state > kp::Call::RELEASED) {
+        o.state = kp::Call::ACTIVE;
+        (*n)++;
+    }
+    o.target = tr_text(c.target, kp::wire::TRUNK_ID_MAX, n);
+    o.source = tr_text(c.source, kp::wire::TRUNK_ID_MAX, n);
+    o.slot = tr_slot(c.slot, n);
+    return o;
+}
+// the wire's text for them ("" = NAN / none)
+std::string tr_hz(double f) {
+    if (!std::isfinite(f)) return "";
+    char b[40];
+    snprintf(b, sizeof b, "%.1f", f);
+    return b;
+}
+void put0(std::string& p, const std::string& f) {
+    p.push_back('\0');
+    p += f;
+}
+// a CH: name, number, freq_hz, slot, uplink_hz (cleaned)
+std::string tr_channel_payload(const kp::TrunkChannel& c) {
+    std::string p = c.name;
+    put0(p, c.number >= 0 ? std::to_string(c.number) : std::string());
+    put0(p, tr_hz(c.freq_hz));
+    put0(p, std::to_string(c.slot));
+    put0(p, tr_hz(c.uplink_hz));
+    return p;
+}
+std::string tr_grant_payload(const kp::Grant& g) {
+    // E, then name, number, freq_hz, slot, target, group, source, flags,
+    // decoder, demod, bw_hz, uplink_hz (added last: the channel is written
+    // field by field, not as a CH), then the options
+    std::string p = std::to_string(kp::wire::GRANT_FIXED);
+    put0(p, g.channel.name);
+    put0(p, g.channel.number >= 0 ? std::to_string(g.channel.number) : std::string());
+    put0(p, tr_hz(g.channel.freq_hz));
+    put0(p, std::to_string(g.channel.slot));
+    put0(p, g.target);
+    put0(p, g.group ? "1" : "0");
+    put0(p, g.source);
+    std::string fl;
+    if (g.encrypted) fl += 'e';
+    if (g.emergency) fl += 'm';
+    if (g.data) fl += 'd';
+    if (g.update) fl += 'u';
+    put0(p, fl);
+    put0(p, g.decoder);
+    put0(p, g.demod);
+    put0(p, g.bw_hz > 0 ? tr_hz(g.bw_hz) : std::string());
+    put0(p, tr_hz(g.channel.uplink_hz));
+    for (const auto& [k, v] : g.options) {
+        put0(p, k);
+        put0(p, v);
+    }
+    return p;
+}
+std::string tr_call_payload(const kp::Call& c) {
+    std::string p = std::to_string(c.state);
+    put0(p, c.target);
+    put0(p, c.group ? "1" : "0");
+    put0(p, c.source);
+    put0(p, std::to_string(c.slot));
+    std::string fl;
+    if (c.encrypted) fl += 'e';
+    if (c.emergency) fl += 'm';
+    put0(p, fl);
+    return p;
+}
+std::string tr_system_payload(const kp::TrunkSystem& s) {
+    std::string p = s.key;
+    put0(p, s.name);
+    put0(p, s.site);
+    put0(p, s.control ? "1" : "0");
+    return p;
+}
+
+// --------------------------------------------------------------------------
 // Live mode
 // --------------------------------------------------------------------------
 class WireHost : public kp::Host {
@@ -521,6 +692,35 @@ public:
         snprintf(b, sizeof b, "%.0f", rf_hz);
         send(kp::wire::TUNE, b, strlen(b));
         return true;
+    }
+    // trunked systems: cleaned to the wire limits (kraken_doa checks again);
+    // a channel without a name is not sent
+    void trunk_system(const kp::TrunkSystem& s) override {
+        uint64_t n = 0;
+        const std::string p = tr_system_payload(tr_system(s, &n));
+        send(kp::wire::TRUNK_SYSTEM, p.data(), p.size());
+    }
+    void trunk_channel(const kp::TrunkChannel& c) override { send_channel(kp::wire::TRUNK_CHANNEL, c); }
+    void control_channel(const kp::TrunkChannel& c) override { send_channel(kp::wire::CONTROL_CHANNEL, c); }
+    void grant_end(const kp::TrunkChannel& c) override { send_channel(kp::wire::GRANT_END, c); }
+    void grant(const kp::Grant& g) override {
+        uint64_t n = 0;
+        const kp::Grant o = tr_grant(g, &n);
+        if (o.channel.name.empty()) return;
+        const std::string p = tr_grant_payload(o);
+        send(kp::wire::GRANT, p.data(), p.size());
+    }
+    void call(const kp::Call& c) override {
+        uint64_t n = 0;
+        const std::string p = tr_call_payload(tr_call(c, &n));
+        send(kp::wire::CALL, p.data(), p.size());
+    }
+    void send_channel(uint32_t type, const kp::TrunkChannel& c) {
+        uint64_t n = 0;
+        const kp::TrunkChannel o = tr_channel(c, &n);
+        if (o.name.empty()) return;
+        const std::string p = tr_channel_payload(o);
+        send(type, p.data(), p.size());
     }
     double array_t_ = -1;   // array plugins: Host::time() = the block being processed
     void map_point(const kp::MapPoint& m) override {
@@ -1067,6 +1267,231 @@ public:
     bool tune(double rf_hz) override {
         if (!quiet_) printf("[%9.3f s] (tune) %.6f MHz asked - a recording can't be retuned\n", time(), rf_hz / 1e6);
         return false;
+    }
+
+    // --- trunked systems: each call as one line, cleaned as the live host
+    // sends it; a line identical to one printed within the last TRUNK_DEDUP_S
+    // (its repeats keep it quiet - a grant update every second prints once)
+    // is not printed again, except with --verbose; the summary counts all
+    static constexpr double TRUNK_DEDUP_S = 5.0;
+    std::map<std::string, double> trunk_last_;   // line -> last time it came
+    uint64_t trunk_msgs_ = 0, trunk_quiet_ = 0, trunk_cut_ = 0, trunk_dropped_ = 0;
+    void trunk_line(const std::string& tag, const std::string& body) {
+        trunk_msgs_++;
+        const std::string line = "(" + tag + ") " + body;
+        const double t = time();
+        auto it = trunk_last_.find(line);
+        const bool rep = it != trunk_last_.end() && t - it->second < TRUNK_DEDUP_S;
+        trunk_last_[line] = t;
+        if (rep && !verbose_) {
+            trunk_quiet_++;
+            return;
+        }
+        if (!quiet_) printf("[%9.3f s] %s\n", t, line.c_str());
+    }
+    static std::string tq(const std::string& s) {   // "text", \" and \\ escaped
+        std::string o = "\"";
+        for (char c : s) {
+            if (c == '"' || c == '\\') o += '\\';
+            o += c;
+        }
+        return o + "\"";
+    }
+    static std::string tmhz(double f) {
+        if (!std::isfinite(f)) return "?";
+        char b[40];
+        snprintf(b, sizeof b, "%.6f", f / 1e6);
+        return b;
+    }
+    // ch="1-0412" num=412 mhz=851.012500 slot=-1 [up=806.012500]
+    static std::string tch(const kp::TrunkChannel& c) {
+        std::string s = "ch=" + tq(c.name) + " num=" + std::to_string(c.number) + " mhz=" + tmhz(c.freq_hz) +
+                        " slot=" + std::to_string(c.slot);
+        if (std::isfinite(c.uplink_hz)) s += " up=" + tmhz(c.uplink_hz);
+        return s;
+    }
+    static std::string tflags(bool e, bool m, bool d, bool u) {
+        std::string f;
+        if (e) f += 'e';
+        if (m) f += 'm';
+        if (d) f += 'd';
+        if (u) f += 'u';
+        return f.empty() ? "-" : f;
+    }
+    void trunk_drop(const char* what) {
+        trunk_dropped_++;
+        trunk_line("trunk dropped", std::string(what) + ": channel without a name (kraken_doa drops it)");
+    }
+    kp::TrunkSystem sys_;
+    uint64_t sys_n_ = 0;
+    void trunk_system(const kp::TrunkSystem& s0) override {
+        const kp::TrunkSystem s = tr_system(s0, &trunk_cut_);
+        sys_ = s;
+        sys_n_++;
+        trunk_line("system", "key=" + tq(s.key) + " name=" + tq(s.name) + " site=" + tq(s.site) +
+                                 " control=" + (s.control ? "1" : "0"));
+    }
+    std::map<std::string, kp::TrunkChannel> tchannels_;   // name/slot -> the latest
+    void trunk_channel(const kp::TrunkChannel& c0) override {
+        const kp::TrunkChannel c = tr_channel(c0, &trunk_cut_);
+        if (c.name.empty()) return trunk_drop("channel");
+        tchannels_[c.name + "/" + std::to_string(c.slot)] = c;
+        trunk_line("channel", tch(c));
+    }
+    kp::TrunkChannel control_;
+    uint64_t control_n_ = 0;
+    void control_channel(const kp::TrunkChannel& c0) override {
+        const kp::TrunkChannel c = tr_channel(c0, &trunk_cut_);
+        if (c.name.empty()) return trunk_drop("control");
+        control_ = c;
+        control_n_++;
+        trunk_line("control", tch(c));
+    }
+    struct TGrant {
+        kp::Grant g;
+        double first = 0, last = 0;
+        uint64_t n = 0, updates = 0;
+    };
+    std::vector<TGrant> tgrants_;   // per channel name + slot + target, in order of first
+    uint64_t grants_ = 0, grant_updates_ = 0, grant_data_ = 0, grant_enc_ = 0, grant_emerg_ = 0;
+    void grant(const kp::Grant& g0) override {
+        const kp::Grant g = tr_grant(g0, &trunk_cut_);
+        if (g.channel.name.empty()) return trunk_drop("grant");
+        grants_++;
+        grant_updates_ += g.update;
+        grant_data_ += g.data;
+        grant_enc_ += g.encrypted;
+        grant_emerg_ += g.emergency;
+        TGrant* k = nullptr;
+        for (auto& x : tgrants_)
+            if (x.g.channel.name == g.channel.name && x.g.channel.slot == g.channel.slot && x.g.target == g.target) k = &x;
+        if (!k) {
+            tgrants_.push_back({g, time(), time(), 0, 0});
+            k = &tgrants_.back();
+        }
+        k->g = g;
+        k->last = time();
+        k->n++;
+        k->updates += g.update;
+        trunk_line("grant", grant_text(g));
+    }
+    static std::string grant_text(const kp::Grant& g) {
+        std::string s = tch(g.channel) + " target=" + tq(g.target) + (g.group ? " group" : " unit") + " source=" +
+                        tq(g.source) + " flags=" + tflags(g.encrypted, g.emergency, g.data, g.update) +
+                        " decoder=" + tq(g.decoder) + " demod=" + tq(g.demod) + " bw=" +
+                        std::to_string(static_cast<long long>(std::llround(g.bw_hz)));
+        for (const auto& [k, v] : g.options) s += " opt." + k + "=" + tq(v);
+        return s;
+    }
+    std::map<std::string, std::pair<kp::TrunkChannel, uint64_t>> grant_ends_;
+    uint64_t grant_end_n_ = 0;
+    void grant_end(const kp::TrunkChannel& c0) override {
+        const kp::TrunkChannel c = tr_channel(c0, &trunk_cut_);
+        if (c.name.empty()) return trunk_drop("grant end");
+        grant_end_n_++;
+        auto& e = grant_ends_[c.name + "/" + std::to_string(c.slot)];
+        e.first = c;
+        e.second++;
+        trunk_line("grant end", tch(c));
+    }
+    // calls as the host would see them: per slot an open call; ACTIVE with
+    // another known target (or source) starts a new one, ENDED / RELEASED
+    // closes it (a RELEASED after an ENDED releases that call)
+    struct TCall {
+        kp::Call c;
+        double first = 0, last = 0;
+        int end = -1;   // -1 open, else Call::ENDED / RELEASED
+    };
+    std::vector<TCall> tcalls_;
+    uint64_t call_msgs_ = 0;
+    static const char* call_state(int s) {
+        return s == kp::Call::ENDED ? "ENDED" : s == kp::Call::RELEASED ? "RELEASED" : "ACTIVE";
+    }
+    void call(const kp::Call& c0) override {
+        const kp::Call c = tr_call(c0, &trunk_cut_);
+        call_msgs_++;
+        TCall* open = nullptr;
+        for (auto& x : tcalls_)
+            if (x.end < 0 && x.c.slot == c.slot) open = &x;
+        auto differs = [](const std::string& a, const std::string& b) { return !a.empty() && !b.empty() && a != b; };
+        if (c.state == kp::Call::ACTIVE) {
+            if (open && (differs(open->c.target, c.target) || differs(open->c.source, c.source))) {
+                open->end = kp::Call::ENDED;
+                open = nullptr;
+            }
+            if (!open) {
+                tcalls_.push_back({c, time(), time(), -1});
+                open = &tcalls_.back();
+            }
+            if (!c.target.empty()) open->c.target = c.target, open->c.group = c.group;
+            if (!c.source.empty()) open->c.source = c.source;
+            open->c.encrypted = open->c.encrypted || c.encrypted;
+            open->c.emergency = open->c.emergency || c.emergency;
+            open->last = time();
+        } else if (open) {
+            open->end = c.state;
+            open->last = time();
+        } else if (c.state == kp::Call::RELEASED) {
+            // the clear-down after the hang time: the slot's last call, ended, is released now
+            for (auto it = tcalls_.rbegin(); it != tcalls_.rend(); ++it)
+                if (it->c.slot == c.slot) {
+                    if (it->end == kp::Call::ENDED && !differs(it->c.target, c.target)) {
+                        it->end = kp::Call::RELEASED;
+                        it->last = time();
+                    }
+                    break;
+                }
+        }
+        trunk_line("call", std::string("state=") + call_state(c.state) + " target=" + tq(c.target) +
+                               (c.group ? " group" : " unit") + " source=" + tq(c.source) + " slot=" +
+                               std::to_string(c.slot) + " flags=" + tflags(c.encrypted, c.emergency, false, false));
+    }
+    void print_trunk() const {
+        if (!trunk_msgs_) return;
+        if (sys_n_)
+            printf("trunk system: key=%s name=%s site=%s control=%d (%llu reports)\n", tq(sys_.key).c_str(),
+                   tq(sys_.name).c_str(), tq(sys_.site).c_str(), sys_.control ? 1 : 0, static_cast<unsigned long long>(sys_n_));
+        else
+            printf("trunk system: none\n");
+        if (control_n_)
+            printf("trunk control channel: %s (%llu reports)\n", tch(control_).c_str(), static_cast<unsigned long long>(control_n_));
+        if (!tchannels_.empty()) {
+            printf("trunk channels: %zu\n", tchannels_.size());
+            size_t i = 0;
+            for (const auto& kv : tchannels_)
+                if (i++ < 100) printf("  %s\n", tch(kv.second).c_str());
+        }
+        printf("trunk grants: %llu messages (%llu updates, %llu data, %llu encrypted, %llu emergency), %zu distinct channel+target\n",
+               static_cast<unsigned long long>(grants_), static_cast<unsigned long long>(grant_updates_),
+               static_cast<unsigned long long>(grant_data_), static_cast<unsigned long long>(grant_enc_),
+               static_cast<unsigned long long>(grant_emerg_), tgrants_.size());
+        for (size_t i = 0; i < tgrants_.size() && i < 200; i++) {
+            const TGrant& k = tgrants_[i];
+            printf("  %s  %.3f .. %.3f s  %llu messages\n", grant_text(k.g).c_str(), k.first, k.last,
+                   static_cast<unsigned long long>(k.n));
+        }
+        if (grant_end_n_) {
+            printf("trunk grant ends: %llu messages, %zu channels\n", static_cast<unsigned long long>(grant_end_n_), grant_ends_.size());
+            for (const auto& kv : grant_ends_)
+                printf("  %s  %llu messages\n", tch(kv.second.first).c_str(), static_cast<unsigned long long>(kv.second.second));
+        }
+        size_t active = 0, ended = 0, released = 0;
+        for (const auto& x : tcalls_) (x.end < 0 ? active : x.end == kp::Call::RELEASED ? released : ended)++;
+        printf("trunk calls: %llu messages, %zu calls (%zu still active, %zu ended, %zu released)\n",
+               static_cast<unsigned long long>(call_msgs_), tcalls_.size(), active, ended, released);
+        for (size_t i = 0; i < tcalls_.size() && i < 200; i++) {
+            const TCall& x = tcalls_[i];
+            printf("  slot=%d target=%s %s source=%s flags=%s  %.3f .. %.3f s  %s\n", x.c.slot, tq(x.c.target).c_str(),
+                   x.c.group ? "group" : "unit", tq(x.c.source).c_str(),
+                   tflags(x.c.encrypted, x.c.emergency, false, false).c_str(), x.first, x.last,
+                   x.end < 0 ? "open" : call_state(x.end));
+        }
+        if (trunk_quiet_)
+            printf("trunk lines not printed (repeated within %.0f s; --verbose prints them): %llu\n", TRUNK_DEDUP_S,
+                   static_cast<unsigned long long>(trunk_quiet_));
+        if (trunk_cut_ || trunk_dropped_)
+            printf("trunk fields cut / dropped by the wire limits: %llu, messages dropped: %llu (kraken_doa does the same)\n",
+                   static_cast<unsigned long long>(trunk_cut_), static_cast<unsigned long long>(trunk_dropped_));
     }
     void map_point(const kp::MapPoint& m) override {
         if (!std::isfinite(m.lat) || !std::isfinite(m.lon) || m.id.empty()) return;
@@ -1724,6 +2149,7 @@ int test_array(const std::string& path, std::string fmt, double rate, int channe
     host.print_plots();
     host.print_choices();
     host.print_table(1000);
+    host.print_trunk();
     return 0;
 }
 
@@ -1950,6 +2376,7 @@ int test_file(int argc, char** argv) {
                    k.len_us / static_cast<double>(k.n), pos);
         }
     }
+    host.print_trunk();
     host.print_choices();
     host.print_table(30);
     host.print_plots();

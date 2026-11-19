@@ -51,6 +51,7 @@ struct PluginInfo {
     bool video = false;           // rebuilds a picture (kp::Info::video): the panel shows a video canvas
     bool tunes = false;           // kp::Info::tunes: may ask for retunes (kp::Host::tune)
     double squelch_hold_s = 0;    // kp::Info::squelch_hold_s: the Digital squelch's hold (0 = the host's)
+    bool trunking = false;        // kp::Info::trunking: reports a trunked system (grants / calls); older plugins: false
     std::vector<PluginOption> options;
     bool built = false;           // exe exists and answered --info
     bool stale = false;           // a source file is newer than exe

@@ -39,6 +39,12 @@
 // receiver's array settings and shows it as a talker of its own on the 🗺
 // Map's 📡 DF panel. Host::plot() shows a line plot (e.g. the impulse
 // response) in the decoder's tab.
+//
+// TRUNKED systems (Info::trunking): a plugin that reads a control channel
+// reports the system, its channels and every grant it hears (Host::
+// trunk_system, trunk_channel, control_channel, grant, grant_end), and on a
+// traffic channel the call it carries (Host::call); kraken_doa then follows
+// the calls with voice VFOs of their own (see TrunkChannel below).
 // See plugins/SDK.md for the full guide and kraken_dsp.hpp for DSP helpers.
 
 #include <cmath>
@@ -317,6 +323,116 @@ struct Info {
     // shorter, so the squelch closes soon after the signal ends instead of
     // passing 1.5 s of noise after every transmission
     double squelch_hold_s = 0;
+    // Reports a TRUNKED system (Host::trunk_system / grant / call, below):
+    // kraken_doa can follow its calls - a temporary voice VFO with the right
+    // decoder on each granted channel for the length of the call. Shown in
+    // the plugin list; set it when the plugin sends grants or calls
+    bool trunking = false;
+};
+
+// --- Trunked systems ------------------------------------------------------
+// A trunked radio system hands out traffic channels call by call on a
+// control channel. A plugin that reads one reports what it hears there in a
+// structured form (Host::trunk_system, trunk_channel, control_channel,
+// grant, grant_end) and, running on a traffic channel, what that channel
+// carries (Host::call); kraken_doa's trunk following then puts a voice VFO
+// on each granted channel inside the receiver's 2.4 MHz for the length of
+// the call. Every text below is cut to its limit (bytes, at a character
+// boundary) and loses its control characters, on both ends of the pipe.
+
+// A channel of a trunked system, as its signalling names it
+struct TrunkChannel {
+    // The channel as the system numbers it ("1-0412", "LCN 5", "412") - the
+    // SAME text every time for the same physical channel: kraken_doa keys
+    // the channel on it (and looks its frequency up in the user's channel
+    // table by it). Always fill it; <= 32 bytes. A message whose channel has
+    // no name is dropped
+    std::string name;
+    // The channel number alone when the system has one (for a "base + n x
+    // step" plan the user enters), -1 = none
+    long long number = -1;
+    // The DOWNLINK frequency (Hz): what a receiver near the site hears - the
+    // repeater's / base station's output. Give it whenever the signalling or
+    // a standard band plan determines it (P25 identifier updates, TETRA
+    // carrier numbers, DMR absolute parameters); NAN = the signalling doesn't
+    // say and the plugin has no plan for it (the user's channel table then
+    // decides). Never a guess. Resolution 1 Hz; <= 0 or > 6 GHz = NAN
+    double freq_hz = NAN;
+    // The channel's UPLINK frequency (Hz): what the radios transmit on - the
+    // repeater's input. A DF receiver gets the site's bearing on the
+    // downlink and the radio's own bearing here. Give it only when the
+    // signalling or a standard plan gives it (P25 IDEN tx offset, TETRA
+    // duplex spacing, DMR absolute parameters); NAN = not known, or the same
+    // frequency (simplex, direct mode). freq_hz stays the downlink
+    double uplink_hz = NAN;
+    // TDMA timeslot on that frequency, 0-based (DMR timeslot 1 = 0, TETRA
+    // timeslot 1 = 0, P25 Phase 2 slot 0 / 1), -1 = the whole channel (FDMA).
+    // Outside -1..15 = -1
+    int slot = -1;
+};
+
+// The system the plugin hears (Host::trunk_system). Send it when it becomes
+// known or changes, and again now and then (every few seconds is fine - the
+// host keeps the latest)
+struct TrunkSystem {
+    // The NETWORK's identity (not the site's), stable over restarts and the
+    // same on every site of the network: [A-Za-z0-9._-], <= 48 bytes (other
+    // characters become '_'), e.g. "BEE00.14C" (P25 WACN.system), "228-8889"
+    // (TETRA MCC-MNC). "" = not known yet. kraken_doa prefixes your plugin id
+    // and keeps under it what the user knows about the system (channel
+    // frequencies, talkgroup names), so never put anything in it that
+    // changes from site to site or from day to day
+    std::string key;
+    std::string name;        // how to show it ("P25 BEE00.14C"), <= 64 bytes
+    std::string site;        // this site within it ("RFSS 5 site 9"), <= 64 bytes, "" = none
+    bool control = false;    // this VFO is on a CONTROL channel (grants come from here)
+};
+
+// A channel assignment (Host::grant), as heard on the control channel - or
+// on a traffic channel that carries them (late-entry / grant-update
+// messages on a TDMA traffic channel)
+struct Grant {
+    TrunkChannel channel;    // where the call goes (name always; freq_hz when known)
+    // Who is called: the talkgroup, or the called unit, as the system
+    // writes it (decimal, or "32-1201"); <= 32 bytes
+    std::string target;
+    bool group = true;       // target is a talkgroup (false: one unit - a private call)
+    std::string source;      // the calling unit, <= 32 bytes, "" = not in the message
+    bool encrypted = false;  // the grant says the call is encrypted
+    bool emergency = false;
+    bool data = false;       // a data channel grant (the host does not follow these)
+    // the repeat of a call in progress (grant update, late entry) rather
+    // than its start - repeats are expected, see Host::grant
+    bool update = false;
+    // The plugin that decodes the traffic channel ("" = this one); a plugin
+    // id ([a-z0-9_-], <= 32 bytes)
+    std::string decoder;
+    // How the traffic channel is heard: "" = the decoder's own voice (Demod
+    // Digital); "nfm" = analogue FM speech (MPT1327). [a-z0-9_], <= 16 bytes
+    std::string demod;
+    // The traffic channel's width (Hz), 0 = the decoder's min_vfo_rate
+    double bw_hz = 0;
+    // Options for the traffic channel's decoder, by ITS Info::options keys:
+    // the timeslot, the colour code / NAC / scrambling identity it needs
+    // before it has heard them itself. Keys [a-z0-9_]{1,32}, values <= 100
+    // bytes without control characters, at most 16 (others are dropped)
+    std::vector<std::pair<std::string, std::string>> options;
+};
+
+// What a TRAFFIC channel carries right now, from its own signalling
+// (Host::call) - the plugin running on a channel kraken_doa put there
+struct Call {
+    enum State : int { ENDED = 0, ACTIVE = 1, RELEASED = 2 };
+    // ACTIVE: a transmission is on; ENDED: this transmission is over (the
+    // terminator, or frames stopped), the channel may stay assigned (hang
+    // time); RELEASED: the system cleared the channel (clear-down, call
+    // termination / release)
+    int state = ACTIVE;
+    std::string target;      // as Grant::target; "" = not known (yet)
+    bool group = true;       // as Grant::group
+    std::string source;      // the transmitting unit, "" = not known (yet)
+    int slot = -1;           // the TDMA slot of this call (TrunkChannel::slot), -1 = the whole channel
+    bool encrypted = false, emergency = false;
 };
 
 class Host {
@@ -469,6 +585,37 @@ public:
     // Each retune makes heimdall recalibrate for a few seconds - search a
     // band step by step, not continuously.
     virtual bool tune(double rf_hz) { (void)rf_hz; return false; }
+    // --- Trunked systems (see TrunkChannel ...; set Info::trunking) ---
+    // An older host ignores all six (the defaults do nothing): keep the
+    // events / facts you show anyway - these are for the host's trunk
+    // following, not a replacement of the panel's text.
+    // The system this VFO hears: its network identity, the site, whether
+    // this is a control channel
+    virtual void trunk_system(const TrunkSystem& s) { (void)s; }
+    // The system announced where a channel is (a band-plan entry, a channel
+    // list): the host keeps it in the system's channel table
+    virtual void trunk_channel(const TrunkChannel& c) { (void)c; }
+    // The system's control channel is (now) HERE - a rest channel that
+    // moved, an announced control channel change: the host moves this VFO
+    // there when it can (inside the receiver's 2.4 MHz)
+    virtual void control_channel(const TrunkChannel& c) { (void)c; }
+    // A channel grant: once per grant message HEARD - repeats (grant
+    // updates, a grant sent twice) are fine and expected: the host
+    // de-duplicates them and takes them as the call's keep-alive. Fill
+    // channel.name always, channel.freq_hz whenever the signalling or a
+    // standard plan determines it (else NAN - the user's channel table
+    // decides), the traffic decoder's options it needs to start
+    virtual void grant(const Grant& g) { (void)g; }
+    // The system took the channel back, as heard on the control channel (a
+    // channel release / deassignment); same name as in the grant
+    virtual void grant_end(const TrunkChannel& c) { (void)c; }
+    // On a TRAFFIC channel: what it carries - when a call starts, when its
+    // target / source / encryption become known or change, and when it ends
+    // (Call::ENDED: the transmission is over; Call::RELEASED: the system
+    // cleared the channel). Repeats are fine (once per superframe is plenty).
+    // talker() / valid() stay as they are (the DoA per radio, the Digital
+    // squelch): call() doesn't replace them
+    virtual void call(const Call& c) { (void)c; }
     // Debug output (stderr; shown in the plugin's log tail). Do NOT print to
     // stdout: in live mode it carries the binary protocol (the host redirects
     // printf/std::cout to stderr anyway).
@@ -602,6 +749,39 @@ constexpr uint32_t PLOT_EX = 41;
 constexpr uint32_t OPTION_CHOICES = 42;
 // Host::option_choices limits (both ends enforce them)
 constexpr size_t CHOICES_MAX = 100, CHOICE_VALUE_MAX = 100, CHOICE_LABEL_MAX = 80;
+// Trunked systems (Host::trunk_system ... call). Text fields '\0'-separated,
+// numbers as decimal text ("" = unknown: NAN, -1), frequencies to 1 Hz
+// ("%.1f"). A channel (CH below) is: name '\0' number '\0' freq_hz '\0' slot
+// '\0' uplink_hz (a reader given four fields takes uplink_hz NAN). Every
+// reader ignores extra trailing fields. Older hosts ignore the types
+// key '\0' name '\0' site '\0' control (0/1)
+constexpr uint32_t TRUNK_SYSTEM = 43;
+constexpr uint32_t TRUNK_CHANNEL = 44;     // CH: Host::trunk_channel
+constexpr uint32_t CONTROL_CHANNEL = 45;   // CH: Host::control_channel
+// E (the count of fixed fields that follow, decimal text) '\0' name '\0'
+// number '\0' freq_hz '\0' slot '\0' target '\0' group (0/1) '\0' source
+// '\0' flags (letters: e encrypted, m emergency, d data, u update) '\0'
+// decoder '\0' demod '\0' bw_hz '\0' uplink_hz, then option key '\0' value
+// '\0' key '\0' value ... A reader takes the fixed fields it knows (a
+// missing one = its default) and skips the rest of the E, so later SDKs
+// can add fixed fields (as PLOT_EX)
+constexpr uint32_t GRANT = 46;
+constexpr uint32_t GRANT_FIXED = 12;       // the fixed fields this SDK writes
+constexpr uint32_t GRANT_END = 47;         // CH: Host::grant_end
+// state (0 ENDED, 1 ACTIVE, 2 RELEASED) '\0' target '\0' group (0/1) '\0'
+// source '\0' slot '\0' flags (e encrypted, m emergency)
+constexpr uint32_t CALL = 48;
+// limits (both ends enforce them: the plugin side cuts / drops, kraken_doa
+// checks everything again): bytes, cut at a character boundary
+constexpr size_t TRUNK_KEY_MAX = 48;       // TrunkSystem::key ([A-Za-z0-9._-], others -> '_')
+constexpr size_t TRUNK_TEXT_MAX = 64;      // TrunkSystem::name / site
+constexpr size_t TRUNK_NAME_MAX = 32;      // TrunkChannel::name
+constexpr size_t TRUNK_ID_MAX = 32;        // Grant / Call target, source; Grant::decoder
+constexpr size_t TRUNK_DEMOD_MAX = 16;     // Grant::demod ([a-z0-9_])
+constexpr size_t TRUNK_OPTIONS_MAX = 16;   // Grant::options (key [a-z0-9_]{1,32})
+constexpr size_t TRUNK_OPTION_VALUE_MAX = 100;   // no control characters
+constexpr int TRUNK_SLOT_MAX = 15;         // slot -1..15
+constexpr double TRUNK_FREQ_MAX_HZ = 6e9;  // freq_hz / uplink_hz in (0, 6 GHz], else NAN
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends; video_wanted()
 // the OPTION "video_wanted=0|1" it sends to Info::video plugins - 1 until then)
 }  // namespace kp::wire

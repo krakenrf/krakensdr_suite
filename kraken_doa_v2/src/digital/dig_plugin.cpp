@@ -158,6 +158,7 @@ void PluginRegistry::scan() {
                     if (json_find(js, "multichannel", v)) pi.multichannel = v == "true";
                     if (json_find(js, "video", v)) pi.video = v == "true";
                     if (json_find(js, "tunes", v)) pi.tunes = v == "true";
+                    if (json_find(js, "trunking", v)) pi.trunking = v == "true";
                     if (json_find(js, "squelch_hold_s", v)) pi.squelch_hold_s = std::clamp(atof(v.c_str()), 0.0, 10.0);
                     // options: one per line, tab-separated key/label/default/choices/help
                     // [/hidden "1" - kp::Option::hidden; plugins from before have five]
@@ -262,7 +263,8 @@ std::string PluginRegistry::list_json() const {
           << ",\"voice\":" << (p.voice ? "true" : "false")
           << ",\"messages\":" << (p.messages ? "true" : "false") << ",\"talkers\":" << (p.talkers ? "true" : "false")
           << ",\"array\":" << (p.array ? "true" : "false") << ",\"video\":" << (p.video ? "true" : "false")
-          << ",\"tunes\":" << (p.tunes ? "true" : "false") << ",\"options\":[";
+          << ",\"tunes\":" << (p.tunes ? "true" : "false") << ",\"trunking\":" << (p.trunking ? "true" : "false")
+          << ",\"options\":[";
         for (size_t k = 0; k < p.options.size(); k++) {
             const auto& op = p.options[k];
             o << (k ? "," : "") << "{\"key\":\"" << json_escape(op.key) << "\",\"label\":\"" << json_escape(op.label)
