@@ -259,6 +259,21 @@ void TcpControlServer::stop() {
     }
 }
 
+// A setting that moves the hardware (frequency, mixer side, antenna ring) is
+// about to change: enter the retune cooldown first, so no frame taken while it
+// moves goes out flagged CONVERGED. Only from CONVERGED (the later retunes of a
+// drag are in the cooldown already); not with --kerberos (STALE would be
+// logged twice), during a recovery or a discrete scan (each call restarts /
+// defers again). The caller still runs begin_retune_cooldown() after the
+// change, which restarts the timer from the moment the hardware settled.
+static void cooldown_before_change(const char* what) {
+    if (kerberos_manual_cal_only() || discrete_scanner.enabled.load() ||
+        recovery_in_progress.load(std::memory_order_acquire) ||
+        get_phase_compensation_state() != PhaseCompensatorState::CONVERGED)
+        return;
+    begin_retune_cooldown(what);
+}
+
 // The status object: broadcast at 2 Hz (as_reply = false) and returned by
 // {"command":"get_status"} (as_reply = true, which adds "status":"success"
 // like every other command reply - clients tell replies from broadcasts by
@@ -733,21 +748,23 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                         return "{\"status\":\"success\",\"frequency\":" + std::to_string(frequency) + "}";
                     }
 
+                    // Enter the cooldown BEFORE the hardware moves, so clients
+                    // see WAITING_FOR_STABILITY (and hold DoA) for every frame
+                    // taken while it moves, not only once it is done:
+                    //  - Windows retunes the tuners one after the other (the
+                    //    array is split across two frequencies meanwhile);
+                    //  - the wideband board's LO write takes tens of ms on any
+                    //    OS, and until this ran first every retune sent 3-13
+                    //    frames (up to 0.44 s) flagged CONVERGED with the old
+                    //    calibration on the new LO - phase off by anything up
+                    //    to 180 degrees.
 #ifdef _WIN32
-                    // Windows retunes the tuners one after the other: enter the
-                    // cooldown before the sweep too, so clients see
-                    // WAITING_FOR_STABILITY (and hold DoA) while the array is
-                    // split across two frequencies, not only once it is done.
-                    // Only from CONVERGED (the later retunes of a drag are in the
-                    // cooldown already); not with --kerberos (STALE logged twice),
-                    // during a recovery or a discrete scan (each call restarts /
-                    // defers again) or on the downconverter (an LO retune).
-                    if (frequency != current_frequency.load() && !kerberos_manual_cal_only() &&
-                        !downconverter.enabled.load() && !discrete_scanner.enabled.load() &&
-                        !recovery_in_progress.load(std::memory_order_acquire) &&
-                        get_phase_compensation_state() == PhaseCompensatorState::CONVERGED)
-                        begin_retune_cooldown("Frequency changing");
+                    const bool cooldown_first = true;
+#else
+                    const bool cooldown_first = downconverter.enabled.load();
 #endif
+                    if (cooldown_first && frequency != current_frequency.load())
+                        cooldown_before_change("Frequency changing");
                     // Coherent mode: update all tuners to same frequency
                     SdrUpdateResult res;
                     bool changed = update_sdr_settings(frequency, -999, devices, &res);
@@ -799,6 +816,12 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         }
 
         std::string side_json = std::string("\"side\":\"") + mixer_side_name(side) + "\"";
+
+        // The side is about to move the LO and flip the spectrum: cooldown
+        // first, as for a frequency change (only when the request will do
+        // something - checked again under the lock below).
+        if (side != downconverter.side.load() && downconverter_rf_valid(current_frequency.load(), side))
+            cooldown_before_change("Mixer side changing");
 
         // RF read, checks and LO programming all under settings_mutex (every
         // retune path holds it): read before the lock, a retune landing in
@@ -869,6 +892,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         if (array == downconverter.array_select.load()) {
             return "{\"status\":\"success\",\"array\":" + std::to_string(array) + "}";
         }
+
+        cooldown_before_change("Array changing");  // before the RF switches move, as for a frequency change
 
         downconverter.array_select.store(array);
         // Re-throw the switches for the new ring on whichever path (noise /
