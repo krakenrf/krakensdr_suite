@@ -85,6 +85,8 @@ private:
     int hint_wacn_ = -1, hint_sysid_ = -1;
     int nac_ = -1;
     int rfss_ = -1, site_ = -1;
+    int site_sysid_ = -1;                // the system ID of this site's RFSS status
+    int own_sysid() const;               // network status's, else the RFSS status's
     double control_at_ = -1e9;           // host time of the last control channel block
     kp::TrunkSystem sent_;
     bool sys_sent_ = false;

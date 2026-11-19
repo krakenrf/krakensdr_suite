@@ -1126,7 +1126,7 @@ struct P25p2Proto::Impl {
     }
     // tstate: what it means for trunk following - ENDED (the transmission is
     // over; the channel may stay assigned for the hang time) or RELEASED
-    // (MAC_IDLE / MAC_RELEASE: the system cleared the LCH)
+    // (MAC_IDLE: the system cleared the LCH)
     void call_end(Chan& c, const char* st, int tstate = kp::Call::ENDED) {
         if (c.call) trunk_call(c, tstate);
         if (c.call) {
@@ -1810,11 +1810,15 @@ struct P25p2Proto::Impl {
                 checked_cc = cc;
                 event("Release: unit " + std::to_string(tgt) + ((m[1] & 0x80) ? " (forced)" : "") +
                           ((m[1] & 0x40) ? " (talker preemption)" : ""), 5.0);
-                // the system takes this LCH back ([GPL-fact] layout, not seen on air)
-                if (c && !c->inbound) {
-                    if (c->call) call_end(*c, "Released", kp::Call::RELEASED);
-                    else if (p1.trunk && wanted(*c)) p1.trunk->release(c->lch);
-                }
+                // Trunk following: at most ENDED, never RELEASED, and the
+                // call state stays as it is. The message is addressed to ONE
+                // unit (the target) and its flags say forced / call-or-audio
+                // ([GPL-fact] layout, [UNVERIFIED]: never seen on air;
+                // TIA-102.BBAD-A, which defines when it clears the channel,
+                // was not available) - an audio release (preemption) or a
+                // unit's release stops that radio, not the logical channel's
+                // call. The LCH's own MAC_IDLE / the next MAC_PTT say the rest
+                if (c && !c->inbound && c->call) trunk_call(*c, kp::Call::ENDED);
                 return;
             }
             default: break;

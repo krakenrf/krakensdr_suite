@@ -40,6 +40,7 @@ void P25Trunk::reset() {
     hint_wacn_ = hint_sysid_ = -1;
     nac_ = -1;
     rfss_ = site_ = -1;
+    site_sysid_ = -1;
     control_at_ = -1e9;
     sent_ = kp::TrunkSystem();
     sys_sent_ = false;
@@ -95,8 +96,11 @@ void P25Trunk::network_hint(int wacn, int sysid) {
 
 void P25Trunk::nac(int n) { if (n >= 0 && n <= 0xFFF) nac_ = n; }
 
+int P25Trunk::own_sysid() const { return sysid_ >= 0 ? sysid_ : site_sysid_; }
+
 void P25Trunk::site(int sysid, int rfss, int site, uint32_t cc) {
     if (sysid_ >= 0 && sysid != sysid_) return;   // a neighbouring system's (it carries its own ID)
+    site_sysid_ = sysid;                           // this site's system: known before the network status
     rfss_ = rfss;
     site_ = site;
     announce(cc, 0xFFFF, sysid);
@@ -129,15 +133,27 @@ kp::TrunkChannel P25Trunk::channel(uint32_t ch, uint32_t ch_r) const {
     };
     c.freq_hz = freq(*in, num);
     if (in->tdma && in->slots > 1) c.slot = num % in->slots;
-    const P25Proto::Iden* rin = (ch_r != 0xFFFF && ch_r != ch && p1_) ? p1_->iden(static_cast<int>((ch_r >> 12) & 0xF)) : nullptr;
-    if (rin && rin->spacing_hz && rin->base_hz) c.uplink_hz = freq(*rin, static_cast<int>(ch_r & 0xFFF));
-    else if (in->tx_offset_hz != 0) c.uplink_hz = c.freq_hz + static_cast<double>(in->tx_offset_hz);
+    if (ch_r == 0xFFFF) {
+        // no explicit uplink channel: the identifier's transmit offset (0 = simplex)
+        if (in->tx_offset_hz != 0) c.uplink_hz = c.freq_hz + static_cast<double>(in->tx_offset_hz);
+    } else if (ch_r != ch) {
+        // an explicit form names it: channel R's frequency, NAN while its
+        // identifier is not known (never T's offset instead - a guess). R ==
+        // T: the same frequency, simplex - NAN
+        const P25Proto::Iden* rin = p1_ ? p1_->iden(static_cast<int>((ch_r >> 12) & 0xF)) : nullptr;
+        if (rin && rin->spacing_hz && rin->base_hz) c.uplink_hz = freq(*rin, static_cast<int>(ch_r & 0xFFF));
+    }
     return c;
 }
 
 void P25Trunk::announce(uint32_t ch, uint32_t ch_r, int sysid) {
     if (ch == 0xFFFF || (ch == 0 && ch_r == 0xFFFF)) return;   // no channel
-    if (sysid >= 0 && sysid_ >= 0 && sysid != sysid_) return;  // another system's numbering
+    // a channel of a message that names its system (the neighbours' status)
+    // only once this site's system is known, and only if it is that one:
+    // another system's channel number would be resolved with THIS site's
+    // identifier tables
+    const int own = own_sysid();
+    if (sysid >= 0 && (own < 0 || sysid != own)) return;
     const kp::TrunkChannel c = channel(ch, ch_r);
     send_system(false);
     Ann& a = ann_[c.name];
@@ -163,7 +179,10 @@ void P25Trunk::iden_learned(int id) {
 
 void P25Trunk::grant(uint32_t ch, const std::string& target, bool group, const std::string& source, int so, bool update,
                      bool data, uint32_t ch_r) {
-    if (ch == 0xFFFF) return;
+    // no grant: the placeholder channel (identifier 15, number 4095 - "no
+    // channel"), talkgroup / unit 0 (a multi-entry form's unused pair is all
+    // zero; the live system's broadcasts also carry "TG 0 on 15-4095")
+    if (ch == 0xFFFF || target.empty() || target == "0") return;
     send_system(false);
     kp::Grant g;
     g.channel = channel(ch, ch_r);
