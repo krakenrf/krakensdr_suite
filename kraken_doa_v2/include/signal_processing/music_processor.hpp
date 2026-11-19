@@ -124,6 +124,26 @@ public:
     bool spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::VectorXd* spec, float* peak_deg, float* conf,
                                 int sources = 0) const;
 
+    // 🎨 Bearing spectrum (bin_doa.hpp): the azimuth steering vectors this
+    // processor's MUSIC uses - topology, radius / spacing / custom positions,
+    // chirality (uca_angle_sign), the ✈ array calibration - built for freq_hz
+    // (not the VFO's frequency), and what MUSIC does to its bearings after
+    // the search: the half-plane mask and the array offset. A of M x
+    // num_angles, unit-norm columns, column i = array-frame azimuth i x
+    // resolution_deg; keep[i] = 0 where the half-plane setting cuts it. 3D
+    // custom arrays: the horizon (XY) steering. Re-syncs the element count.
+    // false: no valid steering (custom positions not set, a UCA under 3)
+    struct AzimuthSteering {
+        int M = 0, num_angles = 0;
+        float resolution_deg = 1.0f, offset_deg = 0.0f;
+        ArrayTopology topology = ArrayTopology::UCA;
+        ULAOutputMode half = ULAOutputMode::BOTH;
+        bool is3d = false, calibrated = false;
+        Eigen::MatrixXcd A;
+        std::vector<uint8_t> keep;
+    };
+    bool azimuthSteering(double freq_hz, AzimuthSteering* out);
+
     void setArrayTopology(ArrayTopology topology);
     ArrayTopology getArrayTopology() const;
 
@@ -532,6 +552,7 @@ private:
     static float peakConfidenceOf(const Eigen::VectorXd& spec, double max_val);
 
     void updateSteeringVectors();
+    bool buildAzimuthSteeringLocked(double freq_hz, Eigen::MatrixXcd& sv, bool* cal_applied, const char** err) const;
 
     // Apply ULA forward/backward truncation and array-offset rotation to the
     // final azimuth `pseudospectrum`. Caller must hold config_mutex_.

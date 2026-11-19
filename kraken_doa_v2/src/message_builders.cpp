@@ -374,7 +374,7 @@ double MessageBuilders::spectrum_center_hz() { return g_spectrum_center_hz.load(
 
 string MessageBuilders::build_spectrum_view(const SpectrumSnapshot& snap, int display, double lo_off_hz,
                                             double hi_off_hz, uint32_t bins, uint32_t seq,
-                                            double* point_step_hz) {
+                                            double* point_step_hz, SpectrumViewCut* cut) {
     if (display < 0 || display > MAX_CHANNELS) return string();
     const SpectrumDisplay& d = snap.disp[display];
     const size_t L = d.db.size();
@@ -406,6 +406,7 @@ string MessageBuilders::build_spectrum_view(const SpectrumSnapshot& snap, int di
     const size_t pool = std::max({size_t(1), (count + budget - 1) / budget, (count + want / 2) / want});
     const size_t n = (count + pool - 1) / pool;
     if (point_step_hz) *point_step_hz = d.step_hz * static_cast<double>(pool);
+    if (cut) *cut = {i0, i1, pool, n};   // 🎨 the bearing spectrum's points (bin_doa.hpp)
 
     string out;
     out.resize(64 + n);
