@@ -1204,8 +1204,17 @@ The offline test reads complex float32 (`.cf32`, rate from the `.json`
 sidecar that `ai/sigtool.py` writes, or `--rate`), rtl_sdr `.cu8`, `.cs16`
 or 2-channel IQ `.wav`; mixes the signal at `--offset` Hz to the centre,
 resamples to your `sample_rate` exactly like the live path and feeds it in
-10 ms blocks. It prints the events with their time in the recording, then a
-summary:
+10 ms blocks. The recording is read as a stream - a block read, converted,
+mixed, resampled, decoded and dropped - so the host's memory stays at a few
+MB however long it is, plus what your decoder keeps (a 300 s, 2.4 MHz cu8
+capture through p25 at `--offset`: 7 MB peak, 50-60 s on one desktop x86
+core; "decode time" includes the reading); the `--uca` bearings read their
+spans from the file again, and `--audio` is written as it comes. Only a pipe (`--file
+/dev/stdin`) is held in memory, because it can't be read twice: its raw
+bytes (one antenna of a multichannel pipe: that antenna as complex float).
+Large captures need no cutting: decode several channels of one
+capture side by side with `--offset`. It prints the events with their time
+in the recording, then a summary:
 
 ```
 === Pagers (POCSAG + FLEX) summary ===

@@ -11,6 +11,8 @@
 //                                  (binary protocol, kraken_plugin.hpp)
 //   decoder --file REC [options]   offline test on a recording - prints the
 //                                  events, a frame count and the final facts
+//                                  (the recording is read as a stream: memory
+//                                  does not grow with its length)
 //
 // Offline options:
 //   --rate HZ        sample rate of the file (default: REC.json "rate" from
@@ -65,6 +67,7 @@
 #include <vector>
 
 #include <liquid/liquid.h>
+#include <sys/stat.h>
 #include <unistd.h>
 // libjpeg-turbo is a PLUGIN-ONLY, permissive (IJG / BSD-3-Clause / zlib)
 // dependency: the plugin host compresses video frames to JPEG when built with
@@ -1120,7 +1123,17 @@ public:
         valid_span_last_ = std::max(valid_span_last_, end_s);
         if (verbose_ && !quiet_) printf("[%9.3f s] (valid) %.4f .. %.4f s\n", time(), start_s, end_s);
     }
-    void audio(const float* pcm, size_t n) override { audio_.insert(audio_.end(), pcm, pcm + n); }
+    // counted; with --audio written to its WAV at once (wav8k_header)
+    void audio(const float* pcm, size_t n) override {
+        audio_n_ += n;
+        if (!audio_f_) return;
+        audio_buf_.resize(n);
+        for (size_t i = 0; i < n; i++) audio_buf_[i] = static_cast<int16_t>(std::clamp(pcm[i], -1.0f, 1.0f) * 32767);
+        fwrite(audio_buf_.data(), 2, n, audio_f_);
+    }
+    FILE* audio_f_ = nullptr;
+    uint64_t audio_n_ = 0;
+    std::vector<int16_t> audio_buf_;
     void voice_state(const std::string& s) override {
         if (s != vstate_ && !quiet_ && !s.empty()) printf("[%9.3f s] (voice) %s\n", time(), s.c_str());
         vstate_ = s;
@@ -1645,7 +1658,6 @@ public:
     std::string vstate_;
     std::vector<std::pair<std::string, std::string>> facts_;
     std::map<std::string, double> last_;
-    std::vector<float> audio_;
 };
 
 // a number from the recording's JSON sidecar (ai/sigtool.py captures:
@@ -1671,89 +1683,157 @@ bool read_sidecar(const std::string& path, const char* key, double* out) {
 }
 bool read_sidecar_rate(const std::string& path, double* rate) { return read_sidecar(path, "rate", rate); }
 
-// Loads the whole recording as complex float
-bool load_file(const std::string& path, std::string fmt, double* rate, double start, double seconds,
-               std::vector<kp::cf>& out, std::string& err) {
-    if (fmt.empty()) {
-        std::string ext = path.substr(path.rfind('.') == std::string::npos ? path.size() : path.rfind('.') + 1);
-        if (ext == "cu8" || ext == "u8") fmt = "cu8";
-        else if (ext == "cs16" || ext == "s16") fmt = "cs16";
-        else if (ext == "wav") fmt = "wav";
-        else fmt = "cf32";
+// The recording's bytes, read where they are asked for: a regular file
+// through fseeko / fread, so memory does not grow with its size. Anything
+// else (a pipe: --file /dev/stdin) can't seek - its bytes are read whole
+// once (as raw bytes: a cu8 pipe takes 2 bytes per sample, not 8)
+struct ByteSource {
+    FILE* f = nullptr;
+    std::vector<char> mem;
+    bool in_mem = false;
+    uint64_t size = 0, pos = 0;
+    bool open(const std::string& path) {
+        f = fopen(path.c_str(), "rb");
+        if (!f) return false;
+        struct stat st;
+        if (fstat(fileno(f), &st) == 0 && S_ISREG(st.st_mode)) {
+            size = static_cast<uint64_t>(st.st_size);
+            return true;
+        }
+        in_mem = true;
+        std::vector<char> b(1 << 16);
+        for (size_t got; (got = fread(b.data(), 1, b.size(), f)) > 0;) mem.insert(mem.end(), b.begin(), b.begin() + got);
+        size = mem.size();
+        fclose(f);
+        f = nullptr;
+        return true;
     }
-    std::ifstream f(path, std::ios::binary);
-    if (!f) { err = "cannot open " + path; return false; }
-    std::vector<char> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    size_t off = 0;
-    int bits = 0;
-    bool wav_float = false;
-    if (fmt == "wav") {
-        // minimal RIFF parser: 2 channels (I, Q), int16 or float32
-        if (raw.size() < 44 || memcmp(raw.data(), "RIFF", 4) || memcmp(raw.data() + 8, "WAVE", 4)) {
-            err = "not a WAV file";
+    // bytes [off, off + n) -> dst; returns how many there are (fewer at the end)
+    size_t read_at(uint64_t off, void* dst, size_t n) {
+        if (off >= size) return 0;
+        n = static_cast<size_t>(std::min<uint64_t>(n, size - off));
+        if (in_mem) {
+            memcpy(dst, mem.data() + off, n);
+            return n;
+        }
+        if (off != pos && fseeko(f, static_cast<off_t>(off), SEEK_SET) != 0) {
+            pos = UINT64_MAX;
+            return 0;
+        }
+        const size_t got = fread(dst, 1, n, f);
+        pos = off + got;
+        return got;
+    }
+    ~ByteSource() {
+        if (f) fclose(f);
+    }
+};
+
+// A one-antenna recording (cf32, cu8, cs16, 16 / 24-bit or float IQ WAV) as
+// complex float, read block by block where asked (the selected range
+// [s0, s1) of --start / --seconds). The checks and messages are the ones the
+// whole-file loader had; the values are bit for bit the same.
+struct IqFile {
+    ByteSource src;
+    int kind = 0;        // 0 cf32, 1 cs16, 2 cs24, 3 cu8
+    uint64_t off = 0;    // first sample byte (after a WAV header)
+    size_t bps = 8, s0 = 0, s1 = 0;
+    std::vector<char> raw;
+    size_t count() const { return s1 - s0; }
+    bool open(const std::string& path, std::string fmt, double* rate, double start, double seconds, std::string& err) {
+        if (fmt.empty()) {
+            std::string ext = path.substr(path.rfind('.') == std::string::npos ? path.size() : path.rfind('.') + 1);
+            if (ext == "cu8" || ext == "u8") fmt = "cu8";
+            else if (ext == "cs16" || ext == "s16") fmt = "cs16";
+            else if (ext == "wav") fmt = "wav";
+            else fmt = "cf32";
+        }
+        if (!src.open(path)) { err = "cannot open " + path; return false; }
+        if (fmt == "wav") {
+            // minimal RIFF parser: 2 channels (I, Q), int16 or float32; the
+            // data runs from its chunk to the end of the file
+            char h[24];
+            auto at = [&](uint64_t p, size_t n) {   // n header bytes at p, zeros past the end
+                memset(h, 0, sizeof h);
+                src.read_at(p, h, n);
+                return h;
+            };
+            if (src.size < 44 || memcmp(at(0, 12), "RIFF", 4) || memcmp(h + 8, "WAVE", 4)) {
+                err = "not a WAV file";
+                return false;
+            }
+            uint64_t p = 12;
+            int ch = 0, bits = 0;
+            bool wav_float = false;
+            while (p + 8 <= src.size) {
+                uint32_t len;
+                at(p, 24);
+                memcpy(&len, h + 4, 4);
+                if (!memcmp(h, "fmt ", 4)) {
+                    uint16_t afmt, nch, bp;
+                    uint32_t sr;
+                    memcpy(&afmt, h + 8, 2);
+                    memcpy(&nch, h + 10, 2);
+                    memcpy(&sr, h + 12, 4);
+                    memcpy(&bp, h + 22, 2);
+                    ch = nch;
+                    bits = bp;
+                    wav_float = afmt == 3;
+                    if (*rate <= 0) *rate = sr;
+                } else if (!memcmp(h, "data", 4)) {
+                    off = p + 8;
+                    break;
+                }
+                p += 8 + len + (len & 1);   // (32-bit sum, as it always was)
+            }
+            if (ch != 2 || off == 0) { err = "WAV must be 2-channel (I/Q)"; return false; }
+            fmt = wav_float ? "cf32" : (bits == 16 ? "cs16" : (bits == 24 ? "cs24" : ""));
+            if (fmt.empty()) { err = "unsupported WAV sample format"; return false; }
+        }
+        if (*rate <= 0 && !read_sidecar_rate(path, rate)) {
+            err = "sample rate unknown: pass --rate";
             return false;
         }
-        size_t p = 12;
-        int ch = 0;
-        while (p + 8 <= raw.size()) {
-            uint32_t len;
-            memcpy(&len, raw.data() + p + 4, 4);
-            if (!memcmp(raw.data() + p, "fmt ", 4)) {
-                uint16_t afmt, nch, bps;
-                uint32_t sr;
-                memcpy(&afmt, raw.data() + p + 8, 2);
-                memcpy(&nch, raw.data() + p + 10, 2);
-                memcpy(&sr, raw.data() + p + 12, 4);
-                memcpy(&bps, raw.data() + p + 22, 2);
-                ch = nch;
-                bits = bps;
-                wav_float = afmt == 3;
-                if (*rate <= 0) *rate = sr;
-            } else if (!memcmp(raw.data() + p, "data", 4)) {
-                off = p + 8;
-                break;
+        kind = fmt == "cf32" ? 0 : fmt == "cs16" ? 1 : fmt == "cs24" ? 2 : 3;
+        bps = kind == 0 ? 8 : kind == 1 ? 4 : kind == 2 ? 6 : 2;
+        const size_t total = static_cast<size_t>((src.size - off) / bps);
+        s0 = std::min(total, static_cast<size_t>(std::max(0.0, start) * *rate));
+        s1 = seconds > 0 ? std::min(total, s0 + static_cast<size_t>(seconds * *rate)) : total;
+        return true;
+    }
+    // samples [i, i + n) of the selected range -> out; returns how many
+    size_t read(size_t i, size_t n, kp::cf* out) {
+        if (i >= count()) return 0;
+        n = std::min(n, count() - i);
+        raw.resize(n * bps);
+        n = src.read_at(off + static_cast<uint64_t>(s0 + i) * bps, raw.data(), n * bps) / bps;
+        const char* d = raw.data();
+        for (size_t k = 0; k < n; k++) {
+            kp::cf v;
+            if (kind == 0) {
+                float iq[2];
+                memcpy(iq, d + k * 8, 8);
+                v = {iq[0], iq[1]};
+            } else if (kind == 1) {
+                int16_t iq[2];
+                memcpy(iq, d + k * 4, 4);
+                v = {iq[0] / 32768.0f, iq[1] / 32768.0f};
+            } else if (kind == 2) {
+                auto q = reinterpret_cast<const uint8_t*>(d + k * 6);
+                int32_t a = static_cast<int32_t>(static_cast<uint32_t>(q[0]) << 8 | static_cast<uint32_t>(q[1]) << 16 |
+                                                 static_cast<uint32_t>(q[2]) << 24) >> 8;
+                int32_t b = static_cast<int32_t>(static_cast<uint32_t>(q[3]) << 8 | static_cast<uint32_t>(q[4]) << 16 |
+                                                 static_cast<uint32_t>(q[5]) << 24) >> 8;
+                v = {a / 8388608.0f, b / 8388608.0f};
+            } else {
+                auto u = reinterpret_cast<const uint8_t*>(d + k * 2);
+                v = {(u[0] - 127.5f) / 127.5f, (u[1] - 127.5f) / 127.5f};
             }
-            p += 8 + len + (len & 1);
+            out[k] = v;
         }
-        if (ch != 2 || off == 0) { err = "WAV must be 2-channel (I/Q)"; return false; }
-        fmt = wav_float ? "cf32" : (bits == 16 ? "cs16" : (bits == 24 ? "cs24" : ""));
-        if (fmt.empty()) { err = "unsupported WAV sample format"; return false; }
+        return n;
     }
-    if (*rate <= 0 && !read_sidecar_rate(path, rate)) {
-        err = "sample rate unknown: pass --rate";
-        return false;
-    }
-    size_t bps = fmt == "cf32" ? 8 : (fmt == "cs16" ? 4 : (fmt == "cs24" ? 6 : 2));
-    size_t total = (raw.size() - off) / bps;
-    size_t s0 = std::min(total, static_cast<size_t>(std::max(0.0, start) * *rate));
-    size_t s1 = seconds > 0 ? std::min(total, s0 + static_cast<size_t>(seconds * *rate)) : total;
-    out.resize(s1 - s0);
-    const char* d = raw.data() + off;
-    for (size_t i = s0; i < s1; i++) {
-        kp::cf v;
-        if (fmt == "cf32") {
-            float iq[2];
-            memcpy(iq, d + i * 8, 8);
-            v = {iq[0], iq[1]};
-        } else if (fmt == "cs16") {
-            int16_t iq[2];
-            memcpy(iq, d + i * 4, 4);
-            v = {iq[0] / 32768.0f, iq[1] / 32768.0f};
-        } else if (fmt == "cs24") {
-            auto q = reinterpret_cast<const uint8_t*>(d + i * 6);
-            int32_t a = static_cast<int32_t>(static_cast<uint32_t>(q[0]) << 8 | static_cast<uint32_t>(q[1]) << 16 |
-                                             static_cast<uint32_t>(q[2]) << 24) >> 8;
-            int32_t b = static_cast<int32_t>(static_cast<uint32_t>(q[3]) << 8 | static_cast<uint32_t>(q[4]) << 16 |
-                                             static_cast<uint32_t>(q[5]) << 24) >> 8;
-            v = {a / 8388608.0f, b / 8388608.0f};
-        } else {
-            auto u = reinterpret_cast<const uint8_t*>(d + i * 2);
-            v = {(u[0] - 127.5f) / 127.5f, (u[1] - 127.5f) / 127.5f};
-        }
-        out[i - s0] = v;
-    }
-    return true;
-}
+};
 
 // A recording of every antenna (--channels M / the sidecar's "channels"):
 // sample by sample, antenna 0 first, cf32 / cs16 / cu8. Read a block at a
@@ -1764,6 +1844,8 @@ struct McReader {
     int m = 1;
     size_t bps = 8;
     std::vector<char> raw;
+    bool regular = false;   // a regular file: samples() is known up front (not a pipe)
+    uint64_t size = 0, skip = 0;
     bool open(const std::string& path, std::string fm, int channels, double rate, double start, std::string& err) {
         if (fm.empty()) {
             std::string ext = path.substr(path.rfind('.') == std::string::npos ? path.size() : path.rfind('.') + 1);
@@ -1775,18 +1857,26 @@ struct McReader {
         bps = fmt == "cf32" ? 8 : fmt == "cs16" ? 4 : 2;
         f = fopen(path.c_str(), "rb");
         if (!f) { err = "cannot open " + path; return false; }
-        const long long skip = static_cast<long long>(std::max(0.0, start) * rate) * m * static_cast<long long>(bps);
-        if (skip && fseeko(f, skip, SEEK_SET) != 0) { err = "cannot seek"; return false; }
+        struct stat st;
+        if (fstat(fileno(f), &st) == 0 && S_ISREG(st.st_mode)) {
+            regular = true;
+            size = static_cast<uint64_t>(st.st_size);
+        }
+        skip = static_cast<uint64_t>(static_cast<long long>(std::max(0.0, start) * rate) * m * static_cast<long long>(bps));
+        if (skip && fseeko(f, static_cast<off_t>(skip), SEEK_SET) != 0) { err = "cannot seek"; return false; }
         return true;
     }
-    // up to n samples of every antenna -> out[k]; returns the samples read
-    size_t read(size_t n, std::vector<std::vector<kp::cf>>& out) {
+    // the samples (of every antenna) from the start position to the end; regular files only
+    size_t samples() const { return size > skip ? static_cast<size_t>((size - skip) / (static_cast<uint64_t>(m) * bps)) : 0; }
+    // up to n samples of every antenna -> out[k] (only >= 0: only that
+    // antenna is converted, out[only]); returns the samples read
+    size_t read(size_t n, std::vector<std::vector<kp::cf>>& out, int only = -1) {
         raw.resize(n * m * bps);
         const size_t got = fread(raw.data(), m * bps, n, f);
         out.resize(static_cast<size_t>(m));
         for (int k = 0; k < m; k++) out[static_cast<size_t>(k)].resize(got);
         const int kind = fmt == "cf32" ? 0 : fmt == "cs16" ? 1 : 2;
-        for (int k = 0; k < m; k++) {
+        for (int k = only >= 0 ? only : 0; k < (only >= 0 ? only + 1 : m); k++) {
             kp::cf* o = out[static_cast<size_t>(k)].data();
             for (size_t i = 0; i < got; i++) {
                 const char* d = raw.data() + (i * m + static_cast<size_t>(k)) * bps;
@@ -1809,14 +1899,16 @@ struct McReader {
     ~McReader() { if (f) fclose(f); }
 };
 
-void write_wav8k(const std::string& path, const std::vector<float>& a) {
-    std::ofstream f(path, std::ios::binary);
-    auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<char*>(&v), 4); };
-    auto u16 = [&](uint16_t v) { f.write(reinterpret_cast<char*>(&v), 2); };
-    f.write("RIFF", 4); u32(36 + a.size() * 2); f.write("WAVEfmt ", 8);
+// --audio: the 8 kHz 16-bit mono WAV is written as the audio comes (its
+// header, with the sizes, once more at the end)
+void wav8k_header(FILE* f, uint64_t n) {
+    std::string h;
+    auto u32 = [&](uint32_t v) { h.append(reinterpret_cast<char*>(&v), 4); };
+    auto u16 = [&](uint16_t v) { h.append(reinterpret_cast<char*>(&v), 2); };
+    h += "RIFF"; u32(static_cast<uint32_t>(36 + n * 2)); h += "WAVEfmt ";
     u32(16); u16(1); u16(1); u32(8000); u32(16000); u16(2); u16(16);
-    f.write("data", 4); u32(a.size() * 2);
-    for (float v : a) u16(static_cast<uint16_t>(static_cast<int16_t>(std::clamp(v, -1.0f, 1.0f) * 32767)));
+    h += "data"; u32(static_cast<uint32_t>(n * 2));
+    fwrite(h.data(), 1, h.size(), f);
 }
 
 // MUSIC with one source on a covariance, kraken_doa's UCA (clockwise, ANT0
@@ -2041,28 +2133,34 @@ int test_array(const std::string& path, std::string fmt, double rate, int channe
         const std::string ext = path.substr(path.rfind('.') == std::string::npos ? path.size() : path.rfind('.') + 1);
         fmt = ext == "cu8" || ext == "u8" ? "cu8" : ext == "cs16" || ext == "s16" ? "cs16" : ext == "wav" ? "wav" : "cf32";
     }
-    // cf32 / cs16 / cu8 are read block by block (a multichannel recording can
-    // be larger than the RAM: 20 s of 5 antennas at 2.4 MHz is 1.9 GB); a WAV whole
+    // read block by block (a multichannel recording can be larger than the
+    // RAM: 20 s of 5 antennas at 2.4 MHz is 1.9 GB): cf32 / cs16 / cu8 here, a
+    // WAV through IqFile (its complex values are the antennas one after the other)
     const bool stream = fmt != "wav";
     const size_t bps = fmt == "cf32" ? 8 : fmt == "cs16" ? 4 : 2;
     std::ifstream sf;
+    IqFile wav;
     size_t total = 0;
     if (stream) {
         sf.open(path, std::ios::binary | std::ios::ate);
         if (!sf) { fprintf(stderr, "error: cannot open %s\n", path.c_str()); return 1; }
         total = static_cast<size_t>(sf.tellg()) / bps / static_cast<size_t>(m);
     } else {
-        if (!load_file(path, fmt, &frate, 0, 0, x, err)) {
+        if (!wav.open(path, fmt, &frate, 0, 0, err)) {
             fprintf(stderr, "error: %s\n", err.c_str());
             return 1;
         }
-        total = x.size() / static_cast<size_t>(m);
+        total = wav.count() / static_cast<size_t>(m);
     }
     std::vector<char> raw;
     // samples p .. p + n of every antenna (sample-major, antenna-minor) -> x[0 ..]
     auto fetch = [&](size_t p, size_t n) -> const kp::cf* {
-        if (!stream) return x.data() + p * static_cast<size_t>(m);
         const size_t cnt = n * static_cast<size_t>(m);
+        if (!stream) {
+            x.resize(cnt);
+            wav.read(p * static_cast<size_t>(m), cnt, x.data());
+            return x.data();
+        }
         raw.resize(cnt * bps);
         sf.seekg(static_cast<std::streamoff>(p * static_cast<size_t>(m) * bps));
         sf.read(raw.data(), static_cast<std::streamsize>(raw.size()));
@@ -2232,7 +2330,14 @@ int test_file(int argc, char** argv) {
         for (auto& o : opts) dec->option(o.first, o.second);
         return test_array(path, fmt, rate, static_cast<int>(ch), offset, start, seconds, all, uca_r, host, *dec, info, quiet);
     }
+    // The recording is read as a stream, block by block (memory independent
+    // of its length): one antenna through IqFile, one antenna of a
+    // multichannel recording or all of them through McReader. Only a
+    // multichannel recording from a pipe, decoded one antenna, is gathered
+    // in x first (its length must be known before the first block).
     std::vector<kp::cf> x;
+    IqFile iq;
+    size_t nin = 0;   // samples to decode (one antenna)
     std::string err;
     if (channels <= 0) {
         double c = 0;
@@ -2261,15 +2366,39 @@ int test_file(int argc, char** argv) {
             return 1;
         }
         if (!mc_all) {   // one antenna, as a single-channel decoder gets it
-            std::vector<std::vector<kp::cf>> b;
             const size_t want = seconds > 0 ? static_cast<size_t>(seconds * rate) : SIZE_MAX;
-            for (size_t got; x.size() < want && (got = mcr.read(std::min<size_t>(1 << 16, want - x.size()), b)) > 0;)
-                x.insert(x.end(), b[static_cast<size_t>(pick)].begin(), b[static_cast<size_t>(pick)].end());
+            if (mcr.regular) {
+                nin = std::min(want, mcr.samples());
+            } else {   // a pipe: its length only shows at its end
+                std::vector<std::vector<kp::cf>> b;
+                for (size_t got; x.size() < want && (got = mcr.read(std::min<size_t>(1 << 16, want - x.size()), b, pick)) > 0;)
+                    x.insert(x.end(), b[static_cast<size_t>(pick)].begin(), b[static_cast<size_t>(pick)].end());
+                nin = x.size();
+            }
         }
-    } else if (!load_file(path, fmt, &rate, start, seconds, x, err)) {
+    } else if (!iq.open(path, fmt, &rate, start, seconds, err)) {
         fprintf(stderr, "error: %s\n", err.c_str());
         return 1;
+    } else {
+        nin = iq.count();
     }
+    // the next n (<= one block) samples of the antenna decoded -> dst; returns how many came
+    size_t nread = 0;
+    std::vector<std::vector<kp::cf>> mb;
+    auto pull = [&](kp::cf* dst, size_t n) -> size_t {
+        size_t got = 0;
+        if (channels <= 1) {
+            got = iq.read(nread, n, dst);
+        } else if (!mcr.regular) {
+            got = std::min(n, x.size() - nread);
+            std::copy(x.begin() + static_cast<std::ptrdiff_t>(nread), x.begin() + static_cast<std::ptrdiff_t>(nread + got), dst);
+        } else {
+            got = mcr.read(n, mb, pick);
+            std::copy(mb[static_cast<size_t>(pick)].begin(), mb[static_cast<size_t>(pick)].end(), dst);
+        }
+        nread += got;
+        return got;
+    };
     // the plugin's input rate: its own, or the file's (Info::sample_rate 0 =
     // the VFO's rate: no resampling)
     const double prate = info.sample_rate > 0 ? info.sample_rate : rate;
@@ -2299,7 +2428,7 @@ int test_file(int argc, char** argv) {
         printf("%s %s: %d antennas of %s at %.0f Hz (process_multi)\n", info.name, info.version, channels, path.c_str(), rate);
     else if (!quiet)
         printf("%s %s: %.2f s of %s at %.0f Hz -> %.0f Hz%s%s\n", info.name, info.version,
-               x.size() / rate, path.c_str(), rate, prate,
+               nin / rate, path.c_str(), rate, prate,
                offset != 0 ? (" (offset " + std::to_string(static_cast<long long>(offset)) + " Hz)").c_str() : "",
                std::isfinite(host.rf_hz_) ? (", RF " + std::to_string(host.rf_hz_ / 1e6).substr(0, 11) + " MHz").c_str() : "");
     // mix + resample to the plugin's rate, in 10 ms blocks like live
@@ -2309,6 +2438,10 @@ int test_file(int argc, char** argv) {
     const double rs_delay_s = prate == rate && offset == 0 ? 0.0 : msresamp_crcf_get_delay(rs) / prate;
     const size_t blk = std::max<size_t>(1, static_cast<size_t>(rate / 100));
     std::vector<kp::cf> in(blk), outb(static_cast<size_t>(blk * prate / rate) + 64);
+    if (!audio_path.empty()) {   // written as it comes; the header again at the end
+        host.audio_f_ = fopen(audio_path.c_str(), "wb");
+        if (host.audio_f_) wav8k_header(host.audio_f_, 0);
+    }
     auto t0 = std::chrono::steady_clock::now();
     if (mc_all) {   // every antenna, 10 ms blocks like live
         std::vector<std::vector<kp::cf>> b;
@@ -2321,9 +2454,12 @@ int test_file(int argc, char** argv) {
             host.samples_ += got;
         }
     }
-    for (size_t p = 0; p < x.size(); p += blk) {
-        size_t n = std::min(blk, x.size() - p);
-        for (size_t i = 0; i < n; i++) in[i] = nco.mix(x[p + i]);
+    // the one antenna, read block by block: the NCO and the resampler keep
+    // their state from block to block, so this is the whole recording in one pass
+    for (size_t p = 0; p < nin; p += blk) {
+        const size_t want = std::min(blk, nin - p), n = pull(in.data(), want);
+        if (!n) break;   // (the file got shorter)
+        for (size_t i = 0; i < n; i++) in[i] = nco.mix(in[i]);
         unsigned int ny = 0;
         if (prate == rate && offset == 0) {
             std::copy(in.begin(), in.begin() + n, outb.begin());
@@ -2335,6 +2471,7 @@ int test_file(int argc, char** argv) {
             dec->process(outb.data(), ny);
             host.samples_ += ny;
         }
+        if (n < want) break;
     }
     msresamp_crcf_destroy(rs);
     double cpu = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -2392,8 +2529,13 @@ int test_file(int argc, char** argv) {
         }
     }
     if (!audio_path.empty()) {
-        write_wav8k(audio_path, host.audio_);
-        printf("audio: %.2f s -> %s\n", host.audio_.size() / 8000.0, audio_path.c_str());
+        if (host.audio_f_) {
+            fseeko(host.audio_f_, 0, SEEK_SET);
+            wav8k_header(host.audio_f_, host.audio_n_);
+            fclose(host.audio_f_);
+            host.audio_f_ = nullptr;
+        }
+        printf("audio: %.2f s -> %s\n", host.audio_n_ / 8000.0, audio_path.c_str());
     }
     if (uca_r > 0 && channels > 1) {
         if (!std::isfinite(host.rf_hz_) || !(host.rf_hz_ > 0)) {
