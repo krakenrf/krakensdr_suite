@@ -106,7 +106,24 @@ D-RELEASE on the timeslot or two AACHs "unallocated". Target / source only
 from what it decodes itself (a call it heard set up on the MCCH - a
 traffic slot of the main carrier - by the `call` option). The scrambling
 options let it decode before its first BSCH; the timeslot NUMBERS come
-from the BSCH (frame 18 of every carrier, at most 1.02 s). With them the
+from the BSCH (frame 18 of every carrier, at most 1.02 s). After a loss of
+slot sync (9 slots without a training sequence) they are unknown, and
+nothing that depends on the timeslot is reported, tracked or played - no
+grant from a traffic instance, no `call()`, talker or voice, no timeslot
+usage - until the cell's next BSCH, or until the carrier is back on the old
+slot grid: the samples skipped are counted exactly, so the new slot start
+must lie a whole number of slots after the last good one within 2 samples
+(half a symbol: the search places a slot to +-1 sample, the tracker held
+the last good one to +-1, two clocks 2 ppm apart drift 1.4 samples in 10 s)
+and at most 10 s later; then the numbering runs on. A fade ends the
+talker's span at its last traffic slot (the fade is no DoA of it) and a new
+span starts with the traffic after it; the call stays ACTIVE unless no
+traffic returns within 1 s (ENDED). A 250 ms fade in the middle of a
+transmission pauses the talker / audio for 0.33 s (2.42 -> 2.75 s: the fade
++ one frame), numbering kept (19 slots later, 1 sample off); 600 ms:
+0.72 s; 1.5 s: ENDED after 1 s, ACTIVE again with the traffic; 12 s (beyond
+10 s): call / talker / voice only from the next BSCH, 1.05 s after the
+carrier is back. With them the
 instance accepts that cell only: another cell's BSCH on the carrier (a
 co-channel cell in frequency reuse) changes nothing - timing, scrambling,
 reports - beyond one event "Another cell on this carrier ... ignored", and
@@ -209,6 +226,19 @@ ACTIVE; now ACTIVE with source "" and talker "?". A RESET clears the
 "Channel allocations" / "Grants" / "Not parsed" facts (they counted on from
 the previous channel). After a retune (digi_test `--retune`, also at 3.5
 s) the system is sent again with the first BSCH heard, before any grant.
+
+Loss of slot sync (sanitize run, 2026-11-20): one 250 ms fade let the old
+timeslot count run on, so the timeslot-3 traffic instance took the MCCH's
+blocks for its own - call 102's grant and a RELEASED with its target. The
+run's four reproducers (`tetra_gap_3s`, `tetra_gap_zero`, `tetra_gap_noise`
+and the no-gap control) now give no grant and only the call's own lines;
+its damage sweep (110 variants each of the trunk scene's main carrier as
+the control VFO and as the timeslot-3 traffic VFO, and of carrier 3580 as
+the timeslot-2 traffic VFO; noise, holes, drops, cuts, echoes, offsets,
+levels): false grant / call lines in 9 traffic-VFO variants before, in
+none now. The control VFO's 2 remaining variants (`snr1`, `holes2`) are
+D-CONNECT grants with target "" whose D-SETUP the damage destroyed - a
+CRC-valid PDU reported as heard, the target simply unknown.
 
 Real recordings (verified against them, not in this repo):
 sigidwiki's "TETRA" IQ (SDR#, 48 kHz, 41.7 s, a downlink): MCC 228 / MNC
