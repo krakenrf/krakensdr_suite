@@ -21987,7 +21987,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const pct = c.total > 0 ? Math.round(100 * c.weight / c.total) : 0;
     uiConfirm({title: 'Retune for the system', icon: 'trunk', ok: 'Retune',
                text: [`Retune the receiver to ${mhz.toFixed(3)} MHz?`,
-                      `${c.channels} of the ${c.of} known channels of ${tkSysName(s)} are then in the span (${pct} % of its calls), and its control channels stay in it.`,
+                      `${c.channels} of the ${c.of} known channels of ${tkSysName(s)} are then in the span (${pct} % of its calls), ` +
+                      (c.controls_of > 0 && c.controls < c.controls_of ? `and ${c.controls} of its ${c.controls_of} control channels.` : 'and its control channels stay in it.'),
                       'The array recalibrates; the calls followed now end.'],
                tip: 'The receiver suggests the centre that keeps every control VFO of the system in the band and holds the most-used channels (weighted by how often each was granted).'}).then(ok => {
       if (!ok) return;
@@ -22043,7 +22044,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
           `${c.rx ? 'received' : 'nothing received for ' + Math.round((c.last_ms || 0) / 1000) + ' s'}${c.counts ? ' · ' + c.counts.grants + ' calls granted, ' + c.counts.followed + ' followed' : ''}">` +
           `<span class="d" style="color:${getDecimatorColor(c.vfo)}">D${c.vfo}</span>${c.hz > 0 ? tkMhz(c.hz) : ''}<span class="rx">&#9679;</span></span>`).join('');
       } else {
-        l2 = s.counts && s.counts.grants ? 'No control channel now' : 'Not heard yet';
+        // heard false: a record the user (or a catalogue entry) made before the system was heard
+        l2 = s.heard === false || !(s.counts && s.counts.grants) ? 'Not heard yet' : 'No control channel now';
       }
       if (r.dataset.l2 !== l2) { r.dataset.l2 = l2; r.querySelector('.l2').innerHTML = l2; }
       r.querySelector('.l2').onclick = e => { const c = e.target.closest('.tk-cc'); if (c) selectDecimator(+c.dataset.vfo); };
@@ -22309,7 +22311,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         parked = st === 'parked' || (!c && !t.call);
         if (parked) { h = 'Trunk VFO · parked'; tip = 'A voice VFO of trunk following, waiting for the next call (muted, not decoding). It is removed after 30 s without one'; }
         else {
-          const lbl = c ? tkLabel(c) : t.label || ('TG ' + t.target);
+          const v = tkSt && (tkSt.vfos || []).find(x => x.vfo === d.id);
+          const lbl = c ? tkLabel(c) : (v && v.label) || t.label || ('TG ' + t.target);
           h = lbl + ' · ' + (TK_STATE[st] || st) + ' · ' + (c ? c.ch : t.ch || '');
           const s = tkSys(c ? c.sys : t.sys);
           tip = 'A voice VFO of trunk following' + (s ? ' (' + tkSysName(s) + ')' : '') + ': the receiver sets its frequency, bandwidth, demod, decoder and squelch for each call - they are locked here. The speaker, Save and × (stops following the call) work';
