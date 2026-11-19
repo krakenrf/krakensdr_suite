@@ -22277,7 +22277,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     // calls, also those its start ended, are back when it ends)
     const shown = tkPbSince ? new Set(tkShownSystems().map(s => s.id)) : null;
     const h = (tkPbSince ? all.filter(c => c.t_end >= tkPbSince - 1000 && shown.has(c.sys)) : all).slice().reverse();
-    const key = c => c.id + ':' + c.t_end;
+    // (the system too: the receiver re-keys a temporary system's rows when it is folded - made again then)
+    const key = c => c.id + ':' + c.t_end + ':' + c.sys;
     const byKey = new Map(h.map(c => [key(c), c]));
     if (!h.length) {
       if (!el.querySelector('.tk-empty')) el.innerHTML = '<div class="tk-empty">None yet</div>';

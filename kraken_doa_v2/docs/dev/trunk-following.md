@@ -999,9 +999,11 @@ broadcasts the lists again when they change.
   (words a user can act on, `TK_WHY`, the long form in the tooltip; "Set its
   frequency" opens the channel table), the talker, the channel / slot and
   MHz, the site.
-- Recent: `history`, newest first, made once each: time of the end, the
-  label, marks, VFO, ⋯; duration and how it ended (`TK_END`) or "Not
-  followed: <why>".
+- Recent: `history`, newest first, made once each (keyed by call id, end
+  time and system: a row the receiver re-keys when it folds a temporary
+  system is made again, so its menu acts on the keyed system): time of the
+  end, the label, marks, VFO, ⋯; duration and how it ended (`TK_END`) or
+  "Not followed: <why>".
 - **During a playback** the receiver keeps the user's systems (without
   control VFOs) and the history from before, to put them back at its end;
   the box shows only what is the playback's: systems a control VFO hears
@@ -1168,3 +1170,27 @@ the debug playback (Play only).
   systems, calls, voice VFO cards, menu, Stop following ("Stopped by you"),
   editor, no "Add a system", no errors: 11 checks.
 - `tools/theme_palette.py --check` OK; no console errors in any run.
+- After the review round (2026-11-20, the receiver with `systems_file`,
+  `sys_refused`, refusals on temporary systems, notes when following is
+  off, events only from `trunking` plugins): the whole pass again plus
+  `t_review` (16 checks: the systems file not loaded - a dialog naming
+  `trunk_systems.json.bad-<date>` once per kept file in this browser, also
+  not again after a reload, and a note; 3 systems refused - a note; the DMR
+  Network tag hint for a call 41 MHz from its control channel; an ended
+  call's row leaving after its 6 s with no status meanwhile; the real
+  receiver refusing a bad rule and a 33rd system - "too many systems (32,
+  all edited or in use): delete one first (a system's Edit, then Forget this
+  system)" shown, 32 kept). All suites pass (states 9, fixtures 18, review
+  16, actions 15, stability 9 - 60 s: 6 calls, 44 changes, 0 re-made, 0
+  pushed down; pointed at: nothing moved -, scale 12 - median 2.1 ms per
+  status with 64 calls + 50 history, lists 48-49 ms -, touch 8, the five
+  scenes 10 each, misc 13, the DMR rule 9, the editor 26 and 29). Found and
+  fixed on the way: a Recent row made while its call was in a temporary
+  system kept that system's id after the receiver re-keyed it at the merge
+  (its menu would have acted on the temporary id - refused); rows are keyed
+  by the system too now. The NXDN scene's first call (TG 100) is followed
+  now: the receiver resolves waiting calls again at the merge. One run of
+  the desktop editor suite stalled (no output, killed after 15 min; the
+  390 px run of the same steps passed in the same pass, and a rerun of the
+  desktop one passed: not reproduced). The new page against the first-pass
+  receiver: 11 checks.
