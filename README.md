@@ -682,8 +682,10 @@ live signal is disconnected and nothing is logged or sent out. **Stop**
 puts your own settings back.
 
 Generating needs python3 with numpy and scipy. `install.sh` installs them on
-Linux; on macOS run `python3 -m pip install --user numpy scipy`. They are
-not in the Docker image: generate on the host and copy the files into
+Linux; on macOS run `python3 -m pip install --user numpy scipy`. The
+receiver uses the `python3` first on its PATH, so a conda or virtualenv
+Python needs its own copies; if they are missing, the page names that
+Python and the command that installs them. They are not in the Docker image: generate on the host and copy the files into
 `docker-data/kraken_doa/testsignal_cache/`.
 
 ## More documentation

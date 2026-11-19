@@ -96,6 +96,9 @@ die()  { echo "${RED}${BOLD}Error:${RST} $*" >&2; exit 1; }
 #   zlib1g-dev   - both link -lz
 #   libsqlite3-dev - kraken links -lsqlite3
 #   tmux         - used by run.sh for the split-screen dashboards
+#   python3-numpy python3-scipy - Debug Playback's test-transmission
+#                  generators (kraken_doa runs the python3 first on its PATH:
+#                  a conda / venv one needs its own - the page says which)
 #   (no libfftw3-dev: both apps use the vendored pffft - external/pffft; no
 #    libliquid-dev: kraken_doa's make fetches liquid-dsp at a pinned commit and
 #    builds it as a static library without FFTW / libfec - liquid.mk)
@@ -112,6 +115,7 @@ PACKAGES=(
     gpsd gpsd-tools                          # GPS daemon (kraken talks JSON to port 2947; tools = cgps/gpsmon for debugging)
     openssl                                  # self-signed cert generation for the kraken web UI
     bubblewrap socat                         # AI assistant: sandboxes (its shell commands, plugins it changed)
+    python3 python3-numpy python3-scipy      # Debug Playback: generating the test transmissions
 )
 
 # macOS (Homebrew): the same, by Homebrew's names. Not included: gpsd (not

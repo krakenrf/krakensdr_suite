@@ -27,8 +27,21 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines
-  read by a thread; `PLAYBACK_GEN_CANCEL` = SIGTERM to the group). The
-  driver runs the entry's `steps` (generators; .cpp compiled once into
+  read by a thread; `PLAYBACK_GEN_CANCEL` = SIGTERM to the group). First
+  the driver checks the modules the entry uses (numpy: a `.py` step, a
+  scene or a cf32 `output`; scipy: a `.py` step or a scene; a dab-style
+  entry of C++ steps writing cu8 needs neither) and fails with `ERROR
+  Python needs numpy + scipy for test transmissions: <command>` - the
+  command for THAT interpreter (`install_hint`: Windows / conda / venv
+  `<exe> -m pip install`, macOS `--user`, a Debian / Ubuntu /usr/bin one
+  `sudo apt-get install python3-numpy python3-scipy`; install.sh installs
+  those since 2026-11-19). Windows only until 2026-11-19: on Linux a
+  python3 first on PATH without numpy (the dev box's conda base, from
+  ./run.sh in the user's shell) gave a traceback in `<id>.log`, and in
+  the driver's own `to_cu8` (cf32 outputs: cells) one that reached no log
+  - the page said "see <id>.log" of a log without it. Test builds that
+  prepend `/usr/bin` to PATH hide all of this. The driver runs the
+  entry's `steps` (generators; .cpp compiled once into
   `.bin/`, again when the .cpp or a `*.h` / `*.hpp` in its folder or its
   plugin folder is newer - until 2026-11-16 only the .cpp counted, and a
   header-only change to dab_gen_*.hpp kept the stale binary; the Windows
