@@ -398,7 +398,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     an unlucky place in the slot grid - after a RESET, after silence),
     one slot dropped per failed search, repeated in `process()` until
     less than a window is left (bounded history; a half-slot drop per
-    10 ms block grew it without limit); a RESET clears the statistics. Real
+    10 ms block grew it without limit); a RESET clears the statistics.
+    After a loss of slot sync the TDMA numbers are unknown (nothing
+    timeslot-dependent reported, tracked or played) until the cell's BSCH
+    or until the carrier is back on the old slot grid (`resume_numbering`:
+    a whole number of slots after the last good one within 2 samples, at
+    most 10 s later; a 250 ms fade costs a call ~0.33 s of talker / audio;
+    before, the old count ran on and a fade put another timeslot's grant /
+    target on a traffic instance - the sanitize run's damage sweep). Real
     sigidwiki recording: 8 allocations, all parsed, all pointing to the
     timeslot the AACH marks as traffic. Details and tests:
     plugins/tetra/README.md

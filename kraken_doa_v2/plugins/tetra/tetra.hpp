@@ -148,6 +148,14 @@ private:
     bool own_recent() const;
     uint64_t foreign_bsch_ = 0;   // BSCHs of another cell ignored (locked identity)
     void clear_cell();
+    // slot grid continuity over a loss of slot sync (resume_numbering)
+    static constexpr int64_t GRID_TOL_SAMPLES = 2;
+    static constexpr double GRID_MAX_GAP_S = 10.0;
+    int64_t good_slot_ = -1;      // the last slot that passed its training check
+    int good_tn_ = 0, good_fn_ = 0, good_mn_ = 0;
+    int64_t lost_slot_ = -1;      // that slot when sync was lost (-1: no numbering to keep)
+    int lost_tn_ = 0, lost_fn_ = 0, lost_mn_ = 0;
+    void resume_numbering();
     double now_s() const;
     // valid frames and cell packets: a traffic instance reports only its own
     // timeslot's, and only while the AACH says it is assigned (assigned
@@ -224,6 +232,7 @@ private:
         double last_report_s = -1e9;
         int unalloc = 0;          // consecutive AACH "unallocated" on the slot
         bool talker_on = false;
+        bool new_span = false;    // sync was lost: the talker's next span starts at its next traffic slot
     } tr_;
     void traffic_call(int state);
     void traffic_start(int64_t at);

@@ -174,6 +174,8 @@ void TetraReceiver::reset() {
     packet_slot_ = -1;
     own_ok_ = -1000000000;
     foreign_bsch_ = 0;
+    good_slot_ = lost_slot_ = -1;
+    good_tn_ = good_fn_ = good_mn_ = 0;
     voice_tn_ = 0;
     voice_tn_ms_ = 0;
     voice_ch_sent_ = -2;
@@ -356,6 +358,7 @@ void TetraReceiver::search() {
                 locked_slots_ = 0;
                 miss_ = 0;
                 ctx_.report->set(Mode::TETRA, "Carrier", "pi/4-DQPSK 18 ksym/s, slot sync acquired");
+                resume_numbering();
                 return;
             }
         }
@@ -371,6 +374,40 @@ void TetraReceiver::search() {
     size_t drop = SLOT_SAMPLES;
     hist_.erase(hist_.begin(), hist_.begin() + static_cast<long>(drop));
     hist_base_ += static_cast<int64_t>(drop);
+}
+
+// After a loss of slot sync: the samples skipped since the last good slot
+// are known exactly (the receiver's sample index), so a carrier that only
+// faded comes back on the old slot grid - the new slot start an exact
+// number of slots after the last good one, within GRID_TOL_SAMPLES (2
+// samples = half a symbol; the search places a slot to +-1 sample, the
+// tracker kept the last good one to +-1, and two clocks 2 ppm apart drift
+// 1.4 samples in the 10 s allowed). Then the numbering runs on by that many
+// slots; otherwise (longer, another place - another carrier or cell, a wrong
+// lock) it stays unknown until the cell's next BSCH (frame 18, <= 1.02 s).
+void TetraReceiver::resume_numbering() {
+    const int64_t ref = lost_slot_;
+    lost_slot_ = -1;
+    if (ref < 0 || lost_tn_ < 1 || lost_fn_ < 1 || lost_mn_ < 1) return;
+    const int64_t d = slot_start_ - ref;
+    if (d <= 0 || d > static_cast<int64_t>(GRID_MAX_GAP_S * RATE)) return;
+    const int64_t k = (d + SLOT_SAMPLES / 2) / SLOT_SAMPLES;
+    const int64_t res = d - k * SLOT_SAMPLES;
+    if (res < -GRID_TOL_SAMPLES || res > GRID_TOL_SAMPLES) {
+        if (ctx_.opts->verbose)
+            ctx_.report->event(Mode::TETRA, "Slot sync again " + std::to_string(res) +
+                                                " samples off the old slot grid: timeslot numbers from the next BSCH", 2.0);
+        return;
+    }
+    // (tn, fn, mn) + k slots: 4 timeslots, 18 frames, 60 multiframes
+    int64_t i = (static_cast<int64_t>(lost_mn_ - 1) * 18 + (lost_fn_ - 1)) * 4 + (lost_tn_ - 1) + k;
+    i %= 60 * 18 * 4;
+    tn_ = static_cast<int>(i % 4) + 1;
+    fn_ = static_cast<int>((i / 4) % 18) + 1;
+    mn_ = static_cast<int>(i / 72) + 1;
+    if (ctx_.opts->verbose)
+        ctx_.report->event(Mode::TETRA, "Slot sync again on the old slot grid (" + std::to_string(k) + " slots, " +
+                                            std::to_string(res) + " samples off): timeslot numbers kept", 2.0);
 }
 
 bool TetraReceiver::decode_block(const float* soft5, int n, int k1, int a, uint32_t scr, std::vector<uint8_t>& type1) {
@@ -1274,6 +1311,7 @@ void TetraReceiver::traffic_start(int64_t at) {
         }
     }
     tr_.active = true;
+    tr_.new_span = false;
     tr_.known = true;
     tr_.start = at;
     tr_.last_tch = at;
@@ -1307,6 +1345,10 @@ void TetraReceiver::traffic_tick() {
 // party's SSI ("?" until a D-TX GRANTED names it), labelled with the group
 void TetraReceiver::traffic_talker(int64_t end) {
     if (!ctx_.talker) return;
+    if (tr_.new_span) {
+        tr_.start = end - SLOT_SAMPLES;   // the call goes on after a fade: a new span from this slot
+        tr_.new_span = false;
+    }
     std::string id = tr_.source ? ssi_str(tr_.source) : "?";
     std::string label = tr_.target ? (tr_.group != 0 ? "TG " : "to ") + ssi_str(tr_.target) : "TETRA call";
     ctx_.talker(id, label, tr_.start - input_delay, end - input_delay, tslot_ - 1);
@@ -1496,6 +1538,9 @@ void TetraReceiver::process(const std::complex<float>* x, size_t n) {
     // no slot sync: search until less than a window is left (each failed
     // search drops a slot) - the backlog stays bounded whatever the block size
     while (slot_start_ < 0) {
+        // a call whose carrier stays away: ended 1 s after its last traffic
+        if (tr_.active && hist_base_ - tr_.last_tch > static_cast<int64_t>(1.0 * RATE))
+            traffic_end(kp::Call::ENDED, tr_.last_tch);
         const int64_t base = hist_base_;
         search();
         if (slot_start_ < 0 && hist_base_ == base) return;   // not enough samples yet
@@ -1523,10 +1568,31 @@ void TetraReceiver::process(const std::complex<float>* x, size_t n) {
             if (ctx_.freq_error) ctx_.freq_error(Mode::TETRA, d * 18000.0f / (2.0f * static_cast<float>(M_PI)));
             decode_slot(bits, soft);
             voice_idle();
+            // the slot grid's reference for a re-acquisition after a fade
+            good_slot_ = slot_start_;
+            good_tn_ = tn_;
+            good_fn_ = fn_;
+            good_mn_ = mn_;
         } else if (++miss_ > 8) {
+            // Slot sync lost. The timeslot / frame / multiframe numbers are
+            // UNKNOWN from here until a BSCH of the cell gives them, or the
+            // carrier comes back on the old slot grid (search()): nothing
+            // that depends on the timeslot is reported, tracked or played
+            // meanwhile (tn_ 0). The grid's reference is the last GOOD slot -
+            // the missed ones moved slot_start_ by the noise's +-1 sample
+            lost_slot_ = good_tn_ > 0 ? good_slot_ : -1;
+            lost_tn_ = good_tn_;
+            lost_fn_ = good_fn_;
+            lost_mn_ = good_mn_;
+            tn_ = fn_ = mn_ = 0;
             slot_start_ = -1;
             ctx_.report->set(Mode::TETRA, "Carrier", "slot sync lost");
-            if (tr_.active) traffic_end(kp::Call::ENDED, tr_.last_tch);
+            // the transmission's talker ends at its last traffic slot (the
+            // fade is no DoA of it); the call itself ends only if no traffic
+            // comes back within 1 s (process())
+            if (tr_.talker_on && ctx_.talker_end) ctx_.talker_end(tr_.last_tch - input_delay, tslot_ - 1);
+            tr_.talker_on = false;
+            tr_.new_span = tr_.active;
             for (int i = 0; i < 5; i++) frag_[i] = Frag();
             return;
         }
