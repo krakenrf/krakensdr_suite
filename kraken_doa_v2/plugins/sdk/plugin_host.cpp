@@ -29,7 +29,8 @@
 //                    antenna K, as a single-channel decoder gets it
 //   --station LAT,LON  the receiver's location (Host::station)
 //   --rf HZ          RF of the file's centre (Host::rf_hz; default: the
-//                    REC.json "rf_hz" of ai/sigtool.py captures)
+//                    REC.json "tuner_hz" of make_testsignal.py scenes, else
+//                    its "rf_hz" - ai/sigtool.py captures, wide_scene.py)
 //   --raw            raw frames on (Host::raw_wanted) and printed
 //   --plots OUT      write the last plot of each id (Host::plot) as JSON lines
 //   --quiet          only the summary
@@ -1697,6 +1698,13 @@ bool read_sidecar(const std::string& path, const char* key, double* out) {
     return *out > 0;
 }
 bool read_sidecar_rate(const std::string& path, double* rate) { return read_sidecar(path, "rate", rate); }
+// the RF of the recording's centre from its sidecar: "tuner_hz" when there
+// (make_testsignal.py's playback sidecar: its "rf_hz" is the band's centre,
+// where the entry's VFO goes, "band_offset_hz" away), else "rf_hz" (sigtool
+// captures, wide_scene.py: the file's centre); false = none
+bool read_sidecar_centre(const std::string& path, double* rf) {
+    return read_sidecar(path, "tuner_hz", rf) || read_sidecar(path, "rf_hz", rf);
+}
 
 // The recording's bytes, read where they are asked for: a regular file
 // through fseeko / fread, so memory does not grow with its size. Anything
@@ -2340,7 +2348,7 @@ int test_file(int argc, char** argv) {
         host.st_lat_ = st_lat;
         host.st_lon_ = st_lon;
         host.plots_path_ = plots_path;
-        if (!std::isfinite(rf) && !read_sidecar(path, "rf_hz", &rf)) rf = NAN;
+        if (!std::isfinite(rf) && !read_sidecar_centre(path, &rf)) rf = NAN;
         if (std::isfinite(rf) && rf > 0) host.rf_hz_ = rf + offset;
         auto dec = kp_plugin_create(host);
         for (const auto& o : info.options) dec->option(o.key, o.def);
@@ -2432,9 +2440,9 @@ int test_file(int argc, char** argv) {
     host.st_lat_ = st_lat;
     host.st_lon_ = st_lon;
     host.plots_path_ = plots_path;
-    // RF of the file's centre (--rf, else the sidecar's "rf_hz"): the
+    // RF of the file's centre (--rf, else the sidecar: read_sidecar_centre): the
     // decoder's 0 Hz is --offset away from it
-    if (!std::isfinite(rf) && !read_sidecar(path, "rf_hz", &rf)) rf = NAN;
+    if (!std::isfinite(rf) && !read_sidecar_centre(path, &rf)) rf = NAN;
     if (std::isfinite(rf) && rf > 0) host.rf_hz_ = rf + offset;
     host.keep_pk_ = uca_r > 0 && channels > 1;
     auto dec = kp_plugin_create(host);
