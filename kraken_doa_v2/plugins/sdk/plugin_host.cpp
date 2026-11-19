@@ -2006,7 +2006,10 @@ void talker_bearings(const BearingIn& in, const TestHost& host) {
     // samples [i0, i0 + n) of every antenna (zeros outside the file)
     std::vector<char> raw;
     auto read = [&](int64_t i0, size_t n, std::vector<std::vector<std::complex<double>>>& out) {
-        out.assign(static_cast<size_t>(m), std::vector<std::complex<double>>(n));
+        // (the buffers reused: a fresh 1 MB per antenna and chunk is an mmap,
+        // page faults and zeroing each time - 15 % of a 15 s scene's run)
+        out.resize(static_cast<size_t>(m));
+        for (auto& o : out) o.assign(n, std::complex<double>(0));
         const int64_t s0 = std::max<int64_t>(0, i0);
         if (static_cast<int64_t>(n) + i0 <= s0) return;
         const size_t skip = static_cast<size_t>(s0 - i0), want = n - skip;
