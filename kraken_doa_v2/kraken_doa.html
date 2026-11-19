@@ -21798,7 +21798,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     ctx.font = font || '12px monospace';
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     const lbl = 'D' + d.id + ' ' + (c ? tkLabel(c) : d.trunk && d.trunk.label ? d.trunk.label : 'trunk');
-    ctx.fillText(lbl.length > 28 ? lbl.slice(0, 27) + '…' : lbl, x0 + 4, 14);
+    ctx.fillText(lbl.length > 28 ? lbl.slice(0, 27) + '…' : lbl, x0 + 4, 28);   // (under the other VFOs' labels)
     ctx.restore();
   }
 
@@ -21908,7 +21908,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const calls = (m.calls || []).filter(c => c.sys === s.id && !c.data);
       const count = w => calls.filter(c => (c.vfo < 0 && c.why === w) || (c.state === 'recent' && !c.why && c.end === w)).length;
       // channels without a frequency (less those the channel table has one for by now)
-      const un = tkUnresolved(s), nu = un.length;
+      const un = tkMissing(s.id), nu = un.length;
       if (nu) {
         const list = un.slice(0, 4).map(u => digEsc(u.ch)).join(', ') + (nu > 4 ? ' …' : '');
         note('w', 'warn', `${name}: ${nu} channel${nu === 1 ? '' : 's'} without a frequency (${list})`,
@@ -22122,9 +22122,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     }
     r.querySelector('.tk-more').onclick = e => { e.stopPropagation(); tkMenuOpen(e.currentTarget, c, hist); };
     // the second line: who talks, the channel, its frequency, and what keeps it
+    // (what keeps it from being followed comes first: the line is cut at its end)
     const parts = [];
-    if (c.source) parts.push(digEsc('from ' + c.source + ((c.sources || []).length > 1 ? ' +' + (c.sources.length - 1) : '')));
-    parts.push(digEsc(c.ch + (c.slot >= 0 ? ' / ' + (c.slot + 1) : '')) + (c.hz > 0 ? ' · ' + tkMhz(c.hz) + ' MHz' : ''));
     if (hist) {
       parts.push((c.dur_ms >= 0 ? (c.dur_ms / 1000).toFixed(1) + ' s · ' : '') +
         (c.followed ? digEsc(TK_END[c.end] || tkWhy(c.end)[0] || c.end) : `<span class="why" title="${digEsc(tkWhy(c.why || c.end)[1])}">Not followed: ${digEsc(tkWhy(c.why || c.end)[0])}</span>`));
@@ -22134,7 +22133,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       parts.push(`<span class="why${why === 'off' || why === 'duplicate' || why === 'ended' ? ' q' : ''}" title="${digEsc(tkWhy(why)[1])}">${digEsc(tkWhy(why)[0])}</span>`);
     } else if (c.state === 'recent') {
       parts.push(digEsc(TK_END[c.end] || c.end || ''));
-    } else if (c.site) parts.push(digEsc(c.site));
+    }
+    if (c.source) parts.push(digEsc('from ' + c.source + ((c.sources || []).length > 1 ? ' +' + (c.sources.length - 1) : '')));
+    parts.push(digEsc(c.ch + (c.slot >= 0 ? ' / ' + (c.slot + 1) : '')) + (c.hz > 0 ? ' · ' + tkMhz(c.hz) + ' MHz' : ''));
+    if (!hist && !why && c.state !== 'recent' && c.site) parts.push(digEsc(c.site));
     const l2 = parts.join(' · ');
     const le = r.querySelector('.l2');
     if (le.dataset.html !== l2) {
@@ -22378,9 +22380,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (tn && tn.dataset.html !== mh) { tn.dataset.html = mh; tn.innerHTML = mh; tn.title = miss.length ? miss.length + ' channels without a frequency' : ''; }
     tkDlgRender('miss');
   }
-  // the channels that lack a frequency: the status' unresolved list + the channel table's entries without one
-  function tkMissing() {
-    const s = tkSys(tkDlgId), L = tkLists[tkDlgId] || {};
+  // the channels that lack a frequency: the status' unresolved list + the channel table's granted entries without one
+  function tkMissing(id) {
+    id = id || tkDlgId;
+    const s = tkSys(id), L = tkLists[id] || {};
     const m = new Map();
     for (const u of s ? tkUnresolved(s) : []) m.set(u.ch, {ch: u.ch, num: u.num, n: u.n});
     for (const c of L.chans || []) {
