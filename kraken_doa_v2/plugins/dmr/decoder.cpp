@@ -5,6 +5,8 @@
 #include "dig_fsk4.hpp"
 #include "dmr.hpp"
 
+#include <cstdlib>
+
 namespace {
 
 struct Sink : dig::Fsk4Sink {

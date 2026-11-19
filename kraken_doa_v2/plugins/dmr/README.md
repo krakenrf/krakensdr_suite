@@ -111,10 +111,74 @@ repeater output every radio's bearing is the repeater's, in direct mode
   recordings: dmr_1 263 -> 269 valid bursts, dmr_it_8 604 -> 605, dmr_2
   unchanged, the talkers unchanged.
 
+- Trunking, generator (2026-11-20): `dmr_gen.py --mode tscc` (C_ALOHA,
+  C_BCAST, Chan_Freq MBC, grants twice then late entry once a second,
+  C_MOVE, C_SYS_Parms in the CACH) and `--mode bs --sys ... --clear S`
+  payload channels -> catalogue entry `dmr-tier3-trunk-three-calls` (14 s,
+  2.4 MHz: TSCC at +300 kHz, channel 301 at -500 kHz with one call per
+  timeslot from two transmitters, channel 302 at -100 kHz from a grant
+  with absolute parameters, colour code 2). Offline: the TSCC gives the
+  system (Small.37 site 5), 3 channels (301 / 302 with downlink and
+  uplink exact, 320 without), 15 grants (9 late entry) of 3 calls with
+  the frequencies, slots and the `cc` option as generated; each payload
+  channel with the grant's options (`--opt slot=1|2 [--opt cc=2]`):
+  ACTIVE at the call's first burst, ENDED at the terminator, RELEASED at
+  the P_CLEAR (+0.6 / +1.0 s), talkers 3100001 40.0, 3100003 160.0,
+  3100002 220.0 deg (each the other slot's talker as "?"; with the two
+  calls overlapping the offline estimator - which takes a talker's whole
+  span - mixed them: 43.8 / 138.3 deg, so the entry has them one after
+  the other). `tools/digi_test` delivers the same SYSTEM / CHANNEL /
+  GRANT / CALL reports through the engine
+- Robustness (TSCC, 12 s, 15 grant messages, SNR in 12.5 kHz, 3 noise
+  seeds each): all 15 down to 8 dB, 10-12 at 6 dB, none at 4 dB; +-1 kHz
+  carrier offset: all 15 (offset measured -1001 / +1002 Hz). Damaged
+  grants (114: 1..14 flipped BPTC bits, a wrong CRC mask, an MBC header
+  without / with a broken continuation or a CG_AP of another CSBKO, a
+  burst cut short): 0 false grants; BPTC repaired 6/6 with up to 5 flips,
+  2-5/6 with 6-14, every other kind none. Each grant form is guarded by
+  BPTC(196,96) + CRC-CCITT (mask 0xA5A5; MBC header 0xAAAA, the last
+  block's own CRC over the continuation, its CSBKO must repeat the
+  header's), Cdeftype 0 and 50-999 MHz for absolute parameters
+- Real Tier III network (2026-11-20, 600 s off air, 2.4 MHz of UHF, one
+  antenna): three TSCCs (sites 1-3 of one network) and seven payload
+  carriers named by their CACH
+  P_SYS_Parms (sites 1-3). Only C_BCAST Adjacent_Site is sent (no
+  Chan_Freq, no MBC, no absolute parameters): grants carry logical
+  channels only. From the grants and which carrier carried the granted
+  talkgroup: one linear plan, f = base + LCN x 12.5 kHz, for all 10
+  channels seen (the base is personalisation data); uplinks are not on air.
+  13 voice grants (TV_GRANT, sent twice 60 ms apart, then as late-entry
+  grants 4 at a time every 360 ms until the clear-down): 12 matched a call
+  of the same talkgroup on the granted carrier and slot 0.34-0.58 s later
+  (median 0.50; one weak carrier 3.5 s: its first LCs lost), 1 never keyed
+  up (P_CLEAR to the talkgroup 2.0 s after). A transmission ends with a
+  terminator (repeated every 60 ms through the hang time), a new one
+  inside the hang time is the same call; 1.98 s after the last terminator
+  the slot is cleared with 3 P_CLEARs 60 ms apart, addressed to the
+  talkgroup (data calls: ALLMSI). The TSCC carriers' slot 2 carries a
+  Motorola-FID CSBKO 0x19 (aloha-like, its own system code, about 300 per
+  600 s) and some data; data grants (PD_GRANT / PD_GRANT_MI, 102 at site
+  1) go to the payload channels and the TSCC's own slot 2 (composite).
+  Not parsed (shown with Show all messages): FID 0x10 CSBKO 0x19, C_ACKD
+  / C_AHOY (standard, no trunking content). A 30 s probe of another
+  Tier III network showed call timers and vote-now advice too
+- Capacity Plus: a 30 s rest-channel recording (no traffic): the rest
+  channel's CSBKO 0x3E on both slots, its timeslot bit matching each
+  (system `CapPlus.CC1`, rest channel 1); nothing to check grants against
+- Every earlier test unchanged (dmr_1 269, dmr_2 294 valid bursts and their
+  talkers, the `dmr-repeater-and-direct` entry's talkers and bearings),
+  except: the GopherTrunk voice-terminator fixture's hang-time terminator
+  train is 1 talker instead of 23 of 27 ms; opcode names 0x2E / 0x2F
+
 ## Sources / limits
 
-ETSI TS 102 361 (public); DSD / dsdcc / sdrtrunk as documentation only;
-the AMBE frame interleave tables from DSD (ISC, notice in
-`lib/mbe_tables.hpp`). A repeater INPUT with both slots busy can't be split
+ETSI TS 102 361 (public; trunking: -4 V1.12.1 clauses 6.3.2.2.1, 7.1.1.1,
+7.1.1.3, 7.1.2, 7.2.19, 7.2.42, annexes A.4 / B.1 / C; MBC and short LC:
+-1 V2.6.1 7.4, 7.1.4, B.2.3, B.3.3, B.3.7, B.3.12); DSD / dsdcc / sdrtrunk
+as documentation only; the AMBE frame interleave tables from DSD (ISC,
+notice in `lib/mbe_tables.hpp`). Capacity Plus (`capplus()` in
+dmr_trunk.cpp): the CSBKO 0x3E octet-2 layout is a [GPL-fact] from
+DSD-FME / SDRTrunk, its timeslot bit confirmed on a recording, the rest
+channel number [UNVERIFIED]. A repeater INPUT with both slots busy can't be split
 (MS bursts carry no slot); two radios in direct mode on both timeslots at
 once: the receiver follows one burst sequence at a time.

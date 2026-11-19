@@ -21,7 +21,7 @@ Three kinds of transmitter:
               its last. A Tier III PAYLOAD channel with --sys (the CACH then
               carries the P_SYS_Parms short LC) and per call --clear S (the
               TS clears the slot S seconds after the terminator: three
-              P_CLEAR CSBKs, target ALLMSI, back to the TSCC). --key-slot N:
+              P_CLEAR CSBKs to the call's talkgroup / unit, back to the TSCC). --key-slot N:
               only timeslot N's 30 ms are on the air - one carrier's two
               timeslots from two transmitters at their own bearings in a
               scene (the per-slot DoA path; a real repeater sends both)
@@ -660,7 +660,8 @@ def main():
         if c.get('clear') is not None:
             # Tier III: the TS clears the payload channel after the hang time
             sc = s1 + 2 * int(round(c['clear'] / 0.06))
-            pc = data_burst('bs', cc, DT_CSBK, block_info(p_clear(0, 0, ALLMSI, TSI), 0xA5A5))
+            # as a real Tier III network clears a voice call: addressed to its talkgroup / unit
+            pc = data_burst('bs', cc, DT_CSBK, block_info(p_clear(0, 0 if c['unit'] else 1, c['dst'], TSI), 0xA5A5))
             for k in range(3):
                 busy[sc + 2 * k] = (c['slot'], pc)
             print('%8.3f s  slot %d  P_CLEAR' % (sc * 0.03, c['slot']))
