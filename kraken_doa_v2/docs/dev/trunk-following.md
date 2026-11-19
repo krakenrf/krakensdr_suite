@@ -1044,8 +1044,11 @@ broadcasts the lists again when they change.
 - Recent: `history`, newest first, made once each (keyed by call id, end
   time and system: a row the receiver re-keys when it folds a temporary
   system is made again, so its menu acts on the keyed system): time of the
-  end, the label, marks, VFO, ⋯; duration and how it ended (`TK_END`) or
-  "Not followed: <why>".
+  end, the label, marks, VFO, ⋯; duration and how it ended (`TK_END`: the
+  receiver's end reasons in words - `taken_over` "Taken over by another
+  site"; with `lost` the reason the over lost its voice VFO follows in
+  brackets, "(lost its VFO: Nothing received)", the long form in the
+  tooltip) or "Not followed: <why>".
 - **During a playback** the receiver keeps the user's systems (without
   control VFOs) and the history from before, to put them back at its end;
   the box shows only what is the playback's: systems a control VFO hears
