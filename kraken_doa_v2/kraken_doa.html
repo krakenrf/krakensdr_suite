@@ -1235,6 +1235,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 #decimator-list .dec-row.dec-tk > span {min-width:0;overflow:hidden;text-overflow:ellipsis}
 #decimator-list .dec-row.dec-tk.lost {color:var(--bad-t)}
 #decimator-list .dec-item.tk-parked {opacity:.6}
+/* names from the air, a plugin or a user: a right-to-left override in one must not turn the rest of its line */
+.tk-sys .nm, .tk-call .nm, .tk-call .l2, .tk-hold b, #tk-dlg-name, .tk-menu .h, .tk-note > span, #decimator-list .dec-row.dec-tk > span, .tk-dlg .tk-t td {unicode-bidi:isolate}
 .tk-tag {display:inline-block;font-size:10px;color:var(--ac-t2);border:1px solid var(--ac-d);border-radius:6px;padding:0 5px;margin-left:4px;vertical-align:1px;white-space:nowrap}
 /* the system editor: a dialog in the Setup Settings look, sections as a strip across the top */
 .sf-dlg.tk-dlg {width:680px;height:580px;display:flex;flex-direction:column;overflow:hidden;padding-bottom:8px}
@@ -1296,6 +1298,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
   .tk-dlg .tk-form input {width:96px}
   .tk-miss .mrow .c {width:80px}
   .tk-miss .mrow input {width:90px}
+  .tk-dlg .tk-t .o {display:none}
+  .tk-dlg .tk-t input.nm {width:110px}
 }
 @media (pointer:coarse) { .tk-tabs button {min-height:40px} }
 .sf-cats {background:var(--s3);border:1px solid var(--l1);border-radius:3px;padding:6px;margin:4px 0 6px}
@@ -22137,7 +22141,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (c.source) parts.push(digEsc('from ' + c.source + ((c.sources || []).length > 1 ? ' +' + (c.sources.length - 1) : '')));
     parts.push(digEsc(c.ch + (c.slot >= 0 ? ' / ' + (c.slot + 1) : '')) + (c.hz > 0 ? ' · ' + tkMhz(c.hz) + ' MHz' : ''));
     if (!hist && !why && c.state !== 'recent' && c.site) parts.push(digEsc(c.site));
-    const l2 = parts.join(' · ');
+    const l2 = parts.map(x => '<bdi>' + x + '</bdi>').join(' · ');
     const le = r.querySelector('.l2');
     if (le.dataset.html !== l2) {
       le.dataset.html = l2;
@@ -22443,11 +22447,11 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       if (tt) tkText(tt, all.length ? String(all.length) : '', all.length + ' talkgroups (' + all.filter(t => t.listed).length + ' listed)');
       tt && (tt.style.color = 'var(--t5)');
       const h = !all.length ? '<div class="tk-more">No talkgroups yet: they appear as they are heard, or add one above</div>' :
-        '<div class="tk-tw"><table class="tk-t"><thead><tr><th>Talkgroup</th><th>Name</th><th>Mode</th><th>Last heard</th><th>Calls</th><th></th></tr></thead><tbody>' +
+        '<div class="tk-tw"><table class="tk-t"><thead><tr><th>Talkgroup</th><th>Name</th><th>Mode</th><th class="o">Last heard</th><th class="o">Calls</th><th></th></tr></thead><tbody>' +
         rows.slice(0, CAP).map(t => `<tr class="${t.listed ? '' : 'heard'}" data-tg="${digEsc(t.id)}"><td class="id" title="${t.listed ? 'In the list' : 'Heard, not in the list'}">${digEsc(t.id)}</td>` +
           `<td><input type="text" class="nm" maxlength="32" value="${digEsc(t.name)}" placeholder="${t.listed ? '' : 'heard'}" title="Its name (Enter saves; a named talkgroup is in the list)"></td>` +
           `<td><select title="Priority: followed first, takes a VFO from a normal call. Skip: never followed">${['normal', 'priority', 'skip'].map(k => `<option value="${k}"${t.mode === k ? ' selected' : ''}>${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select></td>` +
-          `<td class="d">${ago(t.last)}</td><td class="n">${t.calls}</td><td><button type="button" class="del" title="${t.listed ? 'Remove from the list (it comes back as heard when it is)' : 'Forget it'}" aria-label="Delete">${icon('trash')}</button></td></tr>`).join('') +
+          `<td class="d o">${ago(t.last)}</td><td class="n o">${t.calls}</td><td><button type="button" class="del" title="${t.listed ? 'Remove from the list (it comes back as heard when it is)' : 'Forget it'}" aria-label="Delete">${icon('trash')}</button></td></tr>`).join('') +
         '</tbody></table></div>' + (rows.length > CAP ? `<div class="tk-more">${CAP} of ${rows.length} shown: search to find the others</div>` : !rows.length ? '<div class="tk-more">None matches</div>' : '');
       if (!busy('tk-tg-list')) set('tk-tg-list', h);
     }
@@ -22462,13 +22466,13 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const all = (L.chans || []).slice().sort((a, b) => ((b.hz > 0 ? 0 : 1) - (a.hz > 0 ? 0 : 1)) || (a.num - b.num) || (a.ch < b.ch ? -1 : 1));
       const rows = all.filter(c => match(ws, (c.ch + ' ' + (c.num >= 0 ? c.num : '') + ' ' + (c.hz > 0 ? mkFmtMhz(c.hz) : '') + ' ' + c.src).toLowerCase()));
       const h = !all.length ? '<div class="tk-more">No channels yet: they appear as the system grants or announces them</div>' :
-        '<div class="tk-tw"><table class="tk-t"><thead><tr><th>Channel</th><th>No.</th><th>Frequency</th><th>Uplink</th><th>Calls</th><th>Last</th><th></th></tr></thead><tbody>' +
+        '<div class="tk-tw"><table class="tk-t"><thead><tr><th>Channel</th><th>No.</th><th>Frequency</th><th class="o">Uplink</th><th>Calls</th><th class="o">Last</th><th></th></tr></thead><tbody>' +
         rows.slice(0, CAP).map(c => {
           const has = c.hz > 0;
           const srcTip = {user: 'You entered it', rule: 'From a rule', announced: 'The system sent it', learned: 'Learned: a VFO received this channel\'s calls there'}[c.src] || '';
           return `<tr class="${has ? '' : 'miss'}" data-ch="${digEsc(c.ch)}"><td>${digEsc(c.ch)}</td><td class="n">${c.num >= 0 ? c.num : ''}</td>` +
             `<td class="f">${has ? mkFmtMhz(c.hz) + ' MHz' : 'none'}${c.src ? `<span class="tk-src ${c.src}" title="${srcTip}">${c.src}</span>` : ''}</td>` +
-            `<td class="d">${c.up_hz > 0 ? mkFmtMhz(c.up_hz) : ''}</td><td class="n">${c.grants}</td><td class="d">${ago(c.last)}</td><td>` +
+            `<td class="d o">${c.up_hz > 0 ? mkFmtMhz(c.up_hz) : ''}</td><td class="n">${c.grants}</td><td class="d o">${ago(c.last)}</td><td>` +
             `<button type="button" class="ed" title="${has ? 'Enter your own frequency for it' : 'Enter its frequency'}" aria-label="Edit">${icon('edit')}</button>` +
             (c.user_hz > 0 ? `<button type="button" class="clr" data-src="user" title="Clear your frequency (the rule, announced or learned one is used again)" aria-label="Clear">${icon('reset')}</button>` : '') +
             (c.learned_hz > 0 ? `<button type="button" class="clr" data-src="learned" title="Forget the learned frequency" aria-label="Forget learned">${icon('no')}</button>` : '') +
