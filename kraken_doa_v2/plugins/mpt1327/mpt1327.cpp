@@ -141,6 +141,8 @@ void Mpt1327Receiver::reset() {
     talker_.clear();
     talker_start_ = talker_end_ = 0;
     clear_at_ = last_tc_ = -1;
+    tc_gtc_ = 0;
+    tc_gtc_at_ = -1;
     tc_chan_ = -1;
     released_ = false;
 }
@@ -246,6 +248,7 @@ bool Mpt1327Receiver::recent(const std::vector<Recent>& v, int prefix, int id, d
 void Mpt1327Receiver::grant(uint64_t info, bool on_traffic) {
     const int prefix = field(info, 1, 7), id1 = field(info, 8, 13), d = field(info, 22, 1);
     const int chan = field(info, 23, 10), id2 = field(info, 33, 13);
+    if (sys_sent_ < 0) send_system();   // never a grant before the system (after a reset)
     kp::Grant g;
     g.channel = channel(chan);
     g.target = party(prefix, id1);
@@ -278,6 +281,7 @@ void Mpt1327Receiver::grant(uint64_t info, bool on_traffic) {
     if (id1 >= 1 && id1 <= 8100) g.options.push_back({"target", g.target});
     if (id2 >= 1 && id2 <= 8100) g.options.push_back({"source", g.source});
     g.options.push_back({"group", g.group ? "1" : "0"});
+    if (g.emergency) g.options.push_back({"emergency", "1"});
     if (o_.plan) g.options.push_back({"plan", "mpt1343"});
     if (o_.network) g.options.push_back({"network", "mpt1343"});
     if (o_.uplink) g.options.push_back({"link", "up"});
@@ -289,12 +293,21 @@ void Mpt1327Receiver::grant(uint64_t info, bool on_traffic) {
         if (own >= 0 && own != chan) released("moved to a replacement channel");
     }
     // the calling party is a unit: a later call TO it is an individual call
-    if (id2 >= 1 && id2 <= 8100 && units_.size() < 4096) {
-        bool known = false;
-        for (auto& u : units_)
-            if (u.prefix == prefix && u.ident == id2) { known = true; u.at = n_; }
-        if (!known) units_.push_back({prefix, id2, n_, false});
+    if (id2 >= 1 && id2 <= 8100) learn_unit(prefix, id2);
+}
+
+// a unit's ident (the oldest heard gives way when the table is full)
+void Mpt1327Receiver::learn_unit(int prefix, int id) {
+    size_t oldest = 0;
+    for (size_t i = 0; i < units_.size(); i++) {
+        if (units_[i].prefix == prefix && units_[i].ident == id) {
+            units_[i].at = n_;
+            return;
+        }
+        if (units_[i].at < units_[oldest].at) oldest = i;
     }
+    if (units_.size() < MAX_UNITS) units_.push_back({prefix, id, n_, false});
+    else units_[oldest] = {prefix, id, n_, false};
 }
 
 void Mpt1327Receiver::set_call(CallState s, const std::string& target, const std::string& source, bool group) {
@@ -307,6 +320,7 @@ void Mpt1327Receiver::set_call(CallState s, const std::string& target, const std
     c.target = target;
     c.source = source;
     c.group = group;
+    c.emergency = o_.emergency && !target.empty() && target == o_.target;   // the grant said so
     host_.call(c);
 }
 
@@ -325,6 +339,7 @@ void Mpt1327Receiver::released(const char* why) {
     c.target = call_target_;
     c.source = call_source_;
     c.group = call_group_;
+    c.emergency = o_.emergency && !call_target_.empty() && call_target_ == o_.target;
     host_.call(c);
     call_ = NONE;
     released_ = true;   // what follows on this channel is not the granted call
@@ -358,7 +373,10 @@ void Mpt1327Receiver::traffic(uint64_t info, int64_t start, int64_t end) {
         if (!o_.target.empty() && who == o_.target) {
             target = o_.target;
             group = o_.group != 0;
-            if (group) source.clear();   // the group's address: the speaker isn't named
+            // a group call: the group's address - the speaker isn't named; a
+            // unit call: the called unit answers - the call stays the grant's
+            // pair (the host keys a call on its target; who talks is the talker)
+            source = group ? "" : o_.source;
         } else if (!o_.source.empty() && who == o_.source) {
             target = o_.target;
             group = o_.group != 0;
@@ -436,7 +454,17 @@ void Mpt1327Receiver::address(uint64_t info, bool control, bool strict, int64_t 
         if (f(22, 1)) d += " (data)";
         r.event(Mode::MPT1327, "Grant: " + d, 3.0);
         r.set(Mode::MPT1327, "Last grant", d);
-        if (strict) grant(info, !control);
+        if (!strict) return;
+        if (control) {
+            grant(info, false);   // in a slot of the confirmed CCSC grid
+        } else {
+            // after a SYNT (a replacement channel, 9.1.2.4; a control channel
+            // used for traffic): nothing else vouches for one codeword - only
+            // a GTC heard twice within 2 s counts (the TSC repeats GTCs)
+            if (tc_gtc_at_ >= 0 && tc_gtc_ == info && n_ - tc_gtc_at_ < 2LL * FS) grant(info, true);
+            tc_gtc_ = info;
+            tc_gtc_at_ = n_;
+        }
         return;
     }
     if (!control && strict) traffic(info, start, end);
@@ -477,12 +505,7 @@ void Mpt1327Receiver::address(uint64_t info, bool control, bool strict, int64_t 
             const int id2 = f(30, 13), point = f(44, 1), e = f(46, 1);
             r.event(Mode::MPT1327, "AHOY (availability check) to " + to, chatter);
             if (strict && control) {
-                if (point == 0 && id1 >= 1 && id1 <= 8100 && units_.size() < 4096) {   // the called party is a unit
-                    bool known = false;
-                    for (auto& u : units_)
-                        if (u.prefix == prefix && u.ident == id1) { known = true; u.at = n_; }
-                    if (!known) units_.push_back({prefix, id1, n_, false});
-                }
+                if (point == 0 && id1 >= 1 && id1 <= 8100) learn_unit(prefix, id1);   // the called party is a unit
                 if (e) {
                     emerg_.erase(std::remove_if(emerg_.begin(), emerg_.end(), [this](const Recent& x) { return n_ - x.at > 30LL * FS; }),
                                  emerg_.end());
@@ -640,6 +663,7 @@ void Mpt1327Receiver::slot(const Slot& sl) {
         r.set(Mode::MPT1327, "System identity (SYS)", b);
         r.set(Mode::MPT1327, "Channel type", "Control channel");
         cc_seen_ = sync_end;
+        if (sys_sent_ < 0) send_system();   // at once (a new system, or the first after a reset)
         valid = true;
         // a traffic channel back to control signalling: the call is over
         if (call_ != NONE) released("control channel signalling");

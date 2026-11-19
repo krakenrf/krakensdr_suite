@@ -323,7 +323,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     corrected (facts, events, valid slots), after a SYNT and for every trunk
     report error-free only. A CCSC counts only on the 128-bit slot grid of
     another with the same SYS (a lone one passed 7 times in 1 h of noise, 8
-    in 1 h of FM speech; with the check none). The discriminator's DC is
+    in 1 h of FM speech; with the check none). A GTC after a SYNT counts
+    only when the same codeword comes twice within 2 s (3.1: one codeword
+    after a false SYNT has 18 bits of protection - ~400 false grants per
+    VFO-year in noise at 11 000 SYNT candidates an hour); a CLEAR has 38
+    (REVS, type). The system goes out at once after a reset, before any
+    grant. The discriminator's DC is
     removed before the correlators (an offset of 2 kHz lost most slots: the
     1.5 cycles of 1800 Hz don't reject DC) and reported as freq_error.
     Messages (field positions checked against MPT 1327 section 5,
