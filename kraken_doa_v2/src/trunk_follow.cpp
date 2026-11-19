@@ -291,6 +291,7 @@ struct Voice {
     double rf_hz = 0;
     int64_t t_placed = 0;
     bool dirty = false;
+    bool reset_seen = false;                // its decoder's RESET after the latest placement came
 };
 std::vector<Voice> g_voices;
 void park(Voice& v);
@@ -322,7 +323,7 @@ uint64_t g_learned_n = 0, g_learn_refused = 0, g_learn_dropped = 0;
 // --- other --------------------------------------------------------------
 bool g_dispatching = false;
 bool g_paused = false;
-std::string g_pause_why;
+std::string g_pause_why, g_pause_why_last;
 int g_mode = -1;                            // operating mode last seen
 bool g_pb = false;                          // playback last seen
 std::map<std::string, System> g_pb_saved;   // the systems before the playback
@@ -334,6 +335,26 @@ int64_t g_status_sent = 0;
 std::string g_status_last;
 bool g_status_now = false;
 std::string g_last_err;
+
+// Scanners move the user's VFOs, control VFOs included: where each control VFO
+// was (kept up to date while not paused; frozen while paused), put back when
+// the pause ends - and what was done, for the status (scan_restore, 60 s)
+struct Home {
+    std::weak_ptr<Inst> inst;
+    double rf = 0;
+    int bw = 0, tuner = 0;
+    std::string mode;   // dig::mode_string
+    std::string sys;
+};
+std::map<int, Home> g_home;
+struct Restore {
+    int vfo;
+    std::string sys, note;
+    double hz;
+    bool restored;
+    int64_t t;
+};
+std::vector<Restore> g_restore;
 
 // --- the queue from the decoders (any thread) ---------------------------------
 struct QEv {
@@ -876,10 +897,12 @@ bool history_worthy(const Call& c) {
 void record_history(const Call& c, const std::string& end) {
     if (!history_worthy(c)) return;
     const int64_t now = now_ms();
-    std::string j = call_json(c, false, now);
-    // + how it ended, how long it lasted
+    Call e = c;
+    e.end = end;   // (call_json writes "end")
+    std::string j = call_json(e, false, now);
+    // + how long it lasted
     j.pop_back();
-    j += ",\"end\":" + js(end) + ",\"dur_ms\":" + std::to_string(now - c.t_start) +
+    j += ",\"dur_ms\":" + std::to_string(now - c.t_start) +
          ",\"t_end\":" + std::to_string(wall_ms()) + ",\"followed\":" + jb(c.ever_followed) + "}";
     g_history.push_back(j);
     while (g_history.size() > HISTORY_MAX) g_history.pop_front();
@@ -1046,6 +1069,7 @@ void apply_voice(Voice& v, Call& c, const Place& p) {
     v.rf_hz = c.hz;
     v.t_placed = now;
     v.dirty = false;
+    v.reset_seen = false;
     v.call = c.id;
     c.vfo = v.vfo;
     c.t_placed = now;
@@ -1071,7 +1095,7 @@ int rank(const Call& c) { return c.prio ? 1 : 0; }
 std::string policy_why(const System& s, const Call& c) {
     if (!g_set.follow) return "off";
     if (g_paused) return "paused";
-    if (c.user_ended) return "ended";
+    if (c.user_ended) return "stopped";
     if (c.setup_failed) return "no_signal";
     if (c.data) return "data";
     if (c.group) {
@@ -1236,6 +1260,8 @@ std::string try_follow(Call& c) {
         if (!resolve(*s, c.ch, &hz, &up, &src)) {
             why = "no_freq";
         } else {
+            // (whatever gave it a frequency - a grant, an announcement, a rule, learning, an entry)
+            if (s->unresolved.erase(c.ch.name)) g_status_now = true;
             c.hz = hz;
             c.up_hz = up;
             c.fsrc = src;
@@ -1470,6 +1496,7 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
             s.lists_struct = true;
             if (!temp_id(s.id)) mark_dirty(SAVE_LEARN_MS);
         }
+        if (fin(ev.ch.freq_hz) && s.unresolved.erase(ev.ch.name)) g_status_now = true;
     }
     const std::string decoder = ev.decoder.empty() ? plugin : ev.decoder;
     // the site = the control VFO that granted it (a voice VFO's grant: its call's site)
@@ -1851,7 +1878,8 @@ void on_voice_call(Voice& v, const PluginEvent& ev) {
         if (ev.call_state != 1) return;
         // the channel carries a different call: re-labelled when that one may
         // be followed, else the VFO is freed
-        if (now - c.t_placed < STALE_FRAMES_MS * 3) return;   // (the previous channel's, still in the pipe)
+        // (the previous channel's, still in the pipe: not before its decoder's RESET for this placement - or 2 s)
+        if (now - c.t_placed < STALE_FRAMES_MS * 3 || (!v.reset_seen && now - c.t_placed < 2000)) return;
         const std::string key = call_key(c.sys, c.ctl_vfo, ev.group, ev.target);
         auto kit = g_call_by_key.find(key);
         Call probe = c;
@@ -1938,6 +1966,7 @@ void on_reset(int vfo, Track& t) {
     if (Voice* v = voice_of_vfo(vfo)) {
         // our own retune of it: expected; else the user changed it - taken back at the next grant
         if (now > t.expect_reset_until) v->dirty = true;
+        else v->reset_seen = true;   // (its decoder dropped the previous channel: what it says now is this one's)
         return;
     }
     if (now <= t.expect_reset_until) return;   // our CONTROL move
@@ -2170,7 +2199,18 @@ std::string build_status(bool ages) {
       << ",\"mode\":\"" << (mode == 1 ? "wideband" : mode == 2 ? "independent" : "coherent") << "\",\"hold\":";
     if (g_hold_sys.empty()) o << "null";
     else o << "{\"sys\":" << js(g_hold_sys) << ",\"tg\":" << js(g_hold_tg) << "}";
-    o << ",\"vfos\":[";
+    // control VFOs put back (or not) after a scanner, the last 60 s
+    o << ",\"scan_restore\":[";
+    {
+        bool f0 = true;
+        for (const auto& r : g_restore) {
+            if (now - r.t > 60000) continue;
+            o << (f0 ? "" : ",") << "{\"vfo\":" << r.vfo << ",\"sys\":" << js(r.sys) << ",\"hz\":" << num_json(r.hz)
+              << ",\"restored\":" << jb(r.restored) << ",\"note\":" << js(r.note) << "}";
+            f0 = false;
+        }
+    }
+    o << "],\"vfos\":[";
     for (size_t i = 0; i < g_voices.size(); i++) {
         const Voice& v = g_voices[i];
         auto it = v.call ? g_calls.find(v.call) : g_calls.end();
@@ -2329,13 +2369,141 @@ void send_err(const std::string& cmd, const std::string& err) {
 // The state machine
 // ============================================================================
 
+// while not paused: where the control VFOs are now
+void note_homes() {
+    std::map<int, Home> h;
+    for (const auto& kv : g_sys)
+        for (const auto& c : kv.second.ctl) {
+            auto inst = decimator_manager.getDecimator(c.first);
+            auto dd = inst ? inst->getDigital() : nullptr;
+            if (!inst || !dd) continue;
+            const double rf = vfo_rf(*inst);
+            if (rf <= 0) continue;
+            Home& m = h[c.first];
+            m.inst = inst;
+            m.rf = rf;
+            m.bw = inst->bandwidth_hz.load();
+            m.tuner = inst->tuner_channel.load();
+            m.mode = dig::mode_string(dd->mode(), dd->plugin_id());
+            m.sys = kv.first;
+        }
+    g_home.swap(h);
+}
+
+// The pause ended: the control VFOs the scan moved go back (normal commands:
+// the user's VFOs, saved where they were) - from 1 s after the scan stopped
+// (a scanner resets the VFOs it used as it stops), retried every 0.5 s for
+// RESTORE_MS while the VFO stays as the scan left it and its place isn't in
+// the span (the receiver tuned back by hand). Moved meanwhile by the user:
+// left as it is
+constexpr int64_t RESTORE_MS = 30000;
+struct Pending {
+    Home home;
+    float left_off = 0;
+    int left_bw = 0, left_tuner = 0;
+    std::string left_mode;
+    int64_t from = 0, until = 0;
+};
+std::map<int, Pending> g_pending;
+int64_t g_pending_t = 0;
+
+std::string vfo_mode(const Inst& inst) {
+    auto dd = inst.getDigital();
+    return dd ? dig::mode_string(dd->mode(), dd->plugin_id()) : "OFF";
+}
+
+void note_restore(int vfo, const Home& m, bool ok, const std::string& note) {
+    Restore r{vfo, m.sys, note, m.rf, ok, now_ms()};
+    std::cout << "Trunk following: control VFO D" << vfo << " " << note << std::endl;
+    for (auto it = g_restore.begin(); it != g_restore.end();)
+        it = it->vfo == vfo ? g_restore.erase(it) : std::next(it);
+    g_restore.push_back(r);
+    while (g_restore.size() > 16) g_restore.erase(g_restore.begin());
+    g_status_now = true;
+}
+
+void restore_homes() {
+    const int64_t now = now_ms();
+    for (const auto& kv : g_home) {
+        const Home& m = kv.second;
+        auto inst = decimator_manager.getDecimator(kv.first);
+        if (!inst || inst != m.inst.lock()) continue;   // removed meanwhile (an id reused: not ours)
+        Pending& pd = g_pending[kv.first];
+        pd.home = m;
+        pd.left_off = inst->frequency_offset_hz.load();
+        pd.left_bw = inst->bandwidth_hz.load();
+        pd.left_tuner = inst->tuner_channel.load();
+        pd.left_mode = vfo_mode(*inst);
+        pd.from = now + 1000;
+        pd.until = now + RESTORE_MS;
+    }
+}
+
+void tick_restore() {
+    const int64_t now = now_ms();
+    if (g_pending.empty() || g_paused || now - g_pending_t < 500) return;
+    g_pending_t = now;
+    for (auto it = g_pending.begin(); it != g_pending.end();) {
+        const int vfo = it->first;
+        Pending& pd = it->second;
+        const Home& m = pd.home;
+        if (now < pd.from) { ++it; continue; }
+        auto inst = decimator_manager.getDecimator(vfo);
+        if (!inst || inst != m.inst.lock()) { it = g_pending.erase(it); continue; }
+        const std::string mode = vfo_mode(*inst);
+        const double rf = vfo_rf(*inst);
+        if (std::fabs(rf - m.rf) < 100 && inst->bandwidth_hz.load() == m.bw && mode == m.mode) {
+            it = g_pending.erase(it);   // where it was (the scan didn't move it, or it is back)
+            continue;
+        }
+        const bool as_left = std::fabs(inst->frequency_offset_hz.load() - pd.left_off) < 1.0f &&
+                             inst->bandwidth_hz.load() == pd.left_bw && mode == pd.left_mode &&
+                             inst->tuner_channel.load() == pd.left_tuner;
+        if (!as_left) {
+            note_restore(vfo, m, false, "moved by the " + g_pause_why_last + ", then set by hand - left as it is");
+            it = g_pending.erase(it);
+            continue;
+        }
+        const Place p = place_for(m.rf, m.bw, m.tuner);
+        if (!p.ok) {
+            if (now > pd.until) {
+                note_restore(vfo, m, false, "moved by the " + g_pause_why_last + " - " + num_json(m.rf / 1e6, "%.6f") +
+                                                " MHz is outside the receiver's span: tune back (or move the VFO) to follow again");
+                it = g_pending.erase(it);
+            } else {
+                ++it;
+            }
+            continue;
+        }
+        std::vector<std::string> cmds;
+        const std::string sid = std::to_string(vfo);
+        if (inst->bandwidth_hz.load() != m.bw) cmds.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(m.bw));
+        if (mode != m.mode) cmds.push_back("DIGITAL_MODE:" + sid + ":" + m.mode);
+        char f[96];
+        if (operating_mode_index() == 2) snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", vfo, p.off_hz / 1000.0, p.tuner);
+        else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", vfo, p.off_hz / 1000.0);
+        cmds.push_back(f);
+        std::string err;
+        for (const auto& c : cmds) {
+            const std::string why = ControlHandler::apply_command(c);
+            if (!why.empty()) err = "'" + c + "' refused: " + why;
+        }
+        note_restore(vfo, m, err.empty(), err.empty() ? "put back on " + num_json(m.rf / 1e6, "%.6f") + " MHz after the " +
+                                                          g_pause_why_last : err);
+        it = g_pending.erase(it);
+    }
+}
+
 void pause_check() {
     std::string why;
     if (sfscan::running()) why = "saved-frequency scan";
     else if (scanner_manager.isRunning()) why = "discrete scanner";
     else if (continuous_scanner.isRunning()) why = "continuous scanner";
     const bool p = !why.empty();
+    if (!p && !g_paused) note_homes();
+    if (p) g_pause_why_last = why;
     if (p == g_paused && why == g_pause_why) return;
+    const bool resumed = g_paused && !p;
     g_paused = p;
     g_pause_why = why;
     g_status_now = true;
@@ -2346,6 +2514,10 @@ void pause_check() {
         remove_all_voices();
     } else {
         std::cout << "Trunk following: resumed" << std::endl;
+        if (resumed && !playback::active()) restore_homes();
+    }
+    if (p) {
+        g_pending.clear();   // (a scan again: its own end decides)
     }
 }
 
@@ -2387,7 +2559,7 @@ void tick_calls() {
             c.vfo = -1;
             c.user_ended = true;
             set_state(c, WAIT);
-            set_why(c, *s, "ended");
+            set_why(c, *s, "stopped");
             continue;
         }
         if (c.pending_place && now - v->t_placed >= PLACE_MIN_MS) {
@@ -2709,6 +2881,7 @@ void tick() {
         }
         g_mode = mode;
         pause_check();
+        tick_restore();
         tick_tracks();
         tick_calls();
         tick_voices();
@@ -2986,8 +3159,8 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         Call& c = it->second;
         c.user_ended = true;
         std::cout << "Trunk following: " << c.sys << " " << c.target << " ended by the user" << std::endl;
-        if (c.vfo >= 0) unfollow(c, "ended");
-        else if (System* s = sys_of(c.sys)) set_why(c, *s, "ended");
+        if (c.vfo >= 0) unfollow(c, "stopped");
+        else if (System* s = sys_of(c.sys)) set_why(c, *s, "stopped");
         return done();
     }
     if (cmd == "TRUNK_HOLD") {

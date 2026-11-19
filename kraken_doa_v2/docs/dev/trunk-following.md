@@ -69,7 +69,9 @@ first) * step_hz`, uplink = downlink + `up_off_hz`); an **announced** entry
 `announced` | `learned`). Announced / learned values never overwrite a user
 entry (separate fields per channel). Unresolved grants make the call wait
 with why `no_freq` and are listed per channel name (`unresolved`: which
-channel numbers lack a frequency, how often granted). Every granted channel
+channel numbers lack a frequency, how often granted); a channel leaves that
+list as soon as anything gives it a frequency (a grant's own, an
+announcement, a rule, learning, a user entry). Every granted channel
 gets a table entry (its grant count). Uplinks are kept and shown; this
 version follows the downlink only.
 
@@ -96,7 +98,7 @@ applies, `why`):
 |---|---|
 | `off` | following is off |
 | `paused` | a scanner runs (below) |
-| `ended` | the user ended it (`TRUNK_END`) or removed its voice VFO: not rejoined while its grants go on (nor at its next overs within the RECENT time) |
+| `stopped` | the user stopped it (`TRUNK_END`) or removed its voice VFO by hand: not rejoined (below) |
 | `no_signal` | its SETUP gave up (nothing received): not followed again this over |
 | `data` | a data grant - counted only, no call row (below) |
 | `skip` | its talkgroup's mode is skip - counted only, no call row |
@@ -110,6 +112,7 @@ applies, `why`):
 | `out_of_span` | it can't be placed (below) |
 | `no_vfo` | `TRUNK_MAX_VFOS` voice VFOs are busy with calls of equal or higher rank |
 | `vfo_limit` | the receiver's 16 VFOs are all there |
+| `settings` | (a moment) the VFO snapshot is being applied: voice VFOs were removed |
 
 A waiting call is retried every tick (a VFO may be free, an entry added).
 **Priority**: a priority talkgroup's call takes the voice VFO of the oldest
@@ -173,7 +176,7 @@ DIGITAL (analogue: FFT with `DEC_SQUELCH_LEVEL` `ANALOG_SQ_DB` 10 dB),
   VFOs keep being saved while following runs. Before a snapshot is applied
   (the replay after a playback, `RESET_SETTINGS`) every voice VFO is removed
   (`trunk::release_all_vfos`): the snapshot works by list position.
-- Removed by hand: simply gone - its call isn't rejoined (why `ended`).
+- Removed by hand: simply gone - its call isn't rejoined (why `stopped`).
   Retuned / reconfigured by hand: taken back at the next grant.
 - Placed at most every `PLACE_MIN_MS` 100 ms (a grant flood moving a call).
 
@@ -212,8 +215,9 @@ same call). A `hang` call goes back to `active` with new activity.
   never followed (following switched on mid-call) always starts it.
 - A grant of the same target on another channel (or slot): the call MOVES
   (its VFO retunes, `moves`). A `CALL ACTIVE` from the voice VFO naming
-  another target (not before 300 ms after the placement): re-labelled to
-  that target if it may be followed (an existing waiting call of that target
+  another target (not before 300 ms after the placement and its decoder's
+  RESET for it - or 2 s: reports of the previous channel may still be in
+  the pipe): re-labelled to that target if it may be followed (an existing waiting call of that target
   takes the VFO; the old one ends `relabelled`), else the VFO is freed
   (`wrong_call`). Only ACTIVE counts: an ENDED / RELEASED of another target
   is the previous call's, late. An EMPTY target means "not known yet" (DMR
@@ -232,6 +236,16 @@ same call). A `hang` call goes back to `active` with new activity.
   scan stops. (The saved-frequency scan's free tuners don't count voice
   VFOs.) A scanner's retune also resets the control VFOs' decoders: their
   calls end `control_reset`.
+  The scanners move the user's VFOs, control VFOs included (their decoders
+  reset). Where every control VFO is (RF, bandwidth, decoder) is noted each
+  tick while not paused; 1 s after the scan stops, each one the scan moved is
+  put back with normal commands (saved: the user's VFO) when its RF fits the
+  span now - retried every 0.5 s for 30 s (e.g. until the receiver is tuned
+  back by hand). Moved by the user meanwhile: left as it is. Each outcome is
+  in `scan_restore` (`restored` + `note`: "put back on ... MHz after the
+  saved-frequency scan", "... outside the receiver's span: tune back ...",
+  "... then set by hand - left as it is") and a log line. The scanners'
+  own behaviour is unchanged.
 - **Centre / tuner retuned**: the calls on that tuner end (`retuned`, or
   `control_reset` when the control VFO's RESET comes first - in coherent mode
   the control VFO moves with the centre).
@@ -268,8 +282,17 @@ channel (`chans[].data` in the lists message); once per grant sequence
 (on a DMR Tier III network 30 of 33 grants in 100 s were data). `history`
 keeps the followed calls plus the not-followed ones the user can act on:
 `no_freq`, `out_of_span`, `no_vfo`, `vfo_limit`, `encrypted`, `unit`,
-`unlisted`, `no_decoder`, `no_signal` - not `off`, `paused`, `hold`, `ended`,
+`unlisted`, `no_decoder`, `no_signal` - not `off`, `paused`, `hold`, `stopped`,
 `duplicate` (the followed copy is there).
+
+**Stopped by the user** (`TRUNK_END:<id>`, or its voice VFO removed by
+hand): "this call" is the call row - system + site + target - for as long
+as it is listed: while its grants go on, and at every further over of the
+conversation that comes while it is RECENT (30 s after its last over ended;
+each new over restarts that 30 s). Its overs wait with why `stopped`. It is
+followed again once the row has expired (30 s with no grant), and only that
+call is affected: the same talkgroup through another site, a hold, another
+`TRUNK_END` change nothing else.
 
 ### Decoder log
 Each history entry also goes to the decoder data log (*decoder-log*) as one
@@ -349,6 +372,9 @@ renamed.
 - `paused` (bool), `paused_why` (`"saved-frequency scan"` | `"discrete
   scanner"` | `"continuous scanner"` | `""`), `playback` (bool), `mode`
   (`coherent` | `wideband` | `independent`), `hold`: `{"sys","tg"}` | null.
+- `scan_restore`: the control VFOs a scanner moved, put back (or not) when
+  it stopped, the last 60 s: `[{vfo, sys, hz (where it was), restored,
+  note}]` (below).
 - `vfos`: the voice VFOs, `[{vfo, call (0 = parked), state (parked | setup |
   active | hang), hz (the frequency placed on, null), plugin, tuner, heard,
   enabled, + while it has a call: sys, ctl, label ("TG 1201 Fire" /
@@ -600,7 +626,7 @@ GRANT_END, a tone per call on a traffic channel -> valid frames, a talker,
 CALL ACTIVE / ENDED / RELEASED, audio), and a WebSocket client asserting on
 the broadcasts:
 
-- `t1_life` 35 checks: the lifecycle with real timing (grant -> VFO on the
+- `t1_life` 36 checks: the lifecycle with real timing (grant -> VFO on the
   frequency, decoder / demod / 12.5 kHz / options / Digital squelch / heard ->
   ACTIVE 0.2-0.3 s after the grant -> HANG -> released at GRANT_END ->
   parked, muted, not decimated, still listed); the parked VFO reused for the
@@ -620,7 +646,7 @@ the broadcasts:
   (no_signal after 3 s -> the other site ACTIVE); two systems with one
   talkgroup number (two calls); `TRUNK_ALL_SITES:1`; the partial centre
   when two control VFOs don't fit (edge clip 0.3).
-- `t3_policy` 34: VFO limit without / with priority (pre-empted), a moved
+- `t3_policy` 36: VFO limit without / with priority (pre-empted), a moved
   call (same VFO), a re-assigned channel (VFO handed over, no retune), skip
   and data counted only (no rows, no history), encrypted / unit / unlisted,
   out of span + the suggested centre, unresolved -> user entry -> followed,
@@ -631,12 +657,12 @@ the broadcasts:
   snapshot with a heard trunk VFO present = the user's 2 VFOs and heard list
   `1` only, the user's change during following saved, the user's VFOs back
   exactly after the restart; RESET_SETTINGS leaves the systems file.
-- `t5_events` 27: a scanner mid-call (paused, VFOs removed, resumed), a
+- `t5_events` 29: a scanner mid-call (paused, VFOs removed, resumed), a
   centre retune, the user retuning (taken back) / removing a trunk VFO (not
   rejoined), the control VFO retuned / removed, a mode change, the control
   channel lost (not receiving 5.2 s later; the call ends on its own
   hang time), CONTROL (the control VFO moved and saved, a second within 10 s
-  waits).
+  waits); a scanner's moved control VFO put back by the manager (scan_restore).
 - `t6_learn` 13: learning from a user's VFO (two observations, then
   followed), the refusals, a learned entry dropped after two no_signals.
 - `t7_stress` 16: a flood of 3000 grants / s for 5 s (15340 events, none
@@ -652,6 +678,16 @@ the broadcasts:
   tuner 0, out of span past every tuner, no tuner retuned) and wideband scan
   (calls on tuners 3 and 1 at the right offsets, out of span on a seam and
   past the spread, no retune).
+- `t10_log` 2: one `call` record in the decoder log with the control VFO at
+  Log, none at Off.
+- 209 checks, all passing on the final build. Found on the way: a
+  temporary system merged into its keyed one erased the KEYED one (merge_temp
+  took the Track's system id by reference and rewrote it) - the keyed system
+  came back empty and the temporary one stayed as a ghost with a stale
+  control entry, as the first real P25 run showed; fixed. (The test scene:
+  strong carriers summed into uint8 clipped and made intermodulation tones on
+  other channels - the scratch plugin's tone detector took them for calls;
+  the scene's carriers are kept small since.)
 
 On real captures and the plugins' scenes (the orchestrator's runs on the
 merged tree, 2026-11-20): an 80 s off-air P25 capture replayed as heimdall,
@@ -672,4 +708,25 @@ of the control carrier), mpt1327-trunk-two-calls 5 as analogue FM (2 data
 grants not followed), nxdn-trunk-two-calls (with the rule in its
 `commands`); every expected talker at its bearing, every call `released`.
 
-AddressSanitizer + UBSan over t1-t3: ASAN_RESULT.
+The same two captures on the final build (2026-11-20, the TEST build, the
+first 80 / 100 s): P25 - 486 grant messages, 49 grants (overs), 39 followed,
+9 duplicates not double-followed, 2 `no_freq` (before the identifier tables
+were heard), 0 `no_signal`, ONE system listed (no temporary ghost), 38
+history entries (37 `released`, 1 `ended`), 945 events none dropped, place
+median 0 ms (max 102), ACTIVE median 103 ms (max 296), 45 `decimator_info`
+in 82 s (was 184 in 80 s). DMR Tier III with the rule sent at once (the
+system record made before its control channel was heard): 110 grant
+messages, the voice call followed (ACTIVE 34 ms after the grant reached the
+loop), its site-3 copy `duplicate`, 8 data grant sequences counted only (no
+rows), 6 `decimator_info` in 102 s; the suggested centre at the default edge
+clip 0.8 keeps 2 of the 3 control VFOs (455.756 - 457.681 MHz don't fit
+1.92 MHz together): the partial one, `controls` 2 / `controls_of` 3.
+
+AddressSanitizer + UndefinedBehaviorSanitizer (`-fsanitize=address,undefined`,
+the whole TEST build and the scratch plugin) over t1 / t2 / t3 / t5 / t8: no
+report. Under the sanitizers (3-5 x slower plugins) t1-t3 and t8 pass; t5's
+CONTROL part misses its 0.6 s grant tone (5 of 27, timing only).
+
+## Page
+
+(The page worker's section.)
