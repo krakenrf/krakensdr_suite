@@ -1207,6 +1207,7 @@ private:
         if (trunk_from_.empty()) return;
         std::string id;
         id.swap(trunk_from_);
+        owner_->set_trunk_reported(false);
         trunk::PluginEvent ev;
         ev.kind = trunk::PluginEvent::RESET;
         trunk_send(id, std::move(ev));
@@ -1333,6 +1334,7 @@ private:
         }
         if (!trunk_from_.empty() && trunk_from_ != r.id) trunk_reset();   // (another plugin's state)
         trunk_from_ = r.id;
+        owner_->set_trunk_reported(true);   // (before the report goes: a reader that sees false has none in the pipe)
         trunk_send(r.id, std::move(ev));
     }
 
