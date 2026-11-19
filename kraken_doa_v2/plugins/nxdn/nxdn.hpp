@@ -57,7 +57,6 @@ private:
     uint8_t sacch_sf_[72] = {0};
     int sacch_have_ = 0;
     int64_t sacch_t_[4] = {0, 0, 0, 0};     // sync_end of each superframe fragment
-    bool sacch_run_ = false;                // the 4 fragments came from 4 consecutive frames
     std::string call_;
     int cipher_ = 0;
     bool efr_ = false;                      // the call is 9600 bps / EFR (full-rate AMBE+2: not played)
@@ -75,7 +74,7 @@ private:
     bool frame_outbound_ = false;         // sent by a repeater (LICH direction)
     int frame_rfct_ = -1;                 // its LICH RF channel type (0 RCCH, 1 RTCH, 2 RDCH, 3 RTCH_C)
     bool frame_strong_ = false;           // its message passed a strong check (CRC-12 / 15 / 16, or a
-                                          // SACCH superframe of 4 consecutive frames)
+                                          // SACCH superframe: 4 consecutive frames in order)
     int64_t call_start_ = -1;             // start of the transmission's first frame, -1 = none
     int64_t voice_end_ = 0;               // end of its last valid voice / VCALL frame
     int64_t lc_end_ = 0;                  // end of the last frame whose VCALL named the talker
