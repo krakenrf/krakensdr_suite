@@ -496,7 +496,8 @@ system's, verified identical on its traffic channels), `wacn` / `sysid`
 TDULC LCO 0x0F -> RELEASED (on the recorded systems 40-50 ms after almost
 every transmission: no hang time, each transmission granted anew; on one
 channel most ended without it - the host's hang timer is needed); Phase 2
-MAC_END_PTT / HANGTIME -> ENDED, MAC_IDLE / MAC_RELEASE -> RELEASED per LCH;
+MAC_END_PTT / HANGTIME / MAC_RELEASE (one unit's release or a preemption,
+not the channel's) -> ENDED, MAC_IDLE -> RELEASED per LCH;
 another talkgroup on the slot -> RELEASED for the old call, then ACTIVE.
 Timing on air: grant a median 0.22 s before the first voice frame (10-90 %
 0.14-0.28 s UHF, 0.02-0.27 s VHF); in 85 of 319 matched grants voice started

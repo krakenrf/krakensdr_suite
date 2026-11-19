@@ -229,7 +229,10 @@ facts are unchanged.
   options or of its Phase 2 scrambling (not the inbound-only guess). Sent
   when it changes and every 4 s, at most once per input block
 - Channels (`trunk_channel`): the site's control channel (0x3A, 0x3B),
-  neighbours' control channels (0x3C, same system ID only), secondary
+  neighbours' control channels (0x3C: only once this site's system ID is
+  known - RFSS or network status - and only that system's: another
+  system's channel numbers would be resolved with this site's identifier
+  tables), secondary
   control channels (0x39, 0x29 with its uplink), SNDCP data channels (0x16);
   again when their identifier arrives later or a minute passed.
   `control_channel` when, on a control channel, the RFSS status names a
@@ -240,8 +243,10 @@ facts are unchanged.
   x spacing on slot number % N (checked on air: a real update granted
   1-212 and 1-213 of a 6.25 kHz-step TDMA identifier to two talkgroups at
   once - one carrier, both slots); uplink = downlink + the identifier's
-  transmit offset, or the explicit forms' channel R; NAN until the
-  identifier is heard (the grant still goes out, name + number)
+  transmit offset (0: simplex, NAN); an explicit form with a channel R:
+  R's frequency, NAN while R's identifier is not known or when R = T
+  (simplex) - never T's offset in its place; NAN until the identifier is
+  heard (the grant still goes out, name + number)
 - Grants (every one heard, `update` for the update forms): TSBK 0x00, 0x02
   (two calls = two grants), 0x03 (channel T = the downlink), 0x04, 0x06,
   0x08 / 0x09 (telephone: target = the unit, no source), 0x14 (`data`),
@@ -251,7 +256,11 @@ facts are unchanged.
   `encrypted` / `emergency` from the service options where the message has
   them (0x40 / 0x80). Each passed its FEC and CRC first: TSBK rate-1/2
   trellis + CRC-16, link control RS(24,12,13) after Hamming / Golay, Phase
-  2 RS(GF 64) + CRC-12 / CRC-16. Multi-block (MBT) explicit grants are not
+  2 RS(GF 64) + CRC-12 / CRC-16. Never a grant: the placeholder channel
+  15-4095 (0xFFFF), talkgroup / unit 0 - a multi-entry form's unused pair
+  (all zero), and the "TG 0 on 15-4095" the real systems broadcast (175
+  times in 300 s on 7 of the 13 control channels below; none of them
+  reached `grant()` in 3.1 either). Multi-block (MBT) explicit grants are not
   decoded: the receiver hands a PDU over after its header block. P25 has
   no control-channel clear-down: no `grant_end`
 - Grant options (all five every time, "" = the default): `nac` = the
@@ -268,7 +277,13 @@ facts are unchanged.
   0x0F, or when the channel carries trunking blocks. Phase 2 (slot = LCH;
   with `lch` only that one): ACTIVE from MAC_PTT and the voice channel user
   messages, ENDED at MAC_END_PTT, MAC_HANGTIME and the call timeout,
-  RELEASED at MAC_IDLE and MAC_RELEASE. Inbound bursts are radios, not a
+  RELEASED at MAC_IDLE. MAC_RELEASE (one unit's release, forced or not,
+  call or audio - talker preemption; [GPL-fact] layout, never seen on air,
+  TIA-102.BBAD-A not available) gives ENDED at most and changes nothing
+  else: it stops a radio, not the channel's call (before 2026-11-20 it gave
+  RELEASED and ended the call mid-way - a generator burst with one
+  MAC_RELEASE: RELEASED at 2.13 s and a new ACTIVE with an unknown target;
+  now ENDED, the call and its events as in 3.0). Inbound bursts are radios, not a
   traffic channel: no calls. Another known target on the same slot =
   RELEASED for the old call, then ACTIVE. A clear-down heard before any
   call of this instance releases nothing (it may be the previous call's on
@@ -562,6 +577,19 @@ Trunk following (3.1, 2026-11-20):
   ones start up to 77 ms BEFORE the grant's TSDU has been received (a
   transmission keyed while the channel was being granted). No TDMA grant
   on air (the second system announces TDMA identifiers, grants nothing)
+- Review fixes (2026-11-20; a harness feeding `tsbk()` directly, failing
+  before, passing after): a grant update whose first pair is all zero no
+  longer gives a grant "0-0" to TG 0 (TSBK 0x02, MFID 0x90 0x03); a
+  neighbour of another system heard before this site's RFSS / network
+  status is no longer announced with this site's tables; an explicit
+  update whose channel R has no known identifier (or R = T) has uplink NAN,
+  not T's offset; MAC_RELEASE gives ENDED, not RELEASED (above). On the 27
+  off-air channels the grant / call / system lines are identical before
+  and after, to the line and the time; only neighbour channels announced
+  before the site's system ID (without a frequency) are gone; the four
+  scenes identical (events, trunk lines, bearings). After a RESET
+  (`tools/digi_test --retune`) the system goes out before the first grant
+  or channel, at once (not with the 4 s repeat)
 - Messages the decoder could not parse on those control channels: MFID
   0xD8 opcode 0x34 (279, constant payload), TSBK 0x2D (3). No MBT / PDU on
   any real control channel (the receiver hands a PDU over after its header
