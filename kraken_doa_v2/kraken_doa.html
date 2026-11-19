@@ -21729,7 +21729,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   };
   const TK_END = {
     released: 'Released', ended: 'Ended', reassigned: 'Channel reassigned', preempted: 'Taken by a priority call',
-    expired: 'Grants stopped', duplicate: 'Followed on another site', wrong_call: 'Channel carried another call', relabelled: 'Relabelled', control_reset: 'Control channel reset',
+    expired: 'Grants stopped', duplicate: 'Followed on another site', taken_over: 'Taken over by another site', wrong_call: 'Channel carried another call', relabelled: 'Relabelled', control_reset: 'Control channel reset',
     control_removed: 'Control VFO removed', mode: 'Mode changed', retuned: 'Receiver retuned', playback: 'Playback started',
     playback_end: 'Playback ended', forgotten: 'System forgotten', settings: 'Settings applied', no_signal: 'Nothing received'
   };
@@ -22221,7 +22221,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const parts = [];
     if (hist) {
       parts.push((c.dur_ms >= 0 ? (c.dur_ms / 1000).toFixed(1) + ' s · ' : '') +
-        (c.followed ? digEsc(TK_END[c.end] || tkWhy(c.end)[0] || c.end) : `<span class="why" title="${digEsc(tkWhy(c.why || c.end)[1])}">Not followed: ${digEsc(tkWhy(c.why || c.end)[0])}</span>`));
+        (c.followed ? tkEndHtml(c) : `<span class="why" title="${digEsc(tkWhy(c.why || c.end)[1])}">Not followed: ${digEsc(tkWhy(c.why || c.end)[0])}</span>`));
     } else if (why === 'no_freq') {
       parts.push(`<a class="why" href="#" data-sys="${digEsc(c.sys)}" title="${digEsc(TK_WHY.no_freq[1])}">Set its frequency</a>`);
     } else if (why) {
@@ -22242,6 +22242,15 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     }
     le.title = [c.sources && c.sources.length > 1 ? 'Talkers: ' + c.sources.join(', ') : '', c.up_hz > 0 ? 'Uplink ' + tkMhz(c.up_hz) + ' MHz' : '',
                 c.site ? 'Site: ' + c.site : '', c.fsrc ? 'Frequency from: ' + c.fsrc : ''].filter(Boolean).join('\n');
+  }
+  // how a followed over ended; `lost` (history): why it lost its voice VFO before its end - for
+  // `taken_over` (it lost the VFO, waited as a duplicate, and ended with the other site's copy) the detail
+  function tkEndHtml(c) {
+    const t = TK_END[c.end] || tkWhy(c.end)[0] || c.end || '';
+    if (!c.lost) return digEsc(t);
+    const why = TK_WHY[c.lost] ? tkWhy(c.lost) : [TK_END[c.lost] || String(c.lost).replace(/_/g, ' '), ''];
+    const tip = (c.end === 'taken_over' ? 'This site\'s copy of the call lost its voice VFO (' + why[0] + ') and another site\'s copy of the same call was followed; it ended with that one. ' : 'It lost its voice VFO before its end: ' + why[0] + '. ') + (why[1] || '');
+    return `<span title="${digEsc(tip)}">${digEsc(t)} (${digEsc(c.end === 'taken_over' ? 'lost its VFO: ' + why[0] : 'VFO lost: ' + why[0])})</span>`;
   }
   function tkClock(ms) {
     const d = new Date(ms);
