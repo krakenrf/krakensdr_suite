@@ -21,9 +21,11 @@
 namespace dig {
 
 // A setting a plugin declares (kp::Option); choices "" = free text, else
-// "value=Label|value=Label|..."
+// "value=Label|value=Label|..."; hidden = the panel draws no control for it
+// (set by a table row click, kp::Option::hidden)
 struct PluginOption {
     std::string key, label, def, choices, help;
+    bool hidden = false;
 };
 
 struct PluginInfo {
@@ -90,7 +92,9 @@ private:
 
 // Digital voice codecs as the decoder plugins find them (runs
 // plugins/lib/build/codecs; blocks ~ms - call it off the uWS thread):
-// {"codecs":{"checked":true,"imbe_ok":..,"imbe":"..","ambe_ok":..,"ambe":"..","acelp_ok":..,"acelp":".."}}
+// {"codecs":{"checked":true,"imbe_ok":..,"imbe":"..","ambe_ok":..,"ambe":"..","acelp_ok":..,"acelp":"..",
+//            "aac_ok":..,"aac":".."}}   (aac: the dab plugin's AAC library, DAB+; only when the
+//                                        codec check was built with plugins/dab/ there)
 std::string codec_status_message();
 
 // Runs argv (argv[0] = path; a bare name with search_path), returns its

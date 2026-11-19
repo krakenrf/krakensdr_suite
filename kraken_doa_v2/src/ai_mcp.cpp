@@ -655,7 +655,9 @@ void t_get_decoder(const Json& a, Reply r) {
     }
     r("{\"vfo\":" + std::to_string(id) + ",\"freq_hz\":" + num(v.hz, 0) + ",\"status\":" + dump(st) +
       ",\"note\":" + q("events: t = ms since epoch, src = plugin id, m = text; tables: rows [key, age_s, cells..] "
-                       "under cols; info = facts [key, value, age_s] per plugin") + "}", false);
+                       "under cols; info = facts [key, value, age_s] per plugin; choices = the values an option "
+                       "takes now, from the plugin (<plugin>.<key>: [[value, label], ...]; e.g. a DAB ensemble's "
+                       "programmes) - set one with set_decoder_option") + "}", false);
 }
 
 double haversine_km(double la1, double lo1, double la2, double lo2, double* brg) {

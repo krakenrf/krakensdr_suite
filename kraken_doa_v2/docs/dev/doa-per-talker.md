@@ -6,7 +6,7 @@ loaded automatically. *Italic* topic names refer to the other files in this
 folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR / Yaesu Fusion callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI), ACARS and VDL Mode 2 aircraft / ground stations; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds,acars,vdl2}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR / Yaesu Fusion callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI), ACARS and VDL Mode 2 aircraft / ground stations, DAB transmitters (TII); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,ysf,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds,acars,vdl2,dab}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -495,6 +495,16 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     10, keep_s 30 min; label = registration + flight (from ACARS over AVLC)
     or the station's airports (its XID). UI kinds as acars (`RDF_PK_KIND`
     vdl2) - see *VDL Mode 2*
+  - DAB transmitters (`plugins/dab`, 2026-11-16): a single frequency
+    network sends one signal from every mast, but each transmitter has its
+    own TII carriers in the null symbol. Every confirmed code's null symbol
+    (coherent mode, DoA on) = a packet `EId-MainId-SubId` (`10BC-12-03`) of
+    1 ms with the plugin's own covariance of that code's unshared carriers
+    (`t.cov`, noise covariance removed; by code, not by channel), avg_s 10,
+    keep_s 30 min, label = the ensemble label. UI kind `transmitter` 🗼
+    ("TII / Ensemble / Nulls", unit null symbol, by name; in
+    `RDF_POS_KINDS`: a FIG 0/22 position, which few ensembles send, is a map
+    point with the talker's id) - see *DAB / DAB+*
   - UI (kraken_doa.html): `RDF_PK_KIND` plugin -> kind (station 📻 aprs,
     sonde 🎈, site 🗼 tetra + mpt1327, navaid 🧭 ils, radar 📡 radar - list
     "Radar / PRF · pulse · scan / Pulses", by name; ship / aircraft /

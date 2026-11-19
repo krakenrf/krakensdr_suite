@@ -47,6 +47,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace kp {
@@ -55,13 +56,19 @@ using cf = std::complex<float>;
 
 // A setting the panel shows for this decoder (sent with Decoder::option()).
 // choices "" = free text, else "value=Label|value=Label|..." (a list).
-// The value "" means "default" (the user cleared it).
+// The value "" means "default" (the user cleared it). A list only known at
+// run time (the services of a DAB ensemble) comes from
+// Host::option_choices instead. hidden: the panel draws no control for it -
+// it is set by clicking a table row whose key is one of its run-time choices
+// (dab: a programme's row), a saved setting or DIGITAL_OPT; kraken_doa from
+// before it shows the control as usual.
 struct Option {
     const char* key = "";           // [a-z0-9_], <= 32 chars
     const char* label = "";
     const char* def = "";           // default value
     const char* choices = "";
     const char* help = "";
+    bool hidden = false;            // (last: existing {key, label, def, choices, help} still compile)
 };
 
 // A position for the web UI's map (Host::map_point). Sending the same id again
@@ -430,6 +437,26 @@ public:
     // picture is ready when a viewer opens the panel). true on a host that
     // doesn't say (older hosts, offline tests).
     virtual bool video_wanted() const { return true; }
+    // The choices of one of Info::options, known only at run time (the
+    // services a DAB ensemble carries): the panel shows the option as a list
+    // of these (value, label) pairs instead of its declared choices / text
+    // field; a pick arrives through Decoder::option() as usual. Replaces the
+    // previous list; {} = none (back to the declaration). Pairs, not the
+    // "value=Label|..." text: a label from the air can't add entries. At
+    // most 100 choices, value <= 100 bytes without control characters
+    // (others are dropped), label <= 80 bytes (longer is cut; "" = the
+    // value), 32 KB for all of a decoder's lists. The setting stays free
+    // text: one that is none of the values gets an entry of its own in the
+    // panel - better, list it yourself saying what it selects. Values should
+    // stay valid (an ID, not a position). Send it when the list changes, not
+    // on every update. The host
+    // forgets it when the plugin restarts and on reset() (a retune) - send
+    // it again then. An older host ignores it (the text field / declared
+    // list stays).
+    virtual void option_choices(const std::string& key, const std::vector<std::pair<std::string, std::string>>& choices) {
+        (void)key;
+        (void)choices;
+    }
     // Ask the host to retune so that rf_hz is at 0 Hz of the input (Info::tunes
     // plugins only): in coherent mode the receiver retunes - every VFO on it
     // moves along -, in independent mode the VFO's own tuner. Fire and
@@ -566,6 +593,12 @@ constexpr uint32_t VIDEO = 40;
 // and skips the rest of the E (later SDKs may add some); older kraken_doa
 // builds ignore the message.
 constexpr uint32_t PLOT_EX = 41;
+// key '\0' value '\0' label '\0' value '\0' label ... (only the key = no
+// choices): Host::option_choices. Hosts before it ignore the type (as every
+// unknown type)
+constexpr uint32_t OPTION_CHOICES = 42;
+// Host::option_choices limits (both ends enforce them)
+constexpr size_t CHOICES_MAX = 100, CHOICE_VALUE_MAX = 100, CHOICE_LABEL_MAX = 80;
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends; video_wanted()
 // the OPTION "video_wanted=0|1" it sends to Info::video plugins - 1 until then)
 }  // namespace kp::wire

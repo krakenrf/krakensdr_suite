@@ -177,6 +177,9 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-info td {padding:2px 3px;border-bottom:1px solid #22304a;vertical-align:top;word-break:break-word}
 .dig-info td:first-child {color:#6f87a6;white-space:nowrap;width:40%}
 .dig-info tr.stale td:last-child {color:#7a8699}
+/* a voice codec that is missing: a voice plugin's "Voice codec" fact, its voice state
+   next to Listen (digCodecFactBad / digVoiceStateBad) and the sidebar's codec list */
+.dig-info td.dig-bad,.dig-info tr.stale td.dig-bad,.info-dec-settings .v.dig-bad,.dig-codec.missing .s {color:#ef5350}
 .dig-log {max-height:240px;overflow-y:auto;font-family:monospace;font-size:10.5px;background:#10101e;border:1px solid #0f3460;border-radius:3px;padding:3px 4px;line-height:1.35}
 .dig-log div {white-space:pre-wrap;word-break:break-word;border-bottom:1px solid #1b2238}
 .dig-log .t {color:#6f87a6}
@@ -293,6 +296,9 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-table tr.dig-det td td {border:none;padding:1px 0;white-space:normal;color:#e0e6ef;font-family:monospace}
 .dig-table tr.talker {cursor:pointer}
 .dig-table tr.talker td:first-child {color:#ffcc80}
+/* a row that is one of an option's run-time choices (dab: a programme): click = select it (+ Listen) */
+.dig-table tr.choice {cursor:pointer}
+.dig-table tr.choice td:first-child {color:#81c784}
 .dig-table-wrap > .cap {color:#7cb3f0;font-size:11px;padding:3px 7px;position:sticky;left:0}
 .dig-inc {display:flex;align-items:center;gap:5px;flex-wrap:wrap;width:100%}
 .dig-inc input {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:2px 4px;border-radius:3px;font-size:12px}
@@ -314,7 +320,7 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-codec .i {width:12px;text-align:center}
 .dig-codec.ok .i {color:#81c784}
 .dig-codec.missing {border-color:#5a4520}
-.dig-codec.missing .i {color:#ffb74d}
+.dig-codec.missing .i {color:#ef5350}
 .dig-codec .u {margin-left:auto;color:#6f87a6;font-size:11px;text-align:right}
 .dig-codec .s {color:#8aa8c7;font-size:11px;margin:2px 0 0 18px;word-break:break-word}
 .dig-codec details {margin:4px 0 0 18px}
@@ -2807,6 +2813,14 @@ const digDemodBefore = (() => {
 function digDemodBeforeSave() {
   try { localStorage.setItem('kraken_dig_demod_before', JSON.stringify(digDemodBefore)); } catch (e) {}
 }
+// A VFO's last decoder mode other than Off, as the receiver reported it
+// (decimator_info): VFO id -> mode. Ticking the decoder on again goes back
+// to it, also when the mode was set elsewhere (a debug playback, a saved
+// frequency, another page, the AI assistant) - digWanted only knows this
+// browser's picks, and Auto detect never runs a manual-only decoder (dab,
+// adsb ...). Dropped when the VFO is removed (a new VFO can get its id).
+// This page only; digRenderCards reads it
+const digLastOn = {};
 // transcripts' DoA lobes shown on the 🗺 map (id -> {L, col, el}) and those
 // asked for (mapDrawNow -> v2tLobeDraw reads them)
 let v2tLobes = new Map(), v2tLobeWant = new Set();
@@ -10804,6 +10818,20 @@ function addTouchHandlers(el, down, move, up) {
     }
     return !!(digPlugin(digModePlugin(mode)) || {}).voice;
   }
+  // Is this VFO's decoded audio heard (the tab's "🔊 Listening")?
+  function digListening(d) { return !!(d && decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled); }
+  // A voice plugin's codec is missing (docs/dev/digital-voice.md) - shown in red. Its
+  // "Voice codec" fact: "not installed (libfdk-aac2)", "AMBE+2: not installed (see README...)",
+  // "disabled (KRAKEN_AAC_LIB=none)", "... lacks the AMBE functions", "... - too old, not used)"
+  // (not "built in", "libfdk-aac.so.2 (FDK AAC decoder 3.2.0)", "ACELP: <path> + <path>");
+  // ysf's fact names two codecs, "VW: IMBE (built in); DN, V/D mode 1: AMBE+2: not installed
+  // (...)" (red when the AMBE part is missing, or the mbelib is "..., without
+  // mbe_processAmbe2450Dataf (no DN voice)");
+  // its voice state: "<who>: AMBE+2 codec not installed (...)" (ysf: "<who>: this mbelib lacks
+  // mbe_processAmbe2450Dataf (DN voice)"), dab's "<programme>: AAC codec disabled (...)" /
+  // "... codec not usable: ..."
+  function digCodecFactBad(v) { return /(?:^|: )(?:not installed|disabled)\b|\blacks the\b|\bnot used\)$|\(no DN voice\)$/.test(String(v)); }
+  function digVoiceStateBad(s) { return /\bcodec (?:not installed|disabled|not usable)\b|\bmbelib lacks\b/.test(String(s)); }
 
   // Does the decoder send text messages (kp::Info::messages - pagers)? Their
   // street addresses become incidents (kraken_doa incidents.cpp)
@@ -10878,9 +10906,14 @@ function addTouchHandlers(el, down, move, up) {
     });
     const head = cols.map((c, i) => `<th onclick="digTableSortBy('${digEsc(name)}', ${i})" title="Sort">${digEsc(c)}${s.c === i ? (s.d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
     const body = rows.map(r => {
+      // what a click does, the first that applies: a map point, a talker, one of an option's
+      // run-time choices (digTableRowClick)
       const tk = mapPts.has(r.k) ? null : digRowTalker(r.k);
-      const cls = (mapPts.has(r.k) ? 'onmap' : tk ? 'talker' : '') +
-                  (r.k === mapSel || (tk && rdfTidSel() === rdfGk(tk.vfo, tk.tid)) ? ' sel' : '');
+      const ch = mapPts.has(r.k) || tk ? null : digRowChoice(r.k);
+      const cls = (mapPts.has(r.k) ? 'onmap' : tk ? 'talker' : ch ? 'choice' : '') +
+                  (r.k === mapSel || (tk && rdfTidSel() === rdfGk(tk.vfo, tk.tid)) || (ch && ch.cur) ? ' sel' : '');
+      const tip = cls.includes('onmap') ? 'Show on the map' : tk ? 'Show its own DoA on the map (📡 DF panel) - again for the whole signal'
+        : ch ? (ch.voice ? 'Listen to this' : 'Select this') + ` (${ch.opt}: ${ch.label})` + (ch.cur ? ' - selected' : '') : '';
       // a row with details (kp::Host::table_detail): a ▸ toggle in front, the
       // details in a row of their own under it while open
       const open = r.det && digDetOpen.has(r.k);
@@ -10890,7 +10923,7 @@ function addTouchHandlers(el, down, move, up) {
         : `<td>${i === 0 ? tog : ''}${digEsc(i === cols.length - 1 ? r.age + ' s' : (r.cells[i] ?? ''))}</td>`).join('');
       const det = open ? `<tr class="dig-det"><td colspan="${cols.length}"><div class="dig-det-box"><table>${r.det.map(([k, v]) =>
         `<tr><th>${digEsc(k)}</th><td>${digEsc(v)}</td></tr>`).join('')}</table></div></td></tr>` : '';
-      return `<tr class="${cls}" data-k="${digEsc(r.k)}" onclick="digTableRowClick(this)"${cls.includes('onmap') ? ' title="Show on the map"' : tk ? ' title="Show its own DoA on the map (📡 DF panel) - again for the whole signal"' : ''}>${cells}</tr>${det}`;
+      return `<tr class="${cls}" data-k="${digEsc(r.k)}" onclick="digTableRowClick(this)"${tip ? ` title="${digEsc(tip)}"` : ''}>${cells}</tr>${det}`;
     }).join('');
     return `<div class="cap">${digEsc(caption)} · ${rows.length}</div>` +
            `<table class="dig-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
@@ -10932,11 +10965,39 @@ function addTouchHandlers(el, down, move, up) {
     const vfo = +f[0], tid = f.slice(2).join('|');
     return ((rdfStatus && rdfStatus.talkers) || []).some(t => t.vfo === vfo && t.tid === tid) ? {vfo, tid} : null;
   }
+  // a table row whose key is one of the run-time choices (kp::Host::option_choices) of an
+  // option of that VFO's plugin (dab: a programme's SId): {vfo, key, val, label, opt, cur =
+  // it is the value set, voice = the plugin plays audio}. The first such option counts
+  function digRowChoice(k) {
+    const f = String(k).split('|');
+    if (f.length < 3) return null;
+    const vfo = +f[0], pk = f.slice(2).join('|');
+    const p = digPlugin(f[1]), d = digDec(vfo), st = digStatus[vfo];
+    if (!p || !p.options || !d || !st || pk === '') return null;
+    const vals = (d.digital_opts && d.digital_opts.plugin) || {};
+    for (const op of p.options) {
+      const key = p.id + '.' + op.key;
+      const c = (digDynChoices(st, key) || []).find(c => c[0] === pk);
+      if (!c) continue;
+      const v = String(vals[key] !== undefined ? vals[key] : (op.default ?? ''));
+      return {vfo, key, val: pk, label: c[1], opt: op.label || op.key, cur: v === pk, voice: digHasVoice(digModeOf(vfo), st)};
+    }
+    return null;
+  }
+  // click on a choice's row: the same command as picking it in the option's list (not sent
+  // again when it is the value set); a voice plugin's Listen goes on if it is off - the
+  // tab's Listen button, so a listener hears the new choice
+  function digPickChoice(ch) {
+    if (!ch.cur) digSetOptFor(ch.vfo, ch.key, ch.val);
+    if (ch.voice && !digListening(digDec(ch.vfo))) digListenFor(ch.vfo);
+  }
   function digTableRowClick(tr) {
     const k = tr.dataset.k, p = mapPts.get(k);
     if (!p) {
       const tk = digRowTalker(k);
-      if (tk) talkerPick(tk.vfo, tk.tid);
+      if (tk) { talkerPick(tk.vfo, tk.tid); return; }
+      const ch = digRowChoice(k);
+      if (ch) digPickChoice(ch);
       return;
     }
     if (!mapState.on) mapToggle(true);
@@ -10996,6 +11057,15 @@ function addTouchHandlers(el, down, move, up) {
   function digOptionsPlugin(mode, st) {
     if (mode === 'AUTO') return st && st.detected ? digPlugin(st.detected) : null;
     return digPlugin(digModePlugin(mode));
+  }
+  // an option's run-time choices in a VFO's decoder status ("choices": {"<plugin>.<key>":
+  // [[value, label], ...]}, kp::Host::option_choices) as [[value, label]], null = none (an
+  // older receiver, or the plugin hasn't sent a list: the declared list / text field)
+  function digDynChoices(st, key) {
+    const l = st && st.choices && st.choices[key];
+    if (!Array.isArray(l)) return null;
+    const out = l.filter(c => Array.isArray(c) && c.length >= 2).slice(0, 200).map(c => [String(c[0]), String(c[1])]);
+    return out.length ? out : null;
   }
   function digDec(id) { return decimatorInfo.find(x => x.id === id) || null; }
   function digModeOf(id) { const d = digDec(id); return d && d.digital_mode ? d.digital_mode : 'OFF'; }
@@ -11321,7 +11391,9 @@ function addTouchHandlers(el, down, move, up) {
         send('DIGITAL_HISTORY:' + d.id);
       }
       if (mode === 'OFF') { delete digHistoryAsked[d.id]; delete digStatus[d.id]; }
+      else digLastOn[d.id] = mode;
     }
+    for (const k of Object.keys(digLastOn)) if (!info.some(d => d.id === +k)) delete digLastOn[k];
     // removed VFOs: their events stay in their modes' tabs (digArchive)
     for (const k of Object.keys(digEvents)) {
       const id = +k;
@@ -11338,9 +11410,13 @@ function addTouchHandlers(el, down, move, up) {
     digRenderAll();
   }
 
+  // the mode a VFO's decoder goes on with (and its list shows while off): the
+  // one it last ran, else the one picked in this browser, else Auto detect
+  function digOnMode(id) { return digLastOn[id] || digWanted[id] || 'AUTO'; }
+
   // Tick on a VFO card: decoder on (with the mode picked in its list) / off
   function digToggle(id, on) {
-    const mode = on ? (digWanted[id] || 'AUTO') : 'OFF';
+    const mode = on ? digOnMode(id) : 'OFF';
     send('DIGITAL_MODE:' + id + ':' + mode);
     const d = digDec(id);
     if (d) d.digital_mode = mode;
@@ -11400,7 +11476,7 @@ function addTouchHandlers(el, down, move, up) {
   function digListenFor(id) {
     const d = digDec(id);
     if (!d) return;
-    if (decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled) {
+    if (digListening(d)) {
       const p = digDemodBefore[d.id], back = digListenBack(d);
       if (back) {
         setDecimatorDemodMode(d.id, back, true);
@@ -11497,7 +11573,8 @@ function addTouchHandlers(el, down, move, up) {
     const info = st.info || {};
     for (const p of Object.keys(info).filter(p => p === tab)) {
       for (const [k, v, age] of info[p])
-        rows += `<tr class="${age > 30 ? 'stale' : ''}" title="updated ${age} s ago"><td>${digEsc(k)}</td><td>${digEsc(v)}</td></tr>`;
+        rows += `<tr class="${age > 30 ? 'stale' : ''}" title="updated ${age} s ago"><td>${digEsc(k)}</td>` +
+                `<td${k === 'Voice codec' && digCodecFactBad(v) ? ' class="dig-bad"' : ''}>${digEsc(v)}</td></tr>`;
     }
     return rows;
   }
@@ -11516,7 +11593,7 @@ function addTouchHandlers(el, down, move, up) {
       const mode = d.digital_mode || 'OFF';
       const on = mode !== 'OFF';
       en.checked = on;
-      digFillSelect($id('dec-dig-mode-' + d.id), on ? mode : (digWanted[d.id] || 'AUTO'));
+      digFillSelect($id('dec-dig-mode-' + d.id), on ? mode : digOnMode(d.id));
       const [col, txt] = digStateOf(d.id);
       const stEl = $id('dec-dig-state-' + d.id);
       if (stEl) {
@@ -11600,6 +11677,16 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
      win_note: 'Then copy <code>cdecoder.exe</code> and <code>sdecoder.exe</code> into the kraken_doa_v2 folder, next to ' +
        'kraken_doa.exe, as <code>tetra-cdecoder.exe</code> and <code>tetra-sdecoder.exe</code> (or set ' +
        'KRAKEN_TETRA_CODEC_DIR to the folder holding cdecoder.exe and sdecoder.exe and restart the software), and '},
+    // DAB+ audio: Fraunhofer FDK AAC, loaded by the dab plugin at run time
+    // (plugins/dab/audio_aaclib.hpp, KRAKEN_AAC_LIB) - reported only by a
+    // receiver whose codec check was built with that plugin
+    {key: 'aac', name: 'HE-AAC v2 (libfdk-aac)', used: 'DAB+',
+     install: `sudo apt-get install -y libfdk-aac2   # Debian: needs the non-free component; Ubuntu: multiverse
+# macOS: brew install fdk-aac`,
+     install_win: `# in the MSYS2 UCRT64 shell (C:\\msys64\\ucrt64.exe)
+pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
+     win_note: 'Then copy <code>C:\\msys64\\ucrt64\\bin\\libfdk-aac-2.dll</code> into the kraken_doa_v2 folder, next to kraken_doa.exe (or set ' +
+       'KRAKEN_AAC_LIB to its full path and restart the software), and '},
   ];
   let digCodecsLast = null;   // the last {"codecs"}: drawn again when the receiver's OS becomes known
   function digOnCodecs(c) {
@@ -11610,16 +11697,19 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!c || !c.checked) {
       html = `<div class="dig-warn" style="display:block">${digEsc((c && c.error) || 'The codec check failed.')}</div>`;
     } else {
-      html = DIG_CODECS.map(k => {
+      // a codec the receiver doesn't report is left out (aac: an older
+      // receiver, or one without the dab plugin)
+      html = DIG_CODECS.filter(k => (k.key + '_ok') in c).map(k => {
         const ok = !!c[k.key + '_ok'];
-        const st = String(c[k.key] || '').replace(/\s*\(see README[^)]*\)/, '');
+        // "not installed (libfdk-aac2)": the hint stays, "not installed" once
+        const st = String(c[k.key] || '').replace(/\s*\(see README[^)]*\)/, '').replace(/^not installed(?= \()/, '');
         // a package (windows/package.sh) has no MSYS2: build it on any PC that has
         let inst = serverWin ? k.install_win : k.install;
         if (serverPkg && inst)
           inst = '# needs MSYS2 (https://www.msys2.org - not part of this package; any PC with it will do)\n' + inst;
         return `<div class="dig-codec ${ok ? 'ok' : 'missing'}">` +
           `<div class="h"><span class="i">${ok ? '✔' : '✗'}</span><b>${digEsc(k.name)}</b><span class="u">${digEsc(k.used)}</span></div>` +
-          `<div class="s">${ok ? digEsc(st) : 'Not installed' + (st && st !== 'not installed' ? ' — ' + digEsc(st) : '')}</div>` +
+          `<div class="s">${ok ? digEsc(st) : 'Not installed' + (st && st !== 'not installed' ? (st.startsWith(' (') ? '' : ' — ') + digEsc(st) : '')}</div>` +
           (!ok && inst ? `<details><summary>How to install</summary><pre>${digEsc(inst)}</pre>` +
             (serverWin ? '<div class="dig-help">' + (k.win_note || 'Then ') + 'switch the decoders off and on, or restart the KrakenSDR software.</div></details>'
               : '<div class="dig-help">Then switch the decoders off and on, or restart the KrakenSDR software. Docker: README, "Digital voice codecs".</div></details>') : '') +
@@ -12412,20 +12502,34 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
     const st = digStatus[id];
     const o = (d && d.digital_opts) || {};
-    const listening = d && decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled;
+    const listening = digListening(d);
     const p = digOptionsPlugin(mode, st);
     const vals = o.plugin || {};
     let opts = '';
     if (p && p.options) for (const op of p.options) {
+      // an option without a control of its own (kp::Option::hidden - dab's Programme: a click
+      // on a programme's row in the table sets it, digRowChoice); a receiver from before the
+      // flag sends none, and the control shows as it used to
+      if (op.hidden) continue;
       const key = p.id + '.' + op.key;
       const v = vals[key] !== undefined ? vals[key] : op.default;
       const tip = op.help ? ` title="${digEsc(op.help)}"` : '';
+      // choices the plugin sent at run time (kp::Host::option_choices - dab: the ensemble's
+      // programmes) replace the declared list / text field
+      const dyn = digDynChoices(st, key);
       // exactly the choices 0 / 1: an on / off button (dtv's Path separation...)
-      const tog = op.choices && op.choices.length === 2 && op.choices.every(c => c[0] === '0' || c[0] === '1') &&
+      const tog = !dyn && op.choices && op.choices.length === 2 && op.choices.every(c => c[0] === '0' || c[0] === '1') &&
                   op.choices[0][0] !== op.choices[1][0];
       // a single choice "range:MIN:MAX[:STEP]": a slider (the quality knob...)
-      const isRange = op.choices && op.choices.length === 1 && String(op.choices[0][0]).startsWith('range:');
-      if (tog) {
+      const isRange = !dyn && op.choices && op.choices.length === 1 && String(op.choices[0][0]).startsWith('range:');
+      if (dyn) {
+        // the value actually set always shows: one that is none of the choices (a part of a
+        // name typed before, a catalogue entry's setting, a SId of another ensemble) gets an
+        // entry of its own instead of the list showing its first choice
+        const list = dyn.some(c => c[0] === v) ? dyn : [[v, v === '' ? 'Default' : v]].concat(dyn);
+        opts += `<label${tip}>${digEsc(op.label || op.key)}: <select class="dig-opt-dyn" data-key="${digEsc(key)}" style="max-width:260px" onchange="digSetOptFor(${id}, this.dataset.key, this.value)">` +
+                list.map(c => `<option value="${digEsc(c[0])}"${c[0] === v ? ' selected' : ''}>${digEsc(c[1])}</option>`).join('') + '</select></label>';
+      } else if (tog) {
         const on = v === '1';
         const cur = (op.choices.find(c => c[0] === (on ? '1' : '0')) || ['', on ? 'On' : 'Off'])[1];
         opts += `<button type="button" class="btn sm dig-opt-tog${on ? ' primary' : ''}" data-key="${digEsc(key)}" aria-pressed="${on}"` +
@@ -12477,7 +12581,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         `<span class="dig-vfo" style="border-color:${getDecimatorColor(id)}" title="${digEsc(txt)}"><span style="color:${col}">●</span> D${id} · ${digMhzOf(id)} MHz</span>` +
         `<label>Mode: <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
         (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${digEsc(listenTip)}">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
-        (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
+        (voice ? `<span class="v${listening && vs && digVoiceStateBad(vs) ? ' dig-bad' : ''}">${digEsc(voice)}</span>` : '') +
         opts +
         `<label title="Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)"><input type="checkbox" ${o.verbose ? 'checked' : ''} onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Log all</label>` +
         `<label title="For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR."><input type="checkbox" ${o.invert ? 'checked' : ''} onchange="digSetOptFor(${id}, 'invert', this.checked ? 1 : 0)"> Invert</label>` +
@@ -15289,7 +15393,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // nearest first like ships, TETRA / MPT1327 sites, VOR / ILS navaids,
   // pulse radars and 1030 MHz interrogators by name, 406 MHz distress
   // beacons newest first, LoRa nodes nearest first (Meshtastic POSITION
-  // packets), the others by name.
+  // packets), DAB transmitters by their TII code (few ensembles send their
+  // positions), the others by name.
   // Ties are broken by name, ID and VFO, so rows with equal values (heard in
   // the same second) never swap; empty values go last either way. Radios
   // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
@@ -15297,7 +15402,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
                         site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
                         gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], collar: ['name', 1], node: ['dist', 1],
-                        broadcast: ['name', 1], talker: ['heard', 1]};
+                        broadcast: ['name', 1], transmitter: ['name', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -15610,17 +15715,19 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
                        ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node',
-                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft', vdl2: 'aircraft'};
+                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft', vdl2: 'aircraft', dab: 'transmitter'};
   // kinds that report where they are (their decoder's map points, same id):
-  // Dist / Δ pos columns, the position check
-  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
+  // Dist / Δ pos columns, the position check. Some only now and then: LoRa
+  // nodes (POSITION packets), DAB transmitters (only an ensemble that sends
+  // its TII database, FIG 0/22)
+  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node', 'transmitter']);
   // what one of their packets is called
   const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse',
                        interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse',
-                       broadcast: 'group'};
+                       broadcast: 'group', transmitter: 'null symbol'};
   // how a kind is named in "Every ...", counts and the position check
   const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon', broadcast: 'broadcast station',
-                         tone: 'analog transmitter'};
+                         tone: 'analog transmitter', transmitter: 'DAB transmitter'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
@@ -15666,7 +15773,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       return /^(MDC|FleetSync) /.test(t.tid) ? '🆔 ' : /^(DTMF|ZVEI|DZVEI|CCIR|EEA|EIA|NATEL|MODAT) /.test(t.tid) ? '🔢 ' : '🔔 ';
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
             sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 ',
-            collar: '🐾 ', broadcast: '🎙 '}[k] || '';
+            collar: '🐾 ', broadcast: '🎙 ', transmitter: '🗼 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -15723,7 +15830,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         const c = rdfPosCheck(t);
         if (c) line += `<br>Reported position: ${c.brg.toFixed(1)}°, ${c.km.toFixed(1)} km` +
           (c.err !== null ? ` · DF error <b>${rdfSigned(c.err)}</b>` : '');
-        else if (pos) line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position</span>';
+        else if (pos) line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position' +
+          (rdfKind(t) === 'transmitter' ? ' (only when the ensemble sends its transmitters\' positions, FIG 0/22 - most don\'t)' : '') + '</span>';
         h += (h ? '<br>' : '') + line;
       } else if (t && t.sp) {
         // a path of a TV signal (a reflection, or another transmitter of a
@@ -15786,6 +15894,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                     collar: ['Collar (MHz)', 'Name · ppm · mode', 'Pulses'],
                     node: ['Node', 'Name · packet', 'Frames'],
                     broadcast: ['Station (PI)', 'Call sign · PS · MHz', 'Groups'],
+                    transmitter: ['TII', 'Ensemble', 'Nulls'],
                     talker: ['ID', 'Info', 'Tx']};
       const head = heads[kinds] || heads.talker;
       // position columns while a listed talker has a reported position (its
@@ -15796,10 +15905,15 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       const posCols = listed.some(([t, c]) => c && RDF_POS_KINDS.has(rdfKind(t)));
       // analog FM transmitters (analog_id: radio IDs / tones): the transmissions' lengths
       const toneCols = ts.some(t => rdfKind(t) === 'tone');
+      // DAB transmitters with the position columns: no Ensemble column (the
+      // label is the same on every row, its " · N km" is the Dist column) -
+      // with it the table was 377 px in the 370 px list and Nulls was cut
+      // off. The label goes into the row's tooltip (and the line above)
+      const noInfo = posCols && kinds === 'transmitter';
       const [scol, sdir] = rdfSortOf(kinds);
       const th = (col, text, tip) => `<th data-sort="${col}" title="${tip ? digEsc(tip) + ' - ' : ''}Sort by this column (again: reversed)">` +
         `${text}${col === scol ? (sdir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
-      tl = '<table><tr><th></th>' + (multi ? th('vfo', 'VFO') : '') + th('name', head[0]) + th('info', head[1]) +
+      tl = '<table><tr><th></th>' + (multi ? th('vfo', 'VFO') : '') + th('name', head[0]) + (noInfo ? '' : th('info', head[1])) +
         (posCols ? th('dist', 'Dist', 'Distance from the station to its reported position') : '') + th('brg', 'Bearing') +
         (posCols ? th('dpos', 'Δ pos', 'DF bearing minus the bearing to its reported position') : '') +
         th('heard', 'Heard') +
@@ -15807,13 +15921,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         th('tx', head[2]) + '</tr>';
       for (const [t, c] of listed) {
         const k = rdfGk(t.vfo, t.tid), ap = air ? rdfAirParts(t) : null;
-        const tip = air ? `${rdfTalkerName(t)}${ap.rest ? ' · ' + ap.rest : ''} - show its DoA on the map` : `Show this ${rdfKind(t)}'s DoA on the map`;
+        const tip = air ? `${rdfTalkerName(t)}${ap.rest ? ' · ' + ap.rest : ''} - show its DoA on the map`
+          : noInfo && t.label ? `${t.label} - show this ${rdfKind(t)}'s DoA on the map` : `Show this ${rdfKind(t)}'s DoA on the map`;
         tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="${digEsc(tip)}">` +
           `<td class="air">${t.active ? '●' : ''}</td>` + (multi ? `<td>D${t.vfo}</td>` : '') +
           (air ? `<td><b>${rdfIcon(t)}${digEsc(ap.cs)}</b></td><td class="dim">${digEsc(t.tid)}</td>`
                : `<td><span class="clip nm" title="${digEsc(t.tid)}">${rdfIcon(t)}${digEsc(t.tid)}</span>` +
                  (t.sp && t.sp[3] && rdfKind(t) === 'path' ? '<span class="ref" title="The main (strongest) path: the other paths\' delays are counted from it">main</span>' : '') + '</td>' +
-                 `<td class="dim"><span class="clip" title="${digEsc(t.label || '')}">${digEsc(t.label || '')}</span></td>`) +
+                 (noInfo ? '' : `<td class="dim"><span class="clip" title="${digEsc(t.label || '')}">${digEsc(t.label || '')}</span></td>`)) +
           (posCols ? `<td class="n">${c ? (c.km < 10 ? c.km.toFixed(1) : Math.round(c.km)) + ' km' : ''}</td>` : '') +
           `<td class="n">${rdfBearingTxt(t)}</td>` + (posCols ? `<td class="n">${c && c.err !== null ? rdfSigned(c.err) : ''}</td>` : '') +
           `<td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td>` +

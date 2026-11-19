@@ -133,10 +133,15 @@ def run(argv, work, cache, plugins, log):
         # as a PC running kraken_doa usually has no compiler - an older one
         # is taken too when there is no g++ to rebuild it with
         pre = os.path.join(os.path.dirname(exe), 'build', name + '.exe')
-        if WINDOWS and os.path.exists(pre) and (os.path.getmtime(pre) >= os.path.getmtime(exe) or not shutil.which('g++')):
+        # the source's time: the .cpp or a header it can include from its own
+        # folder or its plugin's (-I) - the newest. The .cpp alone kept a
+        # stale binary after a header-only change (dab_gen_*.hpp)
+        src_dir = os.path.dirname(os.path.dirname(exe))
+        src_t = max([os.path.getmtime(exe)] + [os.path.getmtime(os.path.join(d, f)) for d in (os.path.dirname(exe), src_dir)
+                                                for f in os.listdir(d) if f.endswith(('.h', '.hpp'))])
+        if WINDOWS and os.path.exists(pre) and (os.path.getmtime(pre) >= src_t or not shutil.which('g++')):
             binp = pre
-        elif not os.path.exists(binp) or os.path.getmtime(binp) < os.path.getmtime(exe):
-            src_dir = os.path.dirname(os.path.dirname(exe))
+        elif not os.path.exists(binp) or os.path.getmtime(binp) < src_t:
             # a plugin with its own LICENSE (plugins/Makefile): the SDK and
             # pffft only, never the source-available lib/
             libdir = os.path.join(plugins, 'lib', 'build')

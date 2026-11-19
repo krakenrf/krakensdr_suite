@@ -12,7 +12,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 47 entries in 31 catalogues (2026-11-18) - EVERY decoder:
+  playback*). 49 entries in 32 catalogues (2026-11-19) - EVERY decoder:
   acars, vdl2, ais, aprs, dstar, nxdn, ysf, tetra, mpt1327, ils (VOR), analog_id (two: the
   CTCSS tones + `analog-ids-six`, radio IDs), radar,
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
@@ -20,13 +20,19 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `p25-three-units`, Phase 2 `p25p2-inbound-three-radios` and
   `p25p2-site-two-timeslots` since 2026-11-18), dmr, radiosonde (the last
   three since 2026-10-16 - their earlier tests used public recordings),
-  rds (2026-10-22), ysf (2026-11-16), analogtv, tempest (four)
+  rds (2026-10-22), dab (2026-11-16: two WIDE entries, `dab-sfn-three` /
+  `dab-single-offset` - the generator writes the 5-antenna cu8 itself;
+  talkers + `{"event"}` rows - *DAB / DAB+*), ysf (2026-11-16), analogtv,
+  tempest (four)
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines
   read by a thread; `PLAYBACK_GEN_CANCEL` = SIGTERM to the group). The
   driver runs the entry's `steps` (generators; .cpp compiled once into
-  `.bin/`) in `testsignal_cache/.work-<id>/`, then `uca_scene.py --clean`
+  `.bin/`, again when the .cpp or a `*.h` / `*.hpp` in its folder or its
+  plugin folder is newer - until 2026-11-16 only the .cpp counted, and a
+  header-only change to dab_gen_*.hpp kept the stale binary; the Windows
+  prebuilt `tools/build/NAME.exe` is taken under the same test) in `testsignal_cache/.work-<id>/`, then `uca_scene.py --clean`
   (narrow) or takes the step's 2.4 MHz `output` (cf32 -> cu8 at rms 0.15),
   and writes `<id>.dat` + the FLAT sidecar `<id>.json` (format, rate,
   channels, samples, tuner_hz, band_offset_hz, radius_m, noise_rms,

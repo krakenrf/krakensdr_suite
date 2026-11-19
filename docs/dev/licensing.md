@@ -101,6 +101,20 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   THIRD_PARTY_NOTICES row + text I and credits for two design ideas. Map
   search: Nominatim on Enter only (its usage policy), credit linked like the
   other OSM credits
+- `dab` plugin (2026-11-16), written from the ETSI standards without
+  consulting any GPL DAB implementation; third-party content: minimp3
+  (CC0, `plugins/dab/minimp3.h`, commit ea99364, vendored unchanged and
+  compiled into the plugin for Layer II PCM - THIRD_PARTY_NOTICES row + text
+  J, `scripts/collect-licenses.sh` copies its dedication) and VisualOn
+  vo-aacenc's AAC code book / scale-factor band tables (Apache-2.0,
+  `plugins/dab/tools/dab_gen_aac_tables.hpp`, the test-signal generator only
+  - row + text K with the full Apache text, since the Windows package
+  carries the prebuilt generator). DAB+ needs Fraunhofer FDK AAC
+  (libfdk-aac, FDK licence): like mbelib it is never vendored, linked or
+  shipped - `audio_aaclib.cpp` dlopens the user's system library
+  (`KRAKEN_AAC_LIB`); THIRD_PARTY_NOTICES section 3. The GPL receivers used
+  to check the generator (welle.io, dablin, eti-stuff) ran only as black
+  boxes in job scratch; their sources were not opened
 - CLEAN-ROOM REWRITES (2026-10-22, the user's request): `radiosonde` v2.0
   (v1.x had code translated from rs1729/RS) and `flarm` v2.0 (v1.0 was built
   on the unlicensed OGN tracker's source) - spec writer (old code + permitted

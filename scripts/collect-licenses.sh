@@ -11,9 +11,10 @@
 #                         decoder plugin under a licence of its own
 #   DEST/third-party/<component>/
 #                         the licence files of what the binaries contain:
-#                         pffft, concurrentqueue and - where their source
-#                         trees are found - the librtlsdr fork, uWebSockets /
-#                         uSockets, liquid-dsp, whisper.cpp; in MSYS2
+#                         pffft, concurrentqueue, minimp3 (the dab plugin)
+#                         and - where their source trees are found - the
+#                         librtlsdr fork, uWebSockets / uSockets, liquid-dsp,
+#                         whisper.cpp; in MSYS2
 #                         (MINGW_PREFIX set) the licences of the MSYS2
 #                         libraries the static .exe files link; on Debian the
 #                         copyright file of Eigen (headers compiled in - the
@@ -93,6 +94,13 @@ if [[ -f $UWS_DIR/src/MoveOnlyFunction.h ]]; then   # MIT, its notice is the fil
     sed -n '1,/\*\//p' "$UWS_DIR/src/MoveOnlyFunction.h" > "$DEST/third-party/uWebSockets/MoveOnlyFunction-LICENSE.txt"
 fi
 put liquid-dsp "$LIQUID_DIR/LICENSE"
+# minimp3 (CC0, vendored in the dab plugin for DAB's Layer II audio): its
+# dedication is the header's first comment
+if [[ -f $ROOT/kraken_doa_v2/plugins/dab/minimp3.h ]]; then
+    mkdir -p "$DEST/third-party/minimp3"
+    awk '/^\/\*/ { f = 1 } f { print } f && /\*\// { exit }' "$ROOT/kraken_doa_v2/plugins/dab/minimp3.h" \
+        > "$DEST/third-party/minimp3/LICENSE.txt"
+fi
 put whisper.cpp "$WHISPER_DIR/LICENSE"
 
 if [[ -n $MSYS2 && -d $MSYS2/share/licenses ]]; then
