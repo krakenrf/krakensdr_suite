@@ -12,7 +12,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 49 entries in 32 catalogues (2026-11-19) - EVERY decoder:
+  playback*). 54 entries in 32 catalogues (2026-11-20, `make_testsignal.py
+  --check --plugins plugins`; the five trunk scenes - p25, dmr, nxdn, tetra,
+  mpt1327 `*-trunk-*` - since 2026-11-20) - EVERY decoder:
   acars, vdl2, ais, aprs, dstar, nxdn, ysf, tetra, mpt1327, ils (VOR), analog_id (two: the
   CTCSS tones + `analog-ids-six`, radio IDs), radar,
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
@@ -24,6 +26,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `dab-single-offset` - the generator writes the 5-antenna cu8 itself;
   talkers + `{"event"}` rows - *DAB / DAB+*), ysf (2026-11-16), analogtv,
   tempest (four)
+- The entry's commands (its `vfo.opts` as `DIGITAL_OPT:0:<decoder>.<key>:<value>`,
+  then `commands`) are taken from the CATALOGUE as it is when the playback
+  starts (`catalogue_commands` in playback.cpp), the cache sidecar's copy
+  only when the catalogue has no such entry (since 2026-11-20: a cache made
+  before a catalogue change kept the old commands - the NXDN trunk scene's
+  channel rule)
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines

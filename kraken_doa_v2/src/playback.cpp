@@ -43,6 +43,7 @@
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
 #include "digital/dig_plugin.hpp"
+#include "geo_address.hpp"   // geo::json_parse
 #include "globals.hpp"
 #include "networking/websocket_server.hpp"
 #include "rdf_mapper.hpp"
@@ -922,6 +923,37 @@ void run_internal(const std::string& cmd) {
 
 // the session (uWS loop): coherent, one VFO with the entry's decoder, DoA on
 // the scene's array, the entry's extra commands - all into the sandbox
+// The catalogue entry `id` of plugin `decoder` (plugins/<decoder>/tools/
+// testsignals.json): its commands as make_testsignal.py builds them (the VFO
+// options as DIGITAL_OPT:0:<decoder>.<key>:<value>, then "commands"), one per
+// line; "\n" = the entry has none; "" = no such entry / catalogue
+std::string catalogue_commands(const std::string& decoder, const std::string& id) {
+    if (!dig::valid_plugin_id(decoder)) return "";
+    const std::string text = read_file(dig::PluginRegistry::dir() + "/" + decoder + "/tools/testsignals.json", 256 << 10);
+    geo::Json j;
+    if (text.empty() || !geo::json_parse(text, &j) || j.type != geo::Json::ARR) return "";
+    for (const auto& e : j.a) {
+        if (e.type != geo::Json::OBJ || e.str("id") != id) continue;
+        std::string out;
+        if (const geo::Json* v = e.get("vfo"); v && v->type == geo::Json::OBJ)
+            if (const geo::Json* o = v->get("opts"); o && o->type == geo::Json::OBJ)
+                for (const auto& kv : o->o) {
+                    std::string val = kv.second.type == geo::Json::STR ? kv.second.s : "";
+                    if (kv.second.type == geo::Json::NUM) {
+                        std::ostringstream n;
+                        n << kv.second.n;
+                        val = n.str();
+                    }
+                    if (val.find('\n') == std::string::npos) out += "DIGITAL_OPT:0:" + decoder + "." + kv.first + ":" + val + "\n";
+                }
+        if (const geo::Json* c = e.get("commands"); c && c->type == geo::Json::ARR)
+            for (const auto& x : c->a)
+                if (x.type == geo::Json::STR && x.s.find('\n') == std::string::npos) out += x.s + "\n";
+        return out.empty() ? "\n" : out;
+    }
+    return "";
+}
+
 void apply_session(const std::string& id) {
     double radius_m;
     {
@@ -945,7 +977,12 @@ void apply_session(const std::string& id) {
     run_internal("DOA:1");
     run_internal("TOPOLOGY:UCA");
     run_internal("RADIUS:" + std::to_string(static_cast<int>(llround(radius_m * 1000))));
-    std::istringstream extra(str(side, "commands"));
+    // the entry's commands: as the catalogue says NOW (the cache's copy is from
+    // when the transmission was generated - a catalogue edited since would
+    // keep the old ones); the cache's only when the catalogue has no such entry
+    std::string cmds = str(side, "commands");
+    if (const std::string cat = catalogue_commands(str(side, "decoder"), id); !cat.empty()) cmds = cat == "\n" ? "" : cat;
+    std::istringstream extra(cmds);
     for (std::string line; std::getline(extra, line);)
         if (!line.empty() && !line.starts_with("PLAYBACK_")) run_internal(line);
     rdfmap::request_full();

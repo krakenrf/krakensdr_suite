@@ -17,11 +17,24 @@ transcribed and direction-found (the voice VFO's own MUSIC / talker DoA).
 The decoder on the traffic channel reports what it carries
 (`kp::Host::call`), which drives the call's state.
 
-- Off by default (`TRUNK_FOLLOW:0`): nothing changes for a user who doesn't
-  turn it on. Off, the manager still tracks systems, grants and calls for
-  display (calls wait with why `off`).
-- The user's own VFOs are never touched, except a control VFO moved by a
-  `CONTROL` event (below). Voice VFOs are never saved (`DECIMATORS:`).
+- Off by default (`TRUNK_FOLLOW:0`), and off means nothing changes for a
+  user who doesn't turn it on: no VFO is made or moved (no CONTROL move, no
+  scan restore), no command is dispatched, nothing is written to disk but
+  what the user asked for with an edit command (`trunk_systems.json` then
+  holds only the systems they edited). What it still does: track systems,
+  grants and calls in memory for the box (calls wait with why `off`), within
+  the bounds below; the status is built only on a change and once a second
+  while a control VFO reports (not per tick, not per event; the counters
+  ride along - a counter alone sends nothing).
+- Events come only from plugins whose registry entry declares `trunking`
+  (others are dropped: `untrunking_dropped`); a grant's traffic decoder must
+  declare it too (else why `no_decoder`).
+- The user's own VFOs are never touched, except - with following on - a
+  control VFO moved by a `CONTROL` event and a control VFO put back after a
+  scanner (below); neither is saved by itself (both go through the
+  dispatching guard): the VFO set the user saves next carries the control VFO
+  where it then is - the current control channel, deliberately. Voice VFOs
+  are never saved (`DECIMATORS:`).
 
 ## Terms
 
@@ -34,6 +47,9 @@ The decoder on the traffic channel reports what it carries
   never saved); when its key arrives the temporary one is folded into the
   keyed one (channels, talkgroups, units, counters, calls) and disappears; a
   temporary system with no control VFO left is dropped with its calls.
+  A temporary system can't be edited (its entries wouldn't be its key's:
+  the command is refused - "this system has no key yet"; forgetting it,
+  `TRUNK_SYS_DEL`, works); its history rows are re-keyed at the merge.
   Calls that waited in the temporary system (`no_freq` before the key was
   known) move with it and are resolved again against the keyed system's
   table and rules at once (seen in the NXDN scene: grants heard before the
@@ -59,9 +75,10 @@ deque (`QUEUE_MAX` 4096) and one `loop->defer` drain posted when the queue
 goes non-empty - a grant reaches the loop within a few ms, not at the next
 tick. When the queue is full every kind but RESET is dropped (SYSTEM,
 CHANNEL, CONTROL, GRANT, GRANT_END, CALL; counted in the status'
-`events_dropped`); a RESET is never dropped - one more is queued past the
-bound unless one for the same VFO and decoder is pending already
-(`resets_coalesced`): a lost RESET would keep stale calls or a stale control
+`events_dropped`); a RESET is never dropped - it is queued past the bound
+unless that VFO + decoder's LAST queued event is a RESET already
+(`resets_coalesced`; a RESET followed by later events of the VFO doesn't
+cover a newer one): a lost RESET would keep stale calls or a stale control
 VFO. Each event carries its decoder's **serial**
 (`DecimatorInstance::digital_serial`, given when `ensureDigital` makes the
 decoder, never repeated - an address can be reused by the next decoder made
@@ -118,7 +135,7 @@ applies, `why`):
 | `unit` | unit-to-unit and `TRUNK_UNIT:0` |
 | `hold` | a hold is on another talkgroup |
 | `duplicate` | the same talkgroup / unit of the system is followed through another site already (`TRUNK_ALL_SITES:0`, the default) |
-| `no_decoder` | the decoder is no built plugin, or one that holds its VFO (`fixed_freq_hz`, `lock_vfo`) |
+| `no_decoder` | the decoder is no built plugin, one that doesn't declare `trunking`, or one that holds its VFO (`fixed_freq_hz`, `lock_vfo`) |
 | `no_freq` | the channel's frequency is not resolved |
 | `out_of_span` | it can't be placed (below) |
 | `no_vfo` | `TRUNK_MAX_VFOS` voice VFOs are busy with calls of equal or higher rank |
@@ -191,6 +208,10 @@ DIGITAL (analogue: FFT with `DEC_SQUELCH_LEVEL` `ANALOG_SQ_DB` 10 dB),
   (the replay after a playback, `RESET_SETTINGS`) every voice VFO is removed
   (`trunk::release_all_vfos`): the snapshot works by list position.
 - Removed by hand: simply gone - its call isn't rejoined (why `stopped`).
+- A voice VFO that can't be removed because it is the receiver's last VFO
+  (the user removed theirs) is handed back to the user as a plain VFO:
+  enabled, NBFM, its decoder off, muted, where it was - never a hidden
+  disabled one.
   Retuned / reconfigured by hand: taken back at the next grant.
 - Placed at most every `PLACE_MIN_MS` 100 ms (a grant flood moving a call).
 
@@ -227,6 +248,10 @@ same call). A `hang` call goes back to `active` with new activity.
   don't restart it (NXDN: one more VCALL_ASSGN_DUP 0.26 s after the DISC;
   DMR late entry, P25 updates likewise). An update for a call the manager
   never followed (following switched on mid-call) always starts it.
+- After every placement the voice VFO's CALL reports count only once its
+  decoder's RESET for it came (or 2 s: a VFO that hadn't reported anything
+  gets no RESET) - ACTIVE, ENDED and RELEASED alike: a late release of the
+  previous channel can't end the moved call.
 - A grant of the same target on another channel (or slot): the call MOVES
   (its VFO retunes, `moves`). A `CALL ACTIVE` from the voice VFO naming
   another target (not before 300 ms after the placement and its decoder's
@@ -251,10 +276,10 @@ same call). A `hang` call goes back to `active` with new activity.
   VFOs.) A scanner's retune also resets the control VFOs' decoders: their
   calls end `control_reset`.
   The scanners move the user's VFOs, control VFOs included (their decoders
-  reset). Where every control VFO is (RF, bandwidth, decoder) is noted each
-  tick while not paused; 1 s after the scan stops, each one the scan moved is
-  put back with normal commands (saved: the user's VFO) when its RF fits the
-  span now - retried every 0.5 s for 30 s (e.g. until the receiver is tuned
+  reset). With following on, where every control VFO is (RF, bandwidth,
+  decoder) is noted each tick while not paused; 1 s after the scan stops,
+  each one the scan moved is put back through the dispatching guard (not
+  saved by itself) when its RF fits the span now - retried every 0.5 s for 30 s (e.g. until the receiver is tuned
   back by hand). Moved by the user meanwhile: left as it is. Each outcome is
   in `scan_restore` (`restored` + `note`: "put back on ... MHz after the
   saved-frequency scan", "... outside the receiver's span: tune back ...",
@@ -272,12 +297,14 @@ same call). A `hang` call goes back to `active` with new activity.
   progress go on with their own signalling (CALL ENDED / RELEASED) and timers:
   without grant updates HANG ends after the hang time.
 - **CONTROL** (the control channel is now elsewhere, e.g. a Capacity Plus
-  rest channel): the control VFO is moved there with a normal
-  `SET_DECIMATOR_FREQ` (saved: it is the user's VFO, where the control
-  channel is now) when the frequency resolves and fits its tuner, at most
-  every `CONTROL_MOVE_MIN_MS` 10 s, with a log line; otherwise the control
-  entry's `note` says why (no frequency / outside the span / waiting / in a
-  playback).
+  rest channel): with following on and not paused, the control VFO is moved
+  there with `SET_DECIMATOR_FREQ` through the dispatching guard (the move is
+  not saved by itself; above) when the frequency resolves and fits its
+  tuner, at most every `CONTROL_MOVE_MIN_MS` 10 s, with a log line; otherwise
+  the control entry's `note` says why (following is off / paused / no
+  frequency / outside the span / waiting / in a playback).
+- **A control VFO that names another system** (a keyed key changed): the old
+  system's calls of that site end (`control_reset`).
 
 ### Playback
 Debug playback and recording playback work as live (that is how scenes are
@@ -346,7 +373,10 @@ answered with the status to every page; a refusal also with
 Not saved:
 - `TRUNK_END:<call id>` - stop following that call now; not rejoined.
 - `TRUNK_HOLD:{"sys":<id>,"tg":<talkgroup>}` - only that talkgroup is
-  followed (others: `hold`) until `TRUNK_HOLD:` (empty) releases it.
+  followed (others: `hold`) until `TRUNK_HOLD:` (empty) releases it - or
+  its system is deleted (a held system is never evicted) or the talkgroup is deleted
+  (`TRUNK_TG_DEL`): the hold is released then too. A temporary system's
+  talkgroup can't be held (no key yet).
 - `GET_TRUNK` - the status; `GET_TRUNK_SYS:<system id>` - its lists message.
 
 Systems (JSON in the saved-frequency store's style; strings are cleaned:
@@ -355,7 +385,10 @@ systems file at once). `sys` is an existing id - or, for the four `_SET`
 commands, a well-formed `<plugin id>:<key>` (`[a-z0-9_-]{1,32}` :
 `[A-Za-z0-9._-]{1,48}`; the plugin needn't be installed) that doesn't exist
 yet: the system's record is made (`heard` false until its control channel is
-heard; a playback's: in memory only). A catalogue entry's `commands` can
+heard; a playback's: in memory only) - only when the whole command is
+valid: a refused command leaves nothing behind. A temporary id (`:@`) is
+refused by every edit but `TRUNK_SYS_DEL`. `TRUNK_END` takes an integer id
+1 .. 2^53. A catalogue entry's `commands` can
 thus enter a plan before the decoder has heard anything.
 
 | command | JSON | rules |
@@ -381,6 +414,10 @@ anything is active (a call, a voice VFO, a control VFO), and on every
 `TRUNK_*` / `GET_TRUNK`. Pages ignore unknown keys; fields are added, never
 renamed.
 
+- `systems_file`: `{ok, note ("" or what went wrong: not loaded - unreadable
+  / larger than 32 MB; not written - over 32 MB), kept_as (the dated name an
+  unreadable file was moved to)}`; `sys_refused` (new air systems not made:
+  the table full of the user's).
 - `follow`, `all_sites`, `max_vfos`, `encrypted`, `unit`, `audio`, `hang_s`:
   the settings.
 - `paused` (bool), `paused_why` (`"saved-frequency scan"` | `"discrete
@@ -425,6 +462,7 @@ renamed.
   arrival on the loop -> its VFO placed / -> ACTIVE); `events`,
   `events_dropped` (queue full: every kind but RESET), `resets_coalesced`,
   `options_dropped` (grant options the traffic plugin doesn't declare),
+  `untrunking_dropped` (events of plugins that don't declare `trunking`),
   `calls_dropped` (grants refused a row: 64 calls already),
   `now` (epoch ms).
 
@@ -444,11 +482,25 @@ calls}]}`. Every number that isn't known is null.
 cwd-relative (Docker: in the app's data folder like the other runtime files;
 it is written there, not served, so no `COPY` / `link_files` entry);
 written through `fs_replace` (temp file, renamed over), never during a
-playback; a user's edit at once, new announced / learned / heard entries
-within 30 s, counters and last-heard times every 10 min, the last unsaved
-change at shutdown (`trunk::save_now`). Not touched by `RESET_SETTINGS` (as
-the saved-frequency store). An unreadable file is kept as `.bad` and the
-manager starts empty. Only keyed systems; units heard are not saved.
+playback; a user's edit at once, new announced / learned entries within 30
+s, counters every 10 min - with following OFF only an edit writes (the air
+writes nothing). At shutdown `trunk::save_now` has the uWS loop write the
+current state once (main waits up to 2 s; a loop that doesn't answer: its
+last copy, at most 1 s old), and no write follows it - both writers take the
+same lock. Not touched by `RESET_SETTINGS` (as the saved-frequency store).
+
+What is written (what must survive a restart): the systems the user edited,
+and - while following is on - the keyed ones heard; of each its names,
+"listed only", rules, the talkgroups the user listed / named / gave a mode,
+and the channels that have a frequency (user, announced, learned - with
+their grant count and last time as the evidence). Not: talkgroups only
+heard, channels never resolved, units, counters of the systems. A text over
+`SYSTEMS_FILE_MAX` 32 MB is never written (the old file stays; the status
+says so) - the user's entries alone can reach 32 x 4000 x ~180 B = 23 MB, so
+what is written always reads back. A file that doesn't load (unreadable or
+over 32 MB) is kept as `trunk_systems.json.bad-<YYYYmmdd-HHMMSS>[-n]` (never
+overwritten) and the status' `systems_file` says `ok` false, why and where
+it went; the manager starts empty.
 
 ```json
 {"version":1,"systems":[
@@ -463,13 +515,26 @@ manager starts empty. Only keyed systems; units heard are not saved.
 
 ## Limits
 
-Queue 4096 events; 32 systems (a temporary one goes first); per system
-2000 talkgroups (the least recently heard unlisted one goes), 2000 channel
-entries (the least recently granted without a user frequency goes), 32
-rules, 1000 units (memory only), 200 unresolved names; 64 calls in progress
-+ recent (the oldest recent one makes room, else the grant gets no row:
-`calls_dropped`); 50 history entries; 8 sources per call; voice VFOs 1-8 and
-never past the receiver's 16 VFOs; the systems file 8 MB.
+Every container the air fills is bounded on every path that inserts (the
+merge of a temporary system included - one insertion function per
+container); when one is full the oldest tenth of what may go goes in one
+pass (amortised O(log n) per insert, never a scan per event), and an entry
+of the user's never goes. Queue 4096 events (a drain takes at most 2000, the
+rest on the loop's next turn - commands and sockets run in between); 32
+systems - when full a system nobody edited, no control VFO reports and no
+hold names goes (a temporary one first, then the one heard longest ago); a
+system the user edited is never evicted by the air: full of those, a new air
+system is not made (`sys_refused`) - the user deletes systems themselves;
+per system 2000 talkgroups (unlisted ones go, least recently heard first),
+2000 channel entries (ones without a user frequency go, least recently
+granted first), 32 rules, 1000 units (memory only), 200 unresolved names, 4096
+data / skip grant sequences remembered (the map is cleared past it);
+passive learning 512 observations, each kept 2 min; 64 calls in progress +
+recent (the oldest recent one makes room, else the grant gets no row:
+`calls_dropped`); 50 history entries; 8 sources per call; voice VFOs 1-8,
+never past the receiver's 16 VFOs, each at most 50 kHz wide (twice TETRA's
+25 kHz, the widest of the five; P25 / DMR / NXDN / MPT1327 12.5 kHz); the
+systems file 32 MB.
 
 ## Protocols
 
@@ -558,6 +623,23 @@ octet 2, the rest-channel number [UNVERIFIED]. Connect Plus and Hytera XPT:
 detected by name only. Verified on air: system identity, grants, the LCN
 plan, call start / end / release. Not verified: absolute parameters
 (generator only), C_MOVE, Capacity Plus rest-channel numbering.
+Since the fix round (plugin 2.2): every grant also carries the hidden option
+`traffic=1` - an instance with it never reports `control = true` and never
+sends `control_channel` (Tier III or Capacity Plus); options are `slot`,
+`traffic`, and `cc` only when the grant names a colour code. The control
+rule is per slot: only TSCC PDUs on a slot the instance follows count;
+C_SYS_Parms from the CACH counts only when no `slot` option is set; a
+single-slot instance reports only its own slot's grants (the real network's
+control carrier slot 2 carries an occasional C_ALOHA - 2 per 600 s - hence
+`traffic` on top of the slot rule). A CACH short-LC fragment counts only once
+the burst behind it passed its own check (slot-type Golay + CRC / FEC, with
+the `cc` filter its colour code; voice bursts B-F by their EMB; a voice burst
+A's only when no filter is set): a co-channel site's CACH cannot name the
+system of a filtered instance. A multi-block (MBC) continuation must be the
+next burst of its header's slot, 60 ms +- 3 symbols after the previous block.
+Capacity Plus: `control_channel` only after 3 status CSBKs in a row name the
+same new rest channel, at most once per 5 s (a move can take up to ~6 s on an
+idle system).
 
 **NXDN** (plugin nxdn, 2.1; Type-C trunking from TS 1-A / 1-C 1.3). System
 key = Location ID category + system code (`global.123`, `regional.4000`,
@@ -574,7 +656,18 @@ traffic VCALL gives it); `emergency` from the CC Option; options `ran`,
 `rate` (4800 / 9600). Traffic: ACTIVE from VCALL; ENDED at TX_REL, TX_REL_EX
 (hang time, Tr_hold 1 s groups / 7 s individual) or a 1 s gap; RELEASED at
 DISC. No `grant_end`. Not supported: DFA, Type-D, EFR voice. Verification:
-generator and specification only, not seen on air.
+generator and specification only, not seen on air. Since the fix round:
+`trunk_system` every 5 s, at once after a reset, and ahead of any grant that
+would otherwise precede it (the engine can drop a plugin's reports without
+resetting the plugin - Auto detect locking elsewhere and back); in a
+dual-format CAC, SITE_INFO / SRV_INFO are handled before a grant in the same
+CAC. A DISC reports RELEASED only for a call this instance reported since its
+reset (a voice VFO that arrives during the previous call's three DISC repeats
+no longer ends the new call of the same talkgroup); an instance that arrives
+mid-call and never decodes a VCALL reports nothing, also at the DISC - the
+manager ends that call on its own no-frames timer. A SACCH message (VCALL ->
+call state, grants) is assembled only from the four fragments of four
+consecutive frames in order.
 
 **TETRA** (plugin tetra, 2.2). The site runs through the MCCH on timeslot 1
 of the main carrier; secondary control channels on timeslots 2-4 are
@@ -601,7 +694,13 @@ moves an active call to hang even while frames go on). Limits: timeslot
 numbers only after the carrier's first BSCH (up to 1.02 s; `mcc` / `mnc` /
 `cc` descramble before, and with them the traffic instance accepts that
 cell only - a stronger co-channel cell's calls are never reported, the
-wanted call just stops being heard); air-interface encryption hides the allocations
+wanted call just stops being heard); after a loss of slot sync (9 slots
+without a training sequence) the timeslot numbers are unknown and nothing
+timeslot-dependent is reported (no grant from a traffic instance, no
+`call()`, talker or voice) until the next BSCH or the carrier back on the
+old slot grid within 10 s - a fade of more than 1 s ENDs the call, the
+host's hang time then decides (plugin README *Loss of slot sync*);
+air-interface encryption hides the allocations
 (nothing can be followed; the plugin's "Trunk following" fact says so);
 downlink bearings are the base station's; the control VFO still plays the
 first traffic timeslot (listening to it too hears the call twice). Verified
@@ -632,6 +731,21 @@ stays). Talker: the MAINT's unit, "via site" on the downlink. Verified on
 air (2026-11-20, night): control-channel decoding of four control channels,
 the BCAST channel numbers and the plan. Not verified on air: any GTC or
 traffic channel. False reports: 0 over 1 h of noise and 1 h of FM speech.
+Since the fix round (plugin 3.1): a replacement GTC on a traffic channel (a
+GTC after SYNT) counts only when the same codeword is heard twice within 2 s
+(one error-free codeword after an unconfirmed sync was 2^-18: 380-570 false
+grants per VFO-year measured from 11,294 / 17,068 SYNT candidates per hour of
+noise / FM audio; now < 1e-15); on a control channel a GTC must sit on the
+confirmed CCSC slot grid (as before). A single CLEAR still releases (2^-38,
+the standard's own acceptance check); a single MAINT still sets ACTIVE /
+ENDED (about one false report per VFO-year on noise without the `chan`
+option, 1e-3 with it; a false ACTIVE on noise ends after 1 s - no carrier). A
+unit call's `call()` keeps the grant's target and source (who is speaking is
+the talker); the traffic calls take the grant's emergency flag through the
+hidden `emergency` option; `trunk_system()` goes out the moment a confirmed
+CCSC is heard and always before a grant after a reset. Still owed (no call in
+the night captures): GTC field positions on air, what a real traffic channel
+carries, false codewords under real speech.
 
 ## Tests (2026-11-20; scratch, not in the repo)
 
@@ -680,8 +794,8 @@ the broadcasts:
   centre retune, the user retuning (taken back) / removing a trunk VFO (not
   rejoined), the control VFO retuned / removed, a mode change, the control
   channel lost (not receiving 5.2 s later; the call ends on its own
-  hang time), CONTROL (the control VFO moved and saved, a second within 10 s
-  waits); a scanner's moved control VFO put back by the manager (scan_restore).
+  hang time), CONTROL (the control VFO moved, the move itself not saved, a
+  second within 10 s waits); a scanner's moved control VFO put back by the manager (scan_restore).
 - `t6_learn` 13: learning from a user's VFO (two observations, then
   followed), the refusals, a learned entry dropped after two no_signals.
 - `t7_stress` 16: a flood of 3000 grants / s for 5 s (15340 events, none
@@ -703,8 +817,26 @@ the broadcasts:
   events dropped, VFO 1 (another system's control VFO, following a call)
   retuned in the middle - its RESET arrives, its call ends `control_reset`; a
   grant option the traffic plugin doesn't declare dropped (counted, one log
-  line), the declared ones set.
-- 217 checks, all passing on the final build. Found on the way: a
+  line), the declared ones set. (The flood's waiting calls push rows
+  through the 50-row history within a few hundred ms, so the check takes the
+  `control_reset` row or the call gone with its voice VFO parked.)
+- `t12_review` 17 (the review round, 2026-11-20): edits on a temporary
+  system refused; three refused `_SET`s leave no system (status, file); five
+  out-of-range `TRUNK_END` ids refused; a 2 MHz grant's VFO 50 kHz; a grant
+  for a plugin without `trunking` `no_decoder`, that plugin's own reports
+  dropped (a copy of trunktest that doesn't declare it); a control VFO naming
+  another keyed system ends the old one's call `control_reset`; a systems file
+  with 1e30 / -5 numbers reads them as defaults, its out-of-range rule
+  dropped. 10 of the 17 fail on the build before the round. The reviewer's
+  reproducers (copied): following off moves / saves / writes nothing (7), the
+  user's system never evicted by 40 air systems (3), the last VFO handed back
+  plain (4), shutdown saves the current state (1), a 60 s merge flood keeps
+  the channel table at 2000 and the file at 348 B (was 150500 entries, 19
+  MB), its file reloads (2), GET_TRUNK's worst answer through a flood of 400 /
+  4000 / 40000 events per 100 ms block: 0.24 / 0.28 / 0.001 s (was 0.32 / 9.9
+  / 12.6 s; at 40000 the old build dropped 98 % of 22 M events, the new one
+  none of 6.5 M).
+- 234 checks, all passing on the final build (2026-11-20, load average 3-7). Found on the way: a
   temporary system merged into its keyed one erased the KEYED one (merge_temp
   took the Track's system id by reference and rewrote it) - the keyed system
   came back empty and the temporary one stayed as a ghost with a stale

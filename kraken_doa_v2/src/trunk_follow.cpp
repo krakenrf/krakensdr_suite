@@ -35,7 +35,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <deque>
+#include <future>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -86,6 +88,10 @@ constexpr int64_t LEARN_SEPARATE_MS = 5000;   // ... the second observation from
 constexpr double PLACE_GUARD_HZ = 2000;       // kept between a channel's edge and the usable band's (AFC, filter)
 constexpr double LEARN_TOL_HZ = 1500;         // two observations agree within this
 constexpr float ANALOG_SQ_DB = 10.0f;         // the level squelch of an analogue (nfm) traffic channel
+// a voice VFO at most this wide: twice the widest traffic channel of the five
+// protocols (TETRA's 25 kHz carrier; P25 / DMR / NXDN / MPT1327 12.5 kHz) - a
+// grant can't make a 2.4 MHz VFO
+constexpr double VOICE_BW_MAX_HZ = 50000;
 constexpr int64_t STATUS_MIN_MS = 250;        // status at most 4 / s ...
 constexpr int64_t STATUS_ACTIVE_MS = 1000;    // ... and at least 1 / s while anything is active
 constexpr int64_t LISTS_STRUCT_MS = 1000;     // the big lists after a change of what is in them
@@ -94,7 +100,10 @@ constexpr int64_t SAVE_EDIT_MS = 0;           // the systems file: a user's edit
 constexpr int64_t SAVE_LEARN_MS = 30000;      // ... new announced / learned / heard entries within 30 s,
 constexpr int64_t SAVE_STATS_MS = 600000;     // ... counters and last-heard times every 10 min
 constexpr const char* SYSTEMS_FILE = "trunk_systems.json";
-constexpr size_t SYSTEMS_FILE_MAX = 8u << 20;
+// what is written always reads back: the user's entries alone can reach
+// 32 x (2000 talkgroups + 2000 channels) x ~180 B = 23 MB; a text over this is
+// not written (the old file stays, the status says so)
+constexpr size_t SYSTEMS_FILE_MAX = 32u << 20;
 
 int64_t now_ms() {
     using namespace std::chrono;
@@ -192,6 +201,9 @@ struct System {
     std::map<std::string, uint64_t> notf;  // calls not followed, by their first reason (data / skip: grants)
     std::unordered_map<std::string, int64_t> quiet;   // data / skip grants counted lately (key -> steady ms)
     bool heard = false;                    // an event of it has arrived (ever: saved) - false = the user's record only
+    bool user = false;                     // the user edited it (or the file has their entries): never evicted by the air
+    int64_t last_heard = 0;                // steady ms of its last event (the air systems' eviction order)
+    int64_t chans_full_until = 0, tgs_full_until = 0;   // a full table of the user's entries: no rescan till then
     // the big lists changed: what is in them / only counters
     bool lists_struct = true, lists_stats = false;
     int64_t lists_sent = 0;
@@ -209,12 +221,17 @@ bool temp_id(const std::string& id) { return id.find(":@") != std::string::npos;
 // --- the systems file: dirty levels and the text waiting for main()'s last save
 int64_t g_dirty_since = 0;     // 0 = clean
 int64_t g_dirty_within = 0;    // save within this (ms)
-std::mutex g_save_mu;
-std::string g_unsaved;         // serialised, not yet written (save_now writes it)
+std::mutex g_save_mu;          // the file: one writer at a time (the loop's save, main's save_now)
+std::string g_unsaved;         // serialised, not yet written (save_now's fallback)
+bool g_shutdown = false;       // (g_save_mu) main's last save ran: the loop writes no more
+std::string g_file_note;       // the status' systems_file: "" = fine, else what went wrong
+std::string g_file_bad;        // where an unreadable file was kept
 std::atomic<bool> g_loaded{false};
 
+bool g_edit_dirty = false;   // a user's edit is unsaved (with following off only these are written)
 void mark_dirty(int64_t within) {
     const int64_t now = now_ms();
+    if (within == 0) g_edit_dirty = true;
     if (!g_dirty_since) {
         g_dirty_since = now;
         g_dirty_within = within;
@@ -269,6 +286,8 @@ uint64_t g_dropped_calls = 0;               // grants that would have made more 
 
 // One call = system + site (the control VFO that granted it) + group / unit + target: a
 // wide-area talkgroup granted on two sites at once is two carriers of one conversation
+void drop_call(uint64_t id);
+
 std::string call_key(const std::string& sys, int site, bool group, const std::string& target) {
     return sys + "\x1f" + std::to_string(site) + "\x1f" + (group ? "g" : "u") + "\x1f" + target;
 }
@@ -376,7 +395,7 @@ std::map<int, std::deque<std::pair<std::string, PluginEvent>>> g_recent;
 
 // --- VFO metadata for decimator_info / the snapshot (any thread) -------------
 struct Meta {
-    const Inst* inst = nullptr;
+    uint64_t inst = 0;   // DecimatorInstance::serial (an address can be the next VFO's)
     bool voice = false;
     std::string json;
 };
@@ -568,7 +587,7 @@ std::string label_of(const System& s, const Call& c) {
 void meta_set(int vfo, const Inst* inst, bool voice, const std::string& json) {
     std::lock_guard<std::mutex> lk(g_meta_mu);
     Meta& m = g_meta[vfo];
-    m.inst = inst;
+    m.inst = inst->serial;
     m.voice = voice;
     m.json = json;
 }
@@ -607,26 +626,73 @@ void meta_control(int vfo, const Track& t) {
 // Systems
 // ============================================================================
 
-System& ensure_system(const std::string& id, const std::string& plugin, const std::string& key) {
+// Room in a container the air fills: when it is full, the oldest tenth of the
+// entries `evictable` allows goes in one pass (so an insert at the bound costs
+// O(log n) amortised, not a scan per insert); false = nothing may go (every
+// entry is the user's) - then *no_scan_until keeps the next tries from
+// rescanning for a second
+template <class M, class Ok, class Stamp>
+bool make_room(M& m, size_t max, Ok evictable, Stamp stamp, int64_t* no_scan_until = nullptr) {
+    if (m.size() < max) return true;
+    const int64_t now = now_ms();
+    if (no_scan_until && now < *no_scan_until) return false;
+    std::vector<std::pair<int64_t, typename M::key_type>> c;
+    for (const auto& kv : m)
+        if (evictable(kv.second)) c.push_back({stamp(kv.second), kv.first});
+    if (c.empty()) {
+        if (no_scan_until) *no_scan_until = now + 1000;
+        return false;
+    }
+    const size_t k = std::min(c.size(), std::max<size_t>(1, max / 10));
+    std::nth_element(c.begin(), c.begin() + static_cast<std::ptrdiff_t>(k - 1), c.end());
+    for (size_t i = 0; i < k; i++) m.erase(c[i].second);
+    return true;
+}
+
+uint64_t g_sys_refused = 0;   // new air systems not made: the table full of the user's
+
+// A system: found, or made. Full (MAX_SYSTEMS): an air system nobody edited and
+// no control VFO reports goes - the temporary ones first, then the one heard
+// longest ago; a system the user edited is never evicted. Every one the user's
+// or in use: nullptr (counted, sys_refused) - the user deletes systems themselves
+System* ensure_system(const std::string& id, const std::string& plugin, const std::string& key) {
     auto it = g_sys.find(id);
-    if (it != g_sys.end()) return it->second;
+    if (it != g_sys.end()) return &it->second;
     if (g_sys.size() >= MAX_SYSTEMS) {
-        // the oldest temporary (unnamed) one goes first, else one without control VFOs
         std::string drop;
-        for (const auto& kv : g_sys)
-            if (temp_id(kv.first) && kv.second.ctl.empty()) { drop = kv.first; break; }
-        if (drop.empty())
-            for (const auto& kv : g_sys)
-                if (kv.second.ctl.empty()) { drop = kv.first; break; }
-        if (!drop.empty()) g_sys.erase(drop);
+        int64_t best = 0;
+        for (const auto& kv : g_sys) {
+            const System& x = kv.second;
+            if (x.user || !x.ctl.empty() || kv.first == g_hold_sys) continue;
+            bool calls = false;
+            for (const auto& c : g_calls)
+                if (c.second.sys == kv.first && c.second.vfo >= 0) calls = true;
+            if (calls) continue;
+            const int64_t rank = (temp_id(kv.first) ? -(int64_t(1) << 60) : 0) + x.last_heard;
+            if (drop.empty() || rank < best) {
+                drop = kv.first;
+                best = rank;
+            }
+        }
+        if (drop.empty()) {
+            g_sys_refused++;
+            g_status_now = true;
+            return nullptr;
+        }
+        std::vector<uint64_t> ids;
+        for (const auto& c : g_calls)
+            if (c.second.sys == drop) ids.push_back(c.first);
+        for (uint64_t c : ids) drop_call(c);
+        g_sys.erase(drop);
     }
     System& s = g_sys[id];
     s.id = id;
     s.plugin = plugin;
     s.key = key;
     s.lists_struct = true;
+    s.last_heard = now_ms();
     if (!temp_id(id)) mark_dirty(SAVE_LEARN_MS);
-    return s;
+    return &s;
 }
 
 // the frequency of channel ch in system s: the grant's, a user entry, a user
@@ -675,14 +741,10 @@ bool resolve(const System& s, const Channel& ch, double* hz, double* up, std::st
 Chan* ensure_chan(System& s, const std::string& name) {
     auto it = s.chans.find(name);
     if (it != s.chans.end()) return &it->second;
-    if (s.chans.size() >= MAX_CHANS) {
-        // the least recently granted entry without a user frequency goes
-        auto drop = s.chans.end();
-        for (auto i = s.chans.begin(); i != s.chans.end(); ++i)
-            if (!fin(i->second.user_hz) && (drop == s.chans.end() || i->second.last < drop->second.last)) drop = i;
-        if (drop == s.chans.end()) return nullptr;
-        s.chans.erase(drop);
-    }
+    // full: the least recently granted entries without a user frequency go
+    if (!make_room(s.chans, MAX_CHANS, [](const Chan& c) { return !fin(c.user_hz); },
+                   [](const Chan& c) { return c.last; }, &s.chans_full_until))
+        return nullptr;
     s.lists_struct = true;
     return &s.chans[name];
 }
@@ -690,13 +752,10 @@ Chan* ensure_chan(System& s, const std::string& name) {
 Tg* ensure_tg(System& s, const std::string& id) {
     auto it = s.tgs.find(id);
     if (it != s.tgs.end()) return &it->second;
-    if (s.tgs.size() >= MAX_TGS) {
-        auto drop = s.tgs.end();
-        for (auto i = s.tgs.begin(); i != s.tgs.end(); ++i)
-            if (!i->second.listed && (drop == s.tgs.end() || i->second.last < drop->second.last)) drop = i;
-        if (drop == s.tgs.end()) return nullptr;
-        s.tgs.erase(drop);
-    }
+    // full: the least recently heard ones not listed by the user go
+    if (!make_room(s.tgs, MAX_TGS, [](const Tg& t) { return !t.listed; }, [](const Tg& t) { return t.last; },
+                   &s.tgs_full_until))
+        return nullptr;
     s.lists_struct = true;
     return &s.tgs[id];
 }
@@ -705,12 +764,7 @@ void note_unit(System& s, const std::string& id, bool call) {
     if (id.empty()) return;
     auto it = s.units.find(id);
     if (it == s.units.end()) {
-        if (s.units.size() >= MAX_UNITS) {
-            auto drop = s.units.begin();
-            for (auto i = s.units.begin(); i != s.units.end(); ++i)
-                if (i->second.last < drop->second.last) drop = i;
-            s.units.erase(drop);
-        }
+        make_room(s.units, MAX_UNITS, [](const Unit&) { return true; }, [](const Unit& u) { return u.last; });
         it = s.units.emplace(id, Unit{}).first;
         s.lists_struct = true;
     }
@@ -719,31 +773,62 @@ void note_unit(System& s, const std::string& id, bool call) {
     s.lists_stats = true;
 }
 
+Unresolved* ensure_unresolved(System& s, const std::string& name) {
+    auto it = s.unresolved.find(name);
+    if (it != s.unresolved.end()) return &it->second;
+    make_room(s.unresolved, MAX_UNRESOLVED, [](const Unresolved&) { return true; },
+              [](const Unresolved& u) { return u.last; });
+    return &s.unresolved[name];
+}
+
 // A temporary system (no key yet) becomes the keyed one: what it gathered moves there
 // (by value: a caller passes a Track's sys, which the loop below rewrites)
 void merge_temp(const std::string from, const std::string to, const std::string plugin, const std::string key) {
     if (from == to || !g_sys.count(from)) return;
-    System& d = ensure_system(to, plugin, key);
+    System* dp = ensure_system(to, plugin, key);
     auto it = g_sys.find(from);
     if (it == g_sys.end()) return;   // (made room for the new one)
+    if (!dp) {
+        // no room for the keyed one: the temporary one goes (its VFO's events
+        // come back under the key and are refused, counted, until there is room)
+        std::vector<uint64_t> ids;
+        for (const auto& c : g_calls)
+            if (c.second.sys == from) ids.push_back(c.first);
+        for (uint64_t c : ids) drop_call(c);
+        for (auto& kv : g_tracks)
+            if (kv.second.sys == from) kv.second.sys = to;
+        g_sys.erase(from);
+        return;
+    }
+    System& d = *dp;
     System& t = it->second;
+    // every entry through the containers' insertion functions (their bounds,
+    // their eviction - never a user entry)
     for (auto& kv : t.chans) {
-        Chan& c = d.chans[kv.first];
-        if (c.num < 0) c.num = kv.second.num;
+        Chan* c = ensure_chan(d, kv.first);
+        if (!c) break;
+        if (c->num < 0) c->num = kv.second.num;
         if (fin(kv.second.ann_hz)) {
-            c.ann_hz = kv.second.ann_hz;
-            c.ann_up = kv.second.ann_up;
+            c->ann_hz = kv.second.ann_hz;
+            c->ann_up = kv.second.ann_up;
         }
-        c.grants += kv.second.grants;
-        c.last = std::max(c.last, kv.second.last);
+        c->grants += kv.second.grants;
+        c->data += kv.second.data;
+        c->last = std::max(c->last, kv.second.last);
     }
     for (auto& kv : t.tgs) {
-        Tg& g = d.tgs[kv.first];
-        g.calls += kv.second.calls;
-        g.last = std::max(g.last, kv.second.last);
+        Tg* g = ensure_tg(d, kv.first);
+        if (!g) break;
+        g->calls += kv.second.calls;
+        g->last = std::max(g->last, kv.second.last);
     }
-    for (auto& kv : t.units) d.units[kv.first] = kv.second;
-    for (auto& kv : t.unresolved) d.unresolved[kv.first] = kv.second;
+    for (auto& kv : t.units) {
+        note_unit(d, kv.first, false);
+        Unit& u = d.units[kv.first];
+        u.calls += kv.second.calls;
+        u.last = std::max(u.last, kv.second.last);
+    }
+    for (auto& kv : t.unresolved) *ensure_unresolved(d, kv.first) = kv.second;
     for (auto& kv : t.ctl) d.ctl[kv.first] = kv.second;
     d.grant_msgs += t.grant_msgs;
     d.grants += t.grants;
@@ -784,6 +869,11 @@ void merge_temp(const std::string from, const std::string to, const std::string 
     }
     for (auto& kv : g_tracks)
         if (kv.second.sys == from) kv.second.sys = to;
+    // the history rows of the temporary id: the keyed one's now
+    const std::string was = "\"sys\":" + js(from) + ",", now_is = "\"sys\":" + js(to) + ",";
+    for (auto& h : g_history)
+        for (size_t at = h.find(was); at != std::string::npos; at = h.find(was, at + now_is.size()))
+            h.replace(at, was.size(), now_is);
     g_sys.erase(from);
     mark_dirty(SAVE_LEARN_MS);
 }
@@ -953,6 +1043,14 @@ void remove_voice_at(size_t i) {
     if (decimator_manager.removeDecimator(v.vfo)) {
         audio_mixer.retain(decimator_manager.audioVfoIds());
         std::cout << "Trunk following: voice VFO D" << v.vfo << " removed" << std::endl;
+    } else if (auto inst = live(v)) {
+        // the last VFO (the user removed theirs): it can't go - it is the user's
+        // now, as a plain VFO: enabled, NBFM, its decoder off, muted, where it was
+        inst->enabled = true;
+        decimator_manager.setDigitalMode(v.vfo, dig::Mode::OFF, "");
+        decimator_manager.setDemodMode(v.vfo, DemodulatorMode::NBFM);
+        std::cout << "Trunk following: voice VFO D" << v.vfo << " is the last VFO - handed back as a plain NBFM VFO (decoder off)"
+                  << std::endl;
     }
     broadcast(MessageBuilders::build_decimator_info_message());
 }
@@ -1037,7 +1135,7 @@ void apply_voice(Voice& v, Call& c, const Place& p) {
     const std::string demod = analog ? "NBFM" : "DIGITAL";
     if (DecimatorManager::demodModeToString(inst->demod_mode.load()) != demod || v.dirty)
         cmds.push_back("SET_DECIMATOR_DEMOD:" + sid + ":" + demod);
-    const double need = std::max(c.bw, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500.0);
+    const double need = std::min(VOICE_BW_MAX_HZ, std::max(c.bw, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500.0));
     const int bw = efficient_bandwidth_at_least(static_cast<int>(std::ceil(std::min(need, 2.4e6))));
     if (inst->bandwidth_hz.load() != bw || v.dirty) cmds.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(bw));
     cmds.push_back("DEC_SQUELCH_METHOD:" + sid + ":" + (analog ? "FFT" : "DIGITAL"));
@@ -1122,7 +1220,7 @@ std::string policy_why(const System& s, const Call& c) {
             if (c.vfo < 0 || o.t_placed < c.t_placed) return "duplicate";
         }
     dig::PluginInfo pi;
-    if (!plugin_info(c.decoder, &pi) || !pi.built || pi.fixed_freq_hz > 0 || pi.lock_vfo) return "no_decoder";
+    if (!plugin_info(c.decoder, &pi) || !pi.built || !pi.trunking || pi.fixed_freq_hz > 0 || pi.lock_vfo) return "no_decoder";
     return "";
 }
 
@@ -1269,7 +1367,7 @@ std::string try_follow(Call& c) {
             c.fsrc = src;
             dig::PluginInfo pi;
             plugin_info(c.decoder, &pi);
-            const double bw = std::max(c.bw, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500.0);
+            const double bw = std::min(VOICE_BW_MAX_HZ, std::max(c.bw, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500.0));
             int prefer = -1;
             if (auto ci = c.ctl_vfo >= 0 ? decimator_manager.getDecimator(c.ctl_vfo) : nullptr) prefer = ci->tuner_channel.load();
             const Place p = place_for(hz, bw, prefer);
@@ -1303,16 +1401,10 @@ std::string try_follow(Call& c) {
     }
     if (why == "no_freq") {
         // the user needs to see WHICH channels lack a frequency
-        Unresolved& u = s->unresolved[c.ch.name];
+        Unresolved& u = *ensure_unresolved(*s, c.ch.name);
         u.num = c.ch.number;
         u.n++;
         u.last = wall_ms();
-        if (s->unresolved.size() > MAX_UNRESOLVED) {
-            auto drop = s->unresolved.begin();
-            for (auto i = s->unresolved.begin(); i != s->unresolved.end(); ++i)
-                if (i->second.last < drop->second.last) drop = i;
-            s->unresolved.erase(drop);
-        }
     }
     if (c.why != why) g_status_now = true;
     set_why(c, *s, why);
@@ -1337,7 +1429,7 @@ void replace_call(Call& c) {
     c.fsrc = src;
     dig::PluginInfo pi;
     plugin_info(c.decoder, &pi);
-    const double bw = std::max(c.bw, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500.0);
+    const double bw = std::min(VOICE_BW_MAX_HZ, std::max(c.bw, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500.0));
     const Place p = place_for(hz, bw, v->tuner);
     if (!p.ok) return unfollow(c, "out_of_span");
     apply_voice(*v, c, p);
@@ -1476,7 +1568,9 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
         sid = plugin + ":@" + std::to_string(vfo);
         t.sys = sid;
     }
-    System& s = ensure_system(sid, plugin, temp_id(sid) ? "" : sid.substr(sid.find(':') + 1));
+    System* sp = ensure_system(sid, plugin, temp_id(sid) ? "" : sid.substr(sid.find(':') + 1));
+    if (!sp) return;   // (no room: counted)
+    System& s = *sp;
     if (!t.system_said && !voice_of_vfo(vfo) && !t.control) {
         t.control = true;   // grants without a SYSTEM: a control VFO
         meta_control(vfo, t);
@@ -1524,13 +1618,14 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
     }
     if ((ev.data || skip_tg) && (!c || c->vfo < 0)) {
         if (c) drop_call(c->id);
-        const std::string qk = key + "\x1f" + ev.ch.name + (ev.data ? "\x1fd" : "\x1fs");
+        const std::string qk = key + "\x1f" + ev.ch.name + (ev.data ? "\x1f" "d" : "\x1f" "s");
         const int64_t now = now_ms();
         auto q = s.quiet.find(qk);
         const bool fresh = q == s.quiet.end() || now - q->second > WAIT_EXPIRE_MS;
+        // (bounded by count: past it the whole map goes - a sequence may then be
+        // counted twice, never a scan per grant)
+        if (s.quiet.size() >= 4096 && q == s.quiet.end()) s.quiet.clear();
         s.quiet[qk] = now;
-        if (s.quiet.size() > 4096)
-            for (auto i = s.quiet.begin(); i != s.quiet.end();) i = now - i->second > WAIT_EXPIRE_MS ? s.quiet.erase(i) : std::next(i);
         if (fresh) {
             s.notf[ev.data ? "data" : "skip"]++;
             if (cl) (ev.data ? cl->data : cl->skip)++;
@@ -1654,7 +1749,7 @@ void on_grant(int vfo, Track& t, const std::string& plugin, const PluginEvent& e
                 c->fsrc = src;
                 dig::PluginInfo pi;
                 plugin_info(c->decoder, &pi);
-                const Place p = place_for(hz, std::max(c->bw, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500.0), v->tuner);
+                const Place p = place_for(hz, std::min(VOICE_BW_MAX_HZ, std::max(c->bw, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500.0)), v->tuner);
                 if (p.ok) {
                     apply_voice(*v, *c, p);
                     note_followed(s, *c);
@@ -1693,7 +1788,9 @@ void on_grant_end(const std::string& sys, int site, const PluginEvent& ev) {
 
 void on_channel(int vfo, Track& t, const std::string& plugin, const PluginEvent& ev) {
     if (t.sys.empty()) t.sys = plugin + ":@" + std::to_string(vfo);
-    System& s = ensure_system(t.sys, plugin, temp_id(t.sys) ? "" : t.sys.substr(t.sys.find(':') + 1));
+    System* sp = ensure_system(t.sys, plugin, temp_id(t.sys) ? "" : t.sys.substr(t.sys.find(':') + 1));
+    if (!sp) return;
+    System& s = *sp;
     Chan* ch = ensure_chan(s, ev.ch.name);
     if (!ch) return;
     bool chg = false;
@@ -1721,13 +1818,19 @@ void on_system(int vfo, Track& t, const std::string& plugin, const PluginEvent& 
         if (temp_id(t.sys) && !temp_id(sid)) {
             merge_temp(t.sys, sid, plugin, ev.sys_key);
         } else if (System* old = sys_of(t.sys)) {
-            old->ctl.erase(vfo);   // the VFO hears another system now
+            old->ctl.erase(vfo);   // the VFO hears another system now: its calls there are over
+            std::vector<uint64_t> done;
+            for (const auto& kv : g_calls)
+                if (kv.second.sys == t.sys && kv.second.ctl_vfo == vfo) done.push_back(kv.first);
+            for (uint64_t id : done) end_call(id, "control_reset");
         }
     }
     t.sys = sid;
     t.system_said = true;
     t.control = ev.control;
-    System& s = ensure_system(sid, plugin, ev.sys_key);
+    System* sp = ensure_system(sid, plugin, ev.sys_key);
+    if (!sp) return;
+    System& s = *sp;
     if (s.name != ev.sys_name || s.site != ev.sys_site) {
         s.name = ev.sys_name;
         s.site = ev.sys_site;
@@ -1748,6 +1851,16 @@ void on_system(int vfo, Track& t, const std::string& plugin, const PluginEvent& 
 void on_control(int vfo, Track& t, const PluginEvent& ev) {
     System* s = sys_of(t.sys);
     if (!s) return;
+    if (!g_set.follow || g_paused) {
+        // (following off: the user's VFO is never moved; paused: a scanner owns the VFOs)
+        const std::string n = "control channel " + ev.ch.name + ": not moved (" +
+                              (g_set.follow ? "paused" : "following is off") + ")";
+        if (t.control_note != n) {
+            t.control_note = n;
+            g_status_now = true;
+        }
+        return;
+    }
     double hz, up;
     std::string src;
     auto inst = decimator_manager.getDecimator(vfo);
@@ -1788,8 +1901,12 @@ void on_control(int vfo, Track& t, const PluginEvent& ev) {
     t.control_note.clear();
     std::cout << "Trunk following: " << t.sys << " control channel moved to " << ev.ch.name << " (" << hz / 1e6
               << " MHz) - D" << vfo << " follows" << std::endl;
-    // the user's own VFO: saved where the control channel is now (not dispatching)
+    // the user's VFO - through the dispatching guard: the move itself is not saved
+    // (the VFO set the user saves next carries it where it is then)
+    const bool was = g_dispatching;
+    g_dispatching = true;
     const std::string why = ControlHandler::apply_command(f);
+    g_dispatching = was;
     if (!why.empty()) {
         t.control_note = "control channel " + ev.ch.name + ": " + why;
         std::cerr << "Trunk following: '" << f << "' refused (" << why << ")" << std::endl;
@@ -1806,6 +1923,15 @@ void on_control(int vfo, Track& t, const PluginEvent& ev) {
 // entry. A learned entry whose calls receive nothing twice (SETUP gives up)
 // is dropped. Never over a user entry, never a frequency another channel of
 // the system already has.
+// (g_learn: at most LEARN_MAX observations, each kept LEARN_KEEP_MS)
+constexpr size_t LEARN_MAX = 512;
+constexpr int64_t LEARN_KEEP_MS = 120000;
+void prune_learn() {
+    const int64_t now = now_ms();
+    for (auto it = g_learn.begin(); it != g_learn.end();) it = now - it->second.t > LEARN_KEEP_MS ? g_learn.erase(it) : std::next(it);
+    make_room(g_learn, LEARN_MAX, [](const LearnObs&) { return true; }, [](const LearnObs& o) { return o.t; });
+}
+
 void on_learn_call(int vfo, const Track& t, const std::string& plugin, const PluginEvent& ev) {
     if (ev.call_state != 1 || ev.target.empty()) return;
     auto inst = decimator_manager.getDecimator(vfo);
@@ -1850,6 +1976,7 @@ void on_learn_call(int vfo, const Track& t, const std::string& plugin, const Plu
     }
     // a second VFO with the same target at the same time: ambiguous
     const std::string lk = c.sys + "\x1f" + c.ch.name;
+    if (!g_learn.count(lk)) prune_learn();
     LearnObs& o = g_learn[lk];
     if (o.call == c.id && o.over == c.overs) {
         if (std::fabs(o.hz - rf) > LEARN_TOL_HZ) {
@@ -1893,6 +2020,10 @@ void on_voice_call(Voice& v, const PluginEvent& ev) {
     System* s = sys_of(c.sys);
     if (!s) return;
     const int64_t now = now_ms();
+    // reports of the previous channel may still be in the pipe after a (re)placement:
+    // none counts before the decoder's RESET for it (or 2 s - a VFO that hadn't
+    // reported anything gets no RESET)
+    if (!v.reset_seen && now - c.t_placed < 2000) return;
     // its tuner retuned / the mode changed since it was placed: what it hears isn't the call's
     {
         const int mode = operating_mode_index();
@@ -2012,14 +2143,36 @@ void on_reset(int vfo, Track& t) {
 }
 
 void note_heard(const std::string& sys) {
-    if (System* s = sys_of(sys); s && !s->heard) {
+    System* s = sys_of(sys);
+    if (!s) return;
+    s->last_heard = now_ms();
+    if (!s->heard) {
         s->heard = true;
         if (!temp_id(s->id)) mark_dirty(SAVE_LEARN_MS);
         g_status_now = true;
     }
 }
 
+uint64_t g_untrunking = 0;   // events of plugins that don't declare trunking (dropped)
+bool plugin_trunking(const std::string& id) {
+    static std::map<std::string, std::pair<bool, int64_t>> cache;
+    const int64_t now = now_ms();
+    auto& e = cache[id];
+    if (now - e.second > 5000 || e.second == 0) {
+        dig::PluginInfo pi;
+        e.first = plugin_info(id, &pi) && pi.trunking;
+        e.second = now;
+    }
+    return e.first;
+}
+
 void apply_event(QEv& q) {
+    // only plugins that declare trunking report systems / grants / calls (a
+    // RESET is the engine's own: always taken)
+    if (q.ev.kind != PluginEvent::RESET && !plugin_trunking(q.plugin)) {
+        g_untrunking++;
+        return;
+    }
     // the VFO as it is now: an event of a decoder that is gone (removed VFO, id reused) is dropped
     auto inst = decimator_manager.getDecimator(q.vfo);
     if (!inst) return;
@@ -2070,13 +2223,27 @@ void apply_event(QEv& q) {
     if (ev.kind != PluginEvent::RESET) note_heard(g_tracks[q.vfo].sys);
 }
 
+// at most this many events per drain: a flood can't hold the loop - the rest
+// waits for the next turn (commands, sockets run in between), the queue's bound
+// drops what comes meanwhile
+constexpr size_t DRAIN_MAX = 2000;
 void drain() {
     std::deque<QEv> q;
+    bool more = false;
     {
         std::lock_guard<std::mutex> lk(g_qmu);
-        q.swap(g_queue);
-        g_drain_posted = false;
+        if (g_queue.size() <= DRAIN_MAX) {
+            q.swap(g_queue);
+        } else {
+            for (size_t i = 0; i < DRAIN_MAX; i++) {
+                q.push_back(std::move(g_queue.front()));
+                g_queue.pop_front();
+            }
+            more = true;
+        }
+        g_drain_posted = more;
     }
+    if (more && loop) loop->defer([] { drain(); });
     const int64_t now = now_ms();
     for (auto& e : q) {
         if (now < g_fence_until) continue;
@@ -2092,13 +2259,18 @@ void drain() {
 // The systems file
 // ============================================================================
 
+// What survives a restart: the systems the user edited, and - while following
+// is on - the keyed ones heard; of each: the names, rules, the talkgroups the
+// user listed / named / gave a mode, the channels with a frequency (user,
+// announced, learned - with their grant count and last time as the
+// evidence). Not: heard-only talkgroups, channels never resolved, units.
 std::string serialise() {
     std::ostringstream o;
     o << "{\"version\":1,\"systems\":[";
     bool first = true;
     for (const auto& kv : g_sys) {
         const System& s = kv.second;
-        if (temp_id(s.id)) continue;
+        if (temp_id(s.id) || !(s.user || (g_set.follow && s.heard))) continue;
         o << (first ? "\n " : ",\n ") << "{\"id\":" << js(s.id) << ",\"plugin\":" << js(s.plugin) << ",\"key\":" << js(s.key)
           << ",\"name\":" << js(s.user_name) << ",\"reported_name\":" << js(s.name) << ",\"listed_only\":" << jb(s.listed_only)
           << ",\"heard\":" << jb(s.heard)
@@ -2106,6 +2278,7 @@ std::string serialise() {
         first = false;
         bool f1 = true;
         for (const auto& t : s.tgs) {
+            if (!t.second.listed && t.second.name.empty() && t.second.mode == TG_NORMAL) continue;
             o << (f1 ? "" : ",") << "{\"id\":" << js(t.first) << ",\"name\":" << js(t.second.name) << ",\"mode\":\""
               << tg_mode_name(t.second.mode) << "\",\"listed\":" << jb(t.second.listed) << ",\"last\":" << t.second.last
               << ",\"calls\":" << t.second.calls << "}";
@@ -2114,6 +2287,7 @@ std::string serialise() {
         o << "],\"chans\":[";
         f1 = true;
         for (const auto& c : s.chans) {
+            if (!fin(c.second.user_hz) && !fin(c.second.ann_hz) && !fin(c.second.learned_hz)) continue;
             o << (f1 ? "" : ",") << "{\"ch\":" << js(c.first) << ",\"num\":" << c.second.num
               << ",\"user_hz\":" << num_json(c.second.user_hz) << ",\"user_up\":" << num_json(c.second.user_up)
               << ",\"ann_hz\":" << num_json(c.second.ann_hz) << ",\"ann_up\":" << num_json(c.second.ann_up)
@@ -2134,6 +2308,12 @@ std::string serialise() {
 }
 
 bool write_file(const std::string& text) {
+    if (text.size() > SYSTEMS_FILE_MAX) {
+        g_file_note = "not written: " + std::to_string(text.size() >> 20) + " MB is over the " +
+                      std::to_string(SYSTEMS_FILE_MAX >> 20) + " MB a start reads - the file keeps the last good state";
+        std::cerr << "Trunk following: " << SYSTEMS_FILE << " " << g_file_note << std::endl;
+        return false;
+    }
     const std::string tmp = std::string(SYSTEMS_FILE) + ".tmp";
     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
     if (f) {
@@ -2154,9 +2334,36 @@ void save() {
     {
         std::lock_guard<std::mutex> lk(g_save_mu);
         g_unsaved.clear();
+        if (g_shutdown) return;
+        write_file(text);
     }
-    write_file(text);
     g_dirty_since = 0;
+    g_edit_dirty = false;
+}
+
+// a JSON number as an integer in [lo, hi] (no cast of an out-of-range double)
+bool as_int(double v, long long lo, long long hi, long long* out) {
+    if (!fin(v) || v != std::floor(v) || v < static_cast<double>(lo) || v > static_cast<double>(hi)) return false;
+    *out = static_cast<long long>(v);
+    return true;
+}
+long long int_or(double v, long long lo, long long hi, long long def) {
+    long long o;
+    return as_int(v, lo, hi, &o) ? o : def;
+}
+
+// a rule's values (the command and the file): "" = fine
+std::string check_rule(Rule* r, double first, double last) {
+    if (!as_int(first, 0, 1000000000, &r->first) || !as_int(last, 0, 1000000000, &r->last) || r->last < r->first)
+        return "first / last: channel numbers, 0 <= first <= last <= 1e9";
+    if (!(fin(r->base_hz) && r->base_hz > 0 && r->base_hz <= 6e9) || !fin(r->step_hz) || std::fabs(r->step_hz) > 10e6 ||
+        r->step_hz == 0)
+        return "base_hz: 0 - 6 GHz; step_hz: not 0, at most 10 MHz";
+    const double top = r->base_hz + static_cast<double>(r->last - r->first) * r->step_hz;
+    if (!(fin(top) && top > 0 && top <= 6e9)) return "the rule's last channel is outside 0 - 6 GHz";
+    if (!std::isnan(r->up_off_hz) && (!fin(r->up_off_hz) || std::fabs(r->up_off_hz) > 1e9))
+        return "up_off_hz: the uplink offset in Hz, or null";
+    return "";
 }
 
 double jnum(const geo::Json& j, const char* k, double def = NAN) {
@@ -2224,7 +2431,8 @@ std::string build_status(bool ages) {
     char hang[16];
     snprintf(hang, sizeof hang, "%.1f", g_set.hang_s);
     const int mode = operating_mode_index();
-    o << "{\"trunk\":{\"follow\":" << jb(g_set.follow) << ",\"all_sites\":" << jb(g_set.all_sites) << ",\"max_vfos\":" << g_set.max_vfos << ",\"encrypted\":" << jb(g_set.enc)
+    o << "{\"trunk\":{\"systems_file\":{\"ok\":" << jb(g_file_note.empty()) << ",\"note\":" << js(g_file_note)
+      << ",\"kept_as\":" << js(g_file_bad) << "},\"sys_refused\":" << g_sys_refused << ",\"follow\":" << jb(g_set.follow) << ",\"all_sites\":" << jb(g_set.all_sites) << ",\"max_vfos\":" << g_set.max_vfos << ",\"encrypted\":" << jb(g_set.enc)
       << ",\"unit\":" << jb(g_set.unit) << ",\"audio\":" << jb(g_set.audio) << ",\"hang_s\":" << hang
       << ",\"paused\":" << jb(g_paused) << ",\"paused_why\":" << js(g_pause_why) << ",\"playback\":" << jb(playback::active())
       << ",\"mode\":\"" << (mode == 1 ? "wideband" : mode == 2 ? "independent" : "coherent") << "\",\"hold\":";
@@ -2329,6 +2537,7 @@ std::string build_status(bool ages) {
       << ",\"active_ms\":" << median(g_lat_active) << ",\"active_max_ms\":" << maxof(g_lat_active) << ",\"n\":" << g_lat_place.size()
       << "},\"events\":" << g_events_in.load() << ",\"events_dropped\":" << g_events_dropped.load()
       << ",\"resets_coalesced\":" << g_resets_coalesced.load() << ",\"options_dropped\":" << g_opts_dropped
+      << ",\"untrunking_dropped\":" << g_untrunking
       << ",\"calls_dropped\":" << g_dropped_calls;
     if (ages) o << ",\"now\":" << wall_ms();
     o << "}}";
@@ -2379,14 +2588,25 @@ std::string lists_json(const System& s) {
     return o.str();
 }
 
+// The status is built only when something changed (g_status_now - at most every
+// STATUS_MIN_MS) or every STATUS_ACTIVE_MS while anything is active (a call, a
+// voice VFO, a control VFO); a change that leaves the body as sent sends nothing
 void send_status(bool force) {
     const int64_t now = now_ms();
-    if (!force && now - g_status_sent < STATUS_MIN_MS) return;
-    const std::string body = build_status(false);
     bool active = !g_calls.empty() || !g_voices.empty();
-    for (const auto& kv : g_sys)
-        if (!kv.second.ctl.empty()) active = true;
-    if (!force && body == g_status_last && !(active && now - g_status_sent >= STATUS_ACTIVE_MS)) return;
+    if (!active)
+        for (const auto& kv : g_sys)
+            if (!kv.second.ctl.empty()) {
+                active = true;
+                break;
+            }
+    const bool periodic = active && now - g_status_sent >= STATUS_ACTIVE_MS;
+    if (!force && !periodic) return;
+    const std::string body = build_status(false);
+    if (!periodic && body == g_status_last) {
+        g_status_now = false;
+        return;
+    }
     g_status_last = body;
     g_status_sent = now;
     g_status_now = false;
@@ -2473,6 +2693,7 @@ void restore_homes() {
 
 void tick_restore() {
     const int64_t now = now_ms();
+    if (!g_set.follow) g_pending.clear();
     if (g_pending.empty() || g_paused || now - g_pending_t < 500) return;
     g_pending_t = now;
     for (auto it = g_pending.begin(); it != g_pending.end();) {
@@ -2516,10 +2737,13 @@ void tick_restore() {
         else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", vfo, p.off_hz / 1000.0);
         cmds.push_back(f);
         std::string err;
+        const bool was = g_dispatching;
+        g_dispatching = true;   // (not saved: the user's saved tuning stays theirs)
         for (const auto& c : cmds) {
             const std::string why = ControlHandler::apply_command(c);
             if (!why.empty()) err = "'" + c + "' refused: " + why;
         }
+        g_dispatching = was;
         note_restore(vfo, m, err.empty(), err.empty() ? "put back on " + num_json(m.rf / 1e6, "%.6f") + " MHz after the " +
                                                           g_pause_why_last : err);
         it = g_pending.erase(it);
@@ -2532,7 +2756,8 @@ void pause_check() {
     else if (scanner_manager.isRunning()) why = "discrete scanner";
     else if (continuous_scanner.isRunning()) why = "continuous scanner";
     const bool p = !why.empty();
-    if (!p && !g_paused) note_homes();
+    if (!p && !g_paused && g_set.follow) note_homes();   // (following off: nothing is put back)
+    if (!g_set.follow) g_home.clear();
     if (p) g_pause_why_last = why;
     if (p == g_paused && why == g_pause_why) return;
     const bool resumed = g_paused && !p;
@@ -2546,7 +2771,7 @@ void pause_check() {
         remove_all_voices();
     } else {
         std::cout << "Trunk following: resumed" << std::endl;
-        if (resumed && !playback::active()) restore_homes();
+        if (resumed && !playback::active() && g_set.follow) restore_homes();
     }
     if (p) {
         g_pending.clear();   // (a scan again: its own end decides)
@@ -2714,6 +2939,13 @@ void tick_tracks() {
         }
         ++it;
     }
+    // a hold on a system that is gone: released
+    if (!g_hold_sys.empty() && !sys_of(g_hold_sys)) {
+        std::cout << "Trunk following: the held system " << g_hold_sys << " is gone - hold released" << std::endl;
+        g_hold_sys.clear();
+        g_hold_tg.clear();
+        g_status_now = true;
+    }
     // control entries of VFOs that report another system now (or nothing): gone
     for (auto& kv : g_sys)
         for (auto c = kv.second.ctl.begin(); c != kv.second.ctl.end();) {
@@ -2774,15 +3006,20 @@ void tick_lists() {
     }
 }
 
+// with following off only a user's edit is written (the air changes nothing on disk)
+int64_t g_unsaved_t = 0;
 void tick_save() {
     if (!g_dirty_since || playback::active()) return;
+    if (!g_set.follow && !g_edit_dirty) return;
     const int64_t now = now_ms();
     if (now - g_dirty_since >= g_dirty_within) {
         save();
-    } else {
-        // what main()'s last save writes if the process ends first
+    } else if (now - g_unsaved_t >= 1000) {
+        // save_now's fallback if the loop doesn't answer at shutdown: at most 1 s old
+        g_unsaved_t = now;
+        const std::string t = serialise();
         std::lock_guard<std::mutex> lk(g_save_mu);
-        if (g_unsaved.empty()) g_unsaved = serialise();
+        g_unsaved = t;
     }
 }
 
@@ -2822,10 +3059,15 @@ void on_plugin_event(int vfo, uint64_t decoder, const std::string& plugin_id, Pl
             return v >= 8 && v <= 100000 ? static_cast<size_t>(v) : QUEUE_MAX;
         }();
         if (g_queue.size() >= qmax) {
+            // (only when that VFO + decoder's LAST queued event is a RESET: a RESET
+            // before later events of the VFO doesn't make those stale)
             bool pending = false;
             if (ev.kind == PluginEvent::RESET)
-                for (const auto& q : g_queue)
-                    if (q.vfo == vfo && q.dec == decoder && q.ev.kind == PluginEvent::RESET) pending = true;
+                for (auto it = g_queue.rbegin(); it != g_queue.rend(); ++it)
+                    if (it->vfo == vfo && it->dec == decoder) {
+                        pending = it->ev.kind == PluginEvent::RESET;
+                        break;
+                    }
             if (ev.kind != PluginEvent::RESET || pending) {
                 (ev.kind == PluginEvent::RESET ? g_resets_coalesced : g_events_dropped).fetch_add(1, std::memory_order_relaxed);
                 return;
@@ -2856,7 +3098,7 @@ void clear_recent() {
 bool dispatching() { return g_dispatching; }
 
 bool is_trunk_vfo(int id) {
-    const Inst* p = nullptr;
+    uint64_t p = 0;
     {
         std::lock_guard<std::mutex> lk(g_meta_mu);
         auto it = g_meta.find(id);
@@ -2864,11 +3106,11 @@ bool is_trunk_vfo(int id) {
         p = it->second.inst;
     }
     auto now = decimator_manager.getDecimator(id);
-    return now && now.get() == p;
+    return now && now->serial == p;
 }
 
 std::string vfo_info_json(int id) {
-    const Inst* p = nullptr;
+    uint64_t p = 0;
     std::string j;
     {
         std::lock_guard<std::mutex> lk(g_meta_mu);
@@ -2878,7 +3120,7 @@ std::string vfo_info_json(int id) {
         j = it->second.json;
     }
     auto now = decimator_manager.getDecimator(id);
-    return now && now.get() == p ? j : "";
+    return now && now->serial == p ? j : "";
 }
 
 void release_all_vfos(const std::string& why) {
@@ -2934,6 +3176,7 @@ void tick() {
         tick_lists();
         tick_save();
         send_status(g_status_now && now_ms() - g_status_sent >= STATUS_MIN_MS);
+        if (now_ms() % 5000 < TICK_MS) prune_learn();
     } catch (const std::exception& e) {
         std::cerr << "Trunk following: " << e.what() << std::endl;
     }
@@ -2950,10 +3193,25 @@ void load() {
     const geo::Json* arr = nullptr;
     if (text.size() <= SYSTEMS_FILE_MAX && geo::json_parse(text, &j)) arr = j.get("systems");
     if (!arr || arr->type != geo::Json::ARR) {
-        const std::string bad = std::string(SYSTEMS_FILE) + ".bad";
+        // kept under a name nothing overwrites: .bad-<date>-<time>[-n]
+        char ts[32];
+        const std::time_t tt = std::time(nullptr);
+        std::tm tmv{};
+#ifdef _WIN32
+        localtime_s(&tmv, &tt);
+#else
+        localtime_r(&tt, &tmv);
+#endif
+        std::strftime(ts, sizeof ts, "%Y%m%d-%H%M%S", &tmv);
+        std::string bad = std::string(SYSTEMS_FILE) + ".bad-" + ts;
+        for (int n = 1; std::ifstream(bad).good() && n < 1000; n++) bad = std::string(SYSTEMS_FILE) + ".bad-" + ts + "-" + std::to_string(n);
+        f.close();
         fs_replace(SYSTEMS_FILE, bad.c_str());
-        std::cerr << "Trunk following: " << SYSTEMS_FILE << " is unreadable (kept as " << bad << ") - starting without systems"
-                  << std::endl;
+        g_file_bad = bad;
+        g_file_note = text.size() > SYSTEMS_FILE_MAX ? "not loaded: larger than " + std::to_string(SYSTEMS_FILE_MAX >> 20) + " MB"
+                                                     : "not loaded: unreadable";
+        std::cerr << "Trunk following: " << SYSTEMS_FILE << " " << g_file_note << " (kept as " << bad
+                  << ") - starting without systems" << std::endl;
         return;
     }
     size_t bad = 0;
@@ -2980,38 +3238,44 @@ void load() {
                 const std::string m = g.str("mode");
                 e.mode = m == "priority" ? TG_PRIORITY : m == "skip" ? TG_SKIP : TG_NORMAL;
                 e.listed = jbool(g, "listed");
-                e.last = static_cast<int64_t>(jnum(g, "last", 0));
-                e.calls = static_cast<uint64_t>(std::max(0.0, jnum(g, "calls", 0)));
+                e.last = int_or(jnum(g, "last", 0), 0, 9000000000000000LL, 0);
+                e.calls = static_cast<uint64_t>(int_or(jnum(g, "calls", 0), 0, 1LL << 53, 0));
             }
         if (const geo::Json* c = x.get("chans"); c && c->type == geo::Json::ARR)
             for (const auto& g : c->a) {
                 const std::string name = clean(g.str("ch"), 32);
                 if (name.empty() || s.chans.size() >= MAX_CHANS) { bad++; continue; }
                 Chan& e = s.chans[name];
-                e.num = static_cast<long long>(jnum(g, "num", -1));
+                e.num = int_or(jnum(g, "num", -1), -1, 1000000000000LL, -1);
                 auto hz = [&](const char* k) { const double v = jnum(g, k); return hz_ok(v) ? v : NAN; };
                 e.user_hz = hz("user_hz");
                 e.user_up = hz("user_up");
                 e.ann_hz = hz("ann_hz");
                 e.ann_up = hz("ann_up");
                 e.learned_hz = hz("learned_hz");
-                e.grants = static_cast<uint64_t>(std::max(0.0, jnum(g, "grants", 0)));
-                e.last = static_cast<int64_t>(jnum(g, "last", 0));
+                e.grants = static_cast<uint64_t>(int_or(jnum(g, "grants", 0), 0, 1LL << 53, 0));
+                e.last = int_or(jnum(g, "last", 0), 0, 9000000000000000LL, 0);
             }
         if (const geo::Json* r = x.get("rules"); r && r->type == geo::Json::ARR)
             for (const auto& g : r->a) {
                 Rule e;
-                e.first = static_cast<long long>(jnum(g, "first", -1));
-                e.last = static_cast<long long>(jnum(g, "last", -1));
                 e.base_hz = jnum(g, "base_hz");
                 e.step_hz = jnum(g, "step_hz");
-                e.up_off_hz = jnum(g, "up_off_hz");
-                if (e.first < 0 || e.last < e.first || !hz_ok(e.base_hz) || !fin(e.step_hz) || s.rules.size() >= MAX_RULES) {
+                if (const geo::Json* u = g.get("up_off_hz"); u && u->type != geo::Json::NUL) e.up_off_hz = jnum(g, "up_off_hz", INFINITY);
+                if (!check_rule(&e, jnum(g, "first", -1), jnum(g, "last", -1)).empty() || s.rules.size() >= MAX_RULES) {
                     bad++;
                     continue;
                 }
                 s.rules.push_back(e);
             }
+    }
+    // what the user entered: never evicted by the air
+    for (auto& kv : g_sys) {
+        System& x = kv.second;
+        bool u = !x.user_name.empty() || x.listed_only || !x.rules.empty();
+        for (const auto& t : x.tgs) u = u || t.second.listed || !t.second.name.empty() || t.second.mode != TG_NORMAL;
+        for (const auto& c : x.chans) u = u || fin(c.second.user_hz);
+        x.user = u;
     }
     std::cout << "Trunk following: " << g_sys.size() << " system(s) loaded from " << SYSTEMS_FILE << std::endl;
     if (bad) std::cerr << "Trunk following: " << bad << " unreadable entr" << (bad == 1 ? "y" : "ies") << " in " << SYSTEMS_FILE
@@ -3019,12 +3283,27 @@ void load() {
 }
 
 void save_now() {
-    std::string text;
-    {
-        std::lock_guard<std::mutex> lk(g_save_mu);
-        text.swap(g_unsaved);
+    // the loop serialises the current state (it owns it) and writes it; main
+    // waits up to 2 s for that - a loop that doesn't answer: the fallback
+    // (g_unsaved, at most 1 s old). Then no more writes either way
+    auto done = std::make_shared<std::promise<void>>();
+    auto fut = done->get_future();
+    bool posted = false;
+    if (loop) {
+        loop->defer([done] {
+            if (g_dirty_since && !playback::active() && (g_set.follow || g_edit_dirty)) save();
+            {
+                std::lock_guard<std::mutex> lk(g_save_mu);
+                g_shutdown = true;
+            }
+            done->set_value();
+        });
+        posted = true;
     }
-    if (!text.empty() && !playback::active()) write_file(text);
+    if (posted && fut.wait_for(std::chrono::seconds(2)) == std::future_status::ready) return;
+    std::lock_guard<std::mutex> lk(g_save_mu);
+    if (!g_shutdown && !g_unsaved.empty() && !playback::active()) write_file(g_unsaved);
+    g_shutdown = true;
 }
 
 std::string status_json() { return build_status(true); }
@@ -3043,8 +3322,18 @@ bool parse_obj(const std::string& body, geo::Json* j, std::string* err) {
     }
     return true;
 }
-System* parse_sys(const geo::Json& j, std::string* err, bool create = false) {
+// The system a command names. A temporary one (no key yet, "<plugin>:@<vfo>")
+// can't be edited - its entries would not survive the merge into the keyed
+// one (allow_temp: forgetting it). create: a well-formed "<plugin>:<key>" not
+// known yet is made (*created = its id - the caller removes it again when the
+// command is refused: a refused command leaves nothing)
+System* parse_sys(const geo::Json& j, std::string* err, bool create = false, std::string* created = nullptr,
+                  bool allow_temp = false) {
     const std::string id = j.str("sys");
+    if (temp_id(id) && !allow_temp) {
+        *err = "this system has no key yet (its control channel hasn't named it) - edit it once it has one";
+        return nullptr;
+    }
     System* s = sys_of(id);
     if (s || !create) {
         if (!s) *err = "no such system";
@@ -3057,11 +3346,10 @@ System* parse_sys(const geo::Json& j, std::string* err, bool create = false) {
         *err = "no such system (sys: <plugin id>:<system key>)";
         return nullptr;
     }
-    if (g_sys.size() >= MAX_SYSTEMS) {
-        *err = "too many systems (" + std::to_string(MAX_SYSTEMS) + ")";
-        return nullptr;
-    }
-    return &ensure_system(id, id.substr(0, c), id.substr(c + 1));
+    System* n = ensure_system(id, id.substr(0, c), id.substr(c + 1));
+    if (!n) *err = "too many systems (" + std::to_string(MAX_SYSTEMS) + ", all edited or in use): delete one first";
+    else if (created) *created = id;
+    return n;
 }
 bool parse_bool01(const std::string& v, bool* out) {
     if (v == "1" || v == "true") { *out = true; return true; }
@@ -3079,6 +3367,7 @@ bool parse_number(const std::string& v, double* out) {
 
 // a command changed a system: saved now (an edit), its lists out soon, the status
 void edited(System& s) {
+    s.user = true;   // never evicted by the air
     s.lists_struct = true;
     if (!temp_id(s.id)) mark_dirty(SAVE_EDIT_MS);
     g_status_now = true;
@@ -3114,8 +3403,10 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
     const size_t colon = msg.find(':');
     const std::string cmd = msg.substr(0, colon);
     const std::string arg = colon == std::string::npos ? "" : msg.substr(colon + 1);
+    std::string created;   // a system this command made: gone again if it is refused
     auto done = [&](bool status = true) {
         if (status) g_status_now = true;
+        if (!err->empty() && !created.empty()) g_sys.erase(created);
         if (!err->empty()) send_err(msg, *err);
         send_status(true);
         return true;
@@ -3197,7 +3488,8 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
             *err = "format: TRUNK_END:<call id>";
             return done();
         }
-        auto it = g_calls.find(static_cast<uint64_t>(id));
+        long long cid = 0;
+        auto it = as_int(id, 1, 1LL << 53, &cid) ? g_calls.find(static_cast<uint64_t>(cid)) : g_calls.end();
         if (it == g_calls.end()) {
             *err = "no such call";
             return done();
@@ -3239,7 +3531,7 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         geo::Json j;
         if (!parse_obj(arg, &j, err)) return done();
         const bool creates = cmd == "TRUNK_SYS_SET" || cmd == "TRUNK_TG_SET" || cmd == "TRUNK_CH_SET" || cmd == "TRUNK_RULE_SET";
-        System* s = parse_sys(j, err, creates);
+        System* s = parse_sys(j, err, creates, &created, cmd == "TRUNK_SYS_DEL");
         if (!s) return done();
         if (cmd == "TRUNK_SYS_SET") {
             if (j.get("name")) {
@@ -3270,8 +3562,7 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
             if (g_hold_sys == id) g_hold_sys.clear();
             // a control VFO still on it: the system starts over, empty
             if (!ctl.empty()) {
-                System& n = ensure_system(id, plugin, key);
-                n.ctl = ctl;
+                if (System* n = ensure_system(id, plugin, key)) n->ctl = ctl;
             }
             if (!temp_id(id)) mark_dirty(SAVE_EDIT_MS);
             std::cout << "Trunk following: system " << id << " forgotten" << std::endl;
@@ -3285,6 +3576,10 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
             }
             if (cmd == "TRUNK_TG_DEL") {
                 s->tgs.erase(tg);
+                if (g_hold_sys == s->id && g_hold_tg == tg) {   // (a hold on it: released)
+                    g_hold_sys.clear();
+                    g_hold_tg.clear();
+                }
                 edited(*s);
                 return done();
             }
@@ -3375,31 +3670,13 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
             return done();
         }
         Rule r;
-        const double first = jnum(j, "first", -1), last = jnum(j, "last", -1);
         r.base_hz = jnum(j, "base_hz");
         r.step_hz = jnum(j, "step_hz");
-        if (first < 0 || last < first || first != std::floor(first) || last != std::floor(last) || last > 1e9) {
-            *err = "first / last: channel numbers, 0 <= first <= last";
-            return done();
-        }
-        if (!hz_ok(r.base_hz) || !fin(r.step_hz) || std::fabs(r.step_hz) > 10e6 || r.step_hz == 0) {
-            *err = "base_hz: 0 - 6 GHz; step_hz: not 0, at most 10 MHz";
-            return done();
-        }
-        r.first = static_cast<long long>(first);
-        r.last = static_cast<long long>(last);
-        const double top = r.base_hz + static_cast<double>(r.last - r.first) * r.step_hz;
-        if (!hz_ok(top)) {
-            *err = "the rule's last channel is outside 0 - 6 GHz";
-            return done();
-        }
         if (const geo::Json* u = j.get("up_off_hz"); u && u->type != geo::Json::NUL) {
-            r.up_off_hz = jnum(j, "up_off_hz");
-            if (!fin(r.up_off_hz) || std::fabs(r.up_off_hz) > 1e9) {
-                *err = "up_off_hz: the uplink offset in Hz, or null";
-                return done();
-            }
+            r.up_off_hz = jnum(j, "up_off_hz", INFINITY);   // (not a number: refused below)
         }
+        *err = check_rule(&r, jnum(j, "first", -1), jnum(j, "last", -1));
+        if (!err->empty()) return done();
         const double i = jnum(j, "i", -1);
         if (i >= 0) {
             if (i >= static_cast<double>(s->rules.size()) || i != std::floor(i)) {
