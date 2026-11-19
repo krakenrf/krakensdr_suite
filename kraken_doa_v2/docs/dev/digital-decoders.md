@@ -223,7 +223,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     was a wall-clock window) when its TACT disagrees: a miscorrected TACT on
     an empty or weak slot named the other slot and cut its superframe short.
     A terminator's hang-time repeats (every 60 ms until P_CLEAR on a Tier
-    III payload channel) no longer make a 27 ms talker each
+    III payload channel) no longer make a 27 ms talker each. Review fixes
+    (2.2): a CACH short LC counts only from a burst whose slot type / EMB
+    passed (with the `cc` filter: of that colour code) - a co-channel TSCC's
+    C_SYS_Parms made a payload VFO claim `control`; a `traffic` instance
+    (grant option) and a single-slot instance on a composite TSCC never do;
+    an MBC continuation must be the header slot's next burst (60 ms +-3
+    symbols); a Capacity Plus rest-channel move needs 3 status CSBKs in a
+    row, at most one per 5 s
   - `DstarReceiver` (plugins/dstar): RF header (scrambler, 24-column
     interleaver, K=3 Viterbi, CRC-16/X.25), slow data (text message, GPS /
     DPRS, header copy), end pattern

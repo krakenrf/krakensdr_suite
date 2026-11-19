@@ -100,6 +100,9 @@ void DmrProto::reset() {
     cp_rest_ = -1;
     cp_seen_ = false;
     sys_key_cp_ = -1;
+    cp_cand_ = -1;
+    cp_cand_n_ = 0;
+    cp_moved_ = -1e9;
 }
 
 // --- talkers (RxContext::talker) ----------------------------------------------
@@ -410,6 +413,19 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
     burst_b_ = burst_a_ + static_cast<int64_t>(132) * s.sps;
     burst_bs_ = bs;
 
+    // The CACH short LC fragment of this burst, held until the burst behind
+    // it checked out: the CACH carries no colour code of its own, so it is
+    // taken only from a burst whose slot type / EMB passed - and, with the
+    // "cc" filter, carried that colour code (a co-channel TSCC's
+    // C_SYS_Parms got through to a payload channel's VFO). A voice burst A
+    // has no colour code to read: its CACH counts only without the filter.
+    uint8_t slc_cach[24];
+    int slc_lcss = -1;
+    auto commit_slc = [&] {
+        if (slc_lcss >= 0) cach_short_lc(slc_cach, slc_lcss);
+        slc_lcss = -1;
+    };
+
     // timeslot
     int slot = 0;
     if (sync == TS1_VOICE || sync == TS1_DATA) slot = 1;
@@ -445,7 +461,10 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             slot = tact_slot;
             last_tc_ = slot;
             last_tc_at_ = burst_a_;
-            cach_short_lc(cach, static_cast<int>(m & 3));
+            // its short LC fragment counts once the burst behind this CACH
+            // proved to be ours (below: commit_slc)
+            std::copy(cach, cach + 24, slc_cach);
+            slc_lcss = static_cast<int>(m & 3);
         } else if (expect) {
             slot = expect;
             last_tc_ = slot;
@@ -472,6 +491,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             set_ext();
             sl.voice_idx = 0;
             sl.emb_state = 0;
+            if (cc_filter_ < 0) commit_slc();
             voice_burst(slot, bits);
             return true;   // validated by the EMBs of bursts B..F
         }
@@ -485,6 +505,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         if (ee < 0 || ee > 1 || (cc_ >= 0 && cc != cc_)) { sl.voice_idx = -1; return false; }
         sl.voice_idx++;
         sl.hang = false;
+        commit_slc();
         sl.privacy = pi;
         voice_burst(slot, bits);
         // embedded LC: LCSS 1 = first, 3 = continuation, 2 = last fragment
@@ -643,6 +664,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             break;
     }
     if (ok) {
+        commit_slc();
         set_ext();
         if (bs) r.set(Mode::DMR, "Source", "Repeater / base station");
         else r.set(Mode::DMR, "Source", slot ? "Direct mode (TDMA)" : "Mobile / direct mode");

@@ -38,10 +38,14 @@ public:
     // Hidden option "cc": only bursts of this colour code (-1 = any) - a
     // traffic channel set up by trunk following ignores a co-channel repeater
     void set_cc_filter(int cc) { cc_filter_ = cc; if (cc >= 0) cc_ = cc; }
+    // Hidden option "traffic": this instance follows a granted payload
+    // channel (trunk following) - it never reports a control channel
+    void set_traffic(bool t) { traffic_ = t; }
 private:
     RxContext& ctx_;
     kp::Host* host_ = nullptr;
     int cc_filter_ = -1;
+    bool traffic_ = false;
     struct Slot {
         int voice_idx = -1;          // burst A=0 .. F=5 within a superframe
         uint8_t emb_raw[128] = {0};
@@ -97,6 +101,8 @@ private:
     int cp_rest_ = -1;
     bool cp_seen_ = false;
     int sys_key_cp_ = -1;            // the colour code of the Capacity Plus key sent
+    int cp_cand_ = -1, cp_cand_n_ = 0;   // a new rest channel being confirmed, how many in a row
+    double cp_moved_ = -1e9;         // host time of the last rest-channel move
     void cach_short_lc(const uint8_t* cach24, int lcss);
     void short_lc(uint32_t slc28);
     void system_seen(int syscode, bool control, bool from_slc);

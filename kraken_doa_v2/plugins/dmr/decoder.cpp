@@ -46,6 +46,11 @@ public:
             sink_.dmr.set_cc_filter((!v.empty() && end && *end == '\0' && c >= 0 && c <= 15) ? static_cast<int>(c) : -1);
             return;
         }
+        if (k == "traffic") {
+            // hidden, set by trunk following: a payload channel's instance
+            sink_.dmr.set_traffic(v == "1");
+            return;
+        }
         br_.option(k, v);
     }
 private:
@@ -67,7 +72,7 @@ KRAKEN_PLUGIN(DmrPlugin, {.id = "dmr",
                                          "system, channel grants and announcements for trunk following. Voice: AMBE+2 "
                                          "(mbelib, README \"Digital voice codecs\"). Bandwidth 12-24 kHz. The colour code "
                                          "filter is set by trunk following.",
-                          .version = "2.1",
+                          .version = "2.2",
                           .sample_rate = 48000,
                           .min_vfo_rate = 12000,
                           .author = "KrakenSDR",
@@ -75,7 +80,10 @@ KRAKEN_PLUGIN(DmrPlugin, {.id = "dmr",
                                        "Only show and play this timeslot's calls."},
                                       {"cc", "Colour code", "", "",
                                        "Only bursts of this colour code (0-15, empty = any): a trunked payload channel "
-                                       "ignores a co-channel repeater. Set by trunk following.", true}},
+                                       "ignores a co-channel repeater. Set by trunk following.", true},
+                                      {"traffic", "Traffic channel", "", "0=No|1=Yes",
+                                       "This VFO follows a granted payload channel: it never reports a control "
+                                       "channel. Set by trunk following.", true}},
                           .map = true,
                           .voice = true,
                           .talkers = true,

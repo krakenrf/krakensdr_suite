@@ -147,6 +147,10 @@ uint8_t crc8_slc(uint32_t v28) {
 void DmrProto::system_seen(int code, bool control, bool from_slc) {
     if (from_slc && syscode_ >= 0 && (syscode_ >> 2) == (code >> 2)) code = syscode_;   // the short LC has no PAR
     const double now = host_ ? host_->time() : 0;
+    // a traffic channel's instance (option "traffic", set by trunk following)
+    // is never a control channel - also on a composite control channel,
+    // whose other slot carries the TSCC it hears
+    if (traffic_) control = false;
     if (control) tscc_t_ = now;
     bool ctl = control || (tscc_t_ > -1e8 && now - tscc_t_ < 5.0);
     bool changed = code != syscode_ || ctl != sys_control_;
@@ -223,7 +227,9 @@ void DmrProto::short_lc(uint32_t v) {
     // composite(1) Common_Slot_Counter(9) - the system code without its PAR
     const int code = static_cast<int>(((d >> 22) << 14) | (((d >> 10) & 0xFFF) << 2));
     if (slco == 3 && ((d >> 9) & 1)) ctx_.report->set(Mode::DMR, "Payload channel", "composite control channel");
-    system_seen(code, slco == 2, true);
+    // C_SYS_Parms: one of the carrier's two slots is a TSCC - not
+    // necessarily the one a single-slot instance follows
+    system_seen(code, slco == 2 && ctx_.opts->dmr_slot == 0, true);
 }
 
 // --- channels ----------------------------------------------------------------
@@ -270,9 +276,24 @@ void DmrProto::mbc_block(int slot, int dt, const uint8_t* by) {
         sl.mbc_at = burst_a_;
         return;
     }
-    // the next burst of the same slot: 60 ms on a repeater, 30 ms .. 60 ms otherwise
-    const int64_t d = burst_a_ - sl.mbc_at;
-    if (sl.mbc_n < 1 || sl.mbc_n > 3 || d <= 0 || d > 300 * static_cast<int64_t>(sps_)) {
+    // "MBCs are transmitted contiguously on a slot" (TS 102 361-1 7.4): the
+    // block must be the NEXT burst of the header's slot - exactly 60 ms (two
+    // 30 ms bursts) after the previous block, to within 3 symbols (burst
+    // positions come from the sync peak or are extrapolated on the 30 ms
+    // grid: a sample or two of jitter). A block 30 ms after it is the other
+    // slot's (its TACT misdecoded - a burst with a sync trusts its TACT):
+    // ignored, the header keeps waiting for its own continuation. Later than
+    // 60 ms: the slot's next burst was something else - the MBC is broken.
+    // Nothing else ties a continuation to its header: the last block's CRC
+    // covers the continuation blocks only; the appended block repeats the
+    // header's CSBKO (checked where it is parsed, absolute()).
+    if (sl.mbc_n < 1 || sl.mbc_n > 3) {
+        sl.mbc_n = 0;
+        return;
+    }
+    const int64_t d = burst_a_ - sl.mbc_at, per2 = 288 * static_cast<int64_t>(sps_), tol = 3 * static_cast<int64_t>(sps_);
+    if (d < per2 - tol) return;
+    if (d > per2 + tol) {
         sl.mbc_n = 0;
         return;
     }
@@ -322,7 +343,7 @@ bool DmrProto::trunk_csbk(int slot, const uint8_t* c, const uint8_t* const* cont
             tier3_grant(slot, c, ap);
             return true;
         case 0x19: {                                 // C_ALOHA (table 7.19)
-            system_seen((c[5] << 8) | c[6], true, false);
+            system_seen((c[5] << 8) | c[6], slot_wanted(slot), false);
             return false;
         }
         case 0x28:                                   // C_BCAST (table 7.20)
@@ -346,6 +367,9 @@ bool DmrProto::trunk_csbk(int slot, const uint8_t* c, const uint8_t* const* cont
 void DmrProto::tier3_grant(int slot, const uint8_t* c, const uint8_t* ap) {
     static const char* names[9] = {"PV_GRANT", "TV_GRANT", "BTV_GRANT", "PD_GRANT", "TD_GRANT",
                                    "PV_GRANT_DX", "PD_GRANT_DX", "PD_GRANT_MI", "TD_GRANT_MI"};
+    // a single-slot instance reports only its own slot's grants (a traffic
+    // instance on a composite control channel hears the TSCC's)
+    if (!slot_wanted(slot)) return;
     const int op = c[0] & 0x3F;
     const bool lb = c[0] & 0x80;
     const int lpcn = (c[2] << 4) | (c[3] >> 4);
@@ -420,6 +444,7 @@ void DmrProto::tier3_grant(int slot, const uint8_t* c, const uint8_t* ap) {
     // the payload channel's decoder: this plugin on the granted timeslot (and
     // only on the granted colour code when the grant names it)
     g.options.push_back({"slot", std::to_string(ts + 1)});
+    g.options.push_back({"traffic", "1"});
     if (a.cc >= 0) g.options.push_back({"cc", std::to_string(a.cc)});
     host_->grant(g);
 }
@@ -431,7 +456,7 @@ void DmrProto::tier3_bcast(int slot, const uint8_t* c, const uint8_t* ap) {
     const uint32_t p1 = ((c[2] & 7u) << 11) | (c[3] << 3) | (c[4] >> 5);
     const int code = (c[5] << 8) | c[6];
     const uint32_t p2 = (c[7] << 16) | (c[8] << 8) | c[9];
-    system_seen(code, true, false);
+    system_seen(code, slot_wanted(slot), false);
     const double quiet = ctx_.opts->verbose ? 2.0 : 300.0;
     auto announce = [&](int lcn) { announce_channel(lcn); };
     // a neighbour's system code: the 14 most significant bits (its PAR unknown)
@@ -568,7 +593,7 @@ void DmrProto::tier3_move(int slot, const uint8_t* c, const uint8_t* ap) {
     const bool all = mask == 0;
     ctx_.report->event(Mode::DMR, slot_name(slot) + " C_MOVE: " + (all ? std::string("every radio") : "radios matching " + id_text(ms) + " (mask " + std::to_string(mask) + ")") +
                                       " to the TSCC on " + where, all ? 5.0 : (ctx_.opts->verbose ? 2.0 : 60.0));
-    if (all && host_) host_->control_channel(ch);
+    if (all && host_ && !traffic_ && slot_wanted(slot)) host_->control_channel(ch);
 }
 
 // Payload-channel CSBKs (TS 102 361-4 7.1.1.3): P_CLEAR clears the slot
@@ -691,7 +716,6 @@ void DmrProto::capplus(int slot, const uint8_t* c) {
     ctx_.report->set(Mode::DMR, "System", "Motorola Capacity Plus");
     const int ts = (c[2] >> 5) & 1, rest = c[2] & 15;
     if (ts != slot - 1 || rest == 0) return;
-    ctx_.report->set(Mode::DMR, "Rest channel", std::to_string(rest));
     if (!host_) return;
     const double now = host_->time();
     // no network identity on air: the colour code is the best key there is
@@ -701,19 +725,43 @@ void DmrProto::capplus(int slot, const uint8_t* c) {
         kp::TrunkSystem t;
         t.key = "CapPlus.CC" + std::to_string(cc_);
         t.name = "Motorola Capacity Plus, colour code " + std::to_string(cc_);
-        t.control = true;   // the rest channel: where idle radios wait and calls start
+        t.control = !traffic_;   // the rest channel: where idle radios wait and calls start
         host_->trunk_system(t);
         sys_sent_ = now;
         sys_key_cp_ = cc_;
     }
-    if (cp_rest_ >= 0 && rest != cp_rest_) {
-        kp::TrunkChannel ch;
-        ch.name = "LCN " + std::to_string(rest);
-        ch.number = rest;
-        host_->control_channel(ch);
-        ctx_.report->event(Mode::DMR, "Capacity Plus: the rest channel moved to channel " + std::to_string(rest), 5.0);
+    if (cp_rest_ < 0) {
+        cp_rest_ = rest;
+        ctx_.report->set(Mode::DMR, "Rest channel", std::to_string(rest));
+        return;
     }
+    // The rest-channel field is not verified on air: a new value moves the
+    // host's VFO only after CP_CONFIRM status CSBKs in a row name it (both
+    // slots count; an idle rest channel keys up for a few hundred ms every
+    // 2-6 s with one on each slot - so up to ~6 s while idle), and at most
+    // once per CP_MOVE_GAP_S
+    constexpr int CP_CONFIRM = 3;
+    constexpr double CP_MOVE_GAP_S = 5.0;
+    if (rest == cp_rest_) {
+        cp_cand_n_ = 0;
+        return;
+    }
+    if (rest == cp_cand_) cp_cand_n_++;
+    else {
+        cp_cand_ = rest;
+        cp_cand_n_ = 1;
+    }
+    if (cp_cand_n_ < CP_CONFIRM || now - cp_moved_ < CP_MOVE_GAP_S) return;
     cp_rest_ = rest;
+    cp_cand_n_ = 0;
+    cp_moved_ = now;
+    ctx_.report->set(Mode::DMR, "Rest channel", std::to_string(rest));
+    ctx_.report->event(Mode::DMR, "Capacity Plus: the rest channel moved to channel " + std::to_string(rest), 5.0);
+    if (traffic_) return;
+    kp::TrunkChannel ch;
+    ch.name = "LCN " + std::to_string(rest);
+    ch.number = rest;
+    host_->control_channel(ch);
 }
 
 }  // namespace dig
