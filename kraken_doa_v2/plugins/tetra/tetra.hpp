@@ -143,8 +143,14 @@ private:
     void sysinfo(const uint8_t* t1);
     int64_t now_ms_s() const;     // the sample clock in ms (slot start)
     double now_s() const;
-    // valid frames and cell packets: a traffic instance reports only its own timeslot's
-    bool slot_reported() const { return tslot_ == 0 || tn_ == tslot_; }
+    // valid frames and cell packets: a traffic instance reports only its own
+    // timeslot's, and only while the AACH says it is assigned (assigned
+    // control or traffic) - the filler of an unallocated slot keeps no voice VFO
+    bool slot_reported() const {
+        if (tslot_ == 0) return true;
+        const int u = slot_usage_[tslot_];
+        return tn_ == tslot_ && (u == 1 || u == 3 || u >= 4);
+    }
 
     // --- upper MAC / LLC / MLE / CMCE ---
     bool parse_alloc(TetraBits& r, TetraChanAlloc& a);

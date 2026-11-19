@@ -293,7 +293,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     D-RELEASE -> `grant_end()`; a TRAFFIC instance (hidden option
     `timeslot`, set by the grant with `mcc` / `mnc` / `cc` / `call` /
     `group`) plays, reports valid frames / cell packets and `call()` /
-    per-transmission talkers for that timeslot only (`tr_`: ACTIVE at TCH
+    per-transmission talkers for that timeslot only, valid frames only
+    while its AACH says assigned (`tr_`: ACTIVE at TCH
     or D-TX GRANTED, ENDED at D-TX CEASED / hang time / 1 s without
     traffic, RELEASED at D-RELEASE / the AACH unallocated twice). Search
     window moved by half a slot after a miss (a whole slot never

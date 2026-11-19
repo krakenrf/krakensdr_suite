@@ -83,8 +83,11 @@ and set the fact "Trunk following: not possible".
 
 **Traffic instance** (`timeslot` set - the voice VFO trunk following puts
 on a granted channel): it plays only that timeslot (end-to-end encrypted
-calls muted), reports valid frames and cell packets only from it, sends no
-grants from other timeslots, and reports `call()` from the timeslot's own
+calls muted), reports valid frames (its TCH slots included) and cell
+packets only from it and only while the AACH marks it assigned (the filler
+blocks of an unallocated slot keep no voice VFO alive: 0 valid frames on
+the real recording's free timeslot 3, 576 on its traffic timeslot 2), sends
+no grants from other timeslots, and reports `call()` from the timeslot's own
 signalling: ACTIVE at the first TCH/S slot (AACH traffic usage marker,
 Reed-Muller checked) or D-TX GRANTED (source = the transmitting party), a
 new ACTIVE when another party is granted, repeated once a second; ENDED at
