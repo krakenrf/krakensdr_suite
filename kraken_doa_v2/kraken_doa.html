@@ -22236,8 +22236,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const el = $id('tk-hist');
     if (!el) return;
     const all = ((tkSt && tkSt.history) || []).filter(c => !c.data);
-    // a playback: its calls only (those from before it are back when it ends)
-    const h = (tkPbSince ? all.filter(c => c.t_end >= tkPbSince - 1000) : all).slice().reverse();
+    // a playback: its calls only - ended after it started, of a system it shows (the user's
+    // calls, also those its start ended, are back when it ends)
+    const shown = tkPbSince ? new Set(tkShownSystems().map(s => s.id)) : null;
+    const h = (tkPbSince ? all.filter(c => c.t_end >= tkPbSince - 1000 && shown.has(c.sys)) : all).slice().reverse();
     const key = c => c.id + ':' + c.t_end;
     const byKey = new Map(h.map(c => [key(c), c]));
     if (!h.length) {
