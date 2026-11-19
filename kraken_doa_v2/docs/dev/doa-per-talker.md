@@ -383,7 +383,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     passed its CRC (BSCH, BNCH, SCH/F, SCH/HD) = one packet of the whole
     255-symbol slot, the RRC front end's 24-sample delay taken off
     (`input_delay`); 0 Hz / 25 kHz, avg_s 10, keep_s 30 min. Co-channel
-    cells (frequency reuse) heard in turn keep their own bearings
+    cells (frequency reuse) heard in turn keep their own bearings. A
+    traffic instance (trunk following's `timeslot` option, 2026-11-20)
+    reports packets of its timeslot only, plus each transmission as a
+    talker: id = the transmitting party's SSI ("?" until a D-TX GRANTED
+    names it), label "TG <GSSI>", channel = timeslot - 1 - still the base
+    station's bearing (a downlink)
   - MPT1327: each control channel slot with a good CCSC = a packet of the
     SITE, id "SYS hhhh", CCSC + address codeword (107 ms) 2 ms inside both
     ends; 12.5 kHz. Mobiles' return channel isn't decoded (their idents:
