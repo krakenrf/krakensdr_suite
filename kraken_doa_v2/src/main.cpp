@@ -35,6 +35,7 @@
 #include "array_cal.hpp"
 #include "recorder.hpp"
 #include "power.hpp"
+#include "sigclass_service.hpp"
 #include "digital/dig_plugin.hpp"
 #include <iostream>
 #include <thread>
@@ -369,6 +370,9 @@ int main(int argc, char* argv[]) {
     // 📼 IQ & audio recorder (recordings folder; nothing runs until asked)
     rec::start();
 
+    // Signal ID: the classifier's worker (idle until SIGCLASS:1)
+    sigsvc::start();
+
     // Start worker threads
     thread data_worker(DataReceiver::data_receiver_thread);
     thread decimation_worker(DataReceiver::decimation_processor_thread);
@@ -503,6 +507,7 @@ int main(int argc, char* argv[]) {
     rdfmap::stop();
     vlvl::stop();
     array_cal::stop();
+    sigsvc::stop();
 
     // Signal all condition variables for shutdown
     {

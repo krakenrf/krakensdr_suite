@@ -375,6 +375,16 @@ receiver retunes only for other bands. The receiver does the scanning, so it
 carries on with no browser open. Options include a VFO of its own for each
 active frequency, so that all are heard, decoded and transcribed at once.
 
+### Signal ID
+
+With **Signal ID** on (its box in the sidebar), the receiver labels every
+signal it finds in the band with its type - DMR, POCSAG, NFM voice, LoRa,
+ADS-B, DAB and more - right above the signal on the spectrum, and lists them
+in the box. Click a label to tune the selected VFO to that signal with the
+right decoder, demod and bandwidth. It looks at half a second of one tuner
+every few seconds, a few percent of one core, and needs the model file
+`kraken_doa_v2/sigclass.model`.
+
 ### Recording and logging
 
 - **IQ & Audio Recorder**: the calibrated IQ samples of every antenna

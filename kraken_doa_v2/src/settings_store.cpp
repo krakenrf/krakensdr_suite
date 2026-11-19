@@ -116,6 +116,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"fft_size",                 "FFT_SIZE:",                 VType::NUMBER, "16384"},
         // 🎨 Bearing spectrum: the spectrum coloured by direction (bin_doa.hpp)
         {"bin_doa",                  "BIN_DOA:",                  VType::BOOL,   "0"},
+        // Signal ID: every signal labelled with its type (sigclass_service.hpp)
+        {"sigclass",                 "SIGCLASS:",                 VType::BOOL,   "0"},
         // Decimator (VFO) setup - one composite value because the set is
         // dynamic: "<heard>|<vfo>;<vfo>;..." with each <vfo> =
         // "offset_hz,bw_index,demod,squelch_en,squelch_db,squelch_method (0 FFT /

@@ -80,6 +80,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `enter` | run the search |
 | `play` `pause` `stop` `next` `first` | start / play, pause / hold, stop, skip / next, to the start |
 | `star` | saved frequencies, save a frequency |
+| `tag` | Signal ID (a label tag: signals labelled with their type; 2026-11-20, *signal-classifier.md*) |
 | `eye` | viewshed / line of sight, show or hide (marks, a key) |
 | `lock` | a locked signal |
 | `pin` | a marker, From GPS, incidents |

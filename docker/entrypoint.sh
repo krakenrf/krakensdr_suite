@@ -84,6 +84,21 @@ link_files() {  # link_files <dir> <source dir> <file>...
     for f in "$@"; do ln -sfn "$src/$f" "$dir/$f"; done
 }
 
+# link_if_absent <dir> <source dir> <file>: a file the user may put there
+# himself (Signal ID's sigclass.model): linked only when the image has it and
+# there is no file or link of the user's there - his own wins; no dangling
+# link (our link to an image file that is gone is removed)
+link_if_absent() {
+    local dir="$1" src="$2" f="$3"
+    [[ -f "$dir/$f" && ! -L "$dir/$f" ]] && return 0
+    [[ -L "$dir/$f" && "$(readlink "$dir/$f")" != "$src/$f" ]] && return 0   # (the user's own link)
+    if [[ -f "$src/$f" ]]; then
+        ln -sfn "$src/$f" "$dir/$f"
+    elif [[ -L "$dir/$f" ]]; then
+        rm -f "$dir/$f"
+    fi
+}
+
 run_heimdall() {
     local want="${KRAKEN_TUNERS:-5}" limit="${USB_WAIT:-45}" n i generic_s=0
     if [[ ! -d /dev/bus/usb ]]; then
@@ -170,6 +185,7 @@ run_kraken_doa() {
     mkdir -p "$DATA/kraken_doa"
     link_files "$DATA/kraken_doa" "$APP/kraken_doa_v2" \
         kraken_doa.html array_calculator.html opus-decoder.min.js VERSION
+    link_if_absent "$DATA/kraken_doa" "$APP/kraken_doa_v2" sigclass.model
     cd "$DATA/kraken_doa"
     # self-installed digital voice codecs (README "Digital voice codecs"):
     # libmbe.so.1, the ETSI TETRA cdecoder / sdecoder and libfdk-aac.so.2

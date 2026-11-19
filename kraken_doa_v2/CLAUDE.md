@@ -49,7 +49,9 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
   `saved_freqs`, `sf_scanner` / `sf_scan_plan`, `continuous_scanner`,
   `scanner_manager`, `recorder*` / `sigmf` / `playback`, `voice2text`,
   `decoder_log`, `incidents` / `geo_*`, `rdf_engine` / `rdf_mapper`,
-  `talker_doa`, `vfo_level`, `array_cal`, `station_info`, `ai_*`.
+  `talker_doa`, `vfo_level`, `array_cal`, `station_info`, `ai_*`,
+  `sigclass_service` (Signal ID's runtime; the classifier core is
+  `src/sigclass/` + `include/sigclass/sigclass.hpp`).
 - `plugins/<id>/` decoders, `plugins/lib/` (libkrakendig), `plugins/sdk/`
   (plugin API `kraken_plugin.hpp` + `plugin_host.cpp`); the plugin guide is
   `plugins/SDK.md`.
@@ -217,6 +219,7 @@ the job's scratch directory (not committed). The established setup:
 | Spectrum views (FFT message type 7) | `spectrum-views.md` |
 | Noise floor (the spectrum's 0 dB) | `noise-floor.md` |
 | Bearing spectrum: the spectrum coloured by the DoA of each point (FFT message type 9, `BIN_DOA:`) | `bearing-spectrum.md` |
+| Signal ID: every signal labelled with its type (the classifier core, training, the runtime service, `SIGCLASS:`, the labels and the box) | `signal-classifier.md` |
 | VFO audio (mixer, latency control) | `vfo-audio.md` |
 | FFT (pffft); liquid-dsp | `fft-pffft.md`, `liquid-dsp.md` |
 | Digital decoders: engine, AFC, protocol receivers, decoder tabs and tables | `digital-decoders.md` |

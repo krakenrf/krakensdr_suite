@@ -11,6 +11,7 @@
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "signal_processing/bin_doa.hpp"
+#include "sigclass_service.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
 #include "continuous_scanner.hpp"
@@ -359,6 +360,7 @@ static bool is_replayed_command(string_view msg) {
         "BEAMFORMING_MODE:", "MANUAL_STEERING:", "STEERING_ANGLE:",
         "MVDR_DIAGONAL_LOADING:",
         "BIN_DOA:",   // 🎨 bearing spectrum
+        "SIGCLASS:",  // Signal ID (the pages draw the {"sigclass"} state)
         "STATION_ID:", "LOCATION_SOURCE:", "STATIC_LOCATION:",
         "LOG_INTERVAL:", "LOG_FORMAT:",
         "WEB_MAPPER:", "WEB_MAPPER_MODE:", "WEB_MAPPER_KEY:",
@@ -591,6 +593,8 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     out.push_back(power::state_message());
     // the antenna bias tees as heimdall reports them (also in every system_status)
     out.push_back(antbias::state_message());
+    // Signal ID: its state and the signals identified so far
+    out.push_back(sigsvc::state_json());
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     for (const auto& [key, cmd] : sync_replay_store) {
         out.push_back(make_sync_cmd_json(cmd));
@@ -2427,6 +2431,14 @@ void ControlHandler::handle_message_impl(string_view message) {
         const string_view v = message.substr(8);
         if (v != "0" && v != "1") throw CommandRejected("format: BIN_DOA:0|1");
         bin_doa::set_enabled(v == "1");
+    }
+    else if (message.starts_with("SIGCLASS:")) {
+        // Signal ID on / off (sigclass_service.hpp; persisted, replayed);
+        // its state goes out as {"sigclass":...}. Read-only: nothing reaches
+        // heimdall, so it is allowed during a playback (sandboxed setting)
+        const string_view v = message.substr(9);
+        if (v != "0" && v != "1") throw CommandRejected("format: SIGCLASS:0|1");
+        sigsvc::set_enabled(v == "1");
     }
     else if (message.starts_with("DIGITAL_CLEAR:")) {
         int id = parse_int(message, 14);

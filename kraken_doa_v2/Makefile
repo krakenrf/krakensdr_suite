@@ -234,9 +234,20 @@ APP_SRCS = \
 	$(SRCDIR)/recorder.cpp \
 	$(SRCDIR)/recorder_audio.cpp \
 	$(SRCDIR)/power.cpp \
-	$(SRCDIR)/antenna_bias.cpp
+	$(SRCDIR)/antenna_bias.cpp \
+	$(SRCDIR)/sigclass_service.cpp
 
-ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
+# signal classifier core (include/sigclass/sigclass.hpp): standard library +
+# pffft only; also built into tools/build/sigclass_tool (`make sigclass-tool`)
+SIGCLASS_SRCS = \
+	$(SRCDIR)/sigclass/analyzer.cpp \
+	$(SRCDIR)/sigclass/channelizer.cpp \
+	$(SRCDIR)/sigclass/detector.cpp \
+	$(SRCDIR)/sigclass/features.cpp \
+	$(SRCDIR)/sigclass/model.cpp \
+	$(SRCDIR)/sigclass/tracker.cpp
+
+ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS) $(SIGCLASS_SRCS)
 
 # Object files (+ pffft, C)
 PFFFT_OBJS = $(OBJDIR)/pffft/pffft.o $(OBJDIR)/pffft/pffft_common.o
@@ -252,10 +263,10 @@ endif
 DEPS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(DEPDIR)/%.d)
 
 # Create object and dependency directories
-OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils $(OBJDIR)/pffft
-DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/digital $(DEPDIR)/utils
+OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils $(OBJDIR)/pffft $(OBJDIR)/sigclass
+DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/digital $(DEPDIR)/utils $(DEPDIR)/sigclass
 
-.PHONY: all clean distclean install deps deps-macos check-uws debug help print-% run status plugins whisper whisper-update
+.PHONY: all clean distclean install deps deps-macos check-uws debug help print-% run status plugins whisper whisper-update sigclass-tool
 
 # Default target
 all: check-uws $(OBJDIRS) $(DEPDIRS) $(TARGET) plugins whisper-update
@@ -355,6 +366,24 @@ $(OBJDIR)/utils/version_info.o: $(SRCDIR)/utils/version_info.cpp $(VERSION_H) $(
 	@echo "Compiling $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -I$(OBJDIR) -MMD -MP -MF $(DEPDIR)/utils/version_info.d -c $< -o $@
 
+# the signal classifier core needs neither liquid-dsp nor uWebSockets (its
+# own rule: the more specific pattern wins), so `make sigclass-tool` builds
+# without them
+$(OBJDIR)/sigclass/%.o: $(SRCDIR)/sigclass/%.cpp $(FLAGS_STAMP) | $(OBJDIRS) $(DEPDIRS)
+	@echo "Compiling $<..."
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $(DEPDIR)/sigclass/$*.d -c $< -o $@
+
+# the classifier's offline tool (tools/sigclass_tool.cpp: features for
+# training, classify, bench, selftest) from the app's own objects and flags
+SIGCLASS_TOOL = tools/build/sigclass_tool$(if $(WINDOWS),.exe,)
+sigclass-tool: $(SIGCLASS_TOOL)
+$(SIGCLASS_TOOL): tools/sigclass_tool.cpp include/sigclass/sigclass.hpp $(SIGCLASS_SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o) $(PFFFT_OBJS) $(FLAGS_STAMP)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@$(LINK_TMP) tools/sigclass_tool.cpp $(SIGCLASS_SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o) $(PFFFT_OBJS) $(LDFLAGS)
+ifeq ($(WINDOWS),1)
+	@mv -f $@$(LINK_TMP) $@
+endif
+
 $(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(OBJDIRS)
 	@echo "Compiling $<..."
 	$(CC) $(PFFFT_CFLAGS) -c $< -o $@
@@ -404,7 +433,7 @@ endif
 
 # Clean build artifacts
 clean:
-	rm -rf $(OBJDIR) $(DEPDIR) $(TARGET)
+	rm -rf $(OBJDIR) $(DEPDIR) $(TARGET) $(SIGCLASS_TOOL)
 	@if [ -f plugins/Makefile ]; then $(MAKE) --no-print-directory -C plugins -f Makefile clean; fi
 	@echo "Build artifacts cleaned"
 

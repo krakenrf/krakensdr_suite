@@ -3,6 +3,10 @@ obj/
 dep/
 kraken_doa
 kraken_doa.exe
+# offline tools built from tools/*.cpp (sigclass_tool: make sigclass-tool)
+tools/build/
+# Python caches of the tools (tools/sigclass/)
+tools/**/__pycache__/
 
 # Vendored dependency (auto-installed by Makefile)
 uWebSockets/

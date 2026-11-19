@@ -1149,6 +1149,16 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .sf-row.sfs-cur .nm::before {content:'';display:inline-block;width:12px;height:12px;margin-right:4px;vertical-align:-2px;background:currentColor;
   -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.2 6.1h2.6l3.6-3v9.8l-3.6-3H2.2z'/%3E%3Cpath d='M10.8 5.6a3.4 3.4 0 0 1 0 4.8M12.7 3.7a6 6 0 0 1 0 8.6'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.2 6.1h2.6l3.6-3v9.8l-3.6-3H2.2z'/%3E%3Cpath d='M10.8 5.6a3.4 3.4 0 0 1 0 4.8M12.7 3.7a6 6 0 0 1 0 8.6'/%3E%3C/svg%3E") center/contain no-repeat}
 .sf-cats {background:var(--s3);border:1px solid var(--l1);border-radius:3px;padding:6px;margin:4px 0 6px}
+/* Signal ID (see SIGNAL ID): the list of identified signals */
+.sig-list {max-height:260px;overflow-y:auto;margin-top:4px}
+.sig-list:empty {display:none}
+.sig-row {display:flex;gap:6px;align-items:baseline;padding:3px 2px;cursor:pointer;border-bottom:1px solid var(--l1);font-size:12px}
+.sig-row:hover {background:var(--s4)}
+.sig-row .nm {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t0)}
+.sig-row .mhz {font-family:monospace;color:var(--ok-t2);white-space:nowrap}
+.sig-row .pc {font-size:10px;color:var(--t3);min-width:28px;text-align:right}
+.sig-row.sub .nm {color:var(--t5)}
+.sig-row.old {opacity:.6}
 .sf-cat-row {display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:12px}
 .sf-cat-row:last-child {margin-bottom:0}
 .sf-cat-row input[type=text] {flex:1;min-width:0;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:3px 5px;border-radius:3px;font-size:12px}
@@ -2224,6 +2234,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
 <symbol id="i-stop" viewBox="0 0 16 16"><rect x="3.4" y="3.4" width="9.2" height="9.2" rx="1.2" fill="currentColor"/></symbol>
 <symbol id="i-next" viewBox="0 0 16 16"><path d="M2.9 3l7.2 5-7.2 5z" fill="currentColor"/><path d="M12.6 3v10"/></symbol>
 <symbol id="i-first" viewBox="0 0 16 16"><path d="M13.1 3L5.9 8l7.2 5z" fill="currentColor"/><path d="M3.4 3v10"/></symbol>
+<symbol id="i-tag" viewBox="0 0 16 16"><path d="M1.8 2.4a.6.6 0 0 1 .6-.6h4.9l6.9 6.9-5.5 5.5-6.9-6.9z"/><circle cx="5.1" cy="5.1" r="1.2"/></symbol>
 <symbol id="i-star" viewBox="0 0 16 16"><path d="M8 2L9.59 6.22L14.09 6.42L10.57 9.23L11.76 13.58L8 11.1L4.24 13.58L5.43 9.23L1.91 6.42L6.41 6.22z"/></symbol>
 <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.4 8S3.9 3.4 8 3.4 14.6 8 14.6 8 12.1 12.6 8 12.6 1.4 8 1.4 8z"/><circle cx="8" cy="8" r="2.1"/></symbol>
 <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3.2" y="7" width="9.6" height="6.8" rx="1.2"/><path d="M5.4 7V5.1a2.6 2.6 0 0 1 5.2 0V7"/></symbol>
@@ -2976,6 +2987,35 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <div id="sf-cats" class="sf-cats" style="display:none"></div>
         <div id="sf-list" class="sf-list"></div>
+      </div>
+    </div>
+
+    <!-- Signal ID: every signal in the band labelled with its type (see SIGNAL ID) -->
+    <div class="sb-section" data-sb="signal-id" id="sig-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-tag"/></svg><span>Signal ID</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Labels every signal the receiver finds in the band with its type - DMR, POCSAG, NFM voice, LoRa, ADS-B, DAB and some 50 more - on the spectrum and in the list here. <b>Click a label</b> (or a row) to tune the selected VFO to that signal with its decoder, demod and bandwidth. A label with a <b>?</b> is a less certain guess; a grey one is a signal of an unknown kind or one not seen for a while (bursts keep their label between transmissions). Hover a label for the next likely types, the bandwidth and the SNR.<br><br>The receiver looks at half a second of one tuner's samples at a time (coherent mode: the selected antenna; independent and wideband scan modes: each tuner in turn), every one to ten seconds - a few percent of one core. It never retunes anything. Paused while heimdall calibrates. <b>On spectrum</b> and <b>Confidence</b> (the least certainty shown) are for this browser only. Needs the model file sigclass.model on the receiver.</span></span></h3>
+        <span class="sf-count" id="sig-count"></span>
+        <span class="sb-toggle"></span>
+      </div>
+      <div class="sb-content">
+        <div class="ctrl-row">
+          <label for="sig-cb">Signal ID</label>
+          <input type="checkbox" class="sw" id="sig-cb" onchange="sigSet(this.checked)">
+          <span class="cv" id="sig-state"></span>
+        </div>
+        <div class="sb-note" id="sig-note"></div>
+        <div class="ctrl-row">
+          <label for="sig-spec">On spectrum</label>
+          <input type="checkbox" class="sw" id="sig-spec" onchange="sigSetSpec(this.checked)" title="Labels over the spectrum (this browser)">
+        </div>
+        <div class="ctrl-row">
+          <label for="sig-min">Confidence</label>
+          <select id="sig-min" onchange="sigSetMin(this.value)" title="The least certainty a label needs to be shown (this browser); Auto = the model's own level">
+            <option value="auto">Auto</option><option value="0">All</option><option value="0.25">25 %</option><option value="0.4">40 %</option>
+            <option value="0.5">50 %</option><option value="0.6">60 %</option><option value="0.75">75 %</option><option value="0.9">90 %</option>
+          </select>
+        </div>
+        <div class="sig-list" id="sig-list"></div>
       </div>
     </div>
 
@@ -4146,6 +4186,25 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
 // the latest type 9 frame, the receiver's {"bin_doa"} state. Up here: the
 // spectrum's draw hook, the waterfall and the DoA plots read them
 let binDoaOn = false, binDoaFrame = null, binDoaState = null;
+// Signal ID (see SIGNAL ID below): the receiver's {"sigclass"} state (null =
+// none yet) and when it came, whether one came on this connection; per
+// browser (localStorage kraken_sigclass): labels on the spectrum, the least
+// confidence shown; the main spectrum's label targets, a click they took.
+// Up here: drawBox and the panes read them
+let sigSt = null, sigStAt = 0, sigHelloOk = false, sigHelloTimer = null, sigRects = [], sigConsumed = false;
+let sigNoRx = false;             // no state 8 s after the socket opened: an older receiver
+const sigDy = new Map();         // track id -> the row its label took last (sigLayout)
+const SIG_FADE_S = [5, 40];      // not seen for: from the first, fading to SIG_FADE_MIN at the second
+const SIG_FADE_MIN = 0.45;
+const sigUi = (() => {
+  const d = {spec: true, min: 0.5};   // min: 0..1, or 'auto' (the model's min_confidence)
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_sigclass') || '{}');
+    if (typeof s.spec === 'boolean') d.spec = s.spec;
+    if ((typeof s.min === 'number' && s.min >= 0 && s.min <= 1) || s.min === 'auto') d.min = s.min;
+  } catch (e) {}
+  return d;
+})();
 
 // Plugin plots beside the video display (see digRenderVideo): canvas id ->
 // {vfo, tab, pl, geometry} as last drawn, the pointer over one ({id, px,
@@ -7638,9 +7697,11 @@ function drawBox() {
 // (handleDown tests the tags first)
 function drawBoxTags(c, ctx, w, h) {
   sfDrawSpectrum(ctx, w, h);
+  sigDrawSpectrum(ctx, w, h);   // Signal ID's labels, under the tags' rows
   aiDrawMarkers(ctx, w);
   if (!fpHover || isDragging || isDraggingEdge || isScrollDragging || squelchDrag) return;
-  if (sfSpecAt(sfSpecRects, fpHover.x, fpHover.y, 3) || aiMarkerAt(fpHover.x, fpHover.y)) c.style.cursor = 'pointer';
+  if (sfSpecAt(sfSpecRects, fpHover.x, fpHover.y, 3) || aiMarkerAt(fpHover.x, fpHover.y) ||
+      sigAt(sigRects, fpHover.x, fpHover.y, 2, true)) c.style.cursor = 'pointer';
 }
 
 
@@ -8122,7 +8183,7 @@ function pointerClick(s, e) {
   if(centerActiveBarAt(s.xToMhz(x))) drawBox();
 }
 
-function handleDown(e) { if (aiMarkerHit(e) || sfMarkerHit(e)) return; pointerDown(fftSurface, e); }
+function handleDown(e) { if (aiMarkerHit(e) || sfMarkerHit(e) || sigMarkerHit(e)) return; pointerDown(fftSurface, e); }
 function handleMove(e) {
   const fo = $id('fo');
   if (fo) {   // first: pointerMove's redraw keeps the hand over a tag with it (drawBoxTags)
@@ -8131,11 +8192,11 @@ function handleMove(e) {
   }
   pointerMove(fftSurface, e);
   let mk = false;   // (over a marker with a tip of its own: no 📏 level readout)
-  if (!isDragging && !isDraggingEdge && !isScrollDragging) mk = aiMarkerHover(e) || sfMarkerHover(e);
+  if (!isDragging && !isDraggingEdge && !isScrollDragging) mk = aiMarkerHover(e) || sfMarkerHover(e) || sigMarkerHover(e);
   vfoLvlHover(e, fo, mk);
 }
 function handleUp(e) { pointerUp(fftSurface, e); }
-function handleClick(e) { if (aiMarkerConsumed || sfMarkerConsumed) return; pointerClick(fftSurface, e); }
+function handleClick(e) { if (aiMarkerConsumed || sfMarkerConsumed || sigConsumed) return; pointerClick(fftSurface, e); }
 function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
 function handleWaterfallMove(e) { pointerMove(wfSurface, e); vfoLvlHover(e, $id('wf-overlay')); }
 function handleWaterfallUp(e) { pointerUp(wfSurface, e); }
@@ -10865,6 +10926,7 @@ function connect() {
     videoSubReq = null;
     setTimeout(videoUpdateSub, 950);
     binDoaHello(true);   // this page takes bearing frames (type 9, bearing spectrum)
+    sigHello();          // Signal ID: the receiver sends its state on connect (an older one never)
     // API auth: send a remembered token first, so the server authenticates
     // before any command/stream. Without one, nothing is sent: a server with
     // no token configured needs none, and one that has will ask (onmessage).
@@ -10919,6 +10981,7 @@ function connect() {
   
   ws.onclose=()=>{
     pwOnClose();
+    sigSocketDown();   // (Signal ID: no "not on this receiver" while the socket is down)
     biasRender();   // the Bias tee button: disabled while not connected
     const connEl = $id('status-connection');
     if (connEl) {
@@ -10938,6 +11001,7 @@ function connect() {
 
           // API auth (see askForToken)
           if (msg.auth_required) {
+            sigHelloAuth();   // (Signal ID: no "not on this receiver" while a token is asked for)
             if (!storedToken()) askForToken();
             return;
           }
@@ -10947,7 +11011,7 @@ function connect() {
             return;
           }
           // the answer to our SUBSCRIBE (sent only once authenticated)
-          if (msg.subscribed) { videoOnSubAck(msg.subscribed); return; }
+          if (msg.subscribed) { videoOnSubAck(msg.subscribed); if (!sigHelloOk) sigHello(); return; }
 
           // Handle decimator info
           if(msg.decimator_info) {
@@ -11053,6 +11117,9 @@ function connect() {
           }
           else if(msg.bin_doa) {
             binDoaOnState(msg.bin_doa);   // bearing spectrum
+          }
+          else if(msg.sigclass) {
+            sigOnState(msg.sigclass);     // Signal ID
           }
           else if(msg.wb_variant) {
             // KrakenSDR Wideband (downconverter) variant state: show/hide the
@@ -12044,7 +12111,7 @@ function paneDrawOverlay(p) {
   ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
   const H = p.oh || (c.height / p.dpr);
   ctx.clearRect(0, 0, c.width / p.dpr, H);
-  p.bars = []; p.ai = []; p.sf = [];
+  p.bars = []; p.ai = []; p.sf = []; p.sig = [];
   const span = paneSpan(p);
   if (!span) return;
   // Tuning bars in the main display's style (drawBox / WaterfallDisplay.
@@ -12139,6 +12206,7 @@ function paneDrawOverlay(p) {
   // saved frequencies' tags under the AI badges (sfPaneTags)
   sfsPaneSquelch(ctx, p);
   p.sf = sfPaneTags(ctx, p, span);
+  p.sig = sigPaneTags(ctx, p, span);   // Signal ID's labels inside this tuner's span
 }
 
 // ---- interaction: click selects the pane; a VFO bar drags; elsewhere the
@@ -12171,6 +12239,8 @@ function paneDown(p, e) {
   if (ai) { aiShowMark(ai.id); return; }
   const sft = sfSpecAt(p.sf || [], x, y, 2);   // a saved frequency's tag: tune there
   if (sft) { sfTune(sft.fs[0].id, {tuner: p.ch}); return; }
+  const sgt = sigAt(p.sig || [], x, y, 2, true);   // a Signal ID label's box: tune to it (the bracket: tooltip only)
+  if (sgt) { sigTune(sgt.t, {tuner: p.ch}); return; }
   if (!paneSpan(p)) return;
   const ht = paneHit(p, x, y);
   if (ht && ht.kind === 'squelch') {
@@ -12225,11 +12295,13 @@ function paneMove(p, e) {
     if (JSON.stringify(hv) !== JSON.stringify(p.hover || null)) { p.hover = hv; paneDrawOverlay(p); }
     e.currentTarget.style.cursor = !ht ? 'default' : ht.kind === 'edge' ? 'ew-resize' : ht.kind === 'squelch' ? 'ns-resize' : 'grab';
     // a saved frequency's tag: what it is + a hand
-    const sft = sfSpecAt(p.sf || [], x, paneXY(e).y, 2), tip = sft ? sfTagTip(sft) : '';
+    const sft = sfSpecAt(p.sf || [], x, paneXY(e).y, 2);
+    const sgt = sft ? null : sigAt(p.sig || [], x, paneXY(e).y, 2);   // (Signal ID's labels)
+    const tip = sft ? sfTagTip(sft) : sgt ? sigTip(sgt.t) : '';
     if (tipText(e.currentTarget) !== tip) e.currentTarget.title = tip;
-    if (sft) e.currentTarget.style.cursor = 'pointer';
+    if (sft || (sgt && sigAt(p.sig || [], x, paneXY(e).y, 2, true))) e.currentTarget.style.cursor = 'pointer';
     // 📏 the level readout over a VFO's bar (not over a tag, nor its squelch line)
-    if (ht && !sft && ht.kind !== 'squelch') vfoLvlShow(ht.bar.id, e); else vfoLvlHide();
+    if (ht && !sft && !sgt && ht.kind !== 'squelch') vfoLvlShow(ht.bar.id, e); else vfoLvlHide();
     return;
   }
   vfoLvlHide();
@@ -13202,6 +13274,379 @@ function applyMobileRelocation() {
 applyMobileRelocation();
 // the value bars' wheel (by group: on a phone they are in the drawer by now; a pane's bar: panesBuild)
 document.querySelectorAll('#tb-gain .vbar, #tb-audio .vbar').forEach(b => b.addEventListener('wheel', vbarWheel, {passive: false}));
+
+// ============================================================================
+// SIGNAL ID ({"sigclass"}, SIGCLASS:) - docs/dev/signal-classifier.md
+// ----------------------------------------------------------------------------
+// With Signal ID on (the receiver's setting, SIGCLASS:0|1, the box "Signal
+// ID") the receiver's classifier labels every signal it finds in 0.5 s
+// snapshots of one tuner and keeps them as tracks (absolute Hz). Its state
+// comes on connect and on every change: {"sigclass":{enabled, available,
+// reason, parked, analyze_ms, period_ms, duty, snapshots, min_confidence,
+// tracks:[{id, hz, bw, lo, hi, tuner, snr, duty, burst, wide, cls, name,
+// family, p, alt:[[cls, p, name]], plugin, demod, vbw, age, hits,
+// unknown}]}}. A label for every track in view with p >= the browser's
+// minimum (sigMin(): a number, or the model's min_confidence with "Auto"):
+// just above the trace's peak in its band, a bracket over the band (lo..hi);
+// a guess below the model's min_confidence (sigSure()) and an unknown kind
+// are subdued (the guess with a "?"), a track not seen for a while fades
+// (age: 0 while its tuner's latest snapshot had it). Overlaps: the more
+// certain label wins, the other moves up a row or is left out. A press on a
+// label's BOX = sfTune with an entry made from the class (its decoder plugin
+// when built - a fixed-frequency one only near its frequency -, demod, VFO
+// width), so lock_vfo decoders and independent mode behave as for a saved
+// frequency; the bracket only gives the tooltip. The state's drawing
+// variables are in the globals block.
+// ============================================================================
+function sigSave() { try { localStorage.setItem('kraken_sigclass', JSON.stringify(sigUi)); } catch (e) {} }
+// the user's switch: the receiver's setting - its state broadcast moves the
+// switch (it goes back until then: no optimistic update)
+function sigSet(on) {
+  send('SIGCLASS:' + (on ? 1 : 0));
+  const cb = $id('sig-cb');
+  if (cb) cb.checked = !!(sigSt && sigSt.enabled);
+}
+function sigSetSpec(on) { sigUi.spec = !!on; sigSave(); sigRedraw(); }
+function sigSetMin(v) {
+  const n = +v;
+  sigUi.min = v === 'auto' ? 'auto' : n >= 0 && n <= 1 ? n : 0.5;
+  sigSave(); sigRender(); sigRedraw();
+}
+// the model's "sure" level (its min_confidence; 0.7 from a model without one)
+function sigSure() {
+  const m = sigSt && +sigSt.min_confidence;
+  return m > 0 && m <= 1 ? m : 0.7;
+}
+// the least confidence a label needs (the box's Confidence; Auto = the model's)
+function sigMin() { return sigUi.min === 'auto' ? sigSure() : +sigUi.min || 0; }
+function sigRedraw() {
+  if (fftPlot) drawBox();
+  if (opMode === 'independent') paneDrawAllOverlays();
+}
+// once per connection: a receiver with Signal ID sends its state with the
+// connect sync; none within 8 s of an open socket = an older receiver
+// (sigNoRx). Not while the socket is down or a token is being asked for
+// (sigHelloAuth: the timer starts again once authenticated)
+function sigHello() {
+  sigHelloOk = false;
+  sigNoRx = false;
+  clearTimeout(sigHelloTimer);
+  sigHelloTimer = setTimeout(() => {
+    sigNoRx = !sigHelloOk && !!(ws && ws.readyState === 1);
+    sigRender();
+  }, 8000);
+}
+function sigHelloAuth() { clearTimeout(sigHelloTimer); sigNoRx = false; sigRender(); }
+function sigSocketDown() { clearTimeout(sigHelloTimer); sigNoRx = false; sigRender(); }
+function sigOnState(s) {
+  if (!s || typeof s !== 'object') return;
+  sigHelloOk = true;
+  sigNoRx = false;
+  sigSt = s;
+  sigStAt = Date.now();
+  if (!Array.isArray(s.tracks)) s.tracks = [];
+  if (sigDy.size > 2 * s.tracks.length + 50) {   // (gone tracks' rows)
+    const ids = new Set(s.tracks.map(t => t.id));
+    for (const id of [...sigDy.keys()]) if (!ids.has(id)) sigDy.delete(id);
+  }
+  sigRender();
+  sigRedraw();
+}
+// seconds since the track was last seen (the state's age + its own age here;
+// a track its tuner's latest snapshot had stays at 0)
+function sigAge(t) { return +t.age > 0 ? +t.age + (Date.now() - sigStAt) / 1000 : 0; }
+// the tracks to label / list: a class (not a hidden one), certain enough, in lo..hi MHz
+function sigShown(lo, hi) {
+  if (!sigSt || !sigSt.enabled || !sigSt.tracks) return [];
+  const mn = sigMin();
+  return sigSt.tracks.filter(t => t.cls && t.name && !t.hidden && (+t.p || 0) >= mn && Number.isFinite(t.hz) &&
+                                  (lo === undefined || (t.hz / 1e6 >= lo && t.hz / 1e6 <= hi)));
+}
+function sigSub(t) { return !!t.unknown || (+t.p || 0) < sigSure(); }
+function sigLabelText(t) {
+  const n = String(t.name);
+  return (n.length > 18 ? n.slice(0, 17) + '…' : n) + (!t.unknown && (+t.p || 0) < sigSure() ? '?' : '');
+}
+function sigAlpha(t) {
+  const a = sigAge(t);
+  if (a <= SIG_FADE_S[0]) return 1;
+  return Math.max(SIG_FADE_MIN, 1 - (1 - SIG_FADE_MIN) * (a - SIG_FADE_S[0]) / (SIG_FADE_S[1] - SIG_FADE_S[0]));
+}
+// the band a track covers in MHz: its lo..hi when the receiver sends them,
+// else the centre +- half the bandwidth
+function sigBand(t) {
+  if (Number.isFinite(t.lo) && Number.isFinite(t.hi) && t.hi > t.lo) return [t.lo / 1e6, t.hi / 1e6];
+  const half = Math.max(0, +t.bw || 0) / 2e6;
+  return [t.hz / 1e6 - half, t.hz / 1e6 + half];
+}
+// the highest level (dB) of mags between lo and hi MHz (freqs ascending);
+// the nearest point when none lies in between; null without data
+function sigPeak(freqs, mags, lo, hi) {
+  const n = freqs ? freqs.length : 0;
+  if (!n || !mags || mags.length < n) return null;
+  let a = 0, b = n;
+  while (a < b) { const m = (a + b) >> 1; if (freqs[m] < lo) a = m + 1; else b = m; }
+  let best = -Infinity;
+  for (let i = a; i < n && freqs[i] <= hi; i++) if (mags[i] > best) best = mags[i];
+  if (best === -Infinity) {
+    const i = Math.min(n - 1, a), j = Math.max(0, a - 1);
+    best = Math.abs(freqs[i] - (lo + hi) / 2) < Math.abs(freqs[j] - (lo + hi) / 2) ? mags[i] : mags[j];
+  }
+  return Number.isFinite(best) ? best : null;
+}
+// Places the labels: each at its signal (xOf: MHz -> px), its box's bottom
+// 6 px above the peak (yPeak: track -> px, null = unknown), never above ytop
+// (the VFO labels' / tags' rows), inside xmin..xmax; more certain first (in
+// steps of 10 %, then the older track: the order - and so the layout -
+// doesn't shuffle with every update); a box that would overlap one placed
+// moves up a row, at most 3 (down only when it is at ytop already: a peak at
+// the top) - the row it had last time first (sigDy) - else it is left out.
+// Returns [{t, label, x0, x1, y0, y1, xc, xl, xr, yb, sub}]
+function sigLayout(ctx, items, xOf, yPeak, xmin, xmax, ytop, ybot, th) {
+  const q = t => Math.floor((+t.p || 0) * 10);
+  const order = items.slice().sort((a, b) => (q(b) - q(a)) || (a.id - b.id));
+  const placed = [];
+  const free = (x0, x1, y0, y1) => !placed.some(g => x0 < g.x1 + 2 && x1 > g.x0 - 2 && y0 < g.y1 + 2 && y1 > g.y0 - 2);
+  for (const t of order) {
+    const xc = xOf(t.hz / 1e6);
+    if (xc == null || !Number.isFinite(xc) || xc < xmin - 2 || xc > xmax + 2) continue;
+    const [blo, bhi] = sigBand(t);
+    let xl = xOf(blo), xr = xOf(bhi);
+    if (!(xr - xl >= 6)) { xl = xc - 3; xr = xc + 3; }
+    xl = Math.max(xmin, xl); xr = Math.min(xmax, xr);
+    const label = sigLabelText(t);
+    const tw = Math.ceil(ctx.measureText(label).width) + 8;
+    const x0 = Math.min(Math.max(xmin, xc - tw / 2), xmax - tw);
+    const yp0 = yPeak(t);
+    const yp = yp0 == null || !Number.isFinite(yp0) ? ytop + th + 30 : Math.max(ytop + th + 4, Math.min(ybot, yp0));
+    const yb = yp - 3;                       // the bracket, just above the peak
+    const want = Math.max(ytop, yb - 3 - th);
+    let y = null;
+    const rows = want > ytop ? [0, -1, -2, -3] : [0, 1, 2, 3], last = sigDy.get(t.id);
+    if (last !== undefined && rows.includes(last)) rows.unshift(last);
+    for (const k of rows) {
+      const yy = want + k * (th + 2);
+      if (yy < ytop || yy + th > ybot) continue;
+      if (free(x0, x0 + tw, yy, yy + th)) { y = yy; sigDy.set(t.id, k); break; }
+    }
+    if (y === null) continue;
+    placed.push({t, label, x0, x1: x0 + tw, y0: y, y1: y + th, xc, xl, xr, yb, sub: sigSub(t)});
+  }
+  return placed;
+}
+// one label: the bracket over the band (with its ends), a thin line from the
+// box to it when they are apart, the box with the name. Colours: --s1 box,
+// --l3 / --l1 border, --t0 / --t5 text, --t2 / --t6 bracket
+function sigDrawLabel(ctx, g) {
+  ctx.save();
+  ctx.globalAlpha = sigAlpha(g.t);
+  const ink = g.sub ? '#707883' : '#b5bfcb';
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1;
+  const yb = Math.round(g.yb) + 0.5;
+  ctx.beginPath();
+  ctx.moveTo(Math.round(g.xl) + 0.5, yb + 3); ctx.lineTo(Math.round(g.xl) + 0.5, yb);
+  ctx.lineTo(Math.round(g.xr) + 0.5, yb); ctx.lineTo(Math.round(g.xr) + 0.5, yb + 3);
+  ctx.stroke();
+  const xc = Math.round(Math.min(Math.max(g.xc, g.x0 + 2), g.x1 - 2)) + 0.5;
+  if (g.y1 < yb - 2) { ctx.beginPath(); ctx.moveTo(xc, g.y1); ctx.lineTo(xc, yb); ctx.stroke(); }
+  else if (g.y0 > yb + 2) { ctx.beginPath(); ctx.moveTo(xc, g.y0); ctx.lineTo(xc, yb); ctx.stroke(); }
+  ctx.fillStyle = hexToRgba('#0b0f14', 0.84);
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(g.x0, g.y0, g.x1 - g.x0, g.y1 - g.y0, 3); else ctx.rect(g.x0, g.y0, g.x1 - g.x0, g.y1 - g.y0);
+  ctx.fill();
+  ctx.strokeStyle = g.sub ? '#333b46' : '#454f5c';
+  ctx.stroke();
+  ctx.fillStyle = g.sub ? '#7f8995' : '#dde4ec';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(g.label, g.x0 + 4, (g.y0 + g.y1) / 2 + 0.5);
+  ctx.restore();
+  g.hit = {x0: g.x0, x1: g.x1, y0: g.y0, y1: g.y1};                 // the box (press + tooltip)
+  g.hitB = {x0: g.xl, x1: g.xr, y0: g.yb - 2, y1: g.yb + 4};         // the bracket (tooltip only)
+}
+// the main spectrum (drawBoxTags, after the saved-frequency tags): not in
+// independent mode (the panes have their own)
+function sigDrawSpectrum(ctx, w, h) {
+  sigRects = [];
+  if (!sigUi.spec || !sigSt || !sigSt.enabled || opMode === 'independent' || !fftPlot || !currentFrequencies.length) return;
+  const items = sigShown(currentFrequencies[0], currentFrequencies[currentFrequencies.length - 1]);
+  if (!items.length) return;
+  // below the VFO labels and AI badges (y < 20) and the saved-frequency tags
+  let ytop = 20;
+  for (const g of sfSpecRects) if (g.hit) ytop = Math.max(ytop, g.hit.y1 + 3);
+  const xs = fftPlot.data && fftPlot.data[0], mags = fftPlot.data && fftPlot.data[1];   // (the trace as drawn)
+  ctx.save();
+  ctx.font = '10px sans-serif';
+  const placed = sigLayout(ctx, items, f => fftPlot.valToPos(f, 'x'), t => {
+    const [lo, hi] = sigBand(t), pk = sigPeak(xs, mags, lo, hi);
+    return pk == null ? null : fftPlot.valToPos(pk, 'y');
+  }, 0, w, ytop, h - 4, 13);
+  for (const g of placed) sigDrawLabel(ctx, g);
+  ctx.restore();
+  sigRects = placed;
+}
+// an independent-mode pane (paneDrawOverlay): the tracks inside its span, in
+// its spectrum part, under its AI badges and saved-frequency tags
+function sigPaneTags(ctx, p, span) {
+  if (!sigUi.spec || !sigSt || !sigSt.enabled || !span || !p.sh) return [];
+  const items = sigShown(span[0], span[1]);
+  if (!items.length) return [];
+  let ytop = 17;
+  for (const g of (p.sf || [])) if (g.hit) ytop = Math.max(ytop, g.hit.y1 + 2);
+  const top = 4, bot = p.sh - 14, ymax = paneYMax(p);
+  ctx.save();
+  ctx.font = '9px sans-serif';
+  const placed = sigLayout(ctx, items, f => paneX(p, f), t => {
+    const [lo, hi] = sigBand(t), pk = sigPeak(p.freqs, p.mags, lo, hi);
+    return pk == null ? null : bot - Math.max(0, Math.min(1, pk / ymax)) * (bot - top);
+  }, p.L, p.sw - 4, ytop, bot, 11);
+  for (const g of placed) sigDrawLabel(ctx, g);
+  ctx.restore();
+  return placed;
+}
+// the label under (x, y): its box; for the tooltip (not press) also the
+// narrowest bracket there (a wide signal's bracket spans the narrow ones' -
+// and a DAB block's the whole plot, so a bracket never takes a press)
+function sigAt(rects, x, y, pad, press) {
+  const inR = (h, p) => h && x >= h.x0 - p && x <= h.x1 + p && y >= h.y0 - p && y <= h.y1 + p;
+  const g = rects.find(r => inR(r.hit, pad));
+  if (g || press) return g || null;
+  let best = null;
+  for (const r of rects) if (inR(r.hitB, 0) && (!best || r.hitB.x1 - r.hitB.x0 < best.hitB.x1 - best.hitB.x0)) best = r;
+  return best;
+}
+// the receiver's band (MHz) around a track: its tuner's (independent mode) or
+// the centre's
+function sigBandCentre(t) {
+  if (opMode === 'independent') { const p = panes[t.tuner | 0]; return p && p.freqMhz > 0 ? p.freqMhz : null; }
+  return currentCenterFreq > 0 ? currentCenterFreq : null;
+}
+// how a click tunes: the class's decoder when this receiver has it built - a
+// fixed-frequency one (ADS-B, AIS: it retunes the receiver to its own
+// frequency) only when the signal is near that frequency (within half the
+// class's width, at least 300 kHz) or the band the signal is in holds it -,
+// its demod and VFO width (else the detected width with some room). Without
+// a decoder for it the VFO's own decoder stays - unless that one holds the
+// VFO (a fixed-frequency or lock_vfo decoder: ADS-B, ism), which then goes off
+function sigEntry(t) {
+  let pl = t.plugin && typeof digPlugin === 'function' ? digPlugin(t.plugin) : null;
+  if (pl && pl.fixed_freq_hz > 0) {
+    const ff = pl.fixed_freq_hz, c = sigBandCentre(t);
+    const near = Math.abs(t.hz - ff) <= Math.max(300e3, 0.5 * (+t.vbw || 0), 0.5 * (+t.bw || 0));
+    const inBand = c !== null && Math.abs(c * 1e6 - ff) <= 1.2e6 && Math.abs(c * 1e6 - t.hz) <= 1.2e6;
+    if (!near && !inBand) pl = null;
+  }
+  const bw = +t.vbw > 0 ? +t.vbw : +t.bw > 0 ? Math.min(2400000, Math.max(1000, Math.round(+t.bw * 1.25))) : 0;
+  const d = decimatorInfo.find(z => z.id === activeDecimatorId);
+  const dec = pl && pl.built ? 'PLUGIN:' + t.plugin : d && vfoLocked(d) ? 'OFF' : '';
+  return {id: '', name: t.name || 'Signal', hz: Math.round(t.hz), dec, mode: ['NBFM', 'WBFM', 'AM', 'DIGITAL'].includes(t.demod) ? t.demod : '', bw};
+}
+function sigTune(t, opts) { if (t) sfTune(sigEntry(t), opts || {}); }
+function sigTuneId(id) { const t = sigSt && sigSt.tracks.find(k => k.id === id); if (t) sigTune(t); }
+function sigFmtAge(s) { return s < 90 ? Math.round(s) + ' s' : Math.round(s / 60) + ' min'; }
+function sigTip(t, noAge) {
+  const pc = v => Math.round((+v || 0) * 100) + ' %';
+  const alt = (t.alt || []).filter(a => Array.isArray(a) && a.length >= 2).map(a => (a[2] || a[0]) + ' ' + pc(a[1]));
+  const e = sigEntry(t), how = [e.dec && e.dec !== 'OFF' && sfDecName(e.dec), e.mode && (SF_MODES[e.mode] || e.mode), e.bw > 0 && sfFmtBw(e.bw)].filter(Boolean);
+  const age = sigAge(t);
+  return `${t.name} - ${pc(t.p)}` + (t.family ? ` (${t.family})` : '') +
+         (alt.length ? `\nOr: ${alt.join(', ')}` : '') +
+         `\n${mkFmtMhz(t.hz)} MHz · ${sfFmtBw(+t.bw || 0)} wide · SNR ${(+t.snr || 0).toFixed(0)} dB` +
+         (t.burst ? ' · bursts' : '') + (!noAge && age >= 3 ? ` · last seen ${sigFmtAge(age)} ago` : '') +
+         `\nClick the label to tune the selected VFO` + (how.length ? ` (${how.join(', ')})` : '');
+}
+function sigMarkerHover(e) {
+  const c = $id('fo');
+  if (!c) return false;
+  const r = c.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const g = sigRects.length ? sigAt(sigRects, x, y, 2) : null;
+  const tip = g ? sigTip(g.t) : '';
+  if (tipText(c) !== tip) c.title = tip;
+  if (g && sigAt(sigRects, x, y, 2, true)) c.style.cursor = 'pointer';   // (a box: it takes the press)
+  return !!g;
+}
+// press on the main spectrum: a label's box tunes instead of placing the VFO
+// (as the saved-frequency tags do); its bracket does not take the press
+function sigMarkerHit(e) {
+  const c = $id('fo');
+  if (!c || !sigRects.length) return false;
+  const r = c.getBoundingClientRect();
+  const g = sigAt(sigRects, e.clientX - r.left, e.clientY - r.top, 2, true);
+  if (!g) return false;
+  sigConsumed = true;
+  setTimeout(() => { sigConsumed = false; }, 400);
+  sigTune(g.t);
+  return true;
+}
+// the box: the switch (from the state), the state and its reason, the list
+function sigRender() {
+  const cb = $id('sig-cb'), st = $id('sig-state'), note = $id('sig-note'), list = $id('sig-list'), cnt = $id('sig-count');
+  if (!cb) return;
+  const s = sigSt;
+  const spec = $id('sig-spec'), mn = $id('sig-min');
+  if (spec && spec.checked !== sigUi.spec) spec.checked = sigUi.spec;
+  if (mn && document.activeElement !== mn && mn.value !== String(sigUi.min)) mn.value = String(sigUi.min);
+  const auto = mn && mn.querySelector('option[value="auto"]');
+  const autoTxt = 'Auto' + (s && +s.min_confidence > 0 ? ` (${Math.round(sigSure() * 100)} %)` : '');
+  if (auto && auto.textContent !== autoTxt) auto.textContent = autoTxt;
+  let text = '', tip = '', why = '';
+  if (!s) {
+    if (sigNoRx) { text = 'Not on this receiver'; tip = 'This receiver (an older kraken_doa) has no Signal ID'; }
+  } else if (!s.available) {
+    text = 'Unavailable'; why = s.reason || '';
+  } else if (!s.enabled) {
+    text = 'Off';
+  } else if (s.parked) {
+    text = 'Paused'; why = s.parked;
+  } else if (!s.snapshots) {
+    text = 'Starting';
+  } else {
+    text = 'Running';
+    tip = `${(+s.analyze_ms || 0).toFixed(0)} ms per snapshot, one every ${((+s.period_ms || 0) / 1000).toFixed(1)} s` +
+          ` (${((+s.duty || 0) * 100).toFixed(1)} % of a core) · ${s.snapshots} snapshots`;
+  }
+  cb.disabled = !s;
+  if (cb.checked !== !!(s && s.enabled)) cb.checked = !!(s && s.enabled);
+  if (st.textContent !== text) st.textContent = text;
+  if (tipText(st) !== tip) st.title = tip;
+  const w = why ? why.charAt(0).toUpperCase() + why.slice(1) : '';
+  if (note.textContent !== w) note.textContent = w;   // (.sb-note: hidden while empty)
+  const rows = sigShown().sort((a, b) => a.hz - b.hz).slice(0, 200);
+  const n = rows.length ? String(rows.length) : '';
+  if (cnt.textContent !== n) cnt.textContent = n;
+  // the rows patched in place, keyed by track id (a row rebuilt between a
+  // press and its release loses the click); kHz in the list is enough
+  const have = new Map();
+  for (const el of [...list.children]) have.set(el.dataset.id, el);
+  let prev = null;
+  for (const t of rows) {
+    const key = String(+t.id);
+    let el = have.get(key);
+    if (el) have.delete(key);
+    else {
+      el = document.createElement('div');
+      el.dataset.id = key;
+      el.innerHTML = '<span class="nm"></span><span class="mhz"></span><span class="pc"></span>';
+      el.addEventListener('click', () => sigTuneId(+el.dataset.id));
+    }
+    const cls = 'sig-row' + (sigSub(t) ? ' sub' : '') + (sigAge(t) > SIG_FADE_S[0] ? ' old' : '');
+    if (el.className !== cls) el.className = cls;
+    const [nm, mhz, pc] = el.children;
+    const a = sigLabelText(t), b = (t.hz / 1e6).toFixed(3), c = Math.round((+t.p || 0) * 100) + ' %';
+    if (nm.textContent !== a) nm.textContent = a;
+    if (mhz.textContent !== b) mhz.textContent = b;
+    if (pc.textContent !== c) pc.textContent = c;
+    const tp = sigTip(t, true);
+    if (tipText(el) !== tp) el.title = tp;
+    const next = prev ? prev.nextSibling : list.firstChild;
+    if (next !== el) list.insertBefore(el, next);
+    prev = el;
+  }
+  for (const el of have.values()) el.remove();
+}
+sigRender();
 
 // --- Touch support: map touch events onto the existing mouse drag handlers ---
 function addTouchHandlers(el, down, move, up) {

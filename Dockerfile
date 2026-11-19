@@ -131,10 +131,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt/krakensdr
 COPY --from=build /src/heimdall_v2/heimdall /src/heimdall_v2/index.html heimdall_v2/
+# (sigclass.mode[l]: Signal ID's model - a pattern, so a tree without the
+# file still builds; the feature then says it is unavailable)
 COPY --from=build /src/kraken_doa_v2/kraken_doa \
                   /src/kraken_doa_v2/kraken_doa.html \
                   /src/kraken_doa_v2/array_calculator.html \
-                  /src/kraken_doa_v2/opus-decoder.min.js kraken_doa_v2/
+                  /src/kraken_doa_v2/opus-decoder.min.js \
+                  /src/kraken_doa_v2/sigclass.mode[l] kraken_doa_v2/
 # decoder plugins (built ones: plugins/<id>/build/decoder); kraken_doa finds
 # them through KRAKEN_PLUGIN_DIR (entrypoint)
 COPY --from=build /src/kraken_doa_v2/plugins/ kraken_doa_v2/plugins/
