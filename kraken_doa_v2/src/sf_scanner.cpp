@@ -19,6 +19,7 @@
 #include "signal_processing/audio_mixer.hpp"
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/noise_floor.hpp"
+#include "trunk_follow.hpp"
 #include "utils/json_escape.hpp"
 
 #include <algorithm>
@@ -202,12 +203,13 @@ Plan make_plan(int vfo, const Layout& lay) {
 bool is_extra(const DecimatorInstance* p);
 
 // Independent mode: the tuners no other VFO is on (lowest first) - the scan's
-// own extra VFOs (one per active frequency) don't count
+// own extra VFOs (one per active frequency) and the trunk manager's voice VFOs
+// (removed while a scan runs: trunk following pauses) don't count
 std::vector<int> free_tuners(int vfo) {
     const int n = std::min(active_num_elements.load(), MAX_CHANNELS);
     uint32_t busy = 0;
     for (const auto& d : decimator_manager.getAllDecimators()) {
-        if (!d || d->id == vfo || d->being_deleted.load() || is_extra(d.get())) continue;
+        if (!d || d->id == vfo || d->being_deleted.load() || is_extra(d.get()) || trunk::is_trunk_vfo(d->id)) continue;
         const int t = d->tuner_channel.load();
         if (t >= 0 && t < 32) busy |= 1u << t;
     }

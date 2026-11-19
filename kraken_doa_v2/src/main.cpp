@@ -10,6 +10,7 @@
 #include "scanner_manager.hpp"
 #include "continuous_scanner.hpp"
 #include "sf_scanner.hpp"
+#include "trunk_follow.hpp"
 #include "networking/websocket_server.hpp"
 #include "networking/data_receiver.hpp"
 #include "networking/tcp_client.hpp"
@@ -341,6 +342,7 @@ int main(int argc, char* argv[]) {
 
     // 📻 Saved frequencies + the map markers (saved_frequencies.json)
     savedfreq::load();
+    trunk::load();   // trunk_systems.json (trunk following)
 
     // The receivers' own noise floors (noise_floors.json) - the spectrum's 0 dB
     // while a signal fills the band
@@ -481,6 +483,7 @@ int main(int argc, char* argv[]) {
     // (The saved-frequency scan the same - its thread only: the tuning it
     // left isn't saved, the settings file keeps the user's)
     sfscan::shutdown();
+    trunk::save_now();   // the systems file's last unsaved change (trunk following)
     continuous_scanner.stop();
 
     // Stop the gpsd client thread (its socket read has a 2s timeout so the

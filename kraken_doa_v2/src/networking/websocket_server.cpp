@@ -27,6 +27,7 @@
 #include "utils/platform.hpp"
 #include "utils/fs_compat.hpp"
 #include "utils/tls_compat.hpp"
+#include "trunk_follow.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -1111,6 +1112,11 @@ void WebSocketServer::web_server_main() {
                     if (!global_ssl_app) return;
                     for (const auto& m : rec::tick_messages()) global_ssl_app->publish(TOPIC_CTL, m, uWS::TEXT, false);
                 }, 1000, 1000);
+
+                // Trunk following: the state machine (grants -> voice VFOs), its
+                // status on change / every second while active - trunk_follow.hpp
+                struct us_timer_t* trunk_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(trunk_timer, [](struct us_timer_t* /*timer*/) { trunk::tick(); }, trunk::TICK_MS, trunk::TICK_MS);
 
                 // 🗂 Decoder Logging status (disk space, sizes) - every 2 s
                 struct us_timer_t* declog_timer = us_create_timer(native_loop, 0, 0);

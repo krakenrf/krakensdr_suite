@@ -680,6 +680,15 @@ void record_incident(int vfo, int log_mode, const std::string& plugin, const std
                       "\",\"text\":\"" + json_escape(text) + "\"}");
 }
 
+void record_call(int vfo, int log_mode, double rf_hz, const std::string& plugin, const std::string& fields) {
+    if (playback::active()) return;
+    if (log_mode == dig::LOG_OFF) return;   // the control VFO's Logging decides (Log / Log All)
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (!s.enabled) return;
+    append_locked(s, safe_folder_name(plugin), head(vfo, rf_hz, plugin, "call") + fields + "}");
+}
+
 void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source, const std::string& fields) {
     if (playback::active()) return;
     State& s = S();
