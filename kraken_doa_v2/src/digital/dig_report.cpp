@@ -203,6 +203,47 @@ void Report::clear_all() {
     std::lock_guard<std::mutex> lk(mu_);
     facts_.clear();
     recent_.clear();
+    choices_.clear();
+}
+
+void Report::choices_set(const std::string& plugin, const std::string& key, std::vector<std::pair<std::string, std::string>> list) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::string k = plugin + "." + key;
+    choices_.erase(k);
+    // all of a decoder's lists together stay small (they go out with every status):
+    // what doesn't fit is left off the end
+    size_t used = 0;
+    for (const auto& kv : choices_)
+        for (const auto& c : kv.second) used += c.first.size() + c.second.size();
+    size_t n = 0;
+    for (; n < list.size(); n++) {
+        const size_t b = list[n].first.size() + list[n].second.size();
+        if (used + b > MAX_CHOICES_BYTES) break;
+        used += b;
+    }
+    list.resize(n);
+    if (!list.empty()) choices_[k] = std::move(list);
+}
+
+void Report::choices_clear(const std::string& plugin) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::string pre = plugin + ".";
+    for (auto it = choices_.lower_bound(pre); it != choices_.end() && it->first.compare(0, pre.size(), pre) == 0;)
+        it = choices_.erase(it);
+}
+
+std::string Report::choices_json() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::string o = "{";
+    bool first = true;
+    for (const auto& [k, list] : choices_) {
+        o += std::string(first ? "" : ",") + "\"" + json_escape(k) + "\":[";
+        first = false;
+        for (size_t i = 0; i < list.size(); i++)
+            o += std::string(i ? "," : "") + "[\"" + json_escape(list[i].first) + "\",\"" + json_escape(list[i].second) + "\"]";
+        o += "]";
+    }
+    return o + "}";
 }
 
 void Report::set_label(const std::string& plugin, const std::string& name) {
@@ -364,9 +405,15 @@ void Report::table_clear() {
     for (auto& kv : tables_) kv.second.rows.clear();
 }
 
-void Report::plot_set(const std::string& plugin, std::string json) {
+void Report::plot_set(const std::string& plugin, const std::string& key, std::string json, size_t max_named) {
     std::lock_guard<std::mutex> lk(mu_);
-    plots_[plugin] = {std::move(json), now_ms()};
+    if (key != plugin && !plots_.count(key)) {
+        const std::string pre = plugin + "/";
+        size_t n = 0;
+        for (auto it = plots_.lower_bound(pre); it != plots_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it) n++;
+        if (n >= max_named) return;
+    }
+    plots_[key] = {std::move(json), now_ms()};
 }
 
 void Report::plot_clear() {

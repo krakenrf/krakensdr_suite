@@ -415,7 +415,9 @@ getting the old type 0 / 6 frames at 2048 points per tuner band
 **Digital voice/data decoders (per VFO)**: engine `kraken_doa_v2/src/digital/`,
 decoders `kraken_doa_v2/plugins/`
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):
-  p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
+  p25 (Phase 1 and Phase 2 TDMA, told apart automatically), dmr, tetra
+  (downlink), dstar, nxdn (48 and 96), ysf (Yaesu System
+  Fusion: DN, VW, V/D mode 1, Data FR), mpt1327 (analogue
   trunking signalling), pagers (POCSAG + FLEX; was pocsag), aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
   as a locked line, `kp::Info::fixed_freq_hz`; v2.0: in coherent mode with
@@ -568,12 +570,20 @@ decoders `kraken_doa_v2/plugins/`
   options, e.g. `dmr.slot`, `p25.nac`); persisted in the VFO snapshot. See
   `kraken_doa_v2/CLAUDE.md` for the design
 - Voice: Demod "Digital" (or the panel's Listen button) on a VFO heard (🔊)
-  plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
-  D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
+  plays the decoded voice. P25 Phase 1 IMBE is built in (port of mbelib,
+  ISC), also used for Yaesu Fusion VW; P25 Phase 2 / DMR / D-STAR / NXDN /
+  Fusion DN and V/D mode 1 AMBE use a user-installed mbelib (dlopen,
+  `KRAKEN_MBELIB`; DN through its `mbe_processAmbe2450Dataf`, optional) -
+  Fusion written from Yaesu's
+  standard, which doesn't give the voice frames' bit order: the placement
+  checked against dsdcc (VW's corrected to the on-air order then) and
+  against off-air DN / VW recordings, whose voice decodes to speech. TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
   `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
   `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the
-  programs need file names, Windows has no /dev/stdin) - neither is shipped
+  programs need file names, Windows has no /dev/stdin), DAB+ HE-AAC v2 the
+  user's libfdk-aac (dlopen by the dab plugin, `KRAKEN_AAC_LIB`; DAB's
+  Layer II is built in, minimp3) - none of them is shipped
   (licensing); README "Digital voice codecs" has the install steps
   (Windows: WINDOWS.md). Docker:
   files in `docker-data/codecs/` are picked up by the entrypoint. Encrypted
@@ -684,8 +694,8 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   connection open after a reconnect). A
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
-  tetra, dstar, nxdn, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, acars, vdl2, dtv and cells (ARRAY
+  tetra, dstar, nxdn, ysf, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, acars, vdl2, dab, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -875,7 +885,7 @@ models + Silero VAD) - opt-in setup `cd kraken_doa_v2 && make whisper`
 base.en) or `WHISPER=1 ./install.sh`; Docker builds it in (`WHISPER=0`
 leaves it out) with the models in `docker-data/whisper_models/`
 - Source per VFO, not what the 🔊 speakers play: its digital decoder's voice when the
-  decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / TETRA vocoder
+  decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / YSF / TETRA vocoder
   output via `dig::set_voice_tap_handler`, with the talker's unit ID /
   talkgroup; cut at talker changes), else - no decoder, or one of no voice
   (`DigitalDecoder::takes_voice()`: analog_id, pagers ...) - its analog demod
@@ -1010,7 +1020,7 @@ spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI, ACARS and VDL Mode 2 aircraft / ground stations)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR / Yaesu Fusion callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI, ACARS and VDL Mode 2 aircraft / ground stations, DAB transmitters by their TII code)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -1027,8 +1037,12 @@ copies identical: by delay), iMet-4 (no serial). A decoder plugin that knows who
 transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
 transmissions - DMR timeslots; id "?" = a busy channel whose radio isn't
-named yet). p25: LDU1 / TDULC link control source; dmr: full / embedded LC
-source per timeslot; nxdn: VCALL source; dstar: MY callsign of the RF
+named yet). p25: LDU1 / TDULC link control source (Phase 1); Phase 2 per
+timeslot on a site's output (MAC_PTT / voice channel user source, channel
+LCH + 1), and an inbound burst as a packet of the radio it is proven to be
+from (named in it, or continuing its named bursts at its carrier offset); dmr:
+full / embedded LC source per timeslot; nxdn: VCALL source; ysf: the source callsign (CSD1 /
+V/D mode 2 DCH); dstar: MY callsign of the RF
 header (or its slow-data copy); adsb: every accepted message as a
 `kp::Talker::packet` (exact samples) - the VFO keeps per-16-sample
 covariances for 1.5 s while packets come, each aircraft's lobe = its
@@ -1085,6 +1099,25 @@ packet "PI xxxx" per RDS group (UI kind `broadcast` 🎙). Generator
 real US station's recording (pysdr.org: PI, RT, dynamic PS, a real 67 kHz
 SCA) and end to end through kraken_doa's debug playback (two stations at
 60.0 / 200.0 deg)
+
+**📻 DAB / DAB+ plugin** (details: `kraken_doa_v2/plugins/dab/README.md`,
+`kraken_doa_v2/docs/dev/plugin-dab.md`): the plugin `dab` ("DAB / DAB+
+(digital radio)", 2026-11-16) on a 2.4 MHz `lock_vfo` VFO tuned to the block
+(e.g. 12C 227.360 MHz), transmission mode I at the native 2.4 MHz (one bin of
+a 2400-point FFT per 1 kHz carrier - no resampler), carrier and sample clock
+offsets tracked inside the plugin; FIC (Viterbi, CRC-checked FIGs: ensemble,
+services, sub-channels, programme types, languages, date / time, labels incl.
+FIG 2), the selected programme's sub-channel (option `service`) through the
+MSC to the audio layer: Layer II built in (minimp3, CC0), DAB+ HE-AAC v2 with
+the user's libfdk-aac (dlopen; never shipped), the dynamic label. Every
+transmitter of the single frequency network by its TII code (level, delay
+against the strongest, both TII pair-phase conventions seen on the air), and
+in coherent mode a talker packet per transmitter with the covariance of its
+own TII carriers (UI kind `transmitter` 🗼); FIG 0/22 positions as map points
+where an ensemble sends them. Generator `plugins/dab/tools/dab_gen.cpp`,
+playback `dab-sfn-three` / `dab-single-offset`. Checked on 8 published
+recordings (DE, AU, IT, BE, NL, UK) and ETI captures of DAB+ / Layer II
+ensembles; not yet live on the array
 
 **📟 Pagers plugin (POCSAG + FLEX)** (details:
 `kraken_doa_v2/plugins/pagers/README.md`, `kraken_doa_v2/CLAUDE.md`
@@ -1244,9 +1277,11 @@ user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
 overlay. A playback never outruns the pipeline (a busy machine plays it
-slower than real time instead of dropping packets). 37 entries in 26
-catalogues - every decoder has its own (p25, dmr, radiosonde, then rds,
-then analog_id's `analog-ids-six`, then pagers' `flex-four-speeds` last)
+slower than real time instead of dropping packets). 49 entries in 32
+catalogues (2026-11-19) - every decoder has its own (p25, dmr, radiosonde,
+then rds, then analog_id's `analog-ids-six`, then pagers'
+`flex-four-speeds`; dab's two, ysf, analogtv and tempest's four since
+2026-11-16; p25's two Phase 2 entries 2026-11-18)
 
 **📼 IQ & audio recorder + playback of recordings (sidebar "📼 IQ & Audio
 Recorder")** (details: `kraken_doa_v2/CLAUDE.md` *📼 IQ & audio recorder*,

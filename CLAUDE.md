@@ -299,8 +299,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   coordinates in committed settings JSON, and `.githooks/pre-push` blocks
   secrets, recognisable map provider API keys added to any file, voice
   codecs and any `*.exe` / `*.dll`. install.sh registers both per clone.
-- Voice codecs (ETSI TETRA, AMBE / mbelib) are never committed or packaged
-  (licensing); users install them themselves.
+- Voice codecs (ETSI TETRA, AMBE / mbelib, libfdk-aac for DAB+) are never
+  committed or packaged (licensing); users install them themselves.
 
 ### Testing run.sh
 - Running a copy of run.sh still stops the live stack: it replaces the tmux

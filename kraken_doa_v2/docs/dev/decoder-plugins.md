@@ -22,7 +22,11 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   rf_inverted (the RF at the input's 0 Hz: wire RF 7 "rf_hz,inv" = the
   engine's `rf_hz_` + `afc_hz_` (mirrored with invert), sent by
   `send_settings` when it moves > 10 Hz and after a (re)start; offline
-  `--rf HZ` or the sidecar's `rf_hz`); `kp::Option` key/label/default/choices "v=Label|..."/help),
+  `--rf HZ` or the sidecar's `rf_hz`) / option_choices (an option's list
+  known only at run time - dab's programmes - as value / label pairs, wire
+  OPTION_CHOICES 42; *Digital decoders* has the host side; the offline test
+  prints the final lists); `kp::Option` key/label/default/choices "v=Label|..."/help/hidden
+  - hidden: no control in the panel, set by a table row click; dab's Programme),
   helpers `plugins/sdk/kraken_dsp.hpp`, the shared library `plugins/lib/`,
   guide `plugins/SDK.md` (written for LLMs too)
 - `plugins/Makefile` builds `lib/build/libkrakendig.a`, then links each
@@ -38,7 +42,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   built from its files + the MIT SDK + pffft only, no `lib/` (see
   docs/dev/licensing.md; ism, flarm)
 - `decoder --info` (JSON incl. `options` and `options_tsv` - the
-  tab-separated copy kraken_doa's flat JSON reader parses; read by
+  tab-separated copy kraken_doa's flat JSON reader parses: key, label,
+  default, choices, help, and a sixth field "1" only for a hidden option,
+  which a reader from before drops; read by
   `PluginRegistry::scan()` at startup, on `PLUGINS_RESCAN` (worker thread,
   `scan_async`) and after builds; `generation()` bumps when the list
   changes), `--serve` (live), `--file REC [--offset HZ] [--opt k=v]

@@ -6,7 +6,7 @@ a plugin may have a licence of its own - see *Licensing a plugin*.
 
 Every decoder in the receiver's **Digital Decoder** (sidebar → 🔐 Digital
 Decoder → Mode) is a plugin - the protocols that ship with the suite (P25,
-DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX pagers, APRS, ADS-B) as well as the ones you add.
+DMR, TETRA, D-STAR, NXDN, Yaesu System Fusion, MPT1327, POCSAG / FLEX pagers, APRS, ADS-B) as well as the ones you add.
 Plugins are written by hand or by the **🤖 AI assistant** (the web UI's
 right-hand column), which has an LLM agent capture and analyse a signal, then
 write, build and test a plugin for it - in Claude Code's sandbox; the receiver
@@ -36,7 +36,7 @@ plugins/
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
 │                         beam - radar, ssr1030), acars_msg.hpp (ACARS block fields -
 │                         acars, vdl2)
-├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
+├── p25/ dmr/ tetra/ dstar/ nxdn/ ysf/ mpt1327/   the shipped protocol decoders
 ├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
 │                         antenna combined, per-message MRC / MVDR beams, its own pulse covariances
@@ -83,6 +83,20 @@ plugins/
 │                         correction, every group type), RDS2 streams, the MPX's subcarriers classified
 │                         (SCA FM audio / FSK data / DARC), SCA or main-programme audio; a packet talker
 │                         per station (PI) per RDS group
+├── dab/                  DAB / DAB+ ensembles in the 2.4 MHz (lock_vfo): mode I OFDM at the native rate
+│                         (2400-point FFT, no resampler), FIC / MSC Viterbi, Layer II (vendored minimp3)
+│                         and DAB+ (the user's libfdk-aac, loaded at run time) audio; a packet talker
+│                         per transmitter of the single frequency network by its TII code, with a
+│                         spatial covariance of that code's own carriers (multichannel)
+├── analogtv/             off-air analog TV (PAL 625/50, NTSC 525/60, SECAM=PAL geometry): negative-AM
+│                         envelope, broadcast H/V sync recovery, interlaced raster -> a grayscale luma
+│                         PICTURE on the decoder tab's video canvas (host.video_frame; lock_vfo, the
+│                         2.4 MHz slice gives a soft ~150 px/line image). Shares plugins/lib/video_raster
+├── tempest/              screen-leakage (TEMPEST / Van Eck) reconstruction: full-band AM-magnitude,
+│                         autocorrelation auto-detection of frame rate + line count snapped to VESA/CVT
+│                         modes (pixel_clock = htotal x vtotal x fps), manual overrides, heavy frame
+│                         averaging -> a PICTURE (host.video_frame); multichannel -> the source's bearing
+│                         as a "screen" talker packet. lock_vfo + manual_only. Shares video_raster
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -151,6 +165,7 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .talkers = false,               // true: reports who transmits (host.talker)
                           .lock_vfo = false,              // true: the VFO stays on its tuner's centre (below)
                           .multichannel = false,          // true: takes every antenna (process_multi, below)
+                          .video = false,                 // true: rebuilds a picture (host.video_frame, below)
                           .squelch_hold_s = 0})           // > 0: the Digital squelch's hold (below)
 ```
 
@@ -165,15 +180,56 @@ that order); pick one of them where it fits - case doesn't matter - or a
 name of your own (listed after those, by name). Without one the plugin is
 listed under `Other`, last.
 
-**Options** (`kp::Option`: key, label, default, choices, help) are the
+**Options** (`kp::Option`: key, label, default, choices, help, hidden) are the
 decoder's own settings. The panel shows them while the plugin is selected (in
 Auto detect: once it has locked onto this plugin) - `choices` = `"value=Label|..."`
 makes a list, `""` a text field; exactly two choices with the values `0`
 and `1` (`"0=Off|1=On"`) make an on / off button ("● Label: On"; a
 choice's text after its name in brackets is left off the button and shown
-in its tooltip). They arrive through `option(key, value)`:
-the default when the plugin starts, then whatever the user picks (`""` =
-back to the default). They are saved per VFO.
+in its tooltip). A `choices` of the form `"range:MIN:MAX[:STEP]"` (e.g.
+`"range:10:95:5"`, STEP defaults to 1) makes a **slider** (`<input
+type="range">`) with the live numeric value shown beside it; the default and
+saved value come from `default` / the stored value, and dragging it sends the
+number through `option(key, value)` like any other option (debounced while
+dragging). Use it for a numeric knob such as the video `quality`. They arrive
+through `option(key, value)`: the default when the plugin starts, then
+whatever the user picks (`""` = back to the default). They are saved per VFO.
+
+`hidden = true` (the last field: `{"service", "Programme", "", "", "help",
+true}`) draws no control for the option. It is set another way: a click on
+a table row whose key is one of its run-time choices (below, *Tables*), a
+saved setting, a debug-playback catalogue's `opts`, the AI assistant's
+`set_decoder_option` (`DIGITAL_OPT` accepts any declared-or-not
+`<id>.<key>`). dab's Programme: the services table is the list, so a second
+control was redundant. Say in the plugin's `description` (shown under the
+settings row) how it is set. `decoder --info` marks it (`"hidden":true`, a
+sixth `options_tsv` field `1`); a kraken_doa from before reads five fields
+and shows the control as usual - fine, the option still works there.
+
+A list that is only known at run time - the programmes of the DAB ensemble
+being received - comes from `host.option_choices(key, {{value, label},
+...})` instead: the panel then draws that option as a list of these
+choices, whatever its declaration says (unless it is `hidden`; dab's
+`service` is declared as a hidden text field, so an older kraken_doa still
+offers a text field / the list, the current one neither). Pairs rather than the `"value=Label|..."` text, so a
+label from the air with `|` or `=` in it can't add entries. A new list
+replaces the previous one; `{}` takes it back to the declaration. Limits:
+100 choices, values <= 100 bytes without control characters (others are
+dropped - they couldn't be set), labels <= 80 bytes (cut at a character
+boundary; `""` = the value), 32 KB for all of a decoder's lists. Send it
+when the list changes, not on every update. It is run-time state: the host
+forgets it when the plugin restarts, on `reset()` (a retune) and when the
+decoder is switched - send it again then; nothing of it is saved. The
+setting itself stays whatever text the user or a saved setting gave: if it
+isn't one of the values (an older setting, a part of a name), the panel adds
+it as an entry of its own so the list shows what is set (you may give it an
+entry yourself that says what it selects; a hidden option needs none -
+say it in a fact instead, as dab's Programme fact does). Use a choice's
+value as the key of its table row and the row becomes a way to pick it
+(*Tables* below) - for a `hidden` option the only one in the panel.
+Choose values that stay valid (dab: the service's SId, not its position in
+the list). An older host ignores the message (wire `OPTION_CHOICES` 42); the
+offline test prints the final lists in its summary.
 
 **Auto detect**: when a VFO's decoder is on "Auto detect", every plugin the
 user left ticked (sidebar plugin list, "Auto detect"; all are by default)
@@ -279,6 +335,9 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the VFO's Logging is "Log All"; written to `decoder_logs/<plugin id>/<plugin id>-YYYY-MM-DD.jsonl`) |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
+| `host.option_choices(key, choices)` | the choices of one of your options known only at run time (`{{value, label}, ...}`; dab: the ensemble's programmes): the panel shows the option as that list; `{}` = none (see Options above; wire OPTION_CHOICES 42, ignored by older hosts) |
+| `host.video_frame(f)` | a reconstructed picture (`kp::VideoFrame`: width, height, format, pixels, label) drawn on a canvas in the decoder's tab - analog TV, screen-leakage (TEMPEST); set `.video = true` (see below) |
+| `host.plot(p)` | a line plot (`kp::Plot`) in the decoder's tab, or several, beside the video display, and one a click on sets an option (see *Array plugins: ... plots* below) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.
@@ -365,7 +424,7 @@ decoded, which comes a frame or more later. Only the samples between
 `start_s` and the latest `end_s` are used, with a 40 ms guard at both ends,
 so an early or late boundary costs a frame, while a wrong one mixes radios.
 The p25 plugin is the reference (`p25/p25.cpp`: `voice_frame`,
-`set_talker`, `tick`); nxdn, dstar and dmr do the same. Plugins built on
+`set_talker`, `tick`); nxdn, ysf, dstar and dmr do the same. Plugins built on
 `plugins/lib` get the time conversion from `dig::Bridge::talkers(rate)` +
 `restart_clock()` (call it in `reset()`). The offline test prints the
 transmissions it would cut ("talkers:" in the summary).
@@ -375,9 +434,9 @@ each its own `t.channel` (0..7) and end it with `host.talker_end(at_s,
 channel)`; a new id ends only its own channel's talker. Frames holding two
 channels' radios go to neither. On such a channel, report a transmission
 whose radio isn't known yet with `t.id = "?"` (the dmr plugin does until
-the LC names it): its samples then stay out of the other channel's talker,
-and the real id later takes over from the same start. A protocol with one
-transmission at a time needs neither.
+the LC names it, p25 on a Phase 2 timeslot too): its samples then stay out
+of the other channel's talker, and the real id later takes over from the
+same start. A protocol with one transmission at a time needs neither.
 
 Short packets from many talkers at once (ADS-B / Mode S: 64-120 us per
 message, dozens of aircraft) don't fit that model - a MUSIC frame holds
@@ -459,7 +518,13 @@ radios) can show them as a table above its facts: `table_columns()` once
 (the constructor), then `table_row(key, cells)` whenever an entry changes -
 at most every second or so per row; the page sorts by any column and adds a
 "Seen" column (time since the row's last update). Use the same key as the
-entry's map point: clicking the row then shows it on the map. kraken_doa
+entry's map point: clicking the row then shows it on the map (as the key of
+a talker: selects it in the DF panel). A row whose key is one of the values
+you sent with `option_choices` selects that choice when clicked - the same
+as picking it in the option's list - and, for a `voice` plugin, turns
+Listen on (dab: a programme's row, key = its SId); the page marks the row
+whose key is the option's current value. The first that applies counts:
+map point, talker, choice. kraken_doa
 empties the rows when the VFO is retuned or the decoder switched. The
 offline test prints the final table. Whatever doesn't fit the columns goes
 into the row's details: `table_detail(key, {{label, value}, ...})` after
@@ -503,8 +568,81 @@ running it) and, when its markers name talkers, in the 📡 DF panel of the
 map: `x0 + i dx` against `y[i]` (<= 1000 points), units, an optional
 dashed `threshold`, `markers` {x, label, talker} - clicking a marker with a
 talker shows that talker alone on the map. The latest plot replaces the
-previous; send at most a few a second. A table row whose key is a talker id
-selects that talker the same way.
+previous; send at most a few a second (the pages get them about once a
+second, with the tables). A table row whose key is a talker id selects
+that talker the same way.
+
+**Several plots, beside the video, set an option by clicking.** More
+fields of `kp::Plot` (any plugin, not only array ones):
+
+| field | effect |
+|---|---|
+| `id` | the plot's own name (`[A-Za-z0-9_.-]`, <= 32 chars): each id is a separate plot, replaced only by the next with the same id (at most 8 per plugin); shown in id order. `""` = the plugin's one plot, as before |
+| `place` | `kp::PLOT_TAB` (default: the decoder tab's row of plots) or `kp::PLOT_BESIDE_VIDEO`: in a column right of the VFO's video display (`.video` plugins, *Video frames* below), as tall as the picture, wrapping below it in a narrow panel |
+| `click_option` | the key of one of your `Info::options`: the page shows the value under the pointer and a click sets that option to it - through the same decoder-option path as typing it into the option's field (saved per VFO, shown in every browser, `option(key, value)` in the plugin). The value is sent as a plain number |
+| `click_also` | `"key=value"`: another option the click also sets, when it isn't so already - the one that makes the value take effect (the tempest plugin: `mode=manual`). For a list option the value must be one of its choices. Sent after the clicked value |
+| `click_snap` | > 0: the value snaps to the curve's highest point within +- this many x units of the pointer (the page widens it to at least 4 screen pixels); Shift+click takes the exact position |
+| `click_step` | > 0: the value is rounded to a multiple of this (`1` = whole numbers) and printed with that many decimals |
+
+The markers keep their meaning there; the first one's label is shown in
+the plot's caption as the value in use. Wire: such a plot goes as
+`PLOT_EX` (41, the extension fields first, then a PLOT payload); a
+kraken_doa older than it ignores the message (the plot just doesn't show),
+and a plot without the new fields is still sent as `PLOT`, so it shows on
+older and newer receivers alike. A page older than them never shows a
+named plot. Plots beside the video are only seen while the video display
+is: skip their work while `host.video_wanted()` is false. The tempest
+plugin is the reference (`send_fps_plot` / `send_lines_plot`: its frame
+rate and total-lines graphs, which set its `fps` / `lines` options).
+
+### Video frames
+
+A decoder that rebuilds a picture from the signal - analog TV (PAL/NTSC
+luma), screen-leakage reconstruction (TEMPEST) - sets `.video = true` and
+sends each frame with `host.video_frame(kp::VideoFrame)`: `width` x `height`
+pixels, `format` 0 = GRAY8 (1 byte/pixel, 0 black .. 255 white) or 1 = RGB24
+(3 bytes R, G, B), `pixels` row-major top-left first, and an optional `label`
+drawn as a caption (e.g. "1024x768 @ 60 Hz"). You always pass **raw pixels**;
+the host compresses them for you. The panel shows a canvas per VFO running the
+plugin; the latest frame replaces the previous one, so send at most a few a
+second.
+
+The host compresses each frame to **JPEG** (libjpeg-turbo) before it goes on
+the wire, and the browser decodes it natively (built in, no download). A GRAY8
+frame is encoded as a **native grayscale JPEG** (one plane - the fastest and
+smallest path), an RGB24 frame as a 3-component JPEG. This makes large frames
+practical: a compressed screen is a few KB, so pictures up to 4K (3840x2160)
+pass where the raw raster would be far over the 1 MB pipe limit
+(`kp::wire::MAX_PAYLOAD`). Two optional hints on `kp::VideoFrame` steer it:
+`quality` (1..100, -1 = the host default ~60) for the lossy encode, and
+`lossless = true`, which uses maximum JPEG quality for a frozen or heavily
+averaged still (JPEG has no truly lossless mode). A plugin that lets the user
+set the quality should expose it as a **slider** (see the `range:` option form
+below), feeding the value straight to `VideoFrame.quality`. The host also keeps
+a hash of the last frame it sent and **skips an identical one**, so a static
+screen costs ~no bandwidth - just keep sending frames. The skip is
+time-bounded: an unchanged frame is still re-sent about **every 1.5 s** as a
+keyframe (a few KB/s for a static screen), so a frame dropped in transit
+(back-pressure) self-heals within that interval and a newly-opened video panel
+fills in without waiting for the picture to change. A changed frame, or any
+geometry change, always sends immediately.
+
+Frames are only wanted while a browser shows the video display: kraken_doa
+tells the plugin (`host.video_wanted()`, the OPTION `video_wanted=0|1` on the
+wire), and while it is false `video_frame()` returns at once - no hash, no
+encode, no pipe traffic. A decoder can check `host.video_wanted()` to skip the
+render / scaling that only feeds the picture, but should keep reconstructing
+(averaging) so the picture is ready the moment someone opens the panel; when
+it turns true the host forgets its last-frame hash, so the next frame goes out
+immediately even if unchanged. It is true on a host that doesn't say (older
+kraken_doa builds, the offline `--file` test).
+
+If the host was built without libjpeg (the `make` note says so), it falls back
+to sending raw pixels unchanged; then the whole frame must stay under 1 MB (a
+GRAY8 raster up to ~1000x1000, RGB24 ~590x590) - downscale a bigger picture, as
+a frame that still won't fit is dropped (logged once), never truncated. Either
+way the hints are harmless to set. Older hosts without the video channel drop
+the frame.
 
 The offline test runs array plugins on multichannel recordings (cf32,
 sample-major: antenna 0..m-1 of sample 0, then of sample 1, ...; `channels`
@@ -513,7 +651,9 @@ in the `.json` sidecar or `--channels M`), in bursts like the live host
 antennas on kraken_doa's clockwise UCA and prints each spatial talker's
 MUSIC bearing at the end. `plugins/dtv/tools/sfn_gen.cpp` writes synthetic
 single frequency networks in that format, `plugins/cells/tools/cell_gen.cpp`
-LTE / NR cells.
+LTE / NR cells, `plugins/dab/tools/dab_gen.cpp` DAB networks (each
+transmitter with its own TII code - packet talkers with their own
+covariances, `t.cov`).
 
 ## ID separation (required when the signal has per-transmitter IDs)
 
@@ -600,10 +740,12 @@ at KNOWN bearings:
    same bearings.
 
 Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
-`dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `tetra/tools/tetra_gen.py`,
+`dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `ysf/tools/ysf_gen.py`, `tetra/tools/tetra_gen.py`,
 `mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`,
 `pagers/tools/pocsag_gen.py`, `pagers/tools/flex_gen.py`, `v23_telemetry/tools/v23_gen.py`,
-`p25/tools/p25_gen.py`, `dmr/tools/dmr_gen.py`,
+`p25/tools/p25_gen.py`, `p25/tools/p25p2_gen.py` (P25 Phase 2: a site's
+TDMA channel, or one radio's inbound bursts - several radios placed by
+uca_scene.py), `dmr/tools/dmr_gen.py`,
 `radiosonde/tools/sonde_gen.py`; a 2.4 MHz
 scene of several transmitters is too big for uca_scene.py's in-memory
 mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
@@ -611,8 +753,10 @@ writes its scene at known bearings itself, in 0.1 s pieces (so do
 `ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py`, `adsb/tools/adsb_gen.py`,
 `dme/tools/dme_gen.py`, `ism/tools/ism_gen.py`,
 `flarm/tools/flarm_gen.py` - the last two with simultaneous packets on
-different channels of one VFO - and `rds/tools/rds_gen.py`: FM stations,
-also at 480 kHz for an offline test).
+different channels of one VFO - `rds/tools/rds_gen.py`: FM stations,
+also at 480 kHz for an offline test - and `dab/tools/dab_gen.cpp`: a DAB
+single frequency network, every transmitter with its TII code, delay and
+level).
 
 **Who transmits, again**: a message ABOUT a transmitter isn't always FROM
 it - UAT's TIS-B / ADS-R messages describe aircraft but are sent by a
@@ -677,7 +821,8 @@ least recently played go).
   "{tools}/scene_x.json", "seconds": 6, "station": "{station}"}}` writes an
   in-repo scene with some keys replaced
 - A step that is a `.py` runs with python3 -I (numpy / scipy); a `.cpp` is
-  compiled once into `testsignal_cache/.bin/` (`g++ -std=c++20 -O2
+  compiled once into `testsignal_cache/.bin/` - again when it or a `*.h` /
+  `*.hpp` in its folder or your plugin folder is newer (`g++ -std=c++20 -O2
   -I<plugin> -Isdk -I../external/pffft ... lib/build/libkrakendig.a` - so
   a generator can use `kraken_fft.hpp`). Working directory = a scratch folder in
   the cache; placeholders `{tools}` (your tools/), `{sdk}`, `{plugins}`,
@@ -791,7 +936,13 @@ plugins/mydec/build/decoder --info        # what kraken_doa reads
 plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw]
 plugins/mydec/build/decoder --file scene.cf32 --channels 5 --uca 0.12 [--rf HZ]   # every antenna: each talker's bearing (ID separation)
 plugins/dtv/build/decoder --file sfn.cf32 [--channels M] [--all] [--uca RADIUS_M] [--opt separate=1]   # array plugins
+plugins/tempest/build/decoder --file screen.cf32 --plots plots.jsonl   # + the last plot of each id as JSON lines
 ```
+
+The summary lists each plot id's last plot (points, x range, markers, its
+highest point and, for a clickable one, the option it sets); `--plots FILE`
+also writes them (x0, dx, y, markers, the click fields) one JSON object per
+line.
 
 **Windows** (MSYS2 UCRT64 shell, see ../../WINDOWS.md): the same commands;
 the executable is `plugins/<id>/build/decoder.exe`. A plugin has to compile
@@ -885,7 +1036,7 @@ named in each file.
 
 ## The shared library (`lib/`)
 
-The shipped protocol decoders are thin plugins around `lib/` (`p25/decoder.cpp`
+The shipped protocol decoders are thin plugins around `lib/` (`dstar/decoder.cpp`
 is ~50 lines). Their receivers were written against an `RxContext` /
 `Report` interface; `dig::Bridge` (dig_common.hpp) maps it onto `kp::Host`,
 and `dig::FmFrontEnd` (48 kHz -> 12.5 kHz channel filter -> discriminator in
@@ -918,7 +1069,7 @@ against miscorrection, numeric and alphanumeric messages) and `flex.cpp`
 FLEX (1600 / 3200 / 6400 bit/s, 2- and 4-level FSK, interleaved blocks,
 fragmented messages; a symbol grid from the sync, timing followed per
 block) on one front end (`decoder.cpp`). The protocol plugins (`p25/`,
-`dmr/`, `nxdn/`, `dstar/`, `tetra/`, `mpt1327/`) show more advanced
+`dmr/`, `nxdn/`, `ysf/`, `dstar/`, `tetra/`, `mpt1327/`) show more advanced
 techniques: 4FSK sync correlation, soft-decision Viterbi, Reed-Solomon,
 interleaving, TDMA burst handling, vocoders; `aprs/` an AFSK modem with
 HDLC framing.

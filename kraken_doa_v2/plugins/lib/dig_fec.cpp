@@ -262,6 +262,98 @@ int rs64_decode(uint8_t* sym, int n, int nroots) {
     return L;
 }
 
+// Errors and erasures: Berlekamp-Massey started from the erasure locator,
+// Chien search, Forney (fcr 1: e = Omega(X^-1) / Lambda'(X^-1)), then the
+// syndromes of the corrected word re-checked. Fixed-size arrays, no heap.
+int rs64_decode_erasures(uint8_t* sym, int n, int nroots, const int* eras, int neras, int* errors) {
+    if (errors) *errors = 0;
+    if (n <= 0 || n > 63 || nroots <= 0 || nroots >= n || neras < 0 || neras > nroots) return -1;
+    const GF64& g = gf64();
+    bool erased[63] = {};
+    for (int k = 0; k < neras; k++) {
+        if (eras[k] < 0 || eras[k] >= n || erased[eras[k]]) return -1;
+        erased[eras[k]] = true;
+    }
+    uint8_t r[63];
+    for (int i = 0; i < n; i++) r[i] = erased[i] ? 0 : sym[i];
+    auto syndromes = [&](const uint8_t* w, uint8_t* S) {
+        bool clean = true;
+        for (int j = 0; j < nroots; j++) {
+            uint8_t s = 0, a = g.pw(j + 1);
+            for (int i = 0; i < n; i++) s = g.mul(s, a) ^ w[i];
+            S[j] = s;
+            if (s) clean = false;
+        }
+        return clean;
+    };
+    uint8_t S[63];
+    if (syndromes(r, S)) {
+        // already a codeword with the erased symbols 0: no errors, every
+        // erasure filled (with 0) - the count the caller is told
+        for (int i = 0; i < n; i++) sym[i] = r[i];
+        return neras;
+    }
+    // erasure locator Gamma(x) = prod (1 + X_k x), X_k = a^(n-1-pos)
+    uint8_t lam[64] = {1}, B[64] = {1}, T[64];
+    for (int k = 0; k < neras; k++) {
+        uint8_t X = g.pw(n - 1 - eras[k]);
+        for (int j = k + 1; j > 0; j--) lam[j] ^= g.mul(lam[j - 1], X);
+    }
+    for (int j = 0; j <= nroots; j++) B[j] = lam[j];
+    int L = neras;
+    for (int rr = neras + 1; rr <= nroots; rr++) {
+        uint8_t d = 0;
+        for (int i = 0; i < rr; i++) d ^= g.mul(lam[i], S[rr - 1 - i]);
+        if (d == 0) {
+            for (int j = nroots; j > 0; j--) B[j] = B[j - 1];
+            B[0] = 0;
+            continue;
+        }
+        T[0] = lam[0];
+        for (int j = 1; j <= nroots; j++) T[j] = lam[j] ^ g.mul(d, B[j - 1]);
+        if (2 * L <= rr + neras - 1) {
+            L = rr + neras - L;
+            for (int j = 0; j <= nroots; j++) B[j] = g.div(lam[j], d);
+        } else {
+            for (int j = nroots; j > 0; j--) B[j] = B[j - 1];
+            B[0] = 0;
+        }
+        for (int j = 0; j <= nroots; j++) lam[j] = T[j];
+    }
+    int deg = 0;
+    for (int j = 0; j <= nroots; j++) if (lam[j]) deg = j;
+    if (deg == 0 || 2 * (deg - neras) + neras > nroots) return -1;
+    // Chien search over the n positions
+    int pos[63], np = 0;
+    for (int i = 0; i < n; i++) {
+        uint8_t xinv = g.pw(-(n - 1 - i)), v = 0, p = 1;
+        for (int j = 0; j <= deg; j++) { v ^= g.mul(lam[j], p); p = g.mul(p, xinv); }
+        if (v == 0) pos[np++] = i;
+    }
+    if (np != deg) return -1;
+    // Forney
+    uint8_t om[63];
+    for (int i = 0; i < nroots; i++) {
+        om[i] = 0;
+        for (int j = 0; j <= std::min(i, deg); j++) om[i] ^= g.mul(lam[j], S[i - j]);
+    }
+    for (int k = 0; k < np; k++) {
+        int e = n - 1 - pos[k];
+        uint8_t xinv = g.pw(-e), num = 0, p = 1;
+        for (int j = 0; j < nroots; j++) { num ^= g.mul(om[j], p); p = g.mul(p, xinv); }
+        uint8_t den = 0;
+        for (int j = 1; j <= deg; j += 2) den ^= g.mul(lam[j], g.pw(-e * (j - 1)));
+        if (den == 0) return -1;
+        r[pos[k]] ^= g.div(num, den);
+    }
+    if (!syndromes(r, S)) return -1;
+    int nerr = 0;
+    for (int k = 0; k < np; k++) if (!erased[pos[k]]) nerr++;
+    for (int i = 0; i < n; i++) sym[i] = r[i];
+    if (errors) *errors = nerr;
+    return np;
+}
+
 // DMR RS(12,9), GF(256) poly 0x11D, generator x^3 + 14x^2 + 56x + 64
 bool rs129_check(const uint8_t* d) {
     static uint8_t exp_t[512], log_t[256];
@@ -329,6 +421,17 @@ uint32_t crc_bits_ones(const uint8_t* bits, int nbits, int width, uint32_t poly)
         if (fb) crc ^= poly;
     }
     return crc & mask;
+}
+
+uint32_t crc_bits(const uint8_t* bits, int nbits, int width, uint32_t poly, uint32_t init, uint32_t xorout) {
+    const uint32_t mask = width >= 32 ? 0xFFFFFFFFu : (1u << width) - 1, top = 1u << (width - 1);
+    uint32_t crc = init & mask;
+    for (int i = 0; i < nbits; i++) {
+        bool fb = ((crc & top) != 0) ^ (bits[i] & 1);
+        crc = (crc << 1) & mask;
+        if (fb) crc ^= poly;
+    }
+    return (crc ^ xorout) & mask;
 }
 
 int dmr_crc5(const uint8_t* lc) {
@@ -402,6 +505,62 @@ Bits viterbi_decode(const float* soft, int nout, int K, const std::vector<uint32
     return out;
 }
 
+// --- P25 NID -------------------------------------------------------------------
+// Systematic BCH(63,16): the 47 parity bits are the remainder of m(x) x^47
+// divided by g(x); codeword bit 62 is the first bit sent
+static uint64_t p25_nid_codeword(uint32_t m) {
+    constexpr uint64_t G = 06331141367235453ULL;
+    uint64_t r = static_cast<uint64_t>(m) << 47;
+    for (int i = 62; i >= 47; i--)
+        if ((r >> i) & 1) r ^= G << (i - 47);
+    return (static_cast<uint64_t>(m) << 47) | r;
+}
+
+int p25_nid_decode(uint64_t rx, int hint_nac, uint32_t* msg) {
+    static const std::vector<uint64_t> tab = [] {
+        std::vector<uint64_t> t(65536);
+        for (uint32_t m = 0; m < 65536; m++) t[m] = p25_nid_codeword(m);
+        return t;
+    }();
+    static const int duids[7] = {0x0, 0x3, 0x5, 0x7, 0xA, 0xC, 0xF};
+    int best = 64;
+    uint32_t bm = 0;
+    if (hint_nac >= 0 && hint_nac <= 0xFFF) {
+        for (int d : duids) {
+            const uint32_t m = (static_cast<uint32_t>(hint_nac) << 4) | static_cast<uint32_t>(d);
+            const int e = popcount64(tab[m] ^ rx);
+            if (e < best) { best = e; bm = m; }
+        }
+    }
+    if (best > 4) {
+        for (uint32_t m = 0; m < 65536; m++) {
+            const int e = popcount64(tab[m] ^ rx);
+            if (e < best) { best = e; bm = m; }
+        }
+    }
+    if (msg) *msg = bm;
+    return best;
+}
+
+// Branch metric: each symbol's absolute error, capped at 4 level units (half
+// a turn of phase per symbol at the nominal 600 Hz per unit). The soft
+// symbols of the 4FSK receiver (an FM discriminator) are not Gaussian near
+// threshold: clicks - and, through CQPSK's envelope nulls, whole turns of
+// phase (8 units) - give large errors far more often than a Gaussian tail
+// (measured on real C4FM / simulcast LSM channels with added noise at 4-6 dB:
+// kurtosis 9-12, |error| > 4 units 4-40x the Gaussian rate; through CQPSK
+// kurtosis 14-30). With the squared error one such symbol outweighs the rest
+// of its block and steers the path; the absolute error weighs it less, and
+// the cap - past half a turn the error no longer says which point was sent -
+// not at all. Chosen by measurement over squared (with and without clipping
+// the input to +-3, or capping), absolute (clipping at >= 3 changes nothing
+// there), caps of 2-6 units and hard decisions: the SNR at which half the
+// TSBK blocks decode is 0.3-0.6 dB lower on every C4FM / LSM control channel
+// tried, unchanged on clean recordings, and CRC false accepts stay at 2^-16.
+static inline float p25_trellis_cost(float x, int level) {
+    return std::min(std::fabs(x - static_cast<float>(level)), 4.0f);
+}
+
 bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric_out) {
     static const uint8_t ilv[98] = {
         0, 1, 8, 9, 16, 17, 24, 25, 32, 33, 40, 41, 48, 49, 56, 57, 64, 65, 72, 73, 80, 81, 88, 89, 96, 97,
@@ -412,8 +571,10 @@ bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric_out) {
     static const int8_t pts[16][2] = {
         {+1, -1}, {-1, -1}, {+3, -3}, {-3, -3}, {-3, -1}, {+3, -1}, {-1, -3}, {+1, -3},
         {-3, +3}, {+3, +3}, {-1, +1}, {+1, +1}, {+1, +3}, {-1, +3}, {+3, +1}, {-3, +1}};
-    float d[98];
-    for (int i = 0; i < 98; i++) d[ilv[i]] = sym98[i];
+    // c[k][l]: the cost of symbol k (trellis order) against level -3, -1, +1, +3
+    float c[98][4];
+    for (int i = 0; i < 98; i++)
+        for (int l = 0; l < 4; l++) c[ilv[i]][l] = p25_trellis_cost(sym98[i], 2 * l - 3);
     const float INF = 1e30f;
     float metric[4] = {0, INF, INF, INF};
     uint8_t prev[49][4];
@@ -424,8 +585,7 @@ bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric_out) {
             for (int in = 0; in < 4; in++) {
                 if (t == 48 && in != 0) continue;   // flush dibit
                 const int8_t* p = pts[enc[s * 4 + in]];
-                float e0 = d[2 * t] - p[0], e1 = d[2 * t + 1] - p[1];
-                float m = metric[s] + e0 * e0 + e1 * e1;
+                float m = metric[s] + c[2 * t][(p[0] + 3) / 2] + c[2 * t + 1][(p[1] + 3) / 2];
                 if (m < nm[in]) { nm[in] = m; prev[t][in] = static_cast<uint8_t>(s); }
             }
         }

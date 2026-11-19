@@ -101,6 +101,20 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   THIRD_PARTY_NOTICES row + text I and credits for two design ideas. Map
   search: Nominatim on Enter only (its usage policy), credit linked like the
   other OSM credits
+- `dab` plugin (2026-11-16), written from the ETSI standards without
+  consulting any GPL DAB implementation; third-party content: minimp3
+  (CC0, `plugins/dab/minimp3.h`, commit ea99364, vendored unchanged and
+  compiled into the plugin for Layer II PCM - THIRD_PARTY_NOTICES row + text
+  J, `scripts/collect-licenses.sh` copies its dedication) and VisualOn
+  vo-aacenc's AAC code book / scale-factor band tables (Apache-2.0,
+  `plugins/dab/tools/dab_gen_aac_tables.hpp`, the test-signal generator only
+  - row + text K with the full Apache text, since the Windows package
+  carries the prebuilt generator). DAB+ needs Fraunhofer FDK AAC
+  (libfdk-aac, FDK licence): like mbelib it is never vendored, linked or
+  shipped - `audio_aaclib.cpp` dlopens the user's system library
+  (`KRAKEN_AAC_LIB`); THIRD_PARTY_NOTICES section 3. The GPL receivers used
+  to check the generator (welle.io, dablin, eti-stuff) ran only as black
+  boxes in job scratch; their sources were not opened
 - CLEAN-ROOM REWRITES (2026-10-22, the user's request): `radiosonde` v2.0
   (v1.x had code translated from rs1729/RS) and `flarm` v2.0 (v1.0 was built
   on the unlicensed OGN tracker's source) - spec writer (old code + permitted
@@ -115,4 +129,24 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   under GPL-3.0 from glidernet/diy-tracker, flarm a GPL-3.0 plugin (above).
   kraken_doa_v2/CLAUDE.md *Radiosonde* / *FLARM / OGN* say how;
   the specs + audits were job scratch, not in the repo
+- P25 PHASE 2 (2026-11-18, `plugins/p25` 3.0: p25p2_phy, p25p2,
+  p25p2_slot, tools/p25p2_gen.py; `rs64_decode_erasures` / `crc_bits` in
+  `plugins/lib/dig_fec`): written CLEAN-ROOM like the rewrites above, but
+  new code - a spec writer's code-free fact sheet, separate implementers who
+  saw only it, a separate generator author. The fact sheet's sources:
+  TIA-102.BBAC-A (slot / burst structure, sync words, ISCH / DUID codes,
+  Reed-Solomon codes, bit maps), the Aeroflex / Viavi note "Understanding
+  and Testing P25 Phase 2 TDMA" and M. Simon's KTH thesis (2013) for the
+  modulations, measurements on public recordings. FACTS (numbers and
+  layouts, no code) from other projects: SDRTrunk (GPL-3.0) - MAC PDU
+  opcodes, MAC_PTT / MAC_END_PTT layouts, the MAC message length table,
+  the voice channel user / grant update / MAC_RELEASE / paging layouts
+  (TIA-102.BBAD-A was not available); OP25 - the CRC-12 polynomial 0x897;
+  GopherTrunk (Apache-2.0) PN44 notes - the scrambler polynomial and seed
+  layout, the inbound 243-step advance, the all-zero-seed rule. Most of
+  them confirmed on the real recordings since (list: plugins/p25/README.md
+  *Sources / limits*); in the code the SDRTrunk facts are marked
+  `[GPL-fact ...]`, the two unconfirmed GopherTrunk rules `[SINGLE ...]`
+  where they are used. NO similarity audit against SDRTrunk / OP25 /
+  GopherTrunk code was run
 

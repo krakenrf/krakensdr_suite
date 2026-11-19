@@ -174,7 +174,7 @@ librtlsdr fork and its tools, libusb). Pass the folder on with the package
   steps below for a missing one). Build them in the MSYS2 UCRT64 shell
   (`C:\msys64\ucrt64.exe`) and put the results in the `kraken_doa_v2` folder,
   next to `kraken_doa.exe`:
-  - DMR / D-STAR / NXDN (AMBE, mbelib): `libmbe.dll` (or
+  - P25 Phase 2 / DMR / D-STAR / NXDN / Yaesu Fusion DN (AMBE, mbelib): `libmbe.dll` (or
     `KRAKEN_MBELIB=<path>`), as the `.so` on Linux:
 
     ```
@@ -211,6 +211,13 @@ librtlsdr fork and its tools, libusb). Pass the folder on with the package
     a patch file as text unless told `--binary`, and the codec's sources
     have DOS (CRLF) line ends - without it every hunk fails with
     "different line endings".
+  - DAB+ (HE-AAC v2, Fraunhofer FDK AAC): MSYS2's package, then copy
+    `C:\msys64\ucrt64\bin\libfdk-aac-2.dll` into the `kraken_doa_v2` folder
+    (or set `KRAKEN_AAC_LIB=<path>`; or have it on the PATH):
+
+    ```
+    pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac
+    ```
 
   Then switch the decoders off and on (or restart the stack); the box shows
   the codec as installed.

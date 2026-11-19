@@ -36,8 +36,10 @@ every session needs and points here.
 | `plugin-adsb.md` | ADS-B plugin |
 | `plugin-ais.md` | AIS plugin |
 | `plugin-analog-id.md` | Analog FM IDs plugin |
+| `plugin-analogtv.md` | Analog TV plugin (PAL / NTSC luma, the video display) |
 | `plugin-beacon406.md` | 406 MHz distress beacons plugin |
 | `plugin-cells.md` | LTE / 5G NR Cell Decoder plugin |
+| `plugin-dab.md` | DAB / DAB+ plugin |
 | `plugin-dme.md` | DME / TACAN plugin |
 | `plugin-dtv.md` | Digital TV plugin |
 | `plugin-flarm.md` | FLARM / OGN plugin |
@@ -49,6 +51,7 @@ every session needs and points here.
 | `plugin-radiosonde.md` | Radiosonde plugin |
 | `plugin-rds.md` | RDS / RBDS + SCA plugin |
 | `plugin-ssr1030.md` | 1030 MHz interrogations plugin |
+| `plugin-tempest.md` | TEMPEST screen-reconstruction plugin |
 | `plugin-uat.md` | UAT plugin |
 | `plugin-vdl2.md` | VDL Mode 2 plugin |
 | `plugin-wildlife.md` | Wildlife collars plugin |
@@ -59,6 +62,7 @@ every session needs and points here.
 | `saved-frequency-scan.md` | Saved-frequency scan |
 | `spectrum-views.md` | Spectrum views (FFT message type 7) |
 | `station-on-map.md` | Station on the map |
+| `tempest-deep-plan.md` | TEMPEST deep-reconstruction plan |
 | `vfo-audio.md` | VFO audio |
 | `vfo-bandwidth.md` | Arbitrary VFO bandwidth and the VFO decimator |
 | `viewshed.md` | Viewshed |

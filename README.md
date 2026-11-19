@@ -234,7 +234,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 
 | Decoder | What you get |
 |---|---|
-| [P25 Phase 1](kraken_doa_v2/plugins/p25/README.md), [DMR](kraken_doa_v2/plugins/dmr/README.md), [D-STAR](kraken_doa_v2/plugins/dstar/README.md), [NXDN](kraken_doa_v2/plugins/nxdn/README.md), [TETRA](kraken_doa_v2/plugins/tetra/README.md) | Networks, talkgroups, radio IDs, callsigns, call activity, GPS positions (DMR, D-STAR), and the voice (see [Digital voice codecs](#digital-voice-codecs)) |
+| [P25 Phase 1 and Phase 2](kraken_doa_v2/plugins/p25/README.md), [DMR](kraken_doa_v2/plugins/dmr/README.md), [D-STAR](kraken_doa_v2/plugins/dstar/README.md), [NXDN](kraken_doa_v2/plugins/nxdn/README.md), [Yaesu System Fusion](kraken_doa_v2/plugins/ysf/README.md), [TETRA](kraken_doa_v2/plugins/tetra/README.md) | Networks, talkgroups, radio IDs, callsigns, call activity, GPS positions (DMR, D-STAR), and the voice (see [Digital voice codecs](#digital-voice-codecs)) |
 | [MPT1327](kraken_doa_v2/plugins/mpt1327/README.md) | Analogue trunking control channels |
 | [Analog FM IDs](kraken_doa_v2/plugins/analog_id/README.md) | CTCSS / DCS tones, MDC1200, FleetSync, 5-tone selcall, DTMF, 1750 Hz tone bursts |
 | [Pagers](kraken_doa_v2/plugins/pagers/README.md) | POCSAG and FLEX at every speed. Street addresses in the pages become incidents on the map |
@@ -254,6 +254,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [LoRa / Meshtastic / LoRaWAN](kraken_doa_v2/plugins/lora/README.md) | Meshtastic's public default channel (text, node names, positions); the clear headers of everything else |
 | [Wildlife collars and tags](kraken_doa_v2/plugins/wildlife/README.md) | Each pulsing transmitter by frequency and pulse rate, with mortality and activity changes |
 | [RDS / RBDS + SCA](kraken_doa_v2/plugins/rds/README.md) (FM broadcast) | Station name, RadioText, programme type, alternative frequencies; SCA subcarriers, with audio |
+| [DAB / DAB+](kraken_doa_v2/plugins/dab/README.md) (digital radio, Band III) | The ensemble, its services and their programme types, date and time; one programme's audio and dynamic label (DAB+ audio: see [Digital voice codecs](#digital-voice-codecs)); every transmitter of the single frequency network by its TII code, with a bearing each |
 | [Digital TV](kraken_doa_v2/plugins/dtv/README.md) | DVB-T / T2, ISDB-T, ATSC, DTMB: standard, mode, transmission parameters, an echo profile, a bearing per path |
 | [LTE / 5G NR cells](kraken_doa_v2/plugins/cells/README.md) | Each cell's operator, tracking area, cell identity, band and the system information it broadcasts |
 | [V.23 telemetry](kraken_doa_v2/plugins/v23_telemetry/README.md) | 1200 bit/s AFSK telemetry frames |
@@ -262,9 +263,9 @@ Things to know:
 
 - **Decoders that tune for you.** ADS-B, UAT, the 1030 MHz decoder, AIS and
   the 406 MHz beacon decoder put the VFO on their own frequency when picked.
-- **Whole-band decoders.** ISM, FLARM, LoRa, pulse radar, Digital TV and
-  LTE / NR cells use the tuner's full 2.4 MHz: tune the receiver to the
-  band. Auto detect leaves out ADS-B and any decoder that needs a wider VFO
+- **Whole-band decoders.** ISM, FLARM, LoRa, pulse radar, Digital TV, DAB
+  and LTE / NR cells use the tuner's full 2.4 MHz: tune the receiver to the
+  band (DAB: to the block, e.g. 12C = 227.360 MHz). Auto detect leaves out ADS-B and any decoder that needs a wider VFO
   than the one it runs on.
 - **Only what is sent in the clear is decoded.** Encrypted calls are shown
   and muted. No keys are guessed or broken: Meshtastic private channels,
@@ -434,19 +435,37 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 | System | Voice codec | Needs |
 |---|---|---|
 | P25 Phase 1 | IMBE | nothing - built in |
+| P25 Phase 2 (TDMA) | AMBE+2 | mbelib, installed by you |
 | DMR | AMBE+2 | mbelib, installed by you |
 | D-STAR | AMBE | mbelib, installed by you |
 | NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
+| Yaesu System Fusion (C4FM) | DN and V/D mode 1: AMBE+2; VW: IMBE | DN / V/D mode 1: mbelib, installed by you; VW: nothing - built in |
 | TETRA | ACELP | the ETSI reference codec, built by you |
 | MPT1327 | analogue FM | nothing - listen to the traffic channel with NBFM |
+| DAB | MPEG Layer II | nothing - built in |
+| DAB+ | HE-AAC v2 | libfdk-aac, installed by you |
 
 The AMBE and TETRA codecs are not shipped with this software: AMBE+2 is
 commercially licensed (DVSI), and the ETSI codec may not be redistributed.
 You can build them yourself for personal use; whether that is allowed where
-you live is your responsibility. **Setup Settings → Decoders** (the cog at the
-right of the top bar) shows which codecs are installed.
+you live is your responsibility. Nor is the AAC decoder for DAB+ (Fraunhofer
+FDK AAC, libfdk-aac): install it from your system's packages. **Setup
+Settings → Decoders** (the cog at the right of the top bar) shows which
+codecs are installed.
 
-**DMR, D-STAR and NXDN: mbelib**
+The Yaesu System Fusion decoder was written from Yaesu's standard and
+checked against another decoder (dsdcc) and against off-air recordings of
+DN and VW calls: every frame decoded, and both voices come out as
+intelligible speech (DN through mbelib, VW through the built-in IMBE). V/D
+mode 1 voice hasn't been heard from a real radio yet.
+
+The P25 decoder tells Phase 1 and Phase 2 apart by itself, on the same VFO.
+Phase 2 was checked against off-air recordings of sites (traffic and
+control channels); what the radios themselves send on Phase 2 has only been
+tested with the decoder's own test signals, as no recording of it could be
+found.
+
+**P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 
 ```
 sudo apt-get install -y git cmake build-essential
@@ -459,7 +478,9 @@ sudo ldconfig
 ```
 
 kraken_doa finds `libmbe.so.1` in the system library path. Set
-`KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere.
+`KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere. Fusion's DN
+voice needs mbelib's `mbe_processAmbe2450Dataf`; a library without it plays
+no DN voice (the decoder's voice status says so).
 
 **TETRA: the ETSI codec, with osmo-tetra's patches**
 
@@ -481,8 +502,22 @@ kraken_doa runs `tetra-cdecoder` and `tetra-sdecoder` from the PATH. Or set
 TETRA voice plays about half a second late, and only on cells without air
 interface encryption.
 
-After installing either codec, restart the KrakenSDR software (`./run.sh`,
-or reboot when it runs as a service).
+**DAB+: libfdk-aac**
+
+```
+sudo apt-get install -y libfdk-aac2
+```
+
+On Debian the package is in the `non-free` component (enable it in the APT
+sources, then `sudo apt-get update`); Raspberry Pi OS normally has it
+enabled, Ubuntu has it in `multiverse`. Older releases ship `libfdk-aac1`,
+which works too. macOS: `brew install fdk-aac`. Set
+`KRAKEN_AAC_LIB=/path/to/libfdk-aac.so.2` to use one elsewhere (`none`
+turns it off). Without it the DAB decoder still shows everything of a DAB+
+service except its audio.
+
+After installing a codec, restart the KrakenSDR software (`./run.sh`, or
+reboot when it runs as a service).
 
 **Docker.** Build the codecs on the host as above (the `sudo make install` /
 `install` steps can be skipped), copy the ones you built into the
@@ -492,6 +527,7 @@ container's data folder and restart the client:
 sudo mkdir -p docker-data/codecs
 sudo cp -L mbelib/build/libmbe.so.1 docker-data/codecs/
 sudo cp osmo-tetra/codec/c-code/cdecoder osmo-tetra/codec/c-code/sdecoder docker-data/codecs/
+sudo cp -L /usr/lib/$(uname -m)-linux-gnu/libfdk-aac.so.2 docker-data/codecs/   # DAB+, after installing libfdk-aac2 on the host
 docker compose restart kraken_doa
 ```
 

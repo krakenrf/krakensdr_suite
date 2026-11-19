@@ -156,9 +156,11 @@ void PluginRegistry::scan() {
                     // "whole_band": the same lock, as cells / dtv builds from before the merge call it
                     if (json_find(js, "whole_band", v) && v == "true") pi.lock_vfo = true;
                     if (json_find(js, "multichannel", v)) pi.multichannel = v == "true";
+                    if (json_find(js, "video", v)) pi.video = v == "true";
                     if (json_find(js, "tunes", v)) pi.tunes = v == "true";
                     if (json_find(js, "squelch_hold_s", v)) pi.squelch_hold_s = std::clamp(atof(v.c_str()), 0.0, 10.0);
                     // options: one per line, tab-separated key/label/default/choices/help
+                    // [/hidden "1" - kp::Option::hidden; plugins from before have five]
                     if (json_find(js, "options_tsv", v)) {
                         std::stringstream ls(v);
                         std::string line;
@@ -167,11 +169,12 @@ void PluginRegistry::scan() {
                             std::stringstream fs(line);
                             std::string x;
                             while (std::getline(fs, x, '\t')) f.push_back(x);
+                            const bool hidden = f.size() > 5 && f[5] == "1";
                             f.resize(5);
                             bool ok = !f[0].empty() && f[0].size() <= 32;
                             for (char c : f[0])
                                 ok &= (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
-                            if (ok) pi.options.push_back({f[0], f[1], f[2], f[3], f[4]});
+                            if (ok) pi.options.push_back({f[0], f[1], f[2], f[3], f[4], hidden});
                         }
                     }
                     // 0 = the VFO's own rate (kp::Info::sample_rate)
@@ -258,12 +261,14 @@ std::string PluginRegistry::list_json() const {
           << ",\"fixed_freq_hz\":" << static_cast<long long>(p.fixed_freq_hz) << ",\"lock_vfo\":" << (p.lock_vfo ? "true" : "false")
           << ",\"voice\":" << (p.voice ? "true" : "false")
           << ",\"messages\":" << (p.messages ? "true" : "false") << ",\"talkers\":" << (p.talkers ? "true" : "false")
-          << ",\"array\":" << (p.array ? "true" : "false") << ",\"tunes\":" << (p.tunes ? "true" : "false") << ",\"options\":[";
+          << ",\"array\":" << (p.array ? "true" : "false") << ",\"video\":" << (p.video ? "true" : "false")
+          << ",\"tunes\":" << (p.tunes ? "true" : "false") << ",\"options\":[";
         for (size_t k = 0; k < p.options.size(); k++) {
             const auto& op = p.options[k];
             o << (k ? "," : "") << "{\"key\":\"" << json_escape(op.key) << "\",\"label\":\"" << json_escape(op.label)
-              << "\",\"default\":\"" << json_escape(op.def) << "\",\"help\":\"" << json_escape(op.help)
-              << "\",\"choices\":[";
+              << "\",\"default\":\"" << json_escape(op.def) << "\",\"help\":\"" << json_escape(op.help) << "\""
+              << (op.hidden ? ",\"hidden\":true" : "")   // (only then: the others' JSON as before)
+              << ",\"choices\":[";
             // "v=Label|v=Label" -> [["v","Label"],...]
             std::stringstream cs(op.choices);
             std::string c;
@@ -287,13 +292,28 @@ std::string PluginRegistry::list_json() const {
 std::string codec_status_message() {
     const std::string tool = kproc::exe_path(PluginRegistry::dir() + "/lib/build/codecs");
     std::string out;
-    if (!is_exe(tool) || !run_and_capture({tool}, 5000, &out))
+    if (!is_exe(tool))
+        return std::string("{\"codecs\":{\"checked\":false,\"error\":\"codec check not built (") + BUILD_HINT + ")\"}}";
+    // the tool has the dab plugin's AAC loader compiled in (plugins/Makefile):
+    // when the AI assistant changed that folder it runs only sandboxed, like
+    // the plugin (ai_sandbox.hpp; a changed plugins/lib marks every plugin)
+    std::vector<std::string> argv{tool};
+    if (aisandbox::must_sandbox_dir(PluginRegistry::dir() + "/dab")) {
+        argv = aisandbox::wrap(argv);
+        if (argv.empty())
+            return std::string("{\"codecs\":{\"checked\":false,\"error\":\"") +
+                   json_escape(std::string("the codec check contains plugins/dab, which the AI assistant changed: it runs "
+                                           "only in a sandbox - ") + aisandbox::NO_SANDBOX_FIX) + "\"}}";
+    }
+    if (!run_and_capture(argv, 5000, &out))
         return std::string("{\"codecs\":{\"checked\":false,\"error\":\"codec check not built (") + BUILD_HINT + ")\"}}";
     std::ostringstream o;
     o << "{\"codecs\":{\"checked\":true";
-    for (const char* k : {"imbe", "ambe", "acelp"}) {
+    // aac (DAB+, the dab plugin's AAC library loader): only when the tool
+    // reports it - it is built in only with the plugin folder there
+    for (const char* k : {"imbe", "ambe", "acelp", "aac"}) {
         std::string ok, st;
-        json_find(out, std::string(k) + "_ok", ok);
+        if (!json_find(out, std::string(k) + "_ok", ok) && std::string(k) == "aac") continue;
         json_find(out, k, st);
         o << ",\"" << k << "_ok\":" << (ok == "true" ? "true" : "false") << ",\"" << k << "\":\"" << json_escape(st) << "\"";
     }

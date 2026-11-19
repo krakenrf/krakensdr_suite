@@ -64,6 +64,15 @@ const BlockCode& rm_30_14();      // TETRA AACH Reed-Muller
 // last). Corrects in place; returns the number of corrected symbols or -1.
 int rs64_decode(uint8_t* sym, int n, int nroots);
 void rs64_encode(uint8_t* sym, int n, int nroots);   // fills the last nroots
+// Errors-and-erasures decoding of the same code (P25 Phase 2: punctured
+// parity symbols and missing ESS segments are erasures - their value is
+// unknown, not zero). eras[0..neras) = distinct positions 0..n-1 (any order;
+// their current values are ignored). Corrects in place while
+// 2 x errors + erasures <= nroots; the result is re-checked (all syndromes
+// zero) and nothing is changed on failure. Returns the number of corrected
+// positions (errors + erasures), or -1. *errors (optional) = the errors
+// found outside the erasures.
+int rs64_decode_erasures(uint8_t* sym, int n, int nroots, const int* eras, int neras, int* errors = nullptr);
 
 // DMR RS(12,9) over GF(2^8) (poly 0x11D), check only (BPTC already corrected
 // the bits). data = 12 bytes after the CRC mask was removed.
@@ -79,6 +88,9 @@ uint16_t crc16_ccitt_bytes(const uint8_t* data, size_t len, uint16_t init);
 // Generic MSB-first CRC over unpacked bits, register initialised to all ones
 // (NXDN CRC-6 0x27, CRC-12 0x80F, CRC-15 0x4CC5)
 uint32_t crc_bits_ones(const uint8_t* bits, int nbits, int width, uint32_t poly);
+// Generic MSB-first CRC over unpacked bits with any register init and final
+// XOR (P25 Phase 2 MAC PDUs: CRC-12 0x897 init 0 xorout 0xFFF)
+uint32_t crc_bits(const uint8_t* bits, int nbits, int width, uint32_t poly, uint32_t init, uint32_t xorout);
 // DMR embedded LC 5-bit checksum (sum of the 9 LC bytes mod 31)
 int dmr_crc5(const uint8_t* lc_bits72);
 
@@ -93,8 +105,17 @@ Bits conv_encode(const uint8_t* bits, int n, int K, const std::vector<uint32_t>&
 
 // P25 rate-1/2 trellis (TSBK / PDU headers): 98 received symbols (soft, in
 // level units +-1/+-3, interleaved order) -> 12 bytes. Returns the path
-// metric (0 = clean) via *metric.
+// metric (sum of the symbols' absolute errors, each capped at 4 level units;
+// 0 = clean) via *metric.
 bool p25_trellis_half(const float* sym98, uint8_t* out12, float* metric);
+
+// P25 Phase 1 NID: BCH(63,16) (generator 6331141367235453 octal), decoded
+// to the nearest codeword. rx63 = the 63 received bits, bit 62 = the first
+// sent. hint_nac >= 0: the codewords of that NAC with a valid DUID are tried
+// first (taken if within 4 bits - the code's distance is 23, so such a
+// codeword is the nearest one); else, or failing that, all 65536. Returns
+// the bit errors (Hamming distance) and *msg = NAC << 4 | DUID.
+int p25_nid_decode(uint64_t rx63, int hint_nac, uint32_t* msg);
 
 // --- DMR ----------------------------------------------------------------------
 // BPTC(196,96): 196 info bits (both burst halves joined) -> 96 data bits.

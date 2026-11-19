@@ -194,7 +194,8 @@ docker-data/kraken_doa/server.crt/.key        TLS certificate (self-signed, made
 docker-data/kraken_doa/doa_recordings/        DoA recordings
 docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
-                                              cdecoder, sdecoder - README "Digital voice codecs")
+                                              cdecoder, sdecoder; libfdk-aac.so.2 for DAB+ -
+                                              README "Digital voice codecs")
 docker-data/whisper_models/                   Voice to Text speech models ("⬇ Get" in ⚙ Setup Settings → 🗣 Voice to Text)
 docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (🗣 Transcription)
 docker-data/kraken_doa/decoder_logs/          Decoder Logging files (a folder per decoder, transcripts/),
@@ -293,7 +294,8 @@ services:
   - Empty variables from compose are removed, because the apps treat an
     empty variable as set.
   - The decoder plugins in `kraken_doa_v2/plugins/` (all the decoders: P25,
-    DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX, APRS) are built
+    DMR, TETRA, D-STAR, NXDN, Yaesu System Fusion, MPT1327, POCSAG / FLEX,
+    APRS) are built
     into the image, and kraken_doa finds them through `KRAKEN_PLUGIN_DIR`.
     The AI assistant is not available in Docker (its panel stays hidden):
     the image has no LLM CLI and no compiler. Create plugins on a native
