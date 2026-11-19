@@ -753,4 +753,236 @@ CONTROL part misses its 0.6 s grant tone (5 of 27, timing only).
 
 ## Page
 
-(The page worker's section.)
+`kraken_doa.html`, script section "📡 TRUNK FOLLOWING" (`tk…`), the box
+`data-sb="trunk"` after Saved Frequencies (all operating modes), the editor
+`#tk-dlg`. The page shows the receiver's state and sends its commands; no
+optimistic updates - every page redraws from the broadcasts (a second tab
+follows at once). `tkSt` (the last status) and `tkLists` (lists by system id)
+sit in the globals block: the VFO cards and `drawBox` read them.
+
+**Compatibility.** The page sends `GET_TRUNK` on connect. The box is
+`display:none` until a status arrives, so a receiver without trunk following
+leaves the page as it was (its decimator_info has no `trunk`, its plugin
+list no `trunking`: no card line, no tag). Fields a receiver doesn't send
+are left out of the view (no `heard`: no "Add a system"; no `scan_restore`:
+no restore notes; why `ended` from a receiver before `stopped` reads "Stopped
+by you" too; a parked voice VFO is `trunk.call` 0, or `trunk.state` parked
+from a receiver before). Each system on the air gets one `GET_TRUNK_SYS` per
+connection (talkgroup names and modes, the channel table); the receiver
+broadcasts the lists again when they change.
+
+**The box**, top to bottom:
+- *Follow calls* (a switch, `TRUNK_FOLLOW`), the state (Off / Following /
+  N followed / Paused / Playback) and ⚙, which folds out the rarely used
+  settings (the saved-frequency scan's pattern): Voice VFOs, Hang time,
+  Encrypted calls, Unit-to-unit calls, Hear calls, Every site, and "System
+  ahead: Add…". The header's badge: "N calls" followed, or "Paused".
+- The hold line ("Holding on TG … · system", Release) while `hold` is set.
+- Notes - why nothing happens, each with the action that fixes it: Paused
+  (which scanner); a control VFO a scan moved, put back or not (the
+  receiver's `scan_restore` note, for its 60 s); Playback; no control
+  channel (what to do, the decoders with `trunking`; a VFO running such a
+  decoder with no system yet: "no control channel heard yet"); "N channels
+  without a frequency (…)" + Enter (the editor's Channels); "N calls outside
+  the span" + Centre (coherent mode, not during a playback, only when the
+  suggested centre covers more than the current one: `uiConfirm` naming the
+  frequency, what it covers and - with `controls` < `controls_of` - how many
+  control channels stay in, then the normal `FREQ:` through
+  `sendFreqChange`); "N calls waiting for a voice VFO" + "+1 VFO"
+  (`TRUNK_MAX_VFOS:n+1`); 16 VFOs in use; nothing received on N calls +
+  Channels; the call's decoder not built; "No speech: the X codec is not
+  installed" + Decoders (Setup Settings, from `{"codecs"}`: p25 IMBE, dmr /
+  nxdn AMBE, tetra ACELP; the existing codec warnings stay as they are); a
+  control VFO's `note`. Counts come from the receiver's `calls` (they stay
+  30 s after their end), so a note does not flash with each call; a note
+  about the traffic stays 20 s after its last cause (`TK_NOTE_HOLD_MS`), and
+  while the pointer is on what lies below the notes (systems, calls,
+  recent) notes may change their text but not come or go - at most 15 s
+  (`TK_HOVER_MAX_MS`: a new note is not held back for good).
+- Systems: one row each (on the air first): the name (the user's, else the
+  reported one, else the key; "Unidentified (Dn)" + "Waiting for the
+  system's identity" - or "Its control channel is not received" - for a
+  temporary one), the decoder unless the name starts with it, the site; the
+  control VFOs as chips (Dn, MHz, a green / red dot = received / not for 5
+  s; a click selects the VFO); "N calls · N followed · N not · N TGs" (the
+  reasons, data and skip included, in its tooltip); Edit. "Not heard yet"
+  for a record with `heard` false (entered ahead of time), "No control
+  channel now" for one heard before. A temporary system whose control VFOs a
+  keyed system has too is not shown (the receiver folds them since
+  2026-11-20; kept as a guard for one from before). A temporary system's
+  Edit and its calls' talkgroup actions (hold, name, mode, System…) are
+  disabled, with the reason in their tooltip: what is entered for a system
+  before it has identified itself (usually seconds) would not carry over to
+  the keyed system it becomes - Stop following works.
+- Calls (in progress): the receiver's `calls` (data and skip grants make
+  none), plus `recent` ones for `TK_LINGER_MS` (6 s, dimmed "Ended"), in
+  first-seen order: new calls at the bottom, and a conversation's next over
+  (the receiver keeps it as the same call) lights its own row again. Rows
+  are keyed (`tkSyncRows`): made once, only their text changes. While the
+  pointer is on the list or a row's menu is open (`tkFreeze`) no row leaves.
+  Each row is two fixed-height lines: state (Waiting / Setup / Active / Hang
+  / Ended, a coloured edge), the talkgroup's name or "TG n" / "Unit n",
+  marks (lock = encrypted, warn = emergency, P = priority), the voice VFO
+  (click: select it), stop and ⋯; then the reason it is not followed first
+  (words a user can act on, `TK_WHY`, the long form in the tooltip; "Set its
+  frequency" opens the channel table), the talker, the channel / slot and
+  MHz, the site.
+- Recent: `history`, newest first, made once each: time of the end, the
+  label, marks, VFO, ⋯; duration and how it ended (`TK_END`) or "Not
+  followed: <why>".
+- **During a playback** the receiver keeps the user's systems (without
+  control VFOs) and the history from before, to put them back at its end;
+  the box shows only what is the playback's: systems a control VFO hears
+  now or a call belongs to, and recent calls of those systems that ended
+  after the page first saw the playback (`tkPbSince`, the receiver's `now`;
+  the user's calls its start ended are not the scene's either; the Recent
+  count's tooltip says how many from before are not shown). The Playback note says
+  so. A page opened mid-playback hides the scene's calls that ended before
+  it connected.
+
+**Stop following** (the row's stop button, or the menu): `TRUNK_END:<id>`.
+On the page it means *this call row*: the receiver frees its voice VFO and
+does not follow the call's further transmissions on that site while the row
+is listed (until 30 s without a grant; why `stopped`, "Stopped by you" in
+the row, its stop button gone - there is no undo). The same talkgroup on
+another site, other talkgroups and the settings are not affected; after the
+row has expired the talkgroup is followed again. A voice VFO removed with ×
+on its card does the same. To keep a talkgroup from being followed for good,
+the menu's Skip.
+
+**Per call / talkgroup** (⋯, a menu in the View popover's dismissal
+pattern - `popDismiss`; keyboard Up / Down, Esc back to the button): Stop
+following this call, Hold on this talkgroup / Release the hold
+(`TRUNK_HOLD`), Name… (`uiPrompt` -> `TRUNK_TG_SET` name - which also lists
+it), Priority / Normal / Skip (the current one ticked, from the lists),
+System… (the editor). A unit call has Stop and System only.
+
+**A system ahead of time** (⚙ → System ahead: Add…, shown when the receiver
+reports `heard` - one from before would refuse an unheard id): a `uiPrompt`
+with the decoder (one of the plugins with `trunking`, checked), the key and
+an optional name. The key field's placeholder is the decoder's key format
+(from the Protocols above and the plugins' READMEs: p25 WACN.SYSID in hex
+"BEE00.14C", dmr model.NET "Small.37", nxdn category.system code
+"global.123", tetra MCC-MNC "530-1", mpt1327 SYS in 4 hex digits "42E1" or
+NET-n), checked against the receiver's key rule (`[A-Za-z0-9._-]{1,48}`).
+`TRUNK_SYS_SET` makes the record; the editor opens on its Channels as soon
+as the status lists it. It is listed "Not heard yet" until its control
+channel is heard; a wrong key makes a second, separate system (the help
+says so).
+
+**The editor** (`tkDlgOpen(id, tab)`; the Setup Settings dialog's look,
+sections as a strip across the top, full screen below 640 px; Esc / × /
+the backdrop close it). Lists are drawn from `trunk_sys`, never while the
+user is typing in them (drawn when the field is left); at most 200 rows,
+search for the rest.
+- System: Name (Enter / leaving saves, `TRUNK_SYS_SET`), Listed talkgroups
+  only (switch), what is known on the air (decoder, key, reported name,
+  site, control VFOs), the counters with every not-followed reason in words,
+  Forget this system (`uiConfirm`, `TRUNK_SYS_DEL`).
+- Talkgroups: add (number, name, mode), search, a table (number - heard-only
+  ones dimmed -, name field, mode select, last heard, calls, delete - a
+  named or non-normal one asks first).
+- Channels: first the missing channels (the status' `unresolved` less those
+  the table resolves by now, plus granted entries without a frequency):
+  each with a MHz field + Set (`TRUNK_CH_SET`, its number kept), then the
+  rule form "Channel numbers to frequencies" - First, Last (empty: up to
+  4096 channels inside 0-6 GHz), Base (MHz), Step (kHz, negative allowed),
+  Uplink offset - with a live preview of what the missing channels get
+  ("LCN 81 → 456.31875 MHz · …", or the rule's first channels and a warning
+  when none of the missing ones is in it), errors in place under the
+  fields; the rules (edit fills the form, delete asks); the channel table:
+  missing first, the frequency with its source tag (user / rule / announced
+  / learned), uplink, calls, last (uplink and last left out below 640 px);
+  edit (`uiPrompt`, downlink + optional uplink -> a user entry), clear the
+  user entry, forget a learned one, delete the entry.
+- Units: heard units (not saved), searchable.
+A refusal (`trunk_error`) is shown only by the page that sent that command
+(the first 64 bytes matched, 10 s): in the editor's error line, else a
+quiet `uiAlert`.
+
+**Trunk VFOs elsewhere.** The VFO card gets a line under its header
+(`tkRenderCards`, called from `digRenderCards`): a voice VFO "TG 1201 Fire
+· Active · 1-412" (its state and call from the status' `vfos` / `calls` -
+decimator_info comes only when a voice VFO is made, removed or placed) or
+"Trunk VFO · parked" (the card dimmed); a control VFO "Control · system ·
+site" (red with "no signal"); a traffic VFO "Traffic · system". **What is
+editable on a voice VFO:** the receiver sets frequency, tuner, bandwidth,
+demod, decoder, squelch and Transcribe for each call and takes back a
+change at the next grant, so on the card they are disabled (the frequency
+digits locked like a fixed-frequency decoder's) and on the spectrum,
+waterfall and independent panes its bar is drawn without grab handles, not
+hit-tested, dashed while not active, with "Dn label" under the other VFOs'
+labels; a parked one is not drawn. A click on the spectrum, the VFO's
+digits, a pane, or a saved frequency does not retune a selected voice VFO
+(`vfoNoTune`; a saved frequency says "Dn is a voice VFO of trunk following
+- select another VFO"). The speaker, Save and × (stops following its call,
+as above) work, and its decoder tab shows its decoding. The plugin list
+(Setup Settings → Decoders) tags the plugins with `trunking`.
+
+**Text from the air** (system, site, talkgroup, channel and unit names,
+notes, reasons): `digEsc` / `textContent` everywhere, `unicode-bidi:
+isolate` on names and `<bdi>` around each one inside a sentence (a
+right-to-left override can't turn the rest of the line), cut to 40
+characters inside notes.
+
+### Page tests (2026-11-20; scratch `tmp/page/`, not in the repo)
+
+A TEST build on 2848x / 2849x, headless Chromium with real mouse, key and
+touch events; the real P25 (300 s, 499.8 MHz) and DMR Tier III (600 s,
+456.8 MHz) captures replayed as heimdall, the five catalogue scenes through
+the debug playback (Play only).
+- Step 1, the real P25 capture, 60 s (first build): 200 status messages
+  (3.3 / s, 14 KB), 18 lists, 125 decimator_info; up to 5 calls per status.
+  The final receiver, 90 s: 296 status, 17 lists, 32 decimator_info.
+- The whole pass on the final receiver: 15 suites, 194 checks, 0 failures
+  (load average 15-30 from other jobs on the 16-core machine):
+  - row stability, 60 s of the P25 capture (7 calls, 31 state / VFO
+    changes): 0 rows re-made, 0 pushed down by a new call; with the pointer
+    on the list nothing re-made or moved in 14 s and, later, 30 s (the list
+    itself held still for the first 15 s); status handling median 1.0 ms,
+    max 30 ms;
+  - real states: paused by the continuous scanner (no voice VFO while
+    paused), resumed, the moved control VFOs put back and said so (2 of 2,
+    "D1: put back on 498.937500 MHz after the continuous scanner"); Voice
+    VFOs 1 with Every site on: "2 calls waiting for a voice VFO" after 1 s,
+    "+1 VFO" raised it;
+  - fixtures (out of span + Centre: Cancel sends nothing, Retune sends
+    `FREQ:499.512`; no decoder; codec missing; a control note; a lost
+    control channel) and an older receiver (every trunk message and field
+    dropped: box hidden, no card line, no tag): 18 checks;
+  - actions with a second page checking (Name with a hostile name, Priority,
+    Hold / Release, Stop following -> why `stopped`): 15;
+  - 64 calls + 50 history rows with hostile strings in every field: 99 ms
+    for the first status, then median 2.8 ms; 500 / 2000 talkgroups + 2000
+    channels + 300 units in the editor 63-90 ms; nothing wider than the box,
+    no script run, no element made;
+  - the five scenes with nothing but Play (p25, dmr, nxdn - its rule from
+    its own `commands` -, tetra, mpt1327), played right after the live P25
+    system was followed: the keyed system recognised, only it listed, only
+    its calls in Recent, a call followed, the voice VFO's card "TG … ·
+    Active · <channel>", its system gone at the end; 9 checks each, 10 in
+    a second run after Recent left out the user's calls the playback's start
+    ended (NXDN:
+    the first grant, TG 100 at 1.5 s, comes before the plugin names its
+    system, so it waits `no_freq` in the temporary system; TG 200 is
+    followed, TG 100 on the loop's next pass.)
+  - the missing-channel workflow on the real DMR capture (the note names LCN
+    207 / 81; Enter; LCN 81 / 207 / 54 on top; rule First 1, Base
+    455.31875, Step 12.5 previewed "LCN 81 → 456.31875 MHz · …"; Add rule ->
+    no missing channel; a call followed on its rule frequency): 9;
+  - the editor at 1500 and 390 px (rename with RTL override + emoji +
+    markup, talkgroups add / mode / rename / search / delete, listed only,
+    a channel's user entry and its clearing, a rule's edit, a bad rule's
+    errors in place, a system added ahead of time - `dmr:Test.99`, the key
+    field's placeholder "model.NET, e.g. Small.37", the editor opening on
+    its Channels, its rule kept, "Not heard yet", `heard` false -, Forget):
+    27 and 29;
+  - touch at 390 px (help mode explains Follow calls without flipping it,
+    40 px menu items): 8; reload mid-call (back in 0.8 s), the sidebar
+    zoomed to 420 px, hover help, Drive mode in / out, the saved-frequency
+    scan pausing following, the decoder tabs: 13.
+- The new page against the first-pass receiver (no `heard`, no
+  `scan_restore`, why `ended`, `trunk.state` in decimator_info): box,
+  systems, calls, voice VFO cards, menu, Stop following ("Stopped by you"),
+  editor, no "Add a system", no errors: 11 checks.
+- `tools/theme_palette.py --check` OK; no console errors in any run.
