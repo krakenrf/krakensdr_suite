@@ -205,7 +205,25 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     exactly one frame later (CRC-6 alone passes 1 random word in 64);
     FACCH1 counts alone. Layer 3: VCALL (unit/TG, cipher), TX_REL, DCALL,
     trunking CAC (site / service info, grants). Voice: 4 (or 2) AMBE+2
-    frames per frame -> mbelib (nW..nZ)
+    frames per frame -> mbelib (nW..nZ). Trunking (2.1, 2026-11-20, from
+    the NXDN Forum's TS 1-A / TS 1-C 1.3; plugins/nxdn/README.md): the
+    outbound CAC only (300 bits, 25 x 12, puncture 1111111 / 1011101, CRC-16
+    preset ones over SR + 144 + 3 null), single or dual message format (SR
+    structure bit 0: two 9-octet messages); UDCH / FACCH2 (348 bits, 29 x
+    12, CRC-15) on traffic channels - a false sync whose LICH read as UDCH
+    no longer resets the SACCH lock. Reports through kp::Host directly
+    (`NxdnReceiver(ctx, &host)`): trunk_system (key = Location ID category
+    + system code, `global.123`), trunk_channel (SITE_INFO / CCH_INFO /
+    ADJ_SITE_INFO control channels), control_channel (CCH_INFO New, this
+    site), grant (VCALL_ASSGN / _DUP, DCALL_ASSGN / _DUP; channel `CH n`,
+    no frequency - Type-C channel plans live in the radios; options `ran`,
+    `rate`), call (VCALL ACTIVE, TX_REL / TX_REL_EX / 1 s gap ENDED, DISC
+    RELEASED; RTCH / RTCH_C only). A grant from a traffic channel's SACCH
+    superframe needs its 4 fragments from 4 consecutive frames. Hidden
+    options `ran` (a frame's SR RAN, inherited by frames that name none)
+    and `rate` (one branch only). VCALL Transmission Mode 011 (EFR) is not
+    played. Not decoded: direct frequency assignment (not in 1.3), Type-D.
+    Control channel not seen on air
   - `YsfReceiver` (plugins/ysf, 2026-11): Yaesu System Fusion, written
     from Yaesu's "Amateur Radio Digital Standards" 1.02 alone (section
     numbers are that document's). 4800 Bd C4FM, RRC 0.2 (span 4, 10 sps);
