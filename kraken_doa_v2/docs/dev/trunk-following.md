@@ -694,7 +694,13 @@ moves an active call to hang even while frames go on). Limits: timeslot
 numbers only after the carrier's first BSCH (up to 1.02 s; `mcc` / `mnc` /
 `cc` descramble before, and with them the traffic instance accepts that
 cell only - a stronger co-channel cell's calls are never reported, the
-wanted call just stops being heard); air-interface encryption hides the allocations
+wanted call just stops being heard); after a loss of slot sync (9 slots
+without a training sequence) the timeslot numbers are unknown and nothing
+timeslot-dependent is reported (no grant from a traffic instance, no
+`call()`, talker or voice) until the next BSCH or the carrier back on the
+old slot grid within 10 s - a fade of more than 1 s ENDs the call, the
+host's hang time then decides (plugin README *Loss of slot sync*);
+air-interface encryption hides the allocations
 (nothing can be followed; the plugin's "Trunk following" fact says so);
 downlink bearings are the base station's; the control VFO still plays the
 first traffic timeslot (listening to it too hears the call twice). Verified
