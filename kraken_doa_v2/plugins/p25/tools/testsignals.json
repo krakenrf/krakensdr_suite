@@ -74,5 +74,41 @@
   {"tid": "2104", "bearing": 120},
   {"event": "LCH 0 voice: TG 101 <- 2101"}
  ]
+},
+{
+ "id": "p25-trunk-three-calls",
+ "title": "P25 trunking: a control channel and three calls on traffic channels (two Phase 1, one Phase 2)",
+ "description": "A P25 Phase 1 control channel (TSDUs of three trunking blocks, NAC 0x2A1, WACN A1B2C / system 3D4, RFSS 3 site 7) on 851.8000 MHz = channel 1-64 (bearing 300 deg), announcing identifier 1 (FDMA, 851.000 MHz + 12.5 kHz, uplink -45 MHz) and 2 (TDMA, 2 slots, the same plan). Grants, each 0.3-0.4 s before its call and repeated as grant updates through it: TG 1201 <- 1001001 on 1-8 = 851.1000 MHz (1.0 s; the call 1.4-4.6 s at 40 deg, a TDU, then the system's call termination TDULCs at 5.6 s), TG 1305 <- 1001002 encrypted (service options 0x40; AES-256 ALGID 0x84, muted) on 1-48 = 851.6000 MHz (5.2 s; 5.6-8.8 s at 200 deg, released at 9.8 s), TG 1402 <- 1001003 on 2-57 = 851.3500 MHz timeslot 1 (8.8 s; a Phase 2 carrier from 8.9 s at 120 deg, the call on LCH 1 9.2-11.7 s, hang time, MAC_END_PTT, then MAC_IDLE). Expect on VFO 0 the system A1B2C.3D4 and the three grants with their frequencies; with trunk following a voice VFO per call, talkers 1001001 at 40 deg, 1001002 at 200 deg (muted), 1001003 at 120 deg (LCH 1).",
+ "rf_hz": 851800000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 14,
+ "vfo": {"bw_khz": 12.5},
+ "commands": ["TRUNK_FOLLOW:1"],
+ "files": {"scene.json": {"rf_hz": 851500000.0, "seconds": 14, "snr_db": 20, "seed": 11, "sources": [
+   {"name": "site-cc", "file": "cc.cf32", "rate": 48000, "at": 0, "offset_hz": 300000, "bearing": 300},
+   {"name": "1001001", "file": "call1.cf32", "rate": 48000, "at": 0, "offset_hz": -400000, "bearing": 40, "shift_hz": 120},
+   {"name": "1001002", "file": "call2.cf32", "rate": 48000, "at": 0, "offset_hz": 100000, "bearing": 200, "gain_db": -3, "shift_hz": -180},
+   {"name": "1001003", "file": "call3.cf32", "rate": 48000, "from": 8.9, "at": 8.9, "offset_hz": -150000, "bearing": 120, "shift_hz": 90}]}},
+ "steps": [
+  ["{tools}/p25_gen.py", "cc.cf32", "--control", "--seconds", "14", "--nac", "2A1", "--wacn", "A1B2C", "--sysid", "3D4",
+   "--rfss", "3", "--site", "7", "--cc", "1-64", "--iden", "1:851000000:12500:-45000000", "--iden", "2:851000000:12500:-45000000:2",
+   "--adj", "4:2:1-200", "--grant", "1.0:1-8:1201:1001001:4.5", "--grant", "5.2:1-48:1305:1001002:4.5:0x40",
+   "--grant", "8.8:2-57:1402:1001003:4.2"],
+  ["{tools}/p25_gen.py", "call1.cf32", "--at", "1.4", "--dur", "3.0", "--src", "1001001", "--dst", "1201", "--nac", "0x2A1",
+   "--release", "1.0"],
+  ["{tools}/p25_gen.py", "call2.cf32", "--at", "5.6", "--dur", "3.0", "--src", "1001002", "--dst", "1305", "--nac", "0x2A1",
+   "--algid", "0x84", "--kid", "0x2C", "--release", "1.0"],
+  ["{tools}/p25p2_gen.py", "call3.cf32", "--dir", "out", "--wacn", "0xA1B2C", "--sysid", "0x3D4", "--nac", "0x2A1",
+   "--chan", "0x2038", "--rfss", "3", "--site", "7", "--hang", "0.8", "--seconds", "14",
+   "--lch", "1", "--at", "9.2", "--dur", "2.2", "--src", "1001003", "--dst", "1402"],
+  ["{sdk}/wide_scene.py", "scene.json", "out.cu8"]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {"tid": "1001001", "bearing": 40},
+  {"tid": "1001002", "bearing": 200},
+  {"tid": "1001003", "bearing": 120},
+  {"event": "Grant: TG 1402 <- 1001003 on 2-57 (851.35000 MHz)"}
+ ]
 }
 ]
