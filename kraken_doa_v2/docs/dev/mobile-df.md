@@ -109,7 +109,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `mapState.dh` -> `--doa-h`, double-click = 42 %; `rpApplySplit`)
 - UI (kraken_doa.html "Mobile DF" block): "📡 DF" panel bottom-left of the
   map (coherent only, hidden until the first `rdf` message): VFO select (All
-  / Dn), Lobe / Lines / Heat toggles (`mapState.rdf*`, localStorage;
+  / Dn), Lobe / Lines / Heat toggles (`mapState.rdf*`, localStorage; in the
+  map's Layers popover, group Direction finding, since 2026-11-18 - they
+  were buttons in this panel's header: *map.md*, *Layers popover*;
   Lobe = the lobe shapes, Lines = EVERY bearing line: the lobes' peak lines,
   a talker's earlier bearings, the driving records' lines - the peak lines
   used to come with Lobe, so Lines did nothing at a fixed station),
@@ -140,6 +142,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
+
+**Drive mode (2026-11-18, *drive-mode.md*):** the page's second face for
+DF from a vehicle - the map full-window and one big bearing readout of the
+selected VFO, taken from this status: its `peak` (compass), `peak -
+station.hdg` (relative to the front), `conf`; the reasons there is none
+from `RDF_STATE`; Reset is this panel's `rdfReset`. Nothing in the
+collecting changed.
 
 **The KrakenSDR Android app's feeds (2026-11-12, PR #4 + `power_dbfs`):**
 - Two connection methods in the app (krakensdr_rdf_android): `legacy` polls

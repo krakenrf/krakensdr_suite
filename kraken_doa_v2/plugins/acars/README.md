@@ -45,7 +45,7 @@ DEL. 7-bit ASCII with odd parity, LSB first; the BCS has no parity.
 Events: one line per block, e.g. `↓ G-ABCD AB0042 · H1 message to /
 from terminal · blk 4 · M03B: SECOND AND LAST BLOCK` (↓ downlink, ↑
 uplink, `…` = more blocks follow); blocks without text (acknowledgements)
-only with "Log all messages"; a retransmission once in 30 s. Facts: Blocks
+only with "Show all messages"; a retransmission once in 30 s. Facts: Blocks
 (down / up), Repaired blocks, Aircraft heard, Last aircraft, Ground
 station, Last label, Last text. Table: one row per aircraft (and ground
 station) - flight, last label, blocks, last text; details: the last block's

@@ -189,7 +189,8 @@ UTILS_SRCS = \
 	$(SRCDIR)/utils/disk_util.cpp \
 	$(SRCDIR)/utils/platform.cpp \
 	$(SRCDIR)/utils/fs_compat.cpp \
-	$(SRCDIR)/utils/tls_compat.cpp
+	$(SRCDIR)/utils/tls_compat.cpp \
+	$(SRCDIR)/utils/version_info.cpp
 # child processes (include/utils/process.hpp): one backend per platform
 ifeq ($(WINDOWS),1)
 UTILS_SRCS += $(SRCDIR)/utils/process_win.cpp
@@ -202,6 +203,7 @@ APP_SRCS = \
 	$(SRCDIR)/station_info.cpp \
 	$(SRCDIR)/doa_logger.cpp \
 	$(SRCDIR)/wb_board.cpp \
+	$(SRCDIR)/app_version.cpp \
 	$(SRCDIR)/channel_manager.cpp \
 	$(SRCDIR)/control_handler.cpp \
 	$(SRCDIR)/settings_store.cpp \
@@ -230,7 +232,9 @@ APP_SRCS = \
 	$(SRCDIR)/playback.cpp \
 	$(SRCDIR)/sigmf.cpp \
 	$(SRCDIR)/recorder.cpp \
-	$(SRCDIR)/recorder_audio.cpp
+	$(SRCDIR)/recorder_audio.cpp \
+	$(SRCDIR)/power.cpp \
+	$(SRCDIR)/antenna_bias.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
@@ -337,6 +341,19 @@ endif
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) $(FLAGS_STAMP) | $(OBJDIRS) $(DEPDIRS) check-uws
 	@echo "Compiling $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $(DEPDIR)/$*.d -c $< -o $@
+
+# The version compiled in (docs/dev/version.md): ../scripts/version.sh writes
+# $(OBJDIR)/build_version.h on every make but replaces it only when it
+# changed, so a new commit recompiles version_info.cpp alone (+ the link).
+# Its own rule: only this file gets -I$(OBJDIR) (a target-specific variable
+# would also reach the flags stamp). No script / no git: an empty header
+VERSION_H = $(OBJDIR)/build_version.h
+$(VERSION_H): FORCE | $(OBJDIRS)
+	@sh ../scripts/version.sh --header $@ 2>/dev/null || [ -f $@ ] || echo '/* no version */' > $@
+FORCE:
+$(OBJDIR)/utils/version_info.o: $(SRCDIR)/utils/version_info.cpp $(VERSION_H) $(LIQUID_H) $(FLAGS_STAMP) | $(OBJDIRS) $(DEPDIRS) check-uws
+	@echo "Compiling $<..."
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I$(OBJDIR) -MMD -MP -MF $(DEPDIR)/utils/version_info.d -c $< -o $@
 
 $(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(OBJDIRS)
 	@echo "Compiling $<..."

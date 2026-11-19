@@ -102,7 +102,7 @@ Per-channel metadata is pushed into `ChannelManager::update_channel_info(ch, fre
   - **Newline-framed**: `cmd + "\n"` — heimdall splits commands on newlines; without it back-to-back commands coalesce (`data_receiver.cpp:1056-1060`).
   - **Lazy connect**: connection opened on first command; socket set `O_NONBLOCK` after connect (`data_receiver.cpp:1067-1070`).
   - **Two attempts** then drop with stderr `"Control command dropped (server unreachable): ..."`.
-- **The client NEVER reads from the control socket.** There is no `receive_data` call on `control_client` anywhere (grep-verified). Heimdall's control-port status JSON broadcasts are **ignored**; all status (phase_state, noise_source, frequencies, gains, retuning) is consumed from the **data-packet header** instead.
+- The client drains the control socket on its status thread (`drain_control_socket`) and takes only a few things from heimdall's status lines: the Wideband board's `downconverter` object, heimdall's `version` and, since 2026-11-18, the antenna bias tee fields and the replies to `set_antenna_bias_tees` (`kraken_doa_v2/docs/dev/bias-tees.md`; for those it also opens the control connection itself, every 5 s at most while it is down). All other status (phase_state, noise_source, frequencies, gains, retuning) is consumed from the **data-packet header**.
 
 ### 3.2 Exact JSON commands sent to heimdall
 All single-line JSON + `\n`:

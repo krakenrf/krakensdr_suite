@@ -364,7 +364,7 @@ private:
     std::array<std::array<long, 3>, 3> fails_seen_{};
     double last_fail_log_ = -10;
 
-    // debug ("Log all messages"): packets whose CRC failed - unverified data,
+    // debug ("Show all messages"): packets whose CRC failed - unverified data,
     // so only to the plugin log, never as events or facts
     void log_crc_failures() {
         for (size_t s = 0; s < slicers_.size(); s++)

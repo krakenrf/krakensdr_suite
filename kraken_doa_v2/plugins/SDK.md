@@ -318,21 +318,21 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.audio_channel(ch)` | optional: the talker channel (`kp::Talker::channel`, e.g. the DMR timeslot) the following `audio()` is from, when several transmissions run at once and you play one - Voice to Text then names the radio on that channel. Call it when it changes; -1 = unknown |
 | `host.voice_state(s)` | short call status shown next to the Listen button |
 | `host.freq_error(hz)` | measured carrier offset (+ = above the VFO centre): the host slowly re-centres the input. Optional |
-| `host.verbose()` | the panel's "Log all messages" option |
+| `host.verbose()` | also report the messages a control channel repeats constantly: the decoder tab's "Show all messages" tick, or its Logging at "Log All" (while logging to disk is allowed) |
 | `host.time()` | seconds of input processed so far (sample clock) - use it for timeouts, not the wall clock |
 | `host.sample_rate()` | the rate `process()` gets (Hz): `Info::sample_rate`, or the VFO's for a plugin that declares 0 |
 | `host.log(text)` | debug output (stderr) |
 | `host.map_point(p)` | a position on the web UI's 🗺 Map (`kp::MapPoint`, below) |
 | `host.map_remove(id)` | takes a point off the map |
 | `host.station(&lat, &lon)` | the receiver's location (sidebar → Station Information), false if it has none |
-| `host.rf_hz()` / `host.rf_inverted()` | the radio frequency (Hz) at 0 Hz of your input - the VFO's centre plus the host's frequency correction - NAN when unknown (offline test without `--rf`); `rf_inverted()`: the input is mirrored (the "invert" option), +f is then `rf_hz() - f`. Name the channel you receive (`dme`: a DME channel from its reply frequency), or find the channels inside a wide VFO. A retune also calls `reset()` |
+| `host.rf_hz()` | the radio frequency (Hz) at 0 Hz of your input - the VFO's centre plus the host's frequency correction - NAN when unknown (offline test without `--rf`); +f in your input is on `rf_hz() + f` (`host.rf_inverted()`, the removed "invert" option, is always false - kept so older plugin sources build). Name the channel you receive (`dme`: a DME channel from its reply frequency), or find the channels inside a wide VFO. A retune also calls `reset()` |
 | `host.table_columns(cols)` | headings of a live table in the panel (e.g. the aircraft ADS-B hears) |
 | `host.table_row(key, cells)` | adds / updates (same key) a table row; rows not updated for 10 min (or `table_keep`) drop out |
 | `host.table_remove(key)` | removes a table row |
 | `host.table_keep(seconds)` | how long a row stays without an update (60 s .. 7 days, default 10 min) - things that report rarely want long (ism: its "Keep devices" option, 24 h) |
 | `host.table_detail(key, lines)` | a row's details: label / value pairs the panel shows when the row is opened (▸) |
 | `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
-| `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
+| `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the VFO's Logging is "Log All"; written to `decoder_logs/<plugin id>/<plugin id>-YYYY-MM-DD.jsonl`) |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
 | `host.option_choices(key, choices)` | the choices of one of your options known only at run time (`{{value, label}, ...}`; dab: the ensemble's programmes): the panel shows the option as that list; `{}` = none (see Options above; wire OPTION_CHOICES 42, ignored by older hosts) |
@@ -349,10 +349,12 @@ kraken_doa finds a street address in the text and looks it up online
 the decoder's tab and, with "Plot on map", on the 🗺 Map. The plugin needs
 no map code (and must not use the network itself).
 
-**Decoder data log.** The user can log what every decoder reports to
-disk (sidebar → 🗂 Decoder Logging, one JSON Lines file per day): your
-events, text messages and map points are logged without any code in the
-plugin. Raw frames are the one thing to add: while `host.raw_wanted()` is
+**Decoder data log.** The user can log what a decoder reports to disk (the
+decoder tab's Logging: Log / Log All, while ⚙ Setup Settings → Decoder
+Logging allows it; one JSON Lines file per day): your events, text messages
+and map points are logged without any code in the plugin. Under "Log All"
+`host.verbose()` is on too, so the messages you only report with verbose
+are written then. Raw frames are the one thing to add: while `host.raw_wanted()` is
 true, pass each frame that passed its checks to `host.raw(text)` - one line,
 printable, compact (hex for binary frames, e.g. ADS-B `"8D4840D6... -14.8"`
 = the Mode S message + level in dB; APRS the TNC2 packet; pagers "POCSAG
@@ -432,9 +434,9 @@ each its own `t.channel` (0..7) and end it with `host.talker_end(at_s,
 channel)`; a new id ends only its own channel's talker. Frames holding two
 channels' radios go to neither. On such a channel, report a transmission
 whose radio isn't known yet with `t.id = "?"` (the dmr plugin does until
-the LC names it): its samples then stay out of the other channel's talker,
-and the real id later takes over from the same start. A protocol with one
-transmission at a time needs neither.
+the LC names it, p25 on a Phase 2 timeslot too): its samples then stay out
+of the other channel's talker, and the real id later takes over from the
+same start. A protocol with one transmission at a time needs neither.
 
 Short packets from many talkers at once (ADS-B / Mode S: 64-120 us per
 message, dozens of aircraft) don't fit that model - a MUSIC frame holds
@@ -741,7 +743,9 @@ Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
 `dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `ysf/tools/ysf_gen.py`, `tetra/tools/tetra_gen.py`,
 `mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`,
 `pagers/tools/pocsag_gen.py`, `pagers/tools/flex_gen.py`, `v23_telemetry/tools/v23_gen.py`,
-`p25/tools/p25_gen.py`, `dmr/tools/dmr_gen.py`,
+`p25/tools/p25_gen.py`, `p25/tools/p25p2_gen.py` (P25 Phase 2: a site's
+TDMA channel, or one radio's inbound bursts - several radios placed by
+uca_scene.py), `dmr/tools/dmr_gen.py`,
 `radiosonde/tools/sonde_gen.py`; a 2.4 MHz
 scene of several transmitters is too big for uca_scene.py's in-memory
 mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
@@ -987,8 +991,8 @@ a good decoder reports nothing there.
 
 A plugin is just its source folder: copy `plugins/<id>/` (without `build/`)
 into the other receiver's `kraken_doa_v2/plugins/`, run `make` in
-`kraken_doa_v2` (or `make -C plugins PLUGIN=<id>`), then press ↻ next to
-"Decoder plugins" in the web UI's Digital Decoders box (or restart). It
+`kraken_doa_v2` (or `make -C plugins PLUGIN=<id>`), then press ↻ Rescan next to
+"Decoder plugins" in the web UI's ⚙ Setup Settings → 🔐 Decoders (or restart). It
 builds against that receiver's `sdk/` and `lib/`, so both should run the same
 version of the suite.
 
@@ -1032,7 +1036,7 @@ named in each file.
 
 ## The shared library (`lib/`)
 
-The shipped protocol decoders are thin plugins around `lib/` (`p25/decoder.cpp`
+The shipped protocol decoders are thin plugins around `lib/` (`dstar/decoder.cpp`
 is ~50 lines). Their receivers were written against an `RxContext` /
 `Report` interface; `dig::Bridge` (dig_common.hpp) maps it onto `kp::Host`,
 and `dig::FmFrontEnd` (48 kHz -> 12.5 kHz channel filter -> discriminator in

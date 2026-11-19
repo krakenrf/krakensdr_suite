@@ -19,6 +19,7 @@ are changing:
 | `--kerberos`, `--kerberos_sw`, `--ext_noise` | `docs/dev/kerberos-and-ext-noise.md` |
 | `--wideband` downconverter (moRFeus LO, mixer sides, RF switches) | `docs/dev/wideband-variant.md` |
 | FFT (pffft) | `docs/dev/fft-pffft.md` |
+| The web page (8070): layout, look (follows the client's palette and text rules), the calibration chip, page tests | `docs/dev/web-ui.md` |
 | The librtlsdr fork, Windows USB behaviour | `../docs/dev/librtlsdr-fork.md`, `../docs/dev/windows.md` |
 | 8091 / 8092 wire protocols | `../gr-krakensdr_v2/docs/heimdall_v2_data_protocol.md`, `..._control_protocol.md` |
 
@@ -174,8 +175,12 @@ Performance
   document it in `README.md` and the gr protocol doc; test with
   `echo '{"command":"..."}' | nc localhost 8092`. New state belongs in the
   8092 status JSON and the web STATE message.
-- A web feature: `src/web/web_server.cpp`, plus `index.html` (read at
-  runtime).
+- A web feature: `src/web/web_server.cpp`, plus `index.html` (read once at
+  startup: restart heimdall to see an edit, no rebuild). The page follows
+  the client's palette and text rules - colours only as `var(--token)`, no
+  explanations on the controls (a `?` tip instead), no emoji, no browser
+  `confirm` / `alert` / `prompt` - the page's `uiConfirm` / `uiAlert`
+  (`docs/dev/web-ui.md`).
 - A module: add its sources to the Makefile (`SOURCES`, the build dirs) and
   `CMakeLists.txt`, and keep the dependency order of the root file.
 

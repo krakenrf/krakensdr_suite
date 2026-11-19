@@ -60,7 +60,8 @@ constexpr double MAX_SIGNAL_SPAN_S = 3.0;   // a valid frame's samples (Host::va
 
 std::mutex record_mu;
 RecordHandler record_handler;
-std::atomic<bool> raw_wanted{false};
+// "Allow logging to disk" (set_log_allowed): Log All's raw frames and verbose
+std::atomic<bool> log_allowed_{false};
 std::atomic<bool> video_wanted{false};   // a browser is subscribed to decoder video
 void deliver_record(DigitalDecoder* d, const LogRecord& r) {
     RecordHandler h;
@@ -139,7 +140,8 @@ void set_record_handler(RecordHandler h) {
     record_handler = std::move(h);
 }
 
-void set_raw_wanted(bool on) { raw_wanted = on; }
+void set_log_allowed(bool on) { log_allowed_ = on; }
+bool log_allowed() { return log_allowed_.load(); }
 void set_video_wanted(bool on) { video_wanted = on; }
 
 void set_voice_tap_handler(VoiceTapHandler h) {
@@ -186,7 +188,6 @@ struct Runner {
     int verbose_sent = -1, voice_sent = -1, raw_sent = -1, video_sent = -1;
     uint64_t station_sent = 0;         // station_gen sent
     double rf_sent = -1;               // kp::Host::rf_hz sent (0 = unknown, -1 = nothing yet)
-    int rf_inv_sent = -1;
     std::map<std::string, std::string> opts_sent;   // key (without the id prefix) -> value
     uint32_t sync_sent = 0, sync_done = 0;
     std::string state = "starting", error;
@@ -357,12 +358,10 @@ public:
             // P25, ...) every later multichannel plugin (lora, ism) got one
             // antenna only (mc_ok below) until kraken_doa restarted
             nco_phase_ = 0.0;
-            if (opts_.invert) for (size_t i = 0; i < n; i++) mixed_[i] = std::conj(x[i]);
-            else std::copy(x, x + n, mixed_.begin());
+            std::copy(x, x + n, mixed_.begin());
         } else {
             for (size_t i = 0; i < n; i++) {
-                std::complex<float> v = opts_.invert ? std::conj(x[i]) : x[i];
-                mixed_[i] = v * std::polar(1.0f, static_cast<float>(nco_phase_));
+                mixed_[i] = x[i] * std::polar(1.0f, static_cast<float>(nco_phase_));
                 nco_phase_ += w;
             }
             nco_phase_ = std::remainder(nco_phase_, 2.0 * M_PI);
@@ -778,7 +777,6 @@ private:
         r.verbose_sent = r.voice_sent = r.raw_sent = r.video_sent = -1;
         r.station_sent = 0;
         r.rf_sent = -1;
-        r.rf_inv_sent = -1;
         r.opts_sent.clear();
         r.sync_sent = r.sync_done = 0;
         r.state = "running";
@@ -791,8 +789,13 @@ private:
         publish_status();
     }
 
+    // the VFO is set to Log All and logging to disk is allowed: raw frames
+    // and the repeated messages are wanted
+    bool log_all() const { return opts_.log == LOG_ALL && log_allowed_.load(); }
+
     void send_settings(Runner& r) {
-        const int verbose = opts_.verbose ? 1 : 0;
+        // kp::Host::verbose: "Show all messages", or Log All in effect
+        const int verbose = opts_.verbose || log_all() ? 1 : 0;
         if (verbose != r.verbose_sent) {
             std::string kv = std::string("verbose=") + (verbose ? "1" : "0");
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
@@ -810,19 +813,17 @@ private:
             r.station_sent = sg;
         }
         // the RF of the plugin's 0 Hz (kp::Host::rf_hz): the VFO's frequency
-        // plus the AFC correction (the mixer moves afc_hz_ to 0 Hz; with
-        // invert the band is mirrored first). Resent when it moves > 10 Hz
-        const double rf0 = rf_hz_ > 0 ? (opts_.invert ? rf_hz_ - afc_hz_ : rf_hz_ + afc_hz_) : 0.0;
-        const int inv = opts_.invert ? 1 : 0;
-        if (std::fabs(rf0 - r.rf_sent) > 10.0 || inv != r.rf_inv_sent) {
+        // plus the AFC correction (the mixer moves afc_hz_ to 0 Hz). Resent when
+        // it moves > 10 Hz, and after a (re)start. Never ",1" (mirrored) since
+        // the Invert option went
+        if (const double rf0 = rf_hz_ > 0 ? rf_hz_ + afc_hz_ : 0.0; r.rf_sent < 0 || std::fabs(rf0 - r.rf_sent) > 10.0) {
             char b[64] = "";
-            if (rf0 > 0) snprintf(b, sizeof b, "%.1f,%d", rf0, inv);
+            if (rf0 > 0) snprintf(b, sizeof b, "%.1f", rf0);
             r.proc->send(W_RF, b, strlen(b), 0);
             r.rf_sent = rf0;
-            r.rf_inv_sent = inv;
         }
-        // raw frames for the decoder data log
-        const int raw = raw_wanted.load() ? 1 : 0;
+        // raw frames for the decoder data log (Log All)
+        const int raw = log_all() ? 1 : 0;
         if (raw != r.raw_sent) {
             std::string kv = std::string("log_raw=") + (raw ? "1" : "0");
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
@@ -884,7 +885,7 @@ private:
         send_settings(r);
         if (mc && ny) {
             // every antenna: SAMPLES_MC = uint32 m + n x m complex int16 (the
-            // VFO's rate - step 1; the invert option mirrors every antenna)
+            // VFO's rate - step 1)
             const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.prate()) * 4 * static_cast<size_t>(mc_m);
             const size_t n = std::min<size_t>(mc_n, ny);
             for (size_t p = 0; p < n; p += PLUGIN_CHUNK) {
@@ -895,10 +896,7 @@ private:
                 std::complex<int16_t>* d = reinterpret_cast<std::complex<int16_t>*>(mc_buf_.data() + 4);
                 const std::complex<int16_t>* q = mc + p * static_cast<size_t>(mc_m);
                 const size_t cnt = k * static_cast<size_t>(mc_m);
-                if (opts_.invert)
-                    for (size_t i = 0; i < cnt; i++) d[i] = {q[i].real(), static_cast<int16_t>(-q[i].imag())};
-                else
-                    std::copy(q, q + cnt, d);
+                std::copy(q, q + cnt, d);
                 if (!r.proc->send(W_SAMPLES_MC, mc_buf_.data(), mc_buf_.size(), backlog)) {
                     r.dropped += k;
                     continue;
@@ -1044,7 +1042,7 @@ private:
                 break;
             }
             case W_RAW: {
-                if (!raw_wanted.load() || len == 0) break;
+                if (!log_all() || len == 0) break;
                 LogRecord lr;
                 lr.type = "raw";
                 lr.plugin = r.id;
@@ -1418,10 +1416,10 @@ private:
             s.packet = true;
             if (f.size() > 8) {
                 // the plugin's frequency -> the VFO's: the AFC mixer moved the band
-                // down by afc_hz_, the invert option mirrored it first
+                // down by afc_hz_
                 if (!f[6].empty()) {
                     const double pf = strtod(f[6].c_str(), nullptr);
-                    if (is_finite_value(pf)) s.freq_hz = opts_.invert ? -(pf + afc_hz_) : pf + afc_hz_;
+                    if (is_finite_value(pf)) s.freq_hz = pf + afc_hz_;
                 }
                 s.bw_hz = std::clamp(strtod(f[7].c_str(), nullptr), 0.0, static_cast<double>(in_rate_));
                 s.avg_s = std::clamp(strtod(f[8].c_str(), nullptr), 0.0, 3600.0);
@@ -1459,8 +1457,7 @@ private:
                         const double im = strtod(q, &e);
                         if (e == q) break;
                         if (!is_finite_value(re) || !is_finite_value(im)) break;
-                        // the invert option negated every antenna's Q: R conjugated
-                        c.emplace_back(re, opts_.invert ? -im : im);
+                        c.emplace_back(re, im);
                         q = *e == ',' ? e + 1 : e;
                     }
                     if (c.size() == static_cast<size_t>(m * m)) {
@@ -1764,6 +1761,8 @@ std::string DigitalDecoder::plugin_id() const {
 void DigitalDecoder::set_options(const Options& o) {
     std::lock_guard<std::mutex> lk(opt_mu_);
     opts_ = o;
+    log_mode_.store(o.log, std::memory_order_relaxed);
+    pos_s_.store(o.pos_s, std::memory_order_relaxed);
 }
 
 Options DigitalDecoder::options() const {
@@ -2009,7 +2008,7 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
           << ",\"state\":\"" << json_escape(voice_state_) << "\"}";
     }
     Options op = options();
-    o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"invert\":" << (op.invert ? "true" : "false")
+    o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"log\":" << op.log << ",\"pos_s\":" << op.pos_s
       << ",\"map\":" << (op.map ? "true" : "false")
       << ",\"plugin\":{";
     first = true;

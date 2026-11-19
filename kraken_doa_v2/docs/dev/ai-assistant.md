@@ -11,9 +11,21 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 assistant that sees the screen, controls the receiver through MCP, searches
 the internet and writes / changes decoder plugins):
 - Page: a docked right-hand column (`#ai-dock`, after `.main-content`; body
-  class `ai-dk-off` while the assistant isn't enabled - the page is as
-  before then). Always visible while enabled: ⟩ collapses it to a 30 px strip
-  (`#ai-strip`, click = open), the left edge (`#ai-dock-rs`) resizes it
+  class `ai-dk-off` while the assistant isn't enabled). Its 🤖 button is
+  always on the right-hand rail (`#rail-ai`, `aiDockToggle()` - *sidebar.md*,
+  "Top bar and rail"): enabled, it opens / collapses the dock and is lit
+  while it is open; not enabled, it opens the dock with only a note that
+  says how to set the assistant up (`#ai-dk-setup`: the `kraken_ai.py setup`
+  command for the receiver's OS; body class `ai-dk-how`, not remembered;
+  everything marked `.ai-on`, the conversation and the question box are
+  hidden; an `ai_state` with `enabled:true` swaps the real dock in). The
+  user asked for the button to stay (2026-11-17): on a receiver without
+  `ai/ai_config.json` - a per-checkout, untracked file, so a stack run from
+  another worktree has none - it had vanished with nothing to say why.
+  ⚙ Setup Settings → 🤖 Assistant (a card of its Add-ons tab until
+  2026-11-17) shows the same state with the full steps (Claude Code, then
+  setup) - *sidebar.md*, "Setup Settings dialog".
+  ⟩ in the dock collapses it too; the left edge (`#ai-dock-rs`) resizes it
   (260 px .. 60 % of the window), width + collapsed state per browser
   (localStorage `kraken_ai_dock`). Phone (<= 900 px): a floating 🤖 button
   (`#ai-fab`) opens it full-screen. Header: Read only switch (`#ai-dk-ro`),
@@ -56,7 +68,11 @@ the internet and writes / changes decoder plugins):
     (VFOs + talkers - `rdfmap::status_message(true)`: a peek that doesn't
     change its every-2.5 s counters; MUSIC bearings without a station),
     `get_map_points`, `get_transcripts` (`v2t::history_json`),
-    `search_decoder_log` (gzip days too, <= 31), `get_saved_frequencies`,
+    `search_decoder_log` (gzip days too, <= 31; every decoder folder,
+    `transcripts/` and the old combined files - `declog::day_files`; an
+    optional `decoder` = only that decoder's folder plus the lines with its
+    `dec` in the transcripts and the old combined files, 2026-11-19),
+    `get_saved_frequencies`,
     `get_incidents`, `list_decoders`, `wait_for` (new decoder events, <= 300
     s, optional text), `find_identifications`
   - records: `capture_iq` (captured INSIDE kraken_doa - `ai_capture.cpp`,
@@ -72,7 +88,11 @@ the internet and writes / changes decoder plugins):
     recalibration ended), `set_gain`, `add_vfo`, `set_vfo` (freq, bandwidth
     -> any whole Hz / a decoder's minimum (the narrowest efficient size), demod, decoder - fixed-
     frequency and `lock_vfo` decoders handled the way the page does it -,
-    squelch, listen, transcribe), `set_decoder_option`, `remove_vfo`,
+    squelch, listen, transcribe), `set_decoder_option` (a plugin's option
+    key, or the decoder tab's own: `log` - the Logging, 0 / off, 1 / log,
+    2 / all = Off / Log / Log All, 2026-11-19, *decoder-log.md* -,
+    `verbose` - Show all messages, 1 / 0, unchanged -, `map`;
+    the receiver checks the value, a bad `log` is refused), `remove_vfo`,
     `set_doa` (on is refused with generic RTL-SDRs: no coherent mode -
     get_screen `receiver.generic_rtlsdr` / `coherent_available:false`;
     *Operating modes*), `save_frequency` (SF_SET, id `ai<ms>`). There is no
@@ -240,8 +260,10 @@ the internet and writes / changes decoder plugins):
   selection clean-up leaves "ai:" (it closed the popup within a second).
   Panel `#map-ai` under the viewshed's (`.aim-it` rows - the viewshed's
   `.vs-it` are hidden by its line of sight mode): show / hide per browser
-  (localStorage `kraken_aim`), ⌖ fit, ✕ = `AI_MAP_DELETE:<id>` (confirm,
-  every page). Map tool steps get 🗺 in the dock
+  (localStorage `kraken_aim`), ⌖ fit, ✕ = `AI_MAP_DELETE:<id>` (every
+  page; after the page's own "Remove map layer" dialog - like a
+  conversation's "Delete conversation" and an identification's "Forget
+  identification", `uiConfirm`, *sidebar.md* "Dialogs"). Map tool steps get 🗺 in the dock
 - 🗺 Page commands (`page_call` in ai_mcp.cpp): the map's view and the
   Viewshed / path loss live in the browser, so these tools are carried
   out by A PAGE: pages announce a random id (`aiPageId`, `AI_PAGE:<id>` on

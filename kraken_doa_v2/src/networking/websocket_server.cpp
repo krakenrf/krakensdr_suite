@@ -926,7 +926,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 return;
             }
 
-            ControlHandler::handle_websocket_message(message);
+            // a page's own command (power commands are taken only from here)
+            ControlHandler::handle_page_message(message);
         },
         
         .close = [](auto* ws, int code, string_view reason) {

@@ -68,7 +68,8 @@ decided once in main() before the dongles open, never changed (no hotplug).
   monitor skips (both also check `generic_rtlsdr()`). Refused with a clear
   error: coherent mode (`generic_mode_refusal()` in `set_operating_mode`,
   every entry point; 8092 replies its text), wideband scan with N = 1,
-  `check_calibration` / `reset_lag_compensation` (8092) and CHECK_CAL /
+  `check_calibration` / `reset_lag_compensation` / `set_antenna_bias_tees`
+  (8092; the status says `antenna_bias_tees_available:false`) and CHECK_CAL /
   FORCE_RECAL / RESET_LAG_COMPENSATION / ANT_BIAS_MASK (web), the
   element-count change. Wideband scan with N >= 2 works; leaving it
   (`set_wideband_mode(false)`) lands in INDEPENDENT and stops the discrete

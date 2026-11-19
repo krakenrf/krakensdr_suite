@@ -21,6 +21,7 @@ measurements and decisions; when they disagree with the code, the code wins.
 | Compiler flags and the measurements behind them | `docs/dev/compiler-flags.md` |
 | Licence of each part, audits, clean-room rewrites | `docs/dev/licensing.md`, `LICENSE` |
 | Long-form suite overview (architecture, configuration, every feature, algorithms) | `docs/dev/suite-reference.md` |
+| Version indicator (from git; VERSION file, compiled-in fallbacks; Docker, package) | `docs/dev/version.md` |
 | 8091 data / 8092 control wire protocols | `gr-krakensdr_v2/docs/heimdall_v2_data_protocol.md`, `..._control_protocol.md` |
 | User docs | `README.md`, `DOCKER.md`, `WINDOWS.md` |
 
@@ -28,7 +29,7 @@ measurements and decisions; when they disagree with the code, the code wins.
 
 ```
 heimdall_v2/      server (C++20): dongles -> coherent, phase-compensated IQ
-  src/{core,sdr,dsp,net,web}/   config.h   index.html (web UI, read at runtime)
+  src/{core,sdr,dsp,net,web}/   config.h   index.html (web UI, read once at startup)
 kraken_doa_v2/    client: spectrum, VFOs, audio, MUSIC DoA, decoders, map, recorder, AI assistant
   src/  include/config.hpp  kraken_doa.html (web UI, read at runtime)
   plugins/<id>/   decoder plugins, each its own executable
@@ -61,7 +62,9 @@ build_windows.bat   run.bat   windows/package.sh                  # Windows buil
 
 - Use at most 3 parallel jobs on a Pi (`-j3`, never `-j4` / `nproc`): more
   can crash it (install.sh picks 1-3 jobs by RAM).
-- The web UIs are read at runtime: edit and refresh the browser, no rebuild.
+- The web UIs need no rebuild. kraken_doa reads its page per request (edit,
+  refresh the browser); heimdall reads `index.html` once at startup (edit,
+  restart heimdall).
 - Builds use `-march=native` / `-mcpu=native`, so build on the machine that
   runs the result (a Pi 5 build fails on a Pi 4 with illegal instruction). A
   flags stamp (`build/.flags`, `obj/.flags`, `plugins/lib/build/.flags`)
@@ -178,7 +181,9 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9)
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),
   `vfo-audio.md`, `operating-modes.md` (also VFO cards, the tuning step,
-  zoom)
+  zoom), `sidebar.md` (the boxes: move, collapse, the remembered layout;
+  how controls and text are written on the whole page), `theme.md` (the
+  colour palette), `icons.md` (the icon set: no emoji)
 - Decoders (every decoder is a plugin): `decoder-plugins.md`,
   `digital-decoders.md`, `digital-voice.md`, `digital-squelch.md`,
   `doa-per-talker.md`, `fixed-frequency-decoders.md`, and
@@ -188,12 +193,15 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 - Map: `map.md`, `map-search.md`, `station-on-map.md`, `osm-masts.md`,
   `viewshed.md`, `path-loss.md`, `range.md` (range from signal strength,
   a VFO's level on mouseover), `incident-map.md`, `mobile-df.md`,
-  `log-replay.md`
+  `log-replay.md`, `drive-mode.md` (DF from a vehicle: the map
+  full-window, one big bearing, big buttons, a Day look)
 - Recording and playback: `recorder.md` (`SIGMF.md`), `debug-playback.md`,
   `decoder-log.md`, `voice-to-text.md`
 - Other: `ai-assistant.md`, `web-mapper.md`, `array-calibration.md`
   (experimental), `array-calculator.md`, `wideband-variant.md`,
-  `fft-pffft.md`, `liquid-dsp.md`
+  `fft-pffft.md`, `liquid-dsp.md`, `power.md` (the page's Restart / Shut down),
+  `bias-tees.md` (the antenna bias tees from the top bar; heimdall's
+  `set_antenna_bias_tees`)
 
 ## Rules
 
@@ -215,8 +223,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   `mac/posix_compat.h` are force-included and define POSIX names only with
   their Linux meaning.
 - Keep shared copies identical in both apps: `host_check.hpp`,
-  `log_sanitize.hpp`, `net_compat.hpp`, `platform.*` and `fs_compat.*` (only
-  the include path differs), `win/`, `mac/` (`posix_compat.h`,
+  `log_sanitize.hpp`, `net_compat.hpp`, `platform.*`, `fs_compat.*` and
+  `version_info.*` (only the include path differs), `win/`, `mac/` (`posix_compat.h`,
   `fast_complex.h`),
   `external/pffft/`. Also keep equal: `UWS_COMMIT` in both Makefiles and the
   Dockerfile; the `WB_*` constants in both config files;

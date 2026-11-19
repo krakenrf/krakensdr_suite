@@ -100,7 +100,7 @@ source checkout (`build_windows.bat`), then packaged again with
 `kraken_doa_v2\transcribe\build\kraken_whisper.exe` /
 `kraken_doa_v2\plugins\<id>\build\decoder.exe` into the same folder of the
 package; ↻ in the plugin list picks up a new plugin). The package carries no
-speech models: the Voice to Text box downloads them. The build steps the web
+speech models: ⚙ Setup Settings → 🗣 Voice to Text downloads them (⬇ Get). The build steps the web
 UI shows on a Windows receiver are meant for that source checkout.
 
 The package's `LICENSE.txt` says which licence covers which program;
@@ -170,11 +170,11 @@ librtlsdr fork and its tools, libusb). Pass the folder on with the package
   `build_windows.bat` (or `make -C kraken_doa_v2 whisper` in an MSYS2 UCRT64
   shell) builds whisper.cpp and fetches the base.en model.
 - **Digital voice codecs** (not shipped - licensing, see the README's
-  "Digital voice codecs"; the web UI's "🔐 Digital Decoders" box shows the
+  "Digital voice codecs"; the web UI's ⚙ Setup Settings → 🔐 Decoders shows the
   steps below for a missing one). Build them in the MSYS2 UCRT64 shell
   (`C:\msys64\ucrt64.exe`) and put the results in the `kraken_doa_v2` folder,
   next to `kraken_doa.exe`:
-  - DMR / D-STAR / NXDN / Yaesu Fusion DN (AMBE, mbelib): `libmbe.dll` (or
+  - P25 Phase 2 / DMR / D-STAR / NXDN / Yaesu Fusion DN (AMBE, mbelib): `libmbe.dll` (or
     `KRAKEN_MBELIB=<path>`), as the `.so` on Linux:
 
     ```

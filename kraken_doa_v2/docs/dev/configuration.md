@@ -51,7 +51,8 @@ Edit `include/config.hpp`:
   `kraken_doa.html` to match
 - Fed by: MUSIC UCA steering vectors and the custom-position UCA default
   (`music_processor.cpp`), the beamformer geometry (`beamformer.cpp`), and in
-  the UI the `drawUCADiagram()` element layout plus the default custom
+  the UI the `drawUCADiagram()` element layout (the array diagrams -
+  *sidebar.md*, "Array diagrams") plus the default custom
   positions. ULA and user-entered CUSTOM positions are taken literally and
   are NOT mirrored
 

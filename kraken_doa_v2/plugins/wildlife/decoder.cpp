@@ -170,7 +170,6 @@ public:
     void process(const kp::cf* x, size_t n) override {
         if (!std::isfinite(t_base_)) t_base_ = host.time() - static_cast<double>(det_.samples()) / rate_;
         rf_ = host.rf_hz();
-        inv_ = host.rf_inverted();
         update_gates();
         pulses_.clear();
         det_.push(x, n, pulses_);
@@ -187,7 +186,6 @@ private:
     std::vector<Chan> ch_;
     std::deque<PRec> recent_all_;   // splatter check
     double t_base_ = NAN, rf_ = NAN;
-    bool inv_ = false;
     double last_pub_ = -1e9, last_facts_ = -1e9, last_plot_ = -1e9;
     uint64_t n_pulses_ = 0, n_twins_ = 0;
     const wl::Profile* prof_ = &wl::profile_by_id("global");
@@ -201,7 +199,7 @@ private:
     double t_of(double s) const { return t_base_ + s / rate_; }
     double abs_mhz(double f) const {
         if (!std::isfinite(rf_)) return NAN;
-        return (inv_ ? rf_ - f : rf_ + f) / 1e6;
+        return (rf_ + f) / 1e6;
     }
 
     void parse_names(const std::string& v) {

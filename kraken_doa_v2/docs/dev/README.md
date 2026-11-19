@@ -17,6 +17,7 @@ every session needs and points here.
 | `digital-squelch.md` | Digital squelch |
 | `digital-voice.md` | Digital voice |
 | `doa-per-talker.md` | DoA per talker |
+| `drive-mode.md` | Drive mode: DF from a vehicle (the map full-window, one big bearing, big buttons, Day / Night) |
 | `fft-pffft.md` | FFT (pffft) |
 | `fixed-frequency-decoders.md` | Fixed-frequency decoders |
 | `incident-map.md` | Incident map |

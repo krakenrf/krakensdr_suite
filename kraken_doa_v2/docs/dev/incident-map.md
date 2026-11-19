@@ -66,7 +66,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   The message handler gets the VFO's RF (`MessageHandler(.., rf_hz)`). Kept 24 h, max 5000,
   saved to incidents.tsv (cwd; reloaded at start; written <= every 10 s and
   at shutdown via `incidents::save_now()`). A new incident logs "📍
-  Incident: ..." in the decoder's event log
+  Incident: ..." in the decoder's event log, and goes to the decoder data
+  log (`declog::record_incident`, type "incident"; in the file of the
+  decoder whose message it was, e.g. `pagers/pagers-YYYY-MM-DD.jsonl`) when logging to disk is
+  allowed and the Logging of the VFO whose decoder sent the message is Log
+  or Log All at the time the lookup finishes (2026-11-19, the per-VFO
+  Logging - *decoder-log.md*; the "Incidents" type tick before). A page
+  added to an incident later is not a new record
 - Output: `incidents::map_json(plugins)` in `build_map_message` (plugin
   "incidents", kind "incident" = red triangle in the UI, `v` = the VFO that
   received it; shown while any decoder running that plugin -

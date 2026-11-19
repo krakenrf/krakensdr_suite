@@ -487,7 +487,7 @@ private:
     double carrier_mhz() const {
         const double rf = host.rf_hz();
         if (!std::isfinite(rf)) return NAN;
-        return (rf + (host.rf_inverted() ? -1 : 1) * main_.off_hz) / 1e6;
+        return (rf + main_.off_hz) / 1e6;
     }
     // the nominal channel (50 kHz grid; markers 75 MHz)
     double channel_mhz() const {

@@ -837,13 +837,18 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
 #endif
 }
 
-void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+// The channels' bits of a mask (bit N = channel N, NUM_DEVICES of them)
+static constexpr uint32_t ALL_CHANNEL_BITS = NUM_DEVICES >= 32 ? ~0u : ((1u << (NUM_DEVICES % 32)) - 1);
+// GPIO1-7 of the channel-0 chip: an 8th channel has no bias tee GPIO
+static constexpr uint32_t BIAS_TEE_GPIO_BITS = 0x7Fu;
+
+std::string apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     // Generic RTL-SDR mode: GPIO1-7 of a generic dongle drive nothing known
     // (the per-port bias tees are KrakenSDR hardware) - never written. The
     // saved mask is the KrakenSDR's and stays as it is.
     if (generic_rtlsdr()) {
         if (mask) std::cerr << "Bias tees: not available with generic RTL-SDRs (KrakenSDR hardware)" << std::endl;
-        return;
+        return std::string("Antenna bias tees ") + GENERIC_NO_GPIO_REASON;
     }
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     // One GPIO per OPEN channel (GPIO ch+1 on the channel-0 chip) - the RTL2832
@@ -857,6 +862,9 @@ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SD
     // fewer channels were open - the UI only shows the open ones).
     const uint32_t open_bits = (nch >= 32) ? ~0u : ((1u << nch) - 1);
     mask = (mask & open_bits) | (antenna_bias_tee_mask.load(std::memory_order_acquire) & ~open_bits);
+    // An 8th channel has no GPIO (there is no GPIO8): its bit used to be
+    // stored, and reported as on, while nothing was switched
+    mask &= BIAS_TEE_GPIO_BITS;
 
     // --ext_noise: the CH0 bias tee powers the add-on array's noise source and
     // is switched by calibration only - not a per-port antenna bias tee
@@ -873,7 +881,7 @@ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SD
         if (mask) std::cerr << "Bias tees: not available on the Wideband variant "
                                "(GPIO1-6 drive the RF path switches)" << std::endl;
         antenna_bias_tee_mask.store(0, std::memory_order_release);
-        return;
+        return "Antenna bias tees not available on the Wideband variant (GPIO1-6 drive the RF path switches)";
     }
 
     rtlsdr_dev_t* ctrl = nullptr;
@@ -885,7 +893,7 @@ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SD
     }
     if (!ctrl) {
         std::cerr << "Bias tees: channel 0 device unavailable - cannot drive GPIOs" << std::endl;
-        return;
+        return "Antenna bias tees: channel 0 device unavailable - cannot drive the GPIOs";
     }
 
     bool ok = true;
@@ -900,7 +908,31 @@ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SD
         std::cout << " Ch" << ch << "=" << (((mask >> ch) & 1) ? "ON" : "off");
     }
     std::cout << std::endl;
-    if (!ok) std::cerr << "Bias tees: some GPIO writes FAILED" << std::endl;
+    if (!ok) {
+        std::cerr << "Bias tees: some GPIO writes FAILED" << std::endl;
+        return "Antenna bias tees: some GPIO writes failed";
+    }
+    return "";
+}
+
+std::string request_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    // Generic RTL-SDRs: nothing written, nothing saved (the saved mask is the KrakenSDR's)
+    if (generic_rtlsdr()) return std::string("Antenna bias tees ") + GENERIC_NO_GPIO_REASON;
+    std::string err = apply_antenna_bias_tees(mask & ALL_CHANNEL_BITS, devices);
+    settings::save();  // remember across restarts (the Wideband variant's cleared mask too, as before)
+    return err;
+}
+
+bool antenna_bias_tees_available() {
+    return !generic_rtlsdr() && !downconverter.enabled.load();
+}
+
+uint32_t antenna_bias_tee_reserved_mask() {
+    return ((external_noise_mode.load(std::memory_order_relaxed) ? 1u : 0u) | ~BIAS_TEE_GPIO_BITS) & ALL_CHANNEL_BITS;
+}
+
+uint32_t antenna_bias_tees_in_effect() {
+    return antenna_bias_tees_available() ? antenna_bias_tee_mask.load(std::memory_order_acquire) : 0u;
 }
 
 bool wideband_retune_rf(uint64_t rf_hz, const std::vector<std::unique_ptr<SDRDevice>>& devices) {

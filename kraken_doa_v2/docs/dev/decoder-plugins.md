@@ -19,8 +19,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   talker_end (DoA per radio, see *DoA per talker*) / station / tune
   (retune request, `Info::tunes` plugins only - see *LTE / 5G NR Cell
   Decoder*) / table_detail (a table row's label / value lines) / rf_hz +
-  rf_inverted (the RF at the input's 0 Hz: wire RF 7 "rf_hz,inv" = the
-  engine's `rf_hz_` + `afc_hz_` (mirrored with invert), sent by
+  rf_inverted (the RF at the input's 0 Hz: wire RF 7 "rf_hz" = the
+  engine's `rf_hz_` + `afc_hz_`; rf_inverted is always false since the
+  Invert option went, 2026-11-19 - an older host sent "rf_hz,inv"), sent by
   `send_settings` when it moves > 10 Hz and after a (re)start; offline
   `--rf HZ` or the sidecar's `rf_hz`) / option_choices (an option's list
   known only at run time - dab's programmes - as value / label pairs, wire

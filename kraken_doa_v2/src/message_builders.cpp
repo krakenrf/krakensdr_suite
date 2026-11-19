@@ -1,4 +1,7 @@
 #include "wb_board.hpp"
+#include "app_version.hpp"
+#include "antenna_bias.hpp"
+#include "utils/version_info.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
 #include "globals.hpp"
@@ -585,6 +588,13 @@ string MessageBuilders::build_system_status_message() {
     // generic RTL-SDRs, no KrakenSDR: no coherent mode (operating_mode has it too)
     json << ",\"generic_rtlsdr\":" << (server_generic_rtlsdr.load(std::memory_order_relaxed) ? "true" : "false");
     json << ",\"platform\":\"" << platform::os_name() << "\"";   // the UI's per-OS instructions
+    // The suite's version (utils/version_info.hpp; the sidebar's footer line) and
+    // heimdall's, from its control-port status (app_version.hpp; absent until heard)
+    json << ",\"version\":" << appver::json();
+    if (const std::string hv = heimdall_version_json(); !hv.empty()) json << ",\"heimdall_version\":" << hv;
+    // heimdall's antenna bias tees, from its control-port status (antenna_bias.hpp;
+    // state "none" / "old" when it isn't there or doesn't have them)
+    json << ",\"antenna_bias\":" << antbias::state_json();
 #ifdef _WIN32
     // running from the source folder (kraken_doa_v2/Makefile in the cwd) or
     // from a package (windows/package.sh: no sources, Makefile or MSYS2) -
@@ -948,7 +958,12 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"transcribe\":" << (info.transcribe ? "true" : "false")
              << ",\"digital_mode\":\"" << json_escape(dig::mode_string(static_cast<dig::Mode>(info.digital_mode), info.digital_plugin)) << "\""
              << ",\"digital_opts\":{\"verbose\":" << (info.digital_opts.verbose ? "true" : "false")
-             << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false")
+             // the logging mode 0 Off / 1 Log / 2 Log All (a page that finds it
+             // shows the Logging select; an older receiver has none)
+             << ",\"log\":" << info.digital_opts.log
+             // Positions every (s) of the decoder log (a page that finds it shows the field
+             // in the decoder's row; an older receiver has the global one)
+             << ",\"pos_s\":" << info.digital_opts.pos_s
              << ",\"map\":" << (info.digital_opts.map ? "true" : "false") << ",\"plugin\":{";
         bool fo = true;
         for (const auto& kv : info.digital_opts.plugin) {

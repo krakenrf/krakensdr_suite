@@ -12,6 +12,7 @@
 #include "../core/host_check.hpp"
 #include "../core/settings.hpp"
 #include "../core/forward_comp.hpp"
+#include "../core/version_info.hpp"
 #include "App.h"  // uWebSockets main header
 #ifdef _WIN32
 #include "../net/tcp_common.hpp"  // listen_error_detail
@@ -111,8 +112,7 @@ static void refuse_cross_origin(Res* res, uWS::HttpRequest* req) {
 // (the page hides those controls; this catches a stale page or a script)
 static bool generic_refused(const char* what) {
     if (!generic_rtlsdr()) return false;
-    std::cerr << "Web: " << what << " refused - not available with generic RTL-SDRs "
-                 "(independent receivers, no calibration, no GPIOs)" << std::endl;
+    std::cerr << "Web: " << what << " refused - " << GENERIC_NO_GPIO_REASON << std::endl;
     return true;
 }
 
@@ -136,6 +136,9 @@ static std::string build_state_message() {
         + std::to_string(periodic_recal_phase_fail_count.load(std::memory_order_relaxed))
         + ",\"antenna_bias_tee_mask\":"
         + std::to_string(antenna_bias_tee_mask.load(std::memory_order_relaxed))
+        // as in the 8092 status: switchable at all, and the channels that can't be
+        + ",\"antenna_bias_tees_available\":" + (antenna_bias_tees_available() ? "true" : "false")
+        + ",\"antenna_bias_tee_reserved\":" + std::to_string(antenna_bias_tee_reserved_mask())
         // --ext_noise: CH0's bias tee powers the add-on array's noise source
         + ",\"external_noise\":"
         + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false")
@@ -143,7 +146,9 @@ static std::string build_state_message() {
         // generic RTL-SDRs (no KrakenSDR): no coherent mode, no calibration (8092 status: same field)
         + ",\"generic_rtlsdr\":" + (generic_rtlsdr() ? "true" : "false")
         // channels whose lag calibration finds no correlation peak (8092 status: same field)
-        + ",\"lag_no_peak\":" + lag_no_peak_json();
+        + ",\"lag_no_peak\":" + lag_no_peak_json()
+        // the suite's version (core/version_info.hpp): the page's footer line
+        + ",\"version\":" + appver::json();
     {
         // Last calibration check (periodic or Check Calibration)
         static const char* const results[] = {"none", "ok", "drifted", "no_verdict"};
@@ -574,8 +579,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                         const uint32_t mask = static_cast<uint32_t>(std::stoul(std::string(mask_str)))
                                               & ((1u << NUM_DEVICES) - 1);
                         if (generic_refused("Antenna bias tees")) return;
-                        apply_antenna_bias_tees(mask, devices);
-                        settings::save();  // remember across restarts
+                        // applied + saved, the same path as the control port's
+                        // set_antenna_bias_tees (a failure is logged there)
+                        request_antenna_bias_tees(mask, devices);
                     } catch (const std::exception&) {
                         std::cerr << "Bias tees: invalid ANT_BIAS_MASK: " << mask_str << std::endl;
                     }

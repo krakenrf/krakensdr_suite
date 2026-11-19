@@ -34,6 +34,12 @@ cp "$ROOT/krakensdr.exe" "$ROOT/run.bat" "$OUT/"
 # heimdall: the exe + its web UI
 cp "$ROOT/heimdall_v2/heimdall.exe" "$ROOT/heimdall_v2/index.html" "$OUT/heimdall_v2/"
 
+# the version the web UIs show (docs/dev/version.md): the package has no git,
+# so it is written from this clone now - VERSION next to each exe (empty
+# without git: the exes then show the version compiled into them)
+sh "$ROOT/scripts/version.sh" > "$OUT/heimdall_v2/VERSION" || : > "$OUT/heimdall_v2/VERSION"
+cp "$OUT/heimdall_v2/VERSION" "$OUT/kraken_doa_v2/VERSION"
+
 # kraken_doa: the exe + the files it serves (Dockerfile COPY list)
 cp "$K/kraken_doa.exe" "$K/kraken_doa.html" "$K/array_calculator.html" \
    "$K/opus-decoder.min.js" "$OUT/kraken_doa_v2/"
@@ -89,7 +95,7 @@ done
 cp "$ROOT/LICENSE" "$OUT/LICENSE.txt"
 bash "$ROOT/scripts/collect-licenses.sh" "$OUT/licenses" rtlsdr="$ROOT/librtlsdr" uws="$K/uWebSockets"
 
-echo "Packaged $OUT  (heimdall, kraken_doa, $n decoder plugins)"
+echo "Packaged $OUT  (heimdall, kraken_doa, $n decoder plugins; version: $(tr '\n' ' ' < "$OUT/heimdall_v2/VERSION"))"
 
 # zip next to the folder (PowerShell's Compress-Archive: no extra package needed)
 ZIP="$OUT.zip"

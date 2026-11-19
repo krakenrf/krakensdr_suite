@@ -55,6 +55,9 @@ bool iq_recording();
 // a recording in the folder by its listed name (folder / .sigmf archive) -> its path, "" = none
 std::string item_path(const std::string& name);
 std::string recording_name();   // the one being written ("" = none)
+// an IQ or audio recording is open - also while RECORDER_STOP finishes it
+// (the rest of the queue, the metadata); false once its files are complete
+bool writing();
 
 // --- IQ taps ---
 // 0 = none, 1 = full band, 2 = a VFO's band (g_band_vfo)

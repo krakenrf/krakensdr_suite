@@ -53,7 +53,10 @@ noise source (GPIO0, every chip) OFF and switches GPIO1 of the channel-0 chip
 (`set_external_noise_power`) instead; `init_rtlsdr_device()` forces GPIO0 off
 and `open_active_devices()` powers the external source for the startup
 calibration. `apply_antenna_bias_tees()` treats CH0 as reserved (bit 0 refused
-and cleared, GPIO1 never written from the mask). Everything else - calibration
+and cleared, GPIO1 never written from the mask; the control port's
+`set_antenna_bias_tees` replies a success with a message saying so, and the
+status reports `antenna_bias_tee_reserved` with bit 0 set - 2026-11-18).
+Everything else - calibration
 state machines, `bias_tee_enabled` semantics, the 8091 noise flag - is
 unchanged. Exclusive with `--wideband` and `--kerberos(_sw)` (refused at
 startup).

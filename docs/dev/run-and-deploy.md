@@ -69,6 +69,28 @@ git secret guards.
   stop`, `LimitRTPRIO=30` (realtime USB threads), `LimitMEMLOCK=infinity`
   (heimdall's `mlockall`), `Restart=on-failure`. install.sh grants the same
   two (`rtprio 30`, `memlock unlimited`) in limits.conf for login sessions.
+- The web page's ↻ Restart / ⏻ Shut down (`kraken_doa_v2/docs/dev/power.md`,
+  2026-11-16): `RESTART_EXIT=75` - both apps get `KRAKEN_RESTART_EXIT=75`
+  from the supervisor (tmux mode, also under the boot service) and from
+  headless mode; the supervisor restarts an app that exits with it after
+  1 s (not RESTART_DELAY, no crash warning); headless mode, when heimdall
+  exits with it, stops the client and runs `run_headless` again (logs
+  appended, not truncated). `install-pi-service.sh` writes
+  `/etc/sudoers.d/krakensdr-power` (checked with `visudo -cf` first, mode
+  0440): `$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff,
+  /usr/bin/systemctl reboot` (+ the `/bin/` paths) - the service has no
+  login session, so logind refuses `systemctl poweroff` without it unless
+  the user has sudo NOPASSWD ALL anyway (the Pi image default).
+  `POWER_BUTTONS=0` removes the rule and puts `Environment=KRAKEN_POWER=restart`
+  in the unit; `--uninstall` removes it. `--power-only` (2026-11-18) installs
+  ONLY that rule (`power_rule_install`, the same `visudo -cf` check) and
+  exits before the preflight: for a computer without the boot service, e.g.
+  a desktop PC started with `run.sh` outside a local session, where logind
+  answers `challenge`; `--power-only --uninstall` (or `POWER_BUTTONS=0
+  --power-only`) removes only the rule. Refused when run as root (the rule
+  is for the user that runs the apps); an unknown option is refused before
+  anything runs (it used to be ignored). The page shows the command when the
+  receiver reports `not_permitted`.
 
 ## Automatic build (run.sh + scripts/autobuild.sh)
 
@@ -311,6 +333,10 @@ browser.
   0x800 - where no calibration runs); empty compose variables are unset (apps treat "" as set)
 - `--wideband` / `--kerberos_sw` need `privileged: true` (hidraw, gpiochip,
   `/proc/device-tree` is masked otherwise) via `compose.override.yaml`
+- `KRAKEN_RESTART_EXIT: "75"` in both services: the page's Restart software
+  ends both apps with 75 and `restart: unless-stopped` starts them again
+  (tini passes the status on). kraken_doa sees `/.dockerenv` and offers no
+  reboot / shut down (a container can't power the host off)
 
 
 ## Logging
@@ -399,7 +425,7 @@ automatically:
   `doa_settings.json` or `api_token` slipped through (bypass:
   `git push --no-verify`). Root commits and merge commits (including a
   secret added while resolving a merge) are scanned too.
-- **Map provider API keys** (the web UI's ⚙ Settings: Google, Mapbox,
+- **Map provider API keys** (the web UI's ⚙ Setup Settings: Google, Mapbox,
   Azure, MapTiler, ...) live only in the browser's localStorage, never in a
   file of the tree. The pre-push hook still blocks an outgoing commit that
   ADDS a recognisable one to any file (`MAP_KEY_AWK`): a Google `AIza…`
