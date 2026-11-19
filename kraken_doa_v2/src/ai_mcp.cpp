@@ -915,7 +915,10 @@ void t_search_log(const Json& a, Reply r) {
         for (size_t i = 0; i < hits.size(); i++) out += (i ? "," : "") + hits[i];
         out += "],\"note\":" + q(files ? "the newest matching records, oldest first (decoder data log: events, messages, "
                                          "positions, incidents, voice transcripts, raw frames)"
-                                       : "no decoder log files - Decoder Logging (sidebar) is off or empty") + "}";
+                                       : "no decoder log files - nothing logged yet: logging to disk is allowed in "
+                                         "Setup Settings -> Decoder Logging, then each VFO decoder's Logging (Off / "
+                                         "Log / Log All, set_decoder_option key log) and the transcripts' choose "
+                                         "what is written") + "}";
         return out;
     }, r);
 }
@@ -1377,7 +1380,7 @@ void t_set_option(const Json& a, Reply r) {
     if (!find_vfo(id, &v)) return r("No VFO D" + std::to_string(id), true);
     std::string key = str_arg(a, "key");
     if (key.empty() || key.find(':') != std::string::npos) return r("key needed (an option of the VFO's decoder)", true);
-    if (key.find('.') == std::string::npos && key != "verbose" && key != "invert" && key != "map") {
+    if (key.find('.') == std::string::npos && key != "verbose" && key != "log" && key != "invert" && key != "map") {
         std::string p = v.d.digital_plugin;
         if (p.empty()) {
             Json st;
@@ -1500,7 +1503,8 @@ std::vector<Tool>& tools() {
          false, true, t_get_transcripts},
         {"search_decoder_log", "Decoder data log",
          "Searches the decoder data log of the last `days` days (every decoded event, message, position, incident, "
-         "transcript - when the user turned Decoder Logging on): the newest matching records.",
+         "transcript - of the VFO decoders set to Log / Log All and the transcripts set to Log, while logging to "
+         "disk is allowed): the newest matching records.",
          OBJ(STRP("query", "text the record must contain (case-insensitive)") "," NUMP("days", "1-31 (1 = today)")
                  "," STRP("type", "event | message | position | raw | incident | voice") "," INTP("vfo", "only this VFO")
                  "," INTP("limit", "records (100)"),
@@ -1654,8 +1658,12 @@ std::vector<Tool>& tools() {
              REQ("\"vfo\"")),
          true, false, t_set_vfo},
         {"set_decoder_option", "Decoder option",
-         "Sets an option of a VFO's decoder (the plugin's options, see get_decoder / list_decoders): key = the "
-         "option's key (or <plugin>.<key>), value as text ('' = its default).",
+         "Sets an option of a VFO's decoder: key = the plugin's option key (or <plugin>.<key>; see get_decoder / "
+         "list_decoders), value as text ('' = its default); or one of the decoder tab's own: log = Logging, what "
+         "the VFO's decoder writes to the decoder log while logging to disk is allowed (0 / off, 1 / log: events, "
+         "messages, positions, incidents; 2 / all: Log All, also raw frames and the repeated control-channel "
+         "messages); verbose = Show all messages (1 / 0: also report the messages a control channel repeats); "
+         "invert, map (Plot on map) 1 / 0.",
          OBJ(INTP("vfo", "VFO number") "," STRP("key", "option key") "," STRP("value", "value"), REQ("\"vfo\",\"key\",\"value\"")),
          true, false, t_set_option},
         {"remove_vfo", "Remove a VFO", "Removes a VFO (not the last one).", OBJ(INTP("vfo", "VFO number"), REQ("\"vfo\"")),

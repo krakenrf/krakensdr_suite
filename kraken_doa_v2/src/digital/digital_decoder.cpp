@@ -55,7 +55,8 @@ constexpr double MAX_SIGNAL_SPAN_S = 3.0;   // a valid frame's samples (Host::va
 
 std::mutex record_mu;
 RecordHandler record_handler;
-std::atomic<bool> raw_wanted{false};
+// "Allow logging to disk" (set_log_allowed): Log All's raw frames and verbose
+std::atomic<bool> log_allowed_{false};
 void deliver_record(DigitalDecoder* d, const LogRecord& r) {
     RecordHandler h;
     {
@@ -133,7 +134,8 @@ void set_record_handler(RecordHandler h) {
     record_handler = std::move(h);
 }
 
-void set_raw_wanted(bool on) { raw_wanted = on; }
+void set_log_allowed(bool on) { log_allowed_ = on; }
+bool log_allowed() { return log_allowed_.load(); }
 
 void set_voice_tap_handler(VoiceTapHandler h) {
     std::lock_guard<std::mutex> lk(voice_tap_mu);
@@ -782,8 +784,13 @@ private:
         publish_status();
     }
 
+    // the VFO is set to Log All and logging to disk is allowed: raw frames
+    // and the repeated messages are wanted
+    bool log_all() const { return opts_.log == LOG_ALL && log_allowed_.load(); }
+
     void send_settings(Runner& r) {
-        const int verbose = opts_.verbose ? 1 : 0;
+        // kp::Host::verbose: "Show all messages", or Log All in effect
+        const int verbose = opts_.verbose || log_all() ? 1 : 0;
         if (verbose != r.verbose_sent) {
             std::string kv = std::string("verbose=") + (verbose ? "1" : "0");
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
@@ -812,8 +819,8 @@ private:
             r.rf_sent = rf0;
             r.rf_inv_sent = inv;
         }
-        // raw frames for the decoder data log
-        const int raw = raw_wanted.load() ? 1 : 0;
+        // raw frames for the decoder data log (Log All)
+        const int raw = log_all() ? 1 : 0;
         if (raw != r.raw_sent) {
             std::string kv = std::string("log_raw=") + (raw ? "1" : "0");
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
@@ -1024,7 +1031,7 @@ private:
                 break;
             }
             case W_RAW: {
-                if (!raw_wanted.load() || len == 0) break;
+                if (!log_all() || len == 0) break;
                 LogRecord lr;
                 lr.type = "raw";
                 lr.plugin = r.id;
@@ -1619,6 +1626,7 @@ std::string DigitalDecoder::plugin_id() const {
 void DigitalDecoder::set_options(const Options& o) {
     std::lock_guard<std::mutex> lk(opt_mu_);
     opts_ = o;
+    log_mode_.store(o.log, std::memory_order_relaxed);
 }
 
 Options DigitalDecoder::options() const {
@@ -1850,7 +1858,7 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
           << ",\"state\":\"" << json_escape(voice_state_) << "\"}";
     }
     Options op = options();
-    o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"invert\":" << (op.invert ? "true" : "false")
+    o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"log\":" << op.log << ",\"invert\":" << (op.invert ? "true" : "false")
       << ",\"map\":" << (op.map ? "true" : "false")
       << ",\"plugin\":{";
     first = true;

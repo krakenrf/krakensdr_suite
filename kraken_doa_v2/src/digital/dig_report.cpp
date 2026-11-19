@@ -100,17 +100,31 @@ std::string pct_decode(const std::string& s) {
 }
 }  // namespace
 
+int parse_log_mode(const std::string& v_in) {
+    std::string v;
+    for (char c : v_in) v += static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    if (v == "0" || v == "off") return LOG_OFF;
+    if (v == "1" || v == "log" || v == "on") return LOG_ON;
+    if (v == "2" || v == "all" || v == "log all" || v == "log_all" || v == "logall") return LOG_ALL;
+    return -1;
+}
+
 std::string options_to_string(const Options& o) {
-    std::string s = std::string("v=") + (o.verbose ? "1" : "0") + "&i=" + (o.invert ? "1" : "0");
+    // v: Show all messages (an older kraken_doa's "Log all"); l: the logging mode
+    std::string s = std::string("v=") + (o.verbose ? "1" : "0") + "&i=" + (o.invert ? "1" : "0") +
+                    "&l=" + std::to_string(o.log);
     if (o.map) s += "&m=1";
     for (const auto& kv : o.plugin) s += "&" + kv.first + "=" + pct_encode(kv.second);
     return s;
 }
 
-Options options_from_string(const std::string& s) {
+Options options_from_string(const std::string& s, bool* no_log_key) {
     Options o;
+    if (no_log_key) *no_log_key = false;
     if (s.find('=') == std::string::npos) {
-        // old form: verbose/dmr_slot/p25_nac/invert
+        // old form: verbose/dmr_slot/p25_nac/invert (before the logging mode: Log)
+        o.log = LOG_ON;
+        if (no_log_key) *no_log_key = true;
         int a = 0, b = 0, c = -1, d = 0;
         if (sscanf(s.c_str(), "%d/%d/%d/%d", &a, &b, &c, &d) >= 3) {
             o.verbose = a != 0;
@@ -126,6 +140,7 @@ Options options_from_string(const std::string& s) {
     }
     std::stringstream ss(s);
     std::string kv;
+    int log = -1;   // the logging mode (-1 = stored before it existed)
     while (std::getline(ss, kv, '&')) {
         size_t eq = kv.find('=');
         if (eq == std::string::npos) continue;
@@ -133,10 +148,16 @@ Options options_from_string(const std::string& s) {
         const size_t dot = k.find('.');
         if (dot != std::string::npos) k = renamed_plugin(k.substr(0, dot)) + k.substr(dot);
         if (k == "v") o.verbose = v == "1";
+        else if (k == "l") log = parse_log_mode(v);
         else if (k == "i") o.invert = v == "1";
         else if (k == "m") o.map = v == "1";
         else if (valid_option_key(k) && v.size() <= 100) o.plugin[k] = v;
     }
+    // stored before the logging mode (2026-11-19): Log, the "Log all" tick
+    // (verbose) kept - what the old version wrote (the caller makes it Log
+    // All where the old log types had raw frames)
+    if (log < 0 && no_log_key) *no_log_key = true;
+    o.log = log >= 0 ? log : LOG_ON;
     return o;
 }
 

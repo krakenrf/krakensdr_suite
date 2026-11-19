@@ -923,6 +923,9 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"transcribe\":" << (info.transcribe ? "true" : "false")
              << ",\"digital_mode\":\"" << json_escape(dig::mode_string(static_cast<dig::Mode>(info.digital_mode), info.digital_plugin)) << "\""
              << ",\"digital_opts\":{\"verbose\":" << (info.digital_opts.verbose ? "true" : "false")
+             // the logging mode 0 Off / 1 Log / 2 Log All (a page that finds it
+             // shows the Logging select; an older receiver has none)
+             << ",\"log\":" << info.digital_opts.log
              << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false")
              << ",\"map\":" << (info.digital_opts.map ? "true" : "false") << ",\"plugin\":{";
         bool fo = true;

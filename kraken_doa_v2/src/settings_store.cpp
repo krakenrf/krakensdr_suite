@@ -128,8 +128,11 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // Incident map: addresses in decoder messages are looked up within
         // this many km of the station
         {"geo_radius_km",            "GEO_RADIUS_KM:",            VType::NUMBER, "300"},
-        // Decoder data log (sidebar 🗂 Decoder Logging): the folder first, so
-        // switching it on doesn't create the default folder
+        // Decoder data log (⚙ Setup Settings → Decoder Logging): the folder first, so
+        // switching it on doesn't create the default folder. Of the types only
+        // "voice" (the transcripts' Logging) still decides; each VFO decoder's
+        // Logging is in its options (DECIMATORS). Before DECIMATORS: a "raw"
+        // here makes VFOs stored without a logging mode Log All (migration)
         {"decoder_log_dir",          "DECODER_LOG_DIR:",          VType::STRING, "decoder_logs"},
         {"decoder_log_types",        "DECODER_LOG_TYPES:",        VType::STRING, "event,message,position,incident,voice"},
         {"decoder_log_days",         "DECODER_LOG_DAYS:",         VType::NUMBER, "7"},

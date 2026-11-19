@@ -313,6 +313,15 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .info-dec-settings select,.info-dec-settings input[type="text"] {background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:2px 4px;border-radius:3px;font-size:12px}
 .info-dec-settings .v {color:var(--t3);font-size:11px}
 .dig-vfo-row {padding:3px 0;border-bottom:1px solid var(--s4)}
+/* the decoders' / transcripts' Logging select (digLogCtlHtml, v2tRenderLogSel): greyed while
+   logging to disk is not allowed, the button to the setting right after it */
+.dig-log-l.na,.dig-log-l.na select,.v2t-log-l.na select {color:var(--t5)}
+.dig-log-l + .dig-log-go {margin-left:-8px}
+.dig-log-go {flex:none;padding:0 5px}
+.dig-log-go[hidden] {display:none}
+.info-dec-settings label:has(> input[type="checkbox"]:disabled) {color:var(--t5)}
+.v2t-log-l {display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:12px;color:var(--t3)}
+.v2t-log-l + .dig-log-go {height:26px;margin-left:-2px}
 .dig-inc-row {padding:3px 0}
 .dig-vfo {border-left:3px solid var(--t5);padding:1px 6px;background:var(--s3);border-radius:2px;color:var(--t0);font-family:monospace;white-space:nowrap}
 .dig-vfo-dot {display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
@@ -1215,7 +1224,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .set-dlg .dl-card .wn {display:flex;align-items:flex-start;overflow-wrap:anywhere}
 .set-dlg .dl-card .wn > .ic {margin-top:1px}
 .set-dlg .dl-card .wn.bad {color:var(--bad-t)}
-.set-dlg .dl-card .wn:first-child {margin-top:6px}
+.set-dlg .dl-card .wn:first-child,.set-dlg .dl-card #dl-old {margin-top:6px}
+.set-dlg .dl-card .wn[hidden] {display:none}
 .set-dlg .dl-status {margin:6px 0 0 18px}
 .set-dlg .dl-status .kv.dim > span:last-child {color:var(--t6)}
 .set-dlg .dl-bar {height:6px;background:var(--s2);border:1px solid var(--l1);border-radius:3px;overflow:hidden;margin:1px 0 4px}
@@ -3310,6 +3320,9 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
             <div class="info-row">
               <input type="text" id="v2t-filter" placeholder="Search transcripts…" oninput="v2tRenderTab(true)">
               <select id="v2t-vfo-filter" onchange="v2tRenderTab(true)" title="Only this VFO's transcripts"></select>
+              <!-- the transcripts' Logging (v2tRenderLogSel; the voice member of DECODER_LOG_TYPES) -->
+              <label class="v2t-log-l" id="v2t-lsel-l">Logging <select id="v2t-lsel" onchange="v2tSetLog(this.value)"><option value="0">Off</option><option value="1">Log</option></select></label>
+              <button class="btn sm dig-log-go" type="button" id="v2t-lsel-go" hidden onclick="setDlgOpen('declog')" aria-label="Decoder Logging" title="Logging to disk is not allowed - Setup Settings → Decoder Logging"><svg class="ic" aria-hidden="true"><use href="#i-log"/></svg></button>
               <button class="btn sm" type="button" onclick="v2tExport()" title="Download the transcripts shown as a CSV file (spreadsheet)"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg><span>CSV</span></button>
               <button class="btn sm" type="button" onclick="v2tClear()" title="Delete every transcript and its audio on the receiver">Clear</button>
             </div>
@@ -3571,14 +3584,19 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         <button class="btn sm" type="button" onclick="send('PLUGINS_RESCAN')" title="Re-read the plugins folder (after copying a plugin in and running make)"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg><span>Rescan</span></button></div>
       <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
     </div>
-    <!-- 🗂 Decoder Logging (decoder_log.cpp; dlOnStatus): the master switch with its state,
-         the problems and the status; what to log; how long and where. Each control sends its
-         command at once. A sidebar box (data-sb "decoder-logging") until 2026-11-19 -->
+    <!-- 🗂 Decoder Logging (decoder_log.cpp; dlOnStatus): the master switch - a permission - with
+         its state, the problems and the status (what is logging now); the positions rate, how
+         long and where. What is written is chosen where the data is (2026-11-19): each decoder's
+         Logging in its tab, the transcripts' in the Transcription panel. "What to log" (#dl-types-sec)
+         only for an older receiver, which still obeys it. Each control sends its command at once.
+         A sidebar box (data-sb "decoder-logging") until 2026-11-19 -->
     <div class="set-pane" data-t="declog" role="tabpanel">
       <div class="dig-codec dl-card off" id="dl-card">
-        <div class="h"><span class="i" id="dl-card-i">&#9679;</span><label for="dl-enable" title="Write what the decoders report (the types ticked under What to log) to files on this device's disk">Allow logging to disk</label><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span><span class="u" id="dl-state">&mdash;</span><input type="checkbox" class="sw" id="dl-enable" aria-label="Allow logging to disk" title="Write what the decoders report (the types ticked under What to log) to files on this device's disk" onchange="dlSetEnabled(this.checked)"></div>
+        <div class="h"><span class="i" id="dl-card-i">&#9679;</span><label for="dl-enable" title="Lets the decoders and transcripts set to Log write to files on this device's disk; nothing is written while it is off">Allow logging to disk</label><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Allows the <b>digital decoders</b> and the <b>transcripts</b> to be saved to files <b>on this device's disk</b>; nothing is written while it is off. What is written is chosen where the data is: each decoder's <b>Logging</b> in its tab under the waterfall (<b>Log</b>: its events, text messages, positions and incidents; <b>Log All</b>: those plus raw frames and the messages a control channel repeats constantly), and the <b>Logging</b> of the Transcription panel. One JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (Log All: ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span><span class="u" id="dl-state">&mdash;</span><input type="checkbox" class="sw" id="dl-enable" aria-label="Allow logging to disk" title="Lets the decoders and transcripts set to Log write to files on this device's disk; nothing is written while it is off" onchange="dlSetEnabled(this.checked)"></div>
         <div id="dl-warn"></div>
+        <div id="dl-old" class="wn" hidden><svg class="ic t" aria-hidden="true"><use href="#i-warn"/></svg><span title="The program running on this receiver is older than this page: it logs by the types under What to log. Rebuild it (make in kraken_doa_v2, or install.sh) for a Logging choice on each decoder">Per-decoder logging needs the updated program</span></div>
         <div id="dl-status" class="dl-status">
+          <div class="kv" id="dl-what-row"><span>Logging</span><span id="dl-what">&mdash;</span></div>
           <div class="kv"><span>Folder</span><span id="dl-path">&mdash;</span></div>
           <div class="kv"><span>Disk free</span><span id="dl-free">&mdash;</span></div>
           <div class="dl-bar" title="Disk used"><div id="dl-free-bar"></div></div>
@@ -3589,16 +3607,23 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <div id="dl-note" class="info dl-note"></div>
       </div>
+      <div id="dl-types-sec" hidden>
       <div class="sec"><span>What to log</span></div>
       <div id="dl-types" class="dl-types">
         <label class="ck" title="Each decoder's event log lines (calls, talkgroups, new aircraft, ...)"><input type="checkbox" data-t="event" onchange="dlSetTypes()"><span>Events</span></label>
         <label class="ck" title="Text messages, e.g. POCSAG / FLEX alphanumeric pages (sender + text)"><input type="checkbox" data-t="message" onchange="dlSetTypes()"><span>Text messages</span></label>
-        <label class="ck" title="Positions the decoders put on the map (aircraft, APRS stations, DMR / D-STAR GPS) - each object at most this often"><input type="checkbox" data-t="position" onchange="dlSetTypes()"><span>Positions, every</span><input type="number" id="dl-pos-s" min="1" max="3600" value="10" onclick="event.stopPropagation()" onchange="dlSetPosS()"><span>s</span></label>
+        <label class="ck" title="Positions the decoders put on the map (aircraft, APRS stations, DMR / D-STAR GPS) - each object at most as often as Positions every says"><input type="checkbox" data-t="position" onchange="dlSetTypes()"><span>Positions</span></label>
         <label class="ck" title="Raw frames: ADS-B Mode S messages (hex + level), APRS packets (TNC2), POCSAG / FLEX codewords"><input type="checkbox" data-t="raw" onchange="dlSetTypes()"><span>Raw frames</span><span class="u">(large)</span></label>
         <label class="ck" title="Addresses found in pager messages (incident map)"><input type="checkbox" data-t="incident" onchange="dlSetTypes()"><span>Incidents</span></label>
         <label class="ck" title="What was said on the VFOs with Transcribe ticked (Voice to Text): the text, talker, bearing"><input type="checkbox" data-t="voice" onchange="dlSetTypes()"><span>Voice transcripts</span></label>
       </div>
+      </div>
       <div class="sec"><span>Files</span></div>
+      <div class="lbl" title="A decoder's position of one object (an aircraft, a ship, a station) is written at most this often">Positions every</div>
+      <div class="row">
+        <input type="number" id="dl-pos-s" class="dl-days" min="1" max="3600" value="10" title="1 - 3600 s" onchange="dlSetPosS()">
+        <span class="u">s</span>
+      </div>
       <div class="lbl" title="Days of log files kept; 0 = forever">Keep</div>
       <div class="row">
         <input type="number" id="dl-days" class="dl-days" min="0" max="3650" value="7" title="0 = keep forever" onchange="dlSetDays()">
@@ -3617,7 +3642,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
          and its state. It was a sidebar box (data-sb "voice-to-text") until 2026-11-17 -->
     <div class="set-pane" data-t="v2t" role="tabpanel">
       <div class="dig-codec" id="v2t-card">
-        <div class="h"><span class="i" id="v2t-card-i">…</span><b>Voice to Text</b><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>Transcribe</b> box is ticked (on the VFO cards in the <b>Decimators</b> box) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>Transcription</b> panel under the waterfall (its button is on the right-hand rail) - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the decoder log files while <b>Allow logging to disk</b> is on (the <b>Decoder Logging</b> section, type "Voice transcripts").</span></span><span class="u" id="v2t-card-u">Checking…</span></div>
+        <div class="h"><span class="i" id="v2t-card-i">…</span><b>Voice to Text</b><span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>Transcribe</b> box is ticked (on the VFO cards in the <b>Decimators</b> box) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>Transcription</b> panel under the waterfall (its button is on the right-hand rail) - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the decoder log files while that panel's <b>Logging</b> is <b>Log</b> and <b>Allow logging to disk</b> is on (the <b>Decoder Logging</b> section).</span></span><span class="u" id="v2t-card-u">Checking…</span></div>
         <div id="v2t-install"></div>
       </div>
       <div class="sec"><span>Speech model</span></div>
@@ -4202,6 +4227,13 @@ let fpHover = null;
 // transcripts (oldest first), how many came while the Transcription panel wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
 let v2tStatus = null, v2tList = [], v2tUnseen = 0;
+// 🗂 Decoder Logging (see dlOnStatus): the receiver's last {"declog"} status, the key of its
+// problems / permission the panels were drawn for. The decoder tabs' Logging select
+// (digLogCtlHtml): its options, the Show all messages tick's tooltip. infoRenderDecoder and
+// v2tRenderHead read these - they can run before those sections are evaluated
+let dlState = null, dlProbKey = '';
+const DIG_LOG_MODES = [['0', 'Off'], ['1', 'Log'], ['2', 'Log All']];
+const DIG_VERBOSE_TIP = 'Also show the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)';
 // The decoders' "All decoders" list (see decAllOpen): open or not, the plugin id of its
 // highlighted row (arrow keys / the mouse), the kind of pointer that last pressed its button
 // (touch: the filter box is not focused - no keyboard popping up), its dismissal (popDismiss).
@@ -10381,6 +10413,7 @@ function updateDecimatorList(info) {
 
   decimatorInfo = info;
   decListMode = opMode;   // the cards depend on it (squelch methods offered)
+  if (typeof dlRenderWhat === 'function') dlRenderWhat();   // Setup Settings → Decoder Logging: what is logging
 
   // Drop beamformed overlays for decimators that no longer exist
   if (window.beamformedFFTs) {
@@ -14848,8 +14881,47 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const t = (cur || '').replace(/\s*\(.*\)\s*$/, '');
     return /^(on|off|yes|no)?$/i.test(t) ? '' : ': ' + digEsc(t);
   }
+  // A VFO decoder's Logging select + its Show all messages tick (the head row, 2026-11-19: the
+  // user replaced the "Log all" tick with "Logging: Off / Log / Log All" and kept the tick,
+  // renamed). Logging = what the decoder writes to the decoder log while "Allow logging to
+  // disk" (Setup Settings → Decoder Logging) is on: Log its events, messages, positions and
+  // incidents, Log All those + raw frames + the repeated messages. Not allowed: Log / Log All
+  // greyed, the select shows Off (the stored mode stays and comes back), a button to the
+  // setting beside it. The decoder gets verbose = the tick OR Log All in effect - the tick is
+  // then shown ticked and disabled. An older receiver (no `log` in the options): only the tick.
+  // (DIG_LOG_MODES, DIG_VERBOSE_TIP: the globals block)
+  function digLogCtlHtml(id, o) {
+    const verb = (dis, tip) => `<label title="${digEsc(tip)}"><input type="checkbox" data-key="verbose" ${o.verbose || dis ? 'checked' : ''}${dis ? ' disabled' : ''}` +
+                               ` onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Show all messages</label>`;
+    if (o.log === undefined) return verb(false, DIG_VERBOSE_TIP);   // an older receiver
+    const allowed = dlAllowed(), m = +o.log || 0, shown = allowed ? m : 0;
+    const name = DIG_LOG_MODES[m] ? DIG_LOG_MODES[m][1] : 'Off';
+    const tip = 'What this decoder writes to the decoder log (files on this device)\n' +
+                'Off: nothing\nLog: its events, text messages, positions and incidents\n' +
+                'Log All: Log, plus raw frames and the messages a control channel repeats constantly' +
+                (allowed ? '' : '\n\nLogging to disk is not allowed (Setup Settings → Decoder Logging)' +
+                                (m ? '. Set to ' + name + ': it applies once logging is allowed' : ''));
+    const sel = `<label class="dig-log-l${allowed ? '' : ' na'}" title="${digEsc(tip)}">Logging <select data-key="log" onchange="digSetOptFor(${id}, 'log', this.value)">` +
+                DIG_LOG_MODES.map(([v, t]) => `<option value="${v}"${+v === shown ? ' selected' : ''}${!allowed && v !== '0' ? ' disabled' : ''}>${t}</option>`).join('') +
+                '</select></label>' +
+                (allowed ? '' : `<button class="btn sm dig-log-go" type="button" onclick="setDlgOpen('declog')" aria-label="Decoder Logging" title="Logging to disk is not allowed - Setup Settings → Decoder Logging">${icon('log')}</button>`);
+    const all = allowed && m === 2;
+    return sel + verb(all, all ? 'Log All includes the messages a control channel repeats: shown and written while this decoder logs everything' +
+                                 (o.verbose ? '' : ' (with Log or Off this is unticked again)') : DIG_VERBOSE_TIP);
+  }
+  // logging to disk allowed ("Allow logging to disk"); the receiver knows per-VFO Logging
+  function dlAllowed() { return !!(dlState && dlState.enabled); }
+  function dlPerVfo() { return !!(dlState && dlState.voice !== undefined); }
+  // the transcripts' Logging: Log (the voice member of the old types list)
+  function dlVoice() { return !!dlState && (dlState.voice !== undefined ? !!dlState.voice : (dlState.types || '').split(',').includes('voice')); }
+  // a VFO's decoder logging mode (an older receiver: every decoder follows the types)
+  function digLogModeOf(id) {
+    const d = digDec(id), o = (d && d.digital_opts) || {};
+    return o.log === undefined ? 1 : (+o.log || 0);
+  }
+
   // One VFO's settings row in a tab: VFO + state, mode, Listen, the plugin's
-  // options, Log all, Invert, Plot on map, bandwidth / plugin problems
+  // options, Logging, Show all messages, Invert, Plot on map, bandwidth / plugin problems
   function digVfoRowHtml(id, tab, about = '') {
     const d = digDec(id);
     const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
@@ -14906,8 +14978,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         `<label>Mode <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
         (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${digEsc(listenTip)}">${icon('speaker')}<span>${listening ? 'Listening' : 'Listen'}</span></button>` : '') +
         (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
-        opts +
-        `<label title="Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)"><input type="checkbox" ${o.verbose ? 'checked' : ''} onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Log all</label>` +
+        opts + digLogCtlHtml(id, o) +
         `<label title="For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR."><input type="checkbox" ${o.invert ? 'checked' : ''} onchange="digSetOptFor(${id}, 'invert', this.checked ? 1 : 0)"> Invert</label>` +
         (st && (st.map_capable || st.map_points > 0 || hasMessages)
           ? `<label title="Show this VFO's positions (e.g. aircraft) / incidents on the Map in the right-hand pane"><input type="checkbox" ${o.map === true ? 'checked' : ''} onchange="digSetOptFor(${id}, 'map', this.checked ? 1 : 0); if (this.checked) mapToggle(true)"> ${icon('map', 't')}<span>Plot on map${st.map_points ? ' (' + st.map_points + ')' : ''}</span></label>` +
@@ -14950,8 +15021,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       (decimatorInfo.length ? ' Start on ' + decimatorInfo.map(d =>
         `<button class="btn sm" type="button" onclick="digSetModeFor(${d.id}, 'PLUGIN:${digEsc(tab)}')" title="D${d.id} ${digMhzOf(d.id)} MHz${d.digital_mode && d.digital_mode !== 'OFF' ? ' (now ' + digEsc(digModeLabel(d.digital_mode)) + ')' : ''}">` +
         `<span class="dig-vfo-dot" style="background:${getDecimatorColor(d.id)}"></span>D${d.id}</button>`).join(' ') : '') + `</div>`;
-    // (a decoder log problem: one line under the VFO rows, while a VFO runs this decoder)
-    const top = idle + ids.map((id, i) => digVfoRowHtml(id, tab, i ? '' : about)).join('') + (ids.length ? digLogWarnHtml() : '') +
+    // (a decoder log problem: one line under the VFO rows, while a VFO running this decoder logs)
+    const top = idle + ids.map((id, i) => digVfoRowHtml(id, tab, i ? '' : about)).join('') + digLogWarnHtml(ids) +
       (plugin && plugin.messages ? digIncidentsRow(tab) : '');
     const topEl = $id('info-dec-top');
     // only an input / list being edited (or an open mode list) holds the
@@ -15292,8 +15363,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (ag && F) ag.textContent = `(${F.age_s < 60 ? F.age_s + ' s' : Math.round(F.age_s / 60) + ' min'} ago)`;
   }
 
-  // --- 🗂 Decoder Logging (decoder_log.cpp, {"declog":{...}} every 2 s) ---
-  let dlState = null, dlProbKey = '';
+  // --- 🗂 Decoder Logging (decoder_log.cpp, {"declog":{...}} every 2 s; dlState: the globals block) ---
   function dlBytes(b) {
     b = +b || 0;
     if (b < 1024) return b + ' B';
@@ -15318,9 +15388,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     return out;
   }
   // the decoders panel's line (a decoder's tab, under its VFO rows): the problem and the way
-  // to the section. Logging is one for all decoders, so one line per tab
-  function digLogWarnHtml() {
-    const p = dlProblems(dlState);
+  // to the section. The log is one for all decoders, so one line per tab - while one of the
+  // tab's VFOs (ids) logs (Logging Log / Log All; an older receiver: any)
+  function digLogWarnHtml(ids) {
+    const p = (ids || []).some(id => digLogModeOf(id) > 0) ? dlProblems(dlState) : [];
     if (!p.length) return '';
     return `<div class="dig-warn dig-log-warn"><span title="${escapeHtml(p.map(x => x.text).join('\n'))}">${icon('warn', 't')}<span>Decoder log: ${escapeHtml(p.map(x => x.short).join(' · '))}</span></span>` +
            `<button class="btn sm" type="button" onclick="setDlgOpen('declog')" title="Setup Settings → Decoder Logging">${icon('log')}<span>Decoder Logging</span></button></div>`;
@@ -15400,6 +15471,25 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     e.style.display = ''; e.style.color = '#fb8d85';
     e.innerHTML = icon('warn', 't') + '<span>' + escapeHtml(err) + '</span>';
   }
+  // the card's Logging row: what is logging now - the VFO decoders set to Log / Log All, the
+  // transcripts (dimmed with "when allowed" while logging to disk is not allowed). Also on
+  // every decimator_info (a decoder's Logging changed)
+  function dlRenderWhat() {
+    const row = $id('dl-what-row');
+    if (!row || !dlState) return;
+    row.style.display = dlPerVfo() ? '' : 'none';
+    if (!dlPerVfo()) return;
+    const vf = decimatorInfo.filter(d => d.digital_mode && d.digital_mode !== 'OFF' && d.digital_opts && +d.digital_opts.log > 0);
+    const parts = vf.map(d => 'D' + d.id);
+    if (dlVoice()) parts.push('transcripts');
+    const tip = vf.map(d => `D${d.id} ${digModeLabel(d.digital_mode)}: ${(DIG_LOG_MODES[+d.digital_opts.log] || ['', '?'])[1]}`)
+                  .concat(dlVoice() ? ['Transcripts: Log'] : []).join('\n');
+    const on = dlAllowed();
+    v2tSetHtml($id('dl-what'), parts.length
+      ? `<span title="${escapeHtml(tip + (on ? '' : '\n\nWritten once logging to disk is allowed'))}">${escapeHtml(parts.join(', ').replace(/, transcripts$/, ' · transcripts'))}${on ? '' : ' (when allowed)'}</span>`
+      : `<span title="Pick Log or Log All in a decoder's Logging (its tab under the waterfall), or Log in the Transcription panel">nothing</span>`);
+    row.classList.toggle('dim', !on || !parts.length);
+  }
   function dlOnStatus(d) {
     dlState = d;
     const idle = (el) => el && document.activeElement !== el;
@@ -15445,13 +15535,22 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       v2tSetHtml(tn, probs.length ? icon('warn') : '');
       tn.title = probs.map(p => p.text).join('\n');
     }
-    // the decoders panel and the Transcription panel say so too (redrawn only on a change)
-    const key = probs.map(p => p.err ? p.text : p.short).join('|');   // (not the free bytes: they change every time)
+    // the decoders panel and the Transcription panel say so too, and their Logging selects
+    // follow the permission and the transcripts' switch (redrawn only on a change)
+    const key = probs.map(p => p.err ? p.text : p.short).join('|') +   // (not the free bytes: they change every time)
+                '|' + !!d.enabled + '|' + dlVoice() + '|' + dlPerVfo();
     if (key !== dlProbKey) {
       dlProbKey = key;
       if (typeof infoRenderDecoder === 'function') infoRenderDecoder();
       if (typeof v2tRenderHead === 'function' && infoOpen('voice')) v2tRenderHead();
+      if (typeof v2tRenderBox === 'function' && v2tStatus) v2tRenderBox();
     }
+    // an older receiver logs by the types: its What to log stays, with the line saying so
+    const old = !dlPerVfo();
+    $id('dl-types-sec').hidden = !old;
+    $id('dl-old').hidden = !old;
+    v2tRenderLogSel();
+    dlRenderWhat();
     $id('dl-path').textContent = d.dir_abs || d.dir || '—';
     $id('dl-free').textContent = d.total ? `${dlBytes(d.free)} of ${dlBytes(d.total)}` : 'unknown';
     const used = d.total ? 1 - d.free / d.total : 0;
@@ -15564,6 +15663,26 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     el.textContent = 'Starting the download of ' + n + '…';
     v2tAutoPick = n;
     send('VOICE2TEXT_DOWNLOAD:' + n);
+  }
+  // The Transcription panel's Logging: the transcripts go to the decoder log (Log) or not (Off) -
+  // the voice member of the types list, the others kept as they are (an older receiver still
+  // filters by them). Greyed like a decoder's while logging to disk is not allowed: the select
+  // shows Off, the stored choice comes back once it is allowed
+  function v2tSetLog(v) {
+    const types = new Set(((dlState && dlState.types) || 'event,message,position,incident').split(',').filter(Boolean));
+    if (v === '1') types.add('voice'); else types.delete('voice');
+    send('DECODER_LOG_TYPES:' + [...types].join(','));
+  }
+  function v2tRenderLogSel() {
+    const sel = $id('v2t-lsel'), l = $id('v2t-lsel-l'), go = $id('v2t-lsel-go');
+    if (!sel || !l) return;
+    const allowed = dlAllowed(), on = dlVoice();
+    sel.options[1].disabled = !allowed;
+    if (document.activeElement !== sel) sel.value = allowed && on ? '1' : '0';
+    l.classList.toggle('na', !allowed);
+    l.title = 'Whether the transcripts are written to the decoder log (files on this device)\nOff: not written\nLog: each transcript with its VFO, talker and bearing' +
+              (allowed ? '' : '\n\nLogging to disk is not allowed (Setup Settings → Decoder Logging)' + (on ? '. Set to Log: it applies once logging is allowed' : ''));
+    go.hidden = allowed;
   }
   // the decoder log with voice transcripts: on, keeping the other types
   function v2tLogOn() {
@@ -15734,11 +15853,19 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       (s.failed ? ` · <span style="color:#fb8d85">${s.failed} failed</span>` : ''));
     v2tSetHtml($id('v2t-speed'), s.rtf > 0 ? `<span title="Audio seconds transcribed per second of work (last transmissions)">${(1 / s.rtf).toFixed(1)}× real time</span>` : '');
     // (the files' section is in this dialog: a link to it; a problem of the log shows here too)
+    // (the receiver's log.enabled = allowed and the transcripts at Log; the reasons from dlState.
+    // A receiver with the transcripts' own Logging: "turn on" sets it to Log - allowing logging
+    // to disk is the section's switch; an older one: both at once, as before)
     const lp = s.log && s.log.enabled ? dlProblems(dlState) : [];
+    const perVfo = dlPerVfo();
     v2tSetHtml($id('v2t-log'), s.log && s.log.enabled
       ? (lp.length ? `<a href="#" onclick="setDlgTab('declog');return false" style="color:#f4c170" title="${digEsc(lp.map(p => p.text).join('\n'))}">${icon('warn', 't')}<span>decoder log files</span></a>`
                    : `<span style="color:#7ccd93">${icon('ok', 't')}</span> <a href="#" onclick="setDlgTab('declog');return false" title="Setup Settings → Decoder Logging">decoder log files</a>`)
-      : '<span style="color:#7f8995">off</span> <a href="#" onclick="v2tLogOn();return false" title="Allow logging to disk (Decoder Logging), with voice transcripts">turn on</a>');
+      : perVfo && !dlAllowed()
+        ? `<span style="color:#7f8995" title="Logging to disk is not allowed${dlVoice() ? ' (the transcripts are set to Log: they are written once it is)' : ''}">off</span> <a href="#" onclick="setDlgTab('declog');return false" title="Allow logging to disk: Setup Settings → Decoder Logging">not allowed</a>`
+      : perVfo
+        ? '<span style="color:#7f8995">off</span> <a href="#" onclick="v2tSetLog(\'1\');return false" title="The transcripts\' Logging (the Transcription panel) to Log">turn on</a>'
+        : '<span style="color:#7f8995">off</span> <a href="#" onclick="v2tLogOn();return false" title="Allow logging to disk (Decoder Logging), with voice transcripts">turn on</a>');
     // on the tab: a problem while VFOs are set to transcribe (the box's
     // header badge until 2026-11-17; its VFO count is the VFOs line)
     const tn = $id('set-tab-v2t-n');
@@ -15762,9 +15889,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
           : `Listening on ${s.vfos.map(v => 'D' + v.id).join(', ')}`;
         if (s.queue) h += ` &nbsp;·&nbsp; ${s.queue} waiting`;
       }
-      // the transcripts go to the decoder log and it has a problem (the sidebar box showed it
-      // until 2026-11-19)
-      const lp = dlState && (dlState.types || '').split(',').includes('voice') ? dlProblems(dlState) : [];
+      // the transcripts go to the decoder log (their Logging at Log) and it has a problem (the
+      // sidebar box showed it until 2026-11-19)
+      const lp = dlVoice() ? dlProblems(dlState) : [];
       if (lp.length && !['not installed', 'no model', 'error'].includes(s.state))
         h += ` &nbsp;·&nbsp; <span style="color:#f4c170" title="${digEsc(lp.map(p => p.text).join('\n'))}">${icon('warn', 't')}<span>Decoder log: ${digEsc(lp.map(x => x.short).join(' · '))}</span></span> - ` +
              `<a href="#" onclick="setDlgOpen('declog');return false" title="Setup Settings → Decoder Logging">Decoder Logging</a>`;

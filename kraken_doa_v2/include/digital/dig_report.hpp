@@ -31,18 +31,37 @@ bool valid_plugin_id(const std::string& id);   // [a-z0-9_-]{1,32}, not "sdk"
 // "sfn" -> "dtv", "ctcss" -> "analog_id", "pocsag" -> "pagers"), else the id itself
 std::string renamed_plugin(const std::string& id);
 
-// Options of one VFO's decoder (sidebar settings)
+// The VFO decoder's logging mode (the decoder tab's "Logging"): what it writes
+// to the decoder data log while "Allow logging to disk" is on (decoder_log.cpp)
+enum : int {
+    LOG_OFF = 0,   // nothing
+    LOG_ON = 1,    // "Log": events, text messages, positions, incidents
+    LOG_ALL = 2,   // "Log All": Log + the repeated control-channel messages (the plugin's verbose) + raw frames
+};
+
+// Options of one VFO's decoder (the decoder tab's settings)
 struct Options {
-    bool verbose = false;      // also log repeating broadcasts / idle chatter
+    // "Show all messages" (the "Log all" tick until 2026-11-19): the plugin
+    // also reports the messages a control channel repeats constantly. The
+    // plugin's kp::Host::verbose() = this OR (log == LOG_ALL and logging to
+    // disk allowed)
+    bool verbose = false;
+    // logging mode (LOG_*); a new VFO / decoder starts at Off
+    int log = LOG_OFF;
     bool invert = false;       // spectrum inverted (I/Q swapped source)
     bool map = false;          // plot the decoder's map points on the web UI's 🗺 Map (the decoder tab's "Plot on map")
     // the plugins' own options, "<plugin id>.<key>" -> value
     std::map<std::string, std::string> plugin;
 };
-// Persisted form "v=1&i=0&dmr.slot=1" (values percent-encoded); also reads
-// the old "verbose/slot/nac/invert" form
+// Persisted form "v=1&i=0&l=2&dmr.slot=1" (values percent-encoded; an older
+// kraken_doa ignores "l"). Also reads the old "verbose/slot/nac/invert" form.
+// Options stored before the logging mode existed (no "l") get Log, and
+// *no_log_key is set (the caller migrates: Log All where the old log types
+// had raw frames)
 std::string options_to_string(const Options& o);
-Options options_from_string(const std::string& s);
+Options options_from_string(const std::string& s, bool* no_log_key = nullptr);
+// "0" | "1" | "2" | "off" | "log" | "all" | "log all" | "log_all" (any case) -> LOG_*; -1 = not a mode
+int parse_log_mode(const std::string& v);
 bool valid_option_key(const std::string& k);   // "<plugin id>.<[a-z0-9_]{1,32}>"
 
 int64_t now_ms();

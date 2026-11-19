@@ -385,9 +385,12 @@ active frequency, so that all are heard, decoded and transcribed at once.
   and GPS track; untick "Include the station position" before
   recording something you will share. Format:
   [SIGMF.md](kraken_doa_v2/SIGMF.md).
-- **Decoder Logging** (the ⚙ Setup Settings button, Decoder Logging;
-  switch on "Allow logging to disk"): what the decoders report (events,
-  messages, positions, raw frames, incidents, voice transcripts), one
+- **Decoder Logging**: allow it once (the ⚙ Setup Settings button,
+  Decoder Logging, switch on "Allow logging to disk"), then pick what to
+  keep where the data is: a decoder's **Logging** in its tab under the
+  waterfall - **Log** (its events, messages, positions, incidents) or
+  **Log All** (also raw frames and the messages a control channel repeats)
+  - and the Transcription panel's **Logging** for voice transcripts. One
   JSON-lines file per day in `kraken_doa_v2/decoder_logs/` (or a drive you
   pick), gzipped at midnight and kept 7 days by default.
 - **DoA Recording**: the bearings to CSV or SQLite.

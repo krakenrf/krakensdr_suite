@@ -1833,7 +1833,7 @@ std::string status_message() {
       << json_escape(c.prompt) << "\",\"vad\":" << (c.vad ? "true" : "false") << ",\"translate\":"
       << (c.translate ? "true" : "false") << ",\"keep_audio\":" << (c.keep_audio ? "true" : "false")
       << ",\"model_multi\":" << (model_multilingual(c.model) ? "true" : "false")
-      << ",\"log\":{\"enabled\":" << (declog::type_logged("voice") ? "true" : "false") << "}";
+      << ",\"log\":{\"enabled\":" << (declog::voice_logged() ? "true" : "false") << "}";
     std::lock_guard<std::mutex> lk(s.st_mu);
     o << ",\"state\":\"" << s.state << "\",\"error\":\"" << json_escape(s.last_error) << "\",\"loaded\":\""
       << json_escape(s.loaded) << "\",\"vad_loaded\":" << (s.vad_loaded ? "true" : "false")

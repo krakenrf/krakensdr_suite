@@ -221,12 +221,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   that dialog - the ids stayed, `v2tRenderBox` kept its name: the set-up
   card `#v2t-card` (`v2tRenderSetup`, the box's `?` in its header), model +
   ⬇ Get list, language row only for multilingual models, cores + speed,
-  prompt, VAD / keep switches, status rows, "To disk" + `v2tLogOn` =
-  DECODER_LOG_TYPES + voice, DECODER_LOG:1 (since 2026-11-19 "decoder log
-  files" there is a link to the Decoder Logging section of the same dialog,
-  amber with a ⚠ while the log has a problem - *decoder-log.md*; the
-  Transcription panel's head says "Decoder log: not writing" etc. with a
-  link while transcripts are logged); the box header's badge is a ⚠
+  prompt, VAD / keep switches, status rows, "To disk" (since 2026-11-19
+  "decoder log files" there is a link to the Decoder Logging section of the
+  same dialog, amber with a ⚠ while the log has a problem - *decoder-log.md*;
+  the Transcription panel's head says "Decoder log: not writing" etc. with a
+  link while transcripts are logged; while off: "turn on" sets the
+  transcripts' Logging to Log, "not allowed" goes to the Decoder Logging
+  section; an older receiver: `v2tLogOn` = DECODER_LOG_TYPES + voice,
+  DECODER_LOG:1, as before); the box header's badge is a ⚠
   on the tab, `#set-tab-v2t-n`, while VFOs are ticked and the state is not
   installed / no model / error - its VFO count is the VFOs row; the box's
   "⤢ Transcripts" button went, the rail opens the panel), VFO cards
@@ -242,7 +244,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   strip (`infoRenderTabs`), and 🔐 Decoders shows the decoders' tabs without
   it - *sidebar.md*, "Top bar and rail".
   (`#info-body-voice`, `v2tRenderTab`: newest first, 400 rows, search with
-  `<mark>` on the raw text, VFO filter, ▶ `v2tPlay` - fetch with the token
+  `<mark>` on the raw text, VFO filter, **Logging: Off / Log** after it
+  (2026-11-19, the user: "Add a logging drop down to transcriptions too";
+  `#v2t-lsel`, `v2tRenderLogSel` / `v2tSetLog`: the transcripts to the
+  decoder log or not - the `voice` member of DECODER_LOG_TYPES, stored as
+  before; no Log All, transcription has no repeated messages; greyed with
+  a Decoder Logging button beside it while logging to disk is not allowed -
+  *decoder-log.md*), ▶ `v2tPlay` - fetch with the token
   -> blob -> Audio; a browser without Ogg Opus (`canPlayType`, older
   Safari): `v2tDecodeOgg` (Ogg pages -> packets, pre-skip from OpusHead ->
   the live audio's opus-decoder.min.js) -> WebAudio; the tab's clip line

@@ -135,7 +135,10 @@ std::string num(double v, const char* f) {
 struct State {
     // settings + the buffer (record handler, commands, status)
     std::mutex mu;
-    bool enabled = false;
+    bool enabled = false;   // "Allow logging to disk"
+    // DECODER_LOG_TYPES as last set: only T_VOICE (the transcripts' Logging)
+    // decides anything; T_RAW migrates the VFOs stored before the per-VFO
+    // logging mode (legacy_raw); the rest is kept for the status / an older page
     unsigned types = T_EVENT | T_MESSAGE | T_POSITION | T_INCIDENT | T_VOICE;
     int days = 7;
     int pos_s = 10;
@@ -366,9 +369,14 @@ void start() {
         unsigned bit = 0;
         for (const auto& tn : TYPE_NAMES)
             if (!strcmp(tn.first, r.type)) bit = tn.second;
+        // the VFO decoder's Logging decides: Off nothing, Log what the decoder reports (the
+        // repeated messages only while its "Show all messages" is on), Log All also raw frames
+        // (and the decoder then reports the repeated messages - digital_decoder.cpp)
+        const int mode = d ? d->log_mode() : dig::LOG_OFF;
+        if (mode == dig::LOG_OFF || !bit || (bit == T_RAW && mode != dig::LOG_ALL)) return;
         const int vfo = d ? d->vfo() : -1;
         std::lock_guard<std::mutex> lk(s.mu);
-        if (!s.enabled || !(s.types & bit)) return;
+        if (!s.enabled) return;
         std::string line = head(vfo, r.rf_hz, r.plugin, r.type);
         if (bit == T_POSITION && r.point) {
             const dig::MapPoint& p = *r.point;
@@ -426,7 +434,7 @@ void set_enabled(bool on) {
     std::lock_guard<std::mutex> lk(s.mu);
     if (on && !s.enabled) s.since_ms = 0;
     s.enabled = on;
-    dig::set_raw_wanted(on && (s.types & T_RAW));
+    dig::set_log_allowed(on);   // Log All's raw frames / repeated messages
 }
 
 bool set_types(const std::string& csv) {
@@ -443,8 +451,13 @@ bool set_types(const std::string& csv) {
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
     s.types = t;
-    dig::set_raw_wanted(s.enabled && (t & T_RAW));
     return true;
+}
+
+bool legacy_raw() {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return (s.types & T_RAW) != 0;
 }
 
 void set_days(int days) {
@@ -523,12 +536,13 @@ bool set_dir(const std::string& path_in, std::string* err) {
     return true;
 }
 
-void record_incident(int vfo, const std::string& plugin, const std::string& address, double lat, double lon,
-                     const std::string& precision, const std::string& confidence, const std::string& text) {
+void record_incident(int vfo, int log_mode, const std::string& plugin, const std::string& address, double lat,
+                     double lon, const std::string& precision, const std::string& confidence, const std::string& text) {
     if (playback::active()) return;
+    if (log_mode == dig::LOG_OFF) return;   // the source VFO's Logging decides (Log / Log All)
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
-    if (!s.enabled || !(s.types & T_INCIDENT)) return;
+    if (!s.enabled) return;
     append_locked(s, head(vfo, 0, plugin, "incident") + ",\"address\":\"" + json_escape(address) + "\",\"lat\":" +
                          num(lat, "%.6f") + ",\"lon\":" + num(lon, "%.6f") + ",\"precision\":\"" +
                          json_escape(precision) + "\",\"confidence\":\"" + json_escape(confidence) +
@@ -555,12 +569,10 @@ int keep_days() {
     return s.days;
 }
 
-bool type_logged(const std::string& type) {
+bool voice_logged() {
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
-    for (const auto& tn : TYPE_NAMES)
-        if (type == tn.first) return s.enabled && (s.types & tn.second);
-    return false;
+    return s.enabled && (s.types & T_VOICE);
 }
 
 std::string status_message() {
@@ -591,8 +603,10 @@ std::string status_message() {
     const int64_t elapsed = std::min<int64_t>(since_midnight, t - (s.since_ms ? s.since_ms : t));
     const double per_day = s.enabled && elapsed > 60000 ? static_cast<double>(today_b) / elapsed * 86400000.0 : 0;
     std::ostringstream o;
+    // voice: the transcripts' Logging (a page that finds it knows the VFO decoders have a
+    // Logging of their own - an older receiver filtered by the types instead)
     o << "{\"declog\":{\"enabled\":" << (s.enabled ? "true" : "false") << ",\"types\":\"" << types
-      << "\",\"days\":" << s.days << ",\"pos_s\":" << s.pos_s << ",\"flush_s\":" << FLUSH_S << ",\"dir\":\""
+      << "\",\"voice\":" << ((s.types & T_VOICE) ? "true" : "false") << ",\"days\":" << s.days << ",\"pos_s\":" << s.pos_s << ",\"flush_s\":" << FLUSH_S << ",\"dir\":\""
       << json_escape(s.dir) << "\",\"dir_abs\":\"" << json_escape(dir_abs) << "\",\"free\":" << (have_space ? fr : 0)
       << ",\"total\":" << (have_space ? tot : 0) << ",\"today\":\"" << local_date(tt) << "\",\"today_bytes\":" << today_b
       << ",\"per_day\":" << static_cast<uint64_t>(per_day) << ",\"files\":" << s.files << ",\"total_bytes\":"

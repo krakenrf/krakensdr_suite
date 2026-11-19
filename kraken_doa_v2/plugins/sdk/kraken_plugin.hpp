@@ -292,7 +292,9 @@ public:
     // Measured carrier offset (Hz, + = signal above the VFO centre). The host
     // slowly steers its frequency correction from it. Optional.
     virtual void freq_error(float hz) = 0;
-    virtual bool verbose() const = 0;        // sidebar "verbose" option
+    // also report the messages a control channel repeats constantly: the
+    // decoder tab's "Show all messages", or its Logging at "Log All"
+    virtual bool verbose() const = 0;
     virtual bool voice_wanted() const = 0;   // someone is listening
     // Seconds of input processed so far (sample clock - deterministic in
     // offline tests, unlike the wall clock)
@@ -311,8 +313,8 @@ public:
     // station) and puts the incident on the 🗺 Map. from = who sent / was
     // paged ("RIC 1234567"). Set Info::messages.
     virtual void message(const std::string& from, const std::string& text) { (void)from; (void)text; }
-    // A raw frame for the decoder data log (sidebar → Decoder Logging, "Raw
-    // frames"): one line of text - e.g. a Mode S message in hex, an APRS
+    // A raw frame for the decoder data log (the VFO's Logging set to "Log
+    // All", logging to disk allowed): one line of text - e.g. a Mode S message in hex, an APRS
     // packet in TNC2 format. Only while raw_wanted() (it costs CPU / disk).
     virtual bool raw_wanted() const { return false; }
     virtual void raw(const std::string& data) { (void)data; }

@@ -509,7 +509,13 @@ static bool apply_decimator_snapshot(const string& snap) {
             // or the old "verbose/slot/nac/invert")
             string tok;
             if (getline(es, tok, ',') && !dig::parse_mode_string(tok, &v.digital, &v.plugin)) v.digital = dig::Mode::OFF;
-            if (getline(es, tok, ',')) v.dopts = dig::options_from_string(tok);
+            if (getline(es, tok, ',')) {
+                // options stored before the logging mode (2026-11-19) get Log; Log All where the
+                // old log types had raw frames (DECODER_LOG_TYPES is replayed before DECIMATORS)
+                bool no_log_key = false;
+                v.dopts = dig::options_from_string(tok, &no_log_key);
+                if (no_log_key && declog::legacy_raw()) v.dopts.log = dig::LOG_ALL;
+            }
             // optional (newer files): the VFO's tuner (wideband / independent mode)
             if (getline(es, tok, ',') && !tok.empty()) v.tuner = std::clamp(stoi(tok), 0, MAX_CHANNELS - 1);
             // optional (newer files): Voice to Text on this VFO
@@ -2027,7 +2033,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         record_decimator_snapshot();
     }
     else if (message.starts_with("DIGITAL_OPT:")) {
-        // Format: DIGITAL_OPT:id:key:value - verbose 0|1, invert 0|1, map 0|1 (Plot on map), or a
+        // Format: DIGITAL_OPT:id:key:value - verbose 0|1 (Show all messages), log 0|1|2 (Logging:
+        // Off / Log / Log All; also the words off, log, all), invert 0|1, map 0|1 (Plot on map), or a
         // plugin's own option "<plugin id>.<key>" (value "" = its default;
         // the plugin checks the value). Old keys: dmr_slot, p25_nac
         string params = string(message.substr(12));
@@ -2046,6 +2053,12 @@ void ControlHandler::handle_message_impl(string_view message) {
             if (val == "any" || val == "-1") val.clear();
         }
         if (key == "verbose") o.verbose = val == "1";
+        else if (key == "log") {
+            const int m = dig::parse_log_mode(val);
+            if (m < 0) throw CommandRejected("log must be 0 (Off), 1 (Log) or 2 (Log All)");
+            o.log = m;
+            g_applied_cmd = "DIGITAL_OPT:" + to_string(id) + ":log:" + to_string(m);
+        }
         else if (key == "invert") o.invert = val == "1";
         else if (key == "map") {
             o.map = val == "1";
@@ -2097,13 +2110,18 @@ void ControlHandler::handle_message_impl(string_view message) {
         for (const auto& m : rec::tick_messages()) broadcast(m);
     }
     else if (message.starts_with("DECODER_LOG:")) {
-        // Decoder data log (sidebar 🗂 Decoder Logging, decoder_log.cpp)
+        // Decoder data log (⚙ Setup Settings → Decoder Logging, decoder_log.cpp): "Allow logging
+        // to disk" - what is written is each VFO decoder's Logging (DIGITAL_OPT:id:log) and the
+        // transcripts' (the voice member of DECODER_LOG_TYPES)
         const bool on = parse_int(message, 12) != 0;
         declog::set_enabled(on);
         g_applied_cmd = string("DECODER_LOG:") + (on ? "1" : "0");
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_TYPES:")) {
+        // the transcripts' Logging (the Transcription panel): only "voice" counts since
+        // 2026-11-19; the other names (an older page's What to log ticks) are accepted and
+        // kept as sent, but chosen per VFO now ("raw" only migrates the stored VFOs)
         if (!declog::set_types(string(message.substr(18)))) throw CommandRejected("unknown log type");
         broadcast(declog::status_message());
     }
@@ -2219,7 +2237,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         rdfmap::request_full();   // a page opening the map: every VFO's heat map next push
     }
     else if (message == "GET_DECODER_LOG") {
-        broadcast(declog::status_message());   // a page opening the sidebar section
+        broadcast(declog::status_message());   // a page opening (Setup Settings → Decoder Logging)
     }
     else if (message == "INCIDENTS_CLEAR") {
         incidents::clear();

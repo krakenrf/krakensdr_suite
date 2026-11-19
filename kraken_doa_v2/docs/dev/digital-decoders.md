@@ -193,16 +193,33 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   label / value table in `.dig-det-box` - sticky left, `100cqw` of the
   `.dig-table-wrap` container, so a table wider than the panel doesn't
   push them out of view)
-- Options (`dig::Options`): verbose, invert (host side: conj before the
-  mixer), map ("Plot on map", default OFF - the user ticks it in the
-  decoder tab; persisted as `&m=1`; `DIGITAL_OPT:id:map:0|1` also asks for
-  a full map push) + `plugin`
+- Options (`dig::Options`): verbose ("Show all messages" - "Log all"
+  until 2026-11-19), log (the logging mode, 0 Off / 1 Log / 2 Log All,
+  2026-11-19 - *decoder-log.md*; a new VFO / decoder starts at Off), invert
+  (host side: conj before the mixer), map ("Plot on map", default OFF - the
+  user ticks it in the decoder tab; persisted as `&m=1`;
+  `DIGITAL_OPT:id:map:0|1` also asks for a full map push) + `plugin`
   {"<id>.<key>": value} - the plugins' declared options,
   sent to the plugin as OPTION key=value ("" = back to its default).
-  `DIGITAL_OPT:id:verbose|invert|<id>.<key>:value` (old keys dmr_slot /
-  p25_nac map to dmr.slot / p25.nac). Persisted as the snapshot field
-  `v=1&i=0&dmr.slot=1` (values percent-encoded; the old `v/slot/nac/inv` form
-  still loads). The panel shows a plugin's options while it is selected, or
+  `DIGITAL_OPT:id:verbose|log|invert|<id>.<key>:value` (log: 0 / 1 / 2 or
+  off / log / all; old keys dmr_slot / p25_nac map to dmr.slot / p25.nac).
+  Persisted as the snapshot field `v=1&i=0&l=1&dmr.slot=1` (values
+  percent-encoded; the old `v/slot/nac/inv` form still loads; without `l` -
+  stored by an older version - the VFO gets Log, or Log All where the old
+  log types had `raw`). Both go to the page in `digital_opts` (decimator
+  info) and the status' `opts`; a page that finds no `log` there talks to
+  an older receiver. **What the plugin gets as `verbose`**
+  (`kp::Host::verbose()`, the OPTION verbose=0|1, `Engine::send_settings`):
+  the VFO's verbose OR (log = Log All AND "Allow logging to disk" on,
+  `dig::set_log_allowed`) - so Log All writes the repeated messages, and
+  they are on screen then too. The host can't keep "verbose-only" reports
+  apart from the others (the wire EVENT carries a de-duplication time and
+  the text, nothing else; plugins just don't send them without verbose), so
+  writing them without showing them would need a plugin-API change. Told
+  that Log All would otherwise be the only way to see them, the user asked
+  for the separate tick: "Yes add a seperate show all messages checkbox
+  too" (2026-11-19). Raw frames (OPTION log_raw=1,
+  W_RAW accepted) only under Log All with logging allowed. The panel shows a plugin's options while it is selected, or
   in AUTO once AUTO detected it. An option whose two choices are exactly
   "0" / "1" is an on / off button (`digVfoRowHtml`, `.dig-opt-tog`: "● Label:
   On" highlighted / "○ Label: Off", the choice's text without a trailing
@@ -320,11 +337,19 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (`digVfoRowHtml`: coloured VFO + MHz + state, mode, Listen - only for
   voice decoders, `kp::Info::voice` (p25 dmr dstar nxdn tetra; `digHasVoice`:
   in AUTO the detected plugin, else any ticked one) -, the plugin's options -
-  in AUTO those of the detected plugin -, verbose, invert, Plot on map,
-  bandwidth / plugin problems), a decoder log problem (`digLogWarnHtml`,
+  in AUTO those of the detected plugin -, then `digLogCtlHtml`: **Logging**
+  (a select: Off / Log / Log All - the user's words, 2026-11-19, in place
+  of the "Log all" tick; greyed while logging to disk is not allowed: Log /
+  Log All disabled options, the select showing Off whatever is stored, a
+  small Decoder Logging button beside it, the tooltip naming the stored
+  mode) and **Show all messages** (the verbose tick, "Log all" until then;
+  ticked and disabled while Log All is in effect, its tooltip saying why;
+  the stored value comes back after), then Invert, Plot on map,
+  bandwidth / plugin problems; an older receiver - no `log` in the options
+  - gets the tick only), a decoder log problem (`digLogWarnHtml(ids)`,
   one line under the rows while logging is on and not writing / dropping /
-  the disk is nearly full, with a button to Setup Settings' Decoder Logging
-  - *decoder-log.md*), the incident row (messages plugins), the
+  the disk is nearly full and one of the tab's VFOs logs, with a button to
+  Setup Settings' Decoder Logging - *decoder-log.md*), the incident row (messages plugins), the
   tables (below), per VFO a status + facts block (`digFactsHtml(id, tab)`:
   only that plugin's facts / frames), the first
   plugin stderr, and ONE event log merged from every VFO (`digTabEvents`:

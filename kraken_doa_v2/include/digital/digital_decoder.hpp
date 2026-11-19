@@ -55,9 +55,12 @@ struct LogRecord {
 };
 using RecordHandler = std::function<void(DigitalDecoder* dec, const LogRecord& r)>;
 void set_record_handler(RecordHandler h);
-// Raw frames wanted (the log's "Raw frames" type is on): passed to the
-// plugins as the OPTION log_raw=0|1 (kp::Host::raw_wanted)
-void set_raw_wanted(bool on);
+// "Allow logging to disk" (decoder_log.cpp). A decoder whose VFO is set to
+// Log All (Options::log) then gets raw frames - the OPTION log_raw=1
+// (kp::Host::raw_wanted) - and verbose=1 (kp::Host::verbose, also on with
+// the VFO's "Show all messages"); otherwise log_raw=0 and verbose = that tick
+void set_log_allowed(bool on);
+bool log_allowed();
 
 // 🗣 Voice to Text (voice2text.cpp): the decoded voice of decoders whose
 // voice tap is on (DigitalDecoder::set_voice_tap - the VFO's "Transcribe"),
@@ -167,6 +170,9 @@ public:
     void set_takes_voice(bool on) { takes_voice_.store(on, std::memory_order_relaxed); }   // Engine
     void set_options(const Options& o);
     Options options() const;
+    // Options::log (LOG_*) without the lock and copy - the decoder log's
+    // record handler asks it per record
+    int log_mode() const { return log_mode_.load(std::memory_order_relaxed); }
 
     // Decimation pipeline: queue a block (copied; never blocks). rf_hz = the
     // VFO's RF centre - a change of more than 100 Hz resets the decoders.
@@ -241,6 +247,7 @@ private:
     std::atomic<bool> reset_pending_{false};   // set_mode -> worker reconfigures + resets
     mutable std::mutex opt_mu_;
     Options opts_;
+    std::atomic<int> log_mode_{LOG_OFF};   // = opts_.log
     std::string plugin_id_;            // Mode::PLUGIN (opt_mu_)
     Report report_;
     std::unique_ptr<Engine> engine_;   // only touched by the worker (or process())

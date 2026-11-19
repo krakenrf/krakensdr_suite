@@ -283,7 +283,7 @@ bool handle(State& s, const Msg& m) {
             }
             char d[32];
             snprintf(d, sizeof d, "%.1f km", geo::distance_km(st_lat, st_lon, r.lat, r.lon));
-            declog::record_incident(vfo, m.plugin, r.address + (r.cross.empty() ? "" : " / " + r.cross) +
+            declog::record_incident(vfo, dd->log_mode(), m.plugin, r.address + (r.cross.empty() ? "" : " / " + r.cross) +
                                                        (r.area.empty() ? "" : ", " + r.area),
                                     r.lat, r.lon, r.precision, r.confidence, m.text);
             ev = "📍 Incident: " + r.address + (r.cross.empty() ? "" : " / " + r.cross) +

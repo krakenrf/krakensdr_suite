@@ -84,7 +84,11 @@ the internet and writes / changes decoder plugins):
     recalibration ended), `set_gain`, `add_vfo`, `set_vfo` (freq, bandwidth
     -> any whole Hz / a decoder's minimum (the narrowest efficient size), demod, decoder - fixed-
     frequency and `lock_vfo` decoders handled the way the page does it -,
-    squelch, listen, transcribe), `set_decoder_option`, `remove_vfo`,
+    squelch, listen, transcribe), `set_decoder_option` (a plugin's option
+    key, or the decoder tab's own: `log` - the Logging, 0 / off, 1 / log,
+    2 / all = Off / Log / Log All, 2026-11-19, *decoder-log.md* -,
+    `verbose` - Show all messages, 1 / 0, unchanged -, `invert`, `map`;
+    the receiver checks the value, a bad `log` is refused), `remove_vfo`,
     `set_doa` (on is refused with generic RTL-SDRs: no coherent mode -
     get_screen `receiver.generic_rtlsdr` / `coherent_available:false`;
     *Operating modes*), `save_frequency` (SF_SET, id `ai<ms>`). There is no

@@ -262,7 +262,7 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.audio_channel(ch)` | optional: the talker channel (`kp::Talker::channel`, e.g. the DMR timeslot) the following `audio()` is from, when several transmissions run at once and you play one - Voice to Text then names the radio on that channel. Call it when it changes; -1 = unknown |
 | `host.voice_state(s)` | short call status shown next to the Listen button |
 | `host.freq_error(hz)` | measured carrier offset (+ = above the VFO centre): the host slowly re-centres the input. Optional |
-| `host.verbose()` | the panel's "Log all messages" option |
+| `host.verbose()` | also report the messages a control channel repeats constantly: the decoder tab's "Show all messages" tick, or its Logging at "Log All" (while logging to disk is allowed) |
 | `host.time()` | seconds of input processed so far (sample clock) - use it for timeouts, not the wall clock |
 | `host.sample_rate()` | the rate `process()` gets (Hz): `Info::sample_rate`, or the VFO's for a plugin that declares 0 |
 | `host.log(text)` | debug output (stderr) |
@@ -276,7 +276,7 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.table_keep(seconds)` | how long a row stays without an update (60 s .. 7 days, default 10 min) - things that report rarely want long (ism: its "Keep devices" option, 24 h) |
 | `host.table_detail(key, lines)` | a row's details: label / value pairs the panel shows when the row is opened (▸) |
 | `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
-| `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
+| `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the VFO's Logging is "Log All") |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
 
@@ -290,10 +290,12 @@ kraken_doa finds a street address in the text and looks it up online
 the decoder's tab and, with "Plot on map", on the 🗺 Map. The plugin needs
 no map code (and must not use the network itself).
 
-**Decoder data log.** The user can log what every decoder reports to
-disk (⚙ Setup Settings → Decoder Logging, one JSON Lines file per day): your
-events, text messages and map points are logged without any code in the
-plugin. Raw frames are the one thing to add: while `host.raw_wanted()` is
+**Decoder data log.** The user can log what a decoder reports to disk (the
+decoder tab's Logging: Log / Log All, while ⚙ Setup Settings → Decoder
+Logging allows it; one JSON Lines file per day): your events, text messages
+and map points are logged without any code in the plugin. Under "Log All"
+`host.verbose()` is on too, so the messages you only report with verbose
+are written then. Raw frames are the one thing to add: while `host.raw_wanted()` is
 true, pass each frame that passed its checks to `host.raw(text)` - one line,
 printable, compact (hex for binary frames, e.g. ADS-B `"8D4840D6... -14.8"`
 = the Mode S message + level in dB; APRS the TNC2 packet; pagers "POCSAG

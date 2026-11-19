@@ -638,11 +638,17 @@ downwards without a limit worth worrying about, a strip does not. So:
   card in the codecs' look (`#dl-card`) holding the master switch - renamed
   from "Log to disk" to **"Allow logging to disk"**, the user's wording -
   with its state beside it (`#dl-state`: Off / Logging / Not writing), the
-  box's `?`, the problems as warning lines and the status rows (Folder,
-  Disk free + its bar, Today, Per day, All logs, Disk lasts; `.kv`); then
-  *What to log* - the ticks in two columns (one on a phone), Positions with
-  its seconds field inline; then *Files* - Keep (days) and Save to (the
-  drive list, the folder + Apply) as labelled fields. Each control acts at
+  box's `?`, the problems as warning lines and the status rows (Logging -
+  what is logging now, "D0, D2 · transcripts" -, Folder, Disk free + its
+  bar, Today, Per day, All logs, Disk lasts; `.kv`); then *Files* -
+  Positions every (s), Keep (days) and Save to (the drive list, the folder
+  + Apply) as labelled fields. *What to log* (the type ticks in two
+  columns, one on a phone) was removed on 2026-11-19 at the user's request:
+  the switch is a permission and what is written is chosen where the data
+  is - each decoder's Logging (Off / Log / Log All) in its tab, the
+  transcripts' in the Transcription panel (*decoder-log.md*); the block
+  shows only for an older receiver, which still obeys it, with the line
+  "Per-decoder logging needs the updated program". Each control acts at
   once, as in the box (Apply stays the folder's). A problem while logging
   is on (not writing, records dropped, the disk nearly full) puts a ⚠ on
   the section's row (`#set-tab-declog-n`) and a line with a Decoder
