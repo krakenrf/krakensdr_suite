@@ -21762,6 +21762,13 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (!c.group) return 'Unit ' + c.target;
     return c.target_name ? c.target_name : 'TG ' + c.target;
   }
+  // text from the air / a plugin / a user inside a sentence: cut, escaped, isolated (a right-to-left override in it stays in it)
+  function tkBdi(t, max) {
+    t = String(t || '');
+    const a = [...t];
+    if (max && a.length > max) t = a.slice(0, max - 1).join('') + '…';
+    return '<bdi>' + digEsc(t) + '</bdi>';
+  }
   function tkWhy(code) { return TK_WHY[code] || [code ? code.replace(/_/g, ' ') : '', '']; }
   // a talkgroup's mode from the system's lists (null = not known yet)
   function tkTgMode(sys, tg) {
@@ -21876,7 +21883,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       if (m.hold) {
         const s = tkSys(m.hold.sys);
         const L = tkLists[m.hold.sys], t = L && (L.tgs || []).find(x => x.id === m.hold.tg);
-        h = icon('pause', 't') + `<span>Holding on <b>${digEsc(t && t.name ? t.name : 'TG ' + m.hold.tg)}</b>${s ? ' · ' + digEsc(tkSysName(s)) : ''}</span>` +
+        h = icon('pause', 't') + `<span>Holding on <b>${tkBdi(t && t.name ? t.name : 'TG ' + m.hold.tg, 40)}</b>${s ? ' · ' + tkBdi(tkSysName(s), 40) : ''}</span>` +
             '<button type="button" class="btn sm" onclick="tkSend(\'TRUNK_HOLD:\')" title="Follow every talkgroup again">Release</button>';
       }
       if (hd.dataset.html !== h) { hd.dataset.html = h; hd.innerHTML = h; }
@@ -21900,7 +21907,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const note = (key, hold, cls, ic, html, tip, btn) => cur.set(key, {hold, order: order++,
       h: `<div class="tk-note ${cls}" data-k="${digEsc(key)}"${tip ? ` title="${digEsc(tip)}"` : ''}>${icon(ic)}<span>${html}</span>${btn || ''}</div>`});
     if (m.playback) note('pb', false, 'p', 'tape', 'Playback: nothing found is kept', 'While a debug playback or a recording plays, the systems, talkgroups and channels it brings are a sandbox: gone when it ends');
-    if (m.paused) note('paused', false, 'w', 'pause', 'Paused: the ' + digEsc(m.paused_why || 'scanner') + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
+    if (m.paused) note('paused', false, 'w', 'pause', 'Paused: the ' + tkBdi(m.paused_why || 'scanner', 40) + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
     const systems = tkShownSystems();
     const live = systems.filter(s => (s.control || []).length);
     if (!live.length) {
@@ -21914,7 +21921,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         '. DMR, NXDN and MPT1327 systems need their channel frequencies entered (the system\'s Edit, once it shows)');
     }
     for (const s of live) {
-      const name = digEsc(tkSysName(s));
+      const name = tkBdi(tkSysName(s), 40);
       // the calls the receiver still lists (up to 30 s after their end): the
       // notes stay while calls keep running into the same problem, they don't
       // flash on and off with each call
@@ -21923,7 +21930,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       // channels without a frequency (less those the channel table has one for by now)
       const un = tkMissing(s.id), nu = un.length;
       if (nu) {
-        const list = un.slice(0, 4).map(u => digEsc(u.ch)).join(', ') + (nu > 4 ? ' …' : '');
+        const list = un.slice(0, 4).map(u => tkBdi(u.ch, 16)).join(', ') + (nu > 4 ? ' …' : '');
         note('miss:' + s.id, false, 'w', 'warn', `${name}: ${nu} channel${nu === 1 ? '' : 's'} without a frequency (${list})`,
           'The system grants these channels by number only. Enter their frequencies - one rule often covers all - and their calls are followed',
           `<button type="button" class="btn sm" onclick="tkDlgOpen('${digEsc(s.id)}','ch')">Enter</button>`);
@@ -21954,7 +21961,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
           '<button type="button" class="btn sm" onclick="setDlgOpen(\'dec\')">Decoders</button>');
       }
       for (const c of s.control || []) {
-        if (c.note) note('cnote:' + c.vfo, true, 'w', 'warn', `D${c.vfo}: ${digEsc(c.note)}`, 'The control channel moved and its VFO could not follow');
+        if (c.note) note('cnote:' + c.vfo, true, 'w', 'warn', `D${c.vfo}: ${tkBdi(c.note, 120)}`, 'The control channel moved and its VFO could not follow');
       }
     }
     for (const [k, n] of cur) tkNoteKeep.set(k, {h: n.h, order: n.order, until: n.hold ? now + TK_NOTE_HOLD_MS : 0});
