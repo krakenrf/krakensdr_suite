@@ -3163,9 +3163,9 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         <div class="tk-hold" id="tk-hold"></div>
         <div id="tk-notes"></div>
         <div id="tk-systems"></div>
-        <div class="sb-sub">Calls<span class="sf-count" id="tk-calls-n"></span></div>
+        <div class="sb-sub tk-below">Calls<span class="sf-count" id="tk-calls-n"></span></div>
         <div class="tk-list" id="tk-calls"></div>
-        <div class="sb-sub">Recent<span class="sf-count" id="tk-hist-n"></span></div>
+        <div class="sb-sub tk-below">Recent<span class="sf-count" id="tk-hist-n"></span></div>
         <div class="tk-list hist" id="tk-hist"></div>
       </div>
     </div>
@@ -21908,7 +21908,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   // notes keep their number: the lists under them must not jump
   const TK_NOTE_HOLD_MS = 20000;
   const tkNoteKeep = new Map();   // key -> {h, until, order}
-  let tkBoxHover = false;
+  let tkBoxHover = false, tkHoverSince = 0;
+  const TK_HOVER_MAX_MS = 15000;
+  function tkHeld() { return tkBoxHover && Date.now() - tkHoverSince < TK_HOVER_MAX_MS; }
   function tkRenderNotes() {
     const el = $id('tk-notes');
     if (!el) return;
@@ -21983,7 +21985,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     for (const [k, n] of [...tkNoteKeep]) if (!cur.has(k) && n.until <= now) tkNoteKeep.delete(k);
     const keys = [...tkNoteKeep.keys()].sort((a, b) => tkNoteKeep.get(a).order - tkNoteKeep.get(b).order);
     // the pointer in the box: a note may change its text, not come or go
-    if (tkBoxHover && keys.join('|') !== (el.dataset.keys || '')) return;
+    if (tkHeld() && keys.join('|') !== (el.dataset.keys || '')) return;
     const h = keys.map(k => tkNoteKeep.get(k).h).join('');
     if (el.dataset.html !== h) { el.dataset.html = h; el.dataset.keys = keys.join('|'); el.innerHTML = h; }
   }
@@ -22034,7 +22036,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const on = all.filter(s => (s.control || []).length), off = all.filter(s => !(s.control || []).length);
     const rows = on.concat(off);
     // the pointer in the box: the systems keep their rows (their text still changes)
-    if (tkBoxHover && rows.map(s => s.id).join('|') !== [...el.children].map(c => c.dataset.id).join('|')) {
+    if (tkHeld() && rows.map(s => s.id).join('|') !== [...el.children].map(c => c.dataset.id).join('|')) {
       const keep = rows.filter(s => el.querySelector(`.tk-sys[data-id="${CSS.escape(s.id)}"]`));
       rows.length = 0;
       rows.push(...keep, ...[...el.children].map(c => c.dataset.id).filter(id => !keep.some(s => s.id === id)).map(id => ({id, control: [], counts: {}, gone: true})));
@@ -22210,10 +22212,18 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   }
   // no row leaves while the pointer is on the list (a click must not land on another call)
   (function () {
+    // the pointer on what lies below the notes (systems, calls, recent): a note coming or going
+    // would move it - held back while the pointer is there, at most TK_HOVER_MAX_MS
     const sec = $id('tk-section');
     if (sec) {
-      sec.addEventListener('pointerenter', () => { tkBoxHover = true; });
-      sec.addEventListener('pointerleave', () => { tkBoxHover = false; tkRenderNotes(); tkRenderSystems(); });
+      const set = on => {
+        if (on === tkBoxHover) return;
+        tkBoxHover = on;
+        tkHoverSince = on ? Date.now() : 0;
+        if (!on) { tkRenderNotes(); tkRenderSystems(); }
+      };
+      sec.addEventListener('pointermove', e => set(!!(e.target.closest && e.target.closest('#tk-systems, #tk-calls, #tk-hist, .tk-below'))));
+      sec.addEventListener('pointerleave', () => set(false));
     }
     const el = $id('tk-calls');
     if (!el) return;
