@@ -308,7 +308,9 @@ What each protocol needs:
   frequency for, the box says which ones; **Enter** opens the channel table
   with those channels on top and a rule form that shows what each would get.
   Channels the system announces, and ones the receiver sees a call on twice,
-  fill in by themselves.
+  fill in by themselves. A system's table can also be entered before it is
+  heard: the box's ⚙ → **System ahead**, with the system's key as its
+  decoder reports it.
 - **No retuning.** Calls are followed inside the band the receiver takes in
   now. Calls outside it are counted, and **Centre** retunes to the
   frequency that holds the control channels and most of the system's

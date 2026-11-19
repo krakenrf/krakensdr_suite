@@ -1228,6 +1228,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .tk-menu .h {padding:3px 10px 4px;color:var(--t4);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
 .tk-menu button {display:flex;align-items:center;width:100%;gap:6px;background:none;border:0;color:var(--t0);font:inherit;text-align:left;padding:5px 10px;cursor:pointer}
 .tk-menu button:hover, .tk-menu button:focus-visible {background:var(--s5);outline:none}
+.tk-menu button:disabled {color:var(--t6);cursor:default;background:none}
 .tk-menu button .ck {width:14px;flex:none;color:var(--ac-t)}
 .tk-menu hr {border:0;border-top:1px solid var(--l1);margin:3px 0}
 @media (pointer:coarse) { .tk-menu button {min-height:40px} .tk-call .ab button {height:26px;padding:0 6px} }
@@ -22052,6 +22053,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       if (s.gone) { r.classList.add('off'); return; }   // (kept while pointed at; it goes when the pointer leaves)
       const ctl = s.control || [];
       r.classList.toggle('off', !ctl.length);
+      const eb = r.querySelector('.l1 button');
+      if (eb && eb.disabled !== tkTemp(s)) { eb.disabled = tkTemp(s); tkTitle(eb, tkTemp(s) ? 'The system has not identified itself yet (usually a few seconds): its name, talkgroups and channel table can be edited then' : 'Name, talkgroups, channel table'); }
       tkText(r.querySelector('.nm'), tkSysName(s), s.user_name && s.name ? s.name + ' (' + s.id + ')' : s.id);
       const pn = tkPlugName(s.plugin), nm = tkSysName(s);
       tkText(r.querySelector('.pl'), [nm.toLowerCase().startsWith(pn.toLowerCase()) ? '' : pn, s.site && ctl.length === 1 ? s.site : ''].filter(Boolean).join(' · '));
@@ -22281,26 +22284,30 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   }
   function tkMenuFill(c, hist) {
     const items = [];
-    const item = (ic, text, fn, ck, tip) => items.push({ic, text, fn, ck, tip});
+    // a system that hasn't identified itself yet (a temporary one): what is entered for it now would
+    // not carry over to the system it becomes (seconds later) - its talkgroup actions wait
+    const sy = tkSys(c.sys), temp = !!(sy && tkTemp(sy)) || String(c.sys).includes(':@');
+    const TEMP_TIP = 'The system has not identified itself yet (usually a few seconds): wait for its name';
+    const item = (ic, text, fn, ck, tip, off) => items.push({ic, text, fn, ck, tip: off ? TEMP_TIP : tip, off});
     const live = !hist && c.state !== 'recent' && c.why !== 'stopped' && c.why !== 'ended';
     if (live) item('stop', 'Stop following this call', () => tkSend('TRUNK_END:' + c.id), false, 'Its voice VFO is freed; its next transmissions on this site are not followed while it is listed (until 30 s without a grant). Other sites and talkgroups are not affected');
     if (c.group) {
       const held = tkSt && tkSt.hold && tkSt.hold.sys === c.sys && tkSt.hold.tg === c.target;
       if (held) item('play', 'Release the hold', () => tkSend('TRUNK_HOLD:'), false, 'Follow every talkgroup again');
-      else item('pause', 'Hold on this talkgroup', () => tkSend('TRUNK_HOLD:' + JSON.stringify({sys: c.sys, tg: c.target})), false, 'Only this talkgroup is followed until you release the hold');
-      item('edit', 'Name…', () => tkTgNameAsk(c.sys, c.target, c.target_name || ''));
+      else item('pause', 'Hold on this talkgroup', () => tkSend('TRUNK_HOLD:' + JSON.stringify({sys: c.sys, tg: c.target})), false, 'Only this talkgroup is followed until you release the hold', temp);
+      item('edit', 'Name…', () => tkTgNameAsk(c.sys, c.target, c.target_name || ''), undefined, '', temp);
       const mode = tkTgMode(c.sys, c.target) || (c.prio ? 'priority' : null);
       items.push('-');
       for (const [k, t, tip] of [['priority', 'Priority', 'Followed first; takes a voice VFO from a normal call when none is free'], ['normal', 'Normal', ''], ['skip', 'Skip', 'Never followed']])
-        item('', t, () => tkSend('TRUNK_TG_SET:' + JSON.stringify({sys: c.sys, tg: c.target, mode: k})), mode === k, tip);
+        item('', t, () => tkSend('TRUNK_TG_SET:' + JSON.stringify({sys: c.sys, tg: c.target, mode: k})), mode === k, tip, temp);
       items.push('-');
     }
-    item('gear', 'System…', () => tkDlgOpen(c.sys, c.group ? 'tg' : 'unit'));
+    item('gear', 'System…', () => tkDlgOpen(c.sys, c.group ? 'tg' : 'unit'), undefined, '', temp);
     tkMenu.innerHTML = `<div class="h">${digEsc(tkLabel(c))}${c.group && c.target_name ? ' · TG ' + digEsc(c.target) : ''}</div>` +
       items.map((it, i) => it === '-' ? '<hr>' : `<button type="button" role="menuitem${it.ck !== undefined && it.ic === '' ? 'radio' : ''}" data-i="${i}"` +
-        `${it.tip ? ` title="${digEsc(it.tip)}"` : ''}${it.ic === '' ? ` aria-checked="${it.ck ? 'true' : 'false'}"` : ''}>` +
+        `${it.tip ? ` title="${digEsc(it.tip)}"` : ''}${it.off ? ' disabled' : ''}${it.ic === '' ? ` aria-checked="${it.ck ? 'true' : 'false'}"` : ''}>` +
         `<span class="ck">${it.ic ? icon(it.ic) : it.ck ? icon('ok') : ''}</span><span>${digEsc(it.text)}</span></button>`).join('');
-    tkMenu.querySelectorAll('button').forEach(b => b.onclick = () => { const it = items[+b.dataset.i]; tkMenuClose(false); it.fn(); });
+    tkMenu.querySelectorAll('button').forEach(b => b.onclick = () => { const it = items[+b.dataset.i]; if (it.off) return; tkMenuClose(false); it.fn(); });
     tkMenu.addEventListener('keydown', e => {
       const bs = [...tkMenu.querySelectorAll('button')], i = bs.indexOf(document.activeElement);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length].focus(); }
