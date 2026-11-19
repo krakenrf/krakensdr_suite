@@ -33,8 +33,9 @@ constexpr size_t RECENT_MAX = 32;
 std::vector<std::pair<std::string, PluginEvent>> recent_events(int vfo);
 void clear_recent();
 
-// main(): the systems file (trunk_systems.json) at startup; what is still
-// unsaved at shutdown (main thread, after the loop stopped dispatching)
+// main(): the systems file (trunk_systems.json) at startup; at shutdown the
+// current state, written once by the uWS loop (main waits up to 2 s for it,
+// else writes the loop's last copy, at most 1 s old) - no write after it
 void load();
 void save_now();
 
