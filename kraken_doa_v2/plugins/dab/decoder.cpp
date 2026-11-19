@@ -946,7 +946,7 @@ private:
             if (std::fabs(cfo_) >= 1000) fo += fmt(" (the ensemble is %.0f kHz off the VFO centre)", cfo_ / 1000);
             fo += fmt(", sample clock %+.1f ppm", no_neg_zero(ppm_, 1));
             host.fact("Frequency offset", fo);
-            if (std::isfinite(rf)) host.fact("Block", dab::band_block(host.rf_inverted() ? rf - cfo_ : rf + cfo_));
+            if (std::isfinite(rf)) host.fact("Block", dab::band_block(rf + cfo_));
             std::string fq = fmt("%.0f %% of FIBs pass their CRC (last 10 s)", 100 * q);
             if (fic_bits_ > 0) fq += fmt(", %.2f %% channel bit errors", 100.0 * static_cast<double>(fic_errs_) / static_cast<double>(fic_bits_));
             host.fact("FIC quality", fq);

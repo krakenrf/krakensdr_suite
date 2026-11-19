@@ -119,8 +119,8 @@ int parse_pos_s(const std::string& v) {
 
 std::string options_to_string(const Options& o) {
     // v: Show all messages (an older kraken_doa's "Log all"); l: the logging mode; ps: Positions every
-    std::string s = std::string("v=") + (o.verbose ? "1" : "0") + "&i=" + (o.invert ? "1" : "0") +
-                    "&l=" + std::to_string(o.log) + "&ps=" + std::to_string(o.pos_s);
+    std::string s = std::string("v=") + (o.verbose ? "1" : "0") + "&l=" + std::to_string(o.log) +
+                    "&ps=" + std::to_string(o.pos_s);
     if (o.map) s += "&m=1";
     for (const auto& kv : o.plugin) s += "&" + kv.first + "=" + pct_encode(kv.second);
     return s;
@@ -131,14 +131,14 @@ Options options_from_string(const std::string& s, bool* no_log_key, bool* no_pos
     if (no_log_key) *no_log_key = false;
     if (no_pos_key) *no_pos_key = false;
     if (s.find('=') == std::string::npos) {
-        // old form: verbose/dmr_slot/p25_nac/invert (before the logging mode: Log)
+        // old form: verbose/dmr_slot/p25_nac/invert (before the logging mode: Log;
+        // the removed Invert option ignored)
         o.log = LOG_ON;
         if (no_log_key) *no_log_key = true;
         if (no_pos_key) *no_pos_key = true;
-        int a = 0, b = 0, c = -1, d = 0;
-        if (sscanf(s.c_str(), "%d/%d/%d/%d", &a, &b, &c, &d) >= 3) {
+        int a = 0, b = 0, c = -1;
+        if (sscanf(s.c_str(), "%d/%d/%d", &a, &b, &c) == 3) {
             o.verbose = a != 0;
-            o.invert = d != 0;
             if (b >= 1 && b <= 2) o.plugin["dmr.slot"] = std::to_string(b);
             if (c >= 0 && c <= 0xFFF) {
                 char h[8];
@@ -162,7 +162,6 @@ Options options_from_string(const std::string& s, bool* no_log_key, bool* no_pos
         if (k == "v") o.verbose = v == "1";
         else if (k == "l") log = parse_log_mode(v);
         else if (k == "ps") { pos = parse_pos_s(v); have_pos = true; }
-        else if (k == "i") o.invert = v == "1";
         else if (k == "m") o.map = v == "1";
         else if (valid_option_key(k) && v.size() <= 100) o.plugin[k] = v;
     }

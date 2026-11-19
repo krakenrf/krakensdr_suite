@@ -325,7 +325,7 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.map_point(p)` | a position on the web UI's 🗺 Map (`kp::MapPoint`, below) |
 | `host.map_remove(id)` | takes a point off the map |
 | `host.station(&lat, &lon)` | the receiver's location (sidebar → Station Information), false if it has none |
-| `host.rf_hz()` / `host.rf_inverted()` | the radio frequency (Hz) at 0 Hz of your input - the VFO's centre plus the host's frequency correction - NAN when unknown (offline test without `--rf`); `rf_inverted()`: the input is mirrored (the "invert" option), +f is then `rf_hz() - f`. Name the channel you receive (`dme`: a DME channel from its reply frequency), or find the channels inside a wide VFO. A retune also calls `reset()` |
+| `host.rf_hz()` | the radio frequency (Hz) at 0 Hz of your input - the VFO's centre plus the host's frequency correction - NAN when unknown (offline test without `--rf`); +f in your input is on `rf_hz() + f` (`host.rf_inverted()`, the removed "invert" option, is always false - kept so older plugin sources build). Name the channel you receive (`dme`: a DME channel from its reply frequency), or find the channels inside a wide VFO. A retune also calls `reset()` |
 | `host.table_columns(cols)` | headings of a live table in the panel (e.g. the aircraft ADS-B hears) |
 | `host.table_row(key, cells)` | adds / updates (same key) a table row; rows not updated for 10 min (or `table_keep`) drop out |
 | `host.table_remove(key)` | removes a table row |

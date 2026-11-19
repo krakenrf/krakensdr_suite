@@ -417,8 +417,9 @@ public:
     // decoder name the channel it receives (a DME channel from its reply
     // frequency) or find the channels inside a wide VFO.
     virtual double rf_hz() const { return NAN; }
-    // true: the input is mirrored (the decoder's "invert" option) - a signal
-    // at +f Hz in process()'s input is on rf_hz() - f
+    // Always false: the input is never mirrored (a signal at +f Hz in
+    // process()'s input is on rf_hz() + f). It was the decoders' "invert"
+    // option, removed 2026-11-19; kept so plugin sources that call it build
     virtual bool rf_inverted() const { return false; }
     // Array plugins: a transmitter's spatial covariance (see Spatial)
     virtual void spatial(const Spatial& s) { (void)s; }
@@ -525,7 +526,7 @@ constexpr uint32_t RESET = 3;          // empty
 constexpr uint32_t VOICE_WANTED = 4;   // 1 byte, 0/1
 constexpr uint32_t SYNC = 5;           // uint32 id: answered with SYNC_DONE once everything before it is processed
 constexpr uint32_t STATION = 6;        // "lat,lon" (degrees) of the receiver, "" = unknown
-constexpr uint32_t RF = 7;             // "rf_hz[,1]": RF at the input's 0 Hz (",1" = mirrored), "" = unknown
+constexpr uint32_t RF = 7;             // "rf_hz": RF at the input's 0 Hz, "" = unknown (an older host may add ",0" / ",1")
 // uint32 m (2..8 antennas), then n x m complex int16 (I, Q) - sample by
 // sample, antenna 0 first; value = int16 / MC_SCALE (Info::multichannel)
 constexpr uint32_t SAMPLES_MC = 8;

@@ -283,7 +283,6 @@ void Rx::process(const kp::cf* x, size_t n) {
         prev_ = y;
         float hz = 0;
         if (std::norm(d) > 1e-30f) hz = std::atan2(d.imag(), d.real()) * static_cast<float>(FS_IN / (2 * PI));
-        if (p.invert) hz = -hz;
         // the voice band at 12 kHz
         {
             const size_t nu = h_au_.size();

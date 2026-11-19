@@ -248,7 +248,6 @@ passes `make_testsignal.py --check`, and the entry generates: 144 MB in 3 s).
 - Only the legacy FLARM packet format is recognised.
 - ADS-L, OGN v2, FANET and PilotAware are not decoded.
 - In the hopping bands only the channels inside the 2.4 MHz are heard.
-- A mirrored input (`invert`) is not supported.
 - No real FLARM / OGN recording was available: the formats are checked
   against synthetic signals only. The real-world use of the status / info
   report layouts and of the non-European channels is not verified.

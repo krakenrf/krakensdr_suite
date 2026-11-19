@@ -15312,7 +15312,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     return p ? !!p.map : !!(st && st.map_capable);
   }
   // One VFO's settings row in a tab: VFO + state, mode, Listen, the plugin's
-  // options, Logging, Positions every, Show all messages, Invert, Plot on map, bandwidth / plugin problems
+  // options, Logging, Positions every, Show all messages, Plot on map, bandwidth / plugin problems
   function digVfoRowHtml(id, tab, about = '') {
     const d = digDec(id);
     const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
@@ -15400,7 +15400,6 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${digEsc(listenTip)}">${icon('speaker')}<span>${listening ? 'Listening' : 'Listen'}</span></button>` : '') +
         (voice ? `<span class="v${listening && vs && digVoiceStateBad(vs) ? ' dig-bad' : ''}">${digEsc(voice)}</span>` : '') +
         opts + digLogCtlHtml(id, o, digReportsPositions(tab, st)) +
-        `<label title="For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR."><input type="checkbox" ${o.invert ? 'checked' : ''} onchange="digSetOptFor(${id}, 'invert', this.checked ? 1 : 0)"> Invert</label>` +
         (st && (st.map_capable || st.map_points > 0 || hasMessages)
           ? `<label title="Show this VFO's positions (e.g. aircraft) / incidents on the Map in the right-hand pane"><input type="checkbox" ${o.map === true ? 'checked' : ''} onchange="digSetOptFor(${id}, 'map', this.checked ? 1 : 0); if (this.checked) mapToggle(true)"> ${icon('map', 't')}<span>Plot on map${st.map_points ? ' (' + st.map_points + ')' : ''}</span></label>` +
             (o.map === true && !mapIsOn() ? `<button class="btn sm" type="button" onclick="mapToggle(true)" title="Open the map in the right-hand pane">Show map</button>` : '')

@@ -963,7 +963,6 @@ string MessageBuilders::build_decimator_info_message() {
              // Positions every (s) of the decoder log (a page that finds it shows the field
              // in the decoder's row; an older receiver has the global one)
              << ",\"pos_s\":" << info.digital_opts.pos_s
-             << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false")
              << ",\"map\":" << (info.digital_opts.map ? "true" : "false") << ",\"plugin\":{";
         bool fo = true;
         for (const auto& kv : info.digital_opts.plugin) {

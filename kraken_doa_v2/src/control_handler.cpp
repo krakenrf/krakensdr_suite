@@ -2038,9 +2038,9 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("DIGITAL_OPT:")) {
         // Format: DIGITAL_OPT:id:key:value - verbose 0|1 (Show all messages), log 0|1|2 (Logging:
         // Off / Log / Log All; also the words off, log, all), pos_s 1-3600 (Positions every N s:
-        // the decoder log's position rate), invert 0|1, map 0|1 (Plot on map), or a
-        // plugin's own option "<plugin id>.<key>" (value "" = its default;
-        // the plugin checks the value). Old keys: dmr_slot, p25_nac
+        // the decoder log's position rate), map 0|1 (Plot on map), or a plugin's own
+        // option "<plugin id>.<key>" (value "" = its default; the plugin checks the
+        // value). Old keys: dmr_slot, p25_nac; invert (removed 2026-11-19) is refused
         string params = string(message.substr(12));
         size_t c1 = params.find(':');
         size_t c2 = c1 == string::npos ? string::npos : params.find(':', c1 + 1);
@@ -2069,7 +2069,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             o.pos_s = n;
             g_applied_cmd = "DIGITAL_OPT:" + to_string(id) + ":pos_s:" + to_string(n);
         }
-        else if (key == "invert") o.invert = val == "1";
+        else if (key == "invert") throw CommandRejected("the decoders' Invert option was removed");
         else if (key == "map") {
             o.map = val == "1";
             MessageBuilders::request_map_full();   // pages get the points back at once

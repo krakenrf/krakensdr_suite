@@ -566,7 +566,7 @@ decoders `kraken_doa_v2/plugins/`
   `plugins/lib/build/codecs` - the plugins' own detection) and the plugin list
   (Auto detect ticks, ↻ re-scan); WS
   `DIGITAL_MODE:id:OFF|AUTO|PLUGIN:<id>` (old names P25/DMR/... still map),
-  `DIGITAL_OPT:id:verbose|invert|<plugin>.<key>:value` (plugin-declared
+  `DIGITAL_OPT:id:verbose|log|pos_s|map|<plugin>.<key>:value` (plugin-declared
   options, e.g. `dmr.slot`, `p25.nac`); persisted in the VFO snapshot. See
   `kraken_doa_v2/CLAUDE.md` for the design
 - Voice: Demod "Digital" (or the panel's Listen button) on a VFO heard (🔊)

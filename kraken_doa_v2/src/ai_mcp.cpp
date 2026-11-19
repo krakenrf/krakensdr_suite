@@ -1391,7 +1391,7 @@ void t_set_option(const Json& a, Reply r) {
     if (!find_vfo(id, &v)) return r("No VFO D" + std::to_string(id), true);
     std::string key = str_arg(a, "key");
     if (key.empty() || key.find(':') != std::string::npos) return r("key needed (an option of the VFO's decoder)", true);
-    if (key.find('.') == std::string::npos && key != "verbose" && key != "log" && key != "pos_s" && key != "invert" && key != "map") {
+    if (key.find('.') == std::string::npos && key != "verbose" && key != "log" && key != "pos_s" && key != "map") {
         std::string p = v.d.digital_plugin;
         if (p.empty()) {
             Json st;
@@ -1679,7 +1679,7 @@ std::vector<Tool>& tools() {
          "messages, positions, incidents; 2 / all: Log All, also raw frames and the repeated control-channel "
          "messages); pos_s = Positions every, 1-3600 s: the log keeps at most one position per aircraft / "
          "vessel / station in that time (decoders that report positions); verbose = Show all messages (1 / 0: "
-         "also report the messages a control channel repeats); invert, map (Plot on map) 1 / 0.",
+         "also report the messages a control channel repeats); map (Plot on map) 1 / 0.",
          OBJ(INTP("vfo", "VFO number") "," STRP("key", "option key") "," STRP("value", "value"), REQ("\"vfo\",\"key\",\"value\"")),
          true, false, t_set_option},
         {"remove_vfo", "Remove a VFO", "Removes a VFO (not the last one).", OBJ(INTP("vfo", "VFO number"), REQ("\"vfo\"")),

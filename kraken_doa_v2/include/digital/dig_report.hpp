@@ -55,14 +55,14 @@ struct Options {
     // decoder log keeps at most one position per object in this many seconds,
     // 1 .. 3600 (POS_S_*). Only the log - the map gets every point
     int pos_s = POS_S_DEFAULT;
-    bool invert = false;       // spectrum inverted (I/Q swapped source)
     bool map = false;          // plot the decoder's map points on the web UI's 🗺 Map (the decoder tab's "Plot on map")
     // the plugins' own options, "<plugin id>.<key>" -> value
     std::map<std::string, std::string> plugin;
 };
-// Persisted form "v=1&i=0&l=2&ps=10&dmr.slot=1" (values percent-encoded; an
+// Persisted form "v=1&l=2&ps=10&dmr.slot=1" (values percent-encoded; an
 // older kraken_doa ignores "l" and "ps"). Also reads the old
-// "verbose/slot/nac/invert" form. Options stored before the logging mode
+// "verbose/slot/nac/invert" form; the removed Invert option ("i", the old
+// form's 4th field; 2026-11-19) is ignored. Options stored before the logging mode
 // existed (no "l") get Log, and *no_log_key is set (the caller migrates: Log
 // All where the old log types had raw frames); stored before the per-VFO
 // "Positions every" (no "ps"): *no_pos_key is set and pos_s is the default -

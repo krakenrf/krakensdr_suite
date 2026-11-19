@@ -305,8 +305,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   decoded at once that never reached the DF list could not be told apart
   (every drop was silent).
 - Channel filtering (AIS): `kp::Talker::freq_hz` / `bw_hz` (packet's
-  centre in the plugin's band - the engine maps it to the VFO's: + afc_hz_,
-  mirrored with invert), `avg_s` (averaging; also TTL = max(2 min, 30
+  centre in the plugin's band - the engine maps it to the VFO's: + afc_hz_),
+  `avg_s` (averaging; also TTL = max(2 min, 30
   avg_s) and the lobe kept max(60 s, 15 avg_s)). Wire TALKER fields 7-9.
   TalkerDoa keeps the raw samples while the VFO rate <= RAW_MAX_RATE (500
   kHz; 5 antennas at 100 kHz ~ 6 MB for RING_S) and `packet_cov_raw`
@@ -359,9 +359,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   talker runs MUSIC with ONE source (`Talker::coded`, like spatial ones).
   `PacketStats::coded` = how many came so (DF status `pk.coded`; the 📡 DF
   panel's line "N decoded, M with a bearing (all / k separated by code)").
-  The invert option conjugates it (every antenna's Q was negated). An older
-  kraken_doa ignores the fields (split0 stops at 13): the stream path, as
-  before
+  An older kraken_doa ignores the fields (split0 stops at 13): the stream
+  path, as before
 - ID separation added 2026-10-15 (packets, the channel always named):
   - APRS (`plugins/aprs`): a packet per frame, id = the frame's RF
     TRANSMITTER: the source, or the last path entry with the H bit ("*") when

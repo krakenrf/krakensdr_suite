@@ -91,7 +91,7 @@ the internet and writes / changes decoder plugins):
     squelch, listen, transcribe), `set_decoder_option` (a plugin's option
     key, or the decoder tab's own: `log` - the Logging, 0 / off, 1 / log,
     2 / all = Off / Log / Log All, 2026-11-19, *decoder-log.md* -,
-    `verbose` - Show all messages, 1 / 0, unchanged -, `invert`, `map`;
+    `verbose` - Show all messages, 1 / 0, unchanged -, `map`;
     the receiver checks the value, a bad `log` is refused), `remove_vfo`,
     `set_doa` (on is refused with generic RTL-SDRs: no coherent mode -
     get_screen `receiver.generic_rtlsdr` / `coherent_available:false`;

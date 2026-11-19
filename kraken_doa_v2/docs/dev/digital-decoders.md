@@ -340,8 +340,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   push them out of view)
 - Options (`dig::Options`): verbose ("Show all messages" - "Log all"
   until 2026-11-19), log (the logging mode, 0 Off / 1 Log / 2 Log All,
-  2026-11-19 - *decoder-log.md*; a new VFO / decoder starts at Off), invert
-  (host side: conj before the mixer), map ("Plot on map", default OFF - the
+  2026-11-19 - *decoder-log.md*; a new VFO / decoder starts at Off), map
+  ("Plot on map", default OFF - the
   user ticks it in the decoder tab; persisted as `&m=1`;
   `DIGITAL_OPT:id:map:0|1` also asks for a full map push) + `plugin`
   {"<id>.<key>": value} - the plugins' declared options,
@@ -349,12 +349,17 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   option declared `hidden` (plugin list `"hidden":true`, 2026-11-17 - dab's
   Programme) gets no control in `digVfoRowHtml` at any stage; it is still
   saved and set by `DIGITAL_OPT` (a table row click, `digRowChoice`).
-  `DIGITAL_OPT:id:verbose|log|invert|<id>.<key>:value` (log: 0 / 1 / 2 or
+  `DIGITAL_OPT:id:verbose|log|pos_s|map|<id>.<key>:value` (log: 0 / 1 / 2 or
   off / log / all; old keys dmr_slot / p25_nac map to dmr.slot / p25.nac).
-  Persisted as the snapshot field `v=1&i=0&l=1&dmr.slot=1` (values
+  Persisted as the snapshot field `v=1&l=1&ps=10&dmr.slot=1` (values
   percent-encoded; the old `v/slot/nac/inv` form still loads; without `l` -
   stored by an older version - the VFO gets Log, or Log All where the old
-  log types had `raw`). Both go to the page in `digital_opts` (decimator
+  log types had `raw`). The Invert option (a conj before the mixer, for an
+  I/Q-swapped source; no use with the KrakenSDR) was removed 2026-11-19:
+  a stored `i=` / the old form's 4th field is ignored, `DIGITAL_OPT:id:invert`
+  is refused, the plugins' `kp::Host::rf_inverted()` is always false; the
+  plugins' own video options (`analogtv.invert`, `tempest.invert`: black /
+  white) are a different thing and stay. Both go to the page in `digital_opts` (decimator
   info) and the status' `opts`; a page that finds no `log` there talks to
   an older receiver. **What the plugin gets as `verbose`**
   (`kp::Host::verbose()`, the OPTION verbose=0|1, `Engine::send_settings`):
@@ -553,7 +558,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   greyed while the VFO's Logging is Off or logging is not allowed;
   *decoder-log.md*) and **Show all messages** (the verbose tick, "Log all" until then;
   ticked and disabled while Log All is in effect, its tooltip saying why;
-  the stored value comes back after), then Invert, Plot on map,
+  the stored value comes back after), then Plot on map,
   bandwidth / plugin problems; an older receiver - no `log` in the options
   - gets the tick only), a decoder log problem (`digLogWarnHtml(ids)`,
   one line under the rows while logging is on and not writing / dropping /

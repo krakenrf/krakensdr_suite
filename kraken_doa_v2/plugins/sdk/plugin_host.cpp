@@ -18,7 +18,7 @@
 //   --format F       cf32 | cu8 | cs16 | wav (default: from the extension)
 //   --offset HZ      the signal sits HZ away from the file's centre
 //   --start S        skip S seconds;  --seconds S  decode only S seconds
-//   --verbose        verbose option on;  --invert  conjugate (swap I/Q)
+//   --verbose        verbose option on
 //   --opt key=value  pass an option to the decoder (repeatable)
 //   --audio OUT.wav  write the decoded 8 kHz audio
 //   --channels M     a recording of every antenna of an array, sample by
@@ -659,14 +659,12 @@ public:
         return true;
     }
     double rf_hz() const override { return rf_hz_; }
-    bool rf_inverted() const override { return rf_inv_; }
 
     bool verbose_ = false, voice_wanted_ = false, raw_wanted_ = false;
     int audio_channel_ = -1;   // last AUDIO_CHANNEL sent
     bool have_station_ = false;
     double st_lat_ = 0, st_lon_ = 0;
     double rf_hz_ = NAN;
-    bool rf_inv_ = false;
     double samples_ = 0;
     void sync_done(const void* id, size_t len) { send(kp::wire::SYNC_DONE, id, len); }
 
@@ -869,11 +867,8 @@ int serve(int argc, char** argv) {
                 }
                 case kp::wire::RF: {
                     std::string s(buf.begin(), buf.end());
-                    double f = NAN;
-                    int inv = 0;
-                    const int got = sscanf(s.c_str(), "%lf,%d", &f, &inv);
-                    host.rf_hz_ = got >= 1 && std::isfinite(f) && f > 0 ? f : NAN;
-                    host.rf_inv_ = got == 2 && inv != 0;
+                    double f = NAN;   // an older host may add ",0" / ",1" (mirrored, no more)
+                    host.rf_hz_ = sscanf(s.c_str(), "%lf", &f) == 1 && std::isfinite(f) && f > 0 ? f : NAN;
                     break;
                 }
                 default:
@@ -1212,9 +1207,7 @@ public:
     bool have_station_ = false;
     double st_lat_ = 0, st_lon_ = 0;
     double rf_hz() const override { return rf_hz_; }
-    bool rf_inverted() const override { return rf_inv_; }
     double rf_hz_ = NAN;
-    bool rf_inv_ = false;
     uint64_t map_updates_ = 0;
     std::map<std::string, kp::MapPoint> map_;
 
@@ -1756,7 +1749,7 @@ int test_file(int argc, char** argv) {
     double rate = 0, offset = 0, start = 0, seconds = 0, rf = NAN, uca_r = 0;
     int channels = 0, pick = -1;   // a recording of every antenna: how many / decode only this one
     bool all = false;              // array plugins: every sample, not bursts
-    bool quiet = false, verbose = false, invert = false, have_station = false, raw = false;
+    bool quiet = false, verbose = false, have_station = false, raw = false;
     double st_lat = 0, st_lon = 0;
     std::vector<std::pair<std::string, std::string>> opts;
     for (int i = 1; i < argc; i++) {
@@ -1776,7 +1769,6 @@ int test_file(int argc, char** argv) {
         else if (a == "--plots") plots_path = next();
         else if (a == "--quiet") quiet = true;
         else if (a == "--verbose") verbose = true;
-        else if (a == "--invert") invert = true;
         else if (a == "--raw") raw = true;
         else if (a == "--channels") channels = atoi(next().c_str());
         else if (a == "--channel") pick = atoi(next().c_str());
@@ -1868,12 +1860,9 @@ int test_file(int argc, char** argv) {
     host.st_lon_ = st_lon;
     host.plots_path_ = plots_path;
     // RF of the file's centre (--rf, else the sidecar's "rf_hz"): the
-    // decoder's 0 Hz is --offset away from it (mirrored with --invert)
+    // decoder's 0 Hz is --offset away from it
     if (!std::isfinite(rf) && !read_sidecar(path, "rf_hz", &rf)) rf = NAN;
-    if (std::isfinite(rf) && rf > 0) {
-        host.rf_hz_ = invert ? rf - offset : rf + offset;
-        host.rf_inv_ = invert;
-    }
+    if (std::isfinite(rf) && rf > 0) host.rf_hz_ = rf + offset;
     host.keep_pk_ = uca_r > 0 && channels > 1;
     auto dec = kp_plugin_create(host);
     for (const auto& o : info.options) dec->option(o.key, o.def);
@@ -1901,18 +1890,14 @@ int test_file(int argc, char** argv) {
         const size_t want = seconds > 0 ? static_cast<size_t>(seconds * rate) : SIZE_MAX;
         size_t done = 0;
         for (size_t got; done < want && (got = mcr.read(std::min(blk, want - done), b)) > 0; done += got) {
-            for (int k = 0; k < channels; k++) {
-                if (invert)
-                    for (auto& v : b[static_cast<size_t>(k)]) v = std::conj(v);
-                ptrs[static_cast<size_t>(k)] = b[static_cast<size_t>(k)].data();
-            }
+            for (int k = 0; k < channels; k++) ptrs[static_cast<size_t>(k)] = b[static_cast<size_t>(k)].data();
             dec->process_multi(ptrs.data(), channels, got);
             host.samples_ += got;
         }
     }
     for (size_t p = 0; p < x.size(); p += blk) {
         size_t n = std::min(blk, x.size() - p);
-        for (size_t i = 0; i < n; i++) in[i] = nco.mix(invert ? std::conj(x[p + i]) : x[p + i]);
+        for (size_t i = 0; i < n; i++) in[i] = nco.mix(x[p + i]);
         unsigned int ny = 0;
         if (prate == rate && offset == 0) {
             std::copy(in.begin(), in.begin() + n, outb.begin());
@@ -1986,8 +1971,6 @@ int test_file(int argc, char** argv) {
     if (uca_r > 0 && channels > 1) {
         if (!std::isfinite(host.rf_hz_) || !(host.rf_hz_ > 0)) {
             printf("talker bearings: need the RF (--rf or the sidecar's rf_hz)\n");
-        } else if (invert) {
-            printf("talker bearings: not with --invert\n");
         } else {
             BearingIn b;
             b.path = path;
@@ -2026,7 +2009,7 @@ int main(int argc, char** argv) {
     fprintf(stderr,
             "%s (%s) - KrakenSDR decoder plugin\n"
             "usage: %s --info | --serve | --file REC [--rate HZ] [--format cf32|cu8|cs16|wav]\n"
-            "          [--offset HZ] [--start S] [--seconds S] [--verbose] [--invert]\n"
+            "          [--offset HZ] [--start S] [--seconds S] [--verbose]\n"
             "          [--opt key=value] [--audio out.wav] [--plots out.jsonl] [--station LAT,LON] [--rf HZ] [--raw] [--quiet]\n"
             "          [--channels M (every antenna, interleaved) [--channel K (only that one)] [--uca RADIUS_M]]\n"
             "          array plugins: [--channels M] [--all] [--uca RADIUS_M]\n",
