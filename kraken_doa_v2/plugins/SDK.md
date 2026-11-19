@@ -1208,12 +1208,13 @@ clang 14 (macOS 12) can't capture a structured binding in a lambda - name it
 in the capture (`[&key = k]`).
 
 `--rf HZ` is the RF at the recording's centre (`host.rf_hz()` = it +
-`--offset`). Without it the `.json` sidecar gives it: its `tuner_hz` when it
-has one (a `make_testsignal.py` playback scene - there `rf_hz` is the band's
-centre, where the entry's VFO goes, `band_offset_hz` from the file's
-centre), else its `rf_hz` (`ai/sigtool.py` captures and `wide_scene.py`
-scenes: the file's centre). So a scene's control channel decodes with just
-`--offset <its offset_hz>`; `--rf` always wins.
+`--offset`). Without it the `.json` sidecar gives it: the `tuner_hz` of a
+wide `make_testsignal.py` playback scene (`"format": "cu8"`, 2.4 MHz - there
+`rf_hz` is the band's centre, where the entry's VFO goes, `band_offset_hz`
+from the file's centre), else its `rf_hz` (`ai/sigtool.py` captures,
+`wide_scene.py` scenes and the narrow `cf32` playback scenes, which are
+centred on the band: the file's centre). So a wide scene's control channel
+decodes with just `--offset <its offset_hz>`; `--rf` always wins.
 
 The offline test reads complex float32 (`.cf32`, rate from the `.json`
 sidecar that `ai/sigtool.py` writes, or `--rate`), rtl_sdr `.cu8`, `.cs16`

@@ -29,8 +29,9 @@
 //                    antenna K, as a single-channel decoder gets it
 //   --station LAT,LON  the receiver's location (Host::station)
 //   --rf HZ          RF of the file's centre (Host::rf_hz; default: the
-//                    REC.json "tuner_hz" of make_testsignal.py scenes, else
-//                    its "rf_hz" - ai/sigtool.py captures, wide_scene.py)
+//                    REC.json "tuner_hz" of a wide (cu8) make_testsignal.py
+//                    scene, else its "rf_hz" - ai/sigtool.py captures,
+//                    wide_scene.py, narrow playback scenes)
 //   --raw            raw frames on (Host::raw_wanted) and printed
 //   --plots OUT      write the last plot of each id (Host::plot) as JSON lines
 //   --quiet          only the summary
@@ -1676,34 +1677,47 @@ public:
     std::map<std::string, double> last_;
 };
 
-// a number from the recording's JSON sidecar (ai/sigtool.py captures:
-// "rate", "rf_hz")
-bool read_sidecar(const std::string& path, const char* key, double* out) {
+// the recording's JSON sidecar as text, "" = none: REC.json, else
+// capture.json next to capture.cf32
+std::string sidecar_text(const std::string& path) {
     std::ifstream f(path + ".json");
     if (!f) {
-        // also accept capture.json next to capture.cf32
         size_t dot = path.rfind('.');
-        if (dot == std::string::npos) return false;
+        if (dot == std::string::npos) return "";
         f.open(path.substr(0, dot) + ".json");
-        if (!f) return false;
+        if (!f) return "";
     }
     std::stringstream ss;
     ss << f.rdbuf();
-    std::string s = ss.str();
+    return ss.str();
+}
+// where the value of "key" starts in the sidecar s (npos = no such key)
+size_t sidecar_at(const std::string& s, const char* key) {
     size_t p = s.find("\"" + std::string(key) + "\"");
-    if (p == std::string::npos) return false;
-    p = s.find(':', p);
+    if (p == std::string::npos) return p;
+    return s.find(':', p);
+}
+// a number from the recording's JSON sidecar (ai/sigtool.py captures:
+// "rate", "rf_hz")
+bool read_sidecar(const std::string& path, const char* key, double* out) {
+    const std::string s = sidecar_text(path);
+    const size_t p = sidecar_at(s, key);
     if (p == std::string::npos) return false;
     *out = atof(s.c_str() + p + 1);
     return *out > 0;
 }
 bool read_sidecar_rate(const std::string& path, double* rate) { return read_sidecar(path, "rate", rate); }
-// the RF of the recording's centre from its sidecar: "tuner_hz" when there
-// (make_testsignal.py's playback sidecar: its "rf_hz" is the band's centre,
-// where the entry's VFO goes, "band_offset_hz" away), else "rf_hz" (sigtool
-// captures, wide_scene.py: the file's centre); false = none
+// the RF of the recording's centre from its sidecar. A make_testsignal.py
+// playback sidecar has "tuner_hz": a WIDE scene ("format": "cu8", 2.4 MHz)
+// is the tuner's band, centred there; its "rf_hz" is the band's centre where
+// the entry's VFO goes, "band_offset_hz" away. A NARROW one ("cf32", at the
+// scene's own rate) is centred on that "rf_hz". Every other sidecar (sigtool
+// captures, wide_scene.py) has the file's centre in "rf_hz". false = none
 bool read_sidecar_centre(const std::string& path, double* rf) {
-    return read_sidecar(path, "tuner_hz", rf) || read_sidecar(path, "rf_hz", rf);
+    const std::string s = sidecar_text(path);
+    const size_t p = sidecar_at(s, "format");
+    const bool wide = p != std::string::npos && s.find("\"cu8\"", p) == s.find_first_not_of(" \t\r\n", p + 1);
+    return (wide && read_sidecar(path, "tuner_hz", rf)) || read_sidecar(path, "rf_hz", rf);
 }
 
 // The recording's bytes, read where they are asked for: a regular file
