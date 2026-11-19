@@ -19,6 +19,10 @@ namespace dig {
 // ---------------------------------------------------------------------------
 // DMR (ETSI TS 102 361)
 // ---------------------------------------------------------------------------
+// A DMR address as text: a Tier III gateway / special identity by its alias
+// (PSTNI, TSI, ALLMSID ... - TS 102 361-4 annex A.4), else the number
+std::string dmr_addr(uint32_t id);
+
 class DmrProto {
 public:
     explicit DmrProto(RxContext& c) : ctx_(c) {}
@@ -41,11 +45,17 @@ public:
     // Hidden option "traffic": this instance follows a granted payload
     // channel (trunk following) - it never reports a control channel
     void set_traffic(bool t) { traffic_ = t; }
+    // Option "net_tag" ([A-Za-z0-9_-], <= 16; the plugin cleans it): two
+    // networks that send the same network code (private Tier III networks
+    // choose theirs; nothing else network-wide is on air) are kept apart by
+    // a tag the user gives one of them - it is added to the system key
+    void set_net_tag(const std::string& t);
 private:
     RxContext& ctx_;
     kp::Host* host_ = nullptr;
     int cc_filter_ = -1;
     bool traffic_ = false;
+    std::string net_tag_;
     struct Slot {
         int voice_idx = -1;          // burst A=0 .. F=5 within a superframe
         uint8_t emb_raw[128] = {0};

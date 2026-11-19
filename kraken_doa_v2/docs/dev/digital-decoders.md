@@ -240,6 +240,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     has its own receiver and checks its FSW start. A call without an LC
     needs the colour code known + two good EMBs (a false voice sync + one
     lucky EMB made calls from noise: 2 per hour, now 0)
+    Option `net_tag` (2.4): two unrelated Tier III networks on air here send
+    the same network code (Huge / NET 1, at 455 and 414 MHz) and nothing
+    else network-wide is on air - a tag the user sets on one network's
+    control VFOs is added to the key (`Huge.1.tait`; Capacity Plus too) and
+    passed on by every grant. Gateway / special addresses (annex A.4) are
+    reported by their alias (`PSTNI`) in grants and calls
   - `DstarReceiver` (plugins/dstar): RF header (scrambler, 24-column
     interleaver, K=3 Viterbi, CRC-16/X.25), slow data (text message, GPS /
     DPRS, header copy), end pattern

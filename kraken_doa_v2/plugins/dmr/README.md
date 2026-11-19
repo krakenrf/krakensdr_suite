@@ -25,7 +25,8 @@ bursts B..F extrapolated from the last sync) hands each burst to `dmr.cpp`:
   short LC counts only from a burst whose own slot type / EMB carried it,
   and none from a voice burst A, which has no colour code) and `traffic`
   (this VFO follows a payload channel: never `control = true`, never
-  `control_channel`)
+  `control_channel`). Option `net_tag` (Network tag, free text: letters,
+  digits, `_`, `-`, up to 16; anything else is dropped): see below
 
 ## Trunk following (Tier III)
 
@@ -40,12 +41,27 @@ bursts B..F extrapolated from the last sync) hands each burst to `dmr.cpp`:
   counts only without a `slot` option: it says one of the carrier's slots
   is a TSCC; never with `traffic`). Sent on a change - at once after a
   reset - and every 5 s
+- Network tag: private networks choose their network code, and two
+  unrelated networks here send the same one (both model Huge, NET 1: one
+  at 455-458 MHz, plan 455.30625 MHz + LCN x 12.5 kHz, colour code 4; a
+  Tait network at 414-418 MHz, plan 414.0000 MHz + LCN x 12.5 kHz, colour
+  code 0) - both were `Huge.1`, so the host applied one's channel table to
+  the other. Tier III sends nothing else network-wide (the colour code is
+  per channel, the adjacent-site lists name the same NET, vendor FIDs name
+  the manufacturer), so the user tells them apart: `net_tag` on the control
+  VFOs of one of them makes the key `<model>.<NET>.<tag>` (`Huge.1.tait`)
+  and the name "... (tait)"; every grant passes it on (`opt.net_tag`), so
+  the traffic instances report the same system. Capacity Plus: key
+  `CapPlus.CC<cc>.<tag>`. Empty = as before
 - Grants: PV / TV / BTV / PD / TD / PV_DX / PD_DX / PD_MI / TD_MI (CSBKO
   0x30-0x38; 0x38 from an MS is BS_Dwn_Act) on a TSCC or a payload channel
   -> `grant`: channel `LCN <n>` / number n, slot = the LCN bit, group (TV,
   BTV, TD, TD_MI), emergency, `update` = Late_Entry (TV / BTV), `data` for
   the data grants, a duplex grant's Call Direction turned into called /
-  calling, options `slot` = 1 / 2, `traffic` = 1 and - with absolute
+  calling (a gateway / special address - TS 102 361-4 annex A.4 - by its
+  alias: `PSTNI`, `TSI`, `ALLMSID` ..., in grants and calls alike; a unit
+  call to PSTNI is a telephone call, private, followed like any other),
+  options `slot` = 1 / 2, `traffic` = 1, `net_tag` when set and - with absolute
   parameters - `cc`. A single-slot instance reports only its own slot's
   grants.
   Logical channel 0xFFF = an MBC with the CG_AP block: downlink = its RX

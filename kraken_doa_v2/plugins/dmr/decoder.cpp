@@ -46,6 +46,10 @@ public:
             sink_.dmr.set_cc_filter((!v.empty() && end && *end == '\0' && c >= 0 && c <= 15) ? static_cast<int>(c) : -1);
             return;
         }
+        if (k == "net_tag") {
+            sink_.dmr.set_net_tag(v);
+            return;
+        }
         if (k == "traffic") {
             // hidden, set by trunk following: a payload channel's instance
             sink_.dmr.set_traffic(v == "1");
@@ -72,7 +76,7 @@ KRAKEN_PLUGIN(DmrPlugin, {.id = "dmr",
                                          "system, channel grants and announcements for trunk following. Voice: AMBE+2 "
                                          "(mbelib, README \"Digital voice codecs\"). Bandwidth 12-24 kHz. The colour code "
                                          "filter is set by trunk following.",
-                          .version = "2.3",
+                          .version = "2.4",
                           .sample_rate = 48000,
                           .min_vfo_rate = 12000,
                           .author = "KrakenSDR",
@@ -81,6 +85,10 @@ KRAKEN_PLUGIN(DmrPlugin, {.id = "dmr",
                                       {"cc", "Colour code", "", "",
                                        "Only bursts of this colour code (0-15, empty = any): a trunked payload channel "
                                        "ignores a co-channel repeater. Set by trunk following.", true},
+                                      {"net_tag", "Network tag", "", "",
+                                       "Tells two networks apart that send the same network code (letters, digits, _ "
+                                       "and -, up to 16): their channel tables and talkgroups are kept separately. "
+                                       "Set it on the control channel VFOs of one of them."},
                                       {"traffic", "Traffic channel", "", "0=No|1=Yes",
                                        "This VFO follows a granted payload channel: it never reports a control "
                                        "channel. Set by trunk following.", true}},

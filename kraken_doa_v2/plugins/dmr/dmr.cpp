@@ -243,8 +243,8 @@ void DmrProto::full_lc(int slot, const uint8_t* lc, const char* what) {
             // the terminator's LC names the transmission that ends (the
             // decoder reports ENDED right after)
             Slot& sl = slots_[slot];
-            sl.ctarget = std::to_string(dst);
-            sl.csource = std::to_string(src);
+            sl.ctarget = dmr_addr(dst);
+            sl.csource = dmr_addr(src);
             sl.cgroup = flco == 0;
         }
     }
