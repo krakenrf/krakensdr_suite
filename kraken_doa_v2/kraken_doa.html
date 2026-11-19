@@ -22164,7 +22164,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       parts.push((c.dur_ms >= 0 ? (c.dur_ms / 1000).toFixed(1) + ' s · ' : '') +
         (c.followed ? digEsc(TK_END[c.end] || tkWhy(c.end)[0] || c.end) : `<span class="why" title="${digEsc(tkWhy(c.why || c.end)[1])}">Not followed: ${digEsc(tkWhy(c.why || c.end)[0])}</span>`));
     } else if (why === 'no_freq') {
-      parts.push(`<a class="why" data-sys="${digEsc(c.sys)}" title="${digEsc(TK_WHY.no_freq[1])}">Set its frequency</a>`);
+      parts.push(`<a class="why" href="#" data-sys="${digEsc(c.sys)}" title="${digEsc(TK_WHY.no_freq[1])}">Set its frequency</a>`);
     } else if (why) {
       parts.push(`<span class="why${why === 'off' || why === 'duplicate' || why === 'ended' ? ' q' : ''}" title="${digEsc(tkWhy(why)[1])}">${digEsc(tkWhy(why)[0])}</span>`);
     } else if (c.state === 'recent') {
@@ -22179,7 +22179,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       le.dataset.html = l2;
       le.innerHTML = l2;
       const a = le.querySelector('a.why');
-      if (a) a.onclick = () => tkDlgOpen(a.dataset.sys, 'ch');
+      if (a) a.onclick = e => { e.preventDefault(); tkDlgOpen(a.dataset.sys, 'ch'); };
     }
     le.title = [c.sources && c.sources.length > 1 ? 'Talkers: ' + c.sources.join(', ') : '', c.up_hz > 0 ? 'Uplink ' + tkMhz(c.up_hz) + ' MHz' : '',
                 c.site ? 'Site: ' + c.site : '', c.fsrc ? 'Frequency from: ' + c.fsrc : ''].filter(Boolean).join('\n');
