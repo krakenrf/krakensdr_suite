@@ -47,6 +47,8 @@ call maintenance messages repeated, then the TSC's clear-down):
   --key    the downlink's carrier from T (default: 0.2 s before the first
            item)
   --uplink the radios' side instead: a carrier per item, no clear-down
+  --gtc    T:CHAN:CALLED:CALLING[:N] the TSC's GTC to a replacement channel
+           (9.1.2.4) at T, N messages in a row (default 1)
 
 Both write OUT (cf32) + OUT.json (rate) + OUT.truth.json (the messages sent,
 with their times). Several transmitters at their bearings: plugins/sdk/tools/
@@ -213,6 +215,7 @@ def parse(a):
     o = {'sys': 0x42E1, 'prefix': 42, 'rate': 48000.0, 'dev': 2500.0, 'sdev': 2000.0, 'chan': 0, 'cont': 0,
          'periodic': 0.0, 'seed': 1, 'clear': None, 'key': None}
     on, grants, bcasts, items, moves, clears = [], [], [], [], [], []
+    o['gtc'] = []
     traffic = False
     maint_p = None
     i = 1
@@ -237,6 +240,8 @@ def parse(a):
             moves.append(v)
         elif k == 'item':
             items.append(v)
+        elif k == 'gtc':
+            o['gtc'].append(v)
         elif k == 'clear':
             if traffic:
                 o['clear'] = float(v)
@@ -378,6 +383,13 @@ def traffic_ch(out, o, items):
             msgs.append((t + d + 0.15, [maint(pa, ia, chan, 3)] * 2, 'MAINT disconnect x2 %03d-%04d' % (pa, ia)))
     if o['clear'] is not None:
         msgs.append((o['clear'], [clear(chan, cont)] * 2, 'CLEAR x2 ch %d -> %d' % (chan, cont)))
+    for g in o['gtc']:
+        q = g.split(':')
+        pc, ic = party(q[2], o['prefix'])
+        pa, ia = party(q[3], o['prefix'])
+        k = int(q[4]) if len(q) > 4 else 1
+        msgs.append((float(q[0]), [gtc(pc if ic != 8191 else pa, ic, int(q[1]), ia)] * k,
+                     'GTC x%d to ch %s %s <- %s' % (k, q[1], q[2], q[3])))
     key = o['key'] if o['key'] is not None else min(t for t, _ in its) - 0.2
     last = max([t + 0.2 + len(c) * 80 / 1200.0 for t, c, _ in msgs] + [t + d + 0.2 for t, d in its])
     end = last + 0.3
@@ -403,7 +415,7 @@ def traffic_ch(out, o, items):
         a, b = int(t * FS), int((t + d) * FS)
         s = speech(b - a, rng) * o['sdev']
         audio[a:b] = np.where(burst[a:b], audio[a:b], s)
-    carrier_end = (o['clear'] + 2 * 96 / 1200.0 + 0.05) if o['clear'] is not None else max(t + d for t, d in its) + 0.25
+    carrier_end = (o['clear'] + 2 * 96 / 1200.0 + 0.05) if o['clear'] is not None else max(max(t + d for t, d in its) + 0.25, last)
     x = fm(audio, rate, None)
     if o.get('uplink'):
         # the radios' own transmissions: a carrier per item (to its last message)

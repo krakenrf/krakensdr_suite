@@ -31,6 +31,7 @@ public:
         else if (k == "target") o_.target = v.substr(0, 32);
         else if (k == "source") o_.source = v.substr(0, 32);
         else if (k == "group") o_.group = v == "1" ? 1 : v == "0" ? 0 : -1;
+        else if (k == "emergency") o_.emergency = v == "1";
         else br_.option(k, v);
         rx_.refresh();
     }
@@ -53,7 +54,7 @@ KRAKEN_PLUGIN(Mpt1327Plugin, {.id = "mpt1327",
                    .name = "MPT1327",
                    .category = "Two-way radio",
                    .description = "MPT1327 analogue trunking (1200 bit/s FFSK signalling on NBFM). Control channel: system identity, neighbour sites, access mode, channel grants (idents as prefix-ident), acknowledgements, broadcasts - and the grants for trunk following (channel numbers to MHz with a Channel plan, else the receiver's channel table). Traffic channel: the radios' call maintenance (who talks) and the site's clear-down; the speech is analogue FM (listen with NBFM). The grant's channel / system / parties are hidden options set by trunk following. Bandwidth 12 kHz.",
-                   .version = "3.0",
+                   .version = "3.1",
                    .sample_rate = 48000,
                    .min_vfo_rate = 12000,
                    .author = "KrakenSDR",
@@ -74,6 +75,7 @@ KRAKEN_PLUGIN(Mpt1327Plugin, {.id = "mpt1327",
                                {"chan", "Channel", "", "", "Set by trunk following: this traffic channel's number.", true},
                                {"target", "Called party", "", "", "Set by trunk following: the grant's called party.", true},
                                {"source", "Calling party", "", "", "Set by trunk following: the grant's calling party.", true},
-                               {"group", "Group call", "", "", "Set by trunk following: 1 group, 0 unit.", true}},
+                               {"group", "Group call", "", "", "Set by trunk following: 1 group, 0 unit.", true},
+                               {"emergency", "Emergency call", "", "", "Set by trunk following: 1 = the grant was an emergency call's.", true}},
                    .talkers = true,
                    .trunking = true})

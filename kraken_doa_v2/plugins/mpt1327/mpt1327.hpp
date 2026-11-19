@@ -25,6 +25,7 @@ struct Mpt1327Options {
     int chan = -1;             // this traffic channel's number, -1 = not known
     std::string target, source;   // the grant's parties ("PPP-IIII"), "" = not known
     int group = -1;            // the grant's group flag, -1 = not known
+    bool emergency = false;    // the grant's emergency flag
 };
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,10 @@ private:
     int64_t last_tc_ = -1;           // sample of the last traffic channel message
     int tc_chan_ = -1;               // the channel number the traffic messages carry
     bool released_ = false;          // a clear-down since the reset: the granted call is over
+    uint64_t tc_gtc_ = 0;            // the last GTC after a SYNT (counts only when repeated)
+    int64_t tc_gtc_at_ = -1;
+    static constexpr size_t MAX_UNITS = 4096;
+    void learn_unit(int prefix, int id);
     // a decoded slot / message: sync_end, SYNC (0) or SYNT (1), the CCSC's
     // SYS, the address codeword and its corrected bits (-1 = bad)
     struct Slot { int64_t sync_end = -1; int which = 0; uint32_t sys = 0; uint64_t addr = 0; int err = -1; };

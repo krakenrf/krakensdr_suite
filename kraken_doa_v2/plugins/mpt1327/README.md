@@ -39,7 +39,11 @@ the same): bit n of a codeword = bit n-1 of the 48 information bits.
   address codewords count (with the correction a random word passes 1 in
   1000: a carrier's key-up produced one in a test), and everything that
   drives trunk following (grants, channels, control channel, calls) takes
-  error-free codewords only.
+  error-free codewords only. A GTC after a SYNT (a replacement channel on a
+  traffic channel, a control channel used for traffic) counts only when the
+  same codeword comes twice within 2 s (version 3.1, 2026-11-20: one
+  error-free codeword after a false SYNT has 18 bits of protection - about
+  one false grant per 20 h of noise).
 - The discriminator's DC (the carrier offset) is taken off before the tone
   correlators (1.5 cycles of 1800 Hz don't reject it: a 2 kHz error lost
   most slots before) and reported as `freq_error` once a second while
@@ -54,7 +58,9 @@ the same): bit n of a codeword = bit n-1 of the 48 information bits.
   network gets one key per site (one channel table each); option System key
   = MPT 1343 network part: "NET-n" (SYS bit 1 = 1: national network, bits
   2-3) or "OPID-n" (bit 1 = 0: regional, bits 2-8), site "SYS hhhh (NDD n,
-  LAB n)". `control` = a CCSC within the last 30 s. Every 5 s.
+  LAB n)". `control` = a CCSC within the last 30 s. At once when the
+  identity is first heard (after every reset too) - never a grant before it
+  - then every 5 s.
 - `grant` per GTC: channel "CH <n>" / number n (the 10-bit field), target
   = IDENT1, source = IDENT2 as "PPP-IIII" (prefix-ident; "ALL" for ALLI,
   "PSTN" / "PABX" / "data network" / "PSTN short j" for gateways, "" for
@@ -66,9 +72,15 @@ the same): bit n of a codeword = bit n-1 of the 48 information bits.
   unit is NOT in the signalling (units and groups share idents 1-8100):
   `group = false` when the called party was checked with an AHY (POINT 0 -
   only units answer) or called before itself (IDENT2 of a GTC is always a
-  unit or a gateway), true for ALLI and otherwise; a gateway is a unit.
-  Options for the traffic channel: `chan`, `sys`, `target`, `source`,
-  `group` (+ `plan` / `network` / `link` when not the default).
+  unit or a gateway), true for ALLI and otherwise; a gateway is a unit. The
+  units heard are kept for the life of the VFO's decoder (4096, the one heard
+  longest ago gives way; emptied on every reset, as are the emergency and
+  repeated-GTC memories). A wrong guess costs the call's label and the
+  host's policy (TG vs unit, `TRUNK_UNIT:0` skips unit calls) and splits
+  its history (the host keys calls on group + target) - never the channel
+  or the parties. Options for the traffic channel: `chan`, `sys`, `target`,
+  `source`, `group`, `emergency` (+ `plan` / `network` / `link` when not the
+  default).
 - `trunk_channel`: BCAST announce control channel, adjacent site, vote now
   - when its SYS has this system's key. `control_channel`: MOVE with (M) = 0
   (every radio) to CONT. No `grant_end` on a control channel: MPT 1327 sends
@@ -93,13 +105,19 @@ can't hear speech, so `valid()` stays with real codewords):
   nothing). The MAINT's PFIX/IDENT1 is the speaker - or, in group calls on
   systems that say so (BCAST SYSDEF 2, ID = 0), the group's address: equal
   to the grant's `target` in a group call = the speaker isn't named (source
-  ""); the grant's `source` = that unit; any other unit while no clear-down
-  has been seen = another party of the granted call (the TSC gives the
-  channel to one call from GTC to CLEAR), after one = target unknown.
+  ""); in a unit call the called unit answering = the grant's pair stays
+  (target the called unit, source the caller: the host keys a call on its
+  target, so the other party as target would read as another call - who
+  talks is the talker); the grant's `source` = that unit; any other unit
+  while no clear-down has been seen = another party of the granted call
+  (the TSC gives the channel to one call from GTC to CLEAR), after one =
+  target unknown. `emergency` (the grant's option) marks the granted call's
+  reports.
 - CLEAR (REVS = 101010101010, CHAN = this channel) -> `call(RELEASED)`; one
   is enough (the TSC sends at least two, the rest within 2 s change
   nothing). A CCSC on the channel (back to control signalling) and a GTC
-  moving the call elsewhere (9.2.3.4: `grant()` too) release it as well.
+  moving the call elsewhere (9.2.3.4: `grant()` too, heard twice) release it
+  as well.
 - No Pressel Off: when the carrier goes (noise squelch on the
   discriminator: rms of its first difference over 10 ms, carrier < 2400 Hz,
   none > 3400 Hz - noise alone measured >= 4100, a carrier with speech at 6
@@ -145,9 +163,11 @@ audio - tone glides and filtered noise - between, two CLEARs) or its uplink
   grant's options: ACTIVE 1.39 s (042-1234), ENDED 3.59, ACTIVE 4.09
   (042-1300, target 042-0100), ENDED 5.69, RELEASED 6.29 (CLEARs at 6.2 s);
   talkers 042-1234 1.321-3.592 s and 042-1300 4.021-5.692 s, both 40.0 deg.
-  CH 132 (+700 kHz, 200 deg): 042-2001 6.39-8.39, 042-0555 8.79-10.59,
-  042-2001 10.89-11.89 (+ Disconnect), RELEASED 12.39; talkers 042-2001 /
-  042-0555 200.0 deg.
+  CH 132 (+700 kHz, 200 deg, with the grant's options incl. `emergency=1`):
+  calls target 042-0555 / source 042-2001 flags m throughout (3.0: source
+  042-0555 while the called unit answered, no m), items 6.39-8.39,
+  8.79-10.59, 10.89-11.89 (+ Disconnect), RELEASED 12.39; talkers 042-2001
+  6.32-8.39 / 10.82-11.89 and 042-0555 8.72-10.59, 200.0 deg.
 - `tools/digi_test` (the real engine): the control channel's SYSTEM /
   CHANNEL / GRANT and the traffic channel's CALL reports arrive as above,
   each GRANT with its 6 options.
@@ -169,6 +189,29 @@ audio - tone glides and filtered noise - between, two CLEARs) or its uplink
   (speech) lone CCSCs passed, each a ghost "control channel" with its
   system reported for 30 s; 2.1 had 10 / 24 valid frames and one false
   grant ("channel 938") on the speech hour.
+- 3.1 checks (each failed with 3.0): a traffic channel with ONE GTC to a
+  replacement channel after its call - 3.0 grant + RELEASED, 3.1 nothing;
+  with the GTC twice - 3.1 one grant + RELEASED. 4100 calls from 4100
+  different units, then a call to the last of them: 3.0 "group" (its unit
+  table stopped at 4096), 3.1 "unit". `tools/digi_test --retune` in the
+  middle of nine GTCs: 3.0 sent the first two GRANTs after the RESET before
+  the SYSTEM, 3.1 the SYSTEM first; an emergency unit call learned before
+  the RESET is a plain group call after it (unit / emergency / repeat
+  memories emptied - 3.0 as well).
+- False trunk reports per VFO (2026-11-20), from the measured sync
+  candidates and the bits each report needs: SYNT candidates 11 294 / h in
+  noise, 17 068 / h in the FM audio hour (an instrumented copy). One
+  error-free codeword after one = 2^-16; a GTC (bit 1, bit 22) 2^-18 =
+  0.04 - 0.07 / h (380 - 570 a year: 3.0); twice the same 64 bits within 2
+  s: < 1e-15 a year; CLEAR (bit 1, type 9, REVS 12) 2^-38 = 4e-4 - 5e-4 a
+  year (x 2^-10 more with `chan`); MAINT -> call ACTIVE / ENDED + a talker
+  (2^-27): 0.7 - 1.1 a year on a VFO without `chan`, 7e-4 - 1.1e-3 with it (a false
+  ACTIVE on noise ends after 1 s: no carrier). Control channel reports need
+  two CCSCs on one slot grid with the same SYS (7 lone CCSCs / h in noise,
+  the second within 20 slots, +-20 samples, same 15-bit SYS: ~1e-10 / h).
+  1 h of an idle control channel at 7 dB (85 % of 33 750 slots decoded,
+  5091 lost): 0 grants, 0 wrong channels. 1 h noise / 1 h FM audio (3.1): 0
+  valid frames, 0 events, 0 trunk reports.
 - Uplink, Pressel Off lost: ENDED 1.0 s after the carrier went (4.02 s for
   a carrier ending at 3.02 s, 20 dB).
 - Real signals (NZ, KrakenSDR captures at night, 2026-11-19: 416.5 MHz 600
@@ -188,7 +231,8 @@ audio - tone glides and filtered noise - between, two CLEARs) or its uplink
   = 416.7500, 301 = 417.7625). The SYS codes of one network differ per site
   (0x42E1, 0x42C1, 0x4221, 0x4201 ...): with the default key each site has
   its own channel table.
-- Decode time 0.6 % of real time at 48 kHz.
+- Decode time 0.6 % of real time at 48 kHz (2 % with the 1 h files on a
+  busy machine).
 
 Public recordings (2026-10-16): sigidwiki's "MPT1327-like bits" audio and
 "Taxi trunk" IQ (504.625 MHz, 250 kHz, five carriers) are NOT MPT1327 - no
