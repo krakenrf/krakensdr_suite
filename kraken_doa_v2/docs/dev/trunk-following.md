@@ -750,13 +750,16 @@ traffic / talker change there (public recording: 8 of 8 allocations).
 Release, other carriers, individual calls, fragment reassembly, extended
 numbering: generated signals only.
 
-**MPT1327** (plugin mpt1327, 3.0; analogue FM traffic, `demod = "nfm"`,
+**MPT1327** (plugin mpt1327, 3.2; analogue FM traffic, `demod = "nfm"`,
 12.5 kHz). Every GTC on the control channel (bit 22 = 0) is a `grant`:
 "CH n" (10-bit CHAN), target IDENT1, source IDENT2 as "PPP-IIII"; only
 error-free codewords on a CCSC-confirmed slot grid. `update` = the same GTC
 within 5 s; `data` = bit D (not followed); `emergency` = an ACKE / AHY with E
-before the GTC. Group or unit: not in the GTC - from an AHY (POINT 0) or an
-earlier call by that ident, else group. Frequencies: only MPT 1343 Band III
+before the GTC. Group or unit: not in the GTC - from an AHY (POINT 0), an
+ACKV QUAL 0 or an earlier call by that ident, else the plugin's `undecided`
+option (default group; "unit" for networks of unit calls - the NZ one: 23 of
+37 calls had the AHY, 9 more were shown to be units, none a group call; a
+multi-site unit call reaches the caller's site without the AHY). Frequencies: only MPT 1343 Band III
 is standard (option `plan=mpt1343`, with uplinks); elsewhere NAN and the
 user's rule decides (the NZ network measured here: 414.0000 MHz + n x 12.5
 kHz, 5 control channels cross-checked). System key = the whole SYS by
@@ -768,10 +771,26 @@ Call end on the traffic channel only: MAINT Pressel Off = ENDED, the TSC's
 CLEAR = RELEASED; no clear-down on the control channel; no Pressel Off: ENDED
 1 s after the carrier drops (talk-through: up until the CLEAR). The
 traffic-channel CALL may name only the unit (empty target: the grant's
-stays). Talker: the MAINT's unit, "via site" on the downlink. Verified on
-air (2026-11-20, night): control-channel decoding of four control channels,
-the BCAST channel numbers and the plan. Not verified on air: any GTC or
-traffic channel. False reports: 0 over 1 h of noise and 1 h of FM speech.
+stays). Talker: the MAINT's unit, "via site" on the downlink. Since 3.2 a
+granted instance reports ACTIVE from the granted channel's carrier (0.2 s,
+before any clear-down; the TSC gives the channel to one call from GTC to
+CLEAR), and control-channel signalling on a traffic VFO counts only when
+its Aloha CHAN4 is that channel's (intermodulation brought the site's
+control channel onto 5 of its traffic channels on air). Verified on air
+(NZ, 2026-11-20, 600 s at 06:30 local): GTC field positions and the plan
+(37 calls on two sites; every granted channel keyed 0.12-0.58 s before its
+GTC and its CLEARs name the site's control channel), the clear-down (23 of
+23: 1-4 CLEARs, mostly 3 at 0.107 s + a 4th after 0.4-0.75 s, RELEASED at
+the first), the downlink (carrier from before the GTC to the CLEAR; the
+radios' MAINT almost never on it: 2 Pressel On in 24 calls - so no per-over
+ENDED / talkers there), ACTIVE from the carrier in 24 of 24 calls, the
+multi-site calls (5 granted on both sites within 0.15 s), real-speech false
+codewords (4456 SYNT candidates in 1339 s of calls, 0 implausible
+codewords, 0 false reports), the four sites as one network (`network=mpt1343`
+-> "NET-0", one table). Not verified on air: Pressel Off / Periodic /
+Disconnect on a downlink, an uplink, MOVE, BCAST announce / withdraw, data
+calls, emergency calls, group calls (none was seen), the MPT 1343 Band III
+plan. False reports: 0 over 1 h of noise and 1 h of FM speech.
 Since the fix round (plugin 3.1): a replacement GTC on a traffic channel (a
 GTC after SYNT) counts only when the same codeword is heard twice within 2 s
 (one error-free codeword after an unconfirmed sync was 2^-18: 380-570 false
@@ -784,9 +803,7 @@ option, 1e-3 with it; a false ACTIVE on noise ends after 1 s - no carrier). A
 unit call's `call()` keeps the grant's target and source (who is speaking is
 the talker); the traffic calls take the grant's emergency flag through the
 hidden `emergency` option; `trunk_system()` goes out the moment a confirmed
-CCSC is heard and always before a grant after a reset. Still owed (no call in
-the night captures): GTC field positions on air, what a real traffic channel
-carries, false codewords under real speech.
+CCSC is heard and always before a grant after a reset.
 
 ## Tests (2026-11-20; scratch, not in the repo)
 
@@ -933,6 +950,13 @@ loop), its site-3 copy `duplicate`, 8 data grant sequences counted only (no
 rows), 6 `decimator_info` in 102 s; the suggested centre at the default edge
 clip 0.8 keeps 2 of the 3 control VFOs (455.756 - 457.681 MHz don't fit
 1.92 MHz together): the partial one, `controls` 2 / `controls_of` 3.
+
+MPT1327, the NZ capture of 06:30 local replayed as heimdall (two control
+VFOs, 42E1 / 42C1, the rule 414.0000 MHz + n x 12.5 kHz for both systems,
+the first 320 s): 23 grants, 12 followed as analogue FM on the granted
+channels - all 12 received (0 `no_signal`), all 12 `released` by the traffic
+channel's clear-down after 16-34 s; 10 outside the span (channels below
+415.5 / above 417.5 MHz), 1 with no free voice VFO.
 
 Live on the KrakenSDR, 2026-11-20 about 05:00 local - P25 (three control
 VFOs on three sites of one system): 150 s, 22 grants, 13 calls followed, all

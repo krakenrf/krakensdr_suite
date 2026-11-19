@@ -119,6 +119,9 @@ void Mpt1327Receiver::reset() {
     n_ = 0;
     pk_ = Peak();
     jobs_.clear();
+    cc_chan4_ = -1;
+    carrier_since_ = -1;
+    ended_at_ = -1;
     for (auto& c : cc_last_) c = {0, -1};
     pend_ = Slot();
     sys_ = 0xFFFFFFFF;
@@ -255,7 +258,7 @@ void Mpt1327Receiver::grant(uint64_t info, bool on_traffic) {
     g.source = party(prefix, id2);
     if (id1 == ALLI) g.group = true;
     else if (id1 > 8100) g.group = false;   // a gateway (PSTN, PABX)
-    else g.group = !recent(units_, prefix, id1, 1e9);
+    else g.group = !recent(units_, prefix, id1, 1e9) && o_.undecided_group;
     g.data = d != 0;
     g.emergency = recent(emerg_, prefix, id1, 20.0) || (id2 >= 1 && id2 <= 8100 && recent(emerg_, prefix, id2, 20.0));
     // MPT1327 has no grant-update flag: the TSC repeats a GTC (9.1.1.12) and
@@ -312,6 +315,7 @@ void Mpt1327Receiver::learn_unit(int prefix, int id) {
 
 void Mpt1327Receiver::set_call(CallState s, const std::string& target, const std::string& source, bool group) {
     call_ = s;
+    if (s == ENDED) ended_at_ = n_;
     call_target_ = target;
     call_source_ = source;
     call_group_ = group;
@@ -342,6 +346,9 @@ void Mpt1327Receiver::released(const char* why) {
     c.emergency = o_.emergency && !call_target_.empty() && call_target_ == o_.target;
     host_.call(c);
     call_ = NONE;
+    call_target_.clear();
+    call_source_.clear();
+    call_group_ = true;
     released_ = true;   // what follows on this channel is not the granted call
     if (ctx_.opts->verbose) ctx_.report->event(Mode::MPT1327, std::string("Traffic channel released: ") + why, 2.0);
 }
@@ -492,6 +499,8 @@ void Mpt1327Receiver::address(uint64_t info, bool control, bool strict, int64_t 
             const int id2 = f(30, 13);
             std::string e = std::string(kn[type - 264]) + ": " + ident(prefix, id2) + " -> " + to;
             r.event(Mode::MPT1327, e, (type == 266 || type == 267 || type == 269) ? 3.0 : chatter);
+            // ACKV QUAL 0 = "called unit not in radio contact" (5.5.2.1): the called party is a unit
+            if (type == 268 && f(43, 1) == 0 && strict && control && id1 >= 1 && id1 <= 8100) learn_unit(prefix, id1);
             if (type == 269 && strict && control) {   // ACKE: an emergency call is being set up
                 emerg_.erase(std::remove_if(emerg_.begin(), emerg_.end(), [this](const Recent& x) { return n_ - x.at > 30LL * FS; }),
                              emerg_.end());
@@ -650,6 +659,28 @@ void Mpt1327Receiver::slot(const Slot& sl) {
     const int err = sl.err;
     bool valid = false, addr_ok = false;
     if (which == 0) {
+        // Whose control channel? The Aloha (and MARK) carry the low 4 bits of
+        // the number of the channel they are sent on, "to protect against
+        // breakthrough" (5.5.1). On a traffic channel's VFO (`chan` set) a
+        // control channel whose CHAN4 isn't this channel's is another
+        // channel's signal that got in - on air (2026-11-19, NZ): the site's
+        // control channel on 5 of its traffic channels (3rd-order
+        // intermodulation with a busy traffic channel: 2 x CH 207 - CH 247 =
+        // CH 167), 304 slots in 600 s on one of them. It is no control
+        // channel here: no system, no grants, no release of the call
+        if (err >= 0 && (addr >> 47) & 1) {
+            const int ty = field(addr, 21, 9);
+            if (ty >= 256 && ty <= 262) cc_chan4_ = field(addr, 30, 4);
+            else if (ty == 280) cc_chan4_ = field(addr, 1, 4);
+        }
+        if (o_.chan >= 0 && cc_chan4_ != (o_.chan & 15)) {
+            if (cc_chan4_ >= 0) {
+                char b[96];
+                snprintf(b, sizeof b, "SYS %04X (channel number ...%d, not this channel's: breakthrough)", sl.sys, cc_chan4_);
+                r.set(Mode::MPT1327, "Control channel heard", b);
+            }
+            return;
+        }
         const uint32_t sys = sl.sys;
         if (sys != sys_) {
             sys_ = sys;
@@ -722,6 +753,19 @@ void Mpt1327Receiver::carrier_block(float hf, int64_t block_end) {
     } else if (!carrier_ && hf < HF_ON) {
         carrier_ = true;
         carrier_lost_ = -1;
+        carrier_since_ = block_end - HF_BLOCK;
+    }
+    // A granted traffic channel's carrier (0.2 s on) before any clear-down
+    // is the granted call: the TSC gives the channel to one call from GTC to
+    // CLEAR, and on air (NZ, 2026-11-19) the site kept the downlink carrier
+    // up from 0.12-0.58 s before the GTC to the clear-down - while the
+    // radios' call maintenance hardly ever reached the downlink (2 Pressel
+    // On in 24 calls). So the call is ACTIVE from the carrier, not only
+    // from a MAINT
+    if (carrier_ && !released_ && !o_.target.empty() && carrier_since_ >= 0 && block_end - carrier_since_ >= FS / 5 &&
+        (call_ == NONE || (call_ == ENDED && carrier_since_ > ended_at_))) {   // (again when it comes back)
+        const bool group = o_.group != 0;
+        set_call(ACTIVE, o_.target, group ? "" : o_.source, group);
     }
     // a speech item whose pressel off was lost: over when its carrier is
     if (call_ == ACTIVE && !carrier_ && carrier_lost_ >= 0 &&
