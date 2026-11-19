@@ -1178,8 +1178,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .tk-note.p > .ic {color:var(--spec-t)}
 .tk-sys {background:var(--s3);border:1px solid var(--l1);border-radius:3px;padding:4px 6px;margin:0 0 4px;font-size:11.5px}
 .tk-sys .l1 {display:flex;align-items:center;gap:6px;height:22px}
-.tk-sys .nm {flex:1;min-width:0;color:var(--t0);font-weight:bold;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tk-sys .pl {color:var(--t5);font-size:11px;white-space:nowrap}
+.tk-sys .nm {flex:1 1 auto;min-width:40px;color:var(--t0);font-weight:bold;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-sys .pl {flex:0 1 auto;min-width:0;max-width:45%;color:var(--t5);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-sys .l1 .btn {flex:none}
 .tk-sys .l2 {color:var(--t3);line-height:17px;min-height:17px}
 .tk-sys .l3 {color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:17px;line-height:17px}
 .tk-sys.off .nm {color:var(--t3);font-weight:normal}
@@ -21750,8 +21751,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   function tkSysName(s) {
     if (!s) return '';
     if (s.user_name) return s.user_name;
-    if (s.name && s.key) return s.name.includes(s.key) ? s.name : s.name + ' ' + s.key;
-    if (s.key) return s.key;
+    if (s.name || s.key) return s.name || s.key;
     const c = (s.control || [])[0];
     return 'Unidentified' + (c ? ' (D' + c.vfo + ')' : '');
   }
@@ -21885,22 +21885,31 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   }
 
   // --- what keeps calls from being followed (shown above the systems) ----------
+  // A note about the traffic (out of span, no free VFO, nothing received, ...) stays
+  // TK_NOTE_HOLD_MS after its last cause, and while the pointer is in the box the
+  // notes keep their number: the lists under them must not jump
+  const TK_NOTE_HOLD_MS = 20000;
+  const tkNoteKeep = new Map();   // key -> {h, until, order}
+  let tkBoxHover = false;
   function tkRenderNotes() {
     const el = $id('tk-notes');
     if (!el) return;
-    const m = tkSt || {}, notes = [];
-    const note = (cls, ic, html, tip, btn) => notes.push(`<div class="tk-note ${cls}"${tip ? ` title="${digEsc(tip)}"` : ''}>${icon(ic)}<span>${html}</span>${btn || ''}</div>`);
-    if (m.playback) note('p', 'tape', 'Playback: nothing found is kept', 'While a debug playback or a recording plays, the systems, talkgroups and channels it brings are a sandbox: gone when it ends');
-    if (m.paused) note('w', 'pause', 'Paused: the ' + digEsc(m.paused_why || 'scanner') + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
+    const m = tkSt || {}, now = Date.now(), cur = new Map();
+    let order = 0;
+    // hold: traffic notes; the rest (paused, playback, no control channel, missing channels) follow the state at once
+    const note = (key, hold, cls, ic, html, tip, btn) => cur.set(key, {hold, order: order++,
+      h: `<div class="tk-note ${cls}" data-k="${digEsc(key)}"${tip ? ` title="${digEsc(tip)}"` : ''}>${icon(ic)}<span>${html}</span>${btn || ''}</div>`});
+    if (m.playback) note('pb', false, 'p', 'tape', 'Playback: nothing found is kept', 'While a debug playback or a recording plays, the systems, talkgroups and channels it brings are a sandbox: gone when it ends');
+    if (m.paused) note('paused', false, 'w', 'pause', 'Paused: the ' + digEsc(m.paused_why || 'scanner') + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
     const systems = tkShownSystems();
     const live = systems.filter(s => (s.control || []).length);
     if (!live.length) {
       const plugs = (typeof digPlugins !== 'undefined' ? digPlugins : []).filter(p => p.trunking).map(p => tkPlugName(p.id));
       // VFOs that run such a decoder and have not reported a system yet
       const waiting = decimatorInfo.filter(d => !d.trunk && digPlugin(digModePlugin(d.digital_mode || '')) && digPlugin(digModePlugin(d.digital_mode)).trunking);
-      if (waiting.length) note('i', 'hourglass', waiting.map(d => 'D' + d.id + ' ' + digEsc(tkPlugName(digModePlugin(d.digital_mode)))).join(', ') + ': no control channel heard yet',
+      if (waiting.length) note('wait', false, 'i', 'hourglass', waiting.map(d => 'D' + d.id + ' ' + digEsc(tkPlugName(digModePlugin(d.digital_mode)))).join(', ') + ': no control channel heard yet',
         'The decoder has not seen a trunked system\'s control channel on this frequency yet. Check the frequency, the bandwidth (12.5 kHz or more; TETRA 25 kHz) and the gain');
-      else note('i', 'trunk', 'No control channel: tune a VFO to one and pick its decoder',
+      else note('nocc', false, 'i', 'trunk', 'No control channel: tune a VFO to one and pick its decoder',
         'A trunked system is recognised by the decoder on its control channel. Decoders that can follow: ' + (plugs.length ? plugs.join(', ') : 'none on this receiver') +
         '. DMR, NXDN and MPT1327 systems need their channel frequencies entered (the system\'s Edit, once it shows)');
     }
@@ -21915,7 +21924,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const un = tkMissing(s.id), nu = un.length;
       if (nu) {
         const list = un.slice(0, 4).map(u => digEsc(u.ch)).join(', ') + (nu > 4 ? ' …' : '');
-        note('w', 'warn', `${name}: ${nu} channel${nu === 1 ? '' : 's'} without a frequency (${list})`,
+        note('miss:' + s.id, false, 'w', 'warn', `${name}: ${nu} channel${nu === 1 ? '' : 's'} without a frequency (${list})`,
           'The system grants these channels by number only. Enter their frequencies - one rule often covers all - and their calls are followed',
           `<button type="button" class="btn sm" onclick="tkDlgOpen('${digEsc(s.id)}','ch')">Enter</button>`);
       }
@@ -21923,33 +21932,38 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       if (oos) {
         const c = s.centre, cur = currentCenterFreq * 1e6;
         const can = c && c.hz > 0 && opMode === 'coherent' && !m.playback && Math.abs(c.hz - cur) >= 1000 && c.weight > (c.now_weight || 0);
-        note('w', 'warn', `${name}: ${oos} call${oos === 1 ? '' : 's'} outside the span`,
+        note('oos:' + s.id, true, 'w', 'warn', `${name}: ${oos} call${oos === 1 ? '' : 's'} outside the span`,
           'Their channels are outside the band the receiver takes in now. ' + (can ? 'Centre retunes it to the frequency that holds the control channels and the most-used channels' :
             opMode !== 'coherent' ? 'Retune a tuner so the channels are in its band' : 'No centre holds the control channels and more of the channels'),
           can ? `<button type="button" class="btn sm" onclick="tkCentre('${digEsc(s.id)}')" title="Retune to ${mkFmtMhz(c.hz)} MHz (asks first)">Centre</button>` : '');
       }
       const nv = count('no_vfo'), nl = count('vfo_limit');
-      if (nv) note('w', 'warn', `${nv} call${nv === 1 ? '' : 's'} waiting for a voice VFO (${m.max_vfos} in use)`, TK_WHY.no_vfo[1],
+      if (nv) note('novfo:' + s.id, true, 'w', 'warn', `${nv} call${nv === 1 ? '' : 's'} waiting for a voice VFO (${m.max_vfos} in use)`, TK_WHY.no_vfo[1],
         m.max_vfos < 8 ? `<button type="button" class="btn sm" onclick="tkSend('TRUNK_MAX_VFOS:${m.max_vfos + 1}')" title="Allow ${m.max_vfos + 1} voice VFOs">+1 VFO</button>` : '');
-      if (nl) note('w', 'warn', `${nl} call${nl === 1 ? '' : 's'} waiting: 16 VFOs in use`, TK_WHY.vfo_limit[1]);
+      if (nl) note('limit:' + s.id, true, 'w', 'warn', `${nl} call${nl === 1 ? '' : 's'} waiting: 16 VFOs in use`, TK_WHY.vfo_limit[1]);
       const ns = count('no_signal');
-      if (ns) note('w', 'warn', `${name}: nothing received on ${ns} call${ns === 1 ? '' : 's'}`, TK_WHY.no_signal[1],
+      if (ns) note('nosig:' + s.id, true, 'w', 'warn', `${name}: nothing received on ${ns} call${ns === 1 ? '' : 's'}`, TK_WHY.no_signal[1],
         `<button type="button" class="btn sm" onclick="tkDlgOpen('${digEsc(s.id)}','ch')">Channels</button>`);
       const nd = count('no_decoder');
-      if (nd) note('b', 'no', `${name}: the call's decoder is not built`, TK_WHY.no_decoder[1]);
+      if (nd) note('nodec:' + s.id, true, 'b', 'no', `${name}: the call's decoder is not built`, TK_WHY.no_decoder[1]);
       // the speech codec its decoder needs
       const ck = TK_CODEC[s.plugin], cs = typeof digCodecsLast !== 'undefined' ? digCodecsLast : null;
       if (ck && cs && cs.checked && (ck + '_ok') in cs && !cs[ck + '_ok']) {
         const cn = (DIG_CODECS.find(k => k.key === ck) || {}).name || ck;
-        note('w', 'warn', `No speech: the ${digEsc(cn)} codec is not installed`, 'Calls are followed and their IDs shown, but nothing is heard without it',
+        note('codec:' + s.plugin, false, 'w', 'warn', `No speech: the ${digEsc(cn)} codec is not installed`, 'Calls are followed and their IDs shown, but nothing is heard without it',
           '<button type="button" class="btn sm" onclick="setDlgOpen(\'dec\')">Decoders</button>');
       }
       for (const c of s.control || []) {
-        if (c.note) note('w', 'warn', `D${c.vfo}: ${digEsc(c.note)}`, 'The control channel moved and its VFO could not follow');
+        if (c.note) note('cnote:' + c.vfo, true, 'w', 'warn', `D${c.vfo}: ${digEsc(c.note)}`, 'The control channel moved and its VFO could not follow');
       }
     }
-    const h = notes.join('');
-    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+    for (const [k, n] of cur) tkNoteKeep.set(k, {h: n.h, order: n.order, until: n.hold ? now + TK_NOTE_HOLD_MS : 0});
+    for (const [k, n] of [...tkNoteKeep]) if (!cur.has(k) && n.until <= now) tkNoteKeep.delete(k);
+    const keys = [...tkNoteKeep.keys()].sort((a, b) => tkNoteKeep.get(a).order - tkNoteKeep.get(b).order);
+    // the pointer in the box: a note may change its text, not come or go
+    if (tkBoxHover && keys.join('|') !== (el.dataset.keys || '')) return;
+    const h = keys.map(k => tkNoteKeep.get(k).h).join('');
+    if (el.dataset.html !== h) { el.dataset.html = h; el.dataset.keys = keys.join('|'); el.innerHTML = h; }
   }
   // the system's channels without a frequency: the status' list, less those
   // the channel table resolves (when this page has it)
@@ -21993,6 +22007,13 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     // on the air first (control VFOs), then the rest
     const on = all.filter(s => (s.control || []).length), off = all.filter(s => !(s.control || []).length);
     const rows = on.concat(off);
+    // the pointer in the box: the systems keep their rows (their text still changes)
+    if (tkBoxHover && rows.map(s => s.id).join('|') !== [...el.children].map(c => c.dataset.id).join('|')) {
+      const keep = rows.filter(s => el.querySelector(`.tk-sys[data-id="${CSS.escape(s.id)}"]`));
+      rows.length = 0;
+      rows.push(...keep, ...[...el.children].map(c => c.dataset.id).filter(id => !keep.some(s => s.id === id)).map(id => ({id, control: [], counts: {}, gone: true})));
+      rows.sort((x, y) => [...el.children].findIndex(c => c.dataset.id === x.id) - [...el.children].findIndex(c => c.dataset.id === y.id));
+    }
     tkSyncRows(el, rows.map(s => s.id), id => {
       const r = document.createElement('div');
       r.className = 'tk-sys';
@@ -22003,10 +22024,12 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       return r;
     }, (r, id) => {
       const s = rows.find(x => x.id === id);
+      if (s.gone) { r.classList.add('off'); return; }   // (kept while pointed at; it goes when the pointer leaves)
       const ctl = s.control || [];
       r.classList.toggle('off', !ctl.length);
       tkText(r.querySelector('.nm'), tkSysName(s), s.user_name && s.name ? s.name + ' (' + s.id + ')' : s.id);
-      tkText(r.querySelector('.pl'), tkPlugName(s.plugin) + (s.site && ctl.length === 1 ? ' · ' + s.site : ''));
+      const pn = tkPlugName(s.plugin), nm = tkSysName(s);
+      tkText(r.querySelector('.pl'), [nm.toLowerCase().startsWith(pn.toLowerCase()) ? '' : pn, s.site && ctl.length === 1 ? s.site : ''].filter(Boolean).join(' · '));
       let l2;
       if (ctl.length) {
         l2 = ctl.map(c => `<span class="tk-cc${c.rx ? '' : ' lost'}" data-vfo="${c.vfo}" title="D${c.vfo}: control channel${c.site ? ' · ' + digEsc(c.site) : ''} · ` +
@@ -22158,6 +22181,11 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   }
   // no row leaves while the pointer is on the list (a click must not land on another call)
   (function () {
+    const sec = $id('tk-section');
+    if (sec) {
+      sec.addEventListener('pointerenter', () => { tkBoxHover = true; });
+      sec.addEventListener('pointerleave', () => { tkBoxHover = false; tkRenderNotes(); tkRenderSystems(); });
+    }
     const el = $id('tk-calls');
     if (!el) return;
     el.addEventListener('pointerenter', () => { tkFreeze = true; });
