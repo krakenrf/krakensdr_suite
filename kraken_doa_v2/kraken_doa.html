@@ -3156,6 +3156,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <div class="ctrl-row"><label for="tk-enc" title="Follow encrypted calls too: they are not heard (never decrypted), but who talks to whom - and from where - still shows">Encrypted calls</label><input type="checkbox" class="sw" id="tk-enc" onchange="tkSend('TRUNK_ENCRYPTED:' + (this.checked ? 1 : 0))"></div>
           <div class="ctrl-row"><label for="tk-unit" title="Follow calls between two radios, not only talkgroup calls">Unit-to-unit calls</label><input type="checkbox" class="sw" id="tk-unit" onchange="tkSend('TRUNK_UNIT:' + (this.checked ? 1 : 0))"></div>
           <div class="ctrl-row"><label for="tk-audio" title="Hear the followed calls (each voice VFO's speaker on while its call is active). Off: followed silently - decoded, listed, logged">Hear calls</label><input type="checkbox" class="sw" id="tk-audio" onchange="tkSend('TRUNK_AUDIO:' + (this.checked ? 1 : 0))"></div>
+          <div class="ctrl-row" id="tk-add-row" style="display:none"><label title="Enter a system's name, talkgroups and channel table before it is heard (its key as its decoder reports it)">System ahead</label><button type="button" class="btn sm" onclick="tkAddSys()" title="Add a system that hasn't been heard yet: its decoder and its key (as the decoder will report it). Its channel table and talkgroups can then be entered; it is used as soon as its control channel is heard"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg><span>Add…</span></button></div>
           <div class="ctrl-row" id="tk-all-row"><label for="tk-all" title="A talkgroup granted on two sites at once (one conversation, two carriers): follow it on every site. Off: on one site only, which saves voice VFOs">Every site</label><input type="checkbox" class="sw" id="tk-all" onchange="tkSend('TRUNK_ALL_SITES:' + (this.checked ? 1 : 0))"></div>
         </div>
         <div class="tk-hold" id="tk-hold"></div>
@@ -21708,7 +21709,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   const TK_WHY = {
     off: ['Following off', 'Following is off: switch Follow calls on'],
     paused: ['Paused', 'A scanner is running: following waits until it stops'],
-    ended: ['Stopped by you', 'You stopped following this conversation'],
+    stopped: ['Stopped by you', 'You stopped following this call: its next transmissions on this site are not followed while it is listed (until 30 s without a grant)'],
+    ended: ['Stopped by you', 'You stopped following this call'],   // (a receiver from before "stopped")
     no_signal: ['Nothing received', 'The voice VFO received nothing on this channel within 3 s: check its frequency in the channel table'],
     data: ['Data call', 'Data calls are not followed'],
     skip: ['Skipped', 'This talkgroup is set to Skip'],
@@ -21726,7 +21728,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   };
   const TK_END = {
     released: 'Released', ended: 'Ended', reassigned: 'Channel reassigned', preempted: 'Taken by a priority call',
-    expired: 'Grants stopped', wrong_call: 'Channel carried another call', relabelled: 'Relabelled', control_reset: 'Control channel reset',
+    expired: 'Grants stopped', duplicate: 'Followed on another site', wrong_call: 'Channel carried another call', relabelled: 'Relabelled', control_reset: 'Control channel reset',
     control_removed: 'Control VFO removed', mode: 'Mode changed', retuned: 'Receiver retuned', playback: 'Playback started',
     playback_end: 'Playback ended', forgotten: 'System forgotten', settings: 'Settings applied', no_signal: 'Nothing received'
   };
@@ -21740,6 +21742,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   const tkPerf = [];            // ms per status handled (tests)
   let tkDrawKey = '';
   const tkListsAsked = new Set();
+  let tkPbSince = 0;   // while a playback runs: when this page first saw it (receiver's epoch ms)
 
   function tkSend(cmd) {
     tkSent.push({c: cmd.slice(0, 64), t: Date.now()});
@@ -21781,7 +21784,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   // a voice VFO's live state: the status (decimator_info may come later), else decimator_info's
   function tkVoiceState(d) {
     const v = tkSt && (tkSt.vfos || []).find(x => x.vfo === d.id);
-    return v ? v.state : d.trunk ? d.trunk.state : '';
+    return v ? v.state : !d.trunk ? '' : d.trunk.state || (d.trunk.call ? '' : 'parked');
   }
   function tkVoiceCall(d) {
     const v = tkSt && (tkSt.vfos || []).find(x => x.vfo === d.id);
@@ -21817,6 +21820,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   function tkOnStatus(m) {
     const t0 = performance.now();
     tkSt = m;
+    // a playback: the receiver's time it was first seen (its own systems and calls from before are not the scene's)
+    if (m.playback && !tkPbSince) tkPbSince = m.now || Date.now();
+    if (!m.playback) tkPbSince = 0;
     const sec = $id('tk-section');
     if (sec && sec.style.display === 'none') sec.style.display = '';
     // each system on the air: its lists once (talkgroup names and modes, the channel table);
@@ -21832,6 +21838,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const k = (m.vfos || []).map(v => v.vfo + ':' + v.state + ':' + v.call + ':' + ((m.calls || []).find(c => c.id === v.call) || {}).target_name).join('|');
     if (k !== tkDrawKey) { tkDrawKey = k; drawBox(); if (typeof paneDrawAllOverlays === 'function') paneDrawAllOverlays(); }
     if (tkDlgId) tkDlgStatus();
+    if (tkAddWant && tkSys(tkAddWant)) { const id = tkAddWant; tkAddWant = ''; tkDlgOpen(id, 'ch'); }
     tkPerf.push(performance.now() - t0);
     if (tkPerf.length > 300) tkPerf.shift();
   }
@@ -21850,6 +21857,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const e = $id(id);
       if (e && typeof m[k] === 'boolean') e.checked = m[k];
     }
+    // a system ahead of time: a receiver that reports "heard" takes edits for one it hasn't heard yet
+    const addr = $id('tk-add-row');
+    if (addr) addr.style.display = (m.systems || []).length === 0 || (m.systems || []).some(s => typeof s.heard === 'boolean') ? '' : 'none';
     const ar = $id('tk-all-row');
     if (ar) ar.style.display = typeof m.all_sites === 'boolean' ? '' : 'none';
     const mx = $id('tk-max'), hg = $id('tk-hang');
@@ -21906,8 +21916,12 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     // hold: traffic notes; the rest (paused, playback, no control channel, missing channels) follow the state at once
     const note = (key, hold, cls, ic, html, tip, btn) => cur.set(key, {hold, order: order++,
       h: `<div class="tk-note ${cls}" data-k="${digEsc(key)}"${tip ? ` title="${digEsc(tip)}"` : ''}>${icon(ic)}<span>${html}</span>${btn || ''}</div>`});
-    if (m.playback) note('pb', false, 'p', 'tape', 'Playback: nothing found is kept', 'While a debug playback or a recording plays, the systems, talkgroups and channels it brings are a sandbox: gone when it ends');
+    if (m.playback) note('pb', false, 'p', 'tape', 'Playback: nothing found is kept', 'While a debug playback or a recording plays, the systems, talkgroups and channels it brings are a sandbox: gone when it ends. Meanwhile only the playback\'s systems and calls are shown here; yours (and their recent calls) are back when it ends');
     if (m.paused) note('paused', false, 'w', 'pause', 'Paused: the ' + tkBdi(m.paused_why || 'scanner', 40) + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
+    // control VFOs a scanner moved, put back (or not) when it stopped - the receiver lists them for 60 s
+    for (const r of m.scan_restore || [])
+      note('restore:' + r.vfo, false, r.restored ? 'i' : 'w', r.restored ? 'ok' : 'warn', `D${r.vfo}: ${tkBdi(r.note || (r.restored ? 'put back' : 'not put back'), 120)}`,
+        r.restored ? 'The scan had moved this control VFO; trunk following put it back where it was' : 'The scan had moved this control VFO and it could not be put back');
     const systems = tkShownSystems();
     const live = systems.filter(s => (s.control || []).length);
     if (!live.length) {
@@ -22002,7 +22016,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   // a temporary system (no identity yet) whose control VFOs a known one has
   // too is the same control channel before it named its system: not shown
   function tkShownSystems() {
-    const all = (tkSt && tkSt.systems) || [];
+    let all = (tkSt && tkSt.systems) || [];
+    // a playback: the receiver keeps the user's systems (without control VFOs) to put them back at its
+    // end - not the scene's: shown only when a control VFO hears them (or a call of the scene is theirs)
+    if (tkSt && tkSt.playback) all = all.filter(s => (s.control || []).length || (tkSt.calls || []).some(c => c.sys === s.id));
     const keyed = new Set();
     for (const s of all) if (!tkTemp(s)) for (const c of s.control || []) keyed.add(c.vfo);
     return all.filter(s => !(tkTemp(s) && (s.control || []).length && (s.control || []).every(c => keyed.has(c.vfo))) &&
@@ -22121,7 +22138,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     r.className = 'tk-call' + (hist ? ' hist' : '');
     r.dataset.id = id;
     r.innerHTML = '<div class="l1"><span class="st"></span><span class="nm"></span><span class="mk"></span><span class="vf"></span><span class="ab">' +
-      (hist ? '' : `<button type="button" class="tk-stop" title="Stop following this call (its voice VFO is freed; the conversation is not followed again)" aria-label="Stop following">${icon('stop')}</button>`) +
+      (hist ? '' : `<button type="button" class="tk-stop" title="Stop following this call: its voice VFO is freed, and its next transmissions on this site are not followed while it is listed (until 30 s without a grant)" aria-label="Stop following">${icon('stop')}</button>`) +
       `<button type="button" class="tk-more" title="Talkgroup: hold, name, priority / skip" aria-label="More" aria-haspopup="menu">${icon('more')}</button></span></div><div class="l2"></div>`;
     return r;
   }
@@ -22152,7 +22169,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     vf.onclick = vfo >= 0 && !hist ? () => selectDecimator(vfo) : null;
     const stop = r.querySelector('.tk-stop');
     if (stop) {
-      const can = c.state !== 'recent' && !(c.why === 'ended');
+      const can = c.state !== 'recent' && c.why !== 'stopped' && c.why !== 'ended';
       if (stop.hidden === can) stop.hidden = !can;
       stop.onclick = () => tkSend('TRUNK_END:' + c.id);
     }
@@ -22166,7 +22183,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     } else if (why === 'no_freq') {
       parts.push(`<a class="why" href="#" data-sys="${digEsc(c.sys)}" title="${digEsc(TK_WHY.no_freq[1])}">Set its frequency</a>`);
     } else if (why) {
-      parts.push(`<span class="why${why === 'off' || why === 'duplicate' || why === 'ended' ? ' q' : ''}" title="${digEsc(tkWhy(why)[1])}">${digEsc(tkWhy(why)[0])}</span>`);
+      parts.push(`<span class="why${why === 'off' || why === 'duplicate' || why === 'stopped' || why === 'ended' ? ' q' : ''}" title="${digEsc(tkWhy(why)[1])}">${digEsc(tkWhy(why)[0])}</span>`);
     } else if (c.state === 'recent') {
       parts.push(digEsc(TK_END[c.end] || c.end || ''));
     }
@@ -22205,7 +22222,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   function tkRenderHist() {
     const el = $id('tk-hist');
     if (!el) return;
-    const h = ((tkSt && tkSt.history) || []).filter(c => !c.data).slice().reverse();
+    const all = ((tkSt && tkSt.history) || []).filter(c => !c.data);
+    // a playback: its calls only (those from before it are back when it ends)
+    const h = (tkPbSince ? all.filter(c => c.t_end >= tkPbSince - 1000) : all).slice().reverse();
     const key = c => c.id + ':' + c.t_end;
     const byKey = new Map(h.map(c => [key(c), c]));
     if (!h.length) {
@@ -22221,7 +22240,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       }, () => {});
     }
     const n = $id('tk-hist-n');
-    if (n) tkText(n, h.length ? String(h.length) : '', h.length ? 'The last ' + h.length + ' calls (newest first)' : '');
+    if (n) tkText(n, h.length ? String(h.length) : '', (h.length ? 'The last ' + h.length + ' calls (newest first)' : '') +
+                  (all.length > h.length ? (h.length ? '; ' : '') + (all.length - h.length) + ' from before the playback not shown' : ''));
   }
 
   // --- a call's / talkgroup's menu ----------------------------------------------------
@@ -22262,8 +22282,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   function tkMenuFill(c, hist) {
     const items = [];
     const item = (ic, text, fn, ck, tip) => items.push({ic, text, fn, ck, tip});
-    const live = !hist && c.state !== 'recent' && c.why !== 'ended';
-    if (live) item('stop', 'Stop following this call', () => tkSend('TRUNK_END:' + c.id), false, 'Its voice VFO is freed; the conversation is not followed again');
+    const live = !hist && c.state !== 'recent' && c.why !== 'stopped' && c.why !== 'ended';
+    if (live) item('stop', 'Stop following this call', () => tkSend('TRUNK_END:' + c.id), false, 'Its voice VFO is freed; its next transmissions on this site are not followed while it is listed (until 30 s without a grant). Other sites and talkgroups are not affected');
     if (c.group) {
       const held = tkSt && tkSt.hold && tkSt.hold.sys === c.sys && tkSt.hold.tg === c.target;
       if (held) item('play', 'Release the hold', () => tkSend('TRUNK_HOLD:'), false, 'Follow every talkgroup again');
@@ -22284,6 +22304,31 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     tkMenu.addEventListener('keydown', e => {
       const bs = [...tkMenu.querySelectorAll('button')], i = bs.indexOf(document.activeElement);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length].focus(); }
+    });
+  }
+  // --- a system ahead of time ----------------------------------------------------------
+  // The key is the identity the decoder reads off the air (docs/dev/trunk-following.md, Protocols;
+  // each plugin's README): the record is made by the first edit (TRUNK_SYS_SET) and used as soon as
+  // its control channel is heard
+  const TK_KEYHINT = {p25: 'WACN.SYSID in hex, e.g. BEE00.14C', dmr: 'model.NET, e.g. Small.37', nxdn: 'category.system code, e.g. global.123',
+                      tetra: 'MCC-MNC, e.g. 530-1', mpt1327: 'SYS in 4 hex digits, e.g. 42E1 (NET-n with network=mpt1343)'};
+  let tkAddWant = '';
+  function tkAddSys() {
+    const plugs = (typeof digPlugins !== 'undefined' ? digPlugins : []).filter(p => p.trunking).map(p => p.id);
+    if (!plugs.length) { uiAlert({title: 'No trunking decoder', kind: 'warn', text: 'No decoder on this receiver can follow a trunked system.'}); return; }
+    uiPrompt({title: 'Add a system', icon: 'trunk', ok: 'Add',
+              text: 'Decoders: ' + plugs.join(', '),
+              tip: 'For entering a system\'s channel table and talkgroups before it is heard. The key must be exactly what its decoder will report (the system row shows it once heard); a wrong key makes a second, separate system.',
+              fields: [{name: 'plugin', label: 'Decoder', value: plugs[0], maxlength: 32,
+                        validate: v => plugs.includes(v.trim()) ? '' : 'One of: ' + plugs.join(', ')},
+                       {name: 'key', label: 'System key', maxlength: 48, placeholder: vals => TK_KEYHINT[String(vals.plugin || '').trim()] || 'as the decoder reports it',
+                        validate: v => /^[A-Za-z0-9._-]{1,48}$/.test(v.trim()) ? '' : 'Letters, digits, . _ - (up to 48)'},
+                       {name: 'name', label: 'Name (optional)', maxlength: 64}]}).then(r => {
+      if (!r) return;
+      const id = r.plugin.trim() + ':' + r.key.trim();
+      if (tkSys(id)) { tkDlgOpen(id, 'ch'); return; }
+      tkAddWant = id;
+      tkSend('TRUNK_SYS_SET:' + JSON.stringify({sys: id, name: String(r.name || '').trim()}));
     });
   }
   function tkTgNameAsk(sys, tg, cur) {
