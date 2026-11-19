@@ -101,6 +101,6 @@ names refer to sections of the other files in this folder (index:
 
 ## Start-up side selection, web UI and USB loss
 
-- Start-up applies the saved center frequency with the same side rule as a retune: the current side if it reaches the RF, otherwise the automatic one (below side above 4132 MHz).
+- Start-up applies the saved center frequency on the automatic side: high below `WB_SIDE_CROSSOVER_HZ` (2200 MHz), below from it up. A retune keeps the current side (it may be a manual choice) while it reaches the RF and the retune stays on one side of the crossover; crossing it, or a side that cannot reach the RF, selects the automatic side again (`downconverter_side_for_retune`). Reason for the crossover (3v0 board, common CW on all inputs, both sides at the same RF): the high side loses conversion gain as its LO climbs - 16 dB behind the below side at 2300 MHz, 38 dB at 3600 MHz, no usable signal from 3900 MHz (LO above 5.1 GHz).
 - The web UI (port 8070) shows a `Wideband` badge and a board card fed by `STATE.downconverter` (the same object as `get_status` `downconverter`); the antenna bias-tee block is hidden.
 - If every USB reader of the running pipeline ends (the board's on-board USB2517 hub dropped off the bus, cable glitch), heimdall exits with status 1 and `run.sh` restarts it. The LO is not saved to the MCU Flash on that exit.
