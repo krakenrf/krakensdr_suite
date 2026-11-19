@@ -505,6 +505,68 @@ Phase 2 (2026-11-18; SNR = signal power over the noise power in 12.5 kHz):
   Talker spans, packets, valid slots and audio identical before and after
   on every recording and scene.
 
+Trunk following (3.1, 2026-11-20):
+- Generator `tools/p25_gen.py --control` (TSDUs of 1 or 3 trunking blocks,
+  the broadcasts, grants and updates on a timeline; `--release`: the call
+  termination TDULCs after a call; `--u2u`). Its TSBK coding against real
+  control channels: blocks demodulated from three sites of two public
+  systems (an independent slicer, not the plugin), re-encoded with the
+  generator's trellis / interleaver / CRC - 361 of 361 bit for bit; frame
+  spacing 37.5 ms (1 block) / 75 ms (3 blocks) as on air. The NID's 64th bit
+  is even parity on one system and inverted on every frame of the other
+  (the decoder ignores it; the generator sends even parity)
+- Scene `p25-trunk-three-calls` (`tools/testsignals.json`, 14 s, 336 MB):
+  offline at the control channel's offset: system, the site's and a
+  neighbour's channels, the three grants with 851.100000 / 851.600000 /
+  851.350000 MHz (slot 1, `lch` 2, `phase` 2) and their uplinks 45 MHz
+  below, 0.32-0.36 s before the first ACTIVE; each traffic channel at its
+  offset with the grant's options: ACTIVE -> ENDED -> RELEASED (Phase 1 at
+  the TDULCs 1 s after the call, Phase 2 at MAC_IDLE after the hang time),
+  talkers 1001001 / 1001002 / 1001003 at 40.0 / 200.0 / 120.0 deg. Through
+  `tools/digi_test` (the real engine): the same SYSTEM / CHANNEL / GRANT /
+  CALL reports, every option delivered
+- Control channel in noise (60 s, 24 grants, 120 grant messages; SNR in
+  12.5 kHz): all at 12 dB and above, 119 at 8-9 dB, 108 at 7 dB, 61 at 5 dB
+  (half), 8 at 4 dB, none at 3 dB; carrier +-1 kHz: 119 / 118 at 8 dB; the
+  single-block form the same (60 at 5 dB). No wrong grant at any SNR or
+  offset. Corruption (60 s each): 328 segments replaced by noise, 980
+  bursts of 1-8 random symbols, 800 TSDUs with a valid NID and random
+  blocks, 120 s of noise - no wrong grant, no event from the random parts.
+  Every grant comes from a block that passed its FEC and CRC (TSBK: trellis
+  + CRC-16; link control: Hamming / Golay + RS(24,12,13); Phase 2: RS +
+  CRC-12 / CRC-16)
+- Existing scenes and recordings unchanged: `p25-three-units`,
+  `p25p2-inbound-three-radios`, `p25p2-site-two-timeslots` give identical
+  events, facts, talkers and bearings before and after (plain and verbose);
+  the generator writes them byte for byte as before
+- Off air (2026-11-20, KrakenSDR recordings of two systems of one network,
+  300 s each, 2.4 MHz at UHF 499.8 and VHF 142.3 MHz, not in this repo;
+  all voice encrypted): 13 control channels, 14 traffic channels. Every
+  control channel's and traffic channel's events and facts identical to
+  3.0's. All 329 grants of the reference timeline (3.0's events) come as a
+  `(grant)` with the same channel, frequency, talkgroup and source
+  (UHF 118, VHF 211), with 10-11 messages per grant on average (the
+  grant, then its updates); uplink offsets -4506.25 kHz
+  (UHF) and -3000 kHz (VHF), from the identifiers (no uplink inside the
+  recordings to check the sign against). The NAC of the control channel
+  is the NAC of its system's traffic channels (0x233 / 0x226 for the two
+  systems); with the grant's options the 14 traffic channels decode
+  exactly as without. Calls: of 332 voice transmissions 331 got an ACTIVE
+  of their talkgroup 0.07-0.08 s after the first frame (0.17-0.36 s when
+  the header was missed), 328 an ENDED within 0.06 s of the last frame (up
+  to 0.75 s when the terminator was missed: the gap); 292 were followed by
+  a TDULC call termination 0.04-0.05 s after the terminator -> RELEASED (no
+  hang time: these systems grant every transmission anew) - on one channel
+  only 7 of 23. Grant -> first voice frame: median 0.22
+  s, 10-90 % 0.14-0.28 s (UHF) / 0.02-0.27 s (VHF); 85 of the 319 matched
+  ones start up to 77 ms BEFORE the grant's TSDU has been received (a
+  transmission keyed while the channel was being granted). No TDMA grant
+  on air (the second system announces TDMA identifiers, grants nothing)
+- Messages the decoder could not parse on those control channels: MFID
+  0xD8 opcode 0x34 (279, constant payload), TSBK 0x2D (3). No MBT / PDU on
+  any real control channel (the receiver hands a PDU over after its header
+  block, so multi-block explicit grants are not decoded)
+
 ## Sources / limits
 
 Phase 1: TIA-102.BAAA / .AABF / .AABC as published in the open-source P25
@@ -539,6 +601,19 @@ separate author for the generator. Its sources:
   length table's entries. Not confirmed: the grant update, MAC_RELEASE and
   paging layouts, the 243-step advance, the all-zero-seed rule. No
   similarity audit against those projects' code was run.
+- Trunk following (3.1): the TSBK grant / update / telephone layouts from
+  TIA-102.AABC (0x03's channel T = the downlink, as established on real
+  0x29s); [GPL-fact OP25 / SDRTrunk] Motorola MFID 0x90 opcodes 0x02
+  (patch voice channel grant, GRP_V_CH_GRANT's layout) and 0x03 (its
+  update, GRP_V_CH_GRANT_UPDT's) - 0x03 seen once on a public Motorola
+  control channel, naming the supergroup the same site's regroup command
+  had just formed on a channel of its tables; 0x02 not seen. Phase 2
+  explicit / extended grants 0xC0 / 0xC3 / 0xC4 / 0xC6 / 0x25 [INFERRED]
+  from the length table [GPL-fact] and the explicit siblings' fields,
+  every length adds up; not seen on air. The TDMA channel arithmetic
+  (number / slots, slot = number % slots) is the standard's; checked on a
+  public recording's grant update giving the two slots of one carrier to
+  two talkgroups at once
 
 Limits:
 - The whole INBOUND path - H-CPM parameters and timing, the inbound sync and
@@ -552,8 +627,10 @@ Limits:
   from inbound bursts as assumed.
 - Not seen on air: unit-to-unit and emergency calls, channel grants on a
   TDMA control channel, dual control channels, MAC_RELEASE, the
-  all-zero-seed rule, the explicit / extended message forms (shown raw with
-  Verbose), the inbound control channel.
+  all-zero-seed rule, the explicit / extended message forms, the inbound
+  control channel; for trunk following also no unit-to-unit, telephone or
+  data grant, no TDMA traffic channel granted from a control channel, no
+  control channel move (`control_channel`), no multi-block grant.
 - Blind identity recovery needs a nearly clean burst; give the identity as
   options for weak signals.
 - Loud talkers: the vocoders run at mbelib's fixed gain (x7 into 16 bits,
@@ -566,13 +643,15 @@ Limits:
   instead (that call: rms -10.0 -> -18.4 dBFS, 0 % clipped; the CQPSK voice
   channel 0.09 % -> 0); frames within full scale pass bit for bit. The
   host's AGC then levels it.
-- Not run on this change: the Windows (MinGW) build and the Linux-glibc
-  cross-check (zig); gcc with the Makefile's flags is warning-free.
+- Not run on this change (3.0, 3.1): the Windows (MinGW) build and the
+  Linux-glibc cross-check (zig); gcc with the Makefile's flags is
+  warning-free.
 - Not decoded: encrypted content.
 
 ## Files
 
 `decoder.cpp` (the plugin: both receivers on one input, options);
+`p25_trunk.cpp` / `.hpp` (trunk following: system, channels, grants, calls);
 `p25.cpp` / `.hpp` (Phase 1 protocol; the TSBK parser, channel identifiers
 and network identity Phase 2 shares); `p25p2_phy.cpp` / `.hpp` (Phase 2
 receiver); `p25p2_slot.hpp` (the slot interface between receiver and MAC
