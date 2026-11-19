@@ -243,8 +243,8 @@ void DmrProto::full_lc(int slot, const uint8_t* lc, const char* what) {
             // the terminator's LC names the transmission that ends (the
             // decoder reports ENDED right after)
             Slot& sl = slots_[slot];
-            sl.ctarget = std::to_string(dst);
-            sl.csource = std::to_string(src);
+            sl.ctarget = dmr_addr(dst);
+            sl.csource = dmr_addr(src);
             sl.cgroup = flco == 0;
         }
     }
@@ -502,11 +502,12 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         int cc = m >> 3, pi = (m >> 2) & 1, lcss = m & 3;
         // a random 16-bit word is within 2 bits of a QR codeword 1 time in
         // 4: accept only near-clean EMBs carrying the channel's colour code
-        if (ee < 0 || ee > 1 || (cc_ >= 0 && cc != cc_)) { sl.voice_idx = -1; return false; }
+        if (ee < 0 || ee > 1 || (cc_ >= 0 && cc != cc_)) { sl.voice_idx = -1; sl.pi_run = 0; return false; }
         sl.voice_idx++;
         sl.hang = false;
         commit_slc();
         sl.privacy = pi;
+        sl.pi_run = pi ? sl.pi_run + 1 : 0;
         voice_burst(slot, bits);
         // embedded LC: LCSS 1 = first, 3 = continuation, 2 = last fragment
         const uint8_t* frag = bits + 116;
@@ -527,7 +528,9 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         } else {
             sl.emb_state = 0;
         }
-        talker_burst(slot);
+        // a talker needs the same evidence as a call (call_voice): one EMB in
+        // noise is within 1 bit of a codeword 3 % of the time
+        if (cc_ >= 0 || sl.voice_idx >= 2) talker_burst(slot);
         if (burst_bs_ || slot != 0) call_voice(slot);
         sl.last_ms = t;
         call_update(slot, "");
@@ -584,6 +587,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
                     r.event(Mode::DMR, slot_name(slot) + " call ended: " + sl.call, 2.0);
                 sl.call.clear();
                 sl.privacy = false;
+                sl.pi_run = 0;
                 if (voice_slot_ == slot && ctx_.voice_state) ctx_.voice_state("");
                 r.set(Mode::DMR, slot_name(slot), "Idle");
             }
@@ -622,6 +626,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             r.event(Mode::DMR, slot_name(slot) + " privacy header: algorithm " + std::to_string(alg) + " key " +
                                    std::to_string(key) + " to " + std::to_string(dst), 3.0);
             sl.privacy = true;
+            sl.pi_run = std::max(sl.pi_run, 2);   // a checked PI header: the call is encrypted
             break;
         }
         case 6: { // data header (a data transmission: its terminator is not a repeat)

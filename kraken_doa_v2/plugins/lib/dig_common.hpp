@@ -186,8 +186,13 @@ struct SymSrc {
     float center = 0.0f;  // Hz
     float pol = 1.0f;
     bool has(int k) const { return buf->has(sync_end + static_cast<int64_t>(k) * sps); }
+    // A symbol outside the history (in front of its start, past its end)
+    // reads as the centre (0: no information) instead of past the buffer -
+    // the receivers bound their reads; this keeps a slip from reading memory
     float sym(int k) const {
-        return pol * (buf->at(sync_end + static_cast<int64_t>(k) * sps) - center) / scale;
+        const int64_t i = sync_end + static_cast<int64_t>(k) * sps;
+        if (!buf->has(i)) return 0.0f;
+        return pol * (buf->at(i) - center) / scale;
     }
     // 4FSK dibit: +3 -> 01, +1 -> 00, -1 -> 10, -3 -> 11
     static uint8_t dibit(float s) { return s >= 2.0f ? 1 : (s >= 0.0f ? 0 : (s >= -2.0f ? 2 : 3)); }

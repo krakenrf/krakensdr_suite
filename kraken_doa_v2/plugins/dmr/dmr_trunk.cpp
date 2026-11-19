@@ -84,6 +84,19 @@ const char* gateway_name(uint32_t id) {
     }
 }
 
+}  // namespace
+
+// An address as the grants / calls report it: a Tier III gateway / special
+// identity by its alias (PSTNI, ALLMSID ...: annex A.4), else the number.
+// A unit call to PSTNI is a telephone call through the gateway: a private
+// voice call like any other (group false), followed as such
+std::string dmr_addr(uint32_t id) {
+    const char* g = gateway_name(id);
+    return g ? std::string(g) : std::to_string(id);
+}
+
+namespace {
+
 std::string id_text(uint32_t id) {
     const char* g = gateway_name(id);
     return g ? std::to_string(id) + " (" + g + ")" : std::to_string(id);
@@ -176,12 +189,27 @@ void DmrProto::send_system(bool force) {
     SysCode s = sys_code(syscode_);
     kp::TrunkSystem t;
     // the NETWORK: model + network code (the same on every site); the site apart
-    t.key = std::string(model_name(s.model)) + "." + std::to_string(s.net);
-    t.name = std::string("DMR Tier III ") + model_name(s.model) + " network " + std::to_string(s.net);
+    t.key = std::string(model_name(s.model)) + "." + std::to_string(s.net) + (net_tag_.empty() ? "" : "." + net_tag_);
+    t.name = std::string("DMR Tier III ") + model_name(s.model) + " network " + std::to_string(s.net) +
+             (net_tag_.empty() ? "" : " (" + net_tag_ + ")");
     t.site = "site " + std::to_string(s.site);
     t.control = sys_control_;
     host_->trunk_system(t);
     sys_sent_ = now;
+}
+
+void DmrProto::set_net_tag(const std::string& t) {
+    std::string c;
+    for (char ch : t)
+        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-') c += ch;
+    if (c.size() > 16) c.resize(16);
+    if (c == net_tag_) return;
+    net_tag_ = c;
+    // another system for the host: send it again at once, then the channels
+    sys_sent_ = -1e9;
+    sys_key_cp_ = -1;
+    chan_sent_.clear();
+    send_system(true);
 }
 
 // --- CACH short LC (TS 102 361-1 7.1.4, B.2.3; TS 102 361-4 7.1.2) ------------
@@ -435,9 +463,9 @@ void DmrProto::tier3_grant(int slot, const uint8_t* c, const uint8_t* ap) {
     if (!host_) return;
     kp::Grant g;
     g.channel = ch;
-    g.target = std::to_string(dst);
+    g.target = dmr_addr(dst);
     g.group = group;
-    g.source = std::to_string(src);
+    g.source = dmr_addr(src);
     g.emergency = emerg;
     g.data = data;
     g.update = late;
@@ -445,6 +473,8 @@ void DmrProto::tier3_grant(int slot, const uint8_t* c, const uint8_t* ap) {
     // only on the granted colour code when the grant names it)
     g.options.push_back({"slot", std::to_string(ts + 1)});
     g.options.push_back({"traffic", "1"});
+    // the traffic instance reports the same system (its key carries the tag)
+    if (!net_tag_.empty()) g.options.push_back({"net_tag", net_tag_});
     if (a.cc >= 0) g.options.push_back({"cc", std::to_string(a.cc)});
     host_->grant(g);
 }
@@ -662,8 +692,8 @@ void DmrProto::call_report(int slot, int state) {
 // a voice LC (header, embedded, terminator) named the call
 void DmrProto::call_lc(int slot, bool group, uint32_t dst, uint32_t src, int so) {
     Slot& sl = slots_[slot];
-    const std::string t = std::to_string(dst), s = std::to_string(src);
-    const bool enc = (so & 0x40) || sl.privacy, em = so & 0x80;
+    const std::string t = dmr_addr(dst), s = dmr_addr(src);
+    const bool enc = (so & 0x40) || sl.pi_run >= 2, em = so & 0x80;
     const bool changed = sl.cstate != kp::Call::ACTIVE || t != sl.ctarget || s != sl.csource || group != sl.cgroup ||
                          enc != sl.cenc || em != sl.cemerg;
     sl.ctarget = t;
@@ -676,16 +706,25 @@ void DmrProto::call_lc(int slot, bool group, uint32_t dst, uint32_t src, int so)
     if (changed || now - sl.csent >= 1.0) call_report(slot, kp::Call::ACTIVE);
 }
 
+// A voice burst with a good EMB. Alone it is weak evidence - a false voice
+// sync in noise followed by one burst whose 16-bit EMB is within 1 bit of a
+// QR codeword (~3 % of random words) made a call from nothing - so a call
+// without an LC yet (late entry) needs the channel's colour code known (a
+// checked data burst, or the "cc" option) and two good EMBs of it in this
+// superframe; encryption from the EMBs needs two PI bits in a row
 void DmrProto::call_voice(int slot) {
     Slot& sl = slots_[slot];
+    if (cc_ < 0 || sl.voice_idx < 2) return;
     sl.clast = burst_b_;
-    if (sl.privacy && !sl.cenc && sl.cstate == kp::Call::ACTIVE) {
-        sl.cenc = true;
-        call_report(slot, kp::Call::ACTIVE);
+    const bool enc = sl.pi_run >= 2;
+    if (sl.cstate == kp::Call::ACTIVE) {
+        if (enc && !sl.cenc) {
+            sl.cenc = true;
+            call_report(slot, kp::Call::ACTIVE);
+        }
         return;
     }
-    if (sl.cstate == kp::Call::ACTIVE) return;
-    sl.cenc = sl.privacy;
+    sl.cenc = enc;
     call_report(slot, kp::Call::ACTIVE);
 }
 
@@ -723,8 +762,8 @@ void DmrProto::capplus(int slot, const uint8_t* c) {
     // share it)
     if (cc_ >= 0 && (now - sys_sent_ >= 5.0 || sys_key_cp_ != cc_)) {
         kp::TrunkSystem t;
-        t.key = "CapPlus.CC" + std::to_string(cc_);
-        t.name = "Motorola Capacity Plus, colour code " + std::to_string(cc_);
+        t.key = "CapPlus.CC" + std::to_string(cc_) + (net_tag_.empty() ? "" : "." + net_tag_);
+        t.name = "Motorola Capacity Plus, colour code " + std::to_string(cc_) + (net_tag_.empty() ? "" : " (" + net_tag_ + ")");
         t.control = !traffic_;   // the rest channel: where idle radios wait and calls start
         host_->trunk_system(t);
         sys_sent_ = now;
