@@ -153,7 +153,10 @@ gives up) or loses its control channel / VFO (`control_reset`,
 (`released`, `ended`, `reassigned`), its waiting duplicates end with it
 (end `duplicate`, not `no_signal`) - they would get a VFO only after the
 transmission had ended everywhere (seen on air: 4 of 4 `no_signal`s of a
-P25 run were such late take-overs). A grant from site B never moves the
+P25 run were such late take-overs). A copy that was followed first, lost its
+VFO (e.g. `no_signal`) and waited while the other site's copy took over ends
+`taken_over` (not `duplicate`): its history row says `followed` true and
+`lost` why it lost the VFO. A grant from site B never moves the
 voice VFO that follows the call on site A (the site is in the call key).
 
 ### Placement (rf -> tuner, offset), never a retune
@@ -235,7 +238,8 @@ same call). A `hang` call goes back to `active` with new activity.
   for its channel + slot, or `CALL RELEASED`), `ended` (hang time
   elapsed), `reassigned` (its channel + slot granted to another target on
   that site: its VFO goes to the new call without a retune), `preempted`,
-  `relabelled` / `wrong_call` (below), `duplicate`, `retuned` (its tuner's
+  `relabelled` / `wrong_call` (below), `duplicate`, `taken_over` (above),
+  `retuned` (its tuner's
   centre moved > 1 kHz), `mode` (operating mode changed), `control_reset`
   (its control VFO's decoder reset: retuned, decoder changed, plugin
   restarted), `control_removed`, `forgotten` (`TRUNK_SYS_DEL`), `no_system`,
@@ -248,10 +252,26 @@ same call). A `hang` call goes back to `active` with new activity.
   don't restart it (NXDN: one more VCALL_ASSGN_DUP 0.26 s after the DISC;
   DMR late entry, P25 updates likewise). An update for a call the manager
   never followed (following switched on mid-call) always starts it.
-- After every placement the voice VFO's CALL reports count only once its
-  decoder's RESET for it came (or 2 s: a VFO that hadn't reported anything
-  gets no RESET) - ACTIVE, ENDED and RELEASED alike: a late release of the
-  previous channel can't end the moved call.
+- Reports of the previous channel after a placement (what the voice VFO's
+  decoder said before it was moved, still in the pipe). The engine resets a
+  decoder at a retune > 100 Hz or another mode / plugin, and sends the
+  manager a RESET then only if the decoder delivered reports since its last
+  one (`DigitalDecoder::trunk_reported()`, or reports of it still in the
+  queue). So at the placement it is known whether a RESET will come:
+  - a placement that resets a decoder which has reported (a parked VFO moved
+    to another channel): its CALL reports count only after that RESET (or 2 s
+    if it never comes) - a late release of the old channel can't end the
+    moved call;
+  - a fresh VFO, or one whose decoder reported nothing: at once;
+  - the same frequency and plugin again (a parked VFO back on the channel of
+    its previous over - most overs of a conversation here): at once, but an
+    ENDED / RELEASED only once the call was active on it since this
+    placement (CALL ACTIVE, valid frames, the analogue squelch): a trailing
+    release of the previous over can't end the new one (P25 and NXDN release
+    only a call their instance reported, too).
+  (2026-11-20: the first version waited for a RESET after every placement -
+  on a real P25 replay 9 of 37 short overs lost their RELEASED, which came
+  within 2 s of a placement that sends no RESET.)
 - A grant of the same target on another channel (or slot): the call MOVES
   (its VFO retunes, `moves`). A `CALL ACTIVE` from the voice VFO naming
   another target (not before 300 ms after the placement and its decoder's
@@ -456,13 +476,20 @@ renamed.
   as one row by `id`; `recent` rows can be shown dimmed.
 - `history`: the last 50 finished overs worth showing (rule above), oldest
   first: the call fields without the ages, plus `end`, `dur_ms`, `t_end`
-  (epoch ms), `followed`.
+  (epoch ms), `followed`, and `lost` (why a followed over lost its voice VFO
+  before its end; only when it did).
 - `learn`: `{learned, refused, dropped}`; `lat`: `{place_ms, place_max_ms,
   active_ms, active_max_ms, n}` (median / max over the last 50: a grant's
-  arrival on the loop -> its VFO placed / -> ACTIVE); `events`,
+  arrival on the loop -> its VFO placed / -> ACTIVE; `place_*` counts only
+  calls placed on the grant's arrival - one that waited for a free VFO, a
+  pre-emption or `PLACE_MIN_MS` measures the wait and is left out; `active_*`
+  is from the latest grant, so a call that waited includes it); `events`,
   `events_dropped` (queue full: every kind but RESET), `resets_coalesced`,
   `options_dropped` (grant options the traffic plugin doesn't declare),
   `untrunking_dropped` (events of plugins that don't declare `trunking`),
+  `stale_reports` (voice-VFO CALL reports not taken: before the awaited
+  RESET, or an ENDED / RELEASED before the call was active on a reused
+  channel),
   `calls_dropped` (grants refused a row: 64 calls already),
   `now` (epoch ms).
 
@@ -836,7 +863,22 @@ the broadcasts:
   4000 / 40000 events per 100 ms block: 0.24 / 0.28 / 0.001 s (was 0.32 / 9.9
   / 12.6 s; at 40000 the old build dropped 98 % of 22 M events, the new one
   none of 6.5 M).
-- 234 checks, all passing on the final build (2026-11-20, load average 3-7). Found on the way: a
+- `t13_place` 5 (2026-11-20, after the replay regression): one voice VFO,
+  overs of 1.2 s ending in RELEASED - a fresh VFO and a same-frequency reuse
+  end `released` (on the build that waited for a RESET after every
+  placement: `ended`, 3.6-3.7 s - the RELEASED came 1.7 s after the
+  placement and was dropped); a parked VFO moved to another channel for the
+  same talkgroup's next over, its grant swept over -0.45 .. +0.3 s around the
+  old channel's RELEASED (17 timings): every moved over ends with its own
+  RELEASED; 1-3 of the old decoder's late reports per run were not taken
+  (`stale_reports`). The window is a few ms wide and not hit on every run
+  (on the build without any such guard the 17 timings passed too): the
+  test shows the guard doesn't cost a release, not that each late report is
+  caught. Real P25 replay (the 3-site UHF capture, 110 s): 51 overs
+  followed, history 47 `released`, 1 `ended`, 0 `no_signal`, 0 stale
+  reports (the round before, the orchestrator's 80 s replay: 28 of 37
+  `released`).
+- 239 checks, all passing on the final build (2026-11-20, load average 3-7). Found on the way: a
   temporary system merged into its keyed one erased the KEYED one (merge_temp
   took the Track's system id by reference and rewrote it) - the keyed system
   came back empty and the temporary one stayed as a ghost with a stale

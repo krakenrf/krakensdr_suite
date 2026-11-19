@@ -187,6 +187,11 @@ public:
     // The Digital squelch's live state: the active plugin (fixed, or what
     // Auto detect locked onto) reported a valid frame within the last ms
     bool frames_within(int64_t ms) const;
+    // it delivered trunked-system reports since its last RESET (so a reset now
+    // - a retune > 100 Hz, another mode / plugin - sends the trunk manager a
+    // RESET; false: it sends none)
+    bool trunk_reported() const { return trunk_reported_.load(std::memory_order_acquire); }
+    void set_trunk_reported(bool b) { trunk_reported_.store(b, std::memory_order_release); }
     // ... within its own hold (kp::Info::squelch_hold_s; def_ms when it sets none)
     bool squelch_open(int64_t def_ms) const;
     // The VFO's voice comes from this decoder (Voice to Text, the analog
@@ -283,6 +288,7 @@ public:
 private:
     std::atomic<int> vfo_id_{-1};
     std::atomic<bool> takes_voice_{true};
+    std::atomic<bool> trunk_reported_{false};
     mutable std::mutex lead_mu_;
     std::string lead_tid_, lead_tlabel_;
     std::atomic<Mode> mode_{Mode::OFF};

@@ -271,6 +271,7 @@ struct Call {
     bool user_ended = false;                // TRUNK_END / its VFO removed by hand: not rejoined
     bool setup_failed = false;              // SETUP gave up: not followed again
     bool ever_followed = false, counted = false;
+    std::string lost;                       // this over: why it lost its voice VFO ("" = it didn't)
     bool pending_place = false;             // re-placement waiting for PLACE_MIN_MS
     int moves = 0;
     std::string end;                        // RECENT: how it ended
@@ -311,6 +312,16 @@ struct Voice {
     int64_t t_placed = 0;
     bool dirty = false;
     bool reset_seen = false;                // its decoder's RESET after the latest placement came
+    // the latest placement: its decoder had delivered reports and the placement
+    // resets it (a retune > 100 Hz, another plugin) - its reports wait for that
+    // RESET (or 2 s); false: what it says counts at once
+    bool await_reset = false;
+    // the latest placement kept the frequency and the plugin (the previous
+    // over's channel again): an ENDED / RELEASED counts only once the call was
+    // active on it since the placement (a trailing release of the previous over
+    // can't end the new one)
+    bool same_place = false;
+    bool active_here = false;               // since the latest placement: CALL ACTIVE, valid frames or the analogue squelch
 };
 std::vector<Voice> g_voices;
 void park(Voice& v);
@@ -995,7 +1006,8 @@ void record_history(const Call& c, const std::string& end) {
     // + how long it lasted
     j.pop_back();
     j += ",\"dur_ms\":" + std::to_string(now - c.t_start) +
-         ",\"t_end\":" + std::to_string(wall_ms()) + ",\"followed\":" + jb(c.ever_followed) + "}";
+         ",\"t_end\":" + std::to_string(wall_ms()) + ",\"followed\":" + jb(c.ever_followed) +
+         (c.lost.empty() ? std::string() : ",\"lost\":" + js(c.lost)) + "}";
     g_history.push_back(j);
     while (g_history.size() > HISTORY_MAX) g_history.pop_front();
     // the decoder data log: one record per call, when the control VFO logs
@@ -1110,6 +1122,7 @@ Voice* free_voice(const std::string& plugin, uint64_t call, std::string* why) {
 // Set the voice VFO up for call c at p and hear it: options first (the
 // decoder gets them before, or with, its first samples on the channel), then
 // the decoder, demod, width, squelch, the frequency
+bool g_on_grant = false;   // apply_event is handling a GRANT (placement latency)
 void apply_voice(Voice& v, Call& c, const Place& p) {
     auto inst = live(v);
     if (!inst) return;
@@ -1151,6 +1164,28 @@ void apply_voice(Voice& v, Call& c, const Place& p) {
     if (mode_now == 2) snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", v.vfo, p.off_hz / 1000.0, p.tuner);
     else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", v.vfo, p.off_hz / 1000.0);
     cmds.push_back(f);
+    // will this placement reset a decoder that has reported (then a RESET comes,
+    // and what is in the pipe before it is the previous channel's)? The engine
+    // resets at a retune > 100 Hz and at another mode / plugin; it sends the
+    // RESET only when it delivered reports since its last one (its own flag,
+    // or reports of it still in our queue)
+    {
+        auto dd = inst->getDigital();
+        bool delivered = dd && dd->trunk_reported();
+        if (dd && !delivered) {
+            const uint64_t sn = inst->digital_serial.load();
+            std::lock_guard<std::mutex> lk(g_qmu);
+            for (const auto& q : g_queue)
+                if (q.vfo == v.vfo && q.dec == sn && q.ev.kind != PluginEvent::RESET) {
+                    delivered = true;
+                    break;
+                }
+        }
+        const bool moved = v.rf_hz <= 0 || std::fabs(c.hz - v.rf_hz) > 100.0;
+        v.await_reset = delivered && (moved || !same_plugin);
+        v.same_place = !moved && same_plugin;
+        v.active_here = false;
+    }
     // a retune > 100 Hz resets the decoder: that RESET is ours
     v.dec = inst->digital_serial.load();
     g_tracks[v.vfo].expect_reset_until = now + RESET_EXPECT_MS;
@@ -1176,7 +1211,9 @@ void apply_voice(Voice& v, Call& c, const Place& p) {
     c.pending_place = false;
     meta_voice(v);
     broadcast(MessageBuilders::build_decimator_info_message());
-    if (c.t_rx_grant > 0) {
+    // (only a placement on the grant's arrival: one that waited - for a free
+    // VFO, a pre-emption, PLACE_MIN_MS - measures the wait, not the latency)
+    if (c.t_rx_grant > 0 && g_on_grant) {
         g_lat_place.push_back(now - c.t_rx_grant);
         while (g_lat_place.size() > 50) g_lat_place.pop_front();
     }
@@ -1255,6 +1292,7 @@ void set_state(Call& c, int st) {
 
 // the call loses its voice VFO (parked) and waits (why)
 void unfollow(Call& c, const std::string& why) {
+    if (c.vfo >= 0) c.lost = why;
     if (Voice* v = voice_of_call(c)) park(*v);
     c.vfo = -1;
     c.pending_place = false;
@@ -1311,7 +1349,7 @@ void end_call(uint64_t id, const std::string& why) {
     c.vfo = -1;
     c.pending_place = false;
     c.end = why;
-    c.guard = was_followed || why == "duplicate";
+    c.guard = was_followed || why == "duplicate" || why == "taken_over";
     c.t_end = now_ms();
     c.st = RECENT;
     c.t_state = c.t_end;
@@ -1328,8 +1366,9 @@ void end_call(uint64_t id, const std::string& why) {
                 o.target == c.target && o.ctl_vfo != c.ctl_vfo)
                 dup.push_back(o.id);
         }
-        const std::string sys = c.sys;
-        for (uint64_t d : dup) end_call(d, "duplicate");
+        // (a copy that was followed first - it lost its VFO, e.g. no_signal, and
+        // this site's took over: "taken_over", its row says why it lost it)
+        for (uint64_t d : dup) end_call(d, g_calls[d].ever_followed ? "taken_over" : "duplicate");
     }
 }
 
@@ -1526,6 +1565,7 @@ void revive(System& s, Call& c, const PluginEvent& ev) {
     c.overs++;
     c.setup_failed = false;
     c.counted = c.ever_followed = false;
+    c.lost.clear();
     c.enc = c.emerg = false;
     c.sources.clear();
     c.source.clear();
@@ -2012,6 +2052,7 @@ void on_learn_call(int vfo, const Track& t, const std::string& plugin, const Plu
     try_follow(c);
 }
 
+uint64_t g_stale_reports = 0;   // voice-VFO CALL reports not taken as the placed call's (above)
 // a CALL from a voice VFO: what its channel carries
 void on_voice_call(Voice& v, const PluginEvent& ev) {
     auto it = g_calls.find(v.call);
@@ -2020,10 +2061,13 @@ void on_voice_call(Voice& v, const PluginEvent& ev) {
     System* s = sys_of(c.sys);
     if (!s) return;
     const int64_t now = now_ms();
-    // reports of the previous channel may still be in the pipe after a (re)placement:
-    // none counts before the decoder's RESET for it (or 2 s - a VFO that hadn't
-    // reported anything gets no RESET)
-    if (!v.reset_seen && now - c.t_placed < 2000) return;
+    // reports of the previous channel may still be in the pipe after a placement
+    // that reset a decoder which had reported: none counts before that RESET
+    // (or 2 s). A fresh VFO / one that reported nothing: at once
+    if (v.await_reset && !v.reset_seen && now - c.t_placed < 2000) {
+        g_stale_reports++;
+        return;
+    }
     // its tuner retuned / the mode changed since it was placed: what it hears isn't the call's
     {
         const int mode = operating_mode_index();
@@ -2039,7 +2083,7 @@ void on_voice_call(Voice& v, const PluginEvent& ev) {
         // the channel carries a different call: re-labelled when that one may
         // be followed, else the VFO is freed
         // (the previous channel's, still in the pipe: not before its decoder's RESET for this placement - or 2 s)
-        if (now - c.t_placed < STALE_FRAMES_MS * 3 || (!v.reset_seen && now - c.t_placed < 2000)) return;
+        if (now - c.t_placed < STALE_FRAMES_MS * 3 || (v.await_reset && !v.reset_seen && now - c.t_placed < 2000)) return;
         const std::string key = call_key(c.sys, c.ctl_vfo, ev.group, ev.target);
         auto kit = g_call_by_key.find(key);
         Call probe = c;
@@ -2113,8 +2157,15 @@ void on_voice_call(Voice& v, const PluginEvent& ev) {
         if (!g_set.enc) return unfollow(c, "encrypted");
     }
     if (ev.emergency) c.emerg = true;
+    // the previous over's channel again: its trailing ENDED / RELEASED is not
+    // this over's end - taken only once this one was active here
+    if (ev.call_state != 1 && v.same_place && !v.active_here) {
+        g_stale_reports++;
+        return;
+    }
     if (ev.call_state == 2) return end_call(c.id, "released");
     if (ev.call_state == 1) {
+        v.active_here = true;
         c.t_call_active = now;
     } else {
         c.t_call_ended = now;
@@ -2204,7 +2255,11 @@ void apply_event(QEv& q) {
         case PluginEvent::CONTROL:
             if (!voice_of_vfo(q.vfo)) on_control(q.vfo, t, ev);
             break;
-        case PluginEvent::GRANT: on_grant(q.vfo, t, q.plugin, ev, q.t_rx); break;
+        case PluginEvent::GRANT:
+            g_on_grant = true;
+            on_grant(q.vfo, t, q.plugin, ev, q.t_rx);
+            g_on_grant = false;
+            break;
         case PluginEvent::GRANT_END: {
             if (Voice* v = voice_of_vfo(q.vfo)) {
                 auto it = g_calls.find(v->call);
@@ -2537,7 +2592,7 @@ std::string build_status(bool ages) {
       << ",\"active_ms\":" << median(g_lat_active) << ",\"active_max_ms\":" << maxof(g_lat_active) << ",\"n\":" << g_lat_place.size()
       << "},\"events\":" << g_events_in.load() << ",\"events_dropped\":" << g_events_dropped.load()
       << ",\"resets_coalesced\":" << g_resets_coalesced.load() << ",\"options_dropped\":" << g_opts_dropped
-      << ",\"untrunking_dropped\":" << g_untrunking
+      << ",\"untrunking_dropped\":" << g_untrunking << ",\"stale_reports\":" << g_stale_reports
       << ",\"calls_dropped\":" << g_dropped_calls;
     if (ages) o << ",\"now\":" << wall_ms();
     o << "}}";
@@ -2840,6 +2895,7 @@ void tick_calls() {
         const bool analog = c.demod == "nfm" && inst->squelch_open.load() && now - c.t_placed > 300;
         const bool act = frames || called || analog;
         if (act) c.t_activity = now;
+        if (frames || analog) v->active_here = true;
         switch (c.st) {
             case SETUP:
                 if (act) {
