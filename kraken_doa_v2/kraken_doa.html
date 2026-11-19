@@ -22052,7 +22052,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const n = s.counts || {}, not = n.not || {};
       const notN = Object.values(not).reduce((a, b) => a + b, 0);
       const temp = tkTemp(s) && ctl.length;
-      tkText(r.querySelector('.l3'), temp ? 'Waiting for the system\'s identity' :
+      tkText(r.querySelector('.l3'), temp ? (ctl.some(c => c.rx) ? 'Waiting for the system\'s identity' : 'Its control channel is not received') :
         (n.grants || 0) + ' calls · ' + (n.followed || 0) + ' followed' + (notN ? ' · ' + notN + ' not' : '') + (s.n_tgs ? ' · ' + s.n_tgs + ' TGs' : ''),
         notN ? 'Not followed:\n' + Object.entries(not).map(([k, v]) => tkWhy(k)[0] + ': ' + v).join('\n') : '');
     });
