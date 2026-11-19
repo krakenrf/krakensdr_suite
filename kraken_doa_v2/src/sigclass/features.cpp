@@ -8,7 +8,7 @@
 // one sample): each group is normalised and the vector is clamped at the end.
 //
 // Samples: the whole view when it is at most FEAT_MAX samples; a longer view
-// (480 k / 2.4 M at 0.5 s) is analysed in NCHUNK chunks of CHUNK samples -
+// (480 k / 2.4 M at 0.5 s) is analysed in NCHUNK_WIDE chunks of CHUNK samples -
 // half the most energetic chunks (bursts), half evenly spread - while the
 // slow statistics (duty, bursts, the low-frequency spectra, long lags) use
 // box sums of the whole view.
@@ -16,6 +16,7 @@
 #include "sc_internal.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <sstream>
 
@@ -63,6 +64,18 @@ constexpr Group GROUPS[] = {
     {"tf", 12, "64-pt spectrogram of the view: centroid std, mean |step|, trend, spread, "
                "instantaneous/total occupancy, frame correlation, on-frames, upward steps, "
                "power std, max step, centroid kurtosis, step/std"},
+    {"sym", 134, "symbol-synchronous: the symbol rate rs = the strongest cyclic line (fs_v/200 .. fs_v/2.2, "
+                 "re its neighbourhood) of |dIF| or of the envelope; per block of <= 2048 symbols the "
+                 "timing phase (of 8) whose samples cluster most; 14 scalars (line dB/20, source, |dIF| "
+                 "line, envelope line, rs/fs_v*4, (log10 rs - 3)/2, rs/bw, line at 2 rs, at rs/2, IF "
+                 "concentration, phase-step concentration, q90 |IF|/fs_v*4, q50/q90 |IF|, symbols on), "
+                 "the IF at the symbol centres (64 bins over +-0.25 fs_v), |IF| / its q90 (24 bins "
+                 "0..1.5), the phase step over one symbol (32 bins -pi..pi): sqrt(density re uniform)/2"},
+    {"frame_c", 48, "|autocorrelation| of the complex view on a LINEAR lag grid (frame periods): views "
+                    "0-1 48 bins of 5 ms centred at 5..240 ms (box sums), views 2-3 48 bins of 22 us "
+                    "from 0 to 1.056 ms (samples); max-pooled, minus the grid's median, x8"},
+    {"frame_e", 48, "the same for the envelope (mean removed)"},
+    {"frame_f", 48, "the same for the gated IF (mean removed)"},
 };
 constexpr int NGROUPS = int(sizeof(GROUPS) / sizeof(GROUPS[0]));
 
@@ -76,7 +89,8 @@ constexpr int DIM = dim_of();
 // analysis parameters (part of the layout: in layout_json and the hash)
 constexpr int FEAT_MAX = 65536;
 constexpr int CHUNK = 4096;
-constexpr int NCHUNK = FEAT_MAX / CHUNK;
+// a view longer than FEAT_MAX (views 2-3 at 0.5 s) is analysed in NCHUNK_WIDE chunks
+constexpr int NCHUNK_WIDE = 8;
 constexpr int ON_BOX = 8;
 constexpr int PSD_SEG = 1024, PSD_K = 48;
 constexpr int ENV_SEG = 256, ENV_K = 64;
@@ -88,6 +102,12 @@ constexpr int TF_N = 64, TF_FRAMES = 128;
 constexpr double LO_RATE = 1200.0, LO_F0 = 2.0, LO_F1 = 500.0;
 constexpr double LAG0 = 2e-6, LAG1 = 0.25;
 constexpr int NLAG = 40;
+// symbol-synchronous group: cyclic-line FFT size (at most), blocks of symbols, timing candidates
+constexpr int SYM_NFFT = 8192, SYM_SEGS = 4, SYM_BLOCK = 2048, SYM_PHASES = 8, SYM_MAXSYM = 4096;
+constexpr double SYM_R0 = 1.0 / 200.0, SYM_R1 = 1.0 / 2.2;   // line search range, fractions of fs_v
+// linear frame-lag grids: narrow views (0-1) and wide views (2-3)
+constexpr int FRAME_N = 48;
+constexpr double FRAME_DT_NARROW = 5e-3, FRAME_DT_WIDE = 22e-6;
 constexpr double PI = 3.14159265358979323846;
 
 int group_offset(const char* name) {
@@ -114,11 +134,14 @@ std::string layout_body() {
     for (int v = 0; v < NUM_VIEWS; v++)
         o << (v ? "," : "") << "{\"view\":" << v << ",\"decim\":" << VIEW_DECIM[v]
           << ",\"rate_hz_at_2m4\":" << int(NOMINAL_FS_HZ / VIEW_DECIM[v]) << "}";
-    o << "],\"params\":{\"feat_max\":" << FEAT_MAX << ",\"chunk\":" << CHUNK << ",\"on_box\":" << ON_BOX
+    o << "],\"params\":{\"feat_max\":" << FEAT_MAX << ",\"nchunk\":" << NCHUNK_WIDE << ",\"chunk\":" << CHUNK << ",\"on_box\":" << ON_BOX
       << ",\"psd_seg\":" << PSD_SEG << ",\"env_seg\":" << ENV_SEG << ",\"sq_seg\":" << SQ_SEG
       << ",\"acf_seg\":" << ACF_SA << ",\"acf_seg_full\":" << ACF_SA_FULL << ",\"acf_k\":" << ACF_KA << ",\"acf_nb\":" << ACF_NB << ",\"lp_seg\":" << LP_SEG
       << ",\"tf_n\":" << TF_N << ",\"lo_rate\":" << LO_RATE << ",\"lag0\":" << LAG0 << ",\"lag1\":" << LAG1
-      << ",\"nlag\":" << NLAG << ",\"long_n\":" << detail::LONG_N << ",\"view_filter\":\"kaiser60 0.4-0.5\"}";
+      << ",\"nlag\":" << NLAG << ",\"sym_nfft\":" << SYM_NFFT << ",\"sym_segs\":" << SYM_SEGS << ",\"sym_block\":" << SYM_BLOCK
+      << ",\"sym_phases\":" << SYM_PHASES << ",\"sym_maxsym\":" << SYM_MAXSYM << ",\"sym_r0\":" << SYM_R0 << ",\"sym_r1\":" << SYM_R1 << ",\"frame_n\":" << FRAME_N
+      << ",\"frame_dt_narrow\":" << FRAME_DT_NARROW << ",\"frame_dt_wide\":" << FRAME_DT_WIDE
+      << ",\"long_n\":" << detail::LONG_N << ",\"view_filter\":\"kaiser60 0.4-0.5\"}";
     o << ",\"groups\":[";
     int off = 0;
     for (int i = 0; i < NGROUPS; i++) {
@@ -367,18 +390,29 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     eb8.assign(size_t(nb8), 0.0f);
     zb8.assign(size_t(nb8), cf(0.0f, 0.0f));
     yb8.assign(size_t(nb8), cf(0.0f, 0.0f));
-    for (int j = 0; j < nb8; j++) {
-        const cf* p = y + size_t(j) * ON_BOX;
-        float e = 0.0f;
-        cf z(0.0f, 0.0f), s(0.0f, 0.0f);
-        for (int i = 0; i < ON_BOX; i++) {
-            e += std::norm(p[i]);
-            s += p[i];
+    {
+        // on interleaved floats, one box of ON_BOX samples per step (vectorisable)
+        const float* f = reinterpret_cast<const float*>(y);
+        for (int j = 0; j < nb8; j++) {
+            const float* p = f + size_t(j) * 2 * ON_BOX;
+            float e = 0.0f, sr = 0.0f, si = 0.0f, zr = 0.0f, zi = 0.0f;
+            for (int i = 0; i < ON_BOX; i++) {
+                const float a = p[2 * i], b = p[2 * i + 1];
+                e += a * a + b * b;
+                sr += a;
+                si += b;
+            }
+            // x[i] conj(x[i-1]) within the box and across from the previous one
+            const int i0 = j == 0 ? 1 : 0;
+            for (int i = i0; i < ON_BOX; i++) {
+                const float a = p[2 * i], b = p[2 * i + 1], c = p[2 * i - 2], d = p[2 * i - 1];
+                zr += a * c + b * d;
+                zi += b * c - a * d;
+            }
+            eb8[size_t(j)] = e;
+            zb8[size_t(j)] = cf(zr, zi);
+            yb8[size_t(j)] = cf(sr, si);
         }
-        for (int i = (j == 0 ? 1 : 0); i < ON_BOX; i++) z += p[i] * std::conj(p[i - 1]);
-        eb8[size_t(j)] = e;
-        zb8[size_t(j)] = z;
-        yb8[size_t(j)] = s;
     }
     if (nb8 < 8) return;
     double etot = 0.0;
@@ -388,8 +422,14 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     es.resize(size_t(nb8));
     for (int j = 0; j < nb8; j++) es[size_t(j)] = eb8[size_t(j)] / ON_BOX;
     double noise = vi.noise_var;
-    if (!(noise > 0.0) || !finite_d(noise)) noise = std::max(1e-20, double(quantile(es.data(), es.size(), 0.1, scratch)));
-    const double q90 = quantile(es.data(), es.size(), 0.9, scratch);
+    // (quantiles of at most 16384 evenly strided boxes)
+    {
+        const size_t st = (es.size() + 16383) / 16384;
+        tmpv.clear();
+        for (size_t i = 0; i < es.size(); i += st) tmpv.push_back(es[i]);
+    }
+    if (!(noise > 0.0) || !finite_d(noise)) noise = std::max(1e-20, double(quantile(tmpv.data(), tmpv.size(), 0.1, scratch)));
+    const double q90 = quantile(tmpv.data(), tmpv.size(), 0.9, scratch);
     const double shi = std::max(q90 - noise, 0.0);
     const double thr_on = noise * std::sqrt(1.0 + shi / noise);
     on8.resize(size_t(nb8));
@@ -444,12 +484,12 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
             en[size_t(c)] = {float(s), c};
         }
         std::vector<uint8_t> pick(static_cast<size_t>(nch), 0);
-        for (int q = 0; q < NCHUNK / 2; q++) pick[size_t(std::lround(double(q) * (nch - 1) / (NCHUNK / 2 - 1)))] = 1;
+        for (int q = 0; q < NCHUNK_WIDE / 2; q++) pick[size_t(std::lround(double(q) * (nch - 1) / (NCHUNK_WIDE / 2 - 1)))] = 1;
         std::stable_sort(en.begin(), en.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
         int have = 0;
         for (uint8_t p : pick) have += p;
         for (const auto& e : en) {
-            if (have >= NCHUNK) break;
+            if (have >= NCHUNK_WIDE) break;
             if (!pick[size_t(e.second)]) { pick[size_t(e.second)] = 1; have++; }
         }
         for (int c = 0; c < nch; c++)
@@ -491,11 +531,13 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     const bool use_all = nonc < 16;
     auto is_on = [&](int i) { return use_all || oc[size_t(i)]; };
     // IF median over on samples, gated IF
+    double if_med = 0.0;
     {
         tmpv.clear();
         for (int i = 0; i < N; i++)
             if (is_on(i)) tmpv.push_back(fc[size_t(i)]);
         const float med = median_of(tmpv, mscratch);
+        if_med = med;
         for (int i = 0; i < N; i++) {
             fc[size_t(i)] -= med;
             fg[size_t(i)] = is_on(i) ? fc[size_t(i)] : 0.0f;
@@ -941,6 +983,232 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
                     for (int k = k0; k <= k1; k++) m = std::max(m, rhoB[w][size_t(k)]);
                 }
                 g[i] = m;
+            }
+        }
+        // frame periods on a linear lag grid: narrow views from the box sums of the
+        // whole view (5 ms bins up to 240 ms), wide views from the sample-level
+        // correlations (22 us bins up to 1.056 ms: OFDM symbol / guard lags)
+        const char* fnames[3] = {"frame_c", "frame_e", "frame_f"};
+        const bool narrow = vi.view <= 1;
+        std::vector<float> fr(FRAME_N), frs(FRAME_N);
+        for (int w = 0; w < 3; w++) {
+            float* g = out + group_offset(fnames[w]);
+            for (int i = 0; i < FRAME_N; i++) {
+                float m = 0.0f;
+                if (narrow) {
+                    const double lo = (i + 0.5) * FRAME_DT_NARROW, hi = (i + 1.5) * FRAME_DT_NARROW;
+                    int k0 = std::max(1, int(std::ceil(lo * fs_v / DB))), k1 = std::min(nB / 2, int(std::floor(hi * fs_v / DB)));
+                    if (nB >= 8)
+                        for (int k = k0; k <= k1; k++) m = std::max(m, rhoB[w][size_t(k)]);
+                } else {
+                    const double lo = i * FRAME_DT_WIDE, hi = (i + 1) * FRAME_DT_WIDE;
+                    int l0 = std::max(1, int(std::ceil(lo * fs_v))), l1 = std::min(la_max, int(std::floor(hi * fs_v)));
+                    for (int l = l0; l <= l1; l++) m = std::max(m, rhoA[w][size_t(l)]);
+                }
+                fr[size_t(i)] = m;
+            }
+            frs = fr;
+            std::nth_element(frs.begin(), frs.begin() + FRAME_N / 2, frs.end());
+            const float med = frs[FRAME_N / 2];
+            for (int i = 0; i < FRAME_N; i++) g[i] = clampf((fr[size_t(i)] - med) * 8.0f, -2.0f, 8.0f);
+        }
+    }
+
+    // ---- symbol-synchronous statistics
+    {
+        float* g = out + group_offset("sym");
+        // 1. the symbol rate: the strongest cyclic line of |dIF| (FSK: the IF steps at
+        // every symbol boundary) or of the envelope (linear modulation), each line
+        // against the mean of its neighbourhood (not the coloured spectrum's level)
+        int maxlen = 0;
+        for (const Span& s : spans) maxlen = std::max(maxlen, s.len);
+        int L = 256;
+        while (L < maxlen && L < SYM_NFFT) L *= 2;
+        Fft& fr_ = plan(L, true);
+        const std::vector<float>& wh = win(L);
+        std::vector<float> Sd(size_t(L / 2 + 1), 0.0f), Se(size_t(L / 2 + 1), 0.0f);
+        ra.resize(size_t(L));
+        rb.resize(size_t(L));
+        int nseg = 0;
+        for (const Span& s : spans) {
+            for (int p0 = 0, ns = 0; p0 < s.len && ns < SYM_SEGS; p0 += L, ns++) {
+                const int len = std::min(L, s.len - p0);
+                if (len < 64) break;
+                for (int which = 0; which < 2; which++) {
+                    double mu = 0.0;
+                    for (int i = 0; i < len; i++) {
+                        const int j = s.start + p0 + i;
+                        float v;
+                        if (which == 0) v = (i > 0 && is_on(j) && is_on(j - 1)) ? std::fabs(fc[size_t(j)] - fc[size_t(j - 1)]) : 0.0f;
+                        else v = ec[size_t(j)];
+                        ra[size_t(i)] = v;
+                        mu += v;
+                    }
+                    mu /= len;
+                    // a short piece: its own Hann window (zero-padded)
+                    for (int i = 0; i < len; i++) {
+                        const float w = len == L ? wh[size_t(i)] : float(0.5 - 0.5 * std::cos(2.0 * PI * (i + 0.5) / len));
+                        ra[size_t(i)] = float((ra[size_t(i)] - mu) * w);
+                    }
+                    std::fill(ra.begin() + len, ra.end(), 0.0f);
+                    fr_.fwd_real(ra.data(), rb.data());
+                    std::vector<float>& S = which == 0 ? Sd : Se;
+                    for (int k = 1; k < L / 2; k++) S[size_t(k)] += rb[size_t(2 * k)] * rb[size_t(2 * k)] + rb[size_t(2 * k + 1)] * rb[size_t(2 * k + 1)];
+                }
+                nseg++;
+            }
+        }
+        // search ranges (also by the occupied width: FSK rs >= bw / 40 - slow wide-deviation
+        // paging -, a linear modulation rs >= bw / 4; either <= 1.5 bw)
+        const int kmin = std::max(3, int(std::ceil(SYM_R0 * L))), kmax = std::min(L / 2 - 4, int(std::floor(SYM_R1 * L)));
+        const double kbw = d.bw_hz / fs_v * L;
+        const int kd0 = std::max(kmin, int(std::ceil(kbw / 40.0))), ke0 = std::max(kmin, int(std::ceil(kbw / 4.0)));
+        const int k1 = std::min(kmax, int(std::floor(1.5 * kbw)));
+        const int W = std::max(8, L / 512);
+        auto line_ratio = [&](const std::vector<float>& S, int k) {
+            // mean of k-W..k+W without k-2..k+2
+            double s = 0.0;
+            int c = 0;
+            for (int j = std::max(1, k - W); j <= std::min(L / 2 - 1, k + W); j++)
+                if (std::abs(j - k) > 2) { s += S[size_t(j)]; c++; }
+            const double pk = std::max({S[size_t(k)], S[size_t(std::max(1, k - 1))], S[size_t(std::min(L / 2 - 1, k + 1))]});
+            return c > 0 && s > 0.0 ? pk / (s / c) : 1.0;
+        };
+        auto best_line = [&](const std::vector<float>& S, int k0, int k1_, int& kb) {
+            // neighbourhood mean by prefix sums, then the best ratio
+            std::vector<double> pre(size_t(L / 2 + 1), 0.0);
+            for (int k = 1; k <= L / 2; k++) pre[size_t(k)] = pre[size_t(k - 1)] + S[size_t(k - 1)];
+            auto sum = [&](int a, int b) { a = std::max(a, 1); b = std::min(b, L / 2 - 1); return b >= a ? pre[size_t(b + 1)] - pre[size_t(a)] : 0.0; };
+            double best = 0.0;
+            kb = -1;
+            for (int k = k0; k <= k1_; k++) {
+                const double s = sum(k - W, k + W) - sum(k - 2, k + 2);
+                const int c = (std::min(L / 2 - 1, k + W) - std::max(1, k - W) + 1) - 5;
+                if (c <= 0 || s <= 0.0) continue;
+                const double r = S[size_t(k)] / (s / c);
+                if (r > best) { best = r; kb = k; }
+            }
+            return std::max(best, 1e-3);
+        };
+        int kd = -1, ke = -1;
+        const double rd = k1 > kd0 ? best_line(Sd, kd0, k1, kd) : 1.0, re = k1 > ke0 ? best_line(Se, ke0, k1, ke) : 1.0;
+        static const bool dbg_sym = std::getenv("SIGCLASS_DEBUG_SYM") != nullptr;
+        if (dbg_sym) std::fprintf(stderr, "sym: view %d bw %.0f  dIF line %.1f Hz %.1f dB  env line %.1f Hz %.1f dB\n", vi.view, d.bw_hz, kd * fs_v / L, db10(rd), ke * fs_v / L, db10(re));
+        // the two agree (a linear modulation shows its rate in both): the stronger; else
+        // a clear |dIF| line wins (an FSK signal's envelope lines are the recording's or
+        // the channel's, not its symbols), else the stronger
+        const bool agree = kd > 0 && ke > 0 && std::abs(kd - ke) <= 2;
+        const bool use_e = ke > 0 && (agree ? re > rd : (kd < 0 || (db10(rd) < 12.0f && re > rd)));
+        const int kb = use_e ? ke : kd;
+        const std::vector<float>& Sb = use_e ? Se : Sd;
+        if (kb > 0 && nseg > 0) {
+            // parabolic interpolation of the line on log power
+            double dk = 0.0;
+            {
+                const double a = std::log(std::max(1e-30, double(Sb[size_t(kb - 1)]))), b = std::log(std::max(1e-30, double(Sb[size_t(kb)]))),
+                             c = std::log(std::max(1e-30, double(Sb[size_t(kb + 1)])));
+                const double den = a - 2.0 * b + c;
+                if (den < -1e-12) dk = std::clamp(0.5 * (a - c) / den, -0.5, 0.5);
+            }
+            const double rs = (kb + dk) * fs_v / L;
+            const double sps = fs_v / rs;
+            g[0] = clampf(db10(use_e ? re : rd) / 20.0f, -1.0f, 3.0f);
+            g[1] = use_e ? 1.0f : 0.0f;
+            g[2] = clampf(db10(rd) / 20.0f, -1.0f, 3.0f);
+            g[3] = clampf(db10(re) / 20.0f, -1.0f, 3.0f);
+            g[4] = clampf(float(rs / fs_v * 4.0), 0.0f, 2.0f);
+            g[5] = clampf(float((std::log10(std::max(rs, 1.0)) - 3.0) / 2.0), -2.0f, 2.0f);
+            g[6] = clampf(float(rs / std::max(d.bw_hz, 1.0)), 0.0f, 4.0f);
+            const int k2 = int(std::lround(2.0 * (kb + dk))), kh = int(std::lround(0.5 * (kb + dk)));
+            g[7] = k2 < L / 2 - 3 ? clampf(db10(line_ratio(Sb, k2)) / 20.0f, -1.0f, 3.0f) : 0.0f;
+            g[8] = kh >= 3 ? clampf(db10(line_ratio(Sb, kh)) / 20.0f, -1.0f, 3.0f) : 0.0f;
+            // 2. per block of <= SYM_BLOCK symbols the timing phase (of SYM_PHASES) whose
+            // IF samples cluster most (FSK: the levels; PSK: the IF is still at the symbol
+            // centres); at most SYM_MAXSYM symbols (blocks evenly picked); then at that
+            // phase the IF at the symbol centres and the phase step over one symbol
+            constexpr int NH = 64, NP = 32, NA = 24;
+            const double hr = 0.25 * fs_v;
+            const double hsc = NH / (2.0 * hr);
+            std::vector<int> hif(NH, 0), hdp(NP, 0), cif(NH, 0);
+            std::vector<float>& absv = tmpv;
+            absv.clear();
+            int M = 0, Mdp = 0;
+            const int blk = std::max(16, int(SYM_BLOCK * sps));
+            int nblk = 0;
+            for (const Span& s : spans) nblk += std::max(0, (s.len - int(2 * sps) - 2 + blk - 1) / blk);
+            const double nsym = double(nblk) * std::min(double(SYM_BLOCK), double(N) / std::max(nblk, 1) / sps);
+            const int skip = std::max(1, int(std::ceil(nsym / SYM_MAXSYM)));
+            auto yat = [&](double t) {
+                const int i0 = int(t);
+                const float a = float(t - i0);
+                return yc[size_t(i0)] * (1.0f - a) + yc[size_t(i0 + 1)] * a;
+            };
+            const float turn = float(2.0 * PI * if_med / rs);   // the carrier offset's turn over one symbol
+            int bi = 0;
+            for (const Span& s : spans) {
+                for (int b0 = 0; b0 + int(2 * sps) + 2 < s.len; b0 += blk, bi++) {
+                    if (bi % skip) continue;
+                    const int b1 = std::min(s.len - 2, b0 + blk);
+                    int best = -1;
+                    double bscore = -1.0;
+                    for (int q = 0; q < SYM_PHASES; q++) {
+                        std::fill(cif.begin(), cif.end(), 0);
+                        int cnt = 0;
+                        for (double t = b0 + sps * (q + 0.5) / SYM_PHASES; t < b1; t += sps) {
+                            const int i0 = s.start + int(t);
+                            if (!is_on(i0) || !is_on(i0 + 1)) continue;
+                            const float a = float(t - int(t));
+                            const float v = fc[size_t(i0)] * (1.0f - a) + fc[size_t(i0 + 1)] * a;
+                            cif[size_t(std::clamp(int(std::floor((v + hr) * hsc)), 0, NH - 1))]++;
+                            cnt++;
+                        }
+                        if (!cnt) continue;
+                        double ci = 0.0;
+                        for (int b = 0; b < NH; b++) ci += double(cif[size_t(b)]) * cif[size_t(b)];
+                        const double sc = ci / (double(cnt) * cnt);
+                        if (sc > bscore) { bscore = sc; best = q; }
+                    }
+                    if (best < 0) continue;
+                    for (double t = b0 + sps * (best + 0.5) / SYM_PHASES; t < b1; t += sps) {
+                        const int i0 = s.start + int(t);
+                        if (!is_on(i0) || !is_on(i0 + 1)) continue;
+                        const float a = float(t - int(t));
+                        const float v = fc[size_t(i0)] * (1.0f - a) + fc[size_t(i0 + 1)] * a;
+                        hif[size_t(std::clamp(int(std::floor((v + hr) * hsc)), 0, NH - 1))]++;
+                        absv.push_back(std::fabs(v));
+                        M++;
+                        if (t - sps >= 0.0 && is_on(s.start + int(t - sps))) {
+                            const cf z = yat(s.start + t) * std::conj(yat(s.start + t - sps));
+                            float ph = fast_atan2(z.imag(), z.real()) - turn;
+                            ph -= float(2.0 * PI) * std::floor((ph + float(PI)) / float(2.0 * PI));
+                            hdp[size_t(std::clamp(int(std::floor((ph + PI) / (2.0 * PI) * NP)), 0, NP - 1))]++;
+                            Mdp++;
+                        }
+                    }
+                }
+            }
+            if (M >= 16) {
+                double ci = 0.0, cp = 0.0;
+                for (int b = 0; b < NH; b++) {
+                    ci += double(hif[size_t(b)]) * hif[size_t(b)];
+                    g[14 + b] = clampf(float(std::sqrt(hif[size_t(b)] * double(NH) / M) / 2.0), 0.0f, 4.0f);
+                }
+                const float q90 = quantile(absv.data(), absv.size(), 0.9, scratch);
+                const float q50 = quantile(absv.data(), absv.size(), 0.5, scratch);
+                std::vector<int> ha(NA, 0);
+                if (q90 > 0.0f)
+                    for (float v : absv) ha[size_t(std::min(NA - 1, int(v / q90 / 1.5f * NA)))]++;
+                for (int b = 0; b < NA; b++) g[14 + NH + b] = clampf(float(std::sqrt(ha[size_t(b)] * double(NA) / M) / 2.0), 0.0f, 4.0f);
+                if (Mdp > 0)
+                    for (int b = 0; b < NP; b++) {
+                        cp += double(hdp[size_t(b)]) * hdp[size_t(b)];
+                        g[14 + NH + NA + b] = clampf(float(std::sqrt(hdp[size_t(b)] * double(NP) / Mdp) / 2.0), 0.0f, 4.0f);
+                    }
+                g[9] = clampf(float(ci / (double(M) * M) * 4.0), 0.0f, 4.0f);
+                g[10] = Mdp > 0 ? clampf(float(cp / (double(Mdp) * Mdp) * 4.0), 0.0f, 4.0f) : 0.0f;
+                g[11] = clampf(float(q90 / fs_v * 4.0), 0.0f, 2.0f);
+                g[12] = q90 > 0.0f ? clampf(q50 / q90, 0.0f, 1.0f) : 0.0f;
+                g[13] = clampf(float(M * sps / std::max(1, N)), 0.0f, 1.0f);
             }
         }
     }

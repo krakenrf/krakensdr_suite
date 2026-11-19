@@ -9,7 +9,11 @@ code). Frames 1-17: normal bursts, SCH/F (an empty MAC-RESOURCE) on
 timeslot 1, the AACH (Reed-Muller 30,14) on every slot.
 
   tetra_gen.py OUT.cf32 --mcc 530 --mnc 1 --cc 12 --la 1001 [--carrier 3600]
-               [--rate 72000] --at T --dur S [--at T --dur S ...]
+               [--rate 72000] [--seed N] --at T --dur S [--at T --dur S ...]
+
+--seed N: the random generator's seed (the cell's TDMA time at the start and
+its slot timing); without it the colour code, so the same options give the
+same file.
 
 The cell's carrier on during each [at, at + dur) (cf32 + OUT.json). Put
 several cells at their own bearings with plugins/sdk/tools/uca_scene.py.
@@ -151,13 +155,15 @@ def main():
         sys.exit(2)
     out = a[0]
     cell = {'mcc': 530, 'mnc': 1, 'cc': 12, 'la': 1001, 'carrier': 3600}
-    rate = FS
+    rate, seed = FS, None
     on = []
     i = 1
     while i < len(a):
         k, v = a[i].lstrip('-'), a[i + 1]
         if k == 'rate':
             rate = float(v)
+        elif k == 'seed':
+            seed = int(v)
         elif k == 'at':
             on.append([float(v), 5.0])
         elif k == 'dur':
@@ -167,7 +173,7 @@ def main():
         i += 2
     end = max(t + d for t, d in on) + 0.2
     nslots = int(end * 18000 / 255) + 2
-    rng = np.random.default_rng(cell['cc'])
+    rng = np.random.default_rng(cell['cc'] if seed is None else seed)
     # the cell's own TDMA time and symbol timing
     tn, fn, mn = 1, int(rng.integers(1, 18)), int(rng.integers(1, 61))
     dphi = {(0, 0): np.pi / 4, (0, 1): 3 * np.pi / 4, (1, 0): -np.pi / 4, (1, 1): -3 * np.pi / 4}

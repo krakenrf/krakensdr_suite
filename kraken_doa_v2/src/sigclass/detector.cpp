@@ -555,7 +555,7 @@ void Detector::burst_search(const FrontEnd& fe, const Config& cfg, const std::ve
 
 // ------------------------------------------------------------ band filling
 
-bool Detector::band_fill(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& found, Cand& c, bool force) {
+bool Detector::band_fill(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& found, Cand& c, int force) {
     const double fs = fe.fs, df = fs / LONG_N;
     for (const Cand& f : found)
         if (f.det.bw_hz >= 0.6 * fs) return false;
@@ -603,7 +603,10 @@ bool Detector::band_fill(const FrontEnd& fe, const Config& cfg, const std::vecto
     }
     fill_corr_ = best;
     if (std::getenv("SIGCLASS_DEBUG_FILL")) std::fprintf(stderr, "band_fill: corr %.4f at %d samples, prominence %.2f%s\n", best, lbest, prom, force ? " (forced)" : "");
-    if (!force && !(best > cfg.band_fill_corr && prom >= cfg.band_fill_prominence)) return false;
+    // (an irregular comb of lines - OFDM pilots - still needs the peak to stand out:
+    // a busy band of narrow carriers (a trunked radio site, 30+ lines) has no CP peak)
+    if (force == 0 && !(best > cfg.band_fill_corr && prom >= cfg.band_fill_prominence)) return false;
+    if (force == 1 && !(prom >= cfg.band_fill_prominence)) return false;
     // the whole band: centroid and 98 % width of the power inside the guards
     double E = 0.0;
     for (int i = LONG_N / 2 - edge; i <= LONG_N / 2 + edge; i++) E += p_[size_t(i)];
@@ -1056,6 +1059,21 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
             else i++;
         }
     }
+    // a burst hump around a stronger continuous signal, at most ten times its
+    // width, is that signal seen through the short frames (its masked band
+    // bridged) plus its skirt or a faint pedestal beside it - not a signal of
+    // its own (a 4-FSK channel's modulation skirt found as a 40 kHz "burst")
+    for (size_t i = 0; i < bursts.size();) {
+        const Detection& B = bursts[i].det;
+        bool skirt = false;
+        for (const Cand& n : cont) {
+            const Detection& N = n.det;
+            skirt = skirt || (!N.bursty && N.peak_db >= B.peak_db + 3.0f && B.bw_hz <= 10.0 * N.bw_hz &&
+                              std::fabs(N.offset_hz - B.offset_hz) < 0.5 * B.bw_hz);
+        }
+        if (skirt) bursts.erase(bursts.begin() + long(i));
+        else i++;
+    }
     out = cont;
     out.insert(out.end(), bursts.begin(), bursts.end());
     {
@@ -1072,7 +1090,7 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
         bool have_wide = false;
         for (const Cand& f : out) have_wide = have_wide || f.det.bw_hz >= 0.6 * fs;
         Cand c;
-        bool fill = cfg.band_fill_test && !have_wide && band_fill(fe, cfg, out, c, false);
+        bool fill = cfg.band_fill_test && !have_wide && band_fill(fe, cfg, out, c, 0);
         bool comb_tv = false;   // filled by a regular line comb (a TV signal): all its narrow pieces are it
         if (cfg.band_fill_test && !have_wide) {
             // a comb of >= 10 lines spread over half the band or more and nothing wide
@@ -1109,7 +1127,7 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
                 }
             }
             if (std::getenv("SIGCLASS_DEBUG_FILL")) std::fprintf(stderr, "band_fill: comb of %d lines over %.0f Hz, regular %d\n", nl, b - a, int(regular));
-            if (!fill && nl >= 10 && (b - a >= lim || regular)) fill = band_fill(fe, cfg, out, c, true);
+            if (!fill && nl >= 10 && (b - a >= lim || regular)) fill = band_fill(fe, cfg, out, c, regular ? 2 : 1);
             comb_tv = fill && regular;
         }
         if (fill) out.push_back(c);
@@ -1198,6 +1216,22 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
             }
         }
         if (skirt) out.erase(out.begin() + long(i));
+        else i++;
+    }
+    // the IQ image of a strong signal (the tuner's gain / phase imbalance mirrors it to
+    // -f, 25-40 dB down): a detection at the mirror frequency of one >= 15 dB stronger,
+    // at most twice as wide, is the image - not a transmitter (a strong signal's image
+    // carried its modulation: the model called it by the signal's class)
+    for (size_t i = 0; i < out.size();) {
+        const Detection& w = out[i].det;
+        bool image = false;
+        if (!w.fills_band)
+            for (size_t j = 0; j < out.size() && !image; j++) {
+                const Detection& s = out[j].det;
+                if (j == i || s.fills_band || std::fabs(s.offset_hz) < std::max(s.bw_hz, 20e3) || w.bw_hz > 2.0 * s.bw_hz) continue;
+                image = std::fabs(s.offset_hz + w.offset_hz) <= 0.5 * std::max(s.bw_hz, w.bw_hz) && s.snr_db >= w.snr_db + 15.0f;
+            }
+        if (image) out.erase(out.begin() + long(i));
         else i++;
     }
     // strongest first - a band-filling detection (peak 0 dB by definition) before all: the

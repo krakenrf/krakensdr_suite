@@ -53,7 +53,8 @@ from bank import default_work, load_classes  # noqa: E402
 import model_io  # noqa: E402
 
 REPO = os.path.normpath(os.path.join(HERE, '..', '..'))
-TOOL = os.path.join(REPO, 'tools', 'build', 'sigclass_tool')
+# (KRAKEN_SIGCLASS_TOOL: another build - an older layout's tool to compare models on the same path)
+TOOL = os.environ.get('KRAKEN_SIGCLASS_TOOL') or os.path.join(REPO, 'tools', 'build', 'sigclass_tool')
 FS = 2400000.0
 DEV = {'dstar': 1200, 'dmr': 1944, 'p25p1': 1800, 'nxdn': 2400, 'ysf': 2700, 'pocsag': 4500, 'flex': 4800, 'aprs': 3000,
        'mpt1327': 2500, 'nfm_voice': 3000, 'v23': 3500}
@@ -61,6 +62,36 @@ WEAK = re.compile(r'unconfirmed|\b0 (frames|valid|packets|messages|bursts|events
 PROBE = re.compile(r'no decoder run|spectrum probe|format / spectrum|only the format', re.I)
 iqlib = None
 MERGED = {c['id']: c['merged_into'] for c in load_classes() if c.get('merged_into')}
+
+
+def coarse_family(fam):
+    """classes.json's family (the modulation) -> a coarse group for the
+    family-level score: fsk, psk, ofdm, vsb, pulse, am, fm, css, noise, none"""
+    f = re.sub(r'\s*\(.*\)', '', fam or '')
+    if f in ('none', 'noise', 'CSS'):
+        return f.lower()
+    if 'OFDM' in f:
+        return 'ofdm'
+    if 'VSB' in f:
+        return 'vsb'
+    if f in ('pulsed', 'OOK', 'pulsed CW'):
+        return 'pulse'
+    if 'AM' in f or f in ('unmodulated', 'SSB'):
+        return 'am'
+    if 'FM' in f and 'FSK' not in f:
+        return 'fm'
+    if 'FSK' in f or 'GMSK' in f:
+        return 'fsk'
+    if 'PSK' in f or 'QAM' in f:
+        return 'psk'
+    return f.lower()
+
+
+FAMILY = {c['id']: coarse_family(c.get('family', '')) for c in load_classes()}
+# classes whose spectrum has no carrier line at the centre: a line there in a
+# narrow recording is the recording receiver's DC spike (notch_dc)
+NO_CARRIER = {'dstar', 'dmr', 'p25p1', 'p25p2', 'nxdn', 'ysf', 'tetra', 'pocsag', 'flex', 'ais', 'vdl2', 'radiosonde', 'lora',
+              'ism_fsk', 'flarm', 'uat', 'dab', 'dvbt', 'dtmb', 'atsc3', 'lte', 'nr'}
 
 
 def group_of(e, known):
@@ -100,12 +131,39 @@ def noise_floor_shape(x, rate, nfft=1024):
     return f, fl, n0
 
 
+def busiest_start(e, seconds, scan_s=120.0, step_s=0.5, probe_s=0.02):
+    """start (s) of the --seconds window with the most power in the first
+    scan_s of the recording (a recording that opens with silence, a gated one:
+    the signal is there later). Probes probe_s every step_s."""
+    try:
+        dur = iqlib.duration_s(e)
+    except Exception:   # noqa: BLE001 - unknown length: from the start
+        return 0.0
+    if not dur or dur <= seconds + step_s or e['format'] in ('disc_audio', 'heimdall8091'):
+        return 0.0
+    t = np.arange(0.0, min(dur - probe_s, scan_s), step_s)
+    pw = []
+    for s in t:
+        x = iqlib.open_entry(e, offset_s=float(s), seconds=probe_s, channel=0)[0]
+        x = np.asarray(x, np.complex64)
+        pw.append(float(np.mean(np.abs(x - x.mean()) ** 2)) if len(x) else 0.0)
+    pw = np.array(pw)
+    w = max(1, int(round(seconds / step_s)))
+    n = len(pw) - w + 1
+    if n <= 1:
+        return 0.0
+    c = np.convolve(pw, np.ones(w), mode='valid')[:n]
+    k = int(np.argmax(c))
+    return float(t[k]) if c[k] > 1.5 * c[0] else 0.0     # from the start unless clearly busier later
+
+
 def build(e, seconds, rng):
     """-> 2.4 MHz complex samples (LSB units, before quantisation), placement shift, info"""
-    x, rate, centre = iqlib.open_entry(e, seconds=seconds, channel=0)
+    t0 = busiest_start(e, seconds)
+    x, rate, centre = iqlib.open_entry(e, offset_s=t0, seconds=seconds, channel=0)
     x = np.asarray(x, np.complex64)
     cls = e['signals'][0]
-    info = {}
+    info = {'start_s': t0} if t0 else {}
     if rate is None or len(x) < 1000:
         raise ValueError('no rate / too short')
     if e['format'] == 'disc_audio':
@@ -130,7 +188,22 @@ def build(e, seconds, rng):
         info['native'] = np.clip(np.rint(v * 127.5 + 127.5), 0, 255).astype(np.uint8)
         info['pedestal_db'] = 0.0
         return x, 0.0, info, rate, 1.0
-    x = x - x.mean()
+    gaps = zero_runs(x, rate)
+    live = ~gaps
+    if live.any():
+        x = x - x[live].mean()
+    if gaps.any():
+        # a squelch-gated recording (its quiet stretches written as exact zeros):
+        # the receiver's noise goes on there - white noise at the recording's own
+        # quiet level (from the stretches that hold samples)
+        f, fl, n0g = noise_floor_shape(x[live][:min(int(live.sum()), 1 << 22)], rate)
+        k = int(gaps.sum())
+        x[gaps] = ((rng.standard_normal(k) + 1j * rng.standard_normal(k)) * np.sqrt(n0g * rate / 2)).astype(np.complex64)
+        info['gated'] = round(float(k) / len(x), 3)
+    if MERGED.get(cls, cls) in NO_CARRIER:
+        x, dc = notch_dc(x, rate, rng)
+        if dc:
+            info['dc_notch_db'] = round(dc, 1)
     if rate >= 2e6:
         y = resample(x, rate, FS)[0] if abs(rate - FS) > 1 else x
         f, fl, n0 = noise_floor_shape(y[:min(len(y), 4 << 20)], FS)
@@ -160,6 +233,44 @@ def build(e, seconds, rng):
     return z, shift, info, rate, n0
 
 
+def zero_runs(x, rate, min_s=1e-3):
+    """samples in runs of exact zeros >= min_s long (a gated recording's silence)"""
+    z = (x.real == 0) & (x.imag == 0)
+    out = np.zeros(len(x), bool)
+    if not z.any():
+        return out
+    d = np.diff(np.concatenate([[0], z.astype(np.int8), [0]]))
+    a, b = np.flatnonzero(d == 1), np.flatnonzero(d == -1)
+    m = int(min_s * rate)
+    for s, e in zip(a, b):
+        if e - s >= m:
+            out[s:e] = True
+    return out
+
+
+def notch_dc(x, rate, rng, half=100.0):
+    """the recording receiver's own DC spike (a line within +-100 Hz of the
+    recording's centre, >= 10 dB over the spectrum beside it) replaced by
+    noise at that level: a receiver tuned elsewhere has no line there. Only
+    for classes without a carrier (NO_CARRIER). -> (x, line dB or 0)"""
+    N = len(x)
+    X = np.fft.fft(x)
+    f = np.fft.fftfreq(N, 1 / rate)
+    a = np.abs(f)
+    inner = a <= half
+    ring = (a > 2 * half) & (a <= 6 * half)
+    if not inner.any() or not ring.any():
+        return x, 0.0
+    p = np.abs(X) ** 2
+    ref = float(np.median(p[ring]))
+    pk = float(p[inner].max())
+    if ref <= 0 or pk < 10.0 * ref:
+        return x, 0.0
+    k = int(inner.sum())
+    X[inner] = (rng.standard_normal(k) + 1j * rng.standard_normal(k)) * np.sqrt(ref / 2)
+    return np.fft.ifft(X).astype(np.complex64), 10 * np.log10(pk / ref)
+
+
 def fill_noise(y, rate, n0, shift, rng, f=None, fl=None):
     """white noise at density n0 where the recording's own floor is below it
     (outside its band, and its anti-alias roll-off)"""
@@ -185,8 +296,11 @@ def pedestal(y, rate, shift):
     return float(10 * np.log10(np.percentile(p[inside], 20) / np.percentile(p[outside], 20)))
 
 
-def quantise(y, n0):
-    """noise ~6 LSB rms per I / Q over the band, peaks <= ~120 LSB"""
+def quantise(y, n0, rng=None):
+    """noise ~6 LSB rms per I / Q over the band, peaks <= ~120 LSB; a recording
+    whose SNR is more than 8 bits hold gets the receiver noise of a real one
+    (>= 0.8 LSB rms: below that the 8 bits would gate the noise with the
+    signal - a real receiver's own noise never vanishes)"""
     g = np.sqrt(2 * 36.0 / max(n0 * FS, 1e-30))
     pk = float(np.percentile(np.abs(np.concatenate([y.real, y.imag])), 99.99)) * g
     if pk > 120:
@@ -194,6 +308,10 @@ def quantise(y, n0):
     v = np.empty(2 * len(y), np.float32)
     v[0::2] = y.real * g
     v[1::2] = y.imag * g
+    sn = np.sqrt(max(n0 * FS, 0.0) / 2) * g      # the noise rms per I / Q now
+    if sn < 0.8:
+        r = rng if rng is not None else np.random.default_rng(0)
+        v += (r.standard_normal(len(v)) * np.sqrt(0.64 - sn * sn)).astype(np.float32)
     return np.clip(np.floor(v + 128.0), 0, 255).astype(np.uint8), g
 
 
@@ -208,7 +326,7 @@ def one(args):
     if info.get('native') is not None:
         u8, g = info['native'], 1.0
     else:
-        u8, g = quantise(y, n0)
+        u8, g = quantise(y, n0, rng)
     tmp = '/dev/shm/evalreal_%d_%s.cu8' % (os.getpid(), re.sub(r'[^A-Za-z0-9]', '_', e['id'])[-60:])
     u8.tofile(tmp)
     r = subprocess.run([TOOL, 'classify', '--model', o.model, '--track', '--rate', '2400000', '--format', 'cu8', tmp],
@@ -245,6 +363,7 @@ def one(args):
             if best is None or key > best[0]:
                 best = (key, t)
         row = {'id': e['id'], 'group': grp, 'class': x['class'], 'rate': rate, 'snaps': len(lines), 'pedestal_db': round(info['pedestal_db'], 1),
+               'gated': info.get('gated', ''), 'dc_notch_db': info.get('dc_notch_db', ''),
                'tracks': len(tracks), 'gain': round(float(g), 4)}
         if best is None:
             row.update({'detected': False})
@@ -260,6 +379,7 @@ def one(args):
                 want = MERGED.get(x['class'], x['class'])     # a class merged into another counts as that one
                 row['ok1'] = bool(top) and top[0]['id'] == want
                 row['ok3'] = bool(top) and want in row['top3']
+                row['okf'] = bool(top) and FAMILY.get(top[0]['id']) == FAMILY.get(want)
                 row['shown_ok'] = bool(top) and top[0]['id'] == want and top[0]['p'] >= thr
         # labels the page would show (not none, p >= min_confidence) - on an empty band all false
         row['shown_tracks'] = sum(1 for t in tracks if t['top'] and t['top'][0]['id'] != 'none' and t['top'][0]['p'] >= thr)
@@ -306,20 +426,23 @@ def summarise(rows, thr, out):
         o1 = sum(1 for r in R if r.get('ok1'))
         o3 = sum(1 for r in R if r.get('ok3'))
         so = sum(1 for r in R if r.get('shown_ok'))
-        p('== %s: %d expected signals, detected %d (%.0f %%), top-1 %d (%.0f %% of all, %.0f %% of detected), top-3 %d (%.0f %%), shown correct %d, %d errors'
-          % (grp, n, d, 100.0 * d / max(n, 1), o1, 100.0 * o1 / max(n, 1), 100.0 * o1 / max(d, 1), o3, 100.0 * o3 / max(n, 1), so, len(E)))
+        of = sum(1 for r in R if r.get('okf'))
+        p('== %s: %d expected signals, detected %d (%.0f %%), top-1 %d (%.0f %% of all, %.0f %% of detected), top-3 %d (%.0f %%), '
+          'family %d (%.0f %%), shown correct %d, %d errors'
+          % (grp, n, d, 100.0 * d / max(n, 1), o1, 100.0 * o1 / max(n, 1), 100.0 * o1 / max(d, 1), o3, 100.0 * o3 / max(n, 1),
+             of, 100.0 * of / max(n, 1), so, len(E)))
         by = {}
         for r in R:
             by.setdefault(r['class'], []).append(r)
-        p('  %-11s %4s %4s %4s %4s  %s' % ('class', 'n', 'det', 'top1', 'top3', 'wrong top-1 (count)'))
+        p('  %-11s %4s %4s %4s %4s %4s  %s' % ('class', 'n', 'det', 'top1', 'top3', 'fam', 'wrong top-1 (count)'))
         for c in sorted(by):
             rs = by[c]
             wrong = {}
             for r in rs:
                 if r.get('detected') and not r.get('ok1'):
                     wrong[r['top1']] = wrong.get(r['top1'], 0) + 1
-            p('  %-11s %4d %4d %4d %4d  %s' % (c, len(rs), sum(1 for r in rs if r.get('detected')), sum(1 for r in rs if r.get('ok1')),
-                                               sum(1 for r in rs if r.get('ok3')), ', '.join('%s %d' % kv for kv in sorted(wrong.items(), key=lambda kv: -kv[1]))))
+            p('  %-11s %4d %4d %4d %4d %4d  %s' % (c, len(rs), sum(1 for r in rs if r.get('detected')), sum(1 for r in rs if r.get('ok1')),
+                                                   sum(1 for r in rs if r.get('ok3')), sum(1 for r in rs if r.get('okf')), ', '.join('%s %d' % kv for kv in sorted(wrong.items(), key=lambda kv: -kv[1]))))
     ped = [r['pedestal_db'] for r in rows if 'pedestal_db' in r and r.get('rate', 3e6) < 2e6 and r['group'] != 'disc_audio']
     if ped:
         p()
@@ -353,8 +476,8 @@ def main():
     with Pool(o.jobs) as pool:
         rows = [r for rs in pool.imap_unordered(one, [(e, o, known, thr) for e in sel]) for r in rs]
     rows.sort(key=lambda r: (r['group'], r['class'], r['id']))
-    keys = ['group', 'class', 'id', 'detected', 'top1', 'p1', 'ok1', 'ok3', 'shown_ok', 'top3', 'hits', 'view', 'det_off', 'det_bw',
-            'tracks', 'shown_tracks', 'wide_extra', 'pedestal_db', 'rate', 'snaps', 'error']
+    keys = ['group', 'class', 'id', 'detected', 'top1', 'p1', 'ok1', 'ok3', 'okf', 'shown_ok', 'top3', 'hits', 'view', 'det_off', 'det_bw',
+            'tracks', 'shown_tracks', 'wide_extra', 'pedestal_db', 'gated', 'dc_notch_db', 'rate', 'snaps', 'error']
     with open(o.out, 'w') as fh:
         fh.write('\t'.join(keys) + '\n')
         for r in rows:

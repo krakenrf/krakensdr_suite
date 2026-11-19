@@ -35,8 +35,12 @@ import zlib
 from fractions import Fraction
 from multiprocessing import Pool
 
-import numpy as np
-from scipy.signal import resample_poly, welch
+# one BLAS thread per worker process (set before numpy loads): with the default
+# thread pools forked workers hung in a futex wait on long wide clips
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+import numpy as np  # noqa: E402
+from scipy.signal import resample_poly, welch  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGINS = os.path.normpath(os.path.join(HERE, '..', '..', 'plugins'))
@@ -117,8 +121,8 @@ def rc_dmr(rng, k, quick):
     S = 6 if quick else 16
     mode = 'bs' if rng.random() < 0.45 else 'dmo'
     cc = int(rng.integers(0, 16))
-    voice = 'random' if rng.random() < 0.3 else 'ambe'
-    a = [G('dmr', 'dmr_gen.py'), 'x.cf32', '--mode', mode, '--cc', str(cc), '--voice', voice]
+    voice = 'ambe'      # what real radios send: vocoder frames with their FEC (not random bits)
+    a = [G('dmr', 'dmr_gen.py'), 'x.cf32', '--mode', mode, '--cc', str(cc), '--voice', voice, '--seed', str(int(rng.integers(1, 1 << 30)))]
     calls = times(rng, S, (1.0, 5.0) if mode == 'bs' else (0.8, 4.0), (0.3, 3.0) if mode == 'dmo' else (-0.5, 2.0))
     for at, d in calls or [(0.5, 2.0)]:
         a += ['--at', str(at), '--slot', str(int(rng.integers(1, 3))), '--dur', str(d),
@@ -129,12 +133,12 @@ def rc_dmr(rng, k, quick):
 def rc_p25p1(rng, k, quick):
     S = 6 if quick else 16
     nac = '0x%03X' % int(rng.integers(1, 0xFFE))
-    a = [G('p25', 'p25_gen.py'), 'x.cf32']
+    a = [G('p25', 'p25_gen.py'), 'x.cf32', '--seed', str(int(rng.integers(1, 1 << 30)))]
     v = {'nac': nac}
     for at, d in times(rng, S, (1.0, 5.0), (0.3, 3.0)) or [(0.5, 2.0)]:
         a += ['--at', str(at), '--nac', nac, '--dur', str(d), '--src', str(int(rng.integers(1, 16777215))),
               '--dst', str(int(rng.integers(1, 65535))), '--end', str(rng.choice(['tdu', 'tdulc'])),
-              '--voice', 'random' if rng.random() < 0.3 else 'imbe']
+              '--voice', 'imbe']
         if rng.random() < 0.2:
             a += ['--algid', '0x84', '--kid', '0x%X' % int(rng.integers(1, 0xFFFF))]
         if rng.random() < 0.2:
@@ -176,7 +180,7 @@ def rc_nxdn(rng, k, quick):
     S = 6 if quick else 16
     ran = int(rng.integers(0, 64))
     outb = int(rng.random() < 0.5)
-    a = [G('nxdn', 'nxdn_gen.py'), 'x.cf32']
+    a = [G('nxdn', 'nxdn_gen.py'), 'x.cf32', '--seed', str(int(rng.integers(1, 1 << 30)))]
     for at, d in times(rng, S, (1.0, 5.0), (0.3, 3.0)) or [(0.5, 2.0)]:
         a += ['--at', str(at), '--ran', str(ran), '--outbound', str(outb), '--dur', str(d), '--src', str(int(rng.integers(1, 65519))), '--dst', str(int(rng.integers(1, 65519)))]
     return j([a], 'x.cf32', {'ran': ran, 'outbound': outb})
@@ -200,7 +204,7 @@ def rc_ysf(rng, k, quick):
 
 def rc_dstar(rng, k, quick):
     S = 6 if quick else 16
-    a = [G('dstar', 'dstar_gen.py'), 'x.cf32']
+    a = [G('dstar', 'dstar_gen.py'), 'x.cf32', '--seed', str(int(rng.integers(1, 1 << 30)))]
     for at, d in times(rng, S, (1.0, 5.0), (0.3, 3.0)) or [(0.5, 2.0)]:
         a += ['--at', str(at), '--dur', str(d), '--my', r_call(rng), '--sfx', r_text(rng, 1, 4, AL + '0123456789'),
               '--ur', 'CQCQCQ' if rng.random() < 0.5 else r_call(rng)]
@@ -221,7 +225,7 @@ def rc_tetra(rng, k, quick):
     cc = int(rng.choice(TETRA_CC_OK))
     mcc, mnc, la = int(rng.integers(200, 800)), int(rng.integers(1, 100)), int(rng.integers(1, 16000))
     a = [G('tetra', 'tetra_gen.py'), 'x.cf32', '--mcc', str(mcc), '--mnc', str(mnc), '--cc', str(cc), '--la', str(la),
-         '--carrier', str(int(rng.integers(0, 4096)))]
+         '--carrier', str(int(rng.integers(0, 4096))), '--seed', str(int(rng.integers(1, 1 << 30)))]
     if rng.random() < 0.75:
         a += ['--at', '0', '--dur', str(S)]
         v = {'keyed': False}
@@ -473,7 +477,7 @@ def rc_synth(kind, S, Sq):
     def f(rng, k, quick):
         s = Sq if quick else S
         return j([[SYNTH, kind, 'x.cf32', '--seed', str(int(rng.integers(1, 1 << 30))), '--seconds', str(s)]], 'x.cf32', None,
-                 recentre=kind not in ('am', 'carrier', 'cw'), merge_ms=30)
+                 recentre=kind not in ('am', 'carrier', 'cw', 'vor'), merge_ms=30)
     return f
 
 
@@ -503,6 +507,11 @@ def rc_lora(rng, k, quick):
     tsym = 2 ** sf / bw
     air = (8 + 4.25 + 8 + np.ceil(max(8 * nbytes - 4 * sf + 28, 0) / (4 * sf)) * 5) * tsym
     period = max(air + rng.uniform(0.05, 1.0), air * rng.uniform(1.05, 2.5))
+    if k % 5 >= 3:
+        # as a receiver mostly sees LoRa: a short packet now and then (most 0.5 s
+        # snapshots hold none, a few one or two)
+        S = 8 if quick else 24
+        period = max(air + 0.2, float(rng.uniform(1.5, 8.0)))
     src = {'proto': proto, 'name': 'x', 'bearing': 0, 'sf': sf, 'bw': bw, 'cr': int(rng.integers(1, 5)), 'freq_mhz': rf / 1e6,
            'level_db': 60, 'period_s': float(period), 't0': float(rng.uniform(0.05, 0.5))}
     if proto == 'lora':
@@ -753,7 +762,9 @@ def rc_cells(tech):
     def f(rng, k, quick):
         S = 0.5 if quick else 2.0
         a = [G('cells', 'cell_gen.cpp'), '--secs', str(S), '--snr', '70', '--seed', str(int(rng.integers(1, 1 << 30))), '--out', 'x.cf32',
-             '--load', '%.2f' % rng.uniform(0.05, 1.0)]
+             # half the carriers lightly loaded (a quiet cell: the reference signals and the
+             # synchronisation / broadcast channels, little data)
+             '--load', '%.2f' % (rng.uniform(0.02, 0.2) if rng.random() < 0.5 else rng.uniform(0.2, 1.0))]
         v = {}
         # half the carriers / SSBs near the window's centre (where the cells plugin searches)
         near = rng.random() < 0.5
@@ -793,19 +804,37 @@ def rc_then_synth(first, n_first, kind, S, Sq):
     return f
 
 
+def rc_split(*parts):
+    """clips by index range: parts = (n, recipe), ... - the first n clips from the
+    first recipe, the next n from the second, ..."""
+    def f(rng, k, quick):
+        a = 0
+        for n, r in parts:
+            if k < a + n:
+                return r(rng, k - a, quick)
+            a += n
+        return parts[-1][1](rng, k - a, quick)
+    return f
+
+
 # class -> (recipe, clips, quick clips)
 RECIPES = {
-    'dmr': (rc_dmr, 24), 'p25p1': (rc_p25p1, 24), 'p25p2': (rc_p25p2, 24), 'nxdn': (rc_nxdn, 20), 'ysf': (rc_ysf, 20),
-    'dstar': (rc_dstar, 20), 'tetra': (rc_tetra, 16), 'mpt1327': (rc_mpt1327, 16), 'pocsag': (rc_pocsag, 24), 'flex': (rc_flex, 24),
+    'dmr': (rc_dmr, 32),
+    # P25 Phase 1: voice calls in C4FM (p25_gen.py), a C4FM control channel, CQPSK / LSM (synth.py)
+    'p25p1': (rc_split((24, rc_p25p1), (12, rc_synth('p25cc', 16, 4)), (12, rc_synth('p25lsm', 16, 4))), 48),
+    'p25p2': (rc_p25p2, 24),
+    # NXDN96 (nxdn_gen.py) and NXDN48 (synth.py)
+    'nxdn': (rc_then_synth(rc_nxdn, 20, 'nxdn48', 16, 4), 32), 'ysf': (rc_ysf, 20),
+    'dstar': (rc_dstar, 24), 'tetra': (rc_tetra, 24), 'mpt1327': (rc_mpt1327, 16), 'pocsag': (rc_pocsag, 24), 'flex': (rc_flex, 24),
     'aprs': (rc_aprs, 40), 'v23': (rc_v23, 30), 'nfm_voice': (rc_nfm, 30), 'ais': (rc_ais, 40), 'acars': (rc_acars, 40),
     'vdl2': (rc_vdl2, 40), 'radiosonde': (rc_radiosonde, 16), 'beacon406': (rc_beacon406, 30), 'wildlife': (rc_wildlife, 30),
     'am_voice': (rc_synth('am', 20, 6), 30), 'ssb': (rc_synth('ssb', 20, 6), 24), 'cw': (rc_synth('cw', 20, 6), 20),
-    'carrier': (rc_synth('carrier', 12, 4), 20), 'vor': (rc_vor, 12), 'ils_loc': (rc_ils_loc, 12),
+    'carrier': (rc_synth('carrier', 12, 4), 20), 'vor': (rc_then_synth(rc_vor, 12, 'vor', 16, 4), 24), 'ils_loc': (rc_ils_loc, 12),
     'lora': (rc_lora, 48), 'ism_ook': (rc_then_synth(rc_ism(False), 64, 'ism_ook', 6, 3), 104), 'ism_fsk': (rc_then_synth(rc_ism(True), 50, 'ism_fsk', 6, 3), 80), 'flarm': (rc_flarm, 30),
     'wfm': (rc_then_synth(rc_wfm, 24, 'wfm', 8, 3), 48), 'adsb': (rc_adsb, 16), 'uat': (rc_uat, 16), 'dme': (rc_dme, 12), 'ssr1030': (rc_ssr, 12), 'radar': (rc_radar, 24),
     'dab': (rc_dab, 16), 'dvbt': (rc_dtv('dvbt'), 32), 'dvbt2': (rc_dtv('dvbt2'), 30), 'isdbt': (rc_dtv('isdbt'), 24),
     'dtmb': (rc_dtv('dtmb'), 18), 'atsc': (rc_dtv('atsc'), 16), 'atsc3': (rc_dtv('atsc3'), 28),
-    'lte': (rc_cells('lte'), 32), 'nr': (rc_cells('nr'), 24), 'analogtv': (rc_analogtv, 12),
+    'lte': (rc_cells('lte'), 40), 'nr': (rc_cells('nr'), 32), 'analogtv': (rc_analogtv, 12),
     'unk_fsk': (rc_synth('unk_fsk', 10, 4), 60), 'unk_psk': (rc_synth('unk_psk', 8, 3), 60), 'unk_ofdm': (rc_synth('unk_ofdm', 6, 3), 50),
     'unk_pulse': (rc_synth('unk_pulse', 10, 4), 40), 'unk_noise': (rc_synth('unk_noise', 6, 3), 40),
 }

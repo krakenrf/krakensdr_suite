@@ -10,7 +10,7 @@ is a conda without them, run `/usr/bin/python3`.
 |---|---|
 | `classes.json` | The class table: id, name, decoder plugin, click-to-tune demod / VFO width, occupied bandwidth range, burst / continuous, family. The single source of class ids. |
 | `bank.py` | Builds the clean signal bank: per class many clips made by the plugins' own test-signal generators (`plugins/<id>/tools/*_gen.*`, run as separate programs) and `synth.py`, seeded random IDs, payloads, modes, speeds, timing. |
-| `synth.py` | The classes no plugin generator makes: AM voice (25 / 8.33 kHz), SSB (USB / LSB), CW Morse, carriers; the unknown families (random FSK / GFSK / AFSK, PSK / QAM, OFDM, pulse trains, band-limited noise - kept away from the known systems' symbol rates, subcarrier spacings and pulse timings). |
+| `synth.py` | The classes no plugin generator makes: AM voice (25 / 8.33 kHz), SSB (USB / LSB), CW Morse, carriers, broadcast FM, generic OOK / FSK ISM devices; the unknown families (random FSK / GFSK / AFSK, PSK / QAM, OFDM, pulse trains, band-limited noise - kept away from the known systems' symbol rates, subcarrier spacings and pulse timings); physical-layer variants the plugin generators lack: a P25 control channel in C4FM and P25 in CQPSK / LSM (p25_gen.py's frame sync, NID and voice frames, random TSBKs), NXDN48 (nxdn_gen.py's filter and sync word, random payload symbols), VOR at measured depths. |
 | `scenes.py` | The scene composer: 0.5 s (configurable) 2.4 MHz cu8 captures with 0-8 signals, channel and RTL-SDR impairments, truth as JSON lines, written in batches for the feature tool to consume. |
 
 ## Where the data goes
@@ -20,7 +20,7 @@ Never inside the repository. Work folder: `--work DIR`, else
 `WORK/bank/<class>/<clip>.cf32` (complex64, centred on 0 Hz, power 1 while
 on air) + `.json` (rate, measured centre / 99 % bandwidth, on-air
 intervals, duty, peak, variant tags, the generator commands) and
-`WORK/bank/index.json`. About 37 GB for the default bank (1498 clips, 4.2 h
+`WORK/bank/index.json`. About 39 GB for the default bank (1582 clips, 4.6 h
 of signal; the 2.4 MHz classes are most of it). Captures go to `/dev/shm/kraken_sigclass/scenes`
 unless `--out`.
 
@@ -35,9 +35,10 @@ python3 kraken_doa_v2/tools/sigclass/bank.py --work DIR --stats          # clips
 ```
 
 Resumable: a clip whose `.json` exists is skipped, so after changing a
-recipe delete that class's folder (the clips are seeded per class and
+recipe move that class's folder away (the clips are seeded per class and
 index - `--seed`, default 20261120 - and only reproduce with the recipe
-that made them).
+that made them). bank.py sets one BLAS thread per worker (with the default
+thread pools the workers hung in a futex wait on the 24 s LoRa clips).
 
 ## Make captures
 
@@ -74,20 +75,31 @@ sigclass-tool`), so training features are the runtime's.
 
 ```bash
 T=kraken_doa_v2/tools/sigclass; W=DIR
-python3 $T/train.py gen --work $W --name A2 --count 24000 --seed 1     # captures -> features -> labelled batches (WORK/ds/A2/)
-python3 $T/train.py gen --work $W --name B --count 4000 --seed 2       # the test scenes (other seed)
-python3 $T/train.py build --work $W --name A2 --out $W/ds/A2.npz        # one cache (retraining needs no regeneration)
-python3 $T/train.py build --work $W --name B --out $W/ds/B.npz
-python3 $T/train.py fit --work $W --data $W/ds/A2.npz --test $W/ds/B.npz --model kraken_doa_v2/sigclass.model --report $W/report.txt
+python3 $T/train.py gen --work $W --name V1 --count 24000 --seed 11    # captures -> features -> labelled batches (WORK/ds/V1/)
+python3 $T/train.py gen --work $W --name VT --count 4000 --seed 2      # the test scenes (other seed)
+python3 $T/train.py build --work $W --name V1 --out $W/ds/V1.npz        # one cache (retraining needs no regeneration)
+python3 $T/train.py build --work $W --name VT --out $W/ds/VT.npz
+python3 $T/train.py fit --work $W --data $W/ds/V1.npz,... --test $W/ds/VT.npz --none-weight 2.5 \
+        --model kraken_doa_v2/sigclass.model --report $W/report.txt
 python3 $T/eval_real.py --work $W [--library DIR] [--model M]          # the real recordings (table: WORK/eval_real.tsv + .txt)
 ```
+
+The shipped model's data: V1 24 000 (seed 11), V2 16 000 (12), V3 3 000 of
+the wide / band-filling classes (13, `--classes`), V4 16 000 (14); test VT
+4 000 (2). `fit --no-merge` trains `merged_into` classes as their own (the
+DVB-T2 / ISDB-T separation test). `KRAKEN_SIGCLASS_TOOL=path` makes
+`eval_real.py` use another build of `sigclass_tool` (an older layout's, to
+compare an older model on the same evaluation path).
 
 - `gen` runs `scenes.py` with `--consume "train.py ingest {batch}"`: each
   batch of captures goes through `sigclass_tool features`, its detections
   are matched to the truth (rules in `train.py`'s docstring: one truth -
   one detection labelled; fragments of a signal keep its class; a detection
   covering several signals only when one dominates by 6 dB, else dropped;
-  detections near no signal are `none`), and the captures are deleted.
+  detections near no signal are `none`, but one next to a strong signal -
+  >= 20 dB, within max(2 x its width, 25 kHz), >= 15 dB weaker - or at its
+  IQ image is dropped: `near_strong`, also applied when a cache is loaded),
+  and the captures are deleted.
 - Splits by bank clip (`split_of`: per class every 10th clip test, the next
   val, the rest train - payloads, IDs and modes of the test clips are never
   trained on); the test set also comes from other scenes (seed 2).
@@ -107,8 +119,21 @@ recordings (`--library`, `$KRAKEN_IQ_LIBRARY`, else `~/krakensdr_iq_library`;
 read-only) the way the receiver sees them: the receiver's own 2.4 MS/s
 bytes as they are; narrower IQ resampled to 2.4 MHz, placed 300 kHz off
 the centre and the band filled with noise at the recording's own density
-(pedestal measured: median 1.0 dB, > 3 dB in 2 of 377); discriminator
-audio FM re-modulated (weaker test); then `sigclass_tool classify --track`.
+(pedestal measured: median 1.0 dB, > 3 dB in 3 of 377); discriminator
+audio FM re-modulated (weaker test); then `sigclass_tool classify --track`
+and the tracks of the last snapshot (track level, not per detection)
+compared with the entry's expected signals. Recording artefacts that a
+receiver tuned elsewhere would not see are removed first: a squelch-gated
+file's exact-zero runs (>= 1 ms) get noise at its own quiet level; for
+classes without a carrier the recording receiver's DC spike (a line within
++-100 Hz, >= 10 dB over its surroundings) is replaced by noise; the 4 s
+window is the busiest of the first 120 s when that is clearly busier than
+the start (files that open with silence); a recording with more SNR than 8
+bits hold keeps >= 0.8 LSB of receiver noise (below that the noise vanished
+with the signal: a whole-band "burst"). Scored exact (the class) and by
+family (`coarse_family`: classes.json's modulation grouped into fsk, psk,
+ofdm, vsb, pulse, am, fm, css, noise, none - unknown FSK for a DMR signal
+is family-right).
 
 ## Results (2026-11-20, model 804-192-96-C, `sigclass.model` 2.84 MB)
 
@@ -148,17 +173,20 @@ Views (classes): 24 kHz 32, 96 kHz 18, 480 kHz 15, 2.4 MHz 19.
 
 ## Known limits
 
-- Several generators use a fixed random seed for their payload (dmr,
-  dstar, nxdn, p25 phase 1, tetra, sfn_gen, dab_gen, analogtv's fixed test
-  card): the variety there comes from IDs, colour codes, timing, modes and
-  offsets only.
+- dmr / dstar / nxdn / p25 / tetra generators take `--seed` (the bank seeds
+  every clip); sfn_gen and dab_gen have none (dab_gen's audio is a tone per
+  service), analogtv has one test card, tetra_gen's payload is the empty
+  SCH/F every frame.
 - tetra_gen.py's output does not decode for 18 of the 64 colour codes
   (2, 3, 5, 8, 10, 17-20, 27, 28, 34, 38-40, 46, 52, 54): the bank uses
   the others.
-- NXDN is NXDN96 only (nxdn_gen.py has no 4800 bit/s NXDN48); radiosondes
-  are RS41 and M20 only.
+- NXDN48, the P25 control channel and P25 CQPSK / LSM come from synth.py
+  (physical layer from the plugin generators' framing pieces + random
+  payload; NXDN48's frame periodicity is weaker than a real one's);
+  radiosondes are RS41 and M20 only (no generator for the other types).
 - DVB-T2 and ISDB-T are trained as DVB-T (`merged_into` in classes.json):
-  the v1 features' log lag grid cannot tell their symbol lengths apart.
+  neither the v1 log lag grid nor the v2 linear one separates them well
+  enough (`fit --no-merge`: ISDB-T 0.5, a third of it DVB-T).
 - A detection of a wide class in a view too narrow for it (the class's
   minimum occupied bandwidth > 2 x the view's widest) is trained as `none`.
 - No sample-rate error on clips at >= 1.2 MHz (wide signals); at 48 kHz it

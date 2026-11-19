@@ -6,7 +6,11 @@ trains, band-limited noise). One clean, noise-free transmitter per file.
 
   synth.py KIND OUT.cf32 --seed N [--seconds S]
 
-KIND: am | ssb | cw | carrier | unk_fsk | unk_psk | unk_ofdm | unk_pulse | unk_noise
+KIND: am | ssb | cw | carrier | wfm | ism_ook | ism_fsk | unk_fsk | unk_psk | unk_ofdm |
+      unk_pulse | unk_noise | p25cc | p25lsm | nxdn48 | vor
+(p25cc / p25lsm / nxdn48 / vor: physical-layer variants of plugin classes that
+their generators do not make - a P25 control channel in C4FM, P25 in CQPSK /
+LSM, NXDN 4800, VOR at measured rather than nominal depths.)
 Every other parameter is drawn from the seed. Writes OUT.cf32 (complex64,
 the signal centred on 0 Hz) + OUT.json {"rate", "variant": {...}}.
 
@@ -637,8 +641,140 @@ def gen_ism_fsk(rng, seconds):
     return rate, x, {'br': round(br), 'dev_khz': round(dev / 1e3, 1), 'manchester': manch, 'gauss': gauss, 'synth': True}
 
 
+# ---- physical-layer variants of plugin classes their generators do not make
+
+def _plugin_module(plugin, name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(PLUGINS, plugin, 'tools', name + '.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def p25_cc_syms(p, rng, seconds, nac):
+    """a P25 Phase 1 control channel: TSDUs back to back, each the frame sync + NID
+    (p25_gen.py's) and three TSBKs (196 bits each; random here - trellis-coded on the
+    air) with the status symbols: 360 symbols = 75 ms"""
+    syms = []
+    for _ in range(int(seconds / 0.075) + 2):
+        syms += p.with_status(p.head(nac, 0x7) + [int(b) for b in rng.integers(0, 2, 588)], 360)
+    return syms
+
+
+def p25_voice_syms(p, rng, seconds, nac):
+    """voice calls (p25_gen.py's call(): HDU, LDU1 / LDU2, TDU) at keyed intervals:
+    [(start s, symbols)]"""
+    out = []
+    for a, b in keyed_intervals(rng, seconds, on=(1.0, 5.0), off=(0.3, 3.0), start=(0.05, 0.8)):
+        out.append((a, p.call(int(rng.integers(1, 16777215)), int(rng.integers(1, 65535)), nac, b - a,
+                              str(rng.choice(['tdu', 'tdulc'])), 'imbe', rng)))
+    return out
+
+
+def gen_p25cc(rng, seconds):
+    """P25 Phase 1 control channel in C4FM (continuous; p25_gen.py's modulator)"""
+    p = _plugin_module('p25', 'p25_gen')
+    nac = int(rng.integers(1, 0xFFE))
+    syms = p25_cc_syms(p, rng, seconds, nac)
+    x = p.modulate(syms, 48000.0)[:int(seconds * 48000)]
+    return 48000, x, {'mod': 'c4fm', 'channel': 'cc'}
+
+
+def lsm(syms, rate, beta=0.2):
+    """P25 CQPSK / LSM: each symbol a phase step (+3: +135, +1: +45, -1: -45, -3: -135
+    degrees - the C4FM symbol's phase change), RRC-shaped at 4800 symbols/s"""
+    step = {3: 3 * np.pi / 4, 1: np.pi / 4, -1: -np.pi / 4, -3: -3 * np.pi / 4}
+    ph = np.cumsum([step[s] for s in syms])
+    sps = int(rate // 4800)
+    up = np.zeros(len(syms) * sps + 16 * sps, complex)
+    up[8 * sps:8 * sps + len(syms) * sps:sps] = np.exp(1j * ph)
+    return np.convolve(up, rrc(beta, sps, 8), 'same')
+
+
+def gen_p25lsm(rng, seconds):
+    """P25 Phase 1 in CQPSK / LSM (simulcast): a control channel or voice calls"""
+    p = _plugin_module('p25', 'p25_gen')
+    rate = 48000
+    nac = int(rng.integers(1, 0xFFE))
+    n = int(seconds * rate)
+    # the pulse's roll-off: on the air LSM signals occupy up to ~9 kHz (the plain
+    # alpha 0.2 shape would be 5.8 kHz)
+    beta = float(rng.uniform(0.6, 1.0) if rng.random() < 0.6 else rng.uniform(0.2, 0.6))
+    if rng.random() < 0.5:
+        x = lsm(p25_cc_syms(p, rng, seconds, nac), rate, beta)[:n]
+        return rate, x, {'mod': 'lsm', 'channel': 'cc', 'beta': round(beta, 2)}
+    x = np.zeros(n, complex)
+    for a, syms in p25_voice_syms(p, rng, seconds, nac):
+        y = lsm(syms, rate, beta)
+        i = int(a * rate)
+        m = min(n - i, len(y))
+        if m > 0:
+            e = ramp_env(m, rate, [[0.0, m / rate]], 0.002)
+            x[i:i + m] += y[:m] * e
+    return rate, x, {'mod': 'lsm', 'channel': 'voice', 'beta': round(beta, 2)}
+
+
+def gen_nxdn48(rng, seconds):
+    """NXDN 4800 bit/s (6.25 kHz): 2400 symbols/s 4-FSK, +-350 / +-1050 Hz, RRC 0.2
+    (nxdn_gen.py's filter and frame sync word); 80 ms frames of 192 symbols = the
+    10-symbol FSW + 182 random symbols (the scrambled LICH / SACCH / voice; nxdn_gen.py
+    frames NXDN96 only); calls at keyed intervals"""
+    m = _plugin_module('nxdn', 'nxdn_gen')
+    rate, sps = 48000, 20
+    n = int(seconds * rate)
+    h = m.rrc(sps, 6, 0.2)
+    h = h / h[len(h) // 2]
+    x = np.zeros(n, complex)
+    for a, b in keyed_intervals(rng, seconds, on=(1.0, 5.0), off=(0.3, 3.0), start=(0.05, 0.8)):
+        syms = []
+        for _ in range(max(1, int((b - a) / 0.08))):
+            syms += list(m.FSW) + [int(s) for s in rng.choice([-3, -1, 1, 3], 182)]
+        up = np.zeros(len(syms) * sps + 12 * sps)
+        up[6 * sps:6 * sps + len(syms) * sps:sps] = syms
+        f = np.convolve(up, h, 'same') * 350.0
+        y = np.exp(2j * np.pi * np.cumsum(f) / rate)
+        i = int(a * rate)
+        k = min(n - i, len(y))
+        if k > 0:
+            x[i:i + k] += y[:k] * ramp_env(k, rate, [[0.0, k / rate]], 0.002)
+    return rate, x, {'mod': 'nxdn48'}
+
+
+def gen_vor(rng, seconds):
+    """VOR as measured on the air (not the nominal 30 % / 30 %): carrier, 30 Hz AM of
+    8-35 %, the 9960 Hz subcarrier at 18-32 % FM +-480 Hz by the 30 Hz reference, the
+    1020 Hz Morse ident at 5-15 % (or none)"""
+    rate = 48000
+    n = int(seconds * rate)
+    t = np.arange(n) / rate
+    m30, msub = rng.uniform(0.08, 0.35), rng.uniform(0.18, 0.32)
+    r = rng.uniform(0, 2 * np.pi)
+    env = 1 + m30 * np.cos(2 * np.pi * 30 * t - r) + msub * np.cos(2 * np.pi * 9960 * t + 16.0 * np.sin(2 * np.pi * 30 * t))
+    ident = rng.random() < 0.6
+    if ident:
+        wpm = rng.uniform(6, 12)
+        dot = 1.2 / wpm
+        key = np.zeros(n)
+        txt = ''.join(rng.choice(list('ABCDEFGHIJKLMNOPQRSTUVWXYZ'), int(rng.integers(2, 4))))
+        t0 = rng.uniform(0.1, 3.0)
+        every = rng.uniform(4.0, 12.0)
+        while t0 < seconds:
+            tt = t0
+            for ch in txt:
+                for s in MORSE.get(ch, ''):
+                    d = dot * (3 if s == '-' else 1)
+                    key[int(tt * rate):min(n, int((tt + d) * rate))] = 1
+                    tt += d + dot
+                tt += 2 * dot
+            t0 += every
+        w = np.hanning(int(0.005 * rate) | 1)
+        key = np.convolve(key, w / w.sum(), 'same')
+        env = env + rng.uniform(0.05, 0.15) * key * np.cos(2 * np.pi * 1020 * t)
+    return rate, env.astype(complex), {'m30': round(m30, 3), 'msub': round(msub, 3), 'ident': ident}
+
+
 KINDS = {'wfm': gen_wfm, 'ism_ook': gen_ism_ook, 'ism_fsk': gen_ism_fsk, 'am': gen_am, 'ssb': gen_ssb, 'cw': gen_cw, 'carrier': gen_carrier, 'unk_fsk': gen_unk_fsk,
-         'unk_psk': gen_unk_psk, 'unk_ofdm': gen_unk_ofdm, 'unk_pulse': gen_unk_pulse, 'unk_noise': gen_unk_noise}
+         'unk_psk': gen_unk_psk, 'unk_ofdm': gen_unk_ofdm, 'unk_pulse': gen_unk_pulse, 'unk_noise': gen_unk_noise,
+         'p25cc': gen_p25cc, 'p25lsm': gen_p25lsm, 'nxdn48': gen_nxdn48, 'vor': gen_vor}
 
 
 def main():

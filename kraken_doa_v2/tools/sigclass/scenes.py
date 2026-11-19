@@ -30,8 +30,12 @@ How a capture is made (all signals in the frequency domain, one inverse FFT):
   anywhere; narrow signals don't overlap (5 %, adjacent 25 % of the
   narrower); band-filling clips move only +-20 kHz (their generators
   already placed the 2.4 MHz window in the channel)
-  levels: SNR in the signal's bandwidth 70 % U(5, 25), 30 % U(-3, 45) dB;
-  at most 40 dB between the signals' powers (the weak one raised)
+  levels: SNR in the signal's bandwidth 55 % U(5, 25), 30 % U(-3, 45), 15 %
+  U(25, 55) dB (broadcast FM: 40 % U(2, 12)); at most 40 dB between the
+  signals' powers (the weak one raised)
+  constant-envelope FM / FSK classes (DEV_TOL): the deviation x U(0.9, 1.1)
+  (the FM phase scaled) and in 30 % a 4th-order channel filter at 1-1.6 x
+  the clip's half 99 % width (the truth's dev_scale)
   each signal: a clip of its class, a time cut (bursts: 55 % one fully
   inside, 25 % cut by the capture's edge, 15 % anywhere, 5 % absent - the
   truth's on_air), the native-rate segment with flat fading (50 % static,
@@ -44,7 +48,8 @@ How a capture is made (all signals in the frequency domain, one inverse FFT):
   delays 0.1-1.5 / bandwidth, wide signals 0.2-6 us)
   the receiver: white noise 3-40 LSB rms per I / Q (log-uniform: the gain
   setting; in 30 % 0.3-3 LSB, a quiet antenna at full gain), passband droop 0.5-6 dB at +-1.2 MHz (|f|^3..10), in 12 % 1-2
-  spurs (clean carriers at 8-40 dB in 1 kHz, labelled carrier), IQ
+  spurs and in 4 % a comb of them every 100-300 kHz (clean carriers at 8-40
+  dB in 1 kHz, labelled carrier), IQ
   imbalance +-0.5 dB / +-3 deg, DC offset +-3 LSB, 8 bits (floor(x + 128),
   0..255); everything scaled down (a lower gain) when the signals' peaks +
   3 noise rms would pass 105 LSB, except in 6 % of captures, driven 1.2-2.5x
@@ -74,6 +79,7 @@ from multiprocessing import Pool
 
 import numpy as np
 import scipy.fft as sfft
+from scipy.signal import butter, sosfiltfilt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -81,6 +87,8 @@ from bank import default_work, load_classes  # noqa: E402
 
 FS = 2400000.0
 MARGIN_S = 0.025      # each side: the segments' circular-FFT edges fall in it (cut off)
+# constant-envelope FM / FSK classes whose deviation a transmitter holds only to ~+-10 %
+DEV_TOL = {'dmr', 'p25p1', 'nxdn', 'ysf', 'dstar', 'pocsag', 'flex', 'mpt1327', 'aprs', 'v23', 'radiosonde', 'nfm_voice'}
 
 # ------------------------------------------------------------------ the bank
 
@@ -342,6 +350,19 @@ def make_capture(index, opt):
         T_seg = msamp / m['rate']
         t0, on_air = pick_time(rng, m, T_seg, T_cap * (1 + ppm * 1e-6), MARGIN_S * (1 + ppm * 1e-6), opt.get('time_mode'))
         x = segment(m, t0, msamp)
+        dev_scale = None
+        if cls in DEV_TOL and (m.get('variant') or {}).get('mod') != 'lsm' and not opt.get('single'):
+            # a transmitter's deviation off nominal (+-10 %: the FM phase scaled - these
+            # are constant-envelope clips) and in 30 % its channel filter after the modulator
+            dev_scale = float(rng.uniform(0.9, 1.1))
+            on = np.abs(x) > 0
+            if on.any():
+                ph = np.unwrap(np.angle(np.where(on, x, 1.0)))
+                x = np.abs(x) * np.exp(1j * dev_scale * ph)
+            if rng.random() < 0.3:
+                fc = min(0.45 * m['rate'], float(rng.uniform(1.0, 1.6)) * max(m['occ_hi_hz'] - m['occ_lo_hz'], 2e3) / 2)
+                sos = butter(4, fc, fs=m['rate'], output='sos')
+                x = sosfiltfilt(sos, x.real) + 1j * sosfiltfilt(sos, x.imag)
         soft = not m['continuous'] and m['rate'] <= 100e3 and cls not in ('wildlife', 'cw', 'unk_pulse', 'carrier')
         e = edge_ramps(m, t0, msamp, m['rate'], rng.uniform(2e-4, 1e-3)) if soft else None
         if e is not None:
@@ -366,17 +387,35 @@ def make_capture(index, opt):
         keep = np.abs(ob) < Nb // 2
         p_all = float(np.sum(np.abs(S) ** 2))
         p_in = float(np.sum(np.abs(S[keep]) ** 2))
-        snr_db = opt['snr'] if opt.get('snr') is not None else \
-            (float(rng.uniform(5, 25)) if rng.random() < 0.7 else float(rng.uniform(-3, 45)))
+        # SNR in the signal's band: mostly 5-25 dB, a wide spread, and strong ones (real
+        # recordings of narrow signals are often 30-60 dB over the floor); broadcast FM
+        # also weak (a distant station: 2-12 dB)
+        r = rng.random()
+        if opt.get('snr') is not None:
+            snr_db = opt['snr']
+        elif cls == 'wfm' and r < 0.4:
+            snr_db = float(rng.uniform(2, 12))
+        else:
+            r = rng.random()
+            snr_db = float(rng.uniform(5, 25)) if r < 0.55 else float(rng.uniform(-3, 45)) if r < 0.85 else float(rng.uniform(25, 55))
         truth.append({'class': cls, 'clip': m['clip'], 'offset_hz': round(f + 0.0, 1), 'bw_hz': round(bw, 1),
                       'lo_hz': round(f + lo, 1), 'hi_hz': round(f + hi, 1), 'snr_db': snr_db, 'on_air': round(on_air, 4),
                       'in_band': round(p_in / p_all, 4) if p_all > 0 else None, 'variant': m.get('variant'), 'ppm': round(ppm, 1),
                       'fading': fdesc, 'multipath': [[round(abs(g), 3), round(d * 1e6, 3)] for g, d in mp], 'spur': False,
+                      'dev_scale': round(dev_scale, 3) if dev_scale else None,
                       '_S': S[keep], '_ob': ob[keep], '_scale': Nb / msamp, '_peak': m['peak_db'], '_bwr': bw})
     # spurs: clean carriers (labelled carrier)
-    if not opt.get('single') and rng.random() < 0.12:
-        for _ in range(int(rng.integers(1, 3))):
-            f = float(rng.uniform(-FS / 2 * 0.97, FS / 2 * 0.97))
+    r = rng.random()
+    if not opt.get('single') and r < 0.16:
+        # a few, or (4 %) a receiver's comb of them: evenly spaced lines (a clock's harmonics)
+        if r < 0.04:
+            sp = float(rng.uniform(100e3, 300e3))
+            f0 = float(rng.uniform(-FS / 2 * 0.97, -FS / 2 * 0.97 + sp))
+            fl = [f for f in f0 + sp * np.arange(int(FS * 0.97 / sp) + 1) if abs(f) < FS / 2 * 0.97]
+            fl = fl[:30]
+        else:
+            fl = [float(rng.uniform(-FS / 2 * 0.97, FS / 2 * 0.97)) for _ in range(int(rng.integers(1, 3)))]
+        for f in fl:
             truth.append({'class': 'carrier', 'clip': None, 'offset_hz': round(f, 1), 'bw_hz': 1000.0, 'lo_hz': round(f, 1),
                           'hi_hz': round(f, 1), 'snr_db': float(rng.uniform(8, 40)), 'on_air': 1.0, 'in_band': 1.0, 'variant': {'spur': True},
                           'ppm': 0.0, 'fading': {'type': 'static'}, 'multipath': [], 'spur': True, '_bwr': 1000.0, '_peak': 0.0})

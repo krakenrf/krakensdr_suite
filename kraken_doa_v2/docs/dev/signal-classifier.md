@@ -60,6 +60,21 @@ no other dependency; the same code runs in kraken_doa and in
     narrow lines (>= 6 dB) spread over >= 0.94 x half the band, or on one
     regular spacing >= 5 kHz (a TV signal's line-rate comb; then every
     piece narrower than 50 kHz under it goes: analog TV from 27 tracks to 1)
+  - (phase 3, from the real recordings) a burst hump around a continuous
+    detection >= 3 dB stronger and at most 10x narrower than the hump is
+    dropped: a 2.7 dB pedestal beside a real DMR channel came out as a 42 kHz
+    "burst" that the tracker then merged the channel into ("AIS")
+  - IQ image: a detection at the mirror frequency (-f) of one >= 15 dB
+    stronger and at most twice as wide is dropped - the tuner's imbalance
+    image carries the strong signal's modulation, and the model named it by
+    that class (in the training data the largest group of confident wrong
+    labels; with 25-55 dB signals in the composer: images 25-40 dB down)
+  - an irregular comb of >= 10 lines forces the band-fill test only on its
+    prominence (>= 4), no longer unconditionally; a regular comb (a TV line
+    comb) still forces it. A real trunked-radio site (own heimdall capture,
+    30-38 carriers / spurs over 2.25 MHz, prominence 1.4-2.5) had become one
+    band-filling "DVB-T2" track that swallowed its P25 channels; synthetic
+    OFDM combs that need the forced path have prominence 9-16
   - limits: a crowded HF band merges into 100-500 kHz regions; a real LTE
     carrier at low load (own 768 MHz capture) comes out as a 930 kHz burst
     plus dozens of 16-23 kHz resource-block pieces and no fill (the
@@ -72,17 +87,46 @@ no other dependency; the same code runs in kraken_doa and in
   to 0.4 x the view rate, >= 60 dB from 0.5 x), an M-point inverse FFT,
   the block's mixer phase restored. Measured by the core's author: passband
   +0.01 dB to 0.39 x the view rate, out-of-view tones -89 / -106 / -132 dB
-  (views 0 / 1 / 2) - not changed since
-- **Features** (`features.cpp`, layout v1, hash a25e257acff49b39, D = 804,
-  unchanged in phase 2): meta 16, psd 128, env_hist 32, env_mom 12, env_spec
-  128, env_spec_lo 32, if_hist 64, if_mom 8, if_spec 128, if_spec_lo 32, sq
-  40, quad 40, acf_c 40, acf_e 40, acf_f 40, lagprod 12, tf 12
-  (`sigclass_tool layout` prints each group's meaning). Every value finite
-  and O(1) (clamped). A change of meaning bumps `FEATURE_LAYOUT_VERSION`; the
-  hash covers the group table and parameters; a model of another hash is
-  refused. Known gap: the log-spaced lag grid (40 bins over 2 us - 250 ms,
-  ~33 % a bin) cannot resolve the useful-symbol lags of DVB-T (896 us at 8
-  MHz) and ISDB-T (1008 us) - hence the merged class (below)
+  (views 0 / 1 / 2). View 3 (no decimation) mixes by a block of exact table
+  phasors x the block's start phasor (vectorised; was a table lookup per
+  sample: 1.85 -> 1.25 ms per wide signal)
+- **Features** (`features.cpp`, layout v2, hash da962d2a45310d8f, D = 1082;
+  `FEATURE_LAYOUT_VERSION` 2): the v1 groups - meta 16, psd 128, env_hist
+  32, env_mom 12, env_spec 128, env_spec_lo 32, if_hist 64, if_mom 8,
+  if_spec 128, if_spec_lo 32, sq 40, quad 40, acf_c 40, acf_e 40, acf_f 40,
+  lagprod 12, tf 12 - plus (phase 3):
+  - `sym` 134, symbol-synchronous: the symbol rate = the strongest cyclic
+    line of |dIF| (FSK) or of the envelope (linear modulation) against its
+    neighbourhood's mean, searched over fs_v / 200 .. fs_v / 2.2 and by the
+    detection's width (|dIF|: >= bw / 40 - slow wide-deviation paging; the
+    envelope: >= bw / 4; both <= 1.5 bw); when the two lines disagree a clear
+    (>= 12 dB) |dIF| line wins (an FSK signal's envelope lines are the
+    recording's - AGC, 200 / 567 Hz lines in real YSF / DMR files); parabolic
+    refinement; per block of <= 2048 symbols (<= 4096 in all, blocks evenly
+    picked) the timing phase of 8 whose IF samples cluster most; then the IF
+    at the symbol centres on a fixed Hz scale (64 bins over +-0.25 fs_v:
+    187.5 Hz at 24 kHz), |IF| / its 90th percentile (24 bins: the
+    inner / outer level ratio), the phase step over one symbol (32 bins, the
+    carrier offset's turn removed: CQPSK / pi/4-DQPSK at +-45 / +-135
+    degrees), 14 scalars (line strengths, rate / fs_v, log rate, rate / bw,
+    harmonic and sub-harmonic lines, concentrations, level quantiles). On the
+    bank: rate 4800.0 +- 0.3 Bd for DMR / P25 / NXDN96 / YSF / D-STAR, 512 for
+    POCSAG, 18000 for TETRA, 2400 for NXDN48; the real files the same (after
+    the envelope rule)
+  - `frame_c` / `frame_e` / `frame_f` 48 each: |autocorrelation| of the
+    complex view / envelope / gated IF on a LINEAR lag grid - views 0-1: 5 ms
+    bins centred at 5..240 ms from the whole-view box sums, views 2-3: 22 us
+    bins 0..1.056 ms from the sample-level correlations - max-pooled, minus
+    the grid's median, x 8. Real files: DMR 60 / 120 / 240 ms, NXDN 80 / 160,
+    YSF 100 / 200, a P25 control channel 75 / 150 / 225 (its TSDUs) - the
+    bank's generators the same, except that the bank had no P25 control
+    channel (180 ms LDUs only). The wide grid was also meant to split DVB-T
+    (896 us) from ISDB-T (1008 us): not enough (below)
+  Long views (2-3) are analysed in 8 chunks of 4096 (was 16), quantiles of
+  the whole-view box powers on <= 16384 of them. `sigclass_tool layout`
+  prints each group's meaning; every value finite and O(1) (clamped); a
+  model of another hash is refused. `SIGCLASS_DEBUG_SYM=1` prints the two
+  lines per detection
 - **Model file** (`model.cpp` header): "KSIGCLS\0", format 1, layout
   version + hash + D, meta JSON, per view: class ids / names, temperature
   (1e-3 .. 1e3), input mean / std, Linear + ReLU layers, linear output;
@@ -106,14 +150,19 @@ no other dependency; the same code runs in kraken_doa and in
   the union band). `expire(t)` (no snapshot) and `Track::fills_band` added
   for the service. Class evidence: EWMA (0.3) of log-probabilities per view,
   the track's view = the one most of its detections had
-- **Cost** (`sigclass_tool bench`, i7-11800H under load 18-30 from other
-  jobs, 2026-11-20): fixed 34-41 ms per snapshot (front end 20 ms, detector
-  12-21 ms); per signal channelize 0.14-1.8 ms, features 2.0-4.9 ms, model
-  (804-192-96-C) 0.09-0.10 ms; 32 signals 114 ms. The core author measured
-  27 / 65 / 77 ms for 1 / 21 / 30 signals at lower load. A Pi 5 is an
-  ESTIMATE, not measured: 3-4x this machine per core -> ~100-150 ms fixed,
-  ~5-8 ms per signal, the MLP < 0.4 ms per signal (178 k multiply-adds;
-  0.7 MB of weights per view)
+- **Cost** (`sigclass_tool bench`, i7-11800H, load ~1.5, layout v1 tool of
+  commit 8b7c707 and v2 run alternately on the same three files,
+  2026-11-20): fixed per snapshot 21 ms both (front end 11 ms, detector 8-12
+  ms; the 34-41 ms of phase 2 were measured under load 18-30 - nothing in
+  the fixed path had grown); per signal, narrow (view 0) features 1.09 ->
+  1.25 ms, a typical mix of 21 signals channelize 0.29 -> 0.24 and features
+  1.49 -> 1.59 ms, wide signals (views 2-3) channelize 1.85 -> 1.25 and
+  features 4.5 -> 3.8 ms (8 chunks instead of 16; the rest of a view-3
+  signal's cost is the whole-view pass over 1.2 M samples: box sums 1.0 ms,
+  on / off runs 0.4 ms); the `sym` group 0.36 ms (view 0) / 0.46 ms (view
+  3), the frame groups < 0.05 ms; model (1082-192-96-C) 0.05 ms. A Pi 5 is
+  an ESTIMATE, not measured: 3-4x this machine per core -> ~70-90 ms fixed,
+  ~4-6 ms per narrow signal, ~15 ms per wide one
 - **Tool** `tools/sigclass_tool.cpp`: `layout`, `features`, `classify
   [--track]` (tracks with lo_hz / hi_hz), `bench`, `view`, `forward`,
   `selftest`; `make sigclass-tool` or the one-line g++ in its header.
@@ -125,7 +174,10 @@ no other dependency; the same code runs in kraken_doa and in
   0.17 -> 0, OFDM fill 20 dB 0.17 -> 0, 1 ms bursts 6 dB 2.50 -> 2.17);
   noise-only 1 false (narrow, -3 dB) in 40 captures as before; the debug
   playback's table-driven noise (replicated in Python) and numpy noise at
-  0.7-25 LSB: 0 detections; `selftest` passes
+  0.7-25 LSB: 0 detections; `selftest` passes. Unchanged after the phase 3
+  rules (burst hump, image, comb prominence). Not run: the MinGW / zig
+  syntax checks (neither is installed on the dev machine); the changes are
+  standard C++20 without platform code
 
 ## Training and evaluation
 
@@ -137,12 +189,16 @@ Everything in `tools/sigclass/` (numpy + scipy only; commands in its
   open-set sink) + `none` (`hidden: true`: a detection that is no signal -
   never shown). `merged_into`: DVB-T2 and ISDB-T are trained as `dvbt`
   ("DVB-T / T2 / ISDB-T") - with the v1 features 28 % of DVB-T went to
-  DVB-T2 and 35 % of ISDB-T to DVB-T (the lag grid can't tell 896 from 1008
-  us); the dtv plugin tells the standards apart itself. TEMPEST is no class.
+  DVB-T2 and 35 % of ISDB-T to DVB-T. Re-tested with the v2 linear lag grid
+  (phase 3, trained apart, `train.py fit --no-merge`): still no separation -
+  val / test ISDB-T 0.48 / 0.54 (0.27 / 0.35 -> DVB-T), DVB-T 0.83 / 0.76
+  (0.11 -> DVB-T2), DVB-T2 0.93 / 0.66 (0.25 -> ATSC 3.0 on test); so the
+  merge stays. The dtv plugin tells the standards apart itself. TEMPEST is
+  no class.
   Per class: plugin, demod / VFO width (click-to-tune), occupied-bandwidth
   range (the SNR bandwidth's clamp, and the view plausibility rule below),
   burst, family, fills_band
-- **Bank** `bank.py` (37 GB, 1498 clips, 4.2 h of signal, 2.1 h on air): clean,
+- **Bank** `bank.py` (39 GB, 1582 clips, 4.6 h of signal after phase 3): clean,
   single-transmitter complex baseband per class from the plugins' own
   generators (run as separate programs - the GPL ism / flarm generators
   too, never copied) and `synth.py` (AM 25 / 8.33 kHz, SSB, CW, carriers,
@@ -150,27 +206,47 @@ Everything in `tools/sigclass/` (numpy + scipy only; commands in its
   subcarrier spacings; since phase 2 also a broadcast-FM model with music /
   speech, pre-emphasis, limiter, stereo pilot and an RDS-like subcarrier,
   and generic OOK / 2-FSK ISM devices - real FM was "LoRa" for every model
-  before). Seeded IDs, payloads, modes, speeds, timing. Limits: dmr, dstar,
-  nxdn, p25 phase 1 and tetra generators seed their payload / voice bits
-  with a fixed RNG (variety from IDs, colour codes, timing only); sfn_gen
-  has no `--seed`; dab_gen's audio is a tone per service; analogtv one test
-  card; tetra_gen's output does not decode for 18 of 64 colour codes (2, 3,
-  5, 8, 10, 17-20, 27, 28, 34, 38-40, 46, 52, 54: the bank uses the others);
-  no NXDN48; radiosondes are RS41 and M20 only (real DFM / iMet / LMS6 / M10
-  recordings come out as unknown FSK)
+  before). Seeded IDs, payloads, modes, speeds, timing. Phase 3: dmr_gen,
+  dstar_gen, nxdn_gen, p25_gen and tetra_gen took an optional `--seed N`
+  (without it their output is bit-identical - all 13 catalogue steps of the
+  five, checksums before / after); the bank seeds every clip and sends the
+  vocoder-frame voice (`ambe` / `imbe`: what radios send) instead of 30 %
+  random bits; new physical-layer variants in `synth.py` - a P25 control
+  channel in C4FM (p25_gen's frame sync + NID, three random TSBKs, status
+  symbols: 360 symbols = 75 ms), P25 CQPSK / LSM (p25_gen's voice calls or
+  control channel, the phase step of each C4FM symbol, RRC roll-off 0.2-1.0:
+  on-air LSM occupies ~9 kHz), NXDN48 (2400 Bd, +-350 / +-1050 Hz,
+  nxdn_gen's filter and FSW + random payload symbols - nxdn_gen frames
+  NXDN96 only; a physical-layer approximation whose 80 ms periodicity is
+  weaker than a real one's), VOR at measured depths (30 Hz 8-35 %, the 9960
+  Hz subcarrier 18-32 %, ident 5-15 % or none: ils_gen has the nominal 30 /
+  30 % only); p25p1 48 clips (24 / 12 / 12), nxdn 32 (12 NXDN48), dmr 32,
+  dstar 24, tetra 24, vor 24; LTE / NR half lightly loaded (0.02-0.2), 40 /
+  32 clips; LoRa: 2 of 5 clips sparse (24 s, a packet every 1.5-8 s). Limits:
+  sfn_gen has no `--seed`; dab_gen's audio is a tone per service; analogtv
+  one test card; tetra_gen's payload is the empty SCH/F every frame and its
+  output does not decode for 18 of 64 colour codes (2, 3, 5, 8, 10, 17-20,
+  27, 28, 34, 38-40, 46, 52, 54: the bank uses the others); radiosondes are
+  RS41 and M20 only (no generator for DFM / iMet / LMS6 / M10 / MRZ / MTS01:
+  left to unknown FSK)
 - **Composer** `scenes.py`: 0.5 s 2.4 MHz cu8 captures, 0-8 signals (+
   spurs) placed in the frequency domain (one inverse FFT): 25 % at one
   channel spacing from a neighbour, 12 % of later narrow ones ON an earlier
   one's channel +-1.5 kHz (half of them the same class: radios taking
   turns - the playback scenes have 2-5 transmitters per channel), ~11 %
-  near DC, ~11 % at the band edge; SNR 70 % U(5, 25), 30 % U(-3, 45) dB
-  (was -3..35: real strong signals sit at 45-65 dB), <= 40 dB between
-  signals; bursts fully in / cut / absent; per signal sample-rate error,
+  near DC, ~11 % at the band edge; SNR 55 % U(5, 25), 30 % U(-3, 45), 15 %
+  U(25, 55) dB (phase 3: real narrow recordings are often 30-60 dB; the bank
+  of phase 2 had a median of 15 and a 90th percentile of 25 dB per
+  detection), broadcast FM 40 % at 2-12 dB, <= 40 dB between signals;
+  constant-envelope FM / FSK classes their deviation x U(0.9, 1.1) and in
+  30 % a 4th-order channel filter (a transmitter's tolerances: DMR's and
+  P25's level sets now overlap, as on the air); bursts fully in / cut /
+  absent; per signal sample-rate error,
   flat fading (static / Rician / Rayleigh, Doppler <= 100 Hz), phase noise,
   soft keying edges, 15 % multipath; receiver noise 3-40 LSB and (since the
   own off-air captures showed 0.6-1 LSB at full gain) 30 % 0.3-3 LSB, droop,
-  spurs, IQ imbalance, DC, 8-bit quantisation after the noise, gain pulled
-  down near clipping (6 % let clip)
+  spurs (4 % a comb every 100-300 kHz), IQ imbalance, DC, 8-bit quantisation
+  after the noise, gain pulled down near clipping (6 % let clip)
 - **Labels** (`train.py ingest`, per batch through `sigclass_tool
   features`): a detection is matched to the truths it overlaps (cover of
   the detection / of the truth's 99 % band); one dominant truth (6 dB) or
@@ -178,92 +254,130 @@ Everything in `tools/sigclass/` (numpy + scipy only; commands in its
   is `none` (a detection near a wide / pulsed signal's band edge is dropped,
   not `none`: skirts, lobes, edge pilots); a piece of a wide signal in a
   view too narrow for that class (occupied-bandwidth minimum > 2 x the
-  view's widest) becomes `none` - so no "DAB" on a 0.4 kHz track
+  view's widest) becomes `none` - so no "DAB" on a 0.4 kHz track. Phase 3:
+  a detection outside a strong truth's band (>= 20 dB) within max(2 x its
+  width, 25 kHz) and >= 15 dB weaker - or at its IQ image - is dropped, not
+  `none` (`near_strong`; applied to the caches on loading too). With the
+  stronger composer the val set's confident wrong labels were nearly all
+  such "none" detections (images, skirts) named by the strong signal's
+  class: `min_confidence` could not reach 95 % precision (0.98 at 38 %
+  shown); with the rule and the detector's image rule 0.81 at 76 % shown
 - **Splits**: by bank clip, per class (every 10th clip test, the next val,
   the rest train: test payloads / IDs / modes never trained on); the test
   scenes also come from another composer seed
 - **Trainer** (`train.py fit`, its own numpy MLP: Adam with decoupled
   weight decay 1e-4, dropout 0.2, label smoothing 0.05, class-weighted
-  cross-entropy (weights (N / n_c / C)^0.75), cosine LR from 2e-3, batch
+  cross-entropy (weights (N / n_c / C)^0.75; `none` x 2.5 since phase 3), cosine LR from 2e-3, batch
   512, early stop on val macro recall; `gradcheck`: 1.7e-7). Per view the
   classes with >= 100 training examples there; one temperature per view
   (val NLL); `min_confidence` = the lowest p at which >= 95 % of the shown
   (not `none`) val labels are right
 
-### Results (2026-11-20, the shipped `sigclass.model`)
+### Diagnosis of the synthetic-to-real gap (phase 3, 2026-11-20)
 
-Model 804-192-96-C per view, 2.84 MB, `min_confidence` 0.82; views
-(classes) 24 kHz 32, 96 kHz 18, 480 kHz 15, 2.4 MHz 19. Trained on 46 000
-captures (0.22 M detections of train clips), tested on 4 000 captures of
-another seed, test clips only. 128-64 (1.84 MB) was 0.853 top-1, 256-128
-(3.9 MB) 0.865 - 192-96 chosen.
+The phase 2 model (layout v1) against the real library, per failing class:
+the real detections' features compared per feature group with the true
+class's training distribution (mean |z| over the group, same view; the
+held-out synthetic examples sit at 0.4-0.9), plus plain facts (detected
+width, view, SNR, duty) against the bank. Four kinds of cause:
 
-- **Synthetic test** (2 740 detections): top-1 0.867, top-3 0.959, macro
-  recall 0.859, macro precision 0.803 (49 classes); per view 0.870 / 0.873 /
-  0.887 / 0.771. Recall >= 0.9: acars ais analogtv atsc3 beacon406 dab dme
-  dmr dstar dvbt flarm lte mpt1327 nr radiosonde tetra uat v23 vdl2 vor wfm
-  wildlife; 0.8-0.9: am_voice aprs atsc carrier cw dtmb ils_loc ism_ook lora
-  none nxdn p25p1 p25p2 pocsag ssb ysf; weak: radar 0.53 (<-> ssr1030),
-  adsb 0.56, nfm_voice 0.63, unk_fsk 0.41 (-> aprs, unk_noise), unk_psk /
-  unk_noise 0.5, ism_fsk 0.77, flex 0.78 (-> carrier), ssr1030 0.78. Top-1 vs
-  SNR: 0.50 below 0 dB, 0.74 at 5-10, 0.87-0.93 from 10 dB. Learning curve
-  (training cap per view): 10 k 0.814, 30 k 0.842, all (14-109 k) 0.867.
-  Non-signal (`none`) detections shown as a signal: 5 %, 0.17 a capture
-- **Detection ceiling** (truths on air >= 10 %, >= half in band): 0.82-0.90
-  for the narrow classes at every SNR, 0.96-1.00 for the wide and
-  band-filling ones; at >= 15 dB the misses are nearly all signals placed
-  across the band edge (the 3 % edge guards)
-- **Own off-air captures in the receiver's format** (2.4 MS/s cu8 / heimdall,
-  fed as they are; 41 expected signals): 26 right (63 %), 24 shown.
-  DVB-T 18 / 19 (13 heimdall captures of the 522 MHz multiplex + 3 rtl_sdr),
-  ADS-B, DME (the only real DME), the VOR band's crystal-harmonic carrier,
-  FM broadcast 3 of 6; wrong or hidden: LoRa (ISM FSK / none), LTE 20 MHz at
-  low load and NR (fragmented into resource-block pieces -> none), SSR 1030
-  (none), the VOR itself (unknown PSK), ISM 433 (unknown OFDM / ISM FSK);
-  the empty band at 1290 MHz: no label shown
-- **Library recordings** (a local library of public and own recordings,
-  `KRAKEN_IQ_LIBRARY`, through `eval_real.py`): decoder-confirmed 357
-  signals (247 of them the rtl_433 ISM test files): top-1 38 %, top-3 54 %
-  (ISM OOK 65 / 149, ISM FSK 27 / 98, FM 9 / 13, DAB 8 / 9, VOR 3 / 3, AIS
-  2 / 2, P25 6 / 19, radiosonde 3 / 14 - other sonde types than the bank's,
-  NXDN 1 / 5, DMR 0 / 5). Spectrum probe only (no decoder run) 20 %;
-  unconfirmed entries (decoder found 0) 4 %; discriminator audio FM
-  re-modulated 17 %; open set (signal types without a class): 80 % labelled
-  unknown / none / below `min_confidence` (wrong: Bluetooth -> UAT, a
-  pulsed VHF ASK -> wildlife, NOAA APT -> radiosonde / FM, HD Radio AM ->
-  carrier). No real recording exists for v23, flarm, ils_loc, dvbt2, atsc
-  (ssr1030 / dme: one own capture each). Before phase 2's fixes the same
-  set gave 21 % (confirmed) and FM was "LoRa" in 12 of 13
-- **Debug playback through the real pipeline** (TEST build, the receiver's
-  service, 40 s per entry, 28 entries, the label of the track at each
-  transmitter): every entry RIGHT and at or above `min_confidence` - POCSAG,
-  DMR, P25, YSF, AIS (both channels), VDL2, LoRa (3 channel tracks), ADS-B,
-  UAT, DAB, LTE, FM broadcast, ISM (13 tracks for 6 devices and their repeat
-  bursts, one stray "unknown OFDM 33 %" below the threshold), FLARM (2
-  channel tracks), DME (3: two beacons + an interrogator piece), VOR (4:
-  carrier, 15 kHz body, the two 9960 Hz sub-carrier lines - the carrier's
-  absorption fix came after this run: 3 in the offline emulation),
-  MPT1327, analog TV (1 track; was 41), TETRA, DVB-T, radar (3), wildlife,
-  NXDN, D-STAR, APRS (2 tracks), ACARS, radiosonde (RS41 and M20 apart),
-  406 MHz beacon: 32 sure, 0 wrong, 0 unsure (`table_sum.py`; its 3 "no
-  track" are entries whose expected frequency is the VFO centre between the
-  channels). With the interim model (0.94, before the detector / tracker
-  fixes) the same run had 6 entries wrong (NXDN, D-STAR, APRS, ACARS,
-  radiosonde, 406 MHz beacon), 4 unsure, 41 tracks on analog TV, 6-9 on DME.
-  The offline emulation of the playback path (`design_interp`'s 12-tap
-  polyphase, the band offset, table noise, 8 bits; scratch `frag_test.py
-  --pb`, 30 entries) agrees except POCSAG there (the channel's track goes to
-  the co-channel FM-tone interferer: "P25 Phase 1 85 %")
-- Weak, known: real P25 / DMR / NXDN recordings (simulcast CQPSK, filtered
-  narrow captures), real LTE / NR at low load (detector fragments them),
-  real ISM bursts (short, strong, wider keying splatter than the bank's),
-  the unknown families' recall, radar vs SSR 1030, a POCSAG channel shared
-  with an FM-tone interferer labelled by the interferer
-- Commands: `tools/sigclass/README.md` ("Train the model"); the run above:
-  `train.py gen` A2 (24 000, seed 1), C (12 000, 3), D (4 000, 4), D2 (2 000,
-  5, `--classes` of the wide ones), E (4 000, 6), B2 (4 000, 2: test);
-  `train.py build` each; `train.py fit --data A2,C,D,D2,E (.npz) --test
-  B2.npz --hidden 192,96`; `eval_real.py`
+- **(a) the evaluation path** (fixed in `eval_real.py`, see its README):
+  the recording receiver's DC spike inside the signal (public SDR# DMR /
+  NXDN files, a P25 file whose first two snapshots hold only the spike,
+  YSF: 26-35 dB lines -> "carrier 0.88"); squelch-gated files (26-82 % exact
+  zeros; mean removal made a gated DC tone) and files that open with
+  silence (the first 4 s: 5 distinct sample values); recordings with more
+  SNR than 8 bits hold (60-100 dB) quantised with the noise under 0.5 LSB
+  -> a whole-band "burst" (unknown noise / radar). Also the core: a 2.7 dB
+  pedestal beside a real DMR channel made a 42 kHz burst detection the
+  tracker merged the channel into ("AIS") -> the detector's burst-hump rule
+- **(b) bank realism**: real narrow recordings at 30-60 dB SNR (the bank's
+  detections: median 15, 90th percentile 25 dB) - TETRA at 41 dB had its
+  psd / envelope / x^2 / x^4 / lag-product groups 1.9-2.6 sigma off; real
+  P25 control channels framed every 75 ms (TSDUs), the bank had voice calls
+  only (180 ms LDUs)
+- **(c) generator artefacts**: none found - the frame lags of real DMR (60 /
+  120 / 240 ms), NXDN (80 / 160), YSF (100 / 200) equal the generators';
+  the fixed payload seeds don't show in a 0.5 s snapshot (payload bits are
+  random per frame anyway)
+- **(d) missing variants**: P25 CQPSK / LSM (all 5 such recordings ->
+  P25 Phase 2: if_hist 2.4, acf_e 2.2, acf_f 2.2 sigma), the P25 control
+  channel, NXDN48 (-> unknown FSK / VDL2), radiosonde DFM / iMet / LMS6 /
+  M10 / MRZ / MTS01 (no generator; DFM09 sat closer to POCSAG in the low
+  spectra and lags)
+- and the features: a clean P25 control channel was as near NXDN as P25 in
+  every v1 group (largest: envelope spectrum 2.0, IF spectrum 1.7): the raw
+  IF histogram blurred the 1800 / 2400 Hz outer levels and the log lag grid
+  could not see a frame period -> layout v2 (`sym`, `frame_*`, above)
+
+### Results (2026-11-20, phase 3, the shipped `sigclass.model`)
+
+Model 1082-192-96-C per view, 3.7 MB (was 2.84), `min_confidence` 0.81
+(95 % of the shown val labels right at 76 % shown); views (classes) 24 kHz
+32, 96 kHz 22, 480 kHz 17, 2.4 MHz 22. Trained on 59 000 captures (V1-V4,
+0.44 M detections; 0.26 M of train clips), tested on 4 000 of another seed
+(VT, test clips only). Real tracks: the tracks of the last 0.5 s snapshot
+of 4 s (track level). "Before" = the phase 2 model with the v1 tool of
+commit 8b7c707 on the SAME (new) evaluation path and library state.
+
+- **(a) debug playback through the real TEST pipeline** (28 entries, 40 s
+  each): 28 / 28 right (25 with the label at the transmitter, the 3 whose
+  expected frequency is the VFO centre between channels - AIS, ISM, FLARM -
+  have every channel track right); 28 sure, 4 unsure, 0 wrong (phase 2: 32
+  sure, 0 unsure). Unsure: radiosonde 35 % (both sondes), wildlife 66 %,
+  DVB-T labelled ATSC 3.0 68 % (the table accepts any DTV class; with the
+  v2 model trained unmerged it was DVB-T 86 %). One-track-per-transmitter
+  check (`frag_test.py --pb`, 30 entries): 1.02 tracks per channel, 22
+  exactly right (phase 2: 1.05, 23)
+- **(b) own off-air captures, native bytes** (110 expected signals - the
+  library now has own DMR / P25 / MPT1327 / NFM captures): top-1 57 -> 65
+  (52 -> 59 %), family 70 -> 70, shown correct 47 -> 52. DVB-T 18 -> 19 /
+  19, DMR 12 -> 12 / 21 (8 not detected: weak), P25 10 -> 16 / 34 (wrong:
+  YSF 5; 9 not detected - in the 5-antenna 142.3 MHz capture the expected
+  channels show only as 1.2-1.4 kHz lines; its phase 2 "detections" were
+  the false band-filling track), MPT1327 5 / 7, NFM 4 / 7, FM broadcast 3 /
+  6 (3 weak ones "LoRa"), ISM 433 0 / 3 (ISM FSK), LoRa / LTE / NR / SSR /
+  VOR none (hidden)
+- **(c) library, decoder-confirmed** (357 signals): top-1 135 -> 157 (38 ->
+  44 %), top-3 54 -> 61 %, family 196 -> 220 (55 -> 62 %), shown correct 75
+  -> 102. Rows (exact / family, before -> after): DMR 1 / 5 -> 3 / 5, P25
+  4 / 11 -> 9 / 14 of 19, NXDN 0 / 1 -> 2 / 3 of 5, YSF 1 / 3 -> 2 / 3 of
+  3, TETRA 1 / 1 -> 3 / 3 of 3, POCSAG 0 / 1 -> 1 / 1, FLEX 1 / 2 -> 2 / 2,
+  AIS 0 / 2 -> 0 / 2 (ISM FSK), ACARS 1 -> 1, VDL2 0 -> 0 (of 1), radiosonde
+  3 / 9 -> 3 / 11 of 14 (the bank's types only), ISM OOK 65 / 77 -> 79 /
+  103 of 149, ISM FSK 28 / 51 -> 23 / 39 of 98 (WORSE: to ISM OOK 17, none
+  16, unknown FSK 13), FM 9 -> 9 of 13, DAB 8 -> 9 of 9, ISDB-T 1 -> 0 (none).
+  With the phase 2 path the same model had DMR 0, P25 6, NXDN 1. Probe-only
+  13 -> 23 %, unconfirmed 7 -> 7 %, disc_audio 17 -> 31 %, open set 84 ->
+  82 % labelled unknown / none / below `min_confidence`
+- **(d) synthetic test** (VT: new composer - more strong signals, IQ
+  images, deviation tolerance - so not comparable 1:1 with phase 2's B2
+  0.867): top-1 0.875, top-3 0.950, family 0.891, macro recall 0.819 /
+  precision 0.791 (49 classes); per view 0.873 / 0.898 / 0.881 / 0.760
+  (family 0.886 / 0.908 / 0.897 / 0.830); by family exact / family: fsk
+  0.80 / 0.85, pulse 0.84 / 0.89, am 0.83 / 0.87, ofdm 0.83 / 0.84, psk
+  0.89, fm 0.93, none 0.91; top-1 vs SNR 0.59 (< 0 dB), 0.78 (0-5), 0.86
+  (5-10), 0.89-0.95 (>= 10). Weak: radar 0.38 (-> SSR 1030), unknown FSK
+  0.26 (-> APRS), am_voice 0.40, cw 0.59. The first v2 fit without the
+  near-strong / image rules: top-1 0.840, `min_confidence` 0.98 at 38 %
+  shown
+- **Unknown vs ISM** (item of the brief): ISM OOK -> unknown pulses and ISM
+  FSK -> unknown FSK stay errors in the exact score; the family score counts
+  them right (OOK and pulses are one family, FSK one) - the honest answer
+  for a device the bank lacks. No class definition changed
+- Where it stands, and why: P25 / DMR / NXDN on real files are about half
+  right now (DMR 3 / 5, P25 9 / 19, NXDN 2 / 5; native P25 16 / 34 and
+  DMR 12 / 21) - the rest go to YSF / unknown FSK (deviation tolerance makes
+  the 4-FSK systems overlap in level; the frame lag is the separating cue
+  and it is weak in 0.5 s); radiosondes other than RS41 / M20 have no
+  generator; real ISM FSK got worse (19 % from 29 %); LTE / NR at low load
+  and LoRa / SSR in the own captures are still hidden as none
+- Commands: `tools/sigclass/README.md` ("Train the model"): `train.py gen`
+  V1 (24 000, seed 11), V2 (16 000, 12), V3 (3 000, 13, `--classes` of the
+  wide ones), V4 (16 000, 14), VT (4 000, 2: test); `train.py fit --data
+  V1,V2,V3,V4 --test VT --hidden 192,96 --none-weight 2.5`; `eval_real.py`
+  (before: `KRAKEN_SIGCLASS_TOOL=<the v1 build> eval_real.py --model <phase
+  2 model>`)
 
 ## Runtime (`sigclass_service.cpp`)
 

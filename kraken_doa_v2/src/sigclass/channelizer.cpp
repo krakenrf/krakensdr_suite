@@ -177,12 +177,24 @@ void Channelizer::extract(const FrontEnd& fe, int centre_bin, int view, avec<cf>
     if (nout == 0) return;
     const int c = std::clamp(centre_bin, -LONG_N / 2, LONG_N / 2 - 1);
     if (view == NUM_VIEWS - 1) {
-        int idx = 0;
         const int step = pos_mod(c, LONG_N);
-        for (size_t i = 0; i < n; i++) {
-            out[i] = fe.x[i] * nco_[size_t(idx)];
-            idx += step;
-            if (idx >= LONG_N) idx -= LONG_N;
+        if (step == 0) {
+            std::copy(fe.x.begin(), fe.x.begin() + long(n), out.begin());
+            return;
+        }
+        // e^{-j 2 pi c i / LONG_N} as a block's phasors (exact table values) times the
+        // block's start phasor: contiguous products the compiler vectorises
+        constexpr size_t B = 4096;
+        tmp_.resize(B);
+        tmp2_.resize(B);
+        for (size_t i = 0; i < B; i++) tmp_[i] = nco_[size_t((int64_t(i) * step) % LONG_N)];
+        for (size_t b0 = 0; b0 < n; b0 += B) {
+            const cf r0 = nco_[size_t((int64_t(b0 % size_t(LONG_N)) * step) % LONG_N)];
+            const size_t m = std::min(B, n - b0);
+            for (size_t i = 0; i < m; i++) tmp2_[i] = tmp_[i] * r0;
+            const cf* x = fe.x.data() + b0;
+            cf* o = out.data() + b0;
+            for (size_t i = 0; i < m; i++) o[i] = x[i] * tmp2_[i];
         }
         return;
     }

@@ -74,6 +74,17 @@ def truth_band(s):
     return mid - half, mid + half
 
 
+STRONG_SNR_DB, STRONG_BELOW_DB, STRONG_REACH_HZ = 20.0, 15.0, 25e3
+
+
+def near_strong(a, b, det_snr, lo, hi, t_snr):
+    """a detection [a, b] outside a strong truth's band [lo, hi] (SNR >= 20 dB), within
+    max(2 x its width, 25 kHz) of it and >= 15 dB weaker: its skirt / sidelobe / an
+    8-bit product of it (called with the mirrored band: its IQ image)"""
+    gap = max(lo - b, a - hi)
+    return t_snr >= STRONG_SNR_DB and gap < max(2.0 * (hi - lo), STRONG_REACH_HZ) and det_snr <= t_snr - STRONG_BELOW_DB
+
+
 def match_capture(dets, truth, lab):
     """dets: list of dicts (tool rows of one capture); truth: the capture's
     truth line -> per detection (label, truth index, cover_d, cover_t) and
@@ -100,6 +111,11 @@ def match_capture(dets, truth, lab):
             # skirts, lobes, pilots at the edge) a detection is not clearly 'none'
             wt = hi - lo
             if wt > 100e3 and ov == 0.0 and min(abs(a - hi), abs(b - lo)) < 0.5 * wt:
+                mx = max(mx, 0.2)
+            # ... or near a strong one (its skirt, sidelobes, 8-bit products: they carry
+            # its modulation - not clearly 'none' either)
+            if ov == 0.0 and (near_strong(a, b, d['snr_db'], lo, hi, sig[i]['snr_db']) or
+                              near_strong(a, b, d['snr_db'], -hi, -lo, sig[i]['snr_db'])):     # (or its IQ image)
                 mx = max(mx, 0.2)
             if ct > t_cov[i]:
                 t_cov[i] = ct
@@ -387,6 +403,7 @@ def fit_temperature(logits, y):
 
 
 SPLIT_WORK = [default_work()]
+NO_MERGE = [False]     # fit --no-merge: train merged_into classes as their own (an experiment)
 
 
 def split_of(clips):
@@ -426,7 +443,7 @@ def merges(lab):
     "merged_into": classes the features cannot tell apart in the receiver's 2.4 MHz)"""
     m = np.arange(len(lab))
     for c in load_classes():
-        if c.get('merged_into'):
+        if c.get('merged_into') and not NO_MERGE[0]:
             m[lab.index(c['id'])] = lab.index(c['merged_into'])
     return m
 
@@ -434,7 +451,9 @@ def merges(lab):
 def load_data(path, lab):
     """a dataset cache (one or several .npz joined by commas) with the merges applied"""
     parts = [dict(np.load(p, allow_pickle=False)) for p in path.split(',')]
-    keys = set.intersection(*[set(p) for p in parts])
+    for p in parts:
+        drop_none_near_strong(p, lab)
+    keys = set.intersection(*[set(p) for p in parts]) - {'_n_near'}
     z = {k: np.concatenate([p[k] for p in parts]) for k in keys}
     m = merges(lab)
     y = z['y'].astype(np.int64)
@@ -451,11 +470,42 @@ def load_data(path, lab):
     bad = (yy >= 0) & (view < 3) & (occ_lo[np.maximum(yy, 0)] > 2.0 * vmax[view])   # (the widest view takes anything)
     z['y'] = np.where(bad, lab.index('none'), yy).astype(np.int16)
     z['n_view_impossible'] = int(bad.sum())
+    z['n_none_near_strong'] = sum(p.get('_n_near', 0) for p in parts)
     return z
+
+
+def drop_none_near_strong(p, lab):
+    """'none' near a strong signal is dropped (match_capture's near_strong; caches
+    ingested before that rule get it here from their truth arrays) - per cache
+    (capture indices repeat between caches)"""
+    ni = lab.index('none')
+    idx = np.flatnonzero(p['y'] == ni)
+    if not len(idx) or 'T_lo' not in p:
+        return
+    by = {}
+    for k, c in enumerate(p['T_cap']):
+        by.setdefault(int(c), []).append(k)
+    det = p['det']
+    drop = []
+    for i in idx:
+        a = det[i, 0] - 0.5 * max(det[i, 1], 100.0)
+        b = det[i, 0] + 0.5 * max(det[i, 1], 100.0)
+        for k in by.get(int(p['cap'][i]), []):
+            half = max(0.5 * (p['T_hi'][k] - p['T_lo'][k]), 0.5 * p['T_bw'][k], 100.0)
+            mid = 0.5 * (p['T_hi'][k] + p['T_lo'][k])
+            if p['T_on_air'][k] > 0 and (near_strong(a, b, det[i, 2], mid - half, mid + half, p['T_snr'][k]) or
+                                         near_strong(a, b, det[i, 2], -mid - half, -mid + half, p['T_snr'][k])):   # (or its IQ image)
+                drop.append(i)
+                break
+    y = p['y'].copy()
+    y[np.array(drop, dtype=np.int64)] = -1
+    p['y'] = y
+    p['_n_near'] = len(drop)
 
 
 def cmd_fit(o):
     SPLIT_WORK[0] = o.work
+    NO_MERGE[0] = o.no_merge
     t_start = time.time()
     lab = label_ids()
     classes = load_classes()
@@ -711,6 +761,7 @@ def main():
     f.add_argument('--min-cover-t', type=float, default=0.0, help='drop fragment detections covering less of their truth')
     f.add_argument('--precision', type=float, default=0.95)
     f.add_argument('--none-weight', type=float, default=1.0, help='extra loss weight of the none class')
+    f.add_argument('--no-merge', action='store_true', help='train merged_into classes (DVB-T2, ISDB-T) as their own - to test whether they separate')
     f.add_argument('--limit', type=int, default=0, help='at most this many training examples per view (learning curve)')
     f.add_argument('--seed', type=int, default=1)
     sub.add_parser('gradcheck')

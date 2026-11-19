@@ -48,7 +48,7 @@ constexpr int VIEW_DECIM[NUM_VIEWS] = {100, 25, 5, 1};
 // The feature layout: bump FEATURE_LAYOUT_VERSION whenever a feature's
 // meaning changes (the hash also covers the group table and parameters);
 // a model trained on another layout refuses to load.
-constexpr int FEATURE_LAYOUT_VERSION = 1;
+constexpr int FEATURE_LAYOUT_VERSION = 2;
 int feature_dim();
 std::string layout_json();
 uint64_t layout_hash();

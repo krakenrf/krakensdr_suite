@@ -79,7 +79,7 @@ private:
     bool spectro_stats(const FrontEnd& fe, Cand& c, bool continuous);   // true: visible frame by frame
     void burst_search(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& cont,
                       std::vector<Cand>& out);
-    bool band_fill(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& found, Cand& c, bool force);
+    bool band_fill(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& found, Cand& c, int force);   // force: 0 the test, 1 an irregular line comb (prominence only), 2 a regular comb (no test)
 
     std::vector<float> p_;        // fine PSD with the DC zone bridged (centred)
     std::vector<float> pb_;       // base PSD (sum of BASE_BINS fine bins)
