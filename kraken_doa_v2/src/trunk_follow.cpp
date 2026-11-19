@@ -285,6 +285,7 @@ struct Voice {
     bool dirty = false;
 };
 std::vector<Voice> g_voices;
+void park(Voice& v);
 
 // --- the VFOs that report (control / traffic) -------------------------------
 struct Track {
@@ -717,15 +718,34 @@ void merge_temp(const std::string& from, const std::string& to, const std::strin
     d.preempted += t.preempted;
     for (auto& kv : t.notf) d.notf[kv.first] += kv.second;
     d.lists_struct = true;
-    // its calls move along (keys change)
+    // its calls move along (keys change); one the keyed system has already
+    // (the same site and target - from before a RESET) gives way: a RECENT one
+    // goes, a live one stays and the moving one goes
+    std::vector<uint64_t> gone;
     for (auto& kv : g_calls) {
         Call& c = kv.second;
         if (c.sys != from) continue;
         g_call_by_key.erase(c.key);
         c.sys = to;
         c.key = call_key(to, c.ctl_vfo, c.group, c.target);
-        if (g_call_by_key.count(c.key)) continue;   // (a duplicate: the old one stays reachable by id only)
+        auto k = g_call_by_key.find(c.key);
+        if (k != g_call_by_key.end()) {
+            auto o = g_calls.find(k->second);
+            if (o != g_calls.end() && o->second.st != RECENT) {
+                gone.push_back(c.id);
+                continue;
+            }
+            if (o != g_calls.end()) gone.push_back(o->first);
+        }
         g_call_by_key[c.key] = c.id;
+    }
+    for (uint64_t id : gone) {
+        auto it2 = g_calls.find(id);
+        if (it2 == g_calls.end()) continue;
+        if (Voice* v = voice_of_call(it2->second)) park(*v);
+        auto k = g_call_by_key.find(it2->second.key);
+        if (k != g_call_by_key.end() && k->second == id) g_call_by_key.erase(k);
+        g_calls.erase(it2);
     }
     for (auto& kv : g_tracks)
         if (kv.second.sys == from) kv.second.sys = to;
