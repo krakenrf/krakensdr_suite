@@ -72,7 +72,7 @@ KRAKEN_PLUGIN(DmrPlugin, {.id = "dmr",
                                          "system, channel grants and announcements for trunk following. Voice: AMBE+2 "
                                          "(mbelib, README \"Digital voice codecs\"). Bandwidth 12-24 kHz. The colour code "
                                          "filter is set by trunk following.",
-                          .version = "2.2",
+                          .version = "2.3",
                           .sample_rate = 48000,
                           .min_vfo_rate = 12000,
                           .author = "KrakenSDR",

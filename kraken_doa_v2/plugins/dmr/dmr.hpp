@@ -67,7 +67,8 @@ private:
         std::string tid, tcall;      // radio ID ("" = not known yet), "TG 9" / "unit call to 123"
         bool tbs = false;            // sent by a repeater (BS sync)
         bool treported = false;      // the host knows of the transmission (by its ID, or as "?")
-        bool hang = false;           // a terminator ended the transmission; repeats of it follow
+        bool hang = false;
+        int pi_run = 0;              // good EMBs in a row with the PI bit (a checked PI header counts as 2)           // a terminator ended the transmission; repeats of it follow
         // multi block control (MBC header + continuation blocks) being assembled
         uint8_t mbc[4][12] = {{0}};
         int mbc_n = 0;               // blocks held (0 = none)

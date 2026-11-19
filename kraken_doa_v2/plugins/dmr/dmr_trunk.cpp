@@ -663,7 +663,7 @@ void DmrProto::call_report(int slot, int state) {
 void DmrProto::call_lc(int slot, bool group, uint32_t dst, uint32_t src, int so) {
     Slot& sl = slots_[slot];
     const std::string t = std::to_string(dst), s = std::to_string(src);
-    const bool enc = (so & 0x40) || sl.privacy, em = so & 0x80;
+    const bool enc = (so & 0x40) || sl.pi_run >= 2, em = so & 0x80;
     const bool changed = sl.cstate != kp::Call::ACTIVE || t != sl.ctarget || s != sl.csource || group != sl.cgroup ||
                          enc != sl.cenc || em != sl.cemerg;
     sl.ctarget = t;
@@ -676,16 +676,25 @@ void DmrProto::call_lc(int slot, bool group, uint32_t dst, uint32_t src, int so)
     if (changed || now - sl.csent >= 1.0) call_report(slot, kp::Call::ACTIVE);
 }
 
+// A voice burst with a good EMB. Alone it is weak evidence - a false voice
+// sync in noise followed by one burst whose 16-bit EMB is within 1 bit of a
+// QR codeword (~3 % of random words) made a call from nothing - so a call
+// without an LC yet (late entry) needs the channel's colour code known (a
+// checked data burst, or the "cc" option) and two good EMBs of it in this
+// superframe; encryption from the EMBs needs two PI bits in a row
 void DmrProto::call_voice(int slot) {
     Slot& sl = slots_[slot];
+    if (cc_ < 0 || sl.voice_idx < 2) return;
     sl.clast = burst_b_;
-    if (sl.privacy && !sl.cenc && sl.cstate == kp::Call::ACTIVE) {
-        sl.cenc = true;
-        call_report(slot, kp::Call::ACTIVE);
+    const bool enc = sl.pi_run >= 2;
+    if (sl.cstate == kp::Call::ACTIVE) {
+        if (enc && !sl.cenc) {
+            sl.cenc = true;
+            call_report(slot, kp::Call::ACTIVE);
+        }
         return;
     }
-    if (sl.cstate == kp::Call::ACTIVE) return;
-    sl.cenc = sl.privacy;
+    sl.cenc = enc;
     call_report(slot, kp::Call::ACTIVE);
 }
 
