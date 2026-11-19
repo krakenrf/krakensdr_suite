@@ -75,5 +75,119 @@
    "bearing": 235
   }
  ]
+},
+{
+ "id": "tetra-trunk-two-calls",
+ "title": "TETRA trunking: the MCCH and two group calls on two carriers",
+ "description": "Cell 530-1 CC12 LA 1001. Main carrier 3600 (390.0000 MHz, the MCCH on timeslot 1, bearing 60 deg): at 1.0 s D-SETUP / D-CONNECT with channel allocations for TG 9001 on its own timeslot 3 (call 101: 2001001 talks 1.3-4.5 s, 2001002 5.5-7.5 s after a D-TX GRANTED with allocation, D-RELEASE after the hang time at 8.3 s); at 6.0 s TG 9002 end-to-end encrypted on carrier 3580 timeslot 2 (389.5000 MHz, bearing 200 deg; call 102: 2001003 talks 6.3-11.5 s, D-TX CEASED + D-RELEASE stolen from the last traffic slot). Back-up D-SETUPs every 2 s, one of them fragmented (MAC-RESOURCE + MAC-END, FCS). Expect the grants on VFO 0 (390.0000 MHz slot 2 and 389.5000 MHz slot 1, the second encrypted), a voice VFO per call with the timeslot option, talkers 2001001 / 2001002 at 60 deg and 2001003 at 200 deg, the encrypted call muted.",
+ "rf_hz": 390000000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 15,
+ "vfo": {
+  "bw_khz": 30
+ },
+ "commands": [
+  "TRUNK_FOLLOW:1"
+ ],
+ "files": {
+  "scene.json": {
+   "rf_hz": 389700000.0,
+   "seconds": 15,
+   "snr_db": 25,
+   "seed": 12,
+   "sources": [
+    {
+     "name": "530-1 CC12 main carrier",
+     "file": "main.cf32",
+     "rate": 72000,
+     "at": 0,
+     "offset_hz": 300000,
+     "bearing": 60
+    },
+    {
+     "name": "530-1 CC12 carrier 3580",
+     "file": "second.cf32",
+     "rate": 72000,
+     "at": 0,
+     "offset_hz": -200000,
+     "bearing": 200,
+     "gain_db": -3
+    }
+   ]
+  }
+ },
+ "steps": [
+  [
+   "{tools}/tetra_gen.py",
+   "main.cf32",
+   "--seconds",
+   "15",
+   "--mcc",
+   "530",
+   "--mnc",
+   "1",
+   "--cc",
+   "12",
+   "--la",
+   "1001",
+   "--carrier",
+   "3600",
+   "--main",
+   "3600",
+   "--call",
+   "cid=101,gssi=9001,carrier=3600,tn=3,um=10,at=1.0,tx=2001001@1.3-4.5+2001002@5.5-7.5,release=8.3",
+   "--call",
+   "cid=102,gssi=9002,carrier=3580,tn=2,um=11,at=6.0,tx=2001003@6.3-11.5,enc=1,release=stolen"
+  ],
+  [
+   "{tools}/tetra_gen.py",
+   "second.cf32",
+   "--seconds",
+   "15",
+   "--mcc",
+   "530",
+   "--mnc",
+   "1",
+   "--cc",
+   "12",
+   "--la",
+   "1001",
+   "--carrier",
+   "3580",
+   "--main",
+   "3600",
+   "--call",
+   "cid=101,gssi=9001,carrier=3600,tn=3,um=10,at=1.0,tx=2001001@1.3-4.5+2001002@5.5-7.5,release=8.3",
+   "--call",
+   "cid=102,gssi=9002,carrier=3580,tn=2,um=11,at=6.0,tx=2001003@6.3-11.5,enc=1,release=stolen"
+  ],
+  [
+   "{sdk}/wide_scene.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "event": "Grant: TG 9001 from 2001001 -> carrier 3600/3"
+  },
+  {
+   "event": "Grant: TG 9002 from 2001003 -> carrier 3580/2"
+  },
+  {
+   "tid": "2001001",
+   "bearing": 60
+  },
+  {
+   "tid": "2001002",
+   "bearing": 60
+  },
+  {
+   "tid": "2001003",
+   "bearing": 200
+  }
+ ],
+ "tol_deg": 5
 }
 ]

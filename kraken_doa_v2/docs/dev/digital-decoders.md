@@ -295,8 +295,31 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   - `TetraReceiver` (plugins/tetra, 72 kHz RRC 0.35 input): differential
     detection, 4th-power frequency estimate, slot sync from the training
     sequences (both spectral orientations tried), BSCH (MCC/MNC/colour code
-    -> scrambling code), BNCH SYSINFO, AACH (Reed-Muller), SCH/F and SCH/HD
-    MAC-RESOURCE with the MM/CMCE PDU type of clear signalling
+    -> scrambling code), BNCH SYSINFO, AACH (Reed-Muller), SCH/F, SCH/HD
+    and STCH MAC PDUs (2026-11-20, version 2.2): MAC-RESOURCE with every
+    header field and the channel allocation element (`parse_alloc`,
+    EN 300 392-2 table 21.87, the augmented fields too), fragmented TM-SDUs
+    reassembled per timeslot (`frag_`: MAC-RESOURCE LI 0x3F + MAC-FRAG +
+    MAC-END; a failed CRC on that timeslot or 8 slots without a fragment
+    drop it), the basic link (FCS = CRC-32 of annex C checked), MLE, the
+    CMCE call control PDUs with their type-1 / 2 / 3 elements
+    (`parse_cmce`, annex E rules; a PDU counts only when its elements end
+    exactly at the TM-SDU's end). Trunking: allocation + call PDU ->
+    `grant()` (carrier -> Hz with SYSINFO's or the extended band / offset,
+    uplink by TS 100 392-15's duplex table), a call table by call
+    identifier (64) for target / source / encryption across PDUs,
+    D-RELEASE -> `grant_end()`; a TRAFFIC instance (hidden option
+    `timeslot`, set by the grant with `mcc` / `mnc` / `cc` / `call` /
+    `group`) plays, reports valid frames / cell packets and `call()` /
+    per-transmission talkers for that timeslot only, valid frames only
+    while its AACH says assigned (`tr_`: ACTIVE at TCH
+    or D-TX GRANTED, ENDED at D-TX CEASED / hang time / 1 s without
+    traffic, RELEASED at D-RELEASE / the AACH unallocated twice). Search
+    window moved by half a slot after a miss (a whole slot never
+    re-acquired an unluckily aligned carrier after a RESET). Real
+    sigidwiki recording: 8 allocations, all parsed, all pointing to the
+    timeslot the AACH marks as traffic. Details and tests:
+    plugins/tetra/README.md
 - Report (`dig_report.hpp`): facts table per plugin id (key, value, age),
   event log (400 entries, identical texts de-duplicated per window; events
   carry `src` = plugin id and `p` = its name, "" = the decoder itself).
