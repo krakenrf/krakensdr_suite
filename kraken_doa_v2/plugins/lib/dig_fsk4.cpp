@@ -48,6 +48,9 @@ static constexpr int64_t KEEP_SAMPLES = 16000;   // P25 frame (8640) + margin
 static constexpr float LIMIT_HZ = 6000.0f;       // discriminator limit per sample
 static constexpr float TURN_HZ = 48000.0f / SPS; // a full turn of phase over a symbol, on the boxcar
 static constexpr float SQUEEZED = 0.85f;         // sync scale limited / exact below this: CQPSK
+// a DMR burst's symbols from its sync's end: -89 (CACH) .. +54 (dmr.cpp),
+// one symbol of margin
+static constexpr int DMR_BEFORE_SYMS = 90;
 
 // P25 frame lengths in dibits from the first sync dibit, status symbols
 // included: sf status-free dibits plus a status symbol after every 35
@@ -187,6 +190,12 @@ void Fsk4Receiver::on_sync(Mode proto, int pat, int64_t sync_end, float sign) {
         // voice sync off that grid is ignored. A sequence a bare voice sync
         // started is not confirmed (it may be that false one): any sync
         // re-anchors it, as before.
+        // A DMR burst is read from 89 symbols BEFORE its sync's end (its
+        // CACH and first half): a sync that ends sooner than that after the
+        // start of the stream or a reset() - the samples there were never
+        // received - would read in front of the buffer. Its burst is not
+        // complete anyway: skipped (the first burst after a retune, at most).
+        if (!b.has(sync_end - DMR_BEFORE_SYMS * SPS)) return;
         if (sign > 0 && dmr_expect_ >= 0) {
             const int64_t per = 144 * SPS;
             const int64_t off = ((sync_end - dmr_expect_) % per + per) % per;
@@ -340,7 +349,7 @@ void Fsk4Receiver::run_jobs() {
         SymSrc s = dmr_last_src_;
         s.sync_end = dmr_expect_;
         int period = dmr_period_;
-        bool ok = bd_.has(s.sync_end - 90 * SPS) && sink_.dmr_burst(s, DmrSync::NONE, &period);
+        bool ok = bd_.has(s.sync_end - DMR_BEFORE_SYMS * SPS) && sink_.dmr_burst(s, DmrSync::NONE, &period);
         dmr_expect_ += static_cast<int64_t>(dmr_period_) * SPS;
         if (ok) dmr_confirmed_ = true;   // its EMB / slot type checked out
         if (!ok && --dmr_expect_left_ <= 0) {

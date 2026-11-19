@@ -230,7 +230,22 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     (grant option) and a single-slot instance on a composite TSCC never do;
     an MBC continuation must be the header slot's next burst (60 ms +-3
     symbols); a Capacity Plus rest-channel move needs 3 status CSBKs in a
-    row, at most one per 5 s
+    row, at most one per 5 s. 2.3 (sanitizer run): a DMR sync less than 89
+    symbols after the stream start / a reset() is skipped in
+    `Fsk4Receiver::on_sync` (its burst was read in front of the buffer -
+    ASan heap-buffer-overflow in 509 of 1023 runs of a start-offset / RESET
+    sweep, 0 after); `SymSrc::sym` returns 0 outside the history (all
+    users of the lib receivers). P25 reads at most 23 symbols back - the
+    sync itself, which the correlator only finds inside the buffer; NXDN
+    has its own receiver and checks its FSW start. A call without an LC
+    needs the colour code known + two good EMBs (a false voice sync + one
+    lucky EMB made calls from noise: 2 per hour, now 0)
+    Option `net_tag` (2.4): two unrelated Tier III networks on air here send
+    the same network code (Huge / NET 1, at 455 and 414 MHz) and nothing
+    else network-wide is on air - a tag the user sets on one network's
+    control VFOs is added to the key (`Huge.1.tait`; Capacity Plus too) and
+    passed on by every grant. Gateway / special addresses (annex A.4) are
+    reported by their alias (`PSTNI`) in grants and calls
   - `DstarReceiver` (plugins/dstar): RF header (scrambler, 24-column
     interleaver, K=3 Viterbi, CRC-16/X.25), slow data (text message, GPS /
     DPRS, header copy), end pattern

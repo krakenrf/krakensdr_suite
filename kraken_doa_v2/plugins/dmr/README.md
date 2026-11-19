@@ -25,7 +25,8 @@ bursts B..F extrapolated from the last sync) hands each burst to `dmr.cpp`:
   short LC counts only from a burst whose own slot type / EMB carried it,
   and none from a voice burst A, which has no colour code) and `traffic`
   (this VFO follows a payload channel: never `control = true`, never
-  `control_channel`)
+  `control_channel`). Option `net_tag` (Network tag, free text: letters,
+  digits, `_`, `-`, up to 16; anything else is dropped): see below
 
 ## Trunk following (Tier III)
 
@@ -40,12 +41,27 @@ bursts B..F extrapolated from the last sync) hands each burst to `dmr.cpp`:
   counts only without a `slot` option: it says one of the carrier's slots
   is a TSCC; never with `traffic`). Sent on a change - at once after a
   reset - and every 5 s
+- Network tag: private networks choose their network code, and two
+  unrelated networks here send the same one (both model Huge, NET 1: one
+  at 455-458 MHz, plan 455.30625 MHz + LCN x 12.5 kHz, colour code 4; a
+  Tait network at 414-418 MHz, plan 414.0000 MHz + LCN x 12.5 kHz, colour
+  code 0) - both were `Huge.1`, so the host applied one's channel table to
+  the other. Tier III sends nothing else network-wide (the colour code is
+  per channel, the adjacent-site lists name the same NET, vendor FIDs name
+  the manufacturer), so the user tells them apart: `net_tag` on the control
+  VFOs of one of them makes the key `<model>.<NET>.<tag>` (`Huge.1.tait`)
+  and the name "... (tait)"; every grant passes it on (`opt.net_tag`), so
+  the traffic instances report the same system. Capacity Plus: key
+  `CapPlus.CC<cc>.<tag>`. Empty = as before
 - Grants: PV / TV / BTV / PD / TD / PV_DX / PD_DX / PD_MI / TD_MI (CSBKO
   0x30-0x38; 0x38 from an MS is BS_Dwn_Act) on a TSCC or a payload channel
   -> `grant`: channel `LCN <n>` / number n, slot = the LCN bit, group (TV,
   BTV, TD, TD_MI), emergency, `update` = Late_Entry (TV / BTV), `data` for
   the data grants, a duplex grant's Call Direction turned into called /
-  calling, options `slot` = 1 / 2, `traffic` = 1 and - with absolute
+  calling (a gateway / special address - TS 102 361-4 annex A.4 - by its
+  alias: `PSTNI`, `TSI`, `ALLMSID` ..., in grants and calls alike; a unit
+  call to PSTNI is a telephone call, private, followed like any other),
+  options `slot` = 1 / 2, `traffic` = 1, `net_tag` when set and - with absolute
   parameters - `cc`. A single-slot instance reports only its own slot's
   grants.
   Logical channel 0xFFF = an MBC with the CG_AP block: downlink = its RX
@@ -194,6 +210,28 @@ repeater output every radio's bearing is the repeater's, in direct mode
   `tools/digi_test --retune` from one network (Chan_Freq for channel 301)
   to another: after the RESET the new network's SYSTEM comes before its
   first GRANT, and its channel 301 has no frequency (the old table is gone)
+- Sanitizer findings (2026-11-20, plugin 2.3): (1) a DMR sync ending less
+  than 89 symbols after the stream's start or a reset() read the burst's
+  CACH / first half in front of the sample buffer (`lib/dig_fsk4.cpp`: a
+  real sync's job checked only the forward end) - such a sync is skipped now
+  (its burst was never received whole: the first burst after a retune at
+  most), and `SymSrc::sym` reads a symbol outside the history as 0. ASan +
+  UBSan build, every start offset 0..2000 samples in steps of 7 of a TSCC,
+  a payload channel and a repeater (858 runs) and a RESET 1 s + 0..2000
+  samples in (165 `--serve` runs): before 484 + 25 runs with a
+  heap-buffer-overflow, after 0 - also with the `sym` bound taken out (the
+  job check alone); the regression set under the sanitizer: no report, the
+  output identical. (2) A call from noise: a false voice sync + one burst
+  whose EMB was within 1 bit of a codeword gave `call(ACTIVE)` with the
+  encrypted flag. A call without an LC now needs the colour code known (a
+  checked data burst or `cc`) and two good EMBs in the superframe; the
+  encrypted flag two PI bits in a row (or a checked PI header); a talker
+  from EMBs alone needs the colour code known or two EMBs. 1 h of noise /
+  30 min of analogue FM on the channel / 30 min of FM on the adjacent
+  channel: before 2 / 2 / 3 false calls (no option), after 0 everywhere
+  (also with `cc`, `slot`, `traffic`); left: 2 / 1 / 0 talker spans of one
+  burst with `cc` set. Late entry into 8 real calls: the first ACTIVE 60 ms
+  (one burst) later than before
 - Every earlier test unchanged (dmr_1 269, dmr_2 294 valid bursts and their
   talkers, the `dmr-repeater-and-direct` entry's talkers and bearings),
   except: the GopherTrunk voice-terminator fixture's hang-time terminator
