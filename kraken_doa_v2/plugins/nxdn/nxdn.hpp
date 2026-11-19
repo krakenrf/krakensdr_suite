@@ -97,6 +97,7 @@ private:
     bool sys_control_ = false;
     std::map<int, int64_t> chan_sent_;    // channel number -> sample index of its last trunk_channel()
     void trunk_system(const Location& loc, bool control);
+    void send_system();                   // the system heard (site_), now
     void trunk_channel(int ch);
     void grant(const uint8_t* m, int type, bool on_traffic);
     // What a traffic channel carries (kp::Host::call)
