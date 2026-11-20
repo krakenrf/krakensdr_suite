@@ -150,8 +150,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   narrows the 📡 DF panel): position, distance / bearing from the station,
   every frequency at the location (`sfFreqsAt`, by frequency: a button that
   tunes + ✎), notes, + Frequency / ✎ Edit (name, position, notes - built
-  once, `mkLeaveEdit` asks before dropping changes) / Centre / Viewshed /
-  Delete (confirm says the frequencies stay). Add Marker sends SF_LOC_SET and
+  once, `mkLeaveEdit` asks before dropping changes: "Discard changes",
+  Keep editing / Discard) / Centre / Viewshed / Delete ("Delete marker":
+  says the frequencies stay). Since 2026-11-18 these questions - and the
+  category's and the editor's Delete, the editor's "Discard changes" - are
+  the page's own dialog (`uiConfirm`, asynchronous: `mkLeaveEdit` /
+  `sfDlgLeave` give `true` or a promise, callers go on with `uiThen`;
+  *sidebar.md* "Dialogs"). Add Marker sends SF_LOC_SET and
   sets `mkWantEdit`; the list arriving with that id opens its edit form. A
   click on the empty map closes the view (not an edit); ⤢ fits the markers
 - Tests (job scratch, not in the repo): `t_sf.cpp` (saved_freqs.cpp offline:

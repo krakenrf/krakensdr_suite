@@ -30,22 +30,55 @@ public:
     // now = the receiver's current sample index: ends a transmission whose
     // voice frames stopped without a terminator
     void tick(int64_t now);
+
+    // --- shared with the Phase 2 MAC layer (p25p2.cpp) ---
+    // A TSBK body: t[0] low 6 bits = opcode, t[1] = MFID, t[2..9] = the 8
+    // argument octets (Phase 2 partition-01 messages are these octets).
+    // tdma = from a Phase 2 channel: channel numbers also name their
+    // timeslot (chan_str); the Phase 1 decoder itself passes false.
+    void tsbk(const uint8_t* t, bool tdma = false);
+    // channel (identifier 4 + number 12) -> "8-602 (854.76250 MHz)", with
+    // tdma ", LCH n" for a TDMA identifier with several slots
+    std::string chan_str(uint32_t ch, bool tdma = false) const;
+    struct Iden { uint64_t base_hz = 0; uint32_t spacing_hz = 0; int64_t tx_offset_hz = 0; bool tdma = false; int slots = 1; };
+    const Iden* iden(int id) const {
+        auto it = iden_.find(id);
+        return it == iden_.end() ? nullptr : &it->second;
+    }
+    // network identity as learned so far (-1 = not yet): the NAC of the
+    // last valid frame, WACN / system ID from NET_STS_BCST
+    int nac() const { return last_nac_; }
+    int wacn() const { return wacn_; }
+    int sysid() const { return sysid_; }
+    static std::string algorithm_name(int alg);   // "clear", "AES-256", "alg 0x.."
 private:
     RxContext& ctx_;
-    struct Iden { uint64_t base_hz = 0; uint32_t spacing_hz = 0; int64_t tx_offset_hz = 0; bool tdma = false; int slots = 1; };
     std::map<int, Iden> iden_;
     int last_nac_ = -1;
-    std::string call_desc_;
-    int64_t last_voice_ms_ = 0;
-    // voice: IMBE, muted while the call is encrypted
+    int wacn_ = -1, sysid_ = -1;
+    // The call of the open transmission (call_start_ >= 0): its events, its
+    // encryption, its voice. Reset when the transmission ends.
+    std::string call_desc_;          // its "Voice:" event ("TG n <- unit"), "" = not announced yet
+    uint32_t call_src_ = 0;          // the unit that event named (0 = none)
+    int call_zero_lcs_ = 0;          // voice user link controls naming no unit so far
+    bool call_voice_ = false;        // it has voice frames (a terminator's LC alone opens no call)
+    // voice: IMBE, played only once the call is known to be clear
     ImbeDecoder imbe_;
-    int alg_ = 0x80;                 // current call's algorithm (0x80 = clear)
-    bool lc_encrypted_ = false;      // service options "protected" bit
+    int alg_ = -1;                   // ALGID (HDU / encryption sync), -1 = not known yet
+    int lc_prot_ = -1;               // voice user LC "protected" bit, -1 = not known yet
+    bool encrypted() const { return (alg_ >= 0 && alg_ != 0x80) || lc_prot_ == 1; }
+    bool clear_known() const { return alg_ == 0x80 || (alg_ < 0 && lc_prot_ == 0); }
+    // an LDU's 9 IMBE frames (mbelib's [8][23] layout), held while the
+    // encryption is not known: released once the call is known to be clear
+    struct Ldu { char fr[9][8][23]; };
+    std::vector<Ldu> held_;
+    static constexpr size_t MAX_HELD = 2;
     void voice_frames(const std::vector<uint8_t>& sf);
-    void tsbk(const uint8_t* t);
+    void play_ldu(Ldu& l);
     void link_control(const uint8_t* lc, const char* where);
-    std::string chan_str(uint32_t ch) const;
-    void voice_activity(const std::string& desc);
+    void voice_user(uint32_t src, const std::string& desc, const std::string& desc_nosrc, bool prot);
+    void voice_activity();
+    void close_call(int64_t at);
     // the talker of the voice transmission in progress (RxContext::talker),
     // in receiver sample indexes
     int64_t frame_a_ = 0, frame_b_ = 0;   // the frame being decoded: first / one past its last sample
@@ -56,7 +89,7 @@ private:
     std::string talker_id_, talker_label_;   // "" = not known (yet)
     int64_t gap() const { return static_cast<int64_t>(0.75 * 4800) * sps_; }   // frames stopped this long: over
     void begin_call_if_new();
-    void voice_frame();                   // a valid HDU / LDU1 / LDU2
+    void voice_frame();                   // a valid HDU / LDU1 / LDU2 (opens its transmission if new)
     void set_talker(uint32_t src, const std::string& label);
     void end_talker(int64_t at);
 };

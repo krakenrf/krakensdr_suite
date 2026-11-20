@@ -241,7 +241,7 @@ Block, FIC quality (share of FIBs with a good CRC over 10 s + channel bit error
 rate), Ensemble, Country, Date / time, Services, Programme, Sub-channel (logical
 frames, lost, channel bit errors), Codec / Voice codec / Audio frames / RS
 corrections / Text (from the audio layer), Transmitters (TII), Antennas;
-"CPU" with "Log all messages" (the plugin's time per stage, % of real time).
+"CPU" with "Show all messages" (the plugin's time per stage, % of real time).
 The programme's facts (Sub-channel, Codec, Voice codec, Audio frames, RS
 corrections, Text) are removed when the programme changes or no service matches
 the option, and set again once the new programme provides them.
@@ -400,7 +400,7 @@ Install:
 | macOS | `brew install fdk-aac` |
 | Docker | copy the host's `libfdk-aac.so.2` into `docker-data/codecs/` (the entrypoint sets `KRAKEN_AAC_LIB`) |
 
-The "Voice codec" fact and the sidebar's Digital Decoders box show its state,
+The "Voice codec" fact and ⚙ Setup Settings → Decoders show its state,
 e.g. `libfdk-aac.so.2 (FDK AAC decoder 3.2.0)` - the decoder module's own
 version (fdk-aac 2.0.2 reports 3.2.0, 0.1.6 2.5.17, 0.1.2 2.4.7) - or `not
 installed (libfdk-aac2)`; then everything but the PCM still runs, and while

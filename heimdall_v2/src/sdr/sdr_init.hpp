@@ -81,7 +81,28 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
 // noise source; cf. rtl_biast -g). Updates antenna_bias_tee_mask, which is
 // persisted by the caller via settings::save() and restored at device init.
 // Refused on the Wideband variant, where GPIO1-6 drive the RF path switches.
-void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// Returns "" when the open channels' GPIOs were written, else why not (also
+// logged to stderr); the mask in effect is antenna_bias_tee_mask afterwards.
+std::string apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// A client's request for the antenna bias tees - the web page's
+// ANT_BIAS_MASK and the control port's set_antenna_bias_tees both go
+// through here: refused with generic RTL-SDRs (no GPIO is ever written
+// there), else apply_antenna_bias_tees() and settings::save(). Returns ""
+// when applied, else why not ("Antenna bias tees ..."). Takes
+// device_io_mutex; not from a realtime thread.
+std::string request_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// For the status reports (8092 status, the web STATE): whether this hardware
+// has switchable antenna bias tees at all (not with generic RTL-SDRs, not on
+// the Wideband variant), the channels that can't be switched (CH0 under
+// --ext_noise - it powers the external noise source -, CH7: the channel-0
+// chip has GPIO0-7 only), and the mask in effect (0 when not available).
+bool antenna_bias_tees_available();
+uint32_t antenna_bias_tee_reserved_mask();
+uint32_t antenna_bias_tees_in_effect();
+// The generic RTL-SDR refusal's reason, shared by the web page's and the
+// control port's replies
+inline constexpr const char* GENERIC_NO_GPIO_REASON =
+    "not available with generic RTL-SDRs (independent receivers, no calibration, no GPIOs)";
 // Wideband (downconverter) variant only: throw the on-board RF switches
 // (GPIO1-6 on the channel-0 chip) so the tuners see either the calibration
 // noise source or the currently selected antenna ring. Called automatically

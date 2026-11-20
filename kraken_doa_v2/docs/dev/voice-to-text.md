@@ -6,7 +6,7 @@ loaded automatically. *Italic* topic names refer to the other files in this
 folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
-**🗣 Voice to Text (`src/voice2text.cpp`, `include/voice2text*.hpp`, `transcribe/`, sidebar "🗣 Voice to Text", the 🗣 Voice tab):**
+**🗣 Voice to Text (`src/voice2text.cpp`, `include/voice2text*.hpp`, `transcribe/`, ⚙ Setup Settings → "🗣 Voice to Text", the 🗣 Transcription panel):**
 - What is said on a VFO, written down by a LOCAL, free model: whisper.cpp
   (MIT, pinned v1.9.4 = `WHISPER_COMMIT` in `transcribe/setup.sh`) with
   OpenAI's Whisper models (ggml-*.bin from huggingface.co/ggerganov/whisper.cpp)
@@ -163,6 +163,11 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   The status `error` = `last_error`, kept until the helper loads (READY) or
   a job goes through (a crash's message used to be overwritten by
   "starting" within ms)
+- Set up or not is the card at the top of ⚙ Setup Settings → 🗣 Voice to
+  Text (`v2tRenderSetup`, from the same status; the "not installed" text is
+  `v2tInstallHtml()`, per receiver OS / Windows package). It was a card of
+  that dialog's Add-ons tab, beside the sidebar box's own note, until
+  2026-11-17 - *sidebar.md*, "Setup Settings dialog".
 - Pushes: `{"voice2text":{"new":[..]}}` (1 s timer, `take_new_message`) and
   `{"voice2text":{"status":{..}}}` when it changed (state off | starting |
   ready | busy | error | not installed | no model, error, installed,
@@ -199,7 +204,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `clips_tick` (2 s): a changed folder = rescan (`scan_clips`: only
   `<digits>.opus` in YYYY-MM-DD dirs; clips in the old folder stay there,
   no longer in the index - the tab says "the audio is gone"); retention
-  (`clip_retention`: day dirs older than `declog::keep_days()`, 0 = keep;
+  (`clip_retention`: day dirs older than `declog::keep_days()` - Decoder
+  Logging's Keep, the plain days; Then compressed does not apply to clips,
+  which are Opus already (2026-11-19) -, 0 = keep;
   clip-named files only, then rmdir - a foreign file keeps its dir) every
   10 min and when the days / date change; free space (statvfs of the
   nearest existing parent) < `MIN_FREE_BYTES` 100 MB -> `clip_low`, clips
@@ -209,20 +216,51 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   check + token like /recordings; only ids in the clip list
   (`v2t::clip_path`)
 - UI (kraken_doa.html "🗣 VOICE TO TEXT" block; state `v2tStatus / v2tList /
-  v2tUnseen` in the globals block - `infoRenderTabs` reads them): sidebar
-  box `#v2t-section` (`v2tRenderBox`: install hint, model + ⬇ Get list,
-  language row only for multilingual models, cores + speed, prompt, VAD /
-  keep ticks, status, "To disk" + `v2tLogOn` = DECODER_LOG_TYPES + voice,
-  DECODER_LOG:1), VFO cards (`dec-v2t-<id>` + state, `v2tRenderCards` from
-  updateDecimatorList and every status), info panel tab `infoTab = 'voice'`
+  v2tUnseen` in the globals block - `infoRenderTabs` reads them): the
+  🗣 Voice to Text tab of ⚙ Setup Settings (`.set-pane[data-t="v2t"]`; a
+  sidebar box, `#v2t-section` / `data-sb` "voice-to-text", until 2026-11-17,
+  when the user asked for everything about setting the software up to be in
+  that dialog - the ids stayed, `v2tRenderBox` kept its name: the set-up
+  card `#v2t-card` (`v2tRenderSetup`, the box's `?` in its header), model +
+  ⬇ Get list, language row only for multilingual models, cores + speed,
+  prompt, VAD / keep switches, status rows, "To disk" (since 2026-11-19
+  "decoder log files" there is a link to the Decoder Logging section of the
+  same dialog, amber with a ⚠ while the log has a problem - *decoder-log.md*;
+  the Transcription panel's head says "Decoder log: not writing" etc. with a
+  link while transcripts are logged; while off: "turn on" sets the
+  transcripts' Logging to Log, "not allowed" goes to the Decoder Logging
+  section; an older receiver: `v2tLogOn` = DECODER_LOG_TYPES + voice,
+  DECODER_LOG:1, as before); the box header's badge is a ⚠
+  on the tab, `#set-tab-v2t-n`, while VFOs are ticked and the state is not
+  installed / no model / error - its VFO count is the VFOs row; the box's
+  "⤢ Transcripts" button went, the rail opens the panel), VFO cards
+  (`dec-v2t-<id>` + state, `v2tRenderCards` from updateDecimatorList and
+  every status; the "⚠ Not installed" / "⚠ Error" state is a link,
+  `a.v2t-go` -> `setDlgOpen('v2t')`, as is "⚙ Setup Settings" in the
+  panel's warning, `v2tRenderHead`), the 🗣 Transcription panel - the
+  panel under the waterfall with `infoTab = 'voice'`. It is a feature of its
+  own there, not a tab beside the decoders' (it was one, "🗣 Voice", until
+  2026-11-17; the user: it is not a decoder): the rail's 🗣 Transcription
+  button (`#rail-voice`, `railPanel('voice')`) opens the panel with the
+  transcripts alone, under the name "🗣 Transcription" in place of the tab
+  strip (`infoRenderTabs`), and 🔐 Decoders shows the decoders' tabs without
+  it - *sidebar.md*, "Top bar and rail".
   (`#info-body-voice`, `v2tRenderTab`: newest first, 400 rows, search with
-  `<mark>` on the raw text, VFO filter, ▶ `v2tPlay` - fetch with the token
+  `<mark>` on the raw text, VFO filter, **Logging: Off / Log** after it
+  (2026-11-19, the user: "Add a logging drop down to transcriptions too";
+  `#v2t-lsel`, `v2tRenderLogSel` / `v2tSetLog`: the transcripts to the
+  decoder log or not - the `voice` member of DECODER_LOG_TYPES, stored as
+  before; written to `<log folder>/transcripts/transcripts-YYYY-MM-DD.jsonl`
+  since 2026-11-19, every source in that one folder - *decoder-log.md*; no Log All, transcription has no repeated messages; greyed with
+  a Decoder Logging button beside it while logging to disk is not allowed -
+  *decoder-log.md*), ▶ `v2tPlay` - fetch with the token
   -> blob -> Audio; a browser without Ogg Opus (`canPlayType`, older
   Safari): `v2tDecodeOgg` (Ogg pages -> packets, pre-skip from OpusHead ->
-  the live audio's opus-decoder.min.js) -> WebAudio; the box's clip line
+  the live audio's opus-decoder.min.js) -> WebAudio; the tab's clip line
   `#v2t-clips` (count, MB, Keep days, folder, low disk / errors), ⬇ CSV `v2tExport` - cells starting = + - @ get a ' so a
-  spreadsheet doesn't run them, Clear), tab label with a red dot while
-  recording and a count of transcripts that came while hidden
+  spreadsheet doesn't run them, Clear), the panel's name with a red dot while
+  recording; the count of transcripts that came while the panel was closed
+  or showed the decoders is on the rail's button (`#rail-voice-n`, `railSync`)
 - Lobes on the 🗺 map (kraken_doa.html, in the "🗣 VOICE TO TEXT" block;
   state `v2tLobes` (id -> {L, col, peak, el}) / `v2tLobeWant` in the globals
   block - mapDrawNow -> `v2tLobeDraw` runs before the section is

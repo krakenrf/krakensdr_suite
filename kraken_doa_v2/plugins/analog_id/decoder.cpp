@@ -167,7 +167,6 @@ public:
             sig_.reset();
             anchored_ = true;
         }
-        rx_.p.invert = host.rf_inverted();
         rx_.process(x, n);
         if (audio_out_) fwrite(rx_.audio.data(), sizeof(float), rx_.audio.size(), audio_out_);
         sig_.process(rx_.audio.data(), rx_.audio.size());

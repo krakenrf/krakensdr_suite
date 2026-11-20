@@ -1257,6 +1257,14 @@ std::string recording_name() {
     return g_iq ? g_iq->name : "";
 }
 
+bool writing() {
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (g_iq) return true;
+    }
+    return detail::audio_running();
+}
+
 bool is_setting(std::string_view m) {
     static const char* keys[] = {"RECORDER_DIR:", "RECORDER_MODE:", "RECORDER_IQ:", "RECORDER_DURATION:", "RECORDER_BAND_VFO:",
                                  "RECORDER_AUDIO_FORMAT:", "RECORDER_AUDIO_RATE:", "RECORDER_AUDIO_KBPS:",

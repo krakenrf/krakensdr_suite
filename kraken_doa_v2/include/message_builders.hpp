@@ -24,6 +24,12 @@ struct SpectrumSnapshot {
     float avg_alpha = 0;
     std::array<SpectrumDisplay, 1 + MAX_CHANNELS> disp;  // 0 = main, 1 + ch = tuner ch
 };
+// Which bins a type 7 frame's points pooled: point j = display bins
+// [i0 + j pool, min(i0 + (j + 1) pool, i1 + 1)) - 🎨 the bearing spectrum's
+// type 9 frame gives the same points a bearing (bin_doa.hpp)
+struct SpectrumViewCut {
+    size_t i0 = 0, i1 = 0, pool = 1, n = 0;
+};
 // One VFO's beamformed spectrum (overlay, FFT message type 4) at the
 // beamformer's full resolution, normalized - kept for a tick so each page
 // gets it at the point spacing of the spectrum it shows
@@ -58,7 +64,7 @@ public:
     // point_step_hz: set to the frame's point spacing. "" = no data
     static std::string build_spectrum_view(const SpectrumSnapshot& snap, int display, double lo_off_hz,
                                            double hi_off_hz, uint32_t bins, uint32_t seq,
-                                           double* point_step_hz = nullptr);
+                                           double* point_step_hz = nullptr, SpectrumViewCut* cut = nullptr);
     static std::string build_audio_message();
     static std::string build_multi_doa_message();
     static std::string build_system_status_message();

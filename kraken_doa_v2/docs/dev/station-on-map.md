@@ -17,7 +17,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   replaced by the next fix - the station is still selectable there, the
   status line says how to place it by hand
 - Right-click menu "📡 Set station here": static location there (heading
-  kept); from GPS / mobile it asks (confirm) and switches the source
+  kept); from GPS / mobile it asks first - the page's own dialog "Use a
+  fixed location", the button "Use fixed location" (`uiConfirm`, 2026-11-18,
+  *sidebar.md* "Dialogs") - and switches the source
   (`setLocationSource('static')`). Selects the station
 - Sent as the panel's `STATIC_LOCATION:lat,lon,heading` (6 decimals, the
   sidebar fields set too): the position on release, the heading every 300

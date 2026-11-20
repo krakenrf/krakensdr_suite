@@ -10,6 +10,7 @@
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/music_processor.hpp"
+#include "signal_processing/bin_doa.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
 #include "continuous_scanner.hpp"
@@ -35,7 +36,10 @@
 #include "geo_address.hpp"   // geo::json_parse
 #include "digital/dig_plugin.hpp"
 #include "utils/parse_num.hpp"
+#include "power.hpp"
+#include "antenna_bias.hpp"
 #include <string>
+#include <utility>
 #include <sstream>
 #include <iostream>
 #include <algorithm>
@@ -354,6 +358,7 @@ static bool is_replayed_command(string_view msg) {
         // only does while beamforming is on)
         "BEAMFORMING_MODE:", "MANUAL_STEERING:", "STEERING_ANGLE:",
         "MVDR_DIAGONAL_LOADING:",
+        "BIN_DOA:",   // 🎨 bearing spectrum
         "STATION_ID:", "LOCATION_SOURCE:", "STATIC_LOCATION:",
         "LOG_INTERVAL:", "LOG_FORMAT:",
         "WEB_MAPPER:", "WEB_MAPPER_MODE:", "WEB_MAPPER_KEY:",
@@ -506,7 +511,16 @@ static bool apply_decimator_snapshot(const string& snap) {
             // or the old "verbose/slot/nac/invert")
             string tok;
             if (getline(es, tok, ',') && !dig::parse_mode_string(tok, &v.digital, &v.plugin)) v.digital = dig::Mode::OFF;
-            if (getline(es, tok, ',')) v.dopts = dig::options_from_string(tok);
+            if (getline(es, tok, ',')) {
+                // options stored before the logging mode (2026-11-19) get Log; Log All where the
+                // old log types had raw frames (DECODER_LOG_TYPES is replayed before DECIMATORS).
+                // Stored before the per-VFO Positions every: the old global DECODER_LOG_POS_S
+                // (also replayed before), so nothing changes for an updated receiver
+                bool no_log_key = false, no_pos_key = false;
+                v.dopts = dig::options_from_string(tok, &no_log_key, &no_pos_key);
+                if (no_log_key && declog::legacy_raw()) v.dopts.log = dig::LOG_ALL;
+                if (no_pos_key) v.dopts.pos_s = declog::pos_interval();
+            }
             // optional (newer files): the VFO's tuner (wideband / independent mode)
             if (getline(es, tok, ',') && !tok.empty()) v.tuner = std::clamp(stoi(tok), 0, MAX_CHANNELS - 1);
             // optional (newer files): Voice to Text on this VFO
@@ -573,6 +587,10 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     out.push_back(build_wb_variant_json());
     // Operating mode + independent mode's per-tuner tuning
     out.push_back(build_operating_mode_json());
+    // ⏻ / ↻ the power actions this installation offers (and one in progress)
+    out.push_back(power::state_message());
+    // the antenna bias tees as heimdall reports them (also in every system_status)
+    out.push_back(antbias::state_message());
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     for (const auto& [key, cmd] : sync_replay_store) {
         out.push_back(make_sync_cmd_json(cmd));
@@ -2020,9 +2038,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         record_decimator_snapshot();
     }
     else if (message.starts_with("DIGITAL_OPT:")) {
-        // Format: DIGITAL_OPT:id:key:value - verbose 0|1, invert 0|1, map 0|1 (Plot on map), or a
-        // plugin's own option "<plugin id>.<key>" (value "" = its default;
-        // the plugin checks the value). Old keys: dmr_slot, p25_nac
+        // Format: DIGITAL_OPT:id:key:value - verbose 0|1 (Show all messages), log 0|1|2 (Logging:
+        // Off / Log / Log All; also the words off, log, all), pos_s 1-3600 (Positions every N s:
+        // the decoder log's position rate), map 0|1 (Plot on map), or a plugin's own
+        // option "<plugin id>.<key>" (value "" = its default; the plugin checks the
+        // value). Old keys: dmr_slot, p25_nac; invert (removed 2026-11-19) is refused
         string params = string(message.substr(12));
         size_t c1 = params.find(':');
         size_t c2 = c1 == string::npos ? string::npos : params.find(':', c1 + 1);
@@ -2039,7 +2059,19 @@ void ControlHandler::handle_message_impl(string_view message) {
             if (val == "any" || val == "-1") val.clear();
         }
         if (key == "verbose") o.verbose = val == "1";
-        else if (key == "invert") o.invert = val == "1";
+        else if (key == "log") {
+            const int m = dig::parse_log_mode(val);
+            if (m < 0) throw CommandRejected("log must be 0 (Off), 1 (Log) or 2 (Log All)");
+            o.log = m;
+            g_applied_cmd = "DIGITAL_OPT:" + to_string(id) + ":log:" + to_string(m);
+        }
+        else if (key == "pos_s") {
+            const int n = dig::parse_pos_s(val);
+            if (n < 0) throw CommandRejected("pos_s must be 1-3600 (seconds)");
+            o.pos_s = n;
+            g_applied_cmd = "DIGITAL_OPT:" + to_string(id) + ":pos_s:" + to_string(n);
+        }
+        else if (key == "invert") throw CommandRejected("the decoders' Invert option was removed");
         else if (key == "map") {
             o.map = val == "1";
             MessageBuilders::request_map_full();   // pages get the points back at once
@@ -2090,26 +2122,58 @@ void ControlHandler::handle_message_impl(string_view message) {
         for (const auto& m : rec::tick_messages()) broadcast(m);
     }
     else if (message.starts_with("DECODER_LOG:")) {
-        // Decoder data log (sidebar 🗂 Decoder Logging, decoder_log.cpp)
+        // Decoder data log (⚙ Setup Settings → Decoder Logging, decoder_log.cpp): "Allow logging
+        // to disk" - what is written is each VFO decoder's Logging (DIGITAL_OPT:id:log) and the
+        // transcripts' (the voice member of DECODER_LOG_TYPES)
         const bool on = parse_int(message, 12) != 0;
         declog::set_enabled(on);
         g_applied_cmd = string("DECODER_LOG:") + (on ? "1" : "0");
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_TYPES:")) {
+        // the transcripts' Logging (the Transcription panel): only "voice" counts since
+        // 2026-11-19; the other names (an older page's What to log ticks) are accepted and
+        // kept as sent, but chosen per VFO now ("raw" only migrates the stored VFOs)
         if (!declog::set_types(string(message.substr(18)))) throw CommandRejected("unknown log type");
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_DAYS:")) {
+        // Keep: the days a finished day stays plain (0 = keep forever: nothing compressed or deleted)
         const int d = parse_int(message, 17);
         if (d < 0 || d > 3650) throw CommandRejected("days must be 0-3650");
         declog::set_days(d);
         broadcast(declog::status_message());
     }
+    else if (message.starts_with("DECODER_LOG_ZIP_DAYS:")) {
+        // Then compressed: the days after Keep a day is kept gzipped, then deleted (0 = none)
+        const int d = parse_int(message, 21);
+        if (d < 0 || d > 3650) throw CommandRejected("compressed days must be 0-3650");
+        declog::set_zip_days(d);
+        broadcast(declog::status_message());
+    }
     else if (message.starts_with("DECODER_LOG_POS_S:")) {
+        // the old global Positions every (an older page; the stored value): what a VFO stored
+        // without its own pos_s gets - and, from a page, every VFO decoder's pos_s (2026-11-19)
         const int sec = parse_int(message, 18);
         if (sec < 1 || sec > 3600) throw CommandRejected("position interval must be 1-3600 s");
         declog::set_pos_interval(sec);
+        if (!g_replaying_settings.load()) {
+            bool any = false;
+            for (const auto& d : decimator_manager.getDecimatorInfoList()) {
+                auto inst = decimator_manager.getDecimator(d.id);
+                auto dd = inst ? inst->getDigital() : nullptr;
+                if (!dd) continue;
+                dig::Options o = dd->options();
+                if (o.pos_s == sec) continue;
+                o.pos_s = sec;
+                decimator_manager.setDigitalOptions(d.id, o);
+                any = true;
+            }
+            if (any) {
+                broadcast(MessageBuilders::build_decimator_info_message());
+                record_decimator_snapshot();
+            }
+        }
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_DIR:")) {
@@ -2212,7 +2276,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         rdfmap::request_full();   // a page opening the map: every VFO's heat map next push
     }
     else if (message == "GET_DECODER_LOG") {
-        broadcast(declog::status_message());   // a page opening the sidebar section
+        broadcast(declog::status_message());   // a page opening (Setup Settings → Decoder Logging)
     }
     else if (message == "INCIDENTS_CLEAR") {
         incidents::clear();
@@ -2356,6 +2420,13 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message == "GET_ARRAY_CAL") {
         broadcast(array_cal::status_message());   // a page connecting
+    }
+    else if (message.starts_with("BIN_DOA:")) {
+        // 🎨 Bearing spectrum on / off (bin_doa.hpp; persisted, replayed);
+        // its state goes out as {"bin_doa":...}
+        const string_view v = message.substr(8);
+        if (v != "0" && v != "1") throw CommandRejected("format: BIN_DOA:0|1");
+        bin_doa::set_enabled(v == "1");
     }
     else if (message.starts_with("DIGITAL_CLEAR:")) {
         int id = parse_int(message, 14);
@@ -2783,10 +2854,32 @@ void ControlHandler::handle_websocket_message(string_view message) {
     apply_command(message);
 }
 
+// Set only around a page's own command; apply_command takes it at once, so a
+// command dispatched from inside that one (RESET_SETTINGS' defaults, the power
+// sequence's RECORDER_STOP) doesn't count as the page's. thread_local: a
+// dispatch on another thread (a rule break, but) can't see the loop's flag.
+static thread_local bool g_from_page = false;
+
+void ControlHandler::handle_page_message(string_view message) {
+    g_from_page = true;
+    apply_command(message);
+    g_from_page = false;
+}
+
 string ControlHandler::apply_command(string_view message) {
+    const bool from_page = std::exchange(g_from_page, false);
     // A malformed number in any command (stof/stoi throwing) must not
     // propagate into the uWS event loop, which would exit(1) the process.
     try {
+        // ⏻ / ↻ (power.cpp): a page's buttons only - not persisted (not in
+        // the settings schema), not echoed, never replayed
+        if (power::is_command(message))
+            return power::handle_command(message, from_page && !g_replaying_settings.load());
+        // Antenna bias tees (antenna_bias.cpp): the same - a page's own socket
+        // only, not persisted, not echoed (the pages draw heimdall's status);
+        // refused during a playback there
+        if (antbias::is_command(message))
+            return antbias::handle_command(message, from_page && !g_replaying_settings.load());
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
         if (playback::handle_command(message)) return "";
@@ -2870,7 +2963,10 @@ void ControlHandler::send_control_command(const string& cmd) {
 
 void ControlHandler::apply_persisted_settings() {
     auto commands = SettingsStore::apply_commands();
-    if (commands.empty()) return;
+    if (commands.empty()) {
+        declog::settings_restored();
+        return;
+    }
     cout << "Restoring " << commands.size() << " persisted setting(s)" << endl;
     g_replaying_settings.store(true);
     for (const auto& cmd : commands) {
@@ -2879,4 +2975,6 @@ void ControlHandler::apply_persisted_settings() {
         handle_websocket_message(cmd);
     }
     g_replaying_settings.store(false);
+    // the decoder log's retention pass waited for the stored Keep / Then compressed days
+    declog::settings_restored();
 }

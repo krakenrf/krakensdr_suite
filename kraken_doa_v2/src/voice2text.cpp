@@ -104,7 +104,7 @@ constexpr double CONT_MIN_S = 5.0, CONT_SOFT_S = 8.0, CONT_MAX_S = 15.0;
 constexpr size_t FRAME = 320;
 constexpr size_t PAUSE_FRAMES = 12;
 constexpr double OVERLAP_S = 0.3;
-// Each transcript's lobe (the 🗺 map shows it from the 🗣 Voice tab): the MUSIC
+// Each transcript's lobe (the 🗺 map shows it from the Transcription panel): the MUSIC
 // pseudospectra published during it, each min..max -> 0..1, averaged with the
 // bearing's weights; LOBE_BINS of 0.5 deg clockwise from north (as the map's
 // live lobe, rdf_mapper.cpp display_lobe) - or from the array's front when
@@ -1833,7 +1833,7 @@ std::string status_message() {
       << json_escape(c.prompt) << "\",\"vad\":" << (c.vad ? "true" : "false") << ",\"translate\":"
       << (c.translate ? "true" : "false") << ",\"keep_audio\":" << (c.keep_audio ? "true" : "false")
       << ",\"model_multi\":" << (model_multilingual(c.model) ? "true" : "false")
-      << ",\"log\":{\"enabled\":" << (declog::type_logged("voice") ? "true" : "false") << "}";
+      << ",\"log\":{\"enabled\":" << (declog::voice_logged() ? "true" : "false") << "}";
     std::lock_guard<std::mutex> lk(s.st_mu);
     o << ",\"state\":\"" << s.state << "\",\"error\":\"" << json_escape(s.last_error) << "\",\"loaded\":\""
       << json_escape(s.loaded) << "\",\"vad_loaded\":" << (s.vad_loaded ? "true" : "false")

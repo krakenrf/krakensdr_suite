@@ -9,8 +9,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`).
 - The user's request (2026-10-20): from ONE DoA lobe + the received level +
   an estimate of the transmitter's EIRP and our antenna gain, a heat map of
   where the transmitter probably is - with the terrain through ITU-R P.1812
-  as the 📶 path loss does. "Range" in the 📡 DF panel's header
-  (`#map-df-rng`, `rgToggle`) -> the panel `#map-rg` (in `.map-tl`, the
+  as the 📶 path loss does. "Range" in the map's Layers popover (group
+  Tools, coherent mode; `rgToggle` - in the 📡 DF panel's header until
+  2026-11-18, *map.md*, *Layers popover*; the panel's ✕ closes it too)
+  -> the panel `#map-rg` (in `.map-tl`, the
   viewshed panels' look: `.map-vs.map-pl.map-rg`) + its layer (`rgDraw`,
   under the DF lobes). The source = the DF panel's selection (`rgSource`):
   one radio (a talker), else the selected VFO (all: the sidebar's selected
@@ -310,7 +312,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`).
   -> dBm, SNR, held), the sweep's status, the readout + warnings (edge > 5
   %, SNR < 10 dB: may read high, total > -8 dBFS: near full scale - lower the
   gain, uncalibrated, held, no place fits), legend, ◎ / Clear, hover, then
-  the fold "Transmitter, our antenna, calibration, model" (`rgState.cfg`,
+  the fold "Settings" (the transmitter, our antenna, calibration, model - `rgState.cfg`,
   open the first time: the map is narrow - the readout first): power +
   antenna - cable or EIRP (W) + presets (`RG_PRESETS`: handheld 5 W -3
   dBi 1.5 m, PMR446 0.5 W ERP, vehicle 25 W, base / repeater 50 W 6 dBi 25

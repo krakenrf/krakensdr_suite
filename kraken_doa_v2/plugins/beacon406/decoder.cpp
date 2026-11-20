@@ -115,7 +115,7 @@ public:
         blk_abs_ = rx_.abs();
         const double rf = host.rf_hz();
         double sgb = 0;
-        if (std::isfinite(rf)) sgb = host.rf_inverted() ? rf - SGB_CENTRE_HZ : SGB_CENTRE_HZ - rf;
+        if (std::isfinite(rf)) sgb = SGB_CENTRE_HZ - rf;
         rx_.set_sgb_centre(std::fabs(sgb) < 40000 ? sgb : 0);
         rx_.verbose = host.verbose();
         std::vector<b406::Burst> bursts;
@@ -145,7 +145,7 @@ private:
     double rf_of(double off) const {
         const double rf = host.rf_hz();
         if (!std::isfinite(rf)) return NAN;
-        return host.rf_inverted() ? rf - off : rf + off;
+        return rf + off;
     }
 
     void on_burst(const b406::Burst& b) {

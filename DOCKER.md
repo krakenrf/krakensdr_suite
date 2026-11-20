@@ -124,6 +124,12 @@ docker compose down           # stop and remove the containers
    Independent mode (the DoA page's Mode selector) no calibration runs, so it
    starts straight away.
 
+The DOA page's **↻ Restart → Restart software** works here too: both apps
+exit with status 75 (`KRAKEN_RESTART_EXIT` in `docker-compose.yml`) and the
+`restart: unless-stopped` policy starts them again. A container can't reboot
+or power off the host, so those buttons are not offered; `KRAKEN_NO_POWER=1`
+in `.env` hides the restart button as well.
+
 The logs show errors only, as in `run.sh`'s headless mode. The apps' live
 terminal dashboards aren't available in Docker. For full log output, put
 `HEIMDALL_VERBOSE_LOG=1` / `KRAKEN_DOA_VERBOSE_LOG=1` in `.env` and run
@@ -190,16 +196,17 @@ docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordin
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
                                               cdecoder, sdecoder; libfdk-aac.so.2 for DAB+ -
                                               README "Digital voice codecs")
-docker-data/whisper_models/                   Voice to Text speech models (the sidebar's "⬇ Get")
-docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (the 🗣 Voice tab)
-docker-data/kraken_doa/decoder_logs/          Decoder Logging files, and in voice_clips/ the
-                                              transcripts' audio (Opus, kept as many days as the logs)
+docker-data/whisper_models/                   Voice to Text speech models ("⬇ Get" in ⚙ Setup Settings → 🗣 Voice to Text)
+docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (🗣 Transcription)
+docker-data/kraken_doa/decoder_logs/          Decoder Logging files (a folder per decoder, transcripts/),
+                                              and in voice_clips/ the transcripts' audio (Opus, kept
+                                              for the logs' Keep days)
 ```
 
-**Voice to Text** (sidebar "🗣 Voice to Text"): the image includes the
+**Voice to Text** (⚙ Setup Settings → 🗣 Voice to Text): the image includes the
 speech-to-text helper (whisper.cpp; `--build-arg WHISPER=0` leaves it out and
 saves ~10 minutes of build). The speech models are not in the image: pick one
-in the sidebar box and press "⬇ Get" - it is downloaded once into
+on that tab and press "⬇ Get" - it is downloaded once into
 `docker-data/whisper_models/` and kept across rebuilds.
 
 **📼 Recordings on a USB drive**: the container only sees `/data` and what
@@ -236,6 +243,10 @@ a commit or an image.
 git pull
 docker compose up -d --build
 ```
+
+The web pages show the version the image was built from (bottom of the
+sidebar, e.g. `r294 · 63a4917`). The build reads it from the clone's `.git`;
+an image built from a source archive without it shows "Version unknown".
 
 ## 8. Hardware variants
 

@@ -56,9 +56,12 @@ struct LogRecord {
 };
 using RecordHandler = std::function<void(DigitalDecoder* dec, const LogRecord& r)>;
 void set_record_handler(RecordHandler h);
-// Raw frames wanted (the log's "Raw frames" type is on): passed to the
-// plugins as the OPTION log_raw=0|1 (kp::Host::raw_wanted)
-void set_raw_wanted(bool on);
+// "Allow logging to disk" (decoder_log.cpp). A decoder whose VFO is set to
+// Log All (Options::log) then gets raw frames - the OPTION log_raw=1
+// (kp::Host::raw_wanted) - and verbose=1 (kp::Host::verbose, also on with
+// the VFO's "Show all messages"); otherwise log_raw=0 and verbose = that tick
+void set_log_allowed(bool on);
+bool log_allowed();
 // A browser shows decoder video (a page subscribed to VIDEO): passed to the
 // video plugins as the OPTION video_wanted=0|1 (kp::Host::video_wanted), and
 // while false their frames are dropped on arrival. Set from the uWS loop.
@@ -189,6 +192,11 @@ public:
     void set_takes_voice(bool on) { takes_voice_.store(on, std::memory_order_relaxed); }   // Engine
     void set_options(const Options& o);
     Options options() const;
+    // Options::log (LOG_*) without the lock and copy - the decoder log's
+    // record handler asks it per record
+    int log_mode() const { return log_mode_.load(std::memory_order_relaxed); }
+    // Options::pos_s the same way (the record handler's "one position per object every N s")
+    int pos_interval_s() const { return pos_s_.load(std::memory_order_relaxed); }
 
     // Decimation pipeline: queue a block (copied; never blocks). rf_hz = the
     // VFO's RF centre - a change of more than 100 Hz resets the decoders.
@@ -268,6 +276,8 @@ private:
     std::atomic<bool> reset_pending_{false};   // set_mode -> worker reconfigures + resets
     mutable std::mutex opt_mu_;
     Options opts_;
+    std::atomic<int> log_mode_{LOG_OFF};   // = opts_.log
+    std::atomic<int> pos_s_{POS_S_DEFAULT};  // = opts_.pos_s
     std::string plugin_id_;            // Mode::PLUGIN (opt_mu_)
     Report report_;
     std::unique_ptr<Engine> engine_;   // only touched by the worker (or process())

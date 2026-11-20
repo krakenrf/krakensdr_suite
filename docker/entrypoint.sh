@@ -10,6 +10,7 @@
 #
 # Both apps keep their state in their working directory, so each runs in its
 # own directory under /data with the read-only web files symlinked in:
+#   (VERSION, the image's version - docs/dev/version.md - is linked in too)
 #   /data/heimdall    heimdall_settings.conf, s2p_calibration/
 #   /data/kraken_doa  doa_settings.json, api_token, server.crt/.key,
 #                     fft_wisdom.dat, doa_recordings/
@@ -111,7 +112,7 @@ run_heimdall() {
         done
     fi
     mkdir -p "$DATA/heimdall/s2p_calibration"
-    link_files "$DATA/heimdall" "$APP/heimdall_v2" index.html
+    link_files "$DATA/heimdall" "$APP/heimdall_v2" index.html VERSION
     cd "$DATA/heimdall"
     export HEIMDALL_NO_TUI=1
     log "starting heimdall ${VARIANT[*]} $*"
@@ -168,7 +169,7 @@ run_kraken_doa() {
     done
     mkdir -p "$DATA/kraken_doa"
     link_files "$DATA/kraken_doa" "$APP/kraken_doa_v2" \
-        kraken_doa.html array_calculator.html opus-decoder.min.js
+        kraken_doa.html array_calculator.html opus-decoder.min.js VERSION
     cd "$DATA/kraken_doa"
     # self-installed digital voice codecs (README "Digital voice codecs"):
     # libmbe.so.1, the ETSI TETRA cdecoder / sdecoder and libfdk-aac.so.2

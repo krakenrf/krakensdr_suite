@@ -55,6 +55,12 @@ KRAKEN_DIR="$SCRIPT_DIR/kraken_doa_v2"
 LOG_DIR="$SCRIPT_DIR/logs"
 
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"     # seconds to wait for convergence; 0 = forever
+# The exit status that means "start me again": the web page's ↻ Restart
+# software makes heimdall and kraken_doa exit with it. Passed to both apps as
+# KRAKEN_RESTART_EXIT (they offer / accept the restart only when it is set);
+# the supervisor and the headless loop restart on it
+# (kraken_doa_v2/docs/dev/power.md)
+RESTART_EXIT=75
 SESSION="${TMUX_SESSION:-krakensdr}"    # tmux session name
 DATA_PORT=8091                          # Heimdall TCP data port (carries phase_state)
 
@@ -205,6 +211,7 @@ PY
 # Restart=on-failure never sees it, so an unattended Pi stayed down.
 #   exit 0 (clean shutdown)            -> done, no restart
 #   SIGTERM/SIGINT/SIGHUP to the pane  -> the app shuts down cleanly, done
+#   exit RESTART_EXIT (web page ↻)     -> restart after 1 s
 #   any other exit (crash, init error) -> restart after RESTART_DELAY seconds
 # The app runs as a background child that we `wait` on: bash defers a trap
 # until a FOREGROUND child returns, and closing a tmux pane/window (or the
@@ -220,7 +227,7 @@ supervise() {  # supervise <name> <command...>
     local stopping=0 rc child=
     trap 'stopping=1; [[ -n "$child" ]] && kill -TERM "$child" 2>/dev/null' TERM INT HUP
     while :; do
-        "$@" <&0 &
+        KRAKEN_RESTART_EXIT="$RESTART_EXIT" "$@" <&0 &
         child=$!
         # wait returns early (status > 128) when a trap fires; keep waiting
         # until the app itself has exited
@@ -230,8 +237,13 @@ supervise() {  # supervise <name> <command...>
         done
         child=
         [[ "$stopping" == "1" || "$rc" == "0" ]] && return "$rc"
-        warn "$name exited (status $rc) - restarting in ${RESTART_DELAY:-5}s (Ctrl+C to stay stopped)"
-        sleep "${RESTART_DELAY:-5}"
+        if [[ "$rc" == "$RESTART_EXIT" ]]; then
+            ok "$name: restart requested from the web page - starting it again"
+            sleep 1
+        else
+            warn "$name exited (status $rc) - restarting in ${RESTART_DELAY:-5}s (Ctrl+C to stay stopped)"
+            sleep "${RESTART_DELAY:-5}"
+        fi
         [[ "$stopping" == "1" ]] && return "$rc"
     done
 }
@@ -661,7 +673,10 @@ run_headless() {
     trap cleanup INT TERM EXIT
 
     say "Starting Heimdall server (headless; log: ${hlog#$SCRIPT_DIR/})"
-    ( cd "$HEIMDALL_DIR" && HEIMDALL_NO_TUI=1 exec ./heimdall $WB_FLAG $KB_FLAG $EN_FLAG ) >"$hlog" 2>&1 &
+    # a restart from the web page (see the loop below) keeps the logs
+    [[ "${HEADLESS_RESTARTED:-0}" == "1" ]] || : >"$hlog"
+    [[ "${HEADLESS_RESTARTED:-0}" == "1" ]] || : >"$klog"
+    ( cd "$HEIMDALL_DIR" && HEIMDALL_NO_TUI=1 KRAKEN_RESTART_EXIT="$RESTART_EXIT" exec ./heimdall $WB_FLAG $KB_FLAG $EN_FLAG ) >>"$hlog" 2>&1 &
     hpid=$!
     echo "     Web UI: http://localhost:8070"
 
@@ -698,7 +713,7 @@ run_headless() {
     # to start the client after cleanup has run - it would be left orphaned.
     [[ "$stopping" == "1" ]] && return 0
     say "Starting KrakenSDR DoA client (headless; log: ${klog#$SCRIPT_DIR/})"
-    ( cd "$KRAKEN_DIR" && KRAKEN_DOA_NO_TUI=1 exec ./kraken_doa $WB_FLAG ) >"$klog" 2>&1 &
+    ( cd "$KRAKEN_DIR" && KRAKEN_DOA_NO_TUI=1 KRAKEN_RESTART_EXIT="$RESTART_EXIT" exec ./kraken_doa $WB_FLAG ) >>"$klog" 2>&1 &
     kpid=$!
     echo "     Web UI: https://localhost:8080   (DoA page: http://localhost:8081)"
     echo
@@ -729,6 +744,15 @@ run_headless() {
         warn "Heimdall process ended; shutting down."
         return 0
     fi
+    # ↻ Restart software from the web page: heimdall exits with RESTART_EXIT
+    # (kraken_doa only asks after heimdall accepted, and exits with it too) -
+    # the client is stopped (if it isn't gone already) and the caller starts
+    # the stack again
+    if [[ "$hrc" == "$RESTART_EXIT" ]]; then
+        say "Restart requested from the web page - restarting the stack"
+        cleanup
+        return "$RESTART_EXIT"
+    fi
     warn "Heimdall exited with status $hrc; shutting down. Last log lines:"
     tail -n 15 "$hlog" | sed 's/^/     /'
     return "$hrc"
@@ -740,8 +764,13 @@ if [[ "$HEADLESS" == "1" ]]; then
     if [[ "$NEED_BUILD" == "1" ]]; then
         build_and_report || exit 1
     fi
-    run_headless
-    exit $?
+    while :; do
+        run_headless
+        rc=$?
+        [[ "$rc" == "$RESTART_EXIT" ]] || exit "$rc"
+        HEADLESS_RESTARTED=1
+        sleep 1
+    done
 fi
 
 # ===========================================================================

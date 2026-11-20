@@ -18,7 +18,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (`doa_enabled_before_wideband`), returning restores it; DOA:/BEAMFORMING:
   outside coherent only update what is restored. It broadcasts
   `{"operating_mode":{"mode","tuners":[{f,g}]}}` (also sent on connect).
-  The coherent `active_channel` (CH selector) is saved on leaving coherent
+  The coherent `active_channel` (the antenna selector on the spectrum's header, `#chs`) is saved on leaving coherent
   and put back on return (the first VFO heard - 🔊 - moves it to its tuner meanwhile).
   The handler saves the mode itself (`SettingsStore::record`): OPERATING_MODE
   is in `is_query_command` (no sync_cmd echo), which also skips the generic
@@ -59,7 +59,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `receiver.generic_rtlsdr` / `coherent_available`, the dashboard's mode.
   Page: `genericRtl`, `opModeOptionsSync()` disables Coherent ("needs a
   KrakenSDR") and, with one tuner, Wideband in the Mode selector (the
-  selector's title says why); everything coherent-only is already hidden
+  selector's title says why), and the top bar shows an "RTL-SDR" chip
+  (`#status-generic`, from `system_status.generic_rtlsdr` - the mode chip
+  that carried "(RTL-SDR)" is gone, *sidebar.md*); everything coherent-only is already hidden
   outside coherent (`.coh-only`). Calibration, element count, noise source
   and bias tees are heimdall's 8070 UI only - the client sends none of them.
   N = 1: `active_num_elements` follows a 1-channel header too (was >= 2 only:
@@ -92,7 +94,23 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   top bar; first 14 px, then "double the size" 2026-10-21): digits
   `G.MMM.kkk.hhh` down to 1 Hz (`.vfd-box` / `.vfd`, 28 px - the top bar's
   size - in 16 px cells, "MHz" inside the box; a row of its own without a
-  "Freq:" label, 236 of the card's 241 px with the ✎), click the
+  "Freq:" label; the "." between the groups, `.vfd-sep`, has the digits'
+  size and line and is a flex container, which centres the glyph on its
+  slot - with `text-align:center` in a 5 px box the wider glyph started at
+  the box's left edge and the dot sat on the next digit, the user's report
+  2026-11-17). The row (`.dec-freq`) never wraps (2026-11-18, the user's
+  report: the ✎ dropped under the digits once the sidebar scrolled - the
+  row was 239 px and a scrollbar left 233): with the scrollbar's room always
+  kept (*sidebar.md*) the row is 233 px and takes 231 - 16 px cells, 5 px
+  separators, the box's padding 0 2 px, "MHz" 2 px from the digits, a 4 px
+  gap, the ✎ 23 px (padding 1 4 px). Where the row is narrower (a 320 px
+  phone's drawer: 215 px) the cells shrink with it - the row is a query
+  container and a cell is `min(16px, (100cqw - 58px) / 10.9375)` (58 px:
+  the box's border, padding and unit, the gap and the ✎; a separator is
+  5/16 of a cell), the font 1.75 and the line 2.25 cells, as at 16 px; never
+  larger. From a 340 px phone up the digits are full size; without
+  container queries they stay 16 px. The typed entry (✎: a 96 px box +
+  "MHz") fits the same row. Click the
   top / bottom half or a wheel notch = +- that digit (`vfdInit` / `vfdStep`,
   selects the VFO); clamped inside the VFO's band like a typed frequency
   (coherent: `maxOffsetHz`; independent: its OWN tuner - a typed one may move
@@ -110,11 +128,18 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (`dec-actual-freq-<id>`, Enter / blur = apply, Escape = cancel); locked
   with the Freq / BW fields by fixed-frequency / `lock_vfo` decoders
   (`digRenderCards`). Test: job scratch t_vfd.py (headless Chrome over CDP,
-  fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8)
+  fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8); the
+  one-line row (2026-11-18, test_sidefix.py with real scrollbars): the ✎
+  centred on the readout within 2 px and nothing past the row or the card -
+  sidebar short and long, zoomed to 420 and 230 px, two cards, independent
+  mode, the typed entry, the drawers of 400 / 360 / 320 px phones (full
+  16 px cells from 360 px, 14.3 px at 320)
 - VFO tuning STEP (the user's request 2026-10-22, "a global setting up on
   the top bar"; kraken_doa.html block "VFO tuning step"): the top bar's
-  `Step:` (`#tb-step` / `#vfo-step`, every mode, moved into the sidebar on
-  mobile like CH / Audio) - 1 / 10 / 100 / 500 Hz, 1 (default) / 2.5 / 5 /
+  Step (`#tb-step` / `#vfo-step`, every mode, moved into the sidebar on
+  mobile like Gain / Audio; since 2026-11-18 right of Audio, immediately
+  left of Mode, with the `step` icon in place of its caption - *sidebar.md*
+  "Top bar and rail") - 1 / 10 / 100 / 500 Hz, 1 (default) / 2.5 / 5 /
   6.25 / 8.33 (25/3) / 10 / 12.5 / 25 / 50 / 100 kHz, per browser
   (localStorage `kraken_vfo_step`, `vfoStepHz`). A tuning-bar drag (main
   spectrum + waterfall: `pointerMove`; panes: `paneMove`) or a click on the
@@ -149,14 +174,26 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   3 per row - 5 tuners = 3 + 2, 4 = 2 x 2 -, the last row centered, >= 360 px
   wide / 230 px tall; each head has a digit frequency selector like the top
   bar's - click top/bottom half or mouse wheel, `paneFreqSelectorInit`, own
-  `.pfd` class since the top bar queries `.freq-digit` page-wide - plus a gain
-  slider; canvas spectrum `paneDrawSpec`, a
+  `.pfd` class since the top bar queries `.freq-digit` page-wide - plus its
+  gain as a value bar, 84 x 22 px, the top bar's design (`.vbar.tpane-vbar`,
+  ids `tpane-g-N` / `tpane-gv-N` and `paneGainInput` as before; the value is
+  written inside, no reading beside it since 2026-11-18 - *sidebar.md*, "Top
+  bar and rail"; a press or drag sets it, the mouse wheel steps it and
+  selects the pane, and `paneGainInput` sends one TUNER_GAIN once the value
+  has rested 120 ms - 250 ms after a wheel notch); canvas spectrum `paneDrawSpec`, a
   `WaterfallDisplay` each, overlay `paneDrawOverlay` with VFO bars + AI
   badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (any width like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side keeps its edge `PANE_CLIP_EDGE_PX` 5 px inside the plot border (`bars[].xl / xr`; until 2026-10-21 a clipped side had none, and a 2.4 MHz VFO, wider than the pane's edge-clipped band, couldn't be resized at all: the user's report); since 2026-11-15 an edge drag is capped at the pane's band, keeps the edge on the plot and starts a clipped edge from where it is drawn (*VFO bandwidth*, `bwEdgeDragBegin` - the main display and waterfall do the same); an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
   digits and gain (`.not-indep`) are hidden in independent mode - each pane
-  has its own (`selTuner` = the highlighted pane; `sendFreqChange` / `sgn`
+  has its own (`selTuner` = the highlighted pane, `paneSelect`: a click
+  anywhere in the pane's header - its empty space, the "T0" name, its
+  digits or gain bar - or a press / wheel in its spectrum selects it;
+  until 2026-11-17 only the small name did in the header, the user asked
+  for the whole header; a click, not a press, so a swipe that starts on a
+  header only scrolls the grid; the pane readout's dots `.pfd-sep` are
+  centred like the VFO cards' `.vfd-sep`; `sendFreqChange` / `sgn`
   still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
-  frequencies, per-pane waterfall auto-range (`computeAutoRange`)
+  frequencies, per-pane waterfall auto-range (`computeAutoRange`), a View button at the
+  header's right end (per-tuner View settings, below; its click selects the pane too)
 - Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..ZOOM_MAX, off}`
   per display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
   ZOOM_MAX 32 (16 until 2026-10-22, the user's request; the slider 0-125).
@@ -173,8 +210,42 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   BEFORE it reaches the plot / waterfall (`applyClip`, `indepOnFrame`), so
   spectrum, tuning bars and waterfall share it. Mouse wheel = x1.25 around the cursor (`zoomWheel`; on
   #fp / #wf-container, or a pane's overlay - which selects it); the Zoom
-  slider (wf-controls bar, log2 x 25) shows / sets the main or the selected
-  pane's zoom (`zoomSyncSlider`)
+  slider (in the View popover - *sidebar.md*; log2 x 25) shows / sets the main display's zoom,
+  in independent mode the popover's tuner's, and with "View · all tuners" every pane's (it
+  shows the selected pane's level) (`zoomTarget`, `zoomSyncSlider`)
+- Per-tuner View settings (2026-11-17; the user asked for each tuner to have its own display
+  settings in its own header): every pane header ends with a View button that opens the View
+  popover for that tuner (*sidebar.md*, script block "VIEW POPOVER"). Scale (the pane
+  spectrum's dB top - `paneYMax(p)` in `paneDrawSpec`, the VFO and scan squelch lines and the
+  squelch drag), Zoom (`p.zoom`, as before), Speed, Colors and the waterfall contrast (Auto,
+  Min and Max) are each per tuner. The model is "the tuner's own value, else the common one; the last change wins":
+  - The common values are the ones the page always had: `UI:FFT_Y`, `UI:WF_SPEED`,
+    `UI:WF_COLORMAP`, `UI:WF_MIN`, `UI:WF_MAX`, `UI:WF_AUTO` - stored by the receiver and
+    replayed to every browser (`viewCommon` in the globals block). Nothing changed on the
+    wire, no new command.
+  - A pane's popover sets the tuner's OWN value, kept in this browser:
+    `localStorage['kraken_pane_view']` = `{v:1, g:{...}, t:{"2":{y:80, cmap:"viridis"}}}`
+    (`viewStore`; keys y, speed, cmap, auto, min, max). Effective value = `viewEff(ch, k)`:
+    the tuner's own, else the common one. Per browser because the receiver has no per-tuner
+    display setting (adding one would change the protocol and every page), and which tuner
+    shows what at which scale is a choice for the screen in front of the user, like the
+    sidebar layout. Nothing is sent for a tuner's own value.
+  - "View · all tuners" (the spectrum header's button in independent mode) sets the common
+    value as before AND drops that key's own value from every tuner - "all tuners" really
+    sets all of them, nothing stays hidden behind an own value. The single spectrum's button
+    (coherent / wideband scan) sets the common value only and keeps the tuners' own values.
+  - A common value from the receiver (the replay at connect, another browser's change) drops
+    the tuners' own values of that key only if it differs from `g[key]`, the value this
+    browser saw last (sent or received); `g` is updated either way. The replay of an
+    unchanged value at page load therefore keeps them; with no `g` yet the value counts as
+    unchanged. The page's own echoes are recognised (`viewEcho`) and ignored.
+  - Auto per tuner: the pane auto-range tick (500 ms, `computeAutoRange`) ranges each pane
+    whose effective Auto is on. Turning a tuner's Auto off keeps the range where Auto left it
+    (it becomes the tuner's own Min / Max), as the single spectrum's Auto always did.
+  - Zoom is not stored (as before). Tuners that are not there (fewer now) keep their stored
+    values, unused; broken storage = no own values.
+  - In coherent and wideband-scan modes there is one spectrum and one popover with the
+    common values. Test: job scratch `test_view.py` (96 checks, *sidebar.md*)
 - `applyClip(newFrame)`: ONLY a frame from the receiver (`applyClip(true)`)
   adds a waterfall line; zoom / zoom slider / edge-clip slider redraw the
   last frame without one (the waterfall just takes the new range for its

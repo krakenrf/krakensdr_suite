@@ -506,7 +506,7 @@ SAMPLES_MC cost about what it saves).
   default key, LoRaWAN FRMPayload / join accepts never (keys not public).
 - Several packets on the SAME channel overlapping in time cannot both be
   decoded (one receiver per channel); collisions are lost.
-- With every antenna, antenna 0 is decoded (as the CH selector's default; a
+- With every antenna, antenna 0 is decoded (as the spectrum's antenna selector defaults to; a
   weaker antenna 0 decodes less - combining the antennas for decoding, as
   ism does, isn't done). A frame decoded without enough clean de-spread
   symbols (the input already gone, a probe's oldest history) gives no
