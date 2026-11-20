@@ -16,6 +16,7 @@
 
 #include <liquid/liquid.h>
 
+#include "config.hpp"   // efficient_bandwidth_at_least
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
@@ -119,10 +120,24 @@ std::vector<std::string> split0(const char* p, size_t len, size_t max_fields) {
     return f;
 }
 
-// Auto detect leaves out the plugins that need a VFO more than this many
-// times wider than the one it runs on (ADS-B wants the whole 2.4 MHz: run on
-// a 12.5 kHz VFO it would only burn CPU on upsampled samples)
+// Without internal streams (an offline caller - DigitalDecoder's
+// internal_streams false) Auto detect leaves out the plugins that need a VFO
+// more than this many times wider than the one it runs on (ADS-B wants the
+// whole 2.4 MHz: run on a 12.5 kHz VFO it would only burn CPU on upsampled
+// samples). The live pipeline makes internal streams instead (below)
 constexpr double AUTO_MAX_RATE_SHORTFALL = 2.0;
+
+// Auto detect's internal streams: a plugin whose min_vfo_rate is more than
+// the VFO's bandwidth gets the VFO's centre at efficient_bandwidth_at_least
+// (min_vfo_rate) - what the page's "Set X kHz" would set. Needs close to each
+// other share one stream: sorted, a need joins the current group while its
+// width is at most AUTO_STREAM_MERGE_RATIO x the group's narrowest, and the
+// group's stream is its widest (the others are resampled down from it, as
+// on a VFO that wide). More groups than DigitalDecoder::MAX_STREAMS: the two
+// neighbours closest in width merge until they fit. Today's plugins on a
+// 12.5 kHz VFO: 25 kHz (aprs, v23, radiosonde, tetra, vdl2), 48 kHz (ils),
+// 150 kHz (rds), 2.4 MHz (analogtv)
+constexpr double AUTO_STREAM_MERGE_RATIO = 2.0;
 
 // Station location for the plugins (set_station_location); gen bumps on a change
 std::mutex station_mu;
@@ -206,8 +221,11 @@ struct Runner {
     int audio_channel = -1;
     // array plugins: Host::time() = VFO stream position / its rate
     double array_rate = 0;
-    // a plugin at the VFO's own rate (kp::Info::sample_rate 0): the rate it
-    // was started at (--serve --rate); a new VFO rate restarts it
+    // the stream it runs on: 0 = the VFO's own, else Auto detect's internal
+    // stream of this width (Engine::assign_streams)
+    int stream_w = 0;
+    // a plugin at its stream's own rate (kp::Info::sample_rate 0): the rate
+    // it was started at (--serve --rate); a new rate restarts it
     double vfo_rate = 0;
     // the rate this process gets its samples at
     double prate() const { return info.sample_rate > 0 ? info.sample_rate : vfo_rate; }
@@ -238,7 +256,8 @@ struct Runner {
 // ---------------------------------------------------------------------------
 class Engine {
 public:
-    Engine(Report& r, DigitalDecoder* owner, bool sync_io) : report_(r), owner_(owner), sync_io_(sync_io) {}
+    Engine(Report& r, DigitalDecoder* owner, bool sync_io, bool streams)
+        : report_(r), owner_(owner), sync_io_(sync_io), streams_on_(streams) {}
     ~Engine() {
         stop_all();
         destroy_resamplers();
@@ -321,66 +340,89 @@ public:
     }
 
     void process(const std::complex<float>* x, size_t n, float rate, double rf, uint64_t pos,
-                 const std::complex<int16_t>* mc = nullptr, int mc_m = 0) {
+                 const std::complex<int16_t>* mc = nullptr, int mc_m = 0, int bw_hz = 0,
+                 const AuxStream* aux = nullptr, size_t naux = 0) {
         if (rate <= 0 || n == 0) return;
         if (pos == DigitalDecoder::NO_POS) pos = next_pos_;
         next_pos_ = pos + n;
         check_rf(rf);
+        bool reassign = false;
         if (rate != in_rate_) {
             in_rate_ = rate;
             // plugins at the VFO's own rate start over at the new one
             for (auto& r : runners_)
-                if (r->proc && r->known && r->info.sample_rate <= 0 && !r->info.array && r->vfo_rate != in_rate_) {
+                if (r->proc && r->known && r->info.sample_rate <= 0 && !r->info.array && r->stream_w == 0 &&
+                    r->vfo_rate != in_rate_) {
                     r->proc->stop();
                     r->proc.reset();
                     close_talker(*r);
                     r->retry_ms = 0;
                     r->note = "new VFO rate";
                 }
-            // Auto detect: the plugin set depends on the VFO's rate
+            // Auto detect without internal streams: the plugin set depends on the VFO's rate
             if (mode_ == Mode::AUTO && auto_ids() != runner_ids()) rebuild_runners();
-            else rebuild_resamplers();
+            else reassign = true;
         }
+        // the VFO's bandwidth (not its rate) decides which plugins need a
+        // wider stream - the page's "too narrow" test
+        const int bw = bw_hz > 0 ? bw_hz : static_cast<int>(std::lround(rate));
+        if (bw != vfo_bw_) {
+            vfo_bw_ = bw;
+            reassign = true;
+        }
+        if (reassign) assign_streams();
         const int64_t t = now_ms();
         if (t - check_ms_ > CHECK_MS) {
             check_ms_ = t;
             periodic(t);
         }
-        // AFC mixer at the input rate
-        mixed_.resize(n);
-        const float w = -2.0f * static_cast<float>(M_PI) * afc_hz_ / in_rate_;
-        if (w == 0.0f) {
-            // no correction (yet, or the plugins report no offset - e.g. ADS-B
-            // at 2.4 MHz): a plain copy instead of a sin/cos per sample, and
-            // nothing to keep continuous - the mixer's phase goes back to 0.
-            // It used to keep the last correction's phase for good, so once
-            // any decoder on this VFO had reported a frequency error (D-STAR,
-            // P25, ...) every later multichannel plugin (lora, ism) got one
-            // antenna only (mc_ok below) until kraken_doa restarted
-            nco_phase_ = 0.0;
-            std::copy(x, x + n, mixed_.begin());
-        } else {
-            for (size_t i = 0; i < n; i++) {
-                mixed_[i] = x[i] * std::polar(1.0f, static_cast<float>(nco_phase_));
-                nco_phase_ += w;
+        // AFC mixer at each stream's rate: the VFO's own, then the internal
+        // ones this block brought (a wanted one it lacks - the pipeline makes
+        // it from the next block - gives its plugins nothing this time)
+        const bool afc_off = afc_hz_ == 0.0f;
+        mix(x, n, in_rate_, nco_phase_, mixed_);
+        for (auto& s : sbuf_) {
+            s.x = nullptr;
+            s.n = 0;
+            for (size_t k = 0; k < naux; k++) {
+                const AuxStream& a = aux[k];
+                if (a.width_hz != s.w || !a.x || a.n == 0) continue;
+                mix(a.x, a.n, static_cast<float>(s.w), s.nco, s.mixed);
+                s.x = a.x;
+                s.n = a.n;
+                s.pos = a.pos;
+                s.mc = afc_off && a.mc && a.mc_m >= 2 ? a.mc : nullptr;
+                s.mc_m = s.mc ? a.mc_m : 0;
+                break;
             }
-            nco_phase_ = std::remainder(nco_phase_, 2.0 * M_PI);
         }
         resample(n);
-        // every antenna (multichannel plugins at the VFO's rate, no AFC
-        // correction to apply: what they get is the VFO's samples as they are)
-        const bool mc_ok = mc && mc_m >= 2 && w == 0.0f;
+        // every antenna (multichannel plugins at their stream's rate, no AFC
+        // correction to apply: what they get is the stream's samples as they are)
+        const bool mc_ok = mc && mc_m >= 2 && afc_off;
         for (size_t i = 0; i < runners_.size(); i++) {
+            Runner& rn = *runners_[i];
             // array plugins get their samples in process_array(); here they
             // are only started / kept up to date (settings, replies)
-            if (runners_[i]->known && runners_[i]->info.array) {
-                run(i, nullptr, 0, pos, 1.0);
+            if (rn.known && rn.info.array) {
+                run(i, nullptr, 0, static_cast<double>(pos), 1.0);
                 continue;
             }
-            const Resampled* r = rate_buf(*runners_[i]);
-            const bool multi = mc_ok && runners_[i]->info.multichannel && rate_of(*runners_[i]) == in_rate_;
-            run(i, r ? r->out.data() : nullptr, r ? r->ny : 0, pos, r ? in_rate_ / r->rate : 1.0,
-                multi ? mc : nullptr, multi ? mc_m : 0, n);
+            const Resampled* r = rate_buf(rn);
+            if (rn.stream_w == 0) {
+                const bool multi = mc_ok && rn.info.multichannel && rate_of(rn) == in_rate_;
+                run(i, r ? r->out.data() : nullptr, r ? r->ny : 0, static_cast<double>(pos), r ? in_rate_ / r->rate : 1.0,
+                    multi ? mc : nullptr, multi ? mc_m : 0, n);
+                continue;
+            }
+            // an internal stream: its samples' positions in the VFO's stream
+            // (the pipeline took the two cascades' delays off), one VFO sample
+            // every in_rate_ / plugin rate of its samples
+            const StreamBuf* s = stream_buf(rn.stream_w);
+            const bool have = s && s->x && r && r->ny;
+            const bool multi = have && s->mc && rn.info.multichannel && rate_of(rn) == static_cast<float>(s->w);
+            run(i, have ? r->out.data() : nullptr, have ? r->ny : 0, have ? s->pos : 0.0, r ? in_rate_ / r->rate : 1.0,
+                multi ? s->mc : nullptr, multi ? s->mc_m : 0, have ? s->n : 0);
         }
         housekeeping();
     }
@@ -399,10 +441,11 @@ public:
         }
         return more;
     }
-    // a running decoder plugin takes every antenna (kp::Info::multichannel)
+    // a running decoder plugin on the VFO's own stream takes every antenna
+    // (kp::Info::multichannel; one on an internal stream asks with StreamWant::mc)
     bool multichannel() const {
         for (const auto& r : runners_)
-            if (r->info.multichannel) return true;
+            if (r->info.multichannel && r->stream_w == 0) return true;
         return false;
     }
 
@@ -458,6 +501,7 @@ public:
         std::vector<std::string> tail;
         uint64_t dropped = 0;
         double rate = 0, min_vfo_rate = 0;
+        int stream_hz = 0;   // the internal stream it runs on (0 = the VFO's own)
         bool map = false;
     };
     struct Status {
@@ -484,7 +528,8 @@ public:
             if (t - v.first < DETECT_WINDOW_MS) s.frames[v.second].first++;
         for (const auto& p : status_plugins_) {
             s.plugins.push_back(p);
-            s.min_rate = std::max<float>(s.min_rate, static_cast<float>(p.min_vfo_rate));
+            // (a plugin on an internal stream has its bandwidth: rate_ok = the VFO's own stream's plugins get theirs)
+            if (p.stream_hz == 0) s.min_rate = std::max<float>(s.min_rate, static_cast<float>(p.min_vfo_rate));
             if (p.id == detected_) s.detected_name = p.name;
         }
         return s;
@@ -494,6 +539,7 @@ private:
     Report& report_;
     DigitalDecoder* owner_;
     const bool sync_io_;
+    const bool streams_on_;            // the caller makes internal streams (DigitalDecoder::internal_streams)
     Mode mode_ = Mode::OFF;
     std::string plugin_;
     Options opts_;
@@ -507,7 +553,23 @@ private:
     double nco_phase_ = 0;
     std::vector<std::complex<float>> mixed_;
     std::vector<char> mc_buf_;   // a SAMPLES_MC message
+    // the internal streams in use (Auto detect; StreamWant): this block's
+    // samples (x null = none came), mixed by the AFC like the VFO's own
+    int vfo_bw_ = 0;                   // the VFO's bandwidth (Hz) of the last block
+    struct StreamBuf {
+        int w = 0;                     // width = rate
+        double nco = 0;
+        std::vector<std::complex<float>> mixed;
+        const std::complex<float>* x = nullptr;
+        size_t n = 0;
+        double pos = 0;
+        const std::complex<int16_t>* mc = nullptr;
+        int mc_m = 0;
+    };
+    std::vector<StreamBuf> sbuf_;
+    std::vector<StreamWant> wants_sent_;
     struct Resampled {
+        int w = 0;                     // its stream (0 = the VFO's own)
         float rate = 0;
         msresamp_crcf q = nullptr;     // nullptr = same rate as the input
         std::vector<std::complex<float>> out;
@@ -580,9 +642,8 @@ private:
             report_.set_label(id, r->known ? r->info.name : id);
             runners_.push_back(std::move(r));
         }
-        rebuild_resamplers();
+        assign_streams();   // + the resamplers, the status
         update_array_wanted();
-        publish_status();
     }
 
     // the pipeline offers every antenna while an array plugin runs here (and
@@ -603,15 +664,129 @@ private:
     }
 
     // The plugins Auto detect runs on this VFO: the ticked ones, without the
-    // manual-only ones and those that need a much wider VFO (none until the
-    // VFO's rate is known)
+    // manual-only ones. With internal streams every one of them, whatever the
+    // VFO's width (assign_streams gives each the stream it needs); without
+    // (offline callers) not those that need a much wider VFO either - none
+    // until the VFO's rate is known
     std::vector<std::string> auto_ids() const {
         std::vector<std::string> ids;
-        if (in_rate_ <= 0) return ids;
+        if (!streams_on_ && in_rate_ <= 0) return ids;
         for (const auto& p : PluginRegistry::instance().list())
-            if (p.built && p.auto_detect && !p.manual_only && p.min_vfo_rate <= in_rate_ * AUTO_MAX_RATE_SHORTFALL)
+            if (p.built && p.auto_detect && !p.manual_only &&
+                (streams_on_ || p.min_vfo_rate <= in_rate_ * AUTO_MAX_RATE_SHORTFALL))
                 ids.push_back(p.id);
         return ids;
+    }
+
+    // Each runner's stream (Runner::stream_w; AUTO_STREAM_MERGE_RATIO above):
+    // the VFO's own when its bandwidth holds the plugin's min_vfo_rate - and
+    // always outside Auto detect, without internal streams, before the
+    // bandwidth is known, for array plugins - else an internal stream. A
+    // plugin at its stream's rate (sample_rate 0) that changes stream starts
+    // over at the new rate ("new VFO rate" as on the VFO's own); the others
+    // just get their samples from the new one. Then the resamplers, the
+    // widths wanted from the pipeline and the status follow
+    void assign_streams() {
+        std::vector<int> need(runners_.size(), 0);   // efficient width needed, 0 = the VFO's own stream
+        if (mode_ == Mode::AUTO && streams_on_ && vfo_bw_ > 0) {
+            for (size_t i = 0; i < runners_.size(); i++) {
+                const Runner& r = *runners_[i];
+                if (!r.known || r.info.array || !(r.info.min_vfo_rate > vfo_bw_)) continue;
+                need[i] = efficient_bandwidth_at_least(static_cast<int>(std::ceil(r.info.min_vfo_rate)));
+            }
+        }
+        // the groups: [narrowest, widest] of the needs, ascending
+        std::vector<int> u;
+        for (int w : need)
+            if (w > 0) u.push_back(w);
+        std::sort(u.begin(), u.end());
+        u.erase(std::unique(u.begin(), u.end()), u.end());
+        std::vector<std::pair<int, int>> g;
+        for (int w : u) {
+            if (g.empty() || w > AUTO_STREAM_MERGE_RATIO * g.back().first) g.push_back({w, w});
+            else g.back().second = w;
+        }
+        while (g.size() > static_cast<size_t>(DigitalDecoder::MAX_STREAMS)) {
+            size_t best = 0;
+            double bq = 1e300;
+            for (size_t k = 0; k + 1 < g.size(); k++) {
+                const double q = static_cast<double>(g[k + 1].second) / g[k].first;
+                if (q < bq) bq = q, best = k;
+            }
+            g[best].second = g[best + 1].second;
+            g.erase(g.begin() + static_cast<std::ptrdiff_t>(best) + 1);
+        }
+        for (size_t i = 0; i < runners_.size(); i++) {
+            Runner& r = *runners_[i];
+            int w = 0;
+            if (need[i] > 0)
+                for (const auto& p : g)
+                    if (need[i] >= p.first && need[i] <= p.second) w = p.second;
+            if (w == r.stream_w) continue;
+            r.stream_w = w;
+            if (r.proc && r.known && r.info.sample_rate <= 0 && r.vfo_rate != stream_rate(w)) {
+                r.proc->stop();
+                r.proc.reset();
+                close_talker(r);
+                r.retry_ms = 0;
+                r.note = "new VFO rate";
+            }
+        }
+        // the stream buffers (an existing one keeps its AFC phase)
+        std::vector<StreamBuf> sb;
+        std::vector<StreamWant> wants;
+        for (const auto& p : g) {
+            StreamWant sw;
+            sw.width_hz = p.second;
+            for (const auto& r : runners_)
+                if (r->stream_w == p.second && r->known && r->info.multichannel && rate_of(*r) == static_cast<float>(p.second))
+                    sw.mc = true;
+            wants.push_back(sw);
+            StreamBuf b;
+            b.w = p.second;
+            for (auto& o : sbuf_)
+                if (o.w == b.w) b = std::move(o);
+            sb.push_back(std::move(b));
+        }
+        sbuf_ = std::move(sb);
+        bool same = wants.size() == wants_sent_.size();
+        for (size_t k = 0; same && k < wants.size(); k++)
+            same = wants[k].width_hz == wants_sent_[k].width_hz && wants[k].mc == wants_sent_[k].mc;
+        if (!same) {
+            wants_sent_ = wants;
+            owner_->set_wanted_streams(wants);
+        }
+        rebuild_resamplers();
+        publish_status();
+    }
+    float stream_rate(int w) const { return w > 0 ? static_cast<float>(w) : in_rate_; }
+    const StreamBuf* stream_buf(int w) const {
+        for (const auto& s : sbuf_)
+            if (s.w == w) return &s;
+        return nullptr;
+    }
+
+    // the AFC mixer: x down by afc_hz_ at `rate` into out. No correction
+    // (yet, or the plugins report no offset - e.g. ADS-B at 2.4 MHz): a plain
+    // copy instead of a sin/cos per sample, and nothing to keep continuous -
+    // the mixer's phase goes back to 0. It used to keep the last correction's
+    // phase for good, so once any decoder on this VFO had reported a
+    // frequency error (D-STAR, P25, ...) every later multichannel plugin
+    // (lora, ism) got one antenna only (mc_ok in process) until kraken_doa
+    // restarted
+    void mix(const std::complex<float>* x, size_t n, float rate, double& phase, std::vector<std::complex<float>>& out) {
+        out.resize(n);
+        const float w = -2.0f * static_cast<float>(M_PI) * afc_hz_ / rate;
+        if (w == 0.0f) {
+            phase = 0.0;
+            std::copy(x, x + n, out.begin());
+            return;
+        }
+        for (size_t i = 0; i < n; i++) {
+            out[i] = x[i] * std::polar(1.0f, static_cast<float>(phase));
+            phase += w;
+        }
+        phase = std::remainder(phase, 2.0 * M_PI);
     }
     std::vector<std::string> runner_ids() const {
         std::vector<std::string> ids;
@@ -625,46 +800,61 @@ private:
         rs_.clear();
     }
 
-    // a plugin's input rate (kp::Info::sample_rate 0: the VFO's own)
+    // a plugin's input rate (kp::Info::sample_rate 0: its stream's own)
     float rate_of(const Runner& rn) const {
         if (!rn.known) return 48000.0f;
-        return rn.info.sample_rate > 0 ? static_cast<float>(rn.info.sample_rate) : in_rate_;
+        return rn.info.sample_rate > 0 ? static_cast<float>(rn.info.sample_rate) : stream_rate(rn.stream_w);
     }
 
+    // one resampler per (stream, plugin rate) in use
     void rebuild_resamplers() {
         destroy_resamplers();
         if (in_rate_ <= 0) return;
         for (auto& rn : runners_) {
             if (rn->known && rn->info.array) continue;   // their samples aren't resampled
-            float rate = rate_of(*rn);
+            const float rate = rate_of(*rn);
             bool have = false;
-            for (auto& r : rs_) have |= r.rate == rate;
+            for (auto& r : rs_) have |= r.w == rn->stream_w && r.rate == rate;
             if (have) continue;
             Resampled r;
+            r.w = rn->stream_w;
             r.rate = rate;
-            if (std::fabs(rate - in_rate_) > 0.5f) r.q = msresamp_crcf_create(rate / in_rate_, 60.0f);
+            const float in = stream_rate(r.w);
+            if (std::fabs(rate - in) > 0.5f) r.q = msresamp_crcf_create(rate / in, 60.0f);
             rs_.push_back(std::move(r));
         }
     }
 
+    // this block of every stream to the rates its plugins take (a stream
+    // this block didn't bring: nothing)
     void resample(size_t n) {
         for (auto& r : rs_) {
+            const std::complex<float>* in = mixed_.data();
+            size_t k = n;
+            if (r.w > 0) {
+                const StreamBuf* s = stream_buf(r.w);
+                in = s && s->x ? s->mixed.data() : nullptr;
+                k = in ? s->n : 0;
+            }
             unsigned int ny = 0;
-            r.out.resize(static_cast<size_t>(std::ceil(n * r.rate / in_rate_)) + 64);
-            if (r.q) {
-                msresamp_crcf_execute(r.q, mixed_.data(), static_cast<unsigned int>(n), r.out.data(), &ny);
-            } else {
-                std::copy(mixed_.begin(), mixed_.end(), r.out.begin());
-                ny = static_cast<unsigned int>(n);
+            if (k > 0) {
+                r.out.resize(static_cast<size_t>(std::ceil(k * r.rate / stream_rate(r.w))) + 64);
+                if (r.q) {
+                    msresamp_crcf_execute(r.q, const_cast<std::complex<float>*>(in), static_cast<unsigned int>(k),
+                                          r.out.data(), &ny);
+                } else {
+                    std::copy(in, in + k, r.out.begin());
+                    ny = static_cast<unsigned int>(k);
+                }
             }
             r.ny = ny;
         }
     }
 
     const Resampled* rate_buf(const Runner& rn) const {
-        float rate = rate_of(rn);
+        const float rate = rate_of(rn);
         for (const auto& r : rs_)
-            if (r.rate == rate) return &r;
+            if (r.w == rn.stream_w && r.rate == rate) return &r;
         return nullptr;
     }
 
@@ -706,6 +896,7 @@ private:
             p.dropped = r->dropped;
             p.rate = r->known ? rate_of(*r) : 0;
             p.min_vfo_rate = r->known ? r->info.min_vfo_rate : 12500;
+            p.stream_hz = r->stream_w;
             p.map = r->known && r->info.map;
             v.push_back(std::move(p));
         }
@@ -742,6 +933,9 @@ private:
         if (native && !(in_rate_ > 0)) return;
         const bool rebuilt = r.note == "rebuilt";
         const bool rate_changed = !r.known || pi.sample_rate != r.info.sample_rate;
+        // a rebuilt plugin may need another bandwidth: its stream follows
+        const bool need_changed = !r.known || pi.min_vfo_rate != r.info.min_vfo_rate ||
+                                  pi.multichannel != r.info.multichannel || pi.array != r.info.array;
         r.info = pi;
         r.known = true;
         report_.set_label(r.id, pi.name);
@@ -750,16 +944,18 @@ private:
             if (pi.squelch_hold_s > 0) hold_ms_by_[r.id] = static_cast<int64_t>(pi.squelch_hold_s * 1000);
             else hold_ms_by_.erase(r.id);
         }
-        if (rate_changed) rebuild_resamplers();
+        if (need_changed) assign_streams();   // (+ the resamplers)
+        else if (rate_changed) rebuild_resamplers();
         update_array_wanted();
         r.array_next = ~0ull;
-        r.vfo_rate = native ? in_rate_ : 0;
+        const double srate = stream_rate(r.stream_w);
+        r.vfo_rate = native ? srate : 0;
         r.proc = std::make_unique<PluginProcess>();
         std::string err;
         std::vector<std::string> args{pi.exe, "--serve"};
         if (native) {
             char b[32];
-            snprintf(b, sizeof b, "%.3f", static_cast<double>(in_rate_));
+            snprintf(b, sizeof b, "%.3f", srate);
             args.push_back("--rate");
             args.push_back(b);
         }
@@ -868,8 +1064,9 @@ private:
     }
 
     // y = this block resampled to the plugin's rate; its sample j is VFO
-    // stream position pos + j * step
-    void run(size_t idx, const std::complex<float>* y, unsigned int ny, uint64_t pos, double step,
+    // stream position pos + j * step (an internal stream's: a fractional pos,
+    // step = the VFO's rate / the plugin's)
+    void run(size_t idx, const std::complex<float>* y, unsigned int ny, double pos, double step,
              const std::complex<int16_t>* mc = nullptr, int mc_m = 0, size_t mc_n = 0) {
         Runner& r = *runners_[idx];
         const int64_t t = now_ms();
@@ -885,7 +1082,7 @@ private:
         send_settings(r);
         if (mc && ny) {
             // every antenna: SAMPLES_MC = uint32 m + n x m complex int16 (the
-            // VFO's rate - step 1)
+            // stream's rate: step 1 on the VFO's own)
             const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.prate()) * 4 * static_cast<size_t>(mc_m);
             const size_t n = std::min<size_t>(mc_n, ny);
             for (size_t p = 0; p < n; p += PLUGIN_CHUNK) {
@@ -901,7 +1098,7 @@ private:
                     r.dropped += k;
                     continue;
                 }
-                r.pos_map.push_back({r.written, k, static_cast<double>(pos) + static_cast<double>(p), 1.0});
+                r.pos_map.push_back({r.written, k, pos + static_cast<double>(p) * step, step});
                 r.written += k;
             }
             ny = 0;   // (sent)
@@ -913,7 +1110,7 @@ private:
                 r.dropped += k;   // never reaches the plugin: its clock doesn't advance
                 continue;
             }
-            r.pos_map.push_back({r.written, k, static_cast<double>(pos) + static_cast<double>(p) * step, step});
+            r.pos_map.push_back({r.written, k, pos + static_cast<double>(p) * step, step});
             r.written += k;
         }
         const uint64_t keep = static_cast<uint64_t>(r.prate() * POS_MAP_SECONDS);
@@ -1645,7 +1842,8 @@ private:
 // ---------------------------------------------------------------------------
 // DigitalDecoder
 // ---------------------------------------------------------------------------
-DigitalDecoder::DigitalDecoder(bool threaded) : engine_(std::make_unique<Engine>(report_, this, !threaded)) {
+DigitalDecoder::DigitalDecoder(bool threaded, bool internal_streams)
+    : engine_(std::make_unique<Engine>(report_, this, !threaded, internal_streams)), internal_streams_(internal_streams) {
     interp_ = firinterp_rrrf_create_kaiser(6, 8, 60.0f);
     if (threaded) worker_ = std::thread([this] {
         pthread_setname_np(pthread_self(), "digital-dec");
@@ -1785,32 +1983,79 @@ void DigitalDecoder::deliver_talker(const TalkerSpan& s) {
 }
 
 void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,
-                          const std::complex<int16_t>* mc, int mc_m) {
-    if (mode() == Mode::OFF || n == 0) return;
+                          const std::complex<int16_t>* mc, int mc_m, int bw_hz, const AuxStream* aux, size_t naux) {
+    if (mode() == Mode::OFF || n == 0 || !(rate_hz > 0)) return;
     // only an array plugin runs: it never sees this stream - a one-sample
     // tick every 100 ms keeps the engine going (starts the plugin, reads its
     // replies, follows the RF) without copying 2.4 MHz of samples
-    if (array_only_.load(std::memory_order_relaxed) && rate_hz > 0) {
+    if (array_only_.load(std::memory_order_relaxed)) {
         if (pos != NO_POS && tick_pos_ != NO_POS && pos >= tick_pos_ && static_cast<double>(pos - tick_pos_) < 0.1 * rate_hz) return;
         tick_pos_ = pos;
         n = 1;
+        naux = 0;
     }
+    // the copies are made outside the queue's lock (the worker takes it per block)
+    Block b;
+    b.x.assign(x, x + n);
+    b.rate = rate_hz;
+    b.rf = rf_hz;
+    b.pos = pos;
+    b.ns = n;
+    b.bw = bw_hz;
+    b.dur = static_cast<double>(n) / rate_hz;
+    if (mc && mc_m >= 2) {
+        b.mc.assign(mc, mc + n * static_cast<size_t>(mc_m));
+        b.m = mc_m;
+    }
+    if (aux && naux && internal_streams_) {
+        b.aux.resize(naux);
+        for (size_t k = 0; k < naux; k++) {
+            AuxBlock& a = b.aux[k];
+            a.w = aux[k].width_hz;
+            a.rate = aux[k].rate_hz;
+            a.pos = aux[k].pos;
+            if (aux[k].x) a.x.assign(aux[k].x, aux[k].x + aux[k].n);
+            if (aux[k].mc && aux[k].mc_m >= 2) {
+                a.mc.assign(aux[k].mc, aux[k].mc + aux[k].n * static_cast<size_t>(aux[k].mc_m));
+                a.m = aux[k].mc_m;
+            }
+        }
+    }
+    enqueue(std::move(b));
+}
+
+// The queue holds at most QUEUE_MAX_SECONDS of signal - the VFO's block and
+// its internal streams go and stay together, so the cap bounds both (a 2.4
+// MHz internal stream is 19 MB a second). A decoder that fell behind (CPU
+// starved) loses the oldest blocks
+void DigitalDecoder::enqueue(Block&& b) {
     {
         std::lock_guard<std::mutex> lk(q_mu_);
-        queue_.push_back({std::vector<std::complex<float>>(x, x + n), rate_hz, rf_hz, pos, {}, 0, 0, n});
-        if (mc && mc_m >= 2) {
-            queue_.back().mc.assign(mc, mc + n * static_cast<size_t>(mc_m));
-            queue_.back().m = mc_m;
-        }
-        queued_samples_ += n;
-        // decoder fell behind (CPU starved): drop the oldest data
-        while (queued_samples_ > static_cast<size_t>(rate_hz) * QUEUE_MAX_SECONDS && queue_.size() > 1) {
-            queued_samples_ -= queue_.front().ns;
+        queued_s_ += b.dur;
+        queue_.push_back(std::move(b));
+        while (queued_s_ > static_cast<double>(QUEUE_MAX_SECONDS) && queue_.size() > 1) {
+            queued_s_ -= queue_.front().dur;
             queue_.pop_front();
             dropped_++;
         }
+        if (queue_.size() == 1) queued_s_ = queue_.front().dur;   // (no drift)
     }
     q_cv_.notify_one();
+}
+
+int DigitalDecoder::wanted_streams(StreamWant* out) const {
+    std::lock_guard<std::mutex> lk(streams_mu_);
+    const int n = streams_n_.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; i++) out[i] = streams_[i];
+    return n;
+}
+
+void DigitalDecoder::set_wanted_streams(const std::vector<StreamWant>& w) {
+    std::lock_guard<std::mutex> lk(streams_mu_);
+    const int n = std::min<int>(static_cast<int>(w.size()), MAX_STREAMS);
+    for (int i = 0; i < n; i++) streams_[i] = w[static_cast<size_t>(i)];
+    streams_n_.store(n, std::memory_order_relaxed);
+    streams_gen_.fetch_add(1, std::memory_order_release);
 }
 
 void DigitalDecoder::set_array_wanted(bool on, double burst_s, double period_s, bool only) {
@@ -1834,17 +2079,8 @@ void DigitalDecoder::push_array(const std::complex<float>* const* ch, int m, siz
     b.pos = pos;
     b.x.resize(static_cast<size_t>(m) * n);
     for (int k = 0; k < m; k++) std::copy_n(ch[k], n, b.x.data() + static_cast<size_t>(k) * n);
-    {
-        std::lock_guard<std::mutex> lk(q_mu_);
-        queue_.push_back(std::move(b));
-        queued_samples_ += n;
-        while (queued_samples_ > static_cast<size_t>(rate_hz) * QUEUE_MAX_SECONDS && queue_.size() > 1) {
-            queued_samples_ -= queue_.front().ns;
-            queue_.pop_front();
-            dropped_++;
-        }
-    }
-    q_cv_.notify_one();
+    b.dur = static_cast<double>(n) / rate_hz;
+    enqueue(std::move(b));
 }
 
 void DigitalDecoder::set_tune_handler(TuneHandler h) {
@@ -1890,11 +2126,12 @@ void DigitalDecoder::deliver_video(const VideoFrameReport& f) {
 }
 
 void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,
-                             const std::complex<int16_t>* mc, int mc_m) {
+                             const std::complex<int16_t>* mc, int mc_m, int bw_hz, const AuxStream* aux, size_t naux) {
     if (reset_pending_.exchange(false)) engine_->reset_all();
     engine_->configure(mode(), options(), plugin_id());
     want_mc_.store(engine_->multichannel(), std::memory_order_relaxed);
-    engine_->process(x, n, rate_hz, rf_hz, pos, mc, mc_m);
+    engine_->process(x, n, rate_hz, rf_hz, pos, mc, mc_m, bw_hz, internal_streams_ ? aux : nullptr,
+                     internal_streams_ ? naux : 0);
 }
 
 void DigitalDecoder::drain(int timeout_ms) { engine_->drain(timeout_ms); }
@@ -1919,7 +2156,7 @@ void DigitalDecoder::run() {
             if (!queue_.empty()) {
                 b = std::move(queue_.front());
                 queue_.pop_front();
-                queued_samples_ -= b.ns;
+                queued_s_ = queue_.empty() ? 0.0 : queued_s_ - b.dur;
                 have = true;
             }
         }
@@ -1927,8 +2164,25 @@ void DigitalDecoder::run() {
         engine_->configure(mode(), options(), plugin_id());
         want_mc_.store(mode() != Mode::OFF && engine_->multichannel(), std::memory_order_relaxed);
         if (have && mode() != Mode::OFF) {
-            if (b.am > 0) engine_->process_array(b.x.data(), b.am, b.ns, b.rate, b.rf, b.pos);
-            else engine_->process(b.x.data(), b.x.size(), b.rate, b.rf, b.pos, b.m ? b.mc.data() : nullptr, b.m);
+            if (b.am > 0) {
+                engine_->process_array(b.x.data(), b.am, b.ns, b.rate, b.rf, b.pos);
+            } else {
+                AuxStream aux[MAX_STREAMS];
+                size_t naux = 0;
+                for (const auto& a : b.aux) {
+                    if (naux >= static_cast<size_t>(MAX_STREAMS)) break;
+                    AuxStream& s = aux[naux++];
+                    s.width_hz = a.w;
+                    s.rate_hz = a.rate;
+                    s.x = a.x.data();
+                    s.n = a.x.size();
+                    s.pos = a.pos;
+                    s.mc = a.m ? a.mc.data() : nullptr;
+                    s.mc_m = a.m;
+                }
+                engine_->process(b.x.data(), b.x.size(), b.rate, b.rf, b.pos, b.m ? b.mc.data() : nullptr, b.m, b.bw,
+                                 aux, naux);
+            }
         }
         pending = engine_->flush_pending();
     }
@@ -1996,8 +2250,10 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
         const auto& p = s.plugins[i];
         o << (i ? "," : "") << "{\"id\":\"" << json_escape(p.id) << "\",\"name\":\"" << json_escape(p.name)
           << "\",\"version\":\"" << json_escape(p.version) << "\",\"state\":\"" << json_escape(p.state)
-          << "\",\"error\":\"" << json_escape(p.error) << "\",\"rate\":" << p.rate << ",\"dropped\":" << p.dropped
-          << ",\"log\":[";
+          << "\",\"error\":\"" << json_escape(p.error) << "\",\"rate\":" << p.rate << ",\"dropped\":" << p.dropped;
+        // Auto detect's internal stream it runs on (Hz; absent = the VFO's own)
+        if (p.stream_hz > 0) o << ",\"stream_hz\":" << p.stream_hz;
+        o << ",\"log\":[";
         for (size_t k = 0; k < p.tail.size(); k++) o << (k ? "," : "") << "\"" << json_escape(p.tail[k]) << "\"";
         o << "]}";
     }

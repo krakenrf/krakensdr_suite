@@ -8,8 +8,10 @@
 // decimation pipeline pushes this VFO's decimated samples (the listened-to
 // channel, or the beamformer output when beamforming runs) with push(); a
 // worker thread mixes them (AFC), resamples them to each plugin's rate and
-// streams them to the plugin processes. Mode AUTO runs every plugin that
-// declares auto_detect and reports the one whose frames pass their checks.
+// streams them to the plugin processes. Mode AUTO runs every plugin ticked
+// for Auto detect and reports the one whose frames pass their checks; one
+// that needs more bandwidth than the VFO has runs on an internal stream of
+// the VFO's centre at the width it needs (StreamWant / AuxStream below).
 //
 // The plugins report facts and events (Report) and decoded voice, which is
 // played through the voice FIFO here when the VFO is heard (🔊) in Digital
@@ -153,11 +155,36 @@ using VideoHandler = std::function<void(const VideoFrameReport&)>;
 // the decoder's worker thread.
 using TuneHandler = std::function<std::string(double rf_hz)>;
 
+// Auto detect's internal streams (docs/dev/digital-decoders.md, "Internal
+// streams"): a plugin that needs a wider bandwidth than the VFO has runs on
+// the VFO's centre decimated to a width of its own - what it would get if
+// the user widened the VFO to that width. The engine says which widths it
+// wants (DigitalDecoder::wanted_streams); the pipeline decimates them in the
+// VFO's pass and hands them over with the VFO's block (push).
+struct StreamWant {
+    int width_hz = 0;   // an efficient size (bandwidth = output rate)
+    bool mc = false;    // a multichannel plugin runs on it: every antenna, when the VFO's own stream would get them
+};
+struct AuxStream {
+    int width_hz = 0;                              // = a StreamWant::width_hz
+    float rate_hz = 0;                             // its output rate (= width_hz)
+    const std::complex<float>* x = nullptr;        // the listened-to channel (never the beamformer output)
+    size_t n = 0;
+    double pos = 0;                                // VFO stream position of x[0] (the cascades' delays taken off)
+    const std::complex<int16_t>* mc = nullptr;     // every antenna x MC_SCALE (StreamWant::mc), null = none
+    int mc_m = 0;
+};
+
 class DigitalDecoder {
 public:
     // threaded = false: offline tests - process() runs synchronously and
-    // waits for slow plugins instead of dropping samples
-    explicit DigitalDecoder(bool threaded = true);
+    // waits for slow plugins instead of dropping samples.
+    // internal_streams = the caller of push() / process() makes the internal
+    // streams wanted_streams() names (the live pipeline). Without them (the
+    // offline tests) Auto detect runs as before they existed: on the VFO's
+    // stream only, without the plugins that need more than
+    // AUTO_MAX_RATE_SHORTFALL x its rate
+    explicit DigitalDecoder(bool threaded = true, bool internal_streams = false);
     ~DigitalDecoder();
     DigitalDecoder(const DigitalDecoder&) = delete;
     DigitalDecoder& operator=(const DigitalDecoder&) = delete;
@@ -207,14 +234,33 @@ public:
     // (kp::Info::multichannel; the pipeline fills it only while
     // wants_multichannel()): n samples x mc_m antennas, sample by sample,
     // antenna 0 first, value x MC_SCALE
+    // bw_hz = the VFO's bandwidth (0 = take the rate for it); aux = the
+    // internal streams of this block (Auto detect, wanted_streams()), copied
+    // with it - one queue entry, so the 1 s cap bounds them too
     void push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS,
-              const std::complex<int16_t>* mc = nullptr, int mc_m = 0);
+              const std::complex<int16_t>* mc = nullptr, int mc_m = 0, int bw_hz = 0, const AuxStream* aux = nullptr,
+              size_t naux = 0);
     static constexpr float MC_SCALE = 8192.0f;   // = kp::wire::MC_SCALE
-    // a multichannel plugin runs (the pipeline then hands every antenna over)
+    // a multichannel plugin runs on the VFO's own stream (the pipeline then
+    // hands every antenna over; one on an internal stream: StreamWant::mc)
     bool wants_multichannel() const { return want_mc_.load(std::memory_order_relaxed); }
     // Synchronous processing (offline tests; threaded = false)
     void process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS,
-                 const std::complex<int16_t>* mc = nullptr, int mc_m = 0);
+                 const std::complex<int16_t>* mc = nullptr, int mc_m = 0, int bw_hz = 0,
+                 const AuxStream* aux = nullptr, size_t naux = 0);
+
+    // --- Auto detect's internal streams (StreamWant) ---
+    // at most this many widths at once (a VFO in Auto detect)
+    static constexpr int MAX_STREAMS = 4;
+    bool internal_streams() const { return internal_streams_; }
+    // the widths the engine wants now (none while the decoder is off, in a
+    // fixed mode, or when the VFO is wide enough for every plugin); the
+    // count fits MAX_STREAMS. streams_gen() changes with every change, so
+    // the pipeline reads them only then; wants_streams() is the cheap test
+    int wanted_streams(StreamWant* out) const;
+    uint32_t streams_gen() const { return streams_gen_.load(std::memory_order_acquire); }
+    bool wants_streams() const { return streams_n_.load(std::memory_order_relaxed) > 0; }
+    void set_wanted_streams(const std::vector<StreamWant>& w);   // Engine
 
     // Talker spans (kp::Host::talker) of this decoder's plugins go to h -
     // the VFO's per-talker DoA (talker_doa.hpp). Called on the worker thread.
@@ -304,7 +350,22 @@ private:
     uint64_t tick_pos_ = NO_POS;            // the last tick (pipeline thread)
     std::atomic<double> arr_burst_{0.25}, arr_period_{1.0};
 
+    // internal streams (set once in the constructor; the wants: Engine -> pipeline)
+    const bool internal_streams_;
+    mutable std::mutex streams_mu_;
+    StreamWant streams_[MAX_STREAMS];
+    std::atomic<int> streams_n_{0};
+    std::atomic<uint32_t> streams_gen_{0};
+
     // queue
+    struct AuxBlock {
+        int w = 0;
+        float rate = 0;
+        double pos = 0;
+        std::vector<std::complex<float>> x;
+        std::vector<std::complex<int16_t>> mc;
+        int m = 0;
+    };
     struct Block {
         std::vector<std::complex<float>> x;
         float rate;
@@ -315,12 +376,16 @@ private:
         // am > 0: an array block (push_array), x = am antennas x ns samples, antenna-major
         int am = 0;
         size_t ns = 0;
+        int bw = 0;                              // the VFO's bandwidth (push's bw_hz)
+        std::vector<AuxBlock> aux;               // internal streams (push's aux)
+        double dur = 0;                          // seconds of signal (the queue's cap)
     };
     std::atomic<bool> want_mc_{false};
     std::mutex q_mu_;
     std::condition_variable q_cv_;
     std::deque<Block> queue_;
-    size_t queued_samples_ = 0;
+    double queued_s_ = 0;   // seconds queued (QUEUE_MAX_SECONDS)
+    void enqueue(Block&& b);
     std::atomic<uint64_t> dropped_{0};
     bool stop_ = false;
     std::thread worker_;
