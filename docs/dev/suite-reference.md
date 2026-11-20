@@ -904,7 +904,10 @@ leaves it out) with the models in `docker-data/whisper_models/`
   CPU per transcript at the same accuracy; a decode that hits a token cap
   (a loop) is done again the old way. 8-bit models base.en-q8_0 /
   small.en-q8_0 are made on the receiver (`kraken_whisper --quantize`; ~15-25 %
-  less CPU)
+  less CPU on a PC, half on a Pi 4 - base.en-q8_0 is the Pi's choice), and
+  4-bit -q4_0 ones (least memory; more CPU than 8-bit on a Pi 4). On Arm
+  CPUs with the dot-product instructions (a Pi 5) the helper is built with
+  Arm's KleidiAI kernels (setup.sh; not measured on a Pi 5)
 - Live text (option, off by default; `VOICE2TEXT_LIVE:`): while someone
   talks the worker sends the transmission so far as a PARTIAL job about once
   a second (finals first), words two partials agree on are confirmed, and

@@ -125,8 +125,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   it. Crash -> the in-flight job is retried once (a partial is not), restart after 2..30 s; a
   job or partial running > max(90 s, 15x its length) kills it. No VFO transcribing for
   `HELPER_IDLE_STOP_MS` 2 min -> stopped (base.en ~280 MB RAM). The same
-  binary makes the derived q8_0 models: `kraken_whisper --quantize IN OUT
-  q8_0` (below)
+  binary makes the derived q8_0 / q4_0 models: `kraken_whisper --quantize IN OUT
+  q8_0|q4_0` (below)
 - In the helper per job: Silero VAD (min speech 200 ms, min silence 300 ms,
   pad 200 ms) -> only the speech parts, joined by 150 ms of silence (< 200
   ms of speech = "no speech", whisper never runs: 30-40 ms for 5 s of noise)
@@ -210,9 +210,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `--file x.wav --partial` (one partial), `--stream 1000` (the live
   schedule: a partial of the audio so far every second, LocalAgreement-2
   confirmed / pending per line, then the final and a summary).
-  `kraken_whisper --quantize IN OUT q8_0|q5_0|q5_1` (`transcribe/quantize.cpp`,
+  `kraken_whisper --quantize IN OUT q8_0|q5_0|q5_1|q4_0` (`transcribe/quantize.cpp`,
   ported from whisper.cpp's quantize example, MIT): byte for byte what
-  whisper-quantize writes (checked: base.en / small.en q8_0, base.en q5_1),
+  whisper-quantize writes (checked: base.en / small.en q8_0 and q4_0, base.en q5_1),
   ~20 MB of memory (1M weights at a time; small.en goes through under a 60
   MB address limit), refuses a quantized / non-speech-model / truncated
   input, stray bytes at its end, a shape that overflows, a row over 65536
@@ -297,13 +297,15 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   URLs), `curl` via posix_spawnp on a detached thread -> `.part` -> rename
   (+ the VAD model when missing); progress = file size / catalogue MB.
   DERIVED models (2026-11-20, `CatalogueEntry::from`: base.en-q8_0 78 MB,
-  small.en-q8_0 252 MB - whisper.cpp publishes no English-only q8_0 file):
+  small.en-q8_0 252 MB, base.en-q4_0 44 MB, small.en-q4_0 139 MB - whisper.cpp
+  publishes no English-only q8_0 / q4_0 file; the type = the name's last part,
+  `DlStep::qtype`):
   made here, never downloaded as such. `download_thread` runs steps
   (`DlStep`): the f16 model from its own fixed URL unless installed - then
   into `ggml-<name>.f16` (no model list shows it; deleted afterwards, also
   when quantizing failed; an installed f16 model stays) -, then
   `<transcribe dir>/build/kraken_whisper --quantize <f16> <models>/ggml-<name>.bin.part
-  q8_0` (kproc, nice 10, stderr kept: a failure reports its last line,
+  <qtype>` (kproc, nice 10, stderr kept: a failure reports its last line,
   "making the model failed (exit 3): ...") and the rename, then the VAD
   model if missing (stage "vad": the page said "Downloading base.en to make
   base.en-q8_0… 0 %" during it - review 2026-11-20). stage "quantize" while
@@ -316,8 +318,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   download thread (a few ms, at most 5 s - on the uWS thread until the
   re-review: a hanging binary blocked the loop, and on Windows a first
   start slowed by a virus scanner or a failed spawn read as "older") and
-  looks at its usage: no "--quantize" in it -> "the speech helper is older
-  than the 8-bit models - update it (make whisper), then Get again"; it
+  looks at its usage: no "--quantize" followed by the model's type (q4_0
+  came after q8_0: a helper of that day's first version lists q8_0|q5_0|q5_1
+  only) -> "the speech helper is older than this model (it cannot make q4_0
+  models) - update it (make whisper), then Get again"; it
   didn't start, printed no usage or didn't answer in 5 s -> "could not
   check the speech helper: it did not start (...)" / "it printed no usage" /
   "it did not answer within 5 s" (not from READY's live: the file may be
@@ -734,7 +738,7 @@ default, because of its CPU cost (measured below).
   2 the bench's minimum with small.en, 1 and 2 within 5 % with base.en);
   the default stays 2.
 
-## Derived models: base.en-q8_0, small.en-q8_0 (2026-11-20)
+## Derived models: base.en-q8_0, small.en-q8_0, base.en-q4_0, small.en-q4_0 (2026-11-20)
 
 whisper.cpp's quantize (q8_0, from the f16 model) used ~16 % (base.en) /
 27 % (small.en) less CPU than f16, about as accurate (the "Measured"
@@ -746,7 +750,62 @@ equal), made by the page's Get (`VOICE2TEXT_DOWNLOAD`, above) or
 `transcribe/setup.sh base.en-q8_0`, both with the helper's `--quantize`
 (one binary: Docker and the Windows package copy only
 `transcribe/build/kraken_whisper[.exe]`). The default model stays base.en.
-Not measured on a Pi.
+
+**4-bit (q4_0) and KleidiAI** (2026-11-20, the user: "Implement 4, for the
+Pi" - q4_0 + Arm's KleidiAI kernels; measured on the user's Raspberry Pi 4
+Model B, 1 GB, Cortex-A72, Raspberry Pi OS / Debian 13, gcc 14):
+- base.en-q4_0 (44 MB) / small.en-q4_0 (139 MB): derived like the q8_0
+  ones (`--quantize ... q4_0`, byte for byte whisper-quantize's file);
+  the type is the derived name's last part everywhere (setup.sh
+  `derived_type`, `DlStep::qtype`). setup.sh downloads an f16 model once
+  for several derived ones (`TEMP_F16`, removed after all of them - also
+  on an EXIT trap when a later download fails; before, `base.en-q8_0
+  base.en-q4_0` fetched base.en twice).
+- KleidiAI (`GGML_CPU_KLEIDIAI`, v1.24.0 pinned by ggml, fetched by its
+  CMake from GitHub, Apache-2.0): its q4_0 / q8_0 kernels need the
+  dot-product instructions (or i8mm / SME) - a Pi 5's Cortex-A76 has them,
+  a Pi 4's A72 (`fp asimd evtstrm crc32 cpuid`) has none. setup.sh's
+  `kleidiai_args`: on 64-bit Arm Linux with `asimddp` in /proc/cpuinfo ON,
+  else OFF (`KLEIDIAI=on|off` overrides); a configure that fails with it
+  ON (no network) is redone without it (`build/cmake-kleidiai.log` kept).
+  An incremental `--update` (kraken_doa's make) keeps the existing build:
+  an existing install gets it with `make whisper`. Forced ON on the Pi 4:
+  fetched and built (4 min 44 s, -j2; binary 2.18 vs 1.98 MB), 8 of 8
+  transcripts identical to the build without it at the same speed (its
+  kernels are not picked on a CPU without dot-product). A Pi 5 - where it
+  matters - was not available: NOT measured.
+- Pi 4 (serve mode, the 15 bench clips, VAD on, CPU-s per job and word
+  error rate vs medium.en-q5_0; 2 threads; each run started below 65 C,
+  two rounds in rotated order agreed within 0.2 %):
+
+  | helper / model | CPU per job | wall per job | WER |
+  |---|---|---|---|
+  | old helper (main, 30 s window), base.en | 39.8 s | 20.1 s | 11.6 % |
+  | new, base.en | 12.8 s | 6.5 s | 11.1 % |
+  | new, base.en-q8_0 | 6.2 s | 3.2 s | 12.5 % |
+  | new, base.en-q4_0 | 8.0 s | 4.1 s | 6.9 % |
+  | new, small.en-q8_0 | 22.5 s | 11.4 s | 7.4 % |
+  | new, small.en-q4_0 | 23.0 s | 11.7 s | 11.1 % |
+
+  The clips average 7.5 s: the old helper fell 2.7x behind real time on a
+  Pi 4; base.en-q8_0 is 2.3x faster than real time (6.4x less CPU than the
+  old helper). On the A72 q4_0 is SLOWER than q8_0 (no dot-product: the
+  4-bit unpacking costs more than the smaller weights save) but faster than
+  f16 (no fp16 arithmetic on the A72 either); small.en-q4_0 = q8_0's CPU,
+  less accurate. 4 threads: more CPU in total (base.en 14.4, q8_0 7.3,
+  q4_0 9.1 CPU-s), less wall (3.8 / 2.0 / 2.5 s). Peak memory (one 11 s
+  job): base.en 221 MB, -q8_0 157, -q4_0 123, small.en-q8_0 392, -q4_0
+  279 MB - q4_0 is the 1 GB Pi 4's memory option. The notes say so: on a
+  Pi base.en-q8_0 is "recommended on a Pi" (base.en points to it); the
+  default download stays base.en.
+- Live text on the Pi 4 (`--stream 1000`, 4 clips): base.en-q8_0 4
+  threads: partials 1.2-1.4 s each (max 3 s), 3-3.6 of the 4 cores while
+  someone talks; 2 threads: 1.8-2.5 s each, ~2 cores; base.en-q4_0 4
+  threads ~ the same as q8_0. Too much next to heimdall + kraken_doa:
+  the Live text tip says to leave it off on a Pi 4.
+- The test Pi 4 throttled in the first, back-to-back runs (83 C,
+  `get_throttled` 0xe0008): sustained transcription on a Pi 4 needs
+  cooling.
 
 ## Tests (job fa22c145, scratch `client/`)
 

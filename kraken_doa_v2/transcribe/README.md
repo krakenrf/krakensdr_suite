@@ -18,7 +18,7 @@ make whisper               # = transcribe/setup.sh: clone + build + base.en + th
 |---|---|
 | `transcribe/setup.sh` | clone whisper.cpp at the pinned commit, build `build/kraken_whisper` (JOBS, max 3), download base.en (if no model yet) and the Silero VAD model |
 | `transcribe/setup.sh small.en tiny.en` | the same + these models |
-| `transcribe/setup.sh base.en-q8_0` | base.en with 8-bit weights, made here from base.en (below) |
+| `transcribe/setup.sh base.en-q8_0` | base.en with 8-bit weights, made here from base.en (below; `-q4_0` = 4-bit) |
 | `transcribe/setup.sh --models-only M..` | only download models |
 | `transcribe/setup.sh --build-only` | only build |
 | `transcribe/setup.sh --update` | rebuild if set up already (kraken_doa's `make` runs it) |
@@ -39,6 +39,19 @@ a second or two on a PC): setup.sh (or the page's "Get") uses an installed
 base.en / small.en, else downloads it for this and removes it again
 afterwards unless it was asked for too. `--models-only` needs the helper
 built already.
+
+**On a Raspberry Pi** (measured on a Pi 4, 2026-11-20): use
+**`base.en-q8_0`** - half the CPU of base.en (6.2 against 12.8 CPU-s per
+transcript, 2.3x faster than real time), as accurate. **4-bit models**
+(`base.en-q4_0` 44 MB, `small.en-q4_0` 139 MB, made the same way with
+`--quantize ... q4_0`) take the least memory (base.en-q4_0 123 MB against
+157 MB for q8_0) but more CPU than q8_0 on a Pi 4, whose Cortex-A72 has no
+dot-product instructions. On 64-bit Arm Linux whose CPU has them (a Pi 5),
+setup.sh builds the helper with Arm's **KleidiAI** kernels for 4- / 8-bit
+models (fetched by CMake from GitHub; offline it builds without them;
+`KLEIDIAI=on|off` overrides the detection; an existing build gets them with
+`make whisper`) - not measured on a Pi 5. Live text is too heavy for a Pi 4
+(3 of its 4 cores while someone talks).
 
 Files: `whisper.cpp/` (the pinned checkout), `build/` and `models/`
 (`ggml-<name>.bin`) - all gitignored. `KRAKEN_TRANSCRIBE_DIR` /
@@ -65,7 +78,7 @@ confidence and the text (or why nothing was kept). Any 16-bit WAV works
 |---|---|
 | `--partial` | one Live text decode of the whole file (what a PARTIAL job does) |
 | `--stream 1000` | Live text as kraken_doa runs it: a partial decode of the audio so far every second (as if the file arrived in real time), each line `time, decode time, [confirmed] pending`; then the final transcript and a summary (decode times, CPU cores used while the audio lasted, words confirmed early and how many the final changed) |
-| `--quantize IN.bin OUT.bin q8_0` | (no `--model`) f16 / f32 model -> 8-bit (`q5_0`, `q5_1` too); OUT is written exactly as named (callers use a `.part` name and rename), exit 0 = done, else a message on stderr and no OUT |
+| `--quantize IN.bin OUT.bin q8_0` | (no `--model`) f16 / f32 model -> 8-bit (`q4_0`, `q5_0`, `q5_1` too); OUT is written exactly as named (callers use a `.part` name and rename), exit 0 = done, else a message on stderr and no OUT |
 
 The clips kraken_doa keeps (`<decoder log folder>/voice_clips/YYYY-MM-DD/<id>.opus`,
 Ogg Opus) are what it sent, compressed: `ffmpeg -i <id>.opus -ar 16000 -ac 1 clip.wav`

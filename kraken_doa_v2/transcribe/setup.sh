@@ -89,12 +89,12 @@ fi
 # name  size_MB  note - the same list as MODEL_CATALOGUE in src/voice2text.cpp
 CATALOGUE="tiny.en 75 fastest,_least_accurate
 base.en 142 default:_good_on_a_Pi_5,_faster_than_real_time
-base.en-q8_0 78 base.en_8-bit:_less_CPU,_as_accurate_-_made_here_from_base.en
-base.en-q4_0 44 base.en_4-bit:_least_CPU_and_memory_-_made_here_from_base.en
+base.en-q8_0 78 base.en_8-bit:_less_CPU_(half_on_a_Pi_4),_as_accurate_-_made_here_from_base.en
+base.en-q4_0 44 base.en_4-bit:_least_memory_(on_a_Pi_4_more_CPU_than_8-bit)_-_made_here_from_base.en
 base.en-q5_1 57 base.en_compressed:_less_memory,_about_as_accurate
 small.en 466 most_accurate_on_a_Pi:_about_2x_slower_than_real_time
 small.en-q8_0 252 small.en_8-bit:_less_CPU,_as_accurate_-_made_here_from_small.en
-small.en-q4_0 139 small.en_4-bit:_less_CPU_and_memory_-_made_here_from_small.en
+small.en-q4_0 139 small.en_4-bit:_less_memory_than_8-bit,_a_little_less_accurate_-_made_here_from_small.en
 small.en-q5_1 181 small.en_compressed
 tiny 75 any_language_(or_translated_to_English),_fastest
 base 142 any_language_(or_translated_to_English)
@@ -243,12 +243,13 @@ resolve_gpu() {
 kleidiai_args() {
     ARM_ARGS=()
     [ $WINDOWS = 0 ] && [ $MACOS = 0 ] && [ "$(uname -m)" = aarch64 ] || return 0
-    local want=${KLEIDIAI:-auto}
+    local want=${KLEIDIAI:-auto} why="KLEIDIAI=on"
     if [ "$want" = auto ]; then
+        why="this CPU has the dot-product instructions"
         if grep -qw asimddp /proc/cpuinfo 2>/dev/null; then want=on; else want=off; fi
     fi
     case "$want" in
-        on) ARM_ARGS=(-DGGML_CPU_KLEIDIAI=ON); echo "With Arm's KleidiAI kernels (this CPU has the dot-product instructions)" ;;
+        on) ARM_ARGS=(-DGGML_CPU_KLEIDIAI=ON); echo "With Arm's KleidiAI kernels ($why)" ;;
         off) ARM_ARGS=(-DGGML_CPU_KLEIDIAI=OFF) ;;
         *) die "KLEIDIAI must be auto, on or off (not '$want')" ;;
     esac

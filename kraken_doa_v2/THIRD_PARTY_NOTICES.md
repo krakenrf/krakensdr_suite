@@ -65,6 +65,7 @@ These are not under the KrakenSDR Source Available Licence (its section 6):
 | GCC runtime (libstdc++, libgcc) | | every program | GPL-3.0 with the GCC Runtime Library Exception | https://gcc.gnu.org/ |
 | GNU C library (glibc) | the system's (Linux, linked dynamically) | every program | LGPL-2.1-or-later | https://www.gnu.org/software/libc/ |
 | whisper.cpp + ggml (optional Voice to Text helper `transcribe/build/kraken_whisper`) | v1.9.4 (`transcribe/setup.sh`) | kraken_whisper | MIT - Copyright (c) 2023-2026 The ggml authors | https://github.com/ggml-org/whisper.cpp |
+| KleidiAI (Arm's matrix kernels for 4- / 8-bit weights, through ggml's `GGML_CPU_KLEIDIAI`) | v1.24.0 (pinned by ggml, fetched by its CMake) - only in builds on 64-bit Arm Linux whose CPU has the dot-product instructions (a Pi 5; `transcribe/setup.sh`) | kraken_whisper | Apache-2.0 - Copyright 2024-2026 Arm Limited and/or its affiliates | https://github.com/ARM-software/kleidiai |
 
 ## 3. Software you install separately
 
