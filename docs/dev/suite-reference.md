@@ -1365,7 +1365,7 @@ EXPERIMENTAL / on the back burner: on the live array the aircraft's
 responses were too distorted (multipath / low elevation) for a good fit -
 see the client CLAUDE.md
 
-### Operating Modes (top-bar Mode selector: Coherent / Wideband / Independent)
+### Operating Modes (top-bar Mode selector: Coherent / Wideband / Independent / Sweep)
 
 - **Coherent**: the array (DoA, beamforming, calibration). **Wideband**: the
   tuner-spread scan (one stitched spectrum, discrete scanner). **Independent**:
@@ -1389,6 +1389,16 @@ see the client CLAUDE.md
 - The assistant's IQ captures (`capture_iq`, done inside kraken_doa -
   `ai_capture.cpp`) record the tuner whose band holds the signal outside
   coherent mode
+- **Sweep** (the fourth mode, 2026-11-20): the chosen tuners step through a
+  range (24 - 1765 MHz at most, 1 912 500 Hz per tuner and step, contiguous
+  blocks of steps per tuner), heimdall hops them (`set_sweep`, 8091 flag
+  0x2000 with 0x800, the scanner fields as round counter / retuning flag) and
+  the client stitches one spectrum (`SWEEP_RANGE` / `SWEEP_TUNERS` /
+  `SWEEP_RES` / `SWEEP_DWELL` / `SWEEP_RUN`, per-page `SWEEP_VIEW`, FFT
+  message type 10). Not live: no VFO processing, audio, decoders or DoA. The
+  top bar shows the range and the tuner selector in place of the frequency.
+  `kraken_doa_v2/docs/dev/sweep-mode.md` (the wire contract and all three
+  parts), `heimdall_v2/docs/dev/operating-modes.md` *Sweep mode*
 - Only coherent exists on the downconverter variant. See heimdall_v2/CLAUDE.md
   *Operating Modes* and kraken_doa_v2/CLAUDE.md *Operating modes*
 

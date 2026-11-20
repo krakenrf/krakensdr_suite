@@ -188,10 +188,27 @@ The **Mode** selector in the top bar (the ring-of-dots icon) picks how the tuner
 | **Coherent** (default) | One phase-calibrated antenna array | Direction finding, beamforming, the web mapper, DoA logging |
 | **Wideband** | Side by side, one stitched spectrum (about 5 x 1.9 MHz on a KrakenSDR) | A wide view and the discrete scanner. No direction finding |
 | **Independent** | Each its own receiver with its own frequency and gain | One spectrum and waterfall per tuner. No direction finding, no calibration |
+| **Sweep** | The chosen tuners step through a frequency range | One spectrum and waterfall of the whole range, up to 24 - 1765 MHz. Not live: no audio, no decoders, no direction finding |
 
 The mode is remembered across restarts. Switching back to Coherent retunes
 every tuner to the common frequency and recalibrates. The KrakenSDR Wideband
 hardware only has Coherent mode.
+
+**Sweep mode.** The top bar's frequency is replaced by the range, **Start**
+and **Stop**, and a button for each tuner. The tuners that are pressed step
+through the range together, about 1.9 MHz per tuner and step, and the page
+draws one spectrum of the whole range, with a waterfall line for every
+completed sweep. More tuners make the sweep faster: the whole 24 - 1765 MHz
+takes roughly 8 seconds with five tuners and 40 seconds with one, the FM
+broadcast band is swept several times a second. Every tuner that takes part
+needs its antenna connected - each covers its own part of the range, and a
+tuner without an antenna shows only noise in its part. The **Sweep** box in the
+sidebar sets the resolution (Auto picks one from the width of the range), how
+long each step is measured (Dwell: longer is smoother and slower), and pauses
+the sweep. The mouse wheel zooms in as far as the resolution goes, dragging
+moves the view, and the pointer shows the frequency and level under it. Gain
+is one setting for all tuners. Nothing is demodulated in this mode; the VFOs
+and their settings are kept and come back with the other modes.
 
 **Ordinary RTL-SDR dongles.** Without a KrakenSDR or KerberosSDR, the suite
 also runs on one or more ordinary RTL-SDR dongles (any serial numbers): just
