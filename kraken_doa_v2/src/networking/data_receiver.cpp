@@ -30,6 +30,7 @@
 #include "utils/iq_converter.hpp"
 #include "channel_manager.hpp"
 #include "scanner_manager.hpp"
+#include "trunk_follow.hpp"
 #include "control_handler.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/endian_utils.hpp"
@@ -619,6 +620,7 @@ void DataReceiver::decimation_processor_thread() {
 
         // Update scanner with phase calibration status from server
         // This allows scanner to avoid checking for signal loss during calibration
+        trunk::note_packet();
         scanner_manager.updatePhaseCalibrationStatus(raw_packet.phase_compensation_state,
                                                     raw_packet.noise_source_active);
 
