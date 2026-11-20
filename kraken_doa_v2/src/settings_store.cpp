@@ -188,6 +188,10 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"trunk_audio",              "TRUNK_AUDIO:",              VType::BOOL,   "1"},
         {"trunk_hang_s",             "TRUNK_HANG:",               VType::NUMBER, "2.0"},
         {"trunk_all_sites",          "TRUNK_ALL_SITES:",          VType::BOOL,   "0"},
+        {"trunk_retune",             "TRUNK_RETUNE:",             VType::BOOL,   "0"},
+        {"trunk_retune_cal",         "TRUNK_RETUNE_CAL:",         VType::BOOL,   "1"},
+        {"trunk_retune_max_s",       "TRUNK_RETUNE_MAX:",         VType::NUMBER, "120"},
+        {"trunk_tuners",             "TRUNK_TUNERS:",             VType::STRING, ""},
         // Station
         {"station_id",               "STATION_ID:",               VType::STRING, "KrakenSDR"},
         {"location_source",          "LOCATION_SOURCE:",          VType::STRING, "gps"},

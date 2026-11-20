@@ -191,7 +191,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 - Scanning: `saved-frequency-scan.md` (the discrete, continuous and
   saved-frequency scanners are mutually exclusive), `saved-frequencies.md`
 - Trunked systems: `trunk-following.md` (a voice VFO per granted call,
-  never saved; paused while a scanner runs)
+  never saved; paused while a scanner runs; optional retunes: an excursion
+  outside the span in coherent mode, voice tuners in independent mode)
 - Map: `map.md`, `map-search.md`, `station-on-map.md`, `osm-masts.md`,
   `viewshed.md`, `path-loss.md`, `range.md` (range from signal strength,
   a VFO's level on mouseover), `incident-map.md`, `mobile-df.md`,

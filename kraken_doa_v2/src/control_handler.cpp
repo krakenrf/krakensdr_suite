@@ -991,11 +991,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         // If wideband mode is active, disable it first to turn off bias-tee/noise source
         // A manual retune ends a discrete scan: heimdall would keep hopping
         // over it (and the client scanner is only fed in wideband mode)
-        if (scanner_manager.isRunning() && !g_replaying_settings.load()) {
+        if (scanner_manager.isRunning() && !g_replaying_settings.load() && !trunk::dispatching()) {
             cout << "Manual retune: stopping the discrete scanner" << endl;
             scanner_manager.stop();
         }
-        if (sfscan::running() && !sfscan::dispatching() && !g_replaying_settings.load())
+        if (sfscan::running() && !sfscan::dispatching() && !trunk::dispatching() && !g_replaying_settings.load())
             sfscan::stop("the receiver was retuned by hand");
         if (wideband_mode_enabled.load(std::memory_order_relaxed)) {
             cout << "Disabling wideband mode before manual frequency retune (prevents bias-tee staying active)" << endl;
@@ -2549,7 +2549,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (is_freq) {
             if (!(v * 1e6 >= RTL_TUNER_MIN_HZ && v * 1e6 <= RTL_TUNER_MAX_HZ))
                 throw CommandRejected("outside the tuner range (24-1766 MHz)");
-            if (sfscan::uses_tuner(ch) && !sfscan::dispatching())
+            if (sfscan::uses_tuner(ch) && !sfscan::dispatching() && !trunk::dispatching())
                 sfscan::stop("tuner " + to_string(ch) + " was retuned by hand");
             const double hz = static_cast<double>(llround(v * 1e6));
             indep_tuner_freq_hz[ch] = hz;
@@ -2564,7 +2564,8 @@ void ControlHandler::handle_message_impl(string_view message) {
             o << "{\"set_independent_tuner\":{\"channel\":" << ch << ",\"gain\":" << g << "}}";
             send_control_command(o.str());
         }
-        if (!sfscan::dispatching()) SettingsStore::record("TUNERS:" + tuners_string());
+        // (the trunk manager's voice tuners: not the user's tuning - not saved)
+        if (!sfscan::dispatching() && !trunk::dispatching()) SettingsStore::record("TUNERS:" + tuners_string());
         broadcast(build_operating_mode_json());
     }
     else if (message.starts_with("TUNERS:")) {
@@ -2903,6 +2904,7 @@ string ControlHandler::apply_command(string_view message) {
             return antbias::handle_command(message, from_page && !g_replaying_settings.load());
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
+        trunk::before_command(message);   // (an excursion outside the span ends first)
         if (playback::handle_command(message)) return "";
         if (playback::active() && !playback::internal() && !g_replaying_settings.load()) {
             uint64_t f = 0;
