@@ -1089,8 +1089,8 @@ void WebSocketServer::web_server_main() {
                     static std::string last_status;
                     static unsigned tick = 0;
                     if (!global_ssl_app) return;
-                    const std::string fresh = v2t::take_new_message();
-                    const std::string live = v2t::take_live_message();
+                    std::string fresh, live;
+                    v2t::take_pushes(&fresh, &live);   // (one lock: a final with its row's removal)
                     if (global_ssl_app->numSubscribers(TOPIC_CTL) == 0) return;
                     if (!fresh.empty()) global_ssl_app->publish(TOPIC_CTL, fresh, uWS::TEXT, false);
                     if (!live.empty()) global_ssl_app->publish(TOPIC_CTL, live, uWS::TEXT, false);

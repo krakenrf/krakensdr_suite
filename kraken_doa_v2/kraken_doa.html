@@ -16554,6 +16554,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (dl && dl.running) {
       dst.style.display = '';
       dst.textContent = dl.stage === 'quantize' ? `Making ${dl.name} from ${from || 'its model'}… ${dl.pct} %`
+                      : dl.stage === 'vad' ? 'Downloading the voice detection model…'
                       : from ? `Downloading ${from} to make ${dl.name}… ${dl.pct} %` : `Downloading ${dl.name}… ${dl.pct} %`;
     }
     else if (dl && dl.error) { dst.style.display = ''; dst.innerHTML = `<span style="color:#fb8d85">${icon('warn', 't')}<span>${digEsc(dl.name)}: ${digEsc(dl.error)}</span></span>`; }
@@ -16630,7 +16631,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     v2tSetHtml($id('v2t-live-st'), !s.live ? ''
       : s.live_ok === false
         ? `<span style="color:#f4c170" title="The speech helper installed is older than Live text: update it (cd kraken_doa_v2 &amp;&amp; make whisper). Transcripts come at the end of each transmission meanwhile">${icon('warn', 't')}<span>not with this helper</span></span>`
-      : s.partials ? `<span title="Live updates so far, the time each took (mean)${s.partials_stale ? ' - ' + s.partials_stale + ' came after their transmission ended (not shown)' : ''}">${s.partials} updates · ${(s.partial_ms / 1000).toFixed(1)} s each</span>`
+      : s.partials ? `<span title="Live updates so far, the time each took (mean)${s.partials_stale ? ' - ' + s.partials_stale + ' came after their transmission ended (not shown)' : ''}">${s.partials} updates · ${(s.partial_ms / 1000).toFixed(1)} s each</span>` +
+        (s.partials_slow ? ` · <span style="color:#f4c170" title="Transmissions whose live text stopped: the next update would have taken over 4 s (a long transmission, a slow model or CPU) - their final transcripts come as ever. A smaller model, an 8-bit one or more CPU cores help">${s.partials_slow} too long</span>` : '')
       : 'on');
     // (the files' section is in this dialog: a link to it; a problem of the log shows here too)
     // (the receiver's log.enabled = allowed and the transcripts at Log; the reasons from dlState.
@@ -16758,9 +16760,12 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (v2tUnseen) { v2tUnseen = 0; infoRenderTabs(); }
     v2tRenderHead();
     const sel = $id('v2t-vfo-filter');
-    const vfos = [...new Set(v2tList.map(t => t.vfo).concat(v2tLive.map(r => r.vfo)))].sort((a, b) => a - b);
+    // the VFOs of the transcripts and live rows - and the one chosen, while it is (a VFO with only a
+    // live row that went without a transcript would otherwise drop out and the filter reset unseen)
+    const cur = sel.value;
+    const vfos = [...new Set(v2tList.map(t => t.vfo).concat(v2tLive.map(r => r.vfo), cur === '' ? [] : [+cur]))].sort((a, b) => a - b);
     const opts = '<option value="">All VFOs</option>' + vfos.map(v => `<option value="${v}">D${v}</option>`).join('');
-    if (sel.dataset.html !== opts) { const cur = sel.value; sel.dataset.html = opts; sel.innerHTML = opts; sel.value = cur; }
+    if (sel.dataset.html !== opts) { sel.dataset.html = opts; sel.innerHTML = opts; sel.value = cur; }
     const q = ($id('v2t-filter').value || '').trim();
     const ql = q.toLowerCase(), vf = sel.value;
     v2tRenderLive(vf, q);

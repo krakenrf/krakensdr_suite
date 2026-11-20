@@ -138,6 +138,15 @@ constexpr uint64_t MIN_FREE_BYTES = 100ull << 20;
 constexpr double LIVE_FIRST_S = 1.0;
 constexpr int64_t LIVE_STEP_MS = 1000;
 constexpr double LIVE_NEW_S = 0.5;
+// A slow model / CPU (a Pi): the step grows to LIVE_DUTY x the time the
+// piece's last partial took, so partials take at most about half the
+// helper's time; a piece whose next partial is expected (the recent
+// partials' time per second of audio x its length) to take more than
+// LIVE_MAX_PARTIAL_MS gets none any more - it would come too late to be
+// worth it, likely after the transmission ended (thrown away), and delay
+// that piece's final by its whole run time
+constexpr double LIVE_DUTY = 2.0;
+constexpr int64_t LIVE_MAX_PARTIAL_MS = 4000;
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -393,6 +402,8 @@ struct Tap {
     uint64_t piece = 0;
     size_t live_sent = 0;
     int64_t live_ms = 0, live_due = 0;
+    int64_t live_took_ms = 0;       // the wall time its last partial took
+    bool live_slow = false;         // its next partial would take too long: none any more
     // 20 ms frame energies of cur (pause search, maybe_cut) + the partial frame
     std::vector<float> fe;
     double fe_acc = 0;
@@ -520,49 +531,178 @@ struct Tap {
 // A word is CONFIRMED when two partial decodes in a row agree on it: the
 // common prefix of the latest partial's words after the confirmed ones and
 // the previous partial's (compared case- and punctuation-insensitively,
-// shown as the latest wrote it). Confirmed words only grow; the rest of the
-// latest partial is PENDING. The final transcript replaces both.
+// shown as the latest wrote it). Confirmed words only grow and stay as they
+// are; the rest of the latest partial is PENDING. The final transcript
+// replaces both. Where the confirmed words end in a new partial is found by
+// aligning their letters (anchor_confirmed): whisper re-spells ("ten-four" /
+// "ten four", "12" / "twelve"), puts words in front or drops some, and a
+// word count then lands in the wrong place - confirming a word twice or
+// skipping one (review 2026-11-20). Not found: nothing is confirmed that time.
 
-// a word for comparing: ASCII letters lower-cased, digits and UTF-8 bytes
-// kept, punctuation dropped
+// a word for comparing: its letters and digits, lower-cased (ASCII, Latin-1,
+// Latin Extended-A, Greek, Cyrillic); punctuation and symbols - also the
+// Unicode ones whisper writes ("…", "—", "¿", "♪") - dropped
 std::string norm_word(const std::string& w) {
     std::string o;
-    for (unsigned char c : w) {
-        if (c >= 0x80 || std::isdigit(c)) o.push_back(static_cast<char>(c));
-        else if (std::isalpha(c)) o.push_back(static_cast<char>(std::tolower(c)));
+    for (size_t i = 0; i < w.size();) {
+        const unsigned char c = static_cast<unsigned char>(w[i]);
+        if (c < 0x80) {
+            if (std::isalnum(c)) o.push_back(static_cast<char>(std::tolower(c)));
+            i++;
+            continue;
+        }
+        // one UTF-8 sequence -> its code point (a stray byte counts as itself)
+        int len = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+        if (i + len > w.size()) len = 1;
+        uint32_t cp = len == 1 ? c : c & (0xFF >> (len + 1));
+        for (int k = 1; k < len; k++) {
+            const unsigned char d = static_cast<unsigned char>(w[i + k]);
+            if ((d & 0xC0) != 0x80) {
+                len = 1;
+                cp = c;
+                break;
+            }
+            cp = (cp << 6) | (d & 0x3F);
+        }
+        i += len;
+        const bool symbol = cp < 0xC0 || cp == 0xD7 || cp == 0xF7 || (cp >= 0x2000 && cp < 0x2C00) ||
+                            (cp >= 0x3000 && cp < 0x3040) || (cp >= 0xE000 && cp < 0xF900) ||
+                            (cp >= 0xFE00 && cp < 0xFE70) || (cp >= 0xFF00 && cp < 0xFF10) ||
+                            (cp >= 0xFF1A && cp < 0xFF21) || (cp >= 0xFF3B && cp < 0xFF41) ||
+                            (cp >= 0xFF5B && cp < 0xFF66) || cp >= 0x1F000;
+        if (symbol) continue;
+        if ((cp >= 0xC0 && cp <= 0xDE) || (cp >= 0x391 && cp <= 0x3A9) || (cp >= 0x410 && cp <= 0x42F)) cp += 0x20;
+        else if (cp >= 0x400 && cp <= 0x40F) cp += 0x50;
+        else if (((cp >= 0x100 && cp < 0x138) || (cp >= 0x14A && cp < 0x178)) && !(cp & 1)) cp += 1;
+        if (cp < 0x800) {
+            o.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        } else if (cp < 0x10000) {
+            o.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            o.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        } else {
+            o.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            o.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            o.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        }
+        o.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
     }
     return o;
 }
 
-// the words of a text; a token without a letter or digit ("-", "...") is
-// kept with the word before it, so it can't shift the words after it
+// the words of a text; a token without a letter or digit ("-", "...", "—")
+// is kept with the word before it (at the start: with the word after it),
+// so it is never a word of its own that could shift the words after it
 std::vector<std::string> split_words(const std::string& s) {
     std::vector<std::string> w;
     std::istringstream in(s);
-    std::string tok;
+    std::string tok, lead;
     while (in >> tok) {
-        if (!w.empty() && norm_word(tok).empty()) w.back() += " " + tok;
-        else w.push_back(tok);
+        if (norm_word(tok).empty()) {
+            if (!w.empty()) w.back() += " " + tok;
+            else lead += (lead.empty() ? "" : " ") + tok;
+            continue;
+        }
+        w.push_back(lead.empty() ? tok : lead + " " + tok);
+        lead.clear();
     }
-    return w;
+    return w;   // (punctuation only: no words)
 }
 
-// Where the confirmed words end in a new partial's words: where its words
-// match the last two confirmed ones, with up to two words more or fewer
-// before them (whisper put one in / left one out early on); no match = the
-// same count (the partial contradicts them: its rest is shown as pending)
-size_t align_confirmed(const std::vector<std::string>& w, const std::vector<std::string>& conf) {
-    const size_t c = conf.size();
-    if (c == 0) return 0;
-    const std::string l1 = norm_word(conf[c - 1]), l2 = c >= 2 ? norm_word(conf[c - 2]) : "";
-    for (int d : {0, -1, 1, -2, 2}) {
-        const long a = static_cast<long>(c) + d;
-        if (a < 1 || a > static_cast<long>(w.size())) continue;
-        if (norm_word(w[a - 1]) != l1) continue;
-        if (c >= 2 && a >= 2 && norm_word(w[a - 2]) != l2) continue;
-        return static_cast<size_t>(a);
+// Where the confirmed words end in a new partial's words w: the word
+// boundary j at which all of the confirmed letters (concatenated, so "ten
+// four" = "ten-four") align to w's letters before j with the fewest edits,
+// among the boundaries where w's letters end with the last confirmed word's
+// (the anchor). ok: found within 2 edits of the best boundary; else j = the
+// best boundary - then nothing is confirmed. near: few edits there (2 + a
+// tenth of the confirmed letters) - the partial changed a word or two of
+// the confirmed ones, rather than being another text. behind: all of the
+// partial is (within as few edits) the beginning of the confirmed text - it
+// came out shorter than the one before
+struct Anchor {
+    size_t j = 0;
+    bool ok = true, near = true, behind = false;
+};
+// the bytes of one UTF-8 sequence starting at s[i] (a stray byte: 1)
+size_t utf8_len(const std::string& s, size_t i) {
+    const unsigned char c = static_cast<unsigned char>(s[i]);
+    const size_t len = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    return i + len <= s.size() ? len : 1;
+}
+// where to cut a word after the first m bytes of its norm_word: its raw
+// index there, the signs right after them kept with the first half
+size_t raw_cut(const std::string& tok, size_t m) {
+    size_t i = 0, got = 0;
+    while (i < tok.size() && got < m) {
+        const size_t len = utf8_len(tok, i);
+        got += norm_word(tok.substr(i, len)).size();
+        i += len;
     }
-    return std::min(c, w.size());
+    while (i < tok.size()) {
+        const size_t len = utf8_len(tok, i);
+        if (!norm_word(tok.substr(i, len)).empty()) break;
+        i += len;
+    }
+    return i;
+}
+// (w: when the anchor falls inside one of its words - "ten" confirmed, the
+// partial wrote "ten-four" -, that word is cut there into two)
+Anchor anchor_confirmed(std::vector<std::string>& w, const std::vector<std::string>& conf) {
+    if (conf.empty()) return {};
+    std::string C, S;
+    for (const auto& c : conf) C += norm_word(c);
+    std::vector<size_t> bpos{0};
+    for (const auto& x : w) {
+        S += norm_word(x);
+        bpos.push_back(S.size());
+    }
+    const std::string last = norm_word(conf.back());
+    const size_t n = C.size(), M = S.size();
+    // edit distance of all of C to each prefix of S (the last row), and of
+    // all of S to the closest prefix of C (the last column's minimum)
+    std::vector<int> prev(M + 1), cur(M + 1);
+    for (size_t k = 0; k <= M; k++) prev[k] = static_cast<int>(k);
+    int s_in_c = prev[M];
+    for (size_t i = 1; i <= n; i++) {
+        cur[0] = static_cast<int>(i);
+        for (size_t k = 1; k <= M; k++)
+            cur[k] = std::min({prev[k] + 1, cur[k - 1] + 1, prev[k - 1] + (C[i - 1] != S[k - 1] ? 1 : 0)});
+        std::swap(prev, cur);
+        s_in_c = std::min(s_in_c, prev[M]);
+    }
+    struct Best { long j = -1; int cost = 0; size_t k = 0; };
+    auto better = [&](const Best& b, long j, int cost, size_t k) {
+        if (b.j < 0 || cost != b.cost) return b.j < 0 || cost < b.cost;
+        const size_t d = k > n ? k - n : n - k, db = b.k > n ? b.k - n : n - b.k;
+        return d != db ? d < db : j > b.j;
+    };
+    Best any, tail, mid;   // mid: the anchor inside a word (j = that word)
+    for (size_t j = 0; j < bpos.size(); j++) {
+        const size_t k = bpos[j];
+        const int cost = prev[k];
+        if (better(any, static_cast<long>(j), cost, k)) any = {static_cast<long>(j), cost, k};
+        const bool anchored = !last.empty() && k >= last.size() && S.compare(k - last.size(), last.size(), last) == 0;
+        if (anchored && better(tail, static_cast<long>(j), cost, k)) tail = {static_cast<long>(j), cost, k};
+        if (j + 1 < bpos.size())
+            for (size_t m = k + 1; m < bpos[j + 1]; m++)
+                if (!last.empty() && m >= last.size() && S.compare(m - last.size(), last.size(), last) == 0 &&
+                    better(mid, static_cast<long>(j), prev[m], m))
+                    mid = {static_cast<long>(j), prev[m], m};
+    }
+    // inside a word, if clearly better than at a word's end: cut it there
+    if (mid.j >= 0 && mid.cost <= any.cost + 2 && (tail.j < 0 || mid.cost < tail.cost)) {
+        const size_t t = static_cast<size_t>(mid.j);
+        const size_t cut = raw_cut(w[t], mid.k - bpos[t]);
+        if (cut > 0 && cut < w[t].size()) {
+            const std::string second = w[t].substr(cut);
+            w[t].resize(cut);
+            w.insert(w.begin() + static_cast<long>(t) + 1, second);
+            return {t + 1, true, mid.cost <= 2 + static_cast<int>(n / 10), false};
+        }
+    }
+    const bool tail_ok = tail.j >= 0 && tail.cost <= any.cost + 2;
+    const Best& b = tail_ok ? tail : any;
+    return {static_cast<size_t>(b.j), tail_ok, b.cost <= 2 + static_cast<int>(n / 10),
+            s_in_c <= 2 + static_cast<int>(M / 10)};
 }
 
 // one live row: a piece still open, or ended and waiting for its final transcript
@@ -575,15 +715,36 @@ struct LiveRow {
     std::string src, tid, tlabel;
     std::vector<std::string> conf;   // confirmed words
     std::vector<std::string> rest;   // the latest partial after them = pending
+    bool rest_ok = false;            // ... anchored: the next partial may confirm from it
+    std::vector<std::string> prev_n; // the latest partial's words, normalized
     double secs = 0;                 // audio the latest partial had
     bool open = true;                // false: the piece ended, its final is coming
     // a new partial's words
-    void agree(const std::vector<std::string>& w) {
-        const size_t a = align_confirmed(w, conf);
+    void agree(std::vector<std::string> w) {
+        if (w.empty()) return;   // no speech this time (a VAD glitch): the row stays as it is
+        const Anchor an = anchor_confirmed(w, conf);
+        std::vector<std::string> wn;
+        for (const auto& x : w) wn.push_back(norm_word(x));
+        size_t a = an.j;
+        bool ok = an.ok;
+        if (!ok && an.behind) {
+            a = w.size();   // shorter than the confirmed text: nothing new in it
+        } else if (!ok && an.near && a > 0) {
+            // the last confirmed word was changed, but this partial and the
+            // one before it agree on everything up to there: anchored there again
+            size_t l = 0;
+            while (l < wn.size() && l < prev_n.size() && wn[l] == prev_n[l]) l++;
+            ok = l >= a;
+        } else if (!ok) {
+            a = 0;   // another text than the confirmed words: all of it pending
+        }
         size_t k = 0;
-        while (a + k < w.size() && k < rest.size() && norm_word(w[a + k]) == norm_word(rest[k])) k++;
+        if (ok && rest_ok)
+            while (a + k < w.size() && k < rest.size() && wn[a + k] == norm_word(rest[k])) k++;
         conf.insert(conf.end(), w.begin() + static_cast<long>(a), w.begin() + static_cast<long>(a + k));
         rest.assign(w.begin() + static_cast<long>(a + k), w.end());
+        rest_ok = ok;
+        prev_n = std::move(wn);
     }
 };
 
@@ -660,6 +821,7 @@ struct State {
     // change counter + the one last pushed
     int helper_live = -1;
     uint64_t partials = 0, partials_stale = 0;
+    uint64_t partials_slow = 0;   // pieces whose partials stopped: they would take > LIVE_MAX_PARTIAL_MS
     double partial_ms = 0;
     std::string live_json = "[]";
     uint64_t live_seq = 0, live_pushed = 0;
@@ -975,6 +1137,7 @@ private:
     uint64_t partial_piece_ = 0;
     int64_t partial_sent_ms_ = 0;
     double partial_secs_ = 0;
+    double partial_rate_ = 0;      // the recent partials' wall time per second of audio, ms (0 = none yet)
     uint64_t next_piece_ = 0;
     std::map<uint64_t, LiveRow> live_;
 
@@ -1494,7 +1657,8 @@ void Worker::enqueue(Utterance&& u) {
 void Worker::new_piece(Tap& tap) {
     tap.piece = ++next_piece_;
     tap.live_sent = 0;
-    tap.live_ms = tap.live_due = 0;
+    tap.live_ms = tap.live_due = tap.live_took_ms = 0;
+    tap.live_slow = false;
 }
 
 void Worker::live_publish_locked() {
@@ -1536,11 +1700,20 @@ void Worker::maybe_partial(int64_t t) {
     for (auto& kv : taps_) {
         Tap& tap = kv.second;
         const size_t n = tap.live_len();
+        // how long this piece's next partial is expected to take; too long:
+        // none for it any more (counted once)
+        const double expect_ms = partial_rate_ * n / RATE;
+        if (can && tap.rec && tap.piece && !tap.live_slow && tap.live_ms && expect_ms > LIVE_MAX_PARTIAL_MS) {
+            tap.live_slow = true;
+            std::lock_guard<std::mutex> lk(s_.st_mu);
+            s_.partials_slow++;
+        }
+        const int64_t step = std::max<int64_t>(LIVE_STEP_MS, std::llround(LIVE_DUTY * tap.live_took_ms));
         // (not while the squelch is closed: the transmission is ending - its
         // final follows within HANG_S, and a partial then would only delay it)
-        const bool due = can && tap.rec && tap.piece && (tap.digital || tap.closed == 0) &&
+        const bool due = can && tap.rec && tap.piece && !tap.live_slow && (tap.digital || tap.closed == 0) &&
                          (tap.live_ms == 0 ? n >= static_cast<size_t>(LIVE_FIRST_S * RATE)
-                                           : t - tap.live_ms >= LIVE_STEP_MS &&
+                                           : t - tap.live_ms >= step &&
                                                  n >= tap.live_sent + static_cast<size_t>(LIVE_NEW_S * RATE));
         if (!due) {
             tap.live_due = 0;
@@ -1584,9 +1757,15 @@ void Worker::on_partial(const char* p, size_t len) {
     memcpy(&ms, p + 4, 4);
     if (id != partial_id_) return;
     has_partial_ = false;
+    // its wall time per second of audio (sending, queueing, decoding): the
+    // next partials' expected time (maybe_partial)
+    const int64_t took = now_ms() - partial_sent_ms_;
+    const double rate = static_cast<double>(took) / std::max(1.0, partial_secs_);
+    partial_rate_ = partial_rate_ > 0 ? 0.7 * partial_rate_ + 0.3 * rate : rate;
     std::string text(p + 12, len - 12);
     while (!text.empty() && text.back() == '\0') text.pop_back();
     auto it = taps_.find(partial_vfo_);
+    if (it != taps_.end() && it->second.piece == partial_piece_) it->second.live_took_ms = took;   // its next step
     const bool fresh = live_on_ && it != taps_.end() && it->second.rec && it->second.piece == partial_piece_;
     {
         std::lock_guard<std::mutex> lk(s_.st_mu);
@@ -1656,6 +1835,7 @@ void Worker::start_helper(const Config& c, int64_t t) {
     ready_ = false;
     proc_model_ = c.model;
     sent_valid_ = false;
+    partial_rate_ = 0;   // (another model, threads: measured anew)
     set_state("starting");
     std::cout << "Voice to Text: helper started, model " << c.model << (vad.empty() ? " (no VAD model)" : "")
               << std::endl;
@@ -1956,7 +2136,63 @@ struct DlStep {
     std::string url, in, out;
     uint64_t total = 0;
     bool temp = false;
+    bool vad = false;   // the VAD model (stage "vad" for the page)
 };
+
+// Files a Get leaves while it works - a derived model's hidden f16
+// (ggml-<name>.f16, 142 / 466 MB, no list shows it) and the .part files -
+// stay when kraken_doa is killed or the power goes meanwhile; the next Get
+// would fetch the f16 again. Removed at startup and before a Get: only these
+// exact names of the catalogue's models, the .part files only when not
+// written to for a minute (setup.sh, which makes the same .part names, may
+// be running). Not while a Get of ours runs (the caller makes sure)
+void clean_model_leftovers() {
+    const std::string md = models_dir();
+    auto drop = [](const std::string& p, bool part) {
+        struct stat st{};
+        if (stat(p.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) return;
+        if (part && time(nullptr) - st.st_mtime < 60) return;
+        if (unlink(p.c_str()) == 0) std::cout << "Voice to Text: removed the leftover " << p << std::endl;
+    };
+    for (const auto& c : MODEL_CATALOGUE) {
+        drop(model_path(c.name) + ".part", true);
+        if (c.from) {
+            drop(md + "/ggml-" + c.name + ".f16", false);
+            drop(md + "/ggml-" + c.name + ".f16.part", true);
+        }
+    }
+    drop(md + "/ggml-" + VAD_NAME + ".bin.part", true);
+}
+
+// Can the helper on disk make the derived models (kraken_whisper --quantize,
+// 2026-11-20)? Its usage (--help, on stderr) names the option; an older one's
+// doesn't. A few ms; bounded to 3 s
+bool helper_quantizes() {
+    kproc::SpawnOptions o;
+    o.argv = {helper_exe(), "--help"};
+    o.in = kproc::Stdio::Null;
+    o.out = kproc::Stdio::Null;
+    o.err = kproc::Stdio::Pipe;
+    kproc::Process proc;
+    std::string err;
+    if (!proc.spawn(o, &err)) return false;
+    std::string text;
+    char buf[4096];
+    const int64_t end = now_ms() + 3000;
+    while (text.size() < 65536) {
+        const int64_t left = end - now_ms();
+        if (left <= 0) break;
+        const ptrdiff_t n = proc.read(kproc::Stream::Err, buf, sizeof buf, static_cast<int>(left));
+        if (n <= 0) break;   // EOF, an error or the time is up
+        text.append(buf, static_cast<size_t>(n));
+    }
+    kproc::ExitStatus st;
+    if (!proc.wait_for(1000, &st)) {
+        proc.kill();
+        proc.wait();
+    }
+    return text.find("--quantize") != std::string::npos;
+}
 
 // a child that ends with a line on stderr when it fails: run, wait, that line
 bool run_quantize(const DlStep& q, const std::string& part, std::string* err) {
@@ -2052,7 +2288,7 @@ void download_thread(std::vector<DlStep> steps) {
             s.dl.proc = proc;
             s.dl.part = part;
             if (f.total) s.dl.total = f.total;
-            s.dl.stage = "download";
+            s.dl.stage = f.vad ? "vad" : "download";
         }
         const kproc::ExitStatus st = proc->wait();
         {
@@ -2085,6 +2321,7 @@ void start() {
     State& s = S();
     if (s.running.exchange(true)) return;
     load_history();
+    clean_model_leftovers();   // what a Get killed midway left in the models folder
     // the digital decoders' voice (8 kHz, the lead plugin's) of VFOs with Transcribe on
     dig::set_voice_tap_handler([](dig::DigitalDecoder* d, const float* x, size_t n, const std::string& plugin,
                                   const std::string& tid, const std::string& tlabel, double rf_hz) {
@@ -2242,9 +2479,11 @@ std::string status_message() {
       << ",\"clips_skipped\":" << s.clips_skipped << ",\"clip_error\":\"" << json_escape(s.clip_error)
       << "\",\"loop_max_ms\":" << s.loop_max_ms << ",\"in_dropped_s\":" << fmt("%.1f", in_dropped)
       // Live text: the helper takes partials (null = none loaded yet), how
-      // many were answered / discarded, their mean processing time
+      // many were answered / discarded, the pieces whose partials stopped
+      // (too slow), their mean processing time
       << ",\"live_ok\":" << (s.helper_live < 0 ? "null" : s.helper_live ? "true" : "false") << ",\"partials\":" << s.partials
-      << ",\"partials_stale\":" << s.partials_stale << ",\"partial_ms\":" << std::lround(s.partial_ms) << ",\"vfos\":[";
+      << ",\"partials_stale\":" << s.partials_stale << ",\"partials_slow\":" << s.partials_slow
+      << ",\"partial_ms\":" << std::lround(s.partial_ms) << ",\"vfos\":[";
     for (size_t i = 0; i < s.vfos.size(); i++) {
         const auto& v = s.vfos[i];
         o << (i ? "," : "") << "{\"id\":" << v.id << ",\"src\":\"" << json_escape(v.src) << "\",\"rec\":"
@@ -2288,14 +2527,26 @@ std::string history_message(size_t max) {
     return o + "]}}";
 }
 
-std::string take_new_message() {
-    State& s = S();
-    std::lock_guard<std::mutex> lk(s.st_mu);
+namespace {
+// st_mu held
+std::string take_new_locked(State& s) {
     if (s.fresh.empty()) return "";
     std::string o = "{\"voice2text\":{\"new\":[";
     for (size_t i = 0; i < s.fresh.size(); i++) o += (i ? "," : "") + transcript_json(s.fresh[i], false);
     s.fresh.clear();
     return o + "]}}";
+}
+std::string take_live_locked(State& s) {
+    if (s.live_seq == s.live_pushed) return "";
+    s.live_pushed = s.live_seq;
+    return "{\"voice2text\":{\"live\":" + s.live_json + "}}";
+}
+}  // namespace
+
+std::string take_new_message() {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.st_mu);
+    return take_new_locked(s);
 }
 
 std::string live_message() {
@@ -2304,12 +2555,13 @@ std::string live_message() {
     return "{\"voice2text\":{\"live\":" + s.live_json + "}}";
 }
 
-std::string take_live_message() {
+void take_pushes(std::string* fresh, std::string* live) {
+    // one lock: a final and the removal of its live row (on_result changes
+    // both in one section) are always taken together
     State& s = S();
     std::lock_guard<std::mutex> lk(s.st_mu);
-    if (s.live_seq == s.live_pushed) return "";
-    s.live_pushed = s.live_seq;
-    return "{\"voice2text\":{\"live\":" + s.live_json + "}}";
+    *fresh = take_new_locked(s);
+    *live = take_live_locked(s);
 }
 
 void clear_history() {
@@ -2359,6 +2611,13 @@ bool download_model(const std::string& name, std::string* err) {
         return false;
     }
     State& s = S();
+    {
+        std::lock_guard<std::mutex> lk(s.st_mu);
+        if (s.dl.running) {
+            *err = "a download is already running";
+            return false;
+        }
+    }
     std::vector<DlStep> steps;
     const uint64_t mb = 1048576;
     if (!file_exists(model_path(name))) {
@@ -2367,6 +2626,12 @@ bool download_model(const std::string& name, std::string* err) {
             // only for this, into a file no model list shows - quantized by the helper
             if (!file_exists(helper_exe())) {
                 *err = "the speech helper is not installed - it makes this model";
+                return false;
+            }
+            // an older helper has no --quantize: said now, before a download
+            // it couldn't use (it would print its usage and exit 1)
+            if (!helper_quantizes()) {
+                *err = "the speech helper is older than the 8-bit models - update it (make whisper), then Get again";
                 return false;
             }
             const CatalogueEntry* src = catalogue(ce->from);
@@ -2396,6 +2661,7 @@ bool download_model(const std::string& name, std::string* err) {
         DlStep f;
         f.url = std::string(VAD_URL) + VAD_NAME + ".bin";
         f.out = models_dir() + "/ggml-" + VAD_NAME + ".bin";
+        f.vad = true;
         steps.push_back(f);   // (its progress against the model's size: it is ~1 MB)
     }
     if (steps.empty()) {
@@ -2412,8 +2678,9 @@ bool download_model(const std::string& name, std::string* err) {
         s.dl.name = name;
         s.dl.running = true;
         s.dl.total = steps.front().total ? steps.front().total : static_cast<uint64_t>(ce->mb) * mb;
-        s.dl.stage = steps.front().quantize ? "quantize" : "download";
+        s.dl.stage = steps.front().quantize ? "quantize" : steps.front().vad ? "vad" : "download";
     }
+    clean_model_leftovers();   // (ours: none running - just claimed)
     std::cout << "Voice to Text: " << (ce->from ? "making model " : "downloading model ") << name << std::endl;
     std::thread(download_thread, std::move(steps)).detach();
     return true;

@@ -82,10 +82,12 @@ std::string take_new_message();
 // Live text: {"voice2text":{"live":[{vfo, key, t, mhz, src, tid, tl, part,
 // secs, open, confirmed, pending}, ...]}} - every live row now (an empty list
 // = none): a piece still open, or ended and waiting for its final transcript,
-// which replaces it. live_message() = the list now (a page connecting);
-// take_live_message() = it when it changed since the last call, else ""
+// which replaces it. live_message() = the list now (a page connecting).
+// take_pushes(): take_new_message() and the live list if it changed since
+// the last call (else "") under ONE lock - a final and the removal of its
+// row are made together, and so are always pushed together
 std::string live_message();
-std::string take_live_message();
+void take_pushes(std::string* fresh, std::string* live);
 void clear_history();
 // {"voice2text":{"lobe":{id, t, vfo, mhz, dur, lobe, lf, doa, brg, slat, slon}}}
 // (VOICE2TEXT_LOBE:<id>): the transcript's averaged DoA lobe - b64 of 720 u8,
