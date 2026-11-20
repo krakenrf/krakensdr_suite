@@ -103,6 +103,21 @@ static inline bool doa_retune_hold_active() {
 }
 
 
+// heimdall's calibration state for the pages: the scanner manager's phase
+// state / noise flag (system_status, the assistant) and {"cal_live":...} at
+// once on a change. The decimation thread calls it per packet; in sweep mode
+// (no packet reaches it) the data receiver does - the chip showed the last
+// state from before the sweep for the whole session
+static void note_calibration_state(uint32_t phase_state, uint32_t noise_source) {
+    scanner_manager.updatePhaseCalibrationStatus(phase_state, noise_source);
+    static std::atomic<uint32_t> last_cal{0xFFFFFFFFu};
+    const uint32_t cal = (phase_state << 1) | (noise_source ? 1u : 0u);
+    if (last_cal.exchange(cal) != cal)
+        WebSocketServer::broadcast_json_message(
+            "{\"cal_live\":{\"phase_state\":" + to_string(phase_state) +
+            ",\"noise_source\":" + (noise_source ? "true" : "false") + "}}");
+}
+
 void DataReceiver::data_receiver_thread() {
     // OPTIMIZATION: Register thread and get index for lock-free stats access
     size_t thread_idx = global_stats.register_thread("DataReceiver");
@@ -484,6 +499,7 @@ void DataReceiver::data_receiver_thread() {
                     for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++)
                         tuner_frequencies[ch].store(static_cast<uint64_t>(ch_freq_hz[ch]), std::memory_order_relaxed);
                     sync_elements();
+                    note_calibration_state(phase_comp_state, noise_source);
                     // the common gain as heimdall runs it: the pages learn a change
                     // (another page's, the assistant's) from the sweep message
                     if (sweep::note_gain(EndianUtils::read_le_float(buffer.data(), offset + 32 + 4), true) && loop)
@@ -658,23 +674,11 @@ void DataReceiver::decimation_processor_thread() {
         }
 
         // Update scanner with phase calibration status from server
-        // This allows scanner to avoid checking for signal loss during calibration
-        scanner_manager.updatePhaseCalibrationStatus(raw_packet.phase_compensation_state,
-                                                    raw_packet.noise_source_active);
-
-        // Push calibration-state / noise-flag changes to the browsers at once
+        // This allows scanner to avoid checking for signal loss during calibration.
+        // Calibration-state / noise-flag changes go to the browsers at once
         // (the system_status broadcast is every 500 ms - the "(Noise On)"
         // badge lagged a ~0.4 s retune calibration by up to half a second).
-        {
-            static uint32_t last_cal = 0xFFFFFFFFu;
-            const uint32_t cal = (raw_packet.phase_compensation_state << 1) | (raw_packet.noise_source_active ? 1u : 0u);
-            if (cal != last_cal) {
-                last_cal = cal;
-                WebSocketServer::broadcast_json_message(
-                    "{\"cal_live\":{\"phase_state\":" + to_string(raw_packet.phase_compensation_state) +
-                    ",\"noise_source\":" + (raw_packet.noise_source_active ? "true" : "false") + "}}");
-            }
-        }
+        note_calibration_state(raw_packet.phase_compensation_state, raw_packet.noise_source_active);
 
         // Noise source switched on/off: restart the spectrum averaging so the
         // display jumps to the new state. The EMA works in dB, so a strong
@@ -1454,7 +1458,7 @@ void DataReceiver::fm_processor_thread() {
                 // (sweep mode: nothing is demodulated - no data is right)
                 if (consecutive_timeouts == 20 && !sweep_mode_enabled.load(std::memory_order_relaxed)) {  // 2 s of no data
                     cout << "FM processor: No data for 2s - check decimation pipeline" << endl;
-                } else if (consecutive_timeouts % 100 == 0) {  // Every 10 seconds
+                } else if (consecutive_timeouts % 100 == 0 && !sweep_mode_enabled.load(std::memory_order_relaxed)) {  // Every 10 seconds
                     cout << "FM processor: No data for " << (consecutive_timeouts / 10) << "s" << endl;
                 }
                 continue;

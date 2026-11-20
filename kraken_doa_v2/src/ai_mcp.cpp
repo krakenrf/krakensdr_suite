@@ -474,10 +474,10 @@ std::string screen_json(const std::string& view_json) {
           << num(v.bw, 0) << ",\"demod\":" << q(DecimatorManager::demodModeToString(d.demod_mode));
         if (multi) o << ",\"tuner\":" << v.tuner;
         o << ",\"heard\":" << (d.audio_out ? "true" : "false") << ",\"level_db\":"
-          << num(band_peak_db(v.hz - v.bw / 2, v.hz + v.bw / 2), 1);
+          << (sweep_mode_enabled.load() ? std::string("null") : num(band_peak_db(v.hz - v.bw / 2, v.hz + v.bw / 2), 1));   // (sweep mode: no live spectrum)
         o << ",\"squelch\":{\"on\":" << (d.squelch_enabled ? "true" : "false") << ",\"method\":"
           << q(squelch_method_name(d.squelch_method)) << ",\"level_db\":" << num(d.squelch_level, 1)
-          << ",\"open\":" << (d.squelch_open ? "true" : "false") << "}";
+          << ",\"open\":" << (d.squelch_open && !sweep_mode_enabled.load() ? "true" : "false") << "}";
         Json st;
         if (d.digital_mode != 0 && decoder_status(d.id, 0, false, &st)) {
             o << ",\"decoder\":{\"mode\":" << q(st.str("mode")) << ",\"detected\":" << q(st.str("detected"))
@@ -603,7 +603,7 @@ void t_get_spectrum(const Json& a, Reply r) {
         for (float& v : db)
             if (!is_finite_value(v)) v = 0.0f;   // never measured
         std::string j = spectrum_json(db, first, step, first + step * (static_cast<double>(db.size()) - 1) / 2, 0,
-                                      static_cast<long>(db.size()) - 1, points, num_arg(a, "min_db", 6), -1, 0, 0);
+                                      static_cast<long>(db.size()) - 1, static_cast<long>(db.size()), num_arg(a, "min_db", 6), -1, 0, 0);
         j.insert(1, "\"sweep\":" + q(sweep::summary() + " - levels max-pooled from the sweep's " +
                                        num(bin, 1) + " Hz bins") + ",");
         return r(j, false);
