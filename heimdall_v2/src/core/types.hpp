@@ -367,6 +367,9 @@ struct SweepState {
     std::atomic<bool> retuning_in_progress{false};
     std::atomic<int64_t> last_retune_ns{0};  // steady clock of the last retune (or mode entry)
     std::atomic<uint32_t> failed_retunes{0}; // tuner retunes that failed twice (session)
+    // sets broadcast with the flag 0 (conversion worker): a dwell lasts until
+    // at least one went out, so no hop goes without data
+    std::atomic<uint32_t> valid_sets{0};
 
     SweepPlan get_plan() const {
         std::lock_guard<std::mutex> lock(mutex);

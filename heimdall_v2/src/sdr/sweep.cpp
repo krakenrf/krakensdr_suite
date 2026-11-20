@@ -74,7 +74,11 @@ void wait_for_change(uint32_t seq, int64_t ns) {
 // the dwell (from `start_ns`) of the plan in force has passed. false as soon
 // as this plan stops hopping: the mode left, paused, the plan changed, exit.
 // A dwell / settle change takes effect at once (re-read on every wake).
-bool wait_phase(bool settle, int64_t start_ns, uint32_t plan_gen) {
+// The dwell also lasts until at least one set has gone out as valid since
+// `valid_from` (sweep_state.valid_sets) - at most SWEEP_DWELL_GRACE_MS more:
+// the first valid set reaches 8091 up to a USB packet (6.8 ms) after the
+// flush, so a short dwell would otherwise often end with none.
+bool wait_phase(bool settle, int64_t start_ns, uint32_t plan_gen, uint32_t valid_from = 0) {
     for (;;) {
         const uint32_t seq = sweep_state.change_seq.load();
         if (!global_running.load() || !in_sweep() || sweep_state.plan_generation.load() != plan_gen) return false;
@@ -82,8 +86,14 @@ bool wait_phase(bool settle, int64_t start_ns, uint32_t plan_gen) {
         if (!p.run) return false;
         const int64_t start = settle ? sweep_state.last_retune_ns.load() : start_ns;
         const int64_t end = start + static_cast<int64_t>(settle ? p.settle_ms : p.dwell_ms) * 1'000'000;
-        const int64_t left = end - now_ns();
-        if (left <= 0) return true;
+        const int64_t now = now_ns();
+        int64_t left = end - now;
+        if (left <= 0) {
+            if (settle || sweep_state.valid_sets.load() != valid_from ||
+                now - end >= static_cast<int64_t>(SWEEP_DWELL_GRACE_MS) * 1'000'000)
+                return true;
+            left = 1'000'000;   // poll for the first valid set
+        }
         wait_for_change(seq, left);
     }
 }
@@ -297,18 +307,27 @@ void sweep_thread() {
         move_hz.clear();
         for (size_t k = 0; k < kp; k++) {
             const uint64_t b0 = static_cast<uint64_t>(k) * H / kp, b1 = static_cast<uint64_t>(k + 1) * H / kp;
-            if (b0 + r < b1) {
+            const uint32_t hz = static_cast<uint32_t>(p.first_center_hz + (b0 + r) * p.step_hz);
+            // a tuner already there isn't retuned (K' = H: every round is the
+            // same - the stream then runs on without a gap); one whose last
+            // retune failed is (it still shows its old frequency)
+            if (b0 + r < b1 && wideband_config.get_tuner_frequency(sel[k]) != hz) {
                 move_tuner.push_back(sel[k]);
-                move_hz.push_back(static_cast<uint32_t>(p.first_center_hz + (b0 + r) * p.step_hz));
+                move_hz.push_back(hz);
             }
         }
         move_ok.assign(move_tuner.size(), 0);
+        // the flag may be on without a retune: the mode just entered, a gain
+        // change - then the settle + flush below run all the same
+        const bool retune = !move_tuner.empty();
 
         const int64_t t0 = now_ns();
         // 1) flag, 2) downstream flush (what is queued is from the old hop
         //    and would be sent flagged anyway)
-        sweep_state.retuning_in_progress.store(true);
-        clear_l2_buffer_quiet();
+        if (retune) {
+            sweep_state.retuning_in_progress.store(true);
+            clear_l2_buffer_quiet();
+        }
 
         // 3) retune, with the mode and the plan re-checked under the locks
         //    every other tuning path takes: leaving the mode or changing the
@@ -319,7 +338,7 @@ void sweep_thread() {
             if (!global_running.load() || !in_sweep() || sweep_state.plan_generation.load() != pg ||
                 !sweep_state.get_plan().run) {
                 cancelled = true;
-            } else {
+            } else if (retune) {
                 std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
                 for_each_tuner(move_tuner.size(), [&](size_t i) {
                     const int t = move_tuner[i];
@@ -334,6 +353,9 @@ void sweep_thread() {
                 for (size_t i = 0; i < move_tuner.size(); i++)
                     if (move_ok[i]) wideband_config.set_tuner_frequency(move_tuner[i], move_hz[i]);
                 sweep_state.last_retune_ns.store(now_ns());
+                sweep_state.round.store(r);
+                sweep_state.frequency_change_counter.fetch_add(1);
+            } else {
                 sweep_state.round.store(r);
                 sweep_state.frequency_change_counter.fetch_add(1);
             }
@@ -352,7 +374,8 @@ void sweep_thread() {
         //    The flag is cleared under settings_mutex, which every change
         //    that sets it holds (the mode entry, a gain change, the next
         //    hop's retune): none can slip in between the check and the clear
-        bool settled = false;
+        uint32_t valid_from = sweep_state.valid_sets.load();
+        bool settled = !retune && !sweep_state.retuning_in_progress.load();
         for (int pass = 0; pass < 8 && !settled; pass++) {
             if (!wait_phase(true, 0, pg)) break;
             const int64_t settled_from = sweep_state.last_retune_ns.load();
@@ -361,11 +384,12 @@ void sweep_thread() {
             if (in_sweep() && sweep_state.plan_generation.load() == pg &&
                 sweep_state.last_retune_ns.load() == settled_from) {
                 sweep_state.retuning_in_progress.store(false);
+                valid_from = sweep_state.valid_sets.load();
                 settled = true;
             }
         }
         if (!settled) continue;
-        if (!wait_phase(false, now_ns(), pg)) continue;
+        if (!wait_phase(false, now_ns(), pg, valid_from)) continue;
 
         sweep_state.round_ms.store(static_cast<uint32_t>((now_ns() - t0) / 1'000'000));
         if (++r >= R) {

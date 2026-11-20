@@ -591,8 +591,14 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
             if (l2_flush_epoch.load(std::memory_order_relaxed) != epoch) {
                 l2_buffer_pool.release(std::move(complex_samples));
             } else {
+                // Sweep mode: count the sets sent as valid (retuning flag 0
+                // before and after the header was built, so the header said
+                // 0 too) - a hop's dwell lasts until one has gone out
+                const bool sweep = operating_mode.load(std::memory_order_relaxed) == OperatingMode::SWEEP;
+                const bool valid_before = sweep && !sweep_state.retuning_in_progress.load();
                 if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples);
                 if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
+                if (valid_before && !sweep_state.retuning_in_progress.load()) sweep_state.valid_sets.fetch_add(1);
 
                 // Drop oldest if full - coherence-safe
                 if (l2_buffer_size.load(std::memory_order_relaxed) >= BUFFER_SIZE) {

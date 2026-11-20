@@ -67,6 +67,10 @@
 #define SWEEP_DWELL_MS           20     // default dwell, ms (set_sweep dwell_ms)
 #define SWEEP_DWELL_MIN_MS       5
 #define SWEEP_DWELL_MAX_MS       5000
+// A dwell also lasts until one set has gone out as valid on 8091 (the first
+// comes up to a USB packet, 6.8 ms, after the post-settle flush) - at most
+// this much longer (a stalled stream must not stop the sweep)
+#define SWEEP_DWELL_GRACE_MS     250
 #define SWEEP_STEP_HZ            1912500ULL   // the contract's hop spacing (51/64 of 2.4 MHz)
 #define SWEEP_STEP_MIN_HZ        100000ULL
 #define SWEEP_STEP_MAX_HZ        2400000ULL
