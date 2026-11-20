@@ -342,7 +342,11 @@ public:
     void process(const std::complex<float>* x, size_t n, float rate, double rf, uint64_t pos,
                  const std::complex<int16_t>* mc = nullptr, int mc_m = 0, int bw_hz = 0,
                  const AuxStream* aux = nullptr, size_t naux = 0) {
-        if (rate <= 0 || n == 0) return;
+        // n = 0 with internal streams: the VFO's samples were held back this
+        // block (the beamformer) - only the internal streams' plugins get
+        // samples; the VFO stream's state (AFC phase, resamplers, positions)
+        // is left as it is, its plugins are only kept up to date
+        if (rate <= 0 || (n == 0 && naux == 0)) return;
         if (pos == DigitalDecoder::NO_POS) pos = next_pos_;
         next_pos_ = pos + n;
         check_rf(rf);
@@ -380,7 +384,7 @@ public:
         // ones this block brought (a wanted one it lacks - the pipeline makes
         // it from the next block - gives its plugins nothing this time)
         const bool afc_off = afc_hz_ == 0.0f;
-        mix(x, n, in_rate_, nco_phase_, mixed_);
+        if (n > 0) mix(x, n, in_rate_, nco_phase_, mixed_);
         for (auto& s : sbuf_) {
             s.x = nullptr;
             s.n = 0;
@@ -1984,11 +1988,17 @@ void DigitalDecoder::deliver_talker(const TalkerSpan& s) {
 
 void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,
                           const std::complex<int16_t>* mc, int mc_m, int bw_hz, const AuxStream* aux, size_t naux) {
-    if (mode() == Mode::OFF || n == 0 || !(rate_hz > 0)) return;
+    // n = 0 with internal streams: the VFO has no samples this block (the
+    // beamformer held them back) - its internal streams still go, so they
+    // stay continuous
+    if (!internal_streams_ || !aux) naux = 0;
+    if (n > 0 && !x) n = 0;
+    if (mode() == Mode::OFF || (n == 0 && naux == 0) || !(rate_hz > 0)) return;
     // only an array plugin runs: it never sees this stream - a one-sample
     // tick every 100 ms keeps the engine going (starts the plugin, reads its
     // replies, follows the RF) without copying 2.4 MHz of samples
     if (array_only_.load(std::memory_order_relaxed)) {
+        if (n == 0) return;
         if (pos != NO_POS && tick_pos_ != NO_POS && pos >= tick_pos_ && static_cast<double>(pos - tick_pos_) < 0.1 * rate_hz) return;
         tick_pos_ = pos;
         n = 1;
@@ -2020,6 +2030,13 @@ void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz,
                 a.m = aux[k].mc_m;
             }
         }
+        // the block's signal by its internal streams: they come every block,
+        // while the beamformer's output for the VFO is withheld some blocks
+        // and longer in the next one (no double count either way)
+        double d = 0;
+        for (const auto& a : b.aux)
+            if (a.rate > 0) d = std::max(d, static_cast<double>(a.x.size()) / a.rate);
+        if (d > 0) b.dur = d;
     }
     enqueue(std::move(b));
 }

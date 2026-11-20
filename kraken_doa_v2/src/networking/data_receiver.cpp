@@ -1142,19 +1142,22 @@ void DataReceiver::decimation_processor_thread() {
 
             // Digital decoders: fed the same stream as the FM audio would be -
             // the beamformer output when beamforming ran for this VFO (empty
-            // while FD-DAS fills: skip, never mix in raw blocks), else the
-            // listened-to channel. Before the FM queueing, which moves the
-            // beamformed samples out.
+            // while FD-DAS fills, and on about one block in three after: its
+            // 256-point frames are longer than a narrow VFO's ~85 samples a
+            // block - no VFO samples then, never mixed-in raw blocks), else
+            // the listened-to channel. Before the FM queueing, which moves
+            // the beamformed samples out. Auto detect's internal streams go
+            // with every block they were decimated in, VFO samples or not
             if (digital_needs_processing) {
                 for (auto& result : results) {
                     const auto& inst = result.instance;
                     if (!inst || inst->digital_mode.load(std::memory_order_relaxed) == 0) continue;
-                    if (result.decimated_data.channels.empty() || result.decimated_data.min_samples == 0) continue;
+                    const bool vfo_ok = !result.decimated_data.channels.empty() && result.decimated_data.min_samples > 0;
                     auto dd = inst->getDigital();
                     if (!dd) continue;
                     // array plugins (kp::Info::array): every antenna's block, not
                     // during a noise-source calibration / retune hold (like MUSIC)
-                    if (dd->wants_array() && !doa_is_calibrating() && !doa_retune_hold_active()) {
+                    if (vfo_ok && dd->wants_array() && !doa_is_calibrating() && !doa_retune_hold_active()) {
                         const auto& chs = result.decimated_data.channels;
                         const size_t ns = result.decimated_data.min_samples;
                         const complex<float>* ptr[8];
@@ -1171,14 +1174,16 @@ void DataReceiver::decimation_processor_thread() {
                                            result.decimated_data.stream_pos);
                     }
                     const vector<complex<float>>* src = nullptr;
-                    if (result.beamformer_ran) {
+                    if (!vfo_ok) {
+                        // (no VFO samples this block)
+                    } else if (result.beamformer_ran) {
                         if (result.have_beamformed) src = &result.beamformed_samples;
                     } else {
                         int idx = (wideband_enabled || fm_only) ? 0 : current_active;
                         if (idx < static_cast<int>(result.decimated_data.channels.size()))
                             src = &result.decimated_data.channels[idx].samples;
                     }
-                    if (!src || src->empty()) continue;
+                    if (src && src->empty()) src = nullptr;
                     int tuner = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : 0;
                     if (tuner < 0 || tuner >= MAX_CHANNELS) tuner = 0;
                     double rf = static_cast<double>(exact_tuner_hz(tuner)) + result.decimated_data.freq_offset_hz;
@@ -1191,8 +1196,8 @@ void DataReceiver::decimation_processor_thread() {
                     const std::complex<int16_t>* mc = nullptr;
                     int mc_m = 0;
                     const auto& chs = result.decimated_data.channels;
-                    const size_t n = src->size();
-                    if (dd->wants_multichannel() && !wideband_enabled && !fm_only && chs.size() >= 2 &&
+                    const size_t n = src ? src->size() : 0;
+                    if (n && dd->wants_multichannel() && !wideband_enabled && !fm_only && chs.size() >= 2 &&
                         n == result.decimated_data.min_samples) {
                         const int m = static_cast<int>(std::min<size_t>(chs.size(), 8));
                         bool ok = true;
@@ -1215,8 +1220,13 @@ void DataReceiver::decimation_processor_thread() {
                     // VFO's stream positions: the VFO's block starts at
                     // stream_pos, and a wider stream's cascade is shorter - what
                     // it shows reaches the VFO's stream (vfo_delay - its
-                    // delay) later. Pushed with the VFO's block (skipped with
-                    // it); every antenna as the VFO's own stream would get them
+                    // delay) later. Pushed with the VFO's block - and without
+                    // one when the VFO has none this time (the beamformer held
+                    // its samples back: they come later, in a bigger block;
+                    // an internal block not pushed now would be lost). Its
+                    // positions come from the decimated block's stream_pos,
+                    // never from the beamformer's output. Every antenna as the
+                    // VFO's own stream would get them
                     dig::AuxStream aux[dig::DigitalDecoder::MAX_STREAMS];
                     size_t naux = 0;
                     const size_t vi = static_cast<size_t>(&result - results.data());
@@ -1254,7 +1264,8 @@ void DataReceiver::decimation_processor_thread() {
                             }
                         }
                     }
-                    dd->push(src->data(), n, result.decimated_data.output_rate_hz, rf,
+                    if (n == 0 && naux == 0) continue;
+                    dd->push(src ? src->data() : nullptr, n, result.decimated_data.output_rate_hz, rf,
                              result.decimated_data.stream_pos, mc, mc_m, result.decimated_data.bandwidth_hz, aux, naux);
                 }
             }

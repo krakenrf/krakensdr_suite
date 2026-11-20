@@ -120,10 +120,22 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     wide enough: one atomic load per block, nothing else
   - Hand-over: the stream blocks go in the VFO's `push` (`AuxStream`, copied
     into the same queue `Block`, so the 1 s cap - now counted in seconds of
-    signal, `queued_s_` - bounds them; a 2.4 MHz stream is 19 MB a second),
-    skipped with the VFO's block (beamformer still filling). A wanted stream
-    a block lacks (the pipeline makes it from the next one) gives its
-    plugins nothing for that block - never upsampled VFO samples
+    signal, `queued_s_` - bounds them; a 2.4 MHz stream is 19 MB a second).
+    An internal stream is continuous whatever happens to the VFO's block:
+    when the beamformer holds the VFO's samples back - FD-DAS's 256-point
+    frames (hop 128) are longer than the ~85 samples a 12.5 kHz VFO gets per
+    16384-sample block, so it returns nothing on about one block in three,
+    and more in the next - the block goes as a `push` with no VFO samples
+    (n = 0) and its internal streams; the engine then feeds only the
+    internal streams' plugins and leaves the VFO stream's AFC phase,
+    resamplers and positions alone. Such a block's length in the queue is
+    its internal streams' (every block has the same), so the 1 s cap stays
+    right; positions come from the decimated block's `stream_pos`, never
+    from the beamformer. (The first version skipped the internal blocks
+    with a withheld VFO block, as the brief said: TETRA on a 12.5 kHz VFO
+    with FD-DAS gave 0 frames - the orchestrator's review, 2026-11-20.) A
+    wanted stream a block lacks (the pipeline makes it from the next one)
+    gives its plugins nothing for that block - never upsampled VFO samples
   - Positions: the VFO block starts at `stream_pos`; an internal sample j of
     the block is VFO position `stream_pos + (D_vfo - D_stream) x vfo_rate + j
     x vfo_rate / stream_rate` (`AuxStream::pos`, the `run()` step) - D = the
@@ -178,7 +190,15 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     heimdall (`t_indep.py`, 7 checks): RDS from its 150 kHz stream on a
     25.5 kHz VFO, 286-292 frames per 30 s in every case. Offline:
     `digi_test` before / after gives the same plugin set (the old rule) at
-    25 and 300 kHz. Page (headless Chromium, real key / mouse events; 10
+    25 and 300 kHz. Beamforming (`sc_bf2.txt`, `bf_run.sh`, after the fix
+    above): FD-DAS, TETRA on 12.5 kHz 2528 (0 before the fix; old build 0 -
+    it ran TETRA starved), RDS on 25.5 kHz 349 (old build: no RDS), DMR on
+    its own 12.5 kHz stream 540 (old build 540); DAS RDS 25.5 kHz 342; MVDR
+    DMR 12.5 kHz 544 (old 535); `t_trans.py` with an FD-DAS step 37 checks.
+    Shutdown (SIGTERM during an FD-DAS Auto detect session, 17 / 14 plugin
+    processes): new 1.46 / 1.56 s, old 1.35 / 1.72 s, the plugins gone with
+    it - unchanged (the process ends with `fast_exit`; decoders aren't torn
+    down). Page (headless Chromium, real key / mouse events; 10
     checks): the marker, no warning locked onto DMR at 25.5 kHz, Demod ->
     Digital (End key) sends no bandwidth, the RDS note + facts row, its Set
     button (a click) -> 150 kHz and the note gone, fixed TETRA's warning +

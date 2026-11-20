@@ -236,7 +236,9 @@ public:
     // antenna 0 first, value x MC_SCALE
     // bw_hz = the VFO's bandwidth (0 = take the rate for it); aux = the
     // internal streams of this block (Auto detect, wanted_streams()), copied
-    // with it - one queue entry, so the 1 s cap bounds them too
+    // with it - one queue entry, so the 1 s cap bounds them too. n = 0 with
+    // aux: the VFO has no samples this block (the beamformer held them back),
+    // its internal streams still go - they must stay continuous
     void push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS,
               const std::complex<int16_t>* mc = nullptr, int mc_m = 0, int bw_hz = 0, const AuxStream* aux = nullptr,
               size_t naux = 0);
