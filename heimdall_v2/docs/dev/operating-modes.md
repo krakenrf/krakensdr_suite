@@ -488,6 +488,72 @@ Not changed: the cure is in the library - a lock check that does not read
 exactly 3 registers costs no samples at all (`../../../docs/dev/
 librtlsdr-fork.md`, *A 3-register tuner read drops 2 samples*).
 
+**The library fix and the way back to coherent** (2026-11-21). The fork
+branch `lock-read-no-slip` makes no control IN of 3 mod 4 bytes (the cause:
+any such IN drops 4 bytes of the stream) and defines `RTLSDR_NO_STREAM_SLIP`
+(`../../../docs/dev/librtlsdr-fork.md`, *The rule, and the fix*). heimdall
+(`set_operating_mode`, sdr_init.cpp): built against a library with the macro,
+the return to coherent after a sweep or after unequal retunes
+(`retunes_unequal`) no longer forces the full recalibration - the lags are as
+they were, so the phase-only return (cooldown, noise on, phase snapshots)
+runs, logged "Mode: tuners retuned ... - the library keeps the streams in
+step: phase recalibration". What stays: the quiet-point re-pairing after a
+sweep (`clear_l1_buffer_paired`, else the coherence recovery), the lag check
+of the phase recalibration (`check_lag_during_phase_recal`: a channel more
+than 1 sample off goes back to its servo) as the net, `--kerberos` (STALE
+after any retune outside coherent, unchanged), and the retune counters (only
+logged now). Built against a library without the macro (the Dockerfile's
+pinned 578b43d, an older clone) heimdall behaves as before (the forced full
+recalibration). Measurements: below (*Return-path measurements*).
+
+*Return-path measurements* (2026-11-21, the KrakenSDR, x86_64 PC, clean
+test builds against the fixed library and against the fork's master without
+the fix; job scratch 52196024 `fork/htest/`, `fork/out/q6.out`; seconds to
+CONVERGED from the mode reply, `t_lagshift.py`):
+
+| before coherent | fixed library | without the fix |
+|---|---|---|
+| 200 retunes of tuner 0 alone (independent) | 3.1 s, no lag logged | 26.9 s (full recalibration; channel 1 logged 399.998 samples) |
+| sweep, tuner 0 alone, 20 s (446 rounds) | 2.9 s | - |
+| the orchestrator's sequence (tuner 0 40 s full range, 0-2 10 s, all 5 10 s) | 2.9 s | 28.5 s (1648.01 samples) |
+| all 5 on 88-108 MHz 20 s (11 hops: uneven) | 2.9 s | - |
+
+`t_uneven.py` (sweep 20 s, then coherent; seconds from the command): the
+11-hop FM plan on 5 tuners 1.1 s, tuners 1 and 3 on 24-1765 MHz 1.1 s, an
+even 10-hop plan 1.1 s - each "full recalibration: no", no lag logged,
+check_calibration |lag| 0.0 / |phase| 0.1-0.2 deg, l1_unquiet_flushes 0,
+coherence_events 0. The same without the fix: 19.2 s (full recalibration,
+channel 4 logged -267.991 samples) and 25.3 s (channel 1 -890.004). And
+8.5 min of the plans cycling every 20 s (the 11-hop FM plan on 5 tuners,
+tuners 1,3 on 24-1765 MHz, 0,2,4 on 400-470 MHz, tuner 2 alone on the FM
+band, all 5 on 24-1765 MHz; 26 blocks, ~11000 rounds, round_ms 41-47, 0
+unquiet flushes, 0 failed retunes) -> coherent 1.1 s, no lag, check |lag|
+0.0 / |phase| 0.2 deg. Coherent start CONVERGED 19.4-22.0 s, `t_basic.py` all
+PASS; drags (`t_drag.py`): 200 steps of 25 kHz 50 ms apart (reply median
+14.4 ms), 60 steps across 109.2 / 109.8 MHz, 40 jumps 100 <-> 433 MHz - each
+CONVERGED 2.5-3.4 s after the last step, no lag logged, check |lag| 0.0.
+`skewtest.py` (the *Accumulated slip* table's cases, fixed library): tuner 1
+x 2048 / 4096 / 9000 retunes (independent, 14.3-14.6 ms each) -> coherent
+1.6 s each (were 27.2 / 35.2 / 25.8 s), no servo engaged, no "no quiet
+point"; the spread (tuners 1 / 2 / 3 x 2048 / 4096 / 6144) then 15 s of
+sweep mode: round_ms 54 (81 before: no unquiet flush now, 191 before),
+0 unquiet flushes, back 1.6 s (39.6 s before); the same sweep from an
+aligned array: round_ms 53, back 1.6 s. Every check |lag| 0.0, |phase|
+0.1-0.3 deg, coherence_events 0. Positive control, the build without the
+fix, case A: channel 1 at -4096.0 samples, the full recalibration, 27.7 s.
+The first heimdall worker's regression set on the fixed build: `t_basic`
+every case PASS (coherent CONVERGED 22.0 s, check OK); `t_contrast` (settle
+0 / 5 ms) first valid packets' worst segment +3.7 / +3.6 dB against later
+packets' max +4.2 / +4.4 and flagged ones up to +16.7 / +17.1 dB (81 / 74
+with the old hop in them); `t_cmds`, `t_web` 0 failures; `t_modes` 0
+failures - sweep -> coherent CONVERGED 2.1 s after the switch (22.6 s with
+the forced full recalibration), mid-calibration -> sweep -> coherent 4.1 s,
+final 1.0 s, every check |lag| 0.0; `t_long` (3 min, full range, 5 tuners,
+heimdall's sweep still on today's full-path hop): 21 sweeps of 7.5 s, 0
+failed retunes, 0 coherence events, 0 unquiet flushes, 0 valid packets off
+the grid (7006 valid), RSS flat 42.0 MB, SIGTERM during a hop exit 0 in
+0.32 s.
+
 Nits: `whole()` takes the JSON number grammar only (not `12abc`, `0x10`,
 `+5`, `1e2x`), `run` needs a delimiter after the literal (not `truex`);
 `set_sweep` bumps `plan_generation` before zeroing `round` / `sweeps`
