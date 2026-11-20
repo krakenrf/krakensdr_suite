@@ -63,17 +63,22 @@
 // before the settle's end) -> flag off -> dwell. SWEEP_SETTLE_MS: on the
 // KrakenSDR (x86 PC, 2026-11-20 / 21) settle 0 already held - the first
 // valid set after a hop showed nothing of the previous hop, against a
-// station 16-24 dB over the floor; 5 ms is margin for slower USB hosts (the
-// Pi not measured) and costs no time on the PC (a hop's packets fall on the
-// same packet boundaries with 0 or 5: docs, "Hop timing"). Numbers in the doc.
-#define SWEEP_SETTLE_MS          5      // default settle, ms (set_sweep settle_ms 0-1000)
+// station 16-24 dB over the floor; 2 ms is margin (the Pi not measured) and
+// costs no time: with the fast tune (7.5 ms) a settle of 2 lands a hop's
+// packets on the same packet boundaries as 0, where 5 costs one more packet
+// period in most rounds (docs, "Hop timing": 20-25 ms a round against 22-29
+// at one packet a hop). Numbers in the doc.
+#define SWEEP_SETTLE_MS          2      // default settle, ms (set_sweep settle_ms 0-1000)
 #define SWEEP_SETTLE_MAX_MS      1000
 // The dwell is whole USB packets of valid data per tuner and hop: dwell_ms
 // asks for at least that much, a hop delivers sweep_hop_packets(dwell_ms) =
 // ceil(dwell_ms x SAMPLE_RATE / (1000 x NUM_SAMPLES)) packets (6.83 ms each:
 // 5 -> 1, 10 -> 2, 20 -> 3, 50 -> 8, 100 -> 15) and moves on as soon as the
 // last has gone out on 8091 (status "hop_packets").
-#define SWEEP_DWELL_MS           20     // default dwell, ms (set_sweep dwell_ms; the contract): 3 packets
+// Default 5 ms = ONE packet a hop (2026-11-21, was 20 = 3): the fastest sweep
+// (24-1765 MHz with 5 tuners 4.3 s against 6.6 s at 20), and a packet still
+// gives the client its 8 averaged FFT frames at the resolution it picks.
+#define SWEEP_DWELL_MS           5      // default dwell, ms (set_sweep dwell_ms; the contract): 1 packet
 #define SWEEP_DWELL_MIN_MS       5
 #define SWEEP_DWELL_MAX_MS       5000
 // A hop waits for its packets at most this much longer than they take (a

@@ -61,7 +61,7 @@ constexpr int64_t SWEEP_AUTO_BINS = 1 << 19;
 constexpr int SWEEP_AUTO_FRAMES = 8;
 constexpr int SWEEP_DWELL_MIN_MS = 5;
 constexpr int SWEEP_DWELL_MAX_MS = 1000;
-constexpr int SWEEP_DWELL_DEFAULT_MS = 20;
+constexpr int SWEEP_DWELL_DEFAULT_MS = 5;   // one 8091 packet a hop (heimdall's SWEEP_DWELL_MS)
 constexpr int DECIMATION_FACTOR = 10;
 // IMPORTANT: If browser uses different rate, change this to match!
 // Common rates: 44100 (CD quality), 48000 (professional), 96000 (high-end)

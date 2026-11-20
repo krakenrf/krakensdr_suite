@@ -49,7 +49,8 @@ the hops into the sweep spectrum, the page shows it.
     ... 2.4 MHz, H 1 ... 20000.
   - `"tuners":[0,1,4]` - the tuners that take part: unique indices below
     the element count, at least one.
-  - `"dwell_ms":D` (5 ... 5000, default 20) - how long the settled stream
+  - `"dwell_ms":D` (5 ... 5000, default 5 = one packet since 2026-11-21,
+    20 before) - how long the settled stream
     runs on each hop. (Made exact 2026-11-21: a hop delivers the fewest
     whole 8091 packets that hold D, `ceil(D x 2.4e6 / (1000 x 16384))` per
     tuner - 5 ms -> 1, 10 -> 2, 20 -> 3, 50 -> 8, 100 -> 15 - and the next
@@ -145,7 +146,8 @@ the hops into the sweep spectrum, the page shows it.
   are not there are dropped, none left = all.
 - `SWEEP_RES:<N>|auto` - the FFT size (128 ... 16384); `auto` (0) picks
   one from the span.
-- `SWEEP_DWELL:<ms>` - 5 ... 1000, default 20.
+- `SWEEP_DWELL:<ms>` - 5 ... 1000, default 5 (one packet a hop; 20 until
+  2026-11-21).
 - `SWEEP_RUN:<1|0>` - run / pause. Not persisted: entering the mode runs.
 - All but `SWEEP_RUN` persisted. Each is answered by the `sweep` message
   to every page, never by an echo.

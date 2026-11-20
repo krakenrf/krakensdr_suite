@@ -245,17 +245,21 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
     tuner range (24-1766 MHz), `step_hz` 100000-2400000, `steps` 1-20000.
   - `tuners`: the tuners that take part - unique whole numbers below
     `num_channels`, at least one.
-  - `dwell_ms` 5-5000 (default 20): how long the settled stream runs on a
-    hop. `settle_ms` 0-1000 (default `SWEEP_SETTLE_MS` = 5 ms, config.h): the wait
-    between the retune and the flush that precedes the dwell. Both take
-    effect at once and don't restart the sweep.
+  - `dwell_ms` 5-5000 (default 5): how much settled data a hop delivers, in
+    whole 8091 packets per tuner: `ceil(dwell_ms x 2.4e6 / (1000 x 16384))`
+    (5 ms -> 1, 10 -> 2, 20 -> 3, 50 -> 8, 100 -> 15; the status object's
+    `hop_packets`). `settle_ms` 0-1000 (default `SWEEP_SETTLE_MS` = 2 ms,
+    config.h): the wait between the end of the retune and the first sample
+    that may count. Both take effect at once and don't restart the sweep.
   - `run`: `false` pauses (the tuners stay put; the retuning flag is 0 again
     once a hop under way has settled), `true` resumes at the round it was on.
-  - A dwell lasts at least until one set has gone out on 8091 with the flag
-    0 (at most 250 ms longer): the first comes up to a USB packet (6.8 ms)
-    after the post-settle flush. A tuner already on its round's hop is not
-    retuned (with as many tuners as hops the stream runs on without a gap;
-    the counter still counts the rounds).
+  - A hop ends as soon as its `hop_packets` have gone out on 8091 with the
+    flag 0 (it waits for them at most 250 ms longer than they take). Before
+    them every dongle's packets that can hold a sample from before the
+    retune's end + the settle are dropped, per dongle. A tuner already on
+    its round's hop is not retuned (with as many tuners as hops the stream
+    runs on without a gap; the counter still counts the rounds). A dongle
+    that stops delivering keeps the flag at 1 (`stalled_tuners`).
   - Reply `{"status":"success","sweep":{...}}` (the status object below) or
     `{"status":"error","message":"..."}`; nothing changes on an error. A plan
     or tuner change restarts the sweep at round 0.
@@ -281,6 +285,13 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
   `failed_tuners` (the tuners whose last retune failed) and
   `l1_unquiet_flushes` (L1 flushes
   that found no quiet point between USB packet rounds, since startup).
+  Since 2026-11-21 also `hop_packets` (valid packets per tuner and hop, from
+  `dwell_ms`), `stalled_tuners` (dongles that deliver nothing: the flag
+  stays 1 while there is one), `gates_failed` / `gates_late` (hops whose
+  per-dongle drop of pre-settle packets had to be retried / was served
+  late) and `timing` (a hop's timeline in ms, averaged over the last 64
+  hops: `retune_ms`, `tune_max_ms`, `settle_ms`, `gate_ms`,
+  `first_valid_ms`, `dwell_ms`, `round_ms`, `valid_per_hop`, ...).
   `operating_mode` is `"sweep"` and `tuner_frequencies` lists every tuner.
 
 ## 3. The 2 Hz status broadcast (exact schema, `broadcast_status()` lines 53–147)

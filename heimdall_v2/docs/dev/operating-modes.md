@@ -485,9 +485,16 @@ reader of 8091 on headers only).
 MHz with 15 overlapped frames, 512 for the full range) - FM 10.5 sweeps a
 second with 5 tuners, the full range 5.2 s; dwell 10 gives today's speed
 with exactly 2 packets a hop (Auto 4096, as today's default gave from
-1.3-1.6). The defaults are left at 20 (the contract's; kraken_doa's
-`SWEEP_DWELL_DEFAULT_MS` and the page show the same) - the proposal is in
-the round's report.
+1.3-1.6). DECIDED 2026-11-21, on the final path's numbers (the fast tune
+call and worker F's library, *Review fixes of the hop loop* below): the
+default dwell is 5 ms - one packet a hop - and the default settle 2 ms
+(`SWEEP_DWELL_MS`, `SWEEP_SETTLE_MS`; kraken_doa's `SWEEP_DWELL_DEFAULT_MS`
+and the page's field follow). With the 7.5 ms tune a settle of 5 costs one
+more packet period in most rounds, 2 runs as fast as 0 (20-25 ms a round at
+one packet a hop against 22-29) and the first valid packet measured as
+clean at 0, 2 and 5; the whole range with 5 tuners then takes ~4.3 s, with
+one ~19 s. Until then both defaults were 20 / 5, and every number above
+that names "the default" means those.
 
 *The guarantee, re-tested* (the first valid packet now comes a packet
 earlier than before, so what "settle 0 holds" meant changed):
