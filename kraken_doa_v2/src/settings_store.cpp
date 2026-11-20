@@ -183,7 +183,7 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"sweep_range",              "SWEEP_RANGE:",              VType::STRING, "87.500000:108.000000"},
         {"sweep_tuners",             "SWEEP_TUNERS:",             VType::STRING, "all"},
         {"sweep_res",                "SWEEP_RES:",                VType::STRING, "auto"},
-        {"sweep_dwell_ms",           "SWEEP_DWELL:",              VType::NUMBER, "20"},
+        {"sweep_dwell_ms",           "SWEEP_DWELL:",              VType::NUMBER, "5"},   // SWEEP_DWELL_DEFAULT_MS
         {"operating_mode",           "OPERATING_MODE:",           VType::STRING, "coherent"},
         // Station
         {"station_id",               "STATION_ID:",               VType::STRING, "KrakenSDR"},

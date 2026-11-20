@@ -727,7 +727,7 @@ body.mode-sweep.swp-panning #swp-spec-box, body.mode-sweep.swp-panning #swp-wf-b
 .swp-pbar {position:relative;flex:none;width:64px;height:6px;border-radius:3px;background:var(--s1);border:1px solid var(--l2);overflow:hidden}
 .swp-pbar > i {position:absolute;left:0;top:0;bottom:0;width:100%;background:var(--ac-l);transform-origin:left center;transform:scaleX(0)}
 .swp-pbar.paused > i {background:var(--warn)}
-#swp-hdr-p {display:inline-block;width:4ch;text-align:right}
+#swp-hdr-p {display:inline-block;width:5ch;text-align:right;margin-right:.6ch}
 #swp-hdr-t {display:inline-block;width:9ch;text-align:left;color:var(--t1)}
 /* the top bar in sweep mode: the range (Start - Stop: digits like the frequency's, .swp-d - the top
    bar's code queries .freq-digit page-wide) and the tuners that take part */
@@ -12990,7 +12990,7 @@ function swpNorm(r) {
     tuners: Array.isArray(r.tuners) ? r.tuners.filter(t => Number.isInteger(t) && t >= 0 && t < 8).sort((a, b) => a - b) : [],
     available: Math.max(0, Math.min(8, num(r.available, 0) | 0)), res: num(r.res, 0) | 0, fft_size: num(r.fft_size, 0) | 0,
     bin_hz: num(r.bin_hz, 0), bins: num(r.bins, 0), hops: num(r.hops, 0), rounds: num(r.rounds, 0),
-    dwell_ms: num(r.dwell_ms, 20), running: r.running !== false, grid: num(r.grid, 0), gain_db: num(r.gain_db, NaN)};
+    dwell_ms: num(r.dwell_ms, 5), running: r.running !== false, grid: num(r.grid, 0), gain_db: num(r.gain_db, NaN)};
   return s.stop_hz > s.start_hz ? s : null;
 }
 let swpOpSentAt = 0;   // this page's last OPERATING_MODE (setOpMode): a sweep message from before it is no evidence
