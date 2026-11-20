@@ -405,6 +405,9 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .v2t-row.live.end .v2t-live {color:var(--t5)}
 .v2t-text .pend {color:var(--t5)}
 .v2t-list.has-live .v2t-empty {display:none}
+/* v2tRenderLive keeps the rows being read in place itself (the browser's scroll anchoring on
+   top of it moved them twice; Safari has none) */
+.v2t-list {overflow-anchor:none}
 .v2t-play {background:var(--s3);border:1px solid var(--l2);color:var(--t1);border-radius:3px;font-size:10px;padding:0 5px;cursor:pointer;line-height:16px}
 .v2t-play:hover {border-color:var(--ac);color:#fff}
 .v2t-play.on {background:#0068bb;border-color:var(--ac);color:#fff}
@@ -16706,7 +16709,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const low = t.conf < 0.5;
     const play = t.clip ? `<button type="button" class="v2t-play${v2tPlaying === t.id ? ' on' : ''}" onclick="v2tPlay(${t.id})" title="${v2tPlaying === t.id ? 'Stop' : 'Play the audio'}">${icon(v2tPlaying === t.id ? 'stop' : 'play')}</button>` : '';
     const text = v2tMark(t.text || '', q);
-    return `<div class="v2t-row"><div class="v2t-meta">${play}<span class="t" title="${digEsc(d.toLocaleString())}">${time}</span>` +
+    return `<div class="v2t-row" data-id="${+t.id}"><div class="v2t-meta">${play}<span class="t" title="${digEsc(d.toLocaleString())}">${time}</span>` +
            `<span class="dig-vfo-tag" style="color:${col}">D${t.vfo}</span><span class="v2t-mhz">${(+t.mhz).toFixed(4)} MHz</span>` +
            `<span>${digEsc(v2tSrcName(t.src))}</span>${who}${brg}<span>${(+t.dur).toFixed(1)} s${t.part ? ' · part ' + t.part : ''}</span>` +
            (low ? `<span class="v2t-low" title="The model was unsure (confidence ${Math.round(t.conf * 100)} %)">?</span>` : '') +
@@ -16777,10 +16780,18 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     }
     // newest first, at most 400 rows (the CSV export has them all)
     const rows = v2tShown.slice(-400).reverse();
+    // scrolled down: the row at the top of the view stays where it is (a new transcript - or a
+    // final replacing its live row - comes in above it); at the top: the list stays at the top
     const atTop = list.scrollTop < 8;
-    const top = list.scrollTop;
+    const top = list.scrollTop, lt = list.getBoundingClientRect().top;
+    let anchor = null;
+    if (!atTop) {
+      const r = [...rowsEl.children].find(e => e.getBoundingClientRect().bottom > lt + 1);
+      if (r && r.dataset.id) anchor = [r.dataset.id, r.getBoundingClientRect().top - lt];
+    }
     rowsEl.innerHTML = rows.map(t => v2tRowHtml(t, q)).join('');
-    list.scrollTop = atTop ? 0 : top;
+    const ar = anchor && rowsEl.querySelector(`.v2t-row[data-id="${anchor[0]}"]`);
+    list.scrollTop = atTop ? 0 : ar ? top + ar.getBoundingClientRect().top - lt - anchor[1] : top;
   }
 
   // An Ogg Opus clip -> 48 kHz PCM with the page's own Opus decoder (the live

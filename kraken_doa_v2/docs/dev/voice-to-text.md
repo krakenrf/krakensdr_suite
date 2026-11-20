@@ -444,8 +444,14 @@ default, because of its CPU cost (measured below).
   escaped (`v2tMark`, the search marks too). No clip, bearing, export or
   unseen count - a live row is not a transcript. Someone reading older
   rows lower down keeps them in place while the live rows change height
-  (`scrollTop` moved by the difference). The empty "No transcripts yet"
-  (`.v2t-empty`) hides while live rows show.
+  (`scrollTop` moved by the difference; `.v2t-list` has
+  `overflow-anchor:none` - Chrome's own scroll anchoring on top of it
+  moved them twice, and Safari has none), and since 2026-11-20 also when
+  a new transcript comes in above them (`v2tRenderTab` re-finds the row
+  that was at the top of the view by its `data-id`; it used to keep
+  `scrollTop`, so the list moved down a row per new transcript - with a
+  final replacing its live row the two together moved it). The empty "No
+  transcripts yet" (`.v2t-empty`) hides while live rows show.
 - Measured (job fa22c145, this PC = i7-11800H, 14 real WBFM voice clips +
   jfk.wav; a patched bench copy of kraken_whisper with a `--stream STEP_MS`
   simulation: re-decode the whole transmission so far every step,
@@ -531,4 +537,9 @@ marker), a fake `curl` on the PATH (no network).
   an older helper -> "not with this helper", no rows; Get base.en-q8_0 ->
   "Downloading base.en to make base.en-q8_0…", "Making base.en-q8_0 from
   base.en…", "base.en-q8_0 made", and the page that pressed Get uses it.
+- t_ui_scroll.py (headless Chromium): 40 older transcripts, the list
+  scrolled to 400 px, two transmissions with live rows coming, growing and
+  replaced by their finals - the row at the top of the view stayed put in
+  all 64 samples (scrollTop 400 -> 441 -> 483 -> 487 -> 510); at the top
+  the list stays at the top.
 
