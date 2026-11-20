@@ -481,6 +481,18 @@ A `sweep` message with `active` switches a page that shows another mode to
 sweep - the page missed the `operating_mode` message - but not within 1.5 s
 of an `operating_mode` message or of this page's own mode change
 (`swpOpSentAt`), so a broadcast from before a change cannot pull it back.
+The receiver's `system_status.sweep` (true while it sweeps) is a hint for
+sweep mode like `independent` / `wideband` for theirs.
+
+**The calibration chip** (end to end, 2026-11-20): `system_status` in sweep
+mode carries heimdall's last phase state (4, "converged", in the test; 1 on
+the KrakenSDR) with `wideband` and `independent` false - the chip said
+"Converged" and coloured the bar green, though heimdall parks the
+calibration. Now `system_status.sweep` (or the page's own sweep mode) counts
+like the other non-coherent modes: the chip shows "Disabled" and the bar has
+no calibration colour - the same as in wideband scan and independent mode
+today, so the chip means one thing in all three. The status message itself
+is right (it says `sweep: true`); the page had not used that field.
 
 **The top bar.** The frequency (`#tb-freq`) is replaced by the range
 (`#tb-swp-range`): Start and Stop, `G.MMM.kkk` digits to 1 kHz (`.swp-d`, own
@@ -537,6 +549,23 @@ bin grid.
   replacing one still waiting). A new grid id (range or resolution) drops the
   waterfall's rows (`WaterfallDisplay.clear`, new) and the last frame; a new
   range also resets the zoom.
+- The waterfall follows the window (2026-11-20, from the orchestrator's run
+  on the KrakenSDR: zoomed from 24 - 1765 into 96.5 - 109.4 MHz, the old rows
+  still showed the whole range under the new axis - with a sweep every 8 -
+  40 s for minutes, a line under "100 MHz" really at 800 MHz; the live
+  spectrum's rule, "older rows keep the span they were drawn with", is fine
+  where rows are replaced within seconds, not here). Each row keeps what it
+  showed - its first point's frequency, the spacing, its levels as u8 (the
+  frames' own resolution) and its height in pixel rows (`swp.rows`, newest
+  first, only the rows that fit the waterfall: at most ~4 KB each) - and
+  every row is painted through the window shown (`swpWfRow`: per pixel the
+  highest of the row's points in it, between two points the level at its
+  middle, black outside the row's span). A zoom, a pan or a resize repaints
+  all rows once per screen refresh (`swpWfRepaint`); a new row is painted the
+  same way, so it lines up with the trace exactly (the main display's
+  `addLine` maps the first to the last point across the plot). Zoomed in
+  past a row's detail the old rows are coarser - honest -, and the new rows
+  come in the new detail.
 - Old frames: a type 10 frame outside sweep mode, one built for a view from
   before the page entered the mode (`seq < swp.seqMin`), and one whose grid id
   is not the latest `sweep` message's are dropped - the last only while that
@@ -565,7 +594,8 @@ bin grid.
 **The sidebar.** A Sweep box (`data-sb="sweep"`, `.sweep-only`, title icon
 `span`, placed first after the phone boxes): Resolution (Auto - naming the
 width in use - and the FFT sizes 128 ... 16384 as bin widths, 18.8 kHz ...
-146 Hz), Dwell (5 - 1000 ms, typed; a value outside is clamped before it is
+146 Hz; a size the receiver had to cap shows both, "146 Hz → 586 Hz", and
+the title says why - the engine holds a sweep to 2^22 bins), Dwell (5 - 1000 ms, typed; a value outside is clamped before it is
 sent), Run / Pause (`Pause` while running; `Run`, primary, while paused), and
 the state: State (Running / Paused / No data yet), Sweep time, Progress,
 Steps (hops and the tuners sharing them), Points (bins and their width),
@@ -625,8 +655,46 @@ mock into a recorder only, for the run against the real engine.
   every icon resolves.
 - `t_phone.py` (15 checks, 400 x 860 touch): the drawer's rows, a tap on a
   digit's upper half, finger-sized tuner toggles and a tap on one.
-- Not covered: Firefox / Safari; the real receiver and heimdall (to come);
-  the theme check passes (`tools/theme_palette.py --check`).
+- Not covered: Firefox / Safari; the theme check passes
+  (`tools/theme_palette.py --check`).
+
+**End to end** (2026-11-20, phase 2): the same suites against the merged
+tree's test build (the real engine) and the receiver worker's
+`client/fake_heimdall_sweep.py` (sweep mode per the contract, an RF scene of
+24 - 1765 MHz in absolute frequency: FM, DAB, DVB-T, LTE 800, GSM 900, ADS-B
+...), scratch `stack_real.sh` + `run_all.sh` (`SOURCE=real`: the page's mock
+only records). Found and fixed on the page:
+- the calibration chip in sweep mode (above);
+- the waterfall's rows after a zoom / pan (above);
+- the Resolution select named the asked size when the engine capped it (the
+  full range at 16384 runs at 4096): it shows both now;
+- the zoom slider's end did not follow a change of the plot's width (a stale
+  `max` until the next zoom): `swpResize` re-syncs it.
+Checked against the engine with nothing to change: Auto's widths (512 =
+4.69 kHz for the full range, 16384 for 20 MHz), `gain_db` from another page,
+a new view answered while paused (flags 1 and 4), K' = H (400 - 409 MHz on 5
+tuners: ~20 lines a second, the sweep time 0.02 s, the progress readout
+steady), a slow sweep (1 tuner, the full range: the progress climbs, no line
+before the sweep completes, "911 · 1 tuner"), nothing the page sends by
+itself in sweep mode (20 s idle: no command at all; no `Rejected control
+message` in the receiver's log over the whole run), round trips to coherent /
+wideband / independent with a VFO's audio (type 7 and audio again, the VFO's
+tuning bar, no sweep display left, no refusal), two pages (range, tuners,
+resolution and gain follow; each its own zoom). Results, each suite on a
+freshly started stack: real engine - `t_sweep.py` 161 / 161 (with the
+waterfall-follows-the-window checks: a 538 MHz DVB-T mux keeps its colour
+under its axis position after a x3.8 zoom and a 300 px pan, noise under 520
+MHz; the rows stay within the waterfall's height), `t_real.py` 42 / 42,
+`t_bar.py` 16 / 16, `t_phone.py` 15 / 15; the mock (the page's own engine,
+the real one's sweep traffic kept from the page) - `t_sweep.py` 160 / 160,
+`t_compat.py` 22 / 22 (the other modes identical to the page before sweep
+mode, measured against the new receiver), `t_bar.py` 16 / 16, `t_phone.py`
+15 / 15.
+- A level of 0 in a frame means "never measured" (the contract) but also
+  "measured at or under the sweep's reference": at 146 Hz bins with 1 - 2
+  averages a quiet hop's noise sits partly under the one reference, and the
+  trace shows runs of 0 there (89.6 - 91.3 MHz in the FM-band test). The page
+  cannot tell them apart; it draws both at 0 dB, which is right for both.
 
 ## Tests
 
