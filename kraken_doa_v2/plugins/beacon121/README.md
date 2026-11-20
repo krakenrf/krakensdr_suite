@@ -67,8 +67,8 @@ Per beacon (table row + details, one talker each):
   406 MHz PLBs send on their homer")
 - **C/N0** (dBHz, now and strongest), first / last heard (UTC), time on the
   air, DoA packets
-- **Plots**: the sweep of the strongest beacon on the air (audio Hz over
-  one sweep) and its C/N0 over the last 2 minutes (walking DF)
+- **Plot**: the C/N0 of the strongest beacon on the air over the last 2
+  minutes (walking DF; the decoder tab shows one plot per VFO)
 - **Events**: "⚠ DISTRESS BEACON on 121.5 MHz: ... - report it to the
   rescue coordination centre (time, frequency, bearing)" (again every 5
   min while it transmits), the 406 MHz homer's pauses, keying, CW periods,
@@ -79,8 +79,8 @@ Per beacon (table row + details, one talker each):
   beacon, the strongest, **carriers without a sweep** (voice, bare
   carriers, tones - explicitly not beacons), channels followed
 - Raw (decoder data log, the decoder tab's Logging at "Log All"): `B121 <id>
-  <direction> <rate>/s <lo>-<hi> m<depth> d<duty> cn0 <dBHz>` every 10 s per
-  beacon. The plugin sends nothing extra for "Show all messages": every
+  <direction> <rate>/s <lo>-<hi> [m<depth>] [d<duty>] [cn0 <dBHz>]` every 10 s
+  per beacon (depth / duty / C/N0 only where measured). The plugin sends nothing extra for "Show all messages": every
   event it has is always shown
 
 ## ID separation
@@ -101,8 +101,11 @@ s, `squelch_hold_s` 1 s): the VFO's own DoA then comes from the beacons'
 samples only.
 
 Limits: two beacons within ~40 Hz are one carrier (one row, a mixed
-bearing); a beacon 17 dB or more weaker than another within 1.6 kHz is
-taken for that one's sideband and missed.
+bearing). A carrier 20 dB or more under an AM signal that is not a beacon
+(voice, a VOR) within 3.5 kHz is taken for its modulation while that one
+is on the air - a weak beacon there is found once the strong one stops;
+next to a confirmed beacon (its sidebands sweep, making no lines) a weaker
+beacon is found at once (22 dB weaker, 2.5 kHz away: tested, below).
 
 ## Receiver (`rx.cpp`)
 
@@ -110,10 +113,14 @@ taken for that one's sideband and missed.
   averaged ~0.5 s, floor = the median bin of +-12 kHz; a carrier = a
   narrow local maximum >= 9 dB over it in 3 successive spectra, not a
   sideband of a stronger line (the spectrum at the mirror frequency within
-  3.5 kHz holds a similar line - a steady tone's or a voice's lines). Up
-  to 8 carriers are followed, each a **channel** started on the last 2.5 s
-  of the input (a 1 s self-test is caught from its start); a channel
-  without its carrier for 30 s closes
+  3.5 kHz holds a similar line - a steady tone's or a voice's lines), nor
+  >= 20 dB under a stronger line within 3.5 kHz that is not a confirmed
+  beacon (real airband voice and VOR recordings left a dozen such
+  "carriers" a minute otherwise). Up to 8 carriers are followed, each a
+  **channel** started on the last 2.5 s of the input (a 1 s self-test is
+  caught from its start); a channel without its carrier for 30 s closes,
+  and when all 8 are taken one that never showed a sweep gives way (not
+  seen for 5 s, or followed for 10 s)
 - **Channel**: NCO + 31-tap low-pass, 16 kHz; carrier AFC from the 20 ms
   block means (the block mean IS the carrier: the sidebands >= 300 Hz
   average out) - also the carrier's presence (pauses, keying, Morse) and
@@ -217,8 +224,36 @@ Results (scratch tests, x86_64 i7-11800H; 2026-11-18):
 - **CPU**: offline 0.6 % of real time with one beacon, 3.2 % with the six
   carriers of `beacon121-four`; live in the playback 4.3 % of an x86 core
   (six channels). Not measured on a Pi
-- Not tested: real recordings (none found with IQ), the Pi, the web UI
-  (the VFO's tuning on pick is the generic `fixed_freq_hz` path)
+- **Real recordings** (the local IQ library, 2026-11-20; not in the repo,
+  private content): no 121.5 / 243 MHz beacon recording exists there. False
+  alarms on real AM: SDRangel's airband capture (3 MS/s around 119.5 MHz,
+  45 s) cut into its 7 channels (118.500 ... 120.625 MHz, voice and
+  carriers, 29-72 dBHz), sigidwiki "AM IQ" (61 s, 80 dBHz carrier) and
+  four VOR recordings (61 + 88 + 88 + 10 s: 30 Hz AM, the 9960 Hz FM
+  subcarrier, keyed 1020 Hz idents): **0 sweeps, 0 beacons, 0 valid
+  frames** in all 12. They showed the "carriers" of real voice's and VOR
+  subcarriers' lines (sigidwiki AM: 33 channels opened in 61 s), hence the
+  20 dB rule above (8 then)
+- **After the merge with main (2026-11-20)**: every test above re-run on
+  the merged tree - the same numbers to the decimal (sensitivity table,
+  depth / duty, edges, pauses / Morse / keying / CW / self-tests, false
+  alarms, the four close-beacon scenes, `beacon121-four` 39.9 / 149.9 /
+  259.9 / 100.2); a fifth scene, a beacon 22 dB weaker 2.5 kHz from a
+  strong one: 30.0 / 199.8 deg. End to end on the merged TEST build (the
+  final plugin): `beacon121-four` 40.1 / 149.9 / 259.9 / 100.3, 39.8 /
+  149.5 / 259.7 / 100.1, 39.9 / 149.7 / 259.9 / 100.1, every expected
+  event; `beacon121-squelch` talker 70.6, VFO DoA 69-71 with the Digital
+  squelch, 67-320 without; doa_settings.json unchanged
+- **The redesigned page** (headless Chromium, real mouse / keys, the TEST
+  build fed by a fake heimdall streaming `beacon121-four` at 2.4 MHz):
+  picking the decoder in D0's list (Marine & distress, "121.5 / 243 MHz
+  distress beacons" + "swept tone") tuned the receiver 100.000 -> 121.500
+  MHz, the VFO to offset 0 at 32 kHz, its frequency / tuner / bandwidth
+  fields locked; the decoder tab showed the four rows, the events (Morse
+  'P', the homer's pauses), the facts and the strength plot; the DF panel
+  listed the four beacons at 40 / 149 / 259 / 99 deg; Logging at Log All
+  wrote `decoder_logs/beacon121/beacon121-YYYY-MM-DD.jsonl` (events + raw
+  lines; "Show all messages" ticked and disabled); 0 page errors
 
 ## Not done / limits
 

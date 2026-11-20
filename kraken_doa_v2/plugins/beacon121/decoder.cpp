@@ -378,9 +378,14 @@ private:
         if (host.raw_wanted() && r.sweep.ok && now_ - b.last_raw >= 10) {
             b.last_raw = now_;
             char s[200];
-            snprintf(s, sizeof s, "B121 %s %s %.2f/s %.0f-%.0f m%.2f d%.2f cn0 %.1f", b.id.c_str(), dir_word(b.sw.dir),
-                     b.sw.rate_hz, b.sw.lo_hz, b.sw.hi_hz, b.depth, b.duty, b.cn0);
-            host.raw(s);
+            snprintf(s, sizeof s, "B121 %s %s %.2f/s %.0f-%.0f", b.id.c_str(), dir_word(b.sw.dir), b.sw.rate_hz, b.sw.lo_hz,
+                     b.sw.hi_hz);
+            std::string line = s;
+            // depth / duty only where measured, C/N0 where known (no "nan" in the log)
+            if (std::isfinite(b.depth)) line += fmt(" m%.2f", b.depth);
+            if (std::isfinite(b.duty)) line += fmt(" d%.2f", b.duty);
+            if (std::isfinite(b.cn0)) line += fmt(" cn0 %.1f", b.cn0);
+            host.raw(line);
         }
         // the table row about once a second (sooner when its status changed)
         const std::string st = status(b);
@@ -545,34 +550,10 @@ private:
             if (active(b) && (!f || b.cn0 > f->cn0)) f = &b;
         if (!f) return;
         plot_t_ = now_;
-        const auto& tr = f->sw.trace;
-        if (!tr.empty()) {
-            kp::Plot p;
-            p.id = "sweep";
-            p.title = "Sweep of " + f->id + " (" + dir_word(f->sw.dir) + fmt(", %.2f/s)", f->sw.rate_hz);
-            p.x_unit = "ms";
-            p.y_unit = "Hz";
-            p.x0 = 0;
-            p.dx = f->sw.period_s * 1e3 / static_cast<double>(tr.size());
-            p.y_min = 0;
-            p.y_max = 2000;
-            // the gaps (tone not seen) bridged for the line
-            p.y.resize(tr.size());
-            float last = NAN;
-            for (size_t i = 0; i < tr.size(); i++) {
-                if (std::isfinite(tr[i])) last = tr[i];
-                p.y[i] = last;
-            }
-            float first = NAN;
-            for (float v : p.y)
-                if (std::isfinite(v)) { first = v; break; }
-            for (auto& v : p.y)
-                if (!std::isfinite(v)) v = first;
-            if (std::isfinite(first)) host.plot(p);
-        }
+        // the page shows one plot per VFO in the decoder tab - the plugin's unnamed one (named plots only
+        // beside a video display): the strength over time, the walking-DF aid (as wildlife's)
         if (f->strength.size() >= 2) {
             kp::Plot p;
-            p.id = "strength";
             p.title = "Strength of " + f->id + " (C/N0, last 2 min)";
             p.x_unit = "s";
             p.y_unit = "dBHz";

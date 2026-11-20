@@ -220,6 +220,7 @@ public:
         g2_ = 0;
         for (double v : g) g2_ += v * v;
         last_seen_abs_ = static_cast<double>(abs_start);
+        start_abs_ = static_cast<double>(abs_start);
         last_carrier_abs_ = static_cast<double>(abs_start);
         last_report_abs_ = static_cast<double>(abs_start);
     }
@@ -232,6 +233,8 @@ public:
     int serial() const { return serial_; }
     double freq() const { return f_; }
     int passes() const { return passes_; }
+    bool ever_passed() const { return ever_passed_; }
+    double start_abs() const { return start_abs_; }
     double last_seen() const { return last_seen_abs_; }
     double last_carrier() const { return last_carrier_abs_; }
     double level() const { return level_; }
@@ -311,6 +314,8 @@ private:
     // evaluation
     int ecount_ = 0;
     int passes_ = 0;
+    bool ever_passed_ = false;
+    double start_abs_ = 0;
     double period_prev_ = 0;
     double last_seen_abs_, last_carrier_abs_, last_report_abs_;
     RunMorse mtone_, mcar_;
@@ -497,6 +502,7 @@ private:
             passes_ = r.sweep.ok ? 1 : 0;
         }
         if (r.sweep.ok) period_prev_ = r.sweep.period_s;
+        if (passes_ >= 2) ever_passed_ = true;
         r.passes = passes_;
         r.cw.swap(cw_);
         if (!morse_.empty()) {
@@ -1059,6 +1065,17 @@ void Receiver::spectrum() {
             if (s == i || lines[s].p < 2 * lines[i].p) continue;
             const double mirror = 2 * lines[s].f - lines[i].f;
             if (std::fabs(lines[s].f - lines[i].f) < 150 && lines[s].p > 10 * lines[i].p) side[i] = true;
+            // >= 20 dB under a carrier within an AM signal's audio band: its modulation (real airband
+            // voice and VOR recordings left a dozen such "carriers" a minute - channels for nothing,
+            // which could fill the 8 slots); a weak beacon there is taken up once the strong one stops
+            // (not next to a confirmed beacon: its sidebands sweep - they make no lines - so a line there is
+            // a transmitter of its own, perhaps a weaker beacon)
+            if (std::fabs(lines[s].f - lines[i].f) <= 3500 && lines[s].p > 100 * lines[i].p) {
+                bool beacon = false;
+                for (const auto& c : ch_)
+                    if (c->ever_passed() && std::fabs(c->freq() - lines[s].f) < MATCH_HZ) beacon = true;
+                if (!beacon) side[i] = true;
+            }
             // the spectrum itself at the mirror frequency (a voice harmonic's mirror needn't pass as a line)
             const int km = static_cast<int>(std::lround(mirror / binw));
             // (AM audio reaches ~3.4 kHz; further out a line is another transmitter's)
@@ -1138,12 +1155,18 @@ void Receiver::spectrum() {
 
 void Receiver::start_channel(double f) {
     if (static_cast<int>(ch_.size()) >= MAX_CHANNELS) {
-        // room for it: the channel heard least lately that never showed a sweep
+        // room for it: the channel heard least lately that never showed a sweep - not seen for 5 s,
+        // or followed for 10 s without one (a beacon shows its sweep within ~3 s)
         size_t worst = ch_.size();
         double oldest = 1e300;
-        for (size_t i = 0; i < ch_.size(); i++)
-            if (ch_[i]->passes() == 0 && ch_[i]->last_seen() < oldest) oldest = ch_[i]->last_seen(), worst = i;
-        if (worst == ch_.size() || (static_cast<double>(abs_) - oldest) / FS < 5) return;
+        const double now = static_cast<double>(abs_);
+        for (size_t i = 0; i < ch_.size(); i++) {
+            const Channel& c = *ch_[i];
+            if (c.ever_passed() || c.passes() > 0) continue;
+            if ((now - c.last_seen()) / FS < 5 && (now - c.start_abs()) / FS < 10) continue;
+            if (c.last_seen() < oldest) oldest = c.last_seen(), worst = i;
+        }
+        if (worst == ch_.size()) return;
         ch_.erase(ch_.begin() + static_cast<long>(worst));
     }
     static const std::vector<float> taps = lowpass_taps();

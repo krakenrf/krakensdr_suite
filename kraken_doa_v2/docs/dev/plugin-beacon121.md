@@ -64,8 +64,11 @@ every test number and the sources: `plugins/beacon121/README.md`.
   8-150 s, <= 2.5 s; keyed = >= 5 pauses all within 20 % of a < 6 s
   interval. Talker packet per evaluation: 0.24 s of the latest carrier run,
   `freq_hz` = carrier, `bw_hz` 100 (kraken_doa's `narrow_cov` path at 32
-  kHz). Valid spans = carrier-on runs of active beacons. Plots `sweep`,
-  `strength`. Page: `RDF_PK_KIND` beacon121 -> `sar` (one entry). Merged
+  kHz). Valid spans = carrier-on runs of active beacons. One plot, unnamed:
+  the strongest beacon's C/N0 over 2 min (the page draws only a plugin's
+  unnamed plot in the decoder tab - named ones only beside a video display;
+  a `sweep` plot with an id never showed, found in the browser test and
+  dropped). Page: `RDF_PK_KIND` beacon121 -> `sar` (one entry). Merged
   with main 2026-11-20 (the redesigned page, logging per decoder, the
   removed Invert option): `host.rf_inverted()` dropped as in beacon406 /
   wildlife; the distress / ⚠ wording left as beacon406's (main didn't change
@@ -77,4 +80,16 @@ every test number and the sources: `plugins/beacon121/README.md`.
   s voice + carriers / tones / sirens, `beacon121-four` offline 39.9 /
   149.9 / 259.9 / 100.2, end to end 39.8 / 149.7 / 259.7 / 100.0, squelch
   entry VFO DoA 69-71 (70) vs 241-251 without the squelch. Not run: a Pi,
-  real recordings, the Windows / glibc syntax checks (no MinGW / zig here)
+  the Windows / glibc syntax checks (no MinGW / zig here)
+- Merge with main (2026-11-20): `rf_inverted` dropped; diagnostics on
+  `B121_DEBUG`; raw lines without "nan"; the strength plot unnamed (the
+  page shows only that one in the decoder tab). Real recordings from the
+  IQ library (no 121.5 MHz beacon in it): 7 airband AM channels, a
+  sigidwiki AM recording, 4 VORs - 0 beacons; their voice / subcarrier
+  lines opened channels for nothing (33 in 61 s) -> a line >= 20 dB under a
+  non-beacon line within 3.5 kHz is not a carrier, and a full table gives
+  way to a channel followed 10 s without a sweep. Browser test in the
+  redesigned page: pick -> 121.500 MHz / 32 kHz / fields locked, tab rows,
+  events, plot, DF list 40 / 149 / 259 / 99, Logging Log All -> events +
+  raw in `decoder_logs/beacon121/` (scratch ui_test.py, ui_test2.py,
+  fake_heimdall_b121.py)
