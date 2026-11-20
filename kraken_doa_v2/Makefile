@@ -163,6 +163,8 @@ SIGNAL_PROCESSING_SRCS = \
 	$(SRCDIR)/signal_processing/music_processor.cpp \
 	$(SRCDIR)/signal_processing/shared_decimator.cpp \
 	$(SRCDIR)/signal_processing/beamformer.cpp
+# 🎨 bearing spectrum
+SIGNAL_PROCESSING_SRCS += $(SRCDIR)/signal_processing/bin_doa.cpp
 
 NETWORKING_SRCS = \
 	$(SRCDIR)/networking/binary_message.cpp \
@@ -187,7 +189,8 @@ UTILS_SRCS = \
 	$(SRCDIR)/utils/disk_util.cpp \
 	$(SRCDIR)/utils/platform.cpp \
 	$(SRCDIR)/utils/fs_compat.cpp \
-	$(SRCDIR)/utils/tls_compat.cpp
+	$(SRCDIR)/utils/tls_compat.cpp \
+	$(SRCDIR)/utils/version_info.cpp
 # child processes (include/utils/process.hpp): one backend per platform
 ifeq ($(WINDOWS),1)
 UTILS_SRCS += $(SRCDIR)/utils/process_win.cpp
@@ -200,6 +203,7 @@ APP_SRCS = \
 	$(SRCDIR)/station_info.cpp \
 	$(SRCDIR)/doa_logger.cpp \
 	$(SRCDIR)/wb_board.cpp \
+	$(SRCDIR)/app_version.cpp \
 	$(SRCDIR)/channel_manager.cpp \
 	$(SRCDIR)/control_handler.cpp \
 	$(SRCDIR)/settings_store.cpp \
@@ -221,13 +225,16 @@ APP_SRCS = \
 	$(SRCDIR)/decoder_log.cpp \
 	$(SRCDIR)/rdf_engine.cpp \
 	$(SRCDIR)/rdf_mapper.cpp \
+	$(SRCDIR)/vfo_level.cpp \
 	$(SRCDIR)/talker_doa.cpp \
 	$(SRCDIR)/array_cal.cpp \
 	$(SRCDIR)/voice2text.cpp \
 	$(SRCDIR)/playback.cpp \
 	$(SRCDIR)/sigmf.cpp \
 	$(SRCDIR)/recorder.cpp \
-	$(SRCDIR)/recorder_audio.cpp
+	$(SRCDIR)/recorder_audio.cpp \
+	$(SRCDIR)/power.cpp \
+	$(SRCDIR)/antenna_bias.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
@@ -335,6 +342,19 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) $(FLAGS_STAMP) | $(OBJDIRS) $(DEPDIRS
 	@echo "Compiling $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $(DEPDIR)/$*.d -c $< -o $@
 
+# The version compiled in (docs/dev/version.md): ../scripts/version.sh writes
+# $(OBJDIR)/build_version.h on every make but replaces it only when it
+# changed, so a new commit recompiles version_info.cpp alone (+ the link).
+# Its own rule: only this file gets -I$(OBJDIR) (a target-specific variable
+# would also reach the flags stamp). No script / no git: an empty header
+VERSION_H = $(OBJDIR)/build_version.h
+$(VERSION_H): FORCE | $(OBJDIRS)
+	@sh ../scripts/version.sh --header $@ 2>/dev/null || [ -f $@ ] || echo '/* no version */' > $@
+FORCE:
+$(OBJDIR)/utils/version_info.o: $(SRCDIR)/utils/version_info.cpp $(VERSION_H) $(LIQUID_H) $(FLAGS_STAMP) | $(OBJDIRS) $(DEPDIRS) check-uws
+	@echo "Compiling $<..."
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I$(OBJDIR) -MMD -MP -MF $(DEPDIR)/utils/version_info.d -c $< -o $@
+
 $(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(OBJDIRS)
 	@echo "Compiling $<..."
 	$(CC) $(PFFFT_CFLAGS) -c $< -o $@
@@ -355,7 +375,18 @@ $(OBJDIR)/win/app_res.o: win/app.rc win/app.manifest | $(OBJDIRS)
 # without AVX2 - the objects of the default x86-64-v3 build would stay in the
 # exe and still crash there (liquid.mk rebuilds liquid-dsp itself;
 # plugins/Makefile has a stamp of its own). It was WIN_MARCH on Windows only
-FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS))
+# "native" names no CPU: the same flags text stands for different instruction
+# sets on a Pi 4 (Cortex-A72) and a Pi 5 (A76: LSE atomics, dot product), so a
+# tree whose objects were built on another kind of CPU (a copied folder, an SD
+# card moved to another Pi) looked up to date and died with "Illegal
+# instruction" (status 132). The stamp therefore also names this machine's
+# CPU(s) - /proc/cpuinfo's "CPU part" (ARM) / "model name" (x86) - whenever
+# the flags say native; no /proc/cpuinfo (macOS) = nothing added
+HOST_CPU :=
+ifneq ($(findstring native,$(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS)),)
+HOST_CPU := $(shell sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ -)
+endif
+FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS)$(if $(HOST_CPU), | cpu $(HOST_CPU)))
 ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
 $(FLAGS_STAMP): flags-changed
 endif

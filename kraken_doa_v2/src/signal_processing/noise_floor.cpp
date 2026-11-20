@@ -197,6 +197,7 @@ int64_t last_save_ms = 0;
 std::mutex save_mu;                    // one writer at a time
 
 std::atomic<float> out_db[MAX_CHANNELS];
+std::atomic<float> noise_r[MAX_CHANNELS];       // the raw frames' noise as r (the remembered floor's while held) - bin_noise_db
 std::atomic<int64_t> out_ms[MAX_CHANNELS];      // when out_db was worked out
 std::atomic<int64_t> frame_ms[MAX_CHANNELS];    // the channel's latest frame (staleness)
 std::atomic<float> frame_dt_ms[MAX_CHANNELS];   // its frame interval (smoothed)
@@ -429,7 +430,8 @@ float wideband_pass(int ch, int64_t now) {
 }
 
 // Wideband scan mode: tuner ch's frame (its averaged spectrum avg) -> its floor
-float wideband_frame(int ch, const std::vector<float>& avg, int n, int64_t now) {
+// (*own: its own flattened percentile - above the floor when a signal fills it)
+float wideband_frame(int ch, const std::vector<float>& avg, int n, int64_t now, float* own) {
     std::lock_guard<std::mutex> lk(mu);
     const std::vector<float>& h = shape_for(n);
     const int usable = static_cast<int>(n * 0.8f), skip = (n - usable) / 2;
@@ -443,6 +445,7 @@ float wideband_frame(int ch, const std::vector<float>& avg, int n, int64_t now) 
     std::nth_element(flat.begin() + static_cast<std::ptrdiff_t>(i10), flat.begin() + static_cast<std::ptrdiff_t>(i50),
                      flat.end());
     const float f50 = flat[i50];
+    *own = f;
     Wb& w = wbs[ch];
     if (!is_finite_value(f) || !is_finite_value(f50)) {
         w = Wb{};
@@ -514,8 +517,15 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
         // Tuners side by side: their floors from each other (see WB_FILL_DB);
         // the remembered floors aren't used - nor learned - here
         const int64_t now = now_ms();
-        const float out = wideband_frame(ch, avg, fft_size, now);
+        float own = 0.0f;
+        const float out = wideband_frame(ch, avg, fft_size, now, &own);
         out_db[ch].store(out, std::memory_order_relaxed);
+        // bin_noise_db: this frame's own percentile, less what the tuner's own
+        // floor stands above the one it is measured from (a signal fills it -
+        // as `held` below)
+        const float r = p10(raw, fft_size) + 10.0f * std::log10(static_cast<float>(fft_size));
+        noise_r[ch].store(is_finite_value(out) && is_finite_value(own) ? r - std::max(0.0f, own - out) : r,
+                          std::memory_order_relaxed);
         out_ms[ch].store(now, std::memory_order_release);
         return;
     }
@@ -525,7 +535,7 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
     const bool cal = doa_is_calibrating();
     const bool coherent = !multi_tuner_mode();
     const int64_t now = now_ms();
-    float out = f_avg;
+    float out = f_avg, nr = r;
     {
         std::lock_guard<std::mutex> lk(mu);
         Chan& c = chans[ch];
@@ -576,11 +586,15 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
                 // The averaged spectrum's percentile sits as far above its
                 // noise as this frame's does (a band-filling signal fluctuates
                 // like noise), so subtracting the excess leaves the noise's
-                if (c.held) out = f_avg - (r - ref);
+                if (c.held) {
+                    out = f_avg - (r - ref);
+                    nr = ref;
+                }
             }
         }
     }
     out_db[ch].store(out, std::memory_order_relaxed);
+    noise_r[ch].store(nr, std::memory_order_relaxed);
     out_ms[ch].store(now, std::memory_order_release);
 }
 
@@ -589,6 +603,18 @@ bool floor_db(int ch, float* out) {
     const int64_t f = frame_ms[ch].load(std::memory_order_acquire);
     if (out_ms[ch].load(std::memory_order_acquire) == 0 || now_ms() - f > STALE_MS) return false;
     *out = out_db[ch].load(std::memory_order_relaxed);
+    return true;
+}
+
+bool bin_noise_db(int ch, int fft_size, float* out) {
+    if (ch < 0 || ch >= MAX_CHANNELS || fft_size < 64) return false;
+    const int64_t f = frame_ms[ch].load(std::memory_order_acquire);
+    if (out_ms[ch].load(std::memory_order_acquire) == 0 || now_ms() - f > STALE_MS) return false;
+    const float nr = noise_r[ch].load(std::memory_order_relaxed);
+    if (!is_finite_value(nr)) return false;
+    // r = a raw frame's 10th percentile + 10 log10(fft size); an exponential's
+    // 10th percentile is -ln(0.9) = 0.1054 x its mean: the mean 9.773 dB above
+    *out = nr - 10.0f * std::log10(static_cast<float>(fft_size)) + 9.773f;
     return true;
 }
 

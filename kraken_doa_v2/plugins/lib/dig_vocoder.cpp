@@ -3,7 +3,8 @@
 // The IMBE decoder below is a port of mbelib's IMBE 7200x4400 path
 // (imbe7200x4400.c, ecc.c, mbelib.c; github.com/szechyjs/mbelib). Changes:
 // C++, a per-instance random generator instead of rand() (several decoders
-// run on their own threads), float output scaled to +-1. mbelib's notice:
+// run on their own threads), float output scaled to +-1 and limited
+// (VoiceLimiter) instead of clipped. mbelib's notice:
 //
 //   Copyright (C) 2010 mbelib Author
 //   GPG Key ID: 0xEA5EFE2C (9E7A 5527 9CDC EBF7 BF1B  D772 4F98 E863 EA5E FE2C)
@@ -128,9 +129,41 @@ int bits_lsb_last(const char* b, int from_hi, int to_lo) {   // b[from_hi..to_lo
 }  // namespace
 
 // ---------------------------------------------------------------------------
+// Output limiter (dig_vocoder.hpp)
+// ---------------------------------------------------------------------------
+void VoiceLimiter::process(float* x, int n) {
+    constexpr float CEIL = 0.891251f;   // -1 dBFS
+    constexpr float REL = 1.035142f;    // +0.3 dB per 20 ms frame
+    constexpr int RAMP = 32;            // the longest attack ramp, 4 ms
+    float peak = 0;
+    for (int i = 0; i < n; i++) peak = std::max(peak, std::fabs(x[i]));
+    if (g_ >= 1.0f && peak <= 1.0f) return;   // idle and within full scale: unchanged
+    const float g0 = g_;
+    float g1 = std::min(1.0f, g0 * REL);
+    if (peak * g1 > CEIL) g1 = CEIL / peak;
+    if (g1 >= g0) {
+        // release (or hold): every gain of the ramp is <= g1
+        for (int i = 0; i < n; i++) x[i] *= g0 + (g1 - g0) * static_cast<float>(i + 1) / static_cast<float>(n);
+    } else {
+        // attack: ramp down over the leading samples that stay under the
+        // ceiling at the old gain, the rest at the new one
+        int m = 0;
+        while (m < RAMP && m < n && std::fabs(x[m]) * g0 <= CEIL) m++;
+        for (int i = 0; i < n; i++)
+            x[i] *= i < m ? g0 + (g1 - g0) * static_cast<float>(i + 1) / static_cast<float>(m + 1) : g1;
+    }
+    g_ = g1;
+}
+
+// ---------------------------------------------------------------------------
 // IMBE
 // ---------------------------------------------------------------------------
 void ImbeDecoder::reset() {
+    reset_codec();
+    lim_.reset();
+}
+
+void ImbeDecoder::reset_codec() {
     prev_ = MbeParms{};
     prev_.w0 = 0.09378f;
     prev_.L = 30;
@@ -333,11 +366,12 @@ int ImbeDecoder::decode(char fr[8][23], float* out) {
         spectral_amp_enhance(cur_);
         synthesize(out, cur_, prev_enh_);
         move_parms(cur_, prev_enh_);
-        for (int n = 0; n < 160; n++) out[n] = std::clamp(out[n] * OUT_SCALE, -1.0f, 1.0f);
+        for (int n = 0; n < 160; n++) out[n] *= OUT_SCALE;
     } else {
         for (int n = 0; n < 160; n++) out[n] = 0;
-        reset();
+        reset_codec();
     }
+    lim_.process(out, 160);
     return use ? errs : -1;
 }
 
@@ -381,6 +415,8 @@ MbeLib::MbeLib() {
     init_ = reinterpret_cast<decltype(init_)>(dlsym(h, "mbe_initMbeParms"));
     ambe2450_ = reinterpret_cast<decltype(ambe2450_)>(dlsym(h, "mbe_processAmbe3600x2450Framef"));
     ambe2400_ = reinterpret_cast<decltype(ambe2400_)>(dlsym(h, "mbe_processAmbe3600x2400Framef"));
+    // optional (YSF DN): the 49 parameter bits without the 72-bit frame's FEC
+    ambe49_ = reinterpret_cast<decltype(ambe49_)>(dlsym(h, "mbe_processAmbe2450Dataf"));
     auto ver = reinterpret_cast<void (*)(char*)>(dlsym(h, "mbe_printVersion"));
     if (!init_ || !ambe2450_ || !ambe2400_) {
         status_ = used + " lacks the AMBE functions";
@@ -406,14 +442,39 @@ int MbeLib::decode(bool dstar, char fr[4][24], void* state, float* out) const {
     char err_str[64];
     char ambe_d[49];
     (dstar ? ambe2400_ : ambe2450_)(out, &errs, &errs2, err_str, fr, ambe_d, s, s + 4096, s + 8192, 3);
-    for (int n = 0; n < 160; n++) out[n] = std::clamp(out[n] * OUT_SCALE, -1.0f, 1.0f);
+    for (int n = 0; n < 160; n++) out[n] *= OUT_SCALE;
     return errs2;
+}
+
+int MbeLib::decode49(const char d[49], int errs, void* state, float* out) const {
+    if (!has_ambe49()) return -1;
+    uint8_t* s = static_cast<uint8_t*>(state);
+    // mbelib writes one err_str character per error (+ a marker): keep it short
+    int e = std::clamp(errs, 0, 32), e2 = e;
+    char err_str[64];
+    char ambe_d[49];
+    std::memcpy(ambe_d, d, 49);
+    ambe49_(out, &e, &e2, err_str, ambe_d, s, s + 4096, s + 8192, 3);
+    for (int n = 0; n < 160; n++) out[n] *= OUT_SCALE;
+    return e2;
 }
 
 AmbeStream::AmbeStream(bool dstar) : dstar_(dstar), state_(MbeLib::STATE_BYTES) { reset(); }
 AmbeStream::~AmbeStream() = default;
-void AmbeStream::reset() { MbeLib::instance().init_state(state_.data()); }
-int AmbeStream::decode(char fr[4][24], float* out) { return MbeLib::instance().decode(dstar_, fr, state_.data(), out); }
+void AmbeStream::reset() {
+    MbeLib::instance().init_state(state_.data());
+    lim_.reset();
+}
+int AmbeStream::decode(char fr[4][24], float* out) {
+    const int r = MbeLib::instance().decode(dstar_, fr, state_.data(), out);
+    if (r >= 0) lim_.process(out, 160);
+    return r;
+}
+int AmbeStream::decode49(const char d[49], int errs, float* out) {
+    const int r = MbeLib::instance().decode49(d, errs, state_.data(), out);
+    if (r >= 0) lim_.process(out, 160);
+    return r;
+}
 
 }  // namespace dig
 

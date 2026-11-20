@@ -335,7 +335,7 @@ private:
         d.fc = b.fc;
         d.snr = std::isfinite(d.snr) ? d.snr + 0.3f * (static_cast<float>(b.snr_db) - d.snr) : static_cast<float>(b.snr_db);
         const double rf = host.rf_hz();
-        d.rf_hz = std::isfinite(rf) ? (host.rf_inverted() ? rf - b.fc : rf + b.fc) : NAN;
+        d.rf_hz = std::isfinite(rf) ? rf + b.fc : NAN;
         d.summary = summarize(m);
 
         // the confirmed samples: valid frame + this device's DoA

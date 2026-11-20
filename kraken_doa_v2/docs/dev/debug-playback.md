@@ -12,19 +12,40 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 39 entries in 28 catalogues (2026-10-25) - EVERY decoder:
-  acars, vdl2, ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), analog_id (two: the
+  playback*). 49 entries in 32 catalogues (2026-11-19) - EVERY decoder:
+  acars, vdl2, ais, aprs, dstar, nxdn, ysf, tetra, mpt1327, ils (VOR), analog_id (two: the
   CTCSS tones + `analog-ids-six`, radio IDs), radar,
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
-  adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last
+  adsb, dme, ism, pocsag, v23_telemetry, p25 (three: Phase 1
+  `p25-three-units`, Phase 2 `p25p2-inbound-three-radios` and
+  `p25p2-site-two-timeslots` since 2026-11-18), dmr, radiosonde (the last
   three since 2026-10-16 - their earlier tests used public recordings),
-  rds (2026-10-22)
+  rds (2026-10-22), dab (2026-11-16: two WIDE entries, `dab-sfn-three` /
+  `dab-single-offset` - the generator writes the 5-antenna cu8 itself;
+  talkers + `{"event"}` rows - *DAB / DAB+*), ysf (2026-11-16), analogtv,
+  tempest (four)
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines
-  read by a thread; `PLAYBACK_GEN_CANCEL` = SIGTERM to the group). The
-  driver runs the entry's `steps` (generators; .cpp compiled once into
-  `.bin/`) in `testsignal_cache/.work-<id>/`, then `uca_scene.py --clean`
+  read by a thread; `PLAYBACK_GEN_CANCEL` = SIGTERM to the group). First
+  the driver checks the modules the entry uses (numpy: a `.py` step, a
+  scene or a cf32 `output`; scipy: a `.py` step or a scene; a dab-style
+  entry of C++ steps writing cu8 needs neither) and fails with `ERROR
+  Python needs numpy + scipy for test transmissions: <command>` - the
+  command for THAT interpreter (`install_hint`: Windows / conda / venv
+  `<exe> -m pip install`, macOS `--user`, a Debian / Ubuntu /usr/bin one
+  `sudo apt-get install python3-numpy python3-scipy`; install.sh installs
+  those since 2026-11-19). Windows only until 2026-11-19: on Linux a
+  python3 first on PATH without numpy (the dev box's conda base, from
+  ./run.sh in the user's shell) gave a traceback in `<id>.log`, and in
+  the driver's own `to_cu8` (cf32 outputs: cells) one that reached no log
+  - the page said "see <id>.log" of a log without it. Test builds that
+  prepend `/usr/bin` to PATH hide all of this. The driver runs the
+  entry's `steps` (generators; .cpp compiled once into
+  `.bin/`, again when the .cpp or a `*.h` / `*.hpp` in its folder or its
+  plugin folder is newer - until 2026-11-16 only the .cpp counted, and a
+  header-only change to dab_gen_*.hpp kept the stale binary; the Windows
+  prebuilt `tools/build/NAME.exe` is taken under the same test) in `testsignal_cache/.work-<id>/`, then `uca_scene.py --clean`
   (narrow) or takes the step's 2.4 MHz `output` (cf32 -> cu8 at rms 0.15),
   and writes `<id>.dat` + the FLAT sidecar `<id>.json` (format, rate,
   channels, samples, tuner_hz, band_offset_hz, radius_m, noise_rms,
@@ -164,4 +185,17 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (load 5-9) it passed its 12 % limit and stopped probing (once the one
   link learned at 446.069 instead of 446.100: 0 / 5) - open, for the lora
   plugin. Settings file identical after every run, 0 notices
+- Test 2026-11-16 (ysf, x86_64 scratch test build, ports 4708x, no
+  heimdall): `ysf-three-radios`, 45 s, Check 3 / 3 - talkers ZL1AAA 50.0,
+  ZL2BBB 170.0, ZL3CCC 285.0 (each +0.0), 0 packets dropped, the plugin
+  running with 0 dropped, every call's start / end event in the decoder log
+  (generator then still with random VW voice bits; regenerated with real
+  IMBE frames the same 50.0 / 170.0 / 285.0 offline)
+- Test 2026-11-18 (p25 3.0, Phase 2, a scratch TEST build of kraken_doa):
+  `p25p2-inbound-three-radios` - talkers 6001 40.0, 6002 160.0, 6003
+  280.0 deg, 718 packets, 716 used, 2 dropped at the loop wrap, none for
+  overlap; `p25p2-site-two-timeslots` - 2101, 2102
+  and 2104 (the Phase 1 call) at 120.0 deg; `p25-three-units` still 60 /
+  200 / 300 deg. The page's own Check button (headless browser) was not
+  run
 

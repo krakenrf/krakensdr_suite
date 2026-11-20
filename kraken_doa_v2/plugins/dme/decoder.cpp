@@ -351,7 +351,7 @@ private:
             const int lo = static_cast<int>(std::ceil((rf - CH_MAX_OFF_HZ) / 1e6));
             const int hi = static_cast<int>(std::floor((rf + CH_MAX_OFF_HZ) / 1e6));
             for (int f = std::max(lo, 962); f <= std::min(hi, 1213); f++) {
-                const double off = (f * 1e6 - rf) * (host.rf_inverted() ? -1 : 1);
+                const double off = f * 1e6 - rf;
                 want.emplace_back(f, off);
             }
             if (want.empty())

@@ -13,6 +13,7 @@
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
+#include "vfo_level.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -85,6 +86,11 @@ struct Fix {
     bool hvalid, compass, fixed;   // fixed = static location
 };
 
+// 📏 the received level (the page's range from signal strength, kraken_doa.html
+// "📏 RANGE"): a VFO's from vfo_level.cpp (every VFO, every mode); a talker
+// takes the VFO's moments that lie inside its own transmission
+using Lvl = vlvl::Level;
+
 // --- shared state (mu) --------------------------------------------------------
 struct Shared {
     std::mutex mu;
@@ -123,6 +129,7 @@ struct Shared {
         bool sp = false, sp_ref = false;
         double sp_us = 0, sp_db = 0, sp_snr = 0;
         double dur_s = 0, air_s = 0;       // transmissions: the latest one's length, all together
+        Lvl lvl;                           // 📏 the received level
     };
     std::map<Key, V> v;
     bool full = true;
@@ -184,7 +191,20 @@ struct SVfo {
     rdf::Gate gate{rdf::GateCfg{}};
     int64_t last_stamp = 0;
     double freq = 0;
+    Lvl lvl;                 // a talker's (a VFO's comes from vfo_level)
+    uint64_t lvl_seq = 0;    // a VFO's: the vfo_level moment last taken for its talkers
+    std::deque<vlvl::Moment> lvl_wait;   // a VFO's: its moments until the decoder says whose they are
 };
+
+// 📏 a VFO moment goes to the talker whose transmission holds its stream
+// position +- LVL_GUARD_S (the spans' edge precision, as TalkerDoa's frames,
+// + the FFT frame vs the decimated stream: a few 6.8 ms packets apart, the
+// decimator's delay), once an open span has been reported LVL_SETTLE_S past
+// it (P25 / DMR / NXDN name their radio every 320-360 ms superframe); not
+// decided in FRAME_WAIT_S: dropped
+constexpr double LVL_GUARD_S = 0.15;
+constexpr double LVL_SETTLE_S = 0.5;
+constexpr int64_t LVL_WAIT_MS = static_cast<int64_t>(tdoa::FRAME_WAIT_S * 1000);
 
 // position / heading at time t from the track (false: no usable fix then)
 bool fix_at(const std::deque<Fix>& tr, int64_t t, Fix* out, double* yaw_dps) {
@@ -322,6 +342,7 @@ void sampler() {
             tdoa::TalkerInfo ti;
             std::vector<Shared::V::H> hist;
             tdoa::PacketStats pk;          // a VFO's: what became of its decoder's packets
+            Lvl lvl;
         };
         std::vector<Disp> disp;
         std::map<Key, rdf::Estimate> ests;
@@ -379,6 +400,8 @@ void sampler() {
                 const bool first = s.freq == 0;
                 s.freq = freq;
                 s.gate.reset();
+                s.lvl = Lvl{};
+                s.lvl_wait.clear();
                 push({first ? Job::HELLO : Job::RESET, k, freq, {}});
             }
             return s;
@@ -412,6 +435,17 @@ void sampler() {
                 d.frames = s.gate.frames();
                 d.gate = s.gate.gate_m();
                 d.moved = s.gate.moved_m();
+                // 📏 its level (vfo_level.cpp); a moment counted since the last tick
+                // waits for its talker (below)
+                vlvl::Level vl;
+                if (vlvl::level(id, &vl)) d.lvl = vl;
+                vlvl::Moment mo;
+                const int64_t lvl_t = vlvl::now_ms();
+                if (vlvl::moment(id, &mo) && mo.seq != s.lvl_seq) {
+                    s.lvl_seq = mo.seq;
+                    s.lvl_wait.push_back(mo);
+                }
+                while (!s.lvl_wait.empty() && lvl_t - s.lvl_wait.front().t > LVL_WAIT_MS) s.lvl_wait.pop_front();
                 disp.push_back(std::move(d));
                 const size_t vfo_disp = disp.size() - 1;
 
@@ -447,6 +481,7 @@ void sampler() {
                     td_.frames = ts.gate.frames();
                     td_.gate = ts.gate.gate_m();
                     td_.moved = ts.gate.moved_m();
+                    td_.lvl = ts.lvl;
                     // the latest transmission's lobe, north frame (heading at its last
                     // frame); a packet talker's (aircraft) = its bearing of the last
                     // packets, recomputed about once a second
@@ -508,7 +543,28 @@ void sampler() {
                         array_cal::add(c.R, c.id, c.lat, c.lon, c.alt_m, sl.lat, sl.lon, st_alt, sl.heading, fixed, off, f_hz);
                 }
                 talker_frames(tframes);
-                for (auto& ti : td->snapshot()) add_talker(std::move(ti));
+                auto snap = td->snapshot();
+                // 📏 the VFO's moments: a talker's when they lie inside its own
+                // transmission, no one else's touching them (spans only: packet /
+                // spatial talkers share the band - no level). By stream position,
+                // not by who is `active` now - that lags the air by the decoder's
+                // latency and stays up to ACTIVE_MS, so a radio keying up right
+                // after another one ended was averaged into the other's level
+                for (auto it = s.lvl_wait.begin(); it != s.lvl_wait.end();) {
+                    const vlvl::Moment& m = *it;
+                    const uint64_t g = static_cast<uint64_t>(LVL_GUARD_S * m.rate);
+                    std::string tid;
+                    const int who = m.pos > g ? td->talker_at(m.pos - g, m.pos + g, static_cast<uint64_t>(LVL_SETTLE_S * m.rate),
+                                                              lvl_t - m.t, &tid)
+                                              : -1;
+                    if (who == 0) {   // not known yet
+                        ++it;
+                        continue;
+                    }
+                    if (who == 1) follow(Key{id, tid}, freq).lvl.add(m.t, m.sig, m.noise, m.total, m.gain);
+                    it = s.lvl_wait.erase(it);
+                }
+                for (auto& ti : snap) add_talker(std::move(ti));
             }
         }
         if (cal_on) array_cal::set_state(cal_state);
@@ -543,6 +599,7 @@ void sampler() {
             v.frames = d.frames;
             v.gate_m = d.gate;
             v.moved_m = d.moved;
+            v.lvl = d.lvl;
             if (d.k.tid.empty()) v.pk = std::move(d.pk);
             if (d.talker) {
                 v.sp = d.ti.spatial;
@@ -954,6 +1011,9 @@ std::string status_message(bool peek) {
           << ",\"peak\":" << (v.lobe.empty() ? "null" : num(v.peak, 1)) << ",\"conf\":" << num(v.conf, 2)
           << ",\"held\":" << (v.held ? "true" : "false") << ",\"frames\":" << v.frames << ",\"gate_m\":"
           << num(v.gate_m, 0) << ",\"moved_m\":" << num(v.moved_m, 0) << ",\"records\":" << v.records;
+        // 📏 the received level (vfo_level.hpp): dBFS of the signal, the band's
+        // noise, the whole band (clipping), the tuner gain then, its age, moments
+        vlvl::write_json(o, v.lvl);
     };
     o << ",\"vfos\":[";
     bool first = true;

@@ -134,6 +134,8 @@ set(CORE_SOURCES
     src/core/status_dashboard.cpp
     src/core/platform.cpp
     src/core/fs_compat.cpp
+    src/core/version_info.cpp    # no compiled-in version here (the Makefile's build_version.h); git / ./VERSION at run time
+    src/core/run_capture.cpp
 )
 
 set(SDR_SOURCES

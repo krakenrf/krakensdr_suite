@@ -1,0 +1,25 @@
+{
+ "rf_hz": 227360000,
+ "seconds": 4.8,
+ "channels": 5,
+ "radius_m": 0.12,
+ "snr_db": 20,
+ "seed": 7,
+ "station": [0.0, 0.0],
+ "ensemble": {"eid": "10BC", "ecc": "E0", "label": "Kraken SFN", "short": "KrakenSF", "ext_label": "Kraken SFN Tëst",
+              "lto_half_hours": 2, "utc": "2026-11-16T12:00:00"},
+ "services": [
+  {"sid": "1001", "label": "Kraken Classic", "short": "Classic", "type": "dab", "kbps": 128, "protection": "3",
+   "pty": 14, "lang": 9, "tone_hz": 1125, "dls": "Kraken Classic - MPEG Layer II 128 kbit/s UEP 3 - test tone 1125 Hz"},
+  {"sid": "1002", "label": "Kraken Plus", "short": "Plus", "type": "dabplus", "kbps": 64, "protection": "3A",
+   "pty": 10, "lang": 9, "tone_hz": 1750, "dls": "Kraken Plus - DAB+ AAC 64 kbit/s EEP 3-A - test tone 1750 Hz"},
+  {"sid": "1003", "label": "Kraken Talk", "short": "Talk", "ext_label": "Kraken Talk Ünö", "type": "dabplus", "kbps": 32,
+   "protection": "1B", "pty": 9, "lang": 8, "tone_hz": 600, "dls": "Kraken Talk - DAB+ AAC 32 kbit/s EEP 1-B - test tone 600 Hz"}
+ ],
+ "transmitters": [
+  {"name": "North", "main": 12, "sub": 3, "bearing": 40, "delay_us": 0, "level_db": 0, "phase_deg": 0, "range_km": 22},
+  {"name": "Harbour", "main": 12, "sub": 7, "bearing": 150, "delay_us": 37.5, "level_db": -4, "phase_deg": 120, "range_km": 35,
+   "tii_pair_phase": "k+1"},
+  {"name": "Ridge", "main": 31, "sub": 15, "bearing": 260, "delay_us": 112.25, "level_db": -8, "phase_deg": 250, "range_km": 48}
+ ]
+}

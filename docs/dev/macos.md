@@ -11,8 +11,10 @@ Native build (2026-10-23, the user's request), the same Makefiles: every
 macOS part sits under `MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)`
 (heimdall, kraken_doa, plugins/Makefile); the Linux build is unchanged.
 `./install.sh` works there (Homebrew in place of apt, no sudo: `brew
-install cmake pkg-config libusb eigen openssl@3 opus tmux` for what's
-missing; the librtlsdr fork built but NOT installed into /usr/local -
+install cmake pkg-config libusb eigen openssl@3 opus jpeg-turbo tmux` for what's
+missing (`jpeg-turbo` is libjpeg-turbo - the decoder plugins' Makefile finds it
+through pkg-config and compresses video frames to JPEG; leave it out and the
+plugins send raw pixels); the librtlsdr fork built but NOT installed into /usr/local -
 Homebrew's prefix, its own librtlsdr would collide; rtl_test in
 librtlsdr/build/src; no udev rules / DVB blacklist / limits.conf; RAM from
 `sysctl hw.memsize` for JOBS), or `make deps-macos` + make in either app. Tested on a MacBook Air 2015 (Intel,
@@ -76,6 +78,11 @@ Apple Silicon Mac.
   notice). Tested: tmux split (both dashboards), convergence wait, `stop`
   (session + a stale run in another process group), the supervisor's crash
   restart, headless start / SIGTERM
+- The web page's ↻ Restart software works through run.sh as on Linux
+  (`KRAKEN_RESTART_EXIT`); reboot / shut down only with a sudo rule
+  (`sudo -n /sbin/shutdown -r|-h now`, checked with `sudo -n -l`), else
+  hidden - nothing installs one (`kraken_doa_v2/docs/dev/power.md`;
+  2026-11-16, not run on a Mac)
 - Voice to Text: `transcribe/setup.sh` as on Linux (wc -c for the download
   size - BSD stat has no -c; Homebrew hints; `${models[@]+...}`: bash 3.2
   calls an empty array unbound under set -u - `make whisper` failed once the

@@ -127,7 +127,9 @@ directly.
 - `iq_converter.cpp`: Optimized uint8→float conversion (compiler auto-vectorization)
 - `raw_data_buffer.cpp`: Bounded queue with automatic old data cleanup
 - `ring_buffer.cpp`: Lock-free circular buffers for FFT/audio
-- `system_stats.cpp`: CPU/memory usage tracking
+- `system_stats.cpp`: CPU/memory usage tracking (machine total for the web
+  page and the dashboard; `get_program_cpu_usage()` = kraken_doa plus its
+  child processes, for the dashboard's SYSTEM line)
 - `thread_pool.hpp`: Generic thread pool (SharedDecimator's shared
   decimation pool, the pipeline's VFO pool)
 - `include/utils/json_escape.hpp`: `json_escape()` for every hand-built JSON

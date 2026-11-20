@@ -40,6 +40,10 @@ services:
     environment:
       VARIANT_FLAGS: ${VARIANT_FLAGS:-}
       KRAKEN_TUNERS: ${KRAKEN_TUNERS:-5}
+      # the web page's ↻ Restart software: both apps exit with this status and
+      # `restart: unless-stopped` starts them again (kraken_doa_v2/docs/dev/power.md).
+      # Remove it (both services) with another restart policy
+      KRAKEN_RESTART_EXIT: "75"
       KRAKEN_ALLOWED_HOSTS: ${KRAKEN_ALLOWED_HOSTS:-}
       HEIMDALL_VERBOSE_LOG: ${HEIMDALL_VERBOSE_LOG:-}
     volumes:
@@ -55,10 +59,15 @@ services:
       - 'c 189:* rmw'
     # SCHED_RR 30 for the USB reader / sample-drain threads (RT_PRIO_* in
     # heimdall_v2/config.h) - the container equivalent of the boot service's
-    # LimitRTPRIO=30
+    # LimitRTPRIO=30. memlock unlimited lets heimdall lock its memory in RAM
+    # (mlockall; it locks only with an unlimited limit) - the boot service's
+    # LimitMEMLOCK=infinity
     ulimits:
       core: 0
       rtprio: 30
+      memlock:
+        soft: -1
+        hard: -1
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "krakensdr-entrypoint", "health-heimdall"]
@@ -82,6 +91,9 @@ services:
       KRAKEN_GPSD_PORT: ${KRAKEN_GPSD_PORT:-}
       KRAKEN_WEB_MAPPER_INSECURE: ${KRAKEN_WEB_MAPPER_INSECURE:-}
       KRAKEN_DOA_VERBOSE_LOG: ${KRAKEN_DOA_VERBOSE_LOG:-}
+      KRAKEN_RESTART_EXIT: "75"   # ↻ Restart software (see heimdall above)
+      # no power buttons at all: KRAKEN_NO_POWER=1 (a container can't shut the host down anyway)
+      KRAKEN_NO_POWER: ${KRAKEN_NO_POWER:-}
     volumes:
       - ${KRAKEN_DATA_DIR:-./docker-data}:/data
       - /etc/localtime:/etc/localtime:ro

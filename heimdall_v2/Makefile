@@ -30,7 +30,7 @@ endif
 
 # Source files organized by module
 CORE_SOURCES = src/core/utils.cpp src/core/settings.cpp src/core/forward_comp.cpp src/core/status_dashboard.cpp \
-               src/core/platform.cpp src/core/fs_compat.cpp
+               src/core/platform.cpp src/core/fs_compat.cpp src/core/version_info.cpp src/core/run_capture.cpp
 SDR_SOURCES = src/sdr/sdr_device.cpp src/sdr/sdr_init.cpp src/sdr/sdr_pipeline.cpp src/sdr/pipeline_control.cpp src/sdr/downconverter.cpp src/sdr/kerberos_gpio.cpp
 DSP_SOURCES = src/dsp/fft_plan.cpp src/dsp/correlation.cpp src/dsp/compensation.cpp
 NET_SOURCES = src/net/tcp_common.cpp src/net/tcp_data_server.cpp src/net/tcp_control_server.cpp src/net/rtl_tcp_server.cpp
@@ -93,7 +93,25 @@ RTLSDR_DIR  = ../librtlsdr
 RTLSDR_REPO = https://github.com/krakenrf/librtlsdr
 RTLSDR_LIB  = $(RTLSDR_DIR)/build/src/librtlsdr.a
 LIBUSB_LIBS := $(shell pkg-config --libs libusb-1.0 2>/dev/null || echo -lusb-1.0)
-RTLSDR_CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON -DINSTALL_UDEV_RULES=ON
+# -ULIBUSB_FOUND (every platform): the fork's FindLibUSB wraps everything,
+# its add_definitions(-DHAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED=1
+# -DHAVE_LIBUSB_ERROR_NAME=1) too, in if(NOT LIBUSB_FOUND), and
+# LIBUSB_FOUND is cached - so the cmake run below on an existing build dir
+# (a pull, a changed librtlsdr.c) compiled the library without them. Without
+# the first, librtlsdr.c maps libusb_handle_events_timeout_completed() to
+# libusb_handle_events_timeout(): a cancel then waits out read_async's 1 s
+# event timeout (heimdall's stop and every stream restart took ~1 s longer,
+# measured on a Pi 5).
+RTLSDR_CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON -DINSTALL_UDEV_RULES=ON \
+    -ULIBUSB_FOUND
+# a build dir already compiled without the defines (configured again before
+# the line above) is configured again once: CMake's cache says libusb has the
+# call, the library's compile flags don't define it
+RTLSDR_FLAGS_MAKE = $(RTLSDR_DIR)/build/src/CMakeFiles/rtlsdr_static.dir/flags.make
+ifneq ($(shell grep -qs '^HAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED:INTERNAL=1' $(RTLSDR_DIR)/build/CMakeCache.txt && \
+    test -f $(RTLSDR_FLAGS_MAKE) && ! grep -qs 'DHAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED' $(RTLSDR_FLAGS_MAKE) && echo yes),)
+RTLSDR_RECONFIGURE = rtlsdr-reconfigure
+endif
 # heimdall requires the fork at krakenrf/librtlsdr 578b43d or later, on every
 # platform: the drag calls rtlsdr_set_center_freq_fast / rtlsdr_finish_tune
 # (RTLSDR_TUNE_KEEP_AUTOTUNE; an older fork builds heimdall's full retune
@@ -155,7 +173,8 @@ RTLSDR_CMAKE_FLAGS = -G "MSYS Makefiles" -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTO
 # path, which -static doesn't change - the tools needed MSYS2's
 # libusb-1.0.dll. -ULIBUSB_FOUND: with LIBUSB_FOUND cached FindLibUSB skips
 # everything, its -DHAVE_LIBUSB_* defines too, so a reconfigure of an existing
-# build dir compiled the library without them (unlike a fresh one)
+# build dir compiled the library without them (unlike a fresh one); it is
+# also what makes FindLibUSB take the path below
 RTLSDR_CMAKE_FLAGS += -ULIBUSB_FOUND \
     -DLIBUSB_LIBRARIES:FILEPATH=$(shell pkg-config --variable=libdir libusb-1.0)/libusb-1.0.a
 # a build dir configured with the import library (before the line above) is
@@ -314,6 +333,20 @@ $(BUILD_DIR)/%.o: src/%.cpp $(FLAGS_STAMP) | $(BUILD_DIR) check-uws $(RTLSDR_LIB
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -IuWebSockets/src -IuWebSockets/uSockets/src -c $< -o $@
 
+# The version compiled in (docs/dev/version.md): ../scripts/version.sh writes
+# $(BUILD_DIR)/build_version.h on every make but replaces it only when it
+# changed, so a new commit recompiles version_info.cpp alone (+ the link).
+# Its own rule: only this file gets -I$(BUILD_DIR) (a target-specific variable
+# would also reach the flags stamp). No script / no git: an empty header
+VERSION_H = $(BUILD_DIR)/build_version.h
+$(VERSION_H): FORCE | $(BUILD_DIR)
+	@sh ../scripts/version.sh --header $@ 2>/dev/null || [ -f $@ ] || echo '/* no version */' > $@
+FORCE:
+$(BUILD_DIR)/core/version_info.o: src/core/version_info.cpp $(VERSION_H) $(FLAGS_STAMP) | $(BUILD_DIR) check-uws $(RTLSDR_LIB)
+	@echo "Compiling $<..."
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I$(BUILD_DIR) -MMD -MP -c $< -o $@
+
 $(BUILD_DIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(BUILD_DIR)
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
@@ -334,7 +367,18 @@ $(BUILD_DIR)/win/app_res.o: win/app.rc win/app.manifest | $(BUILD_DIR)
 # WIN_MARCH=-march=x86-64-v2` for a CPU without AVX2 (the objects of the
 # default x86-64-v3 build would otherwise stay in the exe and still crash
 # there), or new optimisation flags reaching an existing build
-FLAGS_TEXT = $(strip $(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS))
+# "native" names no CPU: the same flags text stands for different instruction
+# sets on a Pi 4 (Cortex-A72) and a Pi 5 (A76: LSE atomics, dot product), so a
+# tree whose objects were built on another kind of CPU (a copied folder, an SD
+# card moved to another Pi) looked up to date and died with "Illegal
+# instruction" (status 132). The stamp therefore also names this machine's
+# CPU(s) - /proc/cpuinfo's "CPU part" (ARM) / "model name" (x86) - whenever
+# the flags say native; no /proc/cpuinfo (macOS) = nothing added
+HOST_CPU :=
+ifneq ($(findstring native,$(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS)),)
+HOST_CPU := $(shell sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ -)
+endif
+FLAGS_TEXT = $(strip $(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS)$(if $(HOST_CPU), | cpu $(HOST_CPU)))
 ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
 $(FLAGS_STAMP): flags-changed
 endif
@@ -344,10 +388,10 @@ $(FLAGS_STAMP):
 
 .PHONY: flags-changed
 flags-changed:
-ifeq ($(WINDOWS),1)
+# forcing prerequisite of the fork's library: configure its build dir again
+# (every platform: the -DHAVE_LIBUSB_* check above; Windows: the import library)
 .PHONY: rtlsdr-reconfigure
 rtlsdr-reconfigure:
-endif
 # forcing prerequisites of the fork's library (every platform, see RTLSDR_FIX_MARK)
 .PHONY: rtlsdr-update rtlsdr-check
 rtlsdr-update rtlsdr-check:

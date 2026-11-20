@@ -16,10 +16,12 @@
 #include "voice2text.hpp"
 #include "scanner_manager.hpp"
 #include "decimator_manager.hpp"
+#include "digital/digital_decoder.hpp"
 #include "channel_manager.hpp"
 #include "networking/gpsd_client.hpp"
 #include "station_info.hpp"
 #include "signal_processing/fft_processor.hpp"
+#include "signal_processing/bin_doa.hpp"
 #include "doa_logger.hpp"
 #include "utils/status_dashboard.hpp"
 #include "utils/platform.hpp"
@@ -71,12 +73,17 @@ struct PerSocketData {
     };
     std::array<SpecView, 1 + MAX_CHANNELS> views{};  // 0 = main, 1 + ch = tuner ch
     double main_step_hz = 0;   // point spacing of its last main frame (beamformed overlays follow it)
+    bool bin_doa = false;      // 🎨 BIN_DOA_VIEW:1 - it takes type 9 frames (bin_doa.hpp)
 };
 
 // Data-stream subscription bits (the heavy/optional streams).
 constexpr uint32_t SUB_FFT   = 1u << 0;
 constexpr uint32_t SUB_AUDIO = 1u << 1;
 constexpr uint32_t SUB_DOA   = 1u << 2;
+// Reconstructed decoder pictures (binary type 8). NOT part of SUB_ALL: a page
+// opts in only while its decoder panel shows a video-capable plugin, so idle
+// browsers never carry the (up to ~1 MB) frames.
+constexpr uint32_t SUB_VIDEO = 1u << 3;
 constexpr uint32_t SUB_ALL   = SUB_FFT | SUB_AUDIO | SUB_DOA;
 
 // pub/sub topics. "ctl" carries control-plane traffic (sync_cmd echoes,
@@ -86,6 +93,7 @@ constexpr string_view TOPIC_CTL   = "ctl";
 constexpr string_view TOPIC_FFT   = "fft";     // shared spectrum (types 0 / 6 / 4) - pages without views
 constexpr string_view TOPIC_AUDIO = "audio";
 constexpr string_view TOPIC_DOA   = "doa";
+constexpr string_view TOPIC_VIDEO = "video";   // reconstructed decoder pictures (type 8), opt-in
 
 // Shared API token, loaded once. Empty => auth disabled (fail-open).
 const string& auth_token() {
@@ -155,6 +163,8 @@ constexpr int AUTH_MAX_FAILURES = 5;             // wrong tokens per IP...
 constexpr int64_t AUTH_FAILURE_WINDOW_MS = 60000;  // ...per window, then refused
 std::unordered_map<ClientWS*, int64_t> g_pending_auth;           // socket -> opened (steady ms)
 std::unordered_set<ClientWS*> g_spec_sockets;  // sockets with spectrum views (uWS loop only)
+std::unordered_set<ClientWS*> g_video_sockets;  // sockets subscribed to decoder video (uWS loop only)
+std::unordered_set<ClientWS*> g_bin_doa_sockets;  // 🎨 sockets taking type 9 (uWS loop only)
 std::unordered_map<std::string, std::pair<int, int64_t>> g_auth_failures;  // ip -> (count, window start)
 
 int64_t steady_ms() {
@@ -216,6 +226,7 @@ uint32_t parse_sub_mask(string_view list) {
         if      (tok == "FFT")   mask |= SUB_FFT;
         else if (tok == "AUDIO") mask |= SUB_AUDIO;
         else if (tok == "DOA")   mask |= SUB_DOA;
+        else if (tok == "VIDEO") mask |= SUB_VIDEO;
         else if (tok == "ALL")   mask |= SUB_ALL;
         if (comma == string_view::npos) break;
         start = comma + 1;
@@ -232,6 +243,12 @@ void apply_subscriptions(WS* ws, uint32_t mask) {
     else ws->unsubscribe(TOPIC_FFT);
     if (mask & SUB_AUDIO) ws->subscribe(TOPIC_AUDIO); else ws->unsubscribe(TOPIC_AUDIO);
     if (mask & SUB_DOA)   ws->subscribe(TOPIC_DOA);   else ws->unsubscribe(TOPIC_DOA);
+    // publish_video sends per socket (its own backpressure drop), so track the
+    // subscribers in a set rather than relying on the topic alone
+    if (mask & SUB_VIDEO) { ws->subscribe(TOPIC_VIDEO); g_video_sockets.insert(ws); }
+    else { ws->unsubscribe(TOPIC_VIDEO); g_video_sockets.erase(ws); }
+    // the video plugins render / encode / send only while someone watches
+    dig::set_video_wanted(!g_video_sockets.empty());
 }
 
 // FFT_VIEW:<display>:<seq>:<lo Hz>:<hi Hz>:<points> (see .message). A bad one
@@ -295,8 +312,17 @@ void send_spectrum_views(const SpectrumSnapshot& snap, const vector<BeamformedSp
         if (!(ud->sub_mask & SUB_FFT) || ws->getBufferedAmount() > SPEC_MAX_BUFFERED) continue;
         for (int d = first; d <= last; d++) {
             const auto& v = ud->views[d];
+            // 🎨 the bearing spectrum (coherent mode): type 9 for the same
+            // points, sent first so the page colours the frame it draws
+            const bool brg = d == 0 && ud->bin_doa && !snap.independent && snap.marker != 0xFE && bin_doa::enabled();
+            SpectrumViewCut cut;
             const string m = MessageBuilders::build_spectrum_view(snap, d, v.lo_hz, v.hi_hz, v.bins, v.seq,
-                                                                  d == 0 ? &ud->main_step_hz : nullptr);
+                                                                  d == 0 ? &ud->main_step_hz : nullptr,
+                                                                  brg ? &cut : nullptr);
+            if (brg && !m.empty()) {
+                const string b = bin_doa::build_frame(snap.disp[0], cut, v.seq);
+                if (!b.empty()) ws->send(b, uWS::BINARY, true);
+            }
             if (!m.empty()) ws->send(m, uWS::BINARY, true);
         }
         for (const auto& bf : bfs) {
@@ -900,7 +926,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 string ack = string("{\"subscribed\":{\"fft\":")
                     + ((mask & SUB_FFT)   ? "true" : "false")
                     + ",\"audio\":" + ((mask & SUB_AUDIO) ? "true" : "false")
-                    + ",\"doa\":"   + ((mask & SUB_DOA)   ? "true" : "false") + "}}";
+                    + ",\"doa\":"   + ((mask & SUB_DOA)   ? "true" : "false")
+                    + ",\"video\":" + ((mask & SUB_VIDEO) ? "true" : "false") + "}}";
                 ws->send(ack, uWS::TEXT);
                 return;
             }
@@ -914,13 +941,28 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 handle_fft_view(ws, message.substr(9));
                 return;
             }
+            // 🎨 BIN_DOA_VIEW:1|0 (transport-level, this connection only):
+            // the page takes type 9 frames with its main view's frames
+            // (bin_doa.hpp); answered with the mode's state
+            if (message.starts_with("BIN_DOA_VIEW:")) {
+                const bool on = message.substr(13) == "1";
+                ws->getUserData()->bin_doa = on;
+                if (on) g_bin_doa_sockets.insert(ws); else g_bin_doa_sockets.erase(ws);
+                bin_doa::set_viewers(static_cast<int>(g_bin_doa_sockets.size()));
+                ws->send(bin_doa::state_json(), uWS::TEXT);
+                return;
+            }
 
-            ControlHandler::handle_websocket_message(message);
+            // a page's own command (power commands are taken only from here)
+            ControlHandler::handle_page_message(message);
         },
         
         .close = [](auto* ws, int code, string_view reason) {
             g_pending_auth.erase(ws);
             g_spec_sockets.erase(ws);
+            g_video_sockets.erase(ws);
+            dig::set_video_wanted(!g_video_sockets.empty());
+            if (g_bin_doa_sockets.erase(ws)) bin_doa::set_viewers(static_cast<int>(g_bin_doa_sockets.size()));
             int remaining = --ws_client_count;  // keep the live dashboard count in sync
             if (remaining < 0) { ws_client_count.store(0); remaining = 0; }
             std::cout << "[WS] Client DISCONNECTED! Code=" << code
@@ -1250,6 +1292,27 @@ void WebSocketServer::broadcast_json_message(const string& json) {
     loop->defer([json_copy = std::move(json_copy)]() {
         if (global_ssl_app) {
             global_ssl_app->publish(TOPIC_CTL, json_copy, uWS::TEXT, false);
+        }
+    });
+}
+
+void WebSocketServer::publish_video(string msg) {
+    if (!global_ssl_app || !loop || msg.empty()) return;
+    // publish() is not thread safe and the frame comes from the decoder's
+    // worker thread, so defer onto the uWS loop (the only thread-safe entry).
+    // A dedicated video frame can be ~1 MB - drop it for a socket whose send
+    // buffer is already deep rather than queueing or closing the connection.
+    constexpr unsigned VIDEO_MAX_BUFFERED = 512 * 1024;
+    // permessage-deflate only for raw pixels (type-8 byte 13 = encoding 0):
+    // a JPEG is already compressed, and deflating it again on the loop thread
+    // costs CPU for nothing
+    const bool compress = msg.size() > 13 && static_cast<uint8_t>(msg[13]) == 0;
+    loop->defer([msg = std::move(msg), compress]() {
+        if (!global_ssl_app) return;
+        for (ClientWS* ws : g_video_sockets) {
+            PerSocketData* ud = ws->getUserData();
+            if (!(ud->sub_mask & SUB_VIDEO) || ws->getBufferedAmount() > VIDEO_MAX_BUFFERED) continue;
+            ws->send(msg, uWS::BINARY, compress);
         }
     });
 }

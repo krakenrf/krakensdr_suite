@@ -31,9 +31,10 @@
 #
 # macOS: the same script, with Homebrew in place of apt (no sudo). The steps
 # that are Linux-only are skipped there: no udev rules or DVB driver to keep
-# off the dongles, no rtprio limit (heimdall gets SCHED_RR without one), and
-# the librtlsdr fork is built but not installed into Homebrew's /usr/local
-# (heimdall links it statically; its rtl_* tools stay in librtlsdr/build/src).
+# off the dongles, no rtprio / memlock limits (heimdall gets SCHED_RR without
+# one and locks its memory on Linux only), and the librtlsdr fork is built but
+# not installed into Homebrew's /usr/local (heimdall links it statically; its
+# rtl_* tools stay in librtlsdr/build/src).
 #
 # -E (errtrace): without it bash does not run the ERR trap inside functions or
 # subshells - and nearly every step lives in one (install_librtlsdr,
@@ -89,9 +90,15 @@ die()  { echo "${RED}${BOLD}Error:${RST} $*" >&2; exit 1; }
 # the rest:
 #   libusb-1.0-0-dev/libusb-dev - required to build librtlsdr
 #   libopus-dev  - kraken links -lopus (missing from its `make deps`, added here)
+#   libjpeg-dev  - the decoder plugins link -ljpeg (libjpeg-turbo) to compress
+#                  video frames (plugin-only, IJG/BSD-3-Clause/zlib; the main app
+#                  never links it - without it the plugins fall back to raw pixels)
 #   zlib1g-dev   - both link -lz
 #   libsqlite3-dev - kraken links -lsqlite3
 #   tmux         - used by run.sh for the split-screen dashboards
+#   python3-numpy python3-scipy - Debug Playback's test-transmission
+#                  generators (kraken_doa runs the python3 first on its PATH:
+#                  a conda / venv one needs its own - the page says which)
 #   (no libfftw3-dev: both apps use the vendored pffft - external/pffft; no
 #    libliquid-dev: kraken_doa's make fetches liquid-dsp at a pinned commit and
 #    builds it as a static library without FFTW / libfec - liquid.mk)
@@ -101,19 +108,21 @@ PACKAGES=(
     libeigen3-dev                            # eigenvalue decomposition (both)
     libssl-dev libcrypto++-dev               # SSL for uWebSockets (both)
     libopus-dev                              # Opus audio codec (kraken)
+    libjpeg-dev                              # JPEG compression of decoder video frames (plugins only; libjpeg-turbo, IJG/BSD-3-Clause/zlib)
     zlib1g-dev                               # zlib -lz (both)
     libsqlite3-dev                           # settings store (kraken)
     tmux                                     # split-screen dashboards (run.sh)
     gpsd gpsd-tools                          # GPS daemon (kraken talks JSON to port 2947; tools = cgps/gpsmon for debugging)
     openssl                                  # self-signed cert generation for the kraken web UI
     bubblewrap socat                         # AI assistant: sandboxes (its shell commands, plugins it changed)
+    python3 python3-numpy python3-scipy      # Debug Playback: generating the test transmissions
 )
 
 # macOS (Homebrew): the same, by Homebrew's names. Not included: gpsd (not
 # needed unless a GPS is attached - `brew install gpsd`), openssl's CLI
 # (macOS has one; kraken_doa makes its certificate itself anyway) and the AI
 # assistant's sandboxes (macOS has its own: sandbox-exec)
-BREW_PACKAGES=(cmake pkg-config libusb eigen openssl@3 opus tmux)
+BREW_PACKAGES=(cmake pkg-config libusb eigen openssl@3 opus jpeg-turbo tmux)
 
 if [[ "${SKIP_DEPS:-0}" == "1" ]]; then
     say "Skipping dependency install (SKIP_DEPS=1)"
@@ -208,15 +217,35 @@ install_librtlsdr() {
 # Only these two thread classes are meant to be realtime - do NOT run the whole
 # process under chrt: the conversion worker is deliberately normal priority
 # (its malloc/mutex use would priority-invert against the web/correlation threads).
-install_rtprio_limit() {
+# Memory locking, for the same threads: heimdall locks its memory in RAM
+# (mlockall, best-effort) so the pages they use can't be swapped out under
+# them - only with an unlimited memlock limit; without one it logs once and
+# runs as before. (The limit covers every process of this user: on a dedicated
+# receiver that's fine.)
+# Each line is added on its own, so an install from before the memlock line
+# still gets it.
+add_user_limit() {   # <limits.conf> <user> <item> <value> [regex of values that are enough]
+    local conf="$1" user="$2" item="$3" value="$4" enough="${5:-.*}" user_re existing
+    user_re=$(printf '%s' "$user" | sed 's/[][\.*^$()+?{}|]/\\&/g')   # the name is not a regex
+    # (|| true: no match is the normal case, and set -e + pipefail would abort)
+    existing=$(grep -Es "^[[:space:]]*${user_re}[[:space:]].*[[:space:]]${item}([[:space:]]|$)" "$conf" 2>/dev/null \
+        | tail -n 1 || true)
+    if [[ -z "$existing" ]]; then
+        echo "${user} - ${item} ${value}" | sudo tee -a "$conf" >/dev/null
+        ok "Granted ${item} ${value} to '${user}' in limits.conf (takes effect on next login)"
+    elif [[ "$existing" =~ ^[[:space:]]*[^[:space:]]+[[:space:]]+(-|hard)[[:space:]]+${item}[[:space:]]+(${enough})[[:space:]]*(#.*)?$ ]]; then
+        ok "${item} limit for '${user}' already present in limits.conf: ${existing}"
+    else
+        # an existing line is the user's own choice: left as it is
+        warn "limits.conf already has '${existing}' - not changed, but heimdall needs"
+        echo "     '${user} - ${item} ${value}' (edit that line to enable it)"
+    fi
+}
+install_realtime_limits() {
     local user="${SUDO_USER:-$USER}"
     local conf=/etc/security/limits.conf
-    if ! grep -Eqs "^[[:space:]]*${user}[[:space:]].*rtprio" "$conf" 2>/dev/null; then
-        echo "${user} - rtprio 30" | sudo tee -a "$conf" >/dev/null
-        ok "Granted rtprio 30 to '${user}' in limits.conf (takes effect on next login)"
-    else
-        ok "rtprio limit for '${user}' already present in limits.conf"
-    fi
+    add_user_limit "$conf" "$user" rtprio 30
+    add_user_limit "$conf" "$user" memlock unlimited 'unlimited|infinity|-1'
 }
 
 # KrakenSDR Wideband variant: heimdall --wideband programs the downconverter LO
@@ -237,10 +266,11 @@ if [[ "${SKIP_RTLSDR:-0}" == "1" ]]; then
 else
     install_librtlsdr
 fi
-# (Linux only: macOS has no udev, and heimdall gets SCHED_RR there without a limit)
+# (Linux only: macOS has no udev, heimdall gets SCHED_RR there without a limit
+# and doesn't lock its memory)
 if [[ "$MACOS" != "1" ]]; then
     install_morfeus_udev_rule
-    install_rtprio_limit
+    install_realtime_limits
 fi
 
 # --- 3. build both applications ---------------------------------------------
@@ -319,8 +349,9 @@ else
     warn "RTL-SDR USB permissions: the udev rules were installed, but if Heimdall still"
     echo "     reports no devices, add yourself to plugdev and re-plug / re-login:"
     echo "       sudo usermod -aG plugdev \"\$USER\""
-    warn "Realtime scheduling (rtprio) was granted in limits.conf but only applies to"
-    echo "     NEW logins - log out and back in (or reboot) before the first run."
+    warn "The realtime scheduling (rtprio) and memory locking (memlock) limits in"
+    echo "     limits.conf only apply to NEW logins - log out and back in (or reboot)"
+    echo "     before the first run."
     echo "     Verify with:  rtl_test -t   (rtl_test ships with the fork's rtl-tools)"
 fi
 if [[ ! -x "$KRAKEN_DIR/transcribe/build/kraken_whisper" ]]; then

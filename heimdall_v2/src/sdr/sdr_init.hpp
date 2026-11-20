@@ -19,12 +19,40 @@ std::vector<DeviceMapping> enumerate_devices_by_serial();
 // Counts the expected serials attached consecutively from the first (the ones
 // an N-element open needs), so a gap ends the count.
 int count_expected_devices_present();
+// Every RTL-SDR on USB, for the generic RTL-SDR mode decision (main): how
+// many are attached, how many carry one of the expected serials (anywhere in
+// the list), and how many serials couldn't be read (no access, no driver,
+// held by another program).
+struct RtlUsbInventory {
+    int total = 0;
+    int expected = 0;
+    int unreadable = 0;
+};
+RtlUsbInventory survey_rtlsdr_usb();
+
+// Held stream start (docs/dev/calibration.md, *Stream start*): with a fork
+// that has rtlsdr_set_fifo_hold / rtlsdr_release_fifos, init_rtlsdr_device()
+// leaves each dongle's USB FIFO held empty, and start_pipeline_threads()
+// releases all of them together once every USB reader has queued its
+// transfers - the streams then start within ~0.1 ms of each other instead of
+// whenever each reader's first transfer happened to go out. Linux only: on
+// Windows control transfers take 3-4 ms each and run one at a time, so the
+// releases themselves would start the streams that far apart.
+#if defined(RTLSDR_HAS_FIFO_HOLD) && defined(__linux__)
+#define HELD_STREAM_START 1
+#else
+#define HELD_STREAM_START 0
+#endif
 
 // Device initialization functions
 bool init_rtlsdr_device(SDRDevice* sdr);
 // Startup entry point: creates one SDRDevice object per expected serial (the
 // vector is never resized afterwards - see pipeline_control.hpp) and opens
-// the first active_num_elements of them.
+// the first active_num_elements of them. Generic RTL-SDR mode: opens up to
+// active_num_elements attached dongles by USB index instead (one that fails
+// to open is skipped), creates one SDRDevice per dongle OPENED (channels
+// 0..N-1 in USB order), and sets active_num_elements and expected_serials to
+// match; false only if none opened.
 bool init_all_rtlsdr_devices(std::vector<std::unique_ptr<SDRDevice>>& devices);
 // (Re)open librtlsdr handles for the first active_num_elements devices; the
 // objects must already exist. Re-enumerates USB (indices shift between opens),
@@ -53,7 +81,28 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
 // noise source; cf. rtl_biast -g). Updates antenna_bias_tee_mask, which is
 // persisted by the caller via settings::save() and restored at device init.
 // Refused on the Wideband variant, where GPIO1-6 drive the RF path switches.
-void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// Returns "" when the open channels' GPIOs were written, else why not (also
+// logged to stderr); the mask in effect is antenna_bias_tee_mask afterwards.
+std::string apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// A client's request for the antenna bias tees - the web page's
+// ANT_BIAS_MASK and the control port's set_antenna_bias_tees both go
+// through here: refused with generic RTL-SDRs (no GPIO is ever written
+// there), else apply_antenna_bias_tees() and settings::save(). Returns ""
+// when applied, else why not ("Antenna bias tees ..."). Takes
+// device_io_mutex; not from a realtime thread.
+std::string request_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// For the status reports (8092 status, the web STATE): whether this hardware
+// has switchable antenna bias tees at all (not with generic RTL-SDRs, not on
+// the Wideband variant), the channels that can't be switched (CH0 under
+// --ext_noise - it powers the external noise source -, CH7: the channel-0
+// chip has GPIO0-7 only), and the mask in effect (0 when not available).
+bool antenna_bias_tees_available();
+uint32_t antenna_bias_tee_reserved_mask();
+uint32_t antenna_bias_tees_in_effect();
+// The generic RTL-SDR refusal's reason, shared by the web page's and the
+// control port's replies
+inline constexpr const char* GENERIC_NO_GPIO_REASON =
+    "not available with generic RTL-SDRs (independent receivers, no calibration, no GPIOs)";
 // Wideband (downconverter) variant only: throw the on-board RF switches
 // (GPIO1-6 on the channel-0 chip) so the tuners see either the calibration
 // noise source or the currently selected antenna ring. Called automatically
@@ -135,6 +184,14 @@ bool set_independent_tuner(int tuner_index, uint64_t frequency, int gain,
 // Startup: re-enter the saved operating mode (settings::persisted_mode) and
 // independent mode's per-tuner tuning, once the devices are open
 void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// Generic RTL-SDR mode: why `target` is refused (nullptr = allowed; always
+// nullptr outside generic mode). Coherent mode is never available there, the
+// wideband scan only with 2+ tuners.
+const char* generic_mode_refusal(OperatingMode target);
+// Generic RTL-SDR mode, startup (devices open, no thread running yet): enter
+// INDEPENDENT and restore the per-tuner tuning saved in generic mode
+// (settings::persisted_generic_tuner_*). Not saved as the user's mode.
+void enter_generic_independent_mode(const std::vector<std::unique_ptr<SDRDevice>>& devices);
 void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices);
 
 // Serializes librtlsdr handle operations (see sdr_init.cpp). Innermost lock.

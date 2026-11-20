@@ -134,8 +134,9 @@ reply; library details docs/dev/librtlsdr-fork.md):
   frequencies (the forced recovery flushes and recalibrates, it doesn't
   retune - code reading). Every reply consumer only logs an error
   (kraken_doa discards replies and follows the 8091 header; the GR source
-  logs a warning). The web UI has no error display; its "Current:" values
-  come from current_frequency / current_gain
+  logs a warning). The web UI has no error display; its "Frequency now" /
+  "Gain now" values ("Current:" until 2026-11-18) come from
+  current_frequency / current_gain
 
 Needs a fork with the call (`#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE`: the code
 still compiles the full path only against an older one, but the Makefile and

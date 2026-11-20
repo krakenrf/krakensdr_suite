@@ -6,11 +6,13 @@
 #include "../sdr/sdr_pipeline.hpp"
 #include "../dsp/compensation.hpp"
 #include "../core/config.hpp"
+#include "../core/version_info.hpp"
 #include <iostream>
 #include <sstream>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <thread>
 
 namespace {
@@ -241,6 +243,11 @@ std::string rf_range_error(const std::string& given) {
     return "{\"status\":\"error\",\"message\":\"Frequency " + g.substr(0, 24) + " out of range (" +
            std::to_string(rf_min / 1000000) + "-" + std::to_string(rf_max / 1000000) + " MHz)\"}";
 }
+
+// Calibration commands in generic RTL-SDR mode (no array, no noise source)
+const char* const GENERIC_NO_CALIBRATION_REPLY =
+    "{\"status\":\"error\",\"message\":\"no calibration with generic RTL-SDRs - they run as independent "
+    "receivers (coherent mode needs a KrakenSDR / KerberosSDR)\"}";
 }  // namespace
 
 void TcpControlServer::stop() {
@@ -277,6 +284,16 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
 
     // KerberosSDR support mode: manual-calibration workflow state for client UIs.
     status_json << ",\"external_noise\":" << (external_noise_mode.load() ? "true" : "false");
+    // generic RTL-SDRs, no KrakenSDR: no coherent mode, no calibration
+    status_json << ",\"generic_rtlsdr\":" << (generic_rtlsdr() ? "true" : "false");
+    // per-port antenna bias tees (set_antenna_bias_tees): switchable at all
+    // (not with generic RTL-SDRs, not on the Wideband variant), the mask in
+    // effect (bit N = channel N; 0 when not available) and the channels that
+    // can't be switched (CH0 under --ext_noise, CH7) - a client draws its
+    // switches from these and num_channels
+    status_json << ",\"antenna_bias_tees_available\":" << (antenna_bias_tees_available() ? "true" : "false")
+                << ",\"antenna_bias_tee_mask\":" << antenna_bias_tees_in_effect()
+                << ",\"antenna_bias_tee_reserved\":" << antenna_bias_tee_reserved_mask();
     // a client's scan holds the calibration (hold_calibration)
     status_json << ",\"calibration_hold\":" << (calibration_held() ? "true" : "false");
     if (kerberos_mode.load()) {
@@ -353,7 +370,14 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
     // recovery (flush + recalibration) is in progress, so the UI/operator can see
     // that coherence was lost and is being restored.
     status_json << ",\"coherence_events\":" << coherence_event_count.load()
-               << ",\"recovering\":" << (recovery_in_progress.load() ? "true" : "false");
+               << ",\"recovering\":" << (recovery_in_progress.load() ? "true" : "false")
+               // channels whose lag calibration finds no correlation peak
+               // (stream skew beyond +-NUM_SAMPLES; config.h LAG_NO_PEAK_*)
+               << ",\"lag_no_peak\":" << lag_no_peak_json();
+
+    // the suite's version (core/version_info.hpp; kraken_doa shows it in its
+    // sidebar's tooltip)
+    status_json << ",\"version\":" << appver::json();
 
     status_json << "}";
     return status_json.str();
@@ -583,6 +607,27 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         return build_status_json(true);
     }
 
+    // Restart: {"command":"restart"} (kraken_doa's ↻ Restart software). The
+    // normal shutdown (dongles released, noise source off), then exit with
+    // KRAKEN_RESTART_EXIT - the status the supervisor that started heimdall
+    // restarts it on (run.sh's supervisor / headless loop, Docker's restart
+    // policy, krakensdr.exe set it). Without one nothing would start heimdall
+    // again, so it is refused.
+    if (json_str.find("\"restart\"") != std::string::npos) {
+        const char* e = std::getenv("KRAKEN_RESTART_EXIT");
+        char* end = nullptr;
+        const long code = e && *e ? std::strtol(e, &end, 10) : 0;
+        if (!e || !*e || !end || *end != '\0' || code < 2 || code > 125) {
+            std::cout << "Restart request refused: no supervisor restarts heimdall (KRAKEN_RESTART_EXIT unset or not 2-125)" << std::endl;
+            return "{\"status\":\"error\",\"message\":\"not started by a supervisor that restarts it (run.sh, Docker, "
+                   "krakensdr.exe)\"}";
+        }
+        std::cout << "Restart requested via control port - shutting down, exit status " << code << std::endl;
+        restart_exit_status.store(static_cast<int>(code));
+        global_running = false;
+        return "{\"status\":\"success\",\"message\":\"restarting\"}";
+    }
+
     // A number field "key":<n> (false if absent / not a finite number)
     auto num_field = [&](const char* key, double& out) {
         const std::string k = std::string("\"") + key + "\":";
@@ -609,9 +654,12 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         const bool changed = set_operating_mode(target, devices);
         if (changed && target == OperatingMode::WIDEBAND_SCAN)
             setup_wideband_frequencies(current_frequency.load(), devices);
-        if (!changed && operating_mode.load() != target)
+        if (!changed && operating_mode.load() != target) {
+            if (const char* why = generic_mode_refusal(target))
+                return "{\"status\":\"error\",\"message\":\"" + std::string(why) + "\"}";
             return "{\"status\":\"error\",\"message\":\"" + std::string(operating_mode_name(target)) +
                    " mode refused (not available on this hardware)\"}";
+        }
         return "{\"status\":\"success\",\"operating_mode\":\"" +
                std::string(operating_mode_name(operating_mode.load())) + "\"}";
     }
@@ -656,6 +704,14 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         } catch (...) {
             return "{\"status\":\"error\",\"message\":\"Invalid num_elements value\"}";
         }
+        // Generic RTL-SDR mode: the count is what was opened at startup
+        if (generic_rtlsdr()) {
+            if (n == active_num_elements.load())
+                return "{\"status\":\"success\",\"num_elements\":" + std::to_string(n) + ",\"message\":\"already active\"}";
+            std::string err;
+            reconfigure_num_elements_precheck(n, err);
+            return "{\"status\":\"error\",\"message\":\"" + err + "\"}";
+        }
         const int max_n = static_cast<int>(expected_serials.size());
         if (n < 2 || n > max_n) {
             return "{\"status\":\"error\",\"message\":\"num_elements must be 2-" + std::to_string(max_n) + "\"}";
@@ -677,6 +733,31 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         }).detach();
         return "{\"status\":\"success\",\"num_elements\":" + std::to_string(n) +
                ",\"message\":\"reconfiguration started (devices reopen + full recalibration)\"}";
+    }
+
+    // Per-port antenna bias tees (DC on the antenna ports, for active
+    // antennas and LNAs): {"command":"set_antenna_bias_tees","mask":N}, bit N
+    // = channel N - what heimdall's web page sends as ANT_BIAS_MASK, through
+    // the same request_antenna_bias_tees() (checks, GPIO writes, saved). Only
+    // the open channels take the new value; CH0 stays off under --ext_noise.
+    // Every reply carries the mask in effect, an error reply too (as a failed
+    // retune replies the frequency in effect).
+    if (json_str.find("\"set_antenna_bias_tees\"") != std::string::npos) {
+        constexpr uint32_t all_bits = NUM_DEVICES >= 32 ? ~0u : ((1u << (NUM_DEVICES % 32)) - 1);
+        auto reply = [](const char* status, const std::string& message) {
+            std::string r = std::string("{\"status\":\"") + status + "\"";
+            if (!message.empty()) r += ",\"message\":\"" + message + "\"";
+            return r + ",\"antenna_bias_tee_mask\":" + std::to_string(antenna_bias_tees_in_effect()) + "}";
+        };
+        double m = 0;
+        if (!num_field("mask", m) || m < 0 || m > all_bits || m != std::floor(m))
+            return reply("error", "mask must be a whole number 0-" + std::to_string(all_bits) + " (bit N = channel N)");
+        const uint32_t requested = static_cast<uint32_t>(m);
+        const std::string err = request_antenna_bias_tees(requested, devices);
+        if (!err.empty()) return reply("error", err);
+        if ((requested & 1u) && external_noise_mode.load())
+            return reply("success", "CH0 is reserved for the external noise source (--ext_noise) - left off");
+        return reply("success", "");
     }
 
     // Simple JSON parsing for command processing
@@ -1066,6 +1147,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                     return "{\"status\":\"success\",\"wideband_enabled\":" + std::string(enable ? "true" : "false") + "}";
                 } else if (enable != (operating_mode.load() == OperatingMode::WIDEBAND_SCAN)) {
                     // Not already there: refused (Wideband variant, scanner, ...)
+                    if (const char* why = generic_mode_refusal(OperatingMode::WIDEBAND_SCAN); enable && why)
+                        return "{\"status\":\"error\",\"message\":\"" + std::string(why) + "\"}";
                     return "{\"status\":\"error\",\"message\":\"Wideband scan mode change refused\"}";
                 } else {
                     return "{\"status\":\"success\",\"message\":\"Already in requested mode\"}";
@@ -1165,6 +1248,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // periodic monitor measures the residual lag/phase at its next tick and
     // recalibrates only if drifted. Result in the web STATE (cal_check).
     if (json_str.find("\"check_calibration\"") != std::string::npos) {
+        if (generic_rtlsdr()) return GENERIC_NO_CALIBRATION_REPLY;
         if (kerberos_manual_cal_only()) {
             return "{\"status\":\"error\",\"message\":\"not available in KerberosSDR manual mode\"}";
         }
@@ -1179,6 +1263,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // neither once calibrated (FFT auto-off idles the machines): the sub-sample
     // trim just vanished, and mid-VERIFYING it could latch a false CONVERGED.
     if (json_str.find("\"reset_lag_compensation\"") != std::string::npos) {
+        if (generic_rtlsdr()) return GENERIC_NO_CALIBRATION_REPLY;
         force_recalibration.store(true, std::memory_order_release);
         std::cout << "Lag reset requested via control port (full recalibration)" << std::endl;
         return "{\"status\":\"success\",\"message\":\"Full recalibration (lag + phase) started\"}";

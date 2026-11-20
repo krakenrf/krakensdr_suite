@@ -2,6 +2,7 @@
 #include "digital/dig_plugin.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -43,7 +44,11 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31,
                    W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_AUDIO_CHANNEL = 34, W_SAMPLES_MC = 8,
                    W_SAMPLES_ARRAY = 9, W_SPATIAL = 35, W_PLOT = 36, W_TUNE = 37, W_TABLE_DETAIL = 38,
-                   W_SPATIAL_REMOVE = 39;
+                   W_SPATIAL_REMOVE = 39, W_VIDEO = 40, W_PLOT_EX = 41, W_OPTION_CHOICES = 42;
+// kp::Host::option_choices limits (kp::wire::CHOICES_MAX ...)
+constexpr size_t CHOICES_MAX = 100, CHOICE_VALUE_MAX = 100, CHOICE_LABEL_MAX = 80;
+// named plots (kp::Plot::id) one plugin may keep
+constexpr size_t MAX_PLOTS_PER_PLUGIN = 8;
 // a plugin's retune requests (kp::Host::tune): at most one per this
 constexpr int64_t TUNE_MIN_GAP_MS = 2000;
 constexpr size_t MAX_PAYLOAD = 1u << 20;   // kp::wire::MAX_PAYLOAD
@@ -55,7 +60,9 @@ constexpr double MAX_SIGNAL_SPAN_S = 3.0;   // a valid frame's samples (Host::va
 
 std::mutex record_mu;
 RecordHandler record_handler;
-std::atomic<bool> raw_wanted{false};
+// "Allow logging to disk" (set_log_allowed): Log All's raw frames and verbose
+std::atomic<bool> log_allowed_{false};
+std::atomic<bool> video_wanted{false};   // a browser is subscribed to decoder video
 void deliver_record(DigitalDecoder* d, const LogRecord& r) {
     RecordHandler h;
     {
@@ -133,7 +140,9 @@ void set_record_handler(RecordHandler h) {
     record_handler = std::move(h);
 }
 
-void set_raw_wanted(bool on) { raw_wanted = on; }
+void set_log_allowed(bool on) { log_allowed_ = on; }
+bool log_allowed() { return log_allowed_.load(); }
+void set_video_wanted(bool on) { video_wanted = on; }
 
 void set_voice_tap_handler(VoiceTapHandler h) {
     std::lock_guard<std::mutex> lk(voice_tap_mu);
@@ -176,10 +185,9 @@ struct Runner {
     int64_t retry_ms = 0, started_ms = 0;
     int crashes = 0;
     std::string note;                  // last problem logged (no repeats)
-    int verbose_sent = -1, voice_sent = -1, raw_sent = -1;
+    int verbose_sent = -1, voice_sent = -1, raw_sent = -1, video_sent = -1;
     uint64_t station_sent = 0;         // station_gen sent
     double rf_sent = -1;               // kp::Host::rf_hz sent (0 = unknown, -1 = nothing yet)
-    int rf_inv_sent = -1;
     std::map<std::string, std::string> opts_sent;   // key (without the id prefix) -> value
     uint32_t sync_sent = 0, sync_done = 0;
     std::string state = "starting", error;
@@ -350,12 +358,10 @@ public:
             // P25, ...) every later multichannel plugin (lora, ism) got one
             // antenna only (mc_ok below) until kraken_doa restarted
             nco_phase_ = 0.0;
-            if (opts_.invert) for (size_t i = 0; i < n; i++) mixed_[i] = std::conj(x[i]);
-            else std::copy(x, x + n, mixed_.begin());
+            std::copy(x, x + n, mixed_.begin());
         } else {
             for (size_t i = 0; i < n; i++) {
-                std::complex<float> v = opts_.invert ? std::conj(x[i]) : x[i];
-                mixed_[i] = v * std::polar(1.0f, static_cast<float>(nco_phase_));
+                mixed_[i] = x[i] * std::polar(1.0f, static_cast<float>(nco_phase_));
                 nco_phase_ += w;
             }
             nco_phase_ = std::remainder(nco_phase_, 2.0 * M_PI);
@@ -540,6 +546,7 @@ private:
     }
 
     void rebuild_runners() {
+        for (const auto& r : runners_) report_.choices_clear(r->id);   // their processes stop
         stop_all();
         {
             std::lock_guard<std::mutex> lk(st_mu_);
@@ -762,14 +769,14 @@ private:
         }
         r.started_ms = t;
         close_talker(r);
+        report_.choices_clear(r.id);   // a new process: what the old one listed is gone
         r.audio_channel = -1;
         r.written = 0;
         r.pos_map.clear();
         if (pi.messages) deliver_message(owner_, r.id, "", "", 0);   // get the street data ready
-        r.verbose_sent = r.voice_sent = r.raw_sent = -1;
+        r.verbose_sent = r.voice_sent = r.raw_sent = r.video_sent = -1;
         r.station_sent = 0;
         r.rf_sent = -1;
-        r.rf_inv_sent = -1;
         r.opts_sent.clear();
         r.sync_sent = r.sync_done = 0;
         r.state = "running";
@@ -782,8 +789,13 @@ private:
         publish_status();
     }
 
+    // the VFO is set to Log All and logging to disk is allowed: raw frames
+    // and the repeated messages are wanted
+    bool log_all() const { return opts_.log == LOG_ALL && log_allowed_.load(); }
+
     void send_settings(Runner& r) {
-        const int verbose = opts_.verbose ? 1 : 0;
+        // kp::Host::verbose: "Show all messages", or Log All in effect
+        const int verbose = opts_.verbose || log_all() ? 1 : 0;
         if (verbose != r.verbose_sent) {
             std::string kv = std::string("verbose=") + (verbose ? "1" : "0");
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
@@ -801,23 +813,31 @@ private:
             r.station_sent = sg;
         }
         // the RF of the plugin's 0 Hz (kp::Host::rf_hz): the VFO's frequency
-        // plus the AFC correction (the mixer moves afc_hz_ to 0 Hz; with
-        // invert the band is mirrored first). Resent when it moves > 10 Hz
-        const double rf0 = rf_hz_ > 0 ? (opts_.invert ? rf_hz_ - afc_hz_ : rf_hz_ + afc_hz_) : 0.0;
-        const int inv = opts_.invert ? 1 : 0;
-        if (std::fabs(rf0 - r.rf_sent) > 10.0 || inv != r.rf_inv_sent) {
+        // plus the AFC correction (the mixer moves afc_hz_ to 0 Hz). Resent when
+        // it moves > 10 Hz, and after a (re)start. Never ",1" (mirrored) since
+        // the Invert option went
+        if (const double rf0 = rf_hz_ > 0 ? rf_hz_ + afc_hz_ : 0.0; r.rf_sent < 0 || std::fabs(rf0 - r.rf_sent) > 10.0) {
             char b[64] = "";
-            if (rf0 > 0) snprintf(b, sizeof b, "%.1f,%d", rf0, inv);
+            if (rf0 > 0) snprintf(b, sizeof b, "%.1f", rf0);
             r.proc->send(W_RF, b, strlen(b), 0);
             r.rf_sent = rf0;
-            r.rf_inv_sent = inv;
         }
-        // raw frames for the decoder data log
-        const int raw = raw_wanted.load() ? 1 : 0;
+        // raw frames for the decoder data log (Log All)
+        const int raw = log_all() ? 1 : 0;
         if (raw != r.raw_sent) {
             std::string kv = std::string("log_raw=") + (raw ? "1" : "0");
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
             r.raw_sent = raw;
+        }
+        // video plugins: is anyone watching? (kp::Host::video_wanted - they
+        // skip the render / encode while not)
+        if (r.info.video) {
+            const int vid = video_wanted.load() ? 1 : 0;
+            if (vid != r.video_sent) {
+                std::string kv = std::string("video_wanted=") + (vid ? "1" : "0");
+                r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
+                r.video_sent = vid;
+            }
         }
         // only the decoder whose voice is played (transcribed, recorded) runs its vocoder
         const int voice = (is_lead(r) && (owner_->voice_wanted() || owner_->voice_tap() || owner_->record_tap())) ? 1 : 0;
@@ -865,7 +885,7 @@ private:
         send_settings(r);
         if (mc && ny) {
             // every antenna: SAMPLES_MC = uint32 m + n x m complex int16 (the
-            // VFO's rate - step 1; the invert option mirrors every antenna)
+            // VFO's rate - step 1)
             const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.prate()) * 4 * static_cast<size_t>(mc_m);
             const size_t n = std::min<size_t>(mc_n, ny);
             for (size_t p = 0; p < n; p += PLUGIN_CHUNK) {
@@ -876,10 +896,7 @@ private:
                 std::complex<int16_t>* d = reinterpret_cast<std::complex<int16_t>*>(mc_buf_.data() + 4);
                 const std::complex<int16_t>* q = mc + p * static_cast<size_t>(mc_m);
                 const size_t cnt = k * static_cast<size_t>(mc_m);
-                if (opts_.invert)
-                    for (size_t i = 0; i < cnt; i++) d[i] = {q[i].real(), static_cast<int16_t>(-q[i].imag())};
-                else
-                    std::copy(q, q + cnt, d);
+                std::copy(q, q + cnt, d);
                 if (!r.proc->send(W_SAMPLES_MC, mc_buf_.data(), mc_buf_.size(), backlog)) {
                     r.dropped += k;
                     continue;
@@ -917,6 +934,7 @@ private:
             r.proc->stop();
             r.proc.reset();
             close_talker(r);
+            report_.choices_clear(r.id);   // (the restarted process sends its own)
             r.crashes++;
             int64_t delay = std::min<int64_t>(30000, 1000LL << std::min(r.crashes, 5));
             r.note.clear();
@@ -1024,7 +1042,7 @@ private:
                 break;
             }
             case W_RAW: {
-                if (!raw_wanted.load() || len == 0) break;
+                if (!log_all() || len == 0) break;
                 LogRecord lr;
                 lr.type = "raw";
                 lr.plugin = r.id;
@@ -1092,6 +1110,15 @@ private:
             case W_PLOT:
                 on_plot(r, p, len);
                 break;
+            case W_PLOT_EX:
+                on_plot_ex(r, p, len);
+                break;
+            case W_VIDEO:
+                on_video(r, p, len);
+                break;
+            case W_OPTION_CHOICES:
+                on_option_choices(r, p, len);
+                break;
             case W_TUNE: {
                 // kp::Host::tune - only plugins that declare kp::Info::tunes
                 const double hz = num_or_nan(std::string(p, std::min<size_t>(len, 32)));
@@ -1124,6 +1151,38 @@ private:
             default:
                 break;
         }
+    }
+
+    // kp::wire::OPTION_CHOICES: key, then value / label pairs (kp::Host::option_choices).
+    // Only for an option the plugin declares; the text comes from a child process (and
+    // a DAB label from the air), so it is bounded and checked here again: a value the
+    // page couldn't set (DIGITAL_OPT: <= 100 bytes, no control characters) or that
+    // repeats is dropped, a label cut at a character boundary
+    void on_option_choices(Runner& r, const char* p, size_t len) {
+        auto f = split0(p, len, 1 + 2 * CHOICES_MAX);
+        if (f.empty() || !r.known) return;
+        bool declared = false;
+        for (const auto& o : r.info.options) declared = declared || o.key == f[0];
+        if (!declared) return;
+        std::vector<std::pair<std::string, std::string>> list;
+        for (size_t i = 1; i + 1 < f.size(); i += 2) {
+            std::string& v = f[i];
+            std::string& l = f[i + 1];
+            bool ok = v.size() <= CHOICE_VALUE_MAX;
+            for (unsigned char c : v) ok = ok && c >= 0x20 && c != 0x7F;
+            for (const auto& x : list) ok = ok && x.first != v;
+            if (!ok) continue;
+            for (char& c : l)
+                if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) c = ' ';
+            if (l.size() > CHOICE_LABEL_MAX) {
+                size_t e = CHOICE_LABEL_MAX;
+                while (e > 0 && (static_cast<unsigned char>(l[e]) & 0xC0) == 0x80) e--;
+                l.resize(e);
+            }
+            if (l.empty()) l = v;
+            list.emplace_back(std::move(v), std::move(l));
+        }
+        report_.choices_set(r.id, f[0], std::move(list));
     }
 
     // kp::wire::SPATIAL: id, label, start_s, end_s, delay_us, power_db, snr_db,
@@ -1176,7 +1235,56 @@ private:
     // kp::wire::PLOT -> the decoder's latest plot (JSON for the page)
     void on_plot(Runner& r, const char* p, size_t len) {
         auto f = split0(p, len, 8 + 3 * 64 + 1);
-        if (f.size() < 9) return;
+        std::string o = plot_json(f);
+        if (!o.empty()) report_.plot_set(r.id, r.id, std::move(o));
+    }
+
+    // kp::wire::PLOT_EX: E, E extension fields (id, place, click_option,
+    // click_also, click_snap, click_step - later ones skipped), then a PLOT
+    // payload. Stored as "<plugin>/<id>" (or "<plugin>" with no id, as PLOT),
+    // the extension as more JSON keys: id, pos ("video" = beside the video
+    // display), opt / also (a click sets them; only valid option keys and
+    // printable values pass), snap, step. A page that doesn't know them
+    // shows a "<plugin>" plot as before and never looks at the others.
+    void on_plot_ex(Runner& r, const char* p, size_t len) {
+        const size_t nl = static_cast<size_t>(std::find(p, p + std::min<size_t>(len, 4), '\0') - p);
+        const std::string es(p, nl);
+        if (es.empty() || es.size() > 2 || es.find_first_not_of("0123456789") != std::string::npos) return;
+        const size_t ne = static_cast<size_t>(std::stoi(es));
+        auto f = split0(p, len, 1 + ne + 8 + 3 * 64 + 1);
+        if (f.size() < 1 + ne) return;
+        auto ext = [&](size_t i) { return i < ne ? f[1 + i] : std::string(); };
+        const std::string id = ext(0);
+        if (id.size() > 32) return;
+        for (unsigned char c : id)
+            if (!(std::isalnum(c) || c == '_' || c == '.' || c == '-')) return;
+        std::string opt = ext(2), also = ext(3);
+        if (!opt.empty() && !valid_option_key(r.id + "." + opt)) opt.clear();
+        if (!also.empty()) {
+            const size_t eq = also.find('=');
+            bool ok = eq != std::string::npos && valid_option_key(r.id + "." + also.substr(0, eq)) && also.size() - eq - 1 <= 100;
+            for (unsigned char c : also)
+                if (c < 0x20 || c == 0x7F) ok = false;
+            if (!ok) also.clear();
+        }
+        auto jn = [](const std::string& t) {
+            const double v = num_or_nan(t);
+            if (!is_finite_value(v) || v <= 0) return std::string("null");
+            char b[48];
+            snprintf(b, sizeof b, "%.9g", v);
+            return std::string(b);
+        };
+        std::string o = plot_json(std::vector<std::string>(f.begin() + static_cast<std::ptrdiff_t>(1 + ne), f.end()));
+        if (o.empty()) return;
+        o.pop_back();   // the closing brace
+        o += ",\"id\":\"" + json_escape(id) + "\",\"pos\":\"" + std::string(ext(1) == "1" ? "video" : "") + "\",\"opt\":\"" +
+             json_escape(opt) + "\",\"also\":\"" + json_escape(also) + "\",\"snap\":" + jn(ext(4)) + ",\"step\":" + jn(ext(5)) + "}";
+        report_.plot_set(r.id, id.empty() ? r.id : r.id + "/" + id, std::move(o), MAX_PLOTS_PER_PLUGIN);
+    }
+
+    // a PLOT payload's fields as the page's JSON; "" = malformed
+    static std::string plot_json(const std::vector<std::string>& f) {
+        if (f.size() < 9) return "";
         auto jn = [](const std::string& t, int prec) {
             const double v = num_or_nan(t);
             if (!is_finite_value(v)) return std::string("null");
@@ -1204,7 +1312,42 @@ private:
             o += std::string(k ? "," : "") + "[" + jn(f[i], 9) + ",\"" + json_escape(f[i + 1].substr(0, 16)) + "\",\"" +
                  json_escape(f[i + 2].substr(0, 32)) + "\"]";
         o += "]}";
-        report_.plot_set(r.id, std::move(o));
+        return o;
+    }
+
+    // kp::wire::VIDEO: uint16 width, height; uint8 format, flags; uint16
+    // label_len; label; then width*height*bpp pixel bytes (bpp = 1 GRAY8 /
+    // 3 RGB24), all little-endian. Forwarded as a binary frame to the panel's
+    // canvas; a frame whose length doesn't match its header is dropped.
+    void on_video(Runner& r, const char* p, size_t len) {
+        constexpr size_t HDR = 8;   // width, height, format, encoding, label_len
+        if (len < HDR || !video_wanted.load(std::memory_order_relaxed)) return;   // no viewer: no copies
+        const auto* u = reinterpret_cast<const uint8_t*>(p);
+        const uint32_t w = static_cast<uint32_t>(u[0]) | (static_cast<uint32_t>(u[1]) << 8);
+        const uint32_t h = static_cast<uint32_t>(u[2]) | (static_cast<uint32_t>(u[3]) << 8);
+        const uint8_t format = u[4];
+        const uint8_t encoding = u[5];   // 0 = raw pixels, 2 = JPEG bitstream
+        const uint32_t label_len = static_cast<uint32_t>(u[6]) | (static_cast<uint32_t>(u[7]) << 8);
+        if (format > 1 || encoding > 2 || w == 0 || h == 0) return;
+        if (len < HDR + label_len) return;   // the label must fit
+        size_t data_len;
+        if (encoding == 0) {   // raw: the pixel count must match the geometry exactly
+            const size_t bpp = format == 1 ? 3 : 1;
+            data_len = static_cast<size_t>(w) * static_cast<size_t>(h) * bpp;
+            if (HDR + label_len + data_len != len) return;
+        } else {   // JPEG: a variable-length blob - the host forwards it opaquely
+            data_len = len - HDR - label_len;
+            if (data_len == 0) return;
+        }
+        VideoFrameReport vf;
+        vf.width = static_cast<int>(w);
+        vf.height = static_cast<int>(h);
+        vf.format = format;
+        vf.encoding = encoding;
+        vf.label.assign(p + HDR, label_len);
+        vf.pixels.assign(u + HDR + label_len, u + HDR + label_len + data_len);
+        owner_->deliver_video(vf);
+        (void)r;
     }
 
     // kp::wire::MAP_POINT: id, lat, lon, label, kind, heading, altitude_m,
@@ -1273,10 +1416,10 @@ private:
             s.packet = true;
             if (f.size() > 8) {
                 // the plugin's frequency -> the VFO's: the AFC mixer moved the band
-                // down by afc_hz_, the invert option mirrored it first
+                // down by afc_hz_
                 if (!f[6].empty()) {
                     const double pf = strtod(f[6].c_str(), nullptr);
-                    if (is_finite_value(pf)) s.freq_hz = opts_.invert ? -(pf + afc_hz_) : pf + afc_hz_;
+                    if (is_finite_value(pf)) s.freq_hz = pf + afc_hz_;
                 }
                 s.bw_hz = std::clamp(strtod(f[7].c_str(), nullptr), 0.0, static_cast<double>(in_rate_));
                 s.avg_s = std::clamp(strtod(f[8].c_str(), nullptr), 0.0, 3600.0);
@@ -1314,8 +1457,7 @@ private:
                         const double im = strtod(q, &e);
                         if (e == q) break;
                         if (!is_finite_value(re) || !is_finite_value(im)) break;
-                        // the invert option negated every antenna's Q: R conjugated
-                        c.emplace_back(re, opts_.invert ? -im : im);
+                        c.emplace_back(re, im);
                         q = *e == ',' ? e + 1 : e;
                     }
                     if (c.size() == static_cast<size_t>(m * m)) {
@@ -1619,6 +1761,8 @@ std::string DigitalDecoder::plugin_id() const {
 void DigitalDecoder::set_options(const Options& o) {
     std::lock_guard<std::mutex> lk(opt_mu_);
     opts_ = o;
+    log_mode_.store(o.log, std::memory_order_relaxed);
+    pos_s_.store(o.pos_s, std::memory_order_relaxed);
 }
 
 Options DigitalDecoder::options() const {
@@ -1729,6 +1873,20 @@ void DigitalDecoder::deliver_spatial(const SpatialReport& s) {
         h = spatial_handler_;
     }
     if (h) h(s);
+}
+
+void DigitalDecoder::set_video_handler(VideoHandler h) {
+    std::lock_guard<std::mutex> lk(talker_mu_);
+    video_handler_ = std::move(h);
+}
+
+void DigitalDecoder::deliver_video(const VideoFrameReport& f) {
+    VideoHandler h;
+    {
+        std::lock_guard<std::mutex> lk(talker_mu_);
+        h = video_handler_;
+    }
+    if (h) h(f);
 }
 
 void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,
@@ -1850,7 +2008,7 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
           << ",\"state\":\"" << json_escape(voice_state_) << "\"}";
     }
     Options op = options();
-    o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"invert\":" << (op.invert ? "true" : "false")
+    o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"log\":" << op.log << ",\"pos_s\":" << op.pos_s
       << ",\"map\":" << (op.map ? "true" : "false")
       << ",\"plugin\":{";
     first = true;
@@ -1859,6 +2017,9 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
         first = false;
     }
     o << "}}";
+    // the options' run-time choices (kp::Host::option_choices), keyed as opts.plugin;
+    // {} = none: the page draws the declared list / text field
+    o << ",\"choices\":" << report_.choices_json();
     // always when asked ({} = none): pages keep the last tables between pushes without them
     if (tables) {
         o << ",\"tables\":" << report_.tables_json() << ",\"plots\":" << report_.plots_json();

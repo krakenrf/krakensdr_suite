@@ -165,7 +165,7 @@ stability cooldown.
 
 Scalar phase compensation aligns each channel at the band *center* only; residual
 IF-filter group-delay differences and sub-sample lag leave a few degrees of error at
-the band edges. The optional **Per-Bin Phase Calibration** mode (web UI checkbox,
+the band edges. The optional **Per-Bin Phase Calibration** mode (web UI switch "Per-bin EQ",
 **OFF by default**) fixes this band-wide: after scalar convergence it accumulates the
 per-bin cross-spectrum `⟨Xᵢ(f)·conj(X_ref(f))⟩` over an extra window (noise still on),
 designs a short complex **phase-only equalizing FIR** per channel
@@ -223,14 +223,17 @@ surfaced in the control-port status; a recovery that never converges is aborted 
 
 ### Web interface (port 8070)
 
-uWebSockets serves `index.html` (loaded at runtime — edit and refresh, no rebuild)
-on `GET /`, and a WebSocket that **broadcasts a binary correlation/state frame every
+uWebSockets serves `index.html` (read once at startup — edit and restart heimdall,
+no rebuild) on `GET /`, and a WebSocket that **broadcasts a binary correlation/state frame every
 50 ms (20 Hz)**: a header (num elements, correlation size, ref channel, compensation
 active, bias-tee state, per-bin enabled), current frequency/gain/RTL-TCP channel,
 then per-channel scale factors, lags, phases, compensation state, and decimated
-correlation traces. The UI gives frequency/gain control, bias-tee toggle, per-bin
-calibration toggle, RTL-TCP channel selection, and live correlation/compensation
-plots.
+correlation traces. The page (the same dark look as the DoA client's) shows the
+calibration state in its top bar and has cards for the channel table with Check
+Calibration / Full Recalibration, tuning, the noise source and periodic check,
+the element count and antenna bias tees, RTL-TCP, the Wideband board, forward
+compensation, and the live phase and correlation graphs
+(`docs/dev/web-ui.md`).
 
 **Incoming WebSocket commands (text):**
 
@@ -241,13 +244,19 @@ plots.
 | `PER_BIN_ENABLE` / `PER_BIN_DISABLE` | Toggle per-bin phase calibration (persisted) |
 | `SDR_SETTINGS:{"frequency":F,"gain":G}` | Set center frequency / gain with cooldown handling |
 | `RTL_TCP_CHANNEL:<n>` | Select which channel the RTL-TCP server streams |
+| `ANT_BIAS_MASK:<mask>` | Antenna bias tees, bit N = channel N (saved; the control port's `set_antenna_bias_tees` does the same) |
 
 ### TCP control (port 8092, JSON)
 
 Newline-delimited JSON commands; the server also **broadcasts a status JSON at 2 Hz**
 with `settings` (center_freq, gain, sample_rate, rtl_tcp_channel), `num_channels`,
 `operating_mode` (`coherent`/`wideband`), `wideband_enabled`, `cooldown_active` /
-`cooldown_remaining_ms`, and the coherence fields `coherence_events` + `recovering`.
+`cooldown_remaining_ms`, the coherence fields `coherence_events` + `recovering`, and
+`lag_no_peak`: the channels whose lag calibration has found no correlation peak for
+60 s (normally `[]`; the dongles' streams most likely started more than +-16384
+samples apart - run a Full Recalibration / `reset_lag_compensation`, and restart
+heimdall if the channel shows up again; heimdall also logs one warning line per
+channel to stderr).
 
 ```bash
 echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
@@ -262,6 +271,7 @@ echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
 | `hold_calibration` | `hold_ms` (0–30000) | Hold the calibration: retunes / gain changes enter the cooldown but don't recalibrate for `hold_ms` from now (a lease to renew); `0` releases and starts a pending calibration at once. Used by the DoA client's saved-frequency scan while it searches |
 | `set_operating_mode` | `mode` (`coherent`/`wideband`/`independent`) | Switch the operating mode (wideband spreads the tuners around the current frequency; coherent retunes all and recalibrates) |
 | `set_independent_tuner` | `channel`, `frequency?` (Hz), `gain?` (dB, `-1`=auto) | Independent mode: tune one tuner / set its gain |
+| `set_antenna_bias_tees` | `mask` (0–255, bit N = channel N) | Switch the antenna ports' bias tees (DC for active antennas / LNAs; the same as the web page's `ANT_BIAS_MASK`, saved); the reply and the status carry `antenna_bias_tee_mask`, the status also `antenna_bias_tees_available` and `antenna_bias_tee_reserved`. Refused with generic RTL-SDRs and on the Wideband variant |
 | `set_wideband_mode` | `enable`, `base_frequency?` | Enter/leave wideband scan mode (older form of `set_operating_mode`) |
 | `set_wideband_frequencies` | `base_frequency` | Per-tuner spacing in wideband |
 | `set_wideband_edge_clip` | `edge_clip` (0.1–1.0) | Usable bandwidth fraction/tuner |
@@ -326,6 +336,13 @@ reboots regardless of USB enumeration order.
 **Realtime scheduling (optional):** USB readers and the drain use `SCHED_RR` if the
 process is granted it; otherwise they log once and run at normal priority. To enable,
 add `<user> - rtprio 30` to `/etc/security/limits.conf` or grant `CAP_SYS_NICE`.
+
+**Memory locking (optional, Linux):** at startup heimdall locks its memory in RAM
+(`mlockall` with `MCL_ONFAULT`: only pages it touches), so the realtime threads don't
+stall on a swapped-out page. It does so only when the locked-memory limit is unlimited;
+otherwise it logs once and runs as before. To enable, add `<user> - memlock unlimited`
+to `/etc/security/limits.conf` (`LimitMEMLOCK=infinity` in a systemd unit). install.sh
+and `install-pi-service.sh` set both limits.
 
 ---
 

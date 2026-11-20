@@ -113,6 +113,17 @@ struct ChannelCompensation {
     // Throttle for the locked-channel drift warning (per channel: touched only
     // by this channel's lag thread, under compensation_mutex)
     std::chrono::steady_clock::time_point last_drift_warning;
+    // No-peak detector (config.h LAG_NO_PEAK_*): active acquisition time and
+    // the last readings' correlation peak / mean magnitude and lag, reset when
+    // the servo engages. Touched by this channel's lag thread under
+    // compensation_mutex; lag_no_peak is read lock-free by the status JSON.
+    float acq_active_s = 0.0f;
+    std::chrono::steady_clock::time_point acq_last_reading;
+    float peak_ratio_ring[LAG_NO_PEAK_READINGS] = {0};
+    float lag_ring[LAG_NO_PEAK_READINGS] = {0};
+    int peak_ring_count = 0;
+    bool no_peak_warned = false;          // once per calibration attempt
+    std::atomic<bool> lag_no_peak{false};  // warned and not locked since
 };
 
 struct PhaseCompensationData {
@@ -281,6 +292,9 @@ struct CorrelationResult {
     std::vector<float> scale_factors;
     std::map<int, float> lags, phases;
     std::map<int, float> amplitudes;  // Amplitude correction factors from eigenvalue decomposition
+    // Per channel: correlation peak / mean magnitude of the latest set (~4-5
+    // with no common signal in the lag range; see LAG_NO_PEAK_RATIO)
+    std::map<int, float> peak_ratios;
     std::map<int, LagCompensatorState> channel_states;
     std::map<int, int> channel_zero_counts;
     mutable std::mutex data_mutex;  // mutable allows locking in const functions
@@ -419,6 +433,11 @@ extern std::atomic<bool> global_running;
 // Set with global_running = false by a fatal error after startup (e.g. the web
 // port is taken): the shutdown path then exits 1, so supervisors see a failure.
 extern std::atomic<bool> fatal_exit;
+// {"command":"restart"} on the control port (kraken_doa's ↻ Restart): set with
+// global_running = false to KRAKEN_RESTART_EXIT, the exit status the
+// supervisor that started heimdall restarts it on (run.sh, Docker,
+// krakensdr.exe); 0 = a normal stop
+extern std::atomic<int> restart_exit_status;
 extern std::atomic<OperatingMode> operating_mode;
 extern std::atomic<int> active_num_elements;  // Set via -n flag at startup (2 to NUM_DEVICES)
 

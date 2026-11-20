@@ -56,6 +56,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -86,6 +87,21 @@ def progress(pct, text):
 def fail(msg):
     print('ERROR ' + msg, flush=True)
     sys.exit(1)
+
+
+def install_hint(modules):
+    """the command that installs modules for the Python running this"""
+    if WINDOWS:
+        return '"%s" -m pip install %s' % (sys.executable, ' '.join(modules))
+    exe = shlex.quote(sys.executable)
+    if MACOS:
+        # Apple's python3 has no writable site-packages (see run())
+        return '%s -m pip install --user %s' % (exe, ' '.join(modules))
+    if os.path.realpath(sys.executable).startswith('/usr/bin/') and shutil.which('apt-get'):
+        # the distro's Python: its pip refuses (PEP 668 on Debian 12,
+        # Ubuntu 23.04 and later)
+        return 'sudo apt-get install %s' % ' '.join('python3-' + m for m in modules)
+    return '%s -m pip install %s' % (exe, ' '.join(modules))
 
 
 def subst(v, ctx):
@@ -133,10 +149,15 @@ def run(argv, work, cache, plugins, log):
         # as a PC running kraken_doa usually has no compiler - an older one
         # is taken too when there is no g++ to rebuild it with
         pre = os.path.join(os.path.dirname(exe), 'build', name + '.exe')
-        if WINDOWS and os.path.exists(pre) and (os.path.getmtime(pre) >= os.path.getmtime(exe) or not shutil.which('g++')):
+        # the source's time: the .cpp or a header it can include from its own
+        # folder or its plugin's (-I) - the newest. The .cpp alone kept a
+        # stale binary after a header-only change (dab_gen_*.hpp)
+        src_dir = os.path.dirname(os.path.dirname(exe))
+        src_t = max([os.path.getmtime(exe)] + [os.path.getmtime(os.path.join(d, f)) for d in (os.path.dirname(exe), src_dir)
+                                                for f in os.listdir(d) if f.endswith(('.h', '.hpp'))])
+        if WINDOWS and os.path.exists(pre) and (os.path.getmtime(pre) >= src_t or not shutil.which('g++')):
             binp = pre
-        elif not os.path.exists(binp) or os.path.getmtime(binp) < os.path.getmtime(exe):
-            src_dir = os.path.dirname(os.path.dirname(exe))
+        elif not os.path.exists(binp) or os.path.getmtime(binp) < src_t:
             # a plugin with its own LICENSE (plugins/Makefile): the SDK and
             # pffft only, never the source-available lib/
             libdir = os.path.join(plugins, 'lib', 'build')
@@ -293,15 +314,20 @@ def main():
     if not match:
         fail('no test transmission "%s"' % ident)
     e = match[0]
-    if WINDOWS:
-        # a Windows Python seldom has them: say so on the page (kraken_doa
-        # shows the ERROR line), not in a traceback in the log
-        # (scipy: uca_scene.py and most generators written in Python)
-        need = ['numpy'] + (['scipy'] if 'scene' in e or any(str(st[0]).endswith('.py') for st in e.get('steps', [])) else [])
-        missing = [m for m in need if importlib.util.find_spec(m) is None]
-        if missing:
-            fail('Python needs %s for test transmissions: "%s" -m pip install %s'
-                 % (' + '.join(missing), sys.executable, ' '.join(missing)))
+    # missing modules: say so on the page (kraken_doa shows the ERROR line)
+    # and name the interpreter - kraken_doa runs the python3 first on its
+    # PATH, which may be a conda / venv one without them although the
+    # system's has them - not in a traceback in the log (to_cu8's would not
+    # even reach the entry's log). numpy: uca_scene.py, the generators
+    # written in Python and a cf32 output (to_cu8); scipy: uca_scene.py and
+    # most of those generators. An entry of C++ steps writing cu8 needs
+    # neither (dab).
+    py_steps = any(str(st[0]).endswith('.py') for st in e.get('steps', []))
+    need = ((['numpy'] if 'scene' in e or py_steps or str(e.get('output', '')).endswith('.cf32') else [])
+            + (['scipy'] if 'scene' in e or py_steps else []))
+    missing = [m for m in need if importlib.util.find_spec(m) is None]
+    if missing:
+        fail('Python needs %s for test transmissions: %s' % (' + '.join(missing), install_hint(missing)))
     cache = os.path.abspath(o['cache'])
     os.makedirs(cache, exist_ok=True)
     work = os.path.join(cache, '.work-' + ident)

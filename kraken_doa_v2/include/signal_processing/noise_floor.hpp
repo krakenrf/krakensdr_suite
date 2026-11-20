@@ -50,6 +50,15 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
 // as before.
 bool floor_db(int ch, float* out);
 
+// The mean noise power of ONE bin of channel ch's RAW frames (dB, the FFT's
+// own units - FFTProcessor's fft_magnitudes): the latest frame's 10th
+// percentile + 9.77 dB (a noise bin's power is exponential: its 10th
+// percentile is 0.105 x its mean), or the remembered floor's while a signal
+// fills the band (wideband scan mode: the tuners' common floor's share, as
+// floor_db). False when there is no recent frame of that channel.
+// (📏 range from signal strength: a VFO's band minus its noise)
+bool bin_noise_db(int ch, int fft_size, float* out);
+
 // Wideband scan mode: the tuners' common response (dB) at each bin of an
 // fft_size spectrum (DC centred) - the stitched spectrum takes it off before
 // floor_db. Copied into out when it changed since *version (updated).

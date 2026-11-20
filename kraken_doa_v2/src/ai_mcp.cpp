@@ -32,8 +32,10 @@
 #include "config.hpp"
 #include "continuous_scanner.hpp"
 #include "control_handler.hpp"
+#include "power.hpp"
 #include "decimator_manager.hpp"
 #include "decoder_log.hpp"
+#include "decoder_log_names.hpp"
 #include "digital/dig_plugin.hpp"
 #include "digital/digital_decoder.hpp"
 #include "doa_logger.hpp"
@@ -420,6 +422,10 @@ std::string screen_json(const std::string& view_json) {
     o << "{\"page\":" << (view_json.empty() ? "{}" : view_json);
     // receiver
     o << ",\"receiver\":{\"mode\":" << q(mode_name());
+    // plain RTL-SDR dongles, no KrakenSDR: independent receivers only (no
+    // coherent mode - no DoA, beamforming or calibration)
+    if (server_generic_rtlsdr.load())
+        o << ",\"generic_rtlsdr\":true,\"coherent_available\":false";
     const bool multi = multi_tuner_mode();
     if (!multi) {
         double lo = 0, hi = 0;
@@ -651,7 +657,9 @@ void t_get_decoder(const Json& a, Reply r) {
     }
     r("{\"vfo\":" + std::to_string(id) + ",\"freq_hz\":" + num(v.hz, 0) + ",\"status\":" + dump(st) +
       ",\"note\":" + q("events: t = ms since epoch, src = plugin id, m = text; tables: rows [key, age_s, cells..] "
-                       "under cols; info = facts [key, value, age_s] per plugin") + "}", false);
+                       "under cols; info = facts [key, value, age_s] per plugin; choices = the values an option "
+                       "takes now, from the plugin (<plugin>.<key>: [[value, label], ...]; e.g. a DAB ensemble's "
+                       "programmes) - set one with set_decoder_option") + "}", false);
 }
 
 double haversine_km(double la1, double lo1, double la2, double lo2, double* brg) {
@@ -873,18 +881,25 @@ void t_search_log(const Json& a, Reply r) {
     const int only = static_cast<int>(num_arg(a, "vfo", -1));
     const int days = static_cast<int>(std::clamp(num_arg(a, "days", 1), 1.0, 31.0));
     const size_t lim = static_cast<size_t>(std::clamp(num_arg(a, "limit", 100.0), 1.0, 500.0));
+    // optional: one decoder's records (its folder; the transcripts and the old combined files by
+    // their "dec")
+    const std::string decoder = lower(str_arg(a, "decoder"));
+    const std::string dfolder = decoder.empty() ? "" : declog::safe_folder_name(decoder);
     const std::string dir = declog::folder();
     later([=](bool*) {
         std::vector<std::string> hits;   // oldest first, the newest lim kept
         size_t matched = 0, files = 0;
         const std::string tneedle = type.empty() ? "" : "\"type\":\"" + type + "\"";
         const std::string vneedle = only < 0 ? "" : "\"vfo\":" + std::to_string(only) + ",";
+        const std::string dneedle = decoder.empty() ? "" : "\"dec\":\"" + json_escape(decoder) + "\"";
         for (int k = days - 1; k >= 0; k--) {
             time_t t = time(nullptr) - static_cast<time_t>(k) * 86400;
             char day[16];
             strftime(day, sizeof day, "%Y-%m-%d", localtime(&t));
-            for (const char* ext : {".jsonl", ".jsonl.gz"}) {
-                const std::string path = dir + "/decoders-" + day + ext;
+            // every decoder's folder, transcripts/, the old combined file - plain and gz
+            for (const auto& df : declog::day_files(dir, day)) {
+                if (!dfolder.empty() && !df.folder.empty() && df.folder != dfolder && df.folder != declog::TRANSCRIPTS) continue;
+                const std::string& path = df.path;
                 if (access(path.c_str(), R_OK) != 0) continue;
                 gzFile f = gzopen(path.c_str(), "rb");   // reads plain files too
                 if (!f) continue;
@@ -896,6 +911,7 @@ void t_search_log(const Json& a, Reply r) {
                     if (line.empty() || line[0] != '{') continue;
                     if (!tneedle.empty() && line.find(tneedle) == std::string::npos) continue;
                     if (!vneedle.empty() && line.find(vneedle) == std::string::npos) continue;
+                    if (!dneedle.empty() && lower(line).find(dneedle) == std::string::npos) continue;
                     if (!query.empty() && lower(line).find(query) == std::string::npos) continue;
                     matched++;
                     if (line.size() > 3000) continue;
@@ -910,7 +926,10 @@ void t_search_log(const Json& a, Reply r) {
         for (size_t i = 0; i < hits.size(); i++) out += (i ? "," : "") + hits[i];
         out += "],\"note\":" + q(files ? "the newest matching records, oldest first (decoder data log: events, messages, "
                                          "positions, incidents, voice transcripts, raw frames)"
-                                       : "no decoder log files - Decoder Logging (sidebar) is off or empty") + "}";
+                                       : "no decoder log files - nothing logged yet: logging to disk is allowed in "
+                                         "Setup Settings -> Decoder Logging, then each VFO decoder's Logging (Off / "
+                                         "Log / Log All, set_decoder_option key log) and the transcripts' choose "
+                                         "what is written") + "}";
         return out;
     }, r);
 }
@@ -1127,6 +1146,11 @@ std::string readonly_refusal() {
 
 std::string cmd(const std::string& c) {
     std::cout << "AI assistant: " << c.substr(0, 200) << std::endl;
+    // ⏻ / ↻ restart, reboot, shut down: the user's buttons only (power.cpp
+    // refuses every caller but a page's socket too - this says it to the model)
+    if (power::is_command(c))
+        return "Refused: restarting, rebooting or shutting down is only for the user (the page's Restart / Shut down "
+               "buttons) - the assistant may not do it";
     return ControlHandler::apply_command(c);
 }
 
@@ -1367,7 +1391,7 @@ void t_set_option(const Json& a, Reply r) {
     if (!find_vfo(id, &v)) return r("No VFO D" + std::to_string(id), true);
     std::string key = str_arg(a, "key");
     if (key.empty() || key.find(':') != std::string::npos) return r("key needed (an option of the VFO's decoder)", true);
-    if (key.find('.') == std::string::npos && key != "verbose" && key != "invert" && key != "map") {
+    if (key.find('.') == std::string::npos && key != "verbose" && key != "log" && key != "pos_s" && key != "map") {
         std::string p = v.d.digital_plugin;
         if (p.empty()) {
             Json st;
@@ -1395,6 +1419,9 @@ void t_remove_vfo(const Json& a, Reply r) {
 void t_set_doa(const Json& a, Reply r) {
     if (auto e = readonly_refusal(); !e.empty()) return r(e, true);
     const bool on = bool_arg(a, "on", true);
+    if (on && server_generic_rtlsdr.load() && !playback::active())
+        return r("No DoA here: the receiver runs generic RTL-SDR dongles, not a KrakenSDR - "
+                 "direction finding needs its coherent array", true);
     if (auto e = cmd(std::string("DOA:") + (on ? "1" : "0")); !e.empty()) return r("Refused: " + e, true);
     r(std::string("DoA ") + (on ? "on" : "off") + (multi_tuner_mode() ? " (applies when the receiver is back in coherent mode)" : ""), false);
 }
@@ -1487,9 +1514,14 @@ std::vector<Tool>& tools() {
          false, true, t_get_transcripts},
         {"search_decoder_log", "Decoder data log",
          "Searches the decoder data log of the last `days` days (every decoded event, message, position, incident, "
-         "transcript - when the user turned Decoder Logging on): the newest matching records.",
+         "transcript - of the VFO decoders set to Log / Log All and the transcripts set to Log, while logging to "
+         "disk is allowed): the newest matching records. The files: a folder per decoder (decoder_logs/<id>/"
+         "<id>-YYYY-MM-DD.jsonl, finished days gzipped after the Keep days), transcripts/, and the older combined "
+         "decoders-YYYY-MM-DD files - all searched.",
          OBJ(STRP("query", "text the record must contain (case-insensitive)") "," NUMP("days", "1-31 (1 = today)")
                  "," STRP("type", "event | message | position | raw | incident | voice") "," INTP("vfo", "only this VFO")
+                 "," STRP("decoder", "only this decoder's records (plugin id: adsb, ais, pagers ...; NBFM / AM / WBFM for "
+                          "analog transcripts)")
                  "," INTP("limit", "records (100)"),
              ""),
          false, true, t_search_log},
@@ -1641,13 +1673,19 @@ std::vector<Tool>& tools() {
              REQ("\"vfo\"")),
          true, false, t_set_vfo},
         {"set_decoder_option", "Decoder option",
-         "Sets an option of a VFO's decoder (the plugin's options, see get_decoder / list_decoders): key = the "
-         "option's key (or <plugin>.<key>), value as text ('' = its default).",
+         "Sets an option of a VFO's decoder: key = the plugin's option key (or <plugin>.<key>; see get_decoder / "
+         "list_decoders), value as text ('' = its default); or one of the decoder tab's own: log = Logging, what "
+         "the VFO's decoder writes to the decoder log while logging to disk is allowed (0 / off, 1 / log: events, "
+         "messages, positions, incidents; 2 / all: Log All, also raw frames and the repeated control-channel "
+         "messages); pos_s = Positions every, 1-3600 s: the log keeps at most one position per aircraft / "
+         "vessel / station in that time (decoders that report positions); verbose = Show all messages (1 / 0: "
+         "also report the messages a control channel repeats); map (Plot on map) 1 / 0.",
          OBJ(INTP("vfo", "VFO number") "," STRP("key", "option key") "," STRP("value", "value"), REQ("\"vfo\",\"key\",\"value\"")),
          true, false, t_set_option},
         {"remove_vfo", "Remove a VFO", "Removes a VFO (not the last one).", OBJ(INTP("vfo", "VFO number"), REQ("\"vfo\"")),
          true, false, t_remove_vfo},
-        {"set_doa", "DoA on / off", "Switches direction finding (MUSIC DoA) on or off (coherent mode).",
+        {"set_doa", "DoA on / off", "Switches direction finding (MUSIC DoA) on or off (coherent mode; not on generic "
+         "RTL-SDR dongles - get_screen receiver.generic_rtlsdr - which have no coherent mode).",
          OBJ(BOOLP("on", "true = on"), REQ("\"on\"")), true, false, t_set_doa},
         {"save_frequency", "Save a frequency",
          "Adds an entry to the user's Saved Frequencies (sidebar): name, frequency, optional demod, bandwidth, decoder, "

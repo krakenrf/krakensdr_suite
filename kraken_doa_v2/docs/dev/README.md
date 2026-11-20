@@ -17,6 +17,7 @@ every session needs and points here.
 | `digital-squelch.md` | Digital squelch |
 | `digital-voice.md` | Digital voice |
 | `doa-per-talker.md` | DoA per talker |
+| `drive-mode.md` | Drive mode: DF from a vehicle (the map full-window, one big bearing, big buttons, Day / Night) |
 | `fft-pffft.md` | FFT (pffft) |
 | `fixed-frequency-decoders.md` | Fixed-frequency decoders |
 | `incident-map.md` | Incident map |
@@ -26,6 +27,7 @@ every session needs and points here.
 | `map.md` | Map (right-hand pane) and decoder map points |
 | `mobile-df.md` | Mobile direction finding |
 | `noise-floor.md` | Noise floor (the spectrum's 0 dB) |
+| `bearing-spectrum.md` | Bearing spectrum: the spectrum coloured by direction (type 9) |
 | `operating-modes.md` | Operating modes, VFO cards, VFO tuning step, spectrum zoom |
 | `osm-masts.md` | OpenStreetMap masts layer |
 | `overview.md` | Overview: build, architecture, threads, components |
@@ -35,8 +37,11 @@ every session needs and points here.
 | `plugin-adsb.md` | ADS-B plugin |
 | `plugin-ais.md` | AIS plugin |
 | `plugin-analog-id.md` | Analog FM IDs plugin |
+| `plugin-analogtv.md` | Analog TV plugin (PAL / NTSC luma, the video display) |
 | `plugin-beacon406.md` | 406 MHz distress beacons plugin |
+| `plugin-beacon121.md` | 121.5 / 243 MHz swept-tone distress beacons plugin |
 | `plugin-cells.md` | LTE / 5G NR Cell Decoder plugin |
+| `plugin-dab.md` | DAB / DAB+ plugin |
 | `plugin-dme.md` | DME / TACAN plugin |
 | `plugin-dtv.md` | Digital TV plugin |
 | `plugin-flarm.md` | FLARM / OGN plugin |
@@ -48,15 +53,18 @@ every session needs and points here.
 | `plugin-radiosonde.md` | Radiosonde plugin |
 | `plugin-rds.md` | RDS / RBDS + SCA plugin |
 | `plugin-ssr1030.md` | 1030 MHz interrogations plugin |
+| `plugin-tempest.md` | TEMPEST screen-reconstruction plugin |
 | `plugin-uat.md` | UAT plugin |
 | `plugin-vdl2.md` | VDL Mode 2 plugin |
 | `plugin-wildlife.md` | Wildlife collars plugin |
+| `range.md` | Range from signal strength, a VFO's level on mouseover |
 | `recorder.md` | IQ & audio recorder and playback of recordings |
 | `reference.md` | Hot paths, development tasks, key files, common issues, testing, dependencies |
 | `saved-frequencies.md` | Saved frequencies and map markers |
 | `saved-frequency-scan.md` | Saved-frequency scan |
 | `spectrum-views.md` | Spectrum views (FFT message type 7) |
 | `station-on-map.md` | Station on the map |
+| `tempest-deep-plan.md` | TEMPEST deep-reconstruction plan |
 | `vfo-audio.md` | VFO audio |
 | `vfo-bandwidth.md` | Arbitrary VFO bandwidth and the VFO decimator |
 | `viewshed.md` | Viewshed |
