@@ -158,13 +158,28 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   audio_ctx it read what an earlier encode had left - zeros in a fresh
   process; 5 of 15 clips changed between run 1 and 2, loops came and went).
   Rounded, every frame read is this input's: the same text in any order and
-  with any thread count. A full-window decode runs in a whisper state no
-  sized encode has written into (`state_for`: one state at a time, a fresh
-  one - caches zeroed by whisper.cpp, 4-24 ms - when the other kind is
-  needed), so its padding is zeros as before; two states at once took
-  base.en 259 -> 322 MB, small.en 662 -> 789 MB peak, one at a time 262 /
-  663 MB (sized jobs only: 228 / 623 MB). LOOP GUARD: a token cap through `logits_filter_callback` - 6 text
-  tokens per second of input (multilingual 10) + 16; at the cap end-of-text
+  with any thread count. ONE whisper state at a time (`state_for`; two at
+  once took base.en 259 -> 322 MB, small.en 662 -> 789 MB peak, one 262 /
+  663 MB, sized jobs only 228 / 623 MB): a full-window FINAL needs a
+  pristine one - no sized encode since it was made (whisper.cpp zeroes its
+  caches), so its padding is zeros as before - and gets a new one (4-24 ms)
+  when the current one isn't: the only swap, so a mix of >= 24.6 s and short
+  transmissions costs one new state per long final (review 2026-11-20: it
+  was two per long job, partials included). Sized decodes and full-window
+  PARTIALs use whatever state there is (a sized decode reads only frames it
+  wrote; a partial may read leftovers in that padding - a preview). Each new
+  state starts with the self-attention cache of 1 decoder, so the next beam
+  search / best_of fallback re-allocates it for 7 (~44 MB base.en, ~130 MB
+  small.en). whisper_full returning -7 (no memory for that cache) has FREED
+  the state inside whisper.cpp: the helper forgets it (the old helper kept
+  the dangling pointer and crashed on the next job - with the swaps it was a
+  double free at once) and decodes again with one decoder (greedy, best_of
+  1); stderr says so, once per 10 min. LOOP GUARD: a token cap through
+  `logits_filter_callback` - 6 text tokens per second of input
+  (multilingual 10) + 16, at most n_text_ctx/2 - 5 = 219 (whisper.cpp's own
+  decode loop stops at 220 and runs its fallbacks instead: an uncapped
+  multilingual 20.3-24.6 s input never reached the cap - fixed after the
+  review); at the cap end-of-text
   is forced (and at once in whisper's temperature fallbacks); a final decode
   that reached it is decoded again with the full window and no cap = the
   decode of before, so the cap can never cut a transcript short (a low cap
@@ -174,7 +189,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   fallback kept for finals. With the rounded window no English model's
   decode reached the cap on the bench clips; the multilingual base did once
   (a clip it took for German: 10.5 CPU s with the guard, 6.3 s in the old
-  helper - its own temperature fallbacks).
+  helper - its own temperature fallbacks; 22 s of noise without VAD: 21.8
+  CPU s, 11.3 old, the old text). LANGUAGE DETECTION (multilingual, "auto")
+  runs inside whisper_full BEFORE it applies audio_ctx, so it encodes with
+  the window of the state's previous decode (a fresh state: 30 s): which
+  5.1-30 s of the input it hears, and what it costs (a short job after a
+  25 s one pays a 25.6 s detection encode), depend on the job before. No
+  public whisper.cpp call sets the window first; forwards / backwards runs
+  over the 15 clips detected the same languages. Not fixed.
   PARTIAL (Live text, wire type 3 -> PARTIAL_RESULT 19, READY `live=1`;
   `transcribe_partial`): the same VAD (< 200 ms speech -> "" without
   whisper), prompt, language, sized window and clean-up, but decoded ONCE:
@@ -190,18 +212,34 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   confirmed / pending per line, then the final and a summary).
   `kraken_whisper --quantize IN OUT q8_0|q5_0|q5_1` (`transcribe/quantize.cpp`,
   ported from whisper.cpp's quantize example, MIT): byte for byte what
-  whisper-quantize writes (checked: base.en / small.en q8_0), ~20 MB of
-  memory (1M weights at a time), refuses a quantized / non-speech-model /
-  truncated input and OUT = IN, removes OUT on failure, exit 0 = done.
+  whisper-quantize writes (checked: base.en / small.en q8_0, base.en q5_1),
+  ~20 MB of memory (1M weights at a time; small.en goes through under a 60
+  MB address limit), refuses a quantized / non-speech-model / truncated
+  input, stray bytes at its end, a shape that overflows, a row over 65536
+  or a tensor larger than the rest of the file (they made it allocate
+  gigabytes or wrap to 0 - review 2026-11-20), tensor names other than
+  exactly whisper's set for the model's layer counts (a file cut at a tensor
+  boundary looked complete; loading the result in whisper instead would need
+  the model's memory and aborts without it), and OUT = IN (POSIX: device +
+  inode; Windows: volume serial + file index, which also sees hard links,
+  8.3 names and mapped drives); OUT removed on any failure, also an
+  exception; exit 0 = done.
   Helper tests 2026-11-20 (job fa22c145 scratch, `helper/`): t_wire.py (23
   checks on the wire: READY live=1, JOB / PARTIAL answers, silence / noise /
   empty partials -> "", OPTIONs, unknown types and short jobs ignored, 19 /
   27 / 44 s inputs decoded to their last words, oversize -> ERROR + exit 2,
-  a bad model -> ERROR), t_guard.sh (above), t_quantize.sh (19 error paths:
-  wrong type / input, truncated, OUT = IN also by sym / hard link, /dev/full),
+  a bad model -> ERROR), t_guard.sh (above), t_quantize.sh (29: wrong type
+  / input, truncated, OUT = IN also by sym / hard link, /dev/full, the
+  review's malformed models - shape overflow, huge rows, cut at a tensor
+  boundary, stray bytes -, a tensor twice / unknown, a 60 MB address
+  limit), t_oom.sh + t_oom_wire.py (beam 5 under an 800 MB address limit:
+  -7 -> one decoder, 6 of 6 jobs answered; the old helper died on job 2;
+  below ~750 MB old and new crash inside whisper.cpp's state allocation),
   t_setup.sh (11, a stub curl: the derived models with / without the f16,
   no helper, a failing helper), bench_serve.py / wer.py / stream_stats.py
-  (the numbers below)
+  (the numbers below); the review's t_order.py (forwards / backwards with
+  partials and full-window jobs between: 0 of 15 texts differ) and
+  t_edge.py
 - PROMPT ("Words to expect", `VOICE2TEXT_PROMPT:`, <= 300): whisper reads it
   as the text said before, and a bare list ("Houston, Roger, over") made
   greedy decoding END after one word ("the", conf 0.99) on 2 of 4 test

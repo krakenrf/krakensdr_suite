@@ -8,12 +8,15 @@
 // Ported from whisper.cpp v1.9.4: examples/quantize/quantize.cpp
 // (whisper_model_quantize) and examples/common-ggml.cpp
 // (ggml_common_quantize_0). Changes: every read is checked (a truncated or
-// foreign file fails instead of writing garbage), the vocabulary is copied
-// without the fixed 129-byte buffer, an already quantized input and OUT = IN
-// are refused, OUT is flushed to the disk and removed on failure, no
-// per-tensor output. The tensors quantized, the ones skipped and the bytes
-// written are the example's: the result is byte for byte what its
-// whisper-quantize writes.
+// foreign file fails instead of writing garbage), tensor shapes are bounded
+// (no overflow, no allocation beyond ~4 MB, nothing larger than the rest of
+// the file), the vocabulary is copied without the fixed 129-byte buffer, an
+// already quantized input and OUT = IN (by file identity) are refused, the
+// tensor names must be exactly whisper's set (a file cut at a tensor boundary
+// looks complete), OUT is flushed to the disk and removed on any failure, no
+// per-tensor output.
+// The tensors quantized, the ones skipped and the bytes written are the
+// example's: the result is byte for byte what its whisper-quantize writes.
 //
 // Original code: MIT License
 //
@@ -39,12 +42,17 @@
 
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <windows.h>   // GetFileInformationByHandle: same_file
+#endif
 
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -55,11 +63,15 @@ namespace {
 struct In {
     FILE* f = nullptr;
     bool ok = true;
+    int64_t pos = 0, size = -1;   // bytes read; the file's size (-1: unknown)
     template <class T>
     bool get(T* v, size_t n = 1) {
         if (ok && n && fread(v, sizeof(T), n, f) != n) ok = false;
+        if (ok) pos += static_cast<int64_t>(n * sizeof(T));
         return ok;
     }
+    // can `bytes` more be there?
+    bool has(int64_t bytes) const { return size < 0 || bytes <= size - pos; }
 };
 
 struct Out {
@@ -72,14 +84,37 @@ struct Out {
     void put(const T& v) { put(&v, sizeof(T)); }
 };
 
+int64_t file_size(const std::string& path) {
+#ifdef _WIN32
+    struct _stati64 st;   // (st_size of the plain stat is 32-bit there)
+    return _stati64(path.c_str(), &st) == 0 ? static_cast<int64_t>(st.st_size) : -1;
+#else
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 ? static_cast<int64_t>(st.st_size) : -1;
+#endif
+}
+
+// OUT is IN (also through a link): writing it would destroy the model
 bool same_file(const std::string& a, const std::string& b) {
+#ifdef _WIN32
+    // volume serial + file index (paths can't tell: hard links, 8.3 names,
+    // subst / mapped drives, paths over MAX_PATH). Narrow paths are UTF-8
+    // under the manifest's active code page, as fopen's
+    auto id = [](const std::string& p, BY_HANDLE_FILE_INFORMATION* fi) {
+        HANDLE h = CreateFileA(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        const bool ok = GetFileInformationByHandle(h, fi) != 0;
+        CloseHandle(h);
+        return ok;
+    };
+    BY_HANDLE_FILE_INFORMATION fa, fb;
+    if (!id(a, &fa) || !id(b, &fb)) return false;   // OUT not there yet
+    return fa.dwVolumeSerialNumber == fb.dwVolumeSerialNumber && fa.nFileIndexHigh == fb.nFileIndexHigh &&
+           fa.nFileIndexLow == fb.nFileIndexLow;
+#else
     struct stat sa, sb;
     if (stat(a.c_str(), &sa) != 0 || stat(b.c_str(), &sb) != 0) return false;
-#ifdef _WIN32
-    // no inode numbers: the full paths (win/posix_compat.h's realpath = _fullpath)
-    char ra[4096], rb[4096];
-    return realpath(a.c_str(), ra) && realpath(b.c_str(), rb) && _stricmp(ra, rb) == 0;
-#else
     return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
 #endif
 }
@@ -90,11 +125,40 @@ bool keep_as_is(const std::string& name) {
            name == "decoder.positional_embedding";
 }
 
+// The tensors of a whisper model (whisper.cpp 1.9.4's src/whisper-arch.h), each
+// once: a file cut at a tensor boundary reads as complete, whisper.cpp would
+// refuse it later. (Loading the result in whisper to check it needs the whole
+// model's memory - and aborts, leaving OUT, when there isn't enough)
+std::set<std::string> whisper_tensors(int n_audio_layer, int n_text_layer) {
+    std::set<std::string> t = {"encoder.positional_embedding", "encoder.conv1.weight", "encoder.conv1.bias",
+                               "encoder.conv2.weight", "encoder.conv2.bias", "encoder.ln_post.weight",
+                               "encoder.ln_post.bias", "decoder.positional_embedding",
+                               "decoder.token_embedding.weight", "decoder.ln.weight", "decoder.ln.bias"};
+    static const char* const ATTN[] = {"attn_ln.weight", "attn_ln.bias", "attn.query.weight", "attn.query.bias",
+                                       "attn.key.weight", "attn.value.weight", "attn.value.bias", "attn.out.weight",
+                                       "attn.out.bias"};
+    static const char* const MLP[] = {"mlp_ln.weight", "mlp_ln.bias", "mlp.0.weight", "mlp.0.bias", "mlp.2.weight",
+                                      "mlp.2.bias"};
+    for (int l = 0; l < n_audio_layer; l++) {
+        const std::string b = "encoder.blocks." + std::to_string(l) + ".";
+        for (const char* x : ATTN) t.insert(b + x);
+        for (const char* x : MLP) t.insert(b + x);
+    }
+    for (int l = 0; l < n_text_layer; l++) {
+        const std::string b = "decoder.blocks." + std::to_string(l) + ".";
+        for (const char* x : ATTN) t.insert(b + x);
+        for (const char* x : ATTN) t.insert(b + "cross_" + x);
+        for (const char* x : MLP) t.insert(b + x);
+    }
+    return t;
+}
+
 bool quantize(const std::string& in_path, const std::string& out_path, ggml_ftype ftype, ggml_type qtype, std::string* err) {
     In in;
     in.f = fopen(in_path.c_str(), "rb");
     if (!in.f) { *err = "cannot open " + in_path + ": " + strerror(errno); return false; }
     struct Closer { FILE*& f; ~Closer() { if (f) fclose(f); } } close_in{in.f};
+    in.size = file_size(in_path);
 
     // magic + hparams (n_vocab, n_audio_ctx, n_audio_state, n_audio_head, n_audio_layer,
     // n_text_ctx, n_text_state, n_text_head, n_text_layer, n_mels, ftype)
@@ -112,6 +176,12 @@ bool quantize(const std::string& in_path, const std::string& out_path, ggml_ftyp
         return false;
     }
     const int32_t ftype_dst = GGML_QNT_VERSION * GGML_QNT_VERSION_FACTOR + ftype;
+    if (hp[4] < 1 || hp[4] > 64 || hp[8] < 1 || hp[8] > 64) {   // n_audio_layer, n_text_layer
+        *err = in_path + " is not a whisper.cpp speech model";
+        return false;
+    }
+    std::set<std::string> want = whisper_tensors(hp[4], hp[8]);
+    const size_t n_want = want.size();
 
     // mel filters
     int32_t n_mel = 0, n_fft = 0;
@@ -128,7 +198,7 @@ bool quantize(const std::string& in_path, const std::string& out_path, ggml_ftyp
     std::vector<char> vocab;   // copied as it is
     for (int32_t i = 0; i < n_vocab; i++) {
         uint32_t len = 0;
-        if (!in.get(&len) || len > 4096) { *err = in_path + ": bad vocabulary"; return false; }
+        if (!in.get(&len) || len > 4096 || !in.has(len)) { *err = in_path + ": bad vocabulary"; return false; }
         const size_t at = vocab.size();
         vocab.resize(at + 4 + len);
         memcpy(&vocab[at], &len, 4);
@@ -140,6 +210,7 @@ bool quantize(const std::string& in_path, const std::string& out_path, ggml_ftyp
     out.f = fopen(out_path.c_str(), "wb");
     if (!out.f) { *err = "cannot write " + out_path + ": " + strerror(errno); return false; }
     bool done = false;
+    // (also when an exception unwinds through here: quantize_model catches it)
     struct Cleanup {
         Out& o;
         const std::string& path;
@@ -166,26 +237,37 @@ bool quantize(const std::string& in_path, const std::string& out_path, ggml_ftyp
     int n_tensors = 0, n_quantized = 0;
     for (;;) {
         int32_t n_dims = 0, length = 0, ttype = 0;
-        if (fread(&n_dims, 4, 1, in.f) != 1) {
-            if (feof(in.f) && !ferror(in.f)) break;   // the end
-            *err = "read error in " + in_path;
-            return false;
-        }
+        const size_t got = fread(&n_dims, 1, 4, in.f);
+        if (got == 0 && feof(in.f) && !ferror(in.f)) break;   // the end, at a tensor boundary
+        if (got != 4) { *err = in_path + " is truncated (or has stray bytes at its end)"; return false; }
+        in.pos += 4;
         if (!in.get(&length) || !in.get(&ttype)) { *err = in_path + " is truncated"; return false; }
         if (n_dims < 1 || n_dims > 4 || length <= 0 || length > 256 ||
             (ttype != GGML_TYPE_F32 && ttype != GGML_TYPE_F16)) {
             *err = in_path + ": unexpected tensor (dims " + std::to_string(n_dims) + ", type " + std::to_string(ttype) + ")";
             return false;
         }
+        // whisper's largest: the token embedding, n_text_state (<= 1280) x n_vocab
+        // (~52k); a row (ne[0]) <= 65536 keeps every buffer below ~4 MB, and the
+        // whole tensor must fit in what is left of the file
         int32_t ne[4] = {1, 1, 1, 1};
         int64_t nelements = 1;
         for (int i = 0; i < n_dims; i++) {
-            if (!in.get(&ne[i]) || ne[i] <= 0) { *err = in_path + ": bad tensor shape"; return false; }
+            if (!in.get(&ne[i])) { *err = in_path + " is truncated"; return false; }
+            if (ne[i] <= 0 || ne[i] > (i == 0 ? 65536 : (1 << 24)) || nelements > (int64_t(1) << 31) / ne[i]) {
+                *err = in_path + ": bad tensor shape";
+                return false;
+            }
             nelements *= ne[i];
         }
-        if (nelements > (int64_t(1) << 31)) { *err = in_path + ": tensor too large"; return false; }
+        const size_t esize = ttype == GGML_TYPE_F32 ? 4 : 2;
+        if (!in.has(length + nelements * static_cast<int64_t>(esize))) { *err = in_path + " is truncated"; return false; }
         std::string name(static_cast<size_t>(length), '\0');
         if (!in.get(&name[0], name.size())) { *err = in_path + " is truncated"; return false; }
+        if (!want.erase(name)) {
+            *err = in_path + ": tensor '" + name.substr(0, 64) + "' is not a whisper one, or there twice";
+            return false;
+        }
 
         const bool q = n_dims == 2 && !keep_as_is(name) && ne[0] % ggml_blck_size(qtype) == 0;
         const int32_t otype = q ? static_cast<int32_t>(qtype) : ttype;
@@ -200,7 +282,6 @@ bool quantize(const std::string& in_path, const std::string& out_path, ggml_ftyp
         const size_t per_row = static_cast<size_t>(ne[0]);
         const size_t rows = static_cast<size_t>(nelements) / per_row;
         const size_t chunk_rows = std::max<size_t>(1, (size_t(1) << 20) / per_row);
-        const size_t esize = ttype == GGML_TYPE_F32 ? 4 : 2;
         for (size_t r0 = 0; r0 < rows && out.ok; r0 += chunk_rows) {
             const size_t nr = std::min(chunk_rows, rows - r0), n = nr * per_row;
             if (q) {
@@ -227,7 +308,10 @@ bool quantize(const std::string& in_path, const std::string& out_path, ggml_ftyp
         n_tensors++;
         if (!out.ok) break;
     }
-    if (n_tensors == 0) { *err = in_path + " holds no tensors"; return false; }
+    if (!want.empty()) {
+        *err = in_path + " is incomplete: " + std::to_string(n_tensors) + " of " + std::to_string(n_want) + " tensors";
+        return false;
+    }
     if (out.ok && fflush(out.f) != 0) out.ok = false;
     if (out.ok && fsync(fileno(out.f)) != 0) out.ok = false;
     if (out.ok && fclose(out.f) != 0) out.ok = false;
@@ -257,7 +341,15 @@ int quantize_model(const std::string& in_path, const std::string& out_path, cons
         ggml_free(ggml_init(gp));
     }
     std::string err;
-    if (!quantize(in_path, out_path, ftype, qtype, &err)) {
+    bool ok = false;
+    try {
+        ok = quantize(in_path, out_path, ftype, qtype, &err);
+    } catch (const std::exception& e) {   // bad_alloc: OUT is removed while unwinding
+        err = std::string("failed: ") + e.what();
+    } catch (...) {
+        err = "failed";
+    }
+    if (!ok) {
         fprintf(stderr, "kraken_whisper --quantize: %s\n", err.c_str());
         return 2;
     }
