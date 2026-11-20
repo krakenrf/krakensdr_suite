@@ -898,7 +898,19 @@ leaves it out) with the models in `docker-data/whisper_models/`
   wire `include/voice2text_wire.hpp`) runs VAD (noise / tones / carriers ->
   "no speech", no transcript), whisper, hallucination filters; a vocabulary
   prompt is sent as "Glossary: ... ." (a bare word list made whisper stop
-  after one word)
+  after one word). CPU (2026-11-20): whisper's encoder runs only over the
+  clip + 1 s, rounded up to 256 frames (5.1 / 10.2 ... s windows - flash
+  attention reads its cache in 256-frame blocks), not always 30 s: ~3x less
+  CPU per transcript at the same accuracy; a decode that hits a token cap
+  (a loop) is done again the old way. 8-bit models base.en-q8_0 /
+  small.en-q8_0 are made on the receiver (`kraken_whisper --quantize`; ~15-25 %
+  less CPU)
+- Live text (option, off by default; `VOICE2TEXT_LIVE:`): while someone
+  talks the worker sends the transmission so far as a PARTIAL job about once
+  a second (finals first), words two partials agree on are confirmed, and
+  the panel shows a live row that the final transcript replaces; ~1 s from
+  speech to text on a PC, ~4-6x the CPU of transcribing at the end. Audio
+  clips, history and log hold finals only
 - Cutting: a two-way transmission is one transcript up to 25 s (longer:
   parts, cut at its latest pause after 11 s); WBFM, or anything open longer
   than 30 s, in pieces from 8 s on at a pause (at the latest 15 s, then at
