@@ -48,7 +48,12 @@ void set_threads(int n);                      // 1-4
 bool set_prompt(const std::string& p);        // vocabulary hint (callsigns, places), <= 300 chars
 void set_vad(bool on);
 void set_translate(bool on);                  // multilingual models: English text
-void set_keep_audio(bool on);                 // a WAV clip per transcript (voice_clips/)
+void set_keep_audio(bool on);                 // an Ogg Opus clip per transcript (voice_clips/)
+// Live text: while a transmission lasts, what was said so far (the helper
+// decodes it again every second - PARTIAL; words two decodes agree on are
+// confirmed), pushed as {"voice2text":{"live":[..]}}; the final transcript
+// replaces it. Off by default: it costs 4-6x the CPU of the finals alone
+void set_live(bool on);
 // A VFO's Transcribe tick changed (DecimatorManager::setTranscribe); also
 // starts / stops the helper process
 void vfo_changed(int vfo, bool on);
@@ -74,6 +79,13 @@ std::string history_json(size_t max);
 std::string history_message(size_t max);
 // {"voice2text":{"new":[...]}} with the transcripts since the last call, or ""
 std::string take_new_message();
+// Live text: {"voice2text":{"live":[{vfo, key, t, mhz, src, tid, tl, part,
+// secs, open, confirmed, pending}, ...]}} - every live row now (an empty list
+// = none): a piece still open, or ended and waiting for its final transcript,
+// which replaces it. live_message() = the list now (a page connecting);
+// take_live_message() = it when it changed since the last call, else ""
+std::string live_message();
+std::string take_live_message();
 void clear_history();
 // {"voice2text":{"lobe":{id, t, vfo, mhz, dur, lobe, lf, doa, brg, slat, slon}}}
 // (VOICE2TEXT_LOBE:<id>): the transcript's averaged DoA lobe - b64 of 720 u8,
@@ -83,7 +95,10 @@ std::string lobe_message(uint64_t id);
 // HTTP /voice_clip/<id>.opus: the clip's file ("" = none)
 std::string clip_path(uint64_t id);
 // Download a model of the catalogue into the models folder (curl, in the
-// background; progress in the status). false + err: unknown / already running
+// background; progress in the status). A derived one (base.en-q8_0,
+// small.en-q8_0) is made here: its f16 model (downloaded unless installed,
+// then deleted again) quantized by the helper (kraken_whisper --quantize).
+// false + err: unknown / already running / no helper to make it
 bool download_model(const std::string& name, std::string* err);
 
 }  // namespace v2t

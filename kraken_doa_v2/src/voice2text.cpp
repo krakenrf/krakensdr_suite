@@ -61,15 +61,20 @@ constexpr bool PC_NOTES = true;
 #else
 constexpr bool PC_NOTES = false;
 #endif
-struct CatalogueEntry { const char* name; int mb; bool multi; const char* note; };
+// from: a DERIVED model - not downloaded as such (whisper.cpp publishes no
+// English-only q8_0 files): `from` (its f16 model) is downloaded unless
+// installed, and `kraken_whisper --quantize` makes this one of it
+struct CatalogueEntry { const char* name; int mb; bool multi; const char* note; const char* from = nullptr; };
 const CatalogueEntry MODEL_CATALOGUE[] = {
     {"tiny.en", 75, false, "fastest, least accurate"},
     {"base.en", 142, false, PC_NOTES ? "recommended: many times faster than real time on a PC"
                                      : "recommended: good on a Pi 5, faster than real time"},
     {"base.en-q5_1", 57, false, "base.en compressed: less memory, about as accurate"},
+    {"base.en-q8_0", 78, false, "base.en 8-bit: less CPU, as accurate - made here from base.en", "base.en"},
     {"small.en", 466, false, PC_NOTES ? "more accurate, faster than real time on a PC"
                                       : "most accurate on a Pi: about 2x slower than real time"},
     {"small.en-q5_1", 181, false, "small.en compressed"},
+    {"small.en-q8_0", 252, false, "small.en 8-bit: less CPU, as accurate - made here from small.en", "small.en"},
     {"tiny", 75, true, "any language (or translated to English), fastest"},
     {"base", 142, true, "any language (or translated to English)"},
     {"base-q5_1", 57, true, "base compressed"},
@@ -124,6 +129,15 @@ constexpr const char* CLIP_DIR = "voice_clips";
 constexpr int CLIP_BITRATE = 16000;
 constexpr uint64_t MAX_CLIP_BYTES = 2ull << 30;
 constexpr uint64_t MIN_FREE_BYTES = 100ull << 20;
+// Live text (VOICE2TEXT_LIVE, off by default): while a piece is open, the
+// audio of it so far goes to the helper as a PARTIAL - the first once it
+// holds LIVE_FIRST_S, then when LIVE_STEP_MS passed since the last one began
+// AND LIVE_NEW_S more audio came (a 0.5 s step showed words only 0.3 s
+// sooner for 1.7x the CPU, and 45 % of its confirmed words changed later -
+// docs/dev/voice-to-text.md). Finals always go first
+constexpr double LIVE_FIRST_S = 1.0;
+constexpr int64_t LIVE_STEP_MS = 1000;
+constexpr double LIVE_NEW_S = 0.5;
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -238,6 +252,7 @@ struct Utterance {
     double slat = NAN, slon = NAN;   // where the station was
     int part = 0;               // > 0: a part of a longer transmission
     int retries = 0;
+    uint64_t piece = 0;         // the piece it was collected as (Live text: its row goes with the result)
     double seconds() const { return pcm.size() / static_cast<double>(RATE); }
 };
 
@@ -373,6 +388,11 @@ struct Tap {
     std::string src, tid, tlabel;
     long anon_from = -1;            // digital: where audio without the named talker began (-1 = none)
     size_t tx_samples = 0;          // the whole transmission so far (all its parts)
+    // Live text: the piece being collected (a key per piece, 0 = none), what
+    // its last partial had, when that was sent, since when the next is due
+    uint64_t piece = 0;
+    size_t live_sent = 0;
+    int64_t live_ms = 0, live_due = 0;
     // 20 ms frame energies of cur (pause search, maybe_cut) + the partial frame
     std::vector<float> fe;
     double fe_acc = 0;
@@ -486,7 +506,92 @@ struct Tap {
         out.resize(base + 2 * x.size());
         for (size_t i = 0; i < x.size(); i++) firinterp_rrrf_execute(interp, x[i], out.data() + base + 2 * i);
     }
+    // what the final job would get if the piece ended now: analog without
+    // the audio since the squelch closed, but for the tail finish() keeps
+    size_t live_len() const {
+        const size_t keep = static_cast<size_t>(TAIL_S * RATE);
+        if (digital || closed <= keep) return cur.size();
+        return cur.size() - std::min(cur.size(), closed - keep);
+    }
 };
+
+// --- Live text: LocalAgreement-2 on the partial texts ---------------------------
+//
+// A word is CONFIRMED when two partial decodes in a row agree on it: the
+// common prefix of the latest partial's words after the confirmed ones and
+// the previous partial's (compared case- and punctuation-insensitively,
+// shown as the latest wrote it). Confirmed words only grow; the rest of the
+// latest partial is PENDING. The final transcript replaces both.
+
+// a word for comparing: ASCII letters lower-cased, digits and UTF-8 bytes
+// kept, punctuation dropped
+std::string norm_word(const std::string& w) {
+    std::string o;
+    for (unsigned char c : w) {
+        if (c >= 0x80 || std::isdigit(c)) o.push_back(static_cast<char>(c));
+        else if (std::isalpha(c)) o.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return o;
+}
+
+// the words of a text; a token without a letter or digit ("-", "...") is
+// kept with the word before it, so it can't shift the words after it
+std::vector<std::string> split_words(const std::string& s) {
+    std::vector<std::string> w;
+    std::istringstream in(s);
+    std::string tok;
+    while (in >> tok) {
+        if (!w.empty() && norm_word(tok).empty()) w.back() += " " + tok;
+        else w.push_back(tok);
+    }
+    return w;
+}
+
+// Where the confirmed words end in a new partial's words: where its words
+// match the last two confirmed ones, with up to two words more or fewer
+// before them (whisper put one in / left one out early on); no match = the
+// same count (the partial contradicts them: its rest is shown as pending)
+size_t align_confirmed(const std::vector<std::string>& w, const std::vector<std::string>& conf) {
+    const size_t c = conf.size();
+    if (c == 0) return 0;
+    const std::string l1 = norm_word(conf[c - 1]), l2 = c >= 2 ? norm_word(conf[c - 2]) : "";
+    for (int d : {0, -1, 1, -2, 2}) {
+        const long a = static_cast<long>(c) + d;
+        if (a < 1 || a > static_cast<long>(w.size())) continue;
+        if (norm_word(w[a - 1]) != l1) continue;
+        if (c >= 2 && a >= 2 && norm_word(w[a - 2]) != l2) continue;
+        return static_cast<size_t>(a);
+    }
+    return std::min(c, w.size());
+}
+
+// one live row: a piece still open, or ended and waiting for its final transcript
+struct LiveRow {
+    int vfo = -1;
+    uint64_t key = 0;
+    int64_t t0_ms = 0;
+    double rf = 0;
+    int part = 0;
+    std::string src, tid, tlabel;
+    std::vector<std::string> conf;   // confirmed words
+    std::vector<std::string> rest;   // the latest partial after them = pending
+    double secs = 0;                 // audio the latest partial had
+    bool open = true;                // false: the piece ended, its final is coming
+    // a new partial's words
+    void agree(const std::vector<std::string>& w) {
+        const size_t a = align_confirmed(w, conf);
+        size_t k = 0;
+        while (a + k < w.size() && k < rest.size() && norm_word(w[a + k]) == norm_word(rest[k])) k++;
+        conf.insert(conf.end(), w.begin() + static_cast<long>(a), w.begin() + static_cast<long>(a + k));
+        rest.assign(w.begin() + static_cast<long>(a + k), w.end());
+    }
+};
+
+std::string join_words(const std::vector<std::string>& w) {
+    std::string o;
+    for (const auto& s : w) o += (o.empty() ? "" : " ") + s;
+    return o;
+}
 
 // --- shared state ------------------------------------------------------------
 
@@ -498,13 +603,15 @@ struct Config {
     bool vad = true;
     bool translate = false;
     bool keep_audio = true;
+    bool live = false;   // Live text: partial transcripts while a transmission lasts
 };
 
 struct Download {
     std::string name, error;
-    std::shared_ptr<kproc::Process> proc;   // curl while it runs (v2t::stop() ends it)
+    std::shared_ptr<kproc::Process> proc;   // curl / the quantizer while it runs (v2t::stop() ends it)
     std::string part;     // the file growing
     uint64_t total = 0;   // expected bytes (catalogue)
+    std::string stage = "download";   // "quantize": a derived model being made of its f16 model
     bool running = false;
 };
 
@@ -547,6 +654,15 @@ struct State {
     size_t file_lines = 0;        // lines in transcripts.jsonl
     uint64_t clear_gen = 0;       // VOICE2TEXT_CLEAR count: a result begun before one is dropped
     std::string last_error;       // the latest helper problem, until a job goes through
+    // Live text: what the helper last said it can (READY live=1; -1 = no helper
+    // loaded yet), the partials answered / discarded (their piece had ended or
+    // was replaced), their mean processing time; the live rows as JSON, a
+    // change counter + the one last pushed
+    int helper_live = -1;
+    uint64_t partials = 0, partials_stale = 0;
+    double partial_ms = 0;
+    std::string live_json = "[]";
+    uint64_t live_seq = 0, live_pushed = 0;
     Download dl;
     // worker
     std::atomic<bool> running{false};
@@ -850,7 +966,24 @@ private:
     bool sent_valid_ = false;
     int64_t vfo_scan_ms_ = 0;
     std::map<int, std::pair<bool, std::string>> vfo_cfg_;   // id -> (transcribe on, analog src or "digital")
+    // Live text: the setting, whether the helper takes PARTIAL (READY live=1),
+    // the partial in flight (it counts as the one job), the rows by piece key
+    bool live_on_ = false, helper_live_ = false;
+    bool has_partial_ = false;
+    uint32_t partial_id_ = 0;
+    int partial_vfo_ = -1;
+    uint64_t partial_piece_ = 0;
+    int64_t partial_sent_ms_ = 0;
+    double partial_secs_ = 0;
+    uint64_t next_piece_ = 0;
+    std::map<uint64_t, LiveRow> live_;
 
+    void new_piece(Tap& tap);
+    void maybe_partial(int64_t t);
+    void on_partial(const char* p, size_t len);
+    void live_drop(uint64_t key);       // its row goes (its final came, or it was dropped)
+    void live_publish_locked();         // st_mu held: the rows -> s_.live_json
+    void live_publish();
     void scan_vfos(int64_t t);
     void take_input(Input& in, int64_t t);
     void analog(Tap& tap, int vfo, Input& in, int64_t t);
@@ -1055,6 +1188,7 @@ void Worker::analog(Tap& tap, int vfo, Input& in, int64_t t) {
         tap.tlabel.clear();
         tap.reset_doa();
         tap.doa_stamp = 0;
+        new_piece(tap);
     }
     if (known && (tap.tid.empty() || tap.tid == in.tid)) {
         tap.tid = in.tid;   // named after its first frames, or the label updated
@@ -1109,6 +1243,7 @@ void Worker::digital(Tap& tap, int vfo, Input& in, int64_t t) {
         tap.rf = in.rf;
         tap.reset_doa();
         tap.doa_stamp = 0;
+        new_piece(tap);
     } else if ((tap.tid.empty() || tap.tid == "?") && known) {
         tap.tid = in.tid;   // the radio was named after its first frames
         tap.tlabel = in.tlabel;
@@ -1221,20 +1356,37 @@ void Worker::finish(Tap& tap, int vfo, bool more) {
     for (size_t i = 0; i < tap.cur.size(); i++)
         u.pcm[i] = static_cast<int16_t>(std::lround(std::clamp(tap.cur[i], -1.0f, 1.0f) * 32767.0f));
     const double dur = u.seconds();
+    u.piece = tap.piece;
     if (more) {
         // a long transmission: this part goes, the next continues
         tap.t0_ms += static_cast<int64_t>(dur * 1000);
         tap.part++;
         tap.reset_doa();
+        new_piece(tap);   // a live row of its own
     } else {
         tap.rec = false;
         tap.part = 0;
+        tap.piece = 0;
     }
     tap.cur.clear();
     tap.refe();
     tap.closed = 0;
     tap.anon_from = -1;
-    if (dur >= MIN_UTTERANCE_S) enqueue(std::move(u));
+    // its live row stays until the final transcript replaces it
+    auto lr = live_.find(u.piece);
+    if (dur >= MIN_UTTERANCE_S) {
+        if (lr != live_.end()) {
+            LiveRow& r = lr->second;
+            r.open = false;
+            r.part = u.part;
+            r.tid = u.tid;
+            r.tlabel = u.tlabel;
+            live_publish();
+        }
+        enqueue(std::move(u));
+    } else if (lr != live_.end()) {
+        live_drop(u.piece);
+    }
 }
 
 // The transmission ends at sample `at` of what was collected; the rest
@@ -1256,6 +1408,7 @@ void Worker::split(Tap& tap, int vfo, size_t at) {
     tap.tlabel.clear();
     tap.reset_doa();
     tap.doa_stamp = 0;
+    new_piece(tap);
 }
 
 // A long piece (see TWOWAY_* / CONT_*): from its trigger length on (two-way:
@@ -1330,11 +1483,137 @@ void Worker::enqueue(Utterance&& u) {
     uint64_t dropped = 0;
     while (pending_.size() > 1 && (pending_.size() > MAX_QUEUED_JOBS || total > MAX_QUEUED_S)) {
         total -= pending_.front().seconds();
+        if (live_.count(pending_.front().piece)) live_drop(pending_.front().piece);
         pending_.pop_front();   // the helper can't keep up: the oldest go
         dropped++;
     }
     std::lock_guard<std::mutex> lk(s_.st_mu);
     s_.dropped += dropped;
+}
+
+void Worker::new_piece(Tap& tap) {
+    tap.piece = ++next_piece_;
+    tap.live_sent = 0;
+    tap.live_ms = tap.live_due = 0;
+}
+
+void Worker::live_publish_locked() {
+    std::string j = "[";
+    for (const auto& kv : live_) {
+        const LiveRow& r = kv.second;
+        if (j.size() > 1) j += ",";
+        j += "{\"vfo\":" + std::to_string(r.vfo) + ",\"key\":" + std::to_string(r.key) + ",\"t\":" +
+             std::to_string(r.t0_ms) + ",\"mhz\":" + fmt("%.6f", r.rf / 1e6) + ",\"src\":\"" + json_escape(r.src) + "\"";
+        if (!r.tid.empty()) j += ",\"tid\":\"" + json_escape(r.tid) + "\"";
+        if (!r.tlabel.empty()) j += ",\"tl\":\"" + json_escape(r.tlabel) + "\"";
+        if (r.part > 0) j += ",\"part\":" + std::to_string(r.part);
+        j += ",\"secs\":" + fmt("%.1f", r.secs) + ",\"open\":" + (r.open ? "true" : "false") + ",\"confirmed\":\"" +
+             json_escape(join_words(r.conf)) + "\",\"pending\":\"" + json_escape(join_words(r.rest)) + "\"}";
+    }
+    j += "]";
+    if (j != s_.live_json) {
+        s_.live_json = std::move(j);
+        s_.live_seq++;
+    }
+}
+
+void Worker::live_publish() {
+    std::lock_guard<std::mutex> lk(s_.st_mu);
+    live_publish_locked();
+}
+
+void Worker::live_drop(uint64_t key) {
+    if (live_.erase(key)) live_publish();
+}
+
+// Live text: the next PARTIAL - for the open piece that has waited longest
+// for one (see LIVE_*), only while nothing else is in flight or queued
+// (finals first) and the helper takes them
+void Worker::maybe_partial(int64_t t) {
+    const bool can = live_on_ && proc_on_ && ready_ && helper_live_ && !playback::active();
+    Tap* best = nullptr;
+    int best_vfo = -1;
+    for (auto& kv : taps_) {
+        Tap& tap = kv.second;
+        const size_t n = tap.live_len();
+        // (not while the squelch is closed: the transmission is ending - its
+        // final follows within HANG_S, and a partial then would only delay it)
+        const bool due = can && tap.rec && tap.piece && (tap.digital || tap.closed == 0) &&
+                         (tap.live_ms == 0 ? n >= static_cast<size_t>(LIVE_FIRST_S * RATE)
+                                           : t - tap.live_ms >= LIVE_STEP_MS &&
+                                                 n >= tap.live_sent + static_cast<size_t>(LIVE_NEW_S * RATE));
+        if (!due) {
+            tap.live_due = 0;
+            continue;
+        }
+        if (!tap.live_due) tap.live_due = t;
+        if (!best || tap.live_due < best->live_due) {
+            best = &tap;
+            best_vfo = kv.first;
+        }
+    }
+    if (!best || has_job_ || has_partial_ || !pending_.empty()) return;
+    Tap& tap = *best;
+    const size_t n = tap.live_len();
+    std::string payload(4 + n * 2, '\0');
+    partial_id_ = ++job_id_;
+    memcpy(&payload[0], &partial_id_, 4);
+    for (size_t i = 0; i < n; i++) {
+        const int16_t v = static_cast<int16_t>(std::lround(std::clamp(tap.cur[i], -1.0f, 1.0f) * 32767.0f));
+        memcpy(&payload[4 + 2 * i], &v, 2);
+    }
+    proc_.send(wire::PARTIAL, payload.data(), payload.size(), SIZE_MAX);
+    has_partial_ = true;
+    partial_vfo_ = best_vfo;
+    partial_piece_ = tap.piece;
+    partial_sent_ms_ = t;
+    partial_secs_ = n / static_cast<double>(RATE);
+    tap.live_ms = t;
+    tap.live_sent = n;
+    tap.live_due = 0;
+}
+
+// PARTIAL_RESULT: uint32 id, uint32 proc_ms, int32 speech_ms, the text so
+// far. Discarded when its piece ended or was replaced meanwhile (its final
+// is coming) or Live text went off. Never reaches the history, the log or
+// the counters of finals
+void Worker::on_partial(const char* p, size_t len) {
+    if (len < 12 || !has_partial_) return;
+    uint32_t id, ms;
+    memcpy(&id, p, 4);
+    memcpy(&ms, p + 4, 4);
+    if (id != partial_id_) return;
+    has_partial_ = false;
+    std::string text(p + 12, len - 12);
+    while (!text.empty() && text.back() == '\0') text.pop_back();
+    auto it = taps_.find(partial_vfo_);
+    const bool fresh = live_on_ && it != taps_.end() && it->second.rec && it->second.piece == partial_piece_;
+    {
+        std::lock_guard<std::mutex> lk(s_.st_mu);
+        s_.partials++;
+        s_.partial_ms = s_.partial_ms > 0 ? 0.8 * s_.partial_ms + 0.2 * ms : ms;
+        if (!fresh) s_.partials_stale++;
+    }
+    if (!fresh) return;
+    const Tap& tap = it->second;
+    const std::vector<std::string> words = split_words(text.substr(0, 4000));
+    auto lr = live_.find(partial_piece_);
+    if (lr == live_.end()) {
+        if (words.empty()) return;   // no speech yet: no row
+        lr = live_.emplace(partial_piece_, LiveRow{}).first;
+        lr->second.key = partial_piece_;
+        lr->second.vfo = partial_vfo_;
+    }
+    LiveRow& r = lr->second;
+    r.t0_ms = tap.t0_ms;
+    r.rf = tap.rf;
+    r.src = tap.src;
+    r.tid = tap.tid == "?" ? "" : tap.tid;
+    r.tlabel = tap.tlabel;
+    r.part = tap.part > 0 ? tap.part + 1 : 0;
+    r.secs = partial_secs_;
+    r.agree(words);
+    live_publish();
 }
 
 void Worker::stop_helper(const std::string& why) {
@@ -1344,10 +1623,13 @@ void Worker::stop_helper(const std::string& why) {
     }
     proc_on_ = ready_ = false;
     sent_valid_ = false;
+    helper_live_ = false;
+    has_partial_ = false;   // a partial in flight is not sent again
     if (has_job_) {
         // put the job back for the next helper (once)
         if (job_.retries++ < 1) pending_.push_front(std::move(job_));
         else {
+            live_drop(job_.piece);
             std::lock_guard<std::mutex> lk(s_.st_mu);
             s_.failed++;
         }
@@ -1421,6 +1703,9 @@ void Worker::on_result(const char* p, size_t len) {
     Transcript t;
     t.text = f[1].substr(0, 4000);
     uint64_t gen;
+    // its live row goes with the result (in the same section as the
+    // transcript joins the list pushed next: the final replaces it)
+    const bool had_row = live_.erase(u.piece) > 0;
     {
         std::lock_guard<std::mutex> lk(s_.st_mu);
         s_.last_ms = ms;
@@ -1428,6 +1713,7 @@ void Worker::on_result(const char* p, size_t len) {
         if (dur > 0) s_.rtf = s_.rtf > 0 ? 0.8 * s_.rtf + 0.2 * (ms / 1000.0 / dur) : ms / 1000.0 / dur;
         if (t.text.empty()) {
             s_.nospeech++;
+            if (had_row) live_publish_locked();
             return;
         }
         s_.done++;
@@ -1457,6 +1743,7 @@ void Worker::on_result(const char* p, size_t len) {
         // the clip, the file and the history together: a Clear (VOICE2TEXT_CLEAR)
         // since the id was taken drops this result instead of bringing it back
         std::lock_guard<std::mutex> lk(s_.st_mu);
+        if (had_row) live_publish_locked();
         if (gen != s_.clear_gen) {
             if (t.clip) unlink(clip.c_str());
             return;
@@ -1499,6 +1786,12 @@ void Worker::helper(int64_t t) {
     }
     const bool any_vfo = !vfo_cfg_.empty();
     if (any_vfo || !pending_.empty() || has_job_) last_wanted_ms_ = t;
+    // Live text off: no more partials, the rows go (the finals come as ever)
+    live_on_ = c.live;
+    if (!live_on_ && !live_.empty()) {
+        live_.clear();
+        live_publish();
+    }
     const bool want = t - last_wanted_ms_ < HELPER_IDLE_STOP_MS;
     {
         std::lock_guard<std::mutex> lk(s_.st_mu);
@@ -1520,15 +1813,22 @@ void Worker::helper(int64_t t) {
             if (type == wire::READY) {
                 ready_ = true;
                 std::string kv(p, len);
+                // live=1: it takes PARTIAL (an older helper doesn't say it, and
+                // would never answer one)
+                const std::string nul(1, '\0');
+                helper_live_ = (nul + kv + nul).find(nul + "live=1" + nul) != std::string::npos;
                 std::lock_guard<std::mutex> lk(s_.st_mu);
                 s_.multilingual = kv.find(std::string("multilingual=1")) != std::string::npos;
                 s_.vad_loaded = kv.find(std::string("vad=1")) != std::string::npos;
                 s_.last_error.clear();   // the model loaded
                 s_.loaded = c.model;
+                s_.helper_live = helper_live_ ? 1 : 0;
                 const size_t sy = kv.find(std::string("\0system=", 8));
                 s_.system = sy == std::string::npos ? "" : kv.substr(sy + 8, 300);
             } else if (type == wire::RESULT) {
                 on_result(p, len);
+            } else if (type == wire::PARTIAL_RESULT) {
+                on_partial(p, len);
             } else if (type == wire::ERROR) {
                 set_state("error", std::string(p, std::min<size_t>(len, 300)));
             }
@@ -1553,11 +1853,20 @@ void Worker::helper(int64_t t) {
             set_state("error", "a transcription took too long - helper restarted");
             return;
         }
+        if (has_partial_ && t - partial_sent_ms_ > std::max<int64_t>(90000, static_cast<int64_t>(partial_secs_ * 15000))) {
+            stop_helper("partial timed out");
+            set_state("error", "a live transcription took too long - helper restarted");
+            return;
+        }
     }
     if (!proc_on_) {
         // nothing to transcribe with: what was collected goes, nothing more is
         usable_ = file_exists(helper_exe()) && valid_model_name(c.model) && file_exists(model_path(c.model));
         if (!usable_) {
+            if (!live_.empty()) {
+                live_.clear();   // their finals won't come
+                live_publish();
+            }
             pending_.clear();
             if (!file_exists(helper_exe())) set_state("not installed");
             else set_state("no model", "model " + c.model + " is not downloaded");
@@ -1569,7 +1878,7 @@ void Worker::helper(int64_t t) {
     }
     if (!ready_) return;
     sync_options(c);
-    if (!has_job_ && !pending_.empty()) {
+    if (!has_job_ && !has_partial_ && !pending_.empty()) {
         job_ = std::move(pending_.front());
         pending_.pop_front();
         has_job_ = true;
@@ -1580,7 +1889,8 @@ void Worker::helper(int64_t t) {
         proc_.send(wire::JOB, payload.data(), payload.size(), SIZE_MAX);
         job_sent_ms_ = t;
     }
-    set_state(has_job_ ? "busy" : "ready");
+    maybe_partial(t);
+    set_state(has_job_ || has_partial_ ? "busy" : "ready");
 }
 
 void Worker::run() {
@@ -1588,7 +1898,7 @@ void Worker::run() {
     while (s_.running.load()) {
         {
             std::unique_lock<std::mutex> lk(s_.q_mu);
-            s_.q_cv.wait_for(lk, std::chrono::milliseconds(proc_on_ && has_job_ ? 20 : 50),
+            s_.q_cv.wait_for(lk, std::chrono::milliseconds(proc_on_ && (has_job_ || has_partial_) ? 20 : 50),
                              [&] { return !s_.q.empty() || !s_.running.load(); });
             batch.swap(s_.q);
             s_.queued_s.clear();
@@ -1636,15 +1946,86 @@ void push_input(Input&& in, double seconds) {
 
 // --- model download (curl, in the background) ----------------------------------
 
-void download_thread(std::vector<std::pair<std::string, std::string>> files) {
+// One step of a download: a file fetched (url -> out, through out.part), or -
+// a derived model (CatalogueEntry::from) - its f16 model quantized by the
+// helper (`kraken_whisper --quantize in out.part q8_0`, then renamed); `temp`:
+// the f16 file was fetched just for this and goes afterwards. total = the
+// expected bytes of what grows (the progress)
+struct DlStep {
+    bool quantize = false;
+    std::string url, in, out;
+    uint64_t total = 0;
+    bool temp = false;
+};
+
+// a child that ends with a line on stderr when it fails: run, wait, that line
+bool run_quantize(const DlStep& q, const std::string& part, std::string* err) {
+    State& s = S();
+    kproc::SpawnOptions o;
+    o.argv = {helper_exe(), "--quantize", q.in, part, "q8_0"};
+    o.in = kproc::Stdio::Null;
+    o.out = kproc::Stdio::Null;
+    o.err = kproc::Stdio::Pipe;
+    o.priority = kproc::Priority::Below;   // as the helper itself (nice 10)
+    auto proc = std::make_shared<kproc::Process>();
+    std::string spawn_err;
+    if (!proc->spawn(o, &spawn_err)) {
+        *err = "cannot run " + helper_exe() + " (" + spawn_err + ")";
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(s.st_mu);
+        s.dl.proc = proc;
+        s.dl.part = part;
+        s.dl.total = q.total;
+        s.dl.stage = "quantize";
+    }
+    std::string tail;   // the end of what it said (its error)
+    char buf[1024];
+    for (;;) {
+        const ptrdiff_t n = proc->read(kproc::Stream::Err, buf, sizeof buf, -1);
+        if (n <= 0) break;
+        tail.append(buf, static_cast<size_t>(n));
+        if (tail.size() > 4096) tail.erase(0, tail.size() - 4096);
+    }
+    const kproc::ExitStatus st = proc->wait();
+    {
+        std::lock_guard<std::mutex> lk(s.st_mu);
+        s.dl.proc.reset();
+    }
+    if (st.ok() && file_size(part) >= 100000) return true;
+    while (!tail.empty() && (tail.back() == '\n' || tail.back() == '\r' || tail.back() == ' ')) tail.pop_back();
+    const size_t nl = tail.find_last_of('\n');
+    std::string line = nl == std::string::npos ? tail : tail.substr(nl + 1);
+    for (char& c : line)
+        if (static_cast<unsigned char>(c) < 0x20) c = ' ';
+    *err = "making the model failed (" + (st.exited() ? "exit " + std::to_string(st.code) : std::string("stopped")) + ")" +
+           (line.empty() ? "" : ": " + line.substr(0, 200));
+    return false;
+}
+
+void download_thread(std::vector<DlStep> steps) {
     State& s = S();
     std::string err;
-    for (const auto& f : files) {
-        const std::string url = f.first, out = f.second, part = out + ".part";
+    std::vector<std::string> temps;   // f16 files fetched just to be quantized
+    for (const auto& f : steps) {
+        const std::string out = f.out, part = out + ".part";
         mkdir(transcribe_dir().c_str(), 0755);
         mkdir(models_dir().c_str(), 0755);
+        if (f.quantize) {
+            if (!run_quantize(f, part, &err)) {
+                unlink(part.c_str());
+                break;
+            }
+            if (fs_replace(part.c_str(), out.c_str()) != 0) {
+                err = "cannot save " + out;
+                unlink(part.c_str());
+                break;
+            }
+            continue;
+        }
         kproc::SpawnOptions o;
-        o.argv = {"curl", "-fsSL", "--retry", "3", "--connect-timeout", "20", "-o", part, url};
+        o.argv = {"curl", "-fsSL", "--retry", "3", "--connect-timeout", "20", "-o", part, f.url};
 #ifdef _WIN32
         // Windows' own curl.exe (System32) checks certificate revocation
         // through Schannel, which fails without access to the CA's OCSP / CRL
@@ -1670,6 +2051,8 @@ void download_thread(std::vector<std::pair<std::string, std::string>> files) {
             std::lock_guard<std::mutex> lk(s.st_mu);
             s.dl.proc = proc;
             s.dl.part = part;
+            if (f.total) s.dl.total = f.total;
+            s.dl.stage = "download";
         }
         const kproc::ExitStatus st = proc->wait();
         {
@@ -1685,7 +2068,9 @@ void download_thread(std::vector<std::pair<std::string, std::string>> files) {
             err = "cannot save " + out;
             break;
         }
+        if (f.temp) temps.push_back(out);
     }
+    for (const auto& t : temps) unlink(t.c_str());   // (also when making the model failed)
     std::lock_guard<std::mutex> lk(s.st_mu);
     s.dl.running = false;
     s.dl.error = err;
@@ -1794,6 +2179,14 @@ void set_keep_audio(bool on) {
     S().cfg.keep_audio = on;
 }
 
+void set_live(bool on) {
+    {
+        std::lock_guard<std::mutex> lk(S().cfg_mu);
+        S().cfg.live = on;
+    }
+    S().q_cv.notify_one();
+}
+
 void vfo_changed(int, bool) { S().q_cv.notify_one(); }
 
 std::string status_message() {
@@ -1825,14 +2218,16 @@ std::string status_message() {
     for (const auto& ce : MODEL_CATALOGUE) {
         o << (first ? "" : ",") << "{\"name\":\"" << ce.name << "\",\"mb\":" << ce.mb << ",\"multi\":"
           << (ce.multi ? "true" : "false") << ",\"note\":\"" << json_escape(ce.note) << "\",\"have\":"
-          << (std::find(inst.begin(), inst.end(), ce.name) != inst.end() ? "true" : "false") << "}";
+          << (std::find(inst.begin(), inst.end(), ce.name) != inst.end() ? "true" : "false");
+        if (ce.from) o << ",\"from\":\"" << ce.from << "\"";   // made here of that model (--quantize)
+        o << "}";
         first = false;
     }
     o << "],\"vad_model\":" << (vad.empty() ? "false" : "true") << ",\"model\":\"" << json_escape(c.model)
       << "\",\"language\":\"" << json_escape(c.language) << "\",\"threads\":" << c.threads << ",\"prompt\":\""
       << json_escape(c.prompt) << "\",\"vad\":" << (c.vad ? "true" : "false") << ",\"translate\":"
       << (c.translate ? "true" : "false") << ",\"keep_audio\":" << (c.keep_audio ? "true" : "false")
-      << ",\"model_multi\":" << (model_multilingual(c.model) ? "true" : "false")
+      << ",\"live\":" << (c.live ? "true" : "false") << ",\"model_multi\":" << (model_multilingual(c.model) ? "true" : "false")
       << ",\"log\":{\"enabled\":" << (declog::voice_logged() ? "true" : "false") << "}";
     std::lock_guard<std::mutex> lk(s.st_mu);
     o << ",\"state\":\"" << s.state << "\",\"error\":\"" << json_escape(s.last_error) << "\",\"loaded\":\""
@@ -1845,7 +2240,11 @@ std::string status_message() {
       << json_escape(s.clip_root.empty() ? "" : diskutil::absolute(s.clip_root)) << "\",\"clip_days\":" << s.clip_days
       << ",\"clip_free_mb\":" << s.clip_free / 1048576 << ",\"clip_low\":" << (s.clip_low ? "true" : "false")
       << ",\"clips_skipped\":" << s.clips_skipped << ",\"clip_error\":\"" << json_escape(s.clip_error)
-      << "\",\"loop_max_ms\":" << s.loop_max_ms << ",\"in_dropped_s\":" << fmt("%.1f", in_dropped) << ",\"vfos\":[";
+      << "\",\"loop_max_ms\":" << s.loop_max_ms << ",\"in_dropped_s\":" << fmt("%.1f", in_dropped)
+      // Live text: the helper takes partials (null = none loaded yet), how
+      // many were answered / discarded, their mean processing time
+      << ",\"live_ok\":" << (s.helper_live < 0 ? "null" : s.helper_live ? "true" : "false") << ",\"partials\":" << s.partials
+      << ",\"partials_stale\":" << s.partials_stale << ",\"partial_ms\":" << std::lround(s.partial_ms) << ",\"vfos\":[";
     for (size_t i = 0; i < s.vfos.size(); i++) {
         const auto& v = s.vfos[i];
         o << (i ? "," : "") << "{\"id\":" << v.id << ",\"src\":\"" << json_escape(v.src) << "\",\"rec\":"
@@ -1856,7 +2255,7 @@ std::string status_message() {
     if (!s.dl.name.empty()) {
         const uint64_t got = s.dl.running ? file_size(s.dl.part) : 0;
         o << ",\"download\":{\"name\":\"" << json_escape(s.dl.name) << "\",\"running\":"
-          << (s.dl.running ? "true" : "false") << ",\"pct\":"
+          << (s.dl.running ? "true" : "false") << ",\"stage\":\"" << s.dl.stage << "\",\"pct\":"
           << (s.dl.total ? std::min<uint64_t>(99, got * 100 / s.dl.total) : 0) << ",\"error\":\""
           << json_escape(s.dl.error) << "\"}";
     }
@@ -1897,6 +2296,20 @@ std::string take_new_message() {
     for (size_t i = 0; i < s.fresh.size(); i++) o += (i ? "," : "") + transcript_json(s.fresh[i], false);
     s.fresh.clear();
     return o + "]}}";
+}
+
+std::string live_message() {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.st_mu);
+    return "{\"voice2text\":{\"live\":" + s.live_json + "}}";
+}
+
+std::string take_live_message() {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.st_mu);
+    if (s.live_seq == s.live_pushed) return "";
+    s.live_pushed = s.live_seq;
+    return "{\"voice2text\":{\"live\":" + s.live_json + "}}";
 }
 
 void clear_history() {
@@ -1946,11 +2359,46 @@ bool download_model(const std::string& name, std::string* err) {
         return false;
     }
     State& s = S();
-    std::vector<std::pair<std::string, std::string>> files;
-    if (!file_exists(model_path(name))) files.push_back({MODEL_URL + name + ".bin", model_path(name)});
-    if (vad_model_path().empty())
-        files.push_back({std::string(VAD_URL) + VAD_NAME + ".bin", models_dir() + "/ggml-" + VAD_NAME + ".bin"});
-    if (files.empty()) {
+    std::vector<DlStep> steps;
+    const uint64_t mb = 1048576;
+    if (!file_exists(model_path(name))) {
+        if (ce->from) {
+            // made here: its f16 model - downloaded unless installed, then
+            // only for this, into a file no model list shows - quantized by the helper
+            if (!file_exists(helper_exe())) {
+                *err = "the speech helper is not installed - it makes this model";
+                return false;
+            }
+            const CatalogueEntry* src = catalogue(ce->from);
+            DlStep q;
+            q.quantize = true;
+            q.in = model_path(ce->from);
+            q.out = model_path(name);
+            q.total = static_cast<uint64_t>(ce->mb) * mb;
+            if (!file_exists(q.in)) {
+                DlStep f;
+                f.url = std::string(MODEL_URL) + ce->from + ".bin";
+                f.out = q.in = models_dir() + "/ggml-" + name + ".f16";
+                f.total = static_cast<uint64_t>(src ? src->mb : ce->mb) * mb;
+                f.temp = true;
+                steps.push_back(f);
+            }
+            steps.push_back(q);
+        } else {
+            DlStep f;
+            f.url = MODEL_URL + name + ".bin";
+            f.out = model_path(name);
+            f.total = static_cast<uint64_t>(ce->mb) * mb;
+            steps.push_back(f);
+        }
+    }
+    if (vad_model_path().empty()) {
+        DlStep f;
+        f.url = std::string(VAD_URL) + VAD_NAME + ".bin";
+        f.out = models_dir() + "/ggml-" + VAD_NAME + ".bin";
+        steps.push_back(f);   // (its progress against the model's size: it is ~1 MB)
+    }
+    if (steps.empty()) {
         *err = "already downloaded";
         return false;
     }
@@ -1963,10 +2411,11 @@ bool download_model(const std::string& name, std::string* err) {
         s.dl = Download{};
         s.dl.name = name;
         s.dl.running = true;
-        s.dl.total = static_cast<uint64_t>(ce->mb) * 1048576;
+        s.dl.total = steps.front().total ? steps.front().total : static_cast<uint64_t>(ce->mb) * mb;
+        s.dl.stage = steps.front().quantize ? "quantize" : "download";
     }
-    std::cout << "Voice to Text: downloading model " << name << std::endl;
-    std::thread(download_thread, std::move(files)).detach();
+    std::cout << "Voice to Text: " << (ce->from ? "making model " : "downloading model ") << name << std::endl;
+    std::thread(download_thread, std::move(steps)).detach();
     return true;
 }
 
