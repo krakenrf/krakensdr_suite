@@ -66,12 +66,16 @@
 // station 16-24 dB over the floor. What the gate guarantees is "taken at or
 // after retune end + settle - L*", L* = that dongle's fastest USB delivery
 // (~1 ms on the PC; a Raspberry Pi and a reader that runs behind under load
-// are NOT measured), so the settle is the margin over L*: 5 ms. On the PC a
-// settle of 2 is as fast as 0 and measured as clean, and 5 costs one more
-// packet period in part of the rounds (20-25 ms a round against 22-29 at one
-// packet a hop; the whole range ~4.0 s against ~4.3 s) - a host measured
-// with t_contrast.py may lower it (set_sweep settle_ms). Numbers in the doc.
-#define SWEEP_SETTLE_MS          5      // default settle, ms (set_sweep settle_ms 0-1000)
+// are NOT measured), so the settle is the margin over L*. Default 2 ms: the
+// stream measured clean at settle 0 already (i.e. from ~1 ms BEFORE the tune
+// call returns - the PLL is written one control transfer or more before
+// that), so 2 leaves ~3 ms over the measured-clean point; and with the
+// receiver attached a settle of 5 pushes the first packet that counts one
+// packet period later in nearly every hop (28 ms a round against 21: the
+// whole range with 5 tuners 5.1 s against 4.0 s, 2026-11-21). A host where
+// t_contrast.py shows the previous hop in the first valid packet needs more
+// (set_sweep settle_ms, or this constant). Numbers in the doc.
+#define SWEEP_SETTLE_MS          2      // default settle, ms (set_sweep settle_ms 0-1000)
 #define SWEEP_SETTLE_MAX_MS      1000
 // The dwell is whole USB packets of valid data per tuner and hop: dwell_ms
 // asks for at least that much, a hop delivers sweep_hop_packets(dwell_ms) =

@@ -323,7 +323,12 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   requires 578b43d or later on every platform (`RTLSDR_FIX_MARK` =
   `rtlsdr_finish_tune`); its Makefile fast-forwards an older clone or stops
   with instructions, and the Dockerfile pins `LIBRTLSDR_COMMIT`. Don't
-  install `librtlsdr-dev`; distro rtl-sdr packages may stay installed.
+  install `librtlsdr-dev`; distro rtl-sdr packages may stay installed. A
+  fork that defines `RTLSDR_NO_STREAM_SLIP` (2026-11-21; a USB control read
+  of 3, 7, 11 ... bytes made the RTL2832U drop 2 samples, so every retune
+  shifted that dongle's stream) lets heimdall return to coherent phase-only
+  and sweep with the faster tune call; older forks still work
+  (`docs/dev/librtlsdr-fork.md`).
 - **uWebSockets** is pinned (`UWS_COMMIT` fe7da4cb): newer master defines
   `uWS::time_ms()` without `inline` in `HttpCache.h`, and the link fails. The
   Makefiles move a checkout on another commit back to the pin.

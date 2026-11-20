@@ -497,17 +497,26 @@ call and worker F's library, *Review fixes of the hop loop* below): the
 default dwell is 5 ms - one packet a hop (`SWEEP_DWELL_MS`; kraken_doa's
 `SWEEP_DWELL_DEFAULT_MS`, its settings schema and the page's field follow;
 until then 20, and every number above that names "the default" means 20).
-The default settle STAYS 5 ms (`SWEEP_SETTLE_MS`): with the 7.5 ms tune a
-settle of 2 runs as fast as 0 (20-25 ms a round at one packet a hop against
-22-29 with 5) and the first valid packet measured as clean at 0, 2 and 5 on
-the PC, and 2 was the default for a few hours - but the gate's bound is
-"retune end + settle - L*" (L* the dongle's fastest USB delivery, ~1 ms
-here), so 2 leaves ~1 ms where 5 leaves ~4, and neither a Raspberry Pi nor
-a reader thread running behind under load is measured (the second review's
-point). The price on the PC: the whole range with 5 tuners ~4.3 s instead
-of ~4.0 s (the orchestrator's end-to-end run at settle 2: 3.96 s, one tuner
-18.9 s, 88-108 MHz 11.1 sweeps a second). A host measured with
-`t_contrast.py` may lower it.
+The default settle is 2 ms (`SWEEP_SETTLE_MS`; 5 until then, and 5 again
+for a few hours on the second review's point that the gate's bound is
+"retune end + settle - L*", L* the dongle's fastest USB delivery, ~1 ms
+here, with neither a Raspberry Pi nor a reader running behind under load
+measured). What decided it, the orchestrator's end-to-end runs on the
+KrakenSDR with kraken_doa and the page attached (the hop then starts ~2.5 ms
+after a packet boundary - the last packet's way through the pipeline): at
+settle 5 the first packet that counts falls one packet period later in
+nearly every hop, 28 ms a round against 21 at settle 2 - the whole range
+with 5 tuners 5.14 s against 3.96 s, one tuner 22.8 s against 18.9 s,
+88-108 MHz 10.4 against 11.1 sweeps a second (the standalone `t_hop.py`
+runs above, with only a header reader on 8091, show less of it: 4.1-4.3 s
+at settle 5). And the margin is larger than "2 - L*" suggests: the stream
+measured clean at settle 0 with its positive control, i.e. from ~1 ms before
+the tune call returns (the PLL is written a control transfer or more before
+that; a slower USB host returns later still), so 2 ms stands ~3 ms after
+the measured-clean point. NOT measured: a Raspberry Pi, Windows, a reader
+thread held up for longer than the gate's window - run `t_contrast.py`
+there; a host that shows the previous hop in a hop's first valid packet
+needs a larger settle (`set_sweep` `settle_ms`, or the constant).
 
 *The guarantee, re-tested* (the first valid packet now comes a packet
 earlier than before, so what "settle 0 holds" meant changed):

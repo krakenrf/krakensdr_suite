@@ -94,7 +94,8 @@ the hops into the sweep spectrum, the page shows it.
   flag 0 (at most 250 ms longer), so no hop goes without data; `set_gain`
   sets the flag until the next settle + flush; the status object also has
   `"retuning"` (the 8091 flag), `"failed_retunes"` and
-  `"l1_unquiet_flushes"` (diagnostics). Default `settle_ms` 5.
+  `"l1_unquiet_flushes"` (diagnostics). Default `settle_ms` 5 (2 since
+  2026-11-21, with the faster hop loop).
   A tuner whose retune failed (twice) has the 8091 per-channel frequency
   **0** ("no valid frequency") from that hop until its next successful
   retune - it is not on its old frequency either (the tuner drivers fail
@@ -919,3 +920,53 @@ by one - a round will be several times slower), macOS, the MinGW / zig
 syntax checks (no toolchain on the test machine), generic RTL-SDRs and
 `--kerberos` on real hardware (both against the fake librtlsdr only),
 Firefox / Safari.
+
+**Round 2, 2026-11-21: the library no longer shifts a stream, the hop loop
+wastes nothing.** Two things changed under the mode (the details and every
+worker's test are in `docs/dev/librtlsdr-fork.md`, *The rule, and the fix*
+and *Review round*, and `heimdall_v2/docs/dev/operating-modes.md`, *Hop
+timing* and its review rounds):
+- librtlsdr (two commits on the fork, not upstream yet; the patches are in
+  `docs/dev/librtlsdr-patches/`): any USB control IN of 3, 7, 11 ... bytes
+  made the RTL2832U drop 4 bytes of its stream - every retune's lock check
+  read 3 tuner registers. Such reads are padded and the lock check reads 4;
+  a PLL settle after big VCO jumps; registers repaired after a lock retry;
+  a tune flag that saves a transfer. heimdall, built against it
+  (`RTLSDR_NO_STREAM_SLIP`), goes back to coherent with the phase-only
+  recalibration.
+- heimdall's hop: the dwell in whole packets, the per-dongle gate in place
+  of the cross-dongle quiet point, the first valid packet no longer thrown
+  away, the fast tune call (7.5 ms against 14.4 ms a tune on the PC).
+  Defaults since: dwell 5 ms (one packet a hop), settle 2 ms.
+
+The orchestrator's own runs on the KrakenSDR (x86 PC, 5 tuners; the merged
+tree and the fork with both commits, rebuilt from the patches; job scratch
+`e2e/`: `lagprobe.py`, `run_hw.py`, `skewtest.py`), each compared with the
+same test before the round:
+
+| | Before | Now |
+|---|---|---|
+| Lag probe, 200 tunes a pattern on one dongle (same frequency, + 100 kHz, 433 MHz and back, 24.5 / 1700 / 100 MHz, a divider boundary; fast path + finish; a 3-register read) | -2.000 samples a tune (-2.02 fast, -2.000 the read) | 0.000 each |
+| 24 - 1765 MHz, 5 tuners / 1 tuner (through the page) | 8.1 - 8.3 s / 39.5 s | 4.0 s / 18.9 s (21 ms a round, exactly 1 packet a hop) |
+| 88 - 108 MHz, 5 tuners / 3 tuners | 7.0 / 5.0 - 5.4 sweeps a second, Auto 586 Hz | 11.3 / 9.4, Auto 1.17 kHz |
+| Sweep (5, 3 and 1 tuners) -> coherent | 29 s (every lag re-acquired; > 100 s before that fix) | 1.5 s, check \|lag\| 0.0, \|phase\| 0.2 deg |
+| 2048 / 4096 / 6144 / 9000 retunes of one tuner (independent), and three tuners 2048 / 4096 / 6144, then coherent | lags -4096 ... -18000 samples (no peak at 18000), 26 - 40 s | no lag at all (no servo engaged), 1.6 s each |
+| The sweep with the tuners' buffer timing spread | 81 ms a round, 191 unquiet flushes in 15 s | as from an aligned array, 0 |
+
+20 of 20 steps of the end-to-end script, 0 coherence events, 0 failed
+retunes, no gate failed or late, no page error. At settle 5 the same run
+gives 5.1 s / 22.8 s for the whole range (one more packet period in nearly
+every hop, with the receiver attached), which is why the default is 2; at
+the old dwell of 20 ms (3 packets a hop) 6.5 s / 31.3 s.
+
+Open after round 2: the fork's commits are local (the Dockerfile's pin and
+heimdall's minimum stay 578b43d; an older fork gives the round-1 behaviour);
+nothing of it has run on a Raspberry Pi, on Windows or on macOS - there the
+first things to run are the lag probe, `t_contrast.py` at the default
+settle (the gate's bound is "retune end + settle - the fastest USB
+delivery") and a sweep-path soak (the tune flag that skips the dummy read
+has no positive control on the PC: the stall it relates to was a Pi
+finding; the library retries by itself). At 1.56 - 1.75 GHz a dongle can
+read 13 - 15 dB louder when it is tuned there from above (seen on downward
+and random tunes, not on the sweep's upward steps; the old library does it
+too; cause unknown).
