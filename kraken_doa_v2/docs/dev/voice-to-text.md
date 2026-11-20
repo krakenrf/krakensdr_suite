@@ -532,34 +532,40 @@ default, because of its CPU cost (measured below).
   final replacing its live row the two together moved it). The empty "No
   transcripts yet" (`.v2t-empty`) hides while live rows show.
 - Measured (job fa22c145, this PC = i7-11800H, 14 real WBFM voice clips +
-  jfk.wav; a patched bench copy of kraken_whisper with a `--stream STEP_MS`
-  simulation: re-decode the whole transmission so far every step,
-  LocalAgreement-2, the final at the end + 0.8 s hang as today). Partial
-  decodes NEED guards: without them whisper looped / hallucinated on
-  half-spoken audio (7-10 s decodes, invented words confirmed); with VAD on
-  the buffer, no temperature fallback and a token cap (6 tokens/s of
-  buffer + 8, end-of-text forced) they took 0.2-0.6 s - the helper's
-  PARTIAL path does that (transcribe/README.md). Word shown after it was
-  said (median / p90), confirmed (median / p90), CPU while someone talks:
-  base.en-q8_0 2 threads 0.8 / 1.2 s, 1.8 / 5.7 s, 0.55 cores; base.en t2
-  0.9 / 1.3, 1.9 / 6.0, 0.75; small.en-q8_0 t4 1.0 / 1.2, 2.0 / 2.8, 1.7;
-  small.en t4 1.2 / 1.6, 2.2 / 3.1, 2.3 cores. 6-10 % of the confirmed
-  words changed in the final. A 0.5 s step: words only 0.3 s sooner for
-  1.7x the CPU, and 45 % of confirmed words changed later - so 1 s.
-  Streaming costs 4-6x the CPU of transcribing at the end. Pi 5 (this PC
-  x3-5, NOT measured): base.en-q8_0 words ~1.3-2.1 s behind, ~2 of its 4
-  cores while someone talks - hence an option, off by default.
-- Threads: CPU per job is lowest at 2 threads (sized encoder window: t1
-  2.73, t2 2.58, t4 3.27, t8 4.86 CPU-s); more threads finish each
-  transcript sooner for more CPU in total - the CPU cores row's tooltip
-  says so (2026-11-20); the default stays 2.
+  jfk.wav). The design came from a bench simulation (re-decode the whole
+  transmission so far every step, LocalAgreement-2, the final at the end
+  + 0.8 s hang as today): partial decodes NEED guards - without them
+  whisper looped / hallucinated on half-spoken audio (7-10 s decodes,
+  invented words confirmed); with VAD on the buffer, no temperature
+  fallback and a token cap they took 0.2-0.6 s (the helper's PARTIAL path,
+  above). A 0.5 s step: words only 0.3 s sooner for 1.7x the CPU, and 45 %
+  of the confirmed words changed later - so 1 s. The helper as built
+  (`--stream 1000`, the "Measured" bullet above): base.en-q8_0 2 threads
+  words shown 0.8 / 1.2 s after they were spoken (median / p90),
+  confirmed 1.8 / 3.3 s, 0.43 cores while someone talks; base.en t2 1.0 /
+  1.3, 2.0 / 3.5, 0.58; small.en-q8_0 t4 1.3 / 1.6, 1.9 / 2.7, 1.91;
+  small.en t4 1.5 / 1.9, 2.5 / 4.1, 2.56 cores. End to end through
+  kraken_doa (tests below; two NBFM VFOs, 33.5 s of speech in a 60 s
+  scene, the two talking at the same time for most of it): the helper's
+  CPU per scene base.en 4.4 s with Live text off, 25.5 s on (5.8x);
+  base.en-q8_0 3.2 / 19.8 s (6.2x) - the old helper (full window, no Live
+  text) 14.8 s; the finals the same with it on or off. Pi 5 (this PC x3-5,
+  NOT measured): base.en-q8_0 words ~1.5-2 s behind, 1.5-2 of its 4 cores
+  while someone talks - hence an option, off by default.
+- Threads: more finish each transcript sooner but cost more CPU in total
+  (the helper with the sized window, base.en 1 / 2 / 4 threads: 0.89 /
+  0.93 / 1.09 CPU s per job, 0.88 / 0.47 / 0.28 s wall; the bench with
+  small.en: t1 2.73, t2 2.58, t4 3.27, t8 4.86 CPU-s) - the CPU cores
+  row's tooltip says so (2026-11-20: "1 or 2 use the least CPU in total" -
+  2 the bench's minimum with small.en, 1 and 2 within 5 % with base.en);
+  the default stays 2.
 
 ## Derived models: base.en-q8_0, small.en-q8_0 (2026-11-20)
 
-whisper.cpp's quantize (q8_0, from the f16 model) used ~25 % less CPU than
-f16 at the same word error rate (small.en, 2 threads, sized window: 2.76
--> 2.02 CPU-s, 8.8 %); q5_1 was slightly slower than f16 here and a little
-less accurate. whisper.cpp publishes no English-only q8_0 files, so the
+whisper.cpp's quantize (q8_0, from the f16 model) used ~16 % (base.en) /
+27 % (small.en) less CPU than f16, about as accurate (the "Measured"
+bullet above); q5_1 was slightly slower than f16 here and a little less
+accurate. whisper.cpp publishes no English-only q8_0 files, so the
 two are made on the receiver: `CatalogueEntry::from` in MODEL_CATALOGUE
 and the same two names / sizes in setup.sh's CATALOGUE (keep the lists
 equal), made by the page's Get (`VOICE2TEXT_DOWNLOAD`, above) or
@@ -621,4 +627,26 @@ marker), a fake `curl` on the PATH (no network).
   replaced by their finals - the row at the top of the view stayed put in
   all 64 samples (scrollTop 400 -> 441 -> 483 -> 487 -> 510); at the top
   the list stays at the top.
+- End to end with the real helper (the merged worktree-voice2text-live,
+  built in scratch from its sources): t_e2e.py - bench clips (JFK 11 s and
+  three 7-8 s talk-radio clips) FM-modulated by fake_heimdall_v.py onto D0
+  / D1 (NBFM, squelch off), two talking at once: live rows from 1.3 s
+  after each piece began (the first partial at 1.0 s of audio incl. the
+  0.3 s pre-roll), growing every ~0.5-1 s, 31-32 partials, 0.31 s
+  (base.en-q8_0) / 0.42 s (base.en) each, none stale; 14-22 confirmed words
+  per transmission, 69 of 70 as in the final with base.en-q8_0, 65 of 66
+  with base.en ("American" confirmed, "America" in the final; the words
+  at the end of a transmission stay pending until the final: 70 of the
+  finals' 80 words were confirmed before it); finals word error rate 3.8 % against
+  the bench's reference, the same texts with Live text on or off; CPU as
+  in "Measured" above. The main checkout's helper (no live=1) behind a
+  logging shim (shim_log.py) with Live text on: 5 OPTION + 4 JOB in, READY
+  + 4 RESULT out - no PARTIAL ever -, live_ok false, the 4 finals as
+  before. t_e2e_ui.py (headless Chromium, 13 checks): real live rows for
+  both VFOs at once (confirmed text, the pending dimmed), replaced by the
+  finals, each final with its Ogg Opus clip, in transcripts.jsonl and the
+  decoder log (2 records, no partial text); Get base.en-q8_0 with base.en
+  installed: "Making base.en-q8_0 from base.en… 93 %" -> "made" in 1.4 s,
+  the file byte for byte the helper worker's base.en-q8_0, base.en kept,
+  nothing else left.
 

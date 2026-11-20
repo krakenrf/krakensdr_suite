@@ -552,7 +552,7 @@ does the same during the install.
 |---|---|---|---|
 | tiny.en | 75 MB | ~5x faster than real time | least accurate |
 | base.en | 142 MB | ~2-3x faster than real time | the default |
-| base.en-q8_0 | 78 MB, made on the receiver from base.en | not measured yet | about 25 % less CPU than base.en, as accurate |
+| base.en-q8_0 | 78 MB, made on the receiver from base.en | not measured yet | about 15 % less CPU than base.en, about as accurate |
 | base.en-q5_1 | 57 MB | about the same | less memory |
 | small.en / small.en-q5_1 | 466 / 181 MB | ~2x slower than real time | most accurate on a Pi; for quiet channels |
 | small.en-q8_0 | 252 MB, made on the receiver from small.en | not measured yet | about 25 % less CPU than small.en, as accurate |
@@ -565,7 +565,7 @@ shows them all). The two q8_0 models are not downloaded as such: **Get**
 downloads base.en / small.en (unless you have it) and converts it on the
 receiver, then deletes the download again. That tab also shows whether
 Voice to Text is set up (and what to run while it is not), and sets the CPU
-cores the model may use (2 use the least CPU in total; more finish each
+cores the model may use (1 or 2 use the least CPU in total; more finish each
 transcript sooner but use more CPU altogether) and the "Words to expect":
 callsigns and names spelled as you want them.
 
@@ -576,7 +576,7 @@ callsigns and names spelled as you want them.
   someone is still talking, updated every second; the final transcript
   replaces them when the transmission ends. It costs CPU: the model runs
   all the time while someone talks, 4 to 6 times the CPU of transcribing at
-  the end. On a Pi 5 use base.en-q8_0 and expect about 2 of its 4 cores
+  the end. On a Pi 5 use base.en-q8_0 and expect about 1.5 to 2 of its 4 cores
   while someone talks, the words 1.5 to 2 s behind (estimated).
 - In Coherent mode with DoA on, each transcript keeps its bearing. Click it
   to draw that transmission's lobe on the map.
