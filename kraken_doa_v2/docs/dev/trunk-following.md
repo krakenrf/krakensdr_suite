@@ -146,6 +146,7 @@ applies, `why`):
 | `retry` | outside the span, and an excursion for this call found nothing (or ran out of time) less than 30 s ago |
 | `no_retune` | outside the span, and no centre in the tuner's range holds it |
 | `tuning` | independent mode: a voice tuner is being retuned for it (placed once the stream shows the tuner there) |
+| `retuning` | coherent mode, an excursion leaving / returning: the stream isn't at the new centre yet - placed at its next grant once it is (no placement against the old centre, no excursion started from the wrong one) |
 | `no_tuner` | independent mode: outside every tuner's span and no voice tuner is free (each carries a call in progress) |
 | `no_vfo` | `TRUNK_MAX_VFOS` voice VFOs are busy with calls of equal or higher rank |
 | `vfo_limit` | the receiver's 16 VFOs are all there |
@@ -209,11 +210,24 @@ is switched on).
   home. The centre must be in the tuner's range (24-1766 MHz; the Wideband
   downconverter: its RF union range, the same `FREQ:` path - else
   `no_retune`).
-- **The VFOs.** Control VFOs (of every system) that fit the away span keep
-  receiving there; the others are PARKED (disabled: no bogus SYSTEM /
-  grants from whatever is on that frequency, no "not receiving", no
-  temporary systems) and put back on the return. In-span calls being
-  followed when the receiver leaves end `excursion`.
+- **The VFOs.** A "control VFO" here (the excursion and the voice tuners
+  alike) is every VFO that is not a voice VFO and whose decoder is a
+  trunking plugin - also one that has not reported a system yet, or whose
+  entry a RESET erased until it reports again. Those that fit the away
+  span keep receiving there (offset moved so the RF stays); the others are
+  PARKED (disabled: no bogus SYSTEM / grants from whatever is on that
+  frequency, no temporary systems; their entries in the systems' control
+  lists say `parked` true and `rx` false - the page shows them as parked,
+  not lost) and put back on the return. Each is remembered by its
+  instance (`DecimatorInstance::serial`): a VFO removed while away and its
+  id reused (by the user or a voice VFO) is left alone. In-span calls
+  being followed when the receiver leaves end `excursion`.
+- **What is saved while away** is the home state: a VFO snapshot recorded
+  then (the user's own edit of another VFO) holds every control VFO at
+  its HOME offset (`trunk::home_offset`), never the away one; the centre is
+  saved only by the user's own `FREQ:`. The Wideband downconverter's mixer
+  side, if the excursion's centre made it switch, is not saved and is put
+  back on the return.
 - **Immediate calibration** with heimdall as it is (`heimdall_v2/docs/dev/
   calibration.md`, "Calibration hold"): `hold_calibration` 3000 ms ->
   `FREQ:` -> `hold_calibration` 0 in one go. heimdall retunes and enters the
@@ -233,8 +247,13 @@ is switched on).
 - **When it leaves.** Only when no followed call is in progress in the
   span - a priority talkgroup's or the held talkgroup's grant leaves an
   ordinary call (the pre-emption ranking; else why `busy_here`). Never in
-  a playback (`out_of_span` as before), while paused (a scanner) or with
-  following off.
+  a playback (`out_of_span` as before), while a scanner runs (tested
+  directly, not the once-a-tick pause: a grant right after a scan starts
+  doesn't leave), with following off, while heimdall sends nothing (no
+  packet for 2 s: `no_retune`), or while an earlier excursion never
+  arrived: `not_arrived` blocks every excursion for 30 s, doubling with
+  each further one up to 8 min (`no_retune` meanwhile). The calibration
+  hold's lease is renewed only while heimdall's packets arrive.
 - **When it returns** (`end`): `call_over` - no followed call in progress
   for the hang time (`TRUNK_HANG`) after the last one ended (on systems
   that grant every transmission anew the next over usually comes on the
@@ -246,11 +265,30 @@ is switched on).
   `command` (`TRUNK_RETURN`); `off` (following or the option switched
   off); `mode` / `scanner` / `playback` - the command that changes the mode
   or starts a scanner or a playback goes home first, then runs
-  (`trunk::before_command` in `apply_command`); `not_arrived` - the stream
-  didn't reach the new centre within 5 s. `user_retuned`: the user retunes
+  (`trunk::before_command` in `apply_command` - also when that command is
+  then refused); `not_arrived` - the stream didn't reach the new centre
+  within 5 s; `shutdown` - kraken_doa stopping while away goes home first
+  (one command round on the loop before the last save - best effort: if
+  heimdall doesn't take it, heimdall stays at the away centre and keeps
+  that until kraken_doa's next start puts it home). A mode switch from
+  heimdall's side (not a command) ends the excursion without a retune.
+  The voice VFOs' SETUP clocks wait for the calibration at most 5 s after
+  the arrival (a calibration that never converges can't keep a call from
+  timing out). `user_retuned`: the user retunes
   the centre while away (`FREQ:` / `WIDEBAND_FREQ:` from anyone but the
   manager) - the excursion is over WITHOUT a return (he took the
-  receiver; the control VFOs back on their offsets). After the return the
+  receiver; the control VFOs back on their offsets). The user's own
+  retune / decoder change of a control VFO is never taken for the
+  excursion's (its expected-reset window is cleared by that command): its
+  calls end `control_reset` as at home.
+- **A control VFO's report without a key** after a RESET the manager
+  expected (an excursion's retune, a CONTROL move): the system it had
+  stands (decoders report the system before they have decoded its key
+  again - P25 does, and this ended the call that sent the receiver out,
+  8 of 8 on air, before 2026-11-20). An unexpected RESET (the user retuned
+  it, its decoder changed) forgets the VFO's system first, so a keyless
+  report then starts a temporary system as before: nothing of the old
+  system is carried to another network's control channel. After the return the
   receiver waits for a control VFO to report again (`returning`, at most
   20 s), then carries on; a grant update of a call still in progress is
   heard as late entry and may send it out again - intended.
@@ -260,6 +298,46 @@ is switched on).
   away comes back home (home is what is saved). A playback can't start
   away: its start command returns first.
 - Wideband scan mode: no excursions (`out_of_span` as before).
+
+**Measured on the KrakenSDR** (2026-11-20, the 3-site P25 system, home
+498.2 MHz with two control channels in the span and every voice channel
+outside it; two clean runs of 6.1 min - 11 excursions before the review
+fixes, 6 after (the system was quieter) - every one `how` "control": one
+control VFO stayed in the away span, the other was parked; heimdall's own
+status checked every 30 s - mode, centre and gain only ours):
+- A plain retune (the user's `FREQ:`, no hold; 4 of them): noise source
+  on 3.04-3.09 s after it, CONVERGED 3.41-3.54 s after it.
+- An excursion: retune -> the stream at the new centre 20-82 ms; noise
+  source on 0.02-0.46 s after the retune (the lag driver's next tick),
+  CONVERGED 0.26-0.88 s after it (arrival -> CONVERGED 400-850 ms). The
+  calibration costs a reception gap of 0.32-0.49 s (noise on -> off), on
+  arrival and on the return alike.
+- The call's first valid frames (ACTIVE) 0.18-1.28 s after the grant made
+  the receiver leave (the gap lies in it when the calibration comes first).
+- The return: CONVERGED 0.41-0.90 s after the retune home, a control VFO
+  reporting again 0.34-0.85 s after it.
+- `TRUNK_RETUNE_CAL:0` (3.1 min, 7 excursions): no calibration while away
+  (no gap in the call, no DoA there); the one at the return: noise on
+  0.04-0.08 s after the retune home (the hold released with it), gap
+  0.38-0.44 s, CONVERGED 0.44-0.47 s after it.
+- A busy system: 1.8 excursions a minute, half the time away; 26 calls
+  started while away, 0 missed because of it (the control VFO in the away
+  span heard their grants; calls that fit were followed there); 35 overs
+  ended `released`, 1 `ended`, no `no_signal`. The control VFO that stayed
+  in span decoded 2.67 grant messages / s away (1.21 / s before - the
+  system's load, not a loss).
+- After the review fixes: 6 excursions, 14 overs `released`, no other end;
+  9 calls started while away, 1 missed (why `away`).
+- Not exercised on air: the DMR Tier III system (4 min, home 456.2 MHz)
+  granted only inside the span - no excursion; MPT1327 (busy by day) not
+  run; the Wideband downconverter (none here).
+- Found on air and fixed: after the retune the P25 decoder's first SYSTEM
+  reports carry no key, which the manager took for another system and
+  ended the call that sent the receiver out (`control_reset`, 8 of 8 in the
+  first run): a keyless report now keeps the VFO's system.
+In the fake heimdall's calibration model (the scratch tests below: 3 s
+cooldown, a once-a-second lag tick, 0.6 s calibration) the same sequence
+gives arrival -> CONVERGED 0.4-1.5 s - MODEL numbers, not the hardware's.
 
 ### Independent mode: voice tuners (`TRUNK_TUNERS`)
 
@@ -280,21 +358,42 @@ retuned, listed or not. For a grant:
    waits (`tuning`) until the stream shows the tuner there, then is
    placed. The voice tuner takes the control tuner's gain while the
    manager uses it (the same band);
-3. else `no_tuner` - or a priority talkgroup's call takes the voice tuner
-   of the oldest lower-ranked call (that one `preempted`).
+3. else `no_tuner` - or a priority talkgroup's call takes a voice tuner
+   whose EVERY call ranks lower (the oldest of them `preempted`, the others
+   `returned`; nothing is ended before the new centre is known). With no
+   listed tuner able to carry voice at all (each a control tuner): as
+   before, `out_of_span`.
 Up to four calls outside every span at once with five tuners; with two
 generic RTL-SDRs (heimdall's generic mode, flag 0x1000) one control tuner
 and one voice tuner. A voice tuner is the manager's: the user's own VFOs on
 it move with it (the page says so). Nothing of it is saved (the `TUNERS:`
-record honours the guard). Each voice tuner goes back to the frequency and
+record honours the guard, and every saved `TUNERS:` - the user's change of
+another tuner too - holds a taken tuner's HOME frequency and gain,
+`trunk::tuner_home`). Each voice tuner goes back to the frequency and
 gain it had when the manager first took it when following or the list is
 switched off (or the tuner leaves the list / gets a control VFO), and
 before a mode change, a scanner or a playback starts (`before_command`:
-back first, then the command); a voice tuner the USER retunes is his again
-(no restore), as are all after his `FREQ:` (every tuner) or `TUNERS:`.
+back first, then the command; a mode switch from heimdall's side or a
+playback: no command, but the remembered home values are put back into the
+tuning kraken_doa replays at the next switch); a voice tuner whose frequency
+or gain the USER changes is his again (no restore), as are all after his
+`FREQ:` (every tuner) or `TUNERS:`. A tuner whose gain was never set (-999)
+keeps the gain it had while the manager used it (the control tuner's): there
+is no gain of its own to go back to.
 The saved-frequency scan also uses "free tuners" in this mode: the
 manager gives its voice tuners back before the scan starts and pauses
 while it runs, so the two never hold a tuner at once.
+
+Measured on the KrakenSDR (2026-11-20, P25, every tuner at 498.2 MHz, the
+control VFOs on tuner 0, `TRUNK_TUNERS:1,2,3,4`, 5.1 min, two clean runs):
+the first out-of-span grant took tuner 1 to 499.47 MHz (the centre holding
+most of the system's known channels), retune -> the stream there 48 ms; every
+later voice channel of the system (499.04-499.86 MHz) fell into that tuner's
+span: no further retune, 28 overs `released`, 1 `ended`. Four calls on four
+voice tuners at once did not happen on air (this system's voice channels fit
+one tuner) - only in the tests. The control tuner kept decoding while the
+voice tuner was in use: 1.66 / 1.69 grant messages a second on its two
+control VFOs (0.77 / 1.93 before - the system's load).
 
 Not done: a single-tuner trunk tracker (independent mode, no voice tuner
 free or configured: an excursion of the control VFO's own tuner) - with no
@@ -613,7 +712,7 @@ renamed.
 - `systems`: `[{id, plugin, key, name (reported), user_name, site
   (reported, the latest), saved (keyed: in the file), heard (false = the
   user's record only), listed_only, control: [{vfo, hz, rx (a report in the
-  last 5 s), site, note (a CONTROL that couldn't be done, "" = none),
+  last 5 s), parked (an excursion parked it: rx false meanwhile, not lost), site, note (a CONTROL that couldn't be done, "" = none),
   last_ms (since its last report), counts: {grant_msgs, grants, followed,
   duplicate, data, skip}}], counts: {grant_msgs (every grant message),
   grants (calls / overs granted), followed, no_signal, moves, preempted,
@@ -1066,7 +1165,37 @@ the broadcasts:
   followed, history 47 `released`, 1 `ended`, 0 `no_signal`, 0 stale
   reports (the round before, the orchestrator's 80 s replay: 28 of 37
   `released`).
-- 239 checks, all passing on the final build (2026-11-20, load average 3-7). Found on the way: a
+- The fake heimdall (round 2) also models the calibration (`cal_model`:
+  a retune -> 3 s cooldown, the lag driver's tick once a second, hold /
+  release / backdating as heimdall, the noise source in the packets),
+  KerberosSDR manual mode, generic RTL-SDRs (flag 0x1000) and a heimdall
+  that doesn't retune (`freeze`).
+- `t14_exc` 36: an excursion with a control VFO in the away span (hold ->
+  retune -> release -> backdated -> calibration <= 1 s later; the control VFO
+  keeps receiving; two overs in one excursion; back home with the same
+  immediate calibration; the control channel regained; nothing saved), one
+  without (the offset centre, the control VFO parked, no bogus system),
+  `no_signal` then `retry`, the limit, `TRUNK_RETURN` (the call stopped),
+  the option off, the user's retune (no return, his FREQ saved), `busy_here`
+  and a priority call leaving an in-span one, a kraken_doa restart while
+  away (home first at the shutdown, home after it), `TRUNK_RETUNE_CAL:0`
+  (held while away, renewed, one calibration at once after the return),
+  a scanner / a mode change while away (home first), KerberosSDR manual
+  mode (no holds), `not_arrived` and the growing block.
+- `t15_tuners` 12 (5 tuners) / 10 (two generic RTL-SDRs): in the control
+  tuner's span no retune, a voice tuner retuned (the control tuner's gain,
+  its home noted), four calls on four voice tuners and a fifth `no_tuner`,
+  a call that fits a busy voice tuner's span, every voice tuner back to its
+  frequency and gain when following goes off, nothing saved, back first
+  before a mode change; the control tuner alone listed -> `out_of_span`.
+- The review of round 2 (scratch `review2/`): `r1` 8 (a VFO snapshot while
+  away holds the control VFO's home offset; a parked VFO's reused id left
+  alone; the user's retune stands), `r2` 3 (the user's change of another
+  tuner saves a voice tuner's home frequency and gain) - 6 / 8 and 2 / 3 on
+  the build before the fixes.
+- 308 checks, all passing on the final build (2026-11-20) but one
+  load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
+  / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a
   temporary system merged into its keyed one erased the KEYED one (merge_temp
   took the Track's system id by reference and rewrote it) - the keyed system
   came back empty and the temporary one stayed as a ghost with a stale

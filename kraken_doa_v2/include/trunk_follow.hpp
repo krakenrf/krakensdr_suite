@@ -51,6 +51,13 @@ bool dispatching();
 // that ends an excursion outside the span (the user's FREQ - no return; a mode
 // change, a scanner or a playback start - home first)
 void before_command(std::string_view m);
+// What is SAVED while the manager has moved things (uWS loop): a control VFO an
+// excursion moved / parked -> its offset at home; a voice tuner -> the
+// frequency and gain it had before the manager took it. false = as it is
+bool home_offset(int id, float* off);
+bool tuner_home(int t, double* hz, float* gain);
+// the data thread, every packet from heimdall (is heimdall there?)
+void note_packet();
 
 // Any thread: VFO `id` (the instance the manager holds now) is a voice VFO
 // of the manager - left out of the saved VFO snapshot (DECIMATORS:) and of

@@ -445,7 +445,9 @@ static string build_decimator_snapshot() {
     for (size_t i = 0; i < info.size(); i++) {
         const auto& d = info[i];
         if (i) ss << ";";
-        ss << d.frequency_offset_hz << "," << d.bandwidth_index << ","
+        float off = d.frequency_offset_hz;
+        trunk::home_offset(d.id, &off);   // (a control VFO an excursion moved: where it is at home)
+        ss << off << "," << d.bandwidth_index << ","
            << DecimatorManager::demodModeToString(d.demod_mode) << ","
            << (d.squelch_enabled ? 1 : 0) << "," << d.squelch_level << ","
            << d.squelch_method << ",0,"   // (was the eigenvalue threshold: the column stays for older files)
@@ -832,7 +834,10 @@ static string tuners_string() {
     ostringstream o;
     for (int i = 0; i < MAX_CHANNELS; i++) {
         if (i) o << ",";
-        o << static_cast<long long>(llround(indep_tuner_freq_hz[i].load())) << "/" << indep_tuner_gain_db[i].load();
+        double f = indep_tuner_freq_hz[i].load();
+        float g = indep_tuner_gain_db[i].load();
+        trunk::tuner_home(i, &f, &g);   // (a voice tuner of the trunk manager: where the user had it)
+        o << static_cast<long long>(llround(f)) << "/" << g;
     }
     return o.str();
 }
@@ -1034,7 +1039,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                 side = wb_auto_side(freq_hz);
                 wb_variant_mixer_side = side;
                 string side_cmd = string("MIXER_SIDE:") + wb_mixer_side_name(side);
-                SettingsStore::record(side_cmd);
+                if (!trunk::dispatching()) SettingsStore::record(side_cmd);   // (an excursion's: not the user's)
                 broadcast(make_sync_cmd_json(side_cmd));
                 cout << "Mixer side auto-selected: " << wb_mixer_side_name(side)
                      << " for " << freq_hz / 1e6 << " MHz" << endl;
