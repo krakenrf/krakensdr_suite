@@ -249,6 +249,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [Pulse radar](kraken_doa_v2/plugins/radar/README.md) (1215-1400 MHz and others) | Pulse width, chirp, PRF and PRI pattern, antenna rotation, beam width |
 | [AIS](kraken_doa_v2/plugins/ais/README.md) (162 MHz) | Ships, base stations, aids to navigation |
 | [406 MHz distress beacons](kraken_doa_v2/plugins/beacon406/README.md) | EPIRB / ELT / PLB: beacon ID, country, type, position. Self-tests are shown as tests |
+| [121.5 / 243 MHz distress beacons](kraken_doa_v2/plugins/beacon121/README.md) | ELT / EPIRB / PLB swept-tone homing, also 406 MHz beacons' homers: carrier, sweep, rate, pauses, Morse letter, a bearing per beacon. AM voice and plain carriers are not beacons |
 | [Radiosondes](kraken_doa_v2/plugins/radiosonde/README.md) (400-406 MHz) | Weather balloons (RS41, DFM, M10 / M20, iMet, LMS6, MRZ): position, weather data, flight track, a sounding |
 | [ISM devices](kraken_doa_v2/plugins/ism/README.md) (315 / 345 / 433 / 868 / 915 MHz) | About 140 device models: weather stations, tyre pressure sensors, key fobs, alarm sensors, energy meters |
 | [LoRa / Meshtastic / LoRaWAN](kraken_doa_v2/plugins/lora/README.md) | Meshtastic's public default channel (text, node names, positions); the clear headers of everything else |
@@ -262,7 +263,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 Things to know:
 
 - **Decoders that tune for you.** ADS-B, UAT, the 1030 MHz decoder, AIS and
-  the 406 MHz beacon decoder put the VFO on their own frequency when picked.
+  the 406 MHz and 121.5 MHz beacon decoders put the VFO on their own frequency when picked.
 - **Whole-band decoders.** ISM, FLARM, LoRa, pulse radar, Digital TV, DAB
   and LTE / NR cells use the tuner's full 2.4 MHz: tune the receiver to the
   band (DAB: to the block, e.g. 12C = 227.360 MHz). Auto detect leaves out ADS-B and any decoder that needs a wider VFO
@@ -272,7 +273,8 @@ Things to know:
   LoRaWAN payloads and FLARM packets stay unread, and of LTE / NR only the
   broadcast system information is read, never anything addressed to a phone.
 - **Distress beacons.** If you hear a real 406 MHz beacon, report it to
-  your rescue coordination centre with its ID, time, frequency and bearing.
+  your rescue coordination centre with its ID, time, frequency and bearing
+  (a 121.5 MHz beacon: its time, frequency and bearing - it sends no ID).
   The receiver reports nothing by itself.
 - **Digital squelch.** On a VFO with a decoder, set the squelch to
   **Digital**: it opens only while valid frames arrive, and the bearing is

@@ -40,6 +40,7 @@ every session needs and points here.
 | `plugin-analog-id.md` | Analog FM IDs plugin |
 | `plugin-analogtv.md` | Analog TV plugin (PAL / NTSC luma, the video display) |
 | `plugin-beacon406.md` | 406 MHz distress beacons plugin |
+| `plugin-beacon121.md` | 121.5 / 243 MHz swept-tone distress beacons plugin |
 | `plugin-cells.md` | LTE / 5G NR Cell Decoder plugin |
 | `plugin-dab.md` | DAB / DAB+ plugin |
 | `plugin-dme.md` | DME / TACAN plugin |
