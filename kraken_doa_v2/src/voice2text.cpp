@@ -140,13 +140,16 @@ constexpr int64_t LIVE_STEP_MS = 1000;
 constexpr double LIVE_NEW_S = 0.5;
 // A slow model / CPU (a Pi): the step grows to LIVE_DUTY x the time the
 // piece's last partial took, so partials take at most about half the
-// helper's time; a piece whose next partial is expected (the recent
-// partials' time per second of audio x its length) to take more than
+// helper's time; a piece whose next partial is expected to take more than
 // LIVE_MAX_PARTIAL_MS gets none any more - it would come too late to be
 // worth it, likely after the transmission ended (thrown away), and delay
-// that piece's final by its whole run time
+// that piece's final by its whole run time. Expected = the time of its last
+// partial (of the latest partial of any piece before its first), scaled by
+// the audio's length, but from LIVE_WINDOW_S up only: the helper's encoder
+// window is never shorter (5.12 s), so a decode costs about the same below it
 constexpr double LIVE_DUTY = 2.0;
 constexpr int64_t LIVE_MAX_PARTIAL_MS = 4000;
+constexpr double LIVE_WINDOW_S = 5.12;
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -402,7 +405,8 @@ struct Tap {
     uint64_t piece = 0;
     size_t live_sent = 0;
     int64_t live_ms = 0, live_due = 0;
-    int64_t live_took_ms = 0;       // the wall time its last partial took
+    int64_t live_took_ms = 0;       // the wall time its last partial took, of how much audio
+    double live_took_s = 0;
     bool live_slow = false;         // its next partial would take too long: none any more
     // 20 ms frame energies of cur (pause search, maybe_cut) + the partial frame
     std::vector<float> fe;
@@ -629,7 +633,9 @@ size_t utf8_len(const std::string& s, size_t i) {
     return i + len <= s.size() ? len : 1;
 }
 // where to cut a word after the first m bytes of its norm_word: its raw
-// index there, the signs right after them kept with the first half
+// index there, the signs right after them kept with the first half; 0 =
+// not at a sign ("ten-four" is cut after "ten-", "Americans" not after
+// "American" - a cut between letters left "s" as a word)
 size_t raw_cut(const std::string& tok, size_t m) {
     size_t i = 0, got = 0;
     while (i < tok.size() && got < m) {
@@ -637,12 +643,13 @@ size_t raw_cut(const std::string& tok, size_t m) {
         got += norm_word(tok.substr(i, len)).size();
         i += len;
     }
+    const size_t letters_end = i;
     while (i < tok.size()) {
         const size_t len = utf8_len(tok, i);
         if (!norm_word(tok.substr(i, len)).empty()) break;
         i += len;
     }
-    return i;
+    return i > letters_end ? i : 0;
 }
 // (w: when the anchor falls inside one of its words - "ten" confirmed, the
 // partial wrote "ten-four" -, that word is cut there into two)
@@ -685,8 +692,10 @@ Anchor anchor_confirmed(std::vector<std::string>& w, const std::vector<std::stri
         if (j + 1 < bpos.size())
             for (size_t m = k + 1; m < bpos[j + 1]; m++)
                 if (!last.empty() && m >= last.size() && S.compare(m - last.size(), last.size(), last) == 0 &&
-                    better(mid, static_cast<long>(j), prev[m], m))
-                    mid = {static_cast<long>(j), prev[m], m};
+                    better(mid, static_cast<long>(j), prev[m], m)) {
+                    const size_t cut = raw_cut(w[j], m - k);   // (only at a sign in the word)
+                    if (cut > 0 && cut < w[j].size()) mid = {static_cast<long>(j), prev[m], m};
+                }
     }
     // inside a word, if clearly better than at a word's end: cut it there
     if (mid.j >= 0 && mid.cost <= any.cost + 2 && (tail.j < 0 || mid.cost < tail.cost)) {
@@ -1137,7 +1146,8 @@ private:
     uint64_t partial_piece_ = 0;
     int64_t partial_sent_ms_ = 0;
     double partial_secs_ = 0;
-    double partial_rate_ = 0;      // the recent partials' wall time per second of audio, ms (0 = none yet)
+    int64_t partial_took_ms_ = 0;  // the latest partial's wall time (0 = none yet), of how much audio
+    double partial_took_s_ = 0;
     uint64_t next_piece_ = 0;
     std::map<uint64_t, LiveRow> live_;
 
@@ -1658,6 +1668,7 @@ void Worker::new_piece(Tap& tap) {
     tap.piece = ++next_piece_;
     tap.live_sent = 0;
     tap.live_ms = tap.live_due = tap.live_took_ms = 0;
+    tap.live_took_s = 0;
     tap.live_slow = false;
 }
 
@@ -1700,10 +1711,14 @@ void Worker::maybe_partial(int64_t t) {
     for (auto& kv : taps_) {
         Tap& tap = kv.second;
         const size_t n = tap.live_len();
-        // how long this piece's next partial is expected to take; too long:
-        // none for it any more (counted once)
-        const double expect_ms = partial_rate_ * n / RATE;
-        if (can && tap.rec && tap.piece && !tap.live_slow && tap.live_ms && expect_ms > LIVE_MAX_PARTIAL_MS) {
+        // how long this piece's next partial is expected to take (LIVE_WINDOW_S);
+        // too long: none for it any more (counted once)
+        const bool own = tap.live_took_ms > 0;
+        const double took = static_cast<double>(own ? tap.live_took_ms : partial_took_ms_);
+        const double expect_ms = took * std::max(n / static_cast<double>(RATE), LIVE_WINDOW_S) /
+                                 std::max(own ? tap.live_took_s : partial_took_s_, LIVE_WINDOW_S);
+        if (can && tap.rec && tap.piece && !tap.live_slow && n >= static_cast<size_t>(LIVE_FIRST_S * RATE) &&
+            expect_ms > LIVE_MAX_PARTIAL_MS) {
             tap.live_slow = true;
             std::lock_guard<std::mutex> lk(s_.st_mu);
             s_.partials_slow++;
@@ -1757,15 +1772,18 @@ void Worker::on_partial(const char* p, size_t len) {
     memcpy(&ms, p + 4, 4);
     if (id != partial_id_) return;
     has_partial_ = false;
-    // its wall time per second of audio (sending, queueing, decoding): the
-    // next partials' expected time (maybe_partial)
-    const int64_t took = now_ms() - partial_sent_ms_;
-    const double rate = static_cast<double>(took) / std::max(1.0, partial_secs_);
-    partial_rate_ = partial_rate_ > 0 ? 0.7 * partial_rate_ + 0.3 * rate : rate;
+    // its wall time (sending, queueing, decoding): the next partials' step
+    // and expected time (maybe_partial)
+    const int64_t took = std::max<int64_t>(1, now_ms() - partial_sent_ms_);
+    partial_took_ms_ = took;
+    partial_took_s_ = partial_secs_;
     std::string text(p + 12, len - 12);
     while (!text.empty() && text.back() == '\0') text.pop_back();
     auto it = taps_.find(partial_vfo_);
-    if (it != taps_.end() && it->second.piece == partial_piece_) it->second.live_took_ms = took;   // its next step
+    if (it != taps_.end() && it->second.piece == partial_piece_) {
+        it->second.live_took_ms = took;   // its next step
+        it->second.live_took_s = partial_secs_;
+    }
     const bool fresh = live_on_ && it != taps_.end() && it->second.rec && it->second.piece == partial_piece_;
     {
         std::lock_guard<std::mutex> lk(s_.st_mu);
@@ -1835,7 +1853,7 @@ void Worker::start_helper(const Config& c, int64_t t) {
     ready_ = false;
     proc_model_ = c.model;
     sent_valid_ = false;
-    partial_rate_ = 0;   // (another model, threads: measured anew)
+    partial_took_ms_ = 0;   // (another model, threads: measured anew)
     set_state("starting");
     std::cout << "Voice to Text: helper started, model " << c.model << (vad.empty() ? " (no VAD model)" : "")
               << std::endl;
