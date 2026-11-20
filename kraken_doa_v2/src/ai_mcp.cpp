@@ -1,3 +1,4 @@
+#include "sweep.hpp"
 #include "ai_mcp.hpp"
 
 #include <algorithm>
@@ -230,7 +231,16 @@ void page_tell(const std::string& op, const std::string& args_json) {
 // The receiver, as the tools see it (uWS loop thread)
 // ---------------------------------------------------------------------------
 const char* mode_name() {
-    return independent_mode_enabled.load() ? "independent" : wideband_mode_enabled.load() ? "wideband" : "coherent";
+    return sweep_mode_enabled.load() ? "sweep" : independent_mode_enabled.load() ? "independent"
+         : wideband_mode_enabled.load() ? "wideband" : "coherent";
+}
+
+// Sweep mode: the tuners step through a range and the receiver draws one wide
+// spectrum - nothing is tuned, demodulated, decoded or captured
+std::string sweep_refusal(const char* what) {
+    if (!sweep_mode_enabled.load()) return "";
+    return std::string("The receiver is in sweep mode (") + sweep::summary() + ") - " + what +
+           " isn't possible there; the user switches the Mode (Coherent / Wideband / Independent) to tune and listen";
 }
 
 double tuner_center_hz(int tuner) {
@@ -427,7 +437,10 @@ std::string screen_json(const std::string& view_json) {
     if (server_generic_rtlsdr.load())
         o << ",\"generic_rtlsdr\":true,\"coherent_available\":false";
     const bool multi = multi_tuner_mode();
-    if (!multi) {
+    if (sweep_mode_enabled.load()) {
+        o << ",\"sweep\":" << q(sweep::summary()) << ",\"sweep_note\":"
+          << q("a frequency sweep: get_spectrum returns the swept range; no VFO audio, decoders, DoA or IQ capture");
+    } else if (!multi) {
         double lo = 0, hi = 0;
         o << ",\"center_hz\":" << num(tuner_center_hz(0), 0) << ",\"gain_db\":"
           << num(ChannelManager::get_gain(active_channel.load()), 1);
@@ -579,6 +592,22 @@ std::string spectrum_json(const std::vector<float>& db, double f0, double step, 
 }
 
 void t_get_spectrum(const Json& a, Reply r) {
+    if (sweep_mode_enabled.load()) {
+        // the sweep's spectrum (its latest measurement of every hop), pooled
+        const double lo = num_arg(a, "start_hz", 0), hi = num_arg(a, "stop_hz", 0);
+        const int points = static_cast<int>(std::clamp(num_arg(a, "points", 256), 8.0, 1024.0));
+        std::vector<float> db;
+        double first = 0, step = 0, bin = 0;
+        if (!sweep::pooled_db(lo, hi, points, db, &first, &step, &bin) || db.empty())
+            return r("No sweep measured yet (" + sweep::summary() + ")", true);
+        for (float& v : db)
+            if (!is_finite_value(v)) v = 0.0f;   // never measured
+        std::string j = spectrum_json(db, first, step, first + step * (static_cast<double>(db.size()) - 1) / 2, 0,
+                                      static_cast<long>(db.size()) - 1, points, num_arg(a, "min_db", 6), -1, 0, 0);
+        j.insert(1, "\"sweep\":" + q(sweep::summary() + " - levels max-pooled from the sweep's " +
+                                       num(bin, 1) + " Hz bins") + ",");
+        return r(j, false);
+    }
     const SpectrumSnapshot& s = MessageBuilders::spectrum_snapshot();
     int di = 0, tuner = -1;
     if (s.independent) {
@@ -935,6 +964,7 @@ void t_search_log(const Json& a, Reply r) {
 }
 
 void t_capture(const Json& a, Reply r) {
+    if (auto e = sweep_refusal("an IQ capture"); !e.empty()) return r(e, true);
     double hz = num_arg(a, "freq_hz", 0), rate = num_arg(a, "rate_hz", 0);
     const double secs = std::clamp(num_arg(a, "seconds", 10), 1.0, 60.0);
     int tuner = 0;
@@ -1168,6 +1198,7 @@ std::string set_bw(int id, double hz, double* applied = nullptr, bool at_least =
 std::string move_vfo(int id, double hz) {
     Vfo v;
     if (!find_vfo(id, &v)) return "no VFO D" + std::to_string(id);
+    if (auto e = sweep_refusal("moving a VFO"); !e.empty()) return e;
     if (wideband_mode_enabled.load())
         return "the receiver is in wideband scan mode - VFOs are placed by the scanner there (switch to coherent mode)";
     if (independent_mode_enabled.load()) {
@@ -1294,6 +1325,7 @@ void t_tune(const Json& a, Reply r) {
     if (auto e = readonly_refusal(); !e.empty()) return r(e, true);
     const double hz = num_arg(a, "freq_hz", 0);
     if (!(hz > 0)) return r("freq_hz needed", true);
+    if (auto e = sweep_refusal("tuning"); !e.empty()) return r(e, true);
     if (wideband_mode_enabled.load()) return r("The receiver is in wideband scan mode (tuners spread by the scan) - not tuned", true);
     std::string e;
     const bool indep = independent_mode_enabled.load();
@@ -1341,13 +1373,14 @@ void t_set_gain(const Json& a, Reply r) {
     }
     if (!e.empty()) return r("Refused: " + e, true);
     r("Gain set to " + (g < 0 ? std::string("auto (AGC)") : num(g, 1) + " dB") +
-      (independent_mode_enabled.load() ? "" : " - the array recalibrates after a gain change (a few seconds)"), false);
+      (multi_tuner_mode() ? "" : " - the array recalibrates after a gain change (a few seconds)"), false);
 }
 
 void t_add_vfo(const Json& a, Reply r) {
     if (auto e = readonly_refusal(); !e.empty()) return r(e, true);
     const double hz = num_arg(a, "freq_hz", 0);
     if (!(hz > 0)) return r("freq_hz needed", true);
+    if (auto e = sweep_refusal("a VFO"); !e.empty()) return r(e, true);
     if (wideband_mode_enabled.load()) return r("The receiver is in wideband scan mode - switch to coherent first", true);
     if (display_for(hz) < 0) return r(mhz(hz) + " MHz is outside the band the receiver shows - tune there first", true);
     int before = -1;

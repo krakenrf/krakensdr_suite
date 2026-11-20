@@ -1224,7 +1224,8 @@ std::string start(int vfo) {
     std::lock_guard<std::mutex> lk(g_life);
     if (g_run.load()) return "the scan is already running";
     if (playback::active()) return "a playback is running - the receiver can't be tuned";
-    const int mode = operating_mode_index();   // 0 coherent, 1 wideband scan, 2 independent
+    const int mode = operating_mode_index();   // 0 coherent, 1 wideband scan, 2 independent, 3 sweep
+    if (mode == 3) return "not in sweep mode - the tuners follow the sweep (Mode: Coherent / Wideband / Independent)";
     if (vfo < 0 || !decimator_manager.getDecimator(vfo)) {
         vfo = -1;
         for (const auto& d : decimator_manager.getDecimatorInfoList()) { vfo = d.id; break; }

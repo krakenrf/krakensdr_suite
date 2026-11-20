@@ -1,3 +1,4 @@
+#include "sweep.hpp"
 #include "networking/websocket_server.hpp"
 #include "ai_mcp.hpp"
 #include "playback.hpp"
@@ -67,6 +68,13 @@ struct PerSocketData {
     std::array<SpecView, 1 + MAX_CHANNELS> views{};  // 0 = main, 1 + ch = tuner ch
     double main_step_hz = 0;   // point spacing of its last main frame (beamformed overlays follow it)
     bool bin_doa = false;      // 🎨 BIN_DOA_VIEW:1 - it takes type 9 frames (bin_doa.hpp)
+    // Sweep mode (SWEEP_VIEW:, type 10 - sweep.hpp): the window this page
+    // shows; a frame goes when the sweep's data, its pause or the view changed
+    bool sweep_view = false;
+    sweep::View sweep{};
+    bool sweep_dirty = false;
+    uint64_t sweep_version = 0;
+    uint32_t sweep_completions = 0;
 };
 
 // Data-stream subscription bits (the heavy/optional streams).
@@ -158,6 +166,7 @@ std::unordered_map<ClientWS*, int64_t> g_pending_auth;           // socket -> op
 std::unordered_set<ClientWS*> g_spec_sockets;  // sockets with spectrum views (uWS loop only)
 std::unordered_set<ClientWS*> g_video_sockets;  // sockets subscribed to decoder video (uWS loop only)
 std::unordered_set<ClientWS*> g_bin_doa_sockets;  // 🎨 sockets taking type 9 (uWS loop only)
+std::unordered_set<ClientWS*> g_sweep_sockets;    // sockets with a sweep view, type 10 (uWS loop only)
 std::unordered_map<std::string, std::pair<int, int64_t>> g_auth_failures;  // ip -> (count, window start)
 
 int64_t steady_ms() {
@@ -291,12 +300,75 @@ void handle_fft_view(WS* ws, string_view args) {
     }
 }
 
+constexpr unsigned SPEC_MAX_BUFFERED = 256 * 1024;   // a frame skipped past this (types 7 / 9 / 10)
+
+// SWEEP_VIEW:<seq>:<lo Hz>:<hi Hz>:<points> (sweep mode; transport level,
+// this connection only, like FFT_VIEW): the window the page shows (absolute
+// Hz, lo >= hi = the whole range) at its plot's width. Junk is ignored.
+template<typename WS>
+void handle_sweep_view(WS* ws, string_view args) {
+    string_view f[4];
+    for (int i = 0; i < 4; i++) {
+        const size_t c = args.find(':');
+        if (i < 3 && c == string_view::npos) return;
+        f[i] = args.substr(0, c);
+        args = c == string_view::npos ? string_view() : args.substr(c + 1);
+    }
+    uint32_t seq = 0, points = 0;
+    double lo = 0, hi = 0;
+    auto num = [](string_view t, auto& v) {
+#if !defined(__cpp_lib_to_chars)
+        if constexpr (std::is_floating_point_v<std::remove_reference_t<decltype(v)>>) {
+            if (t.empty() || t.size() > 64 || !(std::isdigit(static_cast<unsigned char>(t[0])) || t[0] == '-' || t[0] == '.'))
+                return false;
+            const std::string s(t);
+            char* end = nullptr;
+            v = std::strtod(s.c_str(), &end);
+            return end == s.c_str() + s.size();
+        } else
+#endif
+        {
+            auto r = std::from_chars(t.data(), t.data() + t.size(), v);
+            return r.ec == std::errc() && r.ptr == t.data() + t.size();
+        }
+    };
+    if (!num(f[0], seq) || !num(f[1], lo) || !num(f[2], hi) || !num(f[3], points)) return;
+    if (!is_finite_value(lo) || !is_finite_value(hi) || std::abs(lo) > 1e10 || std::abs(hi) > 1e10 || points > 65536) return;
+    PerSocketData* ud = ws->getUserData();
+    ud->sweep = {seq, lo, hi, points};
+    ud->sweep_dirty = true;   // answered on the next tick (also while paused)
+    if (!ud->sweep_view) {
+        ud->sweep_view = true;
+        ud->sweep_completions = sweep::completions();   // its first frame is no waterfall line
+        g_sweep_sockets.insert(ws);
+    }
+}
+
+// Sweep mode, every 50 ms tick: each page with a sweep view gets a frame when
+// something changed (at most 20 a second while hops arrive); a completed sweep
+// marks its frame (flag 2: the page's waterfall line). A slow link skips
+void send_sweep_views() {
+    const uint64_t ver = sweep::data_version();
+    const uint32_t done = sweep::completions();
+    for (ClientWS* ws : g_sweep_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        if (!(ud->sub_mask & SUB_FFT) || ws->getBufferedAmount() > SPEC_MAX_BUFFERED) continue;
+        const bool completes = ud->sweep_completions != done;
+        if (!ud->sweep_dirty && !completes && ud->sweep_version == ver) continue;
+        const string m = sweep::build_frame(ud->sweep, completes);
+        if (m.empty()) continue;
+        ws->send(m, uWS::BINARY, true);
+        ud->sweep_dirty = false;
+        ud->sweep_version = ver;
+        ud->sweep_completions = done;
+    }
+}
+
 // Each page with views gets every display of the current mode (independent:
 // one frame per tuner, else the main one), cut to its window and width, and
 // the beamformed overlays (coherent mode) at its main frame's point spacing -
 // zoomed in, they get finer with the spectrum. A slow link drops frames
 // instead of queueing them: uWS closes a socket past maxBackpressure (2 MB)
-constexpr unsigned SPEC_MAX_BUFFERED = 256 * 1024;
 void send_spectrum_views(const SpectrumSnapshot& snap, const vector<BeamformedSpectrum>& bfs) {
     const int first = snap.independent ? 1 : 0;
     const int last = snap.independent ? std::min<int>(snap.channels, MAX_CHANNELS) : 0;
@@ -914,6 +986,12 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 handle_fft_view(ws, message.substr(9));
                 return;
             }
+            // SWEEP_VIEW:<seq>:<lo Hz>:<hi Hz>:<points> - sweep mode's window
+            // (type 10 frames; an older page never sends it)
+            if (message.starts_with("SWEEP_VIEW:")) {
+                handle_sweep_view(ws, message.substr(11));
+                return;
+            }
             // 🎨 BIN_DOA_VIEW:1|0 (transport-level, this connection only):
             // the page takes type 9 frames with its main view's frames
             // (bin_doa.hpp); answered with the mode's state
@@ -933,6 +1011,7 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         .close = [](auto* ws, int code, string_view reason) {
             g_pending_auth.erase(ws);
             g_spec_sockets.erase(ws);
+            g_sweep_sockets.erase(ws);
             g_video_sockets.erase(ws);
             dig::set_video_wanted(!g_video_sockets.empty());
             if (g_bin_doa_sockets.erase(ws)) bin_doa::set_viewers(static_cast<int>(g_bin_doa_sockets.size()));
@@ -965,6 +1044,12 @@ void WebSocketServer::web_server_main() {
                 doa_timer = us_create_timer(native_loop, 0, 0);
                 
                 us_timer_set(broadcast_timer, [](struct us_timer_t* /*timer*/) {
+                    // Sweep mode: the sweep frames only - no regular spectrum
+                    // (nothing is FFT'd but the sweep's hops)
+                    if (sweep_mode_enabled.load(std::memory_order_relaxed)) {
+                        if (global_ssl_app && !g_sweep_sockets.empty()) send_sweep_views();
+                        return;
+                    }
                     if (global_ssl_app && data_ready) {
                         // built every tick (it feeds the scanners); encoded
                         // only for pages without spectrum views
@@ -1015,8 +1100,8 @@ void WebSocketServer::web_server_main() {
                 us_timer_set(audio_timer, [](struct us_timer_t* /*timer*/) {
                     if (!global_ssl_app) return;
 
-                    if (!fm_enabled.load()) {
-                        return;
+                    if (!fm_enabled.load() || sweep_mode_enabled.load(std::memory_order_relaxed)) {
+                        return;   // (sweep mode: nothing is demodulated)
                     }
 
                     static int64_t due_us = 0;

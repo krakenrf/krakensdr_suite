@@ -9,6 +9,7 @@
 #include "playback.hpp"
 #include "recorder.hpp"
 #include "ai_capture.hpp"
+#include "sweep.hpp"
 #include "utils/thread_pool.hpp"
 #include "utils/parse_num.hpp"
 #include "globals.hpp"
@@ -155,6 +156,9 @@ void DataReceiver::data_receiver_thread() {
         } else {
             raw_data_buffer.clear();
             cout << "Connected to Heimdall data port" << endl;
+            // sweep mode: the plan again (a restarted heimdall may hold another)
+            if (settings_restored && sweep_mode_enabled.load() && loop)
+                loop->defer([] { ControlHandler::send_sweep_plan(); });
         }
 
         if (!pb && !settings_restored) {
@@ -240,9 +244,12 @@ void DataReceiver::data_receiver_thread() {
                 // every downstream phase-state comparison keeps working.
                 server_kerberos_mode.store((phase_comp_state & 0x100u) != 0, std::memory_order_relaxed);
                 server_cal_stale.store((phase_comp_state & 0x200u) != 0, std::memory_order_relaxed);
-                // Bits 10 / 11: heimdall's operating mode (wideband scan /
-                // independent), acted on after the sanity gate below
-                const int hmode = (phase_comp_state & 0x800u) ? 2 : (phase_comp_state & 0x400u) ? 1 : 0;
+                // Bits 10 / 11 / 13: heimdall's operating mode (wideband scan /
+                // independent / sweep - sweep comes with 0x800, so a client
+                // that doesn't know it sees independent tuners), acted on after
+                // the sanity gate below
+                const int hmode = (phase_comp_state & 0x2000u) ? 3 : (phase_comp_state & 0x800u) ? 2
+                                : (phase_comp_state & 0x400u) ? 1 : 0;
                 // Bit 12: generic RTL-SDRs, no KrakenSDR (no coherent mode).
                 // Stored after the sanity gate below (a false magic match
                 // must not flip it); bits above it are ignored
@@ -282,8 +289,14 @@ void DataReceiver::data_receiver_thread() {
                 {
                     static bool mode_bits_seen = false;
                     if (hmode) mode_bits_seen = true;
+                    // sweep mode asked for: heimdall's header shows it soon, or
+                    // heimdall doesn't know it (an older one: fall back)
+                    if (!pb) ControlHandler::note_sweep_header(hmode);
                     if (mode_bits_seen) ControlHandler::note_server_mode(hmode);
                 }
+                // Sweep mode: the tuners hop ~20 times a second - none of the
+                // per-retune lines below
+                const bool sweeping = sweep_mode_enabled.load(std::memory_order_relaxed);
 
                 // Track phase calibration state changes for logging
                 static uint32_t last_phase_state = 0;
@@ -305,7 +318,7 @@ void DataReceiver::data_receiver_thread() {
 
                 if (was_retuning && !is_retuning) {
                     // Retuning just completed
-                    cout << "[RETUNING] *** RETUNING COMPLETE *** Data flow should resume now!" << endl;
+                    if (!sweeping) cout << "[RETUNING] *** RETUNING COMPLETE *** Data flow should resume now!" << endl;
 
                     // Hold DoA for the settling window that follows (see
                     // g_last_retune_complete_ms)
@@ -343,10 +356,11 @@ void DataReceiver::data_receiver_thread() {
                 // counter bump is always visible (the post-retune cooldown
                 // after it is held on heimdall's phase state).
                 if (!first_packet && frequency_change_counter != last_frequency_change_counter) {
-                    cout << "Server frequency change detected! Counter: " << last_frequency_change_counter
-                         << " → " << frequency_change_counter
-                         << ", Group: " << current_group_index
-                         << ", Retuning: " << (is_retuning ? "YES" : "NO") << endl;
+                    if (!sweeping)
+                        cout << "Server frequency change detected! Counter: " << last_frequency_change_counter
+                             << " → " << frequency_change_counter
+                             << ", Group: " << current_group_index
+                             << ", Retuning: " << (is_retuning ? "YES" : "NO") << endl;
                     g_last_retune_complete_ms.store(steady_now_ms(), std::memory_order_relaxed);
                     last_frequency_change_counter = frequency_change_counter;
                 } else if (first_packet) {
@@ -404,9 +418,10 @@ void DataReceiver::data_receiver_thread() {
                     if (last_ref_freq_hz != 0.0f && ref_freq_hz != 0.0f &&
                         std::abs(ref_freq_hz - last_ref_freq_hz) > 1.0f) {
                         g_last_retune_complete_ms.store(steady_now_ms(), std::memory_order_relaxed);
-                        cout << "[DoA] Reference frequency changed ("
-                             << last_ref_freq_hz / 1e6f << " -> " << ref_freq_hz / 1e6f
-                             << " MHz) - holding DoA until heimdall recalibrates" << endl;
+                        if (!sweeping)
+                            cout << "[DoA] Reference frequency changed ("
+                                 << last_ref_freq_hz / 1e6f << " -> " << ref_freq_hz / 1e6f
+                                 << " MHz) - holding DoA until heimdall recalibrates" << endl;
                     }
                     if (ref_freq_hz != 0.0f) last_ref_freq_hz = ref_freq_hz;
                 }
@@ -440,6 +455,47 @@ void DataReceiver::data_receiver_thread() {
                                      noise_source != 0, is_retuning, rf, rg);
                 }
 
+                // Sync active_num_elements from the wire header BEFORE the
+                // gates below, so a runtime element-count change on the server
+                // applies from this very packet (MUSIC, beamformer and the UI
+                // all follow this atomic).
+                // One channel is a single generic RTL-SDR dongle (independent
+                // mode): the tuner count everything outside coherent follows
+                // (panes, TUNER_FREQ, the saved-frequency scan). MUSIC and the
+                // beamformer need >= 2 and stay off (packet_elements >= 2).
+                // Called after the retuning skip below, as before; in sweep
+                // mode for every packet (the sweep's plan follows the count)
+                auto sync_elements = [&]() {
+                    int elems = active_num_elements.load(std::memory_order_relaxed);
+                    if (static_cast<int>(channels) != elems && channels >= 1 && channels <= MAX_CHANNELS) {
+                        cout << "Active elements synced from server: " << elems << " → " << channels << endl;
+                        active_num_elements.store(channels, std::memory_order_release);
+                        elems = static_cast<int>(channels);
+                        // VFOs on a tuner that is gone move to tuner 0 (and the sweep's plan follows)
+                        if (loop) loop->defer([] { ControlHandler::clamp_vfo_tuners(); });
+                    }
+                    if (replay_pending && !pb) start_replay();   // the count + flags are heimdall's now
+                    return elems;
+                };
+
+                // Sweep mode: the sweep engine is the only consumer (sweep.hpp) -
+                // nothing is converted, decimated, FFT'd or demodulated here
+                if (sweeping && !pb) {
+                    for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++)
+                        tuner_frequencies[ch].store(static_cast<uint64_t>(ch_freq_hz[ch]), std::memory_order_relaxed);
+                    sync_elements();
+                    // the common gain as heimdall runs it: the pages learn a change
+                    // (another page's, the assistant's) from the sweep message
+                    if (sweep::note_gain(EndianUtils::read_le_float(buffer.data(), offset + 32 + 4), true) && loop)
+                        loop->defer([] { WebSocketServer::broadcast_json_message(sweep::state_json()); });
+                    sweep::on_packet(buffer.data() + offset + header_size, channels, samples, ch_freq_hz.data(),
+                                     frequency_change_counter, current_group_index, is_retuning);
+                    num_channels = channels;
+                    data_ready = true;
+                    offset += packet_size;
+                    continue;
+                }
+
                 // SKIP PROCESSING if server is currently retuning (data contains noise)
                 // Only advance past the packet without processing it
                 if (is_retuning) {
@@ -452,23 +508,7 @@ void DataReceiver::data_receiver_thread() {
                     continue;  // Skip to next packet - don't process noisy settling data
                 }
 
-                // Sync active_num_elements from the wire header BEFORE the
-                // gates below, so a runtime element-count change on the server
-                // applies from this very packet (MUSIC, beamformer and the UI
-                // all follow this atomic).
-                // One channel is a single generic RTL-SDR dongle (independent
-                // mode): the tuner count everything outside coherent follows
-                // (panes, TUNER_FREQ, the saved-frequency scan). MUSIC and the
-                // beamformer need >= 2 and stay off (packet_elements >= 2).
-                int current_elements = active_num_elements.load(std::memory_order_relaxed);
-                if (static_cast<int>(channels) != current_elements && channels >= 1 && channels <= MAX_CHANNELS) {
-                    cout << "Active elements synced from server: " << current_elements << " → " << channels << endl;
-                    active_num_elements.store(channels, std::memory_order_release);
-                    current_elements = static_cast<int>(channels);
-                    // VFOs on a tuner that is gone move to tuner 0
-                    if (loop) loop->defer([] { ControlHandler::clamp_vfo_tuners(); });
-                }
-                if (replay_pending && !pb) start_replay();   // the count + flags are heimdall's now
+                const int current_elements = sync_elements();
 
                 // OPTIMIZATION: Determine which channels to convert upfront
                 // Use relaxed memory ordering for 5-10% faster atomic loads (flags don't need strict ordering)
@@ -1411,7 +1451,8 @@ void DataReceiver::fm_processor_thread() {
             })) {
                 consecutive_timeouts++;
                 // Log if FM data stops flowing
-                if (consecutive_timeouts == 20) {  // 2 seconds of no data
+                // (sweep mode: nothing is demodulated - no data is right)
+                if (consecutive_timeouts == 20 && !sweep_mode_enabled.load(std::memory_order_relaxed)) {  // 2 s of no data
                     cout << "FM processor: No data for 2s - check decimation pipeline" << endl;
                 } else if (consecutive_timeouts % 100 == 0) {  // Every 10 seconds
                     cout << "FM processor: No data for " << (consecutive_timeouts / 10) << "s" << endl;
@@ -1553,6 +1594,7 @@ static void drain_control_socket_locked() {
             wb_board_ingest(scratch, static_cast<size_t>(n));
             heimdall_version_ingest(scratch, static_cast<size_t>(n));
             antbias::ingest(scratch, static_cast<size_t>(n));
+            ControlHandler::ingest_sweep_reply(scratch, static_cast<size_t>(n));   // an older heimdall's refusal
             if (static_cast<size_t>(n) < sizeof(scratch)) break;  // drained
             continue;                                             // more waiting
         }

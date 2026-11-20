@@ -52,6 +52,17 @@ public:
     // or another control client switched it). Thread-safe.
     static void note_server_mode(int mode);
 
+    // Sweep mode (sweep.hpp). Data receiver, every packet: heimdall's mode
+    // from the header (3 = sweep, flag 0x2000) - after OPERATING_MODE:sweep a
+    // heimdall that never shows the flag (an older one: it answered an error)
+    // gets the client back to its mode with the reason. Thread-safe.
+    static void note_sweep_header(int hmode);
+    // heimdall's control-port replies (data receiver, drain): an error just
+    // after the client asked for sweep mode is its reason. Thread-safe.
+    static void ingest_sweep_reply(const char* data, size_t n);
+    // The sweep's plan to heimdall (set_sweep) - on a reconnect. uWS loop only.
+    static void send_sweep_plan();
+
     // Generic RTL-SDR mode (server_generic_rtlsdr, header bit 12) switched
     // on / off: tells the pages (operating_mode carries generic_rtlsdr).
     // uWS loop only (the data receiver defers it).

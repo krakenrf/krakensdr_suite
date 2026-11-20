@@ -34,6 +34,7 @@
 #include "vfo_level.hpp"
 #include "array_cal.hpp"
 #include "recorder.hpp"
+#include "sweep.hpp"
 #include "power.hpp"
 #include "digital/dig_plugin.hpp"
 #include <iostream>
@@ -78,6 +79,7 @@ atomic<int> ws_client_count{0};  // live browser WebSocket client count (dashboa
 // Wideband scan mode
 atomic<bool> wideband_mode_enabled{false};
 atomic<bool> independent_mode_enabled{false};
+atomic<bool> sweep_mode_enabled{false};
 atomic<bool> doa_enabled_before_wideband{false};  // DoA state before leaving coherent mode
 atomic<double> indep_tuner_freq_hz[8] = {};
 atomic<uint64_t> requested_freq_hz{0};
@@ -369,6 +371,9 @@ int main(int argc, char* argv[]) {
     // 📼 IQ & audio recorder (recordings folder; nothing runs until asked)
     rec::start();
 
+    // Sweep mode's engine (sweep.hpp): idle until the mode is entered
+    sweep::start();
+
     // Start worker threads
     thread data_worker(DataReceiver::data_receiver_thread);
     thread decimation_worker(DataReceiver::decimation_processor_thread);
@@ -513,6 +518,7 @@ int main(int argc, char* argv[]) {
     // Join the processing threads (all poll `running`)
     if (decimation_worker.joinable()) decimation_worker.join();
     if (fm_worker.joinable()) fm_worker.join();
+    sweep::stop();
 
     for (auto& fft_thread : fft_workers) {
         if (fft_thread.joinable()) fft_thread.join();

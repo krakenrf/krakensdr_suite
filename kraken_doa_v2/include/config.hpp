@@ -42,6 +42,24 @@ constexpr float SAMPLE_RATE = 2.4e6f; // 2.4 MSPS
 // is rejected. The Wideband variant uses wb_variant_rf_union_range instead.
 constexpr uint64_t RTL_TUNER_MIN_HZ = 24000000ULL;
 constexpr uint64_t RTL_TUNER_MAX_HZ = 1766000000ULL;
+// Sweep mode (src/sweep.cpp, docs/dev/sweep-mode.md "The contract"): FFT
+// size N (a power of two) -> bin fs / N; every hop contributes its centre
+// N * 51 / 64 bins, so the hops are SWEEP_STEP_HZ apart for every N. The
+// range keeps the last hop's centre below the tuners' 1766 MHz.
+constexpr int64_t SWEEP_STEP_HZ = 1912500;
+constexpr int64_t SWEEP_MIN_HZ = 24000000;
+constexpr int64_t SWEEP_MAX_HZ = 1765000000;
+constexpr int64_t SWEEP_MIN_SPAN_HZ = 100000;
+constexpr int SWEEP_FFT_MIN = 128;
+constexpr int SWEEP_FFT_MAX = 16384;
+// The bins of one sweep: SWEEP_RES:<N> takes a smaller N when its sweep
+// would hold more (the applied size is reported as fft_size); auto picks the
+// largest N whose sweep holds at most SWEEP_AUTO_BINS
+constexpr int64_t SWEEP_MAX_BINS = 1 << 22;
+constexpr int64_t SWEEP_AUTO_BINS = 1 << 19;
+constexpr int SWEEP_DWELL_MIN_MS = 5;
+constexpr int SWEEP_DWELL_MAX_MS = 1000;
+constexpr int SWEEP_DWELL_DEFAULT_MS = 20;
 constexpr int DECIMATION_FACTOR = 10;
 // IMPORTANT: If browser uses different rate, change this to match!
 // Common rates: 44100 (CD quality), 48000 (professional), 96000 (high-end)
