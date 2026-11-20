@@ -1543,13 +1543,14 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
     if (target == OperatingMode::COHERENT) {
         operating_mode = OperatingMode::COHERENT;
         wideband_config.enabled = false;
-        // After a sweep: its L1 flushes (~20 a second) re-pair the streams at
-        // a quiet point, but one that found none may have slipped a channel
-        // by a whole packet - beyond what the phase-only recalibration below
-        // (lag kept CONVERGED) can repair. No sweep flush runs after the
-        // quiesce; then flush once more and require the quiet point (3
-        // tries), else the coherence recovery (flush + full lag + phase
-        // recalibration; --kerberos: uncalibrated).
+        // After a sweep: its gates drop each stream's packets on their own
+        // (no quiet point), so the streams may be a whole packet apart -
+        // beyond what the phase-only recalibration below (lag kept
+        // CONVERGED) can repair. No sweep gate or flush runs after the
+        // quiesce, which also ends the sweep's fast tunes
+        // (rtlsdr_finish_tune); then flush once more and require the quiet
+        // point (3 tries), else the coherence recovery (flush + full lag +
+        // phase recalibration; --kerberos: uncalibrated).
         bool repaired = true;
         const bool after_sweep = repair_after_sweep;
         if (repair_after_sweep) {

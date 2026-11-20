@@ -79,7 +79,10 @@ Coherence
   per-device drop shifts that channel by a full packet, which no
   compensation can represent. When the callback or the drain can't keep up
   (L1 overflow, pool exhaustion, a stuck device), call
-  `signal_coherence_lost()` and let the watchdog recover.
+  `signal_coherence_lost()` and let the watchdog recover. The one exception
+  is sweep mode's gate, which drops per dongle (pairing doesn't matter
+  there); leaving sweep for coherent re-pairs with
+  `clear_l1_buffer_paired()`.
 - The RTL callback is allocation-free (`BufferPool::try_acquire`).
 - The queue size counters (`l1_buffer_size`, `l2_buffer_size`,
   `l2_raw_buffer_size`) change only by matched `fetch_add` / `fetch_sub`.
@@ -155,9 +158,21 @@ Hardware and replies
   holds only samples taken at the header's per-channel frequencies, after
   the settle - clients build on it. The flag goes on before a tuner moves,
   a tuner's frequency is stored only once it took it, the header reads the
-  frequencies before the flag, and the flag is cleared only after the
-  post-settle flush (under `settings_mutex`). No output per hop; its
-  flushes are the quiet ones and never count as coherence losses.
+  frequencies before the flag, and the flag is cleared only after the gate
+  (`sweep_gate_l1`: every dongle's packets that can hold a sample from
+  before retune end + settle are dropped, judged by that stream's
+  earliest-arrival line - every kept sample is from that instant minus the
+  fastest USB delivery or later) and the downstream flush (under
+  `settings_mutex`). A silent dongle keeps the flag at 1 (status
+  `stalled_tuners`). No output per hop; its flushes are quiet and never
+  count as coherence losses. Hops use the fast tune call; the tuners are
+  finished (`rtlsdr_finish_tune`) whenever the sweep stops moving them,
+  before any calibration.
+- The fork's retunes no longer shift a stream (`RTLSDR_NO_STREAM_SLIP`: a
+  USB control IN of 3, 7, 11 ... bytes made the RTL2832U drop 2 samples -
+  `../docs/dev/librtlsdr-fork.md`). With an older library heimdall still
+  re-acquires every lag after unequal retunes; don't add a control read of
+  such a length anywhere while streaming.
 
 Persistence (`heimdall_settings.conf`)
 - The last user tuning (frequency, gain) is saved after 10 s unchanged and
