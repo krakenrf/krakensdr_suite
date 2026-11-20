@@ -772,8 +772,10 @@ Model B, 1 GB, Cortex-A72, Raspberry Pi OS / Debian 13, gcc 14):
   an existing install gets it with `make whisper`. Forced ON on the Pi 4:
   fetched and built (4 min 44 s, -j2; binary 2.18 vs 1.98 MB), 8 of 8
   transcripts identical to the build without it at the same speed (its
-  kernels are not picked on a CPU without dot-product). A Pi 5 - where it
-  matters - was not available: NOT measured.
+  kernels are not picked on a CPU without dot-product). On the Pi 5
+  (below): setup.sh switched it on by itself ("this CPU has the
+  dot-product instructions"), READY's system line says `DOTPROD = 1 | ...
+  | KLEIDIAI = 1`, and it saves 15-21 % on the q8_0 models.
 - Pi 4 (serve mode, the 15 bench clips, VAD on, CPU-s per job and word
   error rate vs medium.en-q5_0; 2 threads; each run started below 65 C,
   two rounds in rotated order agreed within 0.2 %):
@@ -806,6 +808,41 @@ Model B, 1 GB, Cortex-A72, Raspberry Pi OS / Debian 13, gcc 14):
 - The test Pi 4 throttled in the first, back-to-back runs (83 C,
   `get_throttled` 0xe0008): sustained transcription on a Pi 4 needs
   cooling.
+- Pi 5 (2026-11-20, the user: "I've plugged in a Pi 5 now ... Benchmark
+  KleidiAI on that"; Raspberry Pi 5 Model B Rev 1.1, Cortex-A76 with
+  `asimddp` / `asimdhp`, 8 GB, fan; the same SD image). Two builds of the
+  same sources: setup.sh's own choice (KleidiAI ON, 1 min 25 s, -j3) and
+  `KLEIDIAI=off` (1 min 5 s), both `-mcpu=cortex-a76+...+dotprod`; the old
+  helper against the OFF build's libraries. Serve mode, the 15 clips, 2
+  threads, each run started below 50 C, two rounds (the 2nd in reverse
+  order) agreed within 0.01 s, never throttled (max 56 C):
+
+  | model | KleidiAI ON | OFF | ON vs OFF | WER (ON) |
+  |---|---|---|---|---|
+  | old helper (main), base.en | - | 6.23 s | | 11.1 % |
+  | base.en | 1.84 s | 1.83 s | 0 | 11.1 % |
+  | base.en-q8_0 | 0.92 s | 1.08 s | -15 % | 12.5 % |
+  | base.en-q4_0 | 1.34 s | 1.29 s | +4 % | 6.9 % |
+  | small.en | 6.55 s | 6.53 s | 0 | 7.4 % |
+  | small.en-q8_0 | 2.71 s | 3.43 s | -21 % | 6.9 % (OFF 7.4) |
+  | small.en-q4_0 | 3.07 s | 2.96 s | +4 % | 11.6 % (OFF 10.2) |
+
+  (CPU-s per job; wall = about half at 2 threads: base.en-q8_0 0.49 s,
+  small.en-q8_0 1.40 s per 7.5 s clip.) KleidiAI pays for q8_0 (4
+  threads: base.en-q8_0 1.20 vs 1.35 CPU-s, -11 %), not for f16 and
+  slightly NOT for q4_0 (+4 %) - q8_0 stays faster than q4_0 on the A76
+  too, so base.en-q8_0 is the Pi's model either way (6.8x less CPU than
+  the old helper with KleidiAI) and small.en-q8_0 the accurate one (5x
+  faster than real time on a Pi 5). The texts differ slightly between ON
+  and OFF builds for some models (other kernels, other rounding), not in
+  quality. Kept ON by default (auto): it helps the recommended models.
+- Live text on the Pi 5 (`--stream 1000`, 4 clips): base.en-q8_0 2
+  threads (KleidiAI): partials 0.30-0.39 s each (max 0.83), 0.50-0.74 of a
+  core while someone talks, 8-22 words confirmed before the final;
+  base.en-q4_0 2 threads 0.34-0.42 s, 0.58-0.79 cores (OFF ~ the same);
+  4 threads 0.21-0.26 s, 0.66-0.91 cores; small.en-q4_0 4 threads
+  0.60-0.74 s, 2.0-2.5 cores. Fine on a Pi 5 with base.en-q8_0 (the tip
+  says so).
 
 ## Tests (job fa22c145, scratch `client/`)
 

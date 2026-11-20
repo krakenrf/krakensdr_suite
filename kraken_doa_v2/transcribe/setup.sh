@@ -89,11 +89,11 @@ fi
 # name  size_MB  note - the same list as MODEL_CATALOGUE in src/voice2text.cpp
 CATALOGUE="tiny.en 75 fastest,_least_accurate
 base.en 142 default:_good_on_a_Pi_5,_faster_than_real_time
-base.en-q8_0 78 base.en_8-bit:_less_CPU_(half_on_a_Pi_4),_as_accurate_-_made_here_from_base.en
-base.en-q4_0 44 base.en_4-bit:_least_memory_(on_a_Pi_4_more_CPU_than_8-bit)_-_made_here_from_base.en
+base.en-q8_0 78 base.en_8-bit:_less_CPU_(half_on_a_Pi),_as_accurate_-_made_here_from_base.en
+base.en-q4_0 44 base.en_4-bit:_least_memory_(more_CPU_than_8-bit_on_a_Pi)_-_made_here_from_base.en
 base.en-q5_1 57 base.en_compressed:_less_memory,_about_as_accurate
-small.en 466 most_accurate_on_a_Pi:_about_2x_slower_than_real_time
-small.en-q8_0 252 small.en_8-bit:_less_CPU,_as_accurate_-_made_here_from_small.en
+small.en 466 most_accurate:_faster_than_real_time_on_a_Pi_5,_too_slow_on_a_Pi_4
+small.en-q8_0 252 small.en_8-bit:_less_CPU_(a_Pi_5:_5x_faster_than_real_time),_as_accurate_-_made_here_from_small.en
 small.en-q4_0 139 small.en_4-bit:_less_memory_than_8-bit,_a_little_less_accurate_-_made_here_from_small.en
 small.en-q5_1 181 small.en_compressed
 tiny 75 any_language_(or_translated_to_English),_fastest

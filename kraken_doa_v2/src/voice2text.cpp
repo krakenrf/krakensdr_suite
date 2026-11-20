@@ -71,13 +71,15 @@ const CatalogueEntry MODEL_CATALOGUE[] = {
     {"base.en", 142, false, PC_NOTES ? "recommended: many times faster than real time on a PC"
                                      : "good on a Pi 5, faster than real time (base.en-q8_0: half the CPU)"},
     {"base.en-q8_0", 78, false, PC_NOTES ? "base.en 8-bit: less CPU, as accurate - made here from base.en"
-                                          : "recommended on a Pi: half the CPU of base.en (a Pi 4), as accurate - made here from base.en",
+                                          : "recommended on a Pi: half the CPU of base.en, as accurate - made here from base.en",
      "base.en"},
-    {"base.en-q4_0", 44, false, "base.en 4-bit: least memory (on a Pi 4 more CPU than 8-bit) - made here from base.en", "base.en"},
+    {"base.en-q4_0", 44, false, "base.en 4-bit: least memory (more CPU than 8-bit on a Pi) - made here from base.en", "base.en"},
     {"base.en-q5_1", 57, false, "base.en compressed: less memory, about as accurate"},
     {"small.en", 466, false, PC_NOTES ? "more accurate, faster than real time on a PC"
-                                      : "most accurate on a Pi: about 2x slower than real time"},
-    {"small.en-q8_0", 252, false, "small.en 8-bit: less CPU, as accurate - made here from small.en", "small.en"},
+                                      : "most accurate: faster than real time on a Pi 5, too slow on a Pi 4"},
+    {"small.en-q8_0", 252, false, PC_NOTES ? "small.en 8-bit: less CPU, as accurate - made here from small.en"
+                                          : "small.en 8-bit: less CPU (a Pi 5: 5x faster than real time), as accurate - made here from small.en",
+     "small.en"},
     {"small.en-q4_0", 139, false, "small.en 4-bit: less memory than 8-bit, a little less accurate - made here from small.en",
      "small.en"},
     {"small.en-q5_1", 181, false, "small.en compressed"},

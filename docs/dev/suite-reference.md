@@ -904,10 +904,11 @@ leaves it out) with the models in `docker-data/whisper_models/`
   CPU per transcript at the same accuracy; a decode that hits a token cap
   (a loop) is done again the old way. 8-bit models base.en-q8_0 /
   small.en-q8_0 are made on the receiver (`kraken_whisper --quantize`; ~15-25 %
-  less CPU on a PC, half on a Pi 4 - base.en-q8_0 is the Pi's choice), and
-  4-bit -q4_0 ones (least memory; more CPU than 8-bit on a Pi 4). On Arm
-  CPUs with the dot-product instructions (a Pi 5) the helper is built with
-  Arm's KleidiAI kernels (setup.sh; not measured on a Pi 5)
+  less CPU on a PC, half on a Pi 4 / Pi 5 - base.en-q8_0 is the Pi's choice,
+  small.en-q8_0 the accurate one on a Pi 5), and 4-bit -q4_0 ones (least
+  memory; more CPU than 8-bit on both Pis). On Arm CPUs with the dot-product
+  instructions (a Pi 5) the helper is built with Arm's KleidiAI kernels
+  (setup.sh): on a Pi 5 15-21 % less CPU for the q8_0 models
 - Live text (option, off by default; `VOICE2TEXT_LIVE:`): while someone
   talks the worker sends the transmission so far as a PARTIAL job about once
   a second (finals first), words two partials agree on are confirmed, and
@@ -940,6 +941,10 @@ leaves it out) with the models in `docker-data/whisper_models/`
   🗺 map - pale colours of its own, dashed, never a VFO's live-lobe colour -
   with a tag whose ✕ removes it
 - Pi 5: base.en ~280 MB RAM, ~2-3x faster than real time on 2-3 cores
+  (the old 30 s window); since 2026-11-20 base.en-q8_0 + KleidiAI 0.92
+  CPU-s per 7.5 s transcript (~15x faster than real time on 2 cores),
+  Live text with it ~0.5-0.75 of a core. Pi 4: base.en-q8_0 6.2 CPU-s
+  (2.3x faster than real time), Live text too heavy (3 of 4 cores)
 
 **📏 Range from signal strength (🗺 Map, coherent mode; the user's request
 2026-10-20)** (details: `kraken_doa_v2/docs/dev/range.md`): "Range" in the 📡 DF panel's header -> a panel (top left) + a

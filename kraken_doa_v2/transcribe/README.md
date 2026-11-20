@@ -40,18 +40,21 @@ base.en / small.en, else downloads it for this and removes it again
 afterwards unless it was asked for too. `--models-only` needs the helper
 built already.
 
-**On a Raspberry Pi** (measured on a Pi 4, 2026-11-20): use
-**`base.en-q8_0`** - half the CPU of base.en (6.2 against 12.8 CPU-s per
-transcript, 2.3x faster than real time), as accurate. **4-bit models**
+**On a Raspberry Pi** (measured on a Pi 4 and a Pi 5, 2026-11-20): use
+**`base.en-q8_0`** - half the CPU of base.en, as accurate (CPU-s per
+transcript, 2 threads: Pi 4 6.2 against 12.8, Pi 5 0.92 against 1.84; the
+old helper took 39.8 / 6.23). On a Pi 5 **`small.en-q8_0`** (2.7 CPU-s, 5x
+faster than real time) is the accurate choice. **4-bit models**
 (`base.en-q4_0` 44 MB, `small.en-q4_0` 139 MB, made the same way with
 `--quantize ... q4_0`) take the least memory (base.en-q4_0 123 MB against
-157 MB for q8_0) but more CPU than q8_0 on a Pi 4, whose Cortex-A72 has no
-dot-product instructions. On 64-bit Arm Linux whose CPU has them (a Pi 5),
-setup.sh builds the helper with Arm's **KleidiAI** kernels for 4- / 8-bit
-models (fetched by CMake from GitHub; offline it builds without them;
-`KLEIDIAI=on|off` overrides the detection; an existing build gets them with
-`make whisper`) - not measured on a Pi 5. Live text is too heavy for a Pi 4
-(3 of its 4 cores while someone talks).
+157 MB for q8_0 on a Pi 4) but more CPU than q8_0 on both Pis. On 64-bit
+Arm Linux whose CPU has the dot-product instructions (a Pi 5, not a Pi 4),
+setup.sh builds the helper with Arm's **KleidiAI** kernels (fetched by CMake
+from GitHub; offline it builds without them; `KLEIDIAI=on|off` overrides
+the detection; an existing build gets them with `make whisper`): on a Pi 5
+15-21 % less CPU for the q8_0 models, nothing for f16, 4 % more for q4_0.
+Live text: fine on a Pi 5 with base.en-q8_0 (half to three quarters of a
+core while someone talks), too heavy for a Pi 4 (3 of its 4 cores).
 
 Files: `whisper.cpp/` (the pinned checkout), `build/` and `models/`
 (`ggml-<name>.bin`) - all gitignored. `KRAKEN_TRANSCRIBE_DIR` /
