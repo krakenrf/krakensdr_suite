@@ -821,4 +821,61 @@ mode, measured against the new receiver), `t_bar.py` 16 / 16, `t_phone.py`
 
 ## Tests
 
-(each part's tests and the run on the KrakenSDR)
+Each part's own tests are in its section above (heimdall: on the KrakenSDR
+and against a fake librtlsdr, `heimdall_v2/docs/dev/operating-modes.md`; the
+receiver: a fake heimdall with sweep mode, normal and ASan + UBSan builds;
+the page: headless Chromium against the real engine and an in-page mock).
+Two independent reviews (heimdall's code, the receiver's code) followed the
+first merge; their findings and the fixes are in those sections.
+
+**End to end on the KrakenSDR (2026-11-20, x86 PC, 5 tuners, the merged
+tree).** heimdall and kraken_doa as port-moved test builds, the page in
+headless Chromium driven as a user would (the Mode selector, real wheel
+events and clicks; the range, gain and pause as another page would send
+them), heimdall's status and the 8091 headers read beside it. Job scratch
+`e2e/run_hw.py`, `probe_bars.py`, `probe_change.py`.
+
+- Coherent first: CONVERGED after 17 - 22 s. Mode selector -> Sweep: 8091 flags
+  0x2801, the tuners on their blocks, the page's chip "Disabled".
+- 24 - 1765 MHz (911 steps): 8.1 - 8.3 s a sweep with 5 tuners (183 rounds,
+  41 - 48 ms each), 39.2 - 39.7 s with one. Auto resolution 4.69 kHz
+  (371 414 points). 88 - 108 MHz (11 steps): 6.8 - 7.0 sweeps a second with
+  5 tuners, 5.0 - 5.4 with 3 (two toggled off in the top bar by clicks),
+  Auto 586 Hz. The FM stations, DAB / TV, the UHF and mobile blocks at
+  their frequencies; signals that fill whole steps keep their height: over
+  758.9 - 802.3 MHz (some 23 steps of mobile downlink) the six highest
+  points read 22.8 - 23.9 dB.
+- Wheel zoom on the full range down to 96.5 - 109.4 MHz (135x), the pointer
+  readout, a gain change (20.7 dB: applied by heimdall, `gain_db` in the
+  `sweep` message), pause (the sweep count stands) and run.
+- Steady state, 463 sweeps of 88 - 108 MHz (5 093 step measurements): no
+  step's median more than 3 dB from its own median over the run, and a
+  whole sweep's level within -0.44 .. +0.11 dB - nothing pumps. The one
+  exception is the first sweep after a resolution change (two steps -3 and
+  -4 dB, the sweep -2.0 dB).
+- Every frame of the first 8 s after a range change (zoomed in before it,
+  161 frames): no run of 20 equal levels, no complete frame more than
+  1.5 dB over the steady median; the page is back at 1x on the new range.
+- Back to Coherent after sweeps with 5, 3 and 1 tuners: CONVERGED 29.0 s
+  after the switch, calibration check worst |lag| 0.0 samples, |phase|
+  0.2 deg, the page's frequency digits, VFO card, tuning bar and DoA pane
+  back. 0 coherence events, 0 failed retunes, 0 unquiet flushes, no page
+  error in every run.
+- What the first run (before the fix rounds) found: the return to coherent
+  took > 100 s - every channel 1874 - 2220 samples off, re-acquired one by
+  one (a full-path retune moves that dongle's stream by 2 samples, and the
+  tuners had been retuned unequally; heimdall's *Review fixes*); Auto gave
+  146 Hz bins with 1 - 2 averages on 88 - 108 MHz; the waterfall's rows kept
+  their old span after a zoom; the chip said "Converged".
+- A lesson of the test itself: a first version of the script put the zoom
+  back by writing the page's zoom variables, which left the page and the
+  receiver's view of that socket apart - the next range change then drew a
+  row with step-wide blocks of one level. Not reproducible with user
+  actions (wheel, slider, the page's own reset on a range change).
+
+Not tested: a Raspberry Pi (the timing above is a PC's; heimdall's retune
+there is 14 - 19 ms a step, *Drag retunes*), Windows (tuners are written one
+by one - a round will be several times slower), macOS, the MinGW / zig
+syntax checks (no toolchain on the test machine), generic RTL-SDRs and
+`--kerberos` on real hardware (both against the fake librtlsdr only),
+Firefox / Safari.
