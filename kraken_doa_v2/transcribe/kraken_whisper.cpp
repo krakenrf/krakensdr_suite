@@ -71,22 +71,27 @@ struct Result {
 };
 
 whisper_context* g_ctx = nullptr;
-// The decoding state (encoder output, cross-attention cache, ...): one for the
-// sized windows, another for full 30 s windows (encoder_window() says why) -
-// one at a time, made fresh when the other kind is needed (the loop guard,
-// inputs from 24.6 s on): two at once took base.en 254 -> 322 MB, small.en
-// 657 -> 789 MB; a new state takes 4-24 ms here
+// The decoding state (encoder output, cross-attention cache, ...), one at a
+// time (two at once took base.en 254 -> 322 MB, small.en 657 -> 789 MB). A
+// full-window FINAL decode needs a PRISTINE one - no sized encode since it was
+// made (whisper.cpp zeroes its caches), so the padding its decoder reads past
+// the 1500 frames is zeros, as before (encoder_window() says why): when the
+// current one isn't, a new one (4-24 ms here; the only swap - so a busy mix of
+// long and short transmissions costs one per long final). Everything else uses
+// whatever state there is: a sized decode reads only frames it wrote itself,
+// and a full-window PARTIAL may read a sized decode's leftovers in that
+// padding - a preview, redone a second later
 whisper_state* g_state = nullptr;
-bool g_state_full = false;
+bool g_pristine = false;
 
-whisper_state* state_for(bool full) {
-    if (g_state && g_state_full != full) {
+whisper_state* state_for(bool pristine) {
+    if (pristine && g_state && !g_pristine) {
         whisper_free_state(g_state);
         g_state = nullptr;
     }
     if (!g_state) {
         g_state = whisper_init_state(g_ctx);
-        g_state_full = full;
+        g_pristine = true;
     }
     return g_state;
 }
@@ -317,9 +322,14 @@ int encoder_window(size_t samples) {
 // of the 15 clips (~4-7 s of CPU each); rounded, no English model's decode
 // reached the cap (2026-11-20: 8 model / thread setups, 2-3 runs each), the
 // multilingual base's once (a clip it took for German) - the cap is the backstop
+// At most whisper_n_text_ctx/2 - 5 (219): whisper.cpp's decode loop stops at
+// n_text_ctx/2 - 4 tokens (a decoder still going is marked failed there and the
+// temperature fallbacks run instead) - a cap above that never fires (a
+// multilingual model's from 20.3 s of input on)
 int token_cap(size_t samples) {
     const double s = static_cast<double>(samples) / SR;
-    return static_cast<int>(std::ceil((g_multilingual ? 10.0 : 6.0) * s)) + 16;
+    const int cap = static_cast<int>(std::ceil((g_multilingual ? 10.0 : 6.0) * s)) + 16;
+    return std::min(cap, whisper_n_text_ctx(g_ctx) / 2 - 5);
 }
 
 struct TokenCap {
@@ -340,11 +350,13 @@ void cap_filter(whisper_context* ctx, whisper_state*, const whisper_token_data*,
 }
 
 // One whisper_full. audio_ctx 0 = the full window; cap 0 = no token cap.
-// partial: greedy, no temperature fallback (Live text redoes it a second later)
+// partial: greedy, no temperature fallback (Live text redoes it a second later).
+// one_decoder: greedy with best_of 1 (the retry after whisper.cpp ran out of
+// memory for several decoders)
 Decoded decode_once(const std::vector<float>& speech, const Opts& o, const std::string& prompt, int audio_ctx, int cap,
-                    bool partial) {
+                    bool partial, bool one_decoder = false) {
     Decoded d;
-    const bool beam = o.beam > 1 && !partial;
+    const bool beam = o.beam > 1 && !partial && !one_decoder;
     whisper_full_params p = whisper_full_default_params(beam ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
     p.n_threads = std::clamp(o.threads, 1, 8);
     p.no_context = true;         // utterances are independent (other radios, other channels)
@@ -359,9 +371,10 @@ Decoded decode_once(const std::vector<float>& speech, const Opts& o, const std::
         p.carry_initial_prompt = true;   // every 30 s window of a long transmission
     }
     if (beam) p.beam_search.beam_size = std::clamp(o.beam, 2, 8);
+    if (one_decoder) p.greedy.best_of = 1;
     // (a multilingual model's language detection, "auto", encodes with the
-    // window of this state's previous decode - whisper.cpp sets audio_ctx only
-    // after it: at least 5.1 s of this input, plenty for that)
+    // window of this STATE's previous decode - whisper.cpp applies audio_ctx
+    // only after it: 5.1-30 s of this input, depending on the job before)
     p.audio_ctx = audio_ctx;
     if (partial) p.temperature_inc = 0.0f;
     TokenCap tc;
@@ -371,9 +384,27 @@ Decoded decode_once(const std::vector<float>& speech, const Opts& o, const std::
         p.logits_filter_callback_user_data = &tc;
     }
     (audio_ctx > 0 ? g_runs.sized : g_runs.full)++;
-    whisper_state* st = state_for(audio_ctx == 0);
+    whisper_state* st = state_for(audio_ctx == 0 && !partial);
     if (!st) return d;
-    if (whisper_full_with_state(g_ctx, st, p, speech.data(), static_cast<int>(speech.size())) != 0) return d;
+    const int rc = whisper_full_with_state(g_ctx, st, p, speech.data(), static_cast<int>(speech.size()));
+    if (rc == -7) {
+        // no memory for the self-attention cache of several decoders (beam
+        // search, best_of in a temperature fallback): whisper.cpp has FREED the
+        // state itself - forget it (a new one next time) and decode once more
+        // with one decoder
+        g_state = nullptr;
+        if (one_decoder) return d;
+        static auto said = std::chrono::steady_clock::time_point();
+        const auto now = std::chrono::steady_clock::now();
+        if (said == std::chrono::steady_clock::time_point() || now - said > std::chrono::minutes(10)) {
+            said = now;
+            fprintf(stderr, "out of memory for %s - decoding with one decoder\n",
+                    beam ? "beam search" : "a temperature fallback");
+        }
+        return decode_once(speech, o, prompt, audio_ctx, cap, partial, true);
+    }
+    if (audio_ctx > 0) g_pristine = false;
+    if (rc != 0) return d;
     d.ok = true;
     d.capped = tc.hit.load();
     const int nseg = whisper_full_n_segments_from_state(st);

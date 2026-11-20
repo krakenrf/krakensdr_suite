@@ -86,7 +86,8 @@ turns one back into a WAV for this.
    and the longer text wins. Each decode encodes only the speech + 1 s,
    rounded up to 5.1 / 10.2 / 15.4 / 20.5 / 25.6 s, not whisper's fixed 30 s
    (3x less CPU for 5-13 s transmissions, as accurate on the test clips),
-   with a cap of 6 tokens per second (multilingual models: 10) + 16: a decode that reaches
+   with a cap of 6 tokens per second (multilingual models: 10) + 16 (at most
+   219, below whisper's own limit): a decode that reaches
    it (whisper looping) is done again with the full 30 s window and no cap -
    the decode of before -, so the cap never cuts a transcript short.
 3. Clean-up: non-speech annotations (`[BLANK_AUDIO]`, `(static)`, ♪) are
