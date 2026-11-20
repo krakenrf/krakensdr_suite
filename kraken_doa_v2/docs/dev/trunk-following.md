@@ -1468,3 +1468,32 @@ the debug playback (Play only).
   390 px run of the same steps passed in the same pass, and a rerun of the
   desktop one passed: not reproduced). The new page against the first-pass
   receiver: 11 checks.
+- Following outside the span and voice tuners (2026-11-20, the receiver
+  with `TRUNK_RETUNE` / `TRUNK_TUNERS`; the host worker's fake heimdall with
+  its retune / calibration model and the scripted `trunktest` plugin;
+  the TEST stack on 28779 / 28780-1 / 28791-2). `t_pexc` (31 checks at
+  390 px, 30 at 1500): an out-of-span call with the option off - the note's
+  ⚙ opens the settings at "Outside the span"; switching on asks (Cancel
+  keeps it off, Switch on - a second page sees it); away - the box's block
+  and the top-bar banner (the call, 853.6125 MHz, "yours 851.000", the time
+  running, "back within 1:59"), calibrating then calibrated, the parked
+  control VFO's card and its system chip, a hostile talkgroup name shown
+  literally, the second page and a reload while away in the same state, the
+  phone's top bar with the banner inside the window; Return now ->
+  "waiting for the control channel" -> "Back home (Return) · control
+  channel regained after 0.5 s" (gone after 10 s); the call's row "Stopped
+  by you"; Longest away 15 s typed, Calibrate there off -> "calibration
+  held: no bearing", "back within 0:15" counting, back by the limit and said
+  so; the counters. `t_ptun` (14 checks at 1500 and 390 px): independent
+  mode, "T0 Control" disabled, the note pointing at Voice tuners, T1 asks,
+  Others doesn't, a call outside every span on T1 (the box: "T1 TG 9602
+  853.3483 · yours 851.000", the pane's tag and outline), four more calls
+  -> "1 call waiting for a free voice tuner", giving the tuners back (no
+  pane marked). The first-pass receiver (rebuilt on these ports): none of
+  it shown, 12 checks. The whole pass again on the merged build: states 9,
+  fixtures 18, review 16, actions 15, stability 9 (60 s of the P25 capture:
+  5 calls, 44 changes, 0 re-made, 0 pushed down; pointed at: nothing
+  moved), scale 12 (median 2.0 ms), touch 8, misc 13, the DMR rule 9, the
+  editor 27 and 29, the five scenes 10 each (their test signals generated
+  again first, 21-27 s each: the cache had lost them); palette check OK; no
+  console errors.
