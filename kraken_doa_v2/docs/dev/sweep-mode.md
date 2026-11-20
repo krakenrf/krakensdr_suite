@@ -80,6 +80,16 @@ the hops into the sweep spectrum, the page shows it.
   "dwell_ms","settle_ms","run","round","rounds","sweeps","round_ms"}`
   (`sweeps` = completed since the plan changed, `round_ms` = the measured
   time of a round).
+- Additions by heimdall's implementation (2026-11-20; nothing above
+  changed): entering sweep mode sets `run` true and starts at round 0;
+  `dwell_ms` / `settle_ms` / `run` changes take effect at once without a
+  restart; a tuner already on its round's hop is not retuned (K' = H: the
+  stream runs on without a gap, the counter still + 1 per round, the flag
+  stays 0); a dwell lasts at least until one set has gone out with the
+  flag 0 (at most 250 ms longer), so no hop goes without data; `set_gain`
+  sets the flag until the next settle + flush; the status object also has
+  `"retuning"` (the 8091 flag), `"failed_retunes"` and
+  `"l1_unquiet_flushes"` (diagnostics). Default `settle_ms` 5.
 
 ### heimdall, 8091 (sweep mode)
 

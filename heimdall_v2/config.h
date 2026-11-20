@@ -59,10 +59,12 @@
 // The chosen tuners hop through a plan of hop centres (8092 set_sweep) so a
 // client can stitch one wide spectrum out of the hops. A hop: the 8091
 // header's retuning flag on -> flush -> retune -> SWEEP_SETTLE_MS -> flush ->
-// flag off -> dwell. SWEEP_SETTLE_MS is the shortest settle measured on the
-// KrakenSDR with margin (the first valid set after a hop looked like the
-// later ones of the same dwell; the numbers are in the doc).
-#define SWEEP_SETTLE_MS          10     // default settle, ms (set_sweep settle_ms 0-1000)
+// flag off -> dwell. SWEEP_SETTLE_MS: on the KrakenSDR (x86 PC, 2026-11-20)
+// settle 0 already held - the first valid set after a hop showed nothing of
+// the previous hop, against a station 16-24 dB over the floor (the flush
+// after the settle is itself a guard of about a USB packet); 5 ms is margin
+// for slower USB hosts (the Pi not measured). Numbers in the doc.
+#define SWEEP_SETTLE_MS          5      // default settle, ms (set_sweep settle_ms 0-1000)
 #define SWEEP_SETTLE_MAX_MS      1000
 #define SWEEP_DWELL_MS           20     // default dwell, ms (set_sweep dwell_ms)
 #define SWEEP_DWELL_MIN_MS       5

@@ -227,7 +227,7 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
 ```json
 {"command":"set_operating_mode","mode":"sweep"}
 {"command":"set_sweep","first_center_hz":88956250,"step_hz":1912500,"steps":11,
- "tuners":[0,1,2,3,4],"dwell_ms":20,"settle_ms":10,"run":true}
+ "tuners":[0,1,2,3,4],"dwell_ms":20,"settle_ms":5,"run":true}
 ```
 - `set_operating_mode` `sweep`: the calibration parks as in the other
   non-coherent modes (noise source off); every tuner on the common gain.
@@ -246,11 +246,16 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
   - `tuners`: the tuners that take part - unique whole numbers below
     `num_channels`, at least one.
   - `dwell_ms` 5-5000 (default 20): how long the settled stream runs on a
-    hop. `settle_ms` 0-1000 (default `SWEEP_SETTLE_MS`, config.h): the wait
+    hop. `settle_ms` 0-1000 (default `SWEEP_SETTLE_MS` = 5 ms, config.h): the wait
     between the retune and the flush that precedes the dwell. Both take
     effect at once and don't restart the sweep.
   - `run`: `false` pauses (the tuners stay put; the retuning flag is 0 again
     once a hop under way has settled), `true` resumes at the round it was on.
+  - A dwell lasts at least until one set has gone out on 8091 with the flag
+    0 (at most 250 ms longer): the first comes up to a USB packet (6.8 ms)
+    after the post-settle flush. A tuner already on its round's hop is not
+    retuned (with as many tuners as hops the stream runs on without a gap;
+    the counter still counts the rounds).
   - Reply `{"status":"success","sweep":{...}}` (the status object below) or
     `{"status":"error","message":"..."}`; nothing changes on an error. A plan
     or tuner change restarts the sweep at round 0.
