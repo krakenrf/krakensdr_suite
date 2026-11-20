@@ -136,15 +136,20 @@ the uWS loop thread; from any other thread, post it with `loop->defer`.
 **8091 phase-state field**: the low byte is the calibration state; higher
 bits are flags (0x100 KerberosSDR manual mode, 0x200 calibration stale,
 0x400 wideband scan, 0x800 independent, 0x1000 generic RTL-SDRs - coherent
-mode unavailable). Every consumer masks the low byte.
+mode unavailable, 0x2000 sweep, sent with 0x800 so an older client sees
+independent tuners). Every consumer masks the low byte.
 
 ## Modes and hardware variants
 
 - **Operating modes** (top bar): coherent (the array: calibration, DoA,
   beamforming), wideband scan (tuners side by side in one stitched spectrum;
   discrete scanner), independent (each tuner its own frequency, gain and
-  pane; no calibration). The client follows heimdall's mode from the header
-  flags and parks DoA / beamforming outside coherent mode.
+  pane; no calibration), sweep (the chosen tuners step through a frequency
+  range: one wide spectrum and waterfall, not live, nothing demodulated -
+  heimdall hops (`set_sweep`), the client stitches;
+  `kraken_doa_v2/docs/dev/sweep-mode.md` holds the wire contract). The
+  client follows heimdall's mode from the header flags and parks DoA /
+  beamforming outside coherent mode.
 - **`--wideband` / `-w`** (KrakenSDR Wideband downconverter, both apps):
   tuners stay at the 1268 MHz IF and a retune reprograms one shared moRFeus
   LO. The user-facing frequency is always the true RF. Mixer side and antenna
@@ -178,7 +183,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 `kraken_doa_v2/plugins/<id>/README.md`.
 
 - Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7),
-  `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9)
+  `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9),
+  `sweep-mode.md` (sweep mode: `SWEEP_*`, `SWEEP_VIEW:`, type 10)
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),
   `vfo-audio.md`, `operating-modes.md` (also VFO cards, the tuning step,
   zoom), `sidebar.md` (the boxes: move, collapse, the remembered layout;
