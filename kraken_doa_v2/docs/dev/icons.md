@@ -107,6 +107,8 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `gain` | the top bar's Gain (an amplifier triangle with a line in and out; 2026-11-18, *sidebar.md* "Top bar and rail") |
 | `step` | the top bar's tuning Step (two marks with a double arrow between them; 2026-11-18) |
 | `mixer` | the Wideband variant's mixer field in the top bar (a circle with a cross, the RF mixer symbol; 2026-11-18) |
+| `span` | sweep mode: the Sweep box (a spectrum trace between two marks - a frequency span; 2026-11-20, *sweep-mode.md*) |
+| `tuners` | sweep mode: the top bar's tuner selector (three dongles with their antennas; 2026-11-20) |
 | `globe` | Web Mapper, the online search, web tools |
 | `doc` | DoA Recording |
 | `log` | Decoder Logging (its Setup Settings section, the decoder tabs' button to it) |
