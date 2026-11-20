@@ -1896,7 +1896,10 @@ void on_channel(int vfo, Track& t, const std::string& plugin, const PluginEvent&
 
 void on_system(int vfo, Track& t, const std::string& plugin, const PluginEvent& ev) {
     if (voice_of_vfo(vfo)) return;   // a voice VFO's decoder names the system too: not a control VFO
-    const std::string sid = ev.sys_key.empty() ? (t.sys.empty() || !temp_id(t.sys) ? plugin + ":@" + std::to_string(vfo) : t.sys)
+    // (no key in the report - its decoder hasn't decoded it again since its
+    // RESET, e.g. after our own retune of the VFO: the system it had stands;
+    // only another KEY is another system)
+    const std::string sid = ev.sys_key.empty() ? (t.sys.empty() ? plugin + ":@" + std::to_string(vfo) : t.sys)
                                                : plugin + ":" + ev.sys_key;
     if (!t.sys.empty() && t.sys != sid) {
         if (temp_id(t.sys) && !temp_id(sid)) {
@@ -3030,7 +3033,7 @@ void exc_retune(double c, bool home, bool cal, bool hold) {
             cmds.push_back(m);
         }
     }
-    exc_expect_resets(6000);
+    exc_expect_resets(10000);
     dispatch(cmds);
     for (auto& e : g_exc.ctl) {
         auto inst = decimator_manager.getDecimator(e.vfo);
@@ -3076,7 +3079,7 @@ void exc_return(const std::string& why, bool retune) {
             inst->enabled = true;
             e.parked = false;
         }
-        exc_expect_resets(6000);
+        exc_expect_resets(10000);
         dispatch(cmds);
         if (g_exc.holding && !g_exc.kerberos && !playback::active()) heimdall_hold(0);
         g_exc.holding = false;
