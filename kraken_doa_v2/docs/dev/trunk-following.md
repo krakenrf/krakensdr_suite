@@ -301,25 +301,36 @@ is switched on).
 
 **Measured on the KrakenSDR** (2026-11-20, the 3-site P25 system, home
 498.2 MHz with two control channels in the span and every voice channel
-outside it; 6.1 min, 11 excursions, every one `how` "control" - one control
-VFO stayed in the away span, the other was parked):
-- A plain retune (the user's `FREQ:`, no hold): noise source on 3.04-3.09 s
-  after it, CONVERGED 3.49-3.54 s after it.
-- An excursion: retune -> the stream at the new centre 25-82 ms; noise
-  source on 0.08-0.46 s after the retune (the lag driver's next tick),
-  CONVERGED 0.50-0.88 s after it (arrival -> CONVERGED 450-850 ms). The
-  calibration costs a reception gap of 0.38-0.49 s (noise on -> off), on
+outside it; two clean runs of 6.1 min - 11 excursions before the review
+fixes, 6 after (the system was quieter) - every one `how` "control": one
+control VFO stayed in the away span, the other was parked; heimdall's own
+status checked every 30 s - mode, centre and gain only ours):
+- A plain retune (the user's `FREQ:`, no hold; 4 of them): noise source
+  on 3.04-3.09 s after it, CONVERGED 3.41-3.54 s after it.
+- An excursion: retune -> the stream at the new centre 20-82 ms; noise
+  source on 0.02-0.46 s after the retune (the lag driver's next tick),
+  CONVERGED 0.26-0.88 s after it (arrival -> CONVERGED 400-850 ms). The
+  calibration costs a reception gap of 0.32-0.49 s (noise on -> off), on
   arrival and on the return alike.
 - The call's first valid frames (ACTIVE) 0.18-1.28 s after the grant made
   the receiver leave (the gap lies in it when the calibration comes first).
-- The return: CONVERGED 0.41-0.76 s after the retune home, a control VFO
-  reporting again 0.35-0.85 s after it.
+- The return: CONVERGED 0.41-0.90 s after the retune home, a control VFO
+  reporting again 0.34-0.85 s after it.
+- `TRUNK_RETUNE_CAL:0` (3.1 min, 7 excursions): no calibration while away
+  (no gap in the call, no DoA there); the one at the return: noise on
+  0.04-0.08 s after the retune home (the hold released with it), gap
+  0.38-0.44 s, CONVERGED 0.44-0.47 s after it.
 - A busy system: 1.8 excursions a minute, half the time away; 26 calls
   started while away, 0 missed because of it (the control VFO in the away
   span heard their grants; calls that fit were followed there); 35 overs
   ended `released`, 1 `ended`, no `no_signal`. The control VFO that stayed
   in span decoded 2.67 grant messages / s away (1.21 / s before - the
   system's load, not a loss).
+- After the review fixes: 6 excursions, 14 overs `released`, no other end;
+  9 calls started while away, 1 missed (why `away`).
+- Not exercised on air: the DMR Tier III system (4 min, home 456.2 MHz)
+  granted only inside the span - no excursion; MPT1327 (busy by day) not
+  run; the Wideband downconverter (none here).
 - Found on air and fixed: after the retune the P25 decoder's first SYSTEM
   reports carry no key, which the manager took for another system and
   ended the call that sent the receiver out (`control_reset`, 8 of 8 in the
@@ -372,6 +383,17 @@ is no gain of its own to go back to.
 The saved-frequency scan also uses "free tuners" in this mode: the
 manager gives its voice tuners back before the scan starts and pauses
 while it runs, so the two never hold a tuner at once.
+
+Measured on the KrakenSDR (2026-11-20, P25, every tuner at 498.2 MHz, the
+control VFOs on tuner 0, `TRUNK_TUNERS:1,2,3,4`, 5.1 min, two clean runs):
+the first out-of-span grant took tuner 1 to 499.47 MHz (the centre holding
+most of the system's known channels), retune -> the stream there 48 ms; every
+later voice channel of the system (499.04-499.86 MHz) fell into that tuner's
+span: no further retune, 28 overs `released`, 1 `ended`. Four calls on four
+voice tuners at once did not happen on air (this system's voice channels fit
+one tuner) - only in the tests. The control tuner kept decoding while the
+voice tuner was in use: 1.66 / 1.69 grant messages a second on its two
+control VFOs (0.77 / 1.93 before - the system's load).
 
 Not done: a single-tuner trunk tracker (independent mode, no voice tuner
 free or configured: an excursion of the control VFO's own tuner) - with no
@@ -1143,7 +1165,37 @@ the broadcasts:
   followed, history 47 `released`, 1 `ended`, 0 `no_signal`, 0 stale
   reports (the round before, the orchestrator's 80 s replay: 28 of 37
   `released`).
-- 239 checks, all passing on the final build (2026-11-20, load average 3-7). Found on the way: a
+- The fake heimdall (round 2) also models the calibration (`cal_model`:
+  a retune -> 3 s cooldown, the lag driver's tick once a second, hold /
+  release / backdating as heimdall, the noise source in the packets),
+  KerberosSDR manual mode, generic RTL-SDRs (flag 0x1000) and a heimdall
+  that doesn't retune (`freeze`).
+- `t14_exc` 36: an excursion with a control VFO in the away span (hold ->
+  retune -> release -> backdated -> calibration <= 1 s later; the control VFO
+  keeps receiving; two overs in one excursion; back home with the same
+  immediate calibration; the control channel regained; nothing saved), one
+  without (the offset centre, the control VFO parked, no bogus system),
+  `no_signal` then `retry`, the limit, `TRUNK_RETURN` (the call stopped),
+  the option off, the user's retune (no return, his FREQ saved), `busy_here`
+  and a priority call leaving an in-span one, a kraken_doa restart while
+  away (home first at the shutdown, home after it), `TRUNK_RETUNE_CAL:0`
+  (held while away, renewed, one calibration at once after the return),
+  a scanner / a mode change while away (home first), KerberosSDR manual
+  mode (no holds), `not_arrived` and the growing block.
+- `t15_tuners` 12 (5 tuners) / 10 (two generic RTL-SDRs): in the control
+  tuner's span no retune, a voice tuner retuned (the control tuner's gain,
+  its home noted), four calls on four voice tuners and a fifth `no_tuner`,
+  a call that fits a busy voice tuner's span, every voice tuner back to its
+  frequency and gain when following goes off, nothing saved, back first
+  before a mode change; the control tuner alone listed -> `out_of_span`.
+- The review of round 2 (scratch `review2/`): `r1` 8 (a VFO snapshot while
+  away holds the control VFO's home offset; a parked VFO's reused id left
+  alone; the user's retune stands), `r2` 3 (the user's change of another
+  tuner saves a voice tuner's home frequency and gain) - 6 / 8 and 2 / 3 on
+  the build before the fixes.
+- 308 checks, all passing on the final build (2026-11-20) but one
+  load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
+  / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a
   temporary system merged into its keyed one erased the KEYED one (merge_temp
   took the Track's system id by reference and rewrote it) - the keyed system
   came back empty and the temporary one stayed as a ghost with a stale
