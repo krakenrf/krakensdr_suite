@@ -64,6 +64,9 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
     // per slot; l1_put last: a reader that sees n + 1 there finds the stamp
     const uint64_t n = sdr->l1_put.load(std::memory_order_relaxed);
     if (first) sdr->stream_first.store(n, std::memory_order_relaxed);
+    // a short transfer (stream start / cancel) breaks "packets end one
+    // period apart" in the unsafe direction: the line starts again after it
+    if (len != static_cast<uint32_t>(NUM_SAMPLES * 2)) sdr->stream_first.store(n + 1, std::memory_order_relaxed);
     const size_t slot = static_cast<size_t>(n % SDRDevice::ARRIVAL_RING);
     sdr->ring_n[slot].store(UINT64_MAX, std::memory_order_relaxed);
     std::atomic_thread_fence(std::memory_order_release);

@@ -227,14 +227,21 @@ per-channel frequencies, after the settle. From the code:
   gate kept for its dongle: numbered after the first packet s whose
   earliest-arrival line f(s) reached the settle's end T. Its frequencies
   are hop h's (h + 1's are stored after h + 1 set the flag);
-- the bound (proof in `serve_gate_now`; *Review of the hop loop*, 1):
-  every sample of a kept packet was taken at or after T - L* - 22 us,
-  where L* is the latency of the packet the dongle's line runs through -
-  its fastest delivery among the last 32 packets (~1 ms on a PC). A late
-  or burst-delivered packet, samples the RTL2832 lost, the 2-sample slip:
-  none of them moves the line later. So the samples see settle - L*
-  after the tune call returned - measured below and in *Hop timing*,
-  through the real pipeline.
+- the bound (proof in `serve_gate_now`; *Review of the hop loop*, 1, and
+  its third round): every sample of a kept packet was taken at or after
+  **retune end + settle - L* - 33 us**, where L* is the fastest USB
+  delivery among the dongle's last RTL_USB_BUF_COUNT + 16 (48) packets.
+  That window outlasts any backlog a stalled reader can deliver (at most
+  RTL_USB_BUF_COUNT packets: the transfers that completed while it stood),
+  so it always holds packets a running reader delivered and L* is the USB
+  transfer's floor (~1 ms on this PC); a late straddler, a burst, samples
+  the RTL2832 lost or a packet the callback dropped don't move it. What
+  the bound does NOT cover: a reader that runs steadily behind (every
+  packet of the window late - a host loaded for longer than the window,
+  ~330 ms): then L* is that lateness. So **the settle has to cover the
+  host's USB latency** - the default 5 ms leaves ~4 ms of margin on the
+  PC; neither a Raspberry Pi nor a loaded reader is measured. Measured
+  below and in *Hop timing*, through the real pipeline.
 One exception, negligible: the lag FIR's 7-sample tail (`frac_tail`, kept
 across sets for the coherent conversion) is not reset by a flush, so the
 first 3-7 output samples of each channel in a hop's first valid packet are
@@ -757,6 +764,124 @@ older samples lost - that far apart), `FAKE_FAST_TUNE_MS`,
    events, RSS 42.02 MB flat, CPU 14.8 %, SIGTERM during a hop: exit 0 in
    0.37 s. No level jumps were looked for at 1.6-1.75 GHz (F's open
    question) - the tests here don't measure levels there.
+
+*Third review round* (2026-11-21, the gate of 790f060 together with worker
+F's return path; defaults then dwell 5, settle 5):
+1. *The burst protection rested on an accident.* With a window of 32 and
+   `RTL_USB_BUF_COUNT` 32 (a knob documented to be raised), a stalled
+   reader's backlog could fill the whole window; L* is then the stall
+   length, and only the transfer count (a kept packet's transfer could not
+   be resubmitted before the burst was out) kept the data fresh. The
+   reviewer's simulation (`review_s2/burst.cpp`, my arithmetic; `speed/
+   burst2.cpp` with the window as now): backlog B = 33 / 40 / 64 with a
+   window of 32 - first kept sample 84 ms before T after a 300 ms stall,
+   284 ms after 500 ms; with the window `B + 16` - 0.50 ms at every B and
+   stall (= the simulation's floor latency). Now: the window is
+   `SDRDevice::LINE_PACKETS = RTL_USB_BUF_COUNT + 16` (48), the stamp ring
+   `2 x 48 + 32`, both `static_assert`ed; a window counts only when it is
+   complete - all 48 stamps readable and none before a stream (re)start or
+   a short transfer - else the packet counts as "before T" (a packet judged
+   late, after the ring overwrote part of its window, can no longer be
+   judged by its newer half alone). And the proof now says what L* is: the
+   fastest delivery in the window (every term bounds E_s), small because
+   the window always holds packets a running reader delivered. Fake, a
+   reader stalling 300 ms (150 ms +-50 % apart), tune 14 + 0-7 ms, garbage
+   2 ms, settle 5, 15 s: backlog 32 delivered 0.5 ms apart - 0 of 83 valid
+   packets contaminated; backlog 40 - 0 of 149 (inside the window too);
+   backlog 32 delivered 4 ms apart, i.e. a reader that then keeps running
+   behind for ~75 packets - 5 of 59 contaminated (the old hop's tones, 49
+   dB): the case the bound doesn't cover, below.
+2. The bound in those words: **retune end + settle - L***, L* the fastest
+   USB delivery among the window's 48 packets. The settle has to cover
+   L*; L* is the USB floor (~1 ms on the PC) unless the reader runs
+   steadily behind for longer than the window (~330 ms) - then L* is that
+   lateness, and nothing here bounds it. Not measured: a Raspberry Pi, a
+   loaded host. Hence the default settle 5 (orchestrator).
+3. *A stale gate after the re-pairing flush.* A gate filed just before the
+   mode was left (its requester stops waiting then) could be served after
+   `set_operating_mode`'s paired flush, mid-collection, dropping a partial
+   set - a one-packet slip nothing repairs any more with the phase-only
+   return. Now `sweep_quiesce_flushes()` (under `flush_mutex`: no gate can
+   be filed any more) waits in `sweep_gates_quiesce()` until the drain has
+   served every gate ever filed (pending, in flight - it returns at its
+   next 100 us poll once the mode is left - or stale), clears the hold, and
+   only then returns to `set_operating_mode`, which files the paired flush.
+   Proof: every drop a gate causes (L1 in `serve_gate_now`, the partial set
+   in the drain's collection loop, the hold's drops) happens on the drain
+   before it marks that gate completed, or (the hold) only while the mode
+   is SWEEP; after the quiesce no gate is pending and the mode isn't
+   SWEEP, so the drain's next L1 touch is the paired flush. A test cannot
+   force that interleaving; `t_exitstress.py` (sweep -> coherent at a
+   random point of a hop, 20 times, fake): every return CONVERGED with
+   check_calibration |lag| 0.0, 0 coherence events, `lag_no_peak` empty.
+4. *Slow dongles went unreported.* A gate that timed out with every dongle
+   delivering (the line short of T: lost packets) neither set nor cleared
+   the stalled mask, and a stall of an earlier visit stayed in the status.
+   Now `slow_tuners` (status) and its own log line ("deliver, but their
+   packets don't reach the hop's start in 400 ms (packets lost?)"), both
+   masks cleared by a gate that passes and when the mode is entered.
+   `t_stall3.py` (fake, tuner 3 losing 3 of 4 packets): `slow_tuners`
+   [3], `stalled_tuners` never, the line logged; the sweep crawls on (96
+   valid packets in 3 s: its line reaches T after ~1 s, the retries keep
+   T); left and entered again - both masks cleared.
+5. *The other dongles' L1 during a silence.* Kept small only by the ring
+   cutting a retried gate's backlog (peaks ~92-96 of 100 estimated). Now,
+   by design: after a failed gate the drain keeps every L1 empty
+   (`gate_hold`) until the next gate is served or the mode is left; while a
+   gate waits, a dongle already past its straddler keeps at most its newest
+   16 packets (`GATE_KEEP_PACKETS`); a dwell in which no set has gone out
+   for 100 ms + a period ends early (the stream stopped - the drain then
+   waits for the silent dongle with every other L1 filling); and in sweep
+   mode the drain waits for a dongle in 5 ms slices (100 ms elsewhere;
+   the stuck-device alarm counts the time waited, unchanged at 3 s), so a
+   gate filed while it waits is served at once. `t_stall3.py`: over a 2.8 s
+   silence of tuner 2 the other dongles' L1 peaked at 15 of 100 (status
+   `l1_depth`, added, polled every ~10 ms; before the dwell rule and the
+   slices 26-30), 0 coherence events; with a dongle losing 3 of 4 packets
+   21 (the drain forms sets at its rate between gates).
+6. A tune that fails on both paths now counts as fast-pending (the driver
+   may have left the 128 kHz autotune clock): the finish runs for it too.
+7. A short transfer (fewer than NUM_SAMPLES x 2 bytes: stream start /
+   cancel) restarts the line after it (`stream_first`), so no window spans
+   it.
+8. The unreachable `reconfig_in_progress` branch in `finish_fast_tunes`
+   removed (an element-count change requires coherent mode).
+Fake regression on these changes (`regress_fake3.sh`): t_basic, t_cmds,
+t_modes, t_fixes, t_restart, t_generic, t_kerberos, t_long 2 min, t_stall,
+t_stall3, t_finish (rc 0 and 1), t_exitstress: 0 failures; t_race "BOTH"
+as on the old build (a test flaw); t_fakeguard: late straddlers
+(`FAKE_LATE_EVERY=2 FAKE_LATE_US=2700`, garbage 4 ms) 95 / 1 / 0 / 0
+contaminated of 159 / 133 / 130 / 125 at settle 0 / 5 / 6 / 8 (at 5 the
+latency floor of the fake, ~2 ms incl. generating the packet, leaves
+garbage 4 + 2 > 5: the semantics); garbage 8 ms: 196 of 196 at settle 0,
+0 of 147 at 6 and 10.
+KrakenSDR on these changes (worker F's first library patch,
+`lock-read-no-slip` - his second commit was not passed before these runs;
+06:29-07:06, load 1.9-2.5, `hw_r3.out`): `t_contrast.py` (station 14.8-15.0
+dB over B's floor, 20 s a settle) - first valid packet's worst segment
++4.2 / +3.7 dB at settle 5 / 0 against +4.5 / +4.4 for the later
+packets, segment 0 p90 +1.3 / +1.6 against +1.5 / +1.5; flagged B packets
+with the station 163 of 327 / 0 of 184; the no-gate build at settle 0
+(positive control): segment 0 +14.7 dB median over 158 hops, segments 0-2
+over the later max. `t_hop.py`, settle 5, FM ms a round K = 1-5 (sweeps
+a second): dwell 5 - 23.2 / 21.2 / 27.9 / 20.6 / 29.4 (3.92 / 7.86 / 8.97
+/ 16.20 / 11.35); dwell 10 - 29.7 / 27.4 / 34.2 / 27.3 / 36.5 (3.06 /
+6.09 / 7.31 / 12.21 / 9.14); dwell 20 - 36.6 / 35.1 / 41.6 / 36.3 / 43.0
+(2.48 / 4.75 / 6.01 / 9.19 / 7.75); every hop exactly its packets;
+24-1765 MHz timed at dwell 5 / 10 / 20: 5 tuners 4.11 / 5.58 / 6.86 s, 1
+tuner 18.95 / 25.17 / 31.42 s; CPU 12.6 % of a core (10.9 % in round 2 -
+the drain's 5 ms wait slices in sweep mode). `t_modes.py --sweep-seconds
+60`: 0 failures, 447 sweeps, 0 coherence events; sweep -> coherent (the
+phase-only return, "the library keeps the streams in step") reply 0.61
+s, CONVERGED 2.1 s, check_calibration |lag| 0.0 / |phase| 0.1 deg;
+mid-calibration entry and back 4.0 s; final 1.0 s; no "PLL not locked".
+`t_exitstress.py --n 15`: 15 returns at random points of a hop, every
+check_calibration |lag| 0.0 / |phase| 0.1-0.3 deg, 0 coherence events,
+`lag_no_peak` empty. `t_long.py --minutes 9` at the defaults (dwell 5,
+settle 5, full range, 5 tuners): 130 sweeps in 542 s (4.30 s each), 23924
+valid / 30209 flagged packets, 0 off the grid, 0 failed retunes, 0
+coherence events, RSS 41.98-41.99 MB flat, CPU 14.6 %, SIGTERM during a
+hop: exit 0 in 0.27 s.
 
 **Review fixes** (2026-11-20, an independent review of the merged diff and
 the orchestrator's end-to-end run; tests on the fake librtlsdr build -

@@ -85,6 +85,16 @@ int sweep_gate_l1(int64_t from_ns);
 uint32_t sweep_gate_stalled();
 uint32_t sweep_gates_failed();
 uint32_t sweep_gates_late();
+// The dongles that delivered at the last failed gate, but whose line never
+// reached its T (lost packets); cleared with the stalled mask by a gate
+// that passes and by sweep_gate_reset_diagnostics (the mode entered)
+uint32_t sweep_gate_slow();
+void sweep_gate_reset_diagnostics();
+// Leaving sweep mode (sweep.cpp's sweep_quiesce_flushes, the mode already
+// left, no gate can be filed any more): returns once the drain has served
+// every gate ever filed - pending, in flight or stale - so the re-pairing
+// flush after it is the last thing to touch the pairing
+void sweep_gates_quiesce();
 
 // Coherence-loss signalling. Cheap and callable from any thread (including the
 // alloc-free RTL callback): sets the coherence_lost flag exactly once per event,

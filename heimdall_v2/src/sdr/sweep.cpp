@@ -31,13 +31,14 @@
 //    frequencies it read are hop h's (h + 1's would make it read the flag
 //    as 1: they are stored after h + 1 set the flag).
 //  - The bound (proof at serve_gate_now, sdr_pipeline.cpp): every sample of
-//    a kept packet was taken at or after T - L* - 22 us, L* = the latency of
-//    the packet that dongle's line runs through - its fastest delivery of
-//    the last 32 packets (~1 ms on a PC). A late straddler, a backlog burst
-//    after a stalled reader, lost samples: none of them moves the line
-//    later, so none lets an earlier sample through. So the settle the
-//    samples see is SWEEP_SETTLE_MS minus that floor latency: what the
-//    contrast test (docs) checks, through the real pipeline.
+//    a kept packet was taken at or after T - L* - 33 us, L* = the fastest
+//    USB delivery among that dongle's last RTL_USB_BUF_COUNT + 16 packets.
+//    The window outlasts any backlog a stalled reader can deliver (at most
+//    RTL_USB_BUF_COUNT packets), so it always holds packets a running
+//    reader delivered and L* is the USB floor (~1 ms on a PC) - unless the
+//    reader runs steadily behind (every packet of the window late), which
+//    nothing here bounds. So the samples see SWEEP_SETTLE_MS minus L*: the
+//    settle has to cover the host's USB latency (the contrast test, docs).
 //  - A gain change in sweep mode (sweep_note_tuner_change) and the mode's
 //    entry set the flag the same way; whenever hopping stops (paused, plan
 //    not runnable) the thread finishes the settle and the gate before it
@@ -115,7 +116,14 @@ bool sweep_tune(rtlsdr_dev_t* dev, uint32_t hz, bool& fast) {
 #else
     if (rtlsdr_set_center_freq(dev, hz) >= 0) return true;
 #endif
-    return rtlsdr_set_center_freq(dev, hz) >= 0;   // the full path (lock check, 8 kHz autotune)
+    if (rtlsdr_set_center_freq(dev, hz) >= 0) return true;   // the full path (lock check, 8 kHz autotune)
+#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
+    // both failed: the driver may have left the 128 kHz autotune clock
+    // pending (it is set before the lock check, cleared only by the 8 kHz
+    // write) - counted as pending, so the finish runs for this tuner too
+    fast = true;
+#endif
+    return false;
 }
 
 // The tuners in `mask` whose fast tunes are pending: rtlsdr_finish_tune (0 =
@@ -129,10 +137,6 @@ bool sweep_tune(rtlsdr_dev_t* dev, uint32_t hz, bool& fast) {
 void finish_fast_tunes(uint32_t mask, bool in_mode, const char* why) {
     mask &= fast_pending.load();
     if (!mask) return;
-    if (reconfig_in_progress.load(std::memory_order_acquire)) {
-        fast_pending.fetch_and(~mask);   // the handles are reopened: fresh, fully tuned
-        return;
-    }
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     mask &= fast_pending.load();
     if (!mask) return;
@@ -180,14 +184,24 @@ int sweep_gate(int64_t from_ns) {
     const int r = sweep_gate_l1(from_ns);
     if (r == 0) {
         static int64_t last_log_ns = -20'000'000'000LL;
-        const uint32_t m = sweep_gate_stalled();
-        if (m && now_ns() - last_log_ns > 10'000'000'000LL) {
-            last_log_ns = now_ns();
+        const uint32_t m = sweep_gate_stalled(), slow = sweep_gate_slow();
+        auto list = [](uint32_t mask) {
             std::string t;
             for (int i = 0; i < NUM_DEVICES; i++)
-                if (m & (1u << i)) t += (t.empty() ? "" : ",") + std::to_string(i);
-            std::cerr << "Sweep: tuner(s) " << t << " delivered no data for 100 ms or more - no valid sweep data "
-                      "(the 8091 flag stays 1) until every tuner streams again" << std::endl;
+                if (mask & (1u << i)) t += (t.empty() ? "" : ",") + std::to_string(i);
+            return t;
+        };
+        if (now_ns() - last_log_ns > 10'000'000'000LL) {
+            last_log_ns = now_ns();
+            if (m)
+                std::cerr << "Sweep: tuner(s) " << list(m) << " delivered no data for 100 ms or more - no valid sweep "
+                          "data (the 8091 flag stays 1) until every tuner streams again" << std::endl;
+            else if (slow)
+                std::cerr << "Sweep: tuner(s) " << list(slow) << " deliver, but their packets don't reach the hop's "
+                          "start in 400 ms (packets lost?) - no valid sweep data (the 8091 flag stays 1)" << std::endl;
+            else
+                std::cerr << "Sweep: a hop's gate failed (the drain did not serve it) - the 8091 flag stays 1"
+                          << std::endl;
         }
     }
     return r;
@@ -231,6 +245,12 @@ bool wait_settle(uint32_t plan_gen) {
 // stream must not stop the sweep). false as soon as this plan stops hopping.
 // A dwell change takes effect at once.
 std::atomic<uint32_t> valid_target{~0u};   // wake the dwell when valid_sets reaches it
+std::atomic<int64_t> last_valid_ns{0};      // the last set counted valid (sweep_note_valid_set)
+// A dwell in which no set has gone out for this long ends early: the stream
+// stopped (a dongle silent - the drain then waits for it with every other
+// dongle's L1 filling); the next hop's gate finds the stall and keeps every
+// L1 empty (gate_hold)
+constexpr int64_t DWELL_STALL_NS = 100'000'000;
 bool wait_dwell(uint32_t plan_gen, uint32_t valid_from, int64_t start_ns) {
     const int64_t period_ns = static_cast<int64_t>(1e9 * NUM_SAMPLES / SAMPLE_RATE);
     for (;;) {
@@ -243,8 +263,10 @@ bool wait_dwell(uint32_t plan_gen, uint32_t valid_from, int64_t start_ns) {
         const int64_t left = start_ns + want * period_ns + static_cast<int64_t>(SWEEP_DWELL_GRACE_MS) * 1'000'000 -
                              now_ns();
         if (left <= 0) { valid_target.store(~0u); return true; }
+        const int64_t quiet = now_ns() - std::max(last_valid_ns.load(), start_ns);
+        if (quiet > DWELL_STALL_NS + period_ns) { valid_target.store(~0u); return true; }
         std::unique_lock<std::mutex> lk(wake_mutex);
-        wake_cv.wait_for(lk, std::chrono::nanoseconds(std::min<int64_t>(left, 50'000'000)), [&]() {
+        wake_cv.wait_for(lk, std::chrono::nanoseconds(std::min<int64_t>(left, 20'000'000)), [&]() {
             return sweep_state.change_seq.load() != seq || sweep_state.valid_sets.load() - valid_from >= want;
         });
     }
@@ -473,6 +495,19 @@ std::string sweep_status_json() {
              for (int i = 0; i < NUM_DEVICES; i++) if (m & (1u << i)) f.push_back(i);
              return tuners_json(f);
          }()
+      << ",\"l1_depth\":" << [] {   // packets in each active dongle's L1 now (diagnostic)
+             std::vector<int> f;
+             const int n = std::min<int>(active_num_elements.load(), static_cast<int>(devices.size()));
+             for (int i = 0; i < n; i++)
+                 f.push_back(devices[i] ? static_cast<int>(devices[i]->l1_buffer_size.load()) : 0);
+             return tuners_json(f);
+         }()
+      << ",\"slow_tuners\":" << [] {
+             std::vector<int> f;
+             const uint32_t m = sweep_gate_slow();
+             for (int i = 0; i < NUM_DEVICES; i++) if (m & (1u << i)) f.push_back(i);
+             return tuners_json(f);
+         }()
       << ",\"gates_failed\":" << sweep_gates_failed() << ",\"gates_late\":" << sweep_gates_late()
       << ",\"timing\":" << timing_json() << "}";
     return o.str();
@@ -480,7 +515,9 @@ std::string sweep_status_json() {
 
 void sweep_note_valid_set() {
     const uint32_t n = sweep_state.valid_sets.fetch_add(1) + 1;
-    if (n == first_valid_mark.load(std::memory_order_relaxed)) first_valid_ns.store(now_ns(), std::memory_order_relaxed);
+    const int64_t t = now_ns();
+    last_valid_ns.store(t, std::memory_order_relaxed);
+    if (n == first_valid_mark.load(std::memory_order_relaxed)) first_valid_ns.store(t, std::memory_order_relaxed);
     // the dwell's last packet is out: wake the hop thread (the lock pairs
     // with its predicate check, so the wake can't fall between check and wait)
     const uint32_t target = valid_target.load();
@@ -499,6 +536,7 @@ void sweep_notify() {
 }
 
 void sweep_prepare_entry() {
+    sweep_gate_reset_diagnostics();   // no stall of an earlier visit shown
     {
         std::lock_guard<std::mutex> lock(sweep_state.mutex);
         sweep_state.plan.run = true;   // entering the mode runs (as the client's SWEEP_RUN)
@@ -524,6 +562,9 @@ void sweep_note_tuner_change_done() {
 
 void sweep_quiesce_flushes() {
     std::lock_guard<std::mutex> lk(flush_mutex);
+    // every gate ever filed served (a stale one included) before the
+    // re-pairing flush that follows this - nothing after it touches the pairing
+    sweep_gates_quiesce();
     // (settings_mutex held: set_operating_mode on the way back to coherent,
     // before return_to_coherent_locked retunes every tuner and the
     // recalibration starts) the sweep's fast tunes end here

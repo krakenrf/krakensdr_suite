@@ -121,9 +121,13 @@ the hops into the sweep spectrum, the page shows it.
   `valid_min` / `valid_max`, `hops`, `moved`; diagnostics). The counter
   steps once per round (a round retried after a stalled tuner is not a new
   one). The guarantee's bound, exactly: every sample of a valid packet was
-  taken at or after retune end + settle - L* - 22 us, L* = that tuner's
-  fastest USB delivery among its last 32 packets (~1 ms on a PC;
-  heimdall's operating-modes.md, *Review of the hop loop*).
+  taken at or after retune end + settle - L* - 33 us, L* = that tuner's
+  fastest USB delivery among its last RTL_USB_BUF_COUNT + 16 (48) packets
+  (~1 ms on a PC; a reader running steadily behind makes it larger - the
+  settle has to cover it; heimdall's operating-modes.md, *Review of the
+  hop loop*). Also `"slow_tuners"` (tuners that deliver but whose packets
+  never reach the hop's start: lost packets) and `"l1_depth"` (each
+  tuner's L1 now; diagnostics), added in the third review round.
 
 ### heimdall, 8091 (sweep mode)
 
