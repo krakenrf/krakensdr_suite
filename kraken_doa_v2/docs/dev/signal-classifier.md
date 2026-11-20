@@ -491,6 +491,76 @@ the `sym` group or retraining for the 4-FSK family again.
   is a poor witness: its channel alternates POCSAG 1200 and FLEX 1600 and
   the file carries a comb of lines every 512 Hz
 
+### Why the real recordings fail: the per-recording analysis (2026-11-21)
+
+Every failing real signal of the shipped model was traced one by one
+(truth from the project's decoders; how it was fed; detection; features
+against the synthetic rows of its class; per-snapshot output; tracker;
+synthetic twins; an experiment per cause): 38 failing rows of the public
+narrowband digital recordings, 47 of the own native captures. **The
+real-recording tables above understate the classifier: most failures are
+in the evaluation and around the model, not in the features or the
+training.** Not fixed yet - this is the work list.
+
+- **Evaluation and truth, 44 of the 85 rows** (`eval_real.py`, the
+  library's index): the 5-channel capture was read as one interleaved
+  stream (0 of 8 right; antenna 0 alone 7 of 8); 14 rows of bursty voice /
+  payload channels are not on air in the 4 s window that is scored; wrong
+  truth rows (P25 Phase 2 voice listed as Phase 1, channels at other
+  offsets, a carrier that does not exist, two tones of one FSK device as
+  two OOK devices); a narrow recording placed into the 2.4 MHz band keeps
+  its own floor ~1 dB above the white fill, and the detector reports that
+  band as a 70-100 kHz signal (9 rows; replacing the floor outside the
+  signal with flat noise makes all 9 right at 0.86-1.00); two IF-filtered
+  files whose passband noise became a "noise-like signal"
+- **The tracker absorbs a correctly labelled channel into a wide weak
+  track** (~17 public rows end this way; also at runtime: key-up clicks,
+  packet splatter, band-wide floor flutter): a narrow track inside one at
+  least 2x wider is absorbed while both have one hit, and from then on the
+  channel's detections only keep the wide track alive. In 12 of the 15
+  DMR / P25 / NXDN rows that fail in every fit the model's own output on
+  the channel is right at 0.84-1.00 per snapshot. Experiment (a channel
+  >= 2 kHz wide and >= 6 dB stronger is neither absorbed nor counted as a
+  piece): library confirmed top-1 177 -> 186, shown-correct 117 -> 126, own
+  captures unchanged; the 2 kHz floor is needed (without it NFM carriers
+  split off); side effect to check: a dPMR recording then reads NXDN 0.98
+- **The 96 kHz view has no 12.5 kHz class** (no P25, P25 Phase 2, DMR,
+  NXDN, YSF, D-STAR, MPT1327, NFM voice): training keeps a class in a view
+  only with >= 100 examples and the composer made 46-96. A real channel
+  detected wider than 10.8 kHz (a shoulder, a neighbour, three adjacent
+  simulcast channels, ghost copies) is sent to a model that cannot name
+  it - this, not the features, is why those rows did not move in any fit.
+  Experiment (a view-1 detection 10.8-40 kHz wide is also classified in
+  view 0, the more probable known class wins) plus a tighter IQ-image
+  rule: channels on air at the busy local trunked sites 66 -> 77 of 81
+  right; no regression on 44 synthetic single signals (not yet run on the
+  impaired synthetic set or the public library)
+- Detector: the IQ-image rule dropped a real control channel 1.5 kHz off
+  the exact mirror of a 27.7 dB stronger one (it allows half a bandwidth);
+  a max-hold "burst" region 1.2-2.2 MHz wide bridges continuous
+  detections and swallows channels; a +-1 dB band-wide level flutter is
+  taken for a burst; wide-shift FSK still arrives as its tone humps (FLEX
+  6400 / 4, DFM, ISM FSK); the VOR's detected width flips 0.1 / 2 kHz and
+  the tracker then absorbs it into a ~1 dB receiver hump
+- Bank: the TETRA generator repeats an identical frame, so `frame_c` shows
+  peaks of 2-4 at the slot and frame lags where real TETRA shows ~0
+  (replacing that one group by the class mean turns unk_psk into tetra
+  0.98-1.00); radiosonde types without a generator (DFM, MRZ, iMet-4: 6
+  rows); a "wide pulse" P25 at ~1.5x the C4FM deviation (the bank allows
+  +-10 %); weak broadcast FM is detected 100-130 kHz wide, the synthetic
+  rows 60 kHz
+- Receiver and recordings: one crowded local capture holds 34 third-order
+  intermodulation products (the product of three strong channels
+  correlates 0.46-0.97 with each; the DMR decoder itself syncs on some); a
+  public 2.4 MS/s capture has copies of every strong carrier at +-12.5 /
+  -25 kHz; LoRa packets at -7..-2 dB are below what an energy detector
+  sees; NR against other OFDM at 875 MHz is ambiguous in 0.5 s
+- Training noise explains 2 of the 85 rows
+- What the shipped model really does on local signals: of the 81 channels
+  on air in the scored windows of the busy trunked-site captures 66 are
+  right (81 %); on 27 further channels identified with the decoders 23
+  (P25 14 of 16, DMR 6 of 8, MPT1327 3 of 3)
+
 ### Results (2026-11-20, phase 5, the shipped `sigclass.model`)
 
 The phase 4 weights (no retraining), now model format 3 with the RF table,
