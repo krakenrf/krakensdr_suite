@@ -420,8 +420,13 @@ the orchestrator's end-to-end run; tests on the fake librtlsdr build -
    alone (473 rounds) -> 945.98-945.99; 200 gain changes of tuner 0 alone ->
    no lag, CONVERGED 3.1 s. So every `rtlsdr_set_center_freq` shifts that
    dongle's sample stream by exactly 2 samples (gain writes - also I2C
-   through the repeater - don't); the cause inside the library / the R820T
-   is not found. Fix: after a sweep, or tuners retuned unequally often
+   through the repeater - don't). The cause, found 2026-11-21: the PLL lock
+   check's I2C read of exactly 3 registers makes the RTL2832U drop 4 bytes
+   of its stream - any 3-register read does, no write and no read of
+   another length (`../../../docs/dev/librtlsdr-fork.md`, *A 3-register
+   tuner read drops 2 samples*); the fast path reads the same 3. Tuners
+   retuned together lose the same 2 samples, which is why coherent retunes
+   and the wideband scan never showed it. Fix: after a sweep, or tuners retuned unequally often
    (counted per tuner, `note_tuner_retuned`; the same path serves
    independent mode - its per-tuner retunes had the same problem: 200
    retunes -> 92.9 s), the return to coherent sets `force_recalibration`:

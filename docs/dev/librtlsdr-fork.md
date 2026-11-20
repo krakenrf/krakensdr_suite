@@ -224,6 +224,57 @@ on every platform. The two notes below were bullets of the Windows section.
   set after ALL tuners, for every channel), retuning the displayed channel
   first, an interruptible sweep, an averaging reset on a retune
 
+## A 3-register tuner read drops 2 samples (measured 2026-11-21)
+
+Every retune moves that dongle's sample stream by exactly 2 samples against
+the others (found with sweep mode: `heimdall_v2/docs/dev/operating-modes.md`,
+*Review fixes* 8). The cause is not the PLL: it is the I2C READ OF EXACTLY 3
+REGISTERS, the PLL lock check `r82xx_read(priv, 0x00, data, 3)` in
+`r82xx_set_pll` (tuner_r82xx.c; osmocom's driver reads the same 3, and so
+does `r82xx_set_pll_yc`). Each such read makes the RTL2832U drop 4 bytes
+(2 I/Q samples) from its bulk stream.
+
+Measured on the KrakenSDR without heimdall (job scratch `lagprobe.py`:
+ctypes on the fork's librtlsdr.so, dongles 1000 / 1001 / 1002 streaming
+continuously with the noise source on, the lag of 1001 and 1002 against
+1000 from a 262144-point cross-correlation before and after ONE operation
+repeated 100 times on 1001; 1002 the control - it never moved, and 2 s of
+nothing moved nothing):
+
+| Operation on one dongle, x 100 | Lag change, samples |
+|---|---|
+| `rtlsdr_set_center_freq`: + 100 kHz and back, to the SAME frequency, 433 MHz and back | -200.00 each (-2.000 a call) |
+| `rtlsdr_set_center_freq_fast` (KEEP_AUTOTUNE) + `rtlsdr_finish_tune` | -202.00 |
+| a gain write; `rtlsdr_is_tuner_PLL_locked` (reads 5) | 0.00 |
+| one register rewritten unchanged: 0x05, 0x10, 0x12, 0x14, 0x15, 0x16, 0x17, 0x1a; the autotune clock 128 kHz then 8 kHz | 0.00 each |
+| the same, written while the autotune clock is at 128 kHz | 0.00 each |
+| read 1, 2, 4 or 5 registers (`rtlsdr_get_tuner_i2c_register`), autotune at 8 or 128 kHz | 0.00 each |
+| read 3 registers, autotune at 8 kHz / at 128 kHz / toggled around it | -200.00 each (-2.000 a read) |
+| a retune's I/O by hand (128 kHz, read 5, write 0x15, read 3, 8 kHz); the same without the write | -200.00 each |
+
+At 1.2 MS/s the 3-register read costs the same -2.000 samples, so it is a
+count of bytes (4) taken out of the stream, not time lost - something in the
+RTL2832U's USB / FIFO handling of that control read; why a length of 3 and
+not 1, 2, 4 or 5 is not known (longer reads could not be tried through the
+public API). The sign: the same instant comes 2 samples EARLIER in that
+dongle's stream. The 202 of the fast path is one read more than its 100
+calls - consistent with one tune whose lock check ran twice (the loop reads
+again after raising the VCO current).
+
+What follows:
+- A retune of every tuner together (coherent mode, the wideband scan) takes
+  the same 2 samples out of every stream: no lag between channels. Only
+  unequal counts show - sweep mode's blocks, independent tuners, a single
+  tuner's retry or second lock read. heimdall counts retunes per tuner
+  outside coherent mode and re-acquires every lag on the way back
+  (`note_tuner_retuned`, `force_recalibration`); in coherent mode a 2-sample
+  slip is caught by the lag check of the phase recalibration (> 1 sample).
+- A lock check that reads another number of registers would not move the
+  stream at all. Not changed here: the read was cut to registers 0..2
+  because reading 3 / 4 while the PLL settles was followed by the 0x0b /
+  0x0c corruption (`R82XX_PLL_SETTLE_US`), so a different length needs that
+  test again, in the fork.
+
 ## Zero-copy USB buffers (investigated 2026-11-12/14)
 
 **State since 2026-11-14** (librtlsdr 701a832 + 3ad1746, on the local
