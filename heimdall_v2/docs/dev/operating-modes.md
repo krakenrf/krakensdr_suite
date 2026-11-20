@@ -855,6 +855,33 @@ contaminated of 159 / 133 / 130 / 125 at settle 0 / 5 / 6 / 8 (at 5 the
 latency floor of the fake, ~2 ms incl. generating the packet, leaves
 garbage 4 + 2 > 5: the semantics); garbage 8 ms: 196 of 196 at settle 0,
 0 of 147 at 6 and 10.
+KrakenSDR on these changes (worker F's first library patch,
+`lock-read-no-slip` - his second commit was not passed before these runs;
+06:29-07:06, load 1.9-2.5, `hw_r3.out`): `t_contrast.py` (station 14.8-15.0
+dB over B's floor, 20 s a settle) - first valid packet's worst segment
++4.2 / +3.7 dB at settle 5 / 0 against +4.5 / +4.4 for the later
+packets, segment 0 p90 +1.3 / +1.6 against +1.5 / +1.5; flagged B packets
+with the station 163 of 327 / 0 of 184; the no-gate build at settle 0
+(positive control): segment 0 +14.7 dB median over 158 hops, segments 0-2
+over the later max. `t_hop.py`, settle 5, FM ms a round K = 1-5 (sweeps
+a second): dwell 5 - 23.2 / 21.2 / 27.9 / 20.6 / 29.4 (3.92 / 7.86 / 8.97
+/ 16.20 / 11.35); dwell 10 - 29.7 / 27.4 / 34.2 / 27.3 / 36.5 (3.06 /
+6.09 / 7.31 / 12.21 / 9.14); dwell 20 - 36.6 / 35.1 / 41.6 / 36.3 / 43.0
+(2.48 / 4.75 / 6.01 / 9.19 / 7.75); every hop exactly its packets;
+24-1765 MHz timed at dwell 5 / 10 / 20: 5 tuners 4.11 / 5.58 / 6.86 s, 1
+tuner 18.95 / 25.17 / 31.42 s; CPU 12.6 % of a core (10.9 % in round 2 -
+the drain's 5 ms wait slices in sweep mode). `t_modes.py --sweep-seconds
+60`: 0 failures, 447 sweeps, 0 coherence events; sweep -> coherent (the
+phase-only return, "the library keeps the streams in step") reply 0.61
+s, CONVERGED 2.1 s, check_calibration |lag| 0.0 / |phase| 0.1 deg;
+mid-calibration entry and back 4.0 s; final 1.0 s; no "PLL not locked".
+`t_exitstress.py --n 15`: 15 returns at random points of a hop, every
+check_calibration |lag| 0.0 / |phase| 0.1-0.3 deg, 0 coherence events,
+`lag_no_peak` empty. `t_long.py --minutes 9` at the defaults (dwell 5,
+settle 5, full range, 5 tuners): 130 sweeps in 542 s (4.30 s each), 23924
+valid / 30209 flagged packets, 0 off the grid, 0 failed retunes, 0
+coherence events, RSS 41.98-41.99 MB flat, CPU 14.6 %, SIGTERM during a
+hop: exit 0 in 0.27 s.
 
 **Review fixes** (2026-11-20, an independent review of the merged diff and
 the orchestrator's end-to-end run; tests on the fake librtlsdr build -
