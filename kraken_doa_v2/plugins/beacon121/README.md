@@ -78,8 +78,10 @@ Per beacon (table row + details, one talker each):
 - **Facts**: beacons heard (⚠ distress, on the air), the last distress
   beacon, the strongest, **carriers without a sweep** (voice, bare
   carriers, tones - explicitly not beacons), channels followed
-- Raw (decoder data log): `B121 <id> <direction> <rate>/s <lo>-<hi> m<depth>
-  d<duty> cn0 <dBHz>` every 10 s per beacon
+- Raw (decoder data log, the decoder tab's Logging at "Log All"): `B121 <id>
+  <direction> <rate>/s <lo>-<hi> m<depth> d<duty> cn0 <dBHz>` every 10 s per
+  beacon. The plugin sends nothing extra for "Show all messages": every
+  event it has is always shown
 
 ## ID separation
 
@@ -138,8 +140,9 @@ taken for that one's sideband and missed.
   marks' own lengths (unit 30 - 200 ms), letters by `nav::morse_char`
   (`plugins/lib/navaid`). A tone-keyed letter only within 4 s after a
   carrier pause (EN 302 152-1: "immediately following each pause")
-- Debug (offline): `B121_TRACE=1` + `--verbose` prints every evaluation's
-  folded trace, `B121_MORSE=1` the key runs that were decoded
+- Debug (stderr, offline or live): `B121_DEBUG=1` prints each channel's
+  evaluation every 0.5 s and channels opened / closed, with `B121_TRACE=1`
+  also the folded trace; `B121_MORSE=1` the key runs that were decoded
 
 ## Tests
 

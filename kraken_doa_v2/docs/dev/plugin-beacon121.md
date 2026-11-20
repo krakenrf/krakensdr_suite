@@ -46,7 +46,10 @@ every test number and the sources: `plugins/beacon121/README.md`.
   <= 1 + 10 %, 1.25-5.5 /s, both sides' own folds alike >= 60 % (added after
   the live playback gave AM voice a "confirming" talker: two same-rate
   beacons' one-sided sidebands crossing on its weaker side). 2 passes with
-  one period (+-6 %) = a beacon. Debug `B121_TRACE`, `B121_MORSE`
+  one period (+-6 %) = a beacon. Debug `B121_DEBUG` (+ `B121_TRACE`),
+  `B121_MORSE` - environment variables, not `host.verbose()`, which since
+  the 2026-11-19 logging rework means "Show all messages" / Logging "Log
+  All" (decoder-log.md) and would put diagnostics every 0.5 s into them
 - Morse (`RunMorse`): runs of a key; a long run (>= 0.6 s) ends the group
   AT ONCE (first version waited for the run's end - the 48 s sweep after
   the letter); key-up lead required; the tone key's 16 ms smear subtracted;
@@ -62,7 +65,11 @@ every test number and the sources: `plugins/beacon121/README.md`.
   interval. Talker packet per evaluation: 0.24 s of the latest carrier run,
   `freq_hz` = carrier, `bw_hz` 100 (kraken_doa's `narrow_cov` path at 32
   kHz). Valid spans = carrier-on runs of active beacons. Plots `sweep`,
-  `strength`. Page: `RDF_PK_KIND` beacon121 -> `sar` (one entry)
+  `strength`. Page: `RDF_PK_KIND` beacon121 -> `sar` (one entry). Merged
+  with main 2026-11-20 (the redesigned page, logging per decoder, the
+  removed Invert option): `host.rf_inverted()` dropped as in beacon406 /
+  wildlife; the distress / ⚠ wording left as beacon406's (main didn't change
+  it; plugin text is third-party text the page shows as it is, icons.md)
 - Tests (scratch `tmp/beacon121/`: harness.py, t_sens / t_false / t_edge /
   t_depth / t_close / t_scene.py offline; kd/ = a TEST kraken_doa on 2818x /
   28179 / 28191-2 / 28147 + ws.py + t_pb.py for the playback): numbers in

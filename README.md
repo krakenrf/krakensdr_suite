@@ -249,7 +249,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [Pulse radar](kraken_doa_v2/plugins/radar/README.md) (1215-1400 MHz and others) | Pulse width, chirp, PRF and PRI pattern, antenna rotation, beam width |
 | [AIS](kraken_doa_v2/plugins/ais/README.md) (162 MHz) | Ships, base stations, aids to navigation |
 | [406 MHz distress beacons](kraken_doa_v2/plugins/beacon406/README.md) | EPIRB / ELT / PLB: beacon ID, country, type, position. Self-tests are shown as tests |
-| [121.5 / 243 MHz distress beacons](kraken_doa_v2/plugins/beacon121/README.md) | The swept-tone homing signal of ELTs / EPIRBs / PLBs and of 406 MHz beacons' homers: each beacon by its carrier, sweep, rate, depth, pauses, Morse letter, with a bearing each. AM voice and plain carriers are not beacons |
+| [121.5 / 243 MHz distress beacons](kraken_doa_v2/plugins/beacon121/README.md) | ELT / EPIRB / PLB swept-tone homing, also 406 MHz beacons' homers: carrier, sweep, rate, pauses, Morse letter, a bearing per beacon. AM voice and plain carriers are not beacons |
 | [Radiosondes](kraken_doa_v2/plugins/radiosonde/README.md) (400-406 MHz) | Weather balloons (RS41, DFM, M10 / M20, iMet, LMS6, MRZ): position, weather data, flight track, a sounding |
 | [ISM devices](kraken_doa_v2/plugins/ism/README.md) (315 / 345 / 433 / 868 / 915 MHz) | About 140 device models: weather stations, tyre pressure sensors, key fobs, alarm sensors, energy meters |
 | [LoRa / Meshtastic / LoRaWAN](kraken_doa_v2/plugins/lora/README.md) | Meshtastic's public default channel (text, node names, positions); the clear headers of everything else |

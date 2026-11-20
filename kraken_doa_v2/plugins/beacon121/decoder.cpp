@@ -133,7 +133,7 @@ public:
     void process(const kp::cf* x, size_t n) override {
         now_ = host.time();
         blk_abs_ = rx_.abs();
-        rx_.verbose = host.verbose();
+        rx_.verbose = debug_;
         std::vector<b121::Report> reps;
         rx_.process(x, n, &reps);
         for (auto& l : rx_.log) host.log(l);
@@ -153,6 +153,9 @@ private:
     std::map<int, Other> others_;              // carriers without a sweep
     double now_ = 0;
     uint64_t blk_abs_ = 0;
+    // the channel / evaluation debug lines (stderr): an environment variable, not host.verbose() - that
+    // is "Show all messages" / Logging "Log All" now, and these are diagnostics every 0.5 s per carrier
+    const bool debug_ = getenv("B121_DEBUG") != nullptr;
     double avg_s_ = 2.0, keep_s_ = KEEP_DEFAULT_S;
     int reports_ = 0;
     double house_t_ = -1e9, plot_t_ = -1e9;
@@ -161,7 +164,7 @@ private:
     double rf_of(double off) const {
         const double rf = host.rf_hz();
         if (!std::isfinite(rf)) return NAN;
-        return host.rf_inverted() ? rf - off : rf + off;
+        return rf + off;
     }
     // 1 = 121.5 MHz, 2 = 243 MHz, 3 = another frequency, 0 = unknown (no RF)
     int freq_class(double off) const {
@@ -286,14 +289,14 @@ private:
         reports_++;
         chan_seen_[r.chan] = now_;
         const double t = to_time(r.eval_abs);
-        if (host.verbose() && (r.sweep.ok || r.carrier_share > 0.5))
+        if (debug_ && (r.sweep.ok || r.carrier_share > 0.5))
             host.log(fmt("ch %.0f ", r.chan) + fmt("%+.1f Hz ", r.freq_hz) + fmt("cn0 %.1f ", r.cn0) +
                      (r.sweep.ok ? "SWEEP " + sweep_text(r.sweep) + fmt(" %.2f/s", r.sweep.rate_hz) + fmt(" rho %.3f", r.sweep.rho) +
                                        fmt(" mono %.2f", r.sweep.mono) + fmt(" lit %.2f", r.sweep.lit) + fmt(" peak %.1f dB", r.sweep.peak_db) +
                                        fmt(" depth %.3f", r.depth) + fmt(" duty %.3f", r.duty)
                                  : "no sweep: " + r.sweep.why) +
                      fmt(" passes %.0f", r.passes));
-        if (host.verbose() && r.sweep.ok && getenv("B121_TRACE")) {
+        if (debug_ && r.sweep.ok && getenv("B121_TRACE")) {
             std::string tr = "trace";
             for (float v : r.sweep.trace) tr += std::isfinite(v) ? fmt(" %.0f", v) : " -";
             host.log(tr);
