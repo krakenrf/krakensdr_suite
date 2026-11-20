@@ -312,10 +312,16 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   and with an older one, before anything is downloaded (review
   2026-11-20: it printed its usage and exited 1 - "making the model failed
   (exit 1): [--prompt ...", after a 466 MB download for small.en-q8_0):
-  `helper_quantizes()` runs `kraken_whisper --help` (a few ms, at most 3 s)
-  and looks for "--quantize" in its usage -> "the speech helper is older
-  than the 8-bit models - update it (make whisper), then Get again" (not
-  from READY's live: the file may be newer than the running helper).
+  `helper_quantizes()` runs `kraken_whisper --help` first thing on the
+  download thread (a few ms, at most 5 s - on the uWS thread until the
+  re-review: a hanging binary blocked the loop, and on Windows a first
+  start slowed by a virus scanner or a failed spawn read as "older") and
+  looks at its usage: no "--quantize" in it -> "the speech helper is older
+  than the 8-bit models - update it (make whisper), then Get again"; it
+  didn't start, printed no usage or didn't answer in 5 s -> "could not
+  check the speech helper: it did not start (...)" / "it printed no usage" /
+  "it did not answer within 5 s" (not from READY's live: the file may be
+  newer than the running helper). Nothing is downloaded then.
   `v2t::stop()` ends the quantizer as it does curl. LEFTOVERS
   (`clean_model_leftovers`, at startup and before every Get, review
   2026-11-20): a Get killed midway (kraken_doa killed, a crash, the power)
@@ -323,7 +329,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   files, and the next Get fetched the f16 again; removed are exactly
   `ggml-<catalogue name>.bin.part`, `ggml-<derived>.f16` and `.f16.part`,
   `ggml-<VAD>.bin.part` - the .part ones only when not written to for 60 s
-  (setup.sh makes the same .part names and may be running), each logged
+  (setup.sh makes the same .part names and may be running), each logged.
+  Accepted (re-review): a setup.sh `.part` whose curl stalled for over a
+  minute is removed too (never a `.bin`)
 - Paths: `KRAKEN_TRANSCRIBE_DIR` (default `transcribe`, cwd-relative) holds
   `build/kraken_whisper`; models in `KRAKEN_WHISPER_MODELS` (default
   `<dir>/models`). Docker: helper built in the image (`--build-arg
@@ -530,17 +538,24 @@ default, because of its CPU cost (measured below).
   about half the helper's time; and none any more for a piece whose next
   one is expected to take over `LIVE_MAX_PARTIAL_MS` 4 s (`Tap::live_slow`;
   counted once per piece in `partials_slow`, the page's status row says
-  "N too long"). Expected = the wall time of the piece's last partial
-  (before its first: of the latest partial of any piece; none after a
-  helper restart) x its audio now / that partial's audio, both taken as
-  at least `LIVE_WINDOW_S` 5.12 s - the helper's smallest encoder window,
-  below which a decode costs about the same. Two tries that failed in the
-  tests: the step from the NEXT partial's expected time (as the piece
-  grows during the wait, the wait never ends for 0.5 s of decode per
+  "N stopped early"). Expected = the time the piece's OWN last partial took
+  (the helper's proc_ms - the wall time has this worker's own delays in it
+  too; wall time only if proc_ms is 0) x its audio now / that partial's
+  audio, both taken as at least `LIVE_WINDOW_S` 5.12 s - the helper's
+  smallest encoder window, below which a decode costs about the same.
+  Every piece sends its first partial, which measures it anew. Three tries
+  that failed: the step from the NEXT partial's expected time (as the
+  piece grows during the wait, the wait never ends for 0.5 s of decode per
   second of audio or more - the stub at 0.3 s/s waited 4.5 s after a 0.4
-  s partial), and the expected time from an average time per second of
-  audio without the floor (a stub taking a constant 1.6 s was given up
-  after its second partial: 1.6 s for 1 s of audio "is" 6.7 s for 4.2 s).
+  s partial); the expected time from an average time per second of audio
+  without the floor (a stub taking a constant 1.6 s was given up after its
+  second partial: 1.6 s for 1 s of audio "is" 6.7 s for 4.2 s); and a
+  piece without a partial yet judged by the latest partial of ANY piece
+  (re-review 2026-11-20, t_latch: one partial stalled 4.5 s - the helper
+  SIGSTOPped, as a CPU spike, an SD card stall or swapping would - and the
+  next transmissions got no partial at all, also after Live text off and
+  on, as nothing refreshed the estimate; now: the stalled piece stops, the
+  next two get 8 partials each).
 - PARTIAL_RESULT (`Worker::on_partial`): discarded (counted
   `partials_stale`) when its piece was finalized, dropped or replaced
   meanwhile (the tap's piece key moved on) or Live text went off; a piece
@@ -551,49 +566,94 @@ default, because of its CPU cost (measured below).
 - LocalAgreement-2 per piece (`LiveRow::agree`): the latest partial's
   words (`split_words`: whitespace; a token without a letter or digit is
   kept with the word before it - at the start with the word after it -, so
-  "-", "..." or "—" can't shift the words after it) are aligned to the
-  confirmed words, then the common prefix of what follows and the previous
-  partial's rest (compared by `norm_word`) is added to the confirmed words,
-  as the latest partial wrote them; confirmed only grows and never changes;
-  pending = the rest of the latest partial.
+  "-", "..." or "—" can't shift the words after it) are anchored to the
+  confirmed words; the words after the anchor that two partials in a row
+  agree on are added to the confirmed words, as the latest partial wrote
+  them; confirmed only grows and never changes; pending = the rest of the
+  latest partial. Words are compared by their letters (`norm_word`, and
+  `covered`: "ten-four over" agrees with "ten four over", but only where a
+  word of the other partial ends - "zz4" does not agree with "zz431").
   - `norm_word`: letters and digits only, lower-cased (ASCII, Latin-1,
     Latin Extended-A, Greek, Cyrillic); punctuation and symbols dropped,
     also the Unicode ones whisper writes ("…", "—", "¿", "♪", emoji).
     The first version kept every UTF-8 byte, so "…" was a word.
-  - The alignment (`anchor_confirmed`, review 2026-11-20): all the
-    confirmed letters (concatenated: "ten four" = "ten-four") against each
-    prefix of the partial's letters (edit distance, a byte DP - ~400 x 400
-    for a 25 s piece, well under a ms), at the word boundaries where the
-    partial's letters END with the last confirmed word's (the anchor),
-    the fewest edits (ties: the length nearest the confirmed letters'),
-    within 2 edits of the best boundary anywhere. The anchor inside a word
-    ("ten" confirmed, "ten-four" now) cuts that word there (`raw_cut`, the
-    signs after the cut kept with the first half) - only at a sign in it:
-    cut between letters, "American" confirmed then "Americans" said
-    "American" + "s" and confirmed the "s" (the real-helper run after the
-    first fix; the fuzz now counts such fragments). No anchor: nothing is
-    confirmed this time and the next partial confirms nothing from this
-    one's rest (`rest_ok`); then if the best boundary is NEAR (2 + a tenth
-    of the confirmed letters in edits: the partial changed a confirmed word
-    or two), it is taken anyway when this partial and the one before agree
-    word for word up to it (re-anchored: "fox" confirmed, "box" twice);
-    a partial whose letters are all (as near) the start of the confirmed
-    text adds nothing (it came out shorter); another text altogether is
+  - The anchor (`anchor_confirmed`): all the confirmed letters
+    (concatenated) against each prefix of the partial's letters (edit
+    distance, a byte DP: O(confirmed x partial bytes), 0.2 ms for 75 words,
+    1.4 ms for 200, 22 ms for 800 - the reviewer measured 5-8 ms at the
+    token cap), at the word boundaries where the partial's letters END with
+    the last confirmed word's, the fewest edits (ties: the length nearest
+    the confirmed letters'), within 2 edits of the best boundary anywhere.
+    Inside a word it cuts that word: at a sign in it ("ten" confirmed,
+    "ten-four" now: "ten-" + "four"), or between letters when the rest of
+    the word is the word the latest anchored partial had next ("every"
+    confirmed, "one" after it, now "everyone": "every" + "one"; "can" /
+    "not" / "cannot"); never else ("American" confirmed, "Americans" now
+    would leave an "s" - the real-helper run after the first fix confirmed
+    one; the fuzz counts such pieces).
+  - The last confirmed word(s) changed - no anchor ("10-4" -> "ten-four",
+    "12" -> "twelve", "alright" -> "all right", an "um" left out): the
+    confirmed words before the last d (1, 2, 3) are anchored, and those d
+    are matched to 0..d+2 words of the partial (more than d only for d = 1
+    and letters within a quarter: "alright" / "all right" - else a word of
+    the partial could be swallowed and never confirmed); chosen: the match
+    after which the partial's words go on as the confirmed words did in
+    the latest anchored partial (`ok_rest` - letters can't tell "10-4" is
+    "ten-four"), then the closest letters, then d words. It counts - its
+    words may be confirmed - only when this partial and the one before are
+    the same up to and including the first word after it AND the words went
+    on so (or, for one word, the letters are within a quarter: "American"
+    -> "Americans"). Otherwise nothing is confirmed (the match only places
+    the pending words): when the words after the changed ones changed as
+    well, an "um" left out and a re-spelled word look the same, and either
+    guess confirms a word twice or skips one. A partial that is only the
+    start of the confirmed text adds nothing; another text altogether is
     all pending. An empty partial ("" - no speech this time, a VAD glitch)
     leaves the row as it was (it used to wipe the pending words, so the
-    next partial confirmed nothing).
-  - Why (review 2026-11-20, a unit test of the code extracted verbatim):
-    the first version aligned by word COUNT (+-2 words around the last two
-    confirmed): "copy that ten-four" -> "copy that ten four we are on"
-    confirmed "copy that ten-four four we are on", three words put in front
-    "a b c d e c d e f g". Fuzz of the new code (`agree/t_fuzz.cpp`,
-    100,000 sentences of distinct words, 2 million words, partials growing
-    1-3 words with whisper-like changes - garbled last words, re-spelled /
-    hyphen-joined words, a filler in front coming and going, signs, empty
-    and shorter partials): 0 words confirmed twice, 0 skipped, 0 out of
-    order, 0 pieces of words, confirmed text never changed, 84 % of the words confirmed before
-    the end - the first version 2213 twice, 3744 skipped, 501 out of order,
-    74 %.
+    next partial confirmed nothing). The confirm step: with the latest
+    partial anchored, the words that go on as its rest did (`ok_rest`);
+    else, if it was the same up to the anchor, as its words did (`prev_n`).
+  - Why. First review (2026-11-20, the code extracted verbatim and unit
+    tested): the first version aligned by word COUNT (+-2 words around the
+    last two confirmed): "copy that ten-four" -> "copy that ten four we
+    are on" confirmed "copy that ten-four four we are on", three words put
+    in front "a b c d e c d e f g". Re-review (2026-11-20): the second
+    version, on no anchor, took the cheapest boundary for all of the
+    confirmed letters, BEFORE a changed word (deleting "104" costs 3 edits,
+    "ten-four" 7) and confirmed "copy that 10-4 ten-four over and"; a
+    confirmed "10-4" / "we can" then "Ten-four, copy that" / "we cannot go
+    there" were too far off its threshold: no confirmation for the rest of
+    the piece, the row showing "10-4 Ten-four, copy that over and" (the
+    whole partial pending); "every one" -> "everyone" skipped "one". Now:
+    "copy that 10-4 over and out", "10-4 copy that over and", "we can not go
+    there today", "we need every one of you here" (`agree/t_agree3.cpp`,
+    224 checks). On the way, measured with the fuzzes: d words for d as the
+    default without evidence miscounted a confirmed "d3-e4" (one word, two
+    in the partial) and confirmed a word twice; an "again" rule (the same
+    uncertain place twice = take it) confirmed 1176 words twice in fuzz 2;
+    the letter rule over d = 2 made "are gonna" / "are going" look alike
+    and confirmed "we are gonna to be there".
+  - Fuzzes (`agree/`, the code extracted verbatim by `extract.py`):
+    t_fuzz.cpp (100,000 sentences of distinct words, 2 million words,
+    partials growing 1-3 words: garbled last words, an "s" or a hyphen join
+    now and then, a filler in front coming and going, signs, empty and
+    shorter partials): 0 confirmed twice, 7 skipped, 0 out of order, 0
+    pieces of words, 89 % confirmed - the first version 2213 twice, 3744
+    skipped, 501 out of order, 74 %; the 7 follow a garbled word two
+    partials happened to agree on (the same random word at the same place).
+    t_fuzz2.cpp (harder: STICKY re-spellings - a word written completely
+    differently, "v" + reversed -, merges without a sign and joins that flip
+    now and then and stay, plus dropped words; errors on every other
+    partial / on any): 0 / 1 twice, 90 / 440 skipped in 410,000 words, 76 /
+    69 % confirmed - 83d63f3: 30 / 45 twice, 19 / 274 skipped, 64 / 59 %;
+    what is left is a sticky change and an earlier wrong partial at the same
+    place. The reviewer's fuzz (`r_alt.cpp` / `r_t_agree_new.cpp`, a
+    repetitive radio vocabulary, insertions / deletions / re-spellings in
+    the partials): errors on every other partial 0 transmissions with
+    wrong confirmed text in 500,000 (99.4 % of the words confirmed); on
+    every partial 66-83 in 20,000 (83d63f3: about 70). Accepted (re-review):
+    confirmed text can only go wrong when two partials in a row are wrong
+    the same way - inherent to agreeing on two partials.
 - Rows (`Worker::live_`, piece key -> `LiveRow`): made by the first
   partial with text, updated by each (talker / label, part, seconds of
   audio, confirmed, pending); `open` false once the piece ended (its final
@@ -618,8 +678,10 @@ default, because of its CPU cost (measured below).
   costs below in plain words - a tap on it doesn't flip the switch, the
   help handler eats the click), hidden for a receiver without `live`; drawn
   from the status only (no optimistic state). Status row "Live text"
-  (`#v2t-live-row`, shown while on): "N updates · 0.4 s each" (+ "· N too
-  long" in amber, `partials_slow`), or "not with this helper" with a
+  (`#v2t-live-row`, shown while on): "N updates · 0.4 s each" (+ "· N
+  stopped early" in amber, `partials_slow`; its title names a busy moment
+  of the computer too and says each new transmission starts again - "a
+  smaller model helps" was wrong for a one-off), or "not with this helper" with a
   warning icon (title: update it with `make whisper`). The rows: `v2tLive`
   (globals block), `v2tRenderLive` into `#v2t-live-rows` above `#v2t-rows`
   in the Transcription panel's list (`v2tRenderTab` calls it first; the VFO
@@ -793,4 +855,19 @@ marker), a fake `curl` on the PATH (no network).
   scenario as if it had talked to the scenario before's receiver (not
   reproduced in four runs since; the receiver exits 1.3-1.7 s after
   SIGTERM, also with a partial in flight - t_shutdown.py).
+- After the re-review (2026-11-20): `agree/t_agree3.cpp` 224 checks (+
+  the re-review's (a) 10-4 -> ten-four after more words, (b) the short
+  "10-4" -> "Ten-four, copy that" and "can" -> "cannot", (c) "every one" ->
+  "everyone", and gonna -> going to, alright -> all right, ten four ->
+  ten-four, a confirmed word dropped, the last word repeated later,
+  whisper restarting the sentence), the reviewer's own probes
+  (review_client `t_agree_respell` / `_merge` / `_alt` / `_new`, rebuilt on
+  the new code), the three fuzzes (above), all under ASan / UBSan for the
+  unit test. t_live.py 86 (+ latch: the helper SIGSTOPped 4.5 s during a
+  partial - partials per transmission 2 / 8 / 8, partials_slow 1, three
+  finals). t_dl2.py 13 (+ an older helper refused on the download thread
+  with nothing downloaded; a helper hanging on --help -> "could not check
+  the speech helper: it did not answer within 5 s", the receiver answering
+  GET_VOICE2TEXT meanwhile at once; one printing nothing -> "... it printed
+  no usage"). t_dl 25, t_ui 44, t_ui_scroll 4, t_e2e_ui 13 (the real helper).
 

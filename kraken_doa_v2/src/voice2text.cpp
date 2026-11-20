@@ -143,10 +143,13 @@ constexpr double LIVE_NEW_S = 0.5;
 // helper's time; a piece whose next partial is expected to take more than
 // LIVE_MAX_PARTIAL_MS gets none any more - it would come too late to be
 // worth it, likely after the transmission ended (thrown away), and delay
-// that piece's final by its whole run time. Expected = the time of its last
-// partial (of the latest partial of any piece before its first), scaled by
-// the audio's length, but from LIVE_WINDOW_S up only: the helper's encoder
-// window is never shorter (5.12 s), so a decode costs about the same below it
+// that piece's final by its whole run time. Expected = the time its last
+// partial took (the helper's proc_ms), scaled by the audio's length, but from
+// LIVE_WINDOW_S up only: the helper's encoder window is never shorter (5.12
+// s), so a decode costs about the same below it. Only the piece's OWN
+// partials count - every piece sends its first: one slow partial (a CPU
+// spike, an SD card stall) used to stop Live text for every later
+// transmission, as nothing refreshed the estimate (review 2026-11-20)
 constexpr double LIVE_DUTY = 2.0;
 constexpr int64_t LIVE_MAX_PARTIAL_MS = 4000;
 constexpr double LIVE_WINDOW_S = 5.12;
@@ -617,14 +620,12 @@ std::vector<std::string> split_words(const std::string& s) {
 // four" = "ten-four") align to w's letters before j with the fewest edits,
 // among the boundaries where w's letters end with the last confirmed word's
 // (the anchor). ok: found within 2 edits of the best boundary; else j = the
-// best boundary - then nothing is confirmed. near: few edits there (2 + a
-// tenth of the confirmed letters) - the partial changed a word or two of
-// the confirmed ones, rather than being another text. behind: all of the
-// partial is (within as few edits) the beginning of the confirmed text - it
-// came out shorter than the one before
+// best boundary. behind: all of the partial is (within 2 + a tenth of its
+// letters in edits) the beginning of the confirmed text - it came out
+// shorter than the one before
 struct Anchor {
     size_t j = 0;
-    bool ok = true, near = true, behind = false;
+    bool ok = true, behind = false;
 };
 // the bytes of one UTF-8 sequence starting at s[i] (a stray byte: 1)
 size_t utf8_len(const std::string& s, size_t i) {
@@ -633,10 +634,12 @@ size_t utf8_len(const std::string& s, size_t i) {
     return i + len <= s.size() ? len : 1;
 }
 // where to cut a word after the first m bytes of its norm_word: its raw
-// index there, the signs right after them kept with the first half; 0 =
-// not at a sign ("ten-four" is cut after "ten-", "Americans" not after
-// "American" - a cut between letters left "s" as a word)
-size_t raw_cut(const std::string& tok, size_t m) {
+// index there - at a sign in it, the signs kept with the first half
+// ("ten-four" after "ten-"), or between letters when the rest of the word
+// is `next`, the word the previous partial had after the confirmed ones
+// ("everyone" after "every" when it had "one": the two words written as one);
+// 0 = neither (a cut between letters made "Americans" "American" + "s")
+size_t raw_cut(const std::string& tok, size_t m, const std::string& next) {
     size_t i = 0, got = 0;
     while (i < tok.size() && got < m) {
         const size_t len = utf8_len(tok, i);
@@ -649,11 +652,26 @@ size_t raw_cut(const std::string& tok, size_t m) {
         if (!norm_word(tok.substr(i, len)).empty()) break;
         i += len;
     }
-    return i > letters_end ? i : 0;
+    if (i > letters_end) return i;
+    if (!next.empty() && letters_end > 0 && letters_end < tok.size() && norm_word(tok.substr(letters_end)) == next)
+        return letters_end;
+    return 0;
 }
-// (w: when the anchor falls inside one of its words - "ten" confirmed, the
-// partial wrote "ten-four" -, that word is cut there into two)
-Anchor anchor_confirmed(std::vector<std::string>& w, const std::vector<std::string>& conf) {
+// edit distance of two short strings (bytes)
+int edit_distance(const std::string& a, const std::string& b) {
+    std::vector<int> prev(b.size() + 1), cur(b.size() + 1);
+    for (size_t k = 0; k <= b.size(); k++) prev[k] = static_cast<int>(k);
+    for (size_t i = 1; i <= a.size(); i++) {
+        cur[0] = static_cast<int>(i);
+        for (size_t k = 1; k <= b.size(); k++)
+            cur[k] = std::min({prev[k] + 1, cur[k - 1] + 1, prev[k - 1] + (a[i - 1] != b[k - 1] ? 1 : 0)});
+        std::swap(prev, cur);
+    }
+    return prev[b.size()];
+}
+// (w: when the anchor falls inside one of its words - raw_cut -, that word
+// is cut there into two)
+Anchor anchor_confirmed(std::vector<std::string>& w, const std::vector<std::string>& conf, const std::string& next) {
     if (conf.empty()) return {};
     std::string C, S;
     for (const auto& c : conf) C += norm_word(c);
@@ -693,25 +711,48 @@ Anchor anchor_confirmed(std::vector<std::string>& w, const std::vector<std::stri
             for (size_t m = k + 1; m < bpos[j + 1]; m++)
                 if (!last.empty() && m >= last.size() && S.compare(m - last.size(), last.size(), last) == 0 &&
                     better(mid, static_cast<long>(j), prev[m], m)) {
-                    const size_t cut = raw_cut(w[j], m - k);   // (only at a sign in the word)
+                    const size_t cut = raw_cut(w[j], m - k, next);
                     if (cut > 0 && cut < w[j].size()) mid = {static_cast<long>(j), prev[m], m};
                 }
     }
+    const bool behind = s_in_c <= 2 + static_cast<int>(M / 10);
     // inside a word, if clearly better than at a word's end: cut it there
     if (mid.j >= 0 && mid.cost <= any.cost + 2 && (tail.j < 0 || mid.cost < tail.cost)) {
         const size_t t = static_cast<size_t>(mid.j);
-        const size_t cut = raw_cut(w[t], mid.k - bpos[t]);
-        if (cut > 0 && cut < w[t].size()) {
-            const std::string second = w[t].substr(cut);
-            w[t].resize(cut);
-            w.insert(w.begin() + static_cast<long>(t) + 1, second);
-            return {t + 1, true, mid.cost <= 2 + static_cast<int>(n / 10), false};
-        }
+        const size_t cut = raw_cut(w[t], mid.k - bpos[t], next);
+        const std::string second = w[t].substr(cut);
+        w[t].resize(cut);
+        w.insert(w.begin() + static_cast<long>(t) + 1, second);
+        return {t + 1, true, false};
     }
     const bool tail_ok = tail.j >= 0 && tail.cost <= any.cost + 2;
-    const Best& b = tail_ok ? tail : any;
-    return {static_cast<size_t>(b.j), tail_ok, b.cost <= 2 + static_cast<int>(n / 10),
-            s_in_c <= 2 + static_cast<int>(M / 10)};
+    return {static_cast<size_t>(tail_ok ? tail.j : any.j), tail_ok, behind};
+}
+
+// the letters of words, concatenated
+std::string cat_words(const std::vector<std::string>& vn, size_t from = 0, size_t to = SIZE_MAX) {
+    std::string o;
+    for (size_t i = from; i < std::min(to, vn.size()); i++) o += vn[i];
+    return o;
+}
+// how many of the words vn[i..] (normalized) the words ref go on with, from
+// letter `pos` of ref (a word boundary of it, else 0), compared by letters
+// but ending where a word of ref ends ("ten-four over" goes on with "ten
+// four over": 2; "zz4" does not go on with "zz431")
+size_t covered(const std::vector<std::string>& vn, size_t i, const std::vector<std::string>& ref, size_t pos = 0) {
+    std::vector<size_t> ends{0};
+    for (const auto& x : ref) ends.push_back(ends.back() + x.size());
+    const std::string R = cat_words(ref);
+    auto boundary = [&](size_t p) { return std::binary_search(ends.begin(), ends.end(), p); };
+    if (!boundary(pos)) return 0;
+    size_t l = 0, best = 0;
+    for (size_t t = i; t < vn.size(); t++) {
+        if (pos + vn[t].size() > R.size() || R.compare(pos, vn[t].size(), vn[t]) != 0) break;
+        pos += vn[t].size();
+        l++;
+        if (boundary(pos)) best = l;
+    }
+    return best;
 }
 
 // one live row: a piece still open, or ended and waiting for its final transcript
@@ -722,36 +763,116 @@ struct LiveRow {
     double rf = 0;
     int part = 0;
     std::string src, tid, tlabel;
-    std::vector<std::string> conf;   // confirmed words
-    std::vector<std::string> rest;   // the latest partial after them = pending
-    bool rest_ok = false;            // ... anchored: the next partial may confirm from it
-    std::vector<std::string> prev_n; // the latest partial's words, normalized
-    double secs = 0;                 // audio the latest partial had
-    bool open = true;                // false: the piece ended, its final is coming
-    // a new partial's words
+    std::vector<std::string> conf;     // confirmed words
+    std::vector<std::string> rest;     // the latest partial after them = pending
+    std::vector<std::string> ok_rest;  // normalized: what followed the confirmed words in the latest
+                                       // partial anchored to them
+    bool rest_ok = false;              // the latest partial was anchored (ok_rest is its rest)
+    std::vector<std::string> prev_n;   // the latest partial's words, normalized
+    double secs = 0;                   // audio the latest partial had
+    bool open = true;                  // false: the piece ended, its final is coming
+    // a new partial's words. Words are compared by their letters, so "ten-four"
+    // agrees with "ten four" and "a0-b1 c2" with "a0 b1 c2"
     void agree(std::vector<std::string> w) {
         if (w.empty()) return;   // no speech this time (a VAD glitch): the row stays as it is
-        const Anchor an = anchor_confirmed(w, conf);
-        std::vector<std::string> wn;
-        for (const auto& x : w) wn.push_back(norm_word(x));
+        const Anchor an = anchor_confirmed(w, conf, ok_rest.empty() ? "" : ok_rest[0]);
         size_t a = an.j;
         bool ok = an.ok;
-        if (!ok && an.behind) {
-            a = w.size();   // shorter than the confirmed text: nothing new in it
-        } else if (!ok && an.near && a > 0) {
-            // the last confirmed word was changed, but this partial and the
-            // one before it agree on everything up to there: anchored there again
-            size_t l = 0;
-            while (l < wn.size() && l < prev_n.size() && wn[l] == prev_n[l]) l++;
-            ok = l >= a;
-        } else if (!ok) {
-            a = 0;   // another text than the confirmed words: all of it pending
+        auto norm_all = [](const std::vector<std::string>& v) {
+            std::vector<std::string> o;
+            for (const auto& x : v) o.push_back(norm_word(x));
+            return o;
+        };
+        std::vector<std::string> wn = norm_all(w);
+        // this partial's letters up to word `upto` = the one before's, up to the end of one of its words
+        auto agreed = [&](const std::vector<std::string>& v, size_t upto) {
+            return upto <= v.size() && covered(v, 0, prev_n) >= upto;
+        };
+        if (!ok) {
+            // The last confirmed word(s) changed ("10-4" -> "ten-four", "12" ->
+            // "twelve", "alright" -> "all right", an "um" left out): anchor the
+            // confirmed words before the last d (1-3) and match those d to 0..d+2
+            // words of this partial: the match whose next words go on as the
+            // confirmed words did in the latest anchored partial (letters can't
+            // tell "10-4" is "ten-four"); equal: the closest letters, then d
+            // words. It counts (its words may be confirmed) only when this
+            // partial and the one before it are the same up to and including
+            // the first word after it, and the words after it went on so or the
+            // letters clearly match ("American" -> "Americans"): one wrong
+            // partial can't place it. Neither (the words after the changed ones
+            // changed as well): nothing is confirmed - an "um" left out and a
+            // word re-spelled look the same then, and either guess confirms a
+            // word twice or skips one (review 2026-11-20 - matching all of the
+            // confirmed letters put the anchor before the changed word and
+            // confirmed "10-4 ten-four"; d words for d as the default miscounted
+            // a confirmed "d3-e4" as one word)
+            bool placed = false;
+            size_t pa = 0;
+            std::vector<std::string> pw;
+            for (size_t d = 1; d <= std::min<size_t>(3, conf.size()) && !ok; d++) {
+                std::vector<std::string> w2 = w;
+                const std::vector<std::string> pre(conf.begin(), conf.end() - static_cast<long>(d));
+                size_t j0 = 0;
+                if (!pre.empty()) {
+                    const Anchor b = anchor_confirmed(w2, pre, "");
+                    if (!b.ok) continue;
+                    j0 = b.j;
+                }
+                const std::vector<std::string> w2n = norm_all(w2);
+                std::string changed;
+                for (size_t i = conf.size() - d; i < conf.size(); i++) changed += norm_word(conf[i]);
+                long best_m = -1;
+                size_t best_l = 0;
+                int best_cost = 0;
+                auto dist = [d](size_t x) { return x > d ? x - d : d - x; };
+                for (size_t m = 0; m <= d + 2 && j0 + m <= w2.size(); m++) {
+                    const std::string got_m = cat_words(w2n, j0, j0 + m);
+                    const int cost = edit_distance(changed, got_m);
+                    // more words than changed only for one changed word whose
+                    // letters say so ("alright" -> "all right"): else a word of
+                    // this partial could be taken into the changed ones and
+                    // never confirmed (with d > 1 an unchanged word in the
+                    // comparison makes "are gonna" / "are going" look alike)
+                    if (m > d && (d > 1 || cost * 4 > static_cast<int>(std::max(changed.size(), got_m.size())))) continue;
+                    const size_t l = covered(w2n, j0 + m, ok_rest);
+                    const bool better_m = best_m < 0 || l > best_l ||
+                                          (l == best_l && (cost < best_cost ||
+                                                           (cost == best_cost && dist(m) < dist(static_cast<size_t>(best_m)))));
+                    if (better_m) {
+                        best_m = static_cast<long>(m);
+                        best_l = l;
+                        best_cost = cost;
+                    }
+                }
+                if (best_m < 0) continue;
+                const size_t m = static_cast<size_t>(best_m);
+                const std::string got = cat_words(w2n, j0, j0 + m);
+                const bool letters = d == 1 && best_cost * 4 <= static_cast<int>(std::max(changed.size(), got.size()));
+                const bool sure = agreed(w2n, j0 + m + 1) && (best_l > 0 || letters);
+                if (sure || !placed) {
+                    pa = j0 + m;
+                    pw = std::move(w2);
+                    ok = sure;
+                    placed = true;
+                }
+            }
+            if (placed) {
+                w = std::move(pw);
+                wn = norm_all(w);
+                a = pa;
+            } else {
+                a = an.behind ? w.size() : 0;   // shorter than the confirmed text / another text: all pending
+            }
         }
+        // the words after the anchor this partial and the one before agree on
         size_t k = 0;
-        if (ok && rest_ok)
-            while (a + k < w.size() && k < rest.size() && wn[a + k] == norm_word(rest[k])) k++;
+        if (ok) {
+            if (rest_ok) k = covered(wn, a, ok_rest);
+            else if (agreed(wn, a)) k = covered(wn, a, prev_n, cat_words(wn, 0, a).size());   // (not anchored, the same up to here)
+        }
         conf.insert(conf.end(), w.begin() + static_cast<long>(a), w.begin() + static_cast<long>(a + k));
         rest.assign(w.begin() + static_cast<long>(a + k), w.end());
+        if (ok) ok_rest.assign(wn.begin() + static_cast<long>(a + k), wn.end());
         rest_ok = ok;
         prev_n = std::move(wn);
     }
@@ -1146,8 +1267,6 @@ private:
     uint64_t partial_piece_ = 0;
     int64_t partial_sent_ms_ = 0;
     double partial_secs_ = 0;
-    int64_t partial_took_ms_ = 0;  // the latest partial's wall time (0 = none yet), of how much audio
-    double partial_took_s_ = 0;
     uint64_t next_piece_ = 0;
     std::map<uint64_t, LiveRow> live_;
 
@@ -1711,14 +1830,13 @@ void Worker::maybe_partial(int64_t t) {
     for (auto& kv : taps_) {
         Tap& tap = kv.second;
         const size_t n = tap.live_len();
-        // how long this piece's next partial is expected to take (LIVE_WINDOW_S);
-        // too long: none for it any more (counted once)
-        const bool own = tap.live_took_ms > 0;
-        const double took = static_cast<double>(own ? tap.live_took_ms : partial_took_ms_);
-        const double expect_ms = took * std::max(n / static_cast<double>(RATE), LIVE_WINDOW_S) /
-                                 std::max(own ? tap.live_took_s : partial_took_s_, LIVE_WINDOW_S);
-        if (can && tap.rec && tap.piece && !tap.live_slow && n >= static_cast<size_t>(LIVE_FIRST_S * RATE) &&
-            expect_ms > LIVE_MAX_PARTIAL_MS) {
+        // how long this piece's next partial is expected to take (LIVE_WINDOW_S;
+        // its own partials only - its first always goes); too long: none for
+        // it any more (counted once)
+        const double expect_ms = static_cast<double>(tap.live_took_ms) *
+                                 std::max(n / static_cast<double>(RATE), LIVE_WINDOW_S) /
+                                 std::max(tap.live_took_s, LIVE_WINDOW_S);
+        if (can && tap.rec && tap.piece && !tap.live_slow && tap.live_took_ms > 0 && expect_ms > LIVE_MAX_PARTIAL_MS) {
             tap.live_slow = true;
             std::lock_guard<std::mutex> lk(s_.st_mu);
             s_.partials_slow++;
@@ -1772,11 +1890,10 @@ void Worker::on_partial(const char* p, size_t len) {
     memcpy(&ms, p + 4, 4);
     if (id != partial_id_) return;
     has_partial_ = false;
-    // its wall time (sending, queueing, decoding): the next partials' step
-    // and expected time (maybe_partial)
-    const int64_t took = std::max<int64_t>(1, now_ms() - partial_sent_ms_);
-    partial_took_ms_ = took;
-    partial_took_s_ = partial_secs_;
+    // the time it took - the helper's proc_ms, else the wall time (that has
+    // this worker's own delays in it too): its piece's next step and expected
+    // time (maybe_partial)
+    const int64_t took = ms > 0 ? static_cast<int64_t>(ms) : std::max<int64_t>(1, now_ms() - partial_sent_ms_);
     std::string text(p + 12, len - 12);
     while (!text.empty() && text.back() == '\0') text.pop_back();
     auto it = taps_.find(partial_vfo_);
@@ -1853,7 +1970,6 @@ void Worker::start_helper(const Config& c, int64_t t) {
     ready_ = false;
     proc_model_ = c.model;
     sent_valid_ = false;
-    partial_took_ms_ = 0;   // (another model, threads: measured anew)
     set_state("starting");
     std::cout << "Voice to Text: helper started, model " << c.model << (vad.empty() ? " (no VAD model)" : "")
               << std::endl;
@@ -2184,8 +2300,10 @@ void clean_model_leftovers() {
 
 // Can the helper on disk make the derived models (kraken_whisper --quantize,
 // 2026-11-20)? Its usage (--help, on stderr) names the option; an older one's
-// doesn't. A few ms; bounded to 3 s
-bool helper_quantizes() {
+// doesn't. 1 = yes, 0 = it ran and doesn't (older), -1 = couldn't tell (*why:
+// it didn't start, or said nothing within 5 s - a first start on Windows can
+// be slow while a virus scanner looks at it). A few ms; on the download thread
+int helper_quantizes(std::string* why) {
     kproc::SpawnOptions o;
     o.argv = {helper_exe(), "--help"};
     o.in = kproc::Stdio::Null;
@@ -2193,14 +2311,19 @@ bool helper_quantizes() {
     o.err = kproc::Stdio::Pipe;
     kproc::Process proc;
     std::string err;
-    if (!proc.spawn(o, &err)) return false;
+    if (!proc.spawn(o, &err)) {
+        *why = "it did not start (" + err + ")";
+        return -1;
+    }
     std::string text;
     char buf[4096];
-    const int64_t end = now_ms() + 3000;
+    bool eof = false;
+    const int64_t end = now_ms() + 5000;
     while (text.size() < 65536) {
         const int64_t left = end - now_ms();
         if (left <= 0) break;
         const ptrdiff_t n = proc.read(kproc::Stream::Err, buf, sizeof buf, static_cast<int>(left));
+        if (n < 0) eof = true;
         if (n <= 0) break;   // EOF, an error or the time is up
         text.append(buf, static_cast<size_t>(n));
     }
@@ -2209,7 +2332,10 @@ bool helper_quantizes() {
         proc.kill();
         proc.wait();
     }
-    return text.find("--quantize") != std::string::npos;
+    if (text.find("--quantize") != std::string::npos) return 1;
+    if (text.find("usage") != std::string::npos) return 0;   // its usage, without the option
+    *why = eof ? "it printed no usage" : "it did not answer within 5 s";
+    return -1;
 }
 
 // a child that ends with a line on stderr when it fails: run, wait, that line
@@ -2262,6 +2388,16 @@ void download_thread(std::vector<DlStep> steps) {
     State& s = S();
     std::string err;
     std::vector<std::string> temps;   // f16 files fetched just to be quantized
+    // a model made here: first whether the helper can (an older one has no
+    // --quantize and would print its usage and exit 1 - after a download
+    // it couldn't use); here, not on the uWS thread (review 2026-11-20)
+    if (std::any_of(steps.begin(), steps.end(), [](const DlStep& f) { return f.quantize; })) {
+        std::string why;
+        const int q = helper_quantizes(&why);
+        if (q == 0) err = "the speech helper is older than the 8-bit models - update it (make whisper), then Get again";
+        else if (q < 0) err = "could not check the speech helper: " + why;
+        if (!err.empty()) steps.clear();
+    }
     for (const auto& f : steps) {
         const std::string out = f.out, part = out + ".part";
         mkdir(transcribe_dir().c_str(), 0755);
@@ -2644,12 +2780,6 @@ bool download_model(const std::string& name, std::string* err) {
             // only for this, into a file no model list shows - quantized by the helper
             if (!file_exists(helper_exe())) {
                 *err = "the speech helper is not installed - it makes this model";
-                return false;
-            }
-            // an older helper has no --quantize: said now, before a download
-            // it couldn't use (it would print its usage and exit 1)
-            if (!helper_quantizes()) {
-                *err = "the speech helper is older than the 8-bit models - update it (make whisper), then Get again";
                 return false;
             }
             const CatalogueEntry* src = catalogue(ce->from);

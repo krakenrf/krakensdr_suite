@@ -16632,7 +16632,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       : s.live_ok === false
         ? `<span style="color:#f4c170" title="The speech helper installed is older than Live text: update it (cd kraken_doa_v2 &amp;&amp; make whisper). Transcripts come at the end of each transmission meanwhile">${icon('warn', 't')}<span>not with this helper</span></span>`
       : s.partials ? `<span title="Live updates so far, the time each took (mean)${s.partials_stale ? ' - ' + s.partials_stale + ' came after their transmission ended (not shown)' : ''}">${s.partials} updates · ${(s.partial_ms / 1000).toFixed(1)} s each</span>` +
-        (s.partials_slow ? ` · <span style="color:#f4c170" title="Transmissions whose live text stopped: the next update would have taken over 4 s (a long transmission, a slow model or CPU) - their final transcripts come as ever. A smaller model, an 8-bit one or more CPU cores help">${s.partials_slow} too long</span>` : '')
+        (s.partials_slow ? ` · <span style="color:#f4c170" title="Transmissions whose live text stopped early: the next update would have taken over 4 s (a long transmission, a busy moment of the computer, or a slow model) - their final transcripts come as ever, and each new transmission starts again. If it happens often: a smaller or 8-bit model, or more CPU cores">${s.partials_slow} stopped early</span>` : '')
       : 'on');
     // (the files' section is in this dialog: a link to it; a problem of the log shows here too)
     // (the receiver's log.enabled = allowed and the transcripts at Log; the reasons from dlState.
