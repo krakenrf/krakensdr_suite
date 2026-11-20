@@ -1,0 +1,63 @@
+[
+{
+ "id": "beacon121-four",
+ "title": "121.5 MHz swept-tone beacons: four beacons, AM voice and a carrier on the guard channel",
+ "description": "Six transmitters in the 32 kHz VFO on 121.500 MHz, 30 s looped: an ELT (downward sweep 1600-300 Hz, 3 sweeps/s, square-wave modulation) on 121.4970 MHz at 40 deg; a 406 MHz beacon's homer (2.5 sweeps/s, pausing 0.5 s every 10 s - real ones every ~50 s - with the Morse 'P' after each pause) on 121.4995 MHz at 150 deg, 6 dB weaker; an upward-sweeping beacon (400-1400 Hz, 2.5/s) on 121.5042 MHz at 260 deg; an old beacon drifted to 121.5105 MHz (+86 ppm, outside the +-50 ppm of the standard) sweeping 4 times a second, at 100 deg; AM voice on 121.5018 MHz (200 deg) and a bare carrier on 121.4920 MHz (320 deg) - neither a beacon. Expect four talkers at their bearings, four '⚠ DISTRESS BEACON' events (121.5105 flagged '+86 ppm (> 50)' in its details), the 406 MHz homer's pause event and its Morse 'P' (after its second pause, ~17 s), and the voice and carrier only under 'Carriers without a sweep'.",
+ "rf_hz": 121500000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 30,
+ "vfo": {"bw_khz": 32},
+ "steps": [
+  ["{tools}/beacon121_gen.py", "a.cf32", "--seconds", "30", "--offset", "-3000", "--sweep-rate", "3", "--depth", "0.9", "--seed", "1"],
+  ["{tools}/beacon121_gen.py", "b.cf32", "--seconds", "30", "--offset", "-500", "--sweep-rate", "2.5", "--wave", "sine", "--depth", "0.95",
+   "--pause-every", "10", "--pause-len", "0.5", "--pause-first", "4", "--morse", "P", "--seed", "2"],
+  ["{tools}/beacon121_gen.py", "c.cf32", "--seconds", "30", "--offset", "4200", "--dir", "up", "--lo", "400", "--hi", "1400",
+   "--sweep-rate", "2.5", "--duty", "0.4", "--seed", "3"],
+  ["{tools}/beacon121_gen.py", "f.cf32", "--seconds", "30", "--offset", "10500", "--sweep-rate", "4", "--seed", "4"],
+  ["{tools}/beacon121_gen.py", "v.cf32", "--seconds", "30", "--offset", "1800", "--kind", "voice", "--depth", "0.8", "--seed", "5"],
+  ["{tools}/beacon121_gen.py", "e.cf32", "--seconds", "30", "--offset", "-8000", "--kind", "carrier", "--seed", "6"]
+ ],
+ "scene": {"rate": 32000, "snr_db": 5, "seed": 7, "sources": [
+  {"name": "121.4970", "file": "a.cf32", "rate": 32000, "at": 0, "bearing": 40},
+  {"name": "121.4995", "file": "b.cf32", "rate": 32000, "at": 0, "bearing": 150, "gain_db": -6},
+  {"name": "121.5042", "file": "c.cf32", "rate": 32000, "at": 0, "bearing": 260, "gain_db": -3},
+  {"name": "121.5105", "file": "f.cf32", "rate": 32000, "at": 0, "bearing": 100},
+  {"name": "voice", "file": "v.cf32", "rate": 32000, "at": 0, "bearing": 200},
+  {"name": "carrier", "file": "e.cf32", "rate": 32000, "at": 0, "bearing": 320, "gain_db": -3}
+ ]},
+ "expect": [
+  {"tid": "121.4970", "bearing": 40},
+  {"tid": "121.4995", "bearing": 150},
+  {"tid": "121.5042", "bearing": 260},
+  {"tid": "121.5105", "bearing": 100},
+  {"event": "DISTRESS BEACON"},
+  {"event": "Morse 'P'"}
+ ],
+ "tol_deg": 5
+},
+{
+ "id": "beacon121-squelch",
+ "title": "121.5 MHz beacon with the Digital squelch: AM voice from another bearing in its silence",
+ "description": "One ELT (downward sweep, 3 sweeps/s) on 121.5030 MHz at 70 deg, on the air 0-12 s and 20-30 s of the 30 s loop; between, AM voice on 121.5010 MHz from 250 deg. The VFO's squelch is set to Digital: it opens only while the beacon's sweep is confirmed, and the VFO's own DoA (its MUSIC plot) comes from the beacon's samples only - expect it at 70 deg, held there while the voice talks, and the beacon's talker at 70 deg.",
+ "rf_hz": 121500000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 30,
+ "vfo": {"bw_khz": 32},
+ "commands": ["DEC_SQUELCH_METHOD:0:DIGITAL", "DEC_SQUELCH_ENABLE:0:1"],
+ "steps": [
+  ["{tools}/beacon121_gen.py", "a.cf32", "--seconds", "30", "--offset", "3000", "--at", "0", "--dur", "12", "--seed", "1"],
+  ["{tools}/beacon121_gen.py", "b.cf32", "--seconds", "30", "--offset", "3000", "--at", "20", "--dur", "10", "--seed", "2"],
+  ["{tools}/beacon121_gen.py", "v.cf32", "--seconds", "30", "--offset", "1000", "--kind", "voice", "--at", "12.5", "--dur", "7", "--depth", "0.8", "--seed", "3"]
+ ],
+ "scene": {"rate": 32000, "snr_db": 5, "seed": 4, "sources": [
+  {"name": "121.5030", "file": "a.cf32", "rate": 32000, "at": 0, "bearing": 70},
+  {"name": "121.5030 again", "file": "b.cf32", "rate": 32000, "at": 0, "bearing": 70},
+  {"name": "voice", "file": "v.cf32", "rate": 32000, "at": 0, "bearing": 250, "gain_db": 3}
+ ]},
+ "expect": [
+  {"tid": "121.5030", "bearing": 70},
+  {"vfo": 0, "bearing": 70}
+ ],
+ "tol_deg": 5
+}
+]
