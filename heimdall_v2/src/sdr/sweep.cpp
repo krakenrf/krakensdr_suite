@@ -44,6 +44,7 @@
 #include "../core/settings.hpp"
 #include <rtl-sdr.h>
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
@@ -53,6 +54,11 @@ namespace {
 
 std::mutex wake_mutex;
 std::condition_variable wake_cv;
+// Serializes the sweep's L1 flushes with leaving the mode: after
+// sweep_quiesce_flushes() no sweep flush can still run (each re-checks the
+// mode under it), so the re-pairing flush on the way back to coherent is the
+// last one (set_operating_mode). Never held while taking settings_mutex.
+std::mutex flush_mutex;
 
 int64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -60,6 +66,14 @@ int64_t now_ns() {
 }
 
 bool in_sweep() { return operating_mode.load() == OperatingMode::SWEEP; }
+
+// The sweep's L1 + downstream flush; false (nothing done) once the mode was left
+bool sweep_flush() {
+    std::lock_guard<std::mutex> lk(flush_mutex);
+    if (!in_sweep()) return false;
+    clear_l1_buffer_quiet();
+    return true;
+}
 
 // Sleep until change_seq moves away from `seq`, at most `ns` (and at most
 // 50 ms: global_running is cleared by a signal handler, which can't notify)
@@ -112,7 +126,7 @@ void settle_and_clear_flag() {
         if (left <= 0) break;
         std::this_thread::sleep_for(std::chrono::nanoseconds(std::min<int64_t>(left, 50'000'000)));
     }
-    clear_l1_buffer_quiet();
+    if (!sweep_flush()) return;
     // Another change (a gain change, the mode left and entered again) since
     // the flush started moved last_retune_ns: leave the flag to the next
     // pass. Under settings_mutex, which every change that sets it holds.
@@ -123,16 +137,17 @@ void settle_and_clear_flag() {
 
 // Failed retunes: counted; logged at once, then at most every 10 s
 void report_failures(int failed, int tuner, uint64_t hz) {
+    // (failed_retunes / failed_mask are updated by the hop itself)
     static int64_t last_log_ns = -20'000'000'000LL;
     static uint32_t unreported = 0;
     if (failed == 0) return;
-    sweep_state.failed_retunes.fetch_add(static_cast<uint32_t>(failed));
     unreported += static_cast<uint32_t>(failed);
     const int64_t now = now_ns();
     if (now - last_log_ns < 10'000'000'000LL) return;
     last_log_ns = now;
     std::cerr << "Sweep: " << unreported << " tuner retune(s) failed twice (latest: tuner " << tuner << " to "
-              << hz / 1e6 << " MHz) - those tuners keep their previous frequency" << std::endl;
+              << hz / 1e6 << " MHz) - their 8091 frequency is 0 (no valid data) until a retune succeeds"
+              << std::endl;
     unreported = 0;
 }
 
@@ -160,17 +175,6 @@ uint32_t sweep_rounds(uint32_t steps, size_t tuners) {
     return (steps + k - 1) / k;
 }
 
-std::string validate_sweep_plan(uint64_t first_center_hz, uint64_t step_hz, uint64_t steps) {
-    if (steps < 1 || steps > SWEEP_STEPS_MAX) return "steps must be 1-" + std::to_string(SWEEP_STEPS_MAX);
-    if (step_hz < SWEEP_STEP_MIN_HZ || step_hz > SWEEP_STEP_MAX_HZ)
-        return "step_hz must be " + std::to_string(SWEEP_STEP_MIN_HZ) + "-" + std::to_string(SWEEP_STEP_MAX_HZ);
-    const uint64_t last = first_center_hz + (steps - 1) * step_hz;
-    if (first_center_hz < RTL_TUNER_MIN_HZ || last > RTL_TUNER_MAX_HZ)
-        return "hop centres must lie in the tuner range (" + std::to_string(RTL_TUNER_MIN_HZ) + "-" +
-               std::to_string(RTL_TUNER_MAX_HZ) + " Hz; the last is " + std::to_string(last) + ")";
-    return "";
-}
-
 std::string apply_sweep_request(const SweepRequest& req) {
     if (req.has_plan) {
         if (std::string e = validate_sweep_plan(req.first_center_hz, req.step_hz, req.steps); !e.empty()) return e;
@@ -190,8 +194,12 @@ std::string apply_sweep_request(const SweepRequest& req) {
     if (req.has_settle && req.settle_ms > SWEEP_SETTLE_MAX_MS)
         return "settle_ms must be 0-" + std::to_string(SWEEP_SETTLE_MAX_MS);
 
-    bool restart = false;
+    bool restart = false, persist = false;
     {
+        // settings_mutex first (the hop thread's lock order: it reads the
+        // plan under settings_mutex): the round / sweeps reset can't land
+        // between the thread's plan check and its round store
+        std::lock_guard<std::mutex> slock(settings_mutex);
         std::lock_guard<std::mutex> lock(sweep_state.mutex);
         SweepPlan& p = sweep_state.plan;
         if (req.has_plan && (p.first_center_hz != req.first_center_hz || p.step_hz != req.step_hz ||
@@ -205,18 +213,20 @@ std::string apply_sweep_request(const SweepRequest& req) {
             p.tuner_mask = mask;
             restart = true;
         }
-        if (req.has_dwell) p.dwell_ms = req.dwell_ms;
-        if (req.has_settle) p.settle_ms = req.settle_ms;
-        if (req.has_run) p.run = req.run;
+        if (req.has_dwell && p.dwell_ms != req.dwell_ms) { p.dwell_ms = req.dwell_ms; persist = true; }
+        if (req.has_settle && p.settle_ms != req.settle_ms) { p.settle_ms = req.settle_ms; persist = true; }
+        if (req.has_run) p.run = req.run;   // not saved
         if (restart) {
+            // the generation first: the thread checks it under this mutex
+            // before it stores a round or counts a sweep
+            sweep_state.plan_generation.fetch_add(1);
             sweep_state.round.store(0);
             sweep_state.sweeps.store(0);
-            sweep_state.plan_generation.fetch_add(1);
+            persist = true;
         }
-        sweep_state.rounds.store(sweep_rounds(p.steps, sweep_tuners(p.tuner_mask).size()));
     }
     sweep_notify();
-    settings::note_sweep();
+    if (persist) settings::note_sweep();   // only what the file holds
     return "";
 }
 
@@ -232,6 +242,12 @@ std::string sweep_status_json() {
       // beyond the contract's fields (diagnostics)
       << ",\"retuning\":" << (in_sweep() && sweep_state.retuning_in_progress.load() ? "true" : "false")
       << ",\"failed_retunes\":" << sweep_state.failed_retunes.load()
+      << ",\"failed_tuners\":" << [] {
+             std::vector<int> f;
+             const uint32_t m = sweep_state.failed_mask.load();
+             for (int i = 0; i < NUM_DEVICES; i++) if (m & (1u << i)) f.push_back(i);
+             return tuners_json(f);
+         }()
       << ",\"l1_unquiet_flushes\":" << l1_unquiet_flushes() << "}";
     return o.str();
 }
@@ -260,6 +276,16 @@ void sweep_prepare_entry() {
 void sweep_note_tuner_change() {
     sweep_state.retuning_in_progress.store(true);
     sweep_state.last_retune_ns.store(now_ns());
+}
+
+void sweep_note_tuner_change_done() {
+    // the settle runs from here: the writes may take longer than settle +
+    // flush (Windows tunes one by one)
+    sweep_state.last_retune_ns.store(now_ns());
+}
+
+void sweep_quiesce_flushes() {
+    std::lock_guard<std::mutex> lk(flush_mutex);
 }
 
 void sweep_thread() {
@@ -297,11 +323,11 @@ void sweep_thread() {
         const uint32_t H = p.steps;
         const size_t kp = std::min<size_t>(sel.size(), H);
         const uint32_t R = sweep_rounds(H, sel.size());
-        if (kp == 0 || R == 0) {
+        if (kp == 0 || R == 0) {   // (no tuner open: not reached in practice)
+            settle_and_clear_flag();
             wait_for_change(seq, 50'000'000);
             continue;
         }
-        sweep_state.rounds.store(R);
         if (r >= R) r = 0;
         move_tuner.clear();
         move_hz.clear();
@@ -310,7 +336,7 @@ void sweep_thread() {
             const uint32_t hz = static_cast<uint32_t>(p.first_center_hz + (b0 + r) * p.step_hz);
             // a tuner already there isn't retuned (K' = H: every round is the
             // same - the stream then runs on without a gap); one whose last
-            // retune failed is (it still shows its old frequency)
+            // retune failed is (its frequency entry is 0)
             if (b0 + r < b1 && wideband_config.get_tuner_frequency(sel[k]) != hz) {
                 move_tuner.push_back(sel[k]);
                 move_hz.push_back(hz);
@@ -335,8 +361,12 @@ void sweep_thread() {
         bool cancelled = false;
         {
             std::lock_guard<std::mutex> lock(settings_mutex);
+            // (and no hop while the pipeline is down or an element-count
+            // change owns the devices - it holds settings_mutex while it
+            // closes and reopens them, but stops the pipeline first)
             if (!global_running.load() || !in_sweep() || sweep_state.plan_generation.load() != pg ||
-                !sweep_state.get_plan().run) {
+                !sweep_state.get_plan().run || !pipeline_running.load(std::memory_order_acquire) ||
+                reconfig_in_progress.load(std::memory_order_acquire)) {
                 cancelled = true;
             } else if (retune) {
                 std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
@@ -349,14 +379,28 @@ void sweep_thread() {
                                  rtlsdr_set_center_freq(dev, move_hz[i]) >= 0;
                 });
                 // Only now the new frequencies (the header reads them before
-                // the flag); a tuner that failed keeps its old one
-                for (size_t i = 0; i < move_tuner.size(); i++)
-                    if (move_ok[i]) wideband_config.set_tuner_frequency(move_tuner[i], move_hz[i]);
+                // the flag). A tuner that failed is NOT on its old frequency
+                // (the R820T / E4000 drivers fail after N / SDM are written,
+                // librtlsdr then reports 0): its entry is 0, which no client
+                // takes for a hop, until a retune succeeds
+                uint32_t failed_now = 0;
+                for (size_t i = 0; i < move_tuner.size(); i++) {
+                    wideband_config.set_tuner_frequency(move_tuner[i], move_ok[i] ? move_hz[i] : 0);
+                    if (!move_ok[i]) failed_now |= 1u << move_tuner[i];
+                }
+                uint32_t moved = 0;
+                for (int t : move_tuner) moved |= 1u << t;
+                sweep_state.failed_mask.store((sweep_state.failed_mask.load() & ~moved) | failed_now);
+                if (failed_now)
+                    sweep_state.failed_retunes.fetch_add(static_cast<uint32_t>(std::popcount(failed_now)));
                 sweep_state.last_retune_ns.store(now_ns());
-                sweep_state.round.store(r);
-                sweep_state.frequency_change_counter.fetch_add(1);
-            } else {
-                sweep_state.round.store(r);
+                for (int t : move_tuner) note_tuner_retuned(t);   // (also: --kerberos marks the calibration stale)
+            }
+            if (!cancelled) {
+                // round and counter only for the plan in force (a set_sweep
+                // resets them under sweep_state.mutex)
+                std::lock_guard<std::mutex> plock(sweep_state.mutex);
+                if (sweep_state.plan_generation.load() == pg) sweep_state.round.store(r);
                 sweep_state.frequency_change_counter.fetch_add(1);
             }
         }
@@ -379,7 +423,7 @@ void sweep_thread() {
         for (int pass = 0; pass < 8 && !settled; pass++) {
             if (!wait_phase(true, 0, pg)) break;
             const int64_t settled_from = sweep_state.last_retune_ns.load();
-            clear_l1_buffer_quiet();
+            if (!sweep_flush()) break;
             std::lock_guard<std::mutex> lock(settings_mutex);
             if (in_sweep() && sweep_state.plan_generation.load() == pg &&
                 sweep_state.last_retune_ns.load() == settled_from) {
@@ -394,6 +438,7 @@ void sweep_thread() {
         sweep_state.round_ms.store(static_cast<uint32_t>((now_ns() - t0) / 1'000'000));
         if (++r >= R) {
             r = 0;
+            std::lock_guard<std::mutex> plock(sweep_state.mutex);
             if (sweep_state.plan_generation.load() == pg) sweep_state.sweeps.fetch_add(1);
         }
     }

@@ -70,6 +70,9 @@ static void recycle_raw_set(std::vector<SampleBuffer>& set) {
 static std::atomic<uint32_t> flush_requests{0};    // bumped by clear_l1_buffer()
 static std::atomic<uint32_t> flush_completed{0};   // last request the drain served
 static std::atomic<bool> drain_active{false};
+// whether the flush the drain served last found its quiet point (stored
+// before flush_completed, read after it)
+static std::atomic<bool> last_served_quiet{true};
 static std::atomic<std::thread::id> drain_thread_id{};
 
 // Downstream flush epoch. Every flush (clear_l1_buffer / clear_l2_buffer)
@@ -103,7 +106,10 @@ static int64_t steady_now_ns() {
 static std::atomic<uint32_t> l1_unquiet_flush_count{0};
 uint32_t l1_unquiet_flushes() { return l1_unquiet_flush_count.load(std::memory_order_relaxed); }
 
-static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
+// Returns whether the flush found its quiet point (true without wait_quiet
+// or with no device: nothing to pair)
+static bool flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
+    bool found_quiet = true;
     if (wait_quiet && num_elements > 0) {
         const int64_t period = static_cast<int64_t>(1e9 * NUM_SAMPLES / SAMPLE_RATE);
         const int64_t deadline = steady_now_ns() + 4 * period;
@@ -132,6 +138,7 @@ static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
                     (steady && hi - lo < period / 2 && steady_now_ns() - hi < period / 2);
             if (!quiet) std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
+        found_quiet = quiet;
         if (!quiet && warn) l1_unquiet_flush_count.fetch_add(1, std::memory_order_relaxed);
         if (!quiet && warn) {
             static int64_t last_warn_ns = 0;  // flush callers are serialized by the drain
@@ -153,6 +160,7 @@ static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
         // No store(0) - see clear_l2_raw_buffer(); a phantom here is fatal
         // (callback would see l1 size == SIZE_MAX and drop every packet).
     }
+    return found_quiet;
 }
 
 // One read of everything the conversion applies set-wide (see SetConversionState).
@@ -423,7 +431,7 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     auto serve_flush = [](int n) {
         const uint32_t req = flush_requests.load(std::memory_order_acquire);
         if (req == flush_completed.load(std::memory_order_relaxed)) return false;
-        flush_l1_now(n, true);
+        last_served_quiet.store(flush_l1_now(n, true), std::memory_order_relaxed);
         flush_completed.store(req, std::memory_order_release);
         return true;
     };
@@ -668,37 +676,43 @@ static void flush_downstream() {
 
 // quiet: the sweep's flushes (~40 a second) - nothing on stdout, and the
 // "did not respond" fault throttled
-static void clear_l1_buffer_impl(bool quiet) {
+static bool clear_l1_buffer_impl(bool quiet) {
     if (!quiet) std::cout << "Clearing L1 buffers for all devices..." << std::endl;
     // The drain performs the flush (see flush_l1_now); wait for it. Flush
     // directly when there is no drain (pipeline stopped) or it doesn't answer.
-    bool served = false;
+    bool served = false, found_quiet = true;
     if (drain_active.load(std::memory_order_acquire) &&
         drain_thread_id.load() != std::this_thread::get_id()) {
         const uint32_t req = flush_requests.fetch_add(1, std::memory_order_acq_rel) + 1;
         for (int waited_ms = 0; waited_ms < 500 && !served; waited_ms++) {
             if (static_cast<int32_t>(flush_completed.load(std::memory_order_acquire) - req) >= 0) {
                 served = true;
+                found_quiet = last_served_quiet.load(std::memory_order_relaxed);
                 break;
             }
             if (!drain_active.load(std::memory_order_acquire)) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         if (!served) {
-            static std::atomic<int64_t> last_warn_ns{0};
+            // throttled against the last LOG line (an exchange on every
+            // occurrence kept a fault recurring faster than 10 s silent)
+            static std::atomic<int64_t> last_warn_ns{-20'000'000'000LL};
             const int64_t now = steady_now_ns();
-            if (!quiet || now - last_warn_ns.exchange(now) > 10'000'000'000LL)
-                std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
+            const bool log = !quiet || now - last_warn_ns.load() > 10'000'000'000LL;
+            if (log) last_warn_ns.store(now);
+            if (log) std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
         }
     }
-    if (!served) flush_l1_now(active_num_elements.load(), true);
+    if (!served) found_quiet = flush_l1_now(active_num_elements.load(), true);
     // AFTER the L1 flush: a set the drain completed before serving it went
     // into L2-raw, and anything already downstream is older still
     flush_downstream();
+    return found_quiet;
 }
 
 void clear_l1_buffer() { clear_l1_buffer_impl(false); }
 void clear_l1_buffer_quiet() { clear_l1_buffer_impl(true); }
+bool clear_l1_buffer_paired() { return clear_l1_buffer_impl(true); }
 
 void clear_l2_buffer() {
     std::cout << "Clearing entire L2 buffer..." << std::endl;

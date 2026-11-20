@@ -347,6 +347,22 @@ struct SweepPlan {
     bool run = true;
 };
 
+// "" if a sweep plan is valid (every hop centre inside the tuner range, step
+// SWEEP_STEP_MIN_HZ .. SWEEP_STEP_MAX_HZ, 1 .. SWEEP_STEPS_MAX hops) - the one
+// check for 8092 set_sweep and the settings file. Inputs up to 2^63 can't
+// wrap: steps and step are bounded before the last centre is computed.
+inline std::string validate_sweep_plan(uint64_t first_center_hz, uint64_t step_hz, uint64_t steps) {
+    if (steps < 1 || steps > SWEEP_STEPS_MAX) return "steps must be 1-" + std::to_string(SWEEP_STEPS_MAX);
+    if (step_hz < SWEEP_STEP_MIN_HZ || step_hz > SWEEP_STEP_MAX_HZ)
+        return "step_hz must be " + std::to_string(SWEEP_STEP_MIN_HZ) + "-" + std::to_string(SWEEP_STEP_MAX_HZ);
+    if (first_center_hz < RTL_TUNER_MIN_HZ || first_center_hz > RTL_TUNER_MAX_HZ ||
+        (steps - 1) * step_hz > RTL_TUNER_MAX_HZ - first_center_hz)
+        return "hop centres must lie in the tuner range (" + std::to_string(RTL_TUNER_MIN_HZ) + "-" +
+               std::to_string(RTL_TUNER_MAX_HZ) + " Hz; the last is " +
+               std::to_string(first_center_hz + (steps - 1) * step_hz) + ")";
+    return "";
+}
+
 // Sweep mode's live state. The plan is guarded by `mutex`; the rest is read
 // lock-free by the 8091 header, the status JSON and the dashboard.
 struct SweepState {
@@ -358,7 +374,6 @@ struct SweepState {
     std::atomic<uint32_t> plan_generation{0};
     std::atomic<uint32_t> change_seq{0};
     std::atomic<uint32_t> round{0};          // the round the tuners are on
-    std::atomic<uint32_t> rounds{0};         // R of the plan in force
     std::atomic<uint32_t> sweeps{0};         // completed since the plan changed
     std::atomic<uint32_t> round_ms{0};       // measured time of the last round
     std::atomic<uint32_t> frequency_change_counter{0};  // + 1 per round (8091)
@@ -367,6 +382,9 @@ struct SweepState {
     std::atomic<bool> retuning_in_progress{false};
     std::atomic<int64_t> last_retune_ns{0};  // steady clock of the last retune (or mode entry)
     std::atomic<uint32_t> failed_retunes{0}; // tuner retunes that failed twice (session)
+    // bit N: tuner N's last retune failed - its tuner_frequencies entry is 0
+    // ("no valid frequency") until its next successful retune
+    std::atomic<uint32_t> failed_mask{0};
     // sets broadcast with the flag 0 (conversion worker): a dwell lasts until
     // at least one went out, so no hop goes without data
     std::atomic<uint32_t> valid_sets{0};

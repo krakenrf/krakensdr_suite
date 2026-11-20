@@ -198,5 +198,13 @@ const char* generic_mode_refusal(OperatingMode target);
 void enter_generic_independent_mode(const std::vector<std::unique_ptr<SDRDevice>>& devices);
 void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices);
 
+// A tuner was retuned / its gain changed outside coherent mode (sweep hop,
+// wideband spread, independent tuner, gain): --kerberos restores its manual
+// calibration STALE on the way back (sdr_init.cpp)
+void note_tuners_changed_outside_coherent();
+// ... and a PLL write on that tuner (counted per tuner: unequal counts mean
+// unknown lags on the way back to coherent - a full recalibration)
+void note_tuner_retuned(int tuner);
+
 // Serializes librtlsdr handle operations (see sdr_init.cpp). Innermost lock.
 extern std::recursive_mutex device_io_mutex;

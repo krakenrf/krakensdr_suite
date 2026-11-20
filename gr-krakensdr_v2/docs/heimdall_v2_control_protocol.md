@@ -276,8 +276,10 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
   them), `sweeps` completed since the plan changed, `round_ms` the measured
   time of the last round - plus three diagnostic fields beyond the contract:
   `retuning` (the 8091 flag, false outside sweep mode), `failed_retunes`
-  (tuner retunes that failed twice this session; such a tuner keeps its
-  previous frequency in the header) and `l1_unquiet_flushes` (L1 flushes
+  (tuner retunes that failed twice this session; such a tuner's 8091
+  frequency is 0 until its next successful retune - see the data protocol),
+  `failed_tuners` (the tuners whose last retune failed) and
+  `l1_unquiet_flushes` (L1 flushes
   that found no quiet point between USB packet rounds, since startup).
   `operating_mode` is `"sweep"` and `tuner_frequencies` lists every tuner.
 

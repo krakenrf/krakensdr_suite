@@ -33,9 +33,7 @@ struct SweepRequest {
 // round 0; every change is saved (settings::note_mode's debounce). Accepted
 // in every mode, used in sweep mode.
 std::string apply_sweep_request(const SweepRequest& req);
-// "" if the three plan fields are valid (hop centres inside the tuner range,
-// step SWEEP_STEP_MIN_HZ .. SWEEP_STEP_MAX_HZ, 1 .. SWEEP_STEPS_MAX hops)
-std::string validate_sweep_plan(uint64_t first_center_hz, uint64_t step_hz, uint64_t steps);
+// (validate_sweep_plan: core/types.hpp, shared with the settings file)
 
 // The contract's status object, {"first_center_hz":..,"round_ms":..}
 std::string sweep_status_json();
@@ -51,10 +49,15 @@ uint32_t sweep_rounds(uint32_t steps, size_t tuners);
 void sweep_prepare_entry();
 // Wake the sweep thread's waits (mode entered / left, plan changed)
 void sweep_notify();
-// A gain change in sweep mode (update_sdr_settings, settings_mutex held),
-// before the tuners are written: the stream is invalid until the next settle
-// + flush
+// A gain change in sweep mode (update_sdr_settings, settings_mutex held):
+// _change() before the tuners are written (the flag on), _change_done()
+// after (the settle + flush that make the stream valid again run from there)
 void sweep_note_tuner_change();
+void sweep_note_tuner_change_done();
+// After the mode left SWEEP (settings_mutex held): wait until no sweep L1
+// flush runs any more - none starts after this (set_operating_mode's
+// re-pairing flush on the way back to coherent is then the last one)
+void sweep_quiesce_flushes();
 
 // The sweep thread (started once from main): hops while the mode is SWEEP,
 // the plan runs and the pipeline is up; idle otherwise.
