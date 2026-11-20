@@ -49,7 +49,9 @@ How a capture is made (all signals in the frequency domain, one inverse FFT):
   the receiver: white noise 3-40 LSB rms per I / Q (log-uniform: the gain
   setting; in 30 % 0.3-3 LSB, a quiet antenna at full gain), passband droop 0.5-6 dB at +-1.2 MHz (|f|^3..10), in 12 % 1-2
   spurs and in 4 % a comb of them every 100-300 kHz (clean carriers at 8-40
-  dB in 1 kHz, labelled carrier), IQ
+  dB in 1 kHz, labelled carrier), in 12 % 1-2 noise-like band-edge humps
+  (8-25 kHz, 3-15 dB, 1.04-1.12 MHz from the centre, 70 % above; no truth:
+  none), IQ
   imbalance +-0.5 dB / +-3 deg, DC offset +-3 LSB, 8 bits (floor(x + 128),
   0..255); everything scaled down (a lower gain) when the signals' peaks +
   3 noise rms would pass 105 LSB, except in 6 % of captures, driven 1.2-2.5x
@@ -444,6 +446,17 @@ def make_capture(index, opt):
             spurs.append((t['offset_hz'], a))
             continue
         X[t['_ob'] % Nb] += t['_S'] * (a * t['_scale'])       # the bins are distinct
+    # receiver artefacts near the band edge (an RTL-SDR at high gain: noise-like humps 8-25
+    # kHz wide at 1.04-1.12 MHz from the centre, 70 % above it) - in no truth: 'none'
+    if not opt.get('single') and rng.random() < 0.12:
+        for _ in range(int(rng.integers(1, 3))):
+            fc = float(rng.uniform(1.04e6, 1.12e6)) * (1 if rng.random() < 0.7 else -1)
+            w = float(rng.uniform(8e3, 25e3))
+            k0, k1 = int(round((fc - w / 2) / df)), int(round((fc + w / 2) / df))
+            ks = np.arange(k0, k1 + 1) % Nb
+            lev = 10 ** (rng.uniform(3, 15) / 10)
+            amp = np.float32(sigma * np.sqrt(Nb * lev))
+            X[ks] += (rng.standard_normal(len(ks)) + 1j * rng.standard_normal(len(ks))).astype(np.complex64) * amp
     # receiver: droop toward the band edges
     droop_db = float(rng.uniform(0.5, 6.0))
     p_ex = float(rng.uniform(3, 10))

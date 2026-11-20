@@ -161,8 +161,17 @@ def ingest(batch, ds):
                        capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit('sigclass_tool features failed: ' + r.stderr[-2000:])
-    D = int(json.loads(subprocess.run([TOOL, 'layout'], capture_output=True, text=True).stdout)['dim'])
+    lay = json.loads(subprocess.run([TOOL, 'layout'], capture_output=True, text=True).stdout)
+    D = int(lay['dim'])
     X = np.fromfile(pre + '.f32', np.float32).reshape(-1, D)
+    # the symbol sequence (layout v3, the last group) apart and as int8 (x 127): the
+    # caches would be 3x larger in float32
+    sq = [g for g in lay['groups'] if g['name'] == 'symseq']
+    Q = None
+    if sq:
+        o0, n0 = int(sq[0]['offset']), int(sq[0]['length'])
+        Q = np.rint(np.clip(np.nan_to_num(X[:, o0:o0 + n0]), -1, 1) * 127).astype(np.int8)
+        X = np.ascontiguousarray(np.delete(X, np.s_[o0:o0 + n0], axis=1))
     rows = [json.loads(l) for l in open(pre + '.jsonl')]
     by = {}
     for k, rw in enumerate(rows):
@@ -208,8 +217,9 @@ def ingest(batch, ds):
         if t['file'] not in by:
             pass
     det = np.array([[rw[k] for k in DET_KEYS] for rw in rows], np.float64).reshape(-1, len(DET_KEYS))
+    extra = {'Q': Q} if Q is not None else {}
     np.savez(dst + '.tmp.npz', X=X, y=y, tidx=tidx, cov=cov, cap=cap, clip=clip.astype(str), tsnr=tsnr, ton=ton, det=det,
-             **{'T_' + k: np.array(v) for k, v in T.items()})
+             **extra, **{'T_' + k: np.array(v) for k, v in T.items()})
     os.replace(dst + '.tmp.npz', dst)
     for f in (pre + '.f32', pre + '.jsonl', lst):
         os.remove(f)
@@ -302,6 +312,84 @@ class MLP:
         return np.concatenate([self.forward(X[i:i + bs])[0] for i in range(0, len(X), bs)]) if len(X) else np.zeros((0, len(self.b[-1])))
 
 
+class ConvMLP(MLP):
+    """the symbol-sequence front end + the MLP: Conv1D (C in, K filters, L taps) over
+    the sequence Q (n, C, S), ReLU, max and mean over time -> appended to the other
+    features -> the MLP (im2col + GEMM; model_io's / model.cpp's format 2)"""
+
+    def __init__(self, sizes, rng, K, C, L):
+        super().__init__(sizes, rng)
+        self.K, self.C, self.L = K, C, L
+        self.Wc = (rng.standard_normal((K, C * L)) * np.sqrt(2.0 / (C * L))).astype(np.float32)
+        self.bc = np.zeros(K, np.float32)
+
+    def params(self):
+        return self.W + self.b + [self.Wc, self.bc]
+
+    def cols(self, Q):
+        Q = np.ascontiguousarray(Q)
+        B, C, S = Q.shape
+        T = S - self.L + 1
+        st = Q.strides
+        v = np.lib.stride_tricks.as_strided(Q, (B, T, C, self.L), (st[0], st[2], st[1], st[2]))
+        return v.reshape(B * T, C * self.L), T
+
+    def front(self, Q):
+        B = Q.shape[0]
+        cols, T = self.cols(Q)
+        Y = np.maximum(cols @ self.Wc.T + self.bc, 0).reshape(B, T, self.K)
+        im = Y.argmax(axis=1)
+        mx = np.take_along_axis(Y, im[:, None, :], axis=1)[:, 0, :]
+        return np.concatenate([mx, Y.mean(axis=1)], axis=1), (cols, Y, im, T)
+
+    def forward_all(self, X, Q, drop=0.0, rng=None):
+        pooled, cache = self.front(Q)
+        A0 = np.concatenate([X, pooled.astype(X.dtype)], axis=1)
+        logits, acts, masks = self.forward(A0, drop, rng)
+        return logits, acts, masks, cache
+
+    def loss_grad(self, X, Q, Y, w, drop=0.0, rng=None):
+        logits, acts, masks, (cols, Yc, im, T) = self.forward_all(X, Q, drop, rng)
+        z = logits - logits.max(axis=1, keepdims=True)
+        lse = np.log(np.exp(z).sum(axis=1, keepdims=True))
+        logp = z - lse
+        ws = w / w.sum()
+        loss = -float(np.sum(ws[:, None] * Y * logp))
+        g = (np.exp(logp) - Y) * ws[:, None]
+        gW, gb = [None] * len(self.W), [None] * len(self.W)
+        for i in range(len(self.W) - 1, -1, -1):
+            gW[i] = g.T @ acts[i]
+            gb[i] = g.sum(axis=0)
+            g = g @ self.W[i]
+            if i > 0:
+                g = g * (acts[i] > 0)
+                if masks[i - 1] is not None:
+                    g = g * masks[i - 1]
+        K = self.K
+        gp = g[:, X.shape[1]:]
+        B = X.shape[0]
+        dY = np.repeat((gp[:, K:] / T)[:, None, :], T, axis=1).astype(Yc.dtype)
+        bi = np.repeat(np.arange(B), K)
+        ki = np.tile(np.arange(K), B)
+        np.add.at(dY, (bi, im.reshape(-1), ki), gp[:, :K].reshape(-1))
+        dY *= Yc > 0
+        dYf = dY.reshape(B * T, K)
+        gWc = dYf.T @ cols
+        gbc = dYf.sum(axis=0)
+        return loss, gW + gb + [gWc.astype(self.Wc.dtype), gbc.astype(self.bc.dtype)]
+
+    def logits2(self, X, Q, bs=2048):
+        if not len(X):
+            return np.zeros((0, len(self.b[-1])))
+        return np.concatenate([self.forward_all(X[i:i + bs], seq_of(Q[i:i + bs]))[0] for i in range(0, len(X), bs)])
+
+
+def seq_of(Qi8, C=2):
+    """int8 sequence rows (n, C x S) -> float32 (n, C, S)"""
+    n = Qi8.shape[0]
+    return (Qi8.astype(np.float32) / 127.0).reshape(n, C, -1)
+
+
 class Adam:
     def __init__(self, params, lr, wd, b1=0.9, b2=0.999, eps=1e-8):
         self.p, self.lr, self.wd, self.b1, self.b2, self.eps = params, lr, wd, b1, b2, eps
@@ -320,7 +408,35 @@ class Adam:
             p -= lr * ((m / c1) / (np.sqrt(v / c2) + self.eps) + (self.wd * p if dm else 0))
 
 
+def gradcheck_conv():
+    rng = np.random.default_rng(4)
+    K, C, L, S, Dx = 3, 2, 4, 12, 5
+    net = ConvMLP([Dx + 2 * K, 6, 3], rng, K, C, L)
+    net.W = [w.astype(np.float64) for w in net.W]
+    net.b = [b.astype(np.float64) + rng.standard_normal(b.shape) * 0.1 for b in net.b]
+    net.Wc = net.Wc.astype(np.float64)
+    net.bc = net.bc.astype(np.float64) + 0.3
+    X = rng.standard_normal((9, Dx))
+    Q = rng.standard_normal((9, C, S))
+    Y = np.eye(3)[rng.integers(0, 3, 9)] * 0.9 + 0.1 / 3
+    w = rng.uniform(0.5, 2, 9)
+    loss, grads = net.loss_grad(X, Q, Y, w)
+    worst = 0.0
+    for p_, g_ in zip(net.params(), grads):
+        for idx in np.ndindex(p_.shape):
+            old = p_[idx]
+            p_[idx] = old + 1e-6
+            lp, _ = net.loss_grad(X, Q, Y, w)
+            p_[idx] = old - 1e-6
+            lm, _ = net.loss_grad(X, Q, Y, w)
+            p_[idx] = old
+            num = (lp - lm) / 2e-6
+            worst = max(worst, abs(num - g_[idx]) / max(1e-8, abs(num) + abs(g_[idx])))
+    return worst
+
+
 def cmd_gradcheck(o):
+    print('conv front end: worst relative gradient error %.2e (%s)' % (gradcheck_conv(), 'OK' if gradcheck_conv() < 1e-5 else 'FAIL'))
     rng = np.random.default_rng(3)
     net = MLP([7, 5, 4, 3], rng)
     net.W = [w.astype(np.float64) for w in net.W]
@@ -351,12 +467,17 @@ def softmax(z, T=1.0):
     return e / e.sum(axis=1, keepdims=True)
 
 
-def train_view(Xtr, ytr, wtr, Xva, yva, C, o, rng, log):
+def train_view(Xtr, ytr, wtr, Xva, yva, C, o, rng, log, Qtr=None, Qva=None):
     D = Xtr.shape[1]
-    sizes = [D] + [int(h) for h in o.hidden.split(',') if h] + [C]
-    net = MLP(sizes, rng)
+    conv = Qtr is not None
+    if conv:
+        sizes = [D + 2 * o.conv_k] + [int(h) for h in o.hidden.split(',') if h] + [C]
+        net = ConvMLP(sizes, rng, o.conv_k, 2, o.conv_l)
+    else:
+        sizes = [D] + [int(h) for h in o.hidden.split(',') if h] + [C]
+        net = MLP(sizes, rng)
     opt = Adam(net.params(), o.lr, o.wd)
-    decay = [True] * len(net.W) + [False] * len(net.b)
+    decay = [True] * len(net.W) + [False] * len(net.b) + ([True, False] if conv else [])
     n = len(Xtr)
     eps = o.smooth
     Yall = np.full((C, C), eps / C, np.float32) + np.eye(C, dtype=np.float32) * (1 - eps)
@@ -368,11 +489,14 @@ def train_view(Xtr, ytr, wtr, Xva, yva, C, o, rng, log):
         tl = 0.0
         for s in range(steps):
             idx = perm[s * o.bs:(s + 1) * o.bs]
-            loss, grads = net.loss_grad(Xtr[idx], Yall[ytr[idx]], wtr[idx], o.dropout, rng)
+            if conv:
+                loss, grads = net.loss_grad(Xtr[idx], seq_of(Qtr[idx]), Yall[ytr[idx]], wtr[idx], o.dropout, rng)
+            else:
+                loss, grads = net.loss_grad(Xtr[idx], Yall[ytr[idx]], wtr[idx], o.dropout, rng)
             opt.step(grads, lr, decay)
             tl += loss
         if len(Xva):
-            pv = net.logits(Xva).argmax(axis=1)
+            pv = (net.logits2(Xva, Qva) if conv else net.logits(Xva)).argmax(axis=1)
             rec = [np.mean(pv[yva == c] == c) for c in range(C) if np.any(yva == c)]
             score = float(np.mean(rec))
         else:
@@ -380,12 +504,15 @@ def train_view(Xtr, ytr, wtr, Xva, yva, C, o, rng, log):
         log('    epoch %2d  lr %.5f  loss %.4f  val macro recall %.4f' % (ep + 1, lr, tl / steps, score))
         if score > best:
             best, best_ep, bad = score, ep, 0
-            best_state = ([w.copy() for w in net.W], [b.copy() for b in net.b])
+            best_state = ([w.copy() for w in net.W], [b.copy() for b in net.b],
+                          (net.Wc.copy(), net.bc.copy()) if conv else None)
         else:
             bad += 1
             if bad >= o.patience:
                 break
-    net.W, net.b = best_state
+    net.W, net.b = best_state[0], best_state[1]
+    if conv:
+        net.Wc, net.bc = best_state[2]
     log('    best epoch %d (val macro recall %.4f)' % (best_ep + 1, best))
     return net
 
@@ -518,6 +645,7 @@ def cmd_fit(o):
     z = load_data(o.data, lab)
     zt = load_data(o.test, lab) if o.test else None
     D = z['X'].shape[1]
+    D_full = D + (z['Q'].shape[1] if 'Q' in z else 0)
     sp = split_of(z['clip'])
     keep = z['y'] >= 0
     if o.min_cover_t > 0:
@@ -526,10 +654,25 @@ def cmd_fit(o):
     view = z['det'][:, 7].astype(int)
     rng = np.random.default_rng(o.seed)
     layout = model_io.layout_from_tool(TOOL)
+    if o.drop_edge_none:
+        # (an ablation) the composer's band-edge receiver humps out of training
+        d_ = z['det']
+        m_ = (z['y'] == lab.index('none')) & (np.abs(d_[:, 0]) > 1.02e6) & (np.abs(d_[:, 0]) < 1.14e6) & (d_[:, 1] <= 40e3)
+        z['y'][m_] = -1
+        keep &= ~m_
+        log('dropped %d none detections at the band edge' % int(m_.sum()))
+    if o.drop_groups:
+        # feature groups the model must not use (set to 0: their std becomes 0 - ignored)
+        for g in layout['groups']:
+            if g['name'] in o.drop_groups.split(',') and g['offset'] + g['length'] <= z['X'].shape[1]:
+                for zz_ in [z] + ([zt] if zt is not None else []):
+                    zz_['X'][:, g['offset']:g['offset'] + g['length']] = 0
     log('sigclass training %s - data %s (%d detections, %d labelled), test %s' % (
         datetime.datetime.now().strftime('%Y-%m-%d %H:%M'), o.data, len(z['y']), int(keep.sum()), o.test or '(the data file\'s test clips)'))
-    log('layout %s, dim %d; MLP %d-%s-C, epochs %d, lr %g, wd %g, dropout %g, smoothing %g, class weight power %g' % (
-        layout['hash'], D, D, o.hidden.replace(',', '-'), o.epochs, o.lr, o.wd, o.dropout, o.smooth, o.cw_power))
+    log('layout %s, dim %d (%d + the symbol sequence %d); MLP %s-C, epochs %d, lr %g, wd %g, dropout %g, smoothing %g, '
+        'class weight power %g; front end in views %s (%d filters x %d taps)' % (
+            layout['hash'], D_full, D, D_full - D, o.hidden.replace(',', '-'), o.epochs, o.lr, o.wd, o.dropout, o.smooth, o.cw_power,
+            o.conv_views if 'Q' in z else '-', o.conv_k, o.conv_l))
     views = {}
     vinfo = {}
     test_pack = []
@@ -546,13 +689,16 @@ def cmd_fit(o):
         remap[cls_v] = np.arange(len(cls_v))
         sel = mv & (remap[np.maximum(z['y'], 0)] >= 0)
 
+        use_conv = 'Q' in z and str(v) in o.conv_views.split(',')
+
         def take(mask):
-            return z['X'][mask].astype(np.float32), remap[z['y'][mask]]
-        Xtr, ytr = take(sel & (sp == 0))
-        Xva, yva = take(sel & (sp == 1))
+            return z['X'][mask].astype(np.float32), remap[z['y'][mask]], (z['Q'][mask] if use_conv else None)
+        Xtr, ytr, Qtr = take(sel & (sp == 0))
+        Xva, yva, Qva = take(sel & (sp == 1))
         if o.limit and len(Xtr) > o.limit:
             ii = rng.choice(len(Xtr), o.limit, replace=False)
             Xtr, ytr = Xtr[ii], ytr[ii]
+            Qtr = Qtr[ii] if use_conv else None
         Xtr = np.where(np.isfinite(Xtr), Xtr, 0)
         Xva = np.where(np.isfinite(Xva), Xva, 0)
         mean = Xtr.mean(axis=0)
@@ -567,13 +713,25 @@ def cmd_fit(o):
             cw[cls_v.index(lab.index('none'))] *= o.none_weight
         wtr = cw[ytr].astype(np.float32)
         log('view %d (%s): %d classes, train %d, val %d' % (v, VIEW_NAME[v], len(cls_v), len(Ztr), len(Zva)))
-        net = train_view(Ztr, ytr, wtr, Zva, yva, len(cls_v), o, rng, log)
-        Lva = net.logits(Zva)
+        net = train_view(Ztr, ytr, wtr, Zva, yva, len(cls_v), o, rng, log, Qtr, Qva)
+        Lva = net.logits2(Zva, Qva) if use_conv else net.logits(Zva)
         T = fit_temperature(Lva, yva)
         log('    temperature %.3f' % T)
         layers = [{'W': W, 'b': b, 'act': 'relu' if i + 1 < len(net.W) else 'none'} for i, (W, b) in enumerate(zip(net.W, net.b))]
-        views[v] = {'classes': [{'id': lab[c], 'name': by_id[lab[c]]['name']} for c in cls_v], 'mean': mean, 'std': std,
+        # the model file reads the full feature vector (D_full: the sequence is the last
+        # group): with the front end the MLP takes the rest + the pooled outputs; without it
+        # the rest only (front end 2: the slice is not read)
+        nseq = D_full - D
+        mean_f = np.concatenate([mean, np.zeros(nseq, np.float32)])
+        std_f = np.concatenate([std, np.zeros(nseq, np.float32)])
+        views[v] = {'classes': [{'id': lab[c], 'name': by_id[lab[c]]['name']} for c in cls_v], 'mean': mean_f, 'std': std_f,
                     'temperature': T, 'layers': layers}
+        if not use_conv and nseq:
+            views[v]['skip'] = {'off': D, 'S': nseq // 2, 'C': 2}     # the sequence not read (format 2, front end 2)
+        if use_conv:
+            views[v]['conv'] = {'off': D, 'S': nseq // 2, 'C': 2, 'W': net.Wc.reshape(o.conv_k, 2, o.conv_l), 'b': net.bc,
+                                'pools': 2, 'pmean': np.zeros(2 * o.conv_k, np.float32), 'pstd': np.ones(2 * o.conv_k, np.float32)}
+            log('    front end: Conv1D 2 x %d -> %d filters, max + mean pooled' % (o.conv_l, o.conv_k))
         vinfo[v] = {'classes': [lab[c] for c in cls_v], 'train': int(len(Ztr)), 'val': int(len(Zva)), 'temperature': T}
         val_pack.append((v, cls_v, softmax(Lva, T), np.array(cls_v)[yva], z, np.nonzero(sel & (sp == 1))[0]))
         # test: the test file's test-clip detections (else the data file's)
@@ -583,7 +741,13 @@ def cmd_fit(o):
         idx = np.nonzero(keepz)[0]
         Xte = zz['X'][idx].astype(np.float32)
         Xte = np.where(np.isfinite(Xte), Xte, 0)
-        P = softmax(net.logits(((Xte - mean) * inv).astype(np.float32)), T) if len(idx) else np.zeros((0, len(cls_v)))
+        Zte = ((Xte - mean) * inv).astype(np.float32)
+        if not len(idx):
+            P = np.zeros((0, len(cls_v)))
+        elif use_conv:
+            P = softmax(net.logits2(Zte, zz['Q'][idx]), T)
+        else:
+            P = softmax(net.logits(Zte), T)
         test_pack.append((v, cls_v, P, zz['y'][idx], zz, idx))
     # min_confidence on val: shown = predicted not none and p >= thr; precision >= 95 %
     none_i = lab.index('none')
@@ -607,7 +771,8 @@ def cmd_fit(o):
     log()
     log('min_confidence %.2f: val precision of the shown labels %.3f at %.1f %% of them' % (
         thr, allok[allp >= thr].mean() if np.any(allp >= thr) else float('nan'), 100 * np.mean(allp >= thr)))
-    meta = {'classes': classes, 'trained': datetime.datetime.now().strftime('%Y-%m-%d'), 'min_confidence': round(thr, 3),
+    meta = {'classes': classes, 'bands': json.load(open(os.path.join(HERE, 'classes.json'))).get('bands', []),
+            'trained': datetime.datetime.now().strftime('%Y-%m-%d'), 'min_confidence': round(thr, 3),
             'layout_hash': layout['hash'], 'views': {str(k): vv for k, vv in vinfo.items()},
             'dataset': {'file': os.path.basename(o.data), 'detections': int(len(z['y'])), 'captures': int(len(np.unique(z['cap'])))},
             'trainer': {'hidden': o.hidden, 'epochs': o.epochs, 'lr': o.lr, 'wd': o.wd, 'dropout': o.dropout, 'smoothing': o.smooth,
@@ -764,6 +929,11 @@ def main():
     f.add_argument('--no-merge', action='store_true', help='train merged_into classes (DVB-T2, ISDB-T) as their own - to test whether they separate')
     f.add_argument('--limit', type=int, default=0, help='at most this many training examples per view (learning curve)')
     f.add_argument('--seed', type=int, default=1)
+    f.add_argument('--conv-views', default='0,1', help='views with the symbol-sequence front end (layout v3 caches)')
+    f.add_argument('--drop-groups', default='', help='feature groups to leave out (an ablation)')
+    f.add_argument('--drop-edge-none', action='store_true', help='leave the band-edge none detections out (an ablation)')
+    f.add_argument('--conv-k', type=int, default=32)
+    f.add_argument('--conv-l', type=int, default=24)
     sub.add_parser('gradcheck')
     for p in (g, i, b, f):
         p.add_argument('--work', default=default_work())

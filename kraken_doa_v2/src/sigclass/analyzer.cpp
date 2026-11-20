@@ -27,7 +27,7 @@ struct Analyzer::Impl {
     std::vector<float> fv;
     bool have = false;
 
-    std::vector<Scored> run(const Model* model, std::vector<float>* fo);
+    std::vector<Scored> run(const Model* model, std::vector<float>* fo, double centre_hz);
     void features_of(const Cand& c, float* out);
 };
 
@@ -46,7 +46,7 @@ int Analyzer::view_for_bandwidth(double bw_hz, double fs_hz, float occupancy) {
 }
 
 std::vector<Scored> Analyzer::analyze(const uint8_t* iq, size_t n, double fs_hz, const Model* model,
-                                      std::vector<float>* fo) {
+                                      std::vector<float>* fo, double centre_hz) {
     Impl& m = *impl_;
     m.have = false;
     if (fo) fo->clear();
@@ -66,11 +66,11 @@ std::vector<Scored> Analyzer::analyze(const uint8_t* iq, size_t n, double fs_hz,
     m.fe.fs = fs_hz;
     m.tm = Timing{};
     m.tm.convert_ms = now_ms() - t0;
-    return m.run(model, fo);
+    return m.run(model, fo, centre_hz);
 }
 
 std::vector<Scored> Analyzer::analyze(const std::complex<float>* iq, size_t n, double fs_hz, const Model* model,
-                                      std::vector<float>* fo) {
+                                      std::vector<float>* fo, double centre_hz) {
     Impl& m = *impl_;
     m.have = false;
     if (fo) fo->clear();
@@ -91,7 +91,7 @@ std::vector<Scored> Analyzer::analyze(const std::complex<float>* iq, size_t n, d
     m.fe.fs = fs_hz;
     m.tm = Timing{};
     m.tm.convert_ms = now_ms() - t0;
-    return m.run(model, fo);
+    return m.run(model, fo, centre_hz);
 }
 
 void Analyzer::Impl::features_of(const Cand& c, float* out) {
@@ -109,7 +109,7 @@ void Analyzer::Impl::features_of(const Cand& c, float* out) {
     tm.features_ms += now_ms() - t1;
 }
 
-std::vector<Scored> Analyzer::Impl::run(const Model* model, std::vector<float>* fo) {
+std::vector<Scored> Analyzer::Impl::run(const Model* model, std::vector<float>* fo, double centre_hz) {
     const double t0 = now_ms();
     fe.run(fe.x.size(), fe.fs, cfg.spectrogram_hop);
     const double t1 = now_ms();
@@ -132,6 +132,12 @@ std::vector<Scored> Analyzer::Impl::run(const Model* model, std::vector<float>* 
         if (model && model->has_view(cands[i].det.view)) {
             const double tm0 = now_ms();
             model->predict(cands[i].det.view, out, res[i].probs);
+            // the RF plausibility mask by the detection's absolute band
+            if (centre_hz > 0.0 && finite_d(centre_hz)) {
+                const Detection& d = cands[i].det;
+                const double lo = centre_hz + d.offset_hz - 0.5 * d.bw_hz, hi = centre_hz + d.offset_hz + 0.5 * d.bw_hz;
+                model->rf_mask(d.view, lo, hi, res[i].probs);
+            }
             for (size_t c = 0; c < res[i].probs.size(); c++)
                 if (res[i].probs[c] > res[i].best_p) {
                     res[i].best_p = res[i].probs[c];

@@ -13,10 +13,12 @@
 // Modes:
 //   layout                                    the feature layout JSON
 //   features --out PREFIX [opts] FILE...      PREFIX.f32 (rows x D float32) + PREFIX.jsonl
-//   classify --model M [--track] [opts] FILE...   JSON lines: detections + top-3 classes
+//   classify --model M [--track] [--rf HZ] [opts] FILE...   JSON lines: detections + top-3 classes
+//                                             (--rf: the capture's RF centre - the model's RF mask)
 //   bench [--reps N] [--model M] [opts] FILE  timing per stage
 //   view --offset HZ --view V --out X.cf32 [opts] FILE   one view of the first snapshot
-//   forward --model M --view V --in X.f32 --out P.f32    the MLP alone (parity tests)
+//   forward --model M --view V --in X.f32 --out P.f32 [--rf F --offset BW]   the model alone (parity tests;
+//                                             --rf: the RF mask for a detection at F with BW)
 //   selftest                                  checks that need no data
 // opts: --rate HZ (2400000)  --format cu8|cs16|cf32 (from the extension, else cu8)
 //       --snap S (0.5)  --hop S (= snap)  --list FILELIST  --centre HZ (classify)
@@ -50,7 +52,7 @@ constexpr double PI = 3.14159265358979323846;
 
 struct Opts {
     std::string mode, out, model, list, format, in;
-    double rate = 2400000.0, snap = 0.5, hop = 0.0, centre = 0.0, offset = 0.0;
+    double rate = 2400000.0, snap = 0.5, hop = 0.0, centre = 0.0, offset = 0.0, rf = 0.0;
     int view = 0, reps = 20, spec_hop = 0;
     bool track = false, requant = false;
     std::vector<std::string> files;
@@ -138,9 +140,9 @@ bool read_snap(std::ifstream& f, const std::string& fmt, int64_t start, int64_t 
 }
 
 std::vector<sigclass::Scored> run(sigclass::Analyzer& an, const Snap& s, double rate, const sigclass::Model* m,
-                                  std::vector<float>* fo) {
-    if (s.is_u8) return an.analyze(s.u8.data(), s.u8.size() / 2, rate, m, fo);
-    return an.analyze(s.c.data(), s.c.size(), rate, m, fo);
+                                  std::vector<float>* fo, double rf = 0.0) {
+    if (s.is_u8) return an.analyze(s.u8.data(), s.u8.size() / 2, rate, m, fo, rf);
+    return an.analyze(s.c.data(), s.c.size(), rate, m, fo, rf);
 }
 
 // iterate the snapshots of every input file
@@ -327,7 +329,7 @@ int mode_classify(const Opts& o) {
     };
     const int bad = for_each_snapshot(o, [&](const std::string& path, int idx, double t0, const Snap& s) {
         if (path != cur) { tr.clear(); cur = path; }
-        const auto res = run(an, s, o.rate, &m, nullptr);
+        const auto res = run(an, s, o.rate, &m, nullptr, o.rf);
         std::string line = "{\"file\":" + jstr(path) + ",\"snap\":" + std::to_string(idx) + ",\"t0_s\":" + num(t0, 9) +
                            ",\"detections\":[";
         for (size_t i = 0; i < res.size(); i++)
@@ -335,7 +337,7 @@ int mode_classify(const Opts& o) {
                     top3(res[i].det.view, res[i].probs) + "}";
         line += "]";
         if (o.track) {
-            const auto& ts = tr.update(res, o.centre, t0);
+            const auto& ts = tr.update(res, o.centre, t0);   // (offsets relative to the capture unless --centre)
             line += ",\"tracks\":[";
             for (size_t i = 0; i < ts.size(); i++) {
                 const auto& t = ts[i];
@@ -443,6 +445,7 @@ int mode_forward(const Opts& o) {
     std::vector<float> p;
     for (size_t r = 0; r < rows; r++) {
         if (!m.predict(o.view, x.data() + r * size_t(D), p)) { std::fprintf(stderr, "no model for view %d\n", o.view); return 2; }
+        if (o.rf > 0) m.rf_mask(o.view, o.rf - 0.5 * o.offset, o.rf + 0.5 * o.offset, p);   // (parity of the RF mask: --rf F --offset BW)
         std::fwrite(p.data(), sizeof(float), p.size(), fo);
     }
     std::fclose(fo);
@@ -484,7 +487,7 @@ int mode_selftest() {
     const int D = sigclass::feature_dim();
     {
         const std::string lj = sigclass::layout_json();
-        check(D >= 600 && D <= 1200 && lj.find("\"dim\":" + std::to_string(D)) != std::string::npos, "layout",
+        check(D >= 600 && D <= 4096 && lj.find("\"dim\":" + std::to_string(D)) != std::string::npos, "layout",
               "D=" + std::to_string(D));
     }
     std::mt19937 rng(1);
@@ -686,7 +689,7 @@ void usage() {
                  "sigclass_tool layout | features --out PREFIX FILE... | classify --model M [--track] FILE... |\n"
                  "              bench FILE | view --offset HZ --view V --out X.cf32 FILE |\n"
                  "              forward --model M --view V --in X.f32 --out P.f32 | selftest\n"
-                 "  opts: --rate HZ --format cu8|cs16|cf32 --snap S --hop S --list FILE --centre HZ --requant --reps N\n");
+                 "  opts: --rate HZ --format cu8|cs16|cf32 --snap S --hop S --list FILE --centre HZ --rf HZ --requant --reps N\n");
 }
 
 }  // namespace
@@ -710,6 +713,7 @@ int main(int argc, char** argv) {
         else if (a == "--snap") o.snap = std::atof(val().c_str());
         else if (a == "--hop") o.hop = std::atof(val().c_str());
         else if (a == "--centre" || a == "--center") o.centre = std::atof(val().c_str());
+        else if (a == "--rf") o.rf = std::atof(val().c_str());
         else if (a == "--offset") o.offset = std::atof(val().c_str());
         else if (a == "--view") o.view = std::clamp(std::atoi(val().c_str()), 0, sigclass::NUM_VIEWS - 1);
         else if (a == "--reps") o.reps = std::atoi(val().c_str());

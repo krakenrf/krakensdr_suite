@@ -607,6 +607,8 @@ bool Detector::band_fill(const FrontEnd& fe, const Config& cfg, const std::vecto
     // a busy band of narrow carriers (a trunked radio site, 30+ lines) has no CP peak)
     if (force == 0 && !(best > cfg.band_fill_corr && prom >= cfg.band_fill_prominence)) return false;
     if (force == 1 && !(prom >= cfg.band_fill_prominence)) return false;
+    // (bursty pieces kept: a pulsed band - SSR replies - can reach 4.5 there)
+    if (force == 3 && !(prom >= 1.25 * cfg.band_fill_prominence)) return false;
     // the whole band: centroid and 98 % width of the power inside the guards
     double E = 0.0;
     for (int i = LONG_N / 2 - edge; i <= LONG_N / 2 + edge; i++) E += p_[size_t(i)];
@@ -1129,6 +1131,25 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
             if (std::getenv("SIGCLASS_DEBUG_FILL")) std::fprintf(stderr, "band_fill: comb of %d lines over %.0f Hz, regular %d\n", nl, b - a, int(regular));
             if (!fill && nl >= 10 && (b - a >= lim || regular)) fill = band_fill(fe, cfg, out, c, regular ? 2 : 1);
             comb_tv = fill && regular;
+            // ... or >= 16 bursty pieces <= 60 kHz wide spread over >= 0.6 fs: a lightly
+            // loaded OFDM carrier (LTE / NR resource blocks come and go) - the test then
+            // keeps the pieces' power (they are the signal; masking them left nothing)
+            if (!fill) {
+                int nb = 0;
+                double ba = 1e30, bb = -1e30;
+                std::vector<Cand> keep;
+                for (const Cand& f : out) {
+                    if (f.det.bursty && f.det.bw_hz <= 60e3 && !f.det.fills_band) {
+                        nb++;
+                        ba = std::min(ba, f.det.offset_hz);
+                        bb = std::max(bb, f.det.offset_hz);
+                    } else {
+                        keep.push_back(f);
+                    }
+                }
+                if (std::getenv("SIGCLASS_DEBUG_FILL")) std::fprintf(stderr, "band_fill: %d bursty pieces over %.0f Hz\n", nb, bb - ba);
+                if (nb >= 16 && bb - ba >= 0.6 * fs) fill = band_fill(fe, cfg, keep, c, 3);
+            }
         }
         if (fill) out.push_back(c);
         for (const Cand& w : std::vector<Cand>(out)) {

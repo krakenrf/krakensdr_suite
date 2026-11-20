@@ -76,6 +76,12 @@ constexpr Group GROUPS[] = {
                     "from 0 to 1.056 ms (samples); max-pooled, minus the grid's median, x8"},
     {"frame_e", 48, "the same for the envelope (mean removed)"},
     {"frame_f", 48, "the same for the gated IF (mean removed)"},
+    {"symseq_meta", 4, "the symbol sequence below: symbols in it / SEQ_S, its IF scale (q90 |IF|) / fs_v * 4, "
+                       "share with a phase step, 0"},
+    {"symseq", 2 * 1024, "the symbol sequence (layout v3; a learned front end reads it): SEQ_S = 1024 symbols at "
+                         "the sym group's rate and timing, the on-air ones in time order from the first, zero-padded; "
+                         "channel 0 = the IF at the symbol centre / its q90, clipped to +-1.5, / 1.5; channel 1 = the "
+                         "phase step over the symbol / pi (0 where the previous symbol was off); channel-major"},
 };
 constexpr int NGROUPS = int(sizeof(GROUPS) / sizeof(GROUPS[0]));
 
@@ -104,6 +110,8 @@ constexpr double LAG0 = 2e-6, LAG1 = 0.25;
 constexpr int NLAG = 40;
 // symbol-synchronous group: cyclic-line FFT size (at most), blocks of symbols, timing candidates
 constexpr int SYM_NFFT = 8192, SYM_SEGS = 4, SYM_BLOCK = 2048, SYM_PHASES = 8, SYM_MAXSYM = 4096;
+constexpr int SEQ_S = 1024;     // symbols in the symseq group (2 channels)
+static_assert(GROUPS[NGROUPS - 1].len == 2 * SEQ_S, "symseq is the last group, 2 x SEQ_S long");
 constexpr double SYM_R0 = 1.0 / 200.0, SYM_R1 = 1.0 / 2.2;   // line search range, fractions of fs_v
 // linear frame-lag grids: narrow views (0-1) and wide views (2-3)
 constexpr int FRAME_N = 48;
@@ -139,7 +147,7 @@ std::string layout_body() {
       << ",\"acf_seg\":" << ACF_SA << ",\"acf_seg_full\":" << ACF_SA_FULL << ",\"acf_k\":" << ACF_KA << ",\"acf_nb\":" << ACF_NB << ",\"lp_seg\":" << LP_SEG
       << ",\"tf_n\":" << TF_N << ",\"lo_rate\":" << LO_RATE << ",\"lag0\":" << LAG0 << ",\"lag1\":" << LAG1
       << ",\"nlag\":" << NLAG << ",\"sym_nfft\":" << SYM_NFFT << ",\"sym_segs\":" << SYM_SEGS << ",\"sym_block\":" << SYM_BLOCK
-      << ",\"sym_phases\":" << SYM_PHASES << ",\"sym_maxsym\":" << SYM_MAXSYM << ",\"sym_r0\":" << SYM_R0 << ",\"sym_r1\":" << SYM_R1 << ",\"frame_n\":" << FRAME_N
+      << ",\"sym_phases\":" << SYM_PHASES << ",\"sym_maxsym\":" << SYM_MAXSYM << ",\"seq_s\":" << SEQ_S << ",\"sym_r0\":" << SYM_R0 << ",\"sym_r1\":" << SYM_R1 << ",\"frame_n\":" << FRAME_N
       << ",\"frame_dt_narrow\":" << FRAME_DT_NARROW << ",\"frame_dt_wide\":" << FRAME_DT_WIDE
       << ",\"long_n\":" << detail::LONG_N << ",\"view_filter\":\"kaiser60 0.4-0.5\"}";
     o << ",\"groups\":[";
@@ -215,7 +223,8 @@ struct Features::Impl {
     std::vector<double> Re, Rf;
     std::vector<cf> Rcc;
     std::vector<float> spec, eB, fB;
-    std::vector<float> S, S2, tmpv, scratch, mscratch;
+    std::vector<float> S, S2, tmpv, scratch, mscratch, seqv, seqp, ffil, efil;
+    avec<cf> yfil;
     std::vector<std::pair<int, int>> segs;
 
     Fft& plan(int n, bool real) {
@@ -1017,6 +1026,66 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     // ---- symbol-synchronous statistics
     {
         float* g = out + group_offset("sym");
+        // 0. the channel filter: the detection's band only (a neighbour channel in the
+        // view, or the view's wider noise, swamps a weak signal's discriminator output -
+        // real P25 / DMR sites: the rate was found in half the detections without it).
+        // Windowed sinc, cutoff 0.8 x bw, per span (edges held), then the same
+        // 3-term discriminator; its own median removed
+        const cf* YC = yc.data();
+        const float* FC = fc.data();
+        const float* EC = ec.data();
+        double sym_med = if_med;
+        if (d.bw_hz > 0.0 && d.bw_hz < 0.5 * fs_v) {
+            const double fcut = std::min(0.45, 0.8 * d.bw_hz / fs_v);
+            const int nt = std::clamp(int(std::ceil(3.0 / fcut)) | 1, 15, 63), hh = nt / 2;
+            std::vector<float> h(static_cast<size_t>(nt));
+            double hs = 0.0;
+            for (int k = 0; k < nt; k++) {
+                const double x = k - hh;
+                const double sn = x == 0 ? 2.0 * fcut : std::sin(2.0 * PI * fcut * x) / (PI * x);
+                h[size_t(k)] = float(sn * (0.54 + 0.46 * std::cos(PI * x / (hh + 1))));
+                hs += h[size_t(k)];
+            }
+            for (float& v : h) v = float(v / hs);
+            yfil.resize(size_t(N));
+            ffil.assign(size_t(N), 0.0f);
+            efil.resize(size_t(N));
+            const float k2 = float(fs_v / (2.0 * PI));
+            for (const Span& s : spans) {
+                const cf* x = yc.data() + s.start;
+                cf* y = yfil.data() + s.start;
+                for (int i = 0; i < s.len; i++) {
+                    float re = 0.0f, im = 0.0f;
+                    if (i >= hh && i + hh < s.len) {
+                        const cf* q = x + (i - hh);
+                        for (int k = 0; k < nt; k++) { re += h[size_t(k)] * q[k].real(); im += h[size_t(k)] * q[k].imag(); }
+                    } else {
+                        for (int k = 0; k < nt; k++) {
+                            const cf v = x[std::clamp(i + k - hh, 0, s.len - 1)];
+                            re += h[size_t(k)] * v.real();
+                            im += h[size_t(k)] * v.imag();
+                        }
+                    }
+                    y[i] = cf(re, im);
+                    efil[size_t(s.start + i)] = re * re + im * im;
+                }
+                for (int i = 1; i < s.len; i++) {
+                    cf z = y[i] * std::conj(y[i - 1]);
+                    if (i >= 2) z += y[i - 1] * std::conj(y[i - 2]);
+                    if (i >= 3) z += y[i - 2] * std::conj(y[i - 3]);
+                    ffil[size_t(s.start + i)] = fast_atan2(z.imag(), z.real()) * k2;
+                }
+            }
+            tmpv.clear();
+            for (int i = 0; i < N; i += std::max(1, N / 8192))
+                if (is_on(i)) tmpv.push_back(ffil[size_t(i)]);
+            const float med = median_of(tmpv, mscratch);
+            for (float& v : ffil) v -= med;
+            sym_med = med;
+            YC = yfil.data();
+            FC = ffil.data();
+            EC = efil.data();
+        }
         // 1. the symbol rate: the strongest cyclic line of |dIF| (FSK: the IF steps at
         // every symbol boundary) or of the envelope (linear modulation), each line
         // against the mean of its neighbourhood (not the coloured spectrum's level)
@@ -1039,8 +1108,8 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
                     for (int i = 0; i < len; i++) {
                         const int j = s.start + p0 + i;
                         float v;
-                        if (which == 0) v = (i > 0 && is_on(j) && is_on(j - 1)) ? std::fabs(fc[size_t(j)] - fc[size_t(j - 1)]) : 0.0f;
-                        else v = ec[size_t(j)];
+                        if (which == 0) v = (i > 0 && is_on(j) && is_on(j - 1)) ? std::fabs(FC[size_t(j)] - FC[size_t(j - 1)]) : 0.0f;
+                        else v = EC[size_t(j)];
                         ra[size_t(i)] = v;
                         mu += v;
                     }
@@ -1132,7 +1201,9 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
             std::vector<int> hif(NH, 0), hdp(NP, 0), cif(NH, 0);
             std::vector<float>& absv = tmpv;
             absv.clear();
-            int M = 0, Mdp = 0;
+            seqv.clear();
+            seqp.clear();
+            int M = 0, Mdp = 0, seqn = 0;
             const int blk = std::max(16, int(SYM_BLOCK * sps));
             int nblk = 0;
             for (const Span& s : spans) nblk += std::max(0, (s.len - int(2 * sps) - 2 + blk - 1) / blk);
@@ -1141,9 +1212,9 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
             auto yat = [&](double t) {
                 const int i0 = int(t);
                 const float a = float(t - i0);
-                return yc[size_t(i0)] * (1.0f - a) + yc[size_t(i0 + 1)] * a;
+                return YC[size_t(i0)] * (1.0f - a) + YC[size_t(i0 + 1)] * a;
             };
-            const float turn = float(2.0 * PI * if_med / rs);   // the carrier offset's turn over one symbol
+            const float turn = float(2.0 * PI * sym_med / rs);   // the carrier offset's turn over one symbol
             int bi = 0;
             for (const Span& s : spans) {
                 for (int b0 = 0; b0 + int(2 * sps) + 2 < s.len; b0 += blk, bi++) {
@@ -1158,7 +1229,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
                             const int i0 = s.start + int(t);
                             if (!is_on(i0) || !is_on(i0 + 1)) continue;
                             const float a = float(t - int(t));
-                            const float v = fc[size_t(i0)] * (1.0f - a) + fc[size_t(i0 + 1)] * a;
+                            const float v = FC[size_t(i0)] * (1.0f - a) + FC[size_t(i0 + 1)] * a;
                             cif[size_t(std::clamp(int(std::floor((v + hr) * hsc)), 0, NH - 1))]++;
                             cnt++;
                         }
@@ -1173,16 +1244,24 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
                         const int i0 = s.start + int(t);
                         if (!is_on(i0) || !is_on(i0 + 1)) continue;
                         const float a = float(t - int(t));
-                        const float v = fc[size_t(i0)] * (1.0f - a) + fc[size_t(i0 + 1)] * a;
+                        const float v = FC[size_t(i0)] * (1.0f - a) + FC[size_t(i0 + 1)] * a;
                         hif[size_t(std::clamp(int(std::floor((v + hr) * hsc)), 0, NH - 1))]++;
                         absv.push_back(std::fabs(v));
                         M++;
+                        float ph = 0.0f;
+                        bool has_ph = false;
                         if (t - sps >= 0.0 && is_on(s.start + int(t - sps))) {
                             const cf z = yat(s.start + t) * std::conj(yat(s.start + t - sps));
-                            float ph = fast_atan2(z.imag(), z.real()) - turn;
+                            ph = fast_atan2(z.imag(), z.real()) - turn;
                             ph -= float(2.0 * PI) * std::floor((ph + float(PI)) / float(2.0 * PI));
                             hdp[size_t(std::clamp(int(std::floor((ph + PI) / (2.0 * PI) * NP)), 0, NP - 1))]++;
                             Mdp++;
+                            has_ph = true;
+                        }
+                        if (int(seqv.size()) < SEQ_S) {
+                            seqv.push_back(v);
+                            seqp.push_back(has_ph ? ph : 0.0f);
+                            seqn += has_ph ? 1 : 0;
                         }
                     }
                 }
@@ -1208,6 +1287,20 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
                 g[10] = Mdp > 0 ? clampf(float(cp / (double(Mdp) * Mdp) * 4.0), 0.0f, 4.0f) : 0.0f;
                 g[11] = clampf(float(q90 / fs_v * 4.0), 0.0f, 2.0f);
                 g[12] = q90 > 0.0f ? clampf(q50 / q90, 0.0f, 1.0f) : 0.0f;
+                // the symbol sequence: IF / its robust scale, the phase step / pi
+                float* sm = out + group_offset("symseq_meta");
+                float* sq = out + group_offset("symseq");
+                const int ns = int(seqv.size());
+                if (q90 > 0.0f && ns > 0) {
+                    const float is = 1.0f / q90;
+                    for (int k = 0; k < ns; k++) {
+                        sq[k] = clampf(seqv[size_t(k)] * is, -1.5f, 1.5f) / 1.5f;
+                        sq[SEQ_S + k] = clampf(seqp[size_t(k)] / float(PI), -1.0f, 1.0f);
+                    }
+                    sm[0] = float(ns) / float(SEQ_S);
+                    sm[1] = clampf(float(q90 / fs_v * 4.0), 0.0f, 2.0f);
+                    sm[2] = float(seqn) / float(ns);
+                }
                 g[13] = clampf(float(M * sps / std::max(1, N)), 0.0f, 1.0f);
             }
         }

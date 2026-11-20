@@ -62,6 +62,7 @@ WEAK = re.compile(r'unconfirmed|\b0 (frames|valid|packets|messages|bursts|events
 PROBE = re.compile(r'no decoder run|spectrum probe|format / spectrum|only the format', re.I)
 iqlib = None
 MERGED = {c['id']: c['merged_into'] for c in load_classes() if c.get('merged_into')}
+MIN_P = {}          # the model's per-class sure thresholds (meta classes min_p)
 
 
 def coarse_family(fam):
@@ -329,8 +330,13 @@ def one(args):
         u8, g = quantise(y, n0, rng)
     tmp = '/dev/shm/evalreal_%d_%s.cu8' % (os.getpid(), re.sub(r'[^A-Za-z0-9]', '_', e['id'])[-60:])
     u8.tofile(tmp)
-    r = subprocess.run([TOOL, 'classify', '--model', o.model, '--track', '--rate', '2400000', '--format', 'cu8', tmp],
-                       capture_output=True, text=True)
+    cmd = [TOOL, 'classify', '--model', o.model, '--track', '--rate', '2400000', '--format', 'cu8', tmp]
+    # the capture's RF centre (the model's RF plausibility mask): the recording's centre
+    # less the placement shift (its centre now lies at +shift)
+    rf = float(e['center_hz']) - shift if o.rf_mask == 'on' and e.get('center_hz') else 0.0
+    if rf > 0:
+        cmd += ['--rf', '%.0f' % rf]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     os.remove(tmp)
     lines = [json.loads(l) for l in r.stdout.splitlines() if l.startswith('{')]
     if not lines:
@@ -339,6 +345,25 @@ def one(args):
     grp = group_of(e, known)
     exp = [x for x in (e.get('expect') or []) if x.get('class')] or [{'class': e['signals'][0], 'offset_hz': None, 'bw_hz': None}]
     in_band = rate if rate < 2e6 else FS
+    # false labels: a drawn track (not none, p >= 0.5) at no identified signal (an expect
+    # row of a known class) - own captures list every identified signal
+    bands = []
+    for x in exp:
+        if x.get('offset_hz') is not None and x['class'] in known:
+            c = shift + float(x['offset_hz'])
+            half = 0.5 * max(float(x.get('bw_hz') or 0), 6e3)
+            bands.append((c - half, c + half))
+    false = []
+    for t in tracks:
+        top = t['top']
+        if not top or top[0]['id'] == 'none' or top[0]['p'] < 0.5:
+            continue
+        tl, th = t['centre_hz'] - 0.5 * t['bw_hz'], t['centre_hz'] + 0.5 * t['bw_hz']
+        if any(min(th, b) - max(tl, a) > 0 for a, b in bands):
+            continue
+        sure = top[0]['p'] >= MIN_P.get(top[0]['id'], thr)
+        false.append('%s:%.2f:%s:%d:%.0f' % (top[0]['id'], top[0]['p'], 'sure' if sure else 'unsure', t['hits'], t['centre_hz'] - shift))
+    first = True
     for x in exp:
         if x.get('offset_hz') is None:
             lo, hi = shift - 0.5 * min(in_band, FS), shift + 0.5 * min(in_band, FS)
@@ -363,6 +388,7 @@ def one(args):
             if best is None or key > best[0]:
                 best = (key, t)
         row = {'id': e['id'], 'group': grp, 'class': x['class'], 'rate': rate, 'snaps': len(lines), 'pedestal_db': round(info['pedestal_db'], 1),
+               'rf': round(rf) if rf > 0 else '', 'false_tracks': ';'.join(false) if first else '',
                'gated': info.get('gated', ''), 'dc_notch_db': info.get('dc_notch_db', ''),
                'tracks': len(tracks), 'gain': round(float(g), 4)}
         if best is None:
@@ -387,6 +413,7 @@ def one(args):
         row['wide_extra'] = sum(1 for t in tracks if t['bw_hz'] > 0.6 * min(in_band, FS) and t is not (best[1] if best else None)
                                 and rate < 2e6)
         rows.append(row)
+        first = False
     return rows
 
 
@@ -443,6 +470,17 @@ def summarise(rows, thr, out):
                     wrong[r['top1']] = wrong.get(r['top1'], 0) + 1
             p('  %-11s %4d %4d %4d %4d %4d  %s' % (c, len(rs), sum(1 for r in rs if r.get('detected')), sum(1 for r in rs if r.get('ok1')),
                                                    sum(1 for r in rs if r.get('ok3')), sum(1 for r in rs if r.get('okf')), ', '.join('%s %d' % kv for kv in sorted(wrong.items(), key=lambda kv: -kv[1]))))
+    p()
+    for grp in ('native', 'confirmed'):
+        ids = {r['id'] for r in rows if r['group'] == grp}
+        wrf = {r['id'] for r in rows if r['group'] == grp and r.get('rf')}
+        p('%s: %d entries, %d with an RF centre (the mask)' % (grp, len(ids), len(wrf)))
+    fl = [(r['id'], f) for r in rows if r['group'] == 'native' and r.get('false_tracks') for f in r['false_tracks'].split(';')]
+    p('false labels on own captures (drawn tracks at no identified signal): %d sure, %d unsure' % (
+        sum(1 for _, f in fl if ':sure:' in f), sum(1 for _, f in fl if ':unsure:' in f)))
+    for i, f in fl:
+        c, pr, su, h, off = f.split(':')
+        p('    %-62s %-10s p %s %-6s hits %s at %+.0f kHz' % (i[-62:], c, pr, su, h, float(off) / 1e3))
     ped = [r['pedestal_db'] for r in rows if 'pedestal_db' in r and r.get('rate', 3e6) < 2e6 and r['group'] != 'disc_audio']
     if ped:
         p()
@@ -463,6 +501,7 @@ def main():
     ap.add_argument('--jobs', type=int, default=8)
     ap.add_argument('--classes', default='')
     ap.add_argument('--ids', default='')
+    ap.add_argument('--rf-mask', default='on', choices=['on', 'off'], help="pass the entry's centre_hz (the model's RF mask)")
     o = ap.parse_args()
     sys.path.insert(0, os.path.join(o.library, '_tools'))
     import iqlib as _iq
@@ -470,6 +509,9 @@ def main():
     o.out = o.out or os.path.join(o.work, 'eval_real.tsv')
     meta, _, _ = model_io.read_model(o.model)
     thr = float(meta.get('min_confidence', 0.0)) if isinstance(meta, dict) else 0.0
+    MIN_P.clear()
+    if isinstance(meta, dict):
+        MIN_P.update({c['id']: float(c['min_p']) for c in meta.get('classes', []) if isinstance(c, dict) and c.get('min_p') is not None})
     known = {c['id'] for c in load_classes()}
     ents = iqlib.load_index(os.path.join(o.library, 'index.json'))['entries']
     sel = [e for e in ents if (not o.classes or e['signals'][0] in o.classes.split(',')) and (not o.ids or o.ids in e['id'])]
@@ -477,7 +519,7 @@ def main():
         rows = [r for rs in pool.imap_unordered(one, [(e, o, known, thr) for e in sel]) for r in rs]
     rows.sort(key=lambda r: (r['group'], r['class'], r['id']))
     keys = ['group', 'class', 'id', 'detected', 'top1', 'p1', 'ok1', 'ok3', 'okf', 'shown_ok', 'top3', 'hits', 'view', 'det_off', 'det_bw',
-            'tracks', 'shown_tracks', 'wide_extra', 'pedestal_db', 'gated', 'dc_notch_db', 'rate', 'snaps', 'error']
+            'tracks', 'shown_tracks', 'wide_extra', 'pedestal_db', 'gated', 'dc_notch_db', 'rate', 'snaps', 'rf', 'false_tracks', 'error']
     with open(o.out, 'w') as fh:
         fh.write('\t'.join(keys) + '\n')
         for r in rows:

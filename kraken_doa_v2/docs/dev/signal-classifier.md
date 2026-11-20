@@ -75,6 +75,13 @@ no other dependency; the same code runs in kraken_doa and in
     30-38 carriers / spurs over 2.25 MHz, prominence 1.4-2.5) had become one
     band-filling "DVB-T2" track that swallowed its P25 channels; synthetic
     OFDM combs that need the forced path have prominence 9-16
+  - (phase 4) >= 16 bursty pieces <= 60 kHz wide spread over >= 0.6 fs
+    (and nothing wide) run the band-fill test with the pieces' power KEPT
+    (they are the signal) and a prominence >= 5: a lightly loaded LTE / NR
+    carrier (own 768 / 875 MHz captures: 29-114 pieces a snapshot, before
+    nothing but `none` pieces) becomes one band-filling detection
+    (prominence 5-10 at the OFDM symbol lag); an SSR 1030 band reached 4.5,
+    the busy LoRa band 2.8
   - limits: a crowded HF band merges into 100-500 kHz regions; a real LTE
     carrier at low load (own 768 MHz capture) comes out as a 930 kHz burst
     plus dozens of 16-23 kHz resource-block pieces and no fill (the
@@ -122,11 +129,100 @@ no other dependency; the same code runs in kraken_doa and in
     bank's generators the same, except that the bank had no P25 control
     channel (180 ms LDUs only). The wide grid was also meant to split DVB-T
     (896 us) from ISDB-T (1008 us): not enough (below)
+  - (layout v3, phase 4) `symseq_meta` 4 + `symseq` 2 x 1024, the LAST
+    group: the symbol sequence for the learned front end - 1024 symbols at
+    the `sym` group's rate and timing, the on-air ones in time order from
+    the first (bursts: the on-air part), zero-padded; channel 0 = the IF at
+    the symbol centre / its q90 (deviation tolerance drops out; the absolute
+    scale stays in the `sym` scalars), clipped +-1.5, / 1.5; channel 1 = the
+    phase step over the symbol / pi; scalars: symbols / 1024, the scale /
+    fs_v x 4, the share with a phase step. On the bank the sequence's own
+    autocorrelation peaks at the frame period (DMR 144 / 288 symbols, NXDN
+    192 / 384, TETRA 255, YSF 480); real files the same (DMR 288 / 576 at
+    0.66, a P25 control channel 360, TETRA 255)
+  - the `sym` group now works on a channel-filtered copy (windowed sinc,
+    cutoff 0.8 x the detection's width, per span; only for detections <
+    0.5 fs_v): a neighbour channel inside the view or the view's wider noise
+    corrupted the discriminator of weak real signals. Symbol-rate hit rate
+    on the real files (653 detections at confirmed / own 4-FSK, TETRA,
+    pager, AIS, sonde signals, within 1 % of the class's nominal rate): 62 %
+    -> 65 % (DMR 0.50 -> 0.62, P25 0.52 -> 0.63, YSF 0.87 -> 0.96, TETRA
+    1.00, radiosonde 0.86 -> 0.81, FLEX 0.81 -> 0.29 - its 800 Hz
+    sub-harmonic now wins -, POCSAG 0, AIS 0); most misses are the own
+    trunked-site captures' weak channels
   Long views (2-3) are analysed in 8 chunks of 4096 (was 16), quantiles of
   the whole-view box powers on <= 16384 of them. `sigclass_tool layout`
   prints each group's meaning; every value finite and O(1) (clamped); a
   model of another hash is refused. `SIGCLASS_DEBUG_SYM=1` prints the two
   lines per detection
+- **RF plausibility mask** (phase 5; model format 3): the receiver knows
+  where it is tuned, and many services exist only in their worldwide
+  allocations. `Analyzer::analyze(..., double centre_hz = 0.0)` (0 =
+  unknown: no mask): each detection's probabilities are masked by its
+  absolute band [centre + offset -+ bw / 2] before the tracker sees them -
+  a class with `rf_hz` ranges is plausible only if the band overlaps one;
+  a detection whose centre lies in an exclusive band (`bands`) cannot be a
+  class outside that band's `only` list; generic classes (the unknown
+  families, `none`, `carrier`: `generic: true`) are plausible anywhere; the
+  rest is renormalised (everything masked: the generic classes keep their
+  share; nothing left: unmasked, never a division by 0). `Model::rf_mask` /
+  `has_rf_table`; the service passes the capture's centre (its one call);
+  `sigclass_tool classify --rf HZ`, `forward --rf F --offset BW`. No JSON in
+  the core and no protocol code: the table is data (`classes.json`, carried
+  in the model file). The table and its basis (ITU Radio Regulations
+  Article 5 worldwide allocations, the plugins' `fixed_freq_hz`;
+  conservative: a class that is used outside a range anywhere in the world
+  stays unrestricted):
+
+  | class | rf_hz (MHz) | basis |
+  |---|---|---|
+  | ils_loc | 74.8-75.2, 108-112, 328.6-335.4 | aeronautical radionavigation: localizer 108-112 (marker beacons 75, glide path 328.6-335.4: the ILS allocations, kept for safety) |
+  | vor | 108-117.975 | aeronautical radionavigation |
+  | acars, vdl2 | 117.975-137 | aeronautical mobile (R) VHF (HF / satellite ACARS are other modulations) |
+  | ais | 156-162.6 | maritime mobile VHF (AIS 1 / 2 at 161.975 / 162.025; the ais plugin's fixed frequency 162.0) |
+  | beacon406 | 406.0-406.1 | mobile-satellite, distress beacons only (plugin 406.05) |
+  | radiosonde | 400.15-406, 1668-1700 | meteorological aids |
+  | wfm | 64-108.5 | broadcasting: OIRT 65.8-74, Japan 76-95, 87.5-108 |
+  | dab | 174-240, 1452-1492 | broadcasting band III, L-band (Canada) |
+  | dvbt (+ dvbt2, isdbt), atsc, atsc3, dtmb, analogtv | 44-88, 170-230, 470-890 | broadcasting bands I, III (no DAB part above 230), IV / V |
+  | lte, nr | >= 400 | the 3GPP bands (450 MHz upward) |
+  | uat | 975-981 | UAT 978 (plugin 978) |
+  | adsb | 1087-1093 | 1090 MHz (plugin 1090) |
+  | ssr1030 | 1027-1033 | 1030 MHz (plugin 1030) |
+  | dme | 960-1215 | aeronautical radionavigation DME / TACAN |
+  | all others | anywhere | PMR / digital voice, pagers, APRS, LoRa, ISM, FLARM, wildlife, radar, V.23, MPT1327, analog voice, CW, SSB, D-STAR, TETRA ... |
+
+  Exclusive bands: 88-108 only `wfm`; 108-117.975 only `vor`, `ils_loc`
+  (GBAS VDB D8PSK: generic PSK); 117.975-137 only `am_voice`, `acars`,
+  `vdl2`; 406.0-406.1 only `beacon406`; 960-1215 only `dme`, `adsb`,
+  `ssr1030`, `uat` (GNSS L5 / E5, JTIDS: generic noise / pulses). Every
+  debug-playback entry keeps its class at its RF (checked: POCSAG at 157.95
+  in AIS's range is fine - a range is not exclusive -, wildlife at 151 /
+  160 / 166, LoRa at 446 / 868 / 915 / 921, the radar at 1300, DAB at
+  227.36 inside both DAB's and DTV's band III)
+- **Model file** format 3 (phase 5): format 2 + the RF table after the
+  views (classes with an entry <= 4096: id, generic flag, <= 64 [lo, hi]
+  f64 ranges; <= 256 exclusive bands: f64 lo, hi, <= 256 class ids;
+  finite, 0 <= lo < hi, every count bounded before use); formats 1 and 2
+  still load (no mask). `model_io.write_model` takes the table from
+  meta["classes"] (rf_hz, generic) and meta["bands"]; `rf_mask()` is the
+  numpy twin (parity at 8 frequencies x 4 views: 2.9e-7); the fuzzer got a
+  format-3 model and checks every masked result sums to 1 and is finite
+- **Model file** format 2 (phase 4; format 1 files still load): per view
+  an optional front end after the input standardisation - 0 none, 1 Conv1D
+  (sequence slice offset / length / channels, K filters x L taps, stride
+  1, ReLU, max- and mean-pooled over time, the pooled values standardised;
+  the MLP then reads the other features followed by them), 2 "the
+  sequence is not read" (views without a front end: no zero weights for
+  2048 inputs). The loader bounds C <= 8, S <= 65536, K <= 256, L <= 256,
+  L <= S, the slice inside D, every product in 64 bits before allocation;
+  the evaluator is a plain per-filter loop over time with the taps outside
+  (vectorised). Parity numpy vs C++ (`model_io.forward` vs `sigclass_tool
+  forward`, random models: formats 1 and 2, with and without front end,
+  NaN / inf inputs): max |dp| 1.7e-7. The review's fuzzer
+  (`tmp/review/fuzz_model.cpp`, ASan + UBSan) got a format-2 model (a
+  front-end view and a not-read view): every truncation, 400 000 random
+  byte changes, hostile values in every u32 field - no fault.
 - **Model file** (`model.cpp` header): "KSIGCLS\0", format 1, layout
   version + hash + D, meta JSON, per view: class ids / names, temperature
   (1e-3 .. 1e3), input mean / std, Linear + ReLU layers, linear output;
@@ -148,8 +244,16 @@ no other dependency; the same code runs in kraken_doa and in
   is dropped instead (a key-up click's splatter); similar widths overlapping
   >= 25 % = one channel (the one with fewer hits goes, the survivor takes
   the union band). `expire(t)` (no snapshot) and `Track::fills_band` added
-  for the service. Class evidence: EWMA (0.3) of log-probabilities per view,
-  the track's view = the one most of its detections had
+  for the service. Class evidence: per view the mean of the log-probabilities
+  of the first 1 / alpha looks, then an EWMA with weight alpha (phase 5:
+  alpha 0.1, was a plain EWMA 0.3), the track's view = the one most of its
+  detections had. Why: the debug playback's DMR entry (a repeater with both
+  timeslots busy, then two radios in direct mode, 12 s looped) ended "P25
+  Phase 1 50 %" live and "DMR 97 %" offline - not a difference of the paths
+  but of where the evidence ended: per snapshot the repeater part reads P25
+  in 3 of 8 snapshots (0.54-0.99), the direct-mode part DMR 0.95-0.99; with
+  0.3 the last three looks decided, and the live run's 40 s end at 4 s into
+  the loop, inside the repeater part
 - **Cost** (`sigclass_tool bench`, i7-11800H, load ~1.5, layout v1 tool of
   commit 8b7c707 and v2 run alternately on the same three files,
   2026-11-20): fixed per snapshot 21 ms both (front end 11 ms, detector 8-12
@@ -220,8 +324,12 @@ Everything in `tools/sigclass/` (numpy + scipy only; commands in its
   NXDN96 only; a physical-layer approximation whose 80 ms periodicity is
   weaker than a real one's), VOR at measured depths (30 Hz 8-35 %, the 9960
   Hz subcarrier 18-32 %, ident 5-15 % or none: ils_gen has the nominal 30 /
-  30 % only); p25p1 48 clips (24 / 12 / 12), nxdn 32 (12 NXDN48), dmr 32,
-  dstar 24, tetra 24, vor 24; LTE / NR half lightly loaded (0.02-0.2), 40 /
+  30 % only); p25p1 48 clips (24 / 12 / 12), nxdn 32 (12 NXDN48), dmr 40
+  (phase 4: + 8 mobile-to-repeater clips, `synth.py dmr_ms` - dmr_gen's
+  TDMA bursts with the MS-sourced voice / data sync words of TS 102 361-1;
+  the bank had BS and direct-mode syncs only, and a sync pattern the bank
+  never shows cannot be learned; the dmr plugin decodes them), dstar 24,
+  tetra 24, vor 24; LTE / NR half lightly loaded (0.02-0.2), 40 /
   32 clips; LoRa: 2 of 5 clips sparse (24 s, a packet every 1.5-8 s). Limits:
   sfn_gen has no `--seed`; dab_gen's audio is a tone per service; analogtv
   one test card; tetra_gen's payload is the empty SCH/F every frame and its
@@ -245,8 +353,12 @@ Everything in `tools/sigclass/` (numpy + scipy only; commands in its
   flat fading (static / Rician / Rayleigh, Doppler <= 100 Hz), phase noise,
   soft keying edges, 15 % multipath; receiver noise 3-40 LSB and (since the
   own off-air captures showed 0.6-1 LSB at full gain) 30 % 0.3-3 LSB, droop,
-  spurs (4 % a comb every 100-300 kHz), IQ imbalance, DC, 8-bit quantisation
-  after the noise, gain pulled down near clipping (6 % let clip)
+  spurs (4 % a comb every 100-300 kHz), (phase 4) in 12 % one or two
+  noise-like humps 8-25 kHz wide, 3-15 dB, at 1.04-1.12 MHz from the centre
+  (70 % above it: an RTL-SDR's band-edge artefacts at high gain - the own
+  1290 MHz empty-band capture showed one at +1096 kHz as "Unknown OFDM";
+  in no truth: `none`), IQ imbalance, DC, 8-bit quantisation after the
+  noise, gain pulled down near clipping (6 % let clip)
 - **Labels** (`train.py ingest`, per batch through `sigclass_tool
   features`): a detection is matched to the truths it overlaps (cover of
   the detection / of the truth's 99 % band); one dominant truth (6 dB) or
@@ -272,6 +384,30 @@ Everything in `tools/sigclass/` (numpy + scipy only; commands in its
   classes with >= 100 training examples there; one temperature per view
   (val NLL); `min_confidence` = the lowest p at which >= 95 % of the shown
   (not `none`) val labels are right
+- **Per-class thresholds** (`thresholds.py`, phases 4-5): per shown class
+  the lowest p >= `min_confidence` at which its synthetic val labels are
+  >= 95 % right, raised above every wrong label of it on HALF A of the own
+  native captures (crc32 of the capture id even) - wrong at an identified
+  signal or drawn (p >= 0.5, not hidden) where none is (`eval_real.py`'s
+  `false_tracks`: own captures list every identified signal in their
+  `expect` rows); 1.01 = never sure. The eval of half A runs WITH the RF
+  mask (the receiver's default). Writes `min_p` into `meta["classes"]` and
+  the RF table (format 3)
+- **The learned front end** (phase 4, `fit --conv-views 0,1 --conv-k 32
+  --conv-l 24`): per view a `ConvMLP` - Conv1D over the int8 symbol
+  sequence (the caches keep it apart as `Q`, int8 x 127: 2 KB a detection;
+  the other 1086 features `X` float32), im2col + GEMM, ReLU, max + mean
+  over time, appended to the standardised features, the MLP; back-propagated
+  end to end (`gradcheck`: conv 2.2e-8, MLP 1.7e-7). 0.25 s a batch of 512:
+  ~25 min for views 0-1 of 59 000 captures. Views without it export front
+  end 2 (the slice not read). Ablation options: `--drop-groups` (feature
+  groups left out), `--drop-edge-none`
+- **Variance** (phase 4): the real-data score of a class moves a lot with
+  the training set, not only with the features: the same layout, the same
+  recipe, 43 000 vs 59 000 captures gave real ISM OOK 29-33 vs 95 of 149
+  (the phase 3 model: 79); dropping the `sym` groups or the band-edge humps
+  changed nothing (29, 30) - more data did. Single-class real deltas of a
+  few signals are within that noise
 
 ### Diagnosis of the synthetic-to-real gap (phase 3, 2026-11-20)
 
@@ -310,7 +446,190 @@ width, view, SNR, duty) against the bank. Four kinds of cause:
   IF histogram blurred the 1800 / 2400 Hz outer levels and the log lag grid
   could not see a frame period -> layout v2 (`sym`, `frame_*`, above)
 
-### Results (2026-11-20, phase 3, the shipped `sigclass.model`)
+### Results (2026-11-20, phase 5, the shipped `sigclass.model`)
+
+The phase 4 weights (no retraining), now model format 3 with the RF table,
+per-class thresholds refitted (`thresholds.py --prec 0.95` on the synthetic
+val split + half A of the own captures, evaluated WITH the RF mask, false
+labels included: 16 classes with `min_p`), the tracker's evidence over ~10
+looks (alpha 0.1), the one-hit rule and the page's per-track sure level.
+Before = commit 6d51b53's model (layout v2, no mask possible in its core) /
+the phase 4 model (as shipped then: unmasked, old tracker).
+
+- **(a) debug playback, strict**: 6d51b53 27 / 28, phase 4 26 / 28, now
+  28 / 28 in the second full run (26 sure; DMR 80 % and DVB-T 71 % unsure)
+  and 27 / 28 in the first (APRS: no track). `dmr-repeater-and-direct` three times live: DMR 0.92,
+  0.94, 0.92 (phase 4 live "P25 Phase 1 50 %"; the cause and the fix are in
+  Core / Tracker); FLARM right (its one-hit "ISM device (FSK) 52 %" piece
+  is no longer published); DVB-T right (72-81 %, unsure). APRS: in 2 of 7
+  live runs of the entry no track at all at the end (offline 0.99, the
+  other live runs 0.98-0.99): not explained - see "still weak"
+- **(b) own native captures** (110 signals): top-1 65 / 67 -> 68 (62 %;
+  unmasked 66), family 70 / 70 -> 69, shown correct 52 / 60 -> 61. The mask
+  fixed the FM station at -600 kHz (FM 3 -> 5 of 6: "LoRa" is implausible
+  in 88-108 MHz) and the false ILS label on the DME capture's band-edge spur
+  (+1128 kHz, ils_loc 0.88 SURE unmasked with the phase 4 thresholds);
+  the 1290 MHz empty band shows no label (the same spur cannot be ILS at
+  1.29 GHz). False labels (drawn, p >= 0.5, at no identified signal):
+  single-service captures 0 sure / 2 unsure (a one-hit ISM FSK piece at
+  433.88 MHz; an "Unknown OFDM 0.58" band-edge artefact at +1097 kHz on the
+  DME capture); the busy trunked-site captures (`mixed/`: P25 / DMR /
+  MPT1327 sites) 40 sure / 49 unsure on channels their `expect` rows don't
+  list - mostly real transmitters the decoders didn't identify, reported
+  apart and not used to fit thresholds
+- **(c) library, decoder-confirmed** (357; 201 of 338 entries have a
+  centre frequency): top-1 157 / 170 -> 177 (50 %; unmasked 171), family
+  220 / 219 -> 227 (unmasked 218), shown correct 102 / 108 -> 117. Masked vs
+  unmasked rows: FM 8 -> 10 of 13, ISM FSK 19 -> 21, LoRa 2 -> 3, P25
+  family 12 -> 13; DMR 3, P25 9, NXDN 2, YSF 1, TETRA 2, radiosonde 3, ISM
+  OOK 97 of 149
+- **(d) synthetic** (XT, unmasked): unchanged from phase 4 - top-1 0.855,
+  family 0.874
+- **Trust** (sure = p >= the class's `min_p` or `min_confidence`; track
+  level; own half B and the library are test data):
+
+  | | sure right | sure wrong | precision | sure share | false labels (single-service captures) |
+  |---|---|---|---|---|---|
+  | 6d51b53, own half B | 31 | 6 | 0.84 | 53 % | not scored then |
+  | phase 4, own half B | 38 | 0 | 1.00 | 54 % | (unmasked) 1 sure (ILS on a spur), 1 unsure |
+  | now, own half B | 39 | 0 | 1.00 | 56 % | 0 sure, 1 unsure |
+  | 6d51b53, library | 102 | 41 | 0.71 | 40 % | - |
+  | phase 4, library | 69 | 8 | 0.90 | 22 % | - |
+  | now, library | 78 | 8 | 0.91 | 24 % | - |
+
+  The library's 8 sure-and-wrong now: ISM FSK as ISM OOK (current cost,
+  fineoffset, Honda remote, two KeeLoq), as unknown OFDM (Jansite TPMS), as
+  LoRa (Insteon 915 MHz); ISM OOK as unknown FSK (ELV WS2000)
+- **Checks**: selftest passes; detector acceptance unchanged; parity
+  formats 1-2 1.9e-7, the RF mask 2.9e-7 (8 frequencies x 4 views); the
+  fuzzer with a format-3 model (every truncation, 400 000 byte changes,
+  hostile u32 fields; every masked result finite and summing to 1): no
+  fault
+- **Still weak**: the APRS entry's intermittent live miss; real ISM FSK
+  (21 / 98) and the ISM FSK <-> OOK swaps that the thresholds cannot catch
+  (they are confident); the busy-site captures' unidentified channels (the
+  library lacks the truth to score them); LoRa, SSR and NR confidence on
+  the own captures; the learned front end (off) - all as in phase 4
+
+### Results (2026-11-20, phase 4)
+
+Layout v3 (hash cf9d37c1ca7226ea, D = 3134 incl. the 2048-value symbol
+sequence), model format 2, 1086(+seq not read)-192-96-C per view, 3.8 MB,
+`min_confidence` 0.82 plus per-class `min_p` for 16 classes
+(`thresholds.py --prec 0.95`: am_voice 0.99, atsc3 0.87, beacon406 0.98,
+carrier 0.95, cw / unk_pulse / wildlife 1.01 = never sure, ism_fsk / ism_ook
+/ unk_fsk 0.98, lora 0.92, unk_noise 0.97, unk_ofdm 0.93, unk_psk 0.96,
+vdl2 0.99, wfm 0.87). Trained on 43 000 captures (X1 24 k, X2 16 k, X3 3 k
+wide), test XT 4 000. "Before" = the committed 6d51b53 model (layout v2)
+with its own tool on the same library state; real tables at track level.
+
+**The learned front end does NOT ship.** Trained with it (Conv1D 2 x 24 ->
+32 filters, max + mean pooled, views 0-1; `fit --conv-views 0,1`) the model
+was no better on real data than the same data without it: native 65 vs 67
+of 110, confirmed 158 vs 170 of 357; the 4-FSK rows identical (DMR 3 / 5,
+P25 9 / 19, NXDN 2 / 5, YSF 2 / 3, native P25 16 / 34, DMR 12 / 21);
+synthetic 0.841 vs 0.855; playback 26 / 28 both (it got DMR right and DVB-T
+wrong, the shipped one the reverse). Its code stays (layout v3 sequence,
+format 2 front end, trainer) - sound, tested, and off in the shipped model
+(every view: front end 2, the sequence not read). What it learned is real:
+on bank clips and real recordings the most excited filters fire once per
+frame - DMR every 288 symbols (and 144: the 30 ms slots; real DMR control
+channel: 288 / 144 exactly), P25 voice 396, a real P25 control channel 360
+(75 ms TSDUs) on the same filter (f25) that fires on the bank's P25,
+NXDN 192, TETRA 255. Why it doesn't help yet: the real 4-FSK signals the
+model misses are mostly the ones whose sequence is unusable - the symbol
+rate is found in 62-65 % of the real 4-FSK detections only (own trunked-site
+captures: weak channels, neighbours), and with a wrong rate the sequence
+is noise; where the rate is right the plain features already separate the
+systems. Next step there: timing recovery that holds at low SNR (a
+matched-filter / Gardner loop on the channel-filtered signal instead of the
+|dIF| line), then retrain with the front end.
+
+- **(a) debug playback, scored strictly** (`pb_strict.py`: the entry's own
+  class or the class it is merged into - the old table accepted any class of
+  the plugin and counted "ATSC 3.0" on the DVB-T entry right): before 27 / 28
+  (DVB-T as ATSC 3.0 68 %; sure 25), after 26 / 28, sure 23, unsure 3.
+  Fixed: DVB-T (DVB-T / T2 / ISDB-T 78 %), radiosonde 35 -> 85 %, wildlife
+  66 -> 85 %. Wrong: DMR (the repeater + direct-mode entry ends "P25 Phase 1
+  50 %", DMR 36 %; the offline emulation of the same entry: DMR 97 %),
+  FLARM (a one-hit "ISM device (FSK) 52 %" piece next to the three FLARM
+  tracks, which are right). Target 28 / 28 not reached
+- **(b) own native captures** (110 signals): top-1 65 -> 67 (59 -> 61 %),
+  family 70 -> 70, shown correct 52 -> 60. Fixed: LTE 768 MHz (none 0.99 ->
+  LTE 0.95: the burst-comb band fill), NR 875 (72 none tracks -> one NR track,
+  but p 0.23: hidden), the empty 1290 MHz band shows nothing, DME 0.53 ->
+  0.65. Not fixed: SSR 1030 (none 0.43), LoRa 921.8 (now a hidden
+  band-filling track, p 0.19), FM 98 MHz -600 kHz still "LoRa 0.62", VOR
+  (unknown OFDM 0.46), ISM 433 (FSK, 0 / 3)
+- **(c) library, decoder-confirmed** (357): top-1 157 -> 170 (44 -> 48 %),
+  family 220 -> 219, shown correct 102 -> 108. Rows exact (family): DMR 3
+  (5) -> 3 (3), P25 9 (14) -> 9 (12), NXDN 2 (3) -> 2 (3), YSF 2 (3) -> 2
+  (3), TETRA 3 -> 2 of 3, POCSAG 1 -> 1, FLEX 2 -> 1 of 2, AIS 0 -> 0 (family
+  2), ACARS 1 -> 1, VDL2 0 -> 0, radiosonde 3 (11) -> 3 (11) of 14, ISM OOK
+  79 (103) -> 95 (110) of 149, ISM FSK 23 (39) -> 19 (33) of 98 (still
+  worse than phase 2's 28), ISDB-T 0 (none) -> 0 (none), LTE 1 -> 3 of 5,
+  NR 0 -> 1, LoRa 1 -> 2 of 4, FM 9 -> 8 of 13, DAB 9 / 9. Probe-only 23 ->
+  27 %, disc_audio 31 -> 31 %, open set 82 -> 80 %
+- **(d) synthetic** (XT, test clips): top-1 0.855, top-3 0.942, family
+  0.874; per view 0.888 / 0.824 / 0.868 / 0.734 (not comparable 1:1 with
+  phase 3's 0.875 on VT: other composer seed contents - the band-edge
+  humps, the MS-sourced DMR)
+- **(C) trust: how often a SURE label is right on real data** (track level;
+  sure = p >= the class's `min_p` or `min_confidence`; unsure = 0.5 .. that;
+  hidden = < 0.5, `none` or no track; thresholds set on the synthetic val
+  split + half A of the own captures - crc32 of the capture id even -, half
+  B and the public library untouched):
+
+  | | sure right | sure wrong | precision | unsure right / wrong | hidden | sure share |
+  |---|---|---|---|---|---|---|
+  | before, own half A | 21 | 0 | 1.00 | 0 / 1 | 16 | 55 % |
+  | before, own half B | 31 | 6 | 0.84 | 5 / 3 | 25 | 53 % |
+  | before, library | 102 | 41 | 0.71 | 32 / 45 | 135 | 40 % |
+  | after, own half A | 22 | 0 | 1.00 | 1 / 1 | 14 | 58 % |
+  | after, own half B (test) | 38 | 0 | 1.00 | 1 / 7 | 24 | 54 % |
+  | after, library (test) | 69 | 8 | 0.90 | 76 / 59 | 143 | 22 % |
+
+  Before, the sure-and-wrong own captures were all 4-FSK called YSF (5 x
+  P25, 1 x DMR) and one P25 called unknown FSK; on the library 41, 30 of
+  them ISM (OOK / FSK swapped, OOK as unknown pulses / OFDM). After (the
+  library's 8): APRS as noise-like, ISM FSK as unknown OFDM (Jansite TPMS,
+  oil watchman), ISM OOK as unknown OFDM (Acurite 3-in-1), a P25 site as FM
+  broadcast (an off-channel 2.4 MS/s capture), a P25 Phase 2 as unknown PSK,
+  an M10 radiosonde as FM broadcast, a wildlife collar as unknown pulses.
+  Without the per-class thresholds (min_confidence only) the library's sure
+  labels were 0.80 right at 38 % sure: the per-class `min_p` buys 0.90 at
+  22 % (the ISM classes need 0.98)
+- **Cost** (load ~1.7, the 6d51b53 tool alternated with this one, 2026-11-20):
+  fixed per snapshot 21 ms both; features per narrow signal 1.25 -> 1.44 ms
+  (the channel filter + the sequence), typical mix 1.61 -> 1.84, wide 3.84
+  -> 3.99 ms; model 0.05 ms per signal (the front end would be 0.15-0.17 ms:
+  1.5 M multiply-adds); model file 3.7 -> 3.8 MB. Pi 5 (an ESTIMATE, not
+  measured: 3-4x this machine per core): ~70-90 ms fixed, ~5-7 ms per
+  narrow signal, ~15 ms per wide one
+- **Checks**: `sigclass_tool selftest` passes; detector acceptance
+  unchanged after every phase 4 rule (Pd 1.00, extras as before, noise-only
+  1 in 40); parity numpy vs C++ on random format 1 / 2 models 1.7e-7 and on
+  the trained models over 2 400 real cache rows 4.9e-7 (front end, not-read
+  and plain views); the fuzzer (ASan + UBSan, now also a format-2 model with
+  a front-end view and a not-read view): ALL DONE, no fault
+- **Still weak, and the next steps**: (1) symbol timing at low SNR (above),
+  then the front end again with the MS-sourced DMR and P25 control-channel
+  clips it now has; (2) ISM FSK on real files (rtl_433 corpus 19 / 98: the
+  bank's two FSK device kinds + the generic ones don't cover the real
+  deviations / bit rates - more generic FSK devices from published device
+  parameters); (3) LoRa: real packets come out as a band-filling or `none`
+  track - the burst-comb fill now also fires on a busy LoRa band; (4) NR /
+  SSR / VOR confidences on the own captures; (5) a 1-hit transient track
+  can show a "?" label (FLARM): the service could publish a track only from
+  its 2nd hit; (6) the real-data variance between training sets (ISM OOK 29
+  - 95 of 149 for equal recipes): an ensemble or averaging several seeds
+  would make the shipped model's real behaviour less of a draw
+- Commands: `train.py gen` X1 / X2 / X3 / XT as in the README; `train.py
+  fit --data X1,X2,X3 --test XT --hidden 192,96 --epochs 40 --none-weight
+  2.5 --conv-views none`; `thresholds.py ... --prec 0.95`; `eval_real.py`;
+  scratch `trust.py`, `pb_strict.py`, `rs_hit.py`, `filt_probe.py`
+
+### Results (2026-11-20, phase 3: the model of commit 6d51b53)
 
 Model 1082-192-96-C per view, 3.7 MB (was 2.84), `min_confidence` 0.81
 (95 % of the shown val labels right at 76 % shown); views (classes) 24 kHz
@@ -436,11 +755,20 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   retunes): there it is the wall clock. Track ids sent = the tracker's id x
   8 + the tuner. Cleared on an operating-mode change, on disable, and when
   parked for the noise source; kept over a retune (absolute Hz: the ones
-  still in band go on). Only the tracks inside the band their tuner receives
-  now are sent (coherent: the centre +- 1.2 MHz): after a retune - or a
-  switch between playback entries - the old band's tracks leave the list at
-  once, but stay in the tracker (and come back if the receiver returns
-  before they expire). Two overlapping tuners (wideband scan) seeing one
+  still in band go on). Only what the pages show is sent: a track whose
+  centre lies inside the EDGE-CLIPPED part of its tuner's band now - the
+  tuner centre +- `EDGE_CLIP` x 1.2 MHz (`current_edge_clip`, the setting
+  the spectrum, the wideband-scan stitch and the scanners use; 0.80 =
+  +- 0.96 MHz; read at every publish, so a change of the setting is followed
+  with the next one). On real captures every remaining stray label sat on
+  band-edge artefacts beyond ~+-1.05 MHz (15 kHz humps at +1080 / +1096 kHz
+  labelled "Unknown OFDM" 0.5-0.67, a spur at +1128 kHz). A wide or
+  band-filling track whose centre is inside is sent with `lo` / `hi`
+  limited to the clipped band (its bracket stays on the plot). After a
+  retune - or a switch between playback entries - the old band's tracks
+  leave the list at once. Tracks outside are kept in the tracker (they may
+  drift in after a retune, and come back if the receiver returns before
+  they expire), just not sent. Two overlapping tuners (wideband scan) seeing one
   signal: sent once (the fresher / more often seen track). Classes marked
   `"hidden": true` (`none`: a false detection) are never sent, nor offered
   as an alternative
@@ -501,7 +829,7 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
 - `{"sigclass":{enabled, available, reason, parked, analyze_ms, period_ms,
   duty, snapshots, min_confidence, tracks:[{id, hz, bw, lo, hi, tuner, snr,
   duty, burst, wide, cls, name, family, p, alt:[[cls, p, name], ...], plugin,
-  demod, vbw, age, hits, unknown}]}}` on the control topic (`WebSocketServer::broadcast_json_message`):
+  demod, vbw, min_p, age, hits, unknown}]}}` on the control topic (`WebSocketServer::broadcast_json_message`):
   on enable / disable at once; after each analysis and on a park change when
   the track list's signature (ids, classes, p in 2 % steps, hz in 200 Hz
   steps, bw on a log scale, the state) changed, at most every 500 ms
@@ -511,10 +839,22 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   (`get_connect_sync_messages`, ages computed then). Tracks: sorted by
   frequency, at most 200 (the most recently seen); none while off. `cls`,
   `name`, `family`, `plugin`, `demod` are null without one; `vbw` = the
-  class's `bw_hz` (the VFO width a click sets; null = none); `hz` = the
+  class's `bw_hz` (the VFO width a click sets; null = none); `min_p`
+  (phase 4) = the class's own "sure" threshold from the model's metadata
+  (`meta.classes[i].min_p`, 0..1.01; null = use `min_confidence`; 1.01 =
+  never sure) - the page's `sigSure(t)` uses it (phase 5), else the
+  model's `min_confidence`. Phase 5: a track seen ONCE only (hits 1) is
+  published only when its label is already sure by that rule - a one-hit
+  stray piece (a FLARM packet's fragment as "ISM device (FSK) 52 %") no
+  longer flashes a "?" label; a device that sends one burst a minute still
+  shows at its first burst when the label is sure, and from its second
+  burst on otherwise (the tracker keeps it 45 s, so a once-a-minute device
+  with an unsure label may never show: by design - one look is not enough
+  evidence for a guess); `hz` = the
   track's smoothed centre (the tune target), `lo` / `hi` = the band its
   detections cover (the core's band edges when its `Track` has `lo_hz` /
-  `hi_hz`, else hz +- bw / 2), `tuner` = its tuner; `wide` = the TRACK's
+  `hi_hz`, else hz +- bw / 2; limited to the edge-clipped band), `tuner` =
+  its tuner; `wide` = the TRACK's
   latest detection filled the band (`Track::fills_band`), or it is >= 90 %
   of 2.4 MHz; `alt` = the next two (not hidden) classes with their names (a
   third element - a two-element reader still works); `age` - see Ages;
@@ -552,7 +892,8 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   sits at the top), the row it had last time tried first (`sigDy`), else it
   is left out. Colours (palette, *theme.md*): box `--s1` at 84 %, border
   `--l3` (`--l1` subdued), text `--t0` (`--t5` subdued), bracket `--t2`
-  (`--t6`). Subdued: p < the model's `min_confidence` (`sigSure()`; 0.7
+  (`--t6`). Subdued: p < the track's sure level (`sigSure(t)`: its `min_p` when the
+  track carries one - above 1 = never sure -, else the model's `min_confidence`; 0.7
   from a model without one) with a trailing "?", and the unknown families. A track not seen for 5 s (`age`) fades to 45 % by 40 s. Names over 18
   characters cut. Not drawn on the main spectrum in independent mode (each
   pane shows the tracks inside its own span); the waterfall gets nothing
@@ -726,3 +1067,54 @@ service compiled against stubs with simulated receiver / uWS threads):
   %). Tracks per transmitter: 1 for most narrow signals; 2 (POCSAG), 3
   (DVB-T, UAT, VOR), 6-9 (DME), 41 (the analog TV test card's lines and
   carriers). Data for the trainer, not runtime bugs
+
+
+### Final verification (2026-11-20, the shipped model: layout v3, model format 3)
+
+TEST builds of the final tree (two instances: 4718x and 4728x), the shipped
+`sigclass.model` (min_confidence 0.82, per-class `min_p`).
+
+- Edge filter (edge_test.py, fake heimdall at 100 MHz with a carrier at +1.1
+  MHz and a 250 kHz band at +0.88 MHz): with EDGE_CLIP 0.80 the +1.1 MHz
+  carrier is not sent and nothing centred beyond +-0.96 MHz is; the band is
+  sent with `hi` = +0.96 MHz; with 1.00 the carrier is sent; back to 0.80
+  gone again (5 / 5)
+- The one-hit rule (onehit_check.py over every snapshot of two 28-entry
+  playback tables, from TEST-only instrumentation that logs the trackers'
+  tracks): 459 one-hit tracks - 34 sure ones sent, 425 unsure / hidden /
+  outside not; 874 tracks with >= 2 hits sent exactly when not hidden and
+  inside the clipped band; 0 mismatches
+- The page's sure level per track (ui_minp.py, 7 / 7): below its class's
+  `min_p` subdued with "?", at or above normal, `min_p` 1.01 never sure, no
+  `min_p` = the model's min_confidence; the drawn labels follow
+- Suites: multi.py 9 / 13 - off by default, no CPU while off, no command to
+  heimdall, noise-source park / resume, independent mode, one channel
+  pass; the 4 misses are the test's expectations, not the service: the
+  scene's noise-modulated "NBFM" at 99.75 MHz is classed `none` (hidden,
+  correctly unsent) by the shipped model, and the retune check expects
+  absolute frequencies the coherent fake doesn't use (its tracks follow the
+  retune to 144.75 / 145.1 / 145.4 MHz as they should). ui_sig.py 18 / 18,
+  ui_fixes.py 12 / 12, ui_touch.py 3 / 3 taps, ui_pane.py 7 / 7,
+  ui_compat.py 3 + 3 (both directions)
+- The reviewer's harness: retune storm - the 100 MHz tracks listed at ages
+  up to 45.6 s then gone, 77 broadcasts; 8 tuners in turn with 0.5 s
+  analysis (12 runs sharing one core: 10 s period, an 80 s round) - no
+  tuner without tracks in the last 150 s of any run
+- Strict debug playback, all 28 entries, 40 s each, twice: 28 / 28 right
+  both times (25 + 24 sure; unsure: DMR 81 / 80 % and DVB-T 59 / 69 %
+  below 0.82, POCSAG 76 % in the second run, wildlife 82 / 94 % - its
+  `min_p` 1.01: never sure). One track per transmitter for most entries;
+  ISM 9-13 tracks (its devices sit on several channels), radiosonde 3-4,
+  LoRa 3, VOR 1-3, DME 2-3, AIS 2 and FLARM 2-3 (one per channel)
+- APRS (the training worker saw no track in 2 of 7 earlier live runs): no
+  failure in 7 runs here (2 tables + 5 independent runs from a cleared
+  state). Per run 18-25 of 38 snapshots had a detection at 144.575 MHz
+  (aprs in 17-19, `none` in 0-6, another class in 0-3); the APRS track was
+  sent in every snapshot after its first (never flipped to hidden, never
+  held back by the one-hit rule). Not reproduced, so no cause found; if it
+  happens again, a track whose first looks are `none` stays hidden until the
+  averaged evidence (~10 looks) turns - the tracker / model, not the service
+- CPU (TEST build, playback, CPU time of the `sigclass` thread): POCSAG
+  2.3 % of a core (analysis 22.5 ms, period 1.0 s - the floor), DAB 2.85 %
+  (28 ms), LoRa 3.5 % (36 ms); the whole process with DAB 38.9 % on, 36.8
+  % off

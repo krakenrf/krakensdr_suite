@@ -8,9 +8,10 @@ is a conda without them, run `/usr/bin/python3`.
 
 | File | What |
 |---|---|
-| `classes.json` | The class table: id, name, decoder plugin, click-to-tune demod / VFO width, occupied bandwidth range, burst / continuous, family. The single source of class ids. |
+| `classes.json` | The class table: id, name, decoder plugin, click-to-tune demod / VFO width, occupied bandwidth range, burst / continuous, family; the RF plausibility table (per class `rf_hz` ranges, `generic`, top-level exclusive `bands`: the model carries it, the receiver masks by its tuned frequency). The single source of class ids. |
 | `bank.py` | Builds the clean signal bank: per class many clips made by the plugins' own test-signal generators (`plugins/<id>/tools/*_gen.*`, run as separate programs) and `synth.py`, seeded random IDs, payloads, modes, speeds, timing. |
 | `synth.py` | The classes no plugin generator makes: AM voice (25 / 8.33 kHz), SSB (USB / LSB), CW Morse, carriers, broadcast FM, generic OOK / FSK ISM devices; the unknown families (random FSK / GFSK / AFSK, PSK / QAM, OFDM, pulse trains, band-limited noise - kept away from the known systems' symbol rates, subcarrier spacings and pulse timings); physical-layer variants the plugin generators lack: a P25 control channel in C4FM and P25 in CQPSK / LSM (p25_gen.py's frame sync, NID and voice frames, random TSBKs), NXDN48 (nxdn_gen.py's filter and sync word, random payload symbols), VOR at measured depths. |
+| `thresholds.py` | Per-class "sure" thresholds (`min_p`) for a trained model, from the synthetic val split and half of the own native captures. |
 | `scenes.py` | The scene composer: 0.5 s (configurable) 2.4 MHz cu8 captures with 0-8 signals, channel and RTL-SDR impairments, truth as JSON lines, written in batches for the feature tool to consume. |
 
 ## Where the data goes
@@ -84,9 +85,23 @@ python3 $T/train.py fit --work $W --data $W/ds/V1.npz,... --test $W/ds/VT.npz --
 python3 $T/eval_real.py --work $W [--library DIR] [--model M]          # the real recordings (table: WORK/eval_real.tsv + .txt)
 ```
 
-The shipped model's data: V1 24 000 (seed 11), V2 16 000 (12), V3 3 000 of
-the wide / band-filling classes (13, `--classes`), V4 16 000 (14); test VT
-4 000 (2). `fit --no-merge` trains `merged_into` classes as their own (the
+The shipped model's data (layout v3, phase 4): X1 24 000 (seed 11), X2
+16 000 (12), X3 3 000 of the wide / band-filling classes (13, `--classes`);
+test XT 4 000 (2). The caches keep the symbol sequence apart (`Q`, int8 x
+127) from the other features (`X`). `fit --conv-views 0,1 [--conv-k 32
+--conv-l 24]` trains the learned front end (a Conv1D over the sequence;
+`--conv-views none` = without - the shipped model, see the doc's Results);
+`--drop-groups`, `--drop-edge-none` are ablations. Then the per-class sure
+thresholds (`min_p` in the metadata's classes - the service passes it
+through on every track):
+
+```bash
+python3 $T/thresholds.py MODEL MODEL_OUT $W/ds/X1.npz,... NATIVE_EVAL.tsv --prec 0.95 --work $W
+```
+
+(the synthetic val split + half A of the own native captures, crc32 of the
+capture id even, from an `eval_real.py` table of the model; half B and the
+public library stay test data). `fit --no-merge` trains `merged_into` classes as their own (the
 DVB-T2 / ISDB-T separation test). `KRAKEN_SIGCLASS_TOOL=path` makes
 `eval_real.py` use another build of `sigclass_tool` (an older layout's, to
 compare an older model on the same evaluation path).
@@ -133,43 +148,41 @@ bits hold keeps >= 0.8 LSB of receiver noise (below that the noise vanished
 with the signal: a whole-band "burst"). Scored exact (the class) and by
 family (`coarse_family`: classes.json's modulation grouped into fsk, psk,
 ofdm, vsb, pulse, am, fm, css, noise, none - unknown FSK for a DMR signal
-is family-right).
+is family-right). With `--rf-mask on` (the default) the entry's
+`center_hz` (less the placement shift) goes to `classify --rf`: the model's
+RF mask, as the receiver applies it (`off` to compare; the library knows
+the centre of 201 of 338 confirmed entries and of every own capture).
+False labels: every drawn track (p >= 0.5, not `none`) that matches no
+identified signal of an own capture goes into `false_tracks` (sure / unsure
+by the model's thresholds) and the summary.
 
-## Results (2026-11-20, model 804-192-96-C, `sigclass.model` 2.84 MB)
+## Results (2026-11-20, phase 5: the phase 4 weights + the RF mask, model format 3)
 
-Data: 46 000 training captures (A2 24 k + C 12 k + D 4 k + D2 2 k of the
-wide classes + E 4 k with sub-LSB receiver noise; 0.32 M detections, 0.29 M
-labelled incl. `none`, 0.22 M of train clips), test = 4 000 captures of another
-seed (B2), test clips only.
-Views (classes): 24 kHz 32, 96 kHz 18, 480 kHz 15, 2.4 MHz 19.
-`min_confidence` 0.82 (95 % of the shown val labels right, 78 % shown).
+The RF plausibility mask (the model carries `classes.json`'s table), the
+refitted per-class thresholds (false labels on own captures included), the
+tracker's evidence over ~10 looks. Track level, 6d51b53 -> now: own native
+captures 65 -> 68 of 110 (the mask: FM, the ILS-on-a-spur false label);
+library confirmed 44 -> 50 % top-1; sure labels right 0.84 -> 1.00 (own
+half B, 56 % of signals sure) and 0.71 -> 0.91 (library, 24 % sure); no
+sure false label on a single-service own capture; the empty band shows
+nothing. Debug playback strict: see the doc.
 
-- **Synthetic test** (2 740 detections): top-1 0.867, top-3 0.959, macro
-  recall 0.859 / precision 0.803 over 49 classes; per view top-1 0.870 /
-  0.873 / 0.887 / 0.771. Weakest: radar 0.53 (<-> ssr1030), adsb 0.56,
-  unk_fsk 0.41, unk_psk / unk_noise ~0.5, nfm_voice 0.63, ism_fsk 0.77,
-  flex 0.78 (-> carrier), none 0.88. Accuracy vs SNR: 0.50 (< 0 dB), 0.74
-  (5-10), 0.87-0.93 (>= 10). Learning curve (per-view training cap): 10 k
-  0.814, 30 k 0.842, all 0.867 - more data still helps. Size: 128-64 0.853
-  (1.84 MB), 192-96 0.867, 256-128 0.865 (3.9 MB). `none` shown as a signal:
-  5 % of non-signal detections, 0.17 a capture (none weight 2.5: top-1
-  0.871, none 0.90 - an option, not the shipped model)
-- **Detection ceiling**: 0.82-0.90 of the narrow truths at any SNR, 1.00
-  for the band-filling ones; nearly all misses at high SNR are signals
-  placed across the band edge (the detector's 3 % edge guards)
-- **Own captures, the receiver's native bytes** (41 expected signals):
-  top-1 26 (63 %); DVB-T 18 / 19, ADS-B, DME, VOR's crystal-harmonic
-  carrier, two of three FM stations right; LoRa, LTE, NR, SSR 1030 (real
-  ones: `none` - not shown), VOR (unknown PSK), ISM 433 (unknown OFDM / ISM
-  FSK) wrong; the empty band (1290 MHz): no shown label
-- **Library, decoder-confirmed** (357 signals, 247 of them rtl_433 ISM test
-  files): top-1 38 %, top-3 54 %; ISM OOK 65 / 149, ISM FSK 27 / 98, FM
-  broadcast 9 / 13, DAB 8 / 9, VOR 3 / 3, AIS 2 / 2, P25 6 / 19, radiosonde
-  3 / 14 (DFM / iMet / LMS6 / M10: no such sonde in the bank). Spectrum-
-  probe-only 20 %, unconfirmed 4 %, disc_audio 17 %; open set (no class):
-  80 % labelled unknown / none / below `min_confidence`
-- **Debug playback through the TEST pipeline**: see
-  `docs/dev/signal-classifier.md` "Results"
+## Results (2026-11-20, phase 4: layout v3, `sigclass.model` 3.8 MB)
+
+Full tables, the diagnosis and the earlier rounds: `docs/dev/signal-classifier.md`
+"Results". The shipped model: X1-X3 (43 000 captures), no learned front
+end (it was no better on real data; the code is in and off), per-class
+`min_p` thresholds. Track level, before = the 6d51b53 model:
+
+- debug playback, strict (the entry's own class): 27 -> 26 of 28 (DMR and a
+  one-hit FLARM piece wrong; DVB-T, radiosonde, wildlife fixed)
+- own native captures: 65 -> 67 of 110; a SURE label right 0.84 -> 1.00 on
+  the half not used for thresholds (54 % of the signals sure)
+- public library, decoder-confirmed: 44 -> 48 % top-1; sure labels right
+  0.71 -> 0.90 (22 % sure)
+- synthetic test XT: top-1 0.855, family 0.874
+- symbol rate found in 65 % of the real 4-FSK / TETRA / pager / sonde
+  detections
 
 ## Known limits
 
@@ -184,6 +197,13 @@ Views (classes): 24 kHz 32, 96 kHz 18, 480 kHz 15, 2.4 MHz 19.
   (physical layer from the plugin generators' framing pieces + random
   payload; NXDN48's frame periodicity is weaker than a real one's);
   radiosondes are RS41 and M20 only (no generator for the other types).
+- The learned front end over the symbol sequence (`fit --conv-views`)
+  learns frame-synchronous filters (they fire once per DMR / P25 / NXDN /
+  TETRA frame) but did not improve the real tables yet: the symbol rate is
+  wrong in a third of the real 4-FSK detections, and the sequence then is
+  noise.
+- Real-data scores vary a lot between training sets of the same recipe (ISM
+  OOK 29-95 of 149).
 - DVB-T2 and ISDB-T are trained as DVB-T (`merged_into` in classes.json):
   neither the v1 log lag grid nor the v2 linear one separates them well
   enough (`fit --no-merge`: ISDB-T 0.5, a third of it DVB-T).

@@ -6,8 +6,9 @@
 // one FSK tone, a burst's lobe, a narrower measurement of the same signal)
 // keeps that track alive but changes neither its band nor its class evidence.
 // Frequencies are absolute (capture centre + offset), so a retune that keeps
-// the signal in band keeps its track. Class evidence per view is an
-// exponentially weighted mean of log-probabilities; a track's probabilities
+// the signal in band keeps its track. Class evidence per view is a
+// mean of log-probabilities (of the first 1 / alpha looks, then exponentially
+// weighted, alpha 0.1); a track's probabilities
 // are its softmax for the view most of its detections had. Tracks unseen for
 // expire_s go.
 //
@@ -163,9 +164,13 @@ const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, do
             std::vector<float>& lp = ev.logp[v];
             const bool fresh = lp.size() != s.probs.size();
             if (fresh) lp.assign(s.probs.size(), 0.0f);
+            // the mean of the first 1 / alpha looks, then an EWMA with weight alpha: a
+            // label rests on ~10 looks (with 0.3 the last three decided - a DMR repeater
+            // whose two busy slots read as P25 in a few snapshots flipped the label)
+            const double an = std::max(a, 1.0 / double(std::max(1, ev.view_hits[v])));
             for (size_t c = 0; c < s.probs.size(); c++) {
                 const float l = float(std::log(std::max(double(s.probs[c]), 1e-6)));
-                lp[c] = fresh ? l : float((1.0 - a) * lp[c] + a * l);
+                lp[c] = fresh ? l : float((1.0 - an) * lp[c] + an * l);
             }
         }
     }

@@ -7,7 +7,7 @@ trains, band-limited noise). One clean, noise-free transmitter per file.
   synth.py KIND OUT.cf32 --seed N [--seconds S]
 
 KIND: am | ssb | cw | carrier | wfm | ism_ook | ism_fsk | unk_fsk | unk_psk | unk_ofdm |
-      unk_pulse | unk_noise | p25cc | p25lsm | nxdn48 | vor
+      unk_pulse | unk_noise | p25cc | p25lsm | nxdn48 | vor | dmr_ms
 (p25cc / p25lsm / nxdn48 / vor: physical-layer variants of plugin classes that
 their generators do not make - a P25 control channel in C4FM, P25 in CQPSK /
 LSM, NXDN 4800, VOR at measured rather than nominal depths.)
@@ -739,6 +739,39 @@ def gen_nxdn48(rng, seconds):
     return rate, x, {'mod': 'nxdn48'}
 
 
+def gen_dmr_ms(rng, seconds):
+    """DMR from a mobile to a repeater (MS-sourced): dmr_gen.py's TDMA direct-mode bursts
+    (a 27.5 ms burst every 60 ms) with the MS-sourced voice / data sync words of ETSI TS
+    102 361-1 (table 9.2) in place of the direct-mode ones - the bank's generator makes
+    BS and direct-mode traffic only, a repeater's input carries these"""
+    import contextlib
+    import io
+    m = _plugin_module('dmr', 'dmr_gen')
+    for slot in ('ts1', 'ts2'):
+        m.SYNC[(slot, 'voice')] = 0x7F7D5DD57DFD
+        m.SYNC[(slot, 'data')] = 0xD5D7F77FD757
+    tmp = '/dev/shm/synth_dmr_ms_%d.cf32' % os.getpid()
+    argv = [tmp, '--mode', 'dmo', '--cc', str(int(rng.integers(0, 16))), '--seed', str(int(rng.integers(1, 1 << 30)))]
+    for a, b in keyed_intervals(rng, seconds - 1.2, on=(0.8, 4.0), off=(0.3, 3.0), start=(0.05, 0.8)):
+        argv += ['--at', '%.3f' % a, '--slot', str(int(rng.integers(1, 3))), '--dur', '%.3f' % (b - a),
+                 '--src', str(int(rng.integers(1, 16776415))), '--dst', str(int(rng.integers(1, 99999)))]
+    old = sys.argv
+    sys.argv = ['dmr_gen.py'] + argv
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            m.main()
+    finally:
+        sys.argv = old
+    x = np.fromfile(tmp, np.complex64).astype(complex)
+    for f in (tmp, tmp[:-5] + '.json'):
+        if os.path.exists(f):
+            os.remove(f)
+    n = int(seconds * 48000)
+    y = np.zeros(n, complex)
+    y[:min(n, len(x))] = x[:n]
+    return 48000, y, {'mode': 'ms'}
+
+
 def gen_vor(rng, seconds):
     """VOR as measured on the air (not the nominal 30 % / 30 %): carrier, 30 Hz AM of
     8-35 %, the 9960 Hz subcarrier at 18-32 % FM +-480 Hz by the 30 Hz reference, the
@@ -774,7 +807,7 @@ def gen_vor(rng, seconds):
 
 KINDS = {'wfm': gen_wfm, 'ism_ook': gen_ism_ook, 'ism_fsk': gen_ism_fsk, 'am': gen_am, 'ssb': gen_ssb, 'cw': gen_cw, 'carrier': gen_carrier, 'unk_fsk': gen_unk_fsk,
          'unk_psk': gen_unk_psk, 'unk_ofdm': gen_unk_ofdm, 'unk_pulse': gen_unk_pulse, 'unk_noise': gen_unk_noise,
-         'p25cc': gen_p25cc, 'p25lsm': gen_p25lsm, 'nxdn48': gen_nxdn48, 'vor': gen_vor}
+         'p25cc': gen_p25cc, 'p25lsm': gen_p25lsm, 'nxdn48': gen_nxdn48, 'vor': gen_vor, 'dmr_ms': gen_dmr_ms}
 
 
 def main():

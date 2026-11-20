@@ -13284,11 +13284,12 @@ document.querySelectorAll('#tb-gain .vbar, #tb-audio .vbar').forEach(b => b.addE
 // comes on connect and on every change: {"sigclass":{enabled, available,
 // reason, parked, analyze_ms, period_ms, duty, snapshots, min_confidence,
 // tracks:[{id, hz, bw, lo, hi, tuner, snr, duty, burst, wide, cls, name,
-// family, p, alt:[[cls, p, name]], plugin, demod, vbw, age, hits,
+// family, p, alt:[[cls, p, name]], plugin, demod, vbw, min_p, age, hits,
 // unknown}]}}. A label for every track in view with p >= the browser's
 // minimum (sigMin(): a number, or the model's min_confidence with "Auto"):
 // just above the trace's peak in its band, a bracket over the band (lo..hi);
-// a guess below the model's min_confidence (sigSure()) and an unknown kind
+// a guess below its sure level (sigSure(t): the class's min_p, else the
+// model's min_confidence) and an unknown kind
 // are subdued (the guess with a "?"), a track not seen for a while fades
 // (age: 0 while its tuner's latest snapshot had it). Overlaps: the more
 // certain label wins, the other moves up a row or is left out. A press on a
@@ -13312,8 +13313,10 @@ function sigSetMin(v) {
   sigUi.min = v === 'auto' ? 'auto' : n >= 0 && n <= 1 ? n : 0.5;
   sigSave(); sigRender(); sigRedraw();
 }
-// the model's "sure" level (its min_confidence; 0.7 from a model without one)
-function sigSure() {
+// the "sure" level: the track's own (its class's min_p from the model - above 1 =
+// never sure), else the model's min_confidence (0.7 from a model without one)
+function sigSure(t) {
+  if (t && t.min_p !== null && t.min_p !== undefined && Number.isFinite(+t.min_p) && +t.min_p >= 0) return +t.min_p;
   const m = sigSt && +sigSt.min_confidence;
   return m > 0 && m <= 1 ? m : 0.7;
 }
@@ -13362,10 +13365,10 @@ function sigShown(lo, hi) {
   return sigSt.tracks.filter(t => t.cls && t.name && !t.hidden && (+t.p || 0) >= mn && Number.isFinite(t.hz) &&
                                   (lo === undefined || (t.hz / 1e6 >= lo && t.hz / 1e6 <= hi)));
 }
-function sigSub(t) { return !!t.unknown || (+t.p || 0) < sigSure(); }
+function sigSub(t) { return !!t.unknown || (+t.p || 0) < sigSure(t); }
 function sigLabelText(t) {
   const n = String(t.name);
-  return (n.length > 18 ? n.slice(0, 17) + '…' : n) + (!t.unknown && (+t.p || 0) < sigSure() ? '?' : '');
+  return (n.length > 18 ? n.slice(0, 17) + '…' : n) + (!t.unknown && (+t.p || 0) < sigSure(t) ? '?' : '');
 }
 function sigAlpha(t) {
   const a = sigAge(t);

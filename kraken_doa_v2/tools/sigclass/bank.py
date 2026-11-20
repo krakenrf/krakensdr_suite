@@ -819,7 +819,7 @@ def rc_split(*parts):
 
 # class -> (recipe, clips, quick clips)
 RECIPES = {
-    'dmr': (rc_dmr, 32),
+    'dmr': (rc_then_synth(rc_dmr, 32, 'dmr_ms', 16, 4), 40),     # + mobile-to-repeater bursts (synth.py)
     # P25 Phase 1: voice calls in C4FM (p25_gen.py), a C4FM control channel, CQPSK / LSM (synth.py)
     'p25p1': (rc_split((24, rc_p25p1), (12, rc_synth('p25cc', 16, 4)), (12, rc_synth('p25lsm', 16, 4))), 48),
     'p25p2': (rc_p25p2, 24),

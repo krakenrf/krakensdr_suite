@@ -30,6 +30,10 @@
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
+// EDGE_CLIP: the part of each tuner's band the spectrum shows (and the
+// wideband-scan stitch is built from), 0.1 .. 1 (main.cpp)
+extern std::atomic<float> current_edge_clip;
+
 namespace sigsvc {
 
 std::atomic<bool> g_armed{false};
@@ -113,6 +117,7 @@ void finish_locked(Result r) {   // g_cap_mu held
 struct ClassMeta {
     std::string id, name, family, plugin, demod;
     double bw_hz = NAN;
+    double min_p = NAN;           // the class's own "sure" threshold (NaN: the model's min_confidence)
     bool burst = false, unknown = false, fills_band = false, hidden = false;
 };
 struct Table {
@@ -199,6 +204,11 @@ std::shared_ptr<const Table> parse_table(const std::string& meta) {
                 const double d = std::strtod(v.c_str(), &end);
                 if (end != v.c_str() && is_finite_value(d) && d > 0) m.bw_hz = d;
             }
+            if (json_find(obj, "min_p", v) && v != "null") {
+                char* end = nullptr;
+                const double d = std::strtod(v.c_str(), &end);
+                if (end != v.c_str() && is_finite_value(d) && d >= 0.0 && d <= 1.01) m.min_p = d;
+            }
             if (json_find(obj, "burst", v)) m.burst = v == "true";
             if (json_find(obj, "unknown", v)) m.unknown = v == "true";
             if (json_find(obj, "fills_band", v)) m.fills_band = v == "true";
@@ -236,6 +246,7 @@ struct PubTrack {
     int hits = 0;
     std::string cls, name, family, plugin, demod;
     double vbw = NAN;
+    double min_p = NAN;           // its class's own sure threshold (null: min_confidence)
     struct Alt {
         std::string id, name;
         float p = 0;
@@ -281,7 +292,7 @@ std::string build_json_locked(std::string* sig) {
             o << (a ? "," : "") << "[\"" << json_escape(k.alt[a].id) << "\"," << num(k.alt[a].p, 3) << ",\""
               << json_escape(k.alt[a].name) << "\"]";
         o << "],\"plugin\":" << str_or_null(k.plugin) << ",\"demod\":" << str_or_null(k.demod)
-          << ",\"vbw\":" << num(k.vbw, 0) << ",\"age\":" << num(age, 1) << ",\"hits\":" << k.hits
+          << ",\"vbw\":" << num(k.vbw, 0) << ",\"min_p\":" << num(k.min_p, 3) << ",\"age\":" << num(age, 1) << ",\"hits\":" << k.hits
           << ",\"unknown\":" << (k.unknown ? "true" : "false") << "}";
         s << k.id << ':' << k.cls << ':' << std::lround(k.p * 50) << ':' << std::llround(k.hz / 200) << ':'
           << std::llround(std::log(std::max(k.bw, 1.0)) * 10) << ':' << k.fresh << ';';
@@ -460,6 +471,7 @@ void worker() {
     };
     int last_mode = -1, rr = 0;
     double ewma_ms = 0, period_now = MIN_PERIOD_S;   // (the cycle period, s)
+    double sure_conf = NAN;                          // the model's min_confidence (the one-hit rule)
     int64_t settle_until = 0;
     bool was_on = false;
 
@@ -472,13 +484,19 @@ void worker() {
     const auto make_pub = [&](int mode, double coh_centre, bool live) {
         const double t = now_s();
         const int M = mode == 0 ? 1 : std::clamp(active_num_elements.load(), 1, MAX_CHANNELS);
+        // only what the pages show: a track whose centre is inside the
+        // edge-clipped part of its tuner's band (EDGE_CLIP, 0.80 = +-0.96 MHz;
+        // beyond it are filter skirts and artefacts the model labels wrongly);
+        // one outside stays in the tracker (it may drift in), unsent
+        const float clip = current_edge_clip.load(std::memory_order_relaxed);
+        const double half = 0.5 * SAMPLE_RATE_HZ * (clip >= 0.1f && clip <= 1.0f ? static_cast<double>(clip) : 0.8);
         std::vector<PubTrack> pub;
         for (int ti = 0; ti < M; ti++) {
             const TunerTracks& x = tt[size_t(ti)];
             const double band_c = mode == 0 ? coh_centre : static_cast<double>(exact_tuner_hz(ti));
             if (!(band_c > 0)) continue;
             for (const sigclass::Track& k : x.trk.tracks()) {
-                if (std::abs(k.centre_hz - band_c) > 0.5 * SAMPLE_RATE_HZ) continue;
+                if (std::abs(k.centre_hz - band_c) > half) continue;
                 PubTrack q;
                 q.id = k.id * MAX_CHANNELS + ti;
                 q.tuner = ti;
@@ -487,6 +505,9 @@ void worker() {
                 // the band the bracket shows (centre_hz is the smoothed power
                 // centre; a core whose Track has its band edges gives those)
                 track_band(k, q.lo, q.hi);
+                // (a wide one's bracket stays on the plot)
+                q.lo = std::clamp(q.lo, band_c - half, band_c + half);
+                q.hi = std::clamp(q.hi, band_c - half, band_c + half);
                 const double sa = x.seen_at(k.id);
                 q.seen_real = sa >= 0 ? sa : t;
                 // fresh: seen in its tuner's latest snapshot, and that one is
@@ -509,6 +530,7 @@ void worker() {
                         q.plugin = m->plugin;
                         q.demod = m->demod;
                         q.vbw = m->bw_hz;
+                        q.min_p = m->min_p;
                         q.unknown = m->unknown;
                     }
                     // the next two candidates (not hidden ones)
@@ -524,6 +546,13 @@ void worker() {
                     }
                 }
                 q.wide = k.fills_band || k.bw_hz >= 0.9 * SAMPLE_RATE_HZ;
+                // seen once only: published only when its label is sure already (the
+                // class's min_p, else min_confidence - the page's rule) - a one-hit stray
+                // piece would flash a "?" label; a sure one-hit label shows at once
+                if (k.hits < 2) {
+                    const double sure = is_finite_value(q.min_p) ? q.min_p : (is_finite_value(sure_conf) ? sure_conf : 0.7);
+                    if (q.cls.empty() || !(q.p >= sure)) continue;
+                }
                 pub.push_back(std::move(q));
             }
         }
@@ -613,6 +642,7 @@ void worker() {
                     g_reason = ok ? "" : (err.empty() ? "cannot load " + path : err);
                     g_min_conf = mc;
                 }
+                sure_conf = mc;
                 if (ok) {
                     int views = 0;
                     for (int v = 0; v < sigclass::NUM_VIEWS; v++) views += model.has_view(v) ? 1 : 0;
@@ -718,7 +748,8 @@ void worker() {
         const auto t0 = std::chrono::steady_clock::now();
         // (the buffer is the worker's while not armed)
         const std::vector<sigclass::Scored> res =
-            analyzer.analyze(g_cap.buf.data(), sigclass::NOMINAL_SNAPSHOT_SAMPLES, static_cast<double>(SAMPLE_RATE_HZ), &model);
+            analyzer.analyze(g_cap.buf.data(), sigclass::NOMINAL_SNAPSHOT_SAMPLES, static_cast<double>(SAMPLE_RATE_HZ), &model,
+                             nullptr, centre);   // (centre: the RF mask of the model)
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         ewma_ms = ewma_ms > 0 ? ewma_ms + 0.3 * (ms - ewma_ms) : ms;
         const double period_s = std::clamp(ewma_ms / 1000.0 / CPU_SHARE, MIN_PERIOD_S, MAX_PERIOD_S);

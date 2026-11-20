@@ -48,7 +48,7 @@ constexpr int VIEW_DECIM[NUM_VIEWS] = {100, 25, 5, 1};
 // The feature layout: bump FEATURE_LAYOUT_VERSION whenever a feature's
 // meaning changes (the hash also covers the group table and parameters);
 // a model trained on another layout refuses to load.
-constexpr int FEATURE_LAYOUT_VERSION = 2;
+constexpr int FEATURE_LAYOUT_VERSION = 3;
 int feature_dim();
 std::string layout_json();
 uint64_t layout_hash();
@@ -107,6 +107,13 @@ public:
     // features (feature_dim() floats) -> probabilities (classes(view)); false
     // without a model for the view. Thread-safe.
     bool predict(int view, const float* features, std::vector<float>& probs) const;
+    // the RF plausibility mask (model format 3: per class where it can exist,
+    // exclusive bands): probabilities of the classes a detection at [lo_hz,
+    // hi_hz] (absolute RF) cannot be set to 0, the rest renormalised; all
+    // masked -> the generic classes keep their share. false (probs untouched)
+    // without a table, a band, or anything left.
+    bool has_rf_table() const;
+    bool rf_mask(int view, double lo_hz, double hi_hz, std::vector<float>& probs) const;
 
 private:
     struct Impl;
@@ -124,12 +131,13 @@ public:
     // features_out (optional): n_det x feature_dim() floats, row-major, in
     // the order of the result. Features are computed only with a model or a
     // features_out; without either only the detector runs.
+    // centre_hz: the capture's RF centre (0 = unknown: no RF mask)
     std::vector<Scored> analyze(const uint8_t* iq, size_t n_samples, double fs_hz,
-                                const Model* model, std::vector<float>* features_out = nullptr);
+                                const Model* model, std::vector<float>* features_out = nullptr, double centre_hz = 0.0);
     // The same for complex float samples on the uint8 path's scale (full
     // scale = 1.0; the uint8 path is (u - 127.5) / 127.5)
     std::vector<Scored> analyze(const std::complex<float>* iq, size_t n_samples, double fs_hz,
-                                const Model* model, std::vector<float>* features_out = nullptr);
+                                const Model* model, std::vector<float>* features_out = nullptr, double centre_hz = 0.0);
 
     static int feature_dim() { return sigclass::feature_dim(); }
     static std::string layout_json() { return sigclass::layout_json(); }
@@ -160,7 +168,8 @@ private:
 
 struct TrackerConfig {
     double expire_s = 10.0;      // a track not seen for this long is dropped
-    double alpha = 0.3;          // weight of a new detection in the class evidence
+    double alpha = 0.1;          // weight of a new detection in the class evidence (the first 1 / alpha
+                                 // looks are averaged, then an EWMA with this weight)
     double min_iou = 0.3;        // band overlap / union to associate
     double freq_tol_hz = 600.0;  // ... or centres this close (narrow signals)
     // one signal = one track: a track whose band lies mostly (this fraction of its
