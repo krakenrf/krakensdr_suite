@@ -673,6 +673,77 @@ older samples lost - that far apart), `FAKE_FAST_TUNE_MS`,
    3 / 4 / 5 packet periods for dwell 5 / 10 / 20 at settle 5: 20.5-21.6 /
    27.3-27.9 / 34.2-34.6 ms (FM, 5 tuners: 15.5 / 11.9 / 9.7 sweeps a
    second; dwell 5 / settle 0 16.3).
+5. *On the KrakenSDR with F's final library* (fork branch
+   `lock-read-no-slip`: no control IN of 3 mod 4 bytes, so no tune shifts a
+   stream; the 5 ms PLL settle also after a VCO jump > 400 MHz;
+   `RTLSDR_TUNE_NO_DUMMY_READ`), 5 tuners, x86 PC, 03:46-04:23, load
+   1.9-2.5. The library rebuilt from scratch in the worktree (the copied
+   build dir named the user's checkout); verified by its header
+   (`RTLSDR_NO_STREAM_SLIP`, `RTLSDR_TUNE_NO_DUMMY_READ`) and by the
+   status timing: the slowest single tune of a round (`tune_max_ms`) 7.65
+   - 7.72 ms on the FM plan with K = 2 / 4 (same-band steps; F: 7.5 ms, 3
+   transfers), 9.3 - 9.6 ms with K = 1, 12.5 - 14.2 ms with K = 3 / 5 (a
+   tuner's wrap to the start of its block: the VCO settle), 8.0 - 8.8 ms on
+   the full range - against 14.5 - 19.7 ms on the full path with the same
+   library. Old tune call (the test tree's `sweep_tune` forced onto the
+   full path, `run_fullpath/`) against the new one (`run_final/`), back to
+   back, `t_hop.py` (3 s a case; `hwf_full.json`, `hwf_fast.json`), ms a
+   round at settle 5 and FM sweeps a second, K = 1 / 2 / 3 / 4 / 5:
+
+   | dwell | full path, ms | fast path, ms | fast path, sweeps / s |
+   |---|---|---|---|
+   | 5 | 31.6 / 29.7 / 36.2 / 31.9 / 36.6 | 23.1 / 22.7 / 28.8 / 21.9 / 29.4 | 3.93 / 7.34 / 8.68 / 15.24 / 11.34 |
+   | 10 | 37.0 / 37.1 / 42.9 / 36.7 / 42.7 | 30.2 / 27.6 / 34.4 / 28.6 / 36.5 | 3.01 / 6.05 / 7.26 / 11.65 / 9.14 |
+   | 20 | 43.3 / 41.7 / 48.8 / 43.2 / 49.6 | 36.5 / 34.4 / 41.1 / 34.7 / 42.9 | 2.49 / 4.85 / 6.09 / 9.61 / 7.76 |
+
+   (full path sweeps a second at dwell 5 / 10 / 20, K = 5: 9.10 / 7.80 /
+   6.72; dwell 5 / settle 0, fast: 21.7 / 20.5 / 23.8 / 20.5 / 25.0 ms.)
+   Every hop delivered exactly its packets (min = max). 24-1765 MHz, one
+   sweep timed, dwell 5 / 10 / 20 at settle 5: 5 tuners 4.25 / 5.36 / 6.59
+   s (full path 5.96 / 7.02 / 8.55), 1 tuner 18.97 / 25.23 / 31.45 s (full
+   path 26.96 / 32.08 / 38.61). CPU 10.9 % of a core for the fast-path
+   run (12.2 % full path). A round is still a whole number of packet
+   periods, and where retune + settle ends against the packet grid moves it
+   by one: `t_basic.py` after a coherent start (the streams aligned by the
+   calibration) gave 41-45 ms at dwell 20 / settle 5 where `t_hop.py`
+   (streams as started) gave 34-43.
+   The rest on the final path: `t_contrast.py` (station 16.4 dB over B's
+   floor, 164-184 hops a settle, 20 s each) - the first valid packet's
+   worst segment +3.8 / +3.6 / +3.4 dB at settle 0 / 2 / 5 against the
+   later packets' +4.2 / +4.0 / +4.5, segment 0 p90 +1.4 / +1.4 / +1.3
+   against +1.5 / +1.5 / +1.4; flagged B packets with the station: 0 of 184
+   / 0 of 184 / 163 of 327. At settle 0 / 2 no flagged packet holds the
+   old hop any more (with the shorter tune the straddler - dropped - is the
+   only packet that does), so the positive control there is a test build
+   without the gate (`run_nogate/`: the test tree's hop skips the gate and
+   its flush, the flag cleared right after the settle): at settle 0 the
+   first valid packet's segment 0 is +16.0 dB (median of 158 hops; worst
+   +16.7, segments 0-2 over the later packets' max, p90 of segment 0 +16.3
+   against +2.8 for the others) - the old station, i.e. exactly what the
+   gate removes; at settle 5 the same build is clean (+4.4 worst against
+   +4.2; the straddler goes out flagged during the settle: 138 of 276
+   flagged packets with the station). (A build with the gate's T 10 ms
+   early stayed clean at settle 0 too, +3.4 dB: packets the drain
+   collected before it served the gate are flushed downstream either way.)
+   Settle 2 / 3 on the final path (`t_hop.py`, 04:27, load 2.1-2.4), ms a
+   round K = 1-5: settle 2, dwell 5 / 10 / 20: 21.7 / 20.5 / 23.9 / 20.4 /
+   25.0, 28.6 / 27.3 / 30.8 / 27.2 / 32.1, 35.2 / 34.1 / 37.4 / 34.1 /
+   38.7 (FM sweeps a second at dwell 5: 4.19 / 8.14 / 10.47 / 16.31 /
+   13.35); settle 3: 22.9 / 20.5 / 26.8 / 20.5 / 29.4, 29.7 / 27.3 / 34.1
+   / 27.3 / 36.5, 36.5 / 34.1 / 40.9 / 34.1 / 43.0. Settle 2 runs as fast
+   as settle 0 (a 7.5-9.5 ms tune + 2 ms still ends before the second
+   packet boundary), settle 5 costs a packet period in most rounds.
+   `t_basic.py` (CONVERGED 19.1 s, check |lag| 0.0
+   / |phase| 0.2 deg, every case PASS), `t_cmds.py` 0 failures,
+   `t_modes.py --sweep-seconds 60` 0 failures (447 sweeps, 0 coherence
+   events; sweep -> coherent: reply 0.60 s, CONVERGED 6.5 s, check clean;
+   mid-calibration entry and back 8.5 s; final 3.9 s; no "PLL not locked"
+   in its log), `t_long.py --minutes 9 --dwell 5` (full range, 5 tuners,
+   settle 5): 130 sweeps in 542 s (4.30 s each, 20 ms a round), 23920 valid
+   / 30339 flagged packets, 0 off the grid, 0 failed retunes, 0 coherence
+   events, RSS 42.02 MB flat, CPU 14.8 %, SIGTERM during a hop: exit 0 in
+   0.37 s. No level jumps were looked for at 1.6-1.75 GHz (F's open
+   question) - the tests here don't measure levels there.
 
 **Review fixes** (2026-11-20, an independent review of the merged diff and
 the orchestrator's end-to-end run; tests on the fake librtlsdr build -
