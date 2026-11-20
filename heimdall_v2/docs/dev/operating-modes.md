@@ -451,3 +451,20 @@ parser is the port's find-based one; set_sweep has no string fields);
 coherent the next packets carry the recalibration's phase state (not
 CONVERGED, noise on) and `return_to_coherent_locked` flushes L2, so nothing
 uses those packets; `frac_tail` noted at the guarantee.
+Finding 7 on the fake (`t_race.py`, `set_num_elements` + `set_operating_mode
+sweep` in one TCP send, 10 tries): when the reconfiguration started, either
+it aborted on its re-check under the lock ("switch to coherent mode ...",
+the count unchanged, sweep mode on) or the mode change was refused
+("Element-count reconfiguration in progress", the new count, coherent) -
+never both. Regression set on the KrakenSDR after the fixes (`regress.sh`):
+T1 CONVERGED 22.6 s, check OK (|lag| 0.0, |phase| 0.2 deg); T2 every case
+PASS; T3 (`t_contrast`, station 14.4 dB over the floor) first valid packets
+worst segment +4.1 / +3.6 dB at settle 0 / 5 against later packets' max
++3.9 / +3.4 and flagged packets up to +16 dB (81 / 75 flagged packets with
+the old hop in them) - noise level, no trace of the old hop; T5 every check
+PASS; the web STATE / SDR_SETTINGS PASS; T6 every check PASS (60 s of
+sweeping, 429 sweeps, 0 coherence events; sweep -> coherent CONVERGED 22.6
+s, check OK; coherent -> sweep mid-calibration -> coherent 20.6 s); 3 min
+full range with 5 tuners: 23 sweeps, 0 failed retunes, 0 coherence events,
+0 valid packets off the grid, RSS flat 43.2 MB, SIGTERM during a hop exit 0
+in 0.72 s.
