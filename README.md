@@ -328,7 +328,7 @@ What each protocol needs:
     since when, when it comes back; **Return now**), all your VFOs move with
     it, and the control channel is not heard unless it fits the new band -
     grants made meanwhile are missed. Each calibration blanks reception for
-    about a second; with **Calibrate there** off the call is heard whole but
+    about half a second; with **Calibrate there** off the call is heard whole but
     has no bearing. **Longest away** stops an excursion that runs too long.
   - **Voice tuners** (Independent mode): tick the tuners trunk following may
     retune for calls outside every tuner's band; the tuner with the control
