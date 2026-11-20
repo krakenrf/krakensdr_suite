@@ -441,6 +441,53 @@ the orchestrator's end-to-end run; tests on the fake librtlsdr build -
    (|lag| 0.0, |phase| <= 0.3 deg) after each, 0 coherence events. The
    phase recalibration that starts first may still log one channel's lag
    before the full recalibration takes over 0.1 s later (harmless).
+
+**Accumulated slip** (measured 2026-11-21, the user's question: can the 2
+samples per retune outgrow the +-16384-sample correlation window?). The
+difference between two tuners grows without limit while they are retuned
+unequally often, and the sets as they are paired then (the N-th buffer of
+every dongle) do leave the window. What the calibration meets is smaller:
+every flush with a quiet point re-pairs the buffers by arrival time, so the
+lag starts again inside one buffer. KrakenSDR, merged build, single tuners
+retuned in independent mode (14.4 ms each), then coherent (job scratch
+`e2e/skewtest.py`):
+
+| Before coherent | Lag as paired | After the recovery's flush | CONVERGED |
+|---|---|---|---|
+| tuner 1 x 2048 retunes | -4096.0 (peak/mean 147) | -4096 | 27.2 s |
+| tuner 1 x 4096 | -8192.0 (94) | -8192 | 35.2 s |
+| tuner 1 x 6144 | -12288.0 (50) | +4095.9 (146) | 29.7 s |
+| tuner 1 x 9000 (18000 samples) | no peak (5.0) | -1616.1 (18000 - 16384) | 25.8 s |
+| tuners 1 / 2 / 3 x 2048 / 4096 / 6144, 15 s of sweep mode, then coherent | - | +12287 (34), +8192 (95), +4096 (148), 0 | 39.6 s |
+
+Each: check_calibration OK (|lag| 0.0, |phase| <= 0.3 deg). The servo pulls
+the lag in on the sample clock, which also puts that dongle's buffers back
+in step with the others - after CONVERGED nothing of the slip is left.
+Two limits the last row shows, both where the dongles' buffer arrivals are
+spread over more than half a period (several tuners thousands of retunes
+apart), so that NO quiet point exists:
+- Sweep mode itself slows down: every hop's L1 flush waits its four packet
+  periods and flushes unpaired - 81 ms a round against 47 ms from an aligned
+  array (the same 10-step plan), 191 unquiet flushes in 15 s, the "no quiet
+  point" line every 10 s. The data stays valid (the wait only adds settle).
+- The way back cannot re-pair (`clear_l1_buffer_paired` fails three times):
+  it takes the coherence-loss path (one coherence event counted), and the
+  pairing its flush leaves is whatever arrives next - lags up to a whole
+  buffer, here 12287 samples (25 % of the window overlapping, still a
+  peak). A channel that lands within a few hundred samples of +-16384 has
+  no peak: the servo never locks, `lag_no_peak` warns after 60 s, the
+  recovery is given up after 120 s, and it stays uncalibrated until a Full
+  Recalibration (by then the other channels' servos have re-aligned their
+  buffers, so that flush finds its quiet point). Not seen in these runs;
+  how often it happens is not measured.
+How fast the slip builds: a sweep with one tuner ~46 samples a second
+against the idle tuners (half a buffer in 3 minutes); the 11-step FM plan on
+5 tuners ~14 a second for tuner 4 (10 minutes); the full range on 5 tuners
+one retune a sweep (hours); coherent mode and the wideband scan none.
+Not changed: the cure is in the library - a lock check that does not read
+exactly 3 registers costs no samples at all (`../../../docs/dev/
+librtlsdr-fork.md`, *A 3-register tuner read drops 2 samples*).
+
 Nits: `whole()` takes the JSON number grammar only (not `12abc`, `0x10`,
 `+5`, `1e2x`), `run` needs a delimiter after the literal (not `truex`);
 `set_sweep` bumps `plan_generation` before zeroing `round` / `sweeps`

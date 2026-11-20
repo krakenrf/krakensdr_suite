@@ -269,11 +269,25 @@ What follows:
   outside coherent mode and re-acquires every lag on the way back
   (`note_tuner_retuned`, `force_recalibration`); in coherent mode a 2-sample
   slip is caught by the lag check of the phase recalibration (> 1 sample).
-- A lock check that reads another number of registers would not move the
-  stream at all. Not changed here: the read was cut to registers 0..2
-  because reading 3 / 4 while the PLL settles was followed by the 0x0b /
-  0x0c corruption (`R82XX_PLL_SETTLE_US`), so a different length needs that
-  test again, in the fork.
+- A lock check that reads another number of registers does not move the
+  stream at all. Measured with scratch builds of the library whose lock
+  check in `r82xx_set_pll` reads 5, and 4, registers (same probe, 200 calls
+  each): full retunes to the same frequency, + 100 kHz and back, 433 MHz and
+  back, a 24.5 / 1700 / 100 MHz round, 109.4 / 109.6 MHz across a divider
+  boundary: 0.00 samples each (0.000 a call), no failed tune in 1000+; the
+  fast path -2.0 for 200 calls + finish - `r82xx_finish_tune` reads 3
+  (`uint8_t data[3]`), once per drag; a 3-register read as control -400.00.
+  So the three reads of exactly 3 registers are the whole effect:
+  `r82xx_set_pll`'s lock check, `r82xx_set_pll_yc`'s, `r82xx_finish_tune`'s.
+  NOT changed in the fork: the lock read was cut to registers 0..2 because
+  reading 3 / 4 while the PLL settled was followed by the 0x0b / 0x0c
+  corruption (`R82XX_PLL_SETTLE_US`; that wait is in place now, which may
+  make 5 safe - the probe did not check the IF VGA registers), so the
+  KrakenSDR sweep test behind that note has to be repeated, on the Pi and on
+  Windows, before the length changes.
+- What the accumulated slip does to heimdall (it wraps into one USB buffer
+  at every re-pairing flush, and where it does not): `heimdall_v2/docs/dev/
+  operating-modes.md`, *Accumulated slip*.
 
 ## Zero-copy USB buffers (investigated 2026-11-12/14)
 
