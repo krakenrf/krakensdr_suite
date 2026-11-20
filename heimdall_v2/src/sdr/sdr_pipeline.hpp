@@ -58,6 +58,13 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
 void clear_l1_buffer();
 void clear_l2_buffer();
 void clear_l2_raw_buffer();
+// The same flushes without the stdout line (the sweep flushes ~40 times a
+// second; docs/dev/operating-modes.md "Sweep mode")
+void clear_l1_buffer_quiet();
+void clear_l2_buffer_quiet();
+// L1 flushes since startup that found no quiet point between packet rounds
+// (flushed anyway: a channel may have slipped by a whole packet)
+uint32_t l1_unquiet_flushes();
 
 // Coherence-loss signalling. Cheap and callable from any thread (including the
 // alloc-free RTL callback): sets the coherence_lost flag exactly once per event,

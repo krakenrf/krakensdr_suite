@@ -374,7 +374,7 @@ bool reconfigure_num_elements_precheck(int new_n, std::string& err) {
     }
     if (discrete_scanner.enabled.load() ||
         operating_mode.load() != OperatingMode::COHERENT) {
-        err = "switch to coherent mode (stop the scanner / wideband / independent mode) first";
+        err = "switch to coherent mode (stop the scanner / wideband / independent / sweep mode) first";
         return false;
     }
     if (reconfig_in_progress.load(std::memory_order_acquire)) {
@@ -410,7 +410,7 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
     }
     if (discrete_scanner.enabled.load() ||
         operating_mode.load() != OperatingMode::COHERENT) {
-        err = "switch to coherent mode (stop the scanner / wideband / independent mode) first";
+        err = "switch to coherent mode (stop the scanner / wideband / independent / sweep mode) first";
         return false;
     }
 

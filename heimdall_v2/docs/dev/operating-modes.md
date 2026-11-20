@@ -1,4 +1,4 @@
-# Operating modes (coherent / wideband scan / independent)
+# Operating modes (coherent / wideband scan / independent / sweep)
 
 Moved verbatim from `heimdall_v2/CLAUDE.md` on 2026-10-24 (that file now keeps
 only what every heimdall session needs). Not loaded automatically. *Italic*
@@ -94,3 +94,252 @@ decided once in main() before the dongles open, never changed (no hotplug).
   after `note_mode()` had overwritten them with the common tuning, so
   independent mode's per-tuner tuning was lost on a restart).
 
+### Sweep mode (added 2026-11-20)
+
+The user's request: "a "sweep" mode which allows us to use all available
+dongles, or just one or some to do a wideband sweep across a swath of
+spectrum, creating a wideband FFT and waterfall ... not live, and does not
+allow for demodulation". The interface between heimdall, kraken_doa and the
+page is fixed in `kraken_doa_v2/docs/dev/sweep-mode.md` ("The contract");
+this is heimdall's side. Code: `src/sdr/sweep.cpp` (+ `sweep.hpp`), the
+plan and live state `SweepPlan` / `SweepState sweep_state` (`types.hpp`),
+constants `SWEEP_*` (`config.h`).
+
+**The mode.** `OperatingMode::SWEEP` (3, `"sweep"`), entered and left only
+through `set_operating_mode()` like the others. Every `!= COHERENT` check
+already stands calibration down (`park_calibration_locked` on entry from
+coherent: noise source off, FFT off, phase machine parked). Decisions at the
+`== INDEPENDENT` / `== WIDEBAND_SCAN` uses:
+- conversion: identity compensation, like independent
+  (`snapshot_conversion_state`) - the tuners are on different frequencies;
+- 8091: per-channel frequency from `wideband_config.tuner_frequencies`
+  (where each tuner is), per-channel gain = the common gain, flags `0x800 |
+  0x2000`, the three scanner fields from `sweep_state`;
+- `set_gain` / `SDR_SETTINGS` gain: every tuner (`update_sdr_settings`, the
+  common gain; no rollback difference); a frequency there is refused
+  (`SdrUpdateResult::sweep_refused`, logged at most every 10 s); 8092
+  `set_frequency` is refused at the command, `set_independent_tuner` by its
+  own mode check, `start_scanner` and the element-count change (precheck)
+  too; entering sweep is refused while the discrete scanner runs and on the
+  Wideband downconverter variant (the existing `target != COHERENT` checks);
+- generic RTL-SDR mode: allowed, also with one dongle (`generic_mode_refusal`
+  returns nullptr; its log throttle array grew to 4 modes);
+- leaving: to coherent `return_to_coherent_locked` (every tuner back on
+  `current_frequency`, which the sweep never changes, then the phase
+  recalibration; KerberosSDR: its manual rules); to independent the tuners
+  stay where the sweep left them (their `tuner_frequencies` are exact: a
+  tuner's entry is written only after it took the frequency); to wideband
+  `setup_wideband_frequencies` as usual. Entering from independent puts every
+  tuner back on the common gain (`restore_common_gain_locked`).
+- The 8070 page's banner says "Sweep mode · no calibration · <range> · <n>
+  tuners · <round> ms a round" (STATE.sweep), and its frequency box / Set are
+  disabled in sweep mode; the terminal dashboard has a SWEEP line.
+
+**The plan.** `set_sweep` (8092; `apply_sweep_request`): `first_center_hz`,
+`step_hz`, `steps` (together), `tuners`, `dwell_ms`, `settle_ms`, `run`.
+Accepted in every mode, used in sweep mode; every field is checked before
+anything changes. A plan or tuner change bumps `plan_generation` and resets
+`round` / `sweeps`; dwell, settle and run changes take effect at once
+without a restart (the thread's waits re-read the plan on every wake,
+`change_seq` + a condition variable). Entering the mode sets `run` (the
+client's "entering the mode runs") and starts at round 0. The default plan
+(before any `set_sweep`) is 88-108 MHz on every tuner. The tuner mask keeps
+the user's choice; bits of tuners that aren't open are ignored, none left =
+every open tuner (`sweep_tuners`). Saved in `heimdall_settings.conf`:
+`operating_mode=sweep` (note_mode, not in generic mode - its rule),
+`sweep_first_center_hz` / `sweep_step_hz` / `sweep_steps` / `sweep_tuners`,
+and `sweep_dwell_ms` / `sweep_settle_ms` only when not the default (so a
+better default reaches existing installs); `run` is not saved. Loaded
+before the dongles open (an invalid plan falls back to the default, logged);
+`restore_operating_mode` re-enters sweep mode and the thread starts hopping
+once the pipeline runs.
+
+**Who measures what** (the contract): K' = min(K, H) of the selected tuners
+(lowest indices) take contiguous blocks `[k H / K', (k + 1) H / K')`; round r
+moves each to `base + r` if its block has one. Blocks, not interleaved: the
+tuners' noise floors differ by a few dB, which then shows as K' - 1 steps in
+the stitched spectrum instead of a comb. A tuner already on its hop is not
+retuned (K' = H: every round is the same, so the stream runs on without a
+gap and a one-hop "sweep" is live); one whose last retune failed is, every
+round (its header frequency still shows the old one).
+
+**The hop** (`sweep_thread`, one thread, started in main):
+1. `retuning_in_progress` = 1 (only when a tuner moves);
+2. downstream flush (`clear_l2_buffer_quiet`: what is queued is the old hop's
+   and would go out flagged anyway);
+3. under `settings_mutex` + `device_io_mutex`, with the mode, the plan
+   generation and `run` re-checked: `rtlsdr_set_center_freq` (the FULL path,
+   not the drag fast path) on the round's tuners through `for_each_tuner`
+   (parallel threads on Linux, one by one on Windows; one retry each), then
+   their new frequencies into `tuner_frequencies` (only the ones that took
+   it), `last_retune_ns`, `round`, `frequency_change_counter` + 1;
+4. the settle (`settle_ms` from `last_retune_ns`);
+5. the L1 + downstream flush (`clear_l1_buffer_quiet`: the drain's
+   quiet-point flush, the same path as every other flush);
+6. `retuning_in_progress` = 0, under `settings_mutex` and only if nothing
+   moved `last_retune_ns` since the settle (a gain change: settle + flush
+   again);
+7. the dwell (`dwell_ms`), and at least until one set has gone out as valid
+   (`sweep_state.valid_sets`, counted by the conversion worker when the flag
+   was 0 before and after the header was built; at most
+   `SWEEP_DWELL_GRACE_MS` 250 ms more) - see *Measurements* for why.
+`round_ms` = 1 to 7 measured. Leaving the mode or a plan change mid-hop: the
+waits end (`sweep_notify`), the retune re-checks under the lock, so the new
+state is never retuned over and no tuner is left half way (a retune in
+progress finishes first: `set_operating_mode` waits for `settings_mutex`).
+Pausing or the pipeline stopping with the flag on: the thread finishes the
+settle from `last_retune_ns`, flushes and clears the flag
+(`settle_and_clear_flag`), so the flag is 0 whenever nothing hops - a stuck
+1 would make every client drop every packet. A gain change in sweep mode
+sets the flag too (`sweep_note_tuner_change`, before the tuners are
+written, under `settings_mutex`). No output per hop: the flushes are the
+quiet variants (no "Clearing ... buffers" lines; the drain's "did not
+respond" throttled), failed retunes are counted (`failed_retunes`) and
+logged at most every 10 s; nothing calls `signal_coherence_lost`, so the
+sweep never counts as a coherence loss or starts a recovery. The realtime
+paths (callback, drain) are unchanged.
+
+**The guarantee** (the client builds on it): a packet with
+`retuning_in_progress` = 0 holds only samples taken at the header's
+per-channel frequencies, after the settle. From the code:
+- the flag is stored (seq_cst) before any tuner moves; a tuner's new
+  frequency is stored (seq_cst) only after it took it; the header
+  (`tcp_data_server.cpp`) now reads the per-channel frequencies FIRST and
+  the flag after them - so a header holding a new frequency reads the flag
+  set by that hop (or a later clear, next point);
+- the header is built while the conversion worker holds `l2_flush_mutex`,
+  with the set's flush epoch unchanged since before the set was dequeued;
+  the post-settle flush (`flush_downstream`) takes the same mutex and bumps
+  the epoch, and the flag is cleared only after it. A header that reads the
+  flag as 0 after hop h's clear was therefore built after hop h's
+  post-settle flush, its set was dequeued after it, and its packets reached
+  L1 after the drain had emptied L1 at the end of the settle. Its
+  frequencies are hop h's (h + 1's are stored after h + 1 set the flag);
+- a packet that reaches L1 after the flush began sampling up to one USB
+  packet earlier (NUM_SAMPLES / SAMPLE_RATE = 6.8 ms) plus the USB latency;
+  the drain serves the flush right after the first packet round that
+  arrives after the request (and drops that round), so the first valid
+  packet's samples start no earlier than about settle - USB latency after
+  the retune - measured below, through the real pipeline.
+The reordering of the header's reads is invisible in coherent mode (the
+same values; the discrete scanner's hops are ordered the same way and gain
+the same property).
+
+**Coherent mode** is unchanged except: the header's reads reordered (above),
+the conversion worker's per-set mode load, `for_each_tuner` moved to
+`for_each_tuner.hpp` (the same code), the status JSON / STATE carry a
+`sweep` object, and the element-count refusal text names sweep mode.
+
+**Measurements** (2026-11-20, the KrakenSDR, 5 tuners, x86_64 Linux PC,
+parallel tuning; job scratch 52196024 `heimdall/`):
+- The settle (`t_contrast.py`): one tuner alternating between hop A (a
+  station at baseband +0.6 MHz, 16 dB over B's floor there at 49.6 dB gain;
+  92.0 / 94.0 MHz) and hop B; in B's packets the narrow band at +0.6 MHz,
+  per 1024-sample segment (0.43 ms). Positive control: of the packets sent
+  with the flag set and B's frequency already in the header, 68-78 per 10 s
+  had segments > +10 dB (worst +17 dB: A's samples really are in the stream
+  while the flag is 1). The FIRST valid packet of each B dwell, worst
+  segment over 71-81 dwells: +3.3 / +3.1 / +3.7 / +3.6 dB at settle 0 / 2 /
+  5 / 10 ms, against +3.2 ... +5.6 dB max for the later packets of the same
+  dwells (segment 0 median +0.1 dB): no trace of A at any settle. A large
+  jump (29 hops 24.8 ... 92.0 MHz, the wrap 92.0 -> 24.8 MHz, station 24 dB
+  over the floor, `--steps 29 --step 2.4e6`): first valid packets +3.1 /
+  +2.5 dB worst at settle 0 / 5, later packets max +3.9 / +3.3; flagged
+  packets up to +15.7 dB. The FM band with every tuner (`t_settle.py`, 11
+  hops, dwell 100 ms, ~300 tuner-dwells per settle 0 / 2 / 5 / 10 / 20 ms,
+  at 29.7 and 49.6 dB): the first valid packet's per-segment power, shape
+  and worst band matched the later packets of the same dwell at every
+  settle (e.g. 49.6 dB, settle 0: worst-segment |dP| median 0.77 / later
+  0.76 dB, dS 2.39 / 2.32 dB). So settle 0 already holds here: the tune
+  call returns with the PLL locked, and the post-settle flush (served at the
+  first packet round after the request, which it drops) is itself a guard of
+  about a packet. `SWEEP_SETTLE_MS` = 5 ms is that plus margin for slower
+  USB hosts (the Raspberry Pi is NOT measured; re-run `t_contrast.py` there).
+- Speed (`t_speed.py`, ms per round from the 8091 counter, 4 s each): the
+  hop costs ~25-30 ms beyond the dwell (the retune - not timed alone -, the
+  flush waits for the next packet round, the first valid set comes a packet
+  later). dwell 20 / settle 5: 42-49 ms a round for K = 1-5,
+  1.3-1.6 valid packets a hop; dwell 5 / settle 0: 34-39 ms, 1.0 valid
+  packets a hop (the "at least one valid set" rule - without it, measured on
+  the fake librtlsdr below, a 20 ms dwell had 1 hop in ~75 without data and
+  a 5 ms one most); dwell 50: 75-80 ms, 5.9 packets; dwell 100: 121-125 ms,
+  12.3 packets. 88-108 MHz (11 hops): 2.1 / 3.9 / 5.4 / 7.6 / 6.8 sweeps a
+  second for K = 1-5 at dwell 20 / settle 5 (2.6 / 4.9 / 6.6 / 9.8 / 8.5 at
+  dwell 5 / settle 0). 24-1765 MHz (911 hops): 45 ms a round at every K ->
+  40.9 / 20.7 / 13.7 / 10.3 / 8.4 s a sweep for K = 1-5 (dwell 20 / settle
+  5; timed directly: K = 5 7.73 s, K = 1 40.96 s), 31.9 ... 6.5 s at dwell 5
+  / settle 0. More tuners = faster as asked, nearly in proportion (K = 5 is
+  a little slower a round than K = 4 at the FM band: five parallel tunes).
+  Windows tunes one by one (~3-4 ms a USB control transfer): expect a hop
+  ~5x the Linux retune there (not measured).
+- Without the "at least one valid set" rule, a dwell's first valid packet
+  reaches 8091 about a packet after the flush, so a 20 ms dwell yielded 0-2
+  (one hop in ~75 none, on the fake librtlsdr) and a 5 ms dwell mostly none.
+- CPU (this PC, the 8091 reader on headers only, 30 s each): independent
+  mode 11.1 %, sweep mode (24-1765 MHz, 5 tuners) 15.0 %. Memory flat: RSS
+  43.7 MB from 60 s to 600 s of a full-range sweep.
+
+**Tests** (2026-11-20, all on the KrakenSDR unless marked fake; scripts and
+logs in job scratch 52196024 `heimdall/`, `README.txt` there):
+- `t_basic.py`: coherent start CONVERGED in 19.7 s, check_calibration OK
+  (|lag| 0.0, |phase| 0.3 deg), coherence_events 0. Then sweep mode, 4 s a
+  case: K = 1 ... 5 on 88-108 MHz, one hop with 5 tuners, 3 hops with 5
+  tuners (tuners 3-4 never move), tuners 1,3,4 (0 and 2 never move),
+  430-440 MHz: every case PASS - every valid packet's per-channel
+  frequencies exactly the block assignment of its round, the unselected
+  tuners never moving (also in flagged packets), counter + 1 per round,
+  round + 1 mod R, flags 0x2800 on every packet; 0 failed retunes, 0 L1
+  flushes without a quiet point.
+- `t_contrast.py`, `t_settle.py`: the settle (above).
+- `t_speed.py`: the speed (above).
+- `t_cmds.py` (every check PASS): set_gain 20.7 dB (reply, every header
+  channel, status); pause (counter and tuners frozen, flag 0, status run
+  false), pause at 10 random points of a hop (flag 0 again within 0.25 s
+  every time), resume; 40 plan / tuner changes 0-120 ms apart (no valid
+  packet off the plans' grids, 217 packets), a plan change replies round 0 /
+  sweeps 0 and the stream then follows it; 30 bad set_sweep requests (each
+  field: missing plan fields, steps 0 / 20001, step 99999 / 2400001, centre
+  below 24 MHz / last above 1766 MHz, fractions, negatives, strings, 1e400,
+  tuners [] / [5] / [0,0] / [-1] / [0.5] / ["a"] / 3, dwell 4 / 5001 / -1 /
+  20.5, settle 1001 / -1, run "yes" / 1, a good field with a bad one) all
+  refused, the plan unchanged; whitespace around colons parses;
+  set_frequency, set_independent_tuner, start_scanner, set_num_elements
+  refused; no tuner reached the refused 433 MHz; four log lines in all.
+- `t_web.py`: STATE carries operating_mode sweep and the sweep object; the
+  page's `SDR_SETTINGS` frequency refused (one log line, no tuner moved),
+  its gain applied. `t_page.py` (headless Chromium): banner "Sweep mode ·
+  no calibration · 88.0-109.0 MHz · 5 tuners · 54 ms a round", frequency box
+  disabled.
+- `t_modes.py` (every check PASS): 60 s of sweeping (424 sweeps) without a
+  coherence event; sweep -> coherent: reply 0.59 s, tuners back on 100 MHz,
+  CONVERGED 23.0 s after the switch, check_calibration OK (|lag| 0.0, |phase|
+  0.3 deg), coherence_events 0, lag_no_peak empty; coherent -> sweep during
+  a full recalibration (state 0): noise source off in sweep mode, hopping;
+  back: CONVERGED 16.7 s, check OK; sweep -> independent (tuners stay where
+  the sweep left them, status = header), set_independent_tuner tuner 4 to
+  433.92 MHz / 10 dB, independent -> sweep with tuners 0-3 (tuner 4 stays on
+  433.92 MHz, every tuner on the common gain); sweep -> wideband (spread
+  around 100 MHz) -> sweep; sweep refused while the scanner runs; final
+  check OK, coherence_events 0.
+- `t_restart.py` (every check PASS): settings saved (`operating_mode=sweep`, the plan,
+  dwell 33, settle 12, tuners 0,2,4); paused, stopped, restarted: mode and
+  plan restored, running, the first valid sweep packet 1.85 s after the
+  start, hops per the plan.
+- `t_long.py`: 10 min full range, 5 tuners, dwell 20 / settle 5: 72 sweeps
+  (8.4 s each), 0 failed retunes, 0 coherence events, 0 valid packets off
+  the grid (18690 valid, 29651 flagged), RSS flat 43.7 MB, CPU 15-25 %
+  (machine shared). SIGTERM during a hop: exit 0 in 0.42 s ("Heimdall
+  shutdown complete"); SIGINT during a hop (30 s run): exit 0 in 0.27 s.
+- Fake librtlsdr (`fakertl/`, a build of heimdall against a fake library
+  that models a retune, its settling garbage and the USB latency):
+  `t_generic.py` - generic RTL-SDR mode with 1 and 2 dongles: sweep works
+  (flags 0x3800, hops per plan), coherent refused, independent and back,
+  `operating_mode=sweep` not saved; `t_kerberos.py` - `--kerberos`:
+  sweep works, back to coherent stays uncalibrated, the noise source never
+  on; the terminal dashboard in a pty ("mode SWEEP", "SWEEP on 89.0-108.1
+  MHz hops 11 tuners 0,1,2,3,4 round 0/3 sweeps 68 ..."). t_basic /
+  t_cmds / t_modes / t_restart / t_settle / t_long pass on it too.
+- Not run: the Raspberry Pi, Windows (one-by-one tuning), macOS, the
+  Wideband downconverter (refusal is the existing `target != COHERENT`
+  check), `--kerberos` on hardware; the MinGW / zig syntax checks (no
+  toolchain on this machine).

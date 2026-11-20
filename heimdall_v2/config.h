@@ -54,6 +54,34 @@
 #define RTL_TUNER_MAX_HZ 1766000000ULL  // path checks it (rf_frequency_range())
 
 // ========================================================================
+// SWEEP MODE (OperatingMode::SWEEP, docs/dev/operating-modes.md "Sweep mode")
+// ========================================================================
+// The chosen tuners hop through a plan of hop centres (8092 set_sweep) so a
+// client can stitch one wide spectrum out of the hops. A hop: the 8091
+// header's retuning flag on -> flush -> retune -> SWEEP_SETTLE_MS -> flush ->
+// flag off -> dwell. SWEEP_SETTLE_MS: on the KrakenSDR (x86 PC, 2026-11-20)
+// settle 0 already held - the first valid set after a hop showed nothing of
+// the previous hop, against a station 16-24 dB over the floor (the flush
+// after the settle is itself a guard of about a USB packet); 5 ms is margin
+// for slower USB hosts (the Pi not measured). Numbers in the doc.
+#define SWEEP_SETTLE_MS          5      // default settle, ms (set_sweep settle_ms 0-1000)
+#define SWEEP_SETTLE_MAX_MS      1000
+#define SWEEP_DWELL_MS           20     // default dwell, ms (set_sweep dwell_ms)
+#define SWEEP_DWELL_MIN_MS       5
+#define SWEEP_DWELL_MAX_MS       5000
+// A dwell also lasts until one set has gone out as valid on 8091 (the first
+// comes up to a USB packet, 6.8 ms, after the post-settle flush) - at most
+// this much longer (a stalled stream must not stop the sweep)
+#define SWEEP_DWELL_GRACE_MS     250
+#define SWEEP_STEP_HZ            1912500ULL   // the contract's hop spacing (51/64 of 2.4 MHz)
+#define SWEEP_STEP_MIN_HZ        100000ULL
+#define SWEEP_STEP_MAX_HZ        2400000ULL
+#define SWEEP_STEPS_MAX          20000
+// The plan before any set_sweep: 88-108 MHz (FM broadcast), every tuner
+#define SWEEP_DEFAULT_START_HZ   88000000ULL
+#define SWEEP_DEFAULT_STEPS      11     // ceil(20 MHz / SWEEP_STEP_HZ)
+
+// ========================================================================
 // KRAKENSDR WIDEBAND (DOWNCONVERTER) VARIANT
 // ========================================================================
 // The KrakenSDR Wideband hardware variant places a mixer in front of every

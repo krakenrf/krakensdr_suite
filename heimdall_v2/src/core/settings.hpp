@@ -14,11 +14,17 @@
 //   - center_freq / gain     : the last user tuning (Hz / tenths of dB, -1 = auto),
 //                              restored before the dongles open - a crash restart
 //                              used to come back at the compiled-in 100 MHz
-//   - operating_mode         : coherent / wideband / independent, re-entered once
-//                              the devices are open (restore_operating_mode)
+//   - operating_mode         : coherent / wideband / independent / sweep,
+//                              re-entered once the devices are open
+//                              (restore_operating_mode)
 //   - tuner_freq<N> / tuner_gain<N> : independent mode's per-tuner tuning
 //   - generic_tuner_freq<N> / generic_tuner_gain<N> : the same in generic
 //                              RTL-SDR mode (kept apart from the KrakenSDR's)
+//   - sweep_first_center_hz / sweep_step_hz / sweep_steps / sweep_tuners
+//     / sweep_dwell_ms / sweep_settle_ms : sweep mode's plan (set_sweep; the
+//                              dwell and settle only when not the default,
+//                              so a new default applies; run is not saved -
+//                              entering the mode runs)
 //
 // load() is called once at startup (before calibration begins) and applies the
 // saved values to the global state; save() is called whenever a persisted
@@ -50,7 +56,7 @@ constexpr long long TUNING_SAVE_DELAY_MS = 10000;
 void note_tuning(uint64_t frequency_hz, int gain);
 void save_tuning_if_due();
 
-// The operating mode (0 coherent, 1 wideband, 2 independent) and independent
+// The operating mode (0 coherent, 1 wideband, 2 independent, 3 sweep) and independent
 // mode's per-tuner tuning (Hz / tenths of dB; 0 / -999 = none). note_mode()
 // takes them from the live state and saves with the same debounce as
 // note_tuning; load() only fills these, main() re-enters the mode.
@@ -64,6 +70,9 @@ extern std::atomic<int> persisted_tuner_gain[8];
 extern std::atomic<uint32_t> persisted_generic_tuner_freq[8];
 extern std::atomic<int> persisted_generic_tuner_gain[8];
 void note_mode();
+// Sweep mode's plan changed (set_sweep): saved with the same debounce. The
+// plan itself lives in sweep_state (types.hpp), which load() fills.
+void note_sweep();
 
 // Read the settings file (if present) and apply known keys to the globals.
 void load();

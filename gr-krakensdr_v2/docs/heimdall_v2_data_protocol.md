@@ -57,7 +57,24 @@ bits are flags every consumer masks off - `0x100` KerberosSDR manual mode,
 `0x200` calibration stale, `0x400` wideband scan, `0x800` independent mode,
 `0x1000` generic RTL-SDRs (heimdall started without a KrakenSDR: no coherent
 array, coherent mode unavailable; set on every frame together with `0x800`
-or `0x400`). In that generic mode `num_channels` can be **1** (a single
+or `0x400`), `0x2000` sweep mode (always together with `0x800`, so a client
+that doesn't know sweep mode takes the stream for independent tuners; one
+that does tests `0x2000` first).
+
+**Sweep mode** (`0x2000`, added 2026-11-20; the contract:
+`kraken_doa_v2/docs/dev/sweep-mode.md`): the chosen tuners hop through the
+plan set with `set_sweep` (control protocol §2.18). Per-channel frequency =
+where that tuner is, per-channel gain = the common gain. The scanner fields
+belong to the sweep: `frequency_change_counter` + 1 per round,
+`current_group_index` = the round r the tuners are on, and
+`retuning_in_progress` = 1 from before the tuners move until the settle and
+the flush after it are done. The guarantee: a packet with
+`retuning_in_progress` = 0 holds only samples taken at the header's
+per-channel frequencies, after the settle (heimdall reads the per-channel
+frequencies before the flag; the flag is cleared only after the post-settle
+flush). The frequency is a float32 (~128 Hz coarse at 1.7 GHz): find the hop
+as `round((f - first_center_hz) / step_hz)`. Tuners that take no part never
+move. In that generic mode `num_channels` can be **1** (a single
 dongle); heimdall's own GR source (`krakensdr_source_impl.cc`) accepts 1-16.
 
 Wire check (generic mode, one R820T dongle, 2026-11-16): `channels=1

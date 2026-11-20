@@ -13,6 +13,6 @@ every session needs and points here.
 | `drag-retunes.md` | Drag retunes (fast path) and failed-retune replies |
 | `fft-pffft.md` | FFT (pffft) |
 | `kerberos-and-ext-noise.md` | KerberosSDR mode and the external noise source array |
-| `operating-modes.md` | Operating modes (coherent / wideband scan / independent) |
+| `operating-modes.md` | Operating modes (coherent / wideband scan / independent / sweep) |
 | `wideband-variant.md` | KrakenSDR Wideband (downconverter) variant in heimdall |
 | `web-ui.md` | The web page on 8070: serving, layout, look (the client's palette and text rules), the calibration chip, tests |

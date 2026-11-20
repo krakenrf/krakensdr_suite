@@ -145,6 +145,7 @@ set(SDR_SOURCES
     src/sdr/pipeline_control.cpp
     src/sdr/kerberos_gpio.cpp
     src/sdr/downconverter.cpp
+    src/sdr/sweep.cpp
 )
 
 set(DSP_SOURCES

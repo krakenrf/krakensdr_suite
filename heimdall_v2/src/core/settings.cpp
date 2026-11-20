@@ -118,6 +118,11 @@ void note_mode() {
     tuning_dirty.store(true, std::memory_order_release);
 }
 
+void note_sweep() {
+    tuning_changed_ms.store(steady_ms(), std::memory_order_release);
+    tuning_dirty.store(true, std::memory_order_release);
+}
+
 void save_tuning_if_due() {
     if (!tuning_dirty.load(std::memory_order_acquire)) return;
     if (steady_ms() - tuning_changed_ms.load(std::memory_order_acquire) < TUNING_SAVE_DELAY_MS) return;
@@ -136,6 +141,9 @@ void load() {
 
     std::string line;
     bool first_line = true;
+    // sweep mode's plan, applied once the whole file is read
+    SweepPlan sweep_load;
+    uint64_t sweep_first = 0, sweep_step = 0, sweep_steps = 0;
     while (std::getline(f, line)) {
         // A UTF-8 byte-order mark (Windows editors - Notepad - save one) would
         // otherwise be part of the first key, which was then silently ignored
@@ -194,7 +202,7 @@ void load() {
                 std::cerr << "Settings: invalid gain '" << val << "'" << std::endl;
             }
         } else if (key == "operating_mode") {
-            const int m = val == "wideband" ? 1 : val == "independent" ? 2 : 0;
+            const int m = val == "wideband" ? 1 : val == "independent" ? 2 : val == "sweep" ? 3 : 0;
             persisted_mode.store(m, std::memory_order_release);
             if (m) std::cout << "Settings: operating_mode = " << val << std::endl;
         } else if (key.rfind("generic_tuner_freq", 0) == 0 || key.rfind("generic_tuner_gain", 0) == 0) {
@@ -213,6 +221,33 @@ void load() {
                 if (ch >= 0 && ch < NUM_DEVICES) {
                     if (key[6] == 'f') persisted_tuner_freq[ch].store(static_cast<uint32_t>(std::stoul(val)));
                     else persisted_tuner_gain[ch].store(std::stoi(val));
+                }
+            } catch (...) {
+                std::cerr << "Settings: invalid " << key << " '" << val << "'" << std::endl;
+            }
+        } else if (key.rfind("sweep_", 0) == 0) {
+            // Sweep mode's plan; the three plan keys are checked together below
+            try {
+                if (key == "sweep_first_center_hz") sweep_first = std::stoull(val);
+                else if (key == "sweep_step_hz") sweep_step = std::stoull(val);
+                else if (key == "sweep_steps") sweep_steps = std::stoull(val);
+                else if (key == "sweep_dwell_ms") {
+                    const unsigned long d = std::stoul(val);
+                    if (d >= SWEEP_DWELL_MIN_MS && d <= SWEEP_DWELL_MAX_MS) sweep_load.dwell_ms = static_cast<uint32_t>(d);
+                } else if (key == "sweep_settle_ms") {
+                    const unsigned long t = std::stoul(val);
+                    if (t <= SWEEP_SETTLE_MAX_MS) sweep_load.settle_ms = static_cast<uint32_t>(t);
+                } else if (key == "sweep_tuners") {
+                    uint32_t mask = 0;
+                    std::stringstream ss(val);
+                    std::string tok;
+                    while (std::getline(ss, tok, ',')) {
+                        tok = trim(tok);
+                        if (tok.empty()) continue;
+                        const int t = std::stoi(tok);
+                        if (t >= 0 && t < NUM_DEVICES) mask |= 1u << t;
+                    }
+                    if (mask) sweep_load.tuner_mask = mask;
                 }
             } catch (...) {
                 std::cerr << "Settings: invalid " << key << " '" << val << "'" << std::endl;
@@ -262,6 +297,25 @@ void load() {
         // Future persisted keys go here.
     }
 
+    // Sweep mode's plan: the three plan keys only together and valid (the
+    // hop centres in the tuner range), else the default plan
+    if (sweep_steps || sweep_first || sweep_step) {
+        const uint64_t last = sweep_first + (sweep_steps ? sweep_steps - 1 : 0) * sweep_step;
+        if (sweep_steps >= 1 && sweep_steps <= SWEEP_STEPS_MAX && sweep_step >= SWEEP_STEP_MIN_HZ &&
+            sweep_step <= SWEEP_STEP_MAX_HZ && sweep_first >= RTL_TUNER_MIN_HZ && last <= RTL_TUNER_MAX_HZ) {
+            sweep_load.first_center_hz = sweep_first;
+            sweep_load.step_hz = sweep_step;
+            sweep_load.steps = static_cast<uint32_t>(sweep_steps);
+        } else {
+            std::cerr << "Settings: invalid sweep plan (sweep_first_center_hz / sweep_step_hz / sweep_steps) - "
+                         "using the default" << std::endl;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> sl(sweep_state.mutex);
+        sweep_state.plan = sweep_load;
+    }
+
     // Build the forward-comp correction from whatever was loaded (uses the
     // compiled-in center frequency for now; it is re-interpolated on the first
     // and every subsequent retune via update_sdr_settings()).
@@ -301,6 +355,23 @@ void save() {
                     f << "tuner_gain" << i << "=" << tg << "\n";
             }
         }
+    }
+    // Sweep mode's plan (the dwell / settle only when not the default)
+    {
+        const SweepPlan p = sweep_state.get_plan();
+        f << "sweep_first_center_hz=" << p.first_center_hz << "\n";
+        f << "sweep_step_hz=" << p.step_hz << "\n";
+        f << "sweep_steps=" << p.steps << "\n";
+        f << "sweep_tuners=";
+        bool first = true;
+        for (int i = 0; i < NUM_DEVICES; i++) {
+            if (!(p.tuner_mask & (1u << i))) continue;
+            f << (first ? "" : ",") << i;
+            first = false;
+        }
+        f << "\n";
+        if (p.dwell_ms != SWEEP_DWELL_MS) f << "sweep_dwell_ms=" << p.dwell_ms << "\n";
+        if (p.settle_ms != SWEEP_SETTLE_MS) f << "sweep_settle_ms=" << p.settle_ms << "\n";
     }
     // Generic RTL-SDR mode's own per-tuner tuning (none = nothing written)
     for (int i = 0; i < NUM_DEVICES; i++) {

@@ -99,6 +99,10 @@ static int64_t steady_now_ns() {
 //    flushed then, it keeps one packet fewer (a one-packet slip)
 // If there is no such point (arrival skew above half a period, a reader stuck
 // in catch-up) flush anyway after the timeout, as before, with a warning.
+// L1 flushes that found no quiet point (a channel may have slipped by a packet)
+static std::atomic<uint32_t> l1_unquiet_flush_count{0};
+uint32_t l1_unquiet_flushes() { return l1_unquiet_flush_count.load(std::memory_order_relaxed); }
+
 static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
     if (wait_quiet && num_elements > 0) {
         const int64_t period = static_cast<int64_t>(1e9 * NUM_SAMPLES / SAMPLE_RATE);
@@ -128,6 +132,7 @@ static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
                     (steady && hi - lo < period / 2 && steady_now_ns() - hi < period / 2);
             if (!quiet) std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
+        if (!quiet && warn) l1_unquiet_flush_count.fetch_add(1, std::memory_order_relaxed);
         if (!quiet && warn) {
             static int64_t last_warn_ns = 0;  // flush callers are serialized by the drain
             const int64_t now = steady_now_ns();
@@ -167,8 +172,10 @@ static void snapshot_conversion_state(SetConversionState& st, int num_elements) 
     const bool fwd = forward_comp.enabled.load(std::memory_order_relaxed) &&
                      forward_comp.ready.load(std::memory_order_acquire) &&
                      !bias_tee_enabled.load(std::memory_order_relaxed);
-    // Independent mode: every tuner is its own receiver - no array correction
-    const bool independent = operating_mode.load(std::memory_order_relaxed) == OperatingMode::INDEPENDENT;
+    // Independent / sweep mode: every tuner is its own receiver - no array
+    // correction
+    const OperatingMode mode = operating_mode.load(std::memory_order_relaxed);
+    const bool independent = mode == OperatingMode::INDEPENDENT || mode == OperatingMode::SWEEP;
     for (int ch = 0; ch < num_elements && ch < NUM_DEVICES; ch++) {
         if (independent) { st.comp[ch] = Complex(1.0f, 0.0f); continue; }
         // Lock-free atomic load - no mutex
@@ -584,8 +591,14 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
             if (l2_flush_epoch.load(std::memory_order_relaxed) != epoch) {
                 l2_buffer_pool.release(std::move(complex_samples));
             } else {
+                // Sweep mode: count the sets sent as valid (retuning flag 0
+                // before and after the header was built, so the header said
+                // 0 too) - a hop's dwell lasts until one has gone out
+                const bool sweep = operating_mode.load(std::memory_order_relaxed) == OperatingMode::SWEEP;
+                const bool valid_before = sweep && !sweep_state.retuning_in_progress.load();
                 if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples);
                 if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
+                if (valid_before && !sweep_state.retuning_in_progress.load()) sweep_state.valid_sets.fetch_add(1);
 
                 // Drop oldest if full - coherence-safe
                 if (l2_buffer_size.load(std::memory_order_relaxed) >= BUFFER_SIZE) {
@@ -653,8 +666,10 @@ static void flush_downstream() {
     l2_flush_epoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
-void clear_l1_buffer() {
-    std::cout << "Clearing L1 buffers for all devices..." << std::endl;
+// quiet: the sweep's flushes (~40 a second) - nothing on stdout, and the
+// "did not respond" fault throttled
+static void clear_l1_buffer_impl(bool quiet) {
+    if (!quiet) std::cout << "Clearing L1 buffers for all devices..." << std::endl;
     // The drain performs the flush (see flush_l1_now); wait for it. Flush
     // directly when there is no drain (pipeline stopped) or it doesn't answer.
     bool served = false;
@@ -669,7 +684,12 @@ void clear_l1_buffer() {
             if (!drain_active.load(std::memory_order_acquire)) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        if (!served) std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
+        if (!served) {
+            static std::atomic<int64_t> last_warn_ns{0};
+            const int64_t now = steady_now_ns();
+            if (!quiet || now - last_warn_ns.exchange(now) > 10'000'000'000LL)
+                std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
+        }
     }
     if (!served) flush_l1_now(active_num_elements.load(), true);
     // AFTER the L1 flush: a set the drain completed before serving it went
@@ -677,7 +697,12 @@ void clear_l1_buffer() {
     flush_downstream();
 }
 
+void clear_l1_buffer() { clear_l1_buffer_impl(false); }
+void clear_l1_buffer_quiet() { clear_l1_buffer_impl(true); }
+
 void clear_l2_buffer() {
     std::cout << "Clearing entire L2 buffer..." << std::endl;
     flush_downstream();  // L2-raw too, so it can't refill L2
 }
+
+void clear_l2_buffer_quiet() { flush_downstream(); }

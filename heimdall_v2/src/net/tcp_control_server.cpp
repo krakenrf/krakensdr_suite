@@ -4,6 +4,7 @@
 #include "../sdr/pipeline_control.hpp"
 #include "../sdr/downconverter.hpp"
 #include "../sdr/sdr_pipeline.hpp"
+#include "../sdr/sweep.hpp"
 #include "../dsp/compensation.hpp"
 #include "../core/config.hpp"
 #include "../core/version_info.hpp"
@@ -70,6 +71,7 @@ std::string settings_error_reply(const SdrUpdateResult& res, bool is_frequency) 
     auto add = [&msg](const std::string& part) { msg += (msg.empty() ? "" : "; ") + part; };
     if (res.frequency_out_of_range) add("Frequency out of range - unchanged");
     if (res.lo_retune_failed) add("LO retune failed - frequency unchanged");
+    if (res.sweep_refused) add("the sweep plan sets the frequencies in sweep mode (set_sweep) - unchanged");
     if (!res.failed_channels.empty()) {
         if (res.restore_failed)
             add(std::string(what) + " failed on channel(s) " + res.failed_channels +
@@ -375,6 +377,9 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                // (stream skew beyond +-NUM_SAMPLES; config.h LAG_NO_PEAK_*)
                << ",\"lag_no_peak\":" << lag_no_peak_json();
 
+    // Sweep mode's plan and progress (always present; sweep.hpp)
+    status_json << ",\"sweep\":" << sweep_status_json();
+
     // the suite's version (core/version_info.hpp; kraken_doa shows it in its
     // sidebar's tooltip)
     status_json << ",\"version\":" << appver::json();
@@ -639,16 +644,18 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         return std::isfinite(out);
     };
 
-    // Operating mode: {"command":"set_operating_mode","mode":"coherent|wideband|independent"}
+    // Operating mode: {"command":"set_operating_mode","mode":"coherent|wideband|independent|sweep"}
     // wideband spreads the tuners around the current frequency; independent
     // keeps them where they are (then set_independent_tuner per tuner);
-    // coherent retunes all to the current frequency and recalibrates.
+    // sweep hops the plan's tuners (set_sweep); coherent retunes all to the
+    // current frequency and recalibrates.
     if (json_str.find("\"set_operating_mode\"") != std::string::npos) {
         OperatingMode target;
         if (json_str.find("\"mode\":\"independent\"") != std::string::npos) target = OperatingMode::INDEPENDENT;
         else if (json_str.find("\"mode\":\"wideband\"") != std::string::npos) target = OperatingMode::WIDEBAND_SCAN;
         else if (json_str.find("\"mode\":\"coherent\"") != std::string::npos) target = OperatingMode::COHERENT;
-        else return "{\"status\":\"error\",\"message\":\"mode must be coherent, wideband or independent\"}";
+        else if (json_str.find("\"mode\":\"sweep\"") != std::string::npos) target = OperatingMode::SWEEP;
+        else return "{\"status\":\"error\",\"message\":\"mode must be coherent, wideband, independent or sweep\"}";
         if (target != OperatingMode::COHERENT && discrete_scanner.enabled.load())
             return "{\"status\":\"error\",\"message\":\"stop the scanner first\"}";
         const bool changed = set_operating_mode(target, devices);
@@ -685,6 +692,90 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         o << "{\"status\":\"success\",\"channel\":" << ch << ",\"frequency\":" << wideband_config.get_tuner_frequency(ch)
           << ",\"gain\":" << (tg == -1 ? -1.0 : tg / 10.0) << "}";
         return o.str();
+    }
+
+    // Sweep mode's plan (kraken_doa_v2/docs/dev/sweep-mode.md, "The contract"):
+    // {"command":"set_sweep"[,"first_center_hz":F0,"step_hz":S,"steps":H]
+    //  [,"tuners":[i,j,..]][,"dwell_ms":D][,"settle_ms":T][,"run":true|false]}
+    // Accepted in every mode, used in sweep mode, persisted. All or nothing:
+    // a bad field changes nothing.
+    if (json_str.find("\"set_sweep\"") != std::string::npos) {
+        auto error = [](const std::string& m) { return "{\"status\":\"error\",\"message\":\"" + m + "\"}"; };
+        // The value after "key" (whitespace allowed around the colon); npos if absent
+        auto value_at = [&](const char* key) -> size_t {
+            const std::string k = std::string("\"") + key + "\"";
+            size_t p = json_str.find(k);
+            if (p == std::string::npos) return p;
+            p += k.size();
+            while (p < json_str.size() && std::isspace(static_cast<unsigned char>(json_str[p]))) p++;
+            if (p >= json_str.size() || json_str[p] != ':') return std::string::npos;
+            p++;
+            while (p < json_str.size() && std::isspace(static_cast<unsigned char>(json_str[p]))) p++;
+            return p;
+        };
+        // A whole, non-negative JSON number no larger than `max`
+        auto whole = [&](const char* key, uint64_t max, uint64_t& out, std::string& err) {
+            const size_t p = value_at(key);
+            if (p == std::string::npos) return false;
+            const std::string v = json_str.substr(p, json_str.find_first_of(",}] \t\r\n", p) - p);
+            double d = 0;
+            try { d = std::stod(v); } catch (...) { d = NAN; }
+            if (!std::isfinite(d) || d < 0 || d != std::floor(d) || d > static_cast<double>(max)) {
+                err = std::string(key) + " must be a whole number 0-" + std::to_string(max);
+                return false;
+            }
+            out = static_cast<uint64_t>(d);
+            return true;
+        };
+        SweepRequest req;
+        std::string err;
+        uint64_t f0 = 0, step = 0, steps = 0, v = 0;
+        const bool h_f0 = whole("first_center_hz", 10'000'000'000ULL, f0, err);
+        if (!err.empty()) return error(err);
+        const bool h_step = whole("step_hz", 10'000'000'000ULL, step, err);
+        if (!err.empty()) return error(err);
+        const bool h_steps = whole("steps", 1'000'000ULL, steps, err);
+        if (!err.empty()) return error(err);
+        if (h_f0 || h_step || h_steps) {
+            if (!(h_f0 && h_step && h_steps))
+                return error("first_center_hz, step_hz and steps go together");
+            req.has_plan = true;
+            req.first_center_hz = f0;
+            req.step_hz = step;
+            req.steps = static_cast<uint32_t>(steps);
+        }
+        if (whole("dwell_ms", 1'000'000ULL, v, err)) { req.has_dwell = true; req.dwell_ms = static_cast<uint32_t>(v); }
+        if (!err.empty()) return error(err);
+        if (whole("settle_ms", 1'000'000ULL, v, err)) { req.has_settle = true; req.settle_ms = static_cast<uint32_t>(v); }
+        if (!err.empty()) return error(err);
+        if (const size_t p = value_at("run"); p != std::string::npos) {
+            if (json_str.compare(p, 4, "true") == 0) req.run = true;
+            else if (json_str.compare(p, 5, "false") == 0) req.run = false;
+            else return error("run must be true or false");
+            req.has_run = true;
+        }
+        if (const size_t p = value_at("tuners"); p != std::string::npos) {
+            const size_t close = json_str.find(']', p);
+            if (json_str[p] != '[' || close == std::string::npos) return error("tuners must be a list of tuner numbers");
+            std::stringstream ss(json_str.substr(p + 1, close - p - 1));
+            std::string tok;
+            while (std::getline(ss, tok, ',')) {
+                tok.erase(std::remove_if(tok.begin(), tok.end(), [](unsigned char c) { return std::isspace(c); }),
+                          tok.end());
+                if (tok.empty()) {
+                    if (ss.eof() && req.tuners.empty()) break;  // "[]"
+                    return error("tuners must be a list of tuner numbers");
+                }
+                double d = 0;
+                try { d = std::stod(tok); } catch (...) { d = NAN; }
+                if (!std::isfinite(d) || d != std::floor(d) || d < -1e6 || d > 1e6)
+                    return error("tuners must be a list of tuner numbers");
+                req.tuners.push_back(static_cast<int>(d));
+            }
+            req.has_tuners = true;
+        }
+        if (std::string e = apply_sweep_request(req); !e.empty()) return error(e);
+        return "{\"status\":\"success\",\"sweep\":" + sweep_status_json() + "}";
     }
 
     // Runtime element-count change: {"command":"set_num_elements","num_elements":N}
@@ -780,6 +871,11 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                 rf_frequency_range(rf_min, rf_max);
 
                 if (frequency >= rf_min && frequency <= rf_max) {
+                    // Sweep mode: the plan sets the frequencies
+                    if (operating_mode.load() == OperatingMode::SWEEP) {
+                        return "{\"status\":\"error\",\"message\":\"the sweep plan sets the frequencies in sweep "
+                               "mode (set_sweep)\",\"frequency\":" + std::to_string(current_frequency.load()) + "}";
+                    }
                     // In wideband mode, SKIP update_sdr_settings (which sets all tuners to same freq)
                     // and ONLY call setup_wideband_frequencies (which sets each tuner to its spread freq)
                     // This prevents a race condition where packets briefly show all tuners at same frequency
@@ -1353,8 +1449,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
 
     // Start discrete scanner
     if (json_str.find("\"start_scanner\"") != std::string::npos) {
-        if (operating_mode.load() == OperatingMode::INDEPENDENT) {
-            return "{\"status\":\"error\",\"message\":\"The scanner is not available in independent mode\"}";
+        if (operating_mode.load() == OperatingMode::INDEPENDENT || operating_mode.load() == OperatingMode::SWEEP) {
+            return "{\"status\":\"error\",\"message\":\"The scanner is not available in " +
+                   std::string(operating_mode_name(operating_mode.load())) + " mode\"}";
         }
         if (discrete_scanner.get_num_groups() == 0) {
             return "{\"status\":\"error\",\"message\":\"Scanner not configured. Use configure_scanner first.\"}";

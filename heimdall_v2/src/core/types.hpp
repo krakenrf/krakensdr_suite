@@ -314,19 +314,68 @@ struct CorrelationResult {
 //                   spectrum, setup_wideband_frequencies)
 //   INDEPENDENT   - every tuner is its own receiver: own frequency and gain
 //                   (set_independent_tuner), no compensation applied
+//   SWEEP         - the chosen tuners hop through a plan of hop centres
+//                   (set_sweep, SweepState below; sdr/sweep.cpp), common gain,
+//                   no compensation applied
 enum class OperatingMode {
     COHERENT = 0,       // Normal phase-coherent operation
     WIDEBAND_SCAN = 1,  // Wideband scan mode (no phase calibration)
-    INDEPENDENT = 2     // Non-coherent independent tuners
+    INDEPENDENT = 2,    // Non-coherent independent tuners
+    SWEEP = 3           // Tuners hop through the sweep plan (no calibration)
 };
 
 inline const char* operating_mode_name(OperatingMode m) {
     switch (m) {
         case OperatingMode::WIDEBAND_SCAN: return "wideband";
         case OperatingMode::INDEPENDENT: return "independent";
+        case OperatingMode::SWEEP: return "sweep";
         default: return "coherent";
     }
 }
+
+// Sweep mode's plan (8092 set_sweep; persisted). Hop h's tuner centre is
+// first_center_hz + h * step_hz, h = 0 .. steps - 1. tuner_mask: bit N =
+// tuner N takes part (bits of tuners that aren't open are ignored; none
+// left = every open tuner).
+struct SweepPlan {
+    uint64_t first_center_hz = SWEEP_DEFAULT_START_HZ + SWEEP_STEP_HZ / 2;
+    uint64_t step_hz = SWEEP_STEP_HZ;
+    uint32_t steps = SWEEP_DEFAULT_STEPS;
+    uint32_t tuner_mask = (1u << NUM_DEVICES) - 1;
+    uint32_t dwell_ms = SWEEP_DWELL_MS;
+    uint32_t settle_ms = SWEEP_SETTLE_MS;
+    bool run = true;
+};
+
+// Sweep mode's live state. The plan is guarded by `mutex`; the rest is read
+// lock-free by the 8091 header, the status JSON and the dashboard.
+struct SweepState {
+    mutable std::mutex mutex;
+    SweepPlan plan;
+    // Bumped (under `mutex`) by a plan or tuner change: the sweep restarts at
+    // round 0. change_seq is bumped by EVERY change (plan, dwell, settle, run,
+    // the mode entered / left), which wakes the sweep thread's waits.
+    std::atomic<uint32_t> plan_generation{0};
+    std::atomic<uint32_t> change_seq{0};
+    std::atomic<uint32_t> round{0};          // the round the tuners are on
+    std::atomic<uint32_t> rounds{0};         // R of the plan in force
+    std::atomic<uint32_t> sweeps{0};         // completed since the plan changed
+    std::atomic<uint32_t> round_ms{0};       // measured time of the last round
+    std::atomic<uint32_t> frequency_change_counter{0};  // + 1 per round (8091)
+    // 8091 retuning_in_progress in sweep mode: set before the tuners move,
+    // cleared after the settle and the flush that follows it
+    std::atomic<bool> retuning_in_progress{false};
+    std::atomic<int64_t> last_retune_ns{0};  // steady clock of the last retune (or mode entry)
+    std::atomic<uint32_t> failed_retunes{0}; // tuner retunes that failed twice (session)
+    // sets broadcast with the flag 0 (conversion worker): a dwell lasts until
+    // at least one went out, so no hop goes without data
+    std::atomic<uint32_t> valid_sets{0};
+
+    SweepPlan get_plan() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return plan;
+    }
+};
 
 // Discrete scanner configuration and state
 struct DiscreteScannerConfig {
@@ -456,6 +505,7 @@ extern std::atomic<bool> recovery_in_progress;
 extern std::atomic<uint32_t> coherence_event_count;
 extern WidebandConfig wideband_config;
 extern DiscreteScannerConfig discrete_scanner;
+extern SweepState sweep_state;
 
 // ---- Periodic calibration check ----
 // The periodic calibration monitor re-verifies lag/phase coherence every
