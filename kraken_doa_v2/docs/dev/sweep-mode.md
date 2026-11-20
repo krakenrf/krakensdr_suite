@@ -50,7 +50,11 @@ the hops into the sweep spectrum, the page shows it.
   - `"tuners":[0,1,4]` - the tuners that take part: unique indices below
     the element count, at least one.
   - `"dwell_ms":D` (5 ... 5000, default 20) - how long the settled stream
-    runs on each hop.
+    runs on each hop. (Made exact 2026-11-21: a hop delivers the fewest
+    whole 8091 packets that hold D, `ceil(D x 2.4e6 / (1000 x 16384))` per
+    tuner - 5 ms -> 1, 10 -> 2, 20 -> 3, 50 -> 8, 100 -> 15 - and the next
+    hop starts as soon as the last of them is out; the status object's
+    `hop_packets` says the number.)
   - `"settle_ms":T` (0 ... 1000; default `SWEEP_SETTLE_MS` in config.h) -
     wait between the retune and the flush that precedes the dwell.
   - `"run":true|false` - false pauses the hopping (tuners stay put).
@@ -98,6 +102,16 @@ the hops into the sweep spectrum, the page shows it.
   tuners whose last retune failed). Leaving sweep mode for coherent runs the
   full recalibration (every channel's lag, then the phase): each full-path
   retune shifts that tuner's samples by 2 against the others (measured).
+- Additions 2026-11-21 (faster hops; nothing above changed): a hop
+  delivers exactly `hop_packets` = `ceil(dwell_ms x 2.4e6 / (1000 x
+  16384))` valid packets per tuner (it waits for them at most 250 ms
+  longer than they take; this replaces "at least one set") and then hops
+  at once; the status object also has `"hop_packets"`, `"gates_unsteady"`
+  and `"timing"` (the hop timeline, averages of the last 64 hops:
+  `flag_ms`, `locked_ms`, `retune_ms`, `tune_max_ms`, `settle_ms`,
+  `gate_ms`, `clear_ms`, `first_valid_ms`, `dwell_ms`, `round_ms`,
+  `round_min_ms` / `round_max_ms`, `valid_per_hop`, `valid_min` /
+  `valid_max`, `hops`, `moved`; diagnostics).
 
 ### heimdall, 8091 (sweep mode)
 
@@ -325,14 +339,18 @@ refused; out-of-range numbers are clamped:
   full range at 16384 runs at 4096: 2.97 M bins); `fft_size` says what runs.
   `auto` = the largest N whose sweep holds at most `SWEEP_AUTO_BINS` (2^19)
   AND whose hop still averages `SWEEP_AUTO_FRAMES` (8) frames at the dwell.
-  A hop's samples are modelled as `max(16384, dwell x 1200)` - half of what
-  the dwell holds at 2.4 MS/s, never less than one packet: the KrakenSDR
-  delivered 1.3-1.6 valid packets per hop at dwell 20 (heimdall's flushes;
-  the hardware run of 2026-11-20). Frames overlap by half (Hann) where a hop
-  would give fewer than 16 frames of its own; `"avg"` in the `sweep` message
-  (additive) = the frames a hop is expected to average. Auto at dwell 5 /
-  20 / 50 / 100 ms: 2048 / 4096 / 8192 / 16384 (15 / 10 / 13 / 13 frames);
-  with the span: 512 for the full range (4.7 kHz bins, 46 frames). The dwell
+  A hop's samples are `ceil(dwell x 2.4e6 / (1000 x 16384))` whole packets
+  of 16384 (`hop_samples`): exactly what heimdall delivers per tuner and hop
+  since 2026-11-21 (`heimdall_v2/docs/dev/operating-modes.md`, *Hop
+  timing*). Until then the model was `max(16384, dwell x 1200)`, half of
+  what the dwell holds: heimdall delivered 1.3-1.6 valid packets per hop at
+  dwell 20 (its flushes; the hardware run of 2026-11-20). Frames overlap by
+  half (Hann) where a hop would give fewer than 16 frames of its own;
+  `"avg"` in the `sweep` message (additive) = the frames a hop is expected
+  to average. Auto at dwell 5 / 10 / 20 / 50 / 100 ms (1 / 2 / 3 / 8 / 15
+  packets): 2048 / 4096 / 8192 / 16384 / 16384 (15 / 15 / 11 / 15 / 29
+  frames; with the old model 2048 / - / 4096 / 8192 / 16384); with the
+  span: 512 for the full range (4.7 kHz bins, 32 frames at dwell 5). The dwell
   re-evaluates it (a new N is a new grid: the pages drop the waterfall).
   Why: the sweep's speed doesn't depend on N (the dwell and the hops do),
   the resolution and the averaging do. The first rule (span only) chose 16384
@@ -401,7 +419,8 @@ refused; out-of-range numbers are clamped:
   is drawn at +2 dB (like the regular spectrum's ~2 dB) for every FFT size
   and dwell; without it the noise moved from 0.5 dB (N = 128) to ~5 dB
   (N = 16384, m = 3). Hops of different m level too: on the KrakenSDR a hop
-  holds 1-2 valid packets at dwell 20 (heimdall's addition 5), m = 1 or 3
+  held 1-2 valid packets at dwell 20 (heimdall's addition 5; exactly 3 since
+  2026-11-21, though a stalled stream can still end a hop short), m = 1 or 3
   (overlapped) at N = 16384. The hop's floor phi is the noise's MEAN (its
   median estimate less `median_db(m)`, the median of Gamma(m, 1/m) in dB:
   -1.59 at m = 1, -0.5 at 3), the reference and the gain steps are taken from

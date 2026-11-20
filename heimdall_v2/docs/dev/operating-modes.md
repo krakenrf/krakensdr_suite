@@ -174,15 +174,19 @@ round (its header frequency still shows the old one).
    their new frequencies into `tuner_frequencies` (only the ones that took
    it), `last_retune_ns`, `round`, `frequency_change_counter` + 1;
 4. the settle (`settle_ms` from `last_retune_ns`);
-5. the L1 + downstream flush (`clear_l1_buffer_quiet`: the drain's
-   quiet-point flush, the same path as every other flush);
+5. the gate (`sweep_gate_l1`, served by the drain; since 2026-11-21 - until
+   then the drain's quiet-point L1 flush): every dongle drops its packets up
+   to and including its first one stamped after the settle's end with a
+   steady gap, each on its own; then the downstream flush (*Hop timing*);
 6. `retuning_in_progress` = 0, under `settings_mutex` and only if nothing
-   moved `last_retune_ns` since the settle (a gain change: settle + flush
+   moved `last_retune_ns` since the settle (a gain change: settle + gate
    again);
-7. the dwell (`dwell_ms`), and at least until one set has gone out as valid
+7. the dwell: `sweep_hop_packets(dwell_ms)` sets out on 8091 as valid
    (`sweep_state.valid_sets`, counted by the conversion worker when the flag
    was 0 before and after the header was built; at most
-   `SWEEP_DWELL_GRACE_MS` 250 ms more) - see *Measurements* for why.
+   `SWEEP_DWELL_GRACE_MS` 250 ms longer than they take), then at once the
+   next hop (*Hop timing*; until 2026-11-21 `dwell_ms` of wall time and at
+   least one valid set).
 `round_ms` = 1 to 7 measured. Leaving the mode or a plan change mid-hop: the
 waits end (`sweep_notify`), the retune re-checks under the lock, so the new
 state is never retuned over and no tuner is left half way (a retune in
@@ -211,18 +215,20 @@ per-channel frequencies, after the settle. From the code:
   set by that hop (or a later clear, next point);
 - the header is built while the conversion worker holds `l2_flush_mutex`,
   with the set's flush epoch unchanged since before the set was dequeued;
-  the post-settle flush (`flush_downstream`) takes the same mutex and bumps
-  the epoch, and the flag is cleared only after it. A header that reads the
-  flag as 0 after hop h's clear was therefore built after hop h's
-  post-settle flush, its set was dequeued after it, and its packets reached
-  L1 after the drain had emptied L1 at the end of the settle. Its
-  frequencies are hop h's (h + 1's are stored after h + 1 set the flag);
-- a packet that reaches L1 after the flush began sampling up to one USB
-  packet earlier (NUM_SAMPLES / SAMPLE_RATE = 6.8 ms) plus the USB latency;
-  the drain serves the flush right after the first packet round that
-  arrives after the request (and drops that round), so the first valid
-  packet's samples start no earlier than about settle - USB latency after
-  the retune - measured below, through the real pipeline.
+  the gate's downstream flush (`flush_downstream`) takes the same mutex and
+  bumps the epoch, and the flag is cleared only after it. A header that
+  reads the flag as 0 after hop h's clear was therefore built after hop h's
+  gate, its set was dequeued and collected after it (the drain drops its
+  partial set when it serves a gate), and each of its packets reached L1
+  after its dongle's straddler - the first packet stamped after the
+  settle's end T with a steady gap, which the gate dropped. Its frequencies
+  are hop h's (h + 1's are stored after h + 1 set the flag);
+- the packet after the straddler begins where the straddler ends, and the
+  straddler reached L1 after T: so the first valid packet's samples start
+  no earlier than T minus the USB latency (~1 ms), i.e. settle - latency
+  after the tune call returned (the steady gap rules out an old packet
+  delivered late in a burst) - measured below and in *Hop timing*, through
+  the real pipeline.
 One exception, negligible: the lag FIR's 7-sample tail (`frac_tail`, kept
 across sets for the coherent conversion) is not reset by a flush, so the
 first 3-7 output samples of each channel in a hop's first valid packet are
@@ -350,6 +356,205 @@ logs in job scratch 52196024 `heimdall/`, `README.txt` there):
   Wideband downconverter (refusal is the existing `target != COHERENT`
   check), `--kerberos` on hardware; the MinGW / zig syntax checks (no
   toolchain on this machine).
+
+**Hop timing** (2026-11-21; the user's question "see if there is any way
+to speed up retunes to make sweeping potentially faster"; job scratch
+52196024 `speed/`, `README.txt` there). The goal: a hop costs the retune,
+what has to be thrown away and the data asked for - nothing else.
+
+*Measuring.* The status `sweep` object has `"timing"` (averages of the last
+64 hops, reset when the plan, dwell or settle changes; nothing per hop on
+any output): `flag_ms` (flag on + downstream flush), `locked_ms`,
+`retune_ms` (for_each_tuner, spawn to join) and `tune_max_ms` (the slowest
+single tune call), `settle_ms`, `gate_ms` (settle end -> L1 gate +
+downstream flush returned), `clear_ms`, `first_valid_ms` (flag cleared ->
+the first valid set broadcast), `dwell_ms` (flag cleared -> the hop's
+end), `round_ms` (+ min / max), `valid_per_hop` (+ min / max). Test:
+`t_hop.py` (every plan / K / dwell / settle case; ms per round and valid
+packets per hop also from the 8091 headers). The fake librtlsdr (`fakertl/`)
+with `FAKE_TUNE_MS=14` reproduces the KrakenSDR's old numbers within a few
+ms (41.0 / 34.1 ms a round at dwell 20 / settle 5 and 5 / 0, 1.46-1.58 /
+1.00 valid packets; KrakenSDR 41-48 / 34-39, 1.4-1.6 / 1.0). Where it
+differs: its tune takes the same time on every tuner and frequency (the
+KrakenSDR's tune call took 14.0-19.4 ms depending on the round's
+frequencies: the FM plan with K = 3 and K = 5 ~18-19 ms, K = 2 and 4 ~14),
+its five streams share one time base (the KrakenSDR's drift apart by 2
+samples a retune - *Accumulated slip* - until the library fix), and its
+"USB latency" includes generating the packet (~1-2 ms). New fake options
+for the spread case: `FAKE_SPREAD_US` (device i's packet boundaries i x
+that later), `FAKE_JITTER_US` (random extra delivery latency),
+`FAKE_TUNE_JITTER_MS`.
+
+*The old hop, step by step* (KrakenSDR, 5 tuners, dwell 20 / settle 5, ms
+from the hop's start): flag + L2 flush 0.05, retune 14.1-18.9 (thread
+spawn + join +0.13 over the slowest tune), settle 5.08, L1 flush 1.5-1.75
+(the drain serves it at the next packet round + its quiet point), flag
+off, first valid set **13.5** later (two packet periods), dwell end 20.1
+after the flag: 41-46 ms, 1.4-1.6 valid packets. Three things beyond the
+retune, the settle and the packet that straddles the retune's end:
+1. *The first valid set was always dropped.* The conversion worker reads
+   the flush epoch BEFORE it waits for the next set (100 ms waits); a wait
+   spanning the gate's flush kept the old epoch, so the first set after it
+   - the first valid one - was discarded as "converted across a flush".
+   Every hop lost a whole packet (6.83 ms). In sweep mode the worker now
+   waits in 2 ms slices (`SWEEP_CONVERT_WAIT_MS`) and re-reads the epoch:
+   the first valid set goes out a packet period after the gate (7.1-7.2
+   ms). Safety unchanged: every dequeue still follows its own epoch read.
+   (This was also why settle 0 "already held" in the first contrast runs:
+   the first VALID packet was really the second after the flush - re-run
+   below.)
+2. *The dwell was wall time.* `dwell_ms` from the flag clear: the packet
+   whose samples were taken at the dwell's end arrived after the next hop
+   had started and was thrown away (20 ms = 2.9 packets, 1.3-1.6 of them
+   delivered). Now `dwell_ms` is whole packets: a hop delivers
+   `sweep_hop_packets(dwell_ms)` = `ceil(dwell_ms x 2.4e6 / (1000 x
+   16384))` valid sets per tuner (5 ms -> 1, 10 -> 2, 20 -> 3, 50 -> 8,
+   100 -> 15; status `"hop_packets"`), and the next retune starts the
+   moment the last of them is out (`sweep_note_valid_set` wakes the hop
+   thread; at most `SWEEP_DWELL_GRACE_MS` 250 ms longer than they take).
+   kraken_doa's Auto resolution model follows (sweep-mode.md).
+3. *The post-settle L1 flush waited for a cross-dongle quiet point.* That
+   point serves pairing (the N-th buffer of every dongle the same instant),
+   which sweep mode doesn't need; with spread buffer timing it never comes
+   and every hop waited four packet periods (fake, `FAKE_SPREAD_US=1500`:
+   L1 flush 28.7-32.4 ms, rounds 60-68 ms, 225 unquiet flushes in 12 s).
+   Now the drain serves a per-dongle gate (`sweep_gate_l1`,
+   `serve_gate_now`): each dongle drops its packets up to and including its
+   first one stamped after the settle's end with a steady gap (0.5-1.5
+   periods; a late packet of a burst is old) - exactly the packets that can
+   hold an earlier sample - each on its own, then the downstream flush. A
+   dongle that delivers but never steadily is taken after four periods
+   (counted, `"gates_unsteady"`); one that delivers nothing in that time
+   fails the gate - the flag stays on, the hop thread tries again. Pairing
+   is restored where it matters, on the way out (`clear_l1_buffer_paired`
+   in `set_operating_mode`, unchanged; a gate still pending then is
+   completed by the drain without dropping anything, and the drain serves a
+   pending gate before a pending flush).
+Not changed: the retune itself (one place, `sweep_tune`, for the library's
+call to be swapped - worker F's subject), the thread spawn of
+`for_each_tuner` (0.13-0.2 ms), the hop-start L2 flush (0.05 ms).
+
+*What a hop costs now.* The hop starts when the last valid set of the
+previous hop is out, i.e. just after a packet arrived. The retune ends
+14-19 ms later; the gate waits for the first packet of each dongle stamped
+after retune + settle (the straddler, dropped); the dwell is the next M
+packets. So a round is a whole number of packet periods: on the fake (14 ms
+tune, aligned streams) exactly 4 / 5 / 6 periods (27.3 / 34.1 / 41.0 ms)
+for 1 / 2 / 3 packets, settle 0 and 5 alike (retune + 5 ms still ends
+before the third packet boundary); spread streams add up to a period
+(the latest dongle decides: `FAKE_SPREAD_US=1500` 27.3 / 39.5 / 46.2 ms).
+KrakenSDR (5 tuners, x86 PC, both loops the same night, back to back, load
+4.6-5.9; `t_hop.py`, 3 s a case; `hw_ab.out`), ms a round and valid packets
+a hop, K = 1 / 2 / 3 / 4 / 5:
+
+| dwell / settle | old loop | new loop |
+|---|---|---|
+| 5 / 0 | 35.4 / 34.1 / 37.4 / 34.1 / 38.7, 1.0 | 28.4 / 27.3 / 30.6 / 27.3 / 31.9, 1 |
+| 5 / 5 | 38.8 / 39.4 / 43.5 / 38.7 / 42.9, 1.0 | 31.9 / 30.3 / 36.2 / 32.9 / 36.4, 1 |
+| 10 / 5 | 38.5 / 38.5 / 44.3 / 39.3 / 44.1, 1.0 | 38.7 / 37.8 / 42.7 / 39.0 / 43.3, 2 |
+| 20 / 5 | 42.8 / 41.1 / 44.5 / 41.4 / 48.3, 1.38-1.59 | 43.4 / 41.1 / 47.0 / 41.9 / 49.0, 3 |
+| 20 / 0 | 42.1 / 40.9 / 44.4 / 41.0 / 45.3, 1.29-1.47 | 42.2 / 41.0 / 44.4 / 41.0 / 45.2, 3 |
+| 50 / 5 | 74.9 / 73.7 / 77.6 / 73.4 / 79.0, 6 | 80.4 / 78.9 / 81.9 / 80.3 / 83.5, 8 |
+| 100 / 5 | 119.6 / 119.3 / 123.2 / 119.0 / 124.6, 13 | 124.9 / 124.9 / 130.0 / 125.3 / 131.2, 15 |
+
+Every new hop delivered exactly its packets (min = max). The new
+timeline (K = 5, dwell 5 / settle 5): retune 19.3, settle 5.1, gate 4.8,
+first valid 7.2, end 7.2 after the flag. Per valid packet: old 20 / 5
+~30 ms, new 5 / 0 28-32, new 20 / 5 14-16. 88-108 MHz (11 hops), sweeps a
+second K = 1-5: old 20 / 5 2.12 / 4.06 / 5.61 / 8.04 / 6.90; new 5 / 0
+3.20 / 6.10 / 8.17 / 12.21 / 10.46, 5 / 5 2.85 / 5.51 / 6.91 / 10.12 /
+9.16, 10 / 5 2.35 / 4.41 / 5.85 / 8.54 / 7.69, 20 / 5 2.09 / 4.05 / 5.31 /
+7.95 / 6.80. 24-1765 MHz (911 hops, rounds x ms): K = 5 old 20 / 5 7.78 s
+(timed: 7.77), new 5 / 0 5.16 s, 10 / 5 7.41 s, 20 / 5 8.69 s (timed 8.58);
+K = 1 old 38.5 s (timed 37.6), new 5 / 0 25.5, 10 / 5 35.3, 20 / 5 41.7
+(timed 41.6). So: at the same dwell the new loop is up to 20 % faster for
+dwell 5 and delivers 2x the data for dwell 10 / 20 at the old speed (a
+dwell of 50 / 100 now gets the 8 / 15 packets it holds, a few ms longer).
+The KrakenSDR's gate took 4-6 ms at settle 5 against the fake's 0.7-1: its
+tune is 0.5-5 ms longer and its streams are spread (the slip), so settle 5
+pushes the straddler a packet later there (+3.6-4.5 ms a round against
+settle 0). CPU: 11.1 % of a core for the whole new run (the old 9.8 %, the
+reader of 8091 on headers only).
+
+*The dwell to use.* The fastest sweep that is still readable at Auto
+(kraken_doa: >= 8 frames a hop): dwell 5 (1 packet, Auto 2048 at 88-108
+MHz with 15 overlapped frames, 512 for the full range) - FM 10.5 sweeps a
+second with 5 tuners, the full range 5.2 s; dwell 10 gives today's speed
+with exactly 2 packets a hop (Auto 4096, as today's default gave from
+1.3-1.6). The defaults are left at 20 (the contract's; kraken_doa's
+`SWEEP_DWELL_DEFAULT_MS` and the page show the same) - the proposal is in
+the round's report.
+
+*The guarantee, re-tested* (the first valid packet now comes a packet
+earlier than before, so what "settle 0 holds" meant changed):
+- fake (`t_fakeguard.py`: every channel of every packet, per 1024-sample
+  segment: the fake's settling garbage or a tone of the old hop), garbage 8
+  ms after the tune call, tune 14 ms, dwell 5: valid packets with garbage
+  at settle 0 / 4: 147 / 147 of 147 (as designed: settle < garbage); at
+  settle 6 / 8 / 9 / 10 / 12: 0 of 117-118 each, while 118 of ~353 flagged
+  packets had it (positive control). Garbage 4 ms: 0 contaminated at settle
+  0 / 4 (the straddler absorbs it), 1-2 of 147 at settle 3 / 5 - the
+  semantics: the samples see settle minus the latency (here the fake's ~2
+  ms including generating the packet). Spread streams and jitter
+  (`FAKE_SPREAD_US=1500 FAKE_JITTER_US=1500 FAKE_TUNE_JITTER_MS=4`,
+  garbage 8 ms): contaminated 130 / 84 / 0 / 0 of 130 / 109 / 97 / 90
+  valid packets at settle 0 / 6 / 11 / 14, flagged ones 90 / 109 / 178 /
+  180 - again clean from settle >= garbage + latency (here up to ~3.5 ms),
+  and at settle 0 the old hop's tones too (the slowest tuner's samples
+  from just before its tune call returned, within the latency): what
+  "after the settle" relies on is a settle covering the USB latency - on
+  the KrakenSDR the tune call itself returns well after the PLL moved, so
+  settle 0 already measured clean there (below), and the default 5 ms is
+  the margin.
+- KrakenSDR, `t_contrast.py` on the new loop (tuner 0 alternating 92.0 /
+  94.0 MHz, the station 15.4-15.6 dB over B's floor at +0.6 MHz, dwell 40
+  = 6 packets): the first valid packet of each B hop, worst 1024-sample
+  segment over 147-164 hops (20 s a settle): +4.0 / +4.0 / +3.3 dB at
+  settle 0 / 2 / 5 against +4.0 / +4.0 / +4.3 for the later packets of the
+  same hops; segment 0 (where old-hop samples would sit) p90 +1.6 / +1.7 /
+  +1.6 against +1.5 / +1.4 / +1.4 for segments 1-15; positive control: 163
+  of 326 / 164 of 328 / 147 of 441 flagged B packets with a segment > +10
+  dB (worst +16.8 dB). A first 10 s run: +3.7 / +5.6 / +3.3 / +3.5 at
+  settle 0 / 2 / 5 / 10 (82 / 82 / 74 / 68 hops; the +5.6 not seen again
+  in the 163 hops of the rerun - noise); the large jump (29 hops 24.8 ...
+  92.0 MHz, station 25 dB over the floor, 5 B hops in 10 s): +2.4 / +3.3
+  at settle 0 / 5 against later maxima +3.2 / +2.7. So settle 0 still
+  holds with the first valid packet a packet earlier than before - the tune
+  call returns well after the PLL moved (lock check, autotune) - and 5 ms
+  stays the default as margin for slower USB hosts (the Pi not measured).
+
+*Everything else, re-tested on the new loop* (job scratch `speed/`):
+- fake (`regress_fake.sh`, `FAKE_TUNE_MS=14`): t_basic (every case PASS;
+  the one-hop / three-hop K' = H cases 20.5 ms a round = 3 packets, no
+  flag), t_cmds (set_gain, pause at 10 random points of a hop - flag 0
+  within 0.25 s every time -, 40 plan changes 0-120 ms apart with no valid
+  packet off the grids, 30 bad requests, refusals: 0 failures), t_modes,
+  t_fixes (failed tuner -> frequency 0, slow gain writes, the settings
+  file), t_restart, t_generic, t_kerberos, t_long 2 min: all PASS.
+  `t_race.py` prints "BOTH" for its tries 2 / 4 / 6 / 8 - identically on
+  the old loop's build (b0e7898): after try 1 the count is already the
+  one asked for ("already active"), so those tries race nothing; a test
+  artefact, not a finding.
+- KrakenSDR: t_basic (coherent CONVERGED 22.9 s, check_calibration |lag|
+  0.0 / |phase| 0.2 deg; every sweep case PASS; 0 coherence events, 0
+  unquiet flushes), t_cmds 0 failures, t_web PASS, t_modes 0 failures (60
+  s of sweeping, 399 sweeps, 0 coherence events; sweep -> coherent reply
+  0.60 s, CONVERGED 23.1 s; mid-calibration entry and back 22.1 s; final
+  18.4 s), `t_long.py --minutes 9 --dwell 5` (full range, 5 tuners, settle
+  5): 101 sweeps in 542 s (5.0-6.0 s each, 27 ms a round), 18534 valid /
+  41677 flagged packets, 0 off the grid, 0 failed retunes, 0 coherence
+  events, RSS flat 41.97-41.98 MB, CPU 16-17.5 %; SIGTERM during a hop:
+  exit 0 in 0.47 s.
+- kraken_doa's suite against its fake heimdall (which already delivered
+  ceil(dwell / 6.83 ms) packets a hop), test build and ASan + UBSan build:
+  t_sweep 206 / 206, t_edge 50 / 50, t_modes 15 / 15, t_old 9 / 9, t_mcp 9 /
+  9, t_fix 29 / 29 after its Auto expectations followed the new model
+  (dwell 20: 8192, not 4096; 50: 16384; explicit 16384 at dwell 20
+  averages 5 frames, not 1-2, so "auto is smoother" is now sd 1.27 vs 1.69
+  dB, a ratio of 0.75 - the check takes < 0.85); no sanitizer reports.
+- Not run: the Raspberry Pi, Windows (tunes one by one: nothing in the hop
+  assumes a short retune - the gate and the dwell's timeout run from the
+  retune's end), macOS, the MinGW / zig syntax checks (no toolchain here).
 
 **Review fixes** (2026-11-20, an independent review of the merged diff and
 the orchestrator's end-to-end run; tests on the fake librtlsdr build -
