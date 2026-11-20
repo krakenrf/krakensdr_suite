@@ -399,6 +399,8 @@ printf 'AUTH:%s\nSUBSCRIBE:FFT,DOA\nDOA:1\n' "$TOKEN" \
 
 Commands `TRUNK_FOLLOW:0|1`, `TRUNK_MAX_VFOS:n`, `TRUNK_ENCRYPTED:0|1`,
 `TRUNK_UNIT:0|1`, `TRUNK_AUDIO:0|1`, `TRUNK_HANG:s`, `TRUNK_ALL_SITES:0|1`,
+`TRUNK_RETUNE:0|1`, `TRUNK_RETUNE_CAL:0|1`, `TRUNK_RETUNE_MAX:s`, `TRUNK_RETURN`,
+`TRUNK_TUNERS:<list>`,
 `TRUNK_END:id`, `TRUNK_HOLD:{..}`, the system edits `TRUNK_SYS_SET:` /
 `TRUNK_TG_SET:` / `TRUNK_CH_SET:` / `TRUNK_RULE_SET:` (+ `_DEL`), `GET_TRUNK`,
 `GET_TRUNK_SYS:<id>`; replies `{"trunk":{...}}` (status), `{"trunk_sys":{...}}`

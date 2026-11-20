@@ -295,6 +295,10 @@ not followed); a call's menu stops following it, holds on its talkgroup,
 names the talkgroup or makes it Priority / Skip. **Edit** on a system holds
 its name, the talkgroup list and the channel table. Voice VFOs are marked
 as the receiver's on their cards and on the spectrum and are never saved.
+Optionally the receiver also follows calls outside its 2.4 MHz: in coherent
+mode it retunes there for the call, calibrates and comes back afterwards
+(your other VFOs move with it meanwhile); in independent mode it retunes the
+tuners you give it as voice tuners.
 
 What each protocol needs:
 

@@ -136,8 +136,48 @@ struct Settings {
     bool unit = true;        // TRUNK_UNIT: follow unit-to-unit calls
     bool audio = true;       // TRUNK_AUDIO: hear followed calls
     double hang_s = 2.0;     // TRUNK_HANG 0.5..10
+    bool retune = false;     // TRUNK_RETUNE: coherent mode - a call outside the span: an excursion (retune, follow, return)
+    bool retune_cal = true;  // TRUNK_RETUNE_CAL: ... calibrated on arrival (else held for the whole excursion)
+    double retune_max_s = 120;   // TRUNK_RETUNE_MAX: ... the longest time away (s, 0 = no limit)
+    std::vector<int> tuners;     // TRUNK_TUNERS: independent mode - the tuners the manager may retune for voice channels
 };
 Settings g_set;
+
+// --- an excursion outside the span (TRUNK_RETUNE; below, "Coherent mode: an excursion") ---
+struct ExcCtl {
+    int vfo = -1;
+    float off = 0;          // its offset at home
+    double rf = 0;          // its RF at home
+    bool parked = false;    // outside the away span: disabled while away
+};
+struct Exc {
+    int st = 0;             // 0 at home, 1 away, 2 returning (home again, waiting for calibration + control channel)
+    uint64_t call = 0;      // the call it left for
+    std::string key, sys, target, ch, decoder;
+    double hz = 0;          // its channel
+    double home = 0, centre = 0;
+    int64_t t_left = 0, t_arrived = 0, t_cal = 0, t_idle = 0, t_back = 0, t_back_arr = 0, t_back_cal = 0;
+    int64_t w_left = 0;     // wall ms
+    bool cal = true;        // calibrated on arrival (else held for the whole excursion)
+    bool holding = false;
+    int64_t hold_sent = 0;
+    bool kerberos = false;  // KerberosSDR manual mode: no calibration requests
+    std::string end;        // why it returned (the latest)
+    std::string centre_how; // "control" (a control VFO of the system in the away span) | "offset"
+    std::vector<ExcCtl> ctl;
+};
+Exc g_exc;
+struct ExcStats {
+    uint64_t n = 0;
+    int64_t away_ms = 0;
+    std::map<std::string, uint64_t> ends;
+    // the latest excursion's timings (ms; -1 = not seen)
+    int64_t arrive_ms = -1, cal_ms = -1, back_arrive_ms = -1, back_cal_ms = -1, ctl_back_ms = -1, first_frames_ms = -1;
+    uint64_t calls_away = 0, calls_missed = 0;   // grants heard while away / not followed because of it
+};
+ExcStats g_exc_stats;
+std::map<std::string, int64_t> g_exc_retry;   // call key -> no excursion for it before (steady ms)
+
 
 enum TgMode { TG_NORMAL = 0, TG_PRIORITY = 1, TG_SKIP = 2 };
 const char* tg_mode_name(int m) { return m == TG_PRIORITY ? "priority" : m == TG_SKIP ? "skip" : "normal"; }
@@ -1389,6 +1429,8 @@ uint64_t victim_for(const Call& c) {
 }
 
 // Follow call c now if it may and can be: "" = followed, else why not
+std::string exc_try(Call& c, double hz, double bw);
+std::string vt_try(Call& c, double hz, double bw);
 std::string try_follow(Call& c) {
     System* s = sys_of(c.sys);
     if (!s) return "no_system";
@@ -1411,7 +1453,8 @@ std::string try_follow(Call& c) {
             if (auto ci = c.ctl_vfo >= 0 ? decimator_manager.getDecimator(c.ctl_vfo) : nullptr) prefer = ci->tuner_channel.load();
             const Place p = place_for(hz, bw, prefer);
             if (!p.ok) {
-                why = "out_of_span";
+                why = exc_try(c, hz, bw);                        // (coherent: an excursion)
+                if (why == "out_of_span") why = vt_try(c, hz, bw);   // (independent: a voice tuner)
             } else {
                 Voice* v = free_voice(c.decoder, c.id, &why);
                 if (!v && rank(c) > 0) {
@@ -1505,6 +1548,7 @@ void count_chan(System& s, const std::string& name) {
 // a call (an over) starts: the counters, its talkgroup / unit heard
 void count_start(System& s, Call& c) {
     s.grants++;
+    if (g_exc.st == 1) g_exc_stats.calls_away++;
     if (c.group) {
         if (Tg* g = ensure_tg(s, c.target)) {
             g->calls++;
@@ -2480,6 +2524,8 @@ int64_t maxof(const std::deque<int64_t>& d) {
     return m;
 }
 
+std::string exc_status_json(int64_t now);
+std::string vt_status_json();
 std::string build_status(bool ages) {
     const int64_t now = now_ms();
     std::ostringstream o;
@@ -2489,6 +2535,9 @@ std::string build_status(bool ages) {
     o << "{\"trunk\":{\"systems_file\":{\"ok\":" << jb(g_file_note.empty()) << ",\"note\":" << js(g_file_note)
       << ",\"kept_as\":" << js(g_file_bad) << "},\"sys_refused\":" << g_sys_refused << ",\"follow\":" << jb(g_set.follow) << ",\"all_sites\":" << jb(g_set.all_sites) << ",\"max_vfos\":" << g_set.max_vfos << ",\"encrypted\":" << jb(g_set.enc)
       << ",\"unit\":" << jb(g_set.unit) << ",\"audio\":" << jb(g_set.audio) << ",\"hang_s\":" << hang
+      << ",\"retune\":" << jb(g_set.retune) << ",\"retune_cal\":" << jb(g_set.retune_cal)
+      << ",\"retune_max_s\":" << static_cast<long long>(std::llround(g_set.retune_max_s)) << "," << exc_status_json(now)
+      << "," << vt_status_json()
       << ",\"paused\":" << jb(g_paused) << ",\"paused_why\":" << js(g_pause_why) << ",\"playback\":" << jb(playback::active())
       << ",\"mode\":\"" << (mode == 1 ? "wideband" : mode == 2 ? "independent" : "coherent") << "\",\"hold\":";
     if (g_hold_sys.empty()) o << "null";
@@ -2805,13 +2854,663 @@ void tick_restore() {
     }
 }
 
+// ============================================================================
+// Coherent mode: an excursion to a call outside the span (TRUNK_RETUNE)
+// ============================================================================
+// A grant that passes every rule but is out_of_span makes the receiver leave:
+// the centre goes where the channel (and, if it can, a control VFO of that
+// system) is in the usable band, heimdall calibrates at once (a calibration
+// hold over the retune, released right after it: the pending cooldown is
+// backdated), the call is followed there; when it is over the receiver goes
+// home ("home" = the centre it had, which is also what is saved - none of this
+// is), calibrates at once again and picks the control channel up again.
+
+constexpr int64_t EXC_HOLD_LEASE_MS = 3000;   // the calibration hold's lease ...
+constexpr int64_t EXC_HOLD_RENEW_MS = 1000;   // ... renewed this often while held for the whole excursion
+constexpr int64_t EXC_RETRY_MS = 30000;       // a call that sent the receiver out for nothing (no_signal / the limit): not again this soon
+constexpr int64_t EXC_BACK_MAX_MS = 20000;    // after the return: waiting for the control channel at most this long
+constexpr double EXC_OFFSET_HZ = 250000;      // no control VFO fits: the channel this far from the centre (towards home)
+constexpr double EXC_DC_GUARD_HZ = 30000;     // a channel (voice or control) at least this far from the centre (DC, LO leakage)
+
+void heimdall_hold(int ms) {
+    char c[64];
+    snprintf(c, sizeof c, "{\"hold_calibration\":{\"hold_ms\":%d}}", ms);
+    ControlHandler::send_control_command(c);
+}
+
+// a VFO's RF in coherent mode from the centre asked for (the stream's header
+// may still show the previous one)
+double coh_rf(const Inst& i) {
+    const double c = static_cast<double>(requested_freq_hz.load(std::memory_order_relaxed));
+    return c > 0 ? c + i.frequency_offset_hz.load() : 0.0;
+}
+
+bool exc_calibrated() {
+    if (server_kerberos_mode.load(std::memory_order_relaxed)) return true;
+    return (scanner_manager.getPhaseState() & 0xFF) == 4 && !scanner_manager.isNoiseSourceActive();
+}
+
+bool exc_range(double c) {
+    if (wb_variant_enabled.load(std::memory_order_relaxed)) {
+        uint64_t lo, hi;
+        wb_variant_rf_union_range(lo, hi);
+        return c >= static_cast<double>(lo) && c <= static_cast<double>(hi);
+    }
+    return c >= static_cast<double>(RTL_TUNER_MIN_HZ) && c <= static_cast<double>(RTL_TUNER_MAX_HZ);
+}
+
+// The away centre for channel hz (bw wide): one that also holds a control VFO
+// of system s - the nearest home -, else the channel EXC_OFFSET_HZ from the
+// centre on the side towards home. 0 = none (outside the tuner range)
+double exc_centre(const System& s, double hz, double bw, double home, std::string* how) {
+    const double half = usable_half_hz();
+    const double need = bw / 2 + PLACE_GUARD_HZ;
+    if (need + EXC_DC_GUARD_HZ > half) return 0;
+    const double lo = hz - (half - need), hi = hz + (half - need);
+    double best = 0;
+    for (const auto& kv : s.ctl) {
+        auto inst = decimator_manager.getDecimator(kv.first);
+        if (!inst) continue;
+        const double r = coh_rf(*inst);
+        if (r <= 0) continue;
+        const double cn = inst->bandwidth_hz.load() / 2.0 + PLACE_GUARD_HZ;
+        const double clo = std::max(lo, r - (half - cn)), chi = std::min(hi, r + (half - cn));
+        if (clo > chi) continue;
+        // the point of [clo, chi] nearest home whose DC is off both channels
+        const double c0 = std::clamp(home, clo, chi);
+        for (int k = 0; k <= 400; k++) {
+            bool found = false;
+            for (int sgn : {1, -1}) {
+                const double c = c0 + sgn * k * 5000.0;
+                if (c < clo || c > chi || !exc_range(c)) continue;
+                if (std::fabs(hz - c) < EXC_DC_GUARD_HZ || std::fabs(r - c) < EXC_DC_GUARD_HZ) continue;
+                if (best == 0 || std::fabs(c - home) < std::fabs(best - home)) best = c;
+                found = true;
+            }
+            if (found) break;
+        }
+    }
+    if (best > 0) {
+        *how = "control";
+        return std::round(best);
+    }
+    const double off = std::min(EXC_OFFSET_HZ, half - need);
+    const double c = hz + (home >= hz ? off : -off);
+    if (!exc_range(c)) return 0;
+    *how = "offset";
+    return std::round(c);
+}
+
+std::string exc_status_json(int64_t now) {
+    std::ostringstream o;
+    o << "\"excursion\":";
+    if (g_exc.st == 0) {
+        o << "null";
+    } else {
+        const char* ret = "";
+        if (g_exc.st == 2) ret = "returning";
+        o << "{\"state\":\"" << (g_exc.st == 1 ? (g_exc.t_arrived ? "away" : "leaving") : ret) << "\""
+          << ",\"since\":" << g_exc.w_left << ",\"away_ms\":" << (now - g_exc.t_left) << ",\"call\":" << g_exc.call
+          << ",\"sys\":" << js(g_exc.sys) << ",\"target\":" << js(g_exc.target) << ",\"ch\":" << js(g_exc.ch)
+          << ",\"hz\":" << num_json(g_exc.hz) << ",\"centre_hz\":" << num_json(g_exc.centre)
+          << ",\"home_hz\":" << num_json(g_exc.home) << ",\"how\":" << js(g_exc.centre_how)
+          << ",\"calibration\":\"" << (g_exc.kerberos ? "manual" : !g_exc.cal && g_exc.st == 1 ? "held" : exc_calibrated() ? "done" : "running")
+          << "\",\"end\":" << js(g_exc.end);
+        int64_t left = -1;
+        if (g_exc.st == 1 && g_set.retune_max_s > 0) left = std::max<int64_t>(0, static_cast<int64_t>(g_set.retune_max_s * 1000) - (now - g_exc.t_left));
+        o << ",\"limit_ms\":" << left << ",\"ctl\":[";
+        for (size_t i = 0; i < g_exc.ctl.size(); i++)
+            o << (i ? "," : "") << "{\"vfo\":" << g_exc.ctl[i].vfo << ",\"parked\":" << jb(g_exc.ctl[i].parked) << "}";
+        o << "]}";
+    }
+    o << ",\"excursions\":{\"n\":" << g_exc_stats.n << ",\"away_ms\":" << g_exc_stats.away_ms << ",\"ends\":{";
+    bool f = true;
+    for (const auto& kv : g_exc_stats.ends) {
+        o << (f ? "" : ",") << js(kv.first) << ":" << kv.second;
+        f = false;
+    }
+    o << "},\"calls_away\":" << g_exc_stats.calls_away << ",\"calls_missed\":" << g_exc_stats.calls_missed
+      << ",\"last\":{\"arrive_ms\":" << g_exc_stats.arrive_ms << ",\"cal_ms\":" << g_exc_stats.cal_ms
+      << ",\"first_frames_ms\":" << g_exc_stats.first_frames_ms << ",\"back_arrive_ms\":" << g_exc_stats.back_arrive_ms
+      << ",\"back_cal_ms\":" << g_exc_stats.back_cal_ms << ",\"ctl_back_ms\":" << g_exc_stats.ctl_back_ms << "}}";
+    return o.str();
+}
+
+// the control VFOs of every system, where they are now (home)
+std::vector<ExcCtl> exc_note_ctl() {
+    std::vector<ExcCtl> v;
+    for (const auto& kv : g_sys)
+        for (const auto& c : kv.second.ctl) {
+            auto inst = decimator_manager.getDecimator(c.first);
+            if (!inst) continue;
+            ExcCtl e;
+            e.vfo = c.first;
+            e.off = inst->frequency_offset_hz.load();
+            e.rf = coh_rf(*inst);
+            v.push_back(e);
+        }
+    return v;
+}
+
+void exc_expect_resets(int64_t ms) {
+    const int64_t until = now_ms() + ms;
+    for (const auto& e : g_exc.ctl) g_tracks[e.vfo].expect_reset_until = std::max(g_tracks[e.vfo].expect_reset_until, until);
+}
+
+// The receiver to centre c, each control VFO kept on its RF where it fits the
+// new span (else parked), or (home) back where it was - through the
+// dispatching guard: nothing of it is saved. cal: hold -> retune -> release
+// (the calibration at once); hold: keep the hold on (no calibration)
+void exc_retune(double c, bool home, bool cal, bool hold) {
+    const int64_t now = now_ms();
+    if (!g_exc.kerberos) {
+        if (cal || hold) {
+            heimdall_hold(static_cast<int>(EXC_HOLD_LEASE_MS));
+            g_exc.holding = true;
+            g_exc.hold_sent = now;
+        }
+    }
+    char f[64];
+    snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
+    std::vector<std::string> cmds{f};
+    const double half = usable_half_hz();
+    for (auto& e : g_exc.ctl) {
+        auto inst = decimator_manager.getDecimator(e.vfo);
+        if (!inst) continue;
+        char m[80];
+        if (home) {
+            snprintf(m, sizeof m, "SET_DECIMATOR_FREQ:%d:%.3f", e.vfo, e.off / 1000.0);
+            cmds.push_back(m);
+            continue;
+        }
+        const double cn = inst->bandwidth_hz.load() / 2.0 + PLACE_GUARD_HZ;
+        e.parked = !(e.rf > 0 && std::fabs(e.rf - c) + cn <= half);
+        if (!e.parked) {
+            snprintf(m, sizeof m, "SET_DECIMATOR_FREQ:%d:%.3f", e.vfo, (e.rf - c) / 1000.0);
+            cmds.push_back(m);
+        }
+    }
+    exc_expect_resets(6000);
+    dispatch(cmds);
+    for (auto& e : g_exc.ctl) {
+        auto inst = decimator_manager.getDecimator(e.vfo);
+        if (!inst) continue;
+        inst->enabled = home || !e.parked;   // a parked control VFO hears nothing (no bogus SYSTEM / grants)
+        if (home) e.parked = false;
+    }
+    if (!g_exc.kerberos && cal) {
+        heimdall_hold(0);   // a hold in effect -> the pending cooldown backdated: the calibration starts now
+        g_exc.holding = false;
+    }
+    broadcast(MessageBuilders::build_decimator_info_message());
+}
+
+void exc_return(const std::string& why, bool retune) {
+    if (g_exc.st != 1) return;
+    const int64_t now = now_ms();
+    std::cout << "Trunk following: back home to " << g_exc.home / 1e6 << " MHz (" << why << ") after "
+              << (now - g_exc.t_left) / 1000.0 << " s away" << std::endl;
+    // what is still followed out there ends
+    std::vector<uint64_t> ids;
+    for (const auto& kv : g_calls)
+        if (kv.second.vfo >= 0 && kv.second.st != RECENT) ids.push_back(kv.first);
+    for (uint64_t id : ids) end_call(id, "returned");
+    g_exc_stats.ends[why]++;
+    g_exc_stats.away_ms += now - g_exc.t_left;
+    g_exc.end = why;
+    if (why == "no_signal" || why == "limit") g_exc_retry[g_exc.key] = now + EXC_RETRY_MS;
+    if (retune && !playback::active()) {
+        exc_retune(g_exc.home, true, true, false);
+        g_exc.st = 2;
+        g_exc.t_back = now;
+        g_exc.t_back_arr = g_exc.t_back_cal = 0;
+    } else {
+        // (the user retuned it / a playback: no retune - the VFOs as they were, relative to the centre)
+        std::vector<std::string> cmds;
+        for (auto& e : g_exc.ctl) {
+            auto inst = decimator_manager.getDecimator(e.vfo);
+            if (!inst) continue;
+            char m[80];
+            snprintf(m, sizeof m, "SET_DECIMATOR_FREQ:%d:%.3f", e.vfo, e.off / 1000.0);
+            if (!playback::active()) cmds.push_back(m);
+            inst->enabled = true;
+            e.parked = false;
+        }
+        exc_expect_resets(6000);
+        dispatch(cmds);
+        if (g_exc.holding && !g_exc.kerberos && !playback::active()) heimdall_hold(0);
+        g_exc.holding = false;
+        g_exc.st = 0;
+        broadcast(MessageBuilders::build_decimator_info_message());
+    }
+    g_status_now = true;
+}
+
+// try_follow: call c's channel hz is outside the span. "" never; the reason it
+// waits: "leaving" (the receiver goes there now / is on its way), or why not
+std::string exc_try(Call& c, double hz, double bw) {
+    if (!g_set.retune || operating_mode_index() != 0 || playback::active() || g_paused || !g_set.follow) return "out_of_span";
+    const int64_t now = now_ms();
+    if (g_exc.st == 1) {
+        if (c.id == g_exc.call) return "leaving";
+        if (c.why != "away") g_exc_stats.calls_missed++;
+        return "away";
+    }
+    auto r = g_exc_retry.find(c.key);
+    if (r != g_exc_retry.end()) {
+        if (now < r->second) return "retry";
+        g_exc_retry.erase(r);
+    }
+    // a followed call in progress here: only a priority / held talkgroup's call leaves it (the pre-emption ranking)
+    const bool held = !g_hold_sys.empty() && g_hold_sys == c.sys && g_hold_tg == c.target;
+    std::vector<uint64_t> here;
+    for (const auto& kv : g_calls)
+        if (kv.second.vfo >= 0 && kv.second.st != RECENT) {
+            if (!held && rank(kv.second) >= rank(c)) return "busy_here";
+            here.push_back(kv.first);
+        }
+    System* s = sys_of(c.sys);
+    if (!s) return "out_of_span";
+    const double home = static_cast<double>(g_exc.st == 2 ? static_cast<uint64_t>(g_exc.home) : requested_freq_hz.load());
+    if (home <= 0) return "out_of_span";
+    std::string how;
+    const double cen = exc_centre(*s, hz, bw, home, &how);
+    if (cen <= 0) return "no_retune";
+    for (uint64_t id : here) end_call(id, "excursion");
+    // (a return still settling: its home stands, its control VFOs are home already)
+    g_exc = Exc{};
+    g_exc.st = 1;
+    g_exc.call = c.id;
+    g_exc.key = c.key;
+    g_exc.sys = c.sys;
+    g_exc.target = c.target;
+    g_exc.ch = c.ch.name;
+    g_exc.decoder = c.decoder;
+    g_exc.hz = hz;
+    g_exc.home = home;
+    g_exc.centre = cen;
+    g_exc.centre_how = how;
+    g_exc.t_left = now;
+    g_exc.w_left = wall_ms();
+    g_exc.cal = g_set.retune_cal;
+    g_exc.kerberos = server_kerberos_mode.load(std::memory_order_relaxed);
+    g_exc.ctl = exc_note_ctl();
+    g_exc_stats.n++;
+    g_exc_stats.arrive_ms = g_exc_stats.cal_ms = g_exc_stats.first_frames_ms = -1;
+    std::cout << "Trunk following: leaving " << home / 1e6 << " MHz for " << c.sys << " " << c.target << " on " << c.ch.name
+              << " (" << hz / 1e6 << " MHz): centre " << cen / 1e6 << " MHz (" << how << ")" << std::endl;
+    exc_retune(cen, false, g_exc.cal, !g_exc.cal);
+    g_status_now = true;
+    return "leaving";
+}
+
+// ============================================================================
+// Independent mode: voice tuners (TRUNK_TUNERS)
+// ============================================================================
+// The tuners the user lets the manager retune. A grant no tuner's span holds
+// goes to a free voice tuner: retuned so the channel is in its usable band,
+// the voice VFO placed once the stream shows it there. A tuner carrying a
+// control VFO is never retuned. Each voice tuner goes back to the frequency
+// and gain it had when the manager first took it when the manager lets go of
+// it (following / the list off, a mode change, a scanner, a playback).
+
+struct VTuner {
+    bool taken = false;     // the manager has retuned it (home_* valid)
+    double home_hz = 0;
+    float home_gain = -999.0f;
+    double hz = 0;          // where the manager put it
+    uint64_t call = 0;      // retuned for this call, waiting for the stream (0 = none)
+    int64_t t_set = 0;      // when (steady)
+    int64_t tune_ms = -1;   // the latest retune -> the stream there
+};
+VTuner g_vt[MAX_CHANNELS];
+
+bool vt_listed(int t) { return std::find(g_set.tuners.begin(), g_set.tuners.end(), t) != g_set.tuners.end(); }
+
+std::set<int> vt_control_tuners() {
+    std::set<int> c;
+    for (const auto& kv : g_sys)
+        for (const auto& x : kv.second.ctl)
+            if (auto inst = decimator_manager.getDecimator(x.first)) c.insert(inst->tuner_channel.load());
+    return c;
+}
+
+// the tuner's followed calls in progress (or the one it is being retuned for)
+bool vt_busy(int t, uint64_t* victim, int rank_below) {
+    bool busy = g_vt[t].call != 0;
+    int64_t oldest = 0;
+    for (const auto& kv : g_calls) {
+        const Call& c = kv.second;
+        if (c.vfo < 0 || c.st == RECENT) continue;
+        auto inst = decimator_manager.getDecimator(c.vfo);
+        if (!inst || inst->tuner_channel.load() != t) continue;
+        busy = true;
+        if (victim && rank(c) < rank_below && (!*victim || c.t_start < oldest)) {
+            *victim = c.id;
+            oldest = c.t_start;
+        }
+    }
+    return busy;
+}
+
+// the voice tuner's centre for channel hz: off DC (>= 30 kHz), holding as many
+// of the system's known channels as it can (weighted by their grants), else
+// the channel 250 kHz from the centre
+double vt_centre(const System& s, double hz, double bw) {
+    const double half = usable_half_hz();
+    const double need = bw / 2 + PLACE_GUARD_HZ;
+    const double lim = half - need;
+    if (lim < EXC_DC_GUARD_HZ) return 0;
+    std::vector<std::pair<double, double>> known;   // (hz, weight)
+    for (const auto& kv : s.chans) {
+        double f, up;
+        std::string src;
+        Channel ch;
+        ch.name = kv.first;
+        ch.number = kv.second.num;
+        if (resolve(s, ch, &f, &up, &src) && std::fabs(f - hz) < 2 * half) known.push_back({f, 1.0 + static_cast<double>(kv.second.grants)});
+    }
+    double best = 0, bs = -1;
+    for (double d = -lim; d <= lim; d += 10000.0) {
+        if (std::fabs(d) < EXC_DC_GUARD_HZ) continue;
+        const double c = hz + d;
+        if (!exc_range(c)) continue;
+        double sc = 0;
+        for (const auto& k : known)
+            if (std::fabs(k.first - c) + need <= half && std::fabs(k.first - c) >= EXC_DC_GUARD_HZ) sc += k.second;
+        // (a tie: the channel nearest 250 kHz off the centre)
+        sc -= std::fabs(std::fabs(d) - EXC_OFFSET_HZ) * 1e-9;
+        if (sc > bs) {
+            bs = sc;
+            best = c;
+        }
+    }
+    return std::round(best);
+}
+
+void vt_take(int t, double c, const std::string& why_log) {
+    VTuner& v = g_vt[t];
+    if (!v.taken) {
+        v.taken = true;
+        v.home_hz = indep_tuner_freq_hz[t].load();
+        if (v.home_hz <= 0) v.home_hz = static_cast<double>(exact_tuner_hz(t));
+        v.home_gain = indep_tuner_gain_db[t].load();
+    }
+    v.hz = c;
+    v.t_set = now_ms();
+    v.tune_ms = -1;
+    char f[64];
+    snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", t, c / 1e6);
+    std::vector<std::string> cmds{f};
+    // the control tuner's gain (the same band): the first control tuner's
+    const std::set<int> ct = vt_control_tuners();
+    if (!ct.empty()) {
+        const float g = indep_tuner_gain_db[*ct.begin()].load();
+        if (g != -999.0f && g != indep_tuner_gain_db[t].load()) {
+            char m[64];
+            snprintf(m, sizeof m, "TUNER_GAIN:%d:%.1f", t, g);
+            cmds.push_back(m);
+        }
+    }
+    dispatch(cmds);
+    std::cout << "Trunk following: voice tuner " << t << " to " << c / 1e6 << " MHz (" << why_log << ")" << std::endl;
+    g_status_now = true;
+}
+
+// the voice tuner back where the manager found it (no: the user took it)
+void vt_restore(int t, const std::string& why, bool retune) {
+    VTuner& v = g_vt[t];
+    if (!v.taken) return;
+    std::vector<uint64_t> ids;
+    for (const auto& kv : g_calls) {
+        const Call& c = kv.second;
+        if (c.vfo < 0 || c.st == RECENT) continue;
+        auto inst = decimator_manager.getDecimator(c.vfo);
+        if (inst && inst->tuner_channel.load() == t) ids.push_back(c.id);
+    }
+    for (uint64_t id : ids) end_call(id, "returned");
+    if (retune && operating_mode_index() == 2 && !playback::active()) {
+        std::vector<std::string> cmds;
+        char f[64];
+        if (v.home_hz > 0) {
+            snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", t, v.home_hz / 1e6);
+            cmds.push_back(f);
+        }
+        if (v.home_gain != -999.0f && v.home_gain != indep_tuner_gain_db[t].load()) {
+            snprintf(f, sizeof f, "TUNER_GAIN:%d:%.1f", t, v.home_gain);
+            cmds.push_back(f);
+        }
+        dispatch(cmds);
+        std::cout << "Trunk following: voice tuner " << t << " back to " << v.home_hz / 1e6 << " MHz (" << why << ")" << std::endl;
+    }
+    v = VTuner{};
+    g_status_now = true;
+}
+
+void vt_restore_all(const std::string& why, bool retune) {
+    for (int t = 0; t < MAX_CHANNELS; t++) vt_restore(t, why, retune);
+}
+
+// try_follow, independent mode: call c's channel hz is in no tuner's span
+std::string vt_try(Call& c, double hz, double bw) {
+    if (g_set.tuners.empty() || operating_mode_index() != 2 || playback::active() || g_paused || !g_set.follow) return "out_of_span";
+    for (int t = 0; t < MAX_CHANNELS; t++)
+        if (g_vt[t].call == c.id) return "tuning";
+    System* s = sys_of(c.sys);
+    if (!s) return "out_of_span";
+    const std::set<int> ct = vt_control_tuners();
+    const int n = n_tuners();
+    int free_t = -1;
+    uint64_t victim = 0;
+    int victim_t = -1;
+    for (int t : g_set.tuners) {
+        if (t < 0 || t >= n || ct.count(t)) continue;
+        uint64_t v = 0;
+        if (!vt_busy(t, rank(c) > 0 ? &v : nullptr, rank(c))) {
+            // (one the manager holds already first: the user's other tuners stay where they are longer)
+            if (free_t < 0 || (g_vt[t].taken && !g_vt[free_t].taken)) free_t = t;
+        } else if (v && !victim) {
+            victim = v;
+            victim_t = t;
+        }
+    }
+    if (free_t < 0 && victim) {
+        auto vi = g_calls.find(victim);
+        std::cout << "Trunk following: " << c.sys << " TG " << c.target << " (priority) takes voice tuner " << victim_t << " from "
+                  << vi->second.target << std::endl;
+        s->preempted++;
+        end_call(victim, "preempted");
+        free_t = victim_t;
+    }
+    if (free_t < 0) return "no_tuner";
+    const double cen = vt_centre(*s, hz, bw);
+    if (cen <= 0) return "no_retune";
+    vt_take(free_t, cen, c.sys + " " + c.target + " on " + c.ch.name);
+    g_vt[free_t].call = c.id;
+    return "tuning";
+}
+
+void tick_vt() {
+    const int64_t now = now_ms();
+    const bool any = std::any_of(std::begin(g_vt), std::end(g_vt), [](const VTuner& v) { return v.taken; });
+    if (!any) return;
+    if (playback::active()) return vt_restore_all("playback", false);
+    if (operating_mode_index() != 2) return vt_restore_all("mode", false);
+    if (!g_set.follow) return vt_restore_all("off", true);
+    if (g_paused) return vt_restore_all("scanner", true);
+    const std::set<int> ct = vt_control_tuners();
+    for (int t = 0; t < MAX_CHANNELS; t++) {
+        VTuner& v = g_vt[t];
+        if (!v.taken) continue;
+        if (!vt_listed(t) || ct.count(t)) {
+            vt_restore(t, ct.count(t) ? "a control VFO is on it" : "not a voice tuner any more", true);
+            continue;
+        }
+        // the user retuned it: his now (no restore)
+        if (std::fabs(indep_tuner_freq_hz[t].load() - v.hz) > 1000) {
+            std::cout << "Trunk following: voice tuner " << t << " retuned by the user - his again" << std::endl;
+            v = VTuner{};
+            g_status_now = true;
+            continue;
+        }
+        if (!v.call) continue;
+        if (std::fabs(static_cast<double>(exact_tuner_hz(t)) - v.hz) < 1000 && std::fabs(tuner_frequencies[t].load() - v.hz) < 1000) {
+            v.tune_ms = now - v.t_set;
+            const uint64_t id = v.call;
+            v.call = 0;
+            auto it = g_calls.find(id);
+            if (it != g_calls.end() && it->second.vfo < 0 && it->second.st != RECENT) try_follow(it->second);
+            g_status_now = true;
+        } else if (now - v.t_set > 5000) {
+            v.call = 0;   // (the stream never showed it: the call's next grant tries again)
+        }
+    }
+}
+
+std::string vt_status_json() {
+    std::ostringstream o;
+    o << "\"tuners\":[";
+    for (size_t i = 0; i < g_set.tuners.size(); i++) o << (i ? "," : "") << g_set.tuners[i];
+    o << "],\"voice_tuners\":[";
+    bool f = true;
+    const std::set<int> ct = vt_control_tuners();
+    for (int t = 0; t < MAX_CHANNELS; t++) {
+        const VTuner& v = g_vt[t];
+        if (!vt_listed(t) && !v.taken) continue;
+        int calls = 0;
+        for (const auto& kv : g_calls) {
+            const Call& c = kv.second;
+            if (c.vfo < 0 || c.st == RECENT) continue;
+            auto inst = decimator_manager.getDecimator(c.vfo);
+            if (inst && inst->tuner_channel.load() == t) calls++;
+        }
+        o << (f ? "" : ",") << "{\"tuner\":" << t << ",\"control\":" << jb(ct.count(t) > 0) << ",\"taken\":" << jb(v.taken)
+          << ",\"hz\":" << num_json(static_cast<double>(exact_tuner_hz(t))) << ",\"home_hz\":" << num_json(v.taken ? v.home_hz : NAN)
+          << ",\"home_gain\":" << num_json(v.taken && v.home_gain != -999.0f ? v.home_gain : NAN) << ",\"calls\":" << calls
+          << ",\"tuning_for\":" << v.call << ",\"tune_ms\":" << v.tune_ms << "}";
+        f = false;
+    }
+    o << "]";
+    return o.str();
+}
+
+// main thread's hook (ControlHandler::apply_command, before a command runs):
+// commands that end an excursion - the user's retune (no return: he took the
+// receiver), a mode change / scanner / playback (home first, then the command)
+void exc_before_command(std::string_view m) {
+    if (g_dispatching) return;
+    // voice tuners: a mode change / scanner / playback - back first; the user's
+    // own tuning of every tuner - his (no restore)
+    if (m.starts_with("OPERATING_MODE:") || m.starts_with("SCANNER_START") || m.starts_with("CONTINUOUS_SCANNER_START") ||
+        m.starts_with("SFSCAN_START") || m.starts_with("PLAYBACK_START:") || m.starts_with("PLAYBACK_OPEN:"))
+        vt_restore_all(m.starts_with("OPERATING_MODE:") ? "mode" : m.starts_with("PLAYBACK_") ? "playback" : "scanner", true);
+    else if ((m.starts_with("FREQ:") && operating_mode_index() == 2) || m.starts_with("TUNERS:"))
+        for (auto& v : g_vt) v = VTuner{};
+    if (g_exc.st == 0) return;
+    if (m.starts_with("FREQ:") || m.starts_with("WIDEBAND_FREQ:")) {
+        if (g_exc.st == 1) exc_return("user_retuned", false);
+        else g_exc.st = 0;   // (returning: the user's tuning from now on)
+        g_status_now = true;
+        return;
+    }
+    const char* why = nullptr;
+    if (m.starts_with("OPERATING_MODE:") || m.starts_with("WIDEBAND_MODE:")) why = "mode";
+    else if (m.starts_with("SCANNER_START") || m.starts_with("CONTINUOUS_SCANNER_START") || m.starts_with("SFSCAN_START")) why = "scanner";
+    else if (m.starts_with("PLAYBACK_START:") || m.starts_with("PLAYBACK_OPEN:")) why = "playback";
+    if (!why) return;
+    if (g_exc.st == 1) exc_return(why, true);
+    g_exc.st = 0;   // (no waiting for the control channel: the command takes the receiver)
+    g_status_now = true;
+}
+
+void tick_exc() {
+    const int64_t now = now_ms();
+    for (auto it = g_exc_retry.begin(); it != g_exc_retry.end();) it = now >= it->second ? g_exc_retry.erase(it) : std::next(it);
+    if (g_exc.st == 0) return;
+    if (playback::active()) {   // (the hook went home first; a playback that started otherwise: no commands to heimdall)
+        if (g_exc.st == 1) exc_return("playback", false);
+        g_exc.st = 0;
+        return;
+    }
+    const double at = static_cast<double>(coherent_tuner_hz());
+    if (g_exc.st == 2) {
+        if (!g_exc.t_back_arr && std::fabs(at - g_exc.home) < 1000) {
+            g_exc.t_back_arr = now;
+            g_exc_stats.back_arrive_ms = now - g_exc.t_back;
+        }
+        if (g_exc.t_back_arr && !g_exc.t_back_cal && exc_calibrated() && now - g_exc.t_back_arr > 100) {
+            g_exc.t_back_cal = now;
+            g_exc_stats.back_cal_ms = now - g_exc.t_back_arr;
+        }
+        bool rx = false;
+        for (const auto& e : g_exc.ctl) {
+            auto tr = g_tracks.find(e.vfo);
+            if (tr == g_tracks.end()) continue;
+            if (System* s = sys_of(tr->second.sys)) {
+                auto c = s->ctl.find(e.vfo);
+                if (c != s->ctl.end() && c->second.last_ms > g_exc.t_back + 300) rx = true;
+            }
+        }
+        if (rx) g_exc_stats.ctl_back_ms = now - g_exc.t_back;
+        if (rx || now - g_exc.t_back > EXC_BACK_MAX_MS || g_exc.ctl.empty()) {
+            g_exc.st = 0;
+            g_status_now = true;
+        }
+        return;
+    }
+    // away
+    if (!g_set.follow || !g_set.retune) return exc_return("off", true);
+    if (operating_mode_index() != 0) return exc_return("mode", false);
+    if (g_paused) return exc_return("scanner", false);
+    if (std::fabs(static_cast<double>(requested_freq_hz.load()) - g_exc.centre) > 1000) return exc_return("user_retuned", false);
+    if (!g_exc.t_arrived && std::fabs(at - g_exc.centre) < 1000) {
+        g_exc.t_arrived = now;
+        g_exc_stats.arrive_ms = now - g_exc.t_left;
+        auto it = g_calls.find(g_exc.call);
+        if (it != g_calls.end() && it->second.vfo < 0 && it->second.st != RECENT) try_follow(it->second);
+    }
+    if (g_exc.t_arrived && !g_exc.t_cal && exc_calibrated() && now - g_exc.t_arrived > 100) {
+        g_exc.t_cal = now;
+        g_exc_stats.cal_ms = now - g_exc.t_arrived;
+    }
+    if (!g_exc.cal && !g_exc.kerberos && now - g_exc.hold_sent >= EXC_HOLD_RENEW_MS) {
+        heimdall_hold(static_cast<int>(EXC_HOLD_LEASE_MS));
+        g_exc.hold_sent = now;
+        g_exc.holding = true;
+    }
+    // while it calibrates the voice VFOs hear the noise source: their SETUP clock waits
+    const bool calibrating = g_exc.cal && !exc_calibrated();
+    bool busy = false;
+    for (auto& kv : g_calls) {
+        Call& c = kv.second;
+        if (c.vfo < 0 || c.st == RECENT) continue;
+        busy = true;
+        if (calibrating && c.st == SETUP) c.t_placed = now;
+        if (c.id == g_exc.call && g_exc_stats.first_frames_ms < 0 && c.st == ACTIVE) g_exc_stats.first_frames_ms = now - g_exc.t_left;
+    }
+    if (g_set.retune_max_s > 0 && now - g_exc.t_left > static_cast<int64_t>(g_set.retune_max_s * 1000)) return exc_return("limit", true);
+    auto it = g_calls.find(g_exc.call);
+    if (it != g_calls.end() && it->second.st == RECENT && it->second.end == "no_signal" && !busy) return exc_return("no_signal", true);
+    if (busy) {
+        g_exc.t_idle = 0;
+        return;
+    }
+    if (!g_exc.t_arrived) {
+        if (now - g_exc.t_left > 5000) return exc_return("not_arrived", true);
+        return;
+    }
+    if (!g_exc.t_idle) g_exc.t_idle = now;
+    // (the next over of a system that grants every transmission anew: within the hang time)
+    if (now - g_exc.t_idle >= static_cast<int64_t>(g_set.hang_s * 1000)) return exc_return("call_over", true);
+}
+
 void pause_check() {
     std::string why;
     if (sfscan::running()) why = "saved-frequency scan";
     else if (scanner_manager.isRunning()) why = "discrete scanner";
     else if (continuous_scanner.isRunning()) why = "continuous scanner";
     const bool p = !why.empty();
-    if (!p && !g_paused && g_set.follow) note_homes();   // (following off: nothing is put back)
+    if (!p && !g_paused && g_set.follow && g_exc.st == 0) note_homes();   // (following off: nothing is put back; away: home's stand)
     if (!g_set.follow) g_home.clear();
     if (p) g_pause_why_last = why;
     if (p == g_paused && why == g_pause_why) return;
@@ -3228,6 +3927,8 @@ void tick() {
         tick_restore();
         tick_tracks();
         tick_calls();
+        tick_exc();
+        tick_vt();
         tick_voices();
         tick_lists();
         tick_save();
@@ -3482,6 +4183,71 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         s->lists_struct = s->lists_stats = false;
         broadcast(lists_json(*s));
         return true;
+    }
+    if (cmd == "TRUNK_RETURN") {
+        if (g_exc.st != 1) {
+            *err = "the receiver is home";
+            return done();
+        }
+        auto it = g_calls.find(g_exc.call);
+        if (it != g_calls.end()) {   // stopped by the user: its grant updates don't send the receiver out again
+            Call& c = it->second;
+            c.user_ended = true;
+            if (c.vfo >= 0) unfollow(c, "stopped");
+            else if (System* s = sys_of(c.sys)) set_why(c, *s, "stopped");
+        }
+        exc_return("command", true);
+        return done();
+    }
+    if (cmd == "TRUNK_RETUNE" || cmd == "TRUNK_RETUNE_CAL") {
+        bool on;
+        if (!parse_bool01(arg, &on)) {
+            *err = "format: " + cmd + ":0|1";
+            return done();
+        }
+        if (cmd == "TRUNK_RETUNE") {
+            if (g_set.retune != on) std::cout << "Trunk following: excursions outside the span " << (on ? "on" : "off") << std::endl;
+            g_set.retune = on;
+        } else {
+            g_set.retune_cal = on;
+        }
+        *persist = cmd + ":" + (on ? "1" : "0");
+        return done();
+    }
+    if (cmd == "TRUNK_TUNERS") {
+        std::vector<int> v;
+        std::string a = arg;
+        bool bad = a.size() > 32;
+        for (size_t i = 0; !bad && i < a.size();) {
+            size_t j = a.find(',', i);
+            if (j == std::string::npos) j = a.size();
+            const std::string x = a.substr(i, j - i);
+            if (x.size() != 1 || x[0] < '0' || x[0] > '7') bad = true;
+            else if (std::find(v.begin(), v.end(), x[0] - '0') == v.end()) v.push_back(x[0] - '0');
+            i = j + 1;
+        }
+        if (bad) {
+            *err = "format: TRUNK_TUNERS:<tuner numbers 0-7, comma separated; empty = none>";
+            return done();
+        }
+        std::sort(v.begin(), v.end());
+        g_set.tuners = v;
+        std::string out;
+        for (int t : v) out += (out.empty() ? "" : ",") + std::to_string(t);
+        *persist = "TRUNK_TUNERS:" + out;
+        return done();
+    }
+    if (cmd == "TRUNK_RETUNE_MAX") {
+        double v;
+        if (!parse_number(arg, &v) || !(v == 0 || (v >= 10 && v <= 3600))) {
+            *err = "format: TRUNK_RETUNE_MAX:<seconds 10-3600, 0 = no limit>";
+            return done();
+        }
+        g_set.retune_max_s = std::round(v);
+        char c[48];
+        snprintf(c, sizeof c, "TRUNK_RETUNE_MAX:%lld", static_cast<long long>(g_set.retune_max_s));
+        *persist = c;
+        return done();
     }
     if (cmd == "TRUNK_FOLLOW" || cmd == "TRUNK_ENCRYPTED" || cmd == "TRUNK_UNIT" || cmd == "TRUNK_AUDIO" ||
         cmd == "TRUNK_ALL_SITES") {
@@ -3755,6 +4521,11 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         return done(false);
     }
     return false;
+}
+
+void before_command(std::string_view m) {
+    if (m.starts_with("TRUNK_") || m.starts_with("GET_")) return;
+    exc_before_command(m);
 }
 
 }  // namespace trunk

@@ -12,6 +12,7 @@
 // functions marked "any thread".
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "digital/trunk_event.hpp"   // trunk::Channel, trunk::PluginEvent
@@ -46,6 +47,10 @@ void tick();
 // uWS loop: one of the manager's own commands is running - not saved, and
 // the VFO snapshot isn't recorded for it (as sfscan::dispatching())
 bool dispatching();
+// ControlHandler::apply_command, before every command (uWS loop): a command
+// that ends an excursion outside the span (the user's FREQ - no return; a mode
+// change, a scanner or a playback start - home first)
+void before_command(std::string_view m);
 
 // Any thread: VFO `id` (the instance the manager holds now) is a voice VFO
 // of the manager - left out of the saved VFO snapshot (DECIMATORS:) and of

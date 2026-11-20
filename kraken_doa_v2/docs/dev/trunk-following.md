@@ -11,8 +11,10 @@ A trunked radio system (P25, DMR Tier III, NXDN, TETRA, MPT1327) hands out
 its traffic channels call by call on a control channel. A decoder plugin on
 a VFO tuned to the control channel reports each grant (`kp::Host::grant`);
 the trunk manager puts a temporary **voice VFO** with the grant's decoder on
-the granted channel - inside the receiver's span, never retuning the centre
-or a tuner - for the length of the call, so the call is heard, decoded,
+the granted channel - inside the receiver's span; it retunes only when the
+user allows it (an excursion outside the span in coherent mode,
+`TRUNK_RETUNE`; voice tuners in independent mode, `TRUNK_TUNERS`, below) - for
+the length of the call, so the call is heard, decoded,
 transcribed and direction-found (the voice VFO's own MUSIC / talker DoA).
 The decoder on the traffic channel reports what it carries
 (`kp::Host::call`), which drives the call's state.
@@ -138,6 +140,13 @@ applies, `why`):
 | `no_decoder` | the decoder is no built plugin, one that doesn't declare `trunking`, or one that holds its VFO (`fixed_freq_hz`, `lock_vfo`) |
 | `no_freq` | the channel's frequency is not resolved |
 | `out_of_span` | it can't be placed (below) |
+| `leaving` | the receiver is going to its channel (an excursion, below): placed on arrival |
+| `away` | the receiver is away for another call and its channel is not in the away span |
+| `busy_here` | outside the span, but a followed call is in progress here and this one doesn't outrank it (priority / the held talkgroup do) |
+| `retry` | outside the span, and an excursion for this call found nothing (or ran out of time) less than 30 s ago |
+| `no_retune` | outside the span, and no centre in the tuner's range holds it |
+| `tuning` | independent mode: a voice tuner is being retuned for it (placed once the stream shows the tuner there) |
+| `no_tuner` | independent mode: outside every tuner's span and no voice tuner is free (each carries a call in progress) |
 | `no_vfo` | `TRUNK_MAX_VFOS` voice VFOs are busy with calls of equal or higher rank |
 | `vfo_limit` | the receiver's 16 VFOs are all there |
 | `settings` | (a moment) the VFO snapshot is being applied: voice VFOs were removed |
@@ -177,6 +186,120 @@ with); the 2 kHz cover the VFO's AFC and the RTL-SDR's ppm error.
 
 An out-of-span call is counted and the status offers a **suggested
 centre** per system (below) for the page's "centre on the system".
+
+### Following outside the span: an excursion (coherent mode, `TRUNK_RETUNE`)
+
+Off by default. With it on, a grant that passes every rule but is
+`out_of_span` in coherent mode makes the receiver leave: retune the centre
+so the channel is in the usable band, calibrate at once, follow the call
+there with a voice VFO as usual (DoA valid once the calibration has
+converged), and when it is over go back to the centre it had ("home"),
+calibrate at once again and pick the control channel up again. The price:
+in coherent mode every VFO moves with the centre - the user's own VFOs are
+carried along while the receiver is away (the page says so where the option
+is switched on).
+
+- **Where to.** A centre that puts the channel AND a control VFO of that
+  system in the usable band (both at least 30 kHz off DC: the RTL-SDR's DC
+  spike and LO leakage), the one nearest home - then that control VFO keeps
+  receiving (its offset is moved so its RF stays) and no grant is missed
+  (`how` "control"). Else the channel 250 kHz from the centre, on the side
+  towards home (`how` "offset"): well clear of DC and its I/Q image's
+  partner, inside the flat part of the band, the rest of the span towards
+  home. The centre must be in the tuner's range (24-1766 MHz; the Wideband
+  downconverter: its RF union range, the same `FREQ:` path - else
+  `no_retune`).
+- **The VFOs.** Control VFOs (of every system) that fit the away span keep
+  receiving there; the others are PARKED (disabled: no bogus SYSTEM /
+  grants from whatever is on that frequency, no "not receiving", no
+  temporary systems) and put back on the return. In-span calls being
+  followed when the receiver leaves end `excursion`.
+- **Immediate calibration** with heimdall as it is (`heimdall_v2/docs/dev/
+  calibration.md`, "Calibration hold"): `hold_calibration` 3000 ms ->
+  `FREQ:` -> `hold_calibration` 0 in one go. heimdall retunes and enters the
+  cooldown inside `set_frequency`, so the release finds the hold in effect
+  and backdates the cooldown: the calibration starts at the lag driver's
+  next tick (at most 1 s) instead of 3 s later. While it calibrates the
+  noise source replaces the antennas: nothing is received (the start of
+  the call on arrival, the control channel on the return); the voice VFO's
+  SETUP clock waits meanwhile (no `no_signal` from the calibration).
+  `TRUNK_RETUNE_CAL:0` ("only listening"): the hold is kept for the whole
+  excursion (lease 3 s renewed every second - a receiver that stops
+  renewing lets it lapse) and released at the return - no gap in the call,
+  no DoA away. The calibration after the RETURN is always immediate.
+  KerberosSDR manual mode (header flag 0x100): no calibration requests; the
+  excursion still works, the calibration is STALE after it as after any
+  retune there.
+- **When it leaves.** Only when no followed call is in progress in the
+  span - a priority talkgroup's or the held talkgroup's grant leaves an
+  ordinary call (the pre-emption ranking; else why `busy_here`). Never in
+  a playback (`out_of_span` as before), while paused (a scanner) or with
+  following off.
+- **When it returns** (`end`): `call_over` - no followed call in progress
+  for the hang time (`TRUNK_HANG`) after the last one ended (on systems
+  that grant every transmission anew the next over usually comes on the
+  same channel within it: the receiver stays for it, and calls that fit
+  the away span are followed there meanwhile); `no_signal` - the SETUP
+  time-out (nothing received) - then that call can't send it out again for
+  30 s (why `retry`); `limit` - `TRUNK_RETUNE_MAX` (a wrong table entry or
+  a continuous carrier can't strand the receiver; also 30 s retry);
+  `command` (`TRUNK_RETURN`); `off` (following or the option switched
+  off); `mode` / `scanner` / `playback` - the command that changes the mode
+  or starts a scanner or a playback goes home first, then runs
+  (`trunk::before_command` in `apply_command`); `not_arrived` - the stream
+  didn't reach the new centre within 5 s. `user_retuned`: the user retunes
+  the centre while away (`FREQ:` / `WIDEBAND_FREQ:` from anyone but the
+  manager) - the excursion is over WITHOUT a return (he took the
+  receiver; the control VFOs back on their offsets). After the return the
+  receiver waits for a control VFO to report again (`returning`, at most
+  20 s), then carries on; a grant update of a call still in progress is
+  heard as late entry and may send it out again - intended.
+- **Nothing of it is the user's tuning.** Every `FREQ:` / VFO move goes
+  through the dispatching guard (not saved; the scanners' "retuned by hand"
+  stops don't trip); the holds go to heimdall directly. A restart while
+  away comes back home (home is what is saved). A playback can't start
+  away: its start command returns first.
+- Wideband scan mode: no excursions (`out_of_span` as before).
+
+### Independent mode: voice tuners (`TRUNK_TUNERS`)
+
+In independent mode every tuner has its own frequency (`TUNER_FREQ`, no
+calibration, no DoA). The user names the tuners the manager may retune for
+voice channels ("voice tuners", e.g. `TRUNK_TUNERS:1,2,3,4`; empty = as
+before). A tuner carrying a control VFO (the control tuner) is never
+retuned, listed or not. For a grant:
+1. a tuner (any) whose usable band holds the channel: the voice VFO there,
+   no retune (the control VFO's tuner first) - as before; a voice tuner
+   carrying a call takes another whose channel fits its span;
+2. else a voice tuner with no followed call in progress (one the manager
+   holds already first): retuned (`TUNER_FREQ` through the dispatching
+   guard) so the channel is in its usable band, at least 30 kHz off DC,
+   at the centre that also holds most of the system's known channels
+   (weighted by their grants; ties: the channel 250 kHz off the centre) -
+   the next grants of the system then often need no retune. The call
+   waits (`tuning`) until the stream shows the tuner there, then is
+   placed. The voice tuner takes the control tuner's gain while the
+   manager uses it (the same band);
+3. else `no_tuner` - or a priority talkgroup's call takes the voice tuner
+   of the oldest lower-ranked call (that one `preempted`).
+Up to four calls outside every span at once with five tuners; with two
+generic RTL-SDRs (heimdall's generic mode, flag 0x1000) one control tuner
+and one voice tuner. A voice tuner is the manager's: the user's own VFOs on
+it move with it (the page says so). Nothing of it is saved (the `TUNERS:`
+record honours the guard). Each voice tuner goes back to the frequency and
+gain it had when the manager first took it when following or the list is
+switched off (or the tuner leaves the list / gets a control VFO), and
+before a mode change, a scanner or a playback starts (`before_command`:
+back first, then the command); a voice tuner the USER retunes is his again
+(no restore), as are all after his `FREQ:` (every tuner) or `TUNERS:`.
+The saved-frequency scan also uses "free tuners" in this mode: the
+manager gives its voice tuners back before the scan starts and pauses
+while it runs, so the two never hold a tuner at once.
+
+Not done: a single-tuner trunk tracker (independent mode, no voice tuner
+free or configured: an excursion of the control VFO's own tuner) - with no
+voice tuner a call outside every span stays `out_of_span`.
+Wideband scan mode: no retunes (`out_of_span` as before).
 
 ### The voice VFO
 Set up, in this order, so the traffic decoder has the grant's options
@@ -240,7 +363,9 @@ same call). A `hang` call goes back to `active` with new activity.
   that site: its VFO goes to the new call without a retune), `preempted`,
   `relabelled` / `wrong_call` (below), `duplicate`, `taken_over` (above),
   `retuned` (its tuner's
-  centre moved > 1 kHz), `mode` (operating mode changed), `control_reset`
+  centre moved > 1 kHz), `excursion` (the receiver left for a priority /
+  held call outside the span), `returned` (still in progress when the
+  receiver went home), `mode` (operating mode changed), `control_reset`
   (its control VFO's decoder reset: retuned, decoder changed, plugin
   restarted), `control_removed`, `forgotten` (`TRUNK_SYS_DEL`), `no_system`,
   `playback` / `playback_end`; a not-followed call's end is its `why` (or
@@ -389,6 +514,10 @@ answered with the status to every page; a refusal also with
 | `TRUNK_AUDIO:0\|1` | hear followed calls | 1 |
 | `TRUNK_HANG:<s>` | hang time, clamped 0.5-10, 0.1 s steps | 2.0 |
 | `TRUNK_ALL_SITES:0\|1` | follow a talkgroup through every site that grants it (1) / once (0) | 0 |
+| `TRUNK_RETUNE:0\|1` | coherent mode: follow a call outside the span by an excursion (retune, calibrate, follow, return) | 0 |
+| `TRUNK_RETUNE_CAL:0\|1` | ... calibrate on arrival (1); 0 = the calibration held for the whole excursion (no gap in the call, no DoA there) | 1 |
+| `TRUNK_RETUNE_MAX:<s>` | ... the longest time away, 10-3600 s, 0 = no limit | 120 |
+| `TRUNK_TUNERS:<list>` | independent mode: the tuners the manager may retune for voice channels, e.g. `1,2,3,4` (0-7; empty = none) | (empty) |
 
 Not saved:
 - `TRUNK_END:<call id>` - stop following that call now; not rejoined.
@@ -397,6 +526,8 @@ Not saved:
   its system is deleted (a held system is never evicted) or the talkgroup is deleted
   (`TRUNK_TG_DEL`): the hold is released then too. A temporary system's
   talkgroup can't be held (no key yet).
+- `TRUNK_RETURN` - an excursion: back home now; its call is stopped (why
+  `stopped`, not rejoined). Refused ("the receiver is home") when not away.
 - `GET_TRUNK` - the status; `GET_TRUNK_SYS:<system id>` - its lists message.
 
 Systems (JSON in the saved-frequency store's style; strings are cleaned:
@@ -438,8 +569,34 @@ renamed.
   / larger than 32 MB; not written - over 32 MB), kept_as (the dated name an
   unreadable file was moved to)}`; `sys_refused` (new air systems not made:
   the table full of the user's).
-- `follow`, `all_sites`, `max_vfos`, `encrypted`, `unit`, `audio`, `hang_s`:
-  the settings.
+- `follow`, `all_sites`, `max_vfos`, `encrypted`, `unit`, `audio`, `hang_s`,
+  `retune`, `retune_cal`, `retune_max_s`: the settings.
+- `excursion`: null at home, else `{state ("leaving" - retuned, the stream
+  not there yet | "away" | "returning" - home again, waiting for the
+  calibration and the control channel, at most 20 s), since (epoch ms it
+  left), away_ms, call (its id), sys, target, ch, hz (its channel), centre_hz
+  (where it went), home_hz, how ("control" - a control VFO of the system is
+  in the away span | "offset" - the channel 250 kHz from the centre),
+  calibration ("running" | "done" | "held" - TRUNK_RETUNE_CAL:0 while away |
+  "manual" - KerberosSDR, no calibration requests), end (why it returned:
+  set in "returning"), limit_ms (time left before TRUNK_RETUNE_MAX, -1 = no
+  limit / not away), ctl: [{vfo, parked}] (every control VFO: parked = it
+  is outside the away span, disabled until the return)}`.
+- `tuners`: the `TRUNK_TUNERS` list; `voice_tuners`: one entry per listed
+  (or still taken) tuner: `{tuner, control (a control VFO is on it: never
+  retuned), taken (the manager has retuned it), hz (where it is now),
+  home_hz / home_gain (where the manager found it; null while not taken),
+  calls (followed calls in progress on it), tuning_for (the call it is
+  being retuned for, 0 = none), tune_ms (the latest retune -> the stream
+  there, -1 = none yet)}`.
+- `excursions`: `{n, away_ms (total), ends: {<why>: n} - call_over |
+  no_signal | limit | command | off | mode | scanner | playback |
+  user_retuned | not_arrived, calls_away (calls that started while away),
+  calls_missed (calls not followed because the receiver was away: why
+  `away`), last: {arrive_ms (retune -> the stream at the new centre),
+  cal_ms (arrival -> CONVERGED, noise off), first_frames_ms (left -> the
+  call ACTIVE), back_arrive_ms, back_cal_ms, ctl_back_ms (return -> a
+  control VFO reporting again); -1 = not seen}}`.
 - `paused` (bool), `paused_why` (`"saved-frequency scan"` | `"discrete
   scanner"` | `"continuous scanner"` | `""`), `playback` (bool), `mode`
   (`coherent` | `wideband` | `independent`), `hold`: `{"sys","tg"}` | null.
