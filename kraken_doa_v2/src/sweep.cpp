@@ -43,7 +43,12 @@ constexpr float SEAM_MAX_DB = 6.0f;
 constexpr float REWRITE_DB = 0.25f;
 constexpr int64_t EVAL_FIRST_MS = 250;    // until the first sweep on a grid is complete
 constexpr int64_t EVAL_MS = 1000;
-constexpr int SLOTS = 8;                  // packets queued for the worker (~55 ms at 16384 samples)
+constexpr int SLOTS = 8;
+// a hop's 10th percentile below this (dB, the FFT's units) is a tuner that delivers constant samples
+constexpr float DEAD_DB = -100.0f;
+// a hop that never ends (another control client paused heimdall, this
+// client didn't): committed every this many samples and measured again
+constexpr int64_t HOP_MAX_SAMPLES = 2400000;                  // packets queued for the worker (~55 ms at 16384 samples)
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -92,13 +97,51 @@ float spread_db(int m) {
     return static_cast<float>(10.0 * std::log10(q50 / q10));
 }
 
+// The samples a hop gets at a dwell: heimdall's valid packets per hop,
+// measured on the KrakenSDR at dwell 20 ms: 1.3-1.6 of 16384 samples - about
+// half of what the dwell holds (its flushes), never less than one packet
+int64_t hop_samples(int dwell_ms) {
+    return std::max<int64_t>(16384, static_cast<int64_t>(dwell_ms) * 1200);
+}
+// Frames overlap by half where a hop would give fewer than
+// SWEEP_OVERLAP_BELOW frames of its own: twice the frames from the same
+// samples, at twice the FFTs - only where the averaging is short (a wide
+// sweep at a small N has plenty and doesn't pay for it)
+constexpr int SWEEP_OVERLAP_BELOW = 16;
+bool overlapped(int n, int64_t samples) { return samples / n < SWEEP_OVERLAP_BELOW; }
+// Hann frames of N in that many samples
+int frames_for(int n, int64_t samples) {
+    if (samples < n) return 0;
+    return static_cast<int>(overlapped(n, samples) ? 2 * samples / n - 1 : samples / n);
+}
+
+// The median of Gamma(m, 1/m) in dB (<= 0): how far a noise bin averaged over
+// m frames sits, by its median, under the noise's mean - hops of different m
+// (1-2 packets a hop on the KrakenSDR) are levelled by their own
+float median_db(int m) {
+    static float cache[257] = {};
+    static bool done[257] = {};
+    m = std::max(m, 1);
+    if (m <= 256) {
+        if (!done[m]) {
+            cache[m] = static_cast<float>(10.0 * std::log10(gamma_q(m, 0.5) / m));
+            done[m] = true;
+        }
+        return cache[m];
+    }
+    const double a = 2.0 / (9.0 * 2.0 * m);   // Wilson-Hilferty, as spread_db
+    return static_cast<float>(10.0 * std::log10(std::pow(1.0 - a, 3.0)));
+}
+
 // The FFT size for the sweep's hops: the request (0 = auto), never more than
 // SWEEP_MAX_BINS bins in the sweep; auto = the largest N with at most
-// SWEEP_AUTO_BINS (docs: why)
-int fft_size_for(int res, int64_t hops) {
+// SWEEP_AUTO_BINS bins that still averages SWEEP_AUTO_FRAMES frames in a hop
+// at this dwell (docs: why)
+int fft_size_for(int res, int64_t hops, int dwell_ms) {
     const int64_t cap = res == 0 ? SWEEP_AUTO_BINS : SWEEP_MAX_BINS;
     int n = res == 0 ? SWEEP_FFT_MAX : res;
-    while (n > SWEEP_FFT_MIN && hops * u_of(n) > cap) n /= 2;
+    const int64_t smp = hop_samples(dwell_ms);
+    while (n > SWEEP_FFT_MIN && (hops * u_of(n) > cap || (res == 0 && frames_for(n, smp) < SWEEP_AUTO_FRAMES))) n /= 2;
     return n;
 }
 
@@ -124,6 +167,10 @@ struct Plan {
     int dwell = SWEEP_DWELL_DEFAULT_MS;
     int res = 0;
     uint32_t grid = 0;       // the id the pages see
+    int avg = 0;             // frames a hop is expected to average (hop_samples at the dwell)
+    bool overlap = false;    // 50 % overlapped frames (overlapped())
+    // the contract's block of each tuner taking part: hops [blo, bhi) (-1 = none)
+    int blo[MAX_CHANNELS] = {-1, -1, -1, -1, -1, -1, -1, -1}, bhi[MAX_CHANNELS] = {-1, -1, -1, -1, -1, -1, -1, -1};
     bool ok = false;
 };
 
@@ -145,7 +192,7 @@ Plan make_plan(const Settings& s, int avail) {
     const int64_t span = s.stop - s.start;
     p.H = static_cast<int>(std::max<int64_t>(1, (span + SWEEP_STEP_HZ - 1) / SWEEP_STEP_HZ));
     p.res = s.res;
-    p.N = fft_size_for(s.res, p.H);
+    p.N = fft_size_for(s.res, p.H, s.dwell);
     p.U = u_of(p.N);
     p.bin_hz = FS / p.N;
     // bin g at start + g * bin: the bins up to stop (exact integer arithmetic)
@@ -160,6 +207,15 @@ Plan make_plan(const Settings& s, int avail) {
     p.f0 = s.start + SWEEP_STEP_HZ / 2;
     p.dwell = s.dwell;
     p.grid = grid_id(p.start, p.stop, p.N);
+    p.avg = frames_for(p.N, hop_samples(p.dwell));
+    p.overlap = overlapped(p.N, hop_samples(p.dwell));
+    for (int t = 0; t < MAX_CHANNELS; t++) p.blo[t] = p.bhi[t] = -1;
+    for (int t = 0, k = 0; t < MAX_CHANNELS && k < p.Kp; t++)
+        if (p.tuners & (1u << t)) {
+            p.blo[t] = static_cast<int>(static_cast<int64_t>(k) * p.H / p.Kp);
+            p.bhi[t] = static_cast<int>(static_cast<int64_t>(k + 1) * p.H / p.Kp);
+            k++;
+        }
     p.ok = true;
     return p;
 }
@@ -185,6 +241,7 @@ struct Store {
     std::vector<std::vector<int16_t>> lv;
     std::vector<float> floor;     // per hop: its 10th percentile (dB, shape off, as measured), NaN = none
     std::vector<float> applied;   // per hop: the reference its bins are stored against
+    std::vector<float> delta;     // per hop: median_db(its frames) - NOISE_SHOWN_DB (its reference = base + step + delta)
     std::vector<int8_t> tuner;    // per hop: who measured it last (-1 none)
     float base = NAN;             // the reference = base + off[tuner]
     std::array<float, MAX_CHANNELS> off{};
@@ -279,6 +336,7 @@ void shift_hop(int h, float d) {
 void evaluate() {
     const Plan& p = S.plan;
     S.eval_ms = now_ms();
+    if (S.tuner.size() != static_cast<size_t>(p.H) || S.lv.empty()) return;
     std::array<float, MAX_CHANNELS> off{};
     for (int k = 0; k + 1 < p.Kp; k++) {
         const int ta = tuner_of_rank(p.tuners, k), tb = tuner_of_rank(p.tuners, k + 1);
@@ -316,7 +374,7 @@ void evaluate() {
     for (int h = 0; h < p.H; h++) {
         const int8_t t = S.tuner[static_cast<size_t>(h)];
         if (t < 0) continue;
-        const float r = S.base + ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f);
+        const float r = S.base + ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f) + S.delta[static_cast<size_t>(h)];
         const float d = S.applied[static_cast<size_t>(h)] - r;
         if (std::fabs(d) > REWRITE_DB) {
             shift_hop(h, d);
@@ -335,14 +393,30 @@ bool apply_plan(bool bump) {
     const Plan& op = S.plan;
     const bool grid = !op.ok || np.start != op.start || np.stop != op.stop || np.N != op.N;
     const bool heim = !op.ok || np.f0 != op.f0 || np.H != op.H || np.tuners != op.tuners || np.dwell != op.dwell;
-    const bool any = grid || heim || np.res != op.res;
+    const bool any = grid || heim || np.res != op.res || np.overlap != op.overlap;
     np.gen = op.gen + ((any || bump) ? 1 : 0);
     np.grid_gen = op.grid_gen + (grid ? 1 : 0);
     if (grid) {
+        // a new grid: no data; its arrays are made when the mode runs (a
+        // receiver that never sweeps holds none - ~16 MB at the bin cap)
+        std::vector<std::vector<int16_t>>().swap(S.lv);
+        std::vector<float>().swap(S.floor);
+        std::vector<float>().swap(S.applied);
+        std::vector<float>().swap(S.delta);
+        std::vector<int8_t>().swap(S.tuner);
+        S.base = NAN;
+        S.off = {};
+        S.any = false;
+        S.done = 0;
+        S.last_s = 0;
+        g_progress.store(0.0f);
+    }
+    if (np.ok && S.lv.empty() && g_active.load()) {
         try {
             pyr_alloc(static_cast<size_t>(np.bins));
             S.floor.assign(static_cast<size_t>(np.H), NAN);
             S.applied.assign(static_cast<size_t>(np.H), 0.0f);
+            S.delta.assign(static_cast<size_t>(np.H), 0.0f);
             S.tuner.assign(static_cast<size_t>(np.H), -1);
             S.scratch.reserve(static_cast<size_t>(np.H));
         } catch (const std::bad_alloc&) {
@@ -350,12 +424,6 @@ bool apply_plan(bool bump) {
             S.lv.clear();
             np.ok = false;
         }
-        S.base = NAN;
-        S.off = {};
-        S.any = false;
-        S.done = 0;
-        S.last_s = 0;
-        g_progress.store(0.0f);
     }
     S.plan = np;
     g_mask.store(np.tuners, std::memory_order_relaxed);
@@ -387,6 +455,7 @@ struct Acc {
     std::vector<float> pw;              // |X|^2 summed, DC centred
     std::vector<uint8_t> pend;          // a block's first samples from the previous packet
     int pend_n = 0;
+    int64_t samples = 0;                // since the hop began (HOP_MAX_SAMPLES)
 };
 
 struct Worker {
@@ -420,12 +489,25 @@ struct Worker {
         have = p.ok;
         if (!have) return;
         if (fft_n != p.N) {
+            // the new buffers first: a bad_alloc leaves the old ones (and have = false)
+            have = false;
+            kfft_complex* nin = kfft_alloc_complex(static_cast<size_t>(p.N));
+            kfft_complex* nout = nullptr;
+            kfft_plan nfft = nullptr;
+            try {
+                nout = kfft_alloc_complex(static_cast<size_t>(p.N));
+                nfft = kfft_plan_dft_1d(p.N, nin, nout, KFFT_FORWARD);
+            } catch (...) {
+                kfft_free(nin);
+                kfft_free(nout);
+                throw;
+            }
             if (fft) kfft_destroy_plan(fft);
             kfft_free(in);
             kfft_free(out);
-            in = kfft_alloc_complex(static_cast<size_t>(p.N));
-            out = kfft_alloc_complex(static_cast<size_t>(p.N));
-            fft = kfft_plan_dft_1d(p.N, in, out, KFFT_FORWARD);
+            in = nin;
+            out = nout;
+            fft = nfft;
             fft_n = p.N;
             win.resize(static_cast<size_t>(p.N));
             for (int i = 0; i < p.N; i++)
@@ -442,6 +524,7 @@ struct Worker {
             a.pw.assign(static_cast<size_t>(p.N), 0.0f);
             a.pend.resize(static_cast<size_t>(p.N) * 2);
         }
+        have = true;
         have_counter = false;
         pass_ok = false;
         seen = 0;
@@ -471,10 +554,14 @@ struct Worker {
         a.frames++;
     }
 
+    // Hann frames, with 50 % overlap when the plan says so (a hop of one
+    // 16384-sample packet: 7 frames of 4096 instead of 4). Every sample goes
+    // through pend (N samples): a frame when it is full, then (overlap) its
+    // second half moves to the front
     void feed(Acc& a, const uint8_t* b, uint32_t samples) {
-        const int n = p.N;
+        const int n = p.N, half = n / 2;
         int rem = static_cast<int>(samples);
-        if (a.pend_n > 0) {
+        while (rem > 0) {
             const int take = std::min(rem, n - a.pend_n);
             std::memcpy(a.pend.data() + 2 * a.pend_n, b, static_cast<size_t>(take) * 2);
             a.pend_n += take;
@@ -482,17 +569,13 @@ struct Worker {
             rem -= take;
             if (a.pend_n == n) {
                 block(a, a.pend.data());
-                a.pend_n = 0;
+                if (p.overlap) {
+                    std::memmove(a.pend.data(), a.pend.data() + n, static_cast<size_t>(n));   // half the samples
+                    a.pend_n = half;
+                } else {
+                    a.pend_n = 0;
+                }
             }
-        }
-        while (rem >= n) {
-            block(a, b);
-            b += 2 * n;
-            rem -= n;
-        }
-        if (rem > 0) {
-            std::memcpy(a.pend.data(), b, static_cast<size_t>(rem) * 2);
-            a.pend_n = rem;
         }
     }
 
@@ -502,6 +585,7 @@ struct Worker {
         const int h = a.hop, fr = a.frames;
         a.frames = 0;
         a.pend_n = 0;
+        a.samples = 0;
         if (fr == 0) return;
         const int n = p.N, c = n / 2, k0 = (n - p.U) / 2;
         float* pw = a.pw.data();
@@ -519,21 +603,42 @@ struct Worker {
                 db[static_cast<size_t>(i)] = 10.0f * std::log10(pw[k] + 1e-20f) - norm - (sh ? shape[static_cast<size_t>(k)] : 0.0f);
             }
             std::copy(db.begin(), db.begin() + p.U, tmp.begin());
-            // the hop's floor: where its noise's median would be, - NOISE_SHOWN_DB
-            const float phi = quantile(tmp, static_cast<size_t>(p.U), 0.10f) + spread_db(fr) - NOISE_SHOWN_DB;
-            if (is_finite_value(phi)) store(h, t, phi);
+            // the hop's floor: where its noise's median would be, - NOISE_SHOWN_DB.
+            // (K frames of 50 % overlap spread like Gamma(K) at these quantiles -
+            // simulated 1 .. 20 frames, within 0.06 dB)
+            const float p10 = quantile(tmp, static_cast<size_t>(p.U), 0.10f);
+            // phi = the noise's MEAN (its median p10 + spread, less the median's
+            // offset from the mean at this many frames): the same for hops of 1 or
+            // 2 packets; the hop is stored against base + step + delta, so its
+            // noise median shows at NOISE_SHOWN_DB whatever its frames
+            const float phi = p10 + spread_db(fr) - median_db(fr);
+            const float dlt = median_db(fr) - NOISE_SHOWN_DB;
+            // a tuner delivering constant samples (a dead dongle: the mean taken off
+            // leaves nothing, ~-200 dB) is no measurement - it would drag the reference
+            // down for every hop; uint8 noise of even 1 count stands ~60 dB over it
+            if (is_finite_value(phi) && p10 > DEAD_DB) {
+                store(h, t, phi, dlt);
+            } else if (p10 <= DEAD_DB) {
+                // and what it measured before goes out of the reference too: the hop
+                // measured as the dongle died held part live, part constant samples
+                // (a floor several dB low), which pulled the seam step and the base
+                std::lock_guard<std::mutex> lk(g_mu);
+                if (S.plan.ok && S.plan.grid_gen == p.grid_gen && static_cast<size_t>(h) < S.tuner.size())
+                    S.tuner[static_cast<size_t>(h)] = -1;
+            }
         }
         std::fill(a.pw.begin(), a.pw.end(), 0.0f);
     }
 
-    void store(int h, int t, float phi) {
+    void store(int h, int t, float phi, float dlt) {
         std::lock_guard<std::mutex> lk(g_mu);
         const Plan& sp = S.plan;
         if (!sp.ok || sp.grid_gen != p.grid_gen || S.lv.empty()) return;   // the grid changed meanwhile
         if (!is_finite_value(S.base)) S.base = phi;   // the first hop of a grid
         S.floor[static_cast<size_t>(h)] = phi;
+        S.delta[static_cast<size_t>(h)] = dlt;
         S.tuner[static_cast<size_t>(h)] = static_cast<int8_t>(t);
-        const float r = S.base + ((sp.tuners >> t) & 1u ? S.off[static_cast<size_t>(t)] : 0.0f);
+        const float r = S.base + ((sp.tuners >> t) & 1u ? S.off[static_cast<size_t>(t)] : 0.0f) + dlt;
         S.applied[static_cast<size_t>(h)] = r;
         const int64_t a = static_cast<int64_t>(h) * sp.U, b = std::min<int64_t>(a + sp.U, sp.bins);
         std::vector<int16_t>& v = S.lv[0];
@@ -599,8 +704,12 @@ struct Worker {
             if (t < 0 || t >= MAX_CHANNELS || !((p.tuners >> t) & 1u)) continue;
             Acc& a = acc[static_cast<size_t>(t)];
             const double f = s.freq[i];
-            const long long h = std::llround((f - static_cast<double>(p.f0)) / step);
-            if (!is_finite_value(f) || h < 0 || h >= p.H ||
+            const long long h = is_finite_value(f) ? std::llround((f - static_cast<double>(p.f0)) / step) : -1;
+            // on a hop of the plan AND of this tuner's block (the contract's assignment):
+            // a selected tuner heimdall doesn't use (K' < selected) is never retuned and
+            // may sit on another tuner's hop centre; frequency 0 = heimdall's "retune
+            // failed, no valid frequency"
+            if (!is_finite_value(f) || f <= 0 || h < p.blo[t] || h >= p.bhi[t] ||
                 std::fabs(f - (static_cast<double>(p.f0) + static_cast<double>(h) * step)) > HOP_TOL_HZ) {
                 if (a.frames > 0 || a.pend_n > 0) commit(t);
                 a.hop = -1;
@@ -611,6 +720,8 @@ struct Worker {
                 a.hop = static_cast<int>(h);
             }
             feed(a, s.data.data() + static_cast<size_t>(i) * s.samples * 2, s.samples);
+            a.samples += s.samples;
+            if (a.samples >= HOP_MAX_SAMPLES) commit(t);   // (keeps the hop; measured again)
         }
     }
 };
@@ -653,7 +764,12 @@ std::string mhz(int64_t hz) {
 // a whole number / decimal, nothing after it
 double number(const std::string& s) {
     size_t used = 0;
-    const double v = std::stod(s, &used);
+    double v = 0;
+    try {
+        v = std::stod(s, &used);
+    } catch (const std::exception&) {
+        throw std::invalid_argument("not a number: " + s);
+    }
     while (used < s.size() && (s[used] == ' ' || s[used] == '\t')) used++;
     if (used != s.size() || !is_finite_value(v)) throw std::invalid_argument("not a number: " + s);
     return v;
@@ -738,7 +854,7 @@ void set_running(bool on) {
 bool running() { return g_run.load(); }
 
 void on_mode(bool active) {
-    g_active.store(active, std::memory_order_release);
+    g_active.store(active, std::memory_order_release);   // (before apply_plan: it allocates the arrays)
     // the worker restarts its hops and rounds (the tuners moved meanwhile)
     apply_plan(true);
 }
@@ -800,7 +916,7 @@ std::string state_json() {
     o << "],\"available\":" << std::clamp(active_num_elements.load(), 1, MAX_CHANNELS) << ",\"res\":" << p.res
       << ",\"fft_size\":" << p.N << ",\"bin_hz\":" << bin << ",\"bins\":" << p.bins << ",\"hops\":" << p.H
       << ",\"rounds\":" << p.R << ",\"dwell_ms\":" << p.dwell << ",\"running\":" << (g_run.load() ? "true" : "false")
-      << ",\"grid\":" << p.grid;
+      << ",\"grid\":" << p.grid << ",\"avg\":" << p.avg;
     // the common gain (optional: once known)
     if (const float g = g_gain.load(); is_finite_value(g)) {
         char gb[24];

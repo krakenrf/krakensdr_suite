@@ -54,9 +54,11 @@ constexpr int SWEEP_FFT_MIN = 128;
 constexpr int SWEEP_FFT_MAX = 16384;
 // The bins of one sweep: SWEEP_RES:<N> takes a smaller N when its sweep
 // would hold more (the applied size is reported as fft_size); auto picks the
-// largest N whose sweep holds at most SWEEP_AUTO_BINS
+// largest N whose sweep holds at most SWEEP_AUTO_BINS and whose hops still
+// average SWEEP_AUTO_FRAMES frames (50 % overlap) at the dwell
 constexpr int64_t SWEEP_MAX_BINS = 1 << 22;
 constexpr int64_t SWEEP_AUTO_BINS = 1 << 19;
+constexpr int SWEEP_AUTO_FRAMES = 8;
 constexpr int SWEEP_DWELL_MIN_MS = 5;
 constexpr int SWEEP_DWELL_MAX_MS = 1000;
 constexpr int SWEEP_DWELL_DEFAULT_MS = 20;
