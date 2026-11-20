@@ -126,7 +126,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   pad 200 ms) -> only the speech parts, joined by 150 ms of silence (< 200
   ms of speech = "no speech", whisper never runs: 30-40 ms for 5 s of noise)
   -> whisper_full (greedy, no_context, no_timestamps, suppress_nst, language
-  "en" for .en models) -> segments with no_speech > 0.6 AND avg logprob < -1
+  "en" for .en models; since 2026-11-20 a SIZED encoder window, below) ->
+  segments with no_speech > 0.6 AND avg logprob < -1
   skipped -> [..] (..) *..* and music notes stripped, a sentence / word
   repeated 4+ times kept once -> dropped: empty, subtitle-credit phrases
   ("thanks for watching"...), lone fillers ("thank you", "you", "bye"...)
@@ -139,7 +140,63 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   help - same text, and always on they broke a clip that decoded fine.
   Our own VAD
   (not whisper_full's vad flag): its segment list goes stale when a clip has
-  NO speech, so speech_ms couldn't be read
+  NO speech, so speech_ms couldn't be read.
+  ENCODER WINDOW (2026-11-20, `encoder_window()`): whisper encodes 30 s
+  whatever the input - ~90 % of a 5-13 s job. `audio_ctx` = the input (the
+  joined speech) in 20 ms frames + 50 (1 s more), rounded UP to a multiple of
+  256 (5.1 / 10.2 / 15.4 / 20.5 / 25.6 s; from 24.6 s of input on the full
+  1500). The input's length exactly made whisper loop (no end-of-text ->
+  ~220 tokens -> 5 temperature fallbacks: slower than 30 s - why it "was
+  SLOWER" before); + 1 s unrounded gave texts that depended on the clips
+  decoded BEFORE (whisper.cpp 1.9.4 with flash attention, its default, reads
+  the cross-attention cache in steps of 256 frames, unmasked: past
+  audio_ctx it read what an earlier encode had left - zeros in a fresh
+  process; 5 of 15 clips changed between run 1 and 2, loops came and went).
+  Rounded, every frame read is this input's: the same text in any order and
+  with any thread count. A full-window decode runs in a whisper state no
+  sized encode has written into (`state_for`: one state at a time, a fresh
+  one - caches zeroed by whisper.cpp, 4-24 ms - when the other kind is
+  needed), so its padding is zeros as before; two states at once took
+  base.en 259 -> 322 MB, small.en 662 -> 789 MB peak, one at a time 262 /
+  663 MB (sized jobs only: 228 / 623 MB). LOOP GUARD: a token cap through `logits_filter_callback` - 6 text
+  tokens per second of input (multilingual 10) + 16; at the cap end-of-text
+  is forced (and at once in whisper's temperature fallbacks); a final decode
+  that reached it is decoded again with the full window and no cap = the
+  decode of before, so the cap can never cut a transcript short (a low cap
+  only costs CPU; tested with a build whose cap fired on every decode: 28 of
+  30 texts = the old helper's, the other 2 never reached it). Applies to
+  every decode (the no-prompt and two-halves retries too); temperature
+  fallback kept for finals. With the rounded window no English model's
+  decode reached the cap on the bench clips; the multilingual base did once
+  (a clip it took for German: 10.5 CPU s with the guard, 6.3 s in the old
+  helper - its own temperature fallbacks).
+  PARTIAL (Live text, wire type 3 -> PARTIAL_RESULT 19, READY `live=1`;
+  `transcribe_partial`): the same VAD (< 200 ms speech -> "" without
+  whisper), prompt, language, sized window and clean-up, but decoded ONCE:
+  greedy even with a beam set, `temperature_inc` 0, the token cap just ends
+  it (no retry), no no-prompt / two-halves retries, and a phrase of up to 8
+  words looped 4+ times kept once with a cut-off copy at the end dropped
+  (`collapse_phrase_loops` - the cap often stops a loop mid-phrase: "ask not
+  ask not ... ask"). Without the guards whisper looped / invented words on
+  half-spoken audio (7-10 s decodes); with them 0.17 s median, 0.53 s max
+  (base.en-q8_0, 2 threads; small.en-q8_0 4 threads 0.38 / 1.2 s). Offline:
+  `--file x.wav --partial` (one partial), `--stream 1000` (the live
+  schedule: a partial of the audio so far every second, LocalAgreement-2
+  confirmed / pending per line, then the final and a summary).
+  `kraken_whisper --quantize IN OUT q8_0|q5_0|q5_1` (`transcribe/quantize.cpp`,
+  ported from whisper.cpp's quantize example, MIT): byte for byte what
+  whisper-quantize writes (checked: base.en / small.en q8_0), ~20 MB of
+  memory (1M weights at a time), refuses a quantized / non-speech-model /
+  truncated input and OUT = IN, removes OUT on failure, exit 0 = done.
+  Helper tests 2026-11-20 (job fa22c145 scratch, `helper/`): t_wire.py (23
+  checks on the wire: READY live=1, JOB / PARTIAL answers, silence / noise /
+  empty partials -> "", OPTIONs, unknown types and short jobs ignored, 19 /
+  27 / 44 s inputs decoded to their last words, oversize -> ERROR + exit 2,
+  a bad model -> ERROR), t_guard.sh (above), t_quantize.sh (19 error paths:
+  wrong type / input, truncated, OUT = IN also by sym / hard link, /dev/full),
+  t_setup.sh (11, a stub curl: the derived models with / without the f16,
+  no helper, a failing helper), bench_serve.py / wer.py / stream_stats.py
+  (the numbers below)
 - PROMPT ("Words to expect", `VOICE2TEXT_PROMPT:`, <= 300): whisper reads it
   as the text said before, and a bare list ("Houston, Roger, over") made
   greedy decoding END after one word ("the", conf 0.99) on 2 of 4 test
@@ -282,9 +339,31 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 - Measured (Pi 5, other sessions loading it, load avg 5-8): base.en ~280 MB
   RSS, an 8-11 s transmission in 3-7 s on 2-3 threads (rtf 0.3-0.6),
   tiny.en 175 MB / ~2x faster but poor on radio audio, small.en-q5_1 460 MB
-  and ~2x slower than real time (the most accurate). `audio_ctx` (shorter
-  encoder window) was SLOWER here and is documented to cost accuracy - not
-  used. Parakeet (also in whisper.cpp 1.9) not used
+  and ~2x slower than real time (the most accurate) - all with the full 30 s
+  window of before 2026-11-20. The sized window (above; measured 2026-11-20 on
+  the PC, i7-11800H, 14 WBFM speech clips + JFK, the helper's serve mode, CPU
+  s per job, word error rate against medium.en-q5_0 with the full window):
+  base.en 2 threads 2.91 -> 0.93 s (11.1 % -> 11.1 %), small.en 2 threads
+  10.8 -> 3.65 s (9.3 -> 7.4 %), 4 threads 12.1 -> 4.09 s; 8-bit q8_0 models
+  (made with `--quantize`): base.en-q8_0 2.15 -> 0.78 s (10.6 -> 12.5 %: one
+  clip's last sentence twice), small.en-q8_0 8.29 -> 2.67 s (9.3 -> 7.4 %) -
+  q8_0 ~16 % (base) / 27 % (small) less CPU than f16, about as accurate;
+  q5_1 was slower than f16 on this PC. The multilingual base (language
+  auto): 5.66 -> 2.2-2.8 s (13.9 -> 15.3 %); its texts the same forwards and
+  backwards except one clip that needs whisper's temperature fallback
+  (random sampling - the old helper's results depend on the jobs before it
+  there too). Threads: base.en 1 / 2 / 4 = 0.89 /
+  0.93 / 1.09 CPU s per job (0.88 / 0.47 / 0.28 s wall): more threads finish
+  sooner but cost more CPU. Every text identical over 2-3 runs and across
+  thread counts. Live text (`--stream 1000` on the 15 clips): base.en-q8_0 2
+  threads partial decodes 0.17 s median / 0.53 s max, 0.43 cores while
+  someone talks, words shown 0.8 s (median) / 1.2 s (p90) after they were
+  spoken, confirmed 1.8 / 3.3 s; base.en 2 threads 0.58 cores, 1.0 / 1.3 s,
+  2.0 / 3.5 s; small.en-q8_0 4 threads 1.91 cores, 1.3 / 1.6 s, 1.9 / 2.7 s
+  (2 threads 1.48 cores, 1.8 / 2.5 s, 3.0 / 3.9 s); small.en 4 threads 2.56
+  cores, 1.5 / 1.9 s, 2.5 / 4.1 s; 51-63 % of the words confirmed before the
+  final, 3.5-7 % of those changed by it. Not measured on a Pi (estimate x3-5).
+  Parakeet (also in whisper.cpp 1.9) not used
 - Tests (scratchpad of job 27e7efb6): fake_heimdall_voice.py (FM with a 100
   Hz CTCSS / AM / bare carrier speech clips onto a 5-element UCA from set
   bearings, generated block by block) + a TEST build on 3908x + t_v2t.py:
