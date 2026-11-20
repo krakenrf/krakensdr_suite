@@ -268,9 +268,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `v2tInstallHtml()`, per receiver OS / Windows package). It was a card of
   that dialog's Add-ons tab, beside the sidebar box's own note, until
   2026-11-17 - *sidebar.md*, "Setup Settings dialog".
-- Pushes: `{"voice2text":{"new":[..]}}` (`take_new_message`) and the live
-  rows `{"voice2text":{"live":[..]}}` when they changed
-  (`take_live_message`, "Live text" below) on a 250 ms timer (1 s until
+- Pushes: `{"voice2text":{"new":[..]}}` and the live rows
+  `{"voice2text":{"live":[..]}}` when they changed, both taken under one
+  lock (`take_pushes`, "Live text" below) on a 250 ms timer (1 s until
   2026-11-20; the new transcripts first, so a final replaces its live row
   in the same pass), and once a second
   `{"voice2text":{"status":{..}}}` when it changed (state off | starting |
@@ -278,13 +278,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   models [{name, mb, multi, note}], catalogue (MODEL_CATALOGUE = setup.sh's
   CATALOGUE - keep them equal) with have and, for a derived model, from
   (below), vad_model, settings (+ live), model_multi, live_ok (null = no helper
-  loaded yet, false = an older helper), partials, partials_stale, partial_ms,
+  loaded yet, false = an older helper), partials, partials_stale,
+  partials_slow, partial_ms,
   log{enabled}, loaded, vad_loaded, queue, queued_s, dropped, done, nospeech,
   failed, rtf, clips, clip_mb, clip_dir (absolute), clip_days, clip_free_mb,
   clip_low, clips_skipped, clip_error, loop_max_ms + in_dropped_s (the
   worker's longest loop / input dropped at the 3 s cap - diagnostics),
   vfos [{id, src, rec, secs, digital}],
-  download{name, running, stage (download | quantize), pct, error}); `GET_VOICE2TEXT` (page connect) ->
+  download{name, running, stage (download | quantize | vad: the VAD model), pct, error}); `GET_VOICE2TEXT` (page connect) ->
   status + `history` (300) + `live` (the rows now). `VOICE2TEXT_CLEAR` empties history, file and
   clips. Settings (schema BEFORE DECIMATORS, so restored VFOs start with
   the model set): `VOICE2TEXT_MODEL:` (name = ggml-<name>.bin, [A-Za-z0-9._-],
@@ -304,10 +305,25 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   `<transcribe dir>/build/kraken_whisper --quantize <f16> <models>/ggml-<name>.bin.part
   q8_0` (kproc, nice 10, stderr kept: a failure reports its last line,
   "making the model failed (exit 3): ...") and the rename, then the VAD
-  model if missing. stage "quantize" while it runs, its pct = the output's
-  size / the catalogue MB. Refused without the helper ("the speech helper
-  is not installed - it makes this model"); `v2t::stop()` ends the
-  quantizer as it does curl
+  model if missing (stage "vad": the page said "Downloading base.en to make
+  base.en-q8_0… 0 %" during it - review 2026-11-20). stage "quantize" while
+  it runs, its pct = the output's size / the catalogue MB. Refused without
+  the helper ("the speech helper is not installed - it makes this model"),
+  and with an older one, before anything is downloaded (review
+  2026-11-20: it printed its usage and exited 1 - "making the model failed
+  (exit 1): [--prompt ...", after a 466 MB download for small.en-q8_0):
+  `helper_quantizes()` runs `kraken_whisper --help` (a few ms, at most 3 s)
+  and looks for "--quantize" in its usage -> "the speech helper is older
+  than the 8-bit models - update it (make whisper), then Get again" (not
+  from READY's live: the file may be newer than the running helper).
+  `v2t::stop()` ends the quantizer as it does curl. LEFTOVERS
+  (`clean_model_leftovers`, at startup and before every Get, review
+  2026-11-20): a Get killed midway (kraken_doa killed, a crash, the power)
+  left `ggml-<name>.f16` (142 / 466 MB, no list shows it) and `.part`
+  files, and the next Get fetched the f16 again; removed are exactly
+  `ggml-<catalogue name>.bin.part`, `ggml-<derived>.f16` and `.f16.part`,
+  `ggml-<VAD>.bin.part` - the .part ones only when not written to for 60 s
+  (setup.sh makes the same .part names and may be running), each logged
 - Paths: `KRAKEN_TRANSCRIBE_DIR` (default `transcribe`, cwd-relative) holds
   `build/kraken_whisper`; models in `KRAKEN_WHISPER_MODELS` (default
   `<dir>/models`). Docker: helper built in the image (`--build-arg
@@ -505,7 +521,26 @@ default, because of its CPU cost (measured below).
   goes, and only while no final is queued (`pending_`) and nothing is in
   flight: finals always first, one message in flight, so several VFOs
   talking at once alternate and each gets fewer updates. Not during a
-  playback (`playback::active()`; the input stops then anyway).
+  playback (`playback::active()`; the input stops then anyway). A SLOW
+  helper (review 2026-11-20: a partial started every second whatever it
+  took - on a Pi a partial of a long piece could outlast the transmission,
+  be thrown away and hold that piece's final up by its whole run time):
+  a piece's next partial no sooner than `LIVE_DUTY` 2x what its last one
+  took (`Tap::live_took_ms`; at least the 1 s), so partials take at most
+  about half the helper's time; and none any more for a piece whose next
+  one is expected to take over `LIVE_MAX_PARTIAL_MS` 4 s (`Tap::live_slow`;
+  counted once per piece in `partials_slow`, the page's status row says
+  "N too long"). Expected = the wall time of the piece's last partial
+  (before its first: of the latest partial of any piece; none after a
+  helper restart) x its audio now / that partial's audio, both taken as
+  at least `LIVE_WINDOW_S` 5.12 s - the helper's smallest encoder window,
+  below which a decode costs about the same. Two tries that failed in the
+  tests: the step from the NEXT partial's expected time (as the piece
+  grows during the wait, the wait never ends for 0.5 s of decode per
+  second of audio or more - the stub at 0.3 s/s waited 4.5 s after a 0.4
+  s partial), and the expected time from an average time per second of
+  audio without the floor (a stub taking a constant 1.6 s was given up
+  after its second partial: 1.6 s for 1 s of audio "is" 6.7 s for 4.2 s).
 - PARTIAL_RESULT (`Worker::on_partial`): discarded (counted
   `partials_stale`) when its piece was finalized, dropped or replaced
   meanwhile (the tap's piece key moved on) or Live text went off; a piece
@@ -513,18 +548,52 @@ default, because of its CPU cost (measured below).
   reach the history, transcripts.jsonl, the decoder log, clips, `done` /
   `nospeech` / `rtf`; they count in `partials` and `partial_ms` (moving
   mean of their proc_ms).
-- LocalAgreement-2 per piece (`LiveRow::agree`): the latest partial's words
-  (`split_words`: whitespace; a token without a letter or digit is kept
-  with the word before it, so "-" or "..." can't shift the words after it)
-  are aligned to the confirmed words (`align_confirmed`: where its words
-  match the last two confirmed ones, with up to two words more or fewer
-  before them - whisper put one in or left one out early on -, else at the
-  same count: a partial that contradicts the confirmed words leaves them
-  and shows its rest as pending); the common prefix of what follows and
-  the previous partial's rest (compared by `norm_word`: ASCII letters
-  lower-cased, digits and UTF-8 bytes kept, punctuation dropped) is added
-  to the confirmed words, as the latest partial wrote them; confirmed only
-  grows; pending = the rest of the latest partial.
+- LocalAgreement-2 per piece (`LiveRow::agree`): the latest partial's
+  words (`split_words`: whitespace; a token without a letter or digit is
+  kept with the word before it - at the start with the word after it -, so
+  "-", "..." or "—" can't shift the words after it) are aligned to the
+  confirmed words, then the common prefix of what follows and the previous
+  partial's rest (compared by `norm_word`) is added to the confirmed words,
+  as the latest partial wrote them; confirmed only grows and never changes;
+  pending = the rest of the latest partial.
+  - `norm_word`: letters and digits only, lower-cased (ASCII, Latin-1,
+    Latin Extended-A, Greek, Cyrillic); punctuation and symbols dropped,
+    also the Unicode ones whisper writes ("…", "—", "¿", "♪", emoji).
+    The first version kept every UTF-8 byte, so "…" was a word.
+  - The alignment (`anchor_confirmed`, review 2026-11-20): all the
+    confirmed letters (concatenated: "ten four" = "ten-four") against each
+    prefix of the partial's letters (edit distance, a byte DP - ~400 x 400
+    for a 25 s piece, well under a ms), at the word boundaries where the
+    partial's letters END with the last confirmed word's (the anchor),
+    the fewest edits (ties: the length nearest the confirmed letters'),
+    within 2 edits of the best boundary anywhere. The anchor inside a word
+    ("ten" confirmed, "ten-four" now) cuts that word there (`raw_cut`, the
+    signs after the cut kept with the first half) - only at a sign in it:
+    cut between letters, "American" confirmed then "Americans" said
+    "American" + "s" and confirmed the "s" (the real-helper run after the
+    first fix; the fuzz now counts such fragments). No anchor: nothing is
+    confirmed this time and the next partial confirms nothing from this
+    one's rest (`rest_ok`); then if the best boundary is NEAR (2 + a tenth
+    of the confirmed letters in edits: the partial changed a confirmed word
+    or two), it is taken anyway when this partial and the one before agree
+    word for word up to it (re-anchored: "fox" confirmed, "box" twice);
+    a partial whose letters are all (as near) the start of the confirmed
+    text adds nothing (it came out shorter); another text altogether is
+    all pending. An empty partial ("" - no speech this time, a VAD glitch)
+    leaves the row as it was (it used to wipe the pending words, so the
+    next partial confirmed nothing).
+  - Why (review 2026-11-20, a unit test of the code extracted verbatim):
+    the first version aligned by word COUNT (+-2 words around the last two
+    confirmed): "copy that ten-four" -> "copy that ten four we are on"
+    confirmed "copy that ten-four four we are on", three words put in front
+    "a b c d e c d e f g". Fuzz of the new code (`agree/t_fuzz.cpp`,
+    100,000 sentences of distinct words, 2 million words, partials growing
+    1-3 words with whisper-like changes - garbled last words, re-spelled /
+    hyphen-joined words, a filler in front coming and going, signs, empty
+    and shorter partials): 0 words confirmed twice, 0 skipped, 0 out of
+    order, 0 pieces of words, confirmed text never changed, 84 % of the words confirmed before
+    the end - the first version 2213 twice, 3744 skipped, 501 out of order,
+    74 %.
 - Rows (`Worker::live_`, piece key -> `LiveRow`): made by the first
   partial with text, updated by each (talker / label, part, seconds of
   audio, confirmed, pending); `open` false once the piece ended (its final
@@ -538,8 +607,10 @@ default, because of its CPU cost (measured below).
   src, tid, tl, part, secs, open, confirmed, pending}]}}` - the WHOLE list
   each time it changed (`s_.live_json` + `live_seq`, built under st_mu by
   `live_publish_locked`), from the 250 ms Voice to Text timer after the
-  `new` transcripts, so the final and the row's removal arrive in the same
-  pass; `GET_VOICE2TEXT` also answers `live_message()` (a page connecting
+  `new` transcripts, both taken under ONE lock (`take_pushes`; two calls
+  until the review 2026-11-20 - a result between them sent the row's removal
+  a tick before its final), so the final and the row's removal arrive in
+  the same pass; `GET_VOICE2TEXT` also answers `live_message()` (a page connecting
   gets the current rows). An older page ignores the key; an older receiver
   refuses the command (unknown).
 - Page: the switch "Live text" in Setup Settings → Voice to Text after
@@ -547,12 +618,15 @@ default, because of its CPU cost (measured below).
   costs below in plain words - a tap on it doesn't flip the switch, the
   help handler eats the click), hidden for a receiver without `live`; drawn
   from the status only (no optimistic state). Status row "Live text"
-  (`#v2t-live-row`, shown while on): "N updates · 0.4 s each", or "not
-  with this helper" with a warning icon (title: update it with `make
-  whisper`). The rows: `v2tLive` (globals block), `v2tRenderLive` into
-  `#v2t-live-rows` above `#v2t-rows` in the Transcription panel's list
-  (`v2tRenderTab` calls it first; the VFO filter - whose options include
-  VFOs with live rows only - and the search apply; newest first),
+  (`#v2t-live-row`, shown while on): "N updates · 0.4 s each" (+ "· N too
+  long" in amber, `partials_slow`), or "not with this helper" with a
+  warning icon (title: update it with `make whisper`). The rows: `v2tLive`
+  (globals block), `v2tRenderLive` into `#v2t-live-rows` above `#v2t-rows`
+  in the Transcription panel's list (`v2tRenderTab` calls it first; the VFO
+  filter - whose options include VFOs with live rows only, and the chosen
+  one while it is chosen: a VFO whose only row went away without a
+  transcript reset the filter to a blank select showing all, review
+  2026-11-20 - and the search apply; newest first),
   `v2tLiveHtml`: the `mic` icon + "Live" in `--bad-t` with a 2 px `--bad`
   left edge (the panel's recording red), `hourglass` + "Finishing" with an
   `--l4` edge once the transmission ended, the time, VFO, MHz, source,
@@ -687,4 +761,36 @@ marker), a fake `curl` on the PATH (no network).
   installed: "Making base.en-q8_0 from base.en… 93 %" -> "made" in 1.4 s,
   the file byte for byte the helper worker's base.en-q8_0, base.en kept,
   nothing else left.
+- After the review (2026-11-20; the helper rebuilt from the merged
+  integration branch with its own review fixes): `agree/t_agree3.cpp`
+  (128 checks: the reviewer's cases - growth, words put in front twice, a
+  leading dash, an empty partial, a confirmed word changed twice, a
+  shorter partial, repeats, merged numbers, UTF-8 case, "ten-four" /
+  "ten four", "12" / "twelve" - plus Unicode signs, a word dropped in
+  front, another text altogether, a word that grows a letter) and `agree/t_fuzz.cpp` (above), both on
+  the code extracted verbatim (`agree/extract.py`). t_live.py 83 checks
+  (+ slow: a partial taking 0.1 s + 0.3 s per second of audio - gaps 1.0 /
+  1.42 / 2.28 / 3.65 s = 2x the one before, none after 9.3 s of audio,
+  partials_slow 1, none thrown away, the final long after the last
+  partial; + stale: a 2 s transmission whose one partial takes 3 s - its
+  answer discarded, no row, the final after it; parts: a constant 1.6 s
+  stub now gets a partial every 3.2 s - 11 in 32 s, 2 thrown away at the
+  cuts - where it was one every ~1.6 s, always in flight, before; the
+  check that a cut always catches one in flight went, the stale scenario
+  makes one for certain). t_dl2.py (9): the main checkout's helper (no --quantize) ->
+  small.en-q8_0 refused at once, nothing downloaded; planted leftovers
+  removed at startup (two .f16, old .part files) and kept (a .part written
+  just now, ggml-foo.f16, other names), each logged; the VAD step's stage
+  after quantize. t_ui.py 44 (+ the VFO filter keeps D1 after its only
+  live row went - Live text off - and drops it once All is chosen; "Downloading
+  the voice detection model…" after making the model). t_e2e_ui.py 13 and
+  t_e2e.py with the rebuilt helper: base.en-q8_0 finals the same with Live
+  text on or off, 64 of 65 confirmed words as in the final (after the
+  fragment fix above; the run before it confirmed "American s ask not"),
+  the helper's CPU per scene 3.2 s off / 19.9 s on. The harness's stack.py
+  now waits until nothing answers on the receiver's port after a kill and
+  checks the new one runs: one full t_live run failed its older-helper
+  scenario as if it had talked to the scenario before's receiver (not
+  reproduced in four runs since; the receiver exits 1.3-1.7 s after
+  SIGTERM, also with a partial in flight - t_shutdown.py).
 
