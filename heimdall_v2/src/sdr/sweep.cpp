@@ -2,11 +2,13 @@
 //
 // One hop (every tuner of the round together):
 //   retuning_in_progress = 1 -> downstream flush -> retune (parallel,
-//   for_each_tuner, full path; sweep_tune) -> settle -> gate (sweep_gate_l1:
-//   each dongle drops its packets up to the last that can hold a sample from
-//   before the settle's end) + downstream flush -> retuning_in_progress = 0
-//   -> dwell: sweep_hop_packets(dwell_ms) valid sets out on 8091, then at
-//   once the next hop.
+//   for_each_tuner; sweep_tune: the library's fast path when it has one) ->
+//   settle -> gate (sweep_gate_l1: each dongle drops the packets that can
+//   hold a sample from before the settle's end) + downstream flush ->
+//   retuning_in_progress = 0 -> dwell: sweep_hop_packets(dwell_ms) valid
+//   sets out on 8091, then at once the next hop. When the sweep stops moving
+//   tuners (mode left, paused, a tuner out of the plan or on its only hop,
+//   the pipeline down), finish_fast_tunes ends their fast tunes.
 //
 // The guarantee the client builds on: a packet with retuning_in_progress = 0
 // holds only samples taken at the header's per-channel frequencies, after the
@@ -23,21 +25,26 @@
 //    0 after hop h's clear was built after hop h's gate had completed, so its
 //    set was dequeued after the gate - and the drain collected it after the
 //    gate too (it drops its partial set when it serves one; sets it finished
-//    before are flushed downstream). So each of its packets reached L1 after
-//    that dongle's straddler, the first packet stamped after the settle's
-//    end T with a steady gap, which the gate dropped. The frequencies it read
-//    are hop h's (h + 1's would make it read the flag as 1: they are stored
-//    after h + 1 set the flag).
-//  - The packet after the straddler starts where the straddler ends, which
-//    reached L1 after T: its first sample was taken no earlier than T minus
-//    the USB latency (the steady gap rules out a late packet of a burst). So
-//    the settle the samples really see is SWEEP_SETTLE_MS minus the latency
-//    (~1 ms), never more than that: what the contrast test (docs) checks,
-//    through the real pipeline.
+//    before are flushed downstream). So each of its packets is one the gate
+//    kept: of a dongle's packets numbered past the first s whose
+//    earliest-arrival line f(s) reached T (retune end + settle). The
+//    frequencies it read are hop h's (h + 1's would make it read the flag
+//    as 1: they are stored after h + 1 set the flag).
+//  - The bound (proof at serve_gate_now, sdr_pipeline.cpp): every sample of
+//    a kept packet was taken at or after T - L* - 22 us, L* = the latency of
+//    the packet that dongle's line runs through - its fastest delivery of
+//    the last 32 packets (~1 ms on a PC). A late straddler, a backlog burst
+//    after a stalled reader, lost samples: none of them moves the line
+//    later, so none lets an earlier sample through. So the settle the
+//    samples see is SWEEP_SETTLE_MS minus that floor latency: what the
+//    contrast test (docs) checks, through the real pipeline.
 //  - A gain change in sweep mode (sweep_note_tuner_change) and the mode's
 //    entry set the flag the same way; whenever hopping stops (paused, plan
 //    not runnable) the thread finishes the settle and the gate before it
-//    clears the flag, so a stuck 1 can't make a client drop everything.
+//    clears the flag. The flag stays 1 only while a dongle delivers nothing
+//    (no set can be formed then anyway): status "stalled_tuners", a log
+//    line every 10 s, the round and the counter stand still, and the gate is
+//    retried until the stream is back.
 //
 // Timing (docs/dev/operating-modes.md, "Hop timing"): a hop costs the retune,
 // the packet that straddles its end (+ settle), and the dwell's packets -
@@ -80,21 +87,110 @@ int64_t now_ns() {
 
 bool in_sweep() { return operating_mode.load() == OperatingMode::SWEEP; }
 
+// Tuners whose last tune was the fast path (bit per channel): their PLL
+// autotune clock stays at 128 kHz until finish_fast_tunes. Written under
+// settings_mutex + device_io_mutex.
+std::atomic<uint32_t> fast_pending{0};
+
 // THE tune call of a hop (one tuner; on its own thread on Linux, under
-// settings_mutex + device_io_mutex): true = the tuner took `hz`. The full
-// path (PLL lock check, the 8 kHz autotune afterwards); one retry. Kept in
-// this one place so the library's call can be swapped.
-bool sweep_tune(rtlsdr_dev_t* dev, uint32_t hz) {
-    return rtlsdr_set_center_freq(dev, hz) >= 0 || rtlsdr_set_center_freq(dev, hz) >= 0;
+// settings_mutex + device_io_mutex): true = the tuner took `hz`. Kept in this
+// one place so the library's call can be swapped. The fork's fast path where
+// it has one (worker F, 2026-11-21: KEEP_AUTOTUNE leaves the 128 kHz
+// autotune clock - 4 USB transfers instead of 6 -, NO_DUMMY_READ skips the
+// dummy read - 3; the PLL lock is still checked); a failure retries once on
+// the full path (as the wideband drag's fallback does). `fast` = the tuner
+// was left on the fast path's state (finish_fast_tunes ends it).
+bool sweep_tune(rtlsdr_dev_t* dev, uint32_t hz, bool& fast) {
+    fast = false;
+#if defined(RTLSDR_TUNE_NO_DUMMY_READ)
+    if (rtlsdr_set_center_freq_fast(dev, hz, RTLSDR_TUNE_KEEP_AUTOTUNE | RTLSDR_TUNE_NO_DUMMY_READ) >= 0) {
+        fast = true;
+        return true;
+    }
+#elif defined(RTLSDR_TUNE_KEEP_AUTOTUNE)
+    if (rtlsdr_set_center_freq_fast(dev, hz, RTLSDR_TUNE_KEEP_AUTOTUNE) >= 0) {
+        fast = true;
+        return true;
+    }
+#else
+    if (rtlsdr_set_center_freq(dev, hz) >= 0) return true;
+#endif
+    return rtlsdr_set_center_freq(dev, hz) >= 0;   // the full path (lock check, 8 kHz autotune)
+}
+
+// The tuners in `mask` whose fast tunes are pending: rtlsdr_finish_tune (0 =
+// done, no transfer if nothing is pending; 1 = PLL not locked, < 0 = I/O
+// error -> their frequency once more on the full path). Under settings_mutex.
+// in_mode: still in sweep mode - the writes are covered by the 8091 flag
+// (on before, the settle + gate after, as a gain change), and a tuner whose
+// full retune fails gets frequency 0. Out of the mode the next mode owns the
+// frequencies (the return to coherent retunes every tuner on the full path
+// after this anyway).
+void finish_fast_tunes(uint32_t mask, bool in_mode, const char* why) {
+    mask &= fast_pending.load();
+    if (!mask) return;
+    if (reconfig_in_progress.load(std::memory_order_acquire)) {
+        fast_pending.fetch_and(~mask);   // the handles are reopened: fresh, fully tuned
+        return;
+    }
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+    mask &= fast_pending.load();
+    if (!mask) return;
+    fast_pending.fetch_and(~mask);
+    if (in_mode) sweep_note_tuner_change();
+    int idx[NUM_DEVICES], rc[NUM_DEVICES] = {};
+    char fixed[NUM_DEVICES] = {};
+    uint32_t f_of[NUM_DEVICES] = {};
+    size_t k = 0;
+    for (int t = 0; t < NUM_DEVICES && t < static_cast<int>(devices.size()); t++)
+        if ((mask & (1u << t)) && devices[t] && devices[t]->dev) idx[k++] = t;
+    for_each_tuner(k, [&](size_t i) {
+        rtlsdr_dev_t* dev = devices[idx[i]]->dev;
+#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
+        rc[i] = rtlsdr_finish_tune(dev);
+#endif
+        if (rc[i] == 0) return;
+        uint32_t f = wideband_config.get_tuner_frequency(idx[i]);
+        if (!f) f = rtlsdr_get_center_freq(dev);
+        f_of[i] = f;
+        fixed[i] = f != 0 && (rtlsdr_set_center_freq(dev, f) >= 0 || rtlsdr_set_center_freq(dev, f) >= 0);
+    });
+    if (in_mode) sweep_note_tuner_change_done();
+    for (size_t i = 0; i < k; i++) {
+        if (rc[i] == 0) continue;
+        std::cerr << "Sweep: tuner " << idx[i] << (rc[i] == 1 ? " PLL not locked" : " I/O error")
+                  << " at the end of its fast retunes (" << why << ", " << rc[i] << ") - "
+                  << (fixed[i] ? "retuned on the full path" : "full retune FAILED") << " at " << f_of[i] / 1e6
+                  << " MHz" << std::endl;
+        if (!fixed[i] && in_mode) {
+            wideband_config.set_tuner_frequency(idx[i], 0);
+            sweep_state.failed_mask.fetch_or(1u << idx[i]);
+            sweep_state.failed_retunes.fetch_add(1);
+        }
+    }
 }
 
 // The sweep's gate (L1 per dongle, then downstream) for samples from
-// `from_ns` on: 1 done, 0 not yet (a dongle stalled: the stream isn't valid
-// yet - try again), -1 nothing done (the mode was left)
+// `from_ns` on: 1 done, 0 not yet (a dongle delivered nothing, the stream
+// isn't valid yet - try again), -1 nothing done (the mode was left). A
+// stalled dongle is logged at once, then at most every 10 s.
 int sweep_gate(int64_t from_ns) {
     std::lock_guard<std::mutex> lk(flush_mutex);
     if (!in_sweep()) return -1;
-    return sweep_gate_l1(from_ns) ? 1 : 0;
+    const int r = sweep_gate_l1(from_ns);
+    if (r == 0) {
+        static int64_t last_log_ns = -20'000'000'000LL;
+        const uint32_t m = sweep_gate_stalled();
+        if (m && now_ns() - last_log_ns > 10'000'000'000LL) {
+            last_log_ns = now_ns();
+            std::string t;
+            for (int i = 0; i < NUM_DEVICES; i++)
+                if (m & (1u << i)) t += (t.empty() ? "" : ",") + std::to_string(i);
+            std::cerr << "Sweep: tuner(s) " << t << " delivered no data for 100 ms or more - no valid sweep data "
+                      "(the 8091 flag stays 1) until every tuner streams again" << std::endl;
+        }
+    }
+    return r;
 }
 
 // Sleep until change_seq moves away from `seq`, at most `ns` (and at most
@@ -366,9 +462,18 @@ std::string sweep_status_json() {
          }()
       << ",\"l1_unquiet_flushes\":" << l1_unquiet_flushes()
       // (added 2026-11-21) the valid packets a hop delivers per tuner at
-      // this dwell; gates that took a packet without a steady gap; the hop
-      // timeline (averages of the last hops)
-      << ",\"hop_packets\":" << sweep_hop_packets(p.dwell_ms) << ",\"gates_unsteady\":" << sweep_gates_unsteady()
+      // this dwell; the tuners that stalled the last gate (no data: the flag
+      // stays 1 until they stream again), gates that failed, packets the gate
+      // met more than half a period late; the hop timeline (averages of the
+      // last hops)
+      << ",\"hop_packets\":" << sweep_hop_packets(p.dwell_ms)
+      << ",\"stalled_tuners\":" << [] {
+             std::vector<int> f;
+             const uint32_t m = sweep_gate_stalled();
+             for (int i = 0; i < NUM_DEVICES; i++) if (m & (1u << i)) f.push_back(i);
+             return tuners_json(f);
+         }()
+      << ",\"gates_failed\":" << sweep_gates_failed() << ",\"gates_late\":" << sweep_gates_late()
       << ",\"timing\":" << timing_json() << "}";
     return o.str();
 }
@@ -419,6 +524,10 @@ void sweep_note_tuner_change_done() {
 
 void sweep_quiesce_flushes() {
     std::lock_guard<std::mutex> lk(flush_mutex);
+    // (settings_mutex held: set_operating_mode on the way back to coherent,
+    // before return_to_coherent_locked retunes every tuner and the
+    // recalibration starts) the sweep's fast tunes end here
+    finish_fast_tunes(~0u, false, "sweep mode left");
 }
 
 void sweep_thread() {
@@ -429,6 +538,10 @@ void sweep_thread() {
     std::vector<uint32_t> move_hz;
     std::vector<char> move_ok;
     std::vector<int64_t> move_ns;            // each tuner's tune call, ns
+    std::vector<char> move_fast;             // ... left on the fast path's state
+    // the counter steps once per round: a round retried (a dongle stalled
+    // its gate, a pause or plan change before its dwell) is not a new one
+    bool round_open = false;
     // what the timeline averages belong to (reset when one changes)
     uint32_t timing_pg = ~0u, timing_dwell = ~0u, timing_settle = ~0u, timing_mask = ~0u;
 
@@ -442,6 +555,14 @@ void sweep_thread() {
             pg = sweep_state.plan_generation.load();
         }
         if (!in_sweep() || !p.run || !pipeline_running.load(std::memory_order_acquire)) {
+            round_open = false;
+            // the sweep stopped moving tuners: their fast tunes end (also
+            // when the mode was left for independent / wideband; on the way
+            // to coherent sweep_quiesce_flushes did it already)
+            if (fast_pending.load()) {
+                std::lock_guard<std::mutex> lock(settings_mutex);
+                finish_fast_tunes(~0u, in_sweep(), in_sweep() ? "sweep paused" : "sweep mode left");
+            }
             // (outside sweep mode nothing reads the flag; entering sets it)
             if (in_sweep()) settle_and_clear_flag();
             wait_for_change(seq, 50'000'000);
@@ -450,6 +571,7 @@ void sweep_thread() {
         if (pg != plan_gen_seen) {
             plan_gen_seen = pg;
             r = 0;
+            round_open = false;
         }
 
         // Who measures what (the contract): the k-th of the K' = min(K, H)
@@ -467,8 +589,10 @@ void sweep_thread() {
         if (r >= R) r = 0;
         move_tuner.clear();
         move_hz.clear();
+        uint32_t hopping = 0;   // tuners that move from round to round (a block of 2+ hops)
         for (size_t k = 0; k < kp; k++) {
             const uint64_t b0 = static_cast<uint64_t>(k) * H / kp, b1 = static_cast<uint64_t>(k + 1) * H / kp;
+            if (b1 - b0 > 1) hopping |= 1u << sel[k];
             const uint32_t hz = static_cast<uint32_t>(p.first_center_hz + (b0 + r) * p.step_hz);
             // a tuner already there isn't retuned (K' = H: every round is the
             // same - the stream then runs on without a gap); one whose last
@@ -480,6 +604,7 @@ void sweep_thread() {
         }
         move_ok.assign(move_tuner.size(), 0);
         move_ns.assign(move_tuner.size(), 0);
+        move_fast.assign(move_tuner.size(), 0);
         // the flag may be on without a retune: the mode just entered, a gain
         // change - then the settle + flush below run all the same
         const bool retune = !move_tuner.empty();
@@ -521,9 +646,15 @@ void sweep_thread() {
                     const int t = move_tuner[i];
                     if (t < 0 || t >= static_cast<int>(devices.size()) || !devices[t] || !devices[t]->dev) return;
                     const int64_t a = now_ns();
-                    move_ok[i] = sweep_tune(devices[t]->dev, move_hz[i]);
+                    bool fast = false;
+                    move_ok[i] = sweep_tune(devices[t]->dev, move_hz[i], fast);
+                    move_fast[i] = fast;
                     move_ns[i] = now_ns() - a;
                 });
+                for (size_t i = 0; i < move_tuner.size(); i++) {
+                    if (move_fast[i]) fast_pending.fetch_or(1u << move_tuner[i]);
+                    else fast_pending.fetch_and(~(1u << move_tuner[i]));   // a full tune ends it
+                }
                 t_retune_end = now_ns();
                 tm.retune = ms_between(t_locked, t_retune_end);
                 for (int64_t ns : move_ns) tm.tune_max = std::max(tm.tune_max, static_cast<float>(ns) / 1e6f);
@@ -546,11 +677,17 @@ void sweep_thread() {
                 for (int t : move_tuner) note_tuner_retuned(t);   // (also: --kerberos marks the calibration stale)
             }
             if (!cancelled) {
+                // tuners that won't move again (out of the plan, or on the
+                // only hop of their block, K' = H): their fast tunes end now,
+                // under the flag (settled + gated below)
+                if (const uint32_t stop = fast_pending.load() & ~hopping)
+                    finish_fast_tunes(stop, true, "tuner stopped hopping");
                 // round and counter only for the plan in force (a set_sweep
-                // resets them under sweep_state.mutex)
+                // resets them under sweep_state.mutex); the counter once per round
                 std::lock_guard<std::mutex> plock(sweep_state.mutex);
                 if (sweep_state.plan_generation.load() == pg) sweep_state.round.store(r);
-                sweep_state.frequency_change_counter.fetch_add(1);
+                if (!round_open) sweep_state.frequency_change_counter.fetch_add(1);
+                round_open = true;
             }
         }
         if (cancelled) continue;  // the flag stays on: the next pass hops or settles + clears it
@@ -581,17 +718,20 @@ void sweep_thread() {
             const int64_t from_ns = settled_from + static_cast<int64_t>(sweep_state.get_plan().settle_ms) * 1'000'000;
             const int g = sweep_gate(from_ns);
             if (g < 0) break;
-            if (g == 0) continue;   // a dongle stalled: not valid yet
+            if (g == 0) continue;   // a dongle stalled (logged, status stalled_tuners): not valid yet
             const int64_t t_gated = now_ns();
             std::lock_guard<std::mutex> lock(settings_mutex);
             if (in_sweep() && sweep_state.plan_generation.load() == pg &&
                 sweep_state.last_retune_ns.load() == settled_from) {
-                first_valid_ns.store(0, std::memory_order_relaxed);
-                sweep_state.retuning_in_progress.store(false);
+                // (no set counts as valid while the flag is on: valid_from,
+                // the mark and t_clear before the clear - every valid set of
+                // the hop is counted, stamped and after t_clear)
                 valid_from = sweep_state.valid_sets.load();
+                first_valid_ns.store(0, std::memory_order_relaxed);
                 first_valid_mark.store(valid_from + 1, std::memory_order_relaxed);
-                settled = true;
                 t_clear = now_ns();
+                sweep_state.retuning_in_progress.store(false);
+                settled = true;
                 tm.settle = ms_between(t_retune_end, t_settled);
                 tm.gate = ms_between(t_settled, t_gated);
                 tm.clear = ms_between(t_gated, t_clear);
@@ -608,6 +748,7 @@ void sweep_thread() {
             tm.first_valid = ms_between(t_clear, fv);
         timing_record(tm);
         sweep_state.round_ms.store(static_cast<uint32_t>((t_end - t0) / 1'000'000));
+        round_open = false;
         if (++r >= R) {
             r = 0;
             std::lock_guard<std::mutex> plock(sweep_state.mutex);
