@@ -69,18 +69,22 @@ bool clear_l1_buffer_paired();
 // (flushed anyway: a channel may have slipped by a whole packet)
 uint32_t l1_unquiet_flushes();
 // Sweep mode's per-hop flush (sweep.cpp; the sample drain serves it): every
-// active device drops its L1 up to and including its first packet stamped
-// after `from_ns` (the hop's retune end + settle) with a steady gap - the
-// last packet that can hold a sample from before then - each device on its
-// own (no cross-device quiet point: nothing pairs buffers in sweep mode),
-// then the downstream flush. Blocks until then (about a packet period after
-// from_ns). false: not every device got there (one stalled, the drain did
-// not answer in 500 ms) - the stream is not valid yet. Without a running
-// drain it empties L1 directly (nothing streams) and returns true.
-bool sweep_gate_l1(int64_t from_ns);
-// Gates that accepted a device's packet without a steady gap (after four
-// periods of irregular delivery; the counterpart of l1_unquiet_flushes)
-uint32_t sweep_gates_unsteady();
+// active dongle drops the packets that can hold a sample taken before
+// `from_ns` (the hop's retune end + settle), judged by its earliest-arrival
+// line (serve_gate_now: every kept sample was taken at or after from_ns
+// minus the dongle's fastest delivery latency), each on its own (nothing
+// pairs buffers in sweep mode); then the downstream flush. Blocks until
+// then (about a packet period after from_ns). 1 done; 0 not (a dongle
+// delivered nothing for 100 ms, the line didn't pass from_ns in 400 ms, the
+// drain didn't answer) - the stream is not valid yet; -1 the mode was left.
+// Without a running drain it empties L1 directly (nothing streams): 1.
+int sweep_gate_l1(int64_t from_ns);
+// Diagnostics: the dongles that stalled the last gate (bit per channel; 0
+// once a gate passes), gates that failed, packets the gate met more than
+// half a period after their stream's line (a held-up reader, a burst)
+uint32_t sweep_gate_stalled();
+uint32_t sweep_gates_failed();
+uint32_t sweep_gates_late();
 
 // Coherence-loss signalling. Cheap and callable from any thread (including the
 // alloc-free RTL callback): sets the coherence_lost flag exactly once per event,

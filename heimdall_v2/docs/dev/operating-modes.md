@@ -175,9 +175,10 @@ round (its header frequency still shows the old one).
    it), `last_retune_ns`, `round`, `frequency_change_counter` + 1;
 4. the settle (`settle_ms` from `last_retune_ns`);
 5. the gate (`sweep_gate_l1`, served by the drain; since 2026-11-21 - until
-   then the drain's quiet-point L1 flush): every dongle drops its packets up
-   to and including its first one stamped after the settle's end with a
-   steady gap, each on its own; then the downstream flush (*Hop timing*);
+   then the drain's quiet-point L1 flush): every dongle drops the packets
+   that can hold a sample from before the settle's end, judged by its
+   earliest-arrival line, each on its own; then the downstream flush (*Hop
+   timing*, *Review of the hop loop*);
 6. `retuning_in_progress` = 0, under `settings_mutex` and only if nothing
    moved `last_retune_ns` since the settle (a gain change: settle + gate
    again);
@@ -193,8 +194,11 @@ state is never retuned over and no tuner is left half way (a retune in
 progress finishes first: `set_operating_mode` waits for `settings_mutex`).
 Pausing or the pipeline stopping with the flag on: the thread finishes the
 settle from `last_retune_ns`, flushes and clears the flag
-(`settle_and_clear_flag`), so the flag is 0 whenever nothing hops - a stuck
-1 would make every client drop every packet. A gain change in sweep mode
+(`settle_and_clear_flag`), so the flag is 0 whenever nothing hops and every
+dongle streams - a stuck 1 would make every client drop every packet. A
+dongle that delivers nothing keeps it at 1 (no set can be formed then
+anyway): status `stalled_tuners`, a log line every 10 s, the gate retried
+until it streams again (*Review of the hop loop*, 2). A gain change in sweep mode
 sets the flag too (`sweep_note_tuner_change`, before the tuners are
 written, under `settings_mutex`). No output per hop: the flushes are the
 quiet variants (no "Clearing ... buffers" lines; the drain's "did not
@@ -219,16 +223,18 @@ per-channel frequencies, after the settle. From the code:
   bumps the epoch, and the flag is cleared only after it. A header that
   reads the flag as 0 after hop h's clear was therefore built after hop h's
   gate, its set was dequeued and collected after it (the drain drops its
-  partial set when it serves a gate), and each of its packets reached L1
-  after its dongle's straddler - the first packet stamped after the
-  settle's end T with a steady gap, which the gate dropped. Its frequencies
+  partial set when it serves a gate), and each of its packets is one the
+  gate kept for its dongle: numbered after the first packet s whose
+  earliest-arrival line f(s) reached the settle's end T. Its frequencies
   are hop h's (h + 1's are stored after h + 1 set the flag);
-- the packet after the straddler begins where the straddler ends, and the
-  straddler reached L1 after T: so the first valid packet's samples start
-  no earlier than T minus the USB latency (~1 ms), i.e. settle - latency
-  after the tune call returned (the steady gap rules out an old packet
-  delivered late in a burst) - measured below and in *Hop timing*, through
-  the real pipeline.
+- the bound (proof in `serve_gate_now`; *Review of the hop loop*, 1):
+  every sample of a kept packet was taken at or after T - L* - 22 us,
+  where L* is the latency of the packet the dongle's line runs through -
+  its fastest delivery among the last 32 packets (~1 ms on a PC). A late
+  or burst-delivered packet, samples the RTL2832 lost, the 2-sample slip:
+  none of them moves the line later. So the samples see settle - L*
+  after the tune call returned - measured below and in *Hop timing*,
+  through the real pipeline.
 One exception, negligible: the lag FIR's 7-sample tail (`frac_tail`, kept
 across sets for the coherent conversion) is not reset by a flush, so the
 first 3-7 output samples of each channel in a hop's first valid packet are
@@ -419,13 +425,11 @@ retune, the settle and the packet that straddles the retune's end:
    and every hop waited four packet periods (fake, `FAKE_SPREAD_US=1500`:
    L1 flush 28.7-32.4 ms, rounds 60-68 ms, 225 unquiet flushes in 12 s).
    Now the drain serves a per-dongle gate (`sweep_gate_l1`,
-   `serve_gate_now`): each dongle drops its packets up to and including its
-   first one stamped after the settle's end with a steady gap (0.5-1.5
-   periods; a late packet of a burst is old) - exactly the packets that can
-   hold an earlier sample - each on its own, then the downstream flush. A
-   dongle that delivers but never steadily is taken after four periods
-   (counted, `"gates_unsteady"`); one that delivers nothing in that time
-   fails the gate - the flag stays on, the hop thread tries again. Pairing
+   `serve_gate_now`): each dongle drops the packets that can hold an
+   earlier sample, each on its own, then the downstream flush. (The first
+   version judged a packet by its own arrival stamp with a "steady gap";
+   the review showed that a late straddler or a backlog burst defeats it -
+   replaced by the earliest-arrival line, *Review of the hop loop*.) Pairing
    is restored where it matters, on the way out (`clear_l1_buffer_paired`
    in `set_operating_mode`, unchanged; a gate still pending then is
    completed by the drain without dropping anything, and the drain serves a
@@ -555,6 +559,120 @@ earlier than before, so what "settle 0 holds" meant changed):
 - Not run: the Raspberry Pi, Windows (tunes one by one: nothing in the hop
   assumes a short retune - the gate and the dwell's timeout run from the
   retune's end), macOS, the MinGW / zig syntax checks (no toolchain here).
+
+**Review of the hop loop** (2026-11-21, an independent review of the hop
+loop's first commit, and worker F's tune call; job scratch `speed/`; fake
+tests with the fake librtlsdr's new knobs `FAKE_LATE_EVERY` /
+`FAKE_LATE_US` (every N-th packet delivered late), `FAKE_STALL_FILE` /
+`FAKE_STALL_DEV` / `FAKE_BURST_US` / `FAKE_STALL_KEEP` (a reader stalls
+while the file exists, then delivers its backlog - at most 15 packets,
+older samples lost - that far apart), `FAKE_FAST_TUNE_MS`,
+`FAKE_FAST_FAIL_PPM`, `FAKE_FINISH_RC`; "g1" = a build of the first gate):
+1. *The gate's bound was weaker than written.* It judged each dongle's
+   straddler by that packet's own arrival stamp and a "steady" gap of
+   0.5-1.5 periods. (a) A straddler delivered up to half a period late
+   after an on-time packet still looked steady, and the packet after it
+   could start up to ~3.4 ms + the latency before T. (b) After four
+   periods without a steady packet it took whatever was stamped after T: a
+   reader still emptying a backlog had the rest of the backlog - samples
+   from before the retune - go out as valid. Now the decision follows when
+   a packet's samples were TAKEN: the callback numbers every packet and
+   keeps its arrival stamp in a ring (`l1_put`, `ring_t` / `ring_n`,
+   `sdr_device.hpp`; allocation-free, a seqlock per slot), and the gate
+   draws each dongle's earliest-arrival line `f(s) = min over the last 32
+   packets n <= s of (A_n + (s - n) P)`. Since a packet arrives after its
+   last sample (latency >= 0) and a dongle's packets end at least P apart
+   in its own time (lost samples, the 2-sample slip and a packet the
+   callback drops only add), the last sample of packet s was taken at or
+   after `f(s) - L* - d`, L* = the latency of the packet the minimum runs
+   through (the fastest delivery of the window), d <= 32 P x 100 ppm = 22
+   us of sample-clock error. The gate drops every packet up to and
+   including the first s with `f(s) >= T` and keeps s + 1 on, so **every
+   sample of a kept packet was taken at or after T - L* - d** - whatever a
+   single late delivery or a burst does (a late packet only raises its own
+   term). It also fixed an overdrop the first gate didn't have: the packet
+   that wakes the drain is already in the dropped partial set, and counts.
+   Tests (fake, tune 14 ms + 0-7 ms jitter, dwell 5, `t_fakeguard.py`;
+   contaminated = a valid packet with the fake's settling garbage or the
+   old hop's tones in any 1024-sample segment of any channel):
+   - late straddlers (`FAKE_LATE_EVERY=2 FAKE_LATE_US=2700`, garbage 4 ms):
+     g1 contaminated 65 / 29 / 9 of 149 / 141 / 134 valid packets at settle
+     5 / 6 / 7 (worst 26.5 dB), 0 from settle 8; the line gate 0 of 135 /
+     131 / 126 / 127 / 122 at settle 5 / 6 / 7 / 8 / 10 (flagged ones with
+     garbage 97-229: the positive control). At settle 0 both see the
+     garbage (180 / 98 contaminated): settle < garbage, as designed.
+   - a reader stalling 80 ms, its backlog delivered 4 ms apart
+     (`FAKE_STALL_DEV=2 FAKE_BURST_US=4000`, 120 ms +-50 % between stalls,
+     garbage 2 ms): g1 contaminated 43 of 190 / 24 of 156 valid packets at
+     settle 5 / 10 - the old hop's tones at 49.5 dB; the line gate 0 of 175
+     / 0 of 158 (163 late packets counted, `gates_late`). With faster
+     bursts (1.5-3 ms apart) g1 stayed clean too (0 of 121-169).
+   - garbage 8 ms, no jitter: 196 / 196 contaminated at settle 0 / 4, 0 at
+     6 / 8 / 10 (147-148 each; flagged with garbage 147-148).
+2. *A silent dongle kept the flag at 1 forever, silently,* with the 8091
+   counter stepping on every retry and pause unable to clear it. Now: the
+   gate tells a stalled dongle (nothing for 100 ms) from a slow line
+   (400 ms cap, a stream restart's gap) and from leaving the mode;
+   `sweep_gate` logs "tuner(s) N delivered no data ... the 8091 flag stays
+   1" at once, then at most every 10 s; status `stalled_tuners`,
+   `gates_failed`, `gates_late` (replacing the first version's
+   `gates_unsteady`); the counter steps once per round, not per retry; the
+   drain's stuck-device alarm (3 s of silence -> the coherence watchdog, as
+   outside the gate - its wait loop isn't reached while a gate is pending)
+   is raised by the gate itself, at most every 3 s; the requester stops
+   waiting as soon as the mode is left. What sweep mode does with a silent
+   dongle: nothing can be measured (a set needs every active dongle), so
+   the flag stays 1 - the guarantee rules out clearing it, the dongle's
+   backlog may hold samples from before the retune - and the gate is
+   retried until the dongle streams. `t_stall.py` (fake, tuner 2 silent):
+   2 s silent - status retuning true, `stalled_tuners` [2], round / sweeps
+   frozen, no packet out, the counter 107 -> 108 over the silence, hops on
+   at once after it; pause while silent - answered in 0.00 s, run false,
+   flag 1 until the dongle streams, then 0 with 205 valid packets; leaving
+   for independent while silent - answered in 0.00 s; 0 coherence events
+   from silences under 3 s in sweep mode (the gate keeps every L1 empty);
+   4 s silent - the stuck-device event and its log line, sweeping again
+   after; the silence logged twice in all. (Independent mode with a silent
+   dongle raised 2 L1-overflow events - the drain's usual reaction there,
+   not sweep mode's.)
+3. Nits: the timeline's `first_valid` and `t_clear` are taken before the
+   flag clears (no set counts as valid while it is on: no hop loses its
+   stamp, no negative value); the drain's comment on a gate pending after
+   the mode was left (the partial set is still dropped - a one-packet slip
+   of those channels, repaired by the paired flush on every way back to
+   coherent). kraken_doa's `hop_samples` with an OLDER heimdall (wall-time
+   dwell, 1.3-1.6 packets at 20 ms): Auto then plans for 3 packets, a hop
+   averages 3-7 frames instead of >= 8 - noisier, it works; not detected
+   (the client's status reader is in data_receiver.cpp, outside this
+   change), and the two ship together.
+4. *The tune call* (worker F): `sweep_tune` uses the fork's fast path,
+   `rtlsdr_set_center_freq_fast(dev, f, RTLSDR_TUNE_KEEP_AUTOTUNE |
+   RTLSDR_TUNE_NO_DUMMY_READ)` where the header has the second flag, only
+   `KEEP_AUTOTUNE` where it has the first, the full path otherwise; a
+   failure retries once on the full path (frequency 0 if that fails too).
+   The fast path leaves the 128 kHz PLL autotune clock: `fast_pending`
+   (bit per tuner) until `finish_fast_tunes` - `rtlsdr_finish_tune`, and on
+   1 (not locked) or < 0 the tuner's frequency once more on the full path,
+   logged - runs wherever the sweep stops moving tuners: in
+   `sweep_quiesce_flushes()` (called by `set_operating_mode` with
+   `settings_mutex` held, on the way to coherent, before
+   `return_to_coherent_locked` retunes every tuner and the recalibration is
+   requested); in the hop thread's idle branch under `settings_mutex` (the
+   mode left for independent / wideband, paused, the pipeline down); in the
+   retune section for tuners out of the plan or on their block's only hop
+   (K' = H). In sweep mode the finish is covered by the flag (on before,
+   settle + gate after, as a gain change). `t_finish.py` (fake): no finish
+   while hopping; pause -> 5 finishes, flag 0 after; K' = H -> 5 finishes,
+   then no tune / finish, the stream valid; -> independent 5; -> coherent:
+   the finishes before "Mode: tuners retuned by the sweep", CONVERGED, 0
+   coherence events; with `FAKE_FINISH_RC=1` every tuner "PLL not locked at
+   the end of its fast retunes ... retuned on the full path" (5 lines), no
+   failure. Fast tunes failing 10 % (`FAKE_FAST_FAIL_PPM=100000`):
+   `t_basic.py` every case PASS, 0 failed retunes (the full-path retry).
+   On the fake with a 7.5 ms fast tune (F's 3-transfer figure) a round is
+   3 / 4 / 5 packet periods for dwell 5 / 10 / 20 at settle 5: 20.5-21.6 /
+   27.3-27.9 / 34.2-34.6 ms (FM, 5 tuners: 15.5 / 11.9 / 9.7 sweeps a
+   second; dwell 5 / settle 0 16.3).
 
 **Review fixes** (2026-11-20, an independent review of the merged diff and
 the orchestrator's end-to-end run; tests on the fake librtlsdr build -

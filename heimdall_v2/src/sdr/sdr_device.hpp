@@ -33,6 +33,19 @@ struct SDRDevice {
     // last-arrival times alone can't tell from the current one.
     std::atomic<int64_t> last_arrival_ns{0};
     std::atomic<int64_t> prev_arrival_ns{0};
+    // Every packet enqueued in L1 is numbered (l1_put = how many so far,
+    // stored after the packet is in L1 and its stamp below is written) and
+    // its arrival stamp kept in a ring: sweep mode's gate draws each stream's
+    // earliest-arrival line through them (sdr_pipeline.cpp, serve_gate_now).
+    // ring_n[slot] = the number of the packet whose stamp ring_t[slot] holds
+    // (UINT64_MAX while it is being written). stream_first = the number of
+    // the first packet after the stamps were reset (a stream start). Written
+    // by the callback only.
+    static constexpr int ARRIVAL_RING = 64;
+    std::atomic<uint64_t> l1_put{0};
+    std::atomic<uint64_t> stream_first{0};
+    std::array<std::atomic<int64_t>, ARRIVAL_RING> ring_t{};
+    std::array<std::atomic<uint64_t>, ARRIVAL_RING> ring_n{};
     ChannelCompensation compensation;
     mutable std::mutex compensation_mutex;
 

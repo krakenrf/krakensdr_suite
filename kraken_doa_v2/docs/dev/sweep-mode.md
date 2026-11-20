@@ -106,12 +106,20 @@ the hops into the sweep spectrum, the page shows it.
   delivers exactly `hop_packets` = `ceil(dwell_ms x 2.4e6 / (1000 x
   16384))` valid packets per tuner (it waits for them at most 250 ms
   longer than they take; this replaces "at least one set") and then hops
-  at once; the status object also has `"hop_packets"`, `"gates_unsteady"`
-  and `"timing"` (the hop timeline, averages of the last 64 hops:
-  `flag_ms`, `locked_ms`, `retune_ms`, `tune_max_ms`, `settle_ms`,
-  `gate_ms`, `clear_ms`, `first_valid_ms`, `dwell_ms`, `round_ms`,
-  `round_min_ms` / `round_max_ms`, `valid_per_hop`, `valid_min` /
-  `valid_max`, `hops`, `moved`; diagnostics).
+  at once; the status object also has `"hop_packets"`, `"stalled_tuners"`
+  (tuners that delivered no data at the last gate: while one is silent no
+  valid packet goes out and the flag stays 1), `"gates_failed"`,
+  `"gates_late"` (these three replace the first version's
+  `"gates_unsteady"`) and `"timing"` (the hop timeline, averages of the
+  last 64 hops: `flag_ms`, `locked_ms`, `retune_ms`, `tune_max_ms`,
+  `settle_ms`, `gate_ms`, `clear_ms`, `first_valid_ms`, `dwell_ms`,
+  `round_ms`, `round_min_ms` / `round_max_ms`, `valid_per_hop`,
+  `valid_min` / `valid_max`, `hops`, `moved`; diagnostics). The counter
+  steps once per round (a round retried after a stalled tuner is not a new
+  one). The guarantee's bound, exactly: every sample of a valid packet was
+  taken at or after retune end + settle - L* - 22 us, L* = that tuner's
+  fastest USB delivery among its last 32 packets (~1 ms on a PC;
+  heimdall's operating-modes.md, *Review of the hop loop*).
 
 ### heimdall, 8091 (sweep mode)
 
@@ -350,7 +358,11 @@ refused; out-of-range numbers are clamped:
   to average. Auto at dwell 5 / 10 / 20 / 50 / 100 ms (1 / 2 / 3 / 8 / 15
   packets): 2048 / 4096 / 8192 / 16384 / 16384 (15 / 15 / 11 / 15 / 29
   frames; with the old model 2048 / - / 4096 / 8192 / 16384); with the
-  span: 512 for the full range (4.7 kHz bins, 32 frames at dwell 5). The dwell
+  span: 512 for the full range (4.7 kHz bins, 32 frames at dwell 5). With
+  an older heimdall (wall-time dwell: 1.3-1.6 packets at 20 ms) this model
+  overestimates a hop - Auto plans for 3 packets and a hop then averages
+  3-7 frames instead of >= 8 (noisier, it works); not detected, the two
+  ship together. The dwell
   re-evaluates it (a new N is a new grid: the pages drop the waterfall).
   Why: the sweep's speed doesn't depend on N (the dwell and the hops do),
   the resolution and the averaging do. The first rule (span only) chose 16384
