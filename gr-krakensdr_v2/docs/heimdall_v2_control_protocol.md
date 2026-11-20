@@ -220,6 +220,62 @@ the control thread, the mask is saved (`antenna_bias_tee_mask` in
 
 ---
 
+### 2.18 `set_sweep` and sweep mode (added 2026-11-20, checked right after `set_independent_tuner`)
+The interface is fixed in `kraken_doa_v2/docs/dev/sweep-mode.md` ("The
+contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
+*Sweep mode*.
+```json
+{"command":"set_operating_mode","mode":"sweep"}
+{"command":"set_sweep","first_center_hz":88956250,"step_hz":1912500,"steps":11,
+ "tuners":[0,1,2,3,4],"dwell_ms":20,"settle_ms":10,"run":true}
+```
+- `set_operating_mode` `sweep`: the calibration parks as in the other
+  non-coherent modes (noise source off); every tuner on the common gain.
+  Refused on the Wideband variant (`--wideband`) and while the discrete
+  scanner runs; allowed with generic RTL-SDRs, also with one. Entering the
+  mode runs the plan (`run` true) from round 0. Leaving it: to coherent every
+  tuner returns to `center_freq` and the array recalibrates (KerberosSDR:
+  its manual-calibration rules); to independent the tuners stay where the
+  sweep left them; to wideband they are spread as usual.
+- `set_sweep`: accepted in every mode, used in sweep mode, saved in
+  `heimdall_settings.conf` (`sweep_*`; not `run`). Every field optional; the
+  three plan fields only together. Whitespace around the colons is allowed.
+  - `first_center_hz`, `step_hz`, `steps`: hop h's tuner centre is
+    `first_center_hz + h * step_hz`. Whole numbers; every centre inside the
+    tuner range (24-1766 MHz), `step_hz` 100000-2400000, `steps` 1-20000.
+  - `tuners`: the tuners that take part - unique whole numbers below
+    `num_channels`, at least one.
+  - `dwell_ms` 5-5000 (default 20): how long the settled stream runs on a
+    hop. `settle_ms` 0-1000 (default `SWEEP_SETTLE_MS`, config.h): the wait
+    between the retune and the flush that precedes the dwell. Both take
+    effect at once and don't restart the sweep.
+  - `run`: `false` pauses (the tuners stay put; the retuning flag is 0 again
+    once a hop under way has settled), `true` resumes at the round it was on.
+  - Reply `{"status":"success","sweep":{...}}` (the status object below) or
+    `{"status":"error","message":"..."}`; nothing changes on an error. A plan
+    or tuner change restarts the sweep at round 0.
+- Who measures what: K' = min(selected tuners, steps); the k-th selected
+  tuner (ascending index, k < K') covers the contiguous hops
+  `[floor(k*H/K'), floor((k+1)*H/K'))`; in round r (`R = ceil(H/K')` rounds)
+  it goes to hop `base + r` if it has one, else stays. Tuners that take no
+  part (unselected, or selected beyond K') are never retuned.
+- In sweep mode: `set_frequency` is refused (`{"status":"error",...,
+  "frequency":<center_freq>}`; the web page's frequency box too), as are
+  `set_independent_tuner`, `start_scanner` and `set_num_elements`;
+  `set_gain` sets every tuner (and marks the stream invalid until the next
+  settle, like a hop).
+- Status (2 Hz broadcast, `get_status`, the web STATE): always
+  `"sweep":{"first_center_hz","step_hz","steps","tuners":[..],"dwell_ms",
+  "settle_ms","run","round","rounds","sweeps","round_ms"}` - `tuners` the
+  ones taking part (every open tuner when the saved list names none of
+  them), `sweeps` completed since the plan changed, `round_ms` the measured
+  time of the last round - plus three diagnostic fields beyond the contract:
+  `retuning` (the 8091 flag, false outside sweep mode), `failed_retunes`
+  (tuner retunes that failed twice this session; such a tuner keeps its
+  previous frequency in the header) and `l1_unquiet_flushes` (L1 flushes
+  that found no quiet point between USB packet rounds, since startup).
+  `operating_mode` is `"sweep"` and `tuner_frequencies` lists every tuner.
+
 ## 3. The 2 Hz status broadcast (exact schema, `broadcast_status()` lines 53–147)
 
 One line per broadcast, terminated `"}\n"`:
@@ -323,7 +379,8 @@ then uint8 interleaved IQ per channel
   - That is the LOW BYTE; higher bits are flags - mask them off: `0x100`
     KerberosSDR manual mode, `0x200` calibration stale, `0x400` wideband scan,
     `0x800` independent, `0x1000` generic RTL-SDRs (no coherent array; set on
-    every frame with `0x800` or `0x400`, §2.16).
+    every frame with `0x800` or `0x400`, §2.16), `0x2000` sweep mode (with
+    `0x800`, §2.18).
 - `noise_source` = `bias_tee_enabled ? 1 : 0` (1 = calibration noise source is routed in; data is NOT antenna signal).
 - Lag states (`LagCompensatorState`, types.hpp:22): `0`=`MEASURING`, `1`=`SERVOING`, `2`=`CONVERGED` — visible only in the web UI/WebSocket, not on 8092/8091.
 

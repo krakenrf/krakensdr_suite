@@ -131,6 +131,7 @@ bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& de
 struct SdrUpdateResult {
     bool frequency_out_of_range = false;  // outside rf_frequency_range(): frequency unchanged
     bool lo_retune_failed = false;        // Wideband variant: the LO retune failed, frequency unchanged
+    bool sweep_refused = false;           // sweep mode: the plan sets the frequencies, frequency unchanged
     // Coherent / wideband scan: the change failed on failed_channels and every
     // tuner was put back on the previous settings (rolled_back) - or that
     // failed too on restore_failed_channels (restore_failed: tuners
@@ -143,7 +144,9 @@ struct SdrUpdateResult {
     std::string restore_failed_channels;
     uint64_t frequency = 0;               // Hz
     int gain = -999;                      // tenths of dB, -1 = AGC
-    bool ok() const { return !frequency_out_of_range && !lo_retune_failed && failed_channels.empty(); }
+    bool ok() const {
+        return !frequency_out_of_range && !lo_retune_failed && !sweep_refused && failed_channels.empty();
+    }
 };
 // Rejects (logs, ignores) a frequency outside rf_frequency_range(); the gain
 // part of the request still applies. Values equal to the current ones are
@@ -167,11 +170,12 @@ bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vec
 void finish_fast_retunes(const std::vector<std::unique_ptr<SDRDevice>>& devices, const char* why, bool only_if_quiet);
 void handle_settings_change();
 
-// Operating mode (COHERENT / WIDEBAND_SCAN / INDEPENDENT, see types.hpp).
-// Leaving COHERENT parks the calibration (noise off, FFT off); returning to it
-// retunes every tuner to current_frequency on the common gain and runs the
-// phase recalibration. WIDEBAND_SCAN: the caller then spreads the tuners
-// (setup_wideband_frequencies). Non-coherent modes are unavailable in the
+// Operating mode (COHERENT / WIDEBAND_SCAN / INDEPENDENT / SWEEP, see
+// types.hpp). Leaving COHERENT parks the calibration (noise off, FFT off);
+// returning to it retunes every tuner to current_frequency on the common gain
+// and runs the phase recalibration. WIDEBAND_SCAN: the caller then spreads
+// the tuners (setup_wideband_frequencies). SWEEP: the sweep thread hops the
+// plan's tuners (sweep.hpp). Non-coherent modes are unavailable in the
 // downconverter variant, which needs every tuner parked at the IF. Returns
 // false if nothing changed / refused.
 bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<SDRDevice>>& devices);

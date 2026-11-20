@@ -283,7 +283,7 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
     <div class="banners">
         <!-- KerberosSDR manual calibration (STATE.kerberos_mode; hidden otherwise) -->
         <div class="banner" id="kerberos-banner" style="display:none"></div>
-        <!-- Wideband scan / independent mode, generic RTL-SDRs (STATE.operating_mode) -->
+        <!-- Wideband scan / independent / sweep mode, generic RTL-SDRs (STATE.operating_mode) -->
         <div class="banner bn-ac" id="mode-banner" style="display:none"></div>
     </div>
 
@@ -1548,21 +1548,40 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
             const m = st.operating_mode;
             opMode = m;
             genericMode = st.generic_rtlsdr === true;
+            // Sweep mode: the plan's span, tuners and pace (STATE.sweep)
+            const sw = st.sweep;
+            const sweepText = () => {
+                if (!sw || !Number.isFinite(sw.first_center_hz) || !Number.isFinite(sw.steps)) return '';
+                const lo = (sw.first_center_hz - sw.step_hz / 2) / 1e6;
+                const hi = (sw.first_center_hz + (sw.steps - 0.5) * sw.step_hz) / 1e6;
+                const t = Array.isArray(sw.tuners) ? sw.tuners.length : 0;
+                return ` · ${lo.toFixed(1)}-${hi.toFixed(1)} MHz · ${t} tuner${t === 1 ? '' : 's'}` +
+                    (sw.run === false ? ' · paused' : (sw.round_ms > 0 ? ` · ${sw.round_ms} ms a round` : ''));
+            };
+            const sweepTitle = 'The chosen tuners step through the frequency range for the DoA client\'s sweep spectrum; ' +
+                'nothing is demodulated. ';
+            // the sweep plan sets the frequencies: no Set here (the server refuses it too)
+            const fi = $('freq-input'), fb = $('freq-btn');
+            fi.disabled = fb.disabled = m === 'sweep';
+            fi.title = fb.title = m === 'sweep' ? 'Set by the sweep range in the DoA client' : '';
             if (genericMode) {
                 // Generic RTL-SDRs: no KrakenSDR, so never coherent
                 const n = Number.isFinite(st.num_elements) ? st.num_elements : 1;
                 b.textContent = `Generic RTL-SDR · ${n} independent receiver${n === 1 ? '' : 's'}` +
-                    (m === 'wideband' ? ' · wideband scan' : '');
+                    (m === 'wideband' ? ' · wideband scan' : m === 'sweep' ? ' · sweep' + sweepText() : '');
                 b.title = 'No KrakenSDR found. ' +
-                    (m === 'wideband' ? 'The tuners are side by side in wideband scan mode. ' : 'Each receiver has its own frequency and gain. ') +
+                    (m === 'wideband' ? 'The tuners are side by side in wideband scan mode. '
+                        : m === 'sweep' ? sweepTitle : 'Each receiver has its own frequency and gain. ') +
                     'Coherent mode, DoA and calibration are unavailable; the noise source and bias tees are never switched.';
                 b.style.display = 'block';
                 return;
             }
             if (m === 'coherent') { b.style.display = 'none'; return; }
-            b.textContent = (m === 'independent' ? 'Independent mode' : 'Wideband scan mode') + ' · no calibration';
+            b.textContent = (m === 'independent' ? 'Independent mode' : m === 'sweep' ? 'Sweep mode' : 'Wideband scan mode') +
+                ' · no calibration' + (m === 'sweep' ? sweepText() : '');
             b.title = (m === 'independent'
                 ? 'Every tuner is its own receiver (own frequency and gain). '
+                : m === 'sweep' ? sweepTitle
                 : 'The tuners are spread side by side. ') +
                 'No calibration runs and the noise source stays off. Switch back to Coherent in the DoA client\'s top bar.';
             b.style.display = 'block';

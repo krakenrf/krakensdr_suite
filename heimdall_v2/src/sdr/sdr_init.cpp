@@ -2,6 +2,8 @@
 #include "downconverter.hpp"
 #include "kerberos_gpio.hpp"
 #include "sdr_pipeline.hpp"   // signal_coherence_lost
+#include "for_each_tuner.hpp"
+#include "sweep.hpp"
 #include "../core/config.hpp"
 #include "../dsp/compensation.hpp"
 #include "../core/settings.hpp"
@@ -37,34 +39,8 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
 extern void clear_l2_buffer();
 extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (defined in sdr_pipeline.cpp)
 
-// Runs fn(0) .. fn(n - 1), one call per tuner: in parallel threads on
-// Linux - each RTL-SDR has its own PLL settling time, so it costs
-// max(latency) rather than n x latency - and one after the other on
-// Windows, where concurrent control transfers to the KrakenSDR's dongles
-// time out on WinUSB (-7): opened together, 4 of 5 dongles' first register
-// write timed out and librtlsdr reset them mid-init; a parallel retune left
-// one tuner on the old frequency and forced a coherence recovery.
-template <class F>
-static void for_each_tuner(size_t n, F&& fn) {
-#ifdef _WIN32
-    for (size_t i = 0; i < n; i++) fn(i);
-#else
-    std::vector<std::thread> threads;
-    threads.reserve(n);
-    for (size_t i = 0; i < n; i++) {
-        // No thread to be had (EAGAIN: thread / memory limits): that tuner
-        // on this thread instead. The exception escaping would destroy the
-        // joinable threads above - std::terminate, e.g. in the shutdown's
-        // noise-source switch-off before the handles are closed.
-        try {
-            threads.emplace_back([&fn, i]() { fn(i); });
-        } catch (const std::system_error&) {
-            fn(i);
-        }
-    }
-    for (auto& t : threads) t.join();
-#endif
-}
+// for_each_tuner (one by one on Windows, parallel threads elsewhere):
+// for_each_tuner.hpp - shared with the sweep (sweep.cpp)
 
 // Drag retunes (the fork's rtlsdr_set_center_freq_fast): a coherent or
 // wideband scan retune while a drag is open - within FAST_TUNE_SETTLE_MS of
@@ -1021,7 +997,25 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
         if (frequency == prev_frequency) frequency = 0;
         if (gain == prev_gain) gain = -999;
     }
+    // Sweep mode: the plan sets the tuners' frequencies (set_sweep); a gain
+    // change sets every tuner (the common gain). Checked under
+    // settings_mutex, which every mode change holds. The refusal is logged at
+    // most every 10 s (a page may keep sending its frequency).
+    const bool sweep = operating_mode.load() == OperatingMode::SWEEP;
+    if (sweep && frequency > 0) {
+        static int64_t last_log_ms = -100000;
+        const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (now_ms - last_log_ms >= 10000) {
+            last_log_ms = now_ms;
+            std::cerr << "SDR: retune to " << frequency / 1e6 << " MHz refused in sweep mode (set_sweep sets the "
+                         "frequencies)" << std::endl;
+        }
+        frequency = 0;
+        res.sweep_refused = true;
+    }
     if (frequency == 0 && gain == -999) return done(false);
+    if (sweep) sweep_note_tuner_change();  // the stream is invalid until the next settle + flush
 
     std::cout << "SDR: Updating settings - ";
     if (frequency > 0) std::cout << "Freq: " << frequency/1e6 << " MHz ";
@@ -1438,10 +1432,10 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
     // control port, the settings replay, wideband off - ends here). A client
     // may ask on every reconnect: logged at most every 10 s per mode.
     if (const char* why = generic_mode_refusal(target)) {
-        static std::atomic<int64_t> last_log_ms[3] = {-100000, -100000, -100000};
+        static std::atomic<int64_t> last_log_ms[4] = {-100000, -100000, -100000, -100000};
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        auto& last = last_log_ms[std::clamp(static_cast<int>(target), 0, 2)];
+        auto& last = last_log_ms[std::clamp(static_cast<int>(target), 0, 3)];
         if (now_ms - last.exchange(now_ms) >= 10000) std::cerr << "System: " << why << std::endl;
         return false;
     }
@@ -1453,8 +1447,12 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
     std::cout << "System: operating mode " << operating_mode_name(cur) << " -> "
               << operating_mode_name(target) << std::endl;
 
+    // Sweep mode: the 8091 retuning flag goes on BEFORE the mode is stored
+    // (a header that sees SWEEP then sees the flag; sweep.cpp)
+    if (target == OperatingMode::SWEEP) sweep_prepare_entry();
+
     if (cur == OperatingMode::COHERENT) {
-        // No calibration in either target mode. The tuners all sit at
+        // No calibration in any target mode. The tuners all sit at
         // current_frequency until told otherwise.
         for (int i = 0; i < NUM_DEVICES; i++) {
             wideband_config.set_tuner_frequency(i, static_cast<uint32_t>(current_frequency.load()));
@@ -1466,6 +1464,9 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
     } else if (cur == OperatingMode::INDEPENDENT) {
         restore_common_gain_locked(devices);
     }
+    // (leaving SWEEP: the sweep thread re-checks the mode under
+    // settings_mutex, held here, before every retune - it can't retune over
+    // the new mode's tuning; sweep_notify() below ends its waits)
 
     if (target == OperatingMode::COHERENT) {
         operating_mode = OperatingMode::COHERENT;
@@ -1475,6 +1476,13 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
         // The caller spreads the tuners (setup_wideband_frequencies)
         wideband_config.enabled = true;
         operating_mode = OperatingMode::WIDEBAND_SCAN;
+    } else if (target == OperatingMode::SWEEP) {
+        // The selected tuners hop (sweep_thread); the others stay where they
+        // are. Every tuner on the common gain (restored above when leaving
+        // independent mode).
+        wideband_config.enabled = false;
+        for (int i = 0; i < NUM_DEVICES; i++) wideband_config.tuner_gains[i] = current_gain.load();
+        operating_mode = OperatingMode::SWEEP;
     } else {
         // Independent: every tuner stays where it is (all at the coherent
         // frequency, or the scan's spread) until set_independent_tuner
@@ -1482,6 +1490,7 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
         for (int i = 0; i < NUM_DEVICES; i++) wideband_config.tuner_gains[i] = current_gain.load();
         operating_mode = OperatingMode::INDEPENDENT;
     }
+    if (target == OperatingMode::SWEEP || cur == OperatingMode::SWEEP) sweep_notify();
     settings::note_mode();
     return true;
 }
@@ -1549,6 +1558,10 @@ void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devic
     if (m == static_cast<int>(OperatingMode::WIDEBAND_SCAN)) {
         if (set_operating_mode(OperatingMode::WIDEBAND_SCAN, devices))
             setup_wideband_frequencies(current_frequency.load(), devices);
+    } else if (m == static_cast<int>(OperatingMode::SWEEP)) {
+        // the saved plan was loaded with the settings; the sweep thread
+        // starts hopping once the pipeline runs
+        set_operating_mode(OperatingMode::SWEEP, devices);
     } else if (m == static_cast<int>(OperatingMode::INDEPENDENT)) {
         // The saved per-tuner tuning first: set_operating_mode and every
         // set_independent_tuner refresh it from the live state (note_mode)

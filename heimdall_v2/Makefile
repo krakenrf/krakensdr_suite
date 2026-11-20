@@ -31,7 +31,7 @@ endif
 # Source files organized by module
 CORE_SOURCES = src/core/utils.cpp src/core/settings.cpp src/core/forward_comp.cpp src/core/status_dashboard.cpp \
                src/core/platform.cpp src/core/fs_compat.cpp src/core/version_info.cpp src/core/run_capture.cpp
-SDR_SOURCES = src/sdr/sdr_device.cpp src/sdr/sdr_init.cpp src/sdr/sdr_pipeline.cpp src/sdr/pipeline_control.cpp src/sdr/downconverter.cpp src/sdr/kerberos_gpio.cpp
+SDR_SOURCES = src/sdr/sdr_device.cpp src/sdr/sdr_init.cpp src/sdr/sdr_pipeline.cpp src/sdr/pipeline_control.cpp src/sdr/downconverter.cpp src/sdr/kerberos_gpio.cpp src/sdr/sweep.cpp
 DSP_SOURCES = src/dsp/fft_plan.cpp src/dsp/correlation.cpp src/dsp/compensation.cpp
 NET_SOURCES = src/net/tcp_common.cpp src/net/tcp_data_server.cpp src/net/tcp_control_server.cpp src/net/rtl_tcp_server.cpp
 WEB_SOURCES = src/web/html_loader.cpp src/web/web_server.cpp

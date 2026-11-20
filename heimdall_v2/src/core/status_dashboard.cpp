@@ -8,6 +8,7 @@
 #include "sdr/sdr_device.hpp"
 #include "sdr/sdr_pipeline.hpp"
 #include "sdr/downconverter.hpp"
+#include "sdr/sweep.hpp"
 #include "net/tcp_data_server.hpp"
 #include "net/tcp_control_server.hpp"
 #include "net/rtl_tcp_server.hpp"
@@ -502,7 +503,10 @@ void render() {
           << col::DIM << "  elems " << col::RST << nelem << "/" << expected_serials.size()
           << col::DIM << "  ref ch" << col::RST << REF_CHANNEL
           << col::DIM << "  mode " << col::RST
-          << (mode == OperatingMode::WIDEBAND_SCAN ? "WIDEBAND" : mode == OperatingMode::INDEPENDENT ? "INDEPENDENT" : "COHERENT")
+          << (mode == OperatingMode::WIDEBAND_SCAN ? "WIDEBAND"
+              : mode == OperatingMode::INDEPENDENT ? "INDEPENDENT"
+              : mode == OperatingMode::SWEEP       ? "SWEEP"
+                                                   : "COHERENT")
           << col::DIM << "  bias " << col::RST << onoff(bias_tee_enabled.load());
         add(o.str());
 
@@ -624,6 +628,23 @@ void render() {
           << col::DIM << "  edge-clip " << col::RST << f2(wideband_config.edge_clip.load());
         for (int i = 0; i < nshow; i++)
             o << col::DIM << "  t" << i << " " << col::RST << f1(wideband_config.get_tuner_frequency(i) / 1e6);
+        add(o.str());
+    } else if (operating_mode.load() == OperatingMode::SWEEP) {
+        // the plan, where it is, and how fast
+        const SweepPlan p = sweep_state.get_plan();
+        const vector<int> t = sweep_tuners(p.tuner_mask);
+        const uint64_t last = p.first_center_hz + (p.steps ? p.steps - 1 : 0) * p.step_hz;
+        ostringstream o;
+        o << label("SWEEP") << (p.run ? string(col::GRN) + "on" : string(col::YEL) + "paused") << col::RST
+          << col::DIM << "  " << col::RST << f1(p.first_center_hz / 1e6) << col::DIM << "-" << col::RST
+          << f1(last / 1e6) << " MHz" << col::DIM << "  hops " << col::RST << p.steps
+          << col::DIM << "  tuners " << col::RST;
+        for (size_t i = 0; i < t.size(); i++) o << (i ? "," : "") << t[i];
+        o << col::DIM << "  round " << col::RST << sweep_state.round.load() << "/" << sweep_rounds(p.steps, t.size())
+          << col::DIM << "  sweeps " << col::RST << sweep_state.sweeps.load()
+          << col::DIM << "  " << col::RST << sweep_state.round_ms.load() << col::DIM << " ms/round  dwell "
+          << col::RST << p.dwell_ms << col::DIM << " settle " << col::RST << p.settle_ms << col::DIM << " ms" << col::RST;
+        if (const uint32_t f = sweep_state.failed_retunes.load(); f) o << "  " << col::RED << f << " failed" << col::RST;
         add(o.str());
     } else if (operating_mode.load() == OperatingMode::INDEPENDENT) {
         ostringstream o;

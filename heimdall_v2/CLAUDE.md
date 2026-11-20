@@ -14,7 +14,7 @@ are changing:
 | `config.h` settings, ingest robustness knobs, realtime scheduling | `docs/dev/configuration.md` |
 | Lag servo, phase calibration, retune timing, calibration hold, why phase-only, fixed IF VGA, calibration buttons | `docs/dev/calibration.md` |
 | Drag retunes (fast path), failed-retune replies, measurements | `docs/dev/drag-retunes.md` |
-| Operating modes (coherent / wideband scan / independent), generic RTL-SDR mode | `docs/dev/operating-modes.md` |
+| Operating modes (coherent / wideband scan / independent / sweep), generic RTL-SDR mode | `docs/dev/operating-modes.md` |
 | Coherence-loss detection and recovery | `docs/dev/coherence-recovery.md` |
 | `--kerberos`, `--kerberos_sw`, `--ext_noise` | `docs/dev/kerberos-and-ext-noise.md` |
 | `--wideband` downconverter (moRFeus LO, mixer sides, RF switches) | `docs/dev/wideband-variant.md` |
@@ -49,10 +49,11 @@ startup by `html_loader.cpp`.
   (enumeration by serial - by USB index in generic RTL-SDR mode,
   `update_sdr_settings()`,
   `set_bias_tee_all_devices()`, `set_operating_mode()`,
-  `wideband_retune_rf()`, `for_each_tuner`), `sdr_pipeline.cpp` (drain,
+  `wideband_retune_rf()`), `for_each_tuner.hpp`, `sdr_pipeline.cpp` (drain,
   conversion worker, `signal_coherence_lost()`), `pipeline_control.cpp`
   (thread lifecycle, `reconfigure_num_elements()`), `downconverter.cpp`,
-  `kerberos_gpio.cpp`.
+  `kerberos_gpio.cpp`, `sweep.cpp` (sweep mode: the plan, the hop thread,
+  its status).
 - `src/dsp/`: `fft_plan.cpp` (`FftPlan`, `FftPool`), `correlation.cpp`
   (`process_correlations()`, Gaussian peak interpolation, the 8070
   correlation message), `compensation.cpp` (lag / phase state machines,
@@ -150,11 +151,19 @@ Hardware and replies
 - Downconverter HID reports are exactly 17 bytes with a leading 0
   report-id; a malformed frame wedges the moRFeus until a power cycle.
   High-side injection is undone by negating Q in the conversion loop.
+- Sweep mode (`sweep.cpp`): a packet with the 8091 `retuning_in_progress` = 0
+  holds only samples taken at the header's per-channel frequencies, after
+  the settle - clients build on it. The flag goes on before a tuner moves,
+  a tuner's frequency is stored only once it took it, the header reads the
+  frequencies before the flag, and the flag is cleared only after the
+  post-settle flush (under `settings_mutex`). No output per hop; its
+  flushes are the quiet ones and never count as coherence losses.
 
 Persistence (`heimdall_settings.conf`)
 - The last user tuning (frequency, gain) is saved after 10 s unchanged and
-  restored before the dongles open; scanner hops are not saved. The
-  operating mode and per-tuner tuning are saved (`settings::note_mode`).
+  restored before the dongles open; scanner and sweep hops are not saved.
+  The operating mode, per-tuner tuning (`settings::note_mode`) and sweep
+  mode's plan (`settings::note_sweep`; not its run / pause) are saved.
   An element count is saved only when chosen at runtime
   (`persisted_num_elements`), never from `-n` or `--kerberos`.
 

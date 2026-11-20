@@ -269,7 +269,8 @@ echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
 | `set_rtl_tcp_channel` | `channel` | Choose RTL-TCP source channel |
 | `set_stability_delay` | `delay_ms` | Override retune cooldown |
 | `hold_calibration` | `hold_ms` (0–30000) | Hold the calibration: retunes / gain changes enter the cooldown but don't recalibrate for `hold_ms` from now (a lease to renew); `0` releases and starts a pending calibration at once. Used by the DoA client's saved-frequency scan while it searches |
-| `set_operating_mode` | `mode` (`coherent`/`wideband`/`independent`) | Switch the operating mode (wideband spreads the tuners around the current frequency; coherent retunes all and recalibrates) |
+| `set_operating_mode` | `mode` (`coherent`/`wideband`/`independent`/`sweep`) | Switch the operating mode (wideband spreads the tuners around the current frequency; sweep hops the plan's tuners; coherent retunes all and recalibrates) |
+| `set_sweep` | `first_center_hz`, `step_hz`, `steps` (together), `tuners?` (list), `dwell_ms?` (5-5000), `settle_ms?` (0-1000), `run?` | Sweep mode's plan: hop h's tuner centre is `first_center_hz + h * step_hz`; the tuners take contiguous blocks of hops. Accepted in every mode, used in sweep mode, saved (not `run`); a bad field changes nothing. Reply and status: `sweep` object. In sweep mode `set_frequency`, `set_independent_tuner`, `start_scanner` and `set_num_elements` are refused; `set_gain` sets every tuner |
 | `set_independent_tuner` | `channel`, `frequency?` (Hz), `gain?` (dB, `-1`=auto) | Independent mode: tune one tuner / set its gain |
 | `set_antenna_bias_tees` | `mask` (0–255, bit N = channel N) | Switch the antenna ports' bias tees (DC for active antennas / LNAs; the same as the web page's `ANT_BIAS_MASK`, saved); the reply and the status carry `antenna_bias_tee_mask`, the status also `antenna_bias_tees_available` and `antenna_bias_tee_reserved`. Refused with generic RTL-SDRs and on the Wideband variant |
 | `set_wideband_mode` | `enable`, `base_frequency?` | Enter/leave wideband scan mode (older form of `set_operating_mode`) |
@@ -297,8 +298,13 @@ Total = `32 + num_channels·8 + num_channels·num_samples·2` bytes. `phase_stat
 mirrors the phase compensator enum so clients know when the stream is fully
 calibrated; its high bits are flags (consumers mask the low byte): 0x100
 KerberosSDR manual calibration, 0x200 calibration stale, 0x400 wideband scan
-mode, 0x800 independent mode. In wideband / independent mode each channel
-carries its own frequency, in independent mode also its own gain.
+mode, 0x800 independent mode, 0x1000 generic RTL-SDRs, 0x2000 sweep mode
+(always with 0x800). In wideband / independent / sweep mode each channel
+carries its own frequency, in independent mode also its own gain. In sweep
+mode the three scanner fields are the sweep's: `freq_change_counter` + 1 per
+round, `current_group_index` the round, and a packet with
+`retuning_in_progress` = 0 holds only samples taken at its per-channel
+frequencies after the settle (`docs/dev/operating-modes.md`, *Sweep mode*).
 
 ### RTL-TCP (port 1234)
 
