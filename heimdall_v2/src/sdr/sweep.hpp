@@ -42,6 +42,16 @@ std::string sweep_status_json();
 std::vector<int> sweep_tuners(uint32_t tuner_mask);
 // Rounds R of a plan: ceil(H / min(K, H)) for H hops and K tuners
 uint32_t sweep_rounds(uint32_t steps, size_t tuners);
+// The valid USB packets (sets) a hop delivers per tuner at a dwell: the
+// fewest whole packets that hold dwell_ms of samples, ceil(dwell_ms x
+// SAMPLE_RATE / (1000 x NUM_SAMPLES)), at least 1 (5 ms -> 1, 10 -> 2,
+// 20 -> 3, 50 -> 8, 100 -> 15 at 2.4 MS/s, 16384 samples)
+constexpr uint32_t sweep_hop_packets(uint32_t dwell_ms) {
+    const uint64_t num = static_cast<uint64_t>(dwell_ms) * static_cast<uint64_t>(SAMPLE_RATE);
+    const uint64_t den = 1000ULL * static_cast<uint64_t>(NUM_SAMPLES);
+    const uint64_t n = (num + den - 1) / den;
+    return n < 1 ? 1u : static_cast<uint32_t>(n);
+}
 
 // set_operating_mode() entering SWEEP (settings_mutex held), BEFORE the mode
 // is stored: round 0, running, the 8091 retuning flag on until the first
@@ -54,6 +64,9 @@ void sweep_notify();
 // after (the settle + flush that make the stream valid again run from there)
 void sweep_note_tuner_change();
 void sweep_note_tuner_change_done();
+// The conversion worker sent a set as valid (retuning flag 0 before and after
+// its header): counted in sweep_state.valid_sets (the dwell's measure)
+void sweep_note_valid_set();
 // After the mode left SWEEP (settings_mutex held): wait until no sweep L1
 // flush runs any more - none starts after this (set_operating_mode's
 // re-pairing flush on the way back to coherent is then the last one)

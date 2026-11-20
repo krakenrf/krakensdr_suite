@@ -58,21 +58,31 @@
 // ========================================================================
 // The chosen tuners hop through a plan of hop centres (8092 set_sweep) so a
 // client can stitch one wide spectrum out of the hops. A hop: the 8091
-// header's retuning flag on -> flush -> retune -> SWEEP_SETTLE_MS -> flush ->
-// flag off -> dwell. SWEEP_SETTLE_MS: on the KrakenSDR (x86 PC, 2026-11-20)
-// settle 0 already held - the first valid set after a hop showed nothing of
-// the previous hop, against a station 16-24 dB over the floor (the flush
-// after the settle is itself a guard of about a USB packet); 5 ms is margin
-// for slower USB hosts (the Pi not measured). Numbers in the doc.
+// header's retuning flag on -> flush -> retune -> SWEEP_SETTLE_MS -> gate
+// (each dongle drops its packets up to the last that can hold a sample from
+// before the settle's end) -> flag off -> dwell. SWEEP_SETTLE_MS: on the
+// KrakenSDR (x86 PC, 2026-11-20 / 21) settle 0 already held - the first
+// valid set after a hop showed nothing of the previous hop, against a
+// station 16-24 dB over the floor; 5 ms is margin for slower USB hosts (the
+// Pi not measured) and costs no time on the PC (a hop's packets fall on the
+// same packet boundaries with 0 or 5: docs, "Hop timing"). Numbers in the doc.
 #define SWEEP_SETTLE_MS          5      // default settle, ms (set_sweep settle_ms 0-1000)
 #define SWEEP_SETTLE_MAX_MS      1000
-#define SWEEP_DWELL_MS           20     // default dwell, ms (set_sweep dwell_ms)
+// The dwell is whole USB packets of valid data per tuner and hop: dwell_ms
+// asks for at least that much, a hop delivers sweep_hop_packets(dwell_ms) =
+// ceil(dwell_ms x SAMPLE_RATE / (1000 x NUM_SAMPLES)) packets (6.83 ms each:
+// 5 -> 1, 10 -> 2, 20 -> 3, 50 -> 8, 100 -> 15) and moves on as soon as the
+// last has gone out on 8091 (status "hop_packets").
+#define SWEEP_DWELL_MS           20     // default dwell, ms (set_sweep dwell_ms; the contract): 3 packets
 #define SWEEP_DWELL_MIN_MS       5
 #define SWEEP_DWELL_MAX_MS       5000
-// A dwell also lasts until one set has gone out as valid on 8091 (the first
-// comes up to a USB packet, 6.8 ms, after the post-settle flush) - at most
-// this much longer (a stalled stream must not stop the sweep)
+// A hop waits for its packets at most this much longer than they take (a
+// stalled stream must not stop the sweep)
 #define SWEEP_DWELL_GRACE_MS     250
+// The conversion worker's wait slice in sweep mode (sdr_pipeline.cpp): it
+// re-reads the flush epoch this often, so the first set after a hop's flush
+// is not dropped as converted across it
+#define SWEEP_CONVERT_WAIT_MS    2
 #define SWEEP_STEP_HZ            1912500ULL   // the contract's hop spacing (51/64 of 2.4 MHz)
 #define SWEEP_STEP_MIN_HZ        100000ULL
 #define SWEEP_STEP_MAX_HZ        2400000ULL
