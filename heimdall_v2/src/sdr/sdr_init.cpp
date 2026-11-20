@@ -1253,7 +1253,9 @@ void note_tuners_changed_outside_coherent() {
 // shifts that tuner's sample stream against the others' (~2 samples a
 // retune), so after unequal counts the lags are unknown - the way back to
 // coherent then re-acquires every channel's lag (the full recalibration)
-// instead of the phase-only one.
+// instead of the phase-only one. Not with a library that defines
+// RTLSDR_NO_STREAM_SLIP (no retune drops a sample; the cause was the lock
+// check's 3-register read, 2026-11-21): the counts are then only logged.
 static std::atomic<uint32_t> retunes_outside_coherent[NUM_DEVICES];
 
 void note_tuner_retuned(int tuner) {
@@ -1557,14 +1559,24 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
             repair_after_sweep = false;
         }
         // The lags: after a sweep, or tuners retuned unequally often (an
-        // independent tuner), they are unknown - re-acquire every channel's
-        // lag together (the coherence watchdog's full recalibration, as at
-        // startup: the servos run in parallel) instead of keeping them
-        // CONVERGED and finding the shifted channels one by one inside the
-        // phase recalibration (~25 s each). Not counted as a coherence
-        // event. --kerberos: no automatic calibration (its restore is
-        // marked STALE below).
-        const bool lags_unknown = after_sweep || retunes_unequal();
+        // independent tuner), they are unknown with a librtlsdr whose retunes
+        // drop samples (2 per tune: every PLL lock check read 3 tuner
+        // registers) - re-acquire every channel's lag together (the
+        // coherence watchdog's full recalibration, as at startup: the servos
+        // run in parallel) instead of keeping them CONVERGED and finding the
+        // shifted channels one by one inside the phase recalibration (~25 s
+        // each). Not counted as a coherence event. A library with
+        // RTLSDR_NO_STREAM_SLIP drops none, so the lags are as they were
+        // and the phase-only return does (seconds); its lag check
+        // (check_lag_during_phase_recal: > 1 sample -> that channel's servo)
+        // stays the net. --kerberos: no automatic calibration (its restore
+        // is marked STALE below).
+        const bool unequal = after_sweep || retunes_unequal();
+#ifdef RTLSDR_NO_STREAM_SLIP
+        const bool lags_unknown = false;
+#else
+        const bool lags_unknown = unequal;
+#endif
         return_to_coherent_locked(devices);
         if (!repaired) {
             signal_coherence_lost("sweep mode exit: no quiet point to re-pair the streams");
@@ -1572,6 +1584,9 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
             std::cout << "Mode: tuners retuned " << (after_sweep ? "by the sweep" : "unequally often")
                       << " - full recalibration (every channel's lag, then the phase)" << std::endl;
             force_recalibration.store(true, std::memory_order_release);
+        } else if (unequal && !kerberos_manual_cal_only()) {
+            std::cout << "Mode: tuners retuned " << (after_sweep ? "by the sweep" : "unequally often")
+                      << " - the library keeps the streams in step: phase recalibration" << std::endl;
         }
     } else if (target == OperatingMode::WIDEBAND_SCAN) {
         // The caller spreads the tuners (setup_wideband_frequencies)
