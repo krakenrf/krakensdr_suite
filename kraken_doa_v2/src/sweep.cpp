@@ -1,0 +1,980 @@
+// Sweep mode: the engine that stitches heimdall's hops into one spectrum.
+// Design, decisions and measurements: docs/dev/sweep-mode.md, "The receiver".
+
+#include "sweep.hpp"
+
+#include "config.hpp"
+#include "globals.hpp"                       // active_num_elements, sweep_mode_enabled
+#include "kraken_fft.hpp"
+#include "signal_processing/noise_floor.hpp" // nfloor::shape_db
+#include "utils/parse_num.hpp"
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <bit>
+#include <chrono>
+#include <cmath>
+#include <condition_variable>
+#include <cstdio>
+#include <cstring>
+#include <iostream>
+#include <limits>
+#include <mutex>
+#include <sstream>
+#include <stdexcept>
+#include <thread>
+
+namespace sweep {
+namespace {
+
+constexpr int16_t NONE = std::numeric_limits<int16_t>::min();   // a bin never measured
+constexpr double FS = 2400000.0;
+// A header frequency is a float32 (128 Hz steps at 1.7 GHz): a tuner further
+// than this from a hop centre is not on a hop of the plan (still on an old one,
+// or a tuner the sweep doesn't move) and its packets are not used
+constexpr double HOP_TOL_HZ = 1500.0;
+// The reference (see evaluate): its quantile over the hops' floors, the seam
+// steps' width and limit, and the change that rewrites a stored hop
+constexpr float REF_QUANTILE = 0.20f;
+constexpr int SEAM_HOPS = 6;
+constexpr int SEAM_MIN_BLOCK = 1;   // also K' = H: one hop per tuner
+constexpr float SEAM_MAX_DB = 6.0f;
+constexpr float REWRITE_DB = 0.25f;
+constexpr int64_t EVAL_FIRST_MS = 250;    // until the first sweep on a grid is complete
+constexpr int64_t EVAL_MS = 1000;
+constexpr int SLOTS = 8;                  // packets queued for the worker (~55 ms at 16384 samples)
+
+int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+int u_of(int n) { return n * 51 / 64; }
+
+// The receiver noise is drawn with its median NOISE_SHOWN_DB over the 0 dB
+// line (the regular spectrum's noise sits ~2 dB over its floor too)
+constexpr float NOISE_SHOWN_DB = 2.0f;
+
+// A noise bin averaged over m Hann frames (no overlap) is Gamma(m, 1/m)
+// distributed: its median stands spread_db(m) over its 10th percentile - the
+// hop's floor is measured as that percentile (robust to signals in 90 % of
+// the hop) and moved to where the median is, so the noise sits at the same
+// height for every FFT size and dwell (m = 2 .. 18750)
+double gamma_cdf(int m, double x) {   // P(m, x) for an integer m
+    if (x <= 0) return 0.0;
+    double lsum = -INFINITY;
+    const double lx = std::log(x);
+    for (int k = 0; k < m; k++) {
+        const double lt = k * lx - std::lgamma(k + 1.0);
+        lsum = lsum > lt ? lsum + std::log1p(std::exp(lt - lsum)) : lt + std::log1p(std::exp(lsum - lt));
+    }
+    return 1.0 - std::exp(lsum - x);
+}
+double gamma_q(int m, double p) {
+    double lo = 0, hi = m * 4.0 + 20;
+    for (int i = 0; i < 80; i++) {
+        const double mid = 0.5 * (lo + hi);
+        (gamma_cdf(m, mid) < p ? lo : hi) = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+float spread_db(int m) {
+    static float cache[257] = {};
+    m = std::max(m, 1);
+    if (m <= 256) {
+        if (cache[m] == 0.0f) cache[m] = static_cast<float>(10.0 * std::log10(gamma_q(m, 0.5) / gamma_q(m, 0.1)));
+        return cache[m];
+    }
+    // Wilson-Hilferty (chi-square of 2m degrees of freedom), within 0.01 dB here
+    const double nu = 2.0 * m, a = 2.0 / (9.0 * nu);
+    const double q10 = std::pow(1.0 - a - 1.2815516 * std::sqrt(a), 3.0), q50 = std::pow(1.0 - a, 3.0);
+    return static_cast<float>(10.0 * std::log10(q50 / q10));
+}
+
+// The FFT size for the sweep's hops: the request (0 = auto), never more than
+// SWEEP_MAX_BINS bins in the sweep; auto = the largest N with at most
+// SWEEP_AUTO_BINS (docs: why)
+int fft_size_for(int res, int64_t hops) {
+    const int64_t cap = res == 0 ? SWEEP_AUTO_BINS : SWEEP_MAX_BINS;
+    int n = res == 0 ? SWEEP_FFT_MAX : res;
+    while (n > SWEEP_FFT_MIN && hops * u_of(n) > cap) n /= 2;
+    return n;
+}
+
+// --- the settings (uWS loop thread) ----------------------------------------------------
+struct Settings {
+    int64_t start = 87500000, stop = 108000000;
+    uint32_t mask = 0;   // requested tuners (bit = index), 0 = all
+    int res = 0;         // 0 = auto
+    int dwell = SWEEP_DWELL_DEFAULT_MS;
+};
+Settings g_set;
+std::atomic<bool> g_run{true};
+std::atomic<bool> g_active{false};
+
+struct Plan {
+    uint32_t gen = 0;        // + 1 on every change the worker must see
+    uint32_t grid_gen = 0;   // + 1 when the grid (range, N) changes: the array is new
+    int64_t start = 0, stop = 0, f0 = 0;
+    int N = 0, U = 0, H = 0, K = 0, Kp = 0, R = 0;
+    int64_t bins = 0;
+    double bin_hz = 0;
+    uint32_t tuners = 0;     // the tuners taking part (bit mask; the first Kp in ascending order measure)
+    int dwell = SWEEP_DWELL_DEFAULT_MS;
+    int res = 0;
+    uint32_t grid = 0;       // the id the pages see
+    bool ok = false;
+};
+
+uint32_t grid_id(int64_t start, int64_t stop, int n) {
+    uint32_t h = 2166136261u;   // FNV-1a over the three values
+    auto mix = [&h](uint64_t v) {
+        for (int i = 0; i < 8; i++) { h ^= static_cast<uint8_t>(v >> (8 * i)); h *= 16777619u; }
+    };
+    mix(static_cast<uint64_t>(start));
+    mix(static_cast<uint64_t>(stop));
+    mix(static_cast<uint64_t>(n));
+    return h ? h : 1u;
+}
+
+Plan make_plan(const Settings& s, int avail) {
+    Plan p;
+    p.start = s.start;
+    p.stop = s.stop;
+    const int64_t span = s.stop - s.start;
+    p.H = static_cast<int>(std::max<int64_t>(1, (span + SWEEP_STEP_HZ - 1) / SWEEP_STEP_HZ));
+    p.res = s.res;
+    p.N = fft_size_for(s.res, p.H);
+    p.U = u_of(p.N);
+    p.bin_hz = FS / p.N;
+    // bin g at start + g * bin: the bins up to stop (exact integer arithmetic)
+    p.bins = std::min<int64_t>(static_cast<int64_t>(p.H) * p.U, span * p.N / static_cast<int64_t>(FS) + 1);
+    avail = std::clamp(avail, 1, MAX_CHANNELS);
+    const uint32_t all = (1u << avail) - 1u;
+    p.tuners = s.mask & all;
+    if (!p.tuners) p.tuners = all;
+    p.K = std::popcount(p.tuners);
+    p.Kp = std::min(p.K, p.H);
+    p.R = (p.H + p.Kp - 1) / p.Kp;
+    p.f0 = s.start + SWEEP_STEP_HZ / 2;
+    p.dwell = s.dwell;
+    p.grid = grid_id(p.start, p.stop, p.N);
+    p.ok = true;
+    return p;
+}
+
+// the k-th tuner taking part (ascending), -1 = none
+int tuner_of_rank(uint32_t mask, int k) {
+    for (int t = 0; t < MAX_CHANNELS; t++)
+        if (mask & (1u << t)) {
+            if (k == 0) return t;
+            k--;
+        }
+    return -1;
+}
+
+// --- the shared store (g_mu) -----------------------------------------------------------
+// lv[0] = the sweep bins in 0.01 dB over the reference (NONE = never measured),
+// lv[l][i] = max(lv[l-1][2i], lv[l-1][2i + 1]): a frame's pool is the max over
+// a few nodes (range_max), whatever the number of bins - no page re-pools the
+// millions of bins of a wide sweep per frame
+std::mutex g_mu;
+struct Store {
+    Plan plan;
+    std::vector<std::vector<int16_t>> lv;
+    std::vector<float> floor;     // per hop: its 10th percentile (dB, shape off, as measured), NaN = none
+    std::vector<float> applied;   // per hop: the reference its bins are stored against
+    std::vector<int8_t> tuner;    // per hop: who measured it last (-1 none)
+    float base = NAN;             // the reference = base + off[tuner]
+    std::array<float, MAX_CHANNELS> off{};
+    int64_t eval_ms = 0;
+    bool any = false;
+    uint32_t done = 0;            // sweeps completed on this grid
+    float last_s = 0;             // the last complete sweep's duration
+    std::vector<float> scratch;   // evaluate
+} S;
+std::atomic<uint32_t> g_plan_gen{0};
+std::atomic<uint32_t> g_mask{0};          // the plan's tuners, for the data receiver
+std::atomic<uint64_t> g_version{0};
+std::atomic<uint32_t> g_completions{0};
+std::atomic<float> g_progress{0.0f};
+std::atomic<uint64_t> g_drops{0};
+std::atomic<bool> g_heim_dirty{false};
+std::atomic<float> g_gain{NAN};       // the common gain (note_gain), NaN = not known yet
+
+int16_t q16(float db) {
+    const float v = std::round(db * 100.0f);
+    return static_cast<int16_t>(std::clamp(v, -32767.0f, 32767.0f));
+}
+
+void pyr_alloc(size_t n) {
+    S.lv.clear();
+    S.lv.emplace_back(n, NONE);
+    size_t m = n;
+    while (m > 1) {
+        m = (m + 1) / 2;
+        S.lv.emplace_back(m, NONE);
+    }
+}
+
+// level-0 bins [a, b] (inclusive) changed: their ancestors
+void pyr_update(size_t a, size_t b) {
+    for (size_t l = 1; l < S.lv.size(); l++) {
+        a >>= 1;
+        b >>= 1;
+        const std::vector<int16_t>& c = S.lv[l - 1];
+        std::vector<int16_t>& d = S.lv[l];
+        for (size_t i = a; i <= b && i < d.size(); i++) {
+            const size_t k = 2 * i;
+            d[i] = std::max(c[k], k + 1 < c.size() ? c[k + 1] : NONE);
+        }
+    }
+}
+
+// max over level-0 bins [a, b)
+int16_t range_max(size_t a, size_t b) {
+    int16_t m = NONE;
+    for (size_t l = 0; a < b && l < S.lv.size(); l++) {
+        const std::vector<int16_t>& v = S.lv[l];
+        if (a & 1) m = std::max(m, v[a++]);
+        if (b & 1) m = std::max(m, v[--b]);
+        a >>= 1;
+        b >>= 1;
+    }
+    return m;
+}
+
+float quantile(std::vector<float>& v, size_t n, float q) {
+    if (n == 0) return NAN;
+    const size_t k = std::min(n - 1, static_cast<size_t>(q * static_cast<float>(n)));
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(k), v.begin() + static_cast<std::ptrdiff_t>(n));
+    return v[k];
+}
+
+// (g_mu) shift hop h's stored bins by d dB
+void shift_hop(int h, float d) {
+    const Plan& p = S.plan;
+    const int64_t a = static_cast<int64_t>(h) * p.U, b = std::min<int64_t>(a + p.U, p.bins);
+    if (a >= b) return;
+    const int dq = static_cast<int>(std::lround(d * 100.0f));
+    std::vector<int16_t>& v = S.lv[0];
+    for (int64_t i = a; i < b; i++) {
+        if (v[static_cast<size_t>(i)] == NONE) continue;
+        v[static_cast<size_t>(i)] = static_cast<int16_t>(std::clamp(v[static_cast<size_t>(i)] + dq, -32767, 32767));
+    }
+    pyr_update(static_cast<size_t>(a), static_cast<size_t>(b - 1));
+}
+
+// (g_mu) The reference: ONE for the whole sweep - base = the 20th percentile
+// of the hops' floors (each hop's 10th percentile) - plus each tuner's gain
+// step, measured where its block meets the next one's: the lowest floor of
+// the SEAM_HOPS hops on each side (neighbours in frequency, so they differ
+// only by the two dongles' gains; a signal only raises a hop's floor, so the
+// lowest is noise as long as one hop of the six is). A step past SEAM_MAX_DB
+// is no gain step (a wide signal on one side): 0. A signal that fills a hop,
+// or several, keeps its height; the dongles' different floors (up to ~4 dB)
+// don't show as steps. Hops whose reference moved by more than REWRITE_DB are
+// rewritten.
+void evaluate() {
+    const Plan& p = S.plan;
+    S.eval_ms = now_ms();
+    std::array<float, MAX_CHANNELS> off{};
+    for (int k = 0; k + 1 < p.Kp; k++) {
+        const int ta = tuner_of_rank(p.tuners, k), tb = tuner_of_rank(p.tuners, k + 1);
+        if (ta < 0 || tb < 0) break;
+        const int a0 = static_cast<int>(static_cast<int64_t>(k) * p.H / p.Kp);
+        const int b0 = static_cast<int>(static_cast<int64_t>(k + 1) * p.H / p.Kp);
+        const int b1 = static_cast<int>(static_cast<int64_t>(k + 2) * p.H / p.Kp);
+        float step = 0.0f;
+        if (b0 - a0 >= SEAM_MIN_BLOCK && b1 - b0 >= SEAM_MIN_BLOCK) {
+            float fa[SEAM_HOPS], fb[SEAM_HOPS];
+            int na = 0, nb = 0;
+            for (int h = b0 - 1; h >= a0 && h >= b0 - SEAM_HOPS; h--)
+                if (S.tuner[static_cast<size_t>(h)] == ta) fa[na++] = S.floor[static_cast<size_t>(h)];
+            for (int h = b0; h < b1 && h < b0 + SEAM_HOPS; h++)
+                if (S.tuner[static_cast<size_t>(h)] == tb) fb[nb++] = S.floor[static_cast<size_t>(h)];
+            if (na >= 1 && nb >= 1) {
+                const float d = *std::min_element(fb, fb + nb) - *std::min_element(fa, fa + na);
+                if (std::fabs(d) <= SEAM_MAX_DB) step = d;
+            }
+        }
+        off[static_cast<size_t>(tb)] = off[static_cast<size_t>(ta)] + step;
+    }
+    // tuners outside the plan (hops measured before a change) keep offset 0
+    size_t n = 0;
+    S.scratch.resize(static_cast<size_t>(p.H));
+    for (int h = 0; h < p.H; h++) {
+        const int8_t t = S.tuner[static_cast<size_t>(h)];
+        if (t < 0) continue;
+        S.scratch[n++] = S.floor[static_cast<size_t>(h)] - ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f);
+    }
+    if (n == 0) return;
+    S.base = quantile(S.scratch, n, REF_QUANTILE);
+    S.off = off;
+    bool moved = false;
+    for (int h = 0; h < p.H; h++) {
+        const int8_t t = S.tuner[static_cast<size_t>(h)];
+        if (t < 0) continue;
+        const float r = S.base + ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f);
+        const float d = S.applied[static_cast<size_t>(h)] - r;
+        if (std::fabs(d) > REWRITE_DB) {
+            shift_hop(h, d);
+            S.applied[static_cast<size_t>(h)] = r;
+            moved = true;
+        }
+    }
+    if (moved) g_version.fetch_add(1, std::memory_order_release);
+}
+
+// (loop thread) the settings -> the plan; a new grid gets a new array. True =
+// what heimdall's plan holds (centres, tuners, dwell) changed
+bool apply_plan(bool bump) {
+    Plan np = make_plan(g_set, active_num_elements.load(std::memory_order_relaxed));
+    std::lock_guard<std::mutex> lk(g_mu);
+    const Plan& op = S.plan;
+    const bool grid = !op.ok || np.start != op.start || np.stop != op.stop || np.N != op.N;
+    const bool heim = !op.ok || np.f0 != op.f0 || np.H != op.H || np.tuners != op.tuners || np.dwell != op.dwell;
+    const bool any = grid || heim || np.res != op.res;
+    np.gen = op.gen + ((any || bump) ? 1 : 0);
+    np.grid_gen = op.grid_gen + (grid ? 1 : 0);
+    if (grid) {
+        try {
+            pyr_alloc(static_cast<size_t>(np.bins));
+            S.floor.assign(static_cast<size_t>(np.H), NAN);
+            S.applied.assign(static_cast<size_t>(np.H), 0.0f);
+            S.tuner.assign(static_cast<size_t>(np.H), -1);
+            S.scratch.reserve(static_cast<size_t>(np.H));
+        } catch (const std::bad_alloc&) {
+            std::cerr << "Sweep: out of memory for " << np.bins << " bins" << std::endl;
+            S.lv.clear();
+            np.ok = false;
+        }
+        S.base = NAN;
+        S.off = {};
+        S.any = false;
+        S.done = 0;
+        S.last_s = 0;
+        g_progress.store(0.0f);
+    }
+    S.plan = np;
+    g_mask.store(np.tuners, std::memory_order_relaxed);
+    g_plan_gen.store(np.gen, std::memory_order_release);
+    if (grid || heim) g_version.fetch_add(1, std::memory_order_release);
+    if (heim) g_heim_dirty.store(true);
+    return heim;
+}
+
+// --- the worker ------------------------------------------------------------------------
+struct Slot {
+    uint32_t counter = 0, round = 0, samples = 0;
+    bool retuning = false;
+    int n = 0;                          // channels in data
+    int8_t ch[MAX_CHANNELS] = {};
+    float freq[MAX_CHANNELS] = {};
+    std::vector<uint8_t> data;          // n x samples x 2 bytes (grows, never shrinks)
+};
+std::array<Slot, SLOTS> g_ring;
+uint64_t g_head = 0, g_tail = 0;        // g_rmu
+std::mutex g_rmu;
+std::condition_variable g_rcv;
+std::atomic<bool> g_stop{false};
+std::thread g_thread;
+
+struct Acc {
+    int hop = -1;
+    int frames = 0;
+    std::vector<float> pw;              // |X|^2 summed, DC centred
+    std::vector<uint8_t> pend;          // a block's first samples from the previous packet
+    int pend_n = 0;
+};
+
+struct Worker {
+    Plan p;
+    bool have = false;
+    std::array<Acc, MAX_CHANNELS> acc;
+    kfft_complex* in = nullptr;
+    kfft_complex* out = nullptr;
+    kfft_plan fft = nullptr;
+    int fft_n = 0;
+    std::vector<float> win, db, tmp, shape;
+    uint32_t shape_ver = 0;
+    // rounds
+    bool have_counter = false;
+    uint32_t counter = 0;
+    int last_r = 0, seen = 0;
+    bool pass_ok = false;
+    int64_t pass_ms = 0;
+
+    ~Worker() {
+        if (fft) kfft_destroy_plan(fft);
+        kfft_free(in);
+        kfft_free(out);
+    }
+
+    void reload() {
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            p = S.plan;
+        }
+        have = p.ok;
+        if (!have) return;
+        if (fft_n != p.N) {
+            if (fft) kfft_destroy_plan(fft);
+            kfft_free(in);
+            kfft_free(out);
+            in = kfft_alloc_complex(static_cast<size_t>(p.N));
+            out = kfft_alloc_complex(static_cast<size_t>(p.N));
+            fft = kfft_plan_dft_1d(p.N, in, out, KFFT_FORWARD);
+            fft_n = p.N;
+            win.resize(static_cast<size_t>(p.N));
+            for (int i = 0; i < p.N; i++)
+                win[static_cast<size_t>(i)] = 0.5f - 0.5f * std::cos(2.0f * static_cast<float>(M_PI) * i / p.N);
+            db.resize(static_cast<size_t>(p.N));
+            tmp.resize(static_cast<size_t>(p.N));
+            shape_ver = 0;
+            shape.clear();
+        }
+        for (Acc& a : acc) {
+            a.hop = -1;
+            a.frames = 0;
+            a.pend_n = 0;
+            a.pw.assign(static_cast<size_t>(p.N), 0.0f);
+            a.pend.resize(static_cast<size_t>(p.N) * 2);
+        }
+        have_counter = false;
+        pass_ok = false;
+        seen = 0;
+    }
+
+    // one block of N samples (uint8 IQ): mean off, Hann, FFT, |X|^2 added
+    void block(Acc& a, const uint8_t* b) {
+        const int n = p.N;
+        uint32_t si = 0, sq = 0;
+        for (int i = 0; i < n; i++) {
+            si += b[2 * i];
+            sq += b[2 * i + 1];
+        }
+        const float ci = static_cast<float>(si) / n, cq = static_cast<float>(sq) / n;
+        for (int i = 0; i < n; i++) {
+            const float w = win[static_cast<size_t>(i)];
+            in[i][0] = (b[2 * i] - ci) * w;
+            in[i][1] = (b[2 * i + 1] - cq) * w;
+        }
+        kfft_execute(fft);
+        float* pw = a.pw.data();
+        const int half = n / 2;
+        for (int j = 0; j < half; j++) {
+            pw[j + half] += out[j][0] * out[j][0] + out[j][1] * out[j][1];
+            pw[j] += out[j + half][0] * out[j + half][0] + out[j + half][1] * out[j + half][1];
+        }
+        a.frames++;
+    }
+
+    void feed(Acc& a, const uint8_t* b, uint32_t samples) {
+        const int n = p.N;
+        int rem = static_cast<int>(samples);
+        if (a.pend_n > 0) {
+            const int take = std::min(rem, n - a.pend_n);
+            std::memcpy(a.pend.data() + 2 * a.pend_n, b, static_cast<size_t>(take) * 2);
+            a.pend_n += take;
+            b += 2 * take;
+            rem -= take;
+            if (a.pend_n == n) {
+                block(a, a.pend.data());
+                a.pend_n = 0;
+            }
+        }
+        while (rem >= n) {
+            block(a, b);
+            b += 2 * n;
+            rem -= n;
+        }
+        if (rem > 0) {
+            std::memcpy(a.pend.data(), b, static_cast<size_t>(rem) * 2);
+            a.pend_n = rem;
+        }
+    }
+
+    // the hop tuner t measured ends: its centre U bins into the sweep
+    void commit(int t) {
+        Acc& a = acc[static_cast<size_t>(t)];
+        const int h = a.hop, fr = a.frames;
+        a.frames = 0;
+        a.pend_n = 0;
+        if (fr == 0) return;
+        const int n = p.N, c = n / 2, k0 = (n - p.U) / 2;
+        float* pw = a.pw.data();
+        if (h >= 0 && h < p.H) {
+            // the DC bins: the block's mean is taken off, which leaves a notch
+            // there (and an RTL's LO leakage); the neighbours' mean instead -
+            // no spike or hole every SWEEP_STEP_HZ
+            const float dc = 0.5f * (pw[c - 2] + pw[c + 2]);
+            pw[c - 1] = pw[c] = pw[c + 1] = dc;
+            nfloor::shape_db(n, shape, &shape_ver);
+            const bool sh = static_cast<int>(shape.size()) == n;
+            const float norm = 10.0f * std::log10(static_cast<float>(fr));
+            for (int i = 0; i < p.U; i++) {
+                const int k = k0 + i;
+                db[static_cast<size_t>(i)] = 10.0f * std::log10(pw[k] + 1e-20f) - norm - (sh ? shape[static_cast<size_t>(k)] : 0.0f);
+            }
+            std::copy(db.begin(), db.begin() + p.U, tmp.begin());
+            // the hop's floor: where its noise's median would be, - NOISE_SHOWN_DB
+            const float phi = quantile(tmp, static_cast<size_t>(p.U), 0.10f) + spread_db(fr) - NOISE_SHOWN_DB;
+            if (is_finite_value(phi)) store(h, t, phi);
+        }
+        std::fill(a.pw.begin(), a.pw.end(), 0.0f);
+    }
+
+    void store(int h, int t, float phi) {
+        std::lock_guard<std::mutex> lk(g_mu);
+        const Plan& sp = S.plan;
+        if (!sp.ok || sp.grid_gen != p.grid_gen || S.lv.empty()) return;   // the grid changed meanwhile
+        if (!is_finite_value(S.base)) S.base = phi;   // the first hop of a grid
+        S.floor[static_cast<size_t>(h)] = phi;
+        S.tuner[static_cast<size_t>(h)] = static_cast<int8_t>(t);
+        const float r = S.base + ((sp.tuners >> t) & 1u ? S.off[static_cast<size_t>(t)] : 0.0f);
+        S.applied[static_cast<size_t>(h)] = r;
+        const int64_t a = static_cast<int64_t>(h) * sp.U, b = std::min<int64_t>(a + sp.U, sp.bins);
+        std::vector<int16_t>& v = S.lv[0];
+        for (int64_t i = a; i < b; i++) v[static_cast<size_t>(i)] = q16(db[static_cast<size_t>(i - a)] - r);
+        if (a < b) pyr_update(static_cast<size_t>(a), static_cast<size_t>(b - 1));
+        S.any = true;
+        if (now_ms() - S.eval_ms >= (S.done == 0 ? EVAL_FIRST_MS : EVAL_MS)) evaluate();
+        g_version.fetch_add(1, std::memory_order_release);
+    }
+
+    void commit_all() {
+        for (int t = 0; t < MAX_CHANNELS; t++)
+            if (acc[static_cast<size_t>(t)].frames > 0 || acc[static_cast<size_t>(t)].pend_n > 0) commit(t);
+    }
+
+    // frequency_change_counter moved: round r began (all of the last one is in)
+    void round_event(int r) {
+        const int64_t now = now_ms();
+        if (!have_counter) {
+            pass_ok = r == 0;
+            pass_ms = now;
+            seen = 1;
+        } else if (r == 0) {
+            if (pass_ok && last_r == p.R - 1 && seen >= p.R) {
+                std::lock_guard<std::mutex> lk(g_mu);
+                if (S.plan.ok && S.plan.grid_gen == p.grid_gen) {
+                    S.done++;
+                    S.last_s = static_cast<float>(now - pass_ms) / 1000.0f;
+                    evaluate();
+                    g_completions.fetch_add(1, std::memory_order_release);
+                    g_version.fetch_add(1, std::memory_order_release);
+                }
+            }
+            pass_ok = true;
+            pass_ms = now;
+            seen = 1;
+        } else if (r == last_r + 1) {
+            seen++;
+        } else if (r != last_r) {
+            pass_ok = false;   // a round missed: this pass doesn't count
+        }
+        last_r = r;
+        g_progress.store(p.R > 0 ? static_cast<float>(std::clamp(r, 0, p.R)) / static_cast<float>(p.R) : 0.0f,
+                         std::memory_order_relaxed);
+    }
+
+    void process(const Slot& s) {
+        if (g_plan_gen.load(std::memory_order_acquire) != p.gen || !have) reload();
+        if (!have) return;
+        if (!have_counter || s.counter != counter) {
+            commit_all();
+            round_event(static_cast<int>(s.round));
+            counter = s.counter;
+            have_counter = true;
+        }
+        if (s.retuning) {
+            commit_all();
+            return;
+        }
+        const double step = static_cast<double>(SWEEP_STEP_HZ);
+        for (int i = 0; i < s.n; i++) {
+            const int t = s.ch[i];
+            if (t < 0 || t >= MAX_CHANNELS || !((p.tuners >> t) & 1u)) continue;
+            Acc& a = acc[static_cast<size_t>(t)];
+            const double f = s.freq[i];
+            const long long h = std::llround((f - static_cast<double>(p.f0)) / step);
+            if (!is_finite_value(f) || h < 0 || h >= p.H ||
+                std::fabs(f - (static_cast<double>(p.f0) + static_cast<double>(h) * step)) > HOP_TOL_HZ) {
+                if (a.frames > 0 || a.pend_n > 0) commit(t);
+                a.hop = -1;
+                continue;
+            }
+            if (a.hop != static_cast<int>(h)) {
+                if (a.frames > 0 || a.pend_n > 0) commit(t);
+                a.hop = static_cast<int>(h);
+            }
+            feed(a, s.data.data() + static_cast<size_t>(i) * s.samples * 2, s.samples);
+        }
+    }
+};
+
+void worker_main() {
+    Worker w;
+    uint64_t drops_told = 0;
+    int64_t told_ms = 0;
+    while (!g_stop.load(std::memory_order_relaxed)) {
+        // packets the worker had no slot for (a machine too busy): said at most every 10 s
+        if (const uint64_t d = g_drops.load(std::memory_order_relaxed); d != drops_told && now_ms() - told_ms > 10000) {
+            std::cerr << "Sweep: " << d - drops_told << " packets dropped - the sweep engine fell behind" << std::endl;
+            drops_told = d;
+            told_ms = now_ms();
+        }
+        Slot* s = nullptr;
+        {
+            std::unique_lock<std::mutex> lk(g_rmu);
+            g_rcv.wait_for(lk, std::chrono::milliseconds(200),
+                           [] { return g_head != g_tail || g_stop.load(std::memory_order_relaxed); });
+            if (g_head == g_tail) continue;
+            s = &g_ring[static_cast<size_t>(g_tail % SLOTS)];
+        }
+        try {
+            w.process(*s);
+        } catch (const std::exception& e) {
+            std::cerr << "Sweep: " << e.what() << std::endl;
+        }
+        std::lock_guard<std::mutex> lk(g_rmu);
+        g_tail++;
+    }
+}
+
+std::string mhz(int64_t hz) {
+    char b[32];
+    snprintf(b, sizeof b, "%.6f", static_cast<double>(hz) / 1e6);
+    return b;
+}
+
+// a whole number / decimal, nothing after it
+double number(const std::string& s) {
+    size_t used = 0;
+    const double v = std::stod(s, &used);
+    while (used < s.size() && (s[used] == ' ' || s[used] == '\t')) used++;
+    if (used != s.size() || !is_finite_value(v)) throw std::invalid_argument("not a number: " + s);
+    return v;
+}
+
+std::string tuners_cmd() {
+    if (!g_set.mask) return "SWEEP_TUNERS:all";
+    std::string o = "SWEEP_TUNERS:";
+    bool first = true;
+    for (int t = 0; t < MAX_CHANNELS; t++)
+        if (g_set.mask & (1u << t)) {
+            o += (first ? "" : ",") + std::to_string(t);
+            first = false;
+        }
+    return o;
+}
+
+}  // namespace
+
+// --- settings ---------------------------------------------------------------------------
+std::string set_range(double start_mhz, double stop_mhz) {
+    if (!is_finite_value(start_mhz) || !is_finite_value(stop_mhz) || std::fabs(start_mhz) > 1e6 || std::fabs(stop_mhz) > 1e6)
+        throw std::invalid_argument("not a frequency");
+    int64_t a = std::llround(start_mhz * 1e6), b = std::llround(stop_mhz * 1e6);
+    if (a > b) std::swap(a, b);
+    a = std::clamp(a, SWEEP_MIN_HZ, SWEEP_MAX_HZ - SWEEP_MIN_SPAN_HZ);
+    b = std::clamp(b, a + SWEEP_MIN_SPAN_HZ, SWEEP_MAX_HZ);
+    g_set.start = a;
+    g_set.stop = b;
+    apply_plan(false);
+    return "SWEEP_RANGE:" + mhz(a) + ":" + mhz(b);
+}
+
+std::string set_tuners(const std::string& list) {
+    std::string l = list;
+    for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint32_t mask = 0;
+    if (l != "all" && !l.empty()) {
+        std::stringstream ss(l);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) {
+            if (tok.empty()) continue;
+            const double v = number(tok);
+            if (v != std::floor(v)) throw std::invalid_argument("not a tuner: " + tok);
+            if (v >= 0 && v < MAX_CHANNELS) mask |= 1u << static_cast<int>(v);
+        }
+    }
+    g_set.mask = mask;
+    apply_plan(false);
+    return tuners_cmd();
+}
+
+std::string set_res(const std::string& v) {
+    std::string l = v;
+    for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    int res = 0;
+    if (l != "auto") {
+        const double d = number(l);
+        if (d > 0.5) {
+            const double c = std::clamp(d, static_cast<double>(SWEEP_FFT_MIN), static_cast<double>(SWEEP_FFT_MAX));
+            res = 1 << static_cast<int>(std::lround(std::log2(c)));   // the nearest power of two
+        } else if (d < 0) {
+            throw std::invalid_argument("negative FFT size");
+        }
+    }
+    g_set.res = res;
+    apply_plan(false);
+    return res ? "SWEEP_RES:" + std::to_string(res) : std::string("SWEEP_RES:auto");
+}
+
+std::string set_dwell(double ms) {
+    if (!is_finite_value(ms)) throw std::invalid_argument("not a number");
+    g_set.dwell = static_cast<int>(std::lround(std::clamp(ms, static_cast<double>(SWEEP_DWELL_MIN_MS),
+                                                          static_cast<double>(SWEEP_DWELL_MAX_MS))));
+    apply_plan(false);
+    return "SWEEP_DWELL:" + std::to_string(g_set.dwell);
+}
+
+void set_running(bool on) {
+    if (g_run.exchange(on) != on) g_version.fetch_add(1, std::memory_order_release);
+}
+bool running() { return g_run.load(); }
+
+void on_mode(bool active) {
+    g_active.store(active, std::memory_order_release);
+    // the worker restarts its hops and rounds (the tuners moved meanwhile)
+    apply_plan(true);
+}
+
+bool on_elements() { return apply_plan(false); }
+bool take_plan_changed() { return g_heim_dirty.exchange(false); }
+
+bool note_gain(float db, bool from_header) {
+    static std::atomic<int64_t> commanded_ms{0};
+    static std::atomic<float> commanded{NAN};
+    if (!is_finite_value(db)) return false;
+    db = db < 0 ? -1.0f : std::round(db * 10.0f) / 10.0f;
+    if (!from_header) {
+        commanded.store(db);
+        commanded_ms.store(now_ms());
+    } else if (now_ms() - commanded_ms.load() < 1500 && !(db == commanded.load())) {
+        return false;   // the header still shows the gain from before the command
+    }
+    const float old = g_gain.exchange(db);
+    return !(old == db);
+}
+
+std::string plan_command() {
+    Plan p;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        p = S.plan;
+    }
+    std::ostringstream o;
+    o << "{\"command\":\"set_sweep\",\"first_center_hz\":" << p.f0 << ",\"step_hz\":" << SWEEP_STEP_HZ
+      << ",\"steps\":" << p.H << ",\"tuners\":[";
+    bool first = true;
+    for (int t = 0; t < MAX_CHANNELS; t++)
+        if (p.tuners & (1u << t)) {
+            o << (first ? "" : ",") << t;
+            first = false;
+        }
+    o << "],\"dwell_ms\":" << p.dwell << ",\"run\":" << (g_run.load() ? "true" : "false") << "}";
+    return o.str();
+}
+
+std::string state_json() {
+    Plan p;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        p = S.plan;
+    }
+    std::ostringstream o;
+    o << "{\"sweep\":{\"active\":" << (sweep_mode_enabled.load() ? "true" : "false") << ",\"start_hz\":" << p.start
+      << ",\"stop_hz\":" << p.stop << ",\"min_hz\":" << SWEEP_MIN_HZ << ",\"max_hz\":" << SWEEP_MAX_HZ << ",\"tuners\":[";
+    bool first = true;
+    for (int t = 0; t < MAX_CHANNELS; t++)
+        if (p.tuners & (1u << t)) {
+            o << (first ? "" : ",") << t;
+            first = false;
+        }
+    char bin[32];
+    snprintf(bin, sizeof bin, "%.6f", p.bin_hz);
+    o << "],\"available\":" << std::clamp(active_num_elements.load(), 1, MAX_CHANNELS) << ",\"res\":" << p.res
+      << ",\"fft_size\":" << p.N << ",\"bin_hz\":" << bin << ",\"bins\":" << p.bins << ",\"hops\":" << p.H
+      << ",\"rounds\":" << p.R << ",\"dwell_ms\":" << p.dwell << ",\"running\":" << (g_run.load() ? "true" : "false")
+      << ",\"grid\":" << p.grid;
+    // the common gain (optional: once known)
+    if (const float g = g_gain.load(); is_finite_value(g)) {
+        char gb[24];
+        snprintf(gb, sizeof gb, "%.1f", g);
+        o << ",\"gain_db\":" << gb;
+    }
+    o << "}}";
+    return o.str();
+}
+
+std::string summary() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    const Plan& p = S.plan;
+    char b[200];
+    snprintf(b, sizeof b, "%.3f-%.3f MHz, %d hops, FFT %d (%.0f Hz bins), %d tuner%s%s, %u sweeps (last %.1f s)%s",
+             p.start / 1e6, p.stop / 1e6, p.H, p.N, p.bin_hz, p.Kp, p.Kp == 1 ? "" : "s", g_run.load() ? "" : ", paused",
+             S.done, S.last_s, g_drops.load() ? (", " + std::to_string(g_drops.load()) + " packets dropped").c_str() : "");
+    return b;
+}
+
+int64_t bins() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    return S.plan.bins;
+}
+
+// --- the data receiver ----------------------------------------------------------------------
+void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const float* freq_hz, uint32_t counter,
+               uint32_t round, bool retuning) {
+    if (!g_active.load(std::memory_order_acquire) || !g_run.load(std::memory_order_relaxed)) return;
+    // a retuning packet is wanted once (the hops end there), not for every
+    // packet of the settle time
+    static bool have = false, last_retuning = false;
+    static uint32_t last_counter = 0;
+    const bool event = !have || counter != last_counter || retuning != last_retuning;
+    have = true;
+    last_counter = counter;
+    last_retuning = retuning;
+    if (retuning && !event) return;
+    uint64_t head;
+    {
+        std::lock_guard<std::mutex> lk(g_rmu);
+        if (g_head - g_tail >= SLOTS) {
+            g_drops.fetch_add(1, std::memory_order_relaxed);
+            return;   // the worker is behind: the next packet's counter / frequency still tell it what changed
+        }
+        head = g_head;
+    }
+    // the slot at head is the producer's until it is published (one producer)
+    Slot& s = g_ring[static_cast<size_t>(head % SLOTS)];
+    s.counter = counter;
+    s.round = round;
+    s.retuning = retuning;
+    s.samples = samples;
+    s.n = 0;
+    if (!retuning) {
+        const uint32_t mask = g_mask.load(std::memory_order_relaxed);
+        const size_t per = static_cast<size_t>(samples) * 2;
+        int want = 0;
+        for (uint32_t c = 0; c < channels && c < static_cast<uint32_t>(MAX_CHANNELS); c++) want += (mask >> c) & 1u;
+        if (s.data.size() < per * static_cast<size_t>(want)) s.data.resize(per * static_cast<size_t>(want));
+        for (uint32_t c = 0; c < channels && c < static_cast<uint32_t>(MAX_CHANNELS); c++) {
+            if (!((mask >> c) & 1u)) continue;
+            std::memcpy(s.data.data() + per * static_cast<size_t>(s.n), iq + per * c, per);
+            s.ch[s.n] = static_cast<int8_t>(c);
+            s.freq[s.n] = freq_hz[c];
+            s.n++;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_rmu);
+        g_head++;
+    }
+    g_rcv.notify_one();
+}
+
+// --- frames -------------------------------------------------------------------------------------
+uint64_t data_version() { return g_version.load(std::memory_order_acquire); }
+uint32_t completions() { return g_completions.load(std::memory_order_acquire); }
+
+namespace {
+// (g_mu) the bins of a window and the pool, as build_spectrum_view picks them
+struct Cut {
+    size_t i0 = 0, i1 = 0, pool = 1, n = 0;
+    bool windowed = false;
+};
+Cut cut_for(double lo, double hi, uint32_t points) {
+    Cut c;
+    const Plan& p = S.plan;
+    const size_t L = static_cast<size_t>(p.bins);
+    if (L < 2) return c;
+    c.i1 = L - 1;
+    if (hi > lo) {
+        const double a = std::ceil((lo - static_cast<double>(p.start)) / p.bin_hz - 1e-6);
+        const double b = std::floor((hi - static_cast<double>(p.start)) / p.bin_hz + 1e-6);
+        const double last = static_cast<double>(L - 1);
+        const double ca = std::clamp(a, 0.0, last), cb = std::clamp(b, 0.0, last);
+        if (cb - ca >= 1.0) {
+            c.i0 = static_cast<size_t>(ca);
+            c.i1 = static_cast<size_t>(cb);
+            c.windowed = true;
+        }
+    }
+    const size_t count = c.i1 - c.i0 + 1;
+    const size_t budget = SPECTRUM_VIEW_MAX_POINTS;
+    const size_t want = std::clamp<size_t>(points ? points : SPECTRUM_LEGACY_POINTS, 16, budget);
+    c.pool = std::max({size_t(1), (count + budget - 1) / budget, (count + want / 2) / want});
+    c.n = (count + c.pool - 1) / c.pool;
+    return c;
+}
+}  // namespace
+
+std::string build_frame(const View& v, bool completes) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    const Plan& p = S.plan;
+    if (!p.ok || S.lv.empty()) return std::string();
+    const Cut c = cut_for(v.lo_hz, v.hi_hz, v.points);
+    if (c.n == 0) return std::string();
+    std::string out;
+    out.resize(64 + c.n);
+    char* o = out.data();
+    auto put = [&o](const auto& x) { std::memcpy(o, &x, sizeof x); o += sizeof x; };
+    put(uint32_t(10));
+    put(static_cast<uint8_t>((c.windowed ? 1 : 0) | (completes ? 2 : 0) | (g_run.load() ? 0 : 4) | (S.any ? 0 : 8)));
+    put(static_cast<uint8_t>(p.Kp));
+    put(uint16_t(0));
+    put(v.seq);
+    put(S.done);
+    put(static_cast<double>(p.start));
+    put(static_cast<double>(p.stop));
+    put(static_cast<double>(p.start) + (static_cast<double>(c.i0) + (static_cast<double>(c.pool) - 1.0) / 2.0) * p.bin_hz);
+    put(p.bin_hz * static_cast<double>(c.pool));
+    put(completes ? 1.0f : g_progress.load(std::memory_order_relaxed));
+    put(S.last_s);
+    put(p.grid);
+    put(static_cast<uint32_t>(c.n));
+    // 0.01 dB -> 0..255 = 0..120 dB (as compress_magnitudes / type 7)
+    constexpr float SCALE = 0.01f * 255.0f / 120.0f;
+    for (size_t j = 0; j < c.n; j++) {
+        const size_t a = c.i0 + j * c.pool, b = std::min(a + c.pool, c.i1 + 1);
+        const int16_t m = range_max(a, b);
+        const int q = m == NONE ? 0 : static_cast<int>(std::lround(static_cast<float>(m) * SCALE));
+        *o++ = static_cast<char>(static_cast<uint8_t>(std::clamp(q, 0, 255)));
+    }
+    return out;
+}
+
+bool pooled_db(double lo_hz, double hi_hz, int points, std::vector<float>& db, double* first_hz, double* step_hz,
+               double* bin_hz) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    const Plan& p = S.plan;
+    if (!p.ok || S.lv.empty() || !S.any) return false;
+    const Cut c = cut_for(lo_hz, hi_hz, static_cast<uint32_t>(std::max(points, 16)));
+    db.resize(c.n);
+    for (size_t j = 0; j < c.n; j++) {
+        const size_t a = c.i0 + j * c.pool, b = std::min(a + c.pool, c.i1 + 1);
+        const int16_t m = range_max(a, b);
+        db[j] = m == NONE ? NAN : static_cast<float>(m) * 0.01f;
+    }
+    *first_hz = static_cast<double>(p.start) + (static_cast<double>(c.i0) + (static_cast<double>(c.pool) - 1.0) / 2.0) * p.bin_hz;
+    *step_hz = p.bin_hz * static_cast<double>(c.pool);
+    *bin_hz = p.bin_hz;
+    return true;
+}
+
+void start() {
+    apply_plan(false);
+    g_stop.store(false);
+    g_thread = std::thread(worker_main);
+}
+
+void stop() {
+    g_stop.store(true);
+    g_rcv.notify_all();
+    if (g_thread.joinable()) g_thread.join();
+}
+
+}  // namespace sweep

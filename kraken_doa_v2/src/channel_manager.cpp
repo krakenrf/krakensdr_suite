@@ -85,7 +85,10 @@ void ChannelManager::update_channel_info(int ch, float frequency_hz, float gain_
         // even on initial startup when frequency comes from server packets.
         // Outside channel_info_mutex: walking the decimators takes
         // decimator_mutex, and addDecimator must never wait on the reverse.
-        if (ch == 0 && std::abs(old_freq - frequency_hz) > 1000.0f) {
+        // (Not in sweep mode: the tuners hop ~20 times a second and MUSIC is
+        // idle - its steering vectors follow on the way back to coherent.)
+        if (ch == 0 && std::abs(old_freq - frequency_hz) > 1000.0f &&
+            !sweep_mode_enabled.load(std::memory_order_relaxed)) {
             // Wideband variant: a retune from heimdall's own UI or the
             // continuous scanner moves the antenna ring too - follow it here,
             // not only in the FREQ handler (the radius stayed on the old ring)

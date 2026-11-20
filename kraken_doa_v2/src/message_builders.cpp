@@ -582,6 +582,7 @@ string MessageBuilders::build_system_status_message() {
     json << "{\"system_status\":{";
     json << "\"wideband\":" << (wideband_mode_enabled.load() ? "true" : "false");
     json << ",\"independent\":" << (independent_mode_enabled.load() ? "true" : "false");
+    json << ",\"sweep\":" << (sweep_mode_enabled.load() ? "true" : "false");
     json << ",\"phase_state\":" << phase_state;
     json << ",\"noise_source\":" << (scanner_manager.isNoiseSourceActive() ? "true" : "false");
     json << ",\"active_elements\":" << active_num_elements.load();

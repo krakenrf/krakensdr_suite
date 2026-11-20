@@ -714,6 +714,7 @@ Need need_locked() {
             }
         }
         if (n.vfos.empty()) n.why = "no VFO chosen";
+        if (sweep_mode_enabled.load()) n.why = "not in sweep mode (nothing is demodulated)";
         n.per_file_bps = detail::audio_bytes_per_s(s.aformat == "wav", s.arate, s.akbps);
         n.files = static_cast<int>(n.vfos.size());
         n.bps = n.per_file_bps * n.files;

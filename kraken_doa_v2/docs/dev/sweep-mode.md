@@ -158,7 +158,279 @@ the hops into the sweep spectrum, the page shows it.
 
 ## The receiver (kraken_doa)
 
-(written with the sweep engine)
+Written 2026-11-20 with the sweep engine (`include/sweep.hpp`,
+`src/sweep.cpp`, namespace `sweep`).
+
+**Mode plumbing.** `sweep_mode_enabled` (globals.hpp) is mode index 3;
+`multi_tuner_mode()` includes it, so everything coherent-only stands down as
+in the other two non-coherent modes (DoA parked in `doa_enabled_before_wideband`
+and restored in coherent, beamforming, MUSIC, the IQ recorder, the bearing
+spectrum, the web mapper's bearings). On top of that the data receiver hands
+every packet to `sweep::on_packet` and `continue`s before the uint8 -> complex
+conversion: nothing reaches `raw_data_buffer`, so no VFO decimation, audio,
+decoder input, squelch or regular FFT runs; the 50 ms tick sends type 10
+frames only (no type 0 / 6 / 7 / 4 / 9) and the audio timer sends nothing. The
+VFOs and their settings stay as they are, idle. Leaving the mode bumps
+`fft_reset_generation` (the averaged spectra held the bands from before).
+Also silent in sweep mode: the per-retune lines (`[RETUNING]`, "Server
+frequency change detected", "[DoA] Reference frequency changed"), the FM
+thread's "No data for 2s", and `ChannelManager::update_channel_info`'s MUSIC
+steering-vector update on every channel-0 frequency change (it recomputed
+the steering vectors and printed two lines per hop; they follow on the way
+back to coherent).
+
+- Header: `0x2000` is tested before `0x800` (mode 3); `note_server_mode`
+  adopts a sweeping heimdall after the usual 3 s, then sends its own plan -
+  except before the startup replay (`g_settings_replayed`): the settings are
+  still the defaults then, and the replay's `OPERATING_MODE:sweep` sends the
+  saved plan (found by the restart test: the default plan reached heimdall
+  for a moment).
+- `OPERATING_MODE:sweep`: refused on the downconverter variant and during a
+  playback (`playback::refuse`, as for the other non-coherent modes);
+  allowed with generic RTL-SDRs, also with one. Stops the discrete,
+  continuous and saved-frequency scanners and a running IQ recording; sets
+  running; sends `set_sweep` (the plan) and then `set_operating_mode`.
+  Sweep -> independent re-sends the saved per-tuner tuning (tuners without
+  one start at the coherent frequency, not at a hop).
+- Refused in sweep mode with a reason (`CommandRejected`): `FREQ:`,
+  `TUNER_FREQ:` / `TUNER_GAIN:`, `WIDEBAND_FREQ:`, `WIDEBAND_BASE_FREQ:`,
+  `SCANNER_START`, `CONTINUOUS_SCANNER_START` (needs coherent),
+  `SFSCAN_START` (sfscan::start), an audio recording (recorder), a decoder's
+  retune request. `GAIN:` works (heimdall's common gain).
+- An older heimdall: it answers `set_sweep` "Unknown command" and the mode
+  "mode must be coherent, wideband or independent", and its header never
+  shows `0x2000`. `ingest_sweep_reply` (the control socket's drain) takes an
+  error reply within 4 s of the request as the reason; `note_sweep_header`
+  (every packet) falls back at once on such a reply, else 4 s after the
+  request without the flag: back to heimdall's mode (its header's), saved as
+  the mode, and `{"operating_mode":{...,"error":"heimdall refused sweep mode:
+  ..."}}` to the pages. `note_server_mode` leaves a pending sweep request to
+  it. Measured: back after 0.46-0.47 s (the reply), in coherent and in
+  independent mode.
+- `system_status.sweep`, the dashboard's mode + a SWEEP line
+  (`sweep::summary()`), the AI assistant: `get_screen` names the mode and the
+  sweep, `get_spectrum` returns the sweep's spectrum (`sweep::pooled_db`),
+  `tune` / `add_vfo` / `set_vfo` / `capture_iq` refuse ("The receiver is in
+  sweep mode (...) - tuning isn't possible there; ..."), `set_gain` sets the
+  common gain.
+
+**Commands** (control_handler.cpp; `is_query_command`: answered by the
+`sweep` message to every page, never echoed; the handler saves the applied
+form itself - not during the replay or a saved-frequency scan's dispatch).
+Junk (no number, `nan`, `inf`, `1.5` as a tuner, a negative FFT size) is
+refused; out-of-range numbers are clamped:
+- `SWEEP_RANGE:a:b` - swapped when reversed, whole Hz, start in [24, 1764.9]
+  MHz, stop in [start + 0.1, 1765] MHz.
+- `SWEEP_TUNERS:` - "all", or a list: indices outside 0..7 dropped from the
+  request; the request is kept and resolved against the tuner count when
+  the plan is made (indices not there dropped, none left = all), so a saved
+  `1,3` survives a start with fewer tuners. The plan follows a tuner-count
+  change (`clamp_vfo_tuners` -> `sweep::on_elements`).
+- `SWEEP_RES:` - `auto` / 0, else the nearest power of two in 128 .. 16384.
+- `SWEEP_DWELL:` - 5 .. 1000 ms. `SWEEP_RUN:` - not saved; `set_sweep
+  {"run":..}` alone.
+- Settings schema (replay order): `SWEEP_RANGE` `SWEEP_TUNERS` `SWEEP_RES`
+  `SWEEP_DWELL` right before `OPERATING_MODE:` (defaults 87.5-108 MHz, all,
+  auto, 20 ms). During the replay the setters send nothing; the replayed
+  `OPERATING_MODE:sweep` sends the plan. `set_sweep` goes to heimdall only
+  when what it holds changed (`take_plan_changed`: centres, tuners, dwell -
+  an FFT size change alone sends nothing), and again after a reconnect of the
+  data port.
+- `gain_db` in the `sweep` message (the contract's optional field, asked for
+  by the page worker): the common gain from heimdall's 8091 header in sweep
+  mode, or a `GAIN:` command; the message goes again when it changes. The
+  header trails a command by a few packets: within 1.5 s of a `GAIN:` a
+  different header value is not taken (the test saw 25 -> 49.6 -> 25 before).
+- `SWEEP_VIEW` (websocket_server.cpp `handle_sweep_view`, per socket like
+  `FFT_VIEW`, junk ignored - also a width over 65536): marks the socket dirty,
+  so it gets a frame on the next 50 ms tick whatever the sweep does - also
+  while paused (a paused page that zooms gets its new window's detail). The
+  first one sets the socket's completion count, so its first frame is no
+  waterfall line.
+
+**The engine.**
+- Plan (`make_plan`): the contract's grid. `H = ceil(span / 1 912 500)`,
+  `U = N * 51 / 64`, bins = `min(H U, floor(span N / 2.4e6) + 1)` in integer
+  arithmetic, `F0 = start + 956 250`, K' = min(tuners, H), R = ceil(H / K'),
+  grid id = FNV-1a of (start, stop, N) - the same grid has the same id after
+  a restart, so a page keeps its waterfall. A new grid (range or N) gets new
+  arrays (allocated on the loop thread, never per packet).
+- FFT size: `SWEEP_RES:N` takes N unless the sweep would hold more than
+  `SWEEP_MAX_BINS` (2^22, 4.2 M) bins - then the largest N that fits (the
+  full range at 16384 runs at 4096: 2.97 M bins); `fft_size` says what runs.
+  `auto` = the largest N whose sweep holds at most `SWEEP_AUTO_BINS` (2^19):
+  16384 up to ~123 MHz of span (146 Hz bins), 8192 to 246 MHz, ... 512 for the
+  full range (4.7 kHz bins). Why: the sweep's speed doesn't depend on N (the
+  dwell and the hops do), the resolution does - and what a plot can show:
+  2^19 bins are ~128 per point of a 4096-point plot, so every zoom down to
+  1/128 of the span still gets one bin per point; smaller N averages more
+  frames per dwell (m = dwell x 2.4 MHz / N: 90 at the full range), which
+  smooths the floor of a wide survey; the memory and the worker's work stay
+  small. A user who wants 146 Hz over a wide range sets the size.
+- Data path: the data receiver copies the bytes of the plan's tuners into a
+  ring of 8 slots (vectors that only grow; no allocation per packet) and
+  wakes the worker thread (`sweep::start` in main.cpp). Retuning packets go
+  in once (no data) - the hop ends there. A full ring drops the packet
+  (counted; "Sweep: N packets dropped" on stderr, at most every 10 s) - the
+  next packet's counter / frequency still say what changed. Paused or outside
+  the mode: nothing is queued.
+- Worker, per slot: `frequency_change_counter` moved -> every tuner's hop is
+  committed, then the round is counted. A retuning packet -> commit. The
+  counter, not the flag, ends a hop: heimdall doesn't retune a tuner already
+  on its round's hop, so with K' = H (5 tuners on <= 9.6 MHz, 1 tuner on 1
+  hop) the stream runs on without any retuning packet and only the counter
+  steps (heimdall's addition 1; tested). Each plan
+  tuner of the packet: hop = round((f - F0) / S), taken only when the header
+  frequency is within 1.5 kHz of that hop's centre (a tuner still on an old
+  hop, or one the sweep doesn't move, is not on the plan's grid; a tuner that
+  stays put for a round is - its hop is measured again). A hop change commits
+  the tuner's old hop. Samples: N-sample blocks (a block may start in one
+  packet and end in the next), each block's mean taken off (the RTL's DC
+  offset), Hann, pffft (`kfft`), |X|^2 added DC centred.
+- Commit: power / frames in dB; the DC bins N/2 - 1 .. N/2 + 1 replaced by
+  the mean of N/2 +- 2 (the mean removal leaves a notch there and an RTL its
+  LO leakage - neither a spike nor a hole every 1.9125 MHz); the tuners'
+  common response (`nfloor::shape_db`, the measured KrakenSDR shape) taken
+  off; the centre U bins go into the sweep array, the latest measurement of a
+  hop replacing the one before. The hop's floor phi = its bins' 10th
+  percentile (a signal may fill 90 % of the hop) + `spread_db(m)` - 2 dB:
+  m frames averaged make a noise bin Gamma(m, 1/m), whose median stands
+  `spread_db(m)` over its 10th percentile (8.18 dB at m = 1, 3.85 at 3, 1.73 at
+  12, 0.35 at 256: exact - bisection on the incomplete gamma - up to m = 256,
+  Wilson-Hilferty above, both checked against scipy). So the noise's median
+  is drawn at +2 dB (like the regular spectrum's ~2 dB) for every FFT size
+  and dwell; without it the noise moved from 0.5 dB (N = 128) to ~5 dB
+  (N = 16384, m = 3). It also keeps hops of different m level: on the
+  KrakenSDR a hop holds 1-2 valid packets at dwell 20 (heimdall's addition
+  5), i.e. m = 1 or 2 at N = 16384 - each hop is levelled by its own m (a cap
+  at the 10th percentile was tried and dropped: it put hops of m = 1 and 2
+  ~3 dB apart). Cost: with m = 1 the noise is exponential and ~35 % of its
+  bins fall below the 0 dB line (0); a carrier over the noise MEDIAN reads
+  1.6 dB more than over its mean (ln 2). One packet (16384 samples = the
+  largest N) always makes at least one frame.
+- Levels: ONE reference for the sweep - `base` = the 20th percentile of the
+  hops' floors - plus each tuner's gain step: where tuner k's block meets
+  tuner k+1's, the lowest floor of the 6 hops on each side (neighbours in
+  frequency, so they differ by the two dongles' gains only; a signal only
+  raises a floor, so the lowest is noise as long as one hop of the six is;
+  the first version took medians of 4 and a 7 MHz band over 2 of the 3 hops
+  of one side moved a whole block by 10 dB); a step over 6 dB is no gain
+  step (0); a block of one hop (K' = H) is its own six (the first version
+  took no step there and a 5-hop range on 5 tuners showed the dongles'
+  -2 .. +4 dB). Stored values = dB - (base + step of the
+  tuner that measured the hop), in 0.01 dB (int16); a hop whose reference
+  moved > 0.25 dB is rewritten (evaluated every 250 ms until the first sweep
+  on a grid is complete, then every 1 s and at every completion) - so a
+  signal that fills hops keeps its height and the waterfall doesn't pump.
+  Limit: a signal wider than the whole range (or than six hops on both sides
+  of a block seam) becomes the floor.
+- Completion: the round index (`current_group_index`) of a counter change
+  goes 0 after R - 1 with every round seen since the last 0 = one sweep:
+  `done` (on this grid) + 1, its duration = the time between the two round-0
+  events; progress = round / R. With R = 1 (one hop, or K' = H) every counter
+  step completes a sweep (heimdall's addition 2; tested: one sweep per 20 ms
+  round, flag-2 frames at the 20 a second limit). A plan change, a new grid
+  or entering the mode restarts the round tracking (a partial pass is not
+  counted). heimdall's own `run` on entering and its non-restarting dwell /
+  settle / run changes (addition 3) need nothing here; `set_gain`'s retuning
+  flag (addition 4) just ends the hop early - the packets after it are a new
+  measurement of the same hop at the new gain.
+- Frames: `sweep::build_frame` cuts and max-pools as type 7 (`pool = max(1,
+  ceil(count / 4096), round(count / points))`, a point at its pool's middle,
+  0 = never measured) over a max-pyramid of the array (level l = max of 2
+  of level l - 1, updated over a hop's U bins on every commit): a pool is
+  the max of ~2 log2(pool) nodes, whatever the bins. Flags 1 / 2 / 4 / 8 as
+  the contract. `send_sweep_views` (the 50 ms tick, sweep mode only): a
+  socket with `SUB_FFT` gets a frame when the data version, its view or the
+  pause changed, or a sweep completed (flag 2, progress 1.0); compressed;
+  skipped past 256 KB buffered. One completion frame per tick at most: a
+  sweep faster than 50 ms gives one waterfall line per tick.
+- Threads: settings and frames on the uWS loop, the producer on the data
+  receiver, the engine on its worker; the array, pyramid and per-hop state
+  under one mutex (a hop's write ~U values + their ancestors; a frame ~4096
+  pools); the plan reaches the worker through a generation number.
+
+**Measurements** (x86 dev machine, shared - load 10-29; no Pi was
+available to this worker: the Pi numbers below are not measured).
+- Engine bench (job scratch `bench/bench_sweep.cpp`: the real sweep.cpp fed
+  5 tuners x 16384-sample packets as fast as it takes them, full range): the
+  worker takes 3150-3740 packets/s = 21-25x real time (N = 4096: 21x, N = 128
+  / 1024: 25x, limited by the offer rate there).
+- `build_frame` at the bin cap (full range, 2.97 M bins): whole range at
+  4096 points 55 us with hot caches, ~300 us measured inside the running
+  receiver (the worker writes between frames), 100 MHz window 32 us, 1 MHz
+  6 us; a plain max over the 3 M bins costs 110 us hot and grows with the
+  bins.
+- Whole receiver, worst case (full range, SWEEP_RES 16384 -> 4096, 5 tuners,
+  dwell 5 ms, fake heimdall at 130 packets/s, t_cpu.py): 6.5 % of a core with
+  no page taking frames, 10.3 % with one page at 4096 points, 19.3 % with four
+  (one zoomed), 27 messages/s and 35 KB/s per page; for comparison coherent
+  mode with one page 32.5 %, independent 48 %. No packet dropped. Of the four
+  pages' cost the frame build is ~300 us x 80 frames/s; the rest is uWS /
+  TLS / deflate (the same with compression off: 7.5 vs 9.2 %).
+- On a Pi 4 / 5: NOT measured. Here the whole of sweep mode costs a fifth
+  (no page) to two fifths (four pages) of what independent mode costs with
+  one page; the worker does what independent mode's FFT workers do (one FFT
+  per sample of every tuner) without the decimation, audio and spectrum
+  work, so it should fit where independent mode fits. The frames scale with
+  the pages (~300 us each at the cap here - expect several times that on a
+  Pi, i.e. a few % of a core per page at 20 frames a second).
+
+**Tests of the receiver** (2026-11-20, job scratch `client/`, not in the
+repo: `fake_heimdall_sweep.py` = heimdall with sweep mode per the contract -
+block assignment, flags, counter / round, retuning packets of garbage, the
+status JSON, `--old`, an RF scene in absolute frequency with the KrakenSDR's
+response shape, per-tuner gains 0 / +3 / -2 / +1 / +4 dB, a 3-count DC
+offset, a rogue carrier on the tuners that take no part; a port-moved test
+build; `run_all.sh`). All pass, also under ASan + UBSan:
+- `t_sweep.py` 206 / 206 (range 400-430 MHz, 16 hops, 5 tuners): for N =
+  128 / 1024 / 4096 / 16384 / auto six carriers - inside a hop, exactly on a
+  hop seam, 1 kHz past one, at two tuner-block boundaries, near the end - on
+  their point within half a bin (at most 0.43 bin: 0-48.8 Hz at 146 Hz, <= 7.5 kHz at
+  18.75 kHz) and at their height (within -1.0 / +0.6 dB of A^2 N / 3 sigma^2,
+  Hann scalloping included); the noise median at 1.88 dB (one level step
+  below 2) for every N; the floor across hops and all five tuners within
+  one level step (0.47 dB), edges vs centre of a hop the same; no DC spike or
+  hole (+-3.3 dB within 6 bins of the hop centres); a band 10 dB over the
+  noise (10.41 expected) at 10.35-10.82 dB in the hops it fills, across a block
+  seam and in the partly filled ones. Tuners 0,1,2 only: the rogue carrier of
+  the parked tuners (on hop 4's centre) not shown (2.8 dB = noise), no
+  garbage of the retuning packets (highest point 4.7 dB). Completions one
+  per sweep, 6.2 sweeps/s = the fake's 0.164 s, `last_s` median 0.164 s,
+  progress 0.25 / 0.5 / 0.75, <= 20 frames/s (shortest gap 46 ms). Views:
+  whole range / windows / outside the range, the pool (1004 points for
+  1000), the 4096 cap, points 0 = 2048, seq, junk SWEEP_VIEWs, compressed;
+  the grid id (same for tuners / dwell, new for N / range, back for the same
+  grid). Every command with good and bad values (24 good, 12 junk refused);
+  set_sweep only on a plan change; FREQ / TUNER_FREQ / WIDEBAND_FREQ /
+  SCANNER_START / CONTINUOUS_SCANNER_START / SFSCAN_START refused; GAIN
+  works and `gain_db` reaches a second page, also for a change made at
+  heimdall. Pause: flag 4, no frames, a new view still answered, resumes;
+  not saved. A data-port drop: the plan again at once. An old page (no
+  SWEEP_VIEW): no type 10, no spectrum, JSON flows; type 0 again after.
+  Restart: settings and mode back, the replay sends the saved plan before
+  the mode, the same grid id.
+- `t_edge.py` 50 / 50 (heimdall's additions; the fake then doesn't retune
+  a tuner already on its hop - no flag): K' = H (400-409 MHz, 5 hops on 5
+  tuners, R = 1) and one hop (433.5-434.5 MHz): a sweep per 20 ms round,
+  ~20 flag-2 frames a second, `last_s` 0.020 s (heimdall 0.021), the floor
+  flat over the five dongles (gains -2 .. +4 dB) at 1.88 dB, carriers at
+  41.4 dB (41.8 expected); one packet per hop (dwell 5 at N = 16384, m = 1)
+  and 1-2 packets per hop at random (the KrakenSDR's case) at N = 16384 and
+  4096: every hop measured, hop medians within 0.94 dB, carriers on their
+  point and height; a GAIN mid-sweep (the fake raises the retuning flag
+  until the next settle): the floor stays.
+- `t_modes.py` 15 / 15: coherent / independent / wideband scan each stream
+  spectra (type 7), audio (1) and, coherent, DoA (3) before and after sweep
+  mode; in sweep mode type 10 only; DoA parked and restored; the VFOs kept;
+  sweep -> independent re-sends the per-tuner tuning.
+- `t_old.py` 9 / 9: an older heimdall (coherent and independent): back to
+  its mode in 0.47 s with the reason, the saved mode heimdall's, spectra
+  again. `t_mcp.py` 9 / 9: the assistant's tools (above).
+- Not run: the MinGW / zig syntax checks of the root CLAUDE.md (no MinGW or
+  zig here; the code uses only the portable helpers and int64 / uint64 Hz);
+  a debug playback end to end (refused by `playback::refuse` as before, and
+  `send_control_command` sends nothing during one); a Pi.
 
 ## The page
 

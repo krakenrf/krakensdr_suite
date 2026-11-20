@@ -177,6 +177,13 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // GAIN and the VFOs (their tuners); TUNERS before the mode, which
         // re-sends it to heimdall when independent mode is entered
         {"independent_tuners",       "TUNERS:",                   VType::STRING, ""},
+        // Sweep mode (sweep.hpp): range MHz, tuners, FFT size, dwell - before
+        // the mode, which sends heimdall the plan (SWEEP_RUN isn't saved:
+        // entering the mode runs)
+        {"sweep_range",              "SWEEP_RANGE:",              VType::STRING, "87.500000:108.000000"},
+        {"sweep_tuners",             "SWEEP_TUNERS:",             VType::STRING, "all"},
+        {"sweep_res",                "SWEEP_RES:",                VType::STRING, "auto"},
+        {"sweep_dwell_ms",           "SWEEP_DWELL:",              VType::NUMBER, "20"},
         {"operating_mode",           "OPERATING_MODE:",           VType::STRING, "coherent"},
         // Station
         {"station_id",               "STATION_ID:",               VType::STRING, "KrakenSDR"},
