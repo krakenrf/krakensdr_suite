@@ -446,6 +446,51 @@ width, view, SNR, duty) against the bank. Four kinds of cause:
   IF histogram blurred the 1800 / 2400 Hz outer levels and the log lag grid
   could not see a frame period -> layout v2 (`sym`, `frame_*`, above)
 
+### Not merged: the symbol-rate estimator v4 experiment (2026-11-21)
+
+Branch `worktree-signal-classifier-symv4` (one commit on top of f045b13;
+its copy of this file has the full tables). Read this before working on
+the `sym` group or retraining for the 4-FSK family again.
+
+- The request: the `sym` estimator finds the right rate in only ~0.65 of
+  the 4-FSK detections - measured on the IMPAIRED synthetic test set (DMR
+  0.67, P25 0.65), which matches real recordings (0.62, 0.63); on the clean
+  bank clips it is ~1.0, so the composer's channel model already reproduces
+  the failure. Misses at SNR >= 10 dB: the voice classes pick an unrelated
+  weak line, the pagers a harmonic (x2, half, x3), TETRA a strong wrong line
+- The estimator built there (layout v4; `tools/sigclass/sym_bench.py`
+  scores it on synthetic captures with known rates, fit seed 101, test
+  seed 7): coherent cyclic spectra over the whole view of the envelope,
+  |dIF| and even lag products, candidates with harmonic moves and a
+  run-length statistic, a fitted score and confidence with "no rate" below
+  it, interpolated timing; the detector merges complementary FSK tone
+  pairs. Synthetic, 4-FSK / TETRA at >= 10 dB: hit 0.88, confident-wrong
+  0.41 (all target classes) -> 0.03. Real recordings: rate right 0.62 ->
+  0.73, wrong 0.38 -> 0.13 (DMR 0.77, P25 0.80). Cost of the block +0.5 ms
+  per narrow signal, -0.3..0.5 ms per wide one. Still poor: POCSAG (0.59 /
+  0.71; 26 % of its detections are fragments - one tone of the wide-shift
+  pair), FLEX, AIS / VDL2 (short bursts: mostly "no rate"), DFM (bit rate
+  reported, not the chip rate)
+- **Why it is not merged**: a model retrained on those features (59,000
+  captures; plain and with the learned Conv1D front end reading `symseq`;
+  two seeds each) is no better on real data. Real DMR 3 of 5, P25 9 of 19,
+  NXDN 2 of 5 in EVERY fit - the same counts as this branch's model;
+  library top-1 143 / 156 / 164 / 174 of 357 across the four fits against
+  177 here; own captures 65 of 110 against 68; debug playback 27 and 26 of
+  28 (DVB-T read as ATSC 3.0) against 28 and 27; sure-label precision on
+  the library 0.80 against 0.91; the empty band shows one unsure label
+- What it taught: (1) symbol timing was NOT the bottleneck of the real
+  4-FSK rows - they did not move with a far better estimator or with the
+  front end, so those failures belong to the particular recordings (look
+  at them one by one before changing features again); (2) the trainer seed
+  moves the real-data score more than a feature change does (ISM OOK 66-91
+  of 149 between seeds, equal synthetic validation): never judge a change
+  by one fit - several seeds, or an average of them, and a real benchmark
+  far larger than 5 DMR / 19 P25 / 5 NXDN recordings (the local trunked
+  systems, labelled by the decoders); (3) the one real POCSAG IQ recording
+  is a poor witness: its channel alternates POCSAG 1200 and FLEX 1600 and
+  the file carries a comb of lines every 512 Hz
+
 ### Results (2026-11-20, phase 5, the shipped `sigclass.model`)
 
 The phase 4 weights (no retraining), now model format 3 with the RF table,
