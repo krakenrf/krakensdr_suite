@@ -62,6 +62,10 @@ void clear_l2_raw_buffer();
 // second; docs/dev/operating-modes.md "Sweep mode")
 void clear_l1_buffer_quiet();
 void clear_l2_buffer_quiet();
+// The quiet L1 flush, returning whether it found its quiet point - i.e. every
+// stream lost the same packet round and the sets are paired again (false: it
+// flushed anyway after four packet periods, a channel may have slipped)
+bool clear_l1_buffer_paired();
 // L1 flushes since startup that found no quiet point between packet rounds
 // (flushed anyway: a channel may have slipped by a whole packet)
 uint32_t l1_unquiet_flushes();

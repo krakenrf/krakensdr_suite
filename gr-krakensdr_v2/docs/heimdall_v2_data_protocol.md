@@ -74,7 +74,11 @@ per-channel frequencies, after the settle (heimdall reads the per-channel
 frequencies before the flag; the flag is cleared only after the post-settle
 flush). The frequency is a float32 (~128 Hz coarse at 1.7 GHz): find the hop
 as `round((f - first_center_hz) / step_hz)`. Tuners that take no part never
-move. In that generic mode `num_channels` can be **1** (a single
+move. A per-channel frequency of **0** means "no valid frequency": that
+tuner's last retune failed (the R820T / E4000 drivers fail after N / SDM are
+written, so the tuner is NOT on its old frequency) - its samples are no hop's
+data until its next successful retune puts a real frequency back (added
+2026-11-20). In that generic mode `num_channels` can be **1** (a single
 dongle); heimdall's own GR source (`krakensdr_source_impl.cc`) accepts 1-16.
 
 Wire check (generic mode, one R820T dongle, 2026-11-16): `channels=1

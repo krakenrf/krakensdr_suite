@@ -90,6 +90,14 @@ the hops into the sweep spectrum, the page shows it.
   sets the flag until the next settle + flush; the status object also has
   `"retuning"` (the 8091 flag), `"failed_retunes"` and
   `"l1_unquiet_flushes"` (diagnostics). Default `settle_ms` 5.
+  A tuner whose retune failed (twice) has the 8091 per-channel frequency
+  **0** ("no valid frequency") from that hop until its next successful
+  retune - it is not on its old frequency either (the tuner drivers fail
+  after writing the new PLL values); 0 is on no grid, so a receiver drops
+  that channel. The status object also has `"failed_tuners":[..]` (the
+  tuners whose last retune failed). Leaving sweep mode for coherent runs the
+  full recalibration (every channel's lag, then the phase): each full-path
+  retune shifts that tuner's samples by 2 against the others (measured).
 
 ### heimdall, 8091 (sweep mode)
 

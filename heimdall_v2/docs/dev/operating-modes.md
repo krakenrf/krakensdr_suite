@@ -195,8 +195,10 @@ sets the flag too (`sweep_note_tuner_change`, before the tuners are
 written, under `settings_mutex`). No output per hop: the flushes are the
 quiet variants (no "Clearing ... buffers" lines; the drain's "did not
 respond" throttled), failed retunes are counted (`failed_retunes`) and
-logged at most every 10 s; nothing calls `signal_coherence_lost`, so the
-sweep never counts as a coherence loss or starts a recovery. The realtime
+logged at most every 10 s; nothing in the hop calls `signal_coherence_lost`,
+so the sweep never counts as a coherence loss or starts a recovery (the one
+exception: leaving for coherent when the re-pairing flush finds no quiet
+point - *Review fixes*, 4). The realtime
 paths (callback, drain) are unchanged.
 
 **The guarantee** (the client builds on it): a packet with
@@ -221,6 +223,11 @@ per-channel frequencies, after the settle. From the code:
   arrives after the request (and drops that round), so the first valid
   packet's samples start no earlier than about settle - USB latency after
   the retune - measured below, through the real pipeline.
+One exception, negligible: the lag FIR's 7-sample tail (`frac_tail`, kept
+across sets for the coherent conversion) is not reset by a flush, so the
+first 3-7 output samples of each channel in a hop's first valid packet are
+a weighted sum reaching into the last pre-flush set (a fraction of a
+sample's energy, out of 16384).
 The reordering of the header's reads is invisible in coherent mode (the
 same values; the discrete scanner's hops are ordered the same way and gain
 the same property).
@@ -343,3 +350,121 @@ logs in job scratch 52196024 `heimdall/`, `README.txt` there):
   Wideband downconverter (refusal is the existing `target != COHERENT`
   check), `--kerberos` on hardware; the MinGW / zig syntax checks (no
   toolchain on this machine).
+
+**Review fixes** (2026-11-20, an independent review of the merged diff and
+the orchestrator's end-to-end run; tests on the fake librtlsdr build -
+`t_fixes.py` - and the KrakenSDR - `t_lagshift.py`, `regress.sh`):
+1. `--kerberos`: a sweep came back with the manual calibration restored as
+   valid (STALE only if `current_frequency` or the per-bin EQ changed - the
+   sweep changes neither), after hundreds of PLL rewrites per tuner. The
+   wideband scan and independent mode had the same hole (same restore; the
+   scan's spread retunes every tuner). Now every PLL / gain write outside
+   coherent (`note_tuners_changed_outside_coherent`: sweep hops, the spread,
+   `set_independent_tuner`, gain / frequency through `update_sdr_settings`;
+   reset when coherent is left) makes the restore STALE. Fake: calibrated ->
+   sweep / wideband / independent + a tuner / independent + a gain change ->
+   coherent all STALE (0x304, `calibration_state` stale); independent
+   untouched stays calibrated (0x104).
+2. A failed retune was sent as valid data at the OLD frequency - but the
+   tuner is not there: `tuner_r82xx.c` / `tuner_e4k.c` fail after N / SDM
+   are written and librtlsdr sets `dev->freq = 0`. Now its
+   `tuner_frequencies` entry is 0 ("no valid frequency", on no client's
+   grid) from that hop until a retune succeeds (retried every round);
+   `failed_tuners` in the status. Contract and data-protocol doc updated.
+   Fake, every tune into 95-97 MHz fails (hop 4 = tuner 2): 66 failures in
+   6 s, 84 tuner-packets with frequency 0, 0 valid packets with a tuner off
+   its assigned hop, one log line.
+3. A gain change's settle ran from BEFORE the writes (`sweep_note_tuner_change`
+   was its only stamp): writes longer than settle + flush (always on Windows)
+   let samples from during the writes through. Now
+   `sweep_note_tuner_change_done()` stamps again after the writes (and the
+   rollback); the flag clear checks the stamp under `settings_mutex`, which
+   the writes hold. Fake (gain writes 40 ms, garbage until 5 ms after,
+   settle 0, one hop so the stream runs on): 18 gain changes (12 hopping, 6
+   paused), 0 of 681 valid packets with garbage; 11 of 175 flagged ones had
+   it (positive control).
+4. An unquiet sweep flush could slip a channel by a packet and the phase-only
+   return could not repair it. Now leaving sweep for coherent waits until no
+   sweep flush runs (`sweep_quiesce_flushes`, a mutex every sweep flush
+   takes with the mode re-checked), then flushes L1 again and requires the
+   quiet point (`clear_l1_buffer_paired`, 3 tries); none -> the coherence
+   recovery (`signal_coherence_lost`). And the return now always re-acquires
+   the lags (8.). Not observed (`l1_unquiet_flushes` stayed 0 in every run).
+5. The settings file took `sweep_first_center_hz=-1000000000` (stoull wraps)
+   and computed the last centre with wrap-around. Now digits only, the three
+   keys together, and `validate_sweep_plan` (moved to `types.hpp`, shared
+   with 8092; overflow-safe). Fake: negative centre, last centre past 1766
+   MHz, two of three keys -> the default plan and a log line; bad tuners /
+   dwell ignored with a line; a valid plan loads.
+6. The quiet flush's "drain did not respond" throttle exchanged on every
+   occurrence (a fault recurring under 10 s logged once, then never); it now
+   throttles against the last log line.
+7. `set_num_elements` then at once `set_operating_mode sweep` on one
+   connection could run the mode change between the 8092 precheck and the
+   detached worker's flag. `reconfigure_num_elements` now re-checks mode and
+   scanner under `settings_mutex`; `set_operating_mode` refuses while
+   `reconfig_in_progress` (8092: "Element-count reconfiguration in
+   progress"); the hop re-checks `pipeline_running` and the flag under the
+   lock. What remains of the old pattern: `start_scanner` doesn't take
+   `settings_mutex`, so a scan started in that window is only caught by the
+   re-check if it got there first; other commands in the window wait for the
+   mutex and then run on the reopened devices (as before).
+8. (end-to-end run) After sweeps with unequal retunes per tuner (a tuner
+   subset; H not a multiple of K' - the 11-hop FM plan with 5 tuners gives
+   tuner 4 a hop every round, the others 2 of 3), the return to coherent
+   took 93-125 s: every channel came back with a lag of hundreds to
+   thousands of samples, re-acquired one at a time inside the phase
+   recalibration (~25 s each). Measured (`t_lagshift.py`, old build): 200
+   full-path retunes of tuner 0 alone (independent mode, 100 / 102 MHz) ->
+   every other channel's lag 399.97-400.01 samples; a 20 s sweep of tuner 0
+   alone (473 rounds) -> 945.98-945.99; 200 gain changes of tuner 0 alone ->
+   no lag, CONVERGED 3.1 s. So every `rtlsdr_set_center_freq` shifts that
+   dongle's sample stream by exactly 2 samples (gain writes - also I2C
+   through the repeater - don't); the cause inside the library / the R820T
+   is not found. Fix: after a sweep, or tuners retuned unequally often
+   (counted per tuner, `note_tuner_retuned`; the same path serves
+   independent mode - its per-tuner retunes had the same problem: 200
+   retunes -> 92.9 s), the return to coherent sets `force_recalibration`:
+   the watchdog's full recalibration, every lag servo in parallel as at
+   startup, then the phase (not a coherence event; `--kerberos`: none, its
+   restore is STALE). Equal counts (the wideband scan, a common retune) keep
+   the phase-only return. KrakenSDR, new build: tuner 0 alone 40 s on the
+   full range (956 rounds), then tuners 0-2 10 s, then all 5 10 s ->
+   coherent CONVERGED 30.2 s; 200 retunes of tuner 0 (independent) -> 25.8
+   s; 20 s of all 5 on 88-108 MHz (unequal: 278 samples on channel 4) ->
+   22.5 s; 50 gain changes -> 2.8 s (phase-only); check_calibration OK
+   (|lag| 0.0, |phase| <= 0.3 deg) after each, 0 coherence events. The
+   phase recalibration that starts first may still log one channel's lag
+   before the full recalibration takes over 0.1 s later (harmless).
+Nits: `whole()` takes the JSON number grammar only (not `12abc`, `0x10`,
+`+5`, `1e2x`), `run` needs a delimiter after the literal (not `truex`);
+`set_sweep` bumps `plan_generation` before zeroing `round` / `sweeps`
+(under `settings_mutex` + the plan mutex, and the thread stores a round /
+counts a sweep only with the generation unchanged under the plan mutex);
+`sweep_state.rounds` removed; the `kp == 0` branch settles and clears the
+flag; the settings file is noted only for a change it holds (not `run`, not
+a no-op); a failed gain rollback in sweep mode no longer calls
+`signal_coherence_lost`; the exits log "Mode:" / "<mode> mode ended". Left:
+a key that first appears inside a string value is taken as absent (the
+parser is the port's find-based one; set_sweep has no string fields);
+`tcp_data_server` reading the mode before the frequencies - after sweep ->
+coherent the next packets carry the recalibration's phase state (not
+CONVERGED, noise on) and `return_to_coherent_locked` flushes L2, so nothing
+uses those packets; `frac_tail` noted at the guarantee.
+Finding 7 on the fake (`t_race.py`, `set_num_elements` + `set_operating_mode
+sweep` in one TCP send, 10 tries): when the reconfiguration started, either
+it aborted on its re-check under the lock ("switch to coherent mode ...",
+the count unchanged, sweep mode on) or the mode change was refused
+("Element-count reconfiguration in progress", the new count, coherent) -
+never both. Regression set on the KrakenSDR after the fixes (`regress.sh`):
+T1 CONVERGED 22.6 s, check OK (|lag| 0.0, |phase| 0.2 deg); T2 every case
+PASS; T3 (`t_contrast`, station 14.4 dB over the floor) first valid packets
+worst segment +4.1 / +3.6 dB at settle 0 / 5 against later packets' max
++3.9 / +3.4 and flagged packets up to +16 dB (81 / 75 flagged packets with
+the old hop in them) - noise level, no trace of the old hop; T5 every check
+PASS; the web STATE / SDR_SETTINGS PASS; T6 every check PASS (60 s of
+sweeping, 429 sweeps, 0 coherence events; sweep -> coherent CONVERGED 22.6
+s, check OK; coherent -> sweep mid-calibration -> coherent 20.6 s); 3 min
+full range with 5 tuners: 23 sweeps, 0 failed retunes, 0 coherence events,
+0 valid packets off the grid, RSS flat 43.2 MB, SIGTERM during a hop exit 0
+in 0.72 s.

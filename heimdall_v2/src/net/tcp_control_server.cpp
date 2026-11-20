@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 
 namespace {
@@ -662,6 +663,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         if (changed && target == OperatingMode::WIDEBAND_SCAN)
             setup_wideband_frequencies(current_frequency.load(), devices);
         if (!changed && operating_mode.load() != target) {
+            if (reconfig_in_progress.load(std::memory_order_acquire))
+                return "{\"status\":\"error\",\"message\":\"Element-count reconfiguration in progress - retry shortly\"}";
             if (const char* why = generic_mode_refusal(target))
                 return "{\"status\":\"error\",\"message\":\"" + std::string(why) + "\"}";
             return "{\"status\":\"error\",\"message\":\"" + std::string(operating_mode_name(target)) +
@@ -713,13 +716,33 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             while (p < json_str.size() && std::isspace(static_cast<unsigned char>(json_str[p]))) p++;
             return p;
         };
+        // The JSON number grammar exactly (stod alone took "12abc", "0x10",
+        // "+5", "1e2x"): -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?
+        auto json_number = [](const std::string& v) {
+            size_t i = 0;
+            auto digits = [&]() { const size_t b = i; while (i < v.size() && v[i] >= '0' && v[i] <= '9') i++; return i > b; };
+            if (i < v.size() && v[i] == '-') i++;
+            if (i < v.size() && v[i] == '0') i++;
+            else if (!digits()) return false;
+            if (i < v.size() && v[i] == '.') { i++; if (!digits()) return false; }
+            if (i < v.size() && (v[i] == 'e' || v[i] == 'E')) {
+                i++;
+                if (i < v.size() && (v[i] == '+' || v[i] == '-')) i++;
+                if (!digits()) return false;
+            }
+            return i == v.size();
+        };
         // A whole, non-negative JSON number no larger than `max`
         auto whole = [&](const char* key, uint64_t max, uint64_t& out, std::string& err) {
             const size_t p = value_at(key);
             if (p == std::string::npos) return false;
             const std::string v = json_str.substr(p, json_str.find_first_of(",}] \t\r\n", p) - p);
             double d = 0;
-            try { d = std::stod(v); } catch (...) { d = NAN; }
+            if (json_number(v)) {
+                try { d = std::stod(v); } catch (...) { d = NAN; }
+            } else {
+                d = NAN;
+            }
             if (!std::isfinite(d) || d < 0 || d != std::floor(d) || d > static_cast<double>(max)) {
                 err = std::string(key) + " must be a whole number 0-" + std::to_string(max);
                 return false;
@@ -749,8 +772,14 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         if (whole("settle_ms", 1'000'000ULL, v, err)) { req.has_settle = true; req.settle_ms = static_cast<uint32_t>(v); }
         if (!err.empty()) return error(err);
         if (const size_t p = value_at("run"); p != std::string::npos) {
-            if (json_str.compare(p, 4, "true") == 0) req.run = true;
-            else if (json_str.compare(p, 5, "false") == 0) req.run = false;
+            // the literal and then a delimiter ("truex" is not true)
+            auto literal = [&](const char* w) {
+                const size_t n = std::strlen(w);
+                return json_str.compare(p, n, w) == 0 &&
+                       (p + n >= json_str.size() || std::strchr(",} \t\r\n", json_str[p + n]) != nullptr);
+            };
+            if (literal("true")) req.run = true;
+            else if (literal("false")) req.run = false;
             else return error("run must be true or false");
             req.has_run = true;
         }
@@ -766,8 +795,10 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                     if (ss.eof() && req.tuners.empty()) break;  // "[]"
                     return error("tuners must be a list of tuner numbers");
                 }
-                double d = 0;
-                try { d = std::stod(tok); } catch (...) { d = NAN; }
+                double d = NAN;
+                if (json_number(tok)) {
+                    try { d = std::stod(tok); } catch (...) { d = NAN; }
+                }
                 if (!std::isfinite(d) || d != std::floor(d) || d < -1e6 || d > 1e6)
                     return error("tuners must be a list of tuner numbers");
                 req.tuners.push_back(static_cast<int>(d));

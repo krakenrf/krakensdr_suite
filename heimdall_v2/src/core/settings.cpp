@@ -56,6 +56,19 @@ std::string trim(const std::string& s) {
     return s.substr(first, last - first + 1);
 }
 
+// A whole number of digits only (stoull takes "-1" and wraps it), at most
+// 19 digits; false otherwise
+bool parse_digits(const std::string& v, uint64_t& out) {
+    if (v.empty() || v.size() > 19) return false;
+    uint64_t x = 0;
+    for (char c : v) {
+        if (c < '0' || c > '9') return false;
+        x = x * 10 + static_cast<uint64_t>(c - '0');
+    }
+    out = x;
+    return true;
+}
+
 bool parse_bool(const std::string& v) {
     return v == "1" || v == "true" || v == "on" || v == "yes";
 }
@@ -144,6 +157,8 @@ void load() {
     // sweep mode's plan, applied once the whole file is read
     SweepPlan sweep_load;
     uint64_t sweep_first = 0, sweep_step = 0, sweep_steps = 0;
+    bool sweep_plan_bad = false;
+    int sweep_plan_keys = 0;
     while (std::getline(f, line)) {
         // A UTF-8 byte-order mark (Windows editors - Notepad - save one) would
         // otherwise be part of the first key, which was then silently ignored
@@ -228,15 +243,18 @@ void load() {
         } else if (key.rfind("sweep_", 0) == 0) {
             // Sweep mode's plan; the three plan keys are checked together below
             try {
-                if (key == "sweep_first_center_hz") sweep_first = std::stoull(val);
-                else if (key == "sweep_step_hz") sweep_step = std::stoull(val);
-                else if (key == "sweep_steps") sweep_steps = std::stoull(val);
+                uint64_t v = 0;
+                const bool num = parse_digits(val, v);
+                bool bad = !num && key != "sweep_tuners";
+                if (key == "sweep_first_center_hz") { sweep_first = v; sweep_plan_bad |= bad; sweep_plan_keys++; }
+                else if (key == "sweep_step_hz") { sweep_step = v; sweep_plan_bad |= bad; sweep_plan_keys++; }
+                else if (key == "sweep_steps") { sweep_steps = v; sweep_plan_bad |= bad; sweep_plan_keys++; }
                 else if (key == "sweep_dwell_ms") {
-                    const unsigned long d = std::stoul(val);
-                    if (d >= SWEEP_DWELL_MIN_MS && d <= SWEEP_DWELL_MAX_MS) sweep_load.dwell_ms = static_cast<uint32_t>(d);
+                    if (num && v >= SWEEP_DWELL_MIN_MS && v <= SWEEP_DWELL_MAX_MS) sweep_load.dwell_ms = static_cast<uint32_t>(v);
+                    else bad = true;
                 } else if (key == "sweep_settle_ms") {
-                    const unsigned long t = std::stoul(val);
-                    if (t <= SWEEP_SETTLE_MAX_MS) sweep_load.settle_ms = static_cast<uint32_t>(t);
+                    if (num && v <= SWEEP_SETTLE_MAX_MS) sweep_load.settle_ms = static_cast<uint32_t>(v);
+                    else bad = true;
                 } else if (key == "sweep_tuners") {
                     uint32_t mask = 0;
                     std::stringstream ss(val);
@@ -244,11 +262,13 @@ void load() {
                     while (std::getline(ss, tok, ',')) {
                         tok = trim(tok);
                         if (tok.empty()) continue;
-                        const int t = std::stoi(tok);
-                        if (t >= 0 && t < NUM_DEVICES) mask |= 1u << t;
+                        uint64_t t = 0;
+                        if (parse_digits(tok, t) && t < NUM_DEVICES) mask |= 1u << t;
+                        else bad = true;
                     }
                     if (mask) sweep_load.tuner_mask = mask;
                 }
+                if (bad) std::cerr << "Settings: invalid " << key << " '" << val << "' - ignored" << std::endl;
             } catch (...) {
                 std::cerr << "Settings: invalid " << key << " '" << val << "'" << std::endl;
             }
@@ -299,16 +319,18 @@ void load() {
 
     // Sweep mode's plan: the three plan keys only together and valid (the
     // hop centres in the tuner range), else the default plan
-    if (sweep_steps || sweep_first || sweep_step) {
-        const uint64_t last = sweep_first + (sweep_steps ? sweep_steps - 1 : 0) * sweep_step;
-        if (sweep_steps >= 1 && sweep_steps <= SWEEP_STEPS_MAX && sweep_step >= SWEEP_STEP_MIN_HZ &&
-            sweep_step <= SWEEP_STEP_MAX_HZ && sweep_first >= RTL_TUNER_MIN_HZ && last <= RTL_TUNER_MAX_HZ) {
+    // (validate_sweep_plan: the same check as 8092 set_sweep)
+    if (sweep_plan_keys > 0) {
+        const std::string why = sweep_plan_bad || sweep_plan_keys != 3
+                                    ? std::string("not three whole numbers")
+                                    : validate_sweep_plan(sweep_first, sweep_step, sweep_steps);
+        if (why.empty()) {
             sweep_load.first_center_hz = sweep_first;
             sweep_load.step_hz = sweep_step;
             sweep_load.steps = static_cast<uint32_t>(sweep_steps);
         } else {
-            std::cerr << "Settings: invalid sweep plan (sweep_first_center_hz / sweep_step_hz / sweep_steps) - "
-                         "using the default" << std::endl;
+            std::cerr << "Settings: invalid sweep plan (sweep_first_center_hz / sweep_step_hz / sweep_steps: "
+                      << why << ") - using the default" << std::endl;
         }
     }
     {
