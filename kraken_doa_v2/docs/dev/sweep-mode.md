@@ -100,9 +100,12 @@ the hops into the sweep spectrum, the page shows it.
   retune - it is not on its old frequency either (the tuner drivers fail
   after writing the new PLL values); 0 is on no grid, so a receiver drops
   that channel. The status object also has `"failed_tuners":[..]` (the
-  tuners whose last retune failed). Leaving sweep mode for coherent runs the
-  full recalibration (every channel's lag, then the phase): each full-path
-  retune shifts that tuner's samples by 2 against the others (measured).
+  tuners whose last retune failed). Leaving sweep mode for coherent: with a
+  librtlsdr that defines `RTLSDR_NO_STREAM_SLIP` (2026-11-21: no tune drops
+  samples any more) the streams are re-paired and only the phase is
+  recalibrated (seconds); with an older library every retune shifted that
+  tuner's samples by 2 against the others (a USB control read of 3 bytes
+  did it), and heimdall re-acquires every channel's lag first (25-30 s).
 - Additions 2026-11-21 (faster hops; nothing above changed): a hop
   delivers exactly `hop_packets` = `ceil(dwell_ms x 2.4e6 / (1000 x
   16384))` valid packets per tuner (it waits for them at most 250 ms

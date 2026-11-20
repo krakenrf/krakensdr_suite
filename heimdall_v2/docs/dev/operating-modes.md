@@ -487,14 +487,20 @@ second with 5 tuners, the full range 5.2 s; dwell 10 gives today's speed
 with exactly 2 packets a hop (Auto 4096, as today's default gave from
 1.3-1.6). DECIDED 2026-11-21, on the final path's numbers (the fast tune
 call and worker F's library, *Review fixes of the hop loop* below): the
-default dwell is 5 ms - one packet a hop - and the default settle 2 ms
-(`SWEEP_DWELL_MS`, `SWEEP_SETTLE_MS`; kraken_doa's `SWEEP_DWELL_DEFAULT_MS`
-and the page's field follow). With the 7.5 ms tune a settle of 5 costs one
-more packet period in most rounds, 2 runs as fast as 0 (20-25 ms a round at
-one packet a hop against 22-29) and the first valid packet measured as
-clean at 0, 2 and 5; the whole range with 5 tuners then takes ~4.3 s, with
-one ~19 s. Until then both defaults were 20 / 5, and every number above
-that names "the default" means those.
+default dwell is 5 ms - one packet a hop (`SWEEP_DWELL_MS`; kraken_doa's
+`SWEEP_DWELL_DEFAULT_MS`, its settings schema and the page's field follow;
+until then 20, and every number above that names "the default" means 20).
+The default settle STAYS 5 ms (`SWEEP_SETTLE_MS`): with the 7.5 ms tune a
+settle of 2 runs as fast as 0 (20-25 ms a round at one packet a hop against
+22-29 with 5) and the first valid packet measured as clean at 0, 2 and 5 on
+the PC, and 2 was the default for a few hours - but the gate's bound is
+"retune end + settle - L*" (L* the dongle's fastest USB delivery, ~1 ms
+here), so 2 leaves ~1 ms where 5 leaves ~4, and neither a Raspberry Pi nor
+a reader thread running behind under load is measured (the second review's
+point). The price on the PC: the whole range with 5 tuners ~4.3 s instead
+of ~4.0 s (the orchestrator's end-to-end run at settle 2: 3.96 s, one tuner
+18.9 s, 88-108 MHz 11.1 sweeps a second). A host measured with
+`t_contrast.py` may lower it.
 
 *The guarantee, re-tested* (the first valid packet now comes a packet
 earlier than before, so what "settle 0 holds" meant changed):

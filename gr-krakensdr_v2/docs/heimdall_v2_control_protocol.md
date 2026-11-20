@@ -248,7 +248,7 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
   - `dwell_ms` 5-5000 (default 5): how much settled data a hop delivers, in
     whole 8091 packets per tuner: `ceil(dwell_ms x 2.4e6 / (1000 x 16384))`
     (5 ms -> 1, 10 -> 2, 20 -> 3, 50 -> 8, 100 -> 15; the status object's
-    `hop_packets`). `settle_ms` 0-1000 (default `SWEEP_SETTLE_MS` = 2 ms,
+    `hop_packets`). `settle_ms` 0-1000 (default `SWEEP_SETTLE_MS` = 5 ms,
     config.h): the wait between the end of the retune and the first sample
     that may count. Both take effect at once and don't restart the sweep.
   - `run`: `false` pauses (the tuners stay put; the retuning flag is 0 again

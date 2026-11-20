@@ -63,12 +63,15 @@
 // before the settle's end) -> flag off -> dwell. SWEEP_SETTLE_MS: on the
 // KrakenSDR (x86 PC, 2026-11-20 / 21) settle 0 already held - the first
 // valid set after a hop showed nothing of the previous hop, against a
-// station 16-24 dB over the floor; 2 ms is margin (the Pi not measured) and
-// costs no time: with the fast tune (7.5 ms) a settle of 2 lands a hop's
-// packets on the same packet boundaries as 0, where 5 costs one more packet
-// period in most rounds (docs, "Hop timing": 20-25 ms a round against 22-29
-// at one packet a hop). Numbers in the doc.
-#define SWEEP_SETTLE_MS          2      // default settle, ms (set_sweep settle_ms 0-1000)
+// station 16-24 dB over the floor. What the gate guarantees is "taken at or
+// after retune end + settle - L*", L* = that dongle's fastest USB delivery
+// (~1 ms on the PC; a Raspberry Pi and a reader that runs behind under load
+// are NOT measured), so the settle is the margin over L*: 5 ms. On the PC a
+// settle of 2 is as fast as 0 and measured as clean, and 5 costs one more
+// packet period in part of the rounds (20-25 ms a round against 22-29 at one
+// packet a hop; the whole range ~4.0 s against ~4.3 s) - a host measured
+// with t_contrast.py may lower it (set_sweep settle_ms). Numbers in the doc.
+#define SWEEP_SETTLE_MS          5      // default settle, ms (set_sweep settle_ms 0-1000)
 #define SWEEP_SETTLE_MAX_MS      1000
 // The dwell is whole USB packets of valid data per tuner and hop: dwell_ms
 // asks for at least that much, a hop delivers sweep_hop_packets(dwell_ms) =
