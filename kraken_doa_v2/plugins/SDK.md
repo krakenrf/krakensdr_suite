@@ -69,6 +69,9 @@ plugins/
 ├── beacon406/            406 MHz distress beacons (Cospas-Sarsat): bursts on every channel of a 100 kHz
 │                         VFO, biphase-L demodulator, BCH syndrome tables, every protocol; a packet
 │                         talker per 15-hex ID on its own channel; distress vs self-test
+├── beacon121/            121.5 / 243 MHz swept-tone homing signals (ELT / EPIRB / PLB, 406 MHz beacons' homers):
+│                         carriers found in a 32 kHz VFO, the sweep from a folded two-sided spectrogram;
+│                         no ID - a packet talker per beacon on its own 100 Hz carrier channel
 ├── lora/                 LoRa CSS in the full 2.4 MHz (lock_vfo): per-channel dechirp receiver
 │                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
 │                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet

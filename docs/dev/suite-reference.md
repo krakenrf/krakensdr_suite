@@ -695,7 +695,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, ysf, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, acars, vdl2, dab, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, beacon121 (121.5 / 243 MHz swept-tone beacons), lora, wildlife, rds, acars, vdl2, dab, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
