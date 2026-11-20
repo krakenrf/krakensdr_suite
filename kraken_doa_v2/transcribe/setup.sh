@@ -11,6 +11,11 @@
 #   transcribe/setup.sh --update           rebuild if set up already (kraken_doa's make)
 #   transcribe/setup.sh --list             the models that can be downloaded
 #
+# base.en-q8_0 / small.en-q8_0 (8-bit: ~25 % less CPU, as accurate) are made
+# HERE from base.en / small.en by the helper (kraken_whisper --quantize):
+# whisper.cpp publishes no English-only q8_0 files. The f16 model is downloaded
+# for it when missing, and removed again unless it was asked for too.
+#
 # Environment: WHISPER_GPU = auto (default: the GPU through Metal on Apple
 # Silicon, the CPU everywhere else) | on (Metal on any Mac - refused off
 # macOS: no GPU backend is tested there) | off (CPU only); remembered for
@@ -26,6 +31,7 @@
 # macOS: the same script (Xcode command line tools + brew install cmake);
 # Accelerate, and Metal on Apple Silicon (WHISPER_GPU above).
 # After it: tick "Transcribe" on a VFO card in kraken_doa (no restart needed).
+HELP_LINES=33
 set -euo pipefail
 
 SELF=$(readlink -f "$0")
@@ -77,8 +83,10 @@ fi
 # name  size_MB  note - the same list as MODEL_CATALOGUE in src/voice2text.cpp
 CATALOGUE="tiny.en 75 fastest,_least_accurate
 base.en 142 default:_good_on_a_Pi_5,_faster_than_real_time
+base.en-q8_0 78 base.en_8-bit:_less_CPU,_as_accurate_-_made_here_from_base.en
 base.en-q5_1 57 base.en_compressed:_less_memory,_about_as_accurate
 small.en 466 most_accurate_on_a_Pi:_about_2x_slower_than_real_time
+small.en-q8_0 252 small.en_8-bit:_less_CPU,_as_accurate_-_made_here_from_small.en
 small.en-q5_1 181 small.en_compressed
 tiny 75 any_language_(or_translated_to_English),_fastest
 base 142 any_language_(or_translated_to_English)
@@ -88,7 +96,14 @@ small-q5_1 181 small_compressed
 medium.en-q5_0 514 PC-class_CPU_only
 large-v3-turbo-q5_0 547 PC-class_CPU_only,_best_for_other_languages"
 
+# DERIVED models: made on this machine from <name minus -q8_0>, never
+# downloaded as such (kraken_doa's "Get" makes them the same way)
+DERIVED="base.en-q8_0 small.en-q8_0"
+HELPER=build/kraken_whisper$EXE
+
 die() { echo "setup.sh: $*" >&2; exit 1; }
+
+derived_from() { case " $DERIVED " in *" $1 "*) echo "${1%-q8_0}" ;; *) return 1 ;; esac; }
 
 list_models() {
     echo "Speech models (transcribe/setup.sh <name>):"
@@ -98,6 +113,13 @@ list_models() {
 }
 
 known_model() { echo "$CATALOGUE" | awk '{print $1}' | grep -qx -- "$1"; }
+
+# asked for on the command line
+wanted() {
+    local x
+    for x in ${models[@]+"${models[@]}"}; do [ "$x" = "$1" ] && return 0; done
+    return 1
+}
 
 fetch() {   # fetch <url> <file>: atomic, resumable-safe
     local url=$1 out=$2
@@ -119,6 +141,25 @@ fetch() {   # fetch <url> <file>: atomic, resumable-safe
     # wc -c, not stat -c %s: the same on GNU and BSD (macOS)
     [ "$(wc -c < "$out.part" | tr -d ' ')" -gt 100000 ] || { rm -f "$out.part"; die "download too small: $url"; }
     mv "$out.part" "$out"
+}
+
+make_derived() {   # make_derived <name> <source model>: quantize the source here
+    local m=$1 src=$2 out="$MODELS_DIR/ggml-$1.bin" in="$MODELS_DIR/ggml-$2.bin" fetched=0
+    [ -s "$out" ] && { echo "  have $out"; return 0; }
+    if [ ! -s "$in" ]; then
+        fetch "$MODEL_URL/ggml-$src.bin" "$in"
+        fetched=1
+    fi
+    echo "  making $(basename "$out") from $(basename "$in") ..."
+    local ok=1
+    "./$HELPER" --quantize "$in" "$out.part" q8_0 >/dev/null || ok=0
+    if [ $ok = 1 ]; then mv "$out.part" "$out"; else rm -f "$out.part"; fi
+    # the f16 model only came for this
+    if [ $fetched = 1 ] && ! wanted "$src"; then
+        rm -f "$in"
+        echo "  removed $(basename "$in") again (downloaded only to make $m)"
+    fi
+    [ $ok = 1 ] || die "making $m from $src failed"
 }
 
 # Windows: the CMake options of the build. Ninja (no make in a native
@@ -256,11 +297,19 @@ for a in "$@"; do
         --models-only) do_build=0 ;;
         --build-only) do_models=0 ;;
         --update) [ -x build/kraken_whisper$EXE ] || exit 0; do_models=0; quiet=1 ;;
-        -h|--help) sed -n '2,28p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n "2,${HELP_LINES}p" "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $a (see --help)" ;;
         *) known_model "$a" || { list_models; die "unknown model $a"; }; models+=("$a") ;;
     esac
 done
+
+# a derived model needs the helper: built below, or already
+if [ $do_models = 1 ] && [ $do_build = 0 ] && [ ! -x "$HELPER" ]; then
+    for m in ${models[@]+"${models[@]}"}; do
+        derived_from "$m" >/dev/null &&
+            die "$m is made here from $(derived_from "$m") by the helper, which is not built yet - run setup.sh $m (without --models-only)"
+    done
+fi
 
 [ $do_build = 1 ] && build
 if [ $do_models = 1 ]; then
@@ -269,7 +318,13 @@ if [ $do_models = 1 ]; then
     fi
     echo "Models -> $MODELS_DIR"
     # (${a[@]+...}: bash 3.2 - macOS's - calls an empty array unbound under set -u)
-    for m in ${models[@]+"${models[@]}"}; do fetch "$MODEL_URL/ggml-$m.bin" "$MODELS_DIR/ggml-$m.bin"; done
+    for m in ${models[@]+"${models[@]}"}; do
+        if src=$(derived_from "$m"); then
+            make_derived "$m" "$src"
+        else
+            fetch "$MODEL_URL/ggml-$m.bin" "$MODELS_DIR/ggml-$m.bin"
+        fi
+    done
     # voice activity detection: skips noise / silence before whisper (which
     # otherwise "hears" words in noise)
     fetch "$VAD_URL/ggml-$VAD_MODEL.bin" "$MODELS_DIR/ggml-$VAD_MODEL.bin"
