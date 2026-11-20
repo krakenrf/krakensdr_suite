@@ -1449,8 +1449,8 @@ it - checked against the first-pass build).
   followed away · N missed"; the ends by reason in the tooltip). Switching
   "Outside the span" on asks every time (`uiConfirm` naming the costs: the
   control channel not heard while away unless it fits, grants missed, the
-  user's VFOs move with the centre, a calibration blanks reception); off
-  goes at once. Independent mode "Voice tuners" (`TRUNK_TUNERS`): a toggle
+  user's VFOs move with the centre, a calibration blanks reception for
+  about half a second - the KrakenSDR's 0.32-0.49 s); off goes at once. Independent mode "Voice tuners" (`TRUNK_TUNERS`): a toggle
   per tuner (lit = the manager may retune it), a tuner with a control VFO
   "Tn Control" and disabled, "Others" = every tuner without a control VFO;
   handing tuners over when the list was empty asks (the user's VFOs on them
@@ -1470,21 +1470,28 @@ it - checked against the first-pass build).
   user's. "returning": "Back on <home> MHz: waiting for the control
   channel" and why it came back; then for 10 s "Back home (<why>) ·
   control channel regained after N s" (`excursions.last.ctl_back_ms`). A
-  parked control VFO: its card "Control · ... · parked while away" (dimmed)
-  and the system row's chip "Dn parked" (its frequency there means
-  nothing).
+  parked control VFO (the control entry's own `parked`, else the
+  excursion's `ctl` list): its card "Control · ... · parked while away"
+  (dimmed) and the system row's chip "Dn parked" (its frequency there means
+  nothing) - never "not receiving".
 - Voice tuners (`voice_tuners`): a block at the top of the box, a row per
   voice tuner - what it carries ("TG 9602", "tuning for TG ...", "free
-  (held for voice)" / "free"), where it is and "yours <home>" while taken;
+  (held for voice)" / "free", or "yours again (you tuned it)" for a listed
+  tuner the manager had taken and the user retuned or changed the gain of -
+  the page sees it as `taken` going false with the list unchanged), where
+  it is and "yours <home>" while taken;
   the tuner's pane: a "Trunk: <call> · yours <home>" tag in its header and
   the frequency digits outlined amber.
 - Reasons and ends: `leaving` "Receiver leaving", `away` "Receiver away",
-  `busy_here` "Call here", `retry` "Retry later", `no_retune` "Out of
-  reach", `tuning` "Tuner retuning", `no_tuner` "No free tuner" (each with
-  what to do in its tooltip); ends `excursion` "Receiver left for another
+  `busy_here` "Call here", `retry` "Retry later", `no_retune` "Can't go
+  there" (its tooltip names every case: no centre in range, heimdall silent
+  for 2 s, an excursion that didn't arrive and the 30 s - 8 min wait after
+  it), `retuning` "Receiver retuning", `tuning` "Tuner retuning",
+  `no_tuner` "No free tuner" (each with what to do in its tooltip); ends `excursion` "Receiver left for another
   call", `returned` "Receiver went back". Notes: "N calls outside the span"
   gets a ⚙ button to the option that follows them (coherent, option off;
-  independent, no voice tuner), next to Centre; "N calls waiting for a free
+  independent, no listed tuner that can carry voice - none, or only
+  control tuners), next to Centre; "N calls waiting for a free
   voice tuner" with a ⚙ to Voice tuners.
 
 **Trunk VFOs elsewhere.** The VFO card gets a line under its header

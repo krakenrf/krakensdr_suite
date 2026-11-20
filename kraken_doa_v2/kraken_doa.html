@@ -3190,8 +3190,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <div class="ctrl-row"><label for="tk-unit" title="Follow calls between two radios, not only talkgroup calls">Unit-to-unit calls</label><input type="checkbox" class="sw" id="tk-unit" onchange="tkSend('TRUNK_UNIT:' + (this.checked ? 1 : 0))"></div>
           <div class="ctrl-row"><label for="tk-audio" title="Hear the followed calls (each voice VFO's speaker on while its call is active). Off: followed silently - decoded, listed, logged">Hear calls</label><input type="checkbox" class="sw" id="tk-audio" onchange="tkSend('TRUNK_AUDIO:' + (this.checked ? 1 : 0))"></div>
           <div id="tk-ret-rows" style="display:none">
-            <div class="ctrl-row"><label for="tk-ret" title="Coherent mode: a call outside the band the receiver takes in is followed by retuning there - the receiver leaves, calibrates at once, follows the call and comes back (calibrating again). While it is away it doesn't hear the control channel (unless the control channel fits the new band): grants are missed, and every VFO of yours moves with the centre. Each calibration blanks reception for about a second">Outside the span</label><input type="checkbox" class="sw" id="tk-ret" onclick="tkRetClick(event)"></div>
-            <div class="ctrl-row tk-sub" id="tk-retcal-row"><label for="tk-retcal" title="Calibrate the array as soon as the receiver arrives (the start of the call is lost for about a second, then the DoA is valid). Off: no calibration while away - the whole call is heard, but no bearing there; the calibration after the return runs either way">Calibrate there</label><input type="checkbox" class="sw" id="tk-retcal" onchange="tkSend('TRUNK_RETUNE_CAL:' + (this.checked ? 1 : 0))"></div>
+            <div class="ctrl-row"><label for="tk-ret" title="Coherent mode: a call outside the band the receiver takes in is followed by retuning there - the receiver leaves, calibrates at once, follows the call and comes back (calibrating again). While it is away it doesn't hear the control channel (unless the control channel fits the new band): grants are missed, and every VFO of yours moves with the centre. Each calibration blanks reception for about half a second (measured 0.3-0.5 s; the DoA is valid under a second after arriving)">Outside the span</label><input type="checkbox" class="sw" id="tk-ret" onclick="tkRetClick(event)"></div>
+            <div class="ctrl-row tk-sub" id="tk-retcal-row"><label for="tk-retcal" title="Calibrate the array as soon as the receiver arrives (about half a second of the call is lost to it, then the DoA is valid). Off: no calibration while away - the whole call is heard, but no bearing there; the calibration after the return runs either way">Calibrate there</label><input type="checkbox" class="sw" id="tk-retcal" onchange="tkSend('TRUNK_RETUNE_CAL:' + (this.checked ? 1 : 0))"></div>
             <div class="ctrl-row tk-sub" id="tk-retmax-row"><label for="tk-retmax" title="The longest time away for one excursion (a wrong channel entry or a carrier that never ends can't keep the receiver away). 0 = no limit; else 10 - 3600 s">Longest away</label><input type="number" id="tk-retmax" min="0" max="3600" step="10" value="120" onchange="tkSend('TRUNK_RETUNE_MAX:' + this.value)"><span class="u">s</span></div>
             <div class="tk-exsum" id="tk-exsum"></div>
           </div>
@@ -21777,7 +21777,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     away: ['Receiver away', 'The receiver was away for another call outside the span, and this channel was not in its band there'],
     busy_here: ['Call here', 'Outside the span, and a call in the span is being followed: the receiver doesn\'t leave it (a Priority or held talkgroup would)'],
     retry: ['Retry later', 'The receiver went for this call less than 30 s ago and found nothing (or stayed its longest time): it doesn\'t go again yet'],
-    no_retune: ['Out of reach', 'Outside the span, and no centre in the tuner\'s range holds it'],
+    no_retune: ['Can\'t go there', 'Outside the span, and the receiver can\'t go there now: no centre in the tuner\'s range holds it, heimdall has sent nothing for 2 s, or an earlier excursion didn\'t arrive (then it waits 30 s - longer after each further one, up to 8 min - before trying again)'],
+    retuning: ['Receiver retuning', 'The receiver is between centres (leaving for a call or coming back): this call is followed at its next grant once the receiver is there'],
     tuning: ['Tuner retuning', 'A voice tuner is being retuned for it: placed when the tuner is there'],
     no_tuner: ['No free tuner', 'Outside every tuner\'s band, and every voice tuner carries a call: give trunk following more voice tuners (its settings)']
   };
@@ -22054,7 +22055,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
           // the options that follow such calls: retuning for them (coherent) / voice tuners (independent)
           (typeof m.retune === 'boolean' && opMode === 'coherent' && !m.retune && !m.playback
             ? `<button type="button" class="btn sm" onclick="tkOpenSet('tk-ret')" title="Or follow each such call by retuning for it: the option Outside the span">${icon('gear')}</button>` : '') +
-          (Array.isArray(m.tuners) && opMode === 'independent' && !m.tuners.length && !m.playback
+          (Array.isArray(m.tuners) && opMode === 'independent' && !m.tuners.some(t => !tkControlTuners().has(t)) && !m.playback
             ? `<button type="button" class="btn sm" onclick="tkOpenSet('tk-tuns')" title="Or let trunk following retune tuners for such calls: Voice tuners">${icon('gear')}</button>` : ''));
       }
       const nv = count('no_vfo'), nl = count('vfo_limit');
@@ -22185,7 +22186,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       tkText(r.querySelector('.pl'), [nm.toLowerCase().startsWith(pn.toLowerCase()) ? '' : pn, s.site && ctl.length === 1 ? s.site : ''].filter(Boolean).join(' · '));
       let l2;
       // (a control VFO parked while the receiver is away: its frequency there means nothing)
-      const exParked = v => !!(tkSt && tkSt.excursion && (tkSt.excursion.ctl || []).some(k => k.vfo === v && k.parked));
+      const exParked = v => (ctl.find(k => k.vfo === v) || {}).parked === true ||
+        !!(tkSt && tkSt.excursion && (tkSt.excursion.ctl || []).some(k => k.vfo === v && k.parked));
       if (ctl.length) {
         l2 = ctl.map(c => exParked(c.vfo) ? `<span class="tk-cc" data-vfo="${c.vfo}" title="D${c.vfo}: control channel, parked while the receiver is away for a call (not decoding)">` +
           `<span class="d" style="color:${getDecimatorColor(c.vfo)}">D${c.vfo}</span>parked</span>` :
@@ -22553,7 +22555,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     e.preventDefault();   // on only once confirmed (the status ticks it)
     uiConfirm({title: 'Follow calls outside the span', icon: 'trunk', ok: 'Switch on',
                text: ['The receiver then retunes for a call outside its band, follows it there and comes back.',
-                      'Meanwhile the control channel is not heard (unless it fits there: grants are missed), all your VFOs move with the centre, and each calibration blanks reception for about a second.'],
+                      'Meanwhile the control channel is not heard (unless it fits there: grants are missed), all your VFOs move with the centre, and each calibration blanks reception for about half a second.'],
                tip: 'Coherent mode only. Calls are followed one at a time this way; the receiver doesn\'t leave a call in its band for an ordinary one (Priority and held talkgroups do). "Longest away" stops a stuck excursion; "Return now" in the box brings it back at once.'}).then(ok => {
       if (ok) tkSend('TRUNK_RETUNE:1');
     });
@@ -22604,15 +22606,27 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
                tip: 'A tuner that carries a control VFO is never retuned. Tuning one yourself makes it yours again.'}).then(ok => { if (ok) go(); });
   }
   // the voice tuners' state (independent mode): in the box, and on their panes - the manager's tuning, not the user's
+  // a listed voice tuner that was taken and isn't any more while the list stayed: the user changed its
+  // frequency or gain (the receiver gives it to him then, without putting it back) - until taken again
+  const tkVtWas = {}, tkVtUser = {};
+  let tkVtList = '';
   function tkRenderTuners() {
     const el = $id('tk-vt');
     if (!el) return;
     const m = tkSt || {};
     const vt = m.mode === 'independent' ? (m.voice_tuners || []).filter(v => !v.control) : [];
+    const list = JSON.stringify(m.tuners || []) + (m.follow ? '1' : '0');
+    if (list !== tkVtList) { for (const k of Object.keys(tkVtUser)) delete tkVtUser[k]; tkVtList = list; }
+    for (const v of vt) {
+      if (v.taken) delete tkVtUser[v.tuner];
+      else if (tkVtWas[v.tuner]) tkVtUser[v.tuner] = true;
+      tkVtWas[v.tuner] = !!v.taken;
+    }
     const callsOn = t => (m.vfos || []).filter(v => v.tuner === t && v.call).map(v => (m.calls || []).find(c => c.id === v.call)).filter(Boolean);
     const rows = vt.map(v => {
       const cs = callsOn(v.tuner), tf = v.tuning_for ? (m.calls || []).find(c => c.id === v.tuning_for) : null;
-      const what = tf ? 'tuning for ' + tkLabel(tf) : cs.length ? cs.map(tkLabel).join(', ') : v.taken ? 'free (held for voice)' : 'free';
+      const what = tf ? 'tuning for ' + tkLabel(tf) : cs.length ? cs.map(tkLabel).join(', ') : v.taken ? 'free (held for voice)'
+        : tkVtUser[v.tuner] ? 'yours again (you tuned it)' : 'free';
       return `<div class="r" title="${digEsc('T' + v.tuner + ': a voice tuner of trunk following' + (v.taken ? ' - retuned by it from ' + tkMhz3(v.home_hz) + ' MHz' + (v.home_gain !== null && v.home_gain !== undefined ? ', gain ' + v.home_gain + ' dB' : '') + ', where it goes back when following stops' : '') + (v.tune_ms >= 0 ? '. Last retune: ' + v.tune_ms + ' ms to the stream' : ''))}">` +
         `<b>T${v.tuner}</b><span class="w${cs.length || tf ? ' on' : ''}">${digEsc(what)}</span><span class="hm">${tkMhz3(v.hz)}${v.taken ? ' · yours ' + tkMhz3(v.home_hz) : ''}</span></div>`;
     }).join('');
@@ -22677,7 +22691,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       } else if (t && (t.role === 'control' || t.role === 'traffic')) {
         const s = tkSys(t.sys);
         const cc = s && (s.control || []).find(c => c.vfo === d.id);
-        const ex = tkSt && tkSt.excursion, pk = !!(ex && (ex.ctl || []).some(k => k.vfo === d.id && k.parked));
+        const ex = tkSt && tkSt.excursion, pk = !!(cc && cc.parked) || !!(ex && (ex.ctl || []).some(k => k.vfo === d.id && k.parked));
         lost = !!(cc && !cc.rx) && !pk;
         parked = pk;
         h = (t.role === 'control' ? 'Control · ' : 'Traffic · ') + (s ? tkSysName(s) : t.sys) + (cc && cc.site ? ' · ' + cc.site : '') +
