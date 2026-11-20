@@ -97,11 +97,15 @@ float spread_db(int m) {
     return static_cast<float>(10.0 * std::log10(q50 / q10));
 }
 
-// The samples a hop gets at a dwell: heimdall's valid packets per hop,
-// measured on the KrakenSDR at dwell 20 ms: 1.3-1.6 of 16384 samples - about
-// half of what the dwell holds (its flushes), never less than one packet
+// The samples a hop gets at a dwell: heimdall delivers the fewest whole USB
+// packets that hold the dwell - ceil(dwell x 2.4 MS/s / 16384 samples), at
+// least one (heimdall's sweep_hop_packets; 5 ms -> 1, 10 -> 2, 20 -> 3,
+// 50 -> 8, 100 -> 15), exactly that many per tuner and hop (since
+// 2026-11-21: before, a hop held 1.3-1.6 packets at 20 ms)
 int64_t hop_samples(int dwell_ms) {
-    return std::max<int64_t>(16384, static_cast<int64_t>(dwell_ms) * 1200);
+    constexpr int64_t packet = 16384, rate = 2400000;
+    const int64_t packets = (static_cast<int64_t>(std::max(dwell_ms, 0)) * rate + 1000 * packet - 1) / (1000 * packet);
+    return std::max<int64_t>(1, packets) * packet;
 }
 // Frames overlap by half where a hop would give fewer than
 // SWEEP_OVERLAP_BELOW frames of its own: twice the frames from the same

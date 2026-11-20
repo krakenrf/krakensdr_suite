@@ -58,17 +58,29 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
 void clear_l1_buffer();
 void clear_l2_buffer();
 void clear_l2_raw_buffer();
-// The same flushes without the stdout line (the sweep flushes ~40 times a
-// second; docs/dev/operating-modes.md "Sweep mode")
-void clear_l1_buffer_quiet();
+// The downstream flush without the stdout line (each sweep hop starts with
+// one; docs/dev/operating-modes.md "Sweep mode")
 void clear_l2_buffer_quiet();
-// The quiet L1 flush, returning whether it found its quiet point - i.e. every
+// The L1 flush without the stdout line, returning whether it found its quiet point - i.e. every
 // stream lost the same packet round and the sets are paired again (false: it
 // flushed anyway after four packet periods, a channel may have slipped)
 bool clear_l1_buffer_paired();
 // L1 flushes since startup that found no quiet point between packet rounds
 // (flushed anyway: a channel may have slipped by a whole packet)
 uint32_t l1_unquiet_flushes();
+// Sweep mode's per-hop flush (sweep.cpp; the sample drain serves it): every
+// active device drops its L1 up to and including its first packet stamped
+// after `from_ns` (the hop's retune end + settle) with a steady gap - the
+// last packet that can hold a sample from before then - each device on its
+// own (no cross-device quiet point: nothing pairs buffers in sweep mode),
+// then the downstream flush. Blocks until then (about a packet period after
+// from_ns). false: not every device got there (one stalled, the drain did
+// not answer in 500 ms) - the stream is not valid yet. Without a running
+// drain it empties L1 directly (nothing streams) and returns true.
+bool sweep_gate_l1(int64_t from_ns);
+// Gates that accepted a device's packet without a steady gap (after four
+// periods of irregular delivery; the counterpart of l1_unquiet_flushes)
+uint32_t sweep_gates_unsteady();
 
 // Coherence-loss signalling. Cheap and callable from any thread (including the
 // alloc-free RTL callback): sets the coherence_lost flag exactly once per event,
