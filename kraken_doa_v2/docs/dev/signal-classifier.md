@@ -489,7 +489,10 @@ the `sym` group or retraining for the 4-FSK family again.
   far larger than 5 DMR / 19 P25 / 5 NXDN recordings (the local trunked
   systems, labelled by the decoders); (3) the one real POCSAG IQ recording
   is a poor witness: its channel alternates POCSAG 1200 and FLEX 1600 and
-  the file carries a comb of lines every 512 Hz
+  the file carries narrow periodic artefact lines (one measurement saw a
+  comb every 512 Hz in the envelope, a second an 800 Hz grid in the
+  spectrum - not settled); its channels are at about -10.25 and +14.6 kHz,
+  not where the index first had them
 
 ### Why the real recordings fail: the per-recording analysis (2026-11-21)
 
