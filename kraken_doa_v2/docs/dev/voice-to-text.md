@@ -870,4 +870,12 @@ marker), a fake `curl` on the PATH (no network).
   the speech helper: it did not answer within 5 s", the receiver answering
   GET_VOICE2TEXT meanwhile at once; one printing nothing -> "... it printed
   no usage"). t_dl 25, t_ui 44, t_ui_scroll 4, t_e2e_ui 13 (the real helper).
+  t_e2e.py with the real helper (base.en-q8_0, the machine loaded by other
+  jobs, load 4-7: partials 0.72 s each instead of 0.33 s): the finals word
+  for word the earlier runs', with Live text on or off; 52 of 53 confirmed
+  words as in the final (the one: "American" / the final's "America");
+  the helper's CPU per scene 3.3 s off / 30.5 s on (19.9 s on a quiet
+  machine before). A run at load 11 had the fake heimdall fall behind real
+  time - the audio itself changed ("I know my fellow America" in the
+  finals with Live text off too) - not counted.
 
