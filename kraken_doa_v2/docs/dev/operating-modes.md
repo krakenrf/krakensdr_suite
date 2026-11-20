@@ -7,6 +7,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
 **Operating modes (top-bar Mode selector):**
+- The fourth mode, **sweep** (`OPERATING_MODE:sweep`, mode index 3, 2026-11-20:
+  the chosen tuners step through a range, one wide spectrum + waterfall, no
+  VFO processing), has its own topic: *Sweep mode* (`sweep-mode.md` - the wire
+  contract with heimdall and the page, the engine, the page). What this file
+  says about "outside coherent" (DoA and beamforming parked, the coherent
+  channel saved and restored, `note_server_mode`) holds for it too; heimdall
+  sends its flag 0x2000 together with 0x800, and the client tests 0x2000 first.
 - `OPERATING_MODE:coherent|wideband|independent` (control_handler.cpp,
   persisted after FREQ/GAIN/DECIMATORS; `WIDEBAND_MODE:` is the old form):
   refused except coherent on the downconverter variant; stops the discrete
