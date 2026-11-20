@@ -317,10 +317,26 @@ What each protocol needs:
   fill in by themselves. A system's table can also be entered before it is
   heard: the box's ⚙ → **System ahead**, with the system's key as its
   decoder reports it.
-- **No retuning.** Calls are followed inside the band the receiver takes in
-  now. Calls outside it are counted, and **Centre** retunes to the
-  frequency that holds the control channels and most of the system's
-  channels (it asks first).
+- **Calls outside the band.** By default calls are followed inside the
+  band the receiver takes in now. Calls outside it are counted, and
+  **Centre** retunes to the frequency that holds the control channels and
+  most of the system's channels (it asks first). Two options follow them
+  anyway, in the box's settings (⚙):
+  - **Outside the span** (Coherent mode): the receiver goes to the call's
+    channel, calibrates there, follows the call and comes back, calibrating
+    again. While it is away the box and the top bar say so (which call,
+    since when, when it comes back; **Return now**), all your VFOs move with
+    it, and the control channel is not heard unless it fits the new band -
+    grants made meanwhile are missed. Each calibration blanks reception for
+    about a second; with **Calibrate there** off the call is heard whole but
+    has no bearing. **Longest away** stops an excursion that runs too long.
+  - **Voice tuners** (Independent mode): tick the tuners trunk following may
+    retune for calls outside every tuner's band; the tuner with the control
+    channel stays on it. Up to four calls at once on five tuners; with two
+    generic RTL-SDRs, one control tuner and one voice tuner. A voice tuner is
+    trunk following's while it uses it: your VFOs on it move with it, and it
+    goes back to its own frequency and gain when following stops. With a
+    single tuner there is no way to follow calls outside its band.
 - **Encrypted calls** are followed and shown (who, where, the bearing) but
   stay muted; nothing is ever decrypted.
 - Following pauses while a scanner runs. DMR Capacity Plus and Connect Plus

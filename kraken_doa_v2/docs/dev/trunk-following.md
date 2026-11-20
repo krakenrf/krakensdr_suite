@@ -1310,6 +1310,54 @@ calls and the notes again when no status came for 0.9 s: an ended call's
 6 s dimmed row, the notes' 20 s hold and the 15 s hover cap run on without
 statuses.
 
+**Following outside the span (an excursion) and voice tuners.** Shown
+only by a receiver that sends `retune` / `tuners` (an older one: none of
+it - checked against the first-pass build).
+- Settings (the ⚙ fold), where they apply: coherent mode "Outside the
+  span" (`TRUNK_RETUNE`) with, while it is on, "Calibrate there"
+  (`TRUNK_RETUNE_CAL`) and "Longest away" (`TRUNK_RETUNE_MAX`, s, 0 = no
+  limit), and the counters under them ("Away N times, m:ss in all · N calls
+  followed away · N missed"; the ends by reason in the tooltip). Switching
+  "Outside the span" on asks every time (`uiConfirm` naming the costs: the
+  control channel not heard while away unless it fits, grants missed, the
+  user's VFOs move with the centre, a calibration blanks reception); off
+  goes at once. Independent mode "Voice tuners" (`TRUNK_TUNERS`): a toggle
+  per tuner (lit = the manager may retune it), a tuner with a control VFO
+  "Tn Control" and disabled, "Others" = every tuner without a control VFO;
+  handing tuners over when the list was empty asks (the user's VFOs on them
+  move, they go back when following stops); changes after that and giving
+  tuners back don't.
+- Away (`excursion`): a block at the top of the box (amber) - "Away for
+  <call>" (or "Leaving for"), its frequency, the time away and "back within
+  m:ss" while `TRUNK_RETUNE_MAX` runs (both counting on between statuses),
+  the centre with the user's own frequency ("yours: 851.000"), the
+  calibration (calibrating / calibrated / calibration held: no bearing /
+  not calibrated (KerberosSDR)), which control VFOs are kept or parked, and
+  **Return now** (`TRUNK_RETURN`, no question: the call is not followed
+  further). The same in the top bar: a banner beside the frequency ("AWAY
+  FOR A CALL", the call, its frequency, "yours ..." and the time, Return),
+  in the playback banner's place and look but amber, and the frequency
+  digits outlined amber - the centre they show is the manager's, not the
+  user's. "returning": "Back on <home> MHz: waiting for the control
+  channel" and why it came back; then for 10 s "Back home (<why>) ·
+  control channel regained after N s" (`excursions.last.ctl_back_ms`). A
+  parked control VFO: its card "Control · ... · parked while away" (dimmed)
+  and the system row's chip "Dn parked" (its frequency there means
+  nothing).
+- Voice tuners (`voice_tuners`): a block at the top of the box, a row per
+  voice tuner - what it carries ("TG 9602", "tuning for TG ...", "free
+  (held for voice)" / "free"), where it is and "yours <home>" while taken;
+  the tuner's pane: a "Trunk: <call> · yours <home>" tag in its header and
+  the frequency digits outlined amber.
+- Reasons and ends: `leaving` "Receiver leaving", `away` "Receiver away",
+  `busy_here` "Call here", `retry` "Retry later", `no_retune` "Out of
+  reach", `tuning` "Tuner retuning", `no_tuner` "No free tuner" (each with
+  what to do in its tooltip); ends `excursion` "Receiver left for another
+  call", `returned` "Receiver went back". Notes: "N calls outside the span"
+  gets a ⚙ button to the option that follows them (coherent, option off;
+  independent, no voice tuner), next to Centre; "N calls waiting for a free
+  voice tuner" with a ⚙ to Voice tuners.
+
 **Trunk VFOs elsewhere.** The VFO card gets a line under its header
 (`tkRenderCards`, called from `digRenderCards`): a voice VFO "TG 1201 Fire
 · Active · 1-412" (its state and call from the status' `vfos` / `calls` -
@@ -1420,3 +1468,32 @@ the debug playback (Play only).
   390 px run of the same steps passed in the same pass, and a rerun of the
   desktop one passed: not reproduced). The new page against the first-pass
   receiver: 11 checks.
+- Following outside the span and voice tuners (2026-11-20, the receiver
+  with `TRUNK_RETUNE` / `TRUNK_TUNERS`; the host worker's fake heimdall with
+  its retune / calibration model and the scripted `trunktest` plugin;
+  the TEST stack on 28779 / 28780-1 / 28791-2). `t_pexc` (31 checks at
+  390 px, 30 at 1500): an out-of-span call with the option off - the note's
+  ⚙ opens the settings at "Outside the span"; switching on asks (Cancel
+  keeps it off, Switch on - a second page sees it); away - the box's block
+  and the top-bar banner (the call, 853.6125 MHz, "yours 851.000", the time
+  running, "back within 1:59"), calibrating then calibrated, the parked
+  control VFO's card and its system chip, a hostile talkgroup name shown
+  literally, the second page and a reload while away in the same state, the
+  phone's top bar with the banner inside the window; Return now ->
+  "waiting for the control channel" -> "Back home (Return) · control
+  channel regained after 0.5 s" (gone after 10 s); the call's row "Stopped
+  by you"; Longest away 15 s typed, Calibrate there off -> "calibration
+  held: no bearing", "back within 0:15" counting, back by the limit and said
+  so; the counters. `t_ptun` (14 checks at 1500 and 390 px): independent
+  mode, "T0 Control" disabled, the note pointing at Voice tuners, T1 asks,
+  Others doesn't, a call outside every span on T1 (the box: "T1 TG 9602
+  853.3483 · yours 851.000", the pane's tag and outline), four more calls
+  -> "1 call waiting for a free voice tuner", giving the tuners back (no
+  pane marked). The first-pass receiver (rebuilt on these ports): none of
+  it shown, 12 checks. The whole pass again on the merged build: states 9,
+  fixtures 18, review 16, actions 15, stability 9 (60 s of the P25 capture:
+  5 calls, 44 changes, 0 re-made, 0 pushed down; pointed at: nothing
+  moved), scale 12 (median 2.0 ms), touch 8, misc 13, the DMR rule 9, the
+  editor 27 and 29, the five scenes 10 each (their test signals generated
+  again first, 21-27 s each: the cache had lost them); palette check OK; no
+  console errors.

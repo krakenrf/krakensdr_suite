@@ -70,7 +70,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `download` `upload` | download / get, upload |
 | `plus` `minus` | a new conversation; zoom in / out (drive mode) |
 | `search` | the map search |
-| `home` | the map back to the station |
+| `home` | the map back to the station; trunk following's Return (the receiver back to its own frequency) |
 | `wheel` | drive mode (a steering wheel: the rail's Drive button) |
 | `sun` `moon` | drive mode's Day / Night (the button shows the look it switches to) |
 | `mute` | audio off (the top bar's speaker button while off, drive mode's Audio button) |
