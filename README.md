@@ -552,8 +552,8 @@ does the same during the install.
 |---|---|---|---|
 | tiny.en | 75 MB | ~5x faster than real time | least accurate |
 | base.en | 142 MB | ~2-3x faster than real time | the default |
-| base.en-q5_1 | 57 MB | about the same | less memory |
 | base.en-q8_0 | 78 MB, made on the receiver from base.en | not measured yet | about 25 % less CPU than base.en, as accurate |
+| base.en-q5_1 | 57 MB | about the same | less memory |
 | small.en / small.en-q5_1 | 466 / 181 MB | ~2x slower than real time | most accurate on a Pi; for quiet channels |
 | small.en-q8_0 | 252 MB, made on the receiver from small.en | not measured yet | about 25 % less CPU than small.en, as accurate |
 | tiny, base, small (+ -q5_1) | as above | as above | any language, or translated to English |

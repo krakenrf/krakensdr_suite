@@ -69,12 +69,12 @@ const CatalogueEntry MODEL_CATALOGUE[] = {
     {"tiny.en", 75, false, "fastest, least accurate"},
     {"base.en", 142, false, PC_NOTES ? "recommended: many times faster than real time on a PC"
                                      : "recommended: good on a Pi 5, faster than real time"},
-    {"base.en-q5_1", 57, false, "base.en compressed: less memory, about as accurate"},
     {"base.en-q8_0", 78, false, "base.en 8-bit: less CPU, as accurate - made here from base.en", "base.en"},
+    {"base.en-q5_1", 57, false, "base.en compressed: less memory, about as accurate"},
     {"small.en", 466, false, PC_NOTES ? "more accurate, faster than real time on a PC"
                                       : "most accurate on a Pi: about 2x slower than real time"},
-    {"small.en-q5_1", 181, false, "small.en compressed"},
     {"small.en-q8_0", 252, false, "small.en 8-bit: less CPU, as accurate - made here from small.en", "small.en"},
+    {"small.en-q5_1", 181, false, "small.en compressed"},
     {"tiny", 75, true, "any language (or translated to English), fastest"},
     {"base", 142, true, "any language (or translated to English)"},
     {"base-q5_1", 57, true, "base compressed"},
