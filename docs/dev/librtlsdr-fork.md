@@ -565,6 +565,74 @@ below" level except where its blocks start (a wrap from a higher block).
 Cause unknown (the VCO at the top of its range: LO 1.6-1.77 GHz = VCO
 3.2-3.54 GHz, vco_max 3.54 GHz).
 
+**Review round (second commit on `lock-read-no-slip`, 2026-11-21).** An
+independent review found no hard defect; three risks and three nits were
+closed:
+1. *A lock retry left corrupted registers unrepaired* (the cache keeps the
+   right values, so nothing rewrote them). Now `r82xx_repair_early_read()`
+   (tuner_r82xx.c): after a lock retry and when `rtlsdr_finish_tune` finds
+   no lock, it waits `R82XX_PLL_SETTLE_US` and writes 0x0b-0x0f and
+   0x1b-0x1f back from the cache (counted: `early_read_repairs`). How it
+   got there, all provoked at settle 0 (bounds plan, 5 min, 5 dongles,
+   about 24000-29500 tunes and 2000-2400 retried tunes a run; job scratch
+   `fork/out/q7.out` - `q11.out`):
+
+   | repair | tunes left with a register off the cache (16-byte readback) | level drops > 6 dB | lock off at rest |
+   |---|---|---|---|
+   | none | 17 (0x0b, each with a retry) | 6 (0x1b / 0x1c) | 0 |
+   | at a retry and at every settle point, written at once | 6 (0x0d-0x0f, no retry: the repair's own writes) | 6 (fixed by 0x19) | 6 |
+   | after a retry only, 5 ms wait first, 0x0b-0x0f + 0x17-0x1f | 0 | 4 (0x1c, no retry) | 0 |
+   | at a retry and at every settle point, wait, 0x0b-0x0f + 0x17-0x1f | 0 | 12 (put right only by PLL registers) | 0 |
+   | at a retry and at every settle point, wait, 0x0b-0x0f + 0x1b-0x1f | 0 | 6 | 6 |
+   | after a retry only, wait, 0x0b-0x0f + 0x1b-0x1f (THE FIX) | 0 in 2261 retried tunes | 5 (0x1c, no retry) | 0 |
+
+   So the repair makes a retried tune whole; what it can't reach is an
+   early read that already saw the lock (no retry) and hit 0x1b / 0x1c -
+   repairing after every settle point instead traded those for PLL-unlock
+   drops and costs ~12 ms per settle point, so it isn't done. At the
+   default settle wait neither case was ever seen (above).
+   The committed library once more (settle 0, 5 min): 27850 tunes, 2278
+   retried and repaired, 0 tunes off the cache, 0 lock off at rest, 1
+   level drop (0x1c, no retry). Re-run on the committed library (3adc8e6,
+   load ~2.1-2.3): lag probe with the settle at 0 (300 tunes a pattern on
+   1001, all five streaming) - 119 retried and repaired tunes, 0.000
+   samples per tune on every pattern, the raw 3-byte IN -2.000: the
+   repair's writes don't move the stream; default path, bounds plan 5 min,
+   27900 tunes: 0 retries / failures / I2C errors / mismatches, level max
+   |deviation| 0.16 dB, 0 repairs needed; sweep path (KEEP_AUTOTUNE |
+   NO_DUMMY_READ) full range 5 min, 36400 tunes: the same zeros, 3.0
+   transfers a hop, 8.3 ms per 5-tuner step (outliers only 1001's
+   1.56-1.73 GHz two-state level, below); lag probe on the sweep path (on
+   1002): 0.000 for every pattern, raw control -2.000. 0 lazy-read retries
+   in every run.
+2. *NO_DUMMY_READ*: when the access's first transfer - the real register
+   read - fails under the flag, the dummy read is made and the read tried
+   once more (`i2c_in_lazy_retries`); the header says plainly that the
+   stall was a Pi finding with no positive control here. Not provoked (no
+   read failed in any run: 0 lazy retries).
+3. `RTLSDR_NO_STREAM_SLIP`'s header now says exactly what holds (every
+   tune, gain / IF / AGC / GPIO / lock call and every other control
+   transfer the library makes) and what is outside (`rtlsdr_reset_buffer`,
+   `rtlsdr_set_sample_rate` - a demod soft reset -, direct sampling and
+   offset tuning; the sample-clock calls move the stream on purpose), and
+   the rule as measured: the length of the data stage actually
+   transferred (the RTL2832U's vendor reads return wLength; libusb's own
+   string-descriptor reads ask for 255 and get the descriptor's even
+   length - measured 0.00).
+4. The VCO-jump settle was measured only in the top divider; elsewhere it
+   is margin. The tunes it makes wait (same divider and band, LO jump >
+   400 MHz / mix_div): mix_div 64 (LO 27.7-55 MHz) > 6.25 MHz within LO
+   27.7-50; 32 none (bands <= 10 MHz); 16 > 25 MHz inside 140-180 /
+   180-220; 8 > 50 MHz inside 310-442; 4 > 100 MHz inside 450-588 /
+   650-885; 2 > 200 MHz. Sweep hops and drag steps never cross these.
+5. `r82xx_set_pll_yc` (vco_algo 2) has no settle wait and now reads 4
+   registers - dead code: the `vcoalgo=` option writes `vco_curr_max`, so
+   vco_algo is always 0. Left inactive, noted at the function.
+6. Wording: the threshold is 400 MHz of VCO (the retries were jumps of >
+   400 MHz of RF = 800 MHz of VCO). The padded IR read reads one more byte
+   of `IR_RX_BUF` - code RAM at 0xFC00 that `rtlsdr_ir_query` resets right
+   after: harmless, said at the padding.
+
 **Not tested** (say so plainly): the Raspberry Pi (the settle wait's history
 was host dependent - the margin above is this PC's; the Pi's own transfers
 are ~2.4 ms, like this PC's), Windows (3-4 ms per transfer, one dongle at a
