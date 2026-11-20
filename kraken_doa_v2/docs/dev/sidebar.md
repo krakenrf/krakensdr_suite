@@ -530,6 +530,19 @@ lost the box too; the section is reached through the cog there as well.
 - **Decoder Logging** is the Decoder Logging section of Setup Settings
   (below; *decoder-log.md*).
 
+### The Sweep box (2026-11-20)
+
+Sweep mode (*sweep-mode.md*, "The page") brought a 17th keyed box, `sweep`,
+shown only in that mode (`.sweep-only`; placed first after the phone
+boxes): Resolution, Dwell, Run / Pause and what the sweep is doing. The mode
+hides the boxes that need demodulation, VFOs or DoA (`.not-sweep` with the
+`.coh-only` ones; the list and the reasons are in that file), and the Display
+box keeps only Slow link and Points sent. In the top bar the range (Start -
+Stop digits) and the tuner toggles take the frequency's place and Audio /
+Step leave; on the phone the range and the tuners are rows of the drawer's
+Tuner & Audio box, before Gain, with their labels. A move by drag counts the
+box like any other hidden one: outside sweep mode it keeps its place.
+
 ### Array diagrams (2026-11-17)
 
 The MUSIC DoA box's diagrams (`#uca-diagram`, `#wb-diagram`, `#ula-diagram`,

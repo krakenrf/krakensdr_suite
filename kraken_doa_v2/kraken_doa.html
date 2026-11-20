@@ -660,6 +660,14 @@ body:not(.mode-independent) .indep-only {display:none !important}
 body.mode-independent .not-indep {display:none !important}
 body.mode-wideband .doa-panel, body.mode-independent .doa-panel {display:none !important}
 body.mode-independent #fp, body.mode-independent #wf-container, body.mode-independent #fp-split {display:none !important}
+/* sweep mode (SWEEP MODE in the script, docs/dev/sweep-mode.md): everything coherent-only goes as in the
+   other non-coherent modes, and so does what needs demodulation (.not-sweep: the VFOs, the audio, the
+   tuning step, the decoders' and transcripts' panel); the sweep's own display and controls (.sweep-only) */
+body.mode-sweep .coh-only, body.mode-sweep .not-sweep {display:none !important}
+body:not(.mode-sweep) .sweep-only {display:none !important}
+body.mode-sweep .doa-panel {display:none !important}
+body.mode-sweep #fp, body.mode-sweep #wf-container, body.mode-sweep #indep-grid,
+body.mode-sweep #rail-dec, body.mode-sweep #rail-voice, body.mode-sweep #info-panel {display:none !important}
 /* The receiver's OS (system_status.platform, setServerOs): a text naming
    Linux commands or the Pi has a Windows twin; an older backend that doesn't
    say = Linux */
@@ -705,6 +713,47 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 .tpane-wf {position:relative;flex:1;min-height:30px;background:#000;overflow:hidden}
 .tpane-wf canvas {position:absolute;left:0;top:0}
 .tpane-ov {position:absolute;left:0;top:0;width:100%;height:100%;z-index:5;touch-action:pan-y;cursor:default}
+/* Sweep mode's display (SWEEP MODE): the spectrum as tall as the main display's (#fp-split drags both,
+   fpApplyHeight), the waterfall under it; canvases drawn by swpDraw / a WaterfallDisplay, an overlay
+   each for the pointer's line and readout. The wheel zooms, a drag pans (nothing is retuned). */
+#swp-spec-box, #swp-wf-box {display:none}
+body.mode-sweep #swp-spec-box {display:block;position:relative;width:100%;height:280px;flex-shrink:0;background:var(--s3);touch-action:pan-y;cursor:crosshair}
+body.mode-sweep #swp-wf-box {display:block;position:relative;width:100%;flex:1 1 auto;min-height:100px;background:#000;border-top:1px solid var(--l1);overflow:hidden;touch-action:pan-y;cursor:crosshair}
+#swp-spec-box canvas, #swp-wf-box canvas {position:absolute;left:0;top:0;display:block}
+body.mode-sweep.swp-zoomed #swp-spec-box, body.mode-sweep.swp-zoomed #swp-wf-box {cursor:grab}
+body.mode-sweep.swp-panning #swp-spec-box, body.mode-sweep.swp-panning #swp-wf-box {cursor:grabbing}
+/* the sweep under way and how long one takes, in the spectrum's header: fixed widths (20 a second) */
+.swp-hdr {display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--t3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.swp-pbar {position:relative;flex:none;width:64px;height:6px;border-radius:3px;background:var(--s1);border:1px solid var(--l2);overflow:hidden}
+.swp-pbar > i {position:absolute;left:0;top:0;bottom:0;width:100%;background:var(--ac-l);transform-origin:left center;transform:scaleX(0)}
+.swp-pbar.paused > i {background:var(--warn)}
+#swp-hdr-p {display:inline-block;width:4ch;text-align:right}
+#swp-hdr-t {display:inline-block;width:9ch;text-align:left;color:var(--t1)}
+/* the top bar in sweep mode: the range (Start - Stop: digits like the frequency's, .swp-d - the top
+   bar's code queries .freq-digit page-wide) and the tuners that take part */
+.swp-rng {display:flex;align-items:center;gap:6px}
+.swp-end {display:flex;align-items:center;gap:8px}
+/* (the frequency's box: 50 px high, so the bar keeps its height when the mode changes) */
+.swp-fsel {display:flex;align-items:center;height:50px;box-sizing:border-box;background:var(--s1);border:1px solid var(--l2);border-radius:6px;padding:4px 5px;user-select:none}
+.swp-d {font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;font-size:24px;font-weight:600;color:var(--ac-t);width:15px;height:40px;
+  display:flex;align-items:center;justify-content:center;cursor:ns-resize;border-radius:3px}
+.swp-d.lead {color:var(--l4)}
+.swp-d:hover {color:var(--ac-t2);text-shadow:0 0 8px rgba(122,184,247,0.5)}
+.swp-d.hover-top {background:linear-gradient(to bottom,rgba(122,184,247,0.35) 0%,rgba(122,184,247,0) 50%,transparent 50%)}
+.swp-d.hover-bottom {background:linear-gradient(to top,rgba(122,184,247,0.35) 0%,rgba(122,184,247,0) 50%,transparent 50%)}
+.swp-sep {display:flex;justify-content:center;width:9px;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;font-size:24px;font-weight:600;color:var(--l4);pointer-events:none}
+.swp-dash {color:var(--t5);font-size:16px}
+.swp-rng .freq-label {margin-left:2px}
+.swp-tsel {display:flex}
+.swp-tsel button {flex:none;min-width:26px;height:28px;padding:0 6px;margin-left:-1px;box-sizing:border-box;background:var(--l2);border:1px solid var(--l4);color:var(--t2);
+  font-size:12.5px;font-variant-numeric:tabular-nums;cursor:pointer;border-radius:0}
+.swp-tsel button:first-child {margin-left:0;border-radius:5px 0 0 5px}
+.swp-tsel button:last-child {border-radius:0 5px 5px 0}
+.swp-tsel button:only-child {border-radius:5px}
+.swp-tsel button:hover {background:var(--l4);border-color:var(--l5);color:var(--t0)}
+.swp-tsel button.on {position:relative;z-index:1;background:var(--ac);border-color:var(--ac-h);color:#fff}
+.swp-tsel button.pend {border-style:dashed}
+.swp-tsel button:focus-visible {position:relative;z-index:2;outline:2px solid var(--ac-l);outline-offset:1px}
 
 /* Spectrum and DoA area */
 .spectrum-doa-container {flex:1;display:flex;overflow:hidden;padding:10px;gap:10px}
@@ -772,7 +821,7 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 body.map-on #rp-tab-map, body.map-on #rp-tab-both, body.map-on .doa-header .rp-close {display:inline-block}
 body.map-on .doa-header .rp-tab {cursor:pointer;color:var(--t5);font-weight:normal;padding-bottom:1px;border-bottom:2px solid transparent}
 body.map-on .doa-header .rp-tab.sel {color:var(--ac-t);font-weight:bold;border-bottom-color:var(--ac-t)}
-body.map-on.mode-wideband .doa-panel, body.map-on.mode-independent .doa-panel {display:flex !important}
+body.map-on.mode-wideband .doa-panel, body.map-on.mode-independent .doa-panel, body.map-on.mode-sweep .doa-panel {display:flex !important}
 /* coherent mode, the pane hidden with the rail's DoA & Map button: MUSIC DoA goes too */
 body.rp-off .doa-panel, body.rp-off .rp-resizer {display:none !important}
 body.rp-map .doa-content {display:none}
@@ -1760,7 +1809,7 @@ body.drive.drive-day .ui-dlg .btn.danger {background:var(--bad);border-color:var
 .top-bar {gap:12px;padding:6px 12px;min-height:58px}
 .top-bar .tb-sep {display:none}
 .top-bar .tb-group.fld {display:flex;align-items:center;gap:6px}
-.top-bar .tb-group > .tb-label {display:none}   /* the phone drawer's row label (a drawer row keeps its text) */
+.top-bar .tb-group > .tb-label, .top-bar .swp-end > .tb-label {display:none}   /* the phone drawer's row label (a drawer row keeps its text) */
 .tb-ic {display:flex;flex:none;color:var(--t3)}
 .tb-ic .ic {font-size:16px}
 /* Value bars (2026-11-18; the user chose them over the readings above two different sliders):
@@ -1878,7 +1927,7 @@ body.drive.drive-day .ui-dlg .btn.danger {background:var(--bad);border-color:var
    View button (its display settings are in the popover, .view-pop) and ? - one line */
 .spectrum-header {justify-content:flex-start;flex-wrap:wrap;gap:5px 14px;padding:5px 10px}
 .spectrum-header .view-btn {margin-left:auto}
-.spectrum-header .view-btn + .view-pop + .help,.spectrum-header .view-btn + .help {margin-left:-6px}
+.spectrum-header .view-btn + .view-pop + .help,.spectrum-header .view-btn + .help,.spectrum-header .help + .help.sweep-only {margin-left:-6px}
 .spectrum-header .spec-ch {background:var(--s1);border:1px solid var(--l2);color:var(--t0);border-radius:5px;height:24px;padding:0 4px;font-size:12px}
 .spectrum-header .spec-ch:focus {border-color:var(--ac-l);outline:none;box-shadow:0 0 0 2px rgba(72,160,244,.22)}
 /* the rail */
@@ -2006,6 +2055,16 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   #mobile-controls-slot .tb-btn.tb-spk .ic {font-size:20px}
   #mobile-controls-slot .tb-btn.tb-spk.on {background:var(--ac);border-color:var(--ac-h);color:#fff}
   #mobile-controls-slot select {background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:6px;border-radius:3px;font-size:13px;min-height:32px}
+  /* sweep mode's range and tuners in the drawer: Start and Stop a row each, finger-sized */
+  #mobile-controls-slot #tb-swp-range {flex-wrap:wrap}
+  #mobile-controls-slot #tb-swp-range > .tb-label {display:none}
+  #mobile-controls-slot .swp-rng {flex-direction:column;align-items:stretch;gap:8px;width:100%}
+  #mobile-controls-slot .swp-end {width:100%}
+  #mobile-controls-slot .swp-dash {display:none}
+  #mobile-controls-slot .swp-fsel {height:44px}
+  #mobile-controls-slot .swp-d {width:20px;height:42px}
+  #mobile-controls-slot .swp-tsel {flex-wrap:wrap;gap:4px}
+  #mobile-controls-slot .swp-tsel button {min-width:38px;height:34px;margin-left:0;border-radius:5px}
 }
 
 /* Phone-size: stack spectrum above DoA in a scrollable column */
@@ -2016,6 +2075,8 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .spectrum-content {flex:none}
   #fp {height:200px}
   #wf-container {flex:none;height:180px}
+  body.mode-sweep #swp-spec-box {height:200px}
+  body.mode-sweep #swp-wf-box {flex:none;height:180px}
   .doa-panel {flex:none;min-width:0;max-height:none}
 }
 
@@ -2023,6 +2084,8 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 @media (max-width:900px) and (max-height:520px) {
   #fp {height:150px}
   #wf-container {height:110px}
+  body.mode-sweep #swp-spec-box {height:150px}
+  body.mode-sweep #swp-wf-box {height:110px}
 }
 /* Wideband board telemetry card */
 .wb-grid { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px; line-height:1.6; }
@@ -2255,6 +2318,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
 <symbol id="i-plug" viewBox="0 0 16 16"><path d="M5.6 1.8v3M10.4 1.8v3M3.8 4.8h8.4v2.6a4.2 4.2 0 0 1-8.4 0zM8 11.6v2.8"/></symbol>
 <symbol id="i-biastee" viewBox="0 0 16 16"><path d="M1.6 12.6h12.8M1.6 10.9v3.4M14.4 10.9v3.4M9.6 1.6L6.3 6h3.4L8 8.7v3.9"/></symbol>
 <symbol id="i-gain" viewBox="0 0 16 16"><path d="M1.2 8h2.6M3.8 3v10l8.6-5zM12.4 8h2.4"/></symbol>
+<symbol id="i-span" viewBox="0 0 16 16"><path d="M1.6 2.8v10.4M14.4 2.8v10.4M3.6 11.6l1.7-3.1 1.5 2 1.9-6 1.8 6.6 1.5-2.6 1.2 1.6"/></symbol>
+<symbol id="i-tuners" viewBox="0 0 16 16"><rect x="1.6" y="6" width="3.2" height="8.2" rx="0.8"/><rect x="6.4" y="6" width="3.2" height="8.2" rx="0.8"/><rect x="11.2" y="6" width="3.2" height="8.2" rx="0.8"/><path d="M3.2 6V1.8M8 6V1.8M12.8 6V1.8"/></symbol>
 <symbol id="i-step" viewBox="0 0 16 16"><path d="M2.4 3.4v9.2M13.6 3.4v9.2M4.6 8h6.8M6.5 6.1L4.6 8l1.9 1.9M9.5 6.1l1.9 1.9-1.9 1.9"/></symbol>
 <symbol id="i-mixer" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.8"/><path d="M3.9 3.9l8.2 8.2M12.1 3.9l-8.2 8.2"/></symbol>
 <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 1.8c-3.4 3.3-3.4 9.1 0 12.4M8 1.8c3.4 3.3 3.4 9.1 0 12.4M1.8 8h12.4"/></symbol>
@@ -2326,8 +2391,36 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       </div>
       <div class="sb-content" id="mobile-display-slot"></div>
     </div>
+    <!-- Sweep mode (SWEEP MODE in the script, docs/dev/sweep-mode.md): shown only in that mode. The range
+         and the tuners are in the top bar; this box holds the rest of the plan and what the sweep is doing -->
+    <div class="sb-section sweep-only" data-sb="sweep" id="swp-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-span"/></svg><span>Sweep</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The tuners chosen in the top bar step through its range, 1.9125 MHz at a time, and the receiver puts their spectra together into one: not live, nothing is demodulated. More tuners = a faster sweep: each takes its own part of the range - and each needs its antenna connected.<br><br><b>Resolution</b>: the width of one point of the sweep (an FFT bin); Auto picks it from the range. Finer = more points to look at when zoomed in. <b>Dwell</b>: how long each step is listened to - longer catches more of a signal that comes and goes, and makes the sweep slower. <b>Pause</b> stops the tuners where they are.</span></span></h3>
+        <span class="sb-toggle"></span>
+      </div>
+      <div class="sb-content">
+        <div class="ctrl-row">
+          <label>Resolution</label>
+          <select id="swp-res" onchange="swpSetRes(this.value)" title="The width of one point of the sweep (an FFT bin of 2.4 MHz / FFT size). Auto picks it from the range"></select>
+        </div>
+        <div class="ctrl-row">
+          <label>Dwell</label>
+          <input type="number" id="swp-dwell" min="5" max="1000" step="5" value="20" onchange="swpSetDwell(this.value)" title="How long each step of the sweep is listened to, 5 - 1000 ms">
+          <span class="u">ms</span>
+        </div>
+        <div class="ctrl-row">
+          <button type="button" class="btn primary" id="swp-run" style="flex:1" onclick="swpRunToggle()"><svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause</span></button>
+        </div>
+        <div class="kv"><span>State</span><span id="swp-state">-</span></div>
+        <div class="kv" title="Time of the last complete sweep"><span>Sweep time</span><span id="swp-time">-</span></div>
+        <div class="kv" title="The sweep under way"><span>Progress</span><span id="swp-prog">-</span></div>
+        <div class="kv" title="Steps of 1.9125 MHz across the range, and the tuners that share them"><span>Steps</span><span id="swp-hops">-</span></div>
+        <div class="kv" title="Points of the whole sweep, and the width of one"><span>Points</span><span id="swp-bins">-</span></div>
+        <div class="kv" title="Complete sweeps since the range or the resolution changed"><span>Sweeps</span><span id="swp-count">-</span></div>
+      </div>
+    </div>
     <!-- Decimator Management -->
-    <div class="sb-section" data-sb="vfos">
+    <div class="sb-section not-sweep" data-sb="vfos">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-vfo"/></svg><span>Decimators</span></span></h3>
         <span class="sb-toggle"></span>
@@ -2760,7 +2853,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
     </div>
 
     <!-- 📼 IQ & Audio Recorder (recorder.cpp, recorder_audio.cpp; playback: playback.cpp) - all modes -->
-    <div class="sb-section" data-sb="recorder" id="iqr-section">
+    <div class="sb-section not-sweep" data-sb="recorder" id="iqr-section">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-tape"/></svg><span>IQ &amp; Audio Recorder</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Records to <b>this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>):<br><b>IQ</b> (coherent mode): the raw samples of <b>every antenna</b>, phase-calibrated - the whole 2.4 MHz (as heimdall sends it, 2 bytes per sample per antenna: 24 MB/s with 5 antennas) or just one VFO's band (much smaller). Saved in the open <b>SigMF</b> format: one recording per antenna + a collection file tying them together, in one folder; downloaded as one <code>.sigmf</code> archive. <b>Open</b> plays a recording back through the receiver - spectrum, VFOs, decoders, DoA, the map - as if the antennas picked it up again.<br><b>Audio</b>: what one or more VFOs demodulate (their demod - NBFM / AM / WBFM - or with demod <i>Digital</i> their decoder's voice), a WAV or Opus file per VFO.<br><br>A recording stops at its time limit, when you press Stop, or before the drive is full (a reserve is kept free). It doesn't start when it can't fit. An SD card writes ~8-20 MB/s: a full-band recording of 5 antennas is then held in memory and written after it ends - only short ones fit; use the VFO band or a USB SSD for long ones.</span></span></h3>
         <span class="acal-badge" id="iqr-badge"></span>
@@ -2851,7 +2944,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
-        <div class="ctrl-row">
+        <div class="ctrl-row not-sweep">
           <label>FFT size<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A larger FFT shows finer detail when zoomed in, and costs more CPU.</span></span></label>
           <select id="fft-size-sel" onchange="setFFTSize(this.value)">
             <option value="1024">1024</option>
@@ -2863,12 +2956,12 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
             <option value="65536">65536</option>
           </select>
         </div>
-        <div class="ctrl-row">
+        <div class="ctrl-row not-sweep">
           <label>Averaging</label>
           <input type="range" id="asl" class="slider" min="0" max="100" value="85" oninput="ua(this.value)">
           <span class="sv" id="av">85%</span>
         </div>
-        <div class="ctrl-row">
+        <div class="ctrl-row not-sweep">
           <label>Edge clip</label>
           <input type="number" id="ecl" value="0.8" min="0.1" max="1.0" step="0.05" style="width:50px">
           <button class="btn sm" onclick="sec()">Set</button>
@@ -2939,7 +3032,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
     </div>
 
     <!-- 📻 Saved frequencies (saved_freqs.cpp) + the map markers - all modes -->
-    <div class="sb-section" data-sb="saved-frequencies" id="sf-section">
+    <div class="sb-section not-sweep" data-sb="saved-frequencies" id="sf-section">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-star"/></svg><span>Saved Frequencies</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (<b>Categories</b>: add your own, rename, recolour). A frequency with a <b>location</b> appears on the map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (the eye on a category hides its marks); click a mark to tune. <b>Save</b> on a VFO card saves that VFO's frequency.<br><br><b>Scan:</b> tick the frequencies to scan - or a whole category with the box in its heading (also the frequencies added to it later; untick single ones to leave them out) - and press <b>Scan</b>. The selected VFO is tuned to each one that is active, received the way the entry says, and heard while it is (plus the Delay). Coherent mode watches one tuner band at a time (the array recalibrates after each retune); independent mode watches a band on every tuner no other VFO is on.</span></span></h3>
         <span class="sf-count" id="sf-count"></span>
@@ -3065,7 +3158,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
     </div>
 
     <!-- 🧪 Debug Playback: decoders' test transmissions through the real pipeline (playback.cpp) -->
-    <div class="sb-section collapsed" data-sb="debug-playback" id="pb-section">
+    <div class="sb-section collapsed not-sweep" data-sb="debug-playback" id="pb-section">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-bug"/></svg><span>Debug Playback</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Plays a decoder's <b>synthetic test transmission</b> (several transmitters with known IDs at known bearings on a 5-element UCA) through the real receiver as if the antennas had picked it up: spectrum, waterfall, VFO, decoder, DoA and the map's <b>DF</b> panel - to see and check a decoder without the real signal.<br><br>While it plays: heimdall's data is disconnected and <b>nothing is sent to heimdall</b>; the frequency / gain can't be changed; <b>your settings are not saved</b> - the VFO, decoder and array set up for the playback are a sandbox, and Stop puts your own settings back (also after a restart). Nothing goes out either: web mapper, decoder log, Voice to Text, DoA recording, incidents are paused.<br><br><b>Generate</b> builds a test transmission once (the plugins' own generators, a few seconds of CPU; kept in testsignal_cache/). <b>Check</b> compares the bearings in the DF panel with the ones the test transmission was made with.</span></span></h3>
         <span class="acal-badge" id="pb-badge"></span>
@@ -3131,7 +3224,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       <div id="pb-banner" title="A synthetic test transmission is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops."><span id="pb-banner-k"><svg class="ic" aria-hidden="true"><use href="#i-bug"/></svg><span>DEBUG PLAYBACK - not live</span></span><span class="pb-bt" id="pb-banner-t"></span><button onclick="pbStop()"><svg class="ic" aria-hidden="true"><use href="#i-stop"/></svg><span>Stop</span></button></div>
       <!-- Center Frequency (SDR#-style) - FIRST. Hidden in independent mode
            (every tuner pane has its own frequency digits and gain) -->
-      <div class="tb-group not-indep" id="tb-freq">
+      <div class="tb-group not-indep not-sweep" id="tb-freq">
         <div class="freq-selector" id="freq-selector">
           <div class="freq-digit" data-pos="8"><span class="hover-upper"></span><span class="hover-lower"></span>0</div>
           <div class="freq-digit" data-pos="7"><span class="hover-upper"></span><span class="hover-lower"></span>0</div>
@@ -3146,6 +3239,24 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <div class="freq-digit" data-pos="0"><span class="hover-upper"></span><span class="hover-lower"></span>0</div>
           <span class="freq-label">MHz</span>
         </div>
+      </div>
+      <!-- Sweep mode (SWEEP MODE in the script): the range in place of the frequency - Start and Stop,
+           digits like the frequency's (to 1 kHz; swpRangeInit builds them) -, then the tuners that take
+           part. On the phone both are rows of the drawer (MOBILE_RELOCATIONS) -->
+      <div class="tb-group sweep-only" id="tb-swp-range">
+        <span class="swp-rng">
+          <span class="swp-end"><span class="tb-label">Start</span><span class="swp-fsel" id="swp-start" role="group" aria-label="Sweep start"
+                title="Sweep start: click the top / bottom half of a digit, or use the mouse wheel on it (1 kHz steps)"></span></span>
+          <span class="swp-dash" aria-hidden="true">–</span>
+          <span class="swp-end"><span class="tb-label">Stop</span><span class="swp-fsel" id="swp-stop" role="group" aria-label="Sweep stop"
+                title="Sweep stop: click the top / bottom half of a digit, or use the mouse wheel on it (1 kHz steps)"></span><span class="freq-label">MHz</span></span>
+        </span>
+      </div>
+      <div class="tb-group fld sweep-only" id="tb-swp-tuners">
+        <span class="tb-label">Tuners</span>
+        <span class="tb-ic" aria-hidden="true" title="Tuners in the sweep"><svg class="ic" aria-hidden="true"><use href="#i-tuners"/></svg></span>
+        <span class="swp-tsel" id="swp-tuners" role="group" aria-label="Tuners in the sweep"
+              title="Tuners in the sweep: pressed = takes part. More tuners = a faster sweep - each one needs its antenna connected. At least one stays on."></span>
       </div>
       <!-- KrakenSDR Wideband (downconverter) variant controls - shown only when
            the backend runs with --wideband. Frequency digits above are the true
@@ -3185,7 +3296,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       </div>
       <!-- Audio: the speaker button is the on / off (tfm; lit while on, the crossed speaker while
            off), then the volume -->
-      <div class="tb-group fld" id="tb-audio">
+      <div class="tb-group fld not-sweep" id="tb-audio">
         <span class="tb-label">Audio</span>
         <button type="button" id="fmt" class="tb-btn tb-spk on" onclick="tfm()" aria-label="Audio" aria-pressed="true" title="Audio on / off"><svg class="ic" aria-hidden="true"><use href="#i-speaker"/></svg></button>
         <span class="vbar"><input type="range" id="vsl" class="vbar-in" min="0" max="100" value="50" data-wheel="5" style="--p:50" oninput="uv(this.value)"
@@ -3195,7 +3306,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
            click on the spectrum puts the VFO on a multiple of it. Right of Audio, left of Mode
            (the user asked for it beside Mode, 2026-11-18) -->
-      <div class="tb-group fld" id="tb-step">
+      <div class="tb-group fld not-sweep" id="tb-step">
         <span class="tb-label">Step</span>
         <span class="tb-ic" aria-hidden="true" title="Tuning step"><svg class="ic" aria-hidden="true"><use href="#i-step"/></svg></span>
         <select id="vfo-step" onchange="setVfoStep(this.value)" aria-label="Tuning step" title="VFO tuning step: dragging a tuning bar or clicking the spectrum puts the VFO on a multiple of this - of its frequency, counted from 0 Hz (12.5 kHz: 446.0125, 446.0250 ... MHz). Hold Shift while dragging to tune finely: 1/100 of the movement, to the Hz, off the step. The VFO card's digits and typed or saved frequencies stay exact."></select>
@@ -3208,6 +3319,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <option value="coherent">Coherent</option>
           <option value="wideband">Wideband</option>
           <option value="independent">Independent</option>
+          <!-- only once the receiver has said it knows sweep mode (its "sweep" message; opModeOptionsSync) -->
+          <option value="sweep" hidden disabled>Sweep</option>
         </select>
       </div>
       <!-- Antenna bias tees (BIAS TEE in the script, docs/dev/bias-tees.md): the button opens a popover
@@ -3264,6 +3377,9 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
             <option value="3">Antenna 3</option>
             <option value="4">Antenna 4</option>
           </select>
+          <!-- sweep mode: the sweep under way and the time of the last complete one (swpHdr; fixed widths) -->
+          <span class="swp-hdr sweep-only" id="swp-hdr"><span class="swp-pbar" id="swp-pbar" title="The sweep under way"><i id="swp-pbar-i"></i></span><span
+                id="swp-hdr-p" title="The sweep under way"></span><span id="swp-hdr-t" title="Time of the last complete sweep"></span></span>
           <!-- the display settings of the spectrum and the waterfall (Scale, Zoom, Speed, Colors, the
                waterfall contrast - Auto, Min, Max): a popover under this button (VIEW POPOVER in the
                script). Each tuner pane of independent mode has the same button; the popover is one element, moved next to the
@@ -3302,16 +3418,21 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
               </div>
             </div>
           </div>
-          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
+          <span class="help not-sweep" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
+          <span class="help sweep-only" tabindex="0" role="button" aria-label="Help">?<span class="tip">The sweep: the tuners step through the top bar's range and the receiver puts their spectra together - not live, nothing is demodulated. The trace fills in as the sweep goes on; the waterfall gets one line per complete sweep. Mouse wheel: zoom (down to one FFT bin per point); drag: pan. Nothing is retuned.</span></span>
         </div>
         <div class="spectrum-content">
           <div id="pb-overlay"><span id="pb-overlay-k">DEBUG PLAYBACK - not live</span></div>
           <div id="fp"></div>
+          <!-- Sweep mode: the sweep's spectrum (as tall as #fp: the split below drags both) -->
+          <div id="swp-spec-box"><canvas id="swp-spec"></canvas><canvas id="swp-spec-ov"></canvas></div>
           <div id="fp-split" class="hsplit" title="Drag to change the spectrum / waterfall split (double-click: default)"></div>
           <div id="wf-container">
             <canvas id="wf-canvas"></canvas>
             <canvas id="wf-overlay"></canvas>
           </div>
+          <!-- Sweep mode: its waterfall, one line per complete sweep -->
+          <div id="swp-wf-box"><canvas id="swp-wc"></canvas><canvas id="swp-wo"></canvas></div>
           <!-- Independent mode: one spectrum + waterfall per tuner -->
           <div id="indep-grid"></div>
         </div>
@@ -4174,6 +4295,17 @@ let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 =
 let selTuner = 0;            // pane the top-bar frequency digits + gain edit
 const panes = [];            // one per tuner, see panesBuild
 let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO bar
+// Sweep mode (see SWEEP MODE): swpKnown = the receiver has sent its {"sweep":{...}} message (an older
+// receiver never does: then nothing of sweep mode is offered, sent or shown). swp: st = that message's
+// state, fr = the latest type 10 frame of the current grid, tr = the trace drawn from it ({w0, w1,
+// freqs, mags}, Hz), zoom = {level, off: window centre - range centre, Hz}, ui = what the controls show
+// (range kHz, holds, the tuners on their way), wf = the sweep's WaterfallDisplay. Up here: the View
+// popover, the zoom slider and applyOpModeUI read it, and they can run before that block is evaluated.
+let swpKnown = false;
+const swp = {st: null, fr: null, tr: null, zoom: {level: 1, off: 0}, wf: null, sw: 0, sh: 0, dpr: 1,
+             ui: {a: 0, b: 0, holdR: 0, tun: null, holdRes: 0, holdDw: 0}, view: null, viewSeq: 0, seqMin: 0,
+             hover: null, drag: null, wfAt: 0, wfPend: null, wfTimer: null, gridOdd: null, readout: '', resText: '', lines: 0,
+             stale: false};   // stale: a new connection, the receiver's state not told anew yet
 // View settings (the "View" popover, see VIEW POPOVER). viewCommon: the single spectrum's - and
 // every tuner pane's that has none of its own; the receiver stores them (UI:FFT_Y, UI:WF_SPEED,
 // ...) and replays them to every browser. viewStore: this browser's per-tuner values in
@@ -5322,6 +5454,15 @@ class WaterfallDisplay {
     this.maxDb = maxDb;
   }
 
+  // every row black again (sweep mode: a new grid - the old rows show another range / resolution)
+  clear() {
+    if (!this.imageData) return;
+    const d = this.imageData.data;
+    for (let i = 0; i < d.length; i += 4) { d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 255; }
+    this.ctx.putImageData(this.imageData, 0, 0);
+    this.lastFrequencies = [];
+  }
+
   setSpeed(speed) {
     this.speed = Math.max(1, Math.min(10, speed));
   }
@@ -5440,6 +5581,7 @@ function updateWaterfallSpeed(value) {
   const v = viewValid('speed', value);
   if (v !== undefined) viewCommon.speed = v;
   if (waterfall) waterfall.setSpeed(viewCommon.speed);
+  if (swp.wf) swp.wf.setSpeed(viewCommon.speed);   // sweep mode's (the common values)
   panes.forEach(paneApplyView);
   viewPopSync();
 }
@@ -5448,6 +5590,7 @@ function updateWaterfallColormap(value) {
   const v = viewValid('cmap', value);
   if (v !== undefined) viewCommon.cmap = v;
   if (waterfall) waterfall.setColormap(viewCommon.cmap);
+  if (swp.wf) swp.wf.setColormap(viewCommon.cmap);
   panes.forEach(paneApplyView);
   viewPopSync();
 }
@@ -5457,6 +5600,7 @@ function updateFFTYAxis(value) {
   if (v !== undefined) viewCommon.y = v;
   if (fftPlot) fftPlot.setScale('y', {min: 0, max: viewCommon.y});
   panes.forEach(p => { paneDrawSpec(p); paneDrawOverlay(p); });
+  if (opMode === 'sweep') swpDraw();
   viewPopSync();
 }
 
@@ -5465,6 +5609,7 @@ function updateFFTYAxis(value) {
 function updateWaterfallRange() {
   const [a, b] = viewSafeRange(viewCommon.min, viewCommon.max);
   if (waterfall) waterfall.setRange(a, b);
+  if (swp.wf) swp.wf.setRange(a, b);
   panes.forEach(p => {
     if (viewEff(p.ch, 'auto')) return;
     const [c, d] = viewSafeRange(viewEff(p.ch, 'min'), viewEff(p.ch, 'max'));
@@ -5924,6 +6069,11 @@ function autoRangeWaterfall() {
   // noise source on has no antenna signals, so ranging on it collapsed the
   // scale - the waterfall went red for up to 500 ms (the tick) past the burst,
   // over rows that already showed the antennas again.
+  if (opMode === 'sweep') {   // the sweep's waterfall: from the sweep's trace (no calibration bursts there)
+    const r = swp.tr && computeAutoRange(swp.tr.mags);
+    if (r) { [viewCommon.min, viewCommon.max] = r; updateWaterfallRange(); }
+    return;
+  }
   if (noiseLive || Date.now() - noiseOffAt < 1000) return;
   if (opMode === 'independent') return;   // the tuner panes range themselves (paneAutoRange)
 
@@ -8149,11 +8299,13 @@ function sac() {
 }
 
 function updatePlotTitle() {
+  if (opMode === 'sweep') { swpTitle(); return; }
   if (opMode === 'independent') {
     $id('fpt').textContent = 'Independent tuners (' + Math.max(1, panes.length || activeNumElements) + ')';
     $id('fpt').title = 'Each pane has its own frequency and gain: drag a pane to tune it, drag a VFO bar, or click to place the selected VFO';
     return;
   }
+  $id('fpt').title = '';
   if(widebandEnabled) {
     $id('fpt').textContent='Wideband Scan (~'+widebandCoverageMhz()+' MHz coverage, all '+activeNumElements+' tuners)';
   } else {
@@ -10858,6 +11010,7 @@ function connect() {
   ws.onopen=()=>{
     // a new connection has no spectrum views: ask again with the next frame
     specViewSent = {}; specMain = null;
+    swpOnOpen();   // sweep mode: its view again too, and the receiver says anew whether it knows sweep mode
     // the server resets subscriptions to the default (no VIDEO) on connect:
     // forget our state so an open video panel re-subscribes (and keeps asking
     // until the server confirms - it ignores a SUBSCRIBE before AUTH succeeds)
@@ -11005,6 +11158,7 @@ function connect() {
             }
           }
           else if(msg.operating_mode) { opOnMessage(msg.operating_mode); }
+          else if(msg.sweep && typeof msg.sweep === 'object') { swpOnState(msg.sweep); }   // sweep mode (SWEEP MODE)
           else if(msg.power) { pwOnState(msg.power); }
           else if(msg.antenna_bias) { biasOnState(msg.antenna_bias); }
           else if(msg.decimator_freq_offset) {
@@ -11225,6 +11379,7 @@ function connect() {
       if(mt===7) { specOnFrame(v, e.data); return; }
       if(mt===8) { videoOnFrame(v, e.data); return; }
       if(mt===9) { binDoaOnFrame(v, e.data); return; }
+      if(mt===10) { swpOnFrame(v, e.data); return; }   // sweep mode's spectrum (SWEEP MODE)
       
       if(mt===1) {
         if(e.data.byteLength<16)return; // Minimum: 4 fields (msgType, sampleCount, sampleRate, opusSize)
@@ -11508,6 +11663,7 @@ document.addEventListener('keydown',handleUserInteraction);
 
 window.addEventListener('resize',()=>{
   if (opMode === 'independent') panesResizeSoon();
+  if (opMode === 'sweep') swpResize();
   if(fftPlot) {
     const fp = $id('fp');
     const spectrumPanel = fp.closest('.spectrum-panel');
@@ -11549,18 +11705,28 @@ function opModeOptionsSync() {
     if (wbVariant.enabled) { if (v !== 'coherent') why = 'not on the KrakenSDR Wideband variant'; }
     else if (genericRtl && v === 'coherent') why = 'needs a KrakenSDR';
     else if (genericRtl && v === 'wideband' && oneTuner) why = 'needs two or more tuners';
-    o.disabled = !!why;
-    o.textContent = (v === 'coherent' ? 'Coherent' : v === 'wideband' ? 'Wideband' : 'Independent') +
-                    (why && genericRtl ? ' (' + why + ')' : '');
+    // Sweep: only from a receiver that knows it (its "sweep" message) - an older one never shows it
+    if (v === 'sweep') o.hidden = !swpKnown;
+    o.disabled = !!why || (v === 'sweep' && !swpKnown);
+    o.textContent = (v === 'coherent' ? 'Coherent' : v === 'wideband' ? 'Wideband' : v === 'sweep' ? 'Sweep' : 'Independent') +
+                    (why && (genericRtl || v === 'sweep') ? ' (' + why + ')' : '');
   });
-  sel.title = genericRtl
+  sel.title = (genericRtl
     ? 'Generic RTL-SDR dongles (no KrakenSDR): they run as independent receivers - coherent mode (DoA, ' +
       'beamforming, calibration) needs a KrakenSDR' + (oneTuner ? ', and the wideband scan two or more tuners.' : '.')
-    : opSelTitle;
+    : opSelTitle) +
+    (swpKnown ? ' Sweep: the tuners chosen step through a frequency range for one wide spectrum and waterfall - not live, ' +
+      'nothing demodulated (no audio, decoders or DoA)' + (wbVariant.enabled ? '; not on the KrakenSDR Wideband variant.' : '.') : '');
 }
 
 function setOpMode(m) {
   if (m === opMode) return;
+  if (m === 'sweep' && (!swpKnown || wbVariant.enabled)) {
+    // (the option is hidden / disabled; a stale selector) - the receiver would refuse it
+    const sel = $id('opmode');
+    if (sel) sel.value = opMode;
+    return;
+  }
   if (genericRtl && (m === 'coherent' || (m === 'wideband' && activeNumElements < 2))) {
     // (the option is disabled; a stale selector) - the receiver would refuse it
     const sel = $id('opmode');
@@ -11569,6 +11735,7 @@ function setOpMode(m) {
   }
   const prev = opMode;
   if (m === 'wideband') channelBeforeWideband = activeChannel;
+  swpOpSentAt = Date.now();   // (sweep messages from before this one are no evidence of the mode: swpOnState)
   send('OPERATING_MODE:' + m);
   applyOpModeUI(m);
   if (prev === 'wideband' && m === 'coherent') {
@@ -11585,14 +11752,15 @@ function setOpMode(m) {
 }
 
 function applyOpModeUI(m) {
-  if (m !== 'wideband' && m !== 'independent') m = 'coherent';
-  const changed = m !== opMode;
+  if (m !== 'wideband' && m !== 'independent' && m !== 'sweep') m = 'coherent';
+  const changed = m !== opMode, prev = opMode;
   opMode = m;
   widebandEnabled = (m === 'wideband');
   const b = document.body;
   b.classList.toggle('mode-coherent', m === 'coherent');
   b.classList.toggle('mode-wideband', m === 'wideband');
   b.classList.toggle('mode-independent', m === 'independent');
+  b.classList.toggle('mode-sweep', m === 'sweep');
   const sel = $id('opmode');
   if (sel && sel.value !== m) sel.value = m;
   const dot = $id('dot');
@@ -11601,6 +11769,7 @@ function applyOpModeUI(m) {
   viewPopClose(false);
   viewBtnTitle();
   if (m === 'independent') panesBuild(); else panesTeardown();
+  if (m === 'sweep') swpEnter(); else if (prev === 'sweep') swpLeave();
   if (typeof rpApply === 'function') rpApply();   // the right-hand pane: its tabs in coherent mode, the map alone outside
   zoomSyncSlider();
   updatePlotTitle();
@@ -11615,6 +11784,9 @@ function applyOpModeUI(m) {
 // every message (flicker). The operating_mode message switches at once.
 let opHintMode = null, opHintSince = 0;
 function opHint(m) {
+  // the receiver says it sweeps (its sweep message): frames and status flags of the other modes
+  // (heimdall's sweep stream looks like independent tuners to them) are no evidence
+  if (swp.st && swp.st.active && !swp.stale) { opHintMode = null; return; }
   if (m === opMode) { opHintMode = null; return; }
   const now = Date.now();
   if (opHintMode !== m) { opHintMode = m; opHintSince = now; return; }
@@ -12398,6 +12570,8 @@ const mainZoom = {level: 1, off: 0};
 // or with "all tuners" (and with the popover closed) the selected one's level
 // (all: the slider sets every pane's)
 function zoomTarget() {
+  // sweep mode: its own zoom, as far as one bin per point (max) - 32x is far too coarse for 1.7 GHz
+  if (opMode === 'sweep') return {z: swp.zoom, center: 0, max: swpZoomMax(), sweep: true};
   if (opMode === 'independent') {
     const ch = typeof viewTarget === 'number' ? viewTarget : selTuner, p = panes[ch];
     return p ? {z: p.zoom, center: p.freqMhz, all: viewTarget === 'main'} : null;
@@ -12435,17 +12609,23 @@ function zoomSyncSlider() {
   // no focus check: a range input keeps focus after a mouse drag, which left
   // the slider behind every later wheel zoom. Its own value maps back to
   // itself (level = 2^(v/25)), so setting it during a drag changes nothing
+  // the slider's end: log2(the target's max) x 25 (125 = ZOOM_MAX; sweep mode's own max)
+  const mx = String(Math.max(1, Math.ceil(Math.log2(t.max || ZOOM_MAX) * 25)));
+  if (sl.max !== mx) sl.max = mx;
   const v = Math.round(Math.log2(t.z.level) * 25);
   if (parseInt(sl.value) !== v) sl.value = v;
-  if (lv) lv.textContent = t.z.level.toFixed(1) + 'x';
+  if (lv) lv.textContent = zoomText(t.z.level);
 }
+// "1.0x" .. "32.0x"; past 100x (sweep mode) whole numbers, so the popover's value column holds it
+function zoomText(l) { return (l < 100 ? l.toFixed(1) : String(Math.round(l))) + 'x'; }
 function zoomFromSlider(v) {
   const t = zoomTarget();
   if (!t) return;
-  let lvl = Math.max(1, Math.min(ZOOM_MAX, Math.pow(2, parseInt(v) / 25)));
+  let lvl = Math.max(1, Math.min(t.max || ZOOM_MAX, Math.pow(2, parseInt(v) / 25)));
   if (lvl < 1.01) lvl = 1;
   for (const z of t.all ? panes.map(p => p.zoom) : [t.z]) { z.level = lvl; if (lvl === 1) z.off = 0; }
-  $id('zoom-val').textContent = lvl.toFixed(1) + 'x';
+  $id('zoom-val').textContent = zoomText(lvl);
+  if (t.sweep) { swpZoomed(); return; }
   if (opMode !== 'independent') applyClip();
 }
 // main display: wheel on the spectrum or the waterfall (the containers - the
@@ -12455,7 +12635,7 @@ function zoomFromSlider(v) {
   const el = $id(id);
   if (!el) return;
   el.addEventListener('wheel', e => {
-    if (!fftPlot || !fftPlot.over || currentFrequencies.length < 2 || opMode === 'independent') return;
+    if (!fftPlot || !fftPlot.over || currentFrequencies.length < 2 || opMode === 'independent' || opMode === 'sweep') return;
     e.preventDefault();
     const r = fftPlot.over.getBoundingClientRect();
     const v0 = currentFrequencies[0], v1 = currentFrequencies[currentFrequencies.length - 1];
@@ -12494,6 +12674,9 @@ function specOnFrame(v, buf) {
   const u8 = new Uint8Array(buf, 64, n), mags = new Float32Array(n);
   for (let i = 0; i < n; i++) mags[i] = u8[i] * (120 / 255);
   const fr = {center, bandLo, bandHi, start, step, mags, wb: marker === 0xFE};
+  // sweep mode shows only its own frames (type 10); one of another mode is a hint (opHint) and is
+  // dropped - it must not reach the main display's plot and waterfall, kept for the return
+  if (opMode === 'sweep') { opHint(disp > 0 ? 'independent' : fr.wb ? 'wideband' : 'coherent'); return; }
   if (disp > 0) { specPaneFrame(disp - 1, nch, fr, gd, aa); return; }
   specHeaderSync(center, gd, aa, fr.wb, marker & 0x7F);
   specMain = fr;
@@ -12699,6 +12882,7 @@ function specSlowSet(on) {
   try { if (specSlow) localStorage.setItem('kraken_spec_slow', '1'); else localStorage.removeItem('kraken_spec_slow'); } catch (e) {}
   // the next frame asks for the new width (specViewWant); redraw now so it
   // doesn't wait for one
+  if (opMode === 'sweep') { swpViewWant(); return; }   // (its own view, at the new width)
   if (specMain && fftPlot && opMode !== 'independent') applyClip();
 }
 function specBinsMain() {
@@ -12746,9 +12930,654 @@ function viewShowRes() {
   const el = $id('zoom-res');
   if (!el || viewTarget === null) return;
   let t = specMainRes;
-  if (opMode === 'independent') { const p = panes[typeof viewTarget === 'number' ? viewTarget : selTuner]; t = (p && p.resText) || ''; }
+  if (opMode === 'sweep') t = swp.resText;
+  else if (opMode === 'independent') { const p = panes[typeof viewTarget === 'number' ? viewTarget : selTuner]; t = (p && p.resText) || ''; }
   if (el.textContent !== t) el.textContent = t;
 }
+
+// ============================================================================
+// SWEEP MODE (the fourth operating mode) - docs/dev/sweep-mode.md
+// ----------------------------------------------------------------------------
+// The chosen tuners step through a frequency range and the receiver stitches ONE spectrum out of the
+// steps: not live, nothing demodulated. On the page: the Mode selector's Sweep (offered only once the
+// receiver has sent its {"sweep":{...}} message - an older one never does), the top bar's range
+// (Start - Stop, digits like the frequency's, in its place) and tuner toggles (pressed = takes part, at
+// least one stays on), the sidebar's Sweep box (Resolution, Dwell, Run / Pause, what the sweep is
+// doing), and the display under the spectrum's header: #swp-spec-box (swpDraw) and #swp-wf-box (a
+// WaterfallDisplay, one line per complete sweep). State: swp / swpKnown in the globals block.
+// Commands, each answered by the sweep message to every page (never an echo; no optimistic update -
+// what the user is changing is held against it for SWP_HOLD_MS, the tuners show their pending look):
+// SWEEP_RANGE:<start MHz>:<stop MHz>, SWEEP_TUNERS:<i,j,..>|all, SWEEP_RES:<N>|auto,
+// SWEEP_DWELL:<ms>, SWEEP_RUN:<1|0> - spun controls send at most every 100 ms + the last value.
+// SWEEP_VIEW:<seq>:<lo Hz>:<hi Hz>:<points> (transport level, per connection, like FFT_VIEW): the
+// window shown (0:0 = the whole range) at the plot's width in device pixels; answered by type 10
+// frames. Frequencies are doubles in Hz throughout (1.765 GHz with ~150 Hz bins).
+// ============================================================================
+const SWP_MIN_SPAN_HZ = 100000, SWP_HOLD_MS = 1500, SWP_PEND_MS = 2000, SWP_SEND_MS = 100;
+const SWP_WF_MS = 50;   // waterfall lines at most 20 a second: never faster than the main waterfall runs
+const SWP_FFT_SIZES = [128, 256, 512, 1024, 2048, 4096, 8192, 16384], SWP_FS = 2400000;
+const SWP_L = 40, SWP_R = 8;   // the plot's margins (CSS px): the dB labels on the left; the waterfall lines up
+const SWP_DIGITS = [6, 's', 5, 4, 3, 's', 2, 1, 0];   // kHz positions: G.MMM.kkk (1.765.000)
+
+// the receiver's limits (kHz): min_hz / max_hz, else the contract's
+function swpLim() {
+  const s = swp.st;
+  return {lo: Math.round(((s && s.min_hz) || 24e6) / 1000), hi: Math.round(((s && s.max_hz) || 1765e6) / 1000)};
+}
+function swpFmtHz(hz) {
+  if (!(hz > 0)) return '-';
+  return hz >= 1e6 ? +(hz / 1e6).toFixed(3) + ' MHz' : hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 1 : 2) + ' kHz' : Math.round(hz) + ' Hz';
+}
+function swpFmtS(s) {
+  if (!(s > 0)) return '-';
+  return (s < 10 ? s.toFixed(2) : s < 100 ? s.toFixed(1) : String(Math.round(s))) + ' s';
+}
+function swpTxt(id, s) { const e = $id(id); if (e && e.textContent !== s) e.textContent = s; }
+// the range shown: the receiver's, or the frame's while no message has come
+function swpSpan() {
+  const s = swp.st;
+  if (s && s.stop_hz > s.start_hz) return [s.start_hz, s.stop_hz];
+  return swp.fr ? [swp.fr.start, swp.fr.stop] : null;
+}
+
+// ---- the receiver's state ({"sweep":{...}}, on connect and on every change) ----
+function swpNorm(r) {
+  const num = (v, d) => (typeof v === 'number' && Number.isFinite(v)) ? v : d;
+  const s = {
+    active: r.active === true, start_hz: num(r.start_hz, 0), stop_hz: num(r.stop_hz, 0),
+    min_hz: num(r.min_hz, 24e6), max_hz: num(r.max_hz, 1765e6),
+    tuners: Array.isArray(r.tuners) ? r.tuners.filter(t => Number.isInteger(t) && t >= 0 && t < 8).sort((a, b) => a - b) : [],
+    available: Math.max(0, Math.min(8, num(r.available, 0) | 0)), res: num(r.res, 0) | 0, fft_size: num(r.fft_size, 0) | 0,
+    bin_hz: num(r.bin_hz, 0), bins: num(r.bins, 0), hops: num(r.hops, 0), rounds: num(r.rounds, 0),
+    dwell_ms: num(r.dwell_ms, 20), running: r.running !== false, grid: num(r.grid, 0), gain_db: num(r.gain_db, NaN)};
+  return s.stop_hz > s.start_hz ? s : null;
+}
+let swpOpSentAt = 0;   // this page's last OPERATING_MODE (setOpMode): a sweep message from before it is no evidence
+function swpOnState(raw) {
+  const s = swpNorm(raw);
+  if (!s) return;
+  const prev = swp.st;
+  swp.st = s;
+  swp.stale = false;
+  if (!swpKnown) { swpKnown = true; opModeOptionsSync(); }
+  if (prev && prev.grid !== s.grid) swpNewGrid(prev.start_hz !== s.start_hz || prev.stop_hz !== s.stop_hz);
+  swp.gridOdd = null;
+  // the receiver sweeps but this page shows another mode: it missed the operating_mode message (which
+  // is authoritative - so not right after one, nor right after this page asked for another mode)
+  const now = Date.now();
+  if (s.active && opMode !== 'sweep' && now - opMsgAt > 1500 && now - swpOpSentAt > 1500) applyOpModeUI('sweep');
+  if (opMode === 'sweep' && Number.isFinite(s.gain_db)) swpGainSync(s.gain_db);
+  swpRenderCtl();
+  if (opMode === 'sweep') { swpTitle(); zoomSyncSlider(); swpTrace(); swpDraw(); swpStatus(); swpViewWant(); }
+}
+// a new grid (range or resolution): the old frame and the waterfall's rows show something else
+function swpNewGrid(rangeChanged) {
+  swp.fr = null; swp.tr = null; swp.hover = null;
+  clearTimeout(swp.wfTimer); swp.wfPend = null;
+  if (swp.wf) swp.wf.clear();
+  if (rangeChanged) { swp.zoom.level = 1; swp.zoom.off = 0; document.body.classList.remove('swp-zoomed'); }
+}
+function swpOnOpen() {
+  // a new connection has no sweep view; the receiver tells its state anew (until then a stale "active"
+  // must not hold the other modes' hints back)
+  if (swp.view && swp.view.t) clearTimeout(swp.view.t);
+  swp.view = null;
+  swp.stale = true;
+}
+function swpGainSync(db) {
+  if (gainUserChanging) return;
+  const gi = gainIndexOf(db), gs = $id('gn-slider');
+  if (gs && document.activeElement !== gs && parseInt(gs.value) !== gi) { gs.value = gi; updateGainDisplay(gi); }
+}
+
+// ---- the controls (top bar: range, tuners; the Sweep box) ----
+function swpRenderCtl() {
+  const st = swp.st, u = swp.ui, now = Date.now();
+  if (st && now >= u.holdR) { u.a = Math.round(st.start_hz / 1000); u.b = Math.round(st.stop_hz / 1000); }
+  swpRangeShow();
+  swpTunersRender();
+  swpResRender();
+  const dw = $id('swp-dwell');
+  if (st && dw && document.activeElement !== dw && now >= u.holdDw && String(dw.value) !== String(Math.round(st.dwell_ms))) dw.value = Math.round(st.dwell_ms);
+  const rb = $id('swp-run');
+  if (rb) {
+    const run = !st || st.running, key = run ? 'run' : 'paused';
+    if (rb.dataset.k !== key) {
+      rb.dataset.k = key;
+      rb.className = 'btn' + (run ? '' : ' primary');
+      rb.innerHTML = run ? icon('pause') + '<span>Pause</span>' : icon('play') + '<span>Run</span>';
+      rb.title = run ? 'Pause the sweep: the tuners stay where they are' : 'Run the sweep again';
+    }
+  }
+  if (st) {
+    const k = swp.fr ? swp.fr.tun : st.tuners.length;
+    swpTxt('swp-hops', st.hops + ' · ' + k + (k === 1 ? ' tuner' : ' tuners'));
+    swpTxt('swp-bins', Math.round(st.bins).toLocaleString('en-US') + ' · ' + swpFmtHz(st.bin_hz));
+  }
+}
+// a held control shows the receiver's value again once its hold is over
+let swpHoldTimer = null;
+function swpHoldLater() {
+  clearTimeout(swpHoldTimer);
+  swpHoldTimer = setTimeout(swpRenderCtl, SWP_HOLD_MS + 30);
+}
+// at most every SWP_SEND_MS per control, the last value always (a trailing send)
+const swpTx = {};
+function swpSendSoon(key, text) {
+  const t = swpTx[key] || (swpTx[key] = {at: 0, timer: null, text: null});
+  t.text = text;
+  if (t.timer) return;
+  const fire = () => { t.timer = null; if (t.text === null) return; t.at = Date.now(); send(t.text); t.text = null; };
+  const wait = SWP_SEND_MS - (Date.now() - t.at);
+  if (wait <= 0) fire(); else t.timer = setTimeout(fire, wait);
+}
+
+// The range digits (#swp-start, #swp-stop: G.MMM.kkk, 1 kHz steps): click the top / bottom half of a
+// digit or turn the mouse wheel on it. Start stays at least 100 kHz below Stop, both inside the limits.
+function swpRangeInit() {
+  for (const which of ['start', 'stop']) {
+    const el = $id('swp-' + which);
+    if (!el) continue;
+    el.innerHTML = SWP_DIGITS.map(d => d === 's' ? '<span class="swp-sep">.</span>' : `<span class="swp-d" data-pos="${d}">0</span>`).join('');
+    const half = (e, d) => { const r = d.getBoundingClientRect(); return e.clientY - r.top < r.height / 2; };
+    el.addEventListener('mousemove', e => {
+      const d = e.target.closest('.swp-d');
+      el.querySelectorAll('.swp-d').forEach(x => { if (x !== d) x.classList.remove('hover-top', 'hover-bottom'); });
+      if (d) { const t = half(e, d); d.classList.toggle('hover-top', t); d.classList.toggle('hover-bottom', !t); }
+    });
+    el.addEventListener('mouseleave', () => el.querySelectorAll('.swp-d').forEach(x => x.classList.remove('hover-top', 'hover-bottom')));
+    el.addEventListener('click', e => { const d = e.target.closest('.swp-d'); if (d) swpRangeStep(which, parseInt(d.dataset.pos), half(e, d) ? 1 : -1); });
+    el.addEventListener('wheel', e => {
+      const d = e.target.closest('.swp-d');
+      if (!d) return;
+      e.preventDefault();
+      if (e.deltaY) swpRangeStep(which, parseInt(d.dataset.pos), e.deltaY < 0 ? 1 : -1);
+    }, {passive: false});
+  }
+  swpRangeShow();
+}
+function swpRangeStep(which, pos, dir) {
+  if (!swp.st) return;   // (nothing from the receiver yet)
+  const lim = swpLim(), u = swp.ui, d = dir * Math.pow(10, pos), gap = SWP_MIN_SPAN_HZ / 1000;
+  if (which === 'start') u.a = Math.max(lim.lo, Math.min(u.b - gap, u.a + d));
+  else u.b = Math.max(u.a + gap, Math.min(lim.hi, u.b + d));
+  u.holdR = Date.now() + SWP_HOLD_MS;
+  swpHoldLater();
+  swpRangeShow();
+  swpSendSoon('range', 'SWEEP_RANGE:' + (u.a / 1000).toFixed(3) + ':' + (u.b / 1000).toFixed(3));
+}
+function swpRangeShow() {
+  for (const [which, khz] of [['start', swp.ui.a], ['stop', swp.ui.b]]) {
+    const el = $id('swp-' + which);
+    if (!el) continue;
+    let lead = true;
+    el.querySelectorAll('.swp-d').forEach(d => {
+      const pos = parseInt(d.dataset.pos), v = Math.floor(khz / Math.pow(10, pos)) % 10;
+      if (d.textContent !== String(v)) d.textContent = v;
+      if (v || pos <= 3) lead = false;   // dim the leading zeros only
+      d.classList.toggle('lead', lead);
+    });
+  }
+}
+
+// The tuner toggles: one per tuner the receiver has (available); pressed = takes part. A press shows
+// at once with the pending look (dashed) until the receiver's state shows it, SWP_PEND_MS at most.
+function swpTunPend() {
+  const p = swp.ui.tun;
+  if (!p) return null;
+  if (Date.now() - p.at > SWP_PEND_MS || (swp.st && p.set.join(',') === swp.st.tuners.join(','))) { swp.ui.tun = null; return null; }
+  return p;
+}
+function swpTunersRender() {
+  const el = $id('swp-tuners'), st = swp.st;
+  if (!el || !st) return;
+  const n = Math.max(1, st.available || 1);
+  if (el.childElementCount !== n) {
+    el.innerHTML = '';
+    for (let i = 0; i < n; i++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = String(i);
+      b.dataset.t = i;
+      b.addEventListener('click', () => swpTunerClick(i));
+      el.appendChild(b);
+    }
+  }
+  const pend = swpTunPend(), on = pend ? pend.set : st.tuners;
+  for (const b of el.children) {
+    const i = parseInt(b.dataset.t), p = on.includes(i);
+    b.classList.toggle('on', p);
+    b.classList.toggle('pend', !!pend && p !== st.tuners.includes(i));
+    b.setAttribute('aria-pressed', p ? 'true' : 'false');
+    const t = 'Tuner ' + i + ': ' + (p ? 'takes part in the sweep' + (on.length === 1 ? ' (at least one stays on)' : '') : 'not in the sweep') +
+              ' - more tuners = a faster sweep; each needs its antenna connected';
+    if (b._tip !== t) { b._tip = t; b.title = t; }
+  }
+}
+function swpTunerClick(i) {
+  const st = swp.st;
+  if (!st) return;
+  const cur = (swpTunPend() || {set: st.tuners}).set.slice(), k = cur.indexOf(i);
+  if (k >= 0) { if (cur.length <= 1) return; cur.splice(k, 1); }   // the last one stays on
+  else { cur.push(i); cur.sort((a, b) => a - b); }
+  swp.ui.tun = {set: cur, at: Date.now()};
+  setTimeout(swpTunersRender, SWP_PEND_MS + 30);
+  swpSendSoon('tuners', 'SWEEP_TUNERS:' + (cur.length === Math.max(1, st.available) ? 'all' : cur.join(',')));
+  swpTunersRender();
+}
+
+// Resolution (Auto + the FFT sizes as bin widths), Dwell, Run / Pause
+function swpResRender() {
+  const sel = $id('swp-res'), st = swp.st;
+  if (!sel) return;
+  if (sel.options.length !== SWP_FFT_SIZES.length + 1)
+    sel.innerHTML = '<option value="auto">Auto</option>' + SWP_FFT_SIZES.map(n => `<option value="${n}">${swpFmtHz(SWP_FS / n)}</option>`).join('');
+  const at = 'Auto' + (st && !st.res && st.fft_size ? ' · ' + swpFmtHz(SWP_FS / st.fft_size) : '');
+  if (sel.options[0].textContent !== at) sel.options[0].textContent = at;
+  if (!st || Date.now() < swp.ui.holdRes) return;
+  const v = st.res ? String(st.res) : 'auto';
+  if (sel.value !== v && [...sel.options].some(o => o.value === v)) sel.value = v;
+}
+function swpSetRes(v) {
+  swp.ui.holdRes = Date.now() + SWP_HOLD_MS;
+  swpHoldLater();
+  swpSendSoon('res', 'SWEEP_RES:' + (v === 'auto' ? 'auto' : parseInt(v)));
+}
+function swpSetDwell(raw) {
+  const el = $id('swp-dwell'), n = Math.round(Number(raw));
+  if (!Number.isFinite(n) || String(raw).trim() === '') { swp.ui.holdDw = 0; if (el) el.blur(); swpRenderCtl(); return; }
+  const v = Math.max(5, Math.min(1000, n));
+  if (el && String(el.value) !== String(v)) el.value = v;
+  swp.ui.holdDw = Date.now() + SWP_HOLD_MS;
+  swpHoldLater();
+  swpSendSoon('dwell', 'SWEEP_DWELL:' + v);
+}
+function swpRunToggle() {
+  if (!swp.st) return;
+  send('SWEEP_RUN:' + (swp.st.running ? '0' : '1'));
+}
+
+// ---- entering / leaving the mode, sizes ----
+function swpEnter() {
+  swp.fr = null; swp.tr = null; swp.hover = null; swp.drag = null;
+  if (swp.view && swp.view.t) clearTimeout(swp.view.t);
+  swp.view = null;
+  swp.seqMin = swp.viewSeq + 1;   // frames built for a view from before this are dropped
+  if (!swp.wf) {
+    swp.wf = new WaterfallDisplay('swp-wc', 'swp-wo');
+    swp.wf.setSpeed(viewCommon.speed);
+    swp.wf.setColormap(viewCommon.cmap);
+    const [a, b] = viewSafeRange(viewCommon.min, viewCommon.max);
+    swp.wf.setRange(a, b);
+  }
+  document.body.classList.toggle('swp-zoomed', swp.zoom.level > 1);
+  swpResize();
+  swpRenderCtl();
+  swpTitle();
+  swpStatus();
+  swpViewWant(true);
+}
+function swpLeave() {
+  if (swp.view && swp.view.t) clearTimeout(swp.view.t);
+  swp.view = null;
+  clearTimeout(swp.wfTimer); swp.wfPend = null;
+  swp.hover = null; swp.drag = null; swp.readout = '';
+  document.body.classList.remove('swp-zoomed', 'swp-panning');
+}
+function swpResize() {
+  const sb = $id('swp-spec-box'), wb = $id('swp-wf-box');
+  if (!sb || !wb || opMode !== 'sweep') return;
+  const dpr = window.devicePixelRatio || 1, w = sb.clientWidth, h = sb.clientHeight;
+  if (w < 60 || h < 30) return;
+  swp.dpr = dpr; swp.sw = w; swp.sh = h;
+  for (const id of ['swp-spec', 'swp-spec-ov']) {
+    const c = $id(id), cw = Math.round(w * dpr), ch = Math.round(h * dpr);
+    if (c.width !== cw) c.width = cw;
+    if (c.height !== ch) c.height = ch;
+    c.style.width = w + 'px'; c.style.height = h + 'px';
+  }
+  const ww = wb.clientWidth, wh = wb.clientHeight;
+  if (swp.wf && ww >= 60 && wh >= 20) {
+    swp.wf.resize(ww, wh, SWP_L, ww - SWP_L - SWP_R);   // (keeps its picture)
+    for (const c of [swp.wf.canvas, swp.wf.overlay]) { c.style.width = ww + 'px'; c.style.height = wh + 'px'; }
+  }
+  swpTrace();
+  swpDraw();
+  swpViewWant();
+}
+let swpRoRaf = 0;
+try {
+  const ro = new ResizeObserver(() => {
+    if (opMode !== 'sweep' || swpRoRaf) return;
+    swpRoRaf = requestAnimationFrame(() => { swpRoRaf = 0; swpResize(); });
+  });
+  ['swp-spec-box', 'swp-wf-box'].forEach(id => { const e = $id(id); if (e) ro.observe(e); });
+} catch (e) {}
+
+// ---- zoom (to one bin per point) and pan; the view the receiver sends ----
+// points asked for: the plot's width in device pixels (half with Slow link), 16 ... 4096
+function swpPoints() {
+  const w = swp.sw ? (swp.sw - SWP_L - SWP_R) * swp.dpr : 1024;
+  return Math.max(16, Math.min(4096, Math.round(specSlow ? w / 2 : w)));
+}
+function swpZoomMax() {
+  const s = swpSpan();
+  if (!s) return 1;
+  const bin = swp.st && swp.st.bin_hz > 0 ? swp.st.bin_hz : SWP_FS / SWP_FFT_SIZES[SWP_FFT_SIZES.length - 1];
+  return Math.max(1, (s[1] - s[0]) / (bin * swpPoints()));
+}
+// the window shown [w0, w1] Hz; keeps the zoom inside the range and its limit
+function swpWindow() {
+  const s = swpSpan();
+  if (!s) return null;
+  const z = swp.zoom, max = swpZoomMax();
+  if (z.level > max) z.level = max;
+  if (z.level <= 1.0001) { z.level = 1; z.off = 0; return [s[0], s[1]]; }
+  const w = (s[1] - s[0]) / z.level, mid = (s[0] + s[1]) / 2;
+  const c = Math.max(s[0] + w / 2, Math.min(s[1] - w / 2, mid + z.off));
+  z.off = c - mid;
+  return [c - w / 2, c + w / 2];
+}
+// one wheel notch: x1.25 in / out around the frequency under the pointer; false = no change
+function swpZoomWheel(zoomIn, f) {
+  const s = swpSpan(), win = swpWindow();
+  if (!s || !win) return false;
+  const z = swp.zoom, old = z.level;
+  let lvl = Math.max(1, Math.min(swpZoomMax(), zoomIn ? old * 1.25 : old / 1.25));
+  if (Math.abs(lvl - old) < 1e-9) return false;
+  if (lvl < 1.01) lvl = 1;
+  const w = win[1] - win[0], t = w > 0 ? (f - win[0]) / w : 0.5, w2 = (s[1] - s[0]) / lvl, mid = (s[0] + s[1]) / 2;
+  z.level = lvl;
+  z.off = lvl === 1 ? 0 : (f - t * w2 + w2 / 2) - mid;
+  return true;
+}
+// after a zoom / pan: at once from the last frame (cut / padded to the window), the detail follows
+function swpZoomed() {
+  swpTrace();
+  swpDraw();
+  zoomSyncSlider();
+  document.body.classList.toggle('swp-zoomed', swp.zoom.level > 1);
+  swpViewWant();
+}
+function swpViewWant(force) {
+  if (opMode !== 'sweep' || !swp.sw) return;
+  const win = swpWindow(), full = !win || swp.zoom.level <= 1;
+  const lo = full ? 0 : Math.floor(win[0]), hi = full ? 0 : Math.ceil(win[1]), pts = swpPoints();
+  const v = swp.view || (swp.view = {lo: NaN, hi: NaN, pts: 0, at: 0, t: null, want: null});
+  if (!force && v.lo === lo && v.hi === hi && v.pts === pts) { v.want = null; return; }
+  v.want = {lo, hi, pts};
+  const wait = SWP_SEND_MS - (Date.now() - v.at);
+  if (wait <= 0 && !v.t) swpViewFlush();
+  else if (!v.t) v.t = setTimeout(() => { v.t = null; swpViewFlush(); }, Math.max(0, wait));
+}
+function swpViewFlush() {
+  const v = swp.view;
+  if (!v || !v.want || applyingRemote || !ws || ws.readyState !== 1 || opMode !== 'sweep') return;
+  const w = v.want;
+  ws.send('SWEEP_VIEW:' + (++swp.viewSeq) + ':' + w.lo + ':' + w.hi + ':' + w.pts);
+  v.lo = w.lo; v.hi = w.hi; v.pts = w.pts; v.at = Date.now(); v.want = null;
+}
+function swpFreqAt(x) {
+  const win = swpWindow();
+  if (!win) return NaN;
+  const W = Math.max(1, swp.sw - SWP_L - SWP_R);
+  return win[0] + Math.max(0, Math.min(1, (x - SWP_L) / W)) * (win[1] - win[0]);
+}
+// the pointer on the spectrum or the waterfall: wheel = zoom, drag = pan (zoomed in), hover = readout
+function swpPtrInit() {
+  for (const id of ['swp-spec-box', 'swp-wf-box']) {
+    const el = $id(id);
+    if (!el) continue;
+    const xOf = e => e.clientX - el.getBoundingClientRect().left;
+    el.addEventListener('wheel', e => {
+      if (opMode !== 'sweep') return;
+      e.preventDefault();
+      if (!e.deltaY) return;
+      const f = swpFreqAt(xOf(e));
+      if (Number.isFinite(f) && swpZoomWheel(e.deltaY < 0, f)) { swp.hover = {x: xOf(e), box: id}; swpZoomed(); }
+    }, {passive: false});
+    el.addEventListener('pointerdown', e => {
+      if (opMode !== 'sweep' || e.button !== 0 || swp.zoom.level <= 1) return;
+      const win = swpWindow();
+      if (!win) return;
+      swp.drag = {x0: e.clientX, off0: swp.zoom.off, span: win[1] - win[0], id: e.pointerId, el};
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      document.body.classList.add('swp-panning');
+    });
+    el.addEventListener('pointermove', e => {
+      if (opMode !== 'sweep') return;
+      const d = swp.drag;
+      if (d && d.id === e.pointerId) {
+        const W = Math.max(1, swp.sw - SWP_L - SWP_R);
+        swp.zoom.off = d.off0 - (e.clientX - d.x0) / W * d.span;
+        swp.hover = {x: xOf(e), box: id};
+        swpZoomed();
+        return;
+      }
+      swp.hover = {x: xOf(e), box: id};
+      swpDrawOverlay();
+    });
+    const end = e => {
+      if (swp.drag && swp.drag.id === e.pointerId) { swp.drag = null; document.body.classList.remove('swp-panning'); }
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    el.addEventListener('pointerleave', () => { if (!swp.drag) { swp.hover = null; swpDrawOverlay(); } });
+  }
+}
+
+// ---- frames (binary type 10, 64-byte header; docs/dev/sweep-mode.md "The contract") ----
+function swpOnFrame(v, buf) {
+  if (buf.byteLength < 64) return;
+  const flags = v.getUint8(4), tun = v.getUint8(5), seq = v.getUint32(8, true), sweeps = v.getUint32(12, true);
+  const start = v.getFloat64(16, true), stop = v.getFloat64(24, true), p0 = v.getFloat64(32, true), step = v.getFloat64(40, true);
+  const prog = v.getFloat32(48, true), dur = v.getFloat32(52, true), grid = v.getUint32(56, true), n = v.getUint32(60, true);
+  if (n < 1 || n > 65536 || buf.byteLength < 64 + n || !(step > 0) || !(stop > start) || !Number.isFinite(p0)) return;
+  // frames in flight around a mode change, or built for a view from before this page entered the mode
+  if (opMode !== 'sweep' || seq < swp.seqMin) return;
+  const st = swp.st;
+  if (st && grid !== st.grid) {
+    // another grid than the receiver's last sweep message said: an old frame in flight (dropped) or
+    // its message is still to come; adopted only if it lasts (a receiver that never says)
+    const now = Date.now();
+    if (!swp.gridOdd || swp.gridOdd.grid !== grid) swp.gridOdd = {grid, since: now};
+    if (now - swp.gridOdd.since < 1500) return;
+    swpNewGrid(st.start_hz !== start || st.stop_hz !== stop);
+    st.grid = grid; st.start_hz = start; st.stop_hz = stop;
+    swp.gridOdd = null;
+  }
+  const u8 = new Uint8Array(buf, 64, n), mags = new Float32Array(n);
+  for (let i = 0; i < n; i++) mags[i] = u8[i] * (120 / 255);
+  swp.fr = {flags, tun, seq, sweeps, start, stop, p0, step, prog: Math.max(0, Math.min(1, prog || 0)), dur: dur > 0 ? dur : 0, grid, mags, t: Date.now()};
+  swpTrace();
+  swpDrawSoon();   // (a quick sweep of a narrow range completes far more often than the screen refreshes)
+  swpStatus();
+  if (flags & 2) swpWfLine();
+  specShowRes(swp.fr);   // the Display box's "Points sent"
+  swp.resText = swpFmtHz(step);
+  viewShowRes();
+}
+// the trace for the window shown, from the latest frame: its points in the window, padded with 0 dB
+// where it doesn't reach (zoomed out, until the wider frame comes) - specWindow, in Hz
+function swpTrace() {
+  const fr = swp.fr, win = swpWindow();
+  if (!fr || !win) { swp.tr = null; return; }
+  const [freqs, mags] = specWindow({start: fr.p0, step: fr.step, mags: fr.mags}, win[0], win[1]);
+  swp.tr = {w0: win[0], w1: win[1], freqs, mags};
+}
+// one waterfall line per complete sweep (flag 2), at most one per SWP_WF_MS - a quicker one waits
+// for its turn, the newest replacing an older one still waiting
+function swpWfLine() {
+  if (!swp.wf || !swp.tr || swp.tr.freqs.length < 2) return;
+  const line = {f: swp.tr.freqs, m: swp.tr.mags};
+  const wait = SWP_WF_MS - (Date.now() - swp.wfAt);
+  if (wait <= 0 && !swp.wfPend) { swpWfAdd(line); return; }
+  const queued = !!swp.wfPend;
+  swp.wfPend = line;
+  if (!queued) swp.wfTimer = setTimeout(() => {
+    const l = swp.wfPend;
+    swp.wfPend = null;
+    if (l && opMode === 'sweep') swpWfAdd(l);
+  }, Math.max(0, wait));
+}
+function swpWfAdd(l) {
+  swp.wf.addLine(l.f, l.m, false);
+  swp.wfAt = Date.now();
+  swp.lines++;
+  swpDrawOverlay();
+}
+
+// ---- drawing ----
+function swpTitle() {
+  const s = swpSpan(), el = $id('fpt');
+  if (!el) return;
+  const t = 'Sweep' + (s ? ' · ' + (s[0] / 1e6).toFixed(3) + ' - ' + (s[1] / 1e6).toFixed(3) + ' MHz' : '');
+  if (el.textContent !== t) el.textContent = t;
+  el.title = '';
+}
+// paused: the receiver's state says so (no frames come while the tuners stand), or the frame does
+function swpPaused() { return !!((swp.st && !swp.st.running) || (swp.fr && (swp.fr.flags & 4))); }
+// what the sweep is doing - the header (progress bar, %, the last sweep's time) and the Sweep box. 20 a
+// second: only texts that changed, in fixed widths (nothing moves)
+function swpStatus() {
+  const fr = swp.fr, st = swp.st;
+  const prog = fr ? fr.prog : 0, paused = swpPaused(), none = !fr || !!(fr.flags & 8);
+  const bi = $id('swp-pbar-i');
+  if (bi) { const tf = 'scaleX(' + prog.toFixed(3) + ')'; if (bi.style.transform !== tf) bi.style.transform = tf; }
+  const pb = $id('swp-pbar');
+  if (pb) pb.classList.toggle('paused', paused);
+  swpTxt('swp-hdr-p', fr && !none ? Math.round(prog * 100) + ' %' : '');
+  swpTxt('swp-hdr-t', fr && fr.dur > 0 ? swpFmtS(fr.dur) : '');
+  swpTxt('swp-state', !st && !fr ? '-' : paused ? 'Paused' : none ? 'No data yet' : 'Running');
+  swpTxt('swp-time', fr && fr.dur > 0 ? swpFmtS(fr.dur) : '-');
+  swpTxt('swp-prog', fr && !none ? Math.round(prog * 100) + ' %' : '-');
+  swpTxt('swp-count', fr ? String(fr.sweeps) : '-');
+  if (st && fr) { const k = fr.tun; swpTxt('swp-hops', st.hops + ' · ' + k + (k === 1 ? ' tuner' : ' tuners')); }
+}
+// a round step for the frequency grid: 1 / 2 / 2.5 / 5 x 10^k Hz, at least `want`
+function swpNiceStep(want) {
+  const p = Math.pow(10, Math.floor(Math.log10(Math.max(1, want))));
+  for (const m of [1, 2, 2.5, 5]) if (m * p >= want) return m * p;
+  return 10 * p;
+}
+function swpDecimals(hz) {   // MHz decimals that show hz exactly
+  let d = 0;
+  const x = hz / 1e6;
+  while (d < 6 && Math.abs(x * Math.pow(10, d) - Math.round(x * Math.pow(10, d))) > 1e-6) d++;
+  return d;
+}
+// at most once per screen refresh
+let swpRaf = 0;
+function swpDrawSoon() {
+  if (swpRaf) return;
+  swpRaf = requestAnimationFrame(() => { swpRaf = 0; swpDraw(); });
+}
+function swpDraw() {
+  const c = $id('swp-spec');
+  if (!c || !swp.sw || !swp.sh || opMode !== 'sweep') return;
+  const ctx = c.getContext('2d');
+  ctx.setTransform(swp.dpr, 0, 0, swp.dpr, 0, 0);
+  const w = swp.sw, h = swp.sh, L = SWP_L, R = w - SWP_R, top = 8, bot = h - 16, W = R - L;
+  ctx.fillStyle = '#171c23';
+  ctx.fillRect(0, 0, w, h);
+  const ymax = viewCommon.y || 60;
+  ctx.font = '10px sans-serif';
+  ctx.lineWidth = 1;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let db = 0, st = ymax > 60 ? 20 : 10; db <= ymax; db += st) {
+    const y = Math.round(bot - db / ymax * (bot - top)) + 0.5;
+    ctx.strokeStyle = '#272e37';
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke();
+    ctx.fillStyle = '#707883'; ctx.fillText(String(db), L - 5, y);
+  }
+  const win = swpWindow(), fr = swp.fr;
+  if (win) {
+    // frequency grid: a label about every 90 px, MHz
+    const span = win[1] - win[0], fs = swpNiceStep(span / Math.max(1, W / 90)), dec = swpDecimals(fs);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let k = Math.ceil(win[0] / fs); k * fs <= win[1]; k++) {
+      const f = k * fs, x = Math.round(L + (f - win[0]) / span * W) + 0.5;
+      ctx.strokeStyle = '#272e37';
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke();
+      if (x > L + 18 && x < R - 18) { ctx.fillStyle = '#707883'; ctx.fillText((f / 1e6).toFixed(dec), x, bot + 3); }
+    }
+  }
+  const tr = swp.tr;
+  if (tr && tr.freqs.length > 1 && tr.w1 > tr.w0) {
+    const n = tr.freqs.length, sp = tr.w1 - tr.w0;
+    const xOf = f => L + (f - tr.w0) / sp * W, yOf = v => bot - Math.max(0, Math.min(1, v / ymax)) * (bot - top);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(L, top - 1, W, bot - top + 1); ctx.clip();
+    ctx.beginPath();
+    ctx.moveTo(xOf(tr.freqs[0]), bot);
+    for (let i = 0; i < n; i++) ctx.lineTo(xOf(tr.freqs[i]), yOf(tr.mags[i]));
+    ctx.lineTo(xOf(tr.freqs[n - 1]), bot);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(122,184,247,0.16)';
+    ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { const x = xOf(tr.freqs[i]), y = yOf(tr.mags[i]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+    ctx.strokeStyle = '#7ab8f7';
+    ctx.stroke();
+    ctx.restore();
+  }
+  // the sweep under way: a bar along the top of the plot (amber while paused)
+  const paused = swpPaused();
+  if (fr && !(fr.flags & 8)) { ctx.fillStyle = paused ? '#e3a842' : '#48a0f4'; ctx.fillRect(L, 1, W * fr.prog, 3); }
+  const msg = !swp.st && !fr ? 'Waiting for the receiver' : !fr || (fr.flags & 8) ? 'No data yet' : paused ? 'Paused' : '';
+  if (msg) {
+    ctx.font = '12px sans-serif';
+    ctx.textBaseline = 'top';
+    if (!fr || (fr.flags & 8)) { ctx.textAlign = 'center'; ctx.fillStyle = '#7f8995'; ctx.fillText(msg, L + W / 2, top + (bot - top) / 2 - 6); }
+    else { ctx.textAlign = 'right'; ctx.fillStyle = '#f4c170'; ctx.fillText(msg, R - 6, top + 4); }
+  }
+  swpDrawOverlay();
+}
+// the pointer's line across the spectrum and the waterfall, and its frequency and level
+function swpDrawOverlay() {
+  const c = $id('swp-spec-ov');
+  if (!c || !swp.sw) return;
+  const ctx = c.getContext('2d');
+  ctx.setTransform(swp.dpr, 0, 0, swp.dpr, 0, 0);
+  ctx.clearRect(0, 0, swp.sw, swp.sh);
+  const wf = swp.wf, wctx = wf && wf.overlayCtx;
+  if (wctx) wctx.clearRect(0, 0, wf.width, wf.height);
+  const hv = swp.hover, L = SWP_L, R = swp.sw - SWP_R, W = R - L, win = swpWindow();
+  swp.readout = '';
+  if (!hv || !win || opMode !== 'sweep' || hv.x < L || hv.x > R) return;
+  const x = Math.round(hv.x) + 0.5, f = swpFreqAt(hv.x), tr = swp.tr;
+  ctx.strokeStyle = 'rgba(205,213,223,0.55)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, 6); ctx.lineTo(x, swp.sh - 16); ctx.stroke();
+  if (wctx) { wctx.strokeStyle = 'rgba(205,213,223,0.45)'; wctx.lineWidth = 1; wctx.beginPath(); wctx.moveTo(x, 0); wctx.lineTo(x, wf.height); wctx.stroke(); }
+  // the level: the highest point within the pointer's pixel (the points are max-pooled too)
+  let db = NaN;
+  if (tr && tr.freqs.length > 1) {
+    const st = tr.freqs[1] - tr.freqs[0], half = Math.max(st / 2, (win[1] - win[0]) / W / 2);
+    const i0 = Math.max(0, Math.ceil((f - half - tr.freqs[0]) / st)), i1 = Math.min(tr.freqs.length - 1, Math.floor((f + half - tr.freqs[0]) / st));
+    for (let i = i0; i <= i1; i++) if (!(tr.mags[i] <= db)) db = tr.mags[i];
+    if (!Number.isFinite(db)) { const i = Math.max(0, Math.min(tr.freqs.length - 1, Math.round((f - tr.freqs[0]) / st))); db = tr.mags[i]; }
+  }
+  const res = Math.max(tr && tr.freqs.length > 1 ? tr.freqs[1] - tr.freqs[0] : 0, (win[1] - win[0]) / W);
+  const dec = res < 100 ? 5 : res < 1000 ? 4 : 3;
+  const t = (f / 1e6).toFixed(dec) + ' MHz' + (Number.isFinite(db) ? '  ' + db.toFixed(1) + ' dB' : '');
+  swp.readout = t;
+  ctx.font = '12px sans-serif';
+  const tw = Math.ceil(ctx.measureText(t).width) + 12, th = 20;
+  let bx = x + 8;
+  if (bx + tw > R) bx = x - 8 - tw;
+  bx = Math.max(L, bx);
+  ctx.fillStyle = 'rgba(11,15,20,0.85)';
+  ctx.fillRect(bx, 10, tw, th);
+  ctx.strokeStyle = '#4f5a69';
+  ctx.strokeRect(bx + 0.5, 10.5, tw - 1, th - 1);
+  ctx.fillStyle = '#dde4ec';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(t, bx + 6, 10 + th / 2);
+}
+swpRangeInit();
+swpResRender();
+swpPtrInit();
+swpStatus();
 
 // ============================================================================
 // BEARING SPECTRUM (FFT message type 9, BIN_DOA:) - docs/dev/bearing-spectrum.md
@@ -13008,11 +13837,12 @@ binDoaLegend();
 // ---- split: main display (#fp height, px) / panes (--spec-frac, shared) ----
 const FP_DEFAULT_H = 280, PANE_SPLIT_DEFAULT = 0.42;
 function fpApplyHeight(h) {
-  const fp = $id('fp'), sc = fp && fp.parentElement;
+  const fp = $id('fp'), sc = fp && fp.parentElement, sw = $id('swp-spec-box');   // (sweep mode's spectrum: the same height)
   if (!fp || !sc) return;
-  if (h == null) { fp.style.height = ''; return; }
+  if (h == null) { fp.style.height = ''; if (sw) sw.style.height = ''; return; }
   const max = Math.max(80, sc.clientHeight - 80);
   fp.style.height = Math.round(Math.max(80, Math.min(max, h))) + 'px';
+  if (sw) sw.style.height = fp.style.height;
 }
 function paneSplitApply(f) {
   const g = $id('indep-grid');
@@ -13174,6 +14004,8 @@ if (mobileLayoutMQ.addEventListener) {
 // keeps element IDs and event handlers intact, so the JS that drives them
 // works unchanged in either location.
 const MOBILE_RELOCATIONS = [
+  {id: 'tb-swp-range', slot: 'mobile-controls-slot'},   // sweep mode's range and tuners (only shown in that mode)
+  {id: 'tb-swp-tuners', slot: 'mobile-controls-slot'},
   {id: 'tb-gain', slot: 'mobile-controls-slot'},     // the drawer's rows in the bar's order
   {id: 'tb-audio', slot: 'mobile-controls-slot'},
   {id: 'tb-step', slot: 'mobile-controls-slot'},
