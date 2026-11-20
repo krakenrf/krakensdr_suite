@@ -1,9 +1,9 @@
 // kraken_whisper --quantize IN.bin OUT.bin q8_0: a whisper.cpp model (f16 / f32
-// weights) -> 8-bit (q8_0) or 5-bit (q5_0, q5_1) weights. Part of the helper
-// binary, not a program of its own: Docker and the Windows package ship only
-// transcribe/build/kraken_whisper[.exe], and kraken_doa / setup.sh make the
-// derived catalogue models (base.en-q8_0, small.en-q8_0 - whisper.cpp
-// publishes no .en q8_0 files) with it.
+// weights) -> 8-bit (q8_0), 5-bit (q5_0, q5_1) or 4-bit (q4_0) weights. Part of
+// the helper binary, not a program of its own: Docker and the Windows package
+// ship only transcribe/build/kraken_whisper[.exe], and kraken_doa / setup.sh
+// make the derived catalogue models (base.en-q8_0, small.en-q8_0, base.en-q4_0,
+// small.en-q4_0 - whisper.cpp publishes no .en q8_0 / q4_0 files) with it.
 //
 // Ported from whisper.cpp v1.9.4: examples/quantize/quantize.cpp
 // (whisper_model_quantize) and examples/common-ggml.cpp
@@ -331,8 +331,9 @@ int quantize_model(const std::string& in_path, const std::string& out_path, cons
     if (type == "q8_0") { ftype = GGML_FTYPE_MOSTLY_Q8_0; qtype = GGML_TYPE_Q8_0; }
     else if (type == "q5_0") { ftype = GGML_FTYPE_MOSTLY_Q5_0; qtype = GGML_TYPE_Q5_0; }
     else if (type == "q5_1") { ftype = GGML_FTYPE_MOSTLY_Q5_1; qtype = GGML_TYPE_Q5_1; }
+    else if (type == "q4_0") { ftype = GGML_FTYPE_MOSTLY_Q4_0; qtype = GGML_TYPE_Q4_0; }
     else {
-        fprintf(stderr, "kraken_whisper --quantize: unknown type '%s' (q8_0, q5_0 or q5_1)\n", type.c_str());
+        fprintf(stderr, "kraken_whisper --quantize: unknown type '%s' (q8_0, q5_0, q5_1 or q4_0)\n", type.c_str());
         return 1;
     }
     // ggml's fp16 tables

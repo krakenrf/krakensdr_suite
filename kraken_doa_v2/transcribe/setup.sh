@@ -11,10 +11,16 @@
 #   transcribe/setup.sh --update           rebuild if set up already (kraken_doa's make)
 #   transcribe/setup.sh --list             the models that can be downloaded
 #
-# base.en-q8_0 / small.en-q8_0 (8-bit: ~25 % less CPU, as accurate) are made
-# HERE from base.en / small.en by the helper (kraken_whisper --quantize):
-# whisper.cpp publishes no English-only q8_0 files. The f16 model is downloaded
-# for it when missing, and removed again unless it was asked for too.
+# base.en-q8_0 / small.en-q8_0 (8-bit: ~25 % less CPU, as accurate) and
+# base.en-q4_0 / small.en-q4_0 (4-bit: less CPU and memory again - for a Pi)
+# are made HERE from base.en / small.en by the helper (kraken_whisper
+# --quantize): whisper.cpp publishes no English-only q8_0 / q4_0 files. The f16
+# model is downloaded for it when missing, and removed again unless it was
+# asked for too.
+# 64-bit Arm Linux with the dot-product instructions (a Pi 5; not a Pi 4):
+# the build adds Arm's KleidiAI kernels for 4- / 8-bit models (downloaded by
+# CMake from github.com/ARM-software/kleidiai; without network the build goes
+# on without them). An existing build gets them with `make whisper`.
 #
 # Environment: WHISPER_GPU = auto (default: the GPU through Metal on Apple
 # Silicon, the CPU everywhere else) | on (Metal on any Mac - refused off
@@ -31,7 +37,7 @@
 # macOS: the same script (Xcode command line tools + brew install cmake);
 # Accelerate, and Metal on Apple Silicon (WHISPER_GPU above).
 # After it: tick "Transcribe" on a VFO card in kraken_doa (no restart needed).
-HELP_LINES=33
+HELP_LINES=39
 set -euo pipefail
 
 SELF=$(readlink -f "$0")
@@ -84,9 +90,11 @@ fi
 CATALOGUE="tiny.en 75 fastest,_least_accurate
 base.en 142 default:_good_on_a_Pi_5,_faster_than_real_time
 base.en-q8_0 78 base.en_8-bit:_less_CPU,_as_accurate_-_made_here_from_base.en
+base.en-q4_0 44 base.en_4-bit:_least_CPU_and_memory_-_made_here_from_base.en
 base.en-q5_1 57 base.en_compressed:_less_memory,_about_as_accurate
 small.en 466 most_accurate_on_a_Pi:_about_2x_slower_than_real_time
 small.en-q8_0 252 small.en_8-bit:_less_CPU,_as_accurate_-_made_here_from_small.en
+small.en-q4_0 139 small.en_4-bit:_less_CPU_and_memory_-_made_here_from_small.en
 small.en-q5_1 181 small.en_compressed
 tiny 75 any_language_(or_translated_to_English),_fastest
 base 142 any_language_(or_translated_to_English)
@@ -96,14 +104,16 @@ small-q5_1 181 small_compressed
 medium.en-q5_0 514 PC-class_CPU_only
 large-v3-turbo-q5_0 547 PC-class_CPU_only,_best_for_other_languages"
 
-# DERIVED models: made on this machine from <name minus -q8_0>, never
-# downloaded as such (kraken_doa's "Get" makes them the same way)
-DERIVED="base.en-q8_0 small.en-q8_0"
+# DERIVED models: made on this machine from <name minus -q8_0 / -q4_0>, never
+# downloaded as such (kraken_doa's "Get" makes them the same way); the
+# quantization type is the name's last part
+DERIVED="base.en-q8_0 small.en-q8_0 base.en-q4_0 small.en-q4_0"
 HELPER=build/kraken_whisper$EXE
 
 die() { echo "setup.sh: $*" >&2; exit 1; }
 
-derived_from() { case " $DERIVED " in *" $1 "*) echo "${1%-q8_0}" ;; *) return 1 ;; esac; }
+derived_from() { case " $DERIVED " in *" $1 "*) echo "${1%-q?_0}" ;; *) return 1 ;; esac; }
+derived_type() { echo "${1##*-}"; }
 
 list_models() {
     echo "Speech models (transcribe/setup.sh <name>):"
@@ -143,23 +153,34 @@ fetch() {   # fetch <url> <file>: atomic, resumable-safe
     mv "$out.part" "$out"
 }
 
+# f16 models fetched only to make derived ones: removed once all asked-for
+# models are made (base.en-q8_0 + base.en-q4_0 download base.en once)
+TEMP_F16=""
+drop_temp_f16() {
+    local src
+    for src in $TEMP_F16; do
+        wanted "$src" && continue
+        rm -f "$MODELS_DIR/ggml-$src.bin"
+        echo "  removed ggml-$src.bin again (downloaded only to make the models above)"
+    done
+    TEMP_F16=""
+}
+
 make_derived() {   # make_derived <name> <source model>: quantize the source here
-    local m=$1 src=$2 out="$MODELS_DIR/ggml-$1.bin" in="$MODELS_DIR/ggml-$2.bin" fetched=0
+    local m=$1 src=$2 out="$MODELS_DIR/ggml-$1.bin" in="$MODELS_DIR/ggml-$2.bin"
     [ -s "$out" ] && { echo "  have $out"; return 0; }
     if [ ! -s "$in" ]; then
         fetch "$MODEL_URL/ggml-$src.bin" "$in"
-        fetched=1
+        TEMP_F16="$TEMP_F16 $src"
     fi
     echo "  making $(basename "$out") from $(basename "$in") ..."
-    local ok=1
-    "./$HELPER" --quantize "$in" "$out.part" q8_0 >/dev/null || ok=0
-    if [ $ok = 1 ]; then mv "$out.part" "$out"; else rm -f "$out.part"; fi
-    # the f16 model only came for this
-    if [ $fetched = 1 ] && ! wanted "$src"; then
-        rm -f "$in"
-        echo "  removed $(basename "$in") again (downloaded only to make $m)"
+    if "./$HELPER" --quantize "$in" "$out.part" "$(derived_type "$m")" >/dev/null; then
+        mv "$out.part" "$out"
+    else
+        rm -f "$out.part"
+        drop_temp_f16
+        die "making $m from $src failed"
     fi
-    [ $ok = 1 ] || die "making $m from $src failed"
 }
 
 # Windows: the CMake options of the build. Ninja (no make in a native
@@ -212,6 +233,25 @@ resolve_gpu() {
     else
         GPU_ARGS=(-DKRAKEN_WHISPER_GPU=OFF)
     fi
+}
+
+# ARM_ARGS: Arm's KleidiAI matrix kernels (4- / 8-bit weights, ggml's
+# GGML_CPU_KLEIDIAI) on 64-bit Arm Linux whose CPU has the dot-product
+# instructions they need (asimddp: a Pi 5's Cortex-A76; a Pi 4's A72 has none,
+# where they would only cost a download and compile time). The build is for
+# this CPU anyway (GGML_NATIVE). KLEIDIAI=on | off overrides the detection
+kleidiai_args() {
+    ARM_ARGS=()
+    [ $WINDOWS = 0 ] && [ $MACOS = 0 ] && [ "$(uname -m)" = aarch64 ] || return 0
+    local want=${KLEIDIAI:-auto}
+    if [ "$want" = auto ]; then
+        if grep -qw asimddp /proc/cpuinfo 2>/dev/null; then want=on; else want=off; fi
+    fi
+    case "$want" in
+        on) ARM_ARGS=(-DGGML_CPU_KLEIDIAI=ON); echo "With Arm's KleidiAI kernels (this CPU has the dot-product instructions)" ;;
+        off) ARM_ARGS=(-DGGML_CPU_KLEIDIAI=OFF) ;;
+        *) die "KLEIDIAI must be auto, on or off (not '$want')" ;;
+    esac
 }
 
 build() {
@@ -269,6 +309,7 @@ build() {
         echo "WHISPER_GPU=on on an Intel Mac: Metal may well be slower than the CPU here"
     fi
     PLATFORM_ARGS=()
+    kleidiai_args
     if [ $WINDOWS = 1 ]; then
         win_cmake_args
         # a build/ configured for another generator (an earlier try) can't be reused
@@ -279,8 +320,24 @@ build() {
     else
         echo "Building kraken_whisper ($JOBS jobs, $GPU_NAME - takes ~10 min on a Pi 5) ..."
     fi
+    mkdir -p build
     # shellcheck disable=SC2086
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} "${GPU_ARGS[@]}" ${WHISPER_CMAKE_ARGS:-} >/dev/null
+    if ! cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} "${GPU_ARGS[@]}" \
+               ${ARM_ARGS[@]+"${ARM_ARGS[@]}"} ${WHISPER_CMAKE_ARGS:-} > build/cmake.log 2>&1; then
+        if [ "${ARM_ARGS[*]:-}" = -DGGML_CPU_KLEIDIAI=ON ]; then
+            # KleidiAI's sources come from GitHub at configure time: offline, without them
+            mv build/cmake.log build/cmake-kleidiai.log
+            echo "KleidiAI could not be fetched (no network?) - building without it (see transcribe/build/cmake-kleidiai.log)"
+            ARM_ARGS=(-DGGML_CPU_KLEIDIAI=OFF)
+            # shellcheck disable=SC2086
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} "${GPU_ARGS[@]}" \
+                  "${ARM_ARGS[@]}" ${WHISPER_CMAKE_ARGS:-} > build/cmake.log 2>&1 || { cat build/cmake.log; die "cmake failed"; }
+        else
+            cat build/cmake.log
+            die "cmake failed"
+        fi
+    fi
+    rm -f build/cmake.log
     cmake --build build --target kraken_whisper -j "$JOBS"
     echo "$GPU_MODE" > build/.gpu_mode
     echo "${GPU_ARGS[*]}" > build/.gpu_args
@@ -317,6 +374,8 @@ if [ $do_models = 1 ]; then
         models=(base.en)
     fi
     echo "Models -> $MODELS_DIR"
+    # a download that fails later (die) must not leave an f16 fetched for an earlier model
+    trap drop_temp_f16 EXIT
     # (${a[@]+...}: bash 3.2 - macOS's - calls an empty array unbound under set -u)
     for m in ${models[@]+"${models[@]}"}; do
         if src=$(derived_from "$m"); then
@@ -325,6 +384,7 @@ if [ $do_models = 1 ]; then
             fetch "$MODEL_URL/ggml-$m.bin" "$MODELS_DIR/ggml-$m.bin"
         fi
     done
+    drop_temp_f16
     # voice activity detection: skips noise / silence before whisper (which
     # otherwise "hears" words in noise)
     fetch "$VAD_URL/ggml-$VAD_MODEL.bin" "$MODELS_DIR/ggml-$VAD_MODEL.bin"

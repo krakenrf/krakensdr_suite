@@ -62,18 +62,21 @@ constexpr bool PC_NOTES = true;
 constexpr bool PC_NOTES = false;
 #endif
 // from: a DERIVED model - not downloaded as such (whisper.cpp publishes no
-// English-only q8_0 files): `from` (its f16 model) is downloaded unless
-// installed, and `kraken_whisper --quantize` makes this one of it
+// English-only q8_0 / q4_0 files): `from` (its f16 model) is downloaded unless
+// installed, and `kraken_whisper --quantize` makes this one of it, of the type
+// the name ends with (-q8_0, -q4_0)
 struct CatalogueEntry { const char* name; int mb; bool multi; const char* note; const char* from = nullptr; };
 const CatalogueEntry MODEL_CATALOGUE[] = {
     {"tiny.en", 75, false, "fastest, least accurate"},
     {"base.en", 142, false, PC_NOTES ? "recommended: many times faster than real time on a PC"
                                      : "recommended: good on a Pi 5, faster than real time"},
     {"base.en-q8_0", 78, false, "base.en 8-bit: less CPU, as accurate - made here from base.en", "base.en"},
+    {"base.en-q4_0", 44, false, "base.en 4-bit: least CPU and memory - made here from base.en", "base.en"},
     {"base.en-q5_1", 57, false, "base.en compressed: less memory, about as accurate"},
     {"small.en", 466, false, PC_NOTES ? "more accurate, faster than real time on a PC"
                                       : "most accurate on a Pi: about 2x slower than real time"},
     {"small.en-q8_0", 252, false, "small.en 8-bit: less CPU, as accurate - made here from small.en", "small.en"},
+    {"small.en-q4_0", 139, false, "small.en 4-bit: less CPU and memory - made here from small.en", "small.en"},
     {"small.en-q5_1", 181, false, "small.en compressed"},
     {"tiny", 75, true, "any language (or translated to English), fastest"},
     {"base", 142, true, "any language (or translated to English)"},
@@ -2262,11 +2265,12 @@ void push_input(Input&& in, double seconds) {
 
 // One step of a download: a file fetched (url -> out, through out.part), or -
 // a derived model (CatalogueEntry::from) - its f16 model quantized by the
-// helper (`kraken_whisper --quantize in out.part q8_0`, then renamed); `temp`:
+// helper (`kraken_whisper --quantize in out.part <qtype>`, then renamed); `temp`:
 // the f16 file was fetched just for this and goes afterwards. total = the
 // expected bytes of what grows (the progress)
 struct DlStep {
     bool quantize = false;
+    std::string qtype;  // quantize: the type, the derived name's last part ("q8_0", "q4_0")
     std::string url, in, out;
     uint64_t total = 0;
     bool temp = false;
@@ -2298,12 +2302,13 @@ void clean_model_leftovers() {
     drop(md + "/ggml-" + VAD_NAME + ".bin.part", true);
 }
 
-// Can the helper on disk make the derived models (kraken_whisper --quantize,
-// 2026-11-20)? Its usage (--help, on stderr) names the option; an older one's
-// doesn't. 1 = yes, 0 = it ran and doesn't (older), -1 = couldn't tell (*why:
+// Can the helper on disk make derived models of this type (kraken_whisper
+// --quantize, 2026-11-20; q4_0 since later that day)? Its usage (--help, on
+// stderr) names the option and the types; an older one's doesn't. 1 = yes,
+// 0 = it ran and can't (older), -1 = couldn't tell (*why:
 // it didn't start, or said nothing within 5 s - a first start on Windows can
 // be slow while a virus scanner looks at it). A few ms; on the download thread
-int helper_quantizes(std::string* why) {
+int helper_quantizes(const std::string& qtype, std::string* why) {
     kproc::SpawnOptions o;
     o.argv = {helper_exe(), "--help"};
     o.in = kproc::Stdio::Null;
@@ -2332,8 +2337,9 @@ int helper_quantizes(std::string* why) {
         proc.kill();
         proc.wait();
     }
-    if (text.find("--quantize") != std::string::npos) return 1;
-    if (text.find("usage") != std::string::npos) return 0;   // its usage, without the option
+    const size_t qo = text.find("--quantize");
+    if (qo != std::string::npos && text.find(qtype, qo) != std::string::npos) return 1;
+    if (text.find("usage") != std::string::npos) return 0;   // its usage, without the option / type
     *why = eof ? "it printed no usage" : "it did not answer within 5 s";
     return -1;
 }
@@ -2342,7 +2348,7 @@ int helper_quantizes(std::string* why) {
 bool run_quantize(const DlStep& q, const std::string& part, std::string* err) {
     State& s = S();
     kproc::SpawnOptions o;
-    o.argv = {helper_exe(), "--quantize", q.in, part, "q8_0"};
+    o.argv = {helper_exe(), "--quantize", q.in, part, q.qtype};
     o.in = kproc::Stdio::Null;
     o.out = kproc::Stdio::Null;
     o.err = kproc::Stdio::Pipe;
@@ -2391,10 +2397,13 @@ void download_thread(std::vector<DlStep> steps) {
     // a model made here: first whether the helper can (an older one has no
     // --quantize and would print its usage and exit 1 - after a download
     // it couldn't use); here, not on the uWS thread (review 2026-11-20)
-    if (std::any_of(steps.begin(), steps.end(), [](const DlStep& f) { return f.quantize; })) {
+    const auto qs = std::find_if(steps.begin(), steps.end(), [](const DlStep& f) { return f.quantize; });
+    if (qs != steps.end()) {
         std::string why;
-        const int q = helper_quantizes(&why);
-        if (q == 0) err = "the speech helper is older than the 8-bit models - update it (make whisper), then Get again";
+        const int q = helper_quantizes(qs->qtype, &why);
+        if (q == 0)
+            err = "the speech helper is older than this model (it cannot make " + qs->qtype +
+                  " models) - update it (make whisper), then Get again";
         else if (q < 0) err = "could not check the speech helper: " + why;
         if (!err.empty()) steps.clear();
     }
@@ -2785,6 +2794,7 @@ bool download_model(const std::string& name, std::string* err) {
             const CatalogueEntry* src = catalogue(ce->from);
             DlStep q;
             q.quantize = true;
+            q.qtype = name.substr(name.rfind('-') + 1);   // "base.en-q4_0" -> "q4_0"
             q.in = model_path(ce->from);
             q.out = model_path(name);
             q.total = static_cast<uint64_t>(ce->mb) * mb;

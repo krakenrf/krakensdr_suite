@@ -12,8 +12,8 @@
 //       --stream: Live text as kraken_doa runs it (a partial decode of the
 //       audio so far every STEP_MS, the words two partials agree on), then the
 //       final transcript
-//   kraken_whisper --quantize IN.bin OUT.bin q8_0|q5_0|q5_1
-//       an f16 model -> 8 / 5-bit weights (quantize.cpp)
+//   kraken_whisper --quantize IN.bin OUT.bin q8_0|q5_0|q5_1|q4_0
+//       an f16 model -> 8 / 5 / 4-bit weights (quantize.cpp)
 //
 // One job at a time (kraken_doa queues them). Each job: the utterance ->
 // Silero VAD (when its model is given): only the speech parts, padded, joined
@@ -869,7 +869,7 @@ void usage() {
             "usage: kraken_whisper --serve --model M.bin [--vad V.bin] [--threads N] [--language L]\n"
             "       kraken_whisper --file clip.wav --model M.bin [--vad V.bin] [--threads N] [--language L]\n"
             "                      [--prompt \"words\"] [--beam N] [--no-vad] [--translate] [--partial | --stream STEP_MS]\n"
-            "       kraken_whisper --quantize IN.bin OUT.bin q8_0|q5_0|q5_1\n");
+            "       kraken_whisper --quantize IN.bin OUT.bin q8_0|q5_0|q5_1|q4_0\n");
 }
 
 }  // namespace
