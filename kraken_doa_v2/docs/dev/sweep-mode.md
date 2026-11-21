@@ -504,8 +504,8 @@ refused; out-of-range numbers are clamped:
   under one mutex (a hop's write ~U values + their ancestors; a frame ~4096
   pools); the plan reaches the worker through a generation number.
 
-**Measurements** (x86 dev machine, shared - load 10-29; no Pi was
-available to this worker: the Pi numbers below are not measured).
+**Measurements** (x86 dev machine, shared - load 10-29; 2026-11-20. The
+Raspberry Pi 5 figures of 2026-11-21 follow below).
 - Engine bench (job scratch `bench/bench_sweep.cpp`: the real sweep.cpp fed
   5 tuners x 16384-sample packets as fast as it takes them, full range): the
   worker takes 3150-3740 packets/s = 21-25x real time (N = 4096: 21x, N = 128
@@ -526,13 +526,58 @@ available to this worker: the Pi numbers below are not measured).
   4.0-4.2 % before. Of the four
   pages' cost the frame build is ~300 us x 80 frames/s; the rest is uWS /
   TLS / deflate (the same with compression off: 7.5 vs 9.2 %).
-- On a Pi 4 / 5: NOT measured. Here the whole of sweep mode costs a fifth
-  (no page) to two fifths (four pages) of what independent mode costs with
-  one page; the worker does what independent mode's FFT workers do (one FFT
-  per sample of every tuner) without the decimation, audio and spectrum
-  work, so it should fit where independent mode fits. The frames scale with
-  the pages (~300 us each at the cap here - expect several times that on a
-  Pi, i.e. a few % of a core per page at 20 frames a second).
+**On the Raspberry Pi 5** (2026-11-21, the user's test Pi: Pi 5 Model B
+Rev 1.1, 8 GB, Debian 13, kernel 6.18.34, gcc 14.2; the integration branch
+at 3919d64 - heimdall's dwell in whole packets, default dwell 5 = one 8091
+packet a hop; no KrakenSDR used: the fake heimdall). Every figure with
+45.5-53 C and `get_throttled` 0x0; load 0.0-1.3 before each run. x86 = the
+dev machine the same day (load 4-13).
+- Clean test build (`-j3`): 179 s. No warning from sweep mode's code; the
+  7 warnings are the old ones (two sign-compares in fft_processor.cpp, one in
+  message_builders.cpp, Eigen's maybe-uninitialized).
+- The Python fake heimdall keeps real time ON the Pi: 146.6 packets/s
+  (1.00x, 24.0 MB/s) with 27 % (independent) / 44 % (sweep) of a core - the
+  CPU figures below are the receiver alone, with the fake on the same Pi.
+- The receiver (`t_cpu.py`; % of ONE core, the whole kraken_doa process;
+  the busiest threads in brackets; no packet dropped in any run; every page
+  got 20.0 type 10 frames a second, 26-27 messages and 27-33 KB a second):
+
+  | | Pi 5 | x86 |
+  |---|---|---|
+  | sweep, defaults (24-1765 MHz, auto = 512, dwell 5, 5 tuners): no page / 1 / 4 pages | 4.2 / 5.9 / 10.3 % (2.5 + 1.2; 6.1 + 2.5 with 4 pages) | 2.1 / 4.6 / 5.6 % |
+  | sweep, worst case (SWEEP_RES:16384 -> 4096, overlapped, dwell 5) | 7.8 / 10.3 / 15.8 % (6.1 worker) | 7.0 / 7.2 / 11.3 % |
+  | coherent, 1 page (spectrum, audio, DoA) | 26.2 % | 17.0 % |
+  | independent, 1 page (5 spectra, audio) | 78.3 % | 29.7 % |
+
+  So a Pi 5 runs sweep mode at heimdall's new rate (one packet a hop, ~47
+  hops a second a tuner) with most of a core to spare even at the worst
+  case and four pages: at the defaults with one page under a quarter of
+  what coherent mode costs there, the worst case with four pages 60 %.
+- The engine bench on the Pi (`bench/bench_sweep.cpp` built there, the real
+  sweep.cpp, 5 tuners x 16384-sample packets, one packet a hop, offered at
+  ~2x real time; us of CPU a packet, = x real time on one core):
+
+  | N | Pi 5 | x86 | Pi 5 no overlap | Pi 5 always overlap |
+  |---|---|---|---|---|
+  | 128 | 424 (16.1x) | 365 (18.7x) | 572 (11.9x) | 1038 (6.6x) |
+  | 512 | 501 (13.6x) | 412 (16.6x) | 669 (10.2x) | 897 (7.6x) |
+  | 1024 | 733 (9.3x) | 429 (15.9x) | 733 (9.3x) | 1042 (6.6x) |
+  | 2048 | 1076 (6.3x) | 913 (7.5x) | 918 (7.4x) | 1072 (6.4x) |
+  | 4096 | 1351 (5.1x) | 1176 (5.8x) | 1146 (6.0x) | 1345 (5.1x) |
+  | 16384 -> 4096 | 1238 (5.5x) | 1102 (6.2x) | 863 (7.9x) | 1245 (5.5x) |
+
+  (with one packet a hop the overlap is on from N 2048 at dwell 5; the
+  columns vary by +-20 % from run to run - the 128 row's "no overlap" is the
+  same code path as the first column). `build_frame` (whole range at the
+  cap, 2.97 M bins, 4096 points) 203 us on the Pi with hot caches, 55 us on
+  x86; 100 MHz window 77 us, 1 MHz 13 us; a plain max over the 3 M bins
+  451 us. At 2x real time the bench's 8-slot ring overflowed now and then
+  (7-24 of ~860 packets at N >= 2048) - at real time the receiver dropped
+  none.
+- The same figures from a second Pi 5 (Rev 1.0, 4 GB, Wi-Fi - the board the
+  router's DNS named `krakensdr`): the fake 146.6 / 146.7 packets/s (27 /
+  45 %), the build 187 s, t_sweep grid 122 / 122 and the rest 90 / 91 (the
+  duration check - see the tests).
 
 **Tests of the receiver** (2026-11-20, job scratch `client/`, not in the
 repo: `fake_heimdall_sweep.py` = heimdall with sweep mode per the contract -
@@ -614,7 +659,22 @@ build; `run_all.sh`). All pass, also under ASan + UBSan:
 - Not run: the MinGW / zig syntax checks of the root CLAUDE.md (no MinGW or
   zig here; the code uses only the portable helpers and int64 / uint64 Hz);
   a debug playback end to end (refused by `playback::refuse` as before, and
-  `send_control_command` sends nothing during one); a Pi.
+  `send_control_command` sends nothing during one).
+- On the Raspberry Pi 5 (2026-11-21; the suite brought to heimdall's
+  whole-packet dwell - dwell 20 = 3 packets: auto 8192 for 88-108 MHz, 16384
+  averages 5 overlapped frames - by the hop-loop worker, then made location
+  independent and run there; no test needs scipy): t_sweep 122 / 122 + 91 /
+  91, t_edge 50 / 50, t_modes 15 / 15, t_old 9 / 9, t_mcp 9 / 9, t_fix 16 / 16
+  + 13 / 13 - on the normal build AND on the ASan + UBSan build (built on the
+  Pi in 307 s at -j3; t_mcp not run on it), no sanitizer report, no aarch64
+  / NEON / alignment finding. x86 the same day: the same counts. Two TEST
+  changes the runs asked for: t_sweep's sweep duration check took the median
+  of the single intervals between completion frames as the truth - those go
+  out on the 50 ms ticks (100 / 150 ms for a 137 ms sweep), so the second Pi
+  5 failed it at 0.137 vs "0.150" - now the period from the first to the last
+  completion frame; the engine counts every sweep (a probe: 89 of the fake's
+  90 in 12 s). t_edge's carrier check for hops of 1 or 3 frames got 3.1 dB of
+  room under the expected height (x86 once 2.68: a one-frame hop's own noise).
 
 ## The page
 
