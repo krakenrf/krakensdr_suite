@@ -2725,8 +2725,9 @@ std::string lists_json(const System& s) {
 
 // The status is built only when something changed (g_status_now - at most every
 // STATUS_MIN_MS) or every STATUS_ACTIVE_MS while anything is active (a call, a
-// voice VFO, a control VFO); a change that leaves the body as sent sends nothing
-void send_status(bool force) {
+// voice VFO, a control VFO); a change that leaves the body as sent sends
+// nothing - but a command (GET_TRUNK, every TRUNK_*) always gets it (answer)
+void send_status(bool force, bool answer = false) {
     const int64_t now = now_ms();
     bool active = !g_calls.empty() || !g_voices.empty();
     if (!active)
@@ -2738,7 +2739,7 @@ void send_status(bool force) {
     const bool periodic = active && now - g_status_sent >= STATUS_ACTIVE_MS;
     if (!force && !periodic) return;
     const std::string body = build_status(false);
-    if (!periodic && body == g_status_last) {
+    if (!periodic && !answer && body == g_status_last) {   // (a command / GET_TRUNK is always answered: a page that connected later)
         g_status_now = false;
         return;
     }
@@ -3783,6 +3784,8 @@ struct Search {
     std::vector<int64_t> step_ms;
     int64_t t_step = 0;
     bool kerberos = false;
+    int mode = 0;           // 0 coherent (the centre steps, calibration held), 2 independent (one tuner steps)
+    int tuner = 0;          // independent: the tuner that steps
 };
 Search g_srch;
 std::string g_srch_last;   // the last run's summary (JSON object)
@@ -3841,16 +3844,17 @@ void srch_end(const std::string& why, bool home) {
     const int64_t now = now_ms();
     srch_remove_probes();
     std::vector<std::string> cmds;
-    if (home && !playback::active()) {
+    if (home && !playback::active() && operating_mode_index() == g_srch.mode) {
         char f[64];
-        snprintf(f, sizeof f, "FREQ:%.6f", g_srch.home / 1e6);
+        if (g_srch.mode == 2) snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", g_srch.tuner, g_srch.home / 1e6);
+        else snprintf(f, sizeof f, "FREQ:%.6f", g_srch.home / 1e6);
         cmds.push_back(f);
     }
     for (auto& e : g_srch.ctl)
         if (auto inst = exc_inst(e)) inst->enabled = true;
     for (auto& e : g_srch.ctl) g_tracks[e.vfo].expect_reset_until = now + 10000;
     if (!cmds.empty()) dispatch(cmds);
-    if (!g_srch.kerberos && !playback::active()) heimdall_hold(0);   // (the calibration at home at once)
+    if (g_srch.mode == 0 && !g_srch.kerberos && !playback::active()) heimdall_hold(0);   // (the calibration at home at once)
     std::ostringstream o;
     o << "{\"end\":" << js(why) << ",\"carriers\":" << g_srch.carriers << ",\"probed\":" << g_srch.probed << ",\"found_new\":"
       << g_srch.found_new << ",\"found_known\":" << g_srch.found_known << ",\"steps\":" << g_srch.centres.size()
@@ -3868,7 +3872,8 @@ std::string srch_start(const geo::Json& j) {
     if (g_srch.active) return "a search runs already";
     if (playback::active()) return "not during a playback";
     if (scanning()) return "a scanner runs - stop it first";
-    if (operating_mode_index() != 0) return "coherent mode only (independent / wideband scan mode: switch to coherent first)";
+    const int mode = operating_mode_index();
+    if (mode == 1) return "not in wideband scan mode (its tuners are spread) - switch to coherent or independent first";
     if (!heimdall_up()) return "heimdall sends nothing";
     const geo::Json* r = j.get("ranges");
     if (!r || r->type != geo::Json::ARR || r->a.empty() || r->a.size() > 16) return "ranges: [[lo_hz, hi_hz], ...] (1-16)";
@@ -3903,7 +3908,15 @@ std::string srch_start(const geo::Json& j) {
         if (kv.second.vfo >= 0) unfollow(kv.second, "paused");
     remove_all_voices();
     s.active = true;
+    s.mode = mode;
     s.home = static_cast<double>(requested_freq_hz.load());
+    if (mode == 2) {
+        // independent mode / generic RTL-SDRs: ONE tuner steps - the user's control VFO's, else tuner 0
+        const std::set<int> ct = vt_control_tuners();
+        s.tuner = ct.empty() ? 0 : *ct.begin();
+        s.home = indep_tuner_freq_hz[s.tuner].load();
+        if (s.home <= 0) s.home = static_cast<double>(exact_tuner_hz(s.tuner));
+    }
     s.t_start = s.t_st = now_ms();
     s.w_start = wall_ms();
     s.kerberos = server_kerberos_mode.load();
@@ -3921,15 +3934,15 @@ std::string srch_start(const geo::Json& j) {
 std::vector<Cand> srch_carriers(double c, double thr) {
     std::vector<Cand> out;
     std::vector<float> spec;
+    const int ch = g_srch.mode == 2 ? g_srch.tuner : std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
     {
         std::lock_guard<std::mutex> lk(fft_mutex);
-        const int ch = std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
         if (ch >= static_cast<int>(fft_averaged.size())) return out;
         spec = fft_averaged[ch];
     }
     const int n = static_cast<int>(spec.size());
     if (n < 64) return out;
-    const float floor_db = FFTProcessor::channel_noise_floor(std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1), spec);
+    const float floor_db = FFTProcessor::channel_noise_floor(ch, spec);
     if (!(floor_db > -190.0f)) return out;
     const double bin = SAMPLE_RATE / static_cast<double>(n), half = usable_half_hz();
     auto fq = [&](double i) { return c - SAMPLE_RATE / 2.0 + i * bin; };
@@ -3948,7 +3961,10 @@ std::vector<Cand> srch_carriers(double c, double thr) {
             fsum += p * k;
             peak = std::max(peak, spec[k] - floor_db);
         }
-        const double w = (last - i + 1) * bin, f = fq(fsum / wsum);
+        // (the centre between the run's edges: a narrow spike inside - a pilot, a carrier - can't pull it)
+        const double w = (last - i + 1) * bin, f = fq((i + last) / 2.0);
+        (void)fsum;
+        (void)wsum;
         if (w >= SRCH_MIN_W_HZ && w <= SRCH_MAX_W_HZ && std::fabs(f - c) + w / 2 <= half && std::fabs(f - c) > 3 * bin) {
             Cand cd;
             cd.hz = f;
@@ -3985,10 +4001,17 @@ void srch_probe_batch() {
             meta_set(id, inst.get(), false, ",\"trunk\":{\"role\":\"probe\"}");
             const int bw = efficient_bandwidth_at_least(static_cast<int>(std::ceil(std::max(12500.0, std::min(50000.0, pi.min_vfo_rate)))));
             char f[96];
-            snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", id, (cd.hz - coherent_tuner_hz()) / 1000.0);
+            // (on the raster when one is set: control channels sit on it, and the decoders track the rest)
+            const double at = g_srch.raster > 0 ? snap(cd.hz, g_srch.raster) : cd.hz;
+            if (g_srch.mode == 2)
+                snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", id, (at - static_cast<double>(exact_tuner_hz(g_srch.tuner))) / 1000.0,
+                         g_srch.tuner);
+            else
+                snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", id, (at - coherent_tuner_hz()) / 1000.0);
             dispatch({"SET_DECIMATOR_BW_HZ:" + std::to_string(id) + ":" + std::to_string(bw), f,
                       "DIGITAL_MODE:" + std::to_string(id) + ":PLUGIN:" + plugin});
             set_heard(id, false);
+            inst->enabled = true;   // (addDecimator makes it disabled)
             g_srch.probed++;
             made++;
         }
@@ -4035,11 +4058,11 @@ void tick_search() {
     if (!g_srch.active) return;
     const int64_t now = now_ms();
     if (playback::active()) return srch_end("playback", false);
-    if (g_srch.st != 0 && g_srch.step < g_srch.centres.size() &&
-        std::fabs(static_cast<double>(requested_freq_hz.load()) - g_srch.centres[g_srch.step]) > 1000)
+    const double asked = g_srch.mode == 2 ? indep_tuner_freq_hz[g_srch.tuner].load() : static_cast<double>(requested_freq_hz.load());
+    if (g_srch.st != 0 && g_srch.step < g_srch.centres.size() && std::fabs(asked - g_srch.centres[g_srch.step]) > 1000)
         return srch_end("user_retuned", false);
-    if (operating_mode_index() != 0) return srch_end("mode", false);
-    if (!g_srch.kerberos && now - g_srch.hold_sent >= EXC_HOLD_RENEW_MS && heimdall_up()) {
+    if (operating_mode_index() != g_srch.mode) return srch_end("mode", false);
+    if (g_srch.mode == 0 && !g_srch.kerberos && now - g_srch.hold_sent >= EXC_HOLD_RENEW_MS && heimdall_up()) {
         heimdall_hold(static_cast<int>(EXC_HOLD_LEASE_MS));
         g_srch.hold_sent = now;
     }
@@ -4056,14 +4079,16 @@ void tick_search() {
         case 0: {
             if (g_srch.step >= g_srch.centres.size()) return srch_end("done", true);
             char f[64];
-            snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
+            if (g_srch.mode == 2) snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", g_srch.tuner, c / 1e6);
+            else snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
             dispatch({f});
             g_srch.st = 1;
             g_srch.t_st = g_srch.t_step = now;
             return;
         }
         case 1:
-            if (std::fabs(static_cast<double>(tuner_frequencies[0].load()) - c) < 1000 && !server_retuning.load()) {
+            if (std::fabs(static_cast<double>(tuner_frequencies[g_srch.mode == 2 ? g_srch.tuner : 0].load()) - c) < 1000 &&
+                !server_retuning.load()) {
                 fft_reset_generation.fetch_add(1, std::memory_order_release);
                 fft_data_valid.store(false, std::memory_order_release);
                 g_srch.st = 2;
@@ -4155,7 +4180,8 @@ std::string srch_status_json(int64_t now) {
         o << "{\"since\":" << g_srch.w_start << ",\"ranges\":[";
         for (size_t i = 0; i < g_srch.ranges.size(); i++)
             o << (i ? "," : "") << "[" << num_json(g_srch.ranges[i].first) << "," << num_json(g_srch.ranges[i].second) << "]";
-        o << "],\"threshold_db\":" << g_srch.thr_db << ",\"raster_hz\":" << g_srch.raster << ",\"home_hz\":" << num_json(g_srch.home)
+        o << "],\"mode\":\"" << (g_srch.mode == 2 ? "independent" : "coherent") << "\",\"tuner\":"
+          << (g_srch.mode == 2 ? g_srch.tuner : -1) << ",\"threshold_db\":" << g_srch.thr_db << ",\"raster_hz\":" << g_srch.raster << ",\"home_hz\":" << num_json(g_srch.home)
           << ",\"centre_hz\":" << num_json(g_srch.step < n ? g_srch.centres[g_srch.step] : NAN) << ",\"step\":" << g_srch.step
           << ",\"steps\":" << n << ",\"pct\":" << (n ? 100 * g_srch.step / n : 100) << ",\"eta_s\":" << (static_cast<int64_t>(n - g_srch.step) * avg / 1000)
           << ",\"phase\":\"" << names[std::clamp(g_srch.st, 0, 4)] << "\",\"carriers\":" << g_srch.carriers << ",\"probing\":"
@@ -5078,11 +5104,11 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         if (status) g_status_now = true;
         if (!err->empty() && !created.empty()) g_sys.erase(created);
         if (!err->empty()) send_err(msg, *err);
-        send_status(true);
+        send_status(true, true);   // (an answer: sent even if the body is as last sent)
         return true;
     };
     if (cmd == "GET_TRUNK") {
-        send_status(true);
+        send_status(true, true);
         return true;
     }
     if (cmd == "GET_TRUNK_SYS") {
