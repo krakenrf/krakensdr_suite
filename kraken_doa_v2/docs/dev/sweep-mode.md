@@ -286,6 +286,27 @@ the hops into the sweep spectrum, the page shows it.
   mode (the page drops what is incomplete). Not compressed. No bin cap and
   no rate limit (the measurements below); `pool` is there for one. A socket
   that never sent the command gets what it got before.
+- Added 2026-11-22 (the user: "other resolution options for the display
+  too"): `SWEEP_FULL:<n>` with n >= 2 = a set of at most n values (n below
+  1 024 is taken as 1 024: `pool` is a u16, and 1 024 keeps it <= 16 384
+  for every grid). pool = the smallest power of two with ceil(bins / pool)
+  <= n, 1 when bins <= n - one level of the store's max pyramid, value i =
+  the max over bins [i pool, (i + 1) pool), the last group maybe shorter.
+  Header: `pool`, Hz of value 0 = start + (pool - 1) / 2 x bin (the first
+  group's centre, as type 10's point 0), spacing = bin x pool, values =
+  ceil(bins / pool); the rest of type 11 as above. Any whole number is
+  taken (not only the listed ones); junk is ignored. A change of n
+  abandons a set in flight and brings a snapshot at the new n on the next
+  tick (or that tick's completion set, which serves for it); the same n
+  again does nothing. One set per pool in use is built a tick, shared.
+  The `sweep` message carries (additive) `"full_sets":[{"n":16384,
+  "pool":1024,"values":11607,"step_hz":150000.0}, ..., {"n":1,"pool":1,
+  "values":11885227,"step_hz":146.484375}]`: the steps this receiver
+  offers for the running grid - n = 16 384, 65 536, 262 144, 1 048 576,
+  4 194 304, each with what it gives, a step whose pool would be 1 left out
+  - and full (n 1) last. Absent: a receiver of 2026-11-21 (`SWEEP_FULL`
+  on / off only; it ignores `SWEEP_FULL:65536` as junk) or older. "Fit to
+  the plot" (0) is the page's and not in the list.
 - Levels: ONE reference for the whole sweep (never one per hop: a signal
   that fills a hop must keep its height), the tuners' common in-band shape
   removed (`nfloor::shape_db`, *Noise floor*).
@@ -715,6 +736,47 @@ refused; out-of-range numbers are clamped:
   15, MCP 9). Note: a page that sends its view as the explicit whole range
   (not `0:0`) gets flag 1 (the window is clamped to the range) and so an
   overview of the same content; a page zoomed out sends `0:0`.
+- The pooled sets (2026-11-22, `SWEEP_FULL:<n>`): `sweep::full_pool(n)` /
+  `pool_for` (sweep.cpp) give the pool; `build_fulls(pools)` converts each
+  pool's level of the pyramid as the full set's level 0, every pool of a
+  tick under ONE lock (the sets of one tick are one state of the sweep
+  whatever their pool - before that, an ASan run saw a pooled set differ
+  from the full set of the same `sweeps`: a hop stored between two builds);
+  `send_sweep_views` collects the pools whose sets start in the tick, then
+  `pump_full` sends. The lock held (bench, 20 sets of the whole range at
+  16384, 11.9 M bins; x86 under load / Pi 5): full 4.3 / 8.7 ms, pool 4
+  (2.97 M values) 0.96 / 2.2, 16 0.19 / 0.54, 64 0.05 / 0.14, 256 0.012 /
+  0.034, 1 024 0.003 / 0.009 ms; several pools in one tick add up. Bytes a
+  set: 11.6 KB / 46 KB / 186 KB / 743 KB / 2.97 MB / 11.9 MB; a second at
+  the 3.75 s sweep 3.1 / 12.4 / 50 / 198 / 792 / 3 170 KB (measured: type
+  11 3.5 / 13.7 / 36 / 218 / 870 / 3 482 KB/s within a 10 s window).
+  CPU (t_drescpu.py: one normal page and one at each step, then two pages
+  at two steps; % of one core; no packet dropped):
+
+  | A / B | x86 (under load, +-3 %) | Raspberry Pi 5 |
+  |---|---|---|
+  | off / off | 14.8 | 15.3 |
+  | 16384 / off | 14.0 | 15.6 |
+  | 65536 / off | 14.6 | 15.7 |
+  | 262144 / off | 11.2 | 15.6 |
+  | 1048576 / off | 9.5 | 15.9 |
+  | 4194304 / off | 14.4 | 15.8 |
+  | full / off | 14.1 | 17.7 |
+  | full / 65536 | 14.1 | 17.4 |
+  | 16384 / 4194304 | 13.6 | 15.7 |
+  | off / off (again) | 13.8 | 15.4 |
+
+  On the Pi 5 every step below full costs at most 0.6 % of a core; full
+  2.4 %. Tests (`t_dres.py` 34 / 34, x86 normal and ASan + UBSan, Pi 5):
+  `full_sets` for six grids against the rule; for every offered step and
+  n = 2, 1 000, 50 000, 3 000 000, bins and 2^32 - 1 (paused) the set's
+  pool, count, Hz of value 0 and spacing, and its levels = the full set of
+  the same store max-pooled, byte for byte (whole range at 11.9 M bins and
+  400-430 MHz); four sockets at n 1 / 65 536 / 16 384 / 4 194 304 at once,
+  each set = the full socket's set of the same sweep pooled; a change of n
+  mid-set (a paused reader, 64 KB receive buffer): the set in flight stops
+  incomplete, then only sets at the new pool; the same n again: no
+  snapshot; another n: a snapshot at it first.
 - The full set (2026-11-21, `SWEEP_FULL`): `sweep::build_full` converts
   the store's level 0 to u8 in one pass under `g_mu` (`level_u8`: exactly
   build_frame's rounding - checked for all 65 536 values - in a loop the

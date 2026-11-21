@@ -78,7 +78,7 @@ struct PerSocketData {
     uint32_t sweep_overview = 0;   // SWEEP_OVERVIEW:<points> (0 = off): the whole range with each completed sweep
     // SWEEP_FULL:1 - the whole range at the sweep's own bins (type 11) with each
     // completed sweep, in parts paced by this socket's buffer, one set at a time
-    bool sweep_full = false;
+    uint32_t sweep_full = 0;      // SWEEP_FULL:<n>: 0 off, 1 every bin, else at most n values (sweep::full_pool)
     bool full_snapshot = false;   // the store as it is, once (on SWEEP_FULL:1)
     bool full_due = false;        // its flag-2 frame went this tick: a completed sweep's set
     std::shared_ptr<const sweep::FullSet> full;   // the set being sent
@@ -373,33 +373,44 @@ void handle_sweep_overview(WS* ws, string_view arg) {
 template<typename WS>
 void handle_sweep_full(WS* ws, string_view arg) {
     PerSocketData* ud = ws->getUserData();
-    if (arg == "1" || arg == "true") {
-        if (!ud->sweep_full) ud->full_snapshot = true;
-        ud->sweep_full = true;
-    } else if (arg == "0" || arg == "false") {
-        ud->sweep_full = false;
-        ud->full_snapshot = ud->full_due = false;
-        ud->full.reset();   // a set in flight stays incomplete (the page drops it)
+    uint32_t n = 0;
+    if (arg == "true") {
+        n = 1;
+    } else if (arg == "false") {
+        n = 0;
+    } else {
+        auto r = std::from_chars(arg.data(), arg.data() + arg.size(), n);
+        if (arg.empty() || r.ec != std::errc() || r.ptr != arg.data() + arg.size()) return;   // junk: ignored
     }
+    if (n == ud->sweep_full) return;   // the same again: nothing (no new snapshot)
+    ud->full.reset();                  // a set in flight is abandoned (the page drops it as incomplete)
+    ud->full_due = false;
+    ud->full_snapshot = n != 0;        // a new n: the store as it is, at that n, on the next tick
+    ud->sweep_full = n;
 }
 
 // The full set's parts go while this socket has less than FULL_QUEUE queued
 // (uWS drops past maxBackpressure, 2 MB): every tick, and when it drains. A set
-// starts only with a tick (lazy: built once a tick, shared by the sockets) and
+// starts only with a tick (the tick's sets: every pool in use from one state of
+// the store, built once, shared by the sockets) and
 // only when the socket has no set in flight and at most SPEC_MAX_BUFFERED
 // queued - else that sweep's set is skipped whole. A grid change abandons a set
 constexpr unsigned FULL_QUEUE = 1024 * 1024;
 bool g_full_active = false;   // some socket has a set in flight (released out of the mode)
+using FullCache = std::vector<std::shared_ptr<const sweep::FullSet>>;   // this tick's sets, one per pool
 template<typename WS>
-void pump_full(WS* ws, std::shared_ptr<const sweep::FullSet>* lazy, uint32_t grid) {
+void pump_full(WS* ws, FullCache* lazy, uint32_t grid) {
     PerSocketData* ud = ws->getUserData();
     if (!ud->sweep_full) return;
     if (ud->full && ud->full->grid != grid) ud->full.reset();
     if (lazy && !ud->full && (ud->full_due || ud->full_snapshot) && (ud->sub_mask & SUB_FFT) &&
         ws->getBufferedAmount() <= SPEC_MAX_BUFFERED) {
-        if (!*lazy) *lazy = sweep::build_full();
-        if (*lazy && (*lazy)->grid == grid) {
-            ud->full = *lazy;
+        const uint32_t pool = sweep::full_pool(ud->sweep_full);
+        std::shared_ptr<const sweep::FullSet> set;
+        for (const auto& s : *lazy)
+            if (s && s->pool == pool) set = s;
+        if (set && set->grid == grid) {
+            ud->full = set;
             ud->full_off = 0;
             ud->full_id++;
             ud->full_flags = static_cast<uint8_t>((ud->full_due ? 0 : 2) | (sweep::running() ? 0 : 4));
@@ -440,7 +451,16 @@ void send_sweep_views() {
         ud->sweep_completions = done;
     }
     // the full sets (SWEEP_FULL): after the frames, so the live trace goes first
-    std::shared_ptr<const sweep::FullSet> lazy;
+    // the sets that start this tick, every pool from one state of the store
+    std::vector<uint32_t> pools;
+    for (ClientWS* ws : g_sweep_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        if (ud->sweep_full && !ud->full && (ud->full_due || ud->full_snapshot) && (ud->sub_mask & SUB_FFT) &&
+            ws->getBufferedAmount() <= SPEC_MAX_BUFFERED)
+            pools.push_back(sweep::full_pool(ud->sweep_full));
+    }
+    FullCache lazy;
+    if (!pools.empty()) lazy = sweep::build_fulls(pools);
     uint32_t grid = 0;
     bool have_grid = false;
     for (ClientWS* ws : g_sweep_sockets) {
