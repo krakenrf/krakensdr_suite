@@ -25,6 +25,8 @@
 #include "playback.hpp"
 #include "scanner_manager.hpp"
 #include "sf_scanner.hpp"
+#include "settings_store.hpp"
+#include "signal_processing/fft_processor.hpp"
 #include "signal_processing/audio_mixer.hpp"
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
@@ -37,6 +39,7 @@
 #include <cstdio>
 #include <ctime>
 #include <deque>
+#include <thread>
 #include <cstring>
 #include <charconv>
 #include <future>
@@ -2273,6 +2276,11 @@ bool plugin_trunking(const std::string& id) {
     return e.first;
 }
 
+bool is_probe(int vfo);
+bool searching();
+void srch_event(int vfo, const PluginEvent& ev);
+void cc_heard(int vfo, const std::string& plugin, const PluginEvent& ev);
+uint64_t g_srch_dropped = 0;   // events of other VFOs while a search runs (the user's control VFOs are parked)
 void apply_event(QEv& q) {
     // only plugins that declare trunking report systems / grants / calls (a
     // RESET is the engine's own: always taken)
@@ -2287,6 +2295,11 @@ void apply_event(QEv& q) {
     // this - a removed VFO's id reused - can sit at the same address)
     auto dd = inst->getDigital();
     if (!dd || inst->digital_serial.load() != q.dec) return;
+    if (searching()) {   // (the search owns the receiver: its probes' reports are its own, nothing else counts)
+        if (is_probe(q.vfo)) srch_event(q.vfo, q.ev);
+        else g_srch_dropped++;
+        return;
+    }
     Track& t = g_tracks[q.vfo];
     if (t.dec != q.dec) {
         // a new decoder on this id: its earlier state is not this one's
@@ -2304,7 +2317,10 @@ void apply_event(QEv& q) {
     }
     const PluginEvent& ev = q.ev;
     switch (ev.kind) {
-        case PluginEvent::SYSTEM: on_system(q.vfo, t, q.plugin, ev); break;
+        case PluginEvent::SYSTEM:
+            on_system(q.vfo, t, q.plugin, ev);
+            if (ev.control && !voice_of_vfo(q.vfo)) cc_heard(q.vfo, q.plugin, ev);
+            break;
         case PluginEvent::CHANNEL:
             if (!voice_of_vfo(q.vfo)) on_channel(q.vfo, t, q.plugin, ev);
             break;
@@ -2539,6 +2555,7 @@ int64_t maxof(const std::deque<int64_t>& d) {
 std::string exc_status_json(int64_t now);
 bool exc_parked(int vfo);
 std::string vt_status_json();
+std::string srch_status_json(int64_t now);
 std::string build_status(bool ages) {
     const int64_t now = now_ms();
     std::ostringstream o;
@@ -2550,7 +2567,7 @@ std::string build_status(bool ages) {
       << ",\"unit\":" << jb(g_set.unit) << ",\"audio\":" << jb(g_set.audio) << ",\"hang_s\":" << hang
       << ",\"retune\":" << jb(g_set.retune) << ",\"retune_cal\":" << jb(g_set.retune_cal)
       << ",\"retune_max_s\":" << static_cast<long long>(std::llround(g_set.retune_max_s)) << "," << exc_status_json(now)
-      << "," << vt_status_json()
+      << "," << vt_status_json() << "," << srch_status_json(now)
       << ",\"paused\":" << jb(g_paused) << ",\"paused_why\":" << js(g_pause_why) << ",\"playback\":" << jb(playback::active())
       << ",\"mode\":\"" << (mode == 1 ? "wideband" : mode == 2 ? "independent" : "coherent") << "\",\"hold\":";
     if (g_hold_sys.empty()) o << "null";
@@ -3157,7 +3174,7 @@ void exc_return(const std::string& why, bool retune) {
 // try_follow: call c's channel hz is outside the span. "" never; the reason it
 // waits: "leaving" (the receiver goes there now / is on its way), or why not
 std::string exc_try(Call& c, double hz, double bw) {
-    if (!g_set.retune || operating_mode_index() != 0 || playback::active() || g_paused || scanning() || !g_set.follow)
+    if (!g_set.retune || operating_mode_index() != 0 || playback::active() || g_paused || scanning() || searching() || !g_set.follow)
         return "out_of_span";
     const int64_t now = now_ms();
     if (!heimdall_up() || now < g_exc_block_until) return "no_retune";
@@ -3375,7 +3392,7 @@ void vt_restore_all(const std::string& why, bool retune) {
 
 // try_follow, independent mode: call c's channel hz is in no tuner's span
 std::string vt_try(Call& c, double hz, double bw) {
-    if (g_set.tuners.empty() || operating_mode_index() != 2 || playback::active() || g_paused || scanning() || !g_set.follow)
+    if (g_set.tuners.empty() || operating_mode_index() != 2 || playback::active() || g_paused || scanning() || searching() || !g_set.follow)
         return "out_of_span";
     if (!heimdall_up()) return "no_retune";
     for (int t = 0; t < MAX_CHANNELS; t++)
@@ -3484,11 +3501,797 @@ std::string vt_status_json() {
     return o.str();
 }
 
+// ============================================================================
+// Control channels: the search, the memory (trunk_control_channels.json),
+// click to follow
+// ============================================================================
+
+constexpr const char* CC_FILE = "trunk_control_channels.json";
+constexpr size_t CC_MAX = 1000;               // memory entries (the oldest the air brought, never named / followed, go)
+constexpr int64_t CC_SAVE_MS = 5000;          // saved this long after a change
+constexpr int64_t CC_LIST_MS = 1000;          // the list message at most this often
+constexpr int64_t CC_HEARD_MS = 60000;        // a control VFO in normal use refreshes its entry at most this often
+constexpr int64_t SRCH_LOOK_GAP_MS = 400;     // the two looks at a step's spectrum this far apart
+constexpr int64_t SRCH_ARRIVE_MAX_MS = 4000;  // a step whose centre the stream never shows: skipped
+constexpr int64_t SRCH_PROBE_MIN_MS = 1500;   // a probe without any valid frame this long: given up ...
+constexpr int64_t SRCH_PROBE_MAX_MS = 7000;   // ... and none longer
+constexpr int64_t SRCH_KEY_WAIT_MS = 2500;    // control = true without a key yet: the key waited for this long
+constexpr double SRCH_OVERLAP_HZ = 50000;     // neighbouring steps' usable bands overlap this much
+constexpr double SRCH_MIN_W_HZ = 4000, SRCH_MAX_W_HZ = 32000;   // a candidate's width above the threshold
+
+struct CcEntry {
+    uint64_t id = 0;
+    double hz = 0, meas_hz = 0;    // nominal (the signalling's / the snapped measurement), measured
+    std::string plugin, sys, sys_name, site, name, src;   // src: search | heard | user
+    std::map<std::string, std::string> opts;   // the control VFO's plugin options (key without the plugin prefix)
+    float level_db = NAN, gain_db = NAN;
+    int64_t first = 0, last = 0, followed = 0;   // epoch ms
+    uint64_t n = 0;
+    bool user() const { return !name.empty() || followed > 0 || src == "user"; }
+};
+std::map<uint64_t, CcEntry> g_cc;
+uint64_t g_cc_next = 1;
+int64_t g_cc_dirty = 0, g_cc_list_sent = 0;
+bool g_cc_list_now = false;
+std::string g_cc_note, g_cc_bad;
+std::map<int, int64_t> g_cc_heard;            // control VFO -> last time it refreshed its entry
+std::map<int, std::pair<uint64_t, uint64_t>> g_cc_follow;   // control VFO -> (its instance serial, the entry it follows)
+
+double snap(double hz, double raster) { return raster > 0 ? std::round(hz / raster) * raster : std::round(hz); }
+
+CcEntry* cc_find(const std::string& plugin, double hz, double tol) {
+    CcEntry* best = nullptr;
+    for (auto& kv : g_cc)
+        if (kv.second.plugin == plugin && std::fabs(kv.second.hz - hz) <= tol &&
+            (!best || std::fabs(kv.second.hz - hz) < std::fabs(best->hz - hz)))
+            best = &kv.second;
+    return best;
+}
+
+void cc_changed() {
+    if (!g_cc_dirty) g_cc_dirty = now_ms();
+    g_cc_list_now = true;
+}
+
+// an entry for (plugin, hz): the existing one within the tolerance, else a new
+// one (the memory full: the oldest the air brought goes; all the user's: none)
+CcEntry* cc_ensure(const std::string& plugin, double hz, double tol, bool* made) {
+    *made = false;
+    if (CcEntry* e = cc_find(plugin, hz, tol)) return e;
+    if (g_cc.size() >= CC_MAX) {
+        auto victim = g_cc.end();
+        for (auto it = g_cc.begin(); it != g_cc.end(); ++it)
+            if (!it->second.user() && (victim == g_cc.end() || it->second.last < victim->second.last)) victim = it;
+        if (victim == g_cc.end()) return nullptr;
+        g_cc.erase(victim);
+    }
+    CcEntry& e = g_cc[g_cc_next];
+    e.id = g_cc_next++;
+    e.plugin = plugin;
+    e.hz = hz;
+    e.first = wall_ms();
+    *made = true;
+    return &e;
+}
+
+// a control channel seen (search / heard): its entry updated. A different
+// system on that frequency replaces the system fields (the user's name stays)
+CcEntry* cc_seen(const std::string& plugin, double nominal, double measured, const std::string& key, const std::string& name,
+                 const std::string& site, const std::map<std::string, std::string>& opts, float level, const char* src, double tol,
+                 bool* made) {
+    CcEntry* e = cc_ensure(plugin, nominal, tol, made);
+    if (!e) return nullptr;
+    const std::string sys = key.empty() ? "" : plugin + ":" + key;
+    if (!sys.empty() || *made) {
+        e->sys = sys;
+        if (!name.empty() || !sys.empty()) e->sys_name = clean(name, 64);
+        e->site = clean(site, 64);
+    }
+    if (*made) e->hz = nominal;
+    if (fin(measured)) e->meas_hz = measured;
+    if (!opts.empty()) e->opts = opts;
+    if (fin(level)) e->level_db = level;
+    const float g = ChannelManager::get_gain(active_channel.load());
+    e->gain_db = g;
+    e->last = wall_ms();
+    e->n++;
+    if (*made || e->src.empty()) e->src = src;
+    cc_changed();
+    return e;
+}
+
+std::string cc_entry_json(const CcEntry& e) {
+    std::ostringstream o;
+    o << "{\"id\":" << e.id << ",\"hz\":" << num_json(e.hz) << ",\"meas_hz\":" << num_json(e.meas_hz > 0 ? e.meas_hz : NAN)
+      << ",\"plugin\":" << js(e.plugin) << ",\"sys\":" << js(e.sys) << ",\"sys_name\":" << js(e.sys_name) << ",\"site\":" << js(e.site)
+      << ",\"name\":" << js(e.name) << ",\"src\":" << js(e.src) << ",\"level_db\":" << num_json(e.level_db, "%.1f")
+      << ",\"gain_db\":" << num_json(e.gain_db, "%.1f") << ",\"first\":" << e.first << ",\"last\":" << e.last << ",\"n\":" << e.n
+      << ",\"followed\":" << e.followed << ",\"opts\":{";
+    bool f = true;
+    for (const auto& kv : e.opts) {
+        o << (f ? "" : ",") << js(kv.first) << ":" << js(kv.second);
+        f = false;
+    }
+    o << "}}";
+    return o.str();
+}
+
+std::string cc_list_json() {
+    std::ostringstream o;
+    o << "{\"trunk_cc\":{\"file\":{\"ok\":" << jb(g_cc_note.empty()) << ",\"note\":" << js(g_cc_note) << ",\"kept_as\":" << js(g_cc_bad)
+      << "},\"max\":" << CC_MAX << ",\"entries\":[";
+    bool f = true;
+    for (const auto& kv : g_cc) {
+        o << (f ? "" : ",") << cc_entry_json(kv.second);
+        f = false;
+    }
+    o << "]}}";
+    return o.str();
+}
+
+void cc_save() {
+    if (playback::active()) return;
+    std::ostringstream o;
+    o << "{\"version\":1,\"entries\":[";
+    bool f = true;
+    for (const auto& kv : g_cc) {
+        o << (f ? "" : ",\n") << cc_entry_json(kv.second);
+        f = false;
+    }
+    o << "]}\n";
+    std::lock_guard<std::mutex> lk(g_save_mu);
+    if (g_shutdown) return;
+    const std::string tmp = std::string(CC_FILE) + ".tmp";
+    {
+        std::ofstream f2(tmp, std::ios::binary | std::ios::trunc);
+        if (!f2) return;
+        f2 << o.str();
+        if (!f2) return;
+    }
+    if (!fs_replace(tmp, CC_FILE)) std::cerr << "Trunk following: " << CC_FILE << " not written" << std::endl;
+    g_cc_dirty = 0;
+}
+
+// a valid entry from JSON (the file, TRUNK_CC_SET): "" = ok, else why not
+std::string cc_parse(const geo::Json& g, CcEntry* e) {
+    const double hz = jnum(g, "hz");
+    if (!hz_ok(hz)) return "hz: the frequency in Hz (0 - 6 GHz)";
+    const std::string plugin = g.str("plugin");
+    if (!dig::valid_plugin_id(plugin)) return "plugin: a plugin id";
+    e->hz = std::round(hz);
+    e->plugin = plugin;
+    const double m = jnum(g, "meas_hz");
+    e->meas_hz = hz_ok(m) ? m : 0;
+    const std::string sys = g.str("sys");
+    const size_t c = sys.find(':');
+    if (!sys.empty() && (c == std::string::npos || sys.substr(0, c) != plugin || !valid_key(sys.substr(c + 1)))) return "sys: <plugin>:<key>";
+    e->sys = sys;
+    e->sys_name = clean(g.str("sys_name"), 64);
+    e->site = clean(g.str("site"), 64);
+    e->name = clean(g.str("name"), 64);
+    const std::string src = g.str("src");
+    e->src = src == "search" || src == "heard" ? src : "user";
+    const double lv = jnum(g, "level_db"), gn = jnum(g, "gain_db");
+    e->level_db = fin(lv) && lv > -50 && lv < 200 ? static_cast<float>(lv) : NAN;
+    e->gain_db = fin(gn) && gn >= -1 && gn <= 60 ? static_cast<float>(gn) : NAN;
+    e->first = int_or(jnum(g, "first", 0), 0, 9000000000000000LL, 0);
+    e->last = int_or(jnum(g, "last", 0), 0, 9000000000000000LL, 0);
+    e->followed = int_or(jnum(g, "followed", 0), 0, 9000000000000000LL, 0);
+    e->n = static_cast<uint64_t>(int_or(jnum(g, "n", 0), 0, 1LL << 53, 0));
+    e->opts.clear();
+    if (const geo::Json* o = g.get("opts"); o && o->type == geo::Json::OBJ) {
+        if (o->o.size() > 32) return "opts: at most 32";
+        for (const auto& kv : o->o) {
+            if (kv.second.type != geo::Json::STR || kv.first.empty() || kv.first.size() > 32 || kv.second.s.size() > 128 ||
+                !dig::valid_plugin_id(kv.first))
+                return "opts: {key: \"value\"} (keys [a-z0-9_], values <= 128 bytes)";
+            e->opts[kv.first] = clean(kv.second.s, 128);
+        }
+    }
+    return "";
+}
+
+void cc_load() {
+    std::ifstream f(CC_FILE, std::ios::binary);
+    if (!f) return;
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    f.close();
+    geo::Json j;
+    const geo::Json* a = nullptr;
+    if (text.size() <= (8u << 20) && geo::json_parse(text, &j) && j.type == geo::Json::OBJ) a = j.get("entries");
+    if (!a || a->type != geo::Json::ARR) {
+        char ts[32];
+        const std::time_t t = std::time(nullptr);
+        std::strftime(ts, sizeof ts, "%Y%m%d-%H%M%S", std::localtime(&t));
+        std::string kept = std::string(CC_FILE) + ".bad-" + ts;
+        for (int k = 1; std::ifstream(kept).good() && k < 100; k++) kept = std::string(CC_FILE) + ".bad-" + ts + "-" + std::to_string(k);
+        if (std::rename(CC_FILE, kept.c_str()) == 0) g_cc_bad = kept;
+        g_cc_note = "the control channel memory could not be read - kept as " + kept + ", starting empty";
+        std::cerr << "Trunk following: " << g_cc_note << std::endl;
+        return;
+    }
+    int bad = 0;
+    for (const auto& g : a->a) {
+        CcEntry e;
+        if (g.type != geo::Json::OBJ || !cc_parse(g, &e).empty() || g_cc.size() >= CC_MAX) {
+            bad++;
+            continue;
+        }
+        long long id = int_or(jnum(g, "id", 0), 1, 1LL << 53, 0);
+        if (id <= 0 || g_cc.count(static_cast<uint64_t>(id))) id = static_cast<long long>(g_cc_next);
+        e.id = static_cast<uint64_t>(id);
+        g_cc_next = std::max(g_cc_next, e.id + 1);
+        g_cc[e.id] = e;
+    }
+    std::cout << "Trunk following: " << g_cc.size() << " control channel(s) remembered (" << CC_FILE << ")"
+              << (bad ? ", " + std::to_string(bad) + " unreadable skipped" : "") << std::endl;
+}
+
+void tick_cc() {
+    const int64_t now = now_ms();
+    if (g_cc_dirty && now - g_cc_dirty >= CC_SAVE_MS && !playback::active()) cc_save();
+    if (g_cc_list_now && now - g_cc_list_sent >= CC_LIST_MS) {
+        g_cc_list_now = false;
+        g_cc_list_sent = now;
+        broadcast(cc_list_json());
+    }
+}
+
+// the control VFO's plugin options as they are now (key without the prefix)
+std::map<std::string, std::string> vfo_plugin_opts(int vfo, const std::string& plugin) {
+    std::map<std::string, std::string> m;
+    auto inst = decimator_manager.getDecimator(vfo);
+    auto dd = inst ? inst->getDigital() : nullptr;
+    if (!dd) return m;
+    const std::string pre = plugin + ".";
+    for (const auto& kv : dd->options().plugin)
+        if (kv.first.compare(0, pre.size(), pre) == 0 && kv.first.size() > pre.size()) m[kv.first.substr(pre.size())] = kv.second;
+    return m;
+}
+
+// --- the search ---------------------------------------------------------------
+struct Probe {
+    int vfo = -1;
+    uint64_t serial = 0;
+    size_t cand = 0;
+    std::string plugin;
+    int64_t t0 = 0, t_ctl = 0;
+    bool control = false, done = false;
+    std::string key, name, site;
+    double ctl_hz = NAN;    // the signalling's own control channel frequency (CONTROL / CHANNEL near the probe)
+};
+struct Cand {
+    double hz = 0, width = 0;
+    float level = 0;
+    bool found = false;
+    std::vector<std::string> todo;   // plugins still to try
+};
+struct Search {
+    bool active = false;
+    std::vector<std::pair<double, double>> ranges;
+    std::vector<double> centres;
+    size_t step = 0;
+    int st = 0;             // 0 tune, 1 arrive, 2 settle, 3 look 1, 4 look 2, 5 probe
+    int64_t t_st = 0, t_start = 0, w_start = 0, hold_sent = 0;
+    double home = 0, thr_db = 9, raster = 6250;
+    std::vector<Cand> cands;
+    std::vector<Probe> probes;
+    std::vector<double> look1;
+    std::vector<std::pair<double, double>> found_hz;   // (hz, plugin hash) this run: an overlap's second sight skipped
+    std::vector<ExcCtl> ctl;    // the user's control VFOs, parked while it runs
+    uint64_t carriers = 0, probed = 0, found_new = 0, found_known = 0;
+    std::vector<int64_t> step_ms;
+    int64_t t_step = 0;
+    bool kerberos = false;
+};
+Search g_srch;
+std::string g_srch_last;   // the last run's summary (JSON object)
+
+bool searching() { return g_srch.active; }
+
+// the averaged spectrum holds only the new band after this long (as the
+// saved-frequency scan reckons it: 95 % of the average replaced)
+int64_t srch_settle_ms() {
+    float a = averaging_alpha.load(std::memory_order_relaxed);
+    if (!(a > 0.001f)) a = 0.001f;
+    const double frames = a >= 1.0f ? 1.0 : std::log(0.05) / std::log(1.0 - a);
+    const double frame_s = std::max(1, current_fft_size.load()) / static_cast<double>(SAMPLE_RATE);
+    return std::clamp<int64_t>(std::llround((frames * frame_s + 0.1) * 1000), 250, 2500);
+}
+
+bool is_probe(int vfo) {
+    for (const auto& p : g_srch.probes)
+        if (p.vfo == vfo) return true;
+    return false;
+}
+
+void srch_remove_probes() {
+    bool any = false;
+    for (auto& p : g_srch.probes) {
+        auto inst = decimator_manager.getDecimator(p.vfo);
+        if (!inst || inst->serial != p.serial) continue;
+        meta_erase(p.vfo, false);
+        if (!decimator_manager.removeDecimator(p.vfo)) {
+            inst->enabled = true;   // (the receiver's last VFO: a plain one, as a voice VFO's hand-back)
+            decimator_manager.setDigitalMode(p.vfo, dig::Mode::OFF, "");
+        }
+        any = true;
+    }
+    g_srch.probes.clear();
+    if (any) {
+        audio_mixer.retain(decimator_manager.audioVfoIds());
+        broadcast(MessageBuilders::build_decimator_info_message());
+    }
+}
+
+std::vector<std::string> trunking_plugins() {
+    std::vector<std::string> v;
+    for (const auto& pi : dig::PluginRegistry::instance().list())
+        if (pi.built && pi.trunking && pi.fixed_freq_hz <= 0 && !pi.lock_vfo) v.push_back(pi.id);
+    return v;
+}
+
+int srch_batch_max() {
+    const unsigned hc = std::thread::hardware_concurrency();
+    return std::clamp<int>(hc ? static_cast<int>(hc) / 2 : 2, 2, 12);
+}
+
+void srch_end(const std::string& why, bool home) {
+    if (!g_srch.active) return;
+    const int64_t now = now_ms();
+    srch_remove_probes();
+    std::vector<std::string> cmds;
+    if (home && !playback::active()) {
+        char f[64];
+        snprintf(f, sizeof f, "FREQ:%.6f", g_srch.home / 1e6);
+        cmds.push_back(f);
+    }
+    for (auto& e : g_srch.ctl)
+        if (auto inst = exc_inst(e)) inst->enabled = true;
+    for (auto& e : g_srch.ctl) g_tracks[e.vfo].expect_reset_until = now + 10000;
+    if (!cmds.empty()) dispatch(cmds);
+    if (!g_srch.kerberos && !playback::active()) heimdall_hold(0);   // (the calibration at home at once)
+    std::ostringstream o;
+    o << "{\"end\":" << js(why) << ",\"carriers\":" << g_srch.carriers << ",\"probed\":" << g_srch.probed << ",\"found_new\":"
+      << g_srch.found_new << ",\"found_known\":" << g_srch.found_known << ",\"steps\":" << g_srch.centres.size()
+      << ",\"steps_done\":" << g_srch.step << ",\"dur_ms\":" << (now - g_srch.t_start) << ",\"t_end\":" << wall_ms() << "}";
+    g_srch_last = o.str();
+    std::cout << "Trunk following: control channel search over (" << why << "): " << g_srch.found_new << " new, "
+              << g_srch.found_known << " known, " << g_srch.carriers << " carriers, " << (now - g_srch.t_start) / 1000.0 << " s"
+              << std::endl;
+    g_srch = Search{};
+    broadcast(MessageBuilders::build_decimator_info_message());
+    g_status_now = true;
+}
+
+std::string srch_start(const geo::Json& j) {
+    if (g_srch.active) return "a search runs already";
+    if (playback::active()) return "not during a playback";
+    if (scanning()) return "a scanner runs - stop it first";
+    if (operating_mode_index() != 0) return "coherent mode only (independent / wideband scan mode: switch to coherent first)";
+    if (!heimdall_up()) return "heimdall sends nothing";
+    const geo::Json* r = j.get("ranges");
+    if (!r || r->type != geo::Json::ARR || r->a.empty() || r->a.size() > 16) return "ranges: [[lo_hz, hi_hz], ...] (1-16)";
+    Search s;
+    double total = 0;
+    for (const auto& x : r->a) {
+        if (x.type != geo::Json::ARR || x.a.size() != 2 || x.a[0].type != geo::Json::NUM || x.a[1].type != geo::Json::NUM)
+            return "ranges: [[lo_hz, hi_hz], ...]";
+        const double lo = x.a[0].n, hi = x.a[1].n;
+        if (!(lo < hi) || !exc_range(lo) || !exc_range(hi)) return "a range outside the tuner's range (or lo >= hi)";
+        s.ranges.push_back({lo, hi});
+        total += hi - lo;
+    }
+    if (total > 2e9) return "ranges: at most 2000 MHz in all";
+    const double thr = jnum(j, "threshold_db", 9), ras = jnum(j, "raster_hz", 6250);
+    if (!(thr >= 3 && thr <= 40)) return "threshold_db: 3-40";
+    if (!(ras == 0 || ras == 5000 || ras == 6250 || ras == 12500)) return "raster_hz: 0, 5000, 6250 or 12500";
+    if (trunking_plugins().empty()) return "no built plugin declares trunking";
+    s.thr_db = thr;
+    s.raster = ras;
+    const double half = usable_half_hz(), stepw = 2 * half - SRCH_OVERLAP_HZ;
+    for (const auto& rg : s.ranges)
+        for (double c = rg.first + half - SRCH_OVERLAP_HZ / 2; ; c += stepw) {
+            s.centres.push_back(std::round(std::min(c, std::max(rg.first + half, rg.second - half + SRCH_OVERLAP_HZ / 2))));
+            if (c + half >= rg.second) break;
+        }
+    // the receiver stands down: an excursion home, voice tuners back, calls freed
+    if (g_exc.st == 1) exc_return("search", true);
+    g_exc.st = 0;
+    vt_restore_all("search", true);
+    for (auto& kv : g_calls)
+        if (kv.second.vfo >= 0) unfollow(kv.second, "paused");
+    remove_all_voices();
+    s.active = true;
+    s.home = static_cast<double>(requested_freq_hz.load());
+    s.t_start = s.t_st = now_ms();
+    s.w_start = wall_ms();
+    s.kerberos = server_kerberos_mode.load();
+    s.ctl = exc_note_ctl();
+    for (auto& e : s.ctl)
+        if (auto inst = exc_inst(e)) inst->enabled = false;   // (the user's control VFOs hear nothing while it sweeps)
+    g_srch = s;
+    std::cout << "Trunk following: control channel search, " << g_srch.centres.size() << " steps, " << total / 1e6 << " MHz"
+              << std::endl;
+    g_status_now = true;
+    return "";
+}
+
+// the spectrum's carriers of channel width >= thr above the floor (Hz), at centre c
+std::vector<Cand> srch_carriers(double c, double thr) {
+    std::vector<Cand> out;
+    std::vector<float> spec;
+    {
+        std::lock_guard<std::mutex> lk(fft_mutex);
+        const int ch = std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
+        if (ch >= static_cast<int>(fft_averaged.size())) return out;
+        spec = fft_averaged[ch];
+    }
+    const int n = static_cast<int>(spec.size());
+    if (n < 64) return out;
+    const float floor_db = FFTProcessor::channel_noise_floor(std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1), spec);
+    if (!(floor_db > -190.0f)) return out;
+    const double bin = SAMPLE_RATE / static_cast<double>(n), half = usable_half_hz();
+    auto fq = [&](double i) { return c - SAMPLE_RATE / 2.0 + i * bin; };
+    for (int i = 0; i < n;) {
+        if (spec[i] - floor_db < thr) { i++; continue; }
+        int j = i, gap = 0, last = i;
+        while (j + 1 < n && gap <= 2) {
+            j++;
+            if (spec[j] - floor_db >= thr) { last = j; gap = 0; } else gap++;
+        }
+        double wsum = 0, fsum = 0;
+        float peak = -999;
+        for (int k = i; k <= last; k++) {
+            const double p = std::pow(10.0, (spec[k] - floor_db) / 10.0);
+            wsum += p;
+            fsum += p * k;
+            peak = std::max(peak, spec[k] - floor_db);
+        }
+        const double w = (last - i + 1) * bin, f = fq(fsum / wsum);
+        if (w >= SRCH_MIN_W_HZ && w <= SRCH_MAX_W_HZ && std::fabs(f - c) + w / 2 <= half && std::fabs(f - c) > 3 * bin) {
+            Cand cd;
+            cd.hz = f;
+            cd.width = w;
+            cd.level = peak;
+            out.push_back(cd);
+        }
+        i = last + 1;
+    }
+    return out;
+}
+
+void srch_probe_batch() {
+    const int64_t now = now_ms();
+    const int room = std::min(srch_batch_max(), VFO_LIMIT - static_cast<int>(decimator_manager.getDecimatorCount()));
+    int made = 0;
+    for (size_t ci = 0; ci < g_srch.cands.size() && made < room; ci++) {
+        Cand& cd = g_srch.cands[ci];
+        while (!cd.found && !cd.todo.empty() && made < room) {
+            const std::string plugin = cd.todo.front();
+            cd.todo.erase(cd.todo.begin());
+            dig::PluginInfo pi;
+            if (!plugin_info(plugin, &pi)) continue;
+            const int id = decimator_manager.addDecimator();
+            auto inst = id >= 0 ? decimator_manager.getDecimator(id) : nullptr;
+            if (!inst) return;
+            Probe p;
+            p.vfo = id;
+            p.serial = inst->serial;
+            p.cand = ci;
+            p.plugin = plugin;
+            p.t0 = now;
+            g_srch.probes.push_back(p);
+            meta_set(id, inst.get(), false, ",\"trunk\":{\"role\":\"probe\"}");
+            const int bw = efficient_bandwidth_at_least(static_cast<int>(std::ceil(std::max(12500.0, std::min(50000.0, pi.min_vfo_rate)))));
+            char f[96];
+            snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", id, (cd.hz - coherent_tuner_hz()) / 1000.0);
+            dispatch({"SET_DECIMATOR_BW_HZ:" + std::to_string(id) + ":" + std::to_string(bw), f,
+                      "DIGITAL_MODE:" + std::to_string(id) + ":PLUGIN:" + plugin});
+            set_heard(id, false);
+            g_srch.probed++;
+            made++;
+        }
+    }
+    if (made) broadcast(MessageBuilders::build_decimator_info_message());
+}
+
+void srch_record(const Probe& p) {
+    Cand& cd = g_srch.cands[p.cand];
+    cd.found = true;
+    const double tol = std::max(3000.0, g_srch.raster / 2);
+    // the nominal frequency: the signalling's, else the measured centre snapped to the raster
+    double nominal = fin(p.ctl_hz) && std::fabs(p.ctl_hz - cd.hz) < 15000 ? p.ctl_hz : snap(cd.hz, g_srch.raster);
+    bool made = false;
+    CcEntry* e = cc_seen(p.plugin, nominal, cd.hz, p.key, p.name, p.site, vfo_plugin_opts(p.vfo, p.plugin), cd.level, "search", tol, &made);
+    if (!e) return;
+    if (made) g_srch.found_new++;
+    else g_srch.found_known++;
+    std::cout << "Trunk following: control channel found at " << nominal / 1e6 << " MHz (" << p.plugin
+              << (p.key.empty() ? ", no key" : ", " + p.plugin + ":" + p.key) << ")" << (made ? "" : " - known") << std::endl;
+}
+
+// a probe VFO's event (the search owns it: nothing of it reaches the systems)
+void srch_event(int vfo, const PluginEvent& ev) {
+    for (auto& p : g_srch.probes) {
+        if (p.vfo != vfo || p.done) continue;
+        const Cand& cd = g_srch.cands[p.cand];
+        if (ev.kind == PluginEvent::SYSTEM) {
+            if (ev.control && !p.control) {
+                p.control = true;
+                p.t_ctl = now_ms();
+            }
+            if (!ev.sys_key.empty()) p.key = ev.sys_key;
+            if (!ev.sys_name.empty()) p.name = ev.sys_name;
+            if (!ev.sys_site.empty()) p.site = ev.sys_site;
+        } else if ((ev.kind == PluginEvent::CONTROL || ev.kind == PluginEvent::CHANNEL) && fin(ev.ch.freq_hz) &&
+                   std::fabs(ev.ch.freq_hz - cd.hz) < 15000) {
+            if (!fin(p.ctl_hz) || std::fabs(ev.ch.freq_hz - cd.hz) < std::fabs(p.ctl_hz - cd.hz)) p.ctl_hz = ev.ch.freq_hz;
+        }
+    }
+}
+
+void tick_search() {
+    if (!g_srch.active) return;
+    const int64_t now = now_ms();
+    if (playback::active()) return srch_end("playback", false);
+    if (g_srch.st != 0 && g_srch.step < g_srch.centres.size() &&
+        std::fabs(static_cast<double>(requested_freq_hz.load()) - g_srch.centres[g_srch.step]) > 1000)
+        return srch_end("user_retuned", false);
+    if (operating_mode_index() != 0) return srch_end("mode", false);
+    if (!g_srch.kerberos && now - g_srch.hold_sent >= EXC_HOLD_RENEW_MS && heimdall_up()) {
+        heimdall_hold(static_cast<int>(EXC_HOLD_LEASE_MS));
+        g_srch.hold_sent = now;
+    }
+    const double c = g_srch.step < g_srch.centres.size() ? g_srch.centres[g_srch.step] : 0;
+    auto next = [&] {
+        srch_remove_probes();
+        g_srch.step_ms.push_back(now - g_srch.t_step);
+        g_srch.step++;
+        g_srch.st = 0;
+        g_srch.cands.clear();
+        g_status_now = true;
+    };
+    switch (g_srch.st) {
+        case 0: {
+            if (g_srch.step >= g_srch.centres.size()) return srch_end("done", true);
+            char f[64];
+            snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
+            dispatch({f});
+            g_srch.st = 1;
+            g_srch.t_st = g_srch.t_step = now;
+            return;
+        }
+        case 1:
+            if (std::fabs(static_cast<double>(tuner_frequencies[0].load()) - c) < 1000 && !server_retuning.load()) {
+                fft_reset_generation.fetch_add(1, std::memory_order_release);
+                fft_data_valid.store(false, std::memory_order_release);
+                g_srch.st = 2;
+                g_srch.t_st = now;
+            } else if (now - g_srch.t_st > SRCH_ARRIVE_MAX_MS) {
+                if (!heimdall_up()) return srch_end("heimdall", false);
+                next();
+            }
+            return;
+        case 2:
+            if (fft_data_valid.load(std::memory_order_acquire) && now - g_srch.t_st >= srch_settle_ms()) {
+                g_srch.look1.clear();
+                for (const auto& cd : srch_carriers(c, g_srch.thr_db)) g_srch.look1.push_back(cd.hz);
+                g_srch.st = 3;
+                g_srch.t_st = now;
+            }
+            return;
+        case 3: {
+            if (now - g_srch.t_st < SRCH_LOOK_GAP_MS) return;
+            // a carrier in both looks (control channels are continuous), not found already in this run (an overlap)
+            const std::vector<std::string> all = trunking_plugins();
+            for (auto& cd : srch_carriers(c, g_srch.thr_db)) {
+                bool twice = false, seen = false;
+                for (double h : g_srch.look1)
+                    if (std::fabs(h - cd.hz) < 3000) twice = true;
+                for (const auto& fh : g_srch.found_hz)
+                    if (std::fabs(fh.first - cd.hz) < 6000) seen = true;
+                if (!twice || seen) continue;
+                g_srch.carriers++;
+                // a remembered control channel there: its plugin first
+                std::vector<std::string> order;
+                for (const auto& kv : g_cc)
+                    if (std::fabs(kv.second.hz - cd.hz) < 6000 &&
+                        std::find(all.begin(), all.end(), kv.second.plugin) != all.end() &&
+                        std::find(order.begin(), order.end(), kv.second.plugin) == order.end())
+                        order.push_back(kv.second.plugin);
+                for (const auto& p : all)
+                    if (std::find(order.begin(), order.end(), p) == order.end()) order.push_back(p);
+                cd.todo = order;
+                g_srch.cands.push_back(cd);
+            }
+            if (g_srch.cands.empty()) return next();
+            g_srch.st = 4;
+            srch_probe_batch();
+            return;
+        }
+        case 4: {
+            bool live = false;
+            for (auto& p : g_srch.probes) {
+                if (p.done) continue;
+                auto inst = decimator_manager.getDecimator(p.vfo);
+                auto dd = inst && inst->serial == p.serial ? inst->getDigital() : nullptr;
+                const int64_t age = now - p.t0;
+                const bool frames = dd && dd->frames_within(SRCH_PROBE_MIN_MS);
+                if (p.control && (!p.key.empty() || now - p.t_ctl >= SRCH_KEY_WAIT_MS)) {
+                    srch_record(p);
+                    g_srch.found_hz.push_back({g_srch.cands[p.cand].hz, 0});
+                    p.done = true;
+                } else if (age >= SRCH_PROBE_MAX_MS || (age >= SRCH_PROBE_MIN_MS && !frames && !p.control) ||
+                           g_srch.cands[p.cand].found) {
+                    p.done = true;
+                } else {
+                    live = true;
+                }
+            }
+            if (live) return;
+            srch_remove_probes();
+            bool more = false;
+            for (const auto& cd : g_srch.cands)
+                if (!cd.found && !cd.todo.empty()) more = true;
+            if (more) srch_probe_batch();
+            else next();
+            return;
+        }
+    }
+}
+
+std::string srch_status_json(int64_t now) {
+    std::ostringstream o;
+    o << "\"search\":";
+    if (!g_srch.active) {
+        o << "null";
+    } else {
+        const size_t n = g_srch.centres.size();
+        int64_t avg = 0;
+        for (int64_t x : g_srch.step_ms) avg += x;
+        avg = g_srch.step_ms.empty() ? 2000 : avg / static_cast<int64_t>(g_srch.step_ms.size());
+        static const char* names[] = {"tuning", "tuning", "settling", "looking", "probing"};
+        o << "{\"since\":" << g_srch.w_start << ",\"ranges\":[";
+        for (size_t i = 0; i < g_srch.ranges.size(); i++)
+            o << (i ? "," : "") << "[" << num_json(g_srch.ranges[i].first) << "," << num_json(g_srch.ranges[i].second) << "]";
+        o << "],\"threshold_db\":" << g_srch.thr_db << ",\"raster_hz\":" << g_srch.raster << ",\"home_hz\":" << num_json(g_srch.home)
+          << ",\"centre_hz\":" << num_json(g_srch.step < n ? g_srch.centres[g_srch.step] : NAN) << ",\"step\":" << g_srch.step
+          << ",\"steps\":" << n << ",\"pct\":" << (n ? 100 * g_srch.step / n : 100) << ",\"eta_s\":" << (static_cast<int64_t>(n - g_srch.step) * avg / 1000)
+          << ",\"phase\":\"" << names[std::clamp(g_srch.st, 0, 4)] << "\",\"carriers\":" << g_srch.carriers << ",\"probing\":"
+          << g_srch.probes.size() << ",\"probed\":" << g_srch.probed << ",\"found_new\":" << g_srch.found_new << ",\"found_known\":"
+          << g_srch.found_known << ",\"elapsed_ms\":" << (now - g_srch.t_start) << "}";
+    }
+    o << ",\"search_last\":" << (g_srch_last.empty() ? "null" : g_srch_last);
+    // the control VFOs a click made, and the entries they follow
+    o << ",\"cc_followed\":[";
+    bool f = true;
+    for (const auto& kv : g_cc_follow) {
+        o << (f ? "" : ",") << "{\"vfo\":" << kv.first << ",\"id\":" << kv.second.second << "}";
+        f = false;
+    }
+    o << "]";
+    return o.str();
+}
+
+// a control VFO in normal use reporting control = true: remembered (heard)
+void cc_heard(int vfo, const std::string& plugin, const PluginEvent& ev) {
+    if (playback::active() || g_srch.active || g_exc.st != 0) return;
+    const int64_t now = now_ms();
+    auto it = g_cc_heard.find(vfo);
+    if (it != g_cc_heard.end() && now - it->second < CC_HEARD_MS) return;
+    auto inst = decimator_manager.getDecimator(vfo);
+    if (!inst) return;
+    const double rf = vfo_rf(*inst);
+    if (rf <= 0) return;
+    g_cc_heard[vfo] = now;
+    bool made = false;
+    CcEntry* e = cc_seen(plugin, snap(rf, 6250), rf, ev.sys_key, ev.sys_name, ev.sys_site, vfo_plugin_opts(vfo, plugin), NAN, "heard",
+                         3125, &made);
+    if (e && made) std::cout << "Trunk following: control channel " << e->hz / 1e6 << " MHz (" << plugin << ") remembered" << std::endl;
+}
+
+// click to follow: the remembered control channel id on a control VFO, following on
+std::string cc_follow(uint64_t id, bool add) {
+    auto it = g_cc.find(id);
+    if (it == g_cc.end()) return "no such control channel";
+    if (playback::active()) return "not during a playback";
+    if (scanning()) return "a scanner runs - stop it first";
+    CcEntry& e = it->second;
+    dig::PluginInfo pi;
+    if (!plugin_info(e.plugin, &pi) || !pi.built) return "its decoder (" + e.plugin + ") is not built";
+    if (g_srch.active) srch_end("follow", true);
+    const int mode = operating_mode_index();
+    if (mode == 1) return "not in wideband scan mode";
+    const double bw = std::max(12500.0, std::min(50000.0, pi.min_vfo_rate));
+    // the VFO a previous click made (replaced) - unless adding
+    int reuse = -1;
+    if (!add)
+        for (const auto& kv : g_cc_follow) {
+            auto inst = decimator_manager.getDecimator(kv.first);
+            if (inst && inst->serial == kv.second.first) reuse = kv.first;
+        }
+    std::vector<std::string> cmds;
+    Place p = place_for(e.hz, bw, -1);
+    if (!p.ok) {
+        if (add && !g_cc_follow.empty()) return "it doesn't fit the span with the control channel(s) followed now - follow it alone";
+        // the user's tuning (he asked for it): a normal, saved retune
+        double c = e.hz + 250000;
+        if (System* s = sys_of(e.sys)) {
+            Centre sc;
+            if (suggest_centre(*s, &sc) && std::fabs(sc.hz - e.hz) + bw / 2 + PLACE_GUARD_HZ <= usable_half_hz() && exc_range(sc.hz))
+                c = std::round(sc.hz);
+        }
+        if (!exc_range(c)) c = e.hz - 250000;
+        if (!exc_range(c)) return "outside the tuner's range";
+        char f[96];
+        if (mode == 2) {
+            int t = 0;
+            for (int ct : vt_control_tuners()) t = ct;
+            snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", t, c / 1e6);
+        } else {
+            snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
+        }
+        const std::string why = ControlHandler::apply_command(f);   // (not dispatching: saved)
+        if (!why.empty()) return "the retune was refused: " + why;
+        p.ok = true;
+        p.centre = c;
+        p.off_hz = e.hz - c;
+        if (mode == 2) {
+            for (int ct : vt_control_tuners()) p.tuner = ct;
+        }
+    }
+    int vfo = reuse;
+    if (vfo < 0) {
+        if (static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) return "16 VFOs in use";
+        std::set<int> before;
+        for (const auto& d : decimator_manager.getDecimatorInfoList()) before.insert(d.id);
+        const std::string why = ControlHandler::apply_command("ADD_DECIMATOR");
+        if (!why.empty()) return "a VFO couldn't be added: " + why;
+        for (const auto& d : decimator_manager.getDecimatorInfoList())
+            if (!before.count(d.id)) vfo = d.id;
+        if (vfo < 0) return "a VFO couldn't be added";
+    }
+    std::vector<std::string> c2;
+    const std::string sid = std::to_string(vfo);
+    c2.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(efficient_bandwidth_at_least(static_cast<int>(bw))));
+    char f[96];
+    if (mode == 2) snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", vfo, p.off_hz / 1000.0, p.tuner);
+    else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", vfo, p.off_hz / 1000.0);
+    c2.push_back(f);
+    for (const auto& kv : e.opts) c2.push_back("DIGITAL_OPT:" + sid + ":" + e.plugin + "." + kv.first + ":" + kv.second);
+    c2.push_back("DIGITAL_MODE:" + sid + ":PLUGIN:" + e.plugin);
+    for (const auto& c : c2) {
+        const std::string why = ControlHandler::apply_command(c);   // (the user's VFO now: saved)
+        if (!why.empty()) std::cerr << "Trunk following: '" << c << "' refused (" << why << ")" << std::endl;
+    }
+    auto inst = decimator_manager.getDecimator(vfo);
+    if (!add) g_cc_follow.clear();
+    if (inst) g_cc_follow[vfo] = {inst->serial, e.id};
+    e.followed = wall_ms();
+    cc_changed();
+    if (!g_set.follow) {
+        g_set.follow = true;
+        SettingsStore::record("TRUNK_FOLLOW:1");
+        std::cout << "Trunk following: on" << std::endl;
+    }
+    std::cout << "Trunk following: following the control channel " << e.hz / 1e6 << " MHz (" << e.plugin << ") on D" << vfo << std::endl;
+    g_status_now = true;
+    return "";
+}
+
 // main thread's hook (ControlHandler::apply_command, before a command runs):
 // commands that end an excursion - the user's retune (no return: he took the
 // receiver), a mode change / scanner / playback (home first, then the command)
-void exc_before_command(std::string_view m) {
-    if (g_dispatching) return;
+const char* exc_before_command(std::string_view m) {
+    if (g_dispatching) return nullptr;
+    if (g_srch.active) {
+        if (m.starts_with("SCANNER_START") || m.starts_with("CONTINUOUS_SCANNER_START") || m.starts_with("SFSCAN_START"))
+            return "a control-channel search runs - stop it first";
+        if (m.starts_with("PLAYBACK_START:") || m.starts_with("PLAYBACK_OPEN:")) return "a control-channel search runs - stop it first";
+        if (m.starts_with("FREQ:") || m.starts_with("WIDEBAND_FREQ:")) srch_end("user_retuned", false);
+        else if (m.starts_with("OPERATING_MODE:") || m.starts_with("WIDEBAND_MODE:")) srch_end("mode", true);
+    }
     // the user's own retune / decoder change of a control VFO within the
     // expected-reset window of an excursion's retune: its RESET is his
     for (const char* p : {"SET_DECIMATOR_FREQ:", "DIGITAL_MODE:", "SET_DECIMATOR_BW_HZ:", "REMOVE_DECIMATOR:"})
@@ -3506,21 +4309,22 @@ void exc_before_command(std::string_view m) {
         vt_restore_all(m.starts_with("OPERATING_MODE:") ? "mode" : m.starts_with("PLAYBACK_") ? "playback" : "scanner", true);
     else if ((m.starts_with("FREQ:") && operating_mode_index() == 2) || m.starts_with("TUNERS:"))
         for (auto& v : g_vt) v = VTuner{};
-    if (g_exc.st == 0) return;
+    if (g_exc.st == 0) return nullptr;
     if (m.starts_with("FREQ:") || m.starts_with("WIDEBAND_FREQ:")) {
         if (g_exc.st == 1) exc_return("user_retuned", false);
         else g_exc.st = 0;   // (returning: the user's tuning from now on)
         g_status_now = true;
-        return;
+        return nullptr;
     }
     const char* why = nullptr;
     if (m.starts_with("OPERATING_MODE:") || m.starts_with("WIDEBAND_MODE:")) why = "mode";
     else if (m.starts_with("SCANNER_START") || m.starts_with("CONTINUOUS_SCANNER_START") || m.starts_with("SFSCAN_START")) why = "scanner";
     else if (m.starts_with("PLAYBACK_START:") || m.starts_with("PLAYBACK_OPEN:")) why = "playback";
-    if (!why) return;
+    if (!why) return nullptr;
     if (g_exc.st == 1) exc_return(why, true);
     g_exc.st = 0;   // (no waiting for the control channel: the command takes the receiver)
     g_status_now = true;
+    return nullptr;
 }
 
 void tick_exc() {
@@ -3609,6 +4413,7 @@ void pause_check() {
     if (sfscan::running()) why = "saved-frequency scan";
     else if (scanner_manager.isRunning()) why = "discrete scanner";
     else if (continuous_scanner.isRunning()) why = "continuous scanner";
+    else if (searching()) why = "control-channel search";
     const bool p = !why.empty();
     if (!p && !g_paused && g_set.follow && g_exc.st == 0) note_homes();   // (following off: nothing is put back; away: home's stand)
     if (!g_set.follow) g_home.clear();
@@ -4029,6 +4834,8 @@ void tick() {
         tick_calls();
         tick_exc();
         tick_vt();
+        tick_search();
+        tick_cc();
         tick_voices();
         tick_lists();
         tick_save();
@@ -4039,7 +4846,9 @@ void tick() {
     }
 }
 
+void cc_load_public();
 void load() {
+    cc_load_public();
     std::ifstream f(SYSTEMS_FILE, std::ios::binary);
     g_loaded = true;
     if (!f) return;
@@ -4148,7 +4957,9 @@ void save_now() {
     bool posted = false;
     if (loop) {
         loop->defer([done] {
+            srch_end("shutdown", true);
             if (g_exc.st == 1) exc_return("shutdown", true);
+            if (g_cc_dirty) cc_save();
             vt_restore_all("shutdown", true);
             if (g_dirty_since && !playback::active() && (g_set.follow || g_edit_dirty)) save();
             {
@@ -4285,6 +5096,71 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         s->lists_struct = s->lists_stats = false;
         broadcast(lists_json(*s));
         return true;
+    }
+    if (cmd == "TRUNK_SEARCH") {
+        geo::Json j;
+        if (!parse_obj(arg, &j, err)) return done();
+        *err = srch_start(j);
+        return done();
+    }
+    if (cmd == "TRUNK_SEARCH_STOP") {
+        if (!g_srch.active) *err = "no search runs";
+        else srch_end("stopped", true);
+        return done();
+    }
+    if (cmd == "GET_TRUNK_CC") {
+        broadcast(cc_list_json());
+        return true;
+    }
+    if (cmd == "TRUNK_CC_CLEAR") {
+        g_cc.clear();
+        g_cc_follow.clear();
+        cc_changed();
+        return done();
+    }
+    if (cmd == "TRUNK_CC_NAME" || cmd == "TRUNK_CC_DEL" || cmd == "TRUNK_CC_FOLLOW" || cmd == "TRUNK_CC_SET") {
+        geo::Json j;
+        if (!parse_obj(arg, &j, err)) return done();
+        if (cmd == "TRUNK_CC_SET") {
+            CcEntry e;
+            *err = cc_parse(j, &e);
+            if (!err->empty()) return done();
+            const double tol = 3125;
+            bool made = false;
+            CcEntry* x = nullptr;
+            const long long id = int_or(jnum(j, "id", 0), 0, 1LL << 53, 0);
+            auto it = id > 0 ? g_cc.find(static_cast<uint64_t>(id)) : g_cc.end();
+            if (it != g_cc.end()) x = &it->second;
+            else x = cc_ensure(e.plugin, e.hz, tol, &made);
+            if (!x) {
+                *err = "the memory is full (" + std::to_string(CC_MAX) + " of the user's entries)";
+                return done();
+            }
+            const uint64_t keep = x->id;
+            if (!made && e.first == 0) e.first = x->first;
+            *x = e;
+            x->id = keep;
+            if (!x->first) x->first = wall_ms();
+            cc_changed();
+            return done();
+        }
+        const long long id = int_or(jnum(j, "id", 0), 1, 1LL << 53, 0);
+        auto it = id > 0 ? g_cc.find(static_cast<uint64_t>(id)) : g_cc.end();
+        if (it == g_cc.end()) {
+            *err = "no such control channel";
+            return done();
+        }
+        if (cmd == "TRUNK_CC_NAME") {
+            it->second.name = clean(j.str("name"), 64);
+        } else if (cmd == "TRUNK_CC_DEL") {
+            for (auto f = g_cc_follow.begin(); f != g_cc_follow.end();) f = f->second.second == it->first ? g_cc_follow.erase(f) : std::next(f);
+            g_cc.erase(it);
+        } else {
+            *err = cc_follow(it->first, jbool(j, "add"));
+            return done();
+        }
+        cc_changed();
+        return done();
     }
     if (cmd == "TRUNK_RETURN") {
         if (g_exc.st != 1) {
@@ -4644,9 +5520,11 @@ bool tuner_home(int t, double* hz, float* gain) {
 
 void note_packet() { g_packet_ms.store(now_ms(), std::memory_order_relaxed); }
 
-void before_command(std::string_view m) {
-    if (m.starts_with("TRUNK_") || m.starts_with("GET_")) return;
-    exc_before_command(m);
+void cc_load_public() { cc_load(); }
+
+const char* before_command(std::string_view m) {
+    if (m.starts_with("TRUNK_") || m.starts_with("GET_")) return nullptr;
+    return exc_before_command(m);
 }
 
 }  // namespace trunk

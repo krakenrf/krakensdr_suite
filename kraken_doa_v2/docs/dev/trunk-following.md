@@ -596,6 +596,105 @@ entries and channels resolved by a rule), each weighted by its grant count
 VFOs first, then the most weight - `controls` < `controls_of` says so.
 Ties: the one nearest the current centre. `null` = nothing known.
 
+## Control channels: the search, the memory, click to follow
+
+**The search** (`TRUNK_SEARCH`) sweeps frequency ranges for control
+channels. Coherent mode only (independent / wideband scan mode / generic
+RTL-SDRs: refused - "switch to coherent first"; the Wideband downconverter
+steps through its `FREQ:` path, its RF range). The centre steps by the
+usable band (edge clip x 2.4 MHz) less a 50 kHz overlap; heimdall's
+calibration is HELD for the whole sweep (lease 3 s renewed every second, no
+noise-source bursts) and released at the end (the calibration at home at
+once). At each step: the stream shows the new centre, the averaged spectrum
+is reset and refilled (`srch_settle_ms`, as the saved-frequency scan), two
+looks 400 ms apart; a CANDIDATE is a run of bins >= `threshold_db` above the
+noise floor, 4-32 kHz wide (wider: broadcast / LTE / DAB - not tried), in
+both looks (control channels are continuous), not found already in this run
+(an overlap). Each candidate is PROBED: a temporary probe VFO per (candidate,
+trunking plugin) - every built plugin that declares `trunking`, a
+remembered control channel's plugin first - at most `cores / 2` (2-12) at
+once and never past the receiver's 16 VFOs; a probe ends when its plugin
+reports `SYSTEM` with `control = true` (and its key, waited up to 2.5 s
+when the flag came first), after 1.5 s without any valid frame, or after
+7 s; the other plugins of a candidate found are not tried. Probe VFOs are
+the search's (`decimator_info` `trunk.role` "probe"; never saved, never
+heard, removed after each batch - their plugin processes with them); while
+it runs no other VFO's report counts (the user's control VFOs are parked).
+The nominal frequency: the signalling's own control channel (a CONTROL /
+CHANNEL report within 15 kHz of the carrier), else the measured carrier
+centre snapped to `raster_hz` (6250 default; 5000, 12500, 0 = none - the
+measured value is kept beside it: this receiver reads ~ +1.35 ppm, 0.67 kHz
+at 499 MHz, well inside half a raster).
+
+It is a fourth scanner: refused while another scanner or a playback runs
+(and they are refused while it runs: "a control-channel search runs - stop it
+first"); trunk following stands down as for a scanner (an excursion home
+first, voice tuners back, calls freed, paused why "control-channel search").
+Nothing of it is saved (the dispatching guard). It ends: `done`, `stopped`
+(`TRUNK_SEARCH_STOP`), `follow` (a click to follow), `mode` (an
+`OPERATING_MODE:` / `WIDEBAND_MODE:` - home first), `shutdown` (home first),
+`heimdall` (the stream never came), `playback`; then the receiver is home
+(the centre it had; its VFOs carried back with it, the control VFOs enabled
+again) and following resumes. `user_retuned`: the user's own `FREQ:` ends it
+WITHOUT going back. A restart mid-sweep comes up at home (home is what is
+saved). One gain for the whole sweep: a front end that clips at some
+frequency hides control channels there - the page should say so (the
+search does not change the gain).
+
+**The memory** (`trunk_control_channels.json`, cwd-relative, written through
+a temp file 5 s after a change and at shutdown, never during a playback;
+loaded at start; a file that doesn't read is kept as
+`trunk_control_channels.json.bad-<YYYYmmdd-HHMMSS>[-n]` and `trunk_cc.file`
+says so). At most 1000 entries: a new one makes room by dropping the entry
+the air brought longest ago that the user never named nor followed; full of
+the user's: not added. An entry is fed by the search, by any control VFO in
+normal use reporting `control = true` (`src` "heard", at most once a minute
+per VFO, at its RF snapped to 6.25 kHz) and by the page (`TRUNK_CC_SET`).
+The same plugin within half a raster (at least 3 kHz) is the same entry:
+updated (last seen, how often, level, options, gain); a different system key
+there replaces the system fields (the user's name stays). Entries are never
+dropped because a channel is gone - `last` says when it was seen.
+
+**Click to follow** (`TRUNK_CC_FOLLOW`): ends a running search; if the
+channel is not in the usable band now, retunes so that it is - THE USER'S
+tuning (saved, a normal `FREQ:` / in independent mode `TUNER_FREQ` of the
+control tuner): the system's suggested centre when that holds the channel,
+else the channel 250 kHz off the centre; puts a control VFO on it with the
+remembered plugin, its options (`DIGITAL_OPT`) and the bandwidth the plugin
+needs (12.5-50 kHz) - a VFO of the user's (saved); switches following on. A
+second click REPLACES the VFO the previous click made (the user's own VFOs
+are never taken); `"add":true` adds another one instead, refused when the
+new channel doesn't fit the span with them. Refused during a playback, in
+wideband scan mode, while a scanner runs. The entry's `followed` is set.
+
+Commands (all `TRUNK_` / `GET_TRUNK_CC`, answered with the status, errors as
+`trunk_error`):
+- `TRUNK_SEARCH:{"ranges":[[lo_hz,hi_hz],...] (1-16, inside the tuner's
+  range, <= 2000 MHz in all), "threshold_db":9 (3-40), "raster_hz":6250
+  (0 | 5000 | 6250 | 12500)}`; `TRUNK_SEARCH_STOP`.
+- `GET_TRUNK_CC` -> the list message; `TRUNK_CC_NAME:{"id":n,"name":".."}`,
+  `TRUNK_CC_DEL:{"id":n}`, `TRUNK_CC_CLEAR`, `TRUNK_CC_SET:{entry}` (the
+  fields below; with an existing `id` it replaces that entry, else it adds /
+  updates the one at that plugin + frequency - the import path: one per
+  entry), `TRUNK_CC_FOLLOW:{"id":n,"add":false}`.
+
+Messages:
+- `{"trunk_cc":{file:{ok,note,kept_as}, max:1000, entries:[{id, hz
+  (nominal), meas_hz (null = none), plugin, sys ("<plugin>:<key>", "" =
+  no key heard), sys_name, site, name (the user's), src ("search" | "heard" |
+  "user"), level_db (above the floor when last found, null), gain_db (the
+  receiver's gain then), first, last, followed (epoch ms, 0 = never), n,
+  opts: {<key>: <value>} (plugin options without the prefix)}]}}` - on
+  change (at most once a second) and on `GET_TRUNK_CC`; not in the status.
+  The file holds `{"version":1,"entries":[<the same objects>]}`.
+- In the status: `search`: null, or `{since, ranges, threshold_db,
+  raster_hz, home_hz, centre_hz, step, steps, pct, eta_s, phase ("tuning" |
+  "settling" | "looking" | "probing"), carriers (candidates this run),
+  probing (probe VFOs now), probed (probes so far), found_new, found_known,
+  elapsed_ms}`; `search_last`: null or `{end, carriers, probed, found_new,
+  found_known, steps, steps_done, dur_ms, t_end}`; `cc_followed`: `[{vfo,
+  id}]` - the control VFOs clicks made and the entries they follow.
+
 ## Commands (plain text, through `apply_command`; the AI assistant and the settings replay use the same path)
 
 All start with `TRUNK_` (`is_query_command`: not echoed; every one is
