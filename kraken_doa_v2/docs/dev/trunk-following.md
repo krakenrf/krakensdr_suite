@@ -751,6 +751,22 @@ the same (`dmr:` + its key without a Network tag option): the memory keeps
 them apart by frequency, but a system shared by key merges them in the
 systems list - follow such an entry with its Network tag set.
 
+**The default threshold, 9 or 6 dB** (KrakenSDR, 2026-11-22, the memory
+cleared before each sweep, against the survey):
+
+| band | 9 dB: found / others / carriers / probes / time | 6 dB: found / others / carriers / probes / time |
+|---|---|---|
+| 496-502 MHz | 6 of 6 / 10 / 21 / 104 / 33.7 s | 6 of 6 / 10 / 19 / 93 / 31.2 s |
+| 453-460 MHz | 4 of 4 / 0 / 9 / 39 / 19.5 s | 4 of 4 / 1 / 9 / 41 / 22.8 s |
+| 410-420 MHz | 6 of 8 / 5 / 12 / 50 / 8.1 s | 7 of 8 / 6 / 15 / 63 / 14.6 s |
+| 138-146 MHz | 7 of 7 / 2 / 15 / 70 / 28.0 s | 7 of 7 / 2 / 27 / 134 / 48.9 s |
+
+6 dB found 24 of 25 against 23 of 25 for 30 s more over the four bands
+(89 s -> 118 s): the default is 6 dB. MPT1327 417.7625 MHz was missed at
+both (found at 6 dB in the orchestrator's run - near the threshold either
+way); 416.6750 MHz, found at 9 dB before the threshold fix, was missed at 9
+and found at 6 here.
+
 **Rules from the third review (2026-11-22):**
 - Probe VFOs are the manager's like voice VFOs: never in a saved VFO
   snapshot (a user's edit during the probing saves his VFOs only), not
@@ -823,7 +839,11 @@ systems list - follow such an entry with its Network tag set.
 Commands (all `TRUNK_` / `GET_TRUNK_CC`, answered with the status, errors as
 `trunk_error`):
 - `TRUNK_SEARCH:{"ranges":[[lo_hz,hi_hz],...] (1-16, inside the tuner's
-  range, <= 2000 MHz in all), "threshold_db":9 (3-40), "raster_hz":6250
+  range, <= 2000 MHz in all), "threshold_db":6 (3-40: dB over the LOCAL
+  background - the 20th percentile within +-50 kHz, which neighbouring
+  carriers raise - not over the receiver's noise floor; it decides only
+  WHETHER a carrier is tried, never where: its width and centre are measured
+  without it), "raster_hz":6250
   (0 | 5000 | 6250 | 12500)}`; `TRUNK_SEARCH_STOP`.
 - `GET_TRUNK_CC` -> the list message; `TRUNK_CC_NAME:{"id":n,"name":".."}`,
   `TRUNK_CC_DEL:{"id":n}`, `TRUNK_CC_CLEAR`, `TRUNK_CC_SET:{entry}` (the

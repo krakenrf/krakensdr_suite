@@ -3883,7 +3883,7 @@ struct Search {
     size_t step = 0;
     int st = 0;             // 0 tune, 1 arrive, 2 settle, 3 look 1, 4 look 2, 5 probe
     int64_t t_st = 0, t_start = 0, w_start = 0, hold_sent = 0;
-    double home = 0, thr_db = 9, raster = 6250;
+    double home = 0, thr_db = 6, raster = 6250;
     std::vector<Cand> cands;
     std::vector<Probe> probes;
     std::vector<double> look1;
@@ -4010,7 +4010,7 @@ std::string srch_start(const geo::Json& j) {
         total += hi - lo;
     }
     if (total > 2e9) return "ranges: at most 2000 MHz in all";
-    const double thr = jnum(j, "threshold_db", 9), ras = jnum(j, "raster_hz", 6250);
+    const double thr = jnum(j, "threshold_db", 6), ras = jnum(j, "raster_hz", 6250);
     if (!(thr >= 3 && thr <= 40)) return "threshold_db: 3-40";
     if (!(ras == 0 || ras == 5000 || ras == 6250 || ras == 12500)) return "raster_hz: 0, 5000, 6250 or 12500";
     if (trunking_plugins().empty()) return "no built plugin declares trunking";
