@@ -3883,7 +3883,7 @@ struct Search {
     size_t step = 0;
     int st = 0;             // 0 tune, 1 arrive, 2 settle, 3 look 1, 4 look 2, 5 probe
     int64_t t_st = 0, t_start = 0, w_start = 0, hold_sent = 0;
-    double home = 0, thr_db = 9, raster = 6250;
+    double home = 0, thr_db = 6, raster = 6250;
     std::vector<Cand> cands;
     std::vector<Probe> probes;
     std::vector<double> look1;
@@ -4010,7 +4010,7 @@ std::string srch_start(const geo::Json& j) {
         total += hi - lo;
     }
     if (total > 2e9) return "ranges: at most 2000 MHz in all";
-    const double thr = jnum(j, "threshold_db", 9), ras = jnum(j, "raster_hz", 6250);
+    const double thr = jnum(j, "threshold_db", 6), ras = jnum(j, "raster_hz", 6250);
     if (!(thr >= 3 && thr <= 40)) return "threshold_db: 3-40";
     if (!(ras == 0 || ras == 5000 || ras == 6250 || ras == 12500)) return "raster_hz: 0, 5000, 6250 or 12500";
     if (trunking_plugins().empty()) return "no built plugin declares trunking";
@@ -4155,14 +4155,16 @@ std::vector<Cand> srch_carriers(double c, double thr) {
         if (used[pk]) continue;
         // the width: the run within 20 dB of the peak; the centre: between the edges of the run within 10 dB
         // (a neighbour merging into the skirt moves the -20 dB edge, not the -10 dB one)
-        const float lim = std::max(spec[pk] - 20.0f, bg[pk] + static_cast<float>(thr) / 2);
-        const float lim10 = std::max(spec[pk] - 10.0f, bg[pk] + static_cast<float>(thr) / 2);
+        // (the threshold decides WHETHER a carrier is tried, never where: the runs don't depend on it)
+        const float lim = std::max(spec[pk] - 20.0f, bg[pk] + 4.5f);
+        const float lim10 = std::max(spec[pk] - 10.0f, bg[pk] + 4.5f);
         int lo = pk, hi = pk;
         while (lo - 1 >= 0 && !used[lo - 1] && spec[lo - 1] >= lim) lo--;
         while (hi + 1 < n && !used[hi + 1] && spec[hi + 1] >= lim) hi++;
         int clo = pk, chi = pk;
-        while (clo - 1 >= lo && spec[clo - 1] >= lim10) clo--;
-        while (chi + 1 <= hi && spec[chi + 1] >= lim10) chi++;
+        // (the centre run on its own peak: a neighbour's run taken out before can't cut it short)
+        while (clo - 1 >= 0 && spec[clo - 1] >= lim10) clo--;
+        while (chi + 1 < n && spec[chi + 1] >= lim10) chi++;
         for (int k = lo; k <= hi; k++) used[k] = 1;
         // (a narrow spike on top - a pilot, a carrier inside a wider signal: the -20 dB run's centre)
         const bool spike = (chi - clo + 1) * 10 < (hi - lo + 1) * 4;
