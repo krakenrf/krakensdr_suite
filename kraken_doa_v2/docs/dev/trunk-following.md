@@ -657,6 +657,7 @@ first, voice tuners back, calls freed, paused why "control-channel search").
 Nothing of it is saved (the dispatching guard). It ends: `done`, `stopped`
 (`TRUNK_SEARCH_STOP`), `follow` (a click to follow), `mode` (an
 `OPERATING_MODE:` / `WIDEBAND_MODE:` - home first), `shutdown` (home first),
+`no_vfo` (no free VFO for its probes for 10 s - home first),
 `heimdall` (the stream never came), `playback`; then the receiver is home
 (the centre it had; its VFOs carried back with it, the control VFOs enabled
 again) and following resumes. `user_retuned`: the user's own `FREQ:` ends it
@@ -749,6 +750,64 @@ this. The DMR keys of the two DMR networks around 415 / 456 MHz came out
 the same (`dmr:` + its key without a Network tag option): the memory keeps
 them apart by frequency, but a system shared by key merges them in the
 systems list - follow such an entry with its Network tag set.
+
+**Rules from the third review (2026-11-22):**
+- Probe VFOs are the manager's like voice VFOs: never in a saved VFO
+  snapshot (a user's edit during the probing saves his VFOs only), not
+  control VFOs, not the saved-frequency scan's tuners.
+- A start with no free VFO is refused ("no free VFO for the probes (16 in
+  use)"); a sweep that has no room for its probes for 10 s (the user added
+  VFOs) ends `no_vfo` (home, hold released).
+- heimdall lost mid-sweep (`heimdall`) and a mode change heimdall reports
+  without a command (`mode`) end it with the home state ASKED for: the
+  receiver is home when the stream is back.
+- Step centres stay inside the tuner's range (the downconverter: its RF
+  range); the band covers the edge from inside. The search's own retune
+  that the receiver refused is never "the user retuned" (the step is
+  compared with what the receiver took).
+- Step centres sit half a raster off the raster: a channel on the raster is
+  never at a centre's DC (within 3 bins of it a carrier can't be measured).
+  With `raster_hz` 0 a carrier within ~0.44 kHz of a step centre is not
+  seen - documented, not worked around.
+- `user_retuned`: nothing goes back - the control VFOs keep their offsets as
+  on any retune (no scan restore).
+- A probe whose plugin set the control flag is always recorded, with or
+  without its key; the key is waited for 2.5 s of stream time.
+- With several FFT workers a frame of the previous step may still be
+  averaged in just after the reset (frames are counted by their RF, the
+  average isn't filtered): one frame among the refill count - the two looks
+  and the threshold over the local background make it harmless.
+- A duplicate erased as "the weaker sighting" is never one the user named
+  or followed.
+- Click to follow checks every refusal (not built / doesn't declare
+  `trunking`, wideband scan mode, outside the tuner range, an add that
+  doesn't fit, 16 VFOs in use) before it changes anything; it places the
+  control VFO against where the receiver WILL be (a running search or an
+  excursion goes home first, voice tuners back; never the stream's stale
+  header); a replaced channel's plugin options go back to the defaults (only
+  the entry's are set); options the receiver refuses are named in the
+  answer ("followed on D<n>, but not applied: ...").
+- Only decoders that declare `trunking`: refused at `TRUNK_CC_SET` ("plugin:
+  a decoder that declares trunking"), dropped from a loaded file (counted in
+  `file.note`), refused at follow ("its decoder (<id>) does not declare
+  trunking"). Options: what `DIGITAL_OPT` takes (its key rule, <= 100 bytes,
+  no control characters) - checked at SET / load by the same rule.
+- `cc_followed`: a clicked VFO that is gone, runs another plugin or was
+  moved more than 3 kHz off its entry is dropped; after a restart a control
+  VFO with the plugin and frequency of an entry followed before is the
+  followed one again (the most recently followed entry) - the highlight and
+  "replace" work across restarts.
+- The file: its size is checked before it is read; a newer `version` is kept
+  aside untouched (`file.state` "not_loaded", the note says "newer
+  version"); ids are renumbered 1.. on load; entries over 1000 are kept aside
+  (`trunk_control_channels.json.full-<ts>`, the note says so) before a write
+  could lose them.
+- Messages: `TRUNK_CC_SET` and `GET_TRUNK_CC` are answered with the list
+  message (to every page, at most once a second), not the full status (an
+  import of 1000 entries was 1004 statuses); there is no reply-to-the-asker
+  path in the command handler, so "the asker only" is not done - the rate
+  limit is global. A heard control VFO's once-a-minute refresh that changes
+  only `last` / `n` sends the list and saves the file at most every 5 min.
 
 Commands (all `TRUNK_` / `GET_TRUNK_CC`, answered with the status, errors as
 `trunk_error`):
