@@ -2116,7 +2116,8 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("DIGITAL_HISTORY:")) {
         // A page opening the decoder panel asks for the whole event log
         int id = parse_int(message, 16);
-        broadcast(MessageBuilders::build_digital_message(id, true));
+        const string m = MessageBuilders::build_digital_message(id, true);
+        if (!m.empty()) broadcast(m);   // (no such VFO / no decoder - a probe gone already: nothing)
     }
     else if (message.starts_with("GEO_RADIUS_KM:")) {
         // Incident map: addresses are looked up within this radius of the

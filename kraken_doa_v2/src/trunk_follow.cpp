@@ -39,6 +39,10 @@
 #include <cstdio>
 #include <ctime>
 #include <deque>
+#ifdef __linux__
+#include <sched.h>
+#endif
+#include <iomanip>
 #include <thread>
 #include <cstring>
 #include <charconv>
@@ -3814,6 +3818,7 @@ Search g_srch;
 std::string g_srch_last;   // the last run's summary (JSON object)
 
 bool searching() { return g_srch.active; }
+void srch_recs_clear();
 
 // the averaged spectrum holds only the new band after this long (as the
 // saved-frequency scan reckons it: 95 % of the average replaced)
@@ -3858,7 +3863,12 @@ std::vector<std::string> trunking_plugins() {
 }
 
 int srch_batch_max() {
-    const unsigned hc = std::thread::hardware_concurrency();
+    unsigned hc = std::thread::hardware_concurrency();
+#ifdef __linux__
+    // (the cores this process may run on - a receiver pinned with taskset, a container with fewer CPUs)
+    cpu_set_t cs;
+    if (sched_getaffinity(0, sizeof cs, &cs) == 0 && CPU_COUNT(&cs) > 0) hc = static_cast<unsigned>(CPU_COUNT(&cs));
+#endif
     return std::clamp<int>(hc ? static_cast<int>(hc) / 2 : 2, 2, 12);
 }
 
@@ -3947,6 +3957,7 @@ std::string srch_start(const geo::Json& j) {
     for (auto& e : s.ctl)
         if (auto inst = exc_inst(e)) inst->enabled = false;   // (the user's control VFOs hear nothing while it sweeps)
     g_srch = s;
+    srch_recs_clear();
     std::cout << "Trunk following: control channel search, " << g_srch.centres.size() << " steps, " << total / 1e6 << " MHz"
               << std::endl;
     g_status_now = true;
@@ -4010,7 +4021,15 @@ std::vector<Cand> srch_carriers(double c, double thr) {
             out.push_back(cd);
         }
     }
-    return out;
+    // (peaks were taken strongest first: a later one in a stronger one's skirt - within 20 kHz, 15 dB weaker - is its skirt)
+    std::vector<Cand> keep;
+    for (const auto& cd : out) {
+        bool skirt = false;
+        for (const auto& k : keep)
+            if (std::fabs(k.hz - cd.hz) < 20000 && k.level - cd.level >= 15) skirt = true;
+        if (!skirt) keep.push_back(cd);
+    }
+    return keep;
 }
 
 void srch_probe_batch() {
@@ -4056,9 +4075,31 @@ void srch_probe_batch() {
     if (made) broadcast(MessageBuilders::build_decimator_info_message());
 }
 
+struct SrchRec {
+    double hz;
+    std::string plugin, key;
+    float level;
+    uint64_t id;
+    bool made;
+};
+std::vector<SrchRec> g_srch_recs;   // this run's records (cleared at its start)
+void srch_recs_clear() { g_srch_recs.clear(); }
+
 void srch_record(const Probe& p) {
     Cand& cd = g_srch.cands[p.cand];
     cd.found = true;
+    for (auto it = g_srch_recs.begin(); it != g_srch_recs.end(); ++it)
+        if (it->plugin == p.plugin && it->key == p.key && std::fabs(it->hz - cd.hz) < 15000) {
+            if (it->level >= cd.level) return;   // (the weaker one beside it: the same channel heard off its centre)
+            if (it->made) {
+                g_cc.erase(it->id);
+                g_srch.found_new--;
+            } else {
+                g_srch.found_known--;
+            }
+            g_srch_recs.erase(it);
+            break;
+        }
     const double tol = std::max(3000.0, g_srch.raster / 2);
     // the nominal frequency: the signalling's, else the measured centre snapped to the raster
     double nominal = fin(p.ctl_hz) && std::fabs(p.ctl_hz - cd.hz) < 15000 ? p.ctl_hz : snap(cd.hz, g_srch.raster);
@@ -4067,6 +4108,7 @@ void srch_record(const Probe& p) {
     if (!e) return;
     if (made) g_srch.found_new++;
     else g_srch.found_known++;
+    g_srch_recs.push_back({cd.hz, p.plugin, p.key, cd.level, e->id, made});
     std::cout << "Trunk following: control channel found at " << nominal / 1e6 << " MHz (" << p.plugin
               << (p.key.empty() ? ", no key" : ", " + p.plugin + ":" + p.key) << ")" << (made ? "" : " - known") << std::endl;
 }
@@ -4184,8 +4226,9 @@ void tick_search() {
             }
             if (getenv("KRAKEN_TRUNK_SEARCH_LOG")) {
                 std::cout << "Trunk following: search step " << g_srch.step << " at " << c / 1e6 << " MHz: candidates";
+                std::cout << std::fixed << std::setprecision(4);
                 for (const auto& cd : g_srch.cands) std::cout << " " << cd.hz / 1e6 << "(" << static_cast<int>(cd.width / 1000) << "k," << static_cast<int>(cd.level) << "dB)";
-                std::cout << std::endl;
+                std::cout << std::defaultfloat << std::setprecision(6) << std::endl;
             }
             if (g_srch.cands.empty()) return next();
             g_srch.st = 4;
