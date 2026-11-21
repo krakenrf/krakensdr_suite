@@ -250,6 +250,42 @@ the hops into the sweep spectrum, the page shows it.
   command gets what it got before, frame for frame. An older receiver
   ignores the command (no reply, no log line, no echo, not saved: checked
   on 3919d64); an older page never sends it.
+- Added 2026-11-21 (the user: "the full resolution sent to the browser"):
+  `SWEEP_FULL:<1|0>` (also true / false; junk ignored) - transport level,
+  per connection like `SWEEP_OVERVIEW`, default 0; an older receiver
+  ignores it. While it is on, a socket with a sweep view gets the **full
+  set** - the whole range at the sweep's own bins - as binary type 11:
+
+  | Offset | Type | |
+  |---|---|---|
+  | 0 | u32 | 11 |
+  | 4 | u8 | flags: 1 = the set's last part, 2 = a snapshot (the store as it is, not a completed sweep: the trace only, no waterfall row), 4 = paused |
+  | 5 | u8 | 0 |
+  | 6 | u16 | pool = bins per value (1: the sweep's own bins) |
+  | 8 | u32 | grid id |
+  | 12 | u32 | sweeps completed on this grid (a completion set: its flag-2 frame's) |
+  | 16 | f64 | Hz of value 0 (its centre) |
+  | 24 | f64 | spacing, Hz (bin x pool) |
+  | 32 | u32 | values in the whole set |
+  | 36 | u32 | this part's first value |
+  | 40 | u32 | n |
+  | 44 | u32 | set id (per socket, + 1 a set; all its parts carry it) |
+  | 48 | u8[n] | levels, type 10's scale (0 = never measured) |
+
+  Parts of at most 524 288 values, ascending, no gaps. When: with every
+  completed sweep AFTER its flag-2 frame (not before, as first proposed:
+  uWS drops a socket's data past 2 MB queued, and a set is up to 16.8 MB -
+  it is paced by the socket's queue, the live frames go first); the page
+  attaches a complete set to the row of the same grid and `sweeps`. On
+  `SWEEP_FULL:1` the store as it is, once, right away (flag 2; also while
+  paused; nothing while there is no data) - unless that tick's completion
+  set goes, which serves for it. Per socket one set at a time: a completion
+  while a set is in flight, or with more than 256 KB queued, gets no set
+  (skipped whole: the row keeps its overview / window levels). A set in
+  flight is abandoned at a grid change, at `SWEEP_FULL:0` and out of the
+  mode (the page drops what is incomplete). Not compressed. No bin cap and
+  no rate limit (the measurements below); `pool` is there for one. A socket
+  that never sent the command gets what it got before.
 - Levels: ONE reference for the whole sweep (never one per hop: a signal
   that fills a hop must keep its height), the tuners' common in-band shape
   removed (`nfloor::shape_db`, *Noise floor*).
@@ -679,6 +715,60 @@ refused; out-of-range numbers are clamped:
   15, MCP 9). Note: a page that sends its view as the explicit whole range
   (not `0:0`) gets flag 1 (the window is clamped to the range) and so an
   overview of the same content; a page zoomed out sends `0:0`.
+- The full set (2026-11-21, `SWEEP_FULL`): `sweep::build_full` converts
+  the store's level 0 to u8 in one pass under `g_mu` (`level_u8`: exactly
+  build_frame's rounding - checked for all 65 536 values - in a loop the
+  compiler vectorizes; a 65 536-entry table was 2x slower on x86, 1.4x on
+  the Pi 5), into a buffer made before the lock and shared (`shared_ptr`)
+  by every socket that sends it, built at most once a tick when a socket
+  starts a set. `pump_full` (websocket_server.cpp) sends parts while the
+  socket has less than 1 MiB queued - every tick after the type 10 frames,
+  and from the socket's `drain` event. One lock, so a set is one state of
+  the sweep (its `sweeps` and its levels read together).
+  - The engine's stall = the lock held for a set (bench, 20 sets; x86 /
+    Pi 5): whole range at 16384 (11.9 M bins) 2.5 (worst 3.3) / 8.5 (8.6)
+    ms; 100-700 MHz at 65536 (16.4 M) 3.8 / 11.9 ms. The worker's ring holds
+    ~55 ms of packets: no packet dropped in any normal-build run, x86 or Pi
+    5. A 1 GB Pi 4 (not measured; ~2x slower than a Pi 5 here) would hold it
+    ~17-24 ms. The ASan + UBSan build (several times slower) dropped 9
+    packets during the 11.9 M-bin sets. The 23 parts are made in 0.8 / 1.6
+    ms; 11.9 MB arrives on localhost in 10-45 ms.
+  - Memory: one buffer of `bins` bytes per set (11.9 MB at 146 Hz, 16.8 MB
+    at most), alive while a socket still sends it - the latest and any a
+    slower socket is still on; released out of the mode.
+  - Not compressed: deflate of a part (the scene's noise and signals) to
+    57 % costs 12.8 ms at level 1 (the set 291 ms), to 54 % 49 ms at level
+    6 (1.1 s), on x86, on the uWS loop.
+  - CPU (t_fullcpu.py, the receiver, % of one core; one normal page plus 0
+    / 1 / 2 full-resolution pages; then 0 again; type 11 KB/s a full page;
+    dwell 5, 5 tuners, the fake at real time; no packet dropped):
+
+    | case | x86 | Raspberry Pi 5 | wire, a full page |
+    |---|---|---|---|
+    | 24-1765 MHz auto (0.37 M bins, 3.75 s) | 2.9 / 3.1 / 3.2 / 3.2 | 6.1 / 6.1 / 6.1 / 6.1 | 122 KB/s |
+    | 24-1765 MHz 4096 (2.97 M) | 5.8 / 5.6 / 5.7 / 5.5 | 11.1 / 11.6 / 12.1 / 11.4 | 883 KB/s |
+    | 24-1765 MHz 16384 (11.9 M) | 8.5 / 8.5 / 8.7 / 8.1 | 15.3 / 17.2 / 18.8 / 15.5 | 3.5 MB/s |
+    | 88-108 MHz auto (17 k bins, 16 sets/s) | 3.9 / 4.0 / 4.0 / 4.0 | 8.1 / 8.4 / 8.5 / 8.2 | 291 KB/s |
+    | 400-430 MHz 16384 (205 k, 12 sets/s) | 7.9 / 7.7 / 7.9 / 7.4 | 13.1 / 14.2 / 15.2 / 13.1 | 2.5 MB/s |
+
+    So no bin cap and no rate limit: the heaviest case costs a Pi 5 ~1.7
+    % of a core per full page (sending 3.5 MB/s); the wire is the limit on a
+    slow link (the page's Slow link wins).
+  - Tests (`t_full.py` 31 / 31, x86 normal and ASan + UBSan, Pi 5): a
+    complete set at once on `SWEEP_FULL:1` (the snapshot; or the tick's
+    completion set); one set per completed sweep, after its flag-2 frame,
+    the same `sweeps` (48 of 48), ids + 1; a second socket the same sets
+    byte for byte; a socket that never asked none (and `t_ovcompat.py`:
+    its type 10 stream as from 3919d64); paused, the snapshot flags 2 | 4,
+    and the set against the store's views at the same instant -
+    max-pooled = the whole-range views of 4096 / 1000 points exactly, the
+    windows at one bin a point = its bins (400-430 MHz, and the whole range
+    at 11.9 M bins in 23 parts); `SWEEP_FULL:0` / junk / `:1`; none out of
+    the mode, sets again back in it; a grid change mid-set (a reader with a
+    64 KB receive buffer, paused): the old set stops incomplete (6 of 23
+    parts x86, 10 Pi), the new grid's sets complete; a reader paused 12 s
+    (~3 sweeps): every set it got complete, the sweeps it could not take
+    skipped whole, the socket open (uWS's 2 MB limit never reached).
 - Threads: settings and frames on the uWS loop, the producer on the data
   receiver, the engine on its worker; the array, pyramid and per-hop state
   under one mutex (a hop's write ~U values + their ancestors; a frame ~4096

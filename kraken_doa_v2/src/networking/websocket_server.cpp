@@ -76,6 +76,15 @@ struct PerSocketData {
     uint64_t sweep_version = 0;
     uint32_t sweep_completions = 0;
     uint32_t sweep_overview = 0;   // SWEEP_OVERVIEW:<points> (0 = off): the whole range with each completed sweep
+    // SWEEP_FULL:1 - the whole range at the sweep's own bins (type 11) with each
+    // completed sweep, in parts paced by this socket's buffer, one set at a time
+    bool sweep_full = false;
+    bool full_snapshot = false;   // the store as it is, once (on SWEEP_FULL:1)
+    bool full_due = false;        // its flag-2 frame went this tick: a completed sweep's set
+    std::shared_ptr<const sweep::FullSet> full;   // the set being sent
+    size_t full_off = 0;
+    uint32_t full_id = 0;
+    uint8_t full_flags = 0;
 };
 
 // Data-stream subscription bits (the heavy/optional streams).
@@ -358,6 +367,57 @@ void handle_sweep_overview(WS* ws, string_view arg) {
     ws->getUserData()->sweep_overview = n == 0 ? 0 : std::clamp<uint32_t>(n, 16, SPECTRUM_VIEW_MAX_POINTS);
 }
 
+// SWEEP_FULL:<1|0> (sweep mode; transport level, this connection only): the
+// full set (type 11) with each completed sweep, and the store as it is right
+// away (a snapshot: flag 2). Junk is ignored
+template<typename WS>
+void handle_sweep_full(WS* ws, string_view arg) {
+    PerSocketData* ud = ws->getUserData();
+    if (arg == "1" || arg == "true") {
+        if (!ud->sweep_full) ud->full_snapshot = true;
+        ud->sweep_full = true;
+    } else if (arg == "0" || arg == "false") {
+        ud->sweep_full = false;
+        ud->full_snapshot = ud->full_due = false;
+        ud->full.reset();   // a set in flight stays incomplete (the page drops it)
+    }
+}
+
+// The full set's parts go while this socket has less than FULL_QUEUE queued
+// (uWS drops past maxBackpressure, 2 MB): every tick, and when it drains. A set
+// starts only with a tick (lazy: built once a tick, shared by the sockets) and
+// only when the socket has no set in flight and at most SPEC_MAX_BUFFERED
+// queued - else that sweep's set is skipped whole. A grid change abandons a set
+constexpr unsigned FULL_QUEUE = 1024 * 1024;
+bool g_full_active = false;   // some socket has a set in flight (released out of the mode)
+template<typename WS>
+void pump_full(WS* ws, std::shared_ptr<const sweep::FullSet>* lazy, uint32_t grid) {
+    PerSocketData* ud = ws->getUserData();
+    if (!ud->sweep_full) return;
+    if (ud->full && ud->full->grid != grid) ud->full.reset();
+    if (lazy && !ud->full && (ud->full_due || ud->full_snapshot) && (ud->sub_mask & SUB_FFT) &&
+        ws->getBufferedAmount() <= SPEC_MAX_BUFFERED) {
+        if (!*lazy) *lazy = sweep::build_full();
+        if (*lazy && (*lazy)->grid == grid) {
+            ud->full = *lazy;
+            ud->full_off = 0;
+            ud->full_id++;
+            ud->full_flags = static_cast<uint8_t>((ud->full_due ? 0 : 2) | (sweep::running() ? 0 : 4));
+            g_full_active = true;
+        }
+    }
+    if (lazy) ud->full_due = ud->full_snapshot = false;
+    while (ud->full && ws->getBufferedAmount() < FULL_QUEUE) {
+        const size_t total = ud->full->lv.size();
+        const size_t n = std::min(sweep::FULL_PART_VALUES, total - ud->full_off);
+        const bool last = ud->full_off + n >= total;
+        ws->send(sweep::full_part(*ud->full, static_cast<uint8_t>(ud->full_flags | (last ? 1 : 0)), ud->full_id, ud->full_off, n),
+                 uWS::BINARY, false);
+        ud->full_off += n;
+        if (last) ud->full.reset();
+    }
+}
+
 // Sweep mode, every 50 ms tick: each page with a sweep view gets a frame when
 // something changed (at most 20 a second while hops arrive); a completed sweep
 // marks its frame (flag 2: the page's waterfall line). A slow link skips
@@ -374,10 +434,34 @@ void send_sweep_views() {
         if (m.empty()) continue;
         if (!ov.empty()) ws->send(ov, uWS::BINARY, true);   // (the overview first: the page pairs them by sweeps)
         ws->send(m, uWS::BINARY, true);
+        if (completes && ud->sweep_full) ud->full_due = true;   // (its full set follows, paced)
         ud->sweep_dirty = false;
         ud->sweep_version = ver;
         ud->sweep_completions = done;
     }
+    // the full sets (SWEEP_FULL): after the frames, so the live trace goes first
+    std::shared_ptr<const sweep::FullSet> lazy;
+    uint32_t grid = 0;
+    bool have_grid = false;
+    for (ClientWS* ws : g_sweep_sockets) {
+        if (!ws->getUserData()->sweep_full) continue;
+        if (!have_grid) {
+            grid = sweep::grid_id();
+            have_grid = true;
+        }
+        pump_full(ws, &lazy, grid);
+    }
+}
+
+// out of sweep mode: no set stays in flight (its memory goes)
+void release_full_sets() {
+    if (!g_full_active) return;
+    for (ClientWS* ws : g_sweep_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        ud->full.reset();
+        ud->full_due = ud->full_snapshot = false;
+    }
+    g_full_active = false;
 }
 
 // Each page with views gets every display of the current mode (independent:
@@ -1014,6 +1098,12 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 handle_sweep_overview(ws, message.substr(15));
                 return;
             }
+            // SWEEP_FULL:<1|0> - the whole range at the sweep's own bins (type 11)
+            // with each completed sweep (an older receiver ignores it)
+            if (message.starts_with("SWEEP_FULL:")) {
+                handle_sweep_full(ws, message.substr(11));
+                return;
+            }
             // 🎨 BIN_DOA_VIEW:1|0 (transport-level, this connection only):
             // the page takes type 9 frames with its main view's frames
             // (bin_doa.hpp); answered with the mode's state
@@ -1030,6 +1120,12 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             ControlHandler::handle_page_message(message);
         },
         
+        // a socket's queue drained: the next parts of its full set (SWEEP_FULL)
+        .drain = [](auto* ws) {
+            if (ws->getUserData()->full && sweep_mode_enabled.load(std::memory_order_relaxed))
+                pump_full(ws, nullptr, sweep::grid_id());
+        },
+
         .close = [](auto* ws, int code, string_view reason) {
             g_pending_auth.erase(ws);
             g_spec_sockets.erase(ws);
@@ -1072,6 +1168,7 @@ void WebSocketServer::web_server_main() {
                         if (global_ssl_app && !g_sweep_sockets.empty()) send_sweep_views();
                         return;
                     }
+                    release_full_sets();
                     if (global_ssl_app && data_ready) {
                         // built every tick (it feeds the scanners); encoded
                         // only for pages without spectrum views

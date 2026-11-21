@@ -14,6 +14,7 @@
 // short mutex.
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,22 @@ uint32_t completions();      // sweeps completed since the engine started (any g
 // overview frame (flag 16 | 2: the whole range as a whole-range view of that many
 // points gets it, same seq / sweeps) to send BEFORE the frame; else it is cleared
 std::string build_frame(const View& v, bool completes, uint32_t overview_points = 0, std::string* overview = nullptr);
+
+// SWEEP_FULL (2026-11-21): the whole store at the sweep's own bins as u8 levels
+// (type 10's scale), for type 11. Made once, shared by every socket sending it
+struct FullSet {
+    uint32_t grid = 0, sweeps = 0;
+    double f0_hz = 0, step_hz = 0;   // the centre of value 0, the spacing
+    uint16_t pool = 1;               // bins per value
+    std::vector<uint8_t> lv;
+    double lock_ms = 0;              // how long the store's lock was held for it
+};
+// nullptr = no data on this grid yet
+std::shared_ptr<const FullSet> build_full();
+constexpr size_t FULL_PART_VALUES = 524288;   // a type 11 part's values at most
+// one type 11 part: flags 1 = last part, 2 = snapshot, 4 = paused
+std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t first, size_t n);
+uint32_t grid_id();   // the current grid's id (0 = none)
 
 // The levels of a window max-pooled to at most `points` points (dB over the
 // reference; NaN = never measured) - the AI assistant's get_spectrum

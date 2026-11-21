@@ -1215,6 +1215,67 @@ std::string build_frame(const View& v, bool completes, uint32_t overview_points,
     return frame_locked(c, v.seq, completes, false);
 }
 
+// int16 store value (0.01 dB) -> type 10's u8 level, exactly as build_frame
+// rounds it (lround of m x SCALE, clamped; NONE -> 0): for x >= 0 below 2^22,
+// int(x + 0.5f) is lround(x) (0.5 is a whole number of x's ulps, the sum
+// exact), negative values and NONE go to 0 - checked for all 65 536 values
+// (bench/conv.cpp). A plain loop the compiler vectorizes: 2.4 ms for 11.9 M
+// bins on x86 against 5.3 for a table
+inline uint8_t level_u8(int16_t m) {
+    constexpr float SCALE = 0.01f * 255.0f / 120.0f;
+    const float x = std::max(static_cast<float>(m) * SCALE, 0.0f) + 0.5f;
+    return static_cast<uint8_t>(std::min(static_cast<int>(x), 255));
+}
+
+std::shared_ptr<const FullSet> build_full() {
+    auto out = std::make_shared<FullSet>();
+    // (the buffer first, outside the lock; the bins can't change size meanwhile:
+    // only the loop thread - this one - makes a new grid)
+    out->lv.resize(static_cast<size_t>(std::max<int64_t>(S.plan.bins, 0)));
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        const Plan& p = S.plan;
+        if (!p.ok || S.lv.empty() || !S.any || S.lv[0].size() != out->lv.size()) return nullptr;
+        out->grid = p.grid;
+        out->sweeps = S.done;
+        out->f0_hz = static_cast<double>(p.start);
+        out->step_hz = p.bin_hz;
+        const int16_t* src = S.lv[0].data();
+        uint8_t* dst = out->lv.data();
+        const size_t n = out->lv.size();
+        for (size_t i = 0; i < n; i++) dst[i] = level_u8(src[i]);
+    }
+    out->lock_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    return out;
+}
+
+std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t first, size_t n) {
+    std::string out;
+    out.resize(48 + n);
+    char* o = out.data();
+    auto put = [&o](const auto& x) { std::memcpy(o, &x, sizeof x); o += sizeof x; };
+    put(uint32_t(11));
+    put(flags);
+    put(uint8_t(0));
+    put(s.pool);
+    put(s.grid);
+    put(s.sweeps);
+    put(s.f0_hz);
+    put(s.step_hz);
+    put(static_cast<uint32_t>(s.lv.size()));
+    put(static_cast<uint32_t>(first));
+    put(static_cast<uint32_t>(n));
+    put(set_id);
+    std::memcpy(o, s.lv.data() + first, n);
+    return out;
+}
+
+uint32_t grid_id() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    return S.plan.ok ? S.plan.grid : 0;
+}
+
 bool pooled_db(double lo_hz, double hi_hz, int points, std::vector<float>& db, double* first_hz, double* step_hz,
                double* bin_hz) {
     std::lock_guard<std::mutex> lk(g_mu);
