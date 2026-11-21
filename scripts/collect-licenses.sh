@@ -102,6 +102,11 @@ if [[ -f $ROOT/kraken_doa_v2/plugins/dab/minimp3.h ]]; then
         > "$DEST/third-party/minimp3/LICENSE.txt"
 fi
 put whisper.cpp "$WHISPER_DIR/LICENSE"
+# KleidiAI (Apache-2.0; its LICENSES/BSD-3-Clause.txt is for a bundled
+# googletest that isn't built): compiled into kraken_whisper on 64-bit Arm
+# Linux with the dot-product instructions (setup.sh's kleidiai_args); ggml's
+# CMake fetches it into the helper's build folder
+put KleidiAI "$(dirname "$WHISPER_DIR")/build/_deps/kleidiai-src/LICENSES/Apache-2.0.txt"
 
 if [[ -n $MSYS2 && -d $MSYS2/share/licenses ]]; then
     # what the static Windows programs link from MSYS2
