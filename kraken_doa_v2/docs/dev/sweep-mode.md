@@ -1179,19 +1179,49 @@ actually have a much better resolution sent to the browser. Perhaps even
 the full resolution. Since it's only updating every few seconds. Add an
 option to choose the full resolution under "Display" when sweep mode is
 used"):
-- The Display box's "Full resolution" (`#swp-full`, `.sweep-only`, a
-  switch; localStorage `kraken_swp_full`, this browser only, off by
-  default). Slow link wins: with Slow link on, the switch is disabled and
-  nothing full is asked for (the user picked Slow link for a slow line);
-  off again, Full resolution comes back as set.
-- The page sends `SWEEP_FULL:<1|0>` (per connection, with its first view, on
-  entering the mode, after a reconnect, when the switch or Slow link
-  changes). The receiver then sends the whole range at the sweep's own bins
-  (binary type 11, the contract above) after each completed sweep's flag-2
-  frame, in parts - and once at once, a snapshot (flag 2, the trace only).
-  `swpOnFull` puts a set together by its set id and first index; a gap, a
-  part out of order or an old grid drops it (that row keeps its window /
-  overview levels). The layout is read in one place, `swpFullParse`.
+- The Display box's "Display resolution" (`#swp-dres`, `.sweep-only`, a
+  list since round 6 - round 5 had a "Full resolution" switch; the user,
+  2026-11-22: "Give us other resolution options for the display too via a
+  drop down"). The choice `swp.dres`: 0 = Fit to the plot (the view's
+  points only; the default), 1 = Full (every bin), n >= 2 = at most n
+  values a set (pooled by the receiver). localStorage `kraken_swp_dres`,
+  this browser only; round 5's `kraken_swp_full` = '1' carries over as
+  Full, and is kept in step (set exactly while the choice is Full) for an
+  older page. Slow link wins: with Slow link on, the list is disabled and
+  nothing is asked for (the user picked Slow link for a slow line); off
+  again, the choice comes back.
+- The list is the receiver's `full_sets` for the running grid (each entry:
+  `n`, `pool`, `values`, `step_hz`; the steps whose pool would be 1 are left
+  out by the receiver; the last is Full), shown as "Fit to the plot",
+  "37.5 kHz (46,427 points)", ..., "Full: 146 Hz (11,885,227 points)" -
+  the page computes nothing (`swpDresRender`; rebuilt only when the
+  entries change, so an open list stays open across sweep messages).
+  Without the field (round 5's receiver, which takes `SWEEP_FULL:65536` as
+  junk, or an older one): Fit / Full only.
+- What is asked (`swpFullAsk`): with the field, the stored choice as it is -
+  a stored n that the running grid doesn't list (it was left out as equal
+  to Full there) is asked anyway, the receiver gives pool 1, and the list
+  shows Full (`swpDresShown`); so a grid change never needs a new ask, and
+  on a grid where that n pools again it pools again. Without the field:
+  Full asks `SWEEP_FULL:1`; any other choice shows and asks Fit (0).
+- The page sends `SWEEP_FULL:<n>` (per connection, with its first view, on
+  entering the mode, after a reconnect, when the choice or Slow link
+  changes, and if the field comes or goes). The receiver then sends the
+  whole range at the sweep's own bins or pooled (binary type 11, the
+  contract above: `pool` = 2^k, Hz of value 0 = the first group's centre,
+  spacing = bin x pool) after each completed sweep's flag-2 frame, in
+  parts - and on a change of n at once a snapshot at the new n (flag 2, the
+  trace only); a set in flight at a change is abandoned by the receiver.
+  `swpOnFull` puts a set together by its set id, pool and first index; a
+  gap, a part out of order or an old grid drops it (that row keeps its
+  window / overview levels). The layout is read in one place,
+  `swpFullParse`.
+- A pooled set can be coarser than the window levels of a row made zoomed
+  in, or than the live frame: a row then paints from its window levels
+  first and from the set where they don't reach (`swpWfRow`), and the
+  instant trace keeps the frame where the frame covers the window at least
+  as finely (`swpTrace`). "Points sent" reads "1525 + 46,427 at 37.5 kHz"
+  for a pooled set, "1525 + full 11,885,227" for a full one.
 - A complete set is the trace's source while no frame for the window shown
   has come: right after a zoom or a pan the trace is cut from the set at the
   view's points (a point = the highest of its bins) - sharp at once, before
