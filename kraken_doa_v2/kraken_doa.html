@@ -6965,12 +6965,20 @@ function applyUiSetting(rest) {
 // ============================================================================
 const SB_KEY = 'kraken_sb';
 let sbBoxDefault = [];   // [{key, collapsed}] as the markup has them
+// A programmatic reveal (Wideband status) must not rewrite the operator's
+// preference, even if a later drag or another box toggle saves the layout.
+const sbBoxTransient = new Map(); // stable data-sb key -> prior collapsed state
 function sbBoxes() { return Array.from(document.querySelectorAll('.sidebar > .sb-section[data-sb]')); }
 function sbBoxShown(el) { return getComputedStyle(el).display !== 'none'; }
 function sbBoxSave() {
   const closed = {};
   const boxes = sbBoxes();
-  boxes.forEach(s => { closed[s.dataset.sb] = s.classList.contains('collapsed') ? 1 : 0; });
+  boxes.forEach(s => {
+    const key = s.dataset.sb;
+    const collapsed = sbBoxTransient.has(key)
+      ? sbBoxTransient.get(key) : s.classList.contains('collapsed');
+    closed[key] = collapsed ? 1 : 0;
+  });
   try { localStorage.setItem(SB_KEY, JSON.stringify({v: 1, order: boxes.map(s => s.dataset.sb), closed})); } catch (e) {}
 }
 // Put the boxes in the order of `keys` (keys of boxes that don't exist are
@@ -7231,19 +7239,27 @@ function sbBoxInit() {
 // The footer's buttons: every box collapsed / open, and the order and the
 // collapsed boxes the page ships with
 function sbBoxCollapseAll(c) {
+  sbBoxTransient.clear();  // An explicit operator-wide action replaces temporary reveals.
   sbBoxes().forEach(s => s.classList.toggle('collapsed', !!c));
   sbBoxSave();
 }
 function sbBoxReset() {
+  sbBoxTransient.clear();
   sbBoxOrder(sbBoxDefault.map(d => d.key));
   sbBoxes().forEach(s => { const d = sbBoxDefault.find(x => x.key === s.dataset.sb); s.classList.toggle('collapsed', !!(d && d.collapsed)); });
   try { localStorage.removeItem(SB_KEY); } catch (e) {}
   document.querySelector('.sidebar').scrollTop = 0;
 }
-// Collapse / open a box (a click on its header)
-function toggleSection(header) {
-  header.parentElement.classList.toggle('collapsed');
-  sbBoxSave();
+// Collapse / open a box (a click on its header). Automatic reveals are
+// intentionally temporary; they never replace the saved operator choice.
+function toggleSection(header, remember = true) {
+  const section = header.parentElement;
+  const key = section.dataset.sb;
+  if (!remember && key && !sbBoxTransient.has(key))
+    sbBoxTransient.set(key, section.classList.contains('collapsed'));
+  if (remember && key) sbBoxTransient.delete(key);
+  section.classList.toggle('collapsed');
+  if (remember) sbBoxSave();
 }
 sbBoxInit();
 
@@ -29691,7 +29707,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     const sec = $id('wb-section');
     if (!sec) return;
     toggleSidebar(true);   // the phone's drawer / a hidden sidebar
-    if (sec.classList.contains('collapsed')) toggleSection(sec.querySelector('.sb-header'));
+    if (sec.classList.contains('collapsed')) toggleSection(sec.querySelector('.sb-header'), false);
     sec.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   }
   function wbSpan(text, level, stale) {
