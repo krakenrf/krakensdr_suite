@@ -4244,7 +4244,8 @@ void srch_probe_batch() {
 
 struct SrchRec {
     double hz;
-    std::string plugin, key;
+    std::string plugin, key, site;
+    double ctl_hz;   // the signalling's own control channel frequency (NAN = none)
     float level;
     uint64_t id;
     bool made;
@@ -4255,11 +4256,21 @@ void srch_recs_clear() { g_srch_recs.clear(); }
 void srch_record(const Probe& p) {
     Cand& cd = g_srch.cands[p.cand];
     cd.found = true;
+    // the same channel heard off its centre (one entry: the stronger stands), or a neighbour of the same system
+    // (another site on the next channel - both recorded): the frequencies the signalling gives, if both have one,
+    // decide; else two different sites are two channels; else (no frequency, a site missing or the same) one
+    auto same_channel = [&](const SrchRec& r) {
+        if (r.plugin != p.plugin || r.key != p.key || std::fabs(r.hz - cd.hz) >= 15000) return false;
+        if (fin(r.ctl_hz) && fin(p.ctl_hz)) return std::fabs(r.ctl_hz - p.ctl_hz) < 1000;
+        if (!r.site.empty() && !p.site.empty() && r.site != p.site) return false;
+        return true;
+    };
     for (auto it = g_srch_recs.begin(); it != g_srch_recs.end(); ++it)
-        if (it->plugin == p.plugin && it->key == p.key && std::fabs(it->hz - cd.hz) < 15000) {
+        if (same_channel(*it)) {
             if (it->level >= cd.level) return;   // (the weaker one beside it: the same channel heard off its centre)
             auto ue = g_cc.find(it->id);
-            if (ue != g_cc.end() && ue->second.user()) return;   // (the user's: never erased by the search)
+            // (the user's - named / followed meanwhile: never erased by the search; the stronger gets its own entry)
+            if (ue != g_cc.end() && ue->second.user()) break;
             if (it->made) {
                 g_cc.erase(it->id);
                 g_srch.found_new--;
@@ -4277,7 +4288,7 @@ void srch_record(const Probe& p) {
     if (!e) return;
     if (made) g_srch.found_new++;
     else g_srch.found_known++;
-    g_srch_recs.push_back({cd.hz, p.plugin, p.key, cd.level, e->id, made});
+    g_srch_recs.push_back({cd.hz, p.plugin, p.key, p.site, p.ctl_hz, cd.level, e->id, made});
     std::cout << "Trunk following: control channel found at " << nominal / 1e6 << " MHz (" << p.plugin
               << (p.key.empty() ? ", no key" : ", " + p.plugin + ":" + p.key) << ")" << (made ? "" : " - known") << std::endl;
 }
