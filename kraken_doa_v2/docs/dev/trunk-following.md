@@ -643,7 +643,11 @@ whose plugin decoded valid frames but no control is a traffic channel of
 that protocol: no other plugin tries it; the other plugins of a candidate
 found are not tried; two probes within 15 kHz confirming the same system
 are one control channel - the stronger carrier stands (the weaker one heard
-it off its centre). Probe VFOs are
+it off its centre) - unless they are two: when both give the signalling's
+own control-channel frequency, those decide (equal within 1 kHz: one); else
+two different sites are two channels (a system's neighbouring 12.5 kHz
+channels can be two of its sites); else (nothing signalled, a site missing
+or the same) one. Probe VFOs are
 the search's (`decimator_info` `trunk.role` "probe"; never saved, never
 heard, removed after each batch - their plugin processes with them); while
 it runs no other VFO's report counts (the user's control VFOs are parked).
@@ -797,7 +801,8 @@ and found at 6 here.
   average isn't filtered): one frame among the refill count - the two looks
   and the threshold over the local background make it harmless.
 - A duplicate erased as "the weaker sighting" is never one the user named
-  or followed.
+  or followed; the stronger carrier then gets its own entry beside it (the
+  user keeps his, the true channel is recorded too).
 - Click to follow checks every refusal (not built / doesn't declare
   `trunking`, wideband scan mode, outside the tuner range, an add that
   doesn't fit, 16 VFOs in use) before it changes anything; it places the
@@ -1550,11 +1555,14 @@ the broadcasts:
   its offset and the user's control VFO's home offset, the same after a
   restart; found: the call that had the receiver away sent it straight out
   again with its next grant update and parked the VFO just clicked (fixed:
-  `follow` holds that call off for the retry time). `t32_dup` 7 - two probes
-  12.5 kHz apart confirming one system, the weaker recorded first: one entry,
-  the stronger; the weaker named or marked followed (`TRUNK_CC_SET` with its
-  id) meanwhile: kept - and then the stronger is not recorded at all; a click
-  on it meanwhile ends the search (`follow`). `t33_notapplied` 8 - the "not
+  `follow` holds that call off for the retry time). `t32_dup` 11 - two probes
+  12.5 kHz apart confirming one system, the weaker recorded first: one
+  site, nothing signalled: one entry, the stronger; different sites: two,
+  each with its site; signalled frequencies equal (even with different
+  sites): one, the stronger; signalled frequencies different: two; the
+  weaker named or marked followed (`TRUNK_CC_SET` with its id) meanwhile:
+  kept, and the stronger gets its own entry (before: not recorded at all); a
+  click on it meanwhile ends the search (`follow`). `t33_notapplied` 8 - the "not
   applied" answer, reached through a hand-edited VFO snapshot (above): the
   VFO right, the accepted option set, the refused one named. `t34_progress`
   19 of 21 - shapes "empty, busy, busy, empty" (27 s), "busy, empty, empty"
