@@ -470,6 +470,11 @@ control channels); what the radios themselves send on Phase 2 has only been
 tested with the decoder's own test signals, as no recording of it could be
 found.
 
+The Inmarsat Classic Aero decoder's data channels were checked against
+off-air recordings. Its C channel voice has only been run on the decoder's
+own test signals: no recording of a real call could be found, so real
+speech has not been heard through it yet.
+
 **P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 
 ```
