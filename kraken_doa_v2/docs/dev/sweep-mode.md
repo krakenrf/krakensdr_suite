@@ -1798,7 +1798,50 @@ looked newer than a changed source - a link error after main was merged
 the copies now go by checksum without the times, and test builds start
 clean.
 
-Open after round 5: Firefox, Safari and iOS have not run the picture's
+**Round 6, 2026-11-22: the display resolution as a list; rows keep the
+detail they have.** The user, after an evening with round 5's switch: other
+resolutions for the display "via a drop down", and "when I turn off full
+resolution, the previous data in the waterfall becomes low resolution ...
+we should only be changing the new display resolution, not the old ones
+already on the waterfall". The parts' records: the contract's
+`SWEEP_FULL:<n>` and `full_sets`, the receiver's and the page's *Display
+resolution*. In one line each:
+- a change of the display resolution (any choice, Slow link too) no longer
+  frees the sets the rows hold - only the trace's set and a set still being
+  put together go; a row keeps its set until it scrolls out, the budget
+  takes it (oldest first), the grid changes or the mode is left; the trace
+  after a zoom draws from a set only when it is of the newest completed
+  sweep;
+- the switch became the list **Display resolution**: Fit to the plot, the
+  receiver's steps (`SWEEP_FULL:<n>` = at most n values: a level of the
+  store's max pyramid, 16 384 ... 4 194 304) and Full, each shown with the
+  point spacing and count the receiver says it gives for the running grid
+  (`full_sets`); a receiver without the field gets Fit / Full only.
+
+The orchestrator's runs on the Pi 5's KrakenSDR (candidates as patches on
+the Pi's test build before each merge - the user's live stack ran from the
+integration worktree again; job scratch `pi/keep_pi.py`, `pi/dres_pi.py`):
+
+| | Before (round 5) | Now |
+|---|---|---|
+| The user's case: 24 - 1765 MHz at 146 Hz, full for 5 sweeps, then fit, a zoom of 6 000x onto a carrier: longest stretch of one colour in the rows made with full (px of 1525) | 1525 each (one band: their sets were freed) | 2 - 4 (their detail is still there) |
+| ... the rows made after the change | coarse | coarse (38 - 44 px: a gradient between their few points), not black |
+| The list, whole range at 146 Hz | a switch | Fit to the plot / 150.0 kHz (11,607 points) / 37.5 kHz (46,427) / 9.38 kHz (185,707) / 2.34 kHz (742,827) / 586 Hz (2,971,307) / Full: 146 Hz (11,885,227) |
+| ... whole range at Auto / 88 - 108 MHz at Auto | - | Fit, 150.0 / 37.5 / 9.38 kHz, Full: 4.69 kHz (371,414) / Fit, 2.34 kHz (8,534), Full: 1.17 kHz (17,067) |
+| "Points sent" at the 2.34 kHz step | - | 1525 + 742,827 at 2.34 kHz |
+| One waterfall with rows made at full / at the 2.34 kHz step / at fit, zoomed 6 000x: longest stretch of one colour | - | 3 - 6 / 26 - 35 / 41 px: each row at its own detail, none black |
+
+15 of 15 and 10 of 10 steps there; on the same build round 5's checks 27 of
+27 (through the list), the waterfall 14 of 14, the resolutions 15 of 15, the
+Resolution list 15 of 15, `run_pi.py` 20 of 20 (4.04 s / 19.0 s, 11.1 sweeps
+a second, coherent again 0.5 s after the last sweep packet); the receiver's
+change alone under the page with the switch passed the same set before it
+was merged. No page error, 48 - 53 C, throttled 0x0. The receiver worker's
+Pi figures for a step: a set of 11.6 KB ... 2.97 MB (full: 11.9 MB), the
+store's lock held 0.009 ... 2.2 ms (full: 8.7 ms), the CPU of a page at a
+step within noise of none.
+
+Open after round 6, as after round 5: Firefox, Safari and iOS have not run the picture's
 download or the full sets (headless Chromium only); a slow link was tried
 through a 2 MB/s proxy by the page worker, not over a real one; a 1 GB Pi 4
 (the full set adds one buffer of `bins` bytes in the receiver - 12 - 17 MB
