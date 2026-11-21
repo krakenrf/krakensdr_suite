@@ -1095,10 +1095,14 @@ uncalibrated until the next mode change, whose paired flush repaired it.
 The log has no USB error, no L1 overflow, no unquiet flush and no coherence
 event. The other 9 returns were clean.
 
-The root cause is not known. It has not happened again: 1 failure in 70
-returns on the Pi (the probe build, net off: 30; the net build: 2 x 30, all
-CONVERGED with check |lag| 0.0 and no net firing). On x86 there have been
-none: 35 earlier returns, 20 + 40 now. What the measurements rule out:
+The root cause is not known. It has not happened again: 1 failure in 590
+returns on the Pi (95 % interval 0.004-0.9 % per return). The other 580
+were the probe build, net off: 30; the net build: 2 x 30; and the long soak,
+`t_exitsoak.py`, 3 holds of 8.5 min. In the soak, 520 of 520 were CONVERGED
+1.6 s after the command, with 105 calibration checks all |lag| 0.0, the net
+never fired, and l1_put was equal after every return; 46-49 C, throttled
+0x0, 9-15 % per core. On x86 there have been none: 35 earlier returns,
+20 + 40 now. What the measurements rule out:
 - The library: worker F ran this exit on the bare library 50 times (all
   five sweeping in parallel, finish, full retune, lags over +-131072
   samples). 0 lag changes of 1 sample or more, delivered buffers equal,
