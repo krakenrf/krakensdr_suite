@@ -91,19 +91,44 @@ this folder (index: `README.md` here, or the table in
   burst's block (2 + 3n columns) isn't signalled: every n is tried until
   the burst identifier and all SUs pass.
 - Talkers: bursts only (packet per burst, AES = ICAO address, from the UW,
-  <= 0.24 s); P / to-aircraft C channels have none (the satellite). A
+  the burst's last <= 0.24 s - it was at the UW, and a 6 s 600 bit/s T
+  burst's packet was out of kraken_doa's 1.5 s stream by the time it was
+  decoded); P / to-aircraft C channels have none (the satellite). A
   from-aircraft C channel (rf > 1600 MHz) gives a transmission talker.
-- AFC: freq_error every 2 s while synced; the plugin shifts its mixer by
-  each `rf_hz()` change (the host's correction moves the input). Not
-  tried live.
-- Real recordings used (IQ library): the sigidwiki 10.5 kbit/s IQ and
-  three sigidwiki MP3s of receiver audio (catalogue
-  `_tools/catalog/inmarsat_aero.json`; turned into IQ by a Hilbert
-  transform for the test). Results and the sensitivity table: plugin
-  README.
+- No AFC (no `freq_error`): kraken_doa moves the input by half of each
+  report every 300 ms; measured live on aero-p10500-ges (50 s, 2.5 loops),
+  2262 / 2444 SUs with it (four frames lost to the steps) and 2366 / 2444
+  without (the 78 lost: the first frame and one frame at each loop seam -
+  as offline). The plugin tracks +-2.5 kHz itself; the earlier
+  `follow_rf()` (mixer shifted by each `rf_hz()` change) went with it.
+- Two passes per P frame (`PChannel::drain`): the released Viterbi bits
+  arrive one frame late (TRACE 64 + CHUNK 64 pairs, the next frame's block
+  has to be pushed): 2 s at 600 bit/s, beyond kraken_doa's 1.5 s stream
+  (`talker_doa.hpp` RING_S), so the Digital squelch's DoA got no samples
+  and the VFO's DoA stayed wrong (live: 271 / 127 / 311 deg for a truth of
+  220). The early pass traces back from the best state the moment the
+  frame is in (`Viterbi::peek`), emits the SUs that pass and reports the
+  frame's span (`on_early` -> `valid_span`, clipped to the last 1.2 s);
+  the final pass retries the failed SUs on the released bits (the
+  look-ahead is worth ~0.5 dB on the last SU: 600 bit/s at 1 dB 89 % with
+  the early pass alone, 93 % with both). Live after it: 220.0 deg steady.
+  Bursts report their last 1.2 s too.
+- Real recordings used (IQ library, catalogue
+  `_tools/catalog/inmarsat_aero.json`): the sigidwiki 10.5 kbit/s IQ,
+  three sigidwiki MP3s and three of JAERO's published samples (10.5k,
+  four 600 bit/s channels side by side, C-band 1200 bit/s bursts), all
+  receiver audio turned into IQ by a Hilbert transform. Results and the
+  sensitivity table: plugin README.
+- No real C channel recording: searched JAERO's repository, releases,
+  wiki and issues (#32 and #67 link Google Drive files that are gone),
+  the Wayback Machine's copies of jontio.zapto.org (only the three
+  samples above), the DecAero and OnAir READMEs (DecAero names an
+  "8400bps_ambe_sample" without a link), InmarScope, rtl-sdr.com. The
+  voice path is checked on generated frames only.
+- Debug playback through a TEST kraken_doa (2026-11-22, 2+ loops per
+  entry): plugin README, Test results.
 - Not done: CPDLC decoding, the 21 kbit/s C channel (no public 9.6 kbit/s
   LPC decoder), the other C rates, simultaneous bursts, verification of
   satellite / beam table fields (not on the recordings). Windows / Linux
   glibc syntax checks (MinGW, zig) not run - not installed on the job
-  machine; the debug playback was run offline only (make_testsignal.py +
-  `decoder --file`), not through a TEST kraken_doa.
+  machine.

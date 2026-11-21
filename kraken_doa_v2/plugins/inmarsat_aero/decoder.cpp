@@ -40,6 +40,7 @@ public:
     explicit AeroPlugin(kp::Host& h) : Decoder(h), su_(h), burst_(h, su_) {
         pch_.on_su = [this](const uint8_t* su, const aero::PFrame& f, int idx) { su_.p_su(su, f.t0, f.t1, idx); };
         pch_.on_frame = [this](const aero::PFrame& f) { on_pframe(f); };
+        pch_.on_early = [this](const aero::PFrame& f) { valid_span(f.t0, f.t1); };
         cch_.on_su = [this](const uint8_t* su, const aero::CFrame& f) { su_.c_su(su, f.t0, f.t1); };
         cch_.on_frame = [this](const aero::CFrame& f) { on_cframe(f); };
         host.fact("Voice codec", "AMBE (Aero 4800): " + dig::AeroAmbeLib::instance().status());
@@ -59,8 +60,7 @@ public:
         make_acq();
         state_ = ACQ;
         tried_.clear();
-        last_fact_ = last_ferr_ = -10;
-        rf_last_ = NAN;
+        last_fact_ = -10;
         voice_.reset();
         in_call_ = false;
         host.fact("Channel", bursts() ? "R / T bursts from aircraft: listening" : "searching");
@@ -83,7 +83,6 @@ public:
             tbase_ = host.time();
             tbase_set_ = true;
         }
-        follow_rf();
         if (bursts()) {
             burst_.process(x, n, host_t(static_cast<double>(n_)));
             n_ += static_cast<int64_t>(n);
@@ -125,8 +124,8 @@ private:
     int64_t lock_at_ = 0;
     double lock_rate_ = 0, lock_f0_ = 0;
     std::vector<std::pair<double, double>> tried_;   // (rate, f0) that did not sync
-    double last_fact_ = -10, last_ferr_ = -10;
-    double rf_last_ = NAN;
+    double last_fact_ = -10;
+    double latest_t_ = 0;   // host time of the newest bit the demodulator gave
     dig::AeroAmbeStream voice_;
     bool in_call_ = false;
     double call_start_ = 0, call_last_ = 0;
@@ -135,15 +134,6 @@ private:
 
     bool bursts() const { return mode_.rfind("burst", 0) == 0; }
     double host_t(double sample) const { return tbase_ + sample / FS; }
-
-    // the host's frequency correction (freq_error -> AFC) moves the input:
-    // keep the demodulator on the carrier
-    void follow_rf() {
-        const double rf = host.rf_hz();
-        if (std::isfinite(rf) && std::isfinite(rf_last_) && state_ == LOCK && std::fabs(rf - rf_last_) < 5000)
-            demod_.shift_carrier(-(rf - rf_last_));
-        rf_last_ = rf;
-    }
 
     void make_acq() {
         std::vector<double> wide, narrow;
@@ -230,6 +220,7 @@ private:
         demod_.process(x, n, bits_);
         // bit times are input sample indexes: make them host times
         for (auto& b : bits_) b.t = host_t(b.t);
+        if (!bits_.empty()) latest_t_ = bits_.back().t;
         if (cmode_) cch_.push(bits_.data(), bits_.size());
         else pch_.push(bits_.data(), bits_.size());
     }
@@ -271,13 +262,24 @@ private:
             snprintf(b, sizeof b, "%+.1f Hz", demod_.carrier_hz());
             host.fact("Carrier offset", b);
         }
-        // the carrier offset to the host (its AFC re-centres the VFO), once
-        // every 2 s while synced
-        if (synced && t - last_ferr_ >= 2.0) {
-            last_ferr_ = t;
-            host.freq_error(static_cast<float>(demod_.carrier_hz()));
-        }
+        // No freq_error: kraken_doa's AFC moves the input by half of each
+        // report every 300 ms - frequency steps the carrier loop has to
+        // recover from (measured live: a 10.5 kbit/s P channel lost 4 of 94
+        // frames to the steps). The plugin finds and tracks +-2.5 kHz
+        // itself; the offset is the "Carrier offset" fact and, for bursts,
+        // the talker packet's freq_hz.
         if (in_call_ && host.time() - call_last_ > 1.5) end_call();
+    }
+
+    // A checked frame's samples for the Digital squelch's DoA. kraken_doa
+    // keeps the VFO's stream ~1.5 s (talker_doa.hpp RING_S): a 2 s frame at
+    // 600 bit/s reaches back further than that even when it is reported
+    // the moment it is in (PChannel's early pass) - report only the part
+    // within the last 1.2 s (kraken_doa drops a span it no longer has).
+    void valid_span(double t0, double t1) {
+        const double from = std::max(t0, latest_t_ - 1.2);
+        if (t1 > from) host.valid(from, t1);
+        else host.valid();
     }
 
     void on_pframe(const aero::PFrame& f) {
@@ -287,7 +289,7 @@ private:
                      f.uw_errors, f.sus_ok, f.sus, demod_.quality(), demod_.carrier_hz());
             host.log(b);
         }
-        if (f.sus_ok > 0) host.valid(f.t0, f.t1);
+        if (f.sus_ok > 0 && f.sus_early == 0) valid_span(f.t0, f.t1);   // else on_early gave it
         su_.frame_done(f.sus, f.sus_ok);
     }
 
@@ -304,7 +306,7 @@ private:
         const bool ok = f.sus_ok > 0 || f.ref_errors <= 2;
         if (!ok) return;
         cframes_ok_++;
-        host.valid(f.t0, f.t1);
+        valid_span(f.t0, f.t1);
         su_.frame_done(3, f.sus_ok);
         if (!in_call_) {
             in_call_ = true;

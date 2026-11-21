@@ -52,6 +52,7 @@ struct PFrame {
     bool header_ok = false;         // format ID 0001 and the frame number twice alike
     int uw_errors = 0;
     int sus = 0, sus_ok = 0;
+    int sus_early = 0;              // of sus_ok: passed in the early pass (PChannel::drain)
 };
 
 class PChannel {
@@ -60,6 +61,9 @@ public:
     std::function<void(const uint8_t* su, const PFrame& f, int index)> on_su;
     // a frame's SUs were all handled
     std::function<void(const PFrame& f)> on_frame;
+    // the frame just came in and some of its SUs passed (before on_frame,
+    // which comes one frame later)
+    std::function<void(const PFrame& f)> on_early;
 
     void start(const PRate& r);
     void stop();
@@ -92,9 +96,12 @@ private:
     struct Pending {
         PFrame f;
         int64_t start;          // decoded-bit index of its first information bit
+        bool peeked = false;    // the early pass ran
+        uint32_t ok_mask = 0;   // SUs that passed their CRC so far
     };
     std::vector<Pending> pending_;
     int64_t vit_steps_ = 0;     // pairs pushed into vit_ since its reset
+    int64_t rel_ = 0;           // decisions the Viterbi released since its reset
 
     int64_t idx_end() const { return base_ + static_cast<int64_t>(s_.size()); }
     bool match_uw(int64_t p, int max_err, int& err, float& sa, float& sb) const;
