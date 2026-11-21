@@ -673,6 +673,42 @@ are never taken); `"add":true` adds another one instead, refused when the
 new channel doesn't fit the span with them. Refused during a playback, in
 wideband scan mode, while a scanner runs. The entry's `followed` is set.
 
+**Measured on the KrakenSDR** (2026-11-22, coherent mode, threshold 9 dB,
+raster 6.25 kHz, one gain per range, the five trunking plugins built, at most
+8 probes at once on this 16-core machine; heimdall's own status checked
+before / after - only ours):
+
+| range | gain | steps | carriers | probes | found | time | per MHz | CPU (kraken_doa + plugins) |
+|---|---|---|---|---|---|---|---|---|
+| 496-502 MHz | 33.8 dB | 4 | 55 | 272 | 13 P25 | 56.8 s | 9.5 s | 79 % mean, 97 % max of a core |
+| 453-460 MHz | 40.2 dB | 4 | 5 | 21 | 4 DMR | 10.1 s | 1.4 s | 104 % |
+| 410-420 MHz | 29.7 dB | 6 | 9 | 40 | 5 DMR + 2 MPT1327 | 9.5 s | 1.0 s | 72 % |
+| 138-146 MHz | 49.6 dB | 5 | 26 | 129 | 7 P25 | 32.1 s | 4.0 s | 68 % mean, 76 % max |
+
+Against the survey of 2026-11-20: every listed control channel of P25 UHF
+(6 of 6), P25 VHF (7 of 7) and DMR Tier III (4 of 4) found at its nominal
+frequency, the measured centre within 2.4 kHz of it; in 410-420 MHz the Tait
+DMR 414.7750 / 418.5125 and the other network's 418.2750 and MPT1327
+416.5875 / 416.6750 found, Tait 415.6375 and MPT1327 416.7500 / 417.7625 not
+(not on air during the sweep or under the threshold - not checked further);
+not in the survey but reported as control channels by the decoders (their
+control signalling, the system keys of the surveyed systems - probably
+further sites heard here; not checked one by one): 7 P25 in 496-502 MHz,
+DMR 414.3250 and 415.7125. No entry from a carrier the decoders didn't
+claim. Click to follow, once per plugin (P25 499.3250, DMR 456.50625,
+MPT1327 416.5875): the receiver retuned (saved) and the new control VFO
+received its system within 25 s each.
+A busy UHF step (14 carriers, 4-5 plugins each) takes ~14 s - over the
+~10 s target: one VFO per (candidate, plugin) starts 60-70 plugin processes
+per step in batches of 8. An engine probe set (one VFO running the plugin
+list, delivering every runner's trunk reports) would cut the VFO setup and
+the decimators to one per candidate, roughly halving it; not built. On a
+Pi 4 (4 cores: 2 probes at once) expect a busy step at about four times
+this. The DMR keys of the two DMR networks around 415 / 456 MHz came out
+the same (`dmr:` + its key without a Network tag option): the memory keeps
+them apart by frequency, but a system shared by key merges them in the
+systems list - follow such an entry with its Network tag set.
+
 Commands (all `TRUNK_` / `GET_TRUNK_CC`, answered with the status, errors as
 `trunk_error`):
 - `TRUNK_SEARCH:{"ranges":[[lo_hz,hi_hz],...] (1-16, inside the tuner's
@@ -1299,6 +1335,22 @@ the broadcasts:
   alone; the user's retune stands), `r2` 3 (the user's change of another
   tuner saves a voice tuner's home frequency and gain) - 6 / 8 and 2 / 3 on
   the build before the fixes.
+- `t16_search` 30 (2026-11-22; the fake's carriers can now be band-limited
+  noise of a given width): six control channels of two systems (10 kHz
+  blocks + the system's pilot) over two ranges - one on a step seam, one 6.25
+  kHz off the 12.5 kHz raster, one 12 dB over the floor, two 12.5 kHz apart -
+  beside a tone, a 200 kHz block, a block without a pilot and an intermittent
+  one: all six and only those, once each, nominal frequency, system and site
+  right, 7.0 s for 5.6 MHz; the calibration held and released, home, nothing
+  saved, the probe VFOs and their processes gone, following resumed, the file
+  written; a second sweep updates (4 known, 0 new, no duplicate); stop, the
+  user's retune (no return), a scanner and a playback refused while it runs,
+  a shutdown mid-sweep (home first), the restart (home, no search), the file
+  reloaded, a corrupt one kept aside; five bad commands refused, an import, a
+  hostile name cleaned; click to follow out of the span (retuned and saved,
+  the system followed), add, replace, an add that doesn't fit refused;
+  independent mode: only tuner 0 steps, back at the end. One trunking test
+  plugin kind (trunktest) - the two-protocol case is the hardware sweep's.
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
   / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a

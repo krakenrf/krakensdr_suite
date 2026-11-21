@@ -2725,8 +2725,9 @@ std::string lists_json(const System& s) {
 
 // The status is built only when something changed (g_status_now - at most every
 // STATUS_MIN_MS) or every STATUS_ACTIVE_MS while anything is active (a call, a
-// voice VFO, a control VFO); a change that leaves the body as sent sends nothing
-void send_status(bool force) {
+// voice VFO, a control VFO); a change that leaves the body as sent sends
+// nothing - but a command (GET_TRUNK, every TRUNK_*) always gets it (answer)
+void send_status(bool force, bool answer = false) {
     const int64_t now = now_ms();
     bool active = !g_calls.empty() || !g_voices.empty();
     if (!active)
@@ -2738,7 +2739,7 @@ void send_status(bool force) {
     const bool periodic = active && now - g_status_sent >= STATUS_ACTIVE_MS;
     if (!force && !periodic) return;
     const std::string body = build_status(false);
-    if (!periodic && body == g_status_last) {
+    if (!periodic && !answer && body == g_status_last) {   // (a command / GET_TRUNK is always answered: a page that connected later)
         g_status_now = false;
         return;
     }
@@ -5103,11 +5104,11 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         if (status) g_status_now = true;
         if (!err->empty() && !created.empty()) g_sys.erase(created);
         if (!err->empty()) send_err(msg, *err);
-        send_status(true);
+        send_status(true, true);   // (an answer: sent even if the body is as last sent)
         return true;
     };
     if (cmd == "GET_TRUNK") {
-        send_status(true);
+        send_status(true, true);
         return true;
     }
     if (cmd == "GET_TRUNK_SYS") {
