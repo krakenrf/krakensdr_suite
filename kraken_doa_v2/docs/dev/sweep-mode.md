@@ -1393,11 +1393,65 @@ What the Pi found, and what it could not show:
   dongles in turn with the streams running, the lag afterwards within
   -0.02 ... +0.03 samples of where it was.
 
-Open after round 3: the fork's commits are local (the Dockerfile's pin and
+**Round 4, 2026-11-21: the waterfall after a colour change and a zoom; finer
+resolutions.** Three things the user asked for after the first evening with
+the mode: a colour change should recolour the rows already there; rows made
+while zoomed in were black outside the zoomed window once zoomed out; and
+the whole range stopped at 586 Hz. The parts' records: the contract's
+`SWEEP_OVERVIEW` bullet and the `sizes` fields, the receiver's *Finer
+resolutions*, the page's *The display* (the overview, the rows) and *Finer
+resolutions on the page*. What was changed, in one line each:
+- the page repaints its rows on a change of the colour map or the level
+  range (it kept the rows as levels already, and repainted them only for a
+  zoom);
+- the receiver sends a zoomed page the whole range with every completed
+  sweep when the page asks (`SWEEP_OVERVIEW`, a type 10 frame with flag 16
+  before the flag-2 frame), and a row keeps both: the window's levels where
+  that sweep's frame reached, the overview's elsewhere;
+- `SWEEP_MAX_BINS` 2^22 -> 2^24 (the cap was the only thing between the
+  whole range and 293 / 146 Hz - ~4 bytes a bin), FFT sizes 32768 and 65536
+  across the packets of a hop (from dwell 7 / 21 ms, up to ~1.2 GHz / ~614
+  MHz of span), the store given back when the mode or a big grid is left,
+  and the Resolution list built from what the receiver says is possible.
+
+The orchestrator's runs, on the Pi 5's KrakenSDR again (the dev machine's
+was in use: the user's live stack ran from the integration worktree, so
+candidates went to the Pi as patches - `git diff A B --output` - before
+anything was merged there; job scratch `e2e/wf_smoke.py`, `pi/wf_pi.py`,
+`pi/res_pi.py`, `pi/reslist_pi.py`: the page driven with real wheel events
+and its own controls, the waterfall's pixels read back):
+
+| | Before | After |
+|---|---|---|
+| 88 - 108 MHz, zoomed in 9.3x for 50 sweeps, zoomed out: black share of each of those rows | 0.892 (44 rows) | 0 |
+| Rows completed while the view was changing (wheel steps out): longest stretch of one colour in a row | 220 px (first version of the fix: the trace's 0 dB padding stored as levels) | 8 px, as steady rows |
+| Colour map changed / level range changed, sweep paused: rows of 60 that changed | 0 / 0 | 60 / 60, and new rows match the recoloured old ones |
+| 24 - 1765 MHz at `SWEEP_RES` 4096 / 8192 / 16384 | 586 Hz / capped to 586 / capped to 586 | 586 / 293 / 146 Hz: 2 971 307 / 5 942 614 / 11 885 227 bins, the sweep 4.03 s each (Auto: 4.02 s) |
+| kraken_doa's memory over coherent mode: Auto / 4096 / 8192 / 16384 | - | + 1.4 / + 11.5 / + 23.3 / + 47 MB; back to + 7 MB on a narrow Auto sweep, + 8 MB in coherent mode again |
+| kraken_doa, % of one core, one page: Auto / 4096 / 8192 / 16384 | 4.7 / - / - / - | 4.3 / 8.8 / 10.7 - 13.3 / 13.7 - 16.5 |
+| 400 - 470 MHz at 65536 | (16384 was the limit) | dwell 5: capped to 16384, the list says "37 Hz -> 146 Hz ... a dwell of 21 ms gets it"; dwell 25: 36.62 Hz bins, 1 911 467 bins, a sweep in 0.35 s (heimdall: 4 packets a hop, 40 - 47 ms a round), 27 - 30 % of a core |
+| A carrier at the zoom limit (7 794x on the whole range at 146 Hz; 1 253x at 37 Hz) | - | 416.587061 MHz at 146.48 Hz spacing, 416.587085 MHz at 36.62 Hz |
+| The Resolution list, whole range dwell 5 / 400 - 470 MHz dwell 5, 10, 25 | eight sizes | ten: 73 and 37 Hz "range too wide" / "7 ms dwell", "21 ms dwell", enabled as the dwell allows; a disabled size cannot be chosen |
+
+Every run: no page error, both processes exit 0, 45 - 51 C, throttled 0x0;
+the 20 steps of `run_pi.py` on the final tree 20 of 20 (4.03 s / 19.0 s,
+11.4 sweeps a second, back in coherent mode 0.53 s after the last sweep
+packet). Noted on the way: a row made BEFORE a deep zoom shows as one flat
+band at that zoom (it holds ~1500 max-pooled points of the whole range - a
+strong carrier fills its pixel); at 146 Hz with dwell 5 a hop is ONE frame
+and the trace scatters by ~ +-10 dB until the dwell is raised; a faint
+hop-wide banding of the FM band's waterfall that appeared during these runs
+was there with the page before and after the change alike (the band, not
+the page). The other modes' waterfalls (the live one, the tuner panes) keep
+pixels, not levels, and still colour only new lines after a colour change.
+
+Open after round 4: the fork's commits are local (the Dockerfile's pin and
 heimdall's minimum stay 578b43d; an older fork gives the round-1
 behaviour). The cause of the one failed return. A Raspberry Pi 4 (another
 USB controller and a third of the CPU: the 9 % a core that sweeping takes
-on the Pi 5 leaves room, but it is not measured), Windows and macOS have
+on the Pi 5 leaves room, but it is not measured - nor is the 48 - 64 MB of
+the finest grids on its 1 GB; the receiver worker's proposal, not built: a
+cap from the memory available), Windows and macOS have
 not run it; nor has a browser on the Pi itself. At 1.56 - 1.75 GHz a dongle
 of the PC's KrakenSDR can read 13 - 15 dB louder when it is tuned there
 from above (seen on downward and random tunes, not on the sweep's upward

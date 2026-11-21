@@ -207,11 +207,16 @@ needs its antenna connected - each covers its own part of the range, and a
 tuner without an antenna shows only noise in its part. The **Sweep** box in the
 sidebar sets the resolution (Auto picks one from the width of the range and
 the dwell, so that every step is still averaged; a finer one can be chosen by
-hand), how long each step is measured (Dwell, 5 ms at first: longer is
-smoother and slower, and lets Auto use a finer resolution), and pauses the
-sweep. The mouse wheel
-zooms in as far as the resolution goes, dragging moves the view, and the
-pointer shows the frequency and level under it. Gain is one setting for all
+hand - down to 146 Hz for the whole range, which takes about 50 MB more
+memory and no more time, and 73 or 37 Hz for a narrower range with a longer
+dwell; the list shows which are possible), how long each step is measured
+(Dwell, 5 ms at first: longer is smoother and slower, and lets Auto use a
+finer resolution; at the finest resolutions a step is a single measurement,
+so the trace is noisy until the dwell is raised), and pauses the sweep. The
+mouse wheel zooms in as far as the resolution goes, dragging moves the view,
+and the waterfall keeps the whole range of every sweep, also of those made
+while zoomed in; a change of its colours repaints the lines already there.
+The pointer shows the frequency and level under it. Gain is one setting for all
 tuners. Nothing is demodulated in this mode; the VFOs and their settings are
 kept and come back with the other modes. Going back to Coherent after a sweep
 recalibrates the array's phases, which takes a second or two (about half a
