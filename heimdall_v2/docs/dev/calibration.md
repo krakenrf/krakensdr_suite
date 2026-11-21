@@ -285,6 +285,17 @@ Fake (one packet lost on channel 1 as the noise comes on, FAKE_DROP1_FILE):
 before, `lag_no_peak` [1] and no recovery; now recovered on its own,
 CONVERGED 5.4-5.5 s after the switch, check |lag| 0.0. Hardware and the
 cause: `operating-modes.md`, *The failed return on the Pi*.
+No loop with a dead noise source (no correlation on any channel: a failed
+internal source, an unplugged `--ext_noise` source; the fake's
+`FAKE_NOISE_DEAD_FILE`, `t_deadnoise.py`). A retune's phase recalibration
+raises ONE coherence event. In the recovery that follows, the lags are not
+CONVERGED, so this check returns early: `lag_no_peak` on every channel
+after 60 s, the recovery given up after 120 s, and the array stays
+uncalibrated, as before the net (no further event in 3.5 min). A return
+from sweep mode and a Full Recalibration in that state raise none. With
+`--kerberos` none at all: no automatic recalibration runs, and an automatic
+coherence loss there only enters the uncalibrated state. With the source
+back, a Full Recalibration converges.
 
 **Calibration hold** (control port `{"command":"hold_calibration","hold_ms":N}`,
 `set_calibration_hold()` / `calibration_held()` in compensation.cpp; added
