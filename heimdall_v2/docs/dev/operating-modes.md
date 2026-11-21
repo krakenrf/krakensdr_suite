@@ -1082,6 +1082,59 @@ sweep mode: round_ms 54 (81 before: no unquiet flush now, 191 before),
 aligned array: round_ms 53, back 1.6 s. Every check |lag| 0.0, |phase|
 0.1-0.3 deg, coherence_events 0. Positive control, the build without the
 fix, case A: channel 1 at -4096.0 samples, the full recalibration, 27.7 s.
+
+**The failed return on the Pi** (2026-11-21, the Raspberry Pi 5 Rev 1.1,
+8 GB, KrakenSDR, the fork with `RTLSDR_NO_STREAM_SLIP`). In `t_exitstress.py
+--n 10` (sweep mode left at a random point of a hop, settle 5), return #2
+left channel 1 with no correlation peak against channel 0. The first lag
+readings came during the 500 ms noise wait right after the re-pairing flush
+and the full retunes ("lag 361.006 samples ... (sample slip)" at peak/mean
+5.7; a real lag reads 150-190). Then 60 s of servo readings scattered over
+-4711 .. 2610 at peak/mean ~5, and `lag_no_peak`. The array stayed
+uncalibrated until the next mode change, whose paired flush repaired it.
+The log has no USB error, no L1 overflow, no unquiet flush and no coherence
+event. The other 9 returns were clean.
+
+The root cause is not known. It has not happened again: 1 failure in 70
+returns on the Pi (the probe build, net off: 30; the net build: 2 x 30, all
+CONVERGED with check |lag| 0.0 and no net firing). On x86 there have been
+none: 35 earlier returns, 20 + 40 now. What the measurements rule out:
+- The library: worker F ran this exit on the bare library 50 times (all
+  five sweeping in parallel, finish, full retune, lags over +-131072
+  samples). 0 lag changes of 1 sample or more, delivered buffers equal,
+  every bulk transfer COMPLETED.
+- Spread buffer boundaries (a quiet point rare on the Pi). Over the sweeps,
+  max - min of the five dongles' latest delivery: median 75 us, p90 105,
+  max 164 on the Pi; 84 / 137 / 345 us on x86 (period 6827 us).
+- `rtlsdr_reset_buffer` while streaming: it is called only at init (and
+  not at all with HELD_STREAM_START).
+
+The offset was already there right after the paired flush, and a later
+quiet flush repaired it. So it is in the pairing (one L1 a packet deeper
+than the others), not in a stream. Two mechanisms fit. One: a USB transfer
+lost after the flush. The library neither delivers nor resubmits a bulk
+transfer that ends ERROR / STALL / OVERFLOW, and logs nothing (worker F;
+never seen in F's runs). Two: the flush cut while one reader ran >= P/2
+late for 2+ packets. `flush_l1_now`'s quiet test then sees every latest
+arrival within P/2 and steady gaps, but that dongle's latest packet is a
+round older. The two can be told apart: a lost transfer leaves that dongle
+a packet short of the others for good, while a bad pairing cut leaves the
+counts equal. The status now carries `sweep.l1_put` (packets delivered into
+L1 per dongle) and `sweep.arrival_phase_us`, and when the net fires its log
+line gives both the counts against channel 0 and the deepest L1 over 8 ms.
+`t_exitstress.py` prints the counts after every return. The next
+occurrence will be classified from these.
+
+The safety net (`calibration.md`, *Lag check during the phase recal*, *No
+peak at all*) handles either kind: a channel with no peak in the phase
+recalibration raises a coherence loss, and the recovery's flush re-pairs.
+Forced offset on the fake (channel 1 loses one packet as the noise comes on,
+`FAKE_DROP1_FILE`): the build before it showed `lag_no_peak` [1] and never
+recovered. With the net, x86 recovered 5 of 5 and the Pi 4 of 4 on their
+own, CONVERGED 5.2-5.5 s after the switch, check |lag| 0.0, one coherence
+event each, with log lines such as "packets delivered vs channel 0: 0 -1 0 0
+0; deepest L1 over 8 ms: 0 0 1 1 1". Clean returns raise no event. `t_hop`
+is unchanged (FM K=1..5: 20.5 / 27.2 / 34.1 ms at dwell 5 / 10 / 20).
 The first heimdall worker's regression set on the fixed build: `t_basic`
 every case PASS (coherent CONVERGED 22.0 s, check OK); `t_contrast` (settle
 0 / 5 ms) first valid packets' worst segment +3.7 / +3.6 dB against later

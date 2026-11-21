@@ -263,6 +263,29 @@ samples/s). Between retunes the 5-minute check (|lag| > 1 sample -> full
 recal) remains the only lag check. Not yet verified on hardware with a real
 slip.
 
+*No peak at all* (2026-11-21, round 4 of the sweep work): when both bad
+readings have no correlation peak (peak / mean < `LAG_NO_PEAK_RATIO` 8,
+against ~150-190 for a real lag on the noise source), the channel is more
+than the correlator's window off - a whole packet, from a pairing broken
+after the re-pairing flush (a lost USB transfer, or the flush cut while a
+reader ran a packet late). The servo can't pull that in. Seen on the Pi 5:
+1 of 10 returns from sweep mode left channel 1 with peak / mean ~5, its
+servo chased noise for 60 s until `lag_no_peak`, and the array stayed
+uncalibrated until the next mode change. Nothing called the coherence
+watchdog: it acts only on `coherence_lost` (overflow, stall, a failed
+re-pairing) and `force_recalibration`, and neither this check (which assumed
+a slip inside the window) nor the no-peak warning (warning only) raised
+either. Now such a channel raises `signal_coherence_lost` (one coherence
+event; the phase stage waits so nothing latches before the watchdog's next
+100 ms tick), and the recovery's flush re-pairs the streams and runs the full
+lag + phase recalibration (`--kerberos`: uncalibrated, as for any coherence
+loss). Behind it, a channel this check handed to its servo
+(`reacquire_from_recal`) that ends in the no-peak warning also raises it.
+Fake (one packet lost on channel 1 as the noise comes on, FAKE_DROP1_FILE):
+before, `lag_no_peak` [1] and no recovery; now recovered on its own,
+CONVERGED 5.4-5.5 s after the switch, check |lag| 0.0. Hardware and the
+cause: `operating-modes.md`, *The failed return on the Pi*.
+
 **Calibration hold** (control port `{"command":"hold_calibration","hold_ms":N}`,
 `set_calibration_hold()` / `calibration_held()` in compensation.cpp; added
 2026-10-22 for the DoA client's saved-frequency scan, which searches its bands

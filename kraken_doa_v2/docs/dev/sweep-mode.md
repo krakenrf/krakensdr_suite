@@ -128,7 +128,12 @@ the hops into the sweep spectrum, the page shows it.
   settle has to cover it; heimdall's operating-modes.md, *Review of the
   hop loop*). Also `"slow_tuners"` (tuners that deliver but whose packets
   never reach the hop's start: lost packets) and `"l1_depth"` (each
-  tuner's L1 now; diagnostics), added in the third review round.
+  tuner's L1 now; diagnostics), added in the third review round;
+  `"l1_put"` (packets each tuner has delivered into L1 since its stream
+  started - a tuner a packet short of the others for good lost a USB
+  transfer) and `"arrival_phase_us"` (where each tuner's latest delivery
+  lies against tuner 0's, within +-P/2: the spread of the buffer
+  boundaries), added in round 4; diagnostics, in every mode.
 
 ### heimdall, 8091 (sweep mode)
 

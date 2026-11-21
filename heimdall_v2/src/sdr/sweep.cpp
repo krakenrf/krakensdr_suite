@@ -502,6 +502,31 @@ std::string sweep_status_json() {
                  f.push_back(devices[i] ? static_cast<int>(devices[i]->l1_buffer_size.load()) : 0);
              return tuners_json(f);
          }()
+      // packets each dongle has delivered into L1 (the callback's count) and
+      // where its latest delivery lies against dongle 0's, us within
+      // (-P/2, P/2] (diagnostics: a buffer lost on USB, the spread of the
+      // dongles' buffer boundaries)
+      << ",\"l1_put\":[" << [] {
+             std::string s;
+             const int n = std::min<int>(active_num_elements.load(), static_cast<int>(devices.size()));
+             for (int i = 0; i < n; i++)
+                 s += (i ? "," : "") + std::to_string(devices[i] ? devices[i]->l1_put.load() : 0);
+             return s;
+         }() << "]"
+      << ",\"arrival_phase_us\":" << [] {
+             std::vector<int> f;
+             const int n = std::min<int>(active_num_elements.load(), static_cast<int>(devices.size()));
+             const int64_t period = static_cast<int64_t>(1e9 * NUM_SAMPLES / SAMPLE_RATE);
+             const int64_t t0 = n > 0 && devices[0] ? devices[0]->last_arrival_ns.load() : 0;
+             for (int i = 0; i < n; i++) {
+                 int64_t d = devices[i] ? devices[i]->last_arrival_ns.load() - t0 : 0;
+                 d %= period;
+                 if (d > period / 2) d -= period;
+                 if (d <= -period / 2) d += period;
+                 f.push_back(static_cast<int>(d / 1000));
+             }
+             return tuners_json(f);
+         }()
       << ",\"slow_tuners\":" << [] {
              std::vector<int> f;
              const uint32_t m = sweep_gate_slow();

@@ -124,6 +124,11 @@ struct ChannelCompensation {
     int peak_ring_count = 0;
     bool no_peak_warned = false;          // once per calibration attempt
     std::atomic<bool> lag_no_peak{false};  // warned and not locked since
+    // handed back to the servo by the phase recalibration's lag check (a
+    // slip): a no-peak warning then ends in the coherence recovery (its
+    // flush re-pairs the streams) instead of waiting for the user. Cleared
+    // on lock and on a full lag reset.
+    bool reacquire_from_recal = false;
 };
 
 struct PhaseCompensationData {
