@@ -807,7 +807,18 @@ systems list - follow such an entry with its Network tag set.
   import of 1000 entries was 1004 statuses); there is no reply-to-the-asker
   path in the command handler, so "the asker only" is not done - the rate
   limit is global. A heard control VFO's once-a-minute refresh that changes
-  only `last` / `n` sends the list and saves the file at most every 5 min.
+  only `last` / `n` sends the list and saves the file at most every 5 min. Measured (TEST build, 2026-11-22): a 1000-entry import gave 34
+  messages / 258 KB in 3 s (before: 1004 full statuses + list messages); an
+  idle minute with 1000 entries and one control VFO heard sent no list
+  message (`trunk` 104 KB - the status once a second - of 946 KB in all to
+  the page; before, the 305 KB list went out with each heard refresh).
+- Entry ids are valid only until the receiver restarts (renumbered at load):
+  a page must take them from the latest list message.
+- `cc_followed` after a restart is found by plugin + frequency of a
+  previously followed entry: a control VFO the user made by hand on such a
+  frequency is taken as the followed one too (there is nothing saved on a
+  VFO that tells a click's from his) - the next click then replaces it. A
+  known limit.
 
 Commands (all `TRUNK_` / `GET_TRUNK_CC`, answered with the status, errors as
 `trunk_error`):
