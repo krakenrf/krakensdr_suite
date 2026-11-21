@@ -404,6 +404,7 @@ uint64_t g_learned_n = 0, g_learn_refused = 0, g_learn_dropped = 0;
 
 // --- other --------------------------------------------------------------
 bool g_dispatching = false;
+bool g_srch_skip_restore = false;   // the user's retune ended a search: its pause's end puts nothing back
 bool g_paused = false;
 std::string g_pause_why, g_pause_why_last;
 int g_mode = -1;                            // operating mode last seen
@@ -3693,6 +3694,8 @@ std::string cc_parse(const geo::Json& g, CcEntry* e) {
     if (!hz_ok(hz)) return "hz: the frequency in Hz (0 - 6 GHz)";
     const std::string plugin = g.str("plugin");
     if (!dig::valid_plugin_id(plugin)) return "plugin: a plugin id";
+    // (only decoders that declare trunking - at load the registry may not be read yet: checked again by tick_cc)
+    if (!dig::PluginRegistry::instance().list().empty() && !plugin_trunking(plugin)) return "plugin: a decoder that declares trunking";
     e->hz = std::round(hz);
     e->plugin = plugin;
     const double m = jnum(g, "meas_hz");
@@ -3724,23 +3727,39 @@ std::string cc_parse(const geo::Json& g, CcEntry* e) {
     if (const geo::Json* o = g.get("opts"); o && o->type == geo::Json::OBJ) {
         if (o->o.size() > 32) return "opts: at most 32";
         for (const auto& kv : o->o) {
-            if (kv.second.type != geo::Json::STR || kv.first.empty() || kv.first.size() > 32 || kv.second.s.size() > 128 ||
-                !dig::valid_plugin_id(kv.first))
-                return "opts: {key: \"value\"} (keys [a-z0-9_], values <= 128 bytes)";
-            e->opts[kv.first] = clean(kv.second.s, 128);
+            // (what DIGITAL_OPT applies: its key rule, values <= 100 bytes without control characters)
+            bool ctl = false;
+            if (kv.second.type == geo::Json::STR)
+                for (unsigned char ch : kv.second.s)
+                    if (ch < 0x20 || ch == 0x7F) ctl = true;
+            if (kv.second.type != geo::Json::STR || kv.first.empty() || kv.first.size() > 32 || kv.second.s.size() > 100 || ctl ||
+                !dig::valid_option_key(plugin + "." + kv.first))
+                return "opts: {key: \"value\"} (the plugin's option keys, values <= 100 bytes, no control characters)";
+            e->opts[kv.first] = kv.second.s;
         }
     }
     return "";
 }
 
 void cc_load() {
-    std::ifstream f(CC_FILE, std::ios::binary);
+    std::ifstream f(CC_FILE, std::ios::binary | std::ios::ate);
     if (!f) return;
-    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const std::streamoff size = f.tellg();
+    std::string text;
+    if (size >= 0 && size <= (8 << 20)) {   // (its size first: a huge file isn't read)
+        f.seekg(0);
+        text.assign(static_cast<size_t>(size), '\0');
+        f.read(&text[0], size);
+    }
     f.close();
     geo::Json j;
     const geo::Json* a = nullptr;
-    if (text.size() <= (8u << 20) && geo::json_parse(text, &j) && j.type == geo::Json::OBJ) a = j.get("entries");
+    bool newer = false;
+    if (!text.empty() && geo::json_parse(text, &j) && j.type == geo::Json::OBJ) {
+        const double ver = jnum(j, "version", 1);
+        if (ver > 1) newer = true;   // (a newer receiver's file: kept aside untouched)
+        else a = j.get("entries");
+    }
     if (!a || a->type != geo::Json::ARR) {
         char ts[32];
         const std::time_t t = std::time(nullptr);
@@ -3748,30 +3767,76 @@ void cc_load() {
         std::string kept = std::string(CC_FILE) + ".bad-" + ts;
         for (int k = 1; std::ifstream(kept).good() && k < 100; k++) kept = std::string(CC_FILE) + ".bad-" + ts + "-" + std::to_string(k);
         if (std::rename(CC_FILE, kept.c_str()) == 0) g_cc_bad = kept;
-        g_cc_note = "the control channel memory could not be read - kept as " + kept + ", starting empty";
+        g_cc_note = std::string(newer ? "the control channel memory is of a newer version" : "the control channel memory could not be read") +
+                    " - kept as " + kept + ", starting empty";
         g_cc_state = "not_loaded";
         std::cerr << "Trunk following: " << g_cc_note << std::endl;
         return;
     }
-    int bad = 0;
+    int bad = 0, over = 0;
     for (const auto& g : a->a) {
         CcEntry e;
-        if (g.type != geo::Json::OBJ || !cc_parse(g, &e).empty() || g_cc.size() >= CC_MAX) {
+        if (g.type != geo::Json::OBJ || !cc_parse(g, &e).empty()) {
             bad++;
             continue;
         }
-        long long id = int_or(jnum(g, "id", 0), 1, 1LL << 53, 0);
-        if (id <= 0 || g_cc.count(static_cast<uint64_t>(id))) id = static_cast<long long>(g_cc_next);
-        e.id = static_cast<uint64_t>(id);
-        g_cc_next = std::max(g_cc_next, e.id + 1);
+        if (g_cc.size() >= CC_MAX) {
+            over++;
+            continue;
+        }
+        // (ids renumbered 1.. on load: an id from a file can't push the next one past what a page can address)
+        e.id = g_cc_next++;
         g_cc[e.id] = e;
+    }
+    if (over) {
+        // more than CC_MAX: the original kept aside before the first write would lose them
+        char ts[32];
+        const std::time_t t = std::time(nullptr);
+        std::strftime(ts, sizeof ts, "%Y%m%d-%H%M%S", std::localtime(&t));
+        const std::string kept = std::string(CC_FILE) + ".full-" + ts;
+        std::ofstream k(kept, std::ios::binary);
+        k << text;
+        g_cc_note = std::to_string(over) + " entries over the " + std::to_string(CC_MAX) + " kept aside in " + kept;
+        std::cerr << "Trunk following: " << g_cc_note << std::endl;
     }
     std::cout << "Trunk following: " << g_cc.size() << " control channel(s) remembered (" << CC_FILE << ")"
               << (bad ? ", " + std::to_string(bad) + " unreadable skipped" : "") << std::endl;
 }
 
+void cc_follow_tick();
+bool g_cc_stats_dirty = false;   // only last / n / level of heard entries changed: saved / sent at most every CC_STATS_MS
+int64_t g_cc_stats_t = 0;
+constexpr int64_t CC_STATS_MS = 300000;
+bool g_cc_plugins_checked = false;
 void tick_cc() {
     const int64_t now = now_ms();
+    static int64_t t_follow = 0;
+    if (now - t_follow >= 2000) {
+        t_follow = now;
+        cc_follow_tick();
+    }
+    if (g_cc_stats_dirty && now - g_cc_stats_t >= CC_STATS_MS) {
+        g_cc_stats_dirty = false;
+        g_cc_stats_t = now;
+        cc_changed();
+    }
+    // entries of decoders that don't declare trunking (a file loaded before the registry was read): dropped
+    if (!g_cc_plugins_checked && !dig::PluginRegistry::instance().list().empty()) {
+        g_cc_plugins_checked = true;
+        int n = 0;
+        for (auto it = g_cc.begin(); it != g_cc.end();)
+            if (!plugin_trunking(it->second.plugin)) {
+                it = g_cc.erase(it);
+                n++;
+            } else {
+                ++it;
+            }
+        if (n) {
+            g_cc_note = std::to_string(n) + " entr" + (n == 1 ? "y" : "ies") + " of decoders without trunking dropped";
+            std::cerr << "Trunk following: " << g_cc_note << std::endl;
+            cc_changed();
+        }
+    }
     if (g_cc_dirty && now - g_cc_dirty >= CC_SAVE_MS && !playback::active()) cc_save();
     if (g_cc_list_now && now - g_cc_list_sent >= CC_LIST_MS) {
         g_cc_list_now = false;
@@ -3800,6 +3865,7 @@ struct Probe {
     std::string plugin;
     int64_t t0 = 0, t_ctl = 0;
     uint64_t f0 = 0;        // the stream's spectrum frames when it was made (its deadlines count stream time)
+    uint64_t f_ctl = 0;     // ... when its control flag came (the key waited for in stream time)
     bool control = false, done = false;
     std::string key, name, site;
     double ctl_hz = NAN;    // the signalling's own control channel frequency (CONTROL / CHANNEL near the probe)
@@ -3828,6 +3894,9 @@ struct Search {
     int64_t t_step = 0;
     bool kerberos = false;
     int mode = 0;           // 0 coherent (the centre steps, calibration held), 2 independent (one tuner steps)
+    double asked = 0;       // what the receiver took for the step (its FREQ refused: unchanged)
+    int64_t t_noroom = 0;   // no free VFO for a probe since
+    bool skip_restore = false;
     uint64_t frames0 = 0;   // the step's spectrum frames counted from here (the search's clock is data, not time)
     std::vector<double> probed_hz;   // every candidate probed in this run, found or not (skipped again)
     std::vector<std::pair<double, double>> covered;   // the bands already looked at (the last step's overlap)
@@ -3860,7 +3929,7 @@ void srch_remove_probes() {
     for (auto& p : g_srch.probes) {
         auto inst = decimator_manager.getDecimator(p.vfo);
         if (!inst || inst->serial != p.serial) continue;
-        meta_erase(p.vfo, false);
+        meta_erase(p.vfo, true);
         if (!decimator_manager.removeDecimator(p.vfo)) {
             inst->enabled = true;   // (the receiver's last VFO: a plain one, as a voice VFO's hand-back)
             decimator_manager.setDigitalMode(p.vfo, dig::Mode::OFF, "");
@@ -3912,6 +3981,7 @@ void srch_end(const std::string& why, bool home) {
       << g_srch.found_new << ",\"found_known\":" << g_srch.found_known << ",\"steps\":" << g_srch.centres.size()
       << ",\"steps_done\":" << g_srch.step << ",\"dur_ms\":" << (now - g_srch.t_start) << ",\"t_end\":" << wall_ms() << "}";
     g_srch_last = o.str();
+    if (why == "user_retuned") g_srch_skip_restore = true;   // (his retune: the VFOs keep their offsets, as on any retune)
     std::cout << "Trunk following: control channel search over (" << why << "): " << g_srch.found_new << " new, "
               << g_srch.found_known << " known, " << g_srch.carriers << " carriers, " << (now - g_srch.t_start) / 1000.0 << " s"
               << std::endl;
@@ -3944,12 +4014,26 @@ std::string srch_start(const geo::Json& j) {
     if (!(thr >= 3 && thr <= 40)) return "threshold_db: 3-40";
     if (!(ras == 0 || ras == 5000 || ras == 6250 || ras == 12500)) return "raster_hz: 0, 5000, 6250 or 12500";
     if (trunking_plugins().empty()) return "no built plugin declares trunking";
+    if (static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) return "no free VFO for the probes (16 in use)";
     s.thr_db = thr;
     s.raster = ras;
     const double half = usable_half_hz(), stepw = 2 * half - SRCH_OVERLAP_HZ;
     for (const auto& rg : s.ranges)
         for (double c = rg.first + half - SRCH_OVERLAP_HZ / 2; ; c += stepw) {
-            s.centres.push_back(std::round(std::min(c, std::max(rg.first + half, rg.second - half + SRCH_OVERLAP_HZ / 2))));
+        {
+            double cc = std::min(c, std::max(rg.first + half, rg.second - half + SRCH_OVERLAP_HZ / 2));
+            // (half a raster off it: a channel on the raster is never at the centre's DC, which can't be seen)
+            if (ras > 0) cc = std::round(cc / ras) * ras + ras / 2;
+            double lo_t = RTL_TUNER_MIN_HZ, hi_t = RTL_TUNER_MAX_HZ;
+            if (wb_variant_enabled.load()) {
+                uint64_t a, b;
+                wb_variant_rf_union_range(a, b);
+                lo_t = static_cast<double>(a);
+                hi_t = static_cast<double>(b);
+            }
+            cc = std::clamp(cc, lo_t, hi_t);   // (the band covers the edge from inside)
+            if (s.centres.empty() || std::fabs(s.centres.back() - cc) > 1000) s.centres.push_back(std::round(cc));
+        }
             if (c + half >= rg.second) break;
         }
     // the receiver stands down: an excursion home, voice tuners back, calls freed
@@ -4125,7 +4209,7 @@ void srch_probe_batch() {
             p.t0 = now;
             p.f0 = srch_frames(g_srch.centres[g_srch.step]);
             g_srch.probes.push_back(p);
-            meta_set(id, inst.get(), false, ",\"trunk\":{\"role\":\"probe\"}");
+            meta_set(id, inst.get(), true, ",\"trunk\":{\"role\":\"probe\"}");   // (true: never saved, never the user's)
             const int bw = efficient_bandwidth_at_least(static_cast<int>(std::ceil(std::max(12500.0, std::min(50000.0, pi.min_vfo_rate)))));
             char f[96];
             // (on the raster when one is set: control channels sit on it, and the decoders track the rest)
@@ -4163,6 +4247,8 @@ void srch_record(const Probe& p) {
     for (auto it = g_srch_recs.begin(); it != g_srch_recs.end(); ++it)
         if (it->plugin == p.plugin && it->key == p.key && std::fabs(it->hz - cd.hz) < 15000) {
             if (it->level >= cd.level) return;   // (the weaker one beside it: the same channel heard off its centre)
+            auto ue = g_cc.find(it->id);
+            if (ue != g_cc.end() && ue->second.user()) return;   // (the user's: never erased by the search)
             if (it->made) {
                 g_cc.erase(it->id);
                 g_srch.found_new--;
@@ -4194,6 +4280,7 @@ void srch_event(int vfo, const PluginEvent& ev) {
             if (ev.control && !p.control) {
                 p.control = true;
                 p.t_ctl = now_ms();
+                p.f_ctl = g_srch.step < g_srch.centres.size() ? srch_frames(g_srch.centres[g_srch.step]) : 0;
             }
             if (!ev.sys_key.empty()) p.key = ev.sys_key;
             if (!ev.sys_name.empty()) p.name = ev.sys_name;
@@ -4210,9 +4297,9 @@ void tick_search() {
     const int64_t now = now_ms();
     if (playback::active()) return srch_end("playback", false);
     const double asked = g_srch.mode == 2 ? indep_tuner_freq_hz[g_srch.tuner].load() : static_cast<double>(requested_freq_hz.load());
-    if (g_srch.st != 0 && g_srch.step < g_srch.centres.size() && std::fabs(asked - g_srch.centres[g_srch.step]) > 1000)
+    if (g_srch.st != 0 && g_srch.step < g_srch.centres.size() && std::fabs(asked - g_srch.asked) > 1000)
         return srch_end("user_retuned", false);
-    if (operating_mode_index() != g_srch.mode) return srch_end("mode", false);
+    if (operating_mode_index() != g_srch.mode) return srch_end("mode", true);   // (the receiver's requested state home)
     if (g_srch.mode == 0 && !g_srch.kerberos && now - g_srch.hold_sent >= EXC_HOLD_RENEW_MS && heimdall_up()) {
         heimdall_hold(static_cast<int>(EXC_HOLD_LEASE_MS));
         g_srch.hold_sent = now;
@@ -4233,6 +4320,7 @@ void tick_search() {
             if (g_srch.mode == 2) snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", g_srch.tuner, c / 1e6);
             else snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
             dispatch({f});
+            g_srch.asked = g_srch.mode == 2 ? indep_tuner_freq_hz[g_srch.tuner].load() : static_cast<double>(requested_freq_hz.load());
             g_srch.st = 1;
             g_srch.t_st = g_srch.t_step = now;
             return;
@@ -4247,7 +4335,7 @@ void tick_search() {
                 g_srch.st = 2;
                 g_srch.t_st = now;
             } else if (now - g_srch.t_st > SRCH_ARRIVE_MAX_MS * 3) {
-                if (!heimdall_up()) return srch_end("heimdall", false);
+                if (!heimdall_up()) return srch_end("heimdall", true);   // (home asked for: home when the stream is back)
                 next();
             }
             return;
@@ -4319,7 +4407,9 @@ void tick_search() {
                 const double age_s = static_cast<double>(srch_frames(c) - std::min(srch_frames(c), p.f0)) / srch_fps();
                 const int64_t age = static_cast<int64_t>(age_s * 1000) + (now - p.t0 > 30000 ? SRCH_PROBE_MAX_MS : 0);
                 const bool frames = dd && dd->frames_within(1500);
-                if (p.control && (!p.key.empty() || now - p.t_ctl >= SRCH_KEY_WAIT_MS)) {
+                const double key_wait_s = static_cast<double>(srch_frames(c) - std::min(srch_frames(c), p.f_ctl)) / srch_fps();
+                if (p.control && (!p.key.empty() || key_wait_s * 1000 >= SRCH_KEY_WAIT_MS || age >= SRCH_PROBE_MAX_MS ||
+                                  now - p.t0 > 30000)) {   // (the control flag: always recorded, with or without its key)
                     srch_record(p);
                     g_srch.found_hz.push_back({g_srch.cands[p.cand].hz, 0});
                     p.done = true;
@@ -4338,8 +4428,17 @@ void tick_search() {
             bool more = false;
             for (const auto& cd : g_srch.cands)
                 if (!cd.found && !cd.todo.empty()) more = true;
-            if (more) srch_probe_batch();
-            else next();
+            if (more) {
+                if (static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) {   // (the user added VFOs)
+                    if (!g_srch.t_noroom) g_srch.t_noroom = now;
+                    if (now - g_srch.t_noroom > 10000) return srch_end("no_vfo", true);
+                    return;
+                }
+                g_srch.t_noroom = 0;
+                srch_probe_batch();
+            } else {
+                next();
+            }
             return;
         }
     }
@@ -4404,8 +4503,18 @@ void cc_heard(int vfo, const std::string& plugin, const PluginEvent& ev) {
     }
     g_cc_heard[vfo] = now;
     bool made = false;
+    CcEntry before;
+    if (const CcEntry* x = cc_find(plugin, snap(rf, 6250), 3125)) before = *x;
+    const int64_t dirty0 = g_cc_dirty;
+    const bool list0 = g_cc_list_now;
     CcEntry* e = cc_seen(plugin, snap(rf, 6250), rf, ev.sys_key, ev.sys_name, ev.sys_site, vfo_plugin_opts(vfo, plugin), NAN, "heard",
                          3125, &made);
+    if (e && !made && e->sys == before.sys && e->sys_name == before.sys_name && e->site == before.site && e->opts == before.opts) {
+        // (only last / n changed: the list and the file at most every CC_STATS_MS - the page shows the VFO anyway)
+        g_cc_list_now = list0;   // (as before this refresh)
+        g_cc_dirty = dirty0;
+        g_cc_stats_dirty = true;
+    }
     if (e && made) std::cout << "Trunk following: control channel " << e->hz / 1e6 << " MHz (" << plugin << ") remembered" << std::endl;
 }
 
@@ -4418,10 +4527,25 @@ std::string cc_follow(uint64_t id, bool add) {
     CcEntry& e = it->second;
     dig::PluginInfo pi;
     if (!plugin_info(e.plugin, &pi) || !pi.built) return "its decoder (" + e.plugin + ") is not built";
-    if (g_srch.active) srch_end("follow", true);
+    if (!pi.trunking) return "its decoder (" + e.plugin + ") does not declare trunking";
     const int mode = operating_mode_index();
     if (mode == 1) return "not in wideband scan mode";
     const double bw = std::max(12500.0, std::min(50000.0, pi.min_vfo_rate));
+    const double need = bw / 2 + PLACE_GUARD_HZ, half = usable_half_hz();
+    // where the receiver WILL be (a search / an excursion goes home first; the stream may still show a step)
+    int tuner = 0;
+    double centre = 0;
+    if (mode == 2) {
+        const std::set<int> ct = vt_control_tuners();
+        tuner = ct.empty() ? 0 : *ct.begin();
+        centre = indep_tuner_freq_hz[tuner].load();
+        if (g_srch.active && g_srch.mode == 2 && g_srch.tuner == tuner) centre = g_srch.home;
+        if (g_vt[tuner].taken) centre = g_vt[tuner].home_hz;
+    } else {
+        centre = g_srch.active ? g_srch.home : g_exc.st == 1 ? g_exc.home : static_cast<double>(requested_freq_hz.load());
+    }
+    if (centre <= 0) return "the receiver's frequency is not known yet";
+    auto rf_of = [&](const Inst& i) { return centre + i.frequency_offset_hz.load(); };
     // the VFO a previous click made (replaced) - unless adding
     int reuse = -1;
     if (!add)
@@ -4434,45 +4558,41 @@ std::string cc_follow(uint64_t id, bool add) {
         auto inst = decimator_manager.getDecimator(kv.first);
         if (!inst || inst->serial != kv.second.first || kv.second.second != id) continue;
         auto dd = inst->getDigital();
-        const double rf = vfo_rf(*inst);
-        if (dd && dd->plugin_id() == e.plugin && rf > 0 && std::fabs(rf - e.hz) < 1000) {
+        if (dd && dd->plugin_id() == e.plugin && std::fabs(rf_of(*inst) - e.hz) < 1000) {
             if (add) return "already followed on D" + std::to_string(kv.first);
             return "";
         }
     }
-    std::vector<std::string> cmds;
-    Place p = place_for(e.hz, bw, -1);
-    if (!p.ok) {
-        if (add && !g_cc_follow.empty()) return "it doesn't fit the span with the control channel(s) followed now - follow it alone";
-        // the user's tuning (he asked for it): a normal, saved retune
-        double c = e.hz + 250000;
-        if (System* s = sys_of(e.sys)) {
+    // every refusal before anything changes
+    double c = centre;
+    const bool fits = std::fabs(e.hz - centre) + need <= half;
+    if (!fits) {
+        bool others = false;
+        for (const auto& kv : g_cc_follow)
+            if (auto inst = decimator_manager.getDecimator(kv.first); inst && inst->serial == kv.second.first) others = true;
+        if (add && others) return "it doesn't fit the span with the control channel(s) followed now - follow it alone";
+        c = e.hz + 250000;
+        if (System* s2 = sys_of(e.sys)) {
             Centre sc;
-            if (suggest_centre(*s, &sc) && std::fabs(sc.hz - e.hz) + bw / 2 + PLACE_GUARD_HZ <= usable_half_hz() && exc_range(sc.hz))
-                c = std::round(sc.hz);
+            if (suggest_centre(*s2, &sc) && std::fabs(sc.hz - e.hz) + need <= half && exc_range(sc.hz)) c = std::round(sc.hz);
         }
         if (!exc_range(c)) c = e.hz - 250000;
         if (!exc_range(c)) return "outside the tuner's range";
+    }
+    if (reuse < 0 && static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) return "16 VFOs in use";
+    // now: a search / an excursion ends (home), voice tuners back
+    if (g_srch.active) srch_end("follow", true);
+    if (g_exc.st == 1) exc_return("follow", true);
+    if (mode == 2) vt_restore_all("follow", true);
+    if (!fits) {
         char f[96];
-        if (mode == 2) {
-            int t = 0;
-            for (int ct : vt_control_tuners()) t = ct;
-            snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", t, c / 1e6);
-        } else {
-            snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
-        }
-        const std::string why = ControlHandler::apply_command(f);   // (not dispatching: saved)
+        if (mode == 2) snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", tuner, c / 1e6);
+        else snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
+        const std::string why = ControlHandler::apply_command(f);   // (the user's tuning - he asked for it: saved)
         if (!why.empty()) return "the retune was refused: " + why;
-        p.ok = true;
-        p.centre = c;
-        p.off_hz = e.hz - c;
-        if (mode == 2) {
-            for (int ct : vt_control_tuners()) p.tuner = ct;
-        }
     }
     int vfo = reuse;
     if (vfo < 0) {
-        if (static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) return "16 VFOs in use";
         std::set<int> before;
         for (const auto& d : decimator_manager.getDecimatorInfoList()) before.insert(d.id);
         const std::string why = ControlHandler::apply_command("ADD_DECIMATOR");
@@ -4481,18 +4601,29 @@ std::string cc_follow(uint64_t id, bool add) {
             if (!before.count(d.id)) vfo = d.id;
         if (vfo < 0) return "a VFO couldn't be added";
     }
-    std::vector<std::string> c2;
+    // the plugin options of a replaced channel go back to the defaults (only the entry's own are set)
+    if (auto inst = decimator_manager.getDecimator(vfo)) {
+        if (auto dd = inst->getDigital()) {
+            dig::Options o = dd->options();
+            if (!o.plugin.empty()) {
+                o.plugin.clear();
+                decimator_manager.setDigitalOptions(vfo, o);
+            }
+        }
+    }
     const std::string sid = std::to_string(vfo);
+    std::vector<std::string> c2;
     c2.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(efficient_bandwidth_at_least(static_cast<int>(bw))));
     char f[96];
-    if (mode == 2) snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", vfo, p.off_hz / 1000.0, p.tuner);
-    else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", vfo, p.off_hz / 1000.0);
+    if (mode == 2) snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", vfo, (e.hz - c) / 1000.0, tuner);
+    else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", vfo, (e.hz - c) / 1000.0);
     c2.push_back(f);
+    std::string refused;
     for (const auto& kv : e.opts) c2.push_back("DIGITAL_OPT:" + sid + ":" + e.plugin + "." + kv.first + ":" + kv.second);
     c2.push_back("DIGITAL_MODE:" + sid + ":PLUGIN:" + e.plugin);
-    for (const auto& c : c2) {
-        const std::string why = ControlHandler::apply_command(c);   // (the user's VFO now: saved)
-        if (!why.empty()) std::cerr << "Trunk following: '" << c << "' refused (" << why << ")" << std::endl;
+    for (const auto& cmd : c2) {
+        const std::string why = ControlHandler::apply_command(cmd);   // (the user's VFO now: saved)
+        if (!why.empty()) refused += (refused.empty() ? "" : "; ") + cmd.substr(0, 80) + ": " + why;
     }
     auto inst = decimator_manager.getDecimator(vfo);
     if (!add) g_cc_follow.clear();
@@ -4506,7 +4637,41 @@ std::string cc_follow(uint64_t id, bool add) {
     }
     std::cout << "Trunk following: following the control channel " << e.hz / 1e6 << " MHz (" << e.plugin << ") on D" << vfo << std::endl;
     g_status_now = true;
-    return "";
+    return refused.empty() ? "" : "followed on D" + sid + ", but not applied: " + refused;
+}
+
+// the clicked control VFOs: a VFO gone, or changed by hand (another plugin, or moved more than 3 kHz off its
+// entry), is no longer the followed one; with none (a restart), a control VFO on a followed entry's frequency
+// with its plugin is (the most recently followed entry)
+void cc_follow_tick() {
+    for (auto it = g_cc_follow.begin(); it != g_cc_follow.end();) {
+        auto inst = decimator_manager.getDecimator(it->first);
+        auto e = g_cc.find(it->second.second);
+        auto dd = inst ? inst->getDigital() : nullptr;
+        const bool ok = inst && inst->serial == it->second.first && e != g_cc.end() && dd && dd->plugin_id() == e->second.plugin &&
+                        std::fabs(vfo_rf(*inst) - e->second.hz) <= 3000;
+        if (ok) ++it;
+        else {
+            it = g_cc_follow.erase(it);
+            g_status_now = true;
+        }
+    }
+    if (!g_cc_follow.empty() || g_srch.active || g_exc.st != 0) return;
+    for (int id : control_vfos()) {
+        auto inst = decimator_manager.getDecimator(id);
+        auto dd = inst ? inst->getDigital() : nullptr;
+        if (!dd) continue;
+        const CcEntry* best = nullptr;
+        for (const auto& kv : g_cc)
+            if (kv.second.followed > 0 && kv.second.plugin == dd->plugin_id() && std::fabs(vfo_rf(*inst) - kv.second.hz) <= 3000 &&
+                (!best || kv.second.followed > best->followed))
+                best = &kv.second;
+        if (best) {
+            g_cc_follow[id] = {inst->serial, best->id};
+            g_status_now = true;
+            return;
+        }
+    }
 }
 
 // main thread's hook (ControlHandler::apply_command, before a command runs):
@@ -4659,7 +4824,11 @@ void pause_check() {
         remove_all_voices();
     } else {
         std::cout << "Trunk following: resumed" << std::endl;
-        if (resumed && !playback::active() && g_set.follow) restore_homes();
+        if (resumed && !playback::active() && g_set.follow && !g_srch_skip_restore) restore_homes();
+        if (resumed && g_srch_skip_restore) {
+            g_srch_skip_restore = false;
+            g_home.clear();
+        }
     }
     if (p) {
         g_pending.clear();   // (a scan again: its own end decides)
@@ -4991,7 +5160,7 @@ bool is_trunk_vfo(int id) {
     {
         std::lock_guard<std::mutex> lk(g_meta_mu);
         auto it = g_meta.find(id);
-        if (it == g_meta.end() || !it->second.voice) return false;
+        if (it == g_meta.end() || !it->second.voice) return false;   // (voice = a voice VFO or a search probe)
         p = it->second.inst;
     }
     auto now = decimator_manager.getDecimator(id);
@@ -5338,7 +5507,7 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
         return done();
     }
     if (cmd == "GET_TRUNK_CC") {
-        broadcast(cc_list_json());
+        g_cc_list_now = true;   // (the list at most once a second: tick_cc)
         return true;
     }
     if (cmd == "TRUNK_CC_CLEAR") {
@@ -5371,7 +5540,7 @@ bool handle_command(const std::string& msg, std::string* err, std::string* persi
             x->id = keep;
             if (!x->first) x->first = wall_ms();
             cc_changed();
-            return done();
+            return true;   // (answered by the list message - an import of 1000 is not 1000 statuses)
         }
         const long long id = int_or(jnum(j, "id", 0), 1, 1LL << 53, 0);
         auto it = id > 0 ? g_cc.find(static_cast<uint64_t>(id)) : g_cc.end();

@@ -2540,7 +2540,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         // Entering independent from coherent: tuners without a saved tuning
         // start where the array was (so the saved set is complete)
         if (mode == 2 && was_coherent) {
-            const double f0 = static_cast<double>(tuner_frequencies[0].load());
+            // (the centre asked for: the stream's header may still be a search step / an excursion's centre)
+            const double f0 = requested_freq_hz.load() ? static_cast<double>(requested_freq_hz.load())
+                                                       : static_cast<double>(tuner_frequencies[0].load());
             for (int ch = 0; ch < MAX_CHANNELS; ch++)
                 if (indep_tuner_freq_hz[ch].load() <= 0 && f0 > 0) indep_tuner_freq_hz[ch] = f0;
             if (!g_replaying_settings.load()) SettingsStore::record("TUNERS:" + tuners_string());
