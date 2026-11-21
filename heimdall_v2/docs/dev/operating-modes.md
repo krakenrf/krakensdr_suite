@@ -241,7 +241,9 @@ per-channel frequencies, after the settle. From the code:
   ~330 ms): then L* is that lateness. So **the settle has to cover the
   host's USB latency** - the default 5 ms leaves ~4 ms of margin on the
   PC; neither a Raspberry Pi nor a loaded reader is measured. Measured
-  below and in *Hop timing*, through the real pipeline.
+  below and in *Hop timing*, through the real pipeline. (A Pi 5 since:
+  *On the Raspberry Pi 5* - its packets arrive ~0.7 ms later than the PC's,
+  and the default is 2 ms now.)
 One exception, negligible: the lag FIR's 7-sample tail (`frac_tail`, kept
 across sets for the coherent conversion) is not reset by a flush, so the
 first 3-7 output samples of each channel in a hop's first valid packet are
@@ -281,6 +283,8 @@ parallel tuning; job scratch 52196024 `heimdall/`):
   first packet round after the request, which it drops) is itself a guard of
   about a packet. `SWEEP_SETTLE_MS` = 5 ms is that plus margin for slower
   USB hosts (the Raspberry Pi is NOT measured; re-run `t_contrast.py` there).
+  (A Pi 5 since: *On the Raspberry Pi 5* - `t_contrast.py` clean at settle
+  0 / 2 / 5 with carriers 31 / 36 dB strong.)
 - Speed (`t_speed.py`, ms per round from the 8091 counter, 4 s each): the
   hop costs ~25-30 ms beyond the dwell (the retune - not timed alone -, the
   flush waits for the next packet round, the first valid set comes a packet
@@ -365,7 +369,8 @@ logs in job scratch 52196024 `heimdall/`, `README.txt` there):
   on; the terminal dashboard in a pty ("mode SWEEP", "SWEEP on 89.0-108.1
   MHz hops 11 tuners 0,1,2,3,4 round 0/3 sweeps 68 ..."). t_basic /
   t_cmds / t_modes / t_restart / t_settle / t_long pass on it too.
-- Not run: the Raspberry Pi, Windows (one-by-one tuning), macOS, the
+- Not run: the Raspberry Pi (a Pi 5 since: *On the Raspberry Pi 5*),
+  Windows (one-by-one tuning), macOS, the
   Wideband downconverter (refusal is the existing `target != COHERENT`
   check), `--kerberos` on hardware; the MinGW / zig syntax checks (no
   toolchain on this machine).
@@ -501,7 +506,7 @@ The default settle is 2 ms (`SWEEP_SETTLE_MS`; 5 until then, and 5 again
 for a few hours on the second review's point that the gate's bound is
 "retune end + settle - L*", L* the dongle's fastest USB delivery, ~1 ms
 here, with neither a Raspberry Pi nor a reader running behind under load
-measured). What decided it, the orchestrator's end-to-end runs on the
+measured; a Pi 5 since: *On the Raspberry Pi 5*). What decided it, the orchestrator's end-to-end runs on the
 KrakenSDR with kraken_doa and the page attached (the hop then starts ~2.5 ms
 after a packet boundary - the last packet's way through the pipeline): at
 settle 5 the first packet that counts falls one packet period later in
@@ -513,7 +518,9 @@ at settle 5). And the margin is larger than "2 - L*" suggests: the stream
 measured clean at settle 0 with its positive control, i.e. from ~1 ms before
 the tune call returns (the PLL is written a control transfer or more before
 that; a slower USB host returns later still), so 2 ms stands ~3 ms after
-the measured-clean point. NOT measured: a Raspberry Pi, Windows, a reader
+the measured-clean point. NOT measured: a Raspberry Pi (a Pi 5 since: *On
+the Raspberry Pi 5* - clean at settle 0 / 2 / 5, and 2 ms is also the faster
+setting there), Windows, a reader
 thread held up for longer than the gate's window - run `t_contrast.py`
 there; a host that shows the previous hop in a hop's first valid packet
 needs a larger settle (`set_sweep` `settle_ms`, or the constant).
@@ -555,6 +562,10 @@ earlier than before, so what "settle 0 holds" meant changed):
   holds with the first valid packet a packet earlier than before - the tune
   call returns well after the PLL moved (lock check, autotune) - and 5 ms
   stays the default as margin for slower USB hosts (the Pi not measured).
+  (Since then: the default is 2 ms, and on a Pi 5 - *On the Raspberry Pi 5*
+  - the slower USB host needs no more: its packets arrive ~0.7 ms later
+  than the PC's, `t_contrast.py` is clean at settle 0 / 2 / 5, and settle 5
+  costs a packet period a hop more there than settle 2 at K = 1, 2, 4.)
 
 *Everything else, re-tested on the new loop* (job scratch `speed/`):
 - fake (`regress_fake.sh`, `FAKE_TUNE_MS=14`): t_basic (every case PASS;
@@ -585,7 +596,8 @@ earlier than before, so what "settle 0 holds" meant changed):
   (dwell 20: 8192, not 4096; 50: 16384; explicit 16384 at dwell 20
   averages 5 frames, not 1-2, so "auto is smoother" is now sd 1.27 vs 1.69
   dB, a ratio of 0.75 - the check takes < 0.85); no sanitizer reports.
-- Not run: the Raspberry Pi, Windows (tunes one by one: nothing in the hop
+- Not run: the Raspberry Pi (a Pi 5 since: *On the Raspberry Pi 5*),
+  Windows (tunes one by one: nothing in the hop
   assumes a short retune - the gate and the dwell's timeout run from the
   retune's end), macOS, the MinGW / zig syntax checks (no toolchain here).
 
@@ -805,7 +817,8 @@ F's return path; defaults then dwell 5, settle 5):
    L*; L* is the USB floor (~1 ms on the PC) unless the reader runs
    steadily behind for longer than the window (~330 ms) - then L* is that
    lateness, and nothing here bounds it. Not measured: a Raspberry Pi, a
-   loaded host. Hence the default settle 5 (orchestrator).
+   loaded host. Hence the default settle 5 (orchestrator). (Since then 2 ms;
+   a Pi 5 measured: *On the Raspberry Pi 5*.)
 3. *A stale gate after the re-pairing flush.* A gate filed just before the
    mode was left (its requester stops waiting then) could be served after
    `set_operating_mode`'s paired flush, mid-collection, dropping a partial
@@ -1082,6 +1095,51 @@ sweep mode: round_ms 54 (81 before: no unquiet flush now, 191 before),
 aligned array: round_ms 53, back 1.6 s. Every check |lag| 0.0, |phase|
 0.1-0.3 deg, coherence_events 0. Positive control, the build without the
 fix, case A: channel 1 at -4096.0 samples, the full recalibration, 27.7 s.
+The first heimdall worker's regression set on the fixed build: `t_basic`
+every case PASS (coherent CONVERGED 22.0 s, check OK); `t_contrast` (settle
+0 / 5 ms) first valid packets' worst segment +3.7 / +3.6 dB against later
+packets' max +4.2 / +4.4 and flagged ones up to +16.7 / +17.1 dB (81 / 74
+with the old hop in them); `t_cmds`, `t_web` 0 failures; `t_modes` 0
+failures - sweep -> coherent CONVERGED 2.1 s after the switch (22.6 s with
+the forced full recalibration), mid-calibration -> sweep -> coherent 4.1 s,
+final 1.0 s, every check |lag| 0.0; `t_long` (3 min, full range, 5 tuners,
+heimdall's sweep still on today's full-path hop): 21 sweeps of 7.5 s, 0
+failed retunes, 0 coherence events, 0 unquiet flushes, 0 valid packets off
+the grid (7006 valid), RSS flat 42.0 MB, SIGTERM during a hop exit 0 in
+0.32 s.
+
+Nits: `whole()` takes the JSON number grammar only (not `12abc`, `0x10`,
+`+5`, `1e2x`), `run` needs a delimiter after the literal (not `truex`);
+`set_sweep` bumps `plan_generation` before zeroing `round` / `sweeps`
+(under `settings_mutex` + the plan mutex, and the thread stores a round /
+counts a sweep only with the generation unchanged under the plan mutex);
+`sweep_state.rounds` removed; the `kp == 0` branch settles and clears the
+flag; the settings file is noted only for a change it holds (not `run`, not
+a no-op); a failed gain rollback in sweep mode no longer calls
+`signal_coherence_lost`; the exits log "Mode:" / "<mode> mode ended". Left:
+a key that first appears inside a string value is taken as absent (the
+parser is the port's find-based one; set_sweep has no string fields);
+`tcp_data_server` reading the mode before the frequencies - after sweep ->
+coherent the next packets carry the recalibration's phase state (not
+CONVERGED, noise on) and `return_to_coherent_locked` flushes L2, so nothing
+uses those packets; `frac_tail` noted at the guarantee.
+Finding 7 on the fake (`t_race.py`, `set_num_elements` + `set_operating_mode
+sweep` in one TCP send, 10 tries): when the reconfiguration started, either
+it aborted on its re-check under the lock ("switch to coherent mode ...",
+the count unchanged, sweep mode on) or the mode change was refused
+("Element-count reconfiguration in progress", the new count, coherent) -
+never both. Regression set on the KrakenSDR after the fixes (`regress.sh`):
+T1 CONVERGED 22.6 s, check OK (|lag| 0.0, |phase| 0.2 deg); T2 every case
+PASS; T3 (`t_contrast`, station 14.4 dB over the floor) first valid packets
+worst segment +4.1 / +3.6 dB at settle 0 / 5 against later packets' max
++3.9 / +3.4 and flagged packets up to +16 dB (81 / 75 flagged packets with
+the old hop in them) - noise level, no trace of the old hop; T5 every check
+PASS; the web STATE / SDR_SETTINGS PASS; T6 every check PASS (60 s of
+sweeping, 429 sweeps, 0 coherence events; sweep -> coherent CONVERGED 22.6
+s, check OK; coherent -> sweep mid-calibration -> coherent 20.6 s); 3 min
+full range with 5 tuners: 23 sweeps, 0 failed retunes, 0 coherence events,
+0 valid packets off the grid, RSS flat 43.2 MB, SIGTERM during a hop exit 0
+in 0.72 s.
 
 **The failed return on the Pi** (2026-11-21, the Raspberry Pi 5 Rev 1.1,
 8 GB, KrakenSDR, the fork with `RTLSDR_NO_STREAM_SLIP`). In `t_exitstress.py
@@ -1139,48 +1197,128 @@ own, CONVERGED 5.2-5.5 s after the switch, check |lag| 0.0, one coherence
 event each, with log lines such as "packets delivered vs channel 0: 0 -1 0 0
 0; deepest L1 over 8 ms: 0 0 1 1 1". Clean returns raise no event. `t_hop`
 is unchanged (FM K=1..5: 20.5 / 27.2 / 34.1 ms at dwell 5 / 10 / 20).
-The first heimdall worker's regression set on the fixed build: `t_basic`
-every case PASS (coherent CONVERGED 22.0 s, check OK); `t_contrast` (settle
-0 / 5 ms) first valid packets' worst segment +3.7 / +3.6 dB against later
-packets' max +4.2 / +4.4 and flagged ones up to +16.7 / +17.1 dB (81 / 74
-with the old hop in them); `t_cmds`, `t_web` 0 failures; `t_modes` 0
-failures - sweep -> coherent CONVERGED 2.1 s after the switch (22.6 s with
-the forced full recalibration), mid-calibration -> sweep -> coherent 4.1 s,
-final 1.0 s, every check |lag| 0.0; `t_long` (3 min, full range, 5 tuners,
-heimdall's sweep still on today's full-path hop): 21 sweeps of 7.5 s, 0
-failed retunes, 0 coherence events, 0 unquiet flushes, 0 valid packets off
-the grid (7006 valid), RSS flat 42.0 MB, SIGTERM during a hop exit 0 in
-0.32 s.
 
-Nits: `whole()` takes the JSON number grammar only (not `12abc`, `0x10`,
-`+5`, `1e2x`), `run` needs a delimiter after the literal (not `truex`);
-`set_sweep` bumps `plan_generation` before zeroing `round` / `sweeps`
-(under `settings_mutex` + the plan mutex, and the thread stores a round /
-counts a sweep only with the generation unchanged under the plan mutex);
-`sweep_state.rounds` removed; the `kp == 0` branch settles and clears the
-flag; the settings file is noted only for a change it holds (not `run`, not
-a no-op); a failed gain rollback in sweep mode no longer calls
-`signal_coherence_lost`; the exits log "Mode:" / "<mode> mode ended". Left:
-a key that first appears inside a string value is taken as absent (the
-parser is the port's find-based one; set_sweep has no string fields);
-`tcp_data_server` reading the mode before the frequencies - after sweep ->
-coherent the next packets carry the recalibration's phase state (not
-CONVERGED, noise on) and `return_to_coherent_locked` flushes L2, so nothing
-uses those packets; `frac_tail` noted at the guarantee.
-Finding 7 on the fake (`t_race.py`, `set_num_elements` + `set_operating_mode
-sweep` in one TCP send, 10 tries): when the reconfiguration started, either
-it aborted on its re-check under the lock ("switch to coherent mode ...",
-the count unchanged, sweep mode on) or the mode change was refused
-("Element-count reconfiguration in progress", the new count, coherent) -
-never both. Regression set on the KrakenSDR after the fixes (`regress.sh`):
-T1 CONVERGED 22.6 s, check OK (|lag| 0.0, |phase| 0.2 deg); T2 every case
-PASS; T3 (`t_contrast`, station 14.4 dB over the floor) first valid packets
-worst segment +4.1 / +3.6 dB at settle 0 / 5 against later packets' max
-+3.9 / +3.4 and flagged packets up to +16 dB (81 / 75 flagged packets with
-the old hop in them) - noise level, no trace of the old hop; T5 every check
-PASS; the web STATE / SDR_SETTINGS PASS; T6 every check PASS (60 s of
-sweeping, 429 sweeps, 0 coherence events; sweep -> coherent CONVERGED 22.6
-s, check OK; coherent -> sweep mid-calibration -> coherent 20.6 s); 3 min
-full range with 5 tuners: 23 sweeps, 0 failed retunes, 0 coherence events,
-0 valid packets off the grid, RSS flat 43.2 MB, SIGTERM during a hop exit 0
-in 0.72 s.
+**On the Raspberry Pi 5** (2026-11-21, round 4 of the sweep work; job
+scratch 52196024 `speed/pi/`). The board: a Raspberry Pi 5 Model B Rev 1.1,
+8 GB, kernel 6.18.34, the KrakenSDR (5 x 0bda:2838) behind the board's hub
+on a USB 2 port. Clean test builds with the ports moved, against the fork
+with `RTLSDR_NO_STREAM_SLIP`; heimdall at the defaults (dwell 5, settle 2).
+Every run 43-52 C, `vcgencmd get_throttled` 0x0, load 0.0-1.8. Beside each
+figure the x86_64 PC's with the same KrakenSDR model (load 6-8: other
+workers' builds).
+
+*Hardware.* `t_hop.py --cases fm` (the FM plan: 88-108 MHz, 11 hops, so
+K = 1 / 2 / 4 tune the same-band blocks, K = 3 and 5 have the longer
+tunes), ms per round, K = 1..5:
+
+| dwell / settle | Pi 5 | PC |
+|---|---|---|
+| 5 / 2 | 21.8 / 20.5 / 27.2 / 20.5 / 29.3 | 21.7 / 20.5 / 23.9 / 20.4 / 25.0 |
+| 10 / 2 | 29.6 / 27.3 / 34.1 / 27.3 / 36.5 | 28.6 / 27.3 / 30.8 / 27.2 / 32.1 |
+| 20 / 2 | 36.7 / 34.1 / 40.9 / 34.1 / 42.9 | 35.2 / 34.1 / 37.4 / 34.1 / 38.7 |
+| 5 / 5 | 28.3 / 27.2 / 30.8 / 27.2 / 31.7 | 23.2 / 21.2 / 27.9 / 20.6 / 29.4 |
+| 10 / 5 | 35.1 / 34.1 / 37.2 / 34.1 / 38.5 | 29.7 / 27.4 / 34.2 / 27.3 / 36.5 |
+| 20 / 5 | 42.0 / 40.8 / 44.2 / 40.7 / 45.0 | 36.6 / 35.1 / 41.6 / 36.3 / 43.0 |
+
+The tune calls are the PC's. Pi: K = 2 / 4 7.62-7.68 ms, K = 1 9.2-9.4,
+K = 3 12.5, K = 5 14.1-14.2. PC: 7.5-7.8, 9.4-9.6, 12.1-12.7, 13.8-14.4.
+The Pi's packets arrive later: first_valid 7.9 ms against 7.1-7.2. The gate
+takes 2.7-5.4 ms at settle 2 and 4.7-6.6 at settle 5, against 1.7-3.6 and
+0.4-3.3 on the PC. Those ~0.7 ms push the hop past a packet boundary in two
+places. At settle 2, K = 3 and 5 cost +3.3 / +4.3 ms a round (dwell 5);
+K = 1 / 2 / 4 lose nothing. At settle 5, K = 1, 2 and 4 cost a whole
+period (+5.1 / +6.0 / +6.6 ms). So on the Pi, settle 5 is a packet period
+slower than settle 2 for the common case, one more reason for the 2 ms
+default.
+
+Full range 24-1765 MHz timed at dwell 5 / 10 / 20 (settle 2): 5 tuners
+4.02 / 5.28 / 6.52 s, 1 tuner 18.93 / 25.15 / 31.37 s. The PC: 4.11 / 5.58 /
+6.86 and 18.95 / 25.17 / 31.42 s, at settle 5, the default then.
+
+CPU: the sweep run 21.1 % of a core (PC 12.6 %). Per thread
+(`t_cpu_threads.py`, 20 s per mode, % of a core):
+
+| mode | total | convert | each rtl-rx | sample-drain | per core |
+|---|---|---|---|---|---|
+| coherent | 37.1 | 32.6 | 0.8 | 0.4 | 8-12 % |
+| independent | 36.2 | 31.6 | 0.8 | 0.4 | 8-12 % |
+| sweep | 31.8 | 25.5 | 0.9 | 0.8 | 8-12 % |
+
+On the PC only the totals were taken.
+
+`t_modes.py --sweep-seconds 60`: 0 failures, 470 sweeps, 0 coherence
+events (PC 447 sweeps). Sweep -> coherent (phase-only, no PLL lines):
+reply 0.61 s, CONVERGED 2.1 s after the switch, check |lag| 0.0 / |phase|
+0.2 deg (PC 0.61 / 2.1 s, 0.0 / 0.1 deg). Mid-calibration and back 3.5 s
+(PC 4.0), final 1.0 s (PC 1.0). The coherent start CONVERGED in
+18.8-23.3 s (PC 19.4-22.0).
+
+`t_long.py --minutes 9 --dwell 5` at the defaults (full range, 5 tuners):
+134 sweeps of 3.75-4.29 s, 24583 valid / 29942 flagged packets, 0 off the
+grid, 0 failed retunes, 0 coherence events, 0 unquiet flushes, RSS
+38.7 MB flat, CPU 22.3 % of a core, 5-8 % per core, 45.5-49.9 C; SIGTERM
+during a hop: exit 0 in 0.41 s. The PC, then at settle 5: 130 sweeps of
+4.30 s, RSS 42.0 MB, CPU 14.6 %, exit 0.27 s. t_long does not print the
+gate counters (`gates_failed`, `gates_late`) or `stalled_tuners` /
+`slow_tuners`, so this run has no figure for them.
+
+`t_contrast.py` (tuner 0, gain 29.7) on the two narrow carriers the
+413-419 MHz scan found, 416.59 MHz (+42 dB) and 415.64 MHz (+46 dB), steady
+over two scans an hour apart. A sits 0.6 MHz below the carrier and B = A + 2
+MHz sees only the floor there; the carrier stands 31.2 / 36.2-36.4 dB over
+B's floor. Valid packets show no trace of it. The first valid packet's
+worst segment is +3.8 / +4.2 / +3.8 dB at settle 0 / 2 / 5 (416.59 MHz) and
++4.3 / +4.3 / +3.6 dB (415.64 MHz), against later packets' max of +3.9 to
++4.7. Segment 0's p90 is +1.5 to +1.7 dB, and no segment exceeds the later
+max. The flagged packets carry the carrier at up to +31.4 / +36.7 dB. The
+no-gate positive control (the gate replaced by "done") is clean too: first
+valid worst +3.8 dB, segment 0 p90 +1.5. Why: the tune call (7.6 ms) is
+longer than a packet (6.83 ms). The packet that straddles the retune's end
+holds only samples from inside the tune, where the PLL moves and no
+carrier shows. Samples from before the tune can only be in a packet that
+ended at least 0.8 ms before the retune's end, and that packet has arrived
+before the hop clears L1. So the KrakenSDR's hardware cannot exercise the
+gate's bound ("retune end + settle - the fastest USB delivery"); the fake
+does (`t_fakeguard.py`, below). The return to coherent: *The failed
+return on the Pi* above.
+
+*Software, the fake librtlsdr on the same Pi* (the net build, 5035cd2).
+Green: `t_basic` (coherent CONVERGED 2.2 s, PC 2.1; T2 34.1-34.3 ms a
+round, PC 34.1), `t_cmds`, `t_modes`, `t_fixes`, `t_restart`
+(61.0 ms a round, PC 58.0), `t_generic` / `t_kerberos` (20.5-20.6 ms),
+`t_long` 1 min (CPU 38.5-42.1 %, PC 21-37 %), `t_stall`, `t_stall3`
+(77 valid packets in 3 s while tuner 3 loses packets; PC 96-101),
+`t_finish` rc 0 / 1 (CONVERGED 1.1 s), `t_exitstress` 10 / 10,
+`t_netfake` and `t_deadnoise` (also with `--kerberos`). `t_race` shows the
+known BOTH artefact, as on the PC. `t_fakeguard`, contaminated packets:
+- garbage for 4 ms after the tune call, every other packet 2.7 ms late, at
+  settle 0 / 5 / 6 / 8: 105 / 7 / 0 / 0 (PC 94 / 1 / 0 / 0);
+- a stalled reader's backlog delivered in bursts, settle 5: 0 / 0 / 3
+  (backlog 32 / 40 / 32 packets, bursts 500 / 500 / 4000 us apart). PC
+  (32 packets, 4000 us): 2 at settle 5, 1 at settle 10;
+- garbage for 8 ms, settle 0 / 6 / 10: 195 / 0 / 0 (PC 196 / 0 / 0).
+
+Fake hop timing (`t_hop.py --cases fm`), ms per round at dwell 5 / 10 / 20,
+the same for K = 1..5 unless split:
+
+| fast tune / settle | Pi 5 | PC |
+|---|---|---|
+| 7.5 ms / 2 | 20.4 / 27.2 / 34.1 | 20.5 / 27.2 / 34.1 |
+| 7.5 ms / 5 | 27.1 / 34.0 / 40.7 | 23-26 / 32.6-33.6 / 39.8-40.7 |
+| 10 ms / 2 | 20.9 (K = 1), 26.5-27.3 (K >= 2) / 34.1 / 40.7-40.9 | 21.5-22.8 / 27.9-31.4 / 34.5-36.4 |
+| 10 ms / 5 | 27.2 / 34.0 / 40.7 | 27.1 / 34.0 / 40.8 |
+
+At 7.5 ms / settle 2 the gate takes 2.6-2.8 ms and first_valid is 8.0 ms
+(PC 2.8-3.3 and 7.4-7.8). Fake CPU, coherent / independent / sweep: 47.8 /
+46.4 / 44.4 % of a core (PC 37.8 / 35.7 / 36.9). The fake generates its
+samples in the reader threads (5.5 % each), so its readers' share is not
+the hardware's.
+
+Realtime scheduling as the Pi gives it: the test user has `ulimit -r` 30.
+The five readers run SCHED_RR 20, the sample drain SCHED_RR 15, the
+conversion worker SCHED_OTHER, and `mlockall` (on fault) succeeds
+(`configuration.md`).
+
+A second board, a Pi 5 Rev 1.0 (4 GB, no KrakenSDR), ran the fake set
+parts A-C before the round moved to the board above: all pass, `t_long`
+2 min CPU 44-47 % of a core (PC 26-37 %).
