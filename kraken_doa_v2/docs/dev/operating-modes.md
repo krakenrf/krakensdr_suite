@@ -200,7 +200,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   centred like the VFO cards' `.vfd-sep`; `sendFreqChange` / `sgn`
   still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
   frequencies, per-pane waterfall auto-range (`computeAutoRange`), a View button at the
-  header's right end (per-tuner View settings, below; its click selects the pane too)
+  header's right end (per-tuner View settings, below; its click selects the pane too) and
+  after it the picture button (2026-11-21, *spectrum-views.md* "The live waterfall recolours;
+  a picture of the spectrum and the waterfall": that pane's spectrum + waterfall as one PNG)
 - Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..ZOOM_MAX, off}`
   per display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
   ZOOM_MAX 32 (16 until 2026-10-22, the user's request; the slider 0-125).

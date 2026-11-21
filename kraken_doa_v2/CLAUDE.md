@@ -215,7 +215,7 @@ the job's scratch directory (not committed). The established setup:
 | The icon set (one monochrome SVG sprite, `icon()`, the names; no emoji) | `icons.md` |
 | KrakenSDR Wideband (downconverter) variant | `wideband-variant.md` |
 | Patch / 3D topology; antenna array calculator | `patch-3d-topology.md`, `array-calculator.md` |
-| Spectrum views (FFT message type 7) | `spectrum-views.md` |
+| Spectrum views (FFT message type 7); the live waterfall's recolour (and why Auto doesn't); the picture (PNG) of the spectrum and the waterfall | `spectrum-views.md` |
 | Noise floor (the spectrum's 0 dB) | `noise-floor.md` |
 | Bearing spectrum: the spectrum coloured by the DoA of each point (FFT message type 9, `BIN_DOA:`) | `bearing-spectrum.md` |
 | VFO audio (mixer, latency control) | `vfo-audio.md` |

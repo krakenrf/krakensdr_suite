@@ -1054,10 +1054,11 @@ bin grid.
     where the window's levels don't reach is the overview read, so a full
     repaint costs the same per pixel - 21.4 ms for 570 rows at 1573 x 677
     px on the fast sweep, 7.6 ms for 162 rows, 3.3 ms for 35.
-  - The other modes' waterfalls (the live one, the independent panes) do
-    not recolour their old lines after a colour change - only new lines get
-    the new colours (`WaterfallDisplay` keeps pixels, not levels); not
-    changed here.
+  - The other modes' waterfalls (the live one, the independent panes)
+    recolour their old lines too since 2026-11-21 (*spectrum-views.md*, "The
+    live waterfall recolours"), with one difference: there Auto's own moves
+    colour only the new lines. This waterfall's instance never gets that
+    level store (it never calls `addLine`).
 - Old frames: a type 10 frame outside sweep mode, one built for a view from
   before the page entered the mode (`seq < swp.seqMin`), and one whose grid id
   is not the latest `sweep` message's are dropped - the last only while that
