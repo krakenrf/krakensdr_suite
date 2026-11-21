@@ -133,7 +133,8 @@ the hops into the sweep spectrum, the page shows it.
   started - a tuner a packet short of the others for good lost a USB
   transfer) and `"arrival_phase_us"` (where each tuner's latest delivery
   lies against tuner 0's, within +-P/2: the spread of the buffer
-  boundaries), added in round 4; diagnostics, in every mode.
+  boundaries), added in the Pi round (round 3 under *Tests*); diagnostics,
+  in every mode.
 
 ### heimdall, 8091 (sweep mode)
 
@@ -979,8 +980,8 @@ them), heimdall's status and the 8091 headers read beside it. Job scratch
   row with step-wide blocks of one level. Not reproducible with user
   actions (wheel, slider, the page's own reset on a range change).
 
-Not tested: a Raspberry Pi (the timing above is a PC's; heimdall's retune
-there is 14 - 19 ms a step, *Drag retunes*), Windows (tuners are written one
+Not tested in that round: a Raspberry Pi (a Pi 5 is round 3, below - it
+turned out as fast as the PC), Windows (tuners are written one
 by one - a round will be several times slower), macOS, the MinGW / zig
 syntax checks (no toolchain on the test machine), generic RTL-SDRs and
 `--kerberos` on real hardware (both against the fake librtlsdr only),
@@ -1014,7 +1015,7 @@ same test before the round:
 | Lag probe, 200 tunes a pattern on one dongle (same frequency, + 100 kHz, 433 MHz and back, 24.5 / 1700 / 100 MHz, a divider boundary; fast path + finish; a 3-register read) | -2.000 samples a tune (-2.02 fast, -2.000 the read) | 0.000 each |
 | 24 - 1765 MHz, 5 tuners / 1 tuner (through the page) | 8.1 - 8.3 s / 39.5 s | 4.0 s / 18.9 s (21 ms a round, exactly 1 packet a hop) |
 | 88 - 108 MHz, 5 tuners / 3 tuners | 7.0 / 5.0 - 5.4 sweeps a second, Auto 586 Hz | 11.3 / 9.4, Auto 1.17 kHz |
-| Sweep (5, 3 and 1 tuners) -> coherent | 29 s (every lag re-acquired; > 100 s before that fix) | 1.5 s, check \|lag\| 0.0, \|phase\| 0.2 deg |
+| Sweep (5, 3 and 1 tuners) -> coherent | 29 s (every lag re-acquired; > 100 s before that fix) | 1.5 s as the script counts (its 1 s of holding CONVERGED included: ~0.5 s), check \|lag\| 0.0, \|phase\| 0.2 deg |
 | 2048 / 4096 / 6144 / 9000 retunes of one tuner (independent), and three tuners 2048 / 4096 / 6144, then coherent | lags -4096 ... -18000 samples (no peak at 18000), 26 - 40 s | no lag at all (no servo engaged), 1.6 s each |
 | The sweep with the tuners' buffer timing spread | 81 ms a round, 191 unquiet flushes in 15 s | as from an aligned array, 0 |
 
@@ -1024,14 +1025,88 @@ gives 5.1 s / 22.8 s for the whole range (one more packet period in nearly
 every hop, with the receiver attached), which is why the default is 2; at
 the old dwell of 20 ms (3 packets a hop) 6.5 s / 31.3 s.
 
-Open after round 2: the fork's commits are local (the Dockerfile's pin and
-heimdall's minimum stay 578b43d; an older fork gives the round-1 behaviour);
-nothing of it has run on a Raspberry Pi, on Windows or on macOS - there the
-first things to run are the lag probe, `t_contrast.py` at the default
-settle (the gate's bound is "retune end + settle - the fastest USB
-delivery") and a sweep-path soak (the tune flag that skips the dummy read
-has no positive control on the PC: the stall it relates to was a Pi
-finding; the library retries by itself). At 1.56 - 1.75 GHz a dongle can
-read 13 - 15 dB louder when it is tuned there from above (seen on downward
-and random tunes, not on the sweep's upward steps; the old library does it
-too; cause unknown).
+**Round 3, 2026-11-21: on a Raspberry Pi 5.** The suite's main target, and
+nothing of the mode had run on one. The Pi: Raspberry Pi 5 Model B Rev 1.1,
+8 GB, Debian 13, kernel 6.18.34, gcc 14.2, on Ethernet, its own KrakenSDR
+(5 tuners behind the board's hub on a USB 2 port). The tree and the fork
+were built there (`-j3`: the fork and heimdall 49 s, kraken_doa with
+liquid-dsp 198 s, no warning from the mode's code). Every figure at
+45 - 55 C with `vcgencmd get_throttled` 0x0. Each part has its own Pi record:
+the receiver above (*On the Raspberry Pi 5*: CPU, the engine bench, the
+suite on the normal and the ASan + UBSan build), heimdall in
+`heimdall_v2/docs/dev/operating-modes.md` (*The failed return on the Pi*,
+*On the Raspberry Pi 5*), the library in `docs/dev/librtlsdr-fork.md` (*On a
+Raspberry Pi 5*).
+
+The orchestrator's runs there (job scratch `pi/`: `lagprobe.py` on the Pi
+against the library built on it; `run_pi.py` = the steps of `run_hw.py`
+with heimdall and kraken_doa as port-moved test builds ON the Pi and the
+page in headless Chromium on the PC, over the LAN - the way a Pi receiver
+is used; CPU per thread from /proc on the Pi), beside the PC's:
+
+| | Raspberry Pi 5 | x86 PC |
+|---|---|---|
+| Lag probe, 100 operations a pattern on one dongle (full retunes: same frequency, + 100 kHz, 433 MHz and back, 24 / 1700 / 100 MHz, a divider boundary; fast path + finish; gain write; lock read; 1 - 5 register reads) | 0.000 samples each, the control dongle 0.00, 0 failed calls | 0.000 |
+| One tune: full / band change / fast + finish | 14.3 / 24.1 / 10.0 ms | 13.8 / 23.6 / 9.5 ms |
+| Coherent start | CONVERGED 24.4 / 25.4 s after heimdall was started (two starts) | 17 - 22 s after its control port opened |
+| 24 - 1765 MHz, 5 tuners / 1 tuner (through the page) | 4.03 s / 19.0 s (21.2 ms a round: tune 8.6, settle 2.1, gate 1.9; exactly 1 packet a hop) | 4.0 s / 18.9 s (21.3 ms: gate 3.0) |
+| 88 - 108 MHz, 5 tuners / 3 tuners | 11.3 / 9.2 sweeps a second (the tunes take 14.2 ms in that band) | 11.3 / 9.4 (14.2 ms) |
+| Sweep -> coherent | CONVERGED 0.53 s after the last sweep packet (8091 headers; the phase-only recalibration), check \|lag\| 0.0, \|phase\| 0.1 deg | the same |
+| Type 10 frames reaching the page | 20 a second | 20 |
+| heimdall, % of one core: sweep / coherent | 23 / 31 - 38 (the conversion worker 17 - 19 / 25 - 32) | - |
+| kraken_doa with one page, % of one core: sweep whole range / FM band / coherent | 4.7 / 5.5 - 6.0 / 22 - 26 | 4.6 / - / 17 (the receiver's table) |
+
+20 of 20 steps on both runs (before and after heimdall's safety net of this
+round), 0 coherence events, 0 failed retunes, no gate failed or late, no
+stalled or slow tuner, no unquiet flush, no page error, both processes exit
+0; no core more than 9 % busy while sweeping (12 - 21 % in coherent mode).
+So a Pi 5 sweeps exactly as fast as the PC - the hop is USB and PLL time,
+not CPU - and sweep mode is the lightest of the modes on it.
+
+What the Pi found, and what it could not show:
+- **One return to coherent that never converged** (the hop-loop worker's
+  exit-stress test: 1 of the first 10 returns; then none in 580 more on the
+  Pi - 1 in 590 - and none in 95 on the PC). One channel had no correlation
+  peak after the re-pairing flush - paired a packet or more off, further
+  than the lag correlator sees (inferred from the next flush repairing it;
+  the offset itself was never measured) - and heimdall waited for the next
+  mode change. Its cause is not known (the library is cleared by 50
+  bare-library exits; a lost USB transfer or a pairing cut remain). What is
+  fixed is the consequence: a channel without any correlation peak in the
+  phase recalibration now raises a coherence loss, and the recovery
+  re-pairs and recalibrates by itself (5.2 - 5.7 s with a forced offset on
+  the fake librtlsdr, Pi and PC; with a dead noise source one recovery,
+  then the same stable uncalibrated state as before). heimdall's doc has
+  the measurements; the next occurrence is classified by its log line.
+- **The gate's bound cannot be reached on the hardware.** `t_contrast.py`
+  with carriers 31 and 36 dB over the floor: at settle 0, 2 and 5 ms no
+  valid packet holds a trace of the old frequency (first valid packets
+  within 0.4 dB of later ones) and the flagged packets hold it at full
+  strength - but the same with the gate taken out. The tune call (7.6 ms)
+  is longer than a packet (6.83 ms): the packet across the retune's end
+  holds only samples from inside the tune. The bound "retune end + settle -
+  the fastest USB delivery" is exercised on the fake librtlsdr only (on the
+  Pi as on the PC). Nothing measured on the Pi argues against settle 2.
+- **The library is the PC's on the Pi.** The old fork slips 2.000 samples a
+  tune there too, the fixed one 0.000 on every path; a control IN of 3, 7,
+  11, 15 bytes drops 4 bytes on the Pi's xHCI as well; a tune costs the
+  same (7.5 ms on the sweep's path, 14.4 ms full); the PLL settle's margin
+  is the same (no lock retry at 5000, 3000 and 2500 us, 1609 in 28 000
+  tunes at 1500 us). The flag that skips the dummy read: 59 720 tunes with
+  it and 56 555 without, 0 errors of any kind - still without a positive
+  control, nobody has produced the stall it guards against. The default
+  path, as the scanners tune: 20 000 full-path tunes on each of the five
+  dongles in turn with the streams running, the lag afterwards within
+  -0.02 ... +0.03 samples of where it was.
+
+Open after round 3: the fork's commits are local (the Dockerfile's pin and
+heimdall's minimum stay 578b43d; an older fork gives the round-1
+behaviour). The cause of the one failed return. A Raspberry Pi 4 (another
+USB controller and a third of the CPU: the 9 % a core that sweeping takes
+on the Pi 5 leaves room, but it is not measured), Windows and macOS have
+not run it; nor has a browser on the Pi itself. At 1.56 - 1.75 GHz a dongle
+of the PC's KrakenSDR can read 13 - 15 dB louder when it is tuned there
+from above (seen on downward and random tunes, not on the sweep's upward
+steps; the old library does it too; cause unknown; the Pi's KrakenSDR
+showed it on another dongle, at 1698.4 MHz, three times in a plan of random
+jumps and never in a sweep).

@@ -200,8 +200,9 @@ through the range together, about 1.9 MHz per tuner and step, and the page
 draws one spectrum of the whole range, with a waterfall line for every
 completed sweep. More tuners make the sweep faster: the whole 24 - 1765 MHz
 takes roughly 4 seconds with five tuners and 20 seconds with one, the FM
-broadcast band is swept about ten times a second (measured on a PC; the
-tuners are retuned one after another on Windows, which is slower). Every tuner that takes part
+broadcast band is swept about ten times a second (measured on a PC and on a
+Raspberry Pi 5, which are equally fast at it; the tuners are retuned one
+after another on Windows, which is slower). Every tuner that takes part
 needs its antenna connected - each covers its own part of the range, and a
 tuner without an antenna shows only noise in its part. The **Sweep** box in the
 sidebar sets the resolution (Auto picks one from the width of the range and
@@ -213,7 +214,7 @@ zooms in as far as the resolution goes, dragging moves the view, and the
 pointer shows the frequency and level under it. Gain is one setting for all
 tuners. Nothing is demodulated in this mode; the VFOs and their settings are
 kept and come back with the other modes. Going back to Coherent after a sweep
-recalibrates the array's phases, which takes a few seconds (about half a
+recalibrates the array's phases, which takes a second or two (about half a
 minute with an older librtlsdr, whose retunes shifted the tuners' samples
 against each other).
 

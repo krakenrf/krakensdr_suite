@@ -1198,7 +1198,7 @@ event each, with log lines such as "packets delivered vs channel 0: 0 -1 0 0
 0; deepest L1 over 8 ms: 0 0 1 1 1". Clean returns raise no event. `t_hop`
 is unchanged (FM K=1..5: 20.5 / 27.2 / 34.1 ms at dwell 5 / 10 / 20).
 
-**On the Raspberry Pi 5** (2026-11-21, round 4 of the sweep work; job
+**On the Raspberry Pi 5** (2026-11-21, the Pi round of the sweep work; job
 scratch 52196024 `speed/pi/`). The board: a Raspberry Pi 5 Model B Rev 1.1,
 8 GB, kernel 6.18.34, the KrakenSDR (5 x 0bda:2838) behind the board's hub
 on a USB 2 port. Clean test builds with the ports moved, against the fork

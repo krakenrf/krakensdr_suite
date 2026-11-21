@@ -633,7 +633,7 @@ closed:
    of `IR_RX_BUF` - code RAM at 0xFC00 that `rtlsdr_ir_query` resets right
    after: harmless, said at the padding.
 
-**On a Raspberry Pi 5 (2026-11-21).** The user's test Pi (192.168.86.62:
+**On a Raspberry Pi 5 (2026-11-21).** The test Pi (a
 Pi 5 Model B Rev 1.1, 8 GB, kernel 6.18.34, the KrakenSDR behind its hub on
 the Pi's xHCI bus 1, 480M; idle apart from the other workers' turns), the
 fork built there from clean clones (88993d3 = the two commits above, and

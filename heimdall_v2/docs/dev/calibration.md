@@ -263,7 +263,7 @@ samples/s). Between retunes the 5-minute check (|lag| > 1 sample -> full
 recal) remains the only lag check. Not yet verified on hardware with a real
 slip.
 
-*No peak at all* (2026-11-21, round 4 of the sweep work): when both bad
+*No peak at all* (2026-11-21, the Pi round of the sweep work): when both bad
 readings have no correlation peak (peak / mean < `LAG_NO_PEAK_RATIO` 8,
 against ~150-190 for a real lag on the noise source), the channel is more
 than the correlator's window off - a whole packet, from a pairing broken
