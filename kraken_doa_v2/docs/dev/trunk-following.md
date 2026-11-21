@@ -1414,7 +1414,7 @@ the broadcasts:
   written again when it can. `t19_ccimport` 6: a hostile imported entry
   bounded (times, `n`, levels, `meas_hz`, `src`), `file.state` "ok"; a
   repeated click to follow re-applies nothing, add of the followed one is
-  refused. `t17_idle` also: `DIGITAL_HISTORY` of a VFO that is gone sends no
+  refused; a sighting without a site keeps the site the entry has. `t17_idle` also: `DIGITAL_HISTORY` of a VFO that is gone sends no
   frame (an empty one used to reach every page).
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
