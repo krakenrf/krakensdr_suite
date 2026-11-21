@@ -1669,31 +1669,46 @@ it - checked against the first-pass build).
 **Control channels: the search, the memory, click to follow.** At the
 bottom of the box (under Recent: the calls don't move when it grows),
 `#tk-cc-sec`, shown only by a receiver whose status has `cc_followed`
-(the page then sends `GET_TRUNK_CC` once per connection; `trunk_cc` comes
-to every page on each change). The sub-heading says "saved automatically"
+(the page then sends `GET_TRUNK_CC` once per connection - `tkCcAsked` is
+reset when the socket opens, before the first status; `trunk_cc` comes to
+every page on each change). The sub-heading says "saved automatically"
 (its tooltip: the file on the receiver, saved by itself, loaded at start,
-Export for a copy) and the count.
+Export for a copy) - or, while a save fails (`trunk_cc.file.state`
+"not_written"), "not saved" in amber with what that means - and the count.
 - **Search bands…** folds out the form: band buttons (several at once:
-  "Around here" ±10 MHz around the receiver's frequency, VHF 136-174, UHF
+  "Around here" ±10 MHz around the receiver's frequency - in independent
+  mode around the tuner the receiver will step (the lowest tuner with a
+  control VFO as the receiver counts them - a VFO of the user's running a
+  decoder that declares trunking, heard or not -, else T0; its tip names it), VHF 136-174, UHF
   380-470, UHF 450-520, 700 MHz 763-776, 800 MHz 851-870, 900 MHz 935-941,
   "Whole range" = the tuner's range from `FREQ_MIN`/`FREQ_MAX`; frequency
-  ranges only, nothing regional), typed ranges ("451-458, 935.5-940" MHz),
+  ranges only, nothing regional; made once, then only their state, small
+  line and tip change - a button made again would lose the keyboard focus),
+  typed ranges ("451-458, 935.5-940" MHz; a decimal comma is taken when that
+  is the only reading that works - "451,5-458" - else the error says to
+  write a point; a range under 10 kHz: "Too narrow"),
   an Advanced fold (threshold 3-40 dB, default 9; raster 6.25 / 12.5 / 5 kHz
   / none). Ranges are merged, clipped to the tuner's range, at most 16 and
   2000 MHz (said in the form, Start disabled otherwise). The estimate under
-  them: the ranges, the steps (the receiver's own stepping: usable band
-  from the edge clip, 50 kHz overlap) and the time at 2.4 s a step, then
-  the cost in words - the receiver leaves <home> MHz, the user's VFOs move,
-  following pauses, it comes back at the end or on Stop, tuning ends it
-  there; over 10 min "A long sweep". Start sends `TRUNK_SEARCH` at once up
-  to 5 min, else (and always for Whole range) after a `uiConfirm` with the
-  MHz, steps and time ("what it finds is kept as it goes"). The selection
+  them, one line: the ranges, the steps (the receiver's own stepping:
+  usable band from the edge clip, 50 kHz overlap), the time as a span -
+  `TK_SRCH_S_PER_MHZ` 1.0 s per MHz on a quiet band to 9.5 s on a busy one,
+  from the receiver's table "Measured on the KrakenSDR" above (the low end
+  at least 1.5 s a step) - amber when its busy end is over 5 min, and "away
+  from <home>"; its `?` tip has the cost in words (the receiver leaves
+  <home> MHz, the user's VFOs move, following pauses, it comes back at the
+  end or on Stop, tuning ends it there, what it finds is kept as it goes).
+  Start sends `TRUNK_SEARCH` at once when the busy end is 5 min or less,
+  else (and always for Whole range) after a `uiConfirm` with the MHz, the
+  steps and the span. While it runs the receiver's `eta_s` is shown. The selection
   is remembered in this browser (`kraken_tk_srch`). The receiver's refusal
   shows in the form ("Not started: ..." + what to do: switch the mode, the
   scanner's Stop, stop the playback). The mode is not checked by the page
   (the receiver decides: independent mode may search too).
 - **While it runs** (`search`): the form folds away; an amber block where
-  the form was - "Searching", Stop, a progress bar, "<centre> MHz · step n
+  the form was (`#tk-srch`, made once in the markup: only its texts, bar,
+  icon and which button shows change - a Stop made again under a press or
+  the keyboard focus lost them) - "Searching", Stop, a progress bar, "<centre> MHz · step n
   of N · p % · about T left", the phase in words (tuning, waiting for the
   spectrum, looking for carriers, "trying n carriers with the decoders"),
   "range i of n (lo-hi)" with several ranges, "Found n new, m known · c
@@ -1737,7 +1752,16 @@ Export for a copy) and the count.
   moves the list between press and release can't lose it; a press that
   moved or a finger that scrolled is not a click): the row says
   "Starting…" at once and "Following on Dn" when `cc_followed` has it; a
-  click on one followed already selects its VFO. Said without sending (the
+  click on one followed already selects its VFO; a second click while one
+  is on its way sends nothing (`tkCcPend`). A finger or a pen follows on
+  `click` instead: the page's press-and-hold help eats the click after a
+  hold, so a hold to read the row's tip never follows (in help mode the
+  page eats the whole press). The held list's correction divides by the
+  sidebar's zoom (`currentCSSZoom`, else `--sb-zoom`): a scroll of 1 moves
+  the zoomed content by the zoom on the screen. The rows' key leaves the
+  centre frequency out: at each step of a search only the tooltips of the
+  rows that go in or out of the band change, and an open Details block is
+  made again only when what it says changed (a selection in it stays). Said without sending (the
   row's second line and a note): outside the tuner's range, its decoder not
   on this receiver, a playback, wideband scan mode, a scanner running. The
   receiver's refusals come as a note under the search with what to do
@@ -1755,15 +1779,32 @@ Export for a copy) and the count.
   the page - no receiver route), Import… (a file input: JSON of that form or
   a bare array, at most 8 MB / 2000 entries; each entry checked as the
   receiver checks it - frequency, plugin id, system key of that plugin,
-  strings cut to 64, options - and sent without its id as one
-  `TRUNK_CC_SET`, one every 50 ms (500 entries in about 25 s; not paced
-  by the answers: an unchanged status is not sent again); a note counts "Importing: n of N sent" with Stop, then "Imported
-  <file>: a added, u updated, r refused (the reasons)" and old air entries
-  dropped to make room), Clear all… (`TRUNK_CC_CLEAR`, asks: how many,
-  how many named, export first). The memory not loaded (`file.ok` false): a
-  dialog once per kept file in this browser (`kraken_tk_ccfile`) with the
-  kept name as a selectable line, and a note while it lasts.
+  strings cut to 64, options, times after now set to now, `n` up to 1e9,
+  a level outside 0-120 dB dropped - and sent without its id as one
+  `TRUNK_CC_SET` at a time: the next when the receiver has answered it
+  (every `TRUNK_` command is answered with the status; a refusal comes
+  first) or after 1 s, at least 50 ms apart. A refusal is matched to its
+  command by the command's first 64 bytes (the receiver's echo), not
+  through `tkSent` (the last 40 commands); a socket that is not open stops
+  it ("Import broken off - the connection to the receiver was lost", n not
+  sent); entries past the first 2000 are said apart ("n not imported (more
+  than 2000 entries in the file)"), not as refused. A note counts
+  "Importing: n of N sent" with Stop (the notes are keyed: the Stop stays
+  the same element under a press and the focus), then "Imported <file>: a
+  added, u updated, r refused (the reasons)" and old air entries dropped to
+  make room), Clear all… (`TRUNK_CC_CLEAR`, asks: how many, how many named,
+  export first). The memory file (`trunk_cc.file.state`; a receiver without
+  it: `kept_as` set = not loaded): "not_loaded" - a dialog once per kept file
+  in this browser (`kraken_tk_ccfile`) with the kept name as a selectable
+  line, and a note while it lasts; "not_written" - "could not be saved -
+  kept in the receiver's memory, tried again every 5 s" and the heading
+  "not saved" until a save succeeds. Whatever an older receiver holds is
+  shown safely: a time in the future "at an unknown time" (never "new",
+  sorted as now), no "Invalid Date" (`tkCcDate`), a negative level "-12 dB"
+  (`tkCcLv`).
 - Notes there also say: a playback (following waits), wideband scan mode.
+  The empty list says one line ("Nothing remembered yet - Search bands…
+  finds them."), the rest in its tooltip.
 
 **Trunk VFOs elsewhere.** The VFO card gets a line under its header
 (`tkRenderCards`, called from `digRenderCards`): a voice VFO "TG 1201 Fire
