@@ -78,13 +78,43 @@ this folder (index: `README.md` here, or the table in
   libaeroambe's 96-entry table (MIT notice in the file). No real C channel
   recording was found: the voice path is checked with random frames only.
 - Bursts (`aero_burst.cpp`): the unmodulated preamble is a tone: a
-  512-point FFT (one hit 18 dB, or two in a row at 14 dB, over the median
-  and 10 dB over the bins 3 - 6 away - a modulated spectrum fails that)
-  and a 4096-point one for 600 / 1200 bit/s (13 dB, two in a row): the
-  short one alone missed 600 bit/s bursts below 8 dB, the long one gets
-  them at 4 dB. The burst lasts while its band (+-0.7 or +-11.7 kHz) is
-  above the pre-burst noise (smoothed; 8 quiet FFTs end it) or until
-  another preamble at another frequency starts. Each rate, four starting
+  512-point FFT (one hit 18 dB, or two in a row at 14 dB, over its bin's
+  noise as over a median, and 10 dB over the bins 3 - 6 away - a
+  modulated spectrum fails that) and a 4096-point one for 600 / 1200
+  bit/s (13 dB, two in a row): the short one alone missed 600 bit/s
+  bursts below 8 dB, the long one gets them at 4 dB.
+  - The noise is per bin (a mean, ~0.2 s / ~0.4 s, each FFT's power
+    clipped at 4x the noise so a tone doesn't lift its own bin before
+    the second FFT confirms it; updated after the detection, not inside
+    a burst's band). It was the median of the whole spectrum: the JAERO
+    C-band burst sample is receiver audio with power in 88 of 512 bins,
+    its median 92 dB under the noise where the bursts are, so noise peaks
+    passed for preambles, held the one burst slot (still "present"
+    against that floor) and the real bursts 160 Hz away were taken for
+    its tone and never searched - 1 - 3 of the 6 decoded, depending on
+    the mix-down frequency (0 / 1000 / 2000 / 2235 / 3000 / 4500 Hz: 3 /
+    2 / 1 / 1 / 3 / 3; mirrored IQ: 5). Now 6 at each.
+  - Up to four bursts at once (`Slot`), on different frequencies. A
+    burst followed covers +-1.4 kHz (its modulated spectrum's peaks and
+    its preamble's lines at R / 4, R / 2 would pass for tones; at R / 2
+    differential detection even decodes the same bits), its whole wide
+    band once a short tone (< 0.1 s as measured: 2400 / 10500 bit/s) is
+    over; tones at 2625 / 5250 Hz (10.5k's R / 4, R / 2) from a burst
+    started < 0.6 s before and tones 40 dB under a burst's carrier within
+    4 kHz are not new bursts; a burst decoded twice (UW time within 20
+    ms, same CRC) is reported once.
+  - A burst lasts while its band (+-0.7 kHz; +-11.7 kHz too for a short
+    tone) is over its noise from before it (the narrow band's: the median
+    bin - the tone lifts its own bins a little before the 4096-point
+    detector confirms it, ~0.2 s, and with their sum the 600 bit/s bursts
+    ended early: 2 / 20 at 2 dB) and within 20 dB of its most (no noise
+    at all: a playback file before the player adds it); 8 quiet FFTs end
+    it, a new tone on its carrier after 0.15 s without (6 FFTs) starts the
+    next burst there. At most 13 s (3 s for a short tone); one held that
+    long sets its band's noise to what is there (a continuous carrier - the
+    Inmarsat-C recording took 2 - 4.7 % of a core in burst mode, holding a
+    burst open 13 s at a time; now 0.3 - 0.5 %), and each rate decodes no
+    more than its longest burst (31 SUs) from the start. Each rate, four starting
   timing phases; the demodulator keeps its 4x loop gains through the
   preamble (`gear_bits`) - with the default 256 bits they were spent on the
   noise before the burst and the 10.5k bursts didn't decode. A 10.5k T
@@ -128,7 +158,7 @@ this folder (index: `README.md` here, or the table in
 - Debug playback through a TEST kraken_doa (2026-11-22, 2+ loops per
   entry): plugin README, Test results.
 - Not done: CPDLC decoding, the 21 kbit/s C channel (no public 9.6 kbit/s
-  LPC decoder), the other C rates, simultaneous bursts, verification of
+  LPC decoder), the other C rates, bursts closer than ~1.4 kHz at once (or more than four), verification of
   satellite / beam table fields (not on the recordings). Windows / Linux
   glibc syntax checks (MinGW, zig) not run - not installed on the job
   machine.

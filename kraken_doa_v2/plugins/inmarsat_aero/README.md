@@ -204,12 +204,14 @@ decoded: no public decoder of its codec is known.
 - `aero_cchan.*`: the C channel the same way (I / Q unique words, the 2/3
   code depunctured, 2730 bits, the 26 reference bits counted as a check).
 - `aero_burst.*`: bursts: a 512-point FFT (every 256 samples) and a
-  4096-point one (the slow rates' long preambles) find the preamble's
-  tone; the burst lasts while its band stays above the noise (or another
-  preamble starts); then every rate, four starting timing phases each, the
-  best UWs decoded until a CRC passes (R: one 19-octet SU; T: burst
-  identifier, then SUs until one fails; 10.5 kbit/s T: the block size
-  2 + 3n whose CRCs check).
+  4096-point one (the slow rates' long preambles) find preamble tones
+  against each bin's own noise (a slow mean outside the bursts); up to
+  four bursts on different frequencies are followed at once, each while
+  its band stays above its noise from before it; then every rate, four
+  starting timing phases each, the best UWs decoded until a CRC passes (R:
+  one 19-octet SU; T: burst identifier, then SUs until one fails; 10.5
+  kbit/s T: the block size 2 + 3n whose CRCs check). The same burst
+  decoded twice (same UW time and CRC) is reported once.
 - `aero_su.*`: SU decoding by type, user data reassembly (ISU / SSU
   sequence numbers, per Q / reference; per AES on T bursts; R channel SU
   sets by their sequence indicator), ACARS (`plugins/lib/acars_msg.hpp`),
@@ -251,8 +253,8 @@ Real recordings (local IQ library; none is in the repo):
 | sigidwiki "Inmarsat AERO" (receiver audio, MP3, 24 s) | P 10500, 44 frames, 1144 / 1170 SUs, 3 ACARS | 1.3 % |
 | JAERO sample "10.5k" (receiver audio, 240.8 s) | P 10500, 12428 / 12454 SUs, 193 user data messages (143 ACARS, BCS good) | 1.2 % |
 | JAERO sample "dish 4 x 600 aligned" (receiver audio, 488 s, four 600 bit/s channels side by side) | the strongest channel: 1446 / 1446 SUs, 4 user data messages (3 ACARS) | 0.8 % |
-| JAERO sample "1200 C-band burst" (receiver audio, 14.8 s, C-band 1200 bit/s bursts) | 8 bursts detected, 1 decoded (UW without errors, CRC good, AES named); the others overlap in time with another burst - one burst at a time is followed (Limitations) | 3.0 % |
-| 300 s of noise; the Inmarsat-C TDM recording | no frames, no events (Auto and bursts) | 0.6 % / 1.2 % |
+| JAERO sample "1200 C-band burst" (receiver audio, 14.8 s, C-band 1200 bit/s bursts at ~2.24 kHz audio) | 6 bursts of 6 (two aircraft, R channel SUs, CRC good), the same however the audio is mixed down (by 0, 1000, 2000, 2235, 3000 or 4500 Hz) and fed straight in as IQ (the spectrum mirrored, each burst at +f and -f: 6, each once) | 0.5 - 1 % |
+| 300 s of noise; the Inmarsat-C TDM recording | no frames, no events (Auto and bursts) | Auto 0.6 %; bursts 0.3 - 0.5 % (the Inmarsat-C carrier cost 2 - 4.7 % before: it held a "burst" open for 13 s at a time, each decoded at every rate) |
 
 Generated (`tools/aero_gen.py`, AWGN; Eb/N0 per channel bit; SUs passing
 their CRC, after lock):
@@ -270,9 +272,18 @@ once in 1000. Measured: A-QPSK below 1 % at 0 dB (coherent BPSK with this
 code: BER ~1e-4 at 3 dB per information bit - ~0.3 dB implementation
 loss), A-BPSK at 2 dB (its differential detection costs ~2 dB).
 Acquisition locks down to 0 dB (10.5 kbit/s) and 1 dB (600 / 1200 bit/s).
-Bursts (R channel log-ons, 20 per point): 600 / 1200 bit/s 13 / 20 at 2
-dB, 20 / 20 from 4 dB; 10.5 kbit/s 13 / 20 at 2 dB, 18 / 20 at 4 - 6 dB,
-20 / 20 at 8 dB.
+Bursts (R channel log-ons, 20 per point): 600 / 1200 bit/s 15 / 20 at 2
+dB, 20 / 20 from 4 dB; 2400 bit/s 19 / 20 at 4 dB, 20 / 20 at 8 dB; 10.5
+kbit/s 13 / 20 at 2 dB, 18 / 20 at 4 - 6 dB, 20 / 20 at 8 dB.
+
+Bursts at the same moment on different frequencies (R log-ons, ten per
+aircraft, starting 20 ms apart; each file with its own noise at 12 dB,
+so ~5 dB less in the sum): 1200 bit/s, two aircraft 2.5 kHz apart 20 /
+20, three (-2200 / +300 / +2700 Hz) 30 / 30; 600 bit/s, 1.8 kHz apart 20
+/ 20 (one burst at a time before: 9 / 20, 9 / 30, 3 / 20). Closer than
+~1.4 kHz the second isn't separated (800 Hz apart: 8 / 20). A burst
+mirrored in frequency (I / Q swapped) still decodes: A-BPSK's +-90 deg
+steps change sign, which the unique word's polarity takes care of.
 
 Carrier offset: P 600 found and decoded from -2800 to +2800 Hz, 1200
 from -2600 to +2600 Hz, 10500 from -2500 to +2500 Hz (not at +-3000);
@@ -280,8 +291,9 @@ lock after 1.4 - 2.7 s (the acquisition's FFTs) plus one frame.
 
 Multi-aircraft scene (`plugins/sdk/tools/uca_scene.py`, 5-element UCA of
 6 cm radius at 1645 MHz, three aircraft at 40 / 165 / 290 deg, R and T
-bursts with ACARS and ADS-C): every burst decoded at 600, 1200 and 10500
-bit/s (600 when the bursts don't overlap in time), talkers 4CA2B1 /
+bursts with ACARS and ADS-C): every burst decoded at 1200 and 10500
+bit/s, 4 of 5 at 600 (there the long T bursts overlap, 600 - 800 Hz
+apart), talkers 4CA2B1 /
 C0FFEE / A1B2C3 at 40.0 / 165.0 / 290.0 deg (10500: 39.9 deg), two
 aircraft on the map. The four debug-playback entries generate and decode
 offline (`make_testsignal.py`, then `decoder --file ... --channels 5 --uca
@@ -317,8 +329,10 @@ unconfirmed.
 
 ## Limitations
 
-- One continuous channel per VFO (the strongest); one burst at a time
-  (bursts on two frequencies at once: the first is followed).
+- One continuous channel per VFO (the strongest). Bursts: up to four at
+  once on different frequencies; one that starts within ~1.4 kHz of a
+  burst being followed (within its whole band for 2400 / 10500 bit/s) is
+  missed, and so is a fifth at once.
 - Not decoded: CPDLC contents (ASN.1 PER), ADS-C contract requests'
   contents, Data-3 beyond the packet header, the 21 kbit/s C channel
   (and its 9.6 kbit/s LPC voice), the 5.25 / 6.0 / 10.5 kbit/s C
