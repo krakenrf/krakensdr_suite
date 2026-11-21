@@ -599,9 +599,15 @@ Ties: the one nearest the current centre. `null` = nothing known.
 ## Control channels: the search, the memory, click to follow
 
 **The search** (`TRUNK_SEARCH`) sweeps frequency ranges for control
-channels. Coherent mode only (independent / wideband scan mode / generic
-RTL-SDRs: refused - "switch to coherent first"; the Wideband downconverter
-steps through its `FREQ:` path, its RF range). The centre steps by the
+channels. Coherent mode: the centre steps (the Wideband downconverter
+through its `FREQ:` path, in its RF range). Independent mode (also generic
+RTL-SDRs, one dongle too): ONE tuner steps (`TUNER_FREQ`, no calibration,
+no hold) - the tuner of the user's control VFO if there is one, else tuner
+0; the probes go on it and it goes back to its frequency at the end; the
+other tuners keep what they do. Wideband scan mode: refused ("switch to
+coherent or independent first" - its tuners are spread around one centre,
+a step would move all five and the probes' placement across the panes is
+not worth it for a search). The centre steps by the
 usable band (edge clip x 2.4 MHz) less a 50 kHz overlap; heimdall's
 calibration is HELD for the whole sweep (lease 3 s renewed every second, no
 noise-source bursts) and released at the end (the calibration at home at
@@ -687,7 +693,8 @@ Messages:
   opts: {<key>: <value>} (plugin options without the prefix)}]}}` - on
   change (at most once a second) and on `GET_TRUNK_CC`; not in the status.
   The file holds `{"version":1,"entries":[<the same objects>]}`.
-- In the status: `search`: null, or `{since, ranges, threshold_db,
+- In the status: `search`: null, or `{since, ranges, mode ("coherent" |
+  "independent"), tuner (the stepping tuner, -1 = coherent), threshold_db,
   raster_hz, home_hz, centre_hz, step, steps, pct, eta_s, phase ("tuning" |
   "settling" | "looking" | "probing"), carriers (candidates this run),
   probing (probe VFOs now), probed (probes so far), found_new, found_known,
