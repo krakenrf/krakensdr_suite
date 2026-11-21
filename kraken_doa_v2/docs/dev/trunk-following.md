@@ -611,18 +611,36 @@ not worth it for a search). The centre steps by the
 usable band (edge clip x 2.4 MHz) less a 50 kHz overlap; heimdall's
 calibration is HELD for the whole sweep (lease 3 s renewed every second, no
 noise-source bursts) and released at the end (the calibration at home at
-once). At each step: the stream shows the new centre, the averaged spectrum
-is reset and refilled (`srch_settle_ms`, as the saved-frequency scan), two
-looks 400 ms apart; a CANDIDATE is a run of bins >= `threshold_db` above the
-noise floor, 4-32 kHz wide (wider: broadcast / LTE / DAB - not tried), in
-both looks (control channels are continuous), not found already in this run
-(an overlap). Each candidate is PROBED: a temporary probe VFO per (candidate,
-trunking plugin) - every built plugin that declares `trunking`, a
-remembered control channel's plugin first - at most `cores / 2` (2-12) at
-once and never past the receiver's 16 VFOs; a probe ends when its plugin
-reports `SYSTEM` with `control = true` (and its key, waited up to 2.5 s
-when the flag came first), after 1.5 s without any valid frame, or after
-7 s; the other plugins of a candidate found are not tried. Probe VFOs are
+once). Every wait in a step is counted in DATA, not wall time (a loaded
+receiver - a Pi 4 - averages late): the spectrum frames are counted per
+channel at the RF they were taken at (`fft_frame_hz` / `fft_frames_here`);
+at the first frame at the new centre the average is reset (frames of the old
+centre still queued can't land in it), the first look comes once enough
+frames there have refilled it (95 %, `srch_refill_frames`), the second look
+half that many frames later. A CANDIDATE: the spectrum smoothed over ~1 kHz,
+every bin >= `threshold_db` above the LOCAL background (the 20th percentile
+within +-50 kHz - on air the band's background sat 11-14 dB above the
+receiver's noise floor), strongest first: its width and centre from the run
+within 10 dB of its own peak (a narrow spike on top: the -20 dB run's), the
+run within 20 dB taken out for the weaker peaks (a peak in a 15 dB stronger
+one's skirt within 20 kHz is no carrier); 4-32 kHz wide (wider: broadcast /
+LTE / DAB - not tried), in both looks (control channels are continuous).
+Each is probed once per run - a carrier probed already (half a raster) or in
+a band an earlier step looked at (the overlap; the last step's clamp) is
+skipped. PROBING: a temporary probe VFO per (candidate, trunking plugin) -
+every built plugin that declares `trunking`, a remembered control channel's
+plugin first - at most half the cores the process may run on (its affinity:
+2 on a Pi 4 or a receiver pinned to 2 cores; 2-12) at once and never past
+the receiver's 16 VFOs; placed on the raster when the measurement is within
+a quarter raster of it, else at the measurement. A probe ends when its
+plugin reports `SYSTEM` with `control = true` (and its key, waited up to 2.5
+s when the flag came first), after 2.5 s of stream without a valid frame,
+or after 5 s of stream (a wall-clock 30 s guards a dead stream); a carrier
+whose plugin decoded valid frames but no control is a traffic channel of
+that protocol: no other plugin tries it; the other plugins of a candidate
+found are not tried; two probes within 15 kHz confirming the same system
+are one control channel - the stronger carrier stands (the weaker one heard
+it off its centre). Probe VFOs are
 the search's (`decimator_info` `trunk.role` "probe"; never saved, never
 heard, removed after each batch - their plugin processes with them); while
 it runs no other VFO's report counts (the user's control VFOs are parked).
@@ -672,6 +690,29 @@ second click REPLACES the VFO the previous click made (the user's own VFOs
 are never taken); `"add":true` adds another one instead, refused when the
 new channel doesn't fit the span with them. Refused during a playback, in
 wideband scan mode, while a scanner runs. The entry's `followed` is set.
+
+**After the review (2026-11-22), the acceptance on the KrakenSDR**: 496-502
+MHz at 33.8 dB, coherent, the receiver and its plugins pinned to 2 cores
+(`taskset -c 0,1` - about a Pi 4), six sweeps - three with a P25 control VFO
+on 498.7625 and following on beforehand, three with following off: all six
+surveyed control channels found in every sweep (before the fixes: 4 of 6 -
+498.9375 never a candidate - in the orchestrator's runs and mine). The
+candidates of the step at 498.805 MHz (13 each time) held 498.7625 /
+498.9375 / 499.1875 / 499.3250 every time, the step at 500.67 MHz (5-6)
+499.7625 / 500.5875 every time, each within 1.2 kHz of the nominal (the
+receiver's +1.35 ppm). Time: 60-66 s for the first sweep (16-17 new entries,
+72-75 probes, 2 at once), 16-25 s for the next (remembered plugin first,
+traffic channels left after one plugin). Found besides the surveyed six: 11
+more P25 control channels of the same two systems (their keys; other site
+numbers where reported) - not checked one by one; no entry from a carrier
+the decoders didn't claim. The cause of the misses (finding 1 of the
+review): the threshold was measured over the receiver's global noise floor,
+and the band's background around 499 MHz sits 11-14 dB above it - a weak
+control channel (26 dB over the floor, 13 dB over the background) had its
+-20 dB run reach into the neighbours' skirts and was dropped as "wide"; the
+wall-clock waits were the second problem on a loaded receiver (frames from
+before the retune). Measured in the real capture of 499.8 MHz replayed (2
+cores): its three control channels candidates in each of three sweeps.
 
 **Measured on the KrakenSDR** (2026-11-22, coherent mode, threshold 9 dB,
 raster 6.25 kHz, one gain per range, the five trunking plugins built, at most
@@ -1365,6 +1406,16 @@ the broadcasts:
   the 6 failed before: from the first review round on, an unchanged status
   body was not sent again - a page that connected later to an idle receiver
   never got `{"trunk"}` and kept the box hidden).
+- `t16_search` also pinned to two cores (`TK_PIN=0,1` - the receiver and its
+  plugins on 2 cores): 30 / 30. `t18_search2` 8: with following OFF the
+  status comes at least once a second while it searches and shows the
+  probing phase; a heard entry carries its system and site; a memory file
+  that can't be written is told (`file.state` "not_written"), warned once,
+  written again when it can. `t19_ccimport` 6: a hostile imported entry
+  bounded (times, `n`, levels, `meas_hz`, `src`), `file.state` "ok"; a
+  repeated click to follow re-applies nothing, add of the followed one is
+  refused. `t17_idle` also: `DIGITAL_HISTORY` of a VFO that is gone sends no
+  frame (an empty one used to reach every page).
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
   / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a

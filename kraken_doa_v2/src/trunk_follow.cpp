@@ -4013,20 +4013,61 @@ std::vector<Cand> srch_carriers(double c, double thr) {
     if (n < 64) return out;
     const float floor_db = FFTProcessor::channel_noise_floor(ch, spec);
     if (!(floor_db > -190.0f)) return out;
+    if (const char* dp = getenv("KRAKEN_TRUNK_SEARCH_DUMP")) {   // (debugging: the spectrum each look saw)
+        std::ofstream df(std::string(dp) + "/look_" + std::to_string(static_cast<long long>(c)) + "_" + std::to_string(now_ms()) + ".txt");
+        df << c << " " << floor_db << "\n";
+        for (float v : spec) df << v << "\n";
+    }
     const double bin = SAMPLE_RATE / static_cast<double>(n), half = usable_half_hz();
+    // smoothed over ~1 kHz: a digital carrier's averaged spectrum is ragged bin to bin (+-3 dB at 146 Hz bins),
+    // its -10 dB run would end in a dip
+    {
+        const int k = std::max(1, static_cast<int>(std::lround(500.0 / bin)));
+        std::vector<float> sm(spec.size());
+        double acc = 0;
+        int cnt = 0;
+        for (int i = 0; i < n + k; i++) {
+            if (i < n) { acc += spec[i]; cnt++; }
+            if (i - 2 * k - 1 >= 0) { acc -= spec[i - 2 * k - 1]; cnt--; }
+            if (i - k >= 0 && i - k < n) sm[i - k] = static_cast<float>(acc / cnt);
+        }
+        spec.swap(sm);
+    }
+    // the LOCAL background (the 20th percentile within +-50 kHz, in 32-bin blocks): a busy band's background
+    // sits well above the receiver's noise floor (measured on air: 11-14 dB around 499 MHz) - over the global
+    // floor a weak carrier's skirt ran into its neighbours' and it was thrown away as "wide"
+    std::vector<float> bg(static_cast<size_t>(n));
+    {
+        const int w = std::max(8, static_cast<int>(50000.0 / bin)), blk = 32;
+        std::vector<float> cs, tmp;
+        for (int b0 = 0; b0 < n; b0 += blk) {
+            const int mid = b0 + blk / 2, a = std::max(0, mid - w), e = std::min(n, mid + w);
+            tmp.assign(spec.begin() + a, spec.begin() + e);
+            const size_t q = tmp.size() / 5;
+            std::nth_element(tmp.begin(), tmp.begin() + static_cast<std::ptrdiff_t>(q), tmp.end());
+            cs.push_back(tmp[q]);
+        }
+        for (int i = 0; i < n; i++) {
+            const double x = (i - blk / 2.0) / blk;
+            const int j = std::clamp(static_cast<int>(std::floor(x)), 0, static_cast<int>(cs.size()) - 1);
+            const int j2 = std::min(j + 1, static_cast<int>(cs.size()) - 1);
+            const double fr = std::clamp(x - j, 0.0, 1.0);
+            bg[i] = static_cast<float>(cs[j] * (1 - fr) + cs[j2] * fr);
+        }
+    }
     auto fq = [&](double i) { return c - SAMPLE_RATE / 2.0 + i * bin; };
     std::vector<char> used(static_cast<size_t>(n), 0);
     // every bin over the threshold, strongest first (all of them: a busy band's noise peaks can't use up a budget)
     std::vector<int> order;
     for (int i = 1; i + 1 < n; i++)
-        if (spec[i] - floor_db >= thr) order.push_back(i);
+        if (spec[i] - bg[i] >= thr) order.push_back(i);
     std::sort(order.begin(), order.end(), [&](int a, int b) { return spec[a] > spec[b]; });
     for (int pk : order) {
         if (used[pk]) continue;
         // the width: the run within 20 dB of the peak; the centre: between the edges of the run within 10 dB
         // (a neighbour merging into the skirt moves the -20 dB edge, not the -10 dB one)
-        const float lim = std::max(spec[pk] - 20.0f, floor_db + static_cast<float>(thr) / 2);
-        const float lim10 = std::max(spec[pk] - 10.0f, floor_db + static_cast<float>(thr) / 2);
+        const float lim = std::max(spec[pk] - 20.0f, bg[pk] + static_cast<float>(thr) / 2);
+        const float lim10 = std::max(spec[pk] - 10.0f, bg[pk] + static_cast<float>(thr) / 2);
         int lo = pk, hi = pk;
         while (lo - 1 >= 0 && !used[lo - 1] && spec[lo - 1] >= lim) lo--;
         while (hi + 1 < n && !used[hi + 1] && spec[hi + 1] >= lim) hi++;
@@ -4036,12 +4077,13 @@ std::vector<Cand> srch_carriers(double c, double thr) {
         for (int k = lo; k <= hi; k++) used[k] = 1;
         // (a narrow spike on top - a pilot, a carrier inside a wider signal: the -20 dB run's centre)
         const bool spike = (chi - clo + 1) * 10 < (hi - lo + 1) * 4;
-        const double w = (hi - lo + 1) * bin, f = spike ? fq((lo + hi) / 2.0) : fq((clo + chi) / 2.0);
+        // (the width too from the -10 dB run: a weak carrier's -20 dB run reaches its neighbours' skirts and looked "wide")
+        const double w = (spike ? hi - lo + 1 : chi - clo + 1) * bin, f = spike ? fq((lo + hi) / 2.0) : fq((clo + chi) / 2.0);
         if (w >= SRCH_MIN_W_HZ && w <= SRCH_MAX_W_HZ && std::fabs(f - c) + w / 2 <= half && std::fabs(f - c) > 3 * bin) {
             Cand cd;
             cd.hz = f;
             cd.width = w;
-            cd.level = spec[pk] - floor_db;
+            cd.level = spec[pk] - bg[pk];
             out.push_back(cd);
         }
     }
