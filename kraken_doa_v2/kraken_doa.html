@@ -2406,7 +2406,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
          and the tuners are in the top bar; this box holds the rest of the plan and what the sweep is doing -->
     <div class="sb-section sweep-only" data-sb="sweep" id="swp-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-span"/></svg><span>Sweep</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The tuners chosen in the top bar step through its range, 1.9125 MHz at a time, and the receiver puts their spectra together into one: not live, nothing is demodulated. More tuners = a faster sweep: each takes its own part of the range - and each needs its antenna connected.<br><br><b>Resolution</b>: the width of one point of the sweep (an FFT bin); Auto picks it from the range. Finer = more points to look at when zoomed in. <b>Dwell</b>: how long each step is listened to - longer catches more of a signal that comes and goes, and makes the sweep slower. <b>Pause</b> stops the tuners where they are.</span></span></h3>
+        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-span"/></svg><span>Sweep</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The tuners chosen in the top bar step through its range, 1.9125 MHz at a time, and the receiver puts their spectra together into one: not live, nothing is demodulated. More tuners = a faster sweep: each takes its own part of the range - and each needs its antenna connected.<br><br><b>Resolution</b>: the width of one point of the sweep (an FFT bin); Auto picks it from the range. Finer = more points to look at when zoomed in. The finest widths need a longer Dwell or a narrower range - the list shows which (the receiver says what can run). <b>Dwell</b>: how long each step is listened to - longer catches more of a signal that comes and goes, and makes the sweep slower. <b>Pause</b> stops the tuners where they are.</span></span></h3>
         <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
@@ -12975,6 +12975,8 @@ function viewShowRes() {
 // ============================================================================
 const SWP_MIN_SPAN_HZ = 100000, SWP_HOLD_MS = 1500, SWP_PEND_MS = 2000, SWP_SEND_MS = 100;
 const SWP_WF_MS = 50;   // waterfall lines at most 20 a second: never faster than the main waterfall runs
+// the sizes an older receiver takes (one without `sizes`: it clamps SWEEP_RES to 16384); a newer one
+// sends its own list (swpResSizes: 128 ... 65536)
 const SWP_FFT_SIZES = [128, 256, 512, 1024, 2048, 4096, 8192, 16384], SWP_FS = 2400000;
 const SWP_L = 40, SWP_R = 8;   // the plot's margins (CSS px): the dB labels on the left; the waterfall lines up
 const SWP_DIGITS = [6, 's', 5, 4, 3, 's', 2, 1, 0];   // kHz positions: G.MMM.kkk (1.765.000)
@@ -13009,7 +13011,13 @@ function swpNorm(r) {
     tuners: Array.isArray(r.tuners) ? r.tuners.filter(t => Number.isInteger(t) && t >= 0 && t < 8).sort((a, b) => a - b) : [],
     available: Math.max(0, Math.min(8, num(r.available, 0) | 0)), res: num(r.res, 0) | 0, fft_size: num(r.fft_size, 0) | 0,
     bin_hz: num(r.bin_hz, 0), bins: num(r.bins, 0), hops: num(r.hops, 0), rounds: num(r.rounds, 0),
-    dwell_ms: num(r.dwell_ms, 5), running: r.running !== false, grid: num(r.grid, 0), gain_db: num(r.gain_db, NaN)};
+    dwell_ms: num(r.dwell_ms, 5), running: r.running !== false, grid: num(r.grid, 0), gain_db: num(r.gain_db, NaN),
+    // (2026-11-21, a receiver with the finer resolutions: the sizes that run as asked, the others and why,
+    // the dwell each size past one packet needs; why the size asked for isn't the one used)
+    sizes: Array.isArray(r.sizes) ? r.sizes.filter(n => Number.isInteger(n) && n >= 128 && n <= 65536) : null,
+    sizes_capped: r.sizes_capped && typeof r.sizes_capped === 'object' ? r.sizes_capped : {},
+    min_dwell_ms: r.min_dwell_ms && typeof r.min_dwell_ms === 'object' ? r.min_dwell_ms : {},
+    cap: typeof r.cap === 'string' ? r.cap : '', dwell_ms_needed: num(r.dwell_ms_needed, 0)};
   return s.stop_hz > s.start_hz ? s : null;
 }
 let swpOpSentAt = 0;   // this page's last OPERATING_MODE (setOpMode): a sweep message from before it is no evidence
@@ -13191,23 +13199,56 @@ function swpTunerClick(i) {
 }
 
 // Resolution (Auto + the FFT sizes as bin widths), Dwell, Run / Pause
+// The sizes offered: the receiver's own list when it sends one (sizes + sizes_capped: 128 ... 65536 since
+// 2026-11-21 - the page never works out from the dwell or the span what can run), else the eight an
+// older receiver takes (it clamps anything past 16384 silently: never offered)
+function swpResSizes() {
+  const st = swp.st;
+  if (!st || !st.sizes) return SWP_FFT_SIZES;
+  const all = new Set(st.sizes);
+  for (const k in st.sizes_capped) all.add(parseInt(k));
+  return [...all].filter(n => n >= 128 && n <= 65536).sort((a, b) => a - b);
+}
 function swpResRender() {
   const sel = $id('swp-res'), st = swp.st;
   if (!sel) return;
-  if (sel.options.length !== SWP_FFT_SIZES.length + 1)
-    sel.innerHTML = '<option value="auto">Auto</option>' + SWP_FFT_SIZES.map(n => `<option value="${n}">${swpFmtHz(SWP_FS / n)}</option>`).join('');
-  // what RUNS: Auto names its width; a size the receiver had to cap (a sweep holds at most ~4 M bins:
-  // 146 Hz over the full range runs at 586 Hz) shows both
+  const sizes = swpResSizes(), key = sizes.join(',');
+  if (sel.dataset.sizes !== key) {
+    sel.dataset.sizes = key;
+    const keep = sel.value;
+    sel.innerHTML = '<option value="auto">Auto</option>' + sizes.map(n => `<option value="${n}">${swpFmtHz(SWP_FS / n)}</option>`).join('');
+    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+  }
+  // what RUNS: Auto names its width; a size asked for that the receiver had to cap shows both widths
+  // ("146 Hz → 293 Hz") and the reason in the title (cap: "bins" - the sweep would hold more than
+  // 2^24 bins, a narrower range gets it - or "dwell" with dwell_ms_needed); a size that can't run at
+  // this range / dwell (sizes_capped) is disabled, a short reason on it, the rest in the title
   const at = 'Auto' + (st && !st.res && st.fft_size ? ' · ' + swpFmtHz(SWP_FS / st.fft_size) : '');
   if (sel.options[0].textContent !== at) sel.options[0].textContent = at;
   const capped = st && st.res && st.fft_size && st.fft_size !== st.res;
+  const why = (st && st.sizes_capped) || {}, md = (st && st.min_dwell_ms) || {};
+  const notes = [];
   for (let i = 1; i < sel.options.length; i++) {
-    const o = sel.options[i], n = parseInt(o.value);
-    const t = swpFmtHz(SWP_FS / n) + (capped && n === st.res ? ' → ' + swpFmtHz(SWP_FS / st.fft_size) : '');
+    const o = sel.options[i], n = parseInt(o.value), w = swpFmtHz(SWP_FS / n), c = why[n];
+    let t = w;
+    if (capped && n === st.res) t = w + ' → ' + swpFmtHz(SWP_FS / st.fft_size);
+    else if (c === 'dwell') t = w + (md[n] ? ' · ' + md[n] + ' ms dwell' : ' · longer dwell');
+    else if (c === 'bins') t = w + ' · range too wide';
     if (o.textContent !== t) o.textContent = t;
+    const dis = !!c && !(capped && n === st.res);   // (the size asked for stays selectable: it shows what runs)
+    if (o.disabled !== dis) o.disabled = dis;
+    if (c === 'dwell') notes.push(w + ' needs a dwell of ' + (md[n] ? md[n] + ' ms or more' : 'more') + ' (one step must hold ' + n + ' samples)');
+    else if (c === 'bins') notes.push(w + ' would make too many points for this range - a narrower range gets it');
   }
-  const tt = 'The width of one point of the sweep (an FFT bin of 2.4 MHz / FFT size). Auto picks it from the range' +
-             (capped ? ' - ' + swpFmtHz(SWP_FS / st.res) + ' would make too many points for this range: it runs at ' + swpFmtHz(SWP_FS / st.fft_size) : '');
+  let tt = 'The width of one point of the sweep (an FFT bin of 2.4 MHz / FFT size). Auto picks it from the range';
+  if (capped) {
+    const run = swpFmtHz(SWP_FS / st.fft_size), ask = swpFmtHz(SWP_FS / st.res);
+    tt += '. ' + ask + ' runs at ' + run + ' now: ' + (st.cap === 'dwell'
+      ? 'a step holds too few samples at this dwell' + (st.dwell_ms_needed > 0 ? ' - a dwell of ' + st.dwell_ms_needed + ' ms gets it' : '')
+      : st.cap === 'bins' ? 'the range is too wide for it - a narrower range gets it'
+      : 'it would make too many points for this range');
+  }
+  if (notes.length) tt += '. ' + notes.join('; ');
   if (sel._tip !== tt) { sel._tip = tt; sel.title = tt; }
   if (!st || Date.now() < swp.ui.holdRes) return;
   const v = st.res ? String(st.res) : 'auto';
@@ -13301,7 +13342,8 @@ function swpPoints() {
 function swpZoomMax() {
   const s = swpSpan();
   if (!s) return 1;
-  const bin = swp.st && swp.st.bin_hz > 0 ? swp.st.bin_hz : SWP_FS / SWP_FFT_SIZES[SWP_FFT_SIZES.length - 1];
+  // (no bin_hz yet - no sweep message: the finest size of the list in use, so the limit is never too low)
+  const sz = swpResSizes(), bin = swp.st && swp.st.bin_hz > 0 ? swp.st.bin_hz : SWP_FS / sz[sz.length - 1];
   return Math.max(1, (s[1] - s[0]) / (bin * swpPoints()));
 }
 // the window shown [w0, w1] Hz; keeps the zoom inside the range and its limit

@@ -1066,7 +1066,7 @@ bin grid.
 - Zoom: the wheel (x1.25 around the pointer) on the spectrum or the
   waterfall, and the View popover's Zoom slider, as far as one bin per point
   (`swpZoomMax` = span / (bin x points): ~490x for the whole range at 2.3
-  kHz bins, ~7800x at 146 Hz) - the usual 32x would leave a 1.7 GHz range at
+  kHz bins, ~7800x at 146 Hz; ~10 700x for 600 MHz at 37 Hz) - the usual 32x would leave a 1.7 GHz range at
   ~54 MHz. The slider's end follows (`zoomTarget` gives `max`; `zoomText`
   writes whole numbers past 100x; other modes: max 125 = 32x, unchanged).
   Zoomed in, a drag pans; nothing is retuned and nothing but `SWEEP_VIEW` is
@@ -1083,11 +1083,41 @@ bin grid.
   second); "No data yet" / "Paused" / "Waiting for the receiver" in the plot.
 - Nothing of the VFOs: a click on it sends nothing.
 
+**Finer resolutions on the page** (2026-11-21, with the receiver's 178f007;
+the user asked for a finer resolution):
+- The Resolution list is the receiver's: `sizes` (run as asked at this
+  range and dwell) and `sizes_capped` (the others and why) - ten sizes, 128
+  ... 65536 (18.8 kHz ... 37 Hz). The page never works out from the dwell or
+  the span what can run. A receiver without these fields gets the eight
+  sizes it takes (128 ... 16384): a size it would clamp silently is never
+  offered (`swpResSizes`, `SWP_FFT_SIZES`).
+- A size in `sizes_capped` is disabled with a short reason on it - "73 Hz ·
+  7 ms dwell" (the dwell from `min_dwell_ms`), "37 Hz · range too wide" -
+  and a sentence each in the select's title ("73 Hz needs a dwell of 7 ms
+  or more (one step must hold 32768 samples)", "... would make too many
+  points for this range - a narrower range gets it"). The list follows every
+  `sweep` message: a dwell or range change moves sizes between the sets.
+- The size asked for but capped (`fft_size` < `res`) stays selectable and
+  shows what runs ("37 Hz → 146 Hz"); the title gives the reason from `cap`:
+  "a step holds too few samples at this dwell - a dwell of 21 ms gets it"
+  (`dwell_ms_needed`) or "the range is too wide for it - a narrower range
+  gets it". An older receiver sends no `cap`: the general sentence.
+- Checked at these sizes (nothing else changed): Points reads "11,885,227 ·
+  146 Hz" (the whole range at 16384) and "16,384,001 · 37 Hz" (1000 - 1600 MHz
+  at 65536); Steps "911 · 5 tuners"; the zoom's limit is span / (bin x
+  points) - 7 794x for the whole range at 146 Hz (slider end 324), 10 744x
+  for 600 MHz at 37 Hz (slider end 335) - with frames of one bin per point (36.62109375 Hz)
+  and the readout to 100 Hz at 146 Hz, 10 Hz at 37 Hz; `swpZoomMax`'s bin
+  before any `bin_hz` is the list's finest; the waterfall's rows and the
+  overview stay <= 4096 points whatever the bins (frames are views).
+
 **The sidebar.** A Sweep box (`data-sb="sweep"`, `.sweep-only`, title icon
 `span`, placed first after the phone boxes): Resolution (Auto - naming the
-width in use - and the FFT sizes 128 ... 16384 as bin widths, 18.8 kHz ...
-146 Hz; a size the receiver had to cap shows both, "146 Hz → 586 Hz", and
-the title says why - the engine holds a sweep to 2^22 bins), Dwell (5 - 1000 ms, typed; a value outside is clamped before it is
+width in use - and the FFT sizes as bin widths: 128 ... 65536, 18.8 kHz ...
+37 Hz, from a receiver that sends its list (`sizes`, since 2026-11-21),
+else 128 ... 16384 - see *Finer resolutions on the page* below; a size the
+receiver had to cap shows both, "146 Hz → 586 Hz", and the title says
+why), Dwell (5 - 1000 ms, typed; a value outside is clamped before it is
 sent), Run / Pause (`Pause` while running; `Run`, primary, while paused), and
 the state: State (Running / Paused / No data yet), Sweep time, Progress,
 Steps (hops and the tuners sharing them), Points (bins and their width),
