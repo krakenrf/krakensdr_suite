@@ -18,6 +18,7 @@ const PRate RATES[] = {
 };
 constexpr int SEARCH_ERR_BPSK = 2, SEARCH_ERR_QPSK = 6;
 constexpr int TRACK_ERR_BPSK = 8, TRACK_ERR_QPSK = 16;
+constexpr float ACC_THR = 0.55f, ACC_ONE = 0.45f;   // frame-averaged / single soft UW correlation
 }  // namespace
 
 const PRate* p_rate(double rate) {
@@ -43,6 +44,28 @@ void PChannel::start(const PRate& r) {
     dec_base_ = 0;
     pending_.clear();
     vit_steps_ = 0;
+    facc_.assign(static_cast<size_t>(r.frame), 0.0f);
+    cand_soft_ = false;
+}
+
+float PChannel::soft_corr(int64_t p) const {
+    const float* s = &s_[static_cast<size_t>(p - base_)];
+    float ca = 0, cb = 0, m = 0;
+    if (r_.mod == Mod::ABPSK) {
+        for (int k = 0; k < 32; k++) {
+            const float u = ((UW_P >> (31 - k)) & 1) ? -1.0f : 1.0f;
+            ca += s[k] * u;
+            m += std::fabs(s[k]);
+        }
+        return m > 0 ? std::fabs(ca) / m : 0;
+    }
+    for (int k = 0; k < 32; k++) {
+        const float u = ((UW_P >> (31 - k)) & 1) ? -1.0f : 1.0f;
+        ca += s[2 * k] * u;
+        cb += s[2 * k + 1] * u;
+        m += std::fabs(s[2 * k]) + std::fabs(s[2 * k + 1]);
+    }
+    return m > 0 ? (std::fabs(ca) + std::fabs(cb)) / m : 0;
 }
 
 void PChannel::stop() {
@@ -103,7 +126,9 @@ void PChannel::push(const SoftBit* b, size_t n) {
             int err = 0, best_err = 1 << 30;
             float sa = 1, sb = 1, bsa = 1, bsb = 1;
             int64_t best = -1;
-            const int lim = synced_ ? (bpsk ? TRACK_ERR_BPSK : TRACK_ERR_QPSK) : (bpsk ? SEARCH_ERR_BPSK : SEARCH_ERR_QPSK);
+            const int lim = (synced_ || cand_soft_) ? (bpsk ? TRACK_ERR_BPSK : TRACK_ERR_QPSK)
+                                                    : (bpsk ? SEARCH_ERR_BPSK : SEARCH_ERR_QPSK);
+            cand_soft_ = false;
             for (int d : {0, -1, 1}) {
                 const int64_t p = next_uw_ + d;
                 if (p < base_ || (!synced_ && d != 0)) continue;
@@ -157,6 +182,16 @@ void PChannel::push(const SoftBit* b, size_t n) {
             float sa, sb;
             if (match_uw(p, bpsk ? SEARCH_ERR_BPSK : SEARCH_ERR_QPSK, err, sa, sb)) {
                 found = true;
+                break;
+            }
+            // weak signals: the UW's soft correlation averaged over the
+            // frame period (the UW comes back every frame, noise doesn't)
+            const float c = soft_corr(p);
+            float& acc = facc_[static_cast<size_t>(((p % r_.frame) + r_.frame) % r_.frame)];
+            acc = 0.5f * acc + 0.5f * c;
+            if (acc >= ACC_THR && c >= ACC_ONE) {
+                found = true;
+                cand_soft_ = true;
                 break;
             }
         }

@@ -5,8 +5,9 @@
 // ADS-C, DIS = ADS-C disconnect, AT1 / CR1 / CC1 / DR1 = CPDLC), the
 // aircraft registration (7, '.' padded), then the binary message in hex,
 // its last two octets a CRC: over IMI + registration + the binary
-// including the CRC the ARINC CRC-16 (table of x^16 + x^12 + x^5 + 1,
-// non-reflected, run LSB-side, preset 0xFFFF) leaves 0x1D0F.
+// including the CRC, CRC-16 x^16 + x^12 + x^5 + 1 (non-reflected, MSB
+// first, preset 0xFFFF; the complement appended, high octet first)
+// leaves 0x1D0F.
 //
 // ADS-C downlink (ARINC 745): a sequence of groups, each a tag octet and a
 // fixed-length body read MSB first: 7 basic report (lat / lon 21 bits
@@ -46,7 +47,7 @@ uint16_t arinc_crc(const uint8_t* p, size_t n, uint16_t c) {
         }
         return a;
     }();
-    for (size_t i = 0; i < n; i++) c = static_cast<uint16_t>((c >> 8) ^ t[(c ^ p[i]) & 0xFF]);
+    for (size_t i = 0; i < n; i++) c = static_cast<uint16_t>((c << 8) ^ t[((c >> 8) ^ p[i]) & 0xFF]);
     return c;
 }
 
@@ -151,7 +152,23 @@ bool adsc_decode(const std::string& label, const std::string& text, AdscReport& 
     Bits bs(bin.data(), bin.size());
     std::string sum;
     uint32_t tag;
+    // each group is a whole number of octets (spare bits at its end)
+    auto glen = [](uint32_t t) {
+        switch (t) {
+        case 3: return 1;
+        case 7: case 9: case 10: case 18: case 19: case 20: return 10;
+        case 12: return 6;
+        case 13: return 17;
+        case 14: case 15: return 5;
+        case 16: return 4;
+        case 17: return 3;
+        case 22: return 8;
+        case 23: return 9;
+        default: return 0;
+        }
+    };
     while (bs.get(8, tag)) {
+        const size_t gstart = bs.pos;
         uint32_t v, v2, v3;
         switch (tag) {
         case 3:   // acknowledgement: contract number
@@ -254,6 +271,7 @@ bool adsc_decode(const std::string& label, const std::string& text, AdscReport& 
             r.summary = sum;
             return true;
         }
+        bs.pos = gstart + 8 * static_cast<size_t>(glen(tag));
     }
     while (!sum.empty() && (sum.back() == ' ' || sum.back() == ';')) sum.pop_back();
     r.summary = sum;

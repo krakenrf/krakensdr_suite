@@ -170,7 +170,7 @@ void Demod::bit(std::vector<SoftBit>& out) {
     nbits_++;
     axis_ = (axis_ + 1) & 3;
     tn_ += sps_ * (1.0 + kt_ * te);
-    if (nbits_ == 256) {
+    if (nbits_ == static_cast<uint64_t>(cfg_.gear_bits)) {
         gains(cfg_.pll_bw);
         kt_ = cfg_.tim_gain;
     }

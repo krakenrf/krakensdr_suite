@@ -120,27 +120,22 @@ def acars_block(reg, label, bid, text, mode="2"):
     return bytes([0xFF, 0xFF, odd(0x01)] + body + [bcs & 0xFF, bcs >> 8, 0x7F])
 
 
-ARINC_T = []
-for _i in range(256):
-    _v = _i << 8
-    for _ in range(8):
-        _v = ((_v << 1) ^ 0x1021) & 0xFFFF if _v & 0x8000 else (_v << 1) & 0xFFFF
-    ARINC_T.append(_v)
-
-
 def arinc_crc(p, c=0xFFFF):
+    """CRC-16, x^16 + x^12 + x^5 + 1, non-reflected, preset FFFF"""
     for b in p:
-        c = (c >> 8) ^ ARINC_T[(c ^ b) & 0xFF]
+        c ^= b << 8
+        for _ in range(8):
+            c = ((c << 1) ^ 0x1021) & 0xFFFF if c & 0x8000 else (c << 1) & 0xFFFF
     return c
 
 
 def arinc622(gs, imi, reg, binary):
+    """ARINC 622 framing: /GS.IMI REG HEX(binary + CRC); the complemented
+    CRC appended high octet first (the whole then leaves 0x1D0F)"""
     regf = reg.rjust(7, ".")[-7:]
-    head = (imi + regf).encode()
-    for x in range(65536):
-        tail = bytes([x >> 8, x & 0xFF])
-        if arinc_crc(head + binary + tail) == 0x1D0F:
-            break
+    c = arinc_crc((imi + regf).encode() + binary) ^ 0xFFFF
+    tail = bytes([c >> 8, c & 0xFF])
+    assert arinc_crc((imi + regf).encode() + binary + tail) == 0x1D0F
     return "/" + gs + "." + imi + regf + (binary + tail).hex().upper()
 
 
@@ -149,7 +144,8 @@ def bitpack(fields):
     for val, w in fields:
         v = (v << w) | (int(val) & ((1 << w) - 1))
         n += w
-    return v.to_bytes(n // 8, "big")
+    pad = (-n) % 8          # spare bits to the octet boundary (zeros)
+    return (v << pad).to_bytes((n + pad) // 8, "big")
 
 
 def coord21(deg):
@@ -214,7 +210,7 @@ def item_sus(item, burst=False):
     if k == "adsc":
         aes, reg, lat, lon, alt = int(p[1], 16), p[2], float(p[3]), float(p[4]), float(p[5])
         flt = p[6] if len(p) > 6 else ""
-        text = arinc622("BOMCAYA", "ADS", reg, adsc_report(lat, lon, alt, flt))
+        text = "M02A" + (flt or "XY0123").ljust(6)[:6] + arinc622("BOMCAYA", "ADS", reg, adsc_report(lat, lon, alt, flt))
         return user_data_sus(aes, acars_block(reg, "B6", "3", text))
     if k == "logon":
         aes = int(p[1], 16)
@@ -351,10 +347,11 @@ def burst(rate, item):
         pos += 64 * cols
     uw = [b for b in UW_P for _ in range(2)] if rate == 10500 else UW_P
     if rate == 10500:
-        pre = [0] * unmod + [(i & 1) if i % 2 == 0 else 0 for i in range(modn)]
-        # A-QPSK preamble: I alternates 0 1 0 1 ..., Q stays 0 (bits I Q I Q ...)
+        # A-QPSK preamble (4.4.3.3.2): unmodulated = the modulator fed all
+        # 0s; modulated = I alternating 0 1 0 1 ... (from 0), Q all 0
         pre = [0] * unmod + [((i // 2) & 1) if i % 2 == 0 else 0 for i in range(modn)]
-        return pre, uw + out, unmod
+        return pre, uw + out, 0
+    # A-BPSK: `unmod` bit periods of carrier, then 0 1 0 1 ... (the first a 0: -90 deg)
     pre = [i & 1 for i in range(modn)]
     return [], pre + uw + out, unmod
 
@@ -450,10 +447,11 @@ def main():
         total = len(x)
     else:
         events = sorted((float(t), it) for t, it in a.at)
-        total = int((max(t for t, _ in events) + 3.0) * fs_gen)
+        made = [(t, it) + burst(rate, it) for t, it in events]
+        end = max(t + (len(pre) + len(bits) + unmod) / rate for t, it, pre, bits, unmod in made)
+        total = int((max(end, a.seconds if a.seconds != 10 else 0) + 1.0) * fs_gen)
         x = np.zeros(total, complex)
-        for t, it in events:
-            pre, bits, unmod = burst(rate, it)
+        for t, it, pre, bits, unmod in made:
             if qpsk:
                 s = mod_aqpsk(pre + bits, sps, unmod=0)
             else:

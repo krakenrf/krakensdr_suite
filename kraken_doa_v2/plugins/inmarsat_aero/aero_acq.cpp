@@ -12,6 +12,8 @@ Acquisition::Acquisition(double fs, std::vector<double> rates_wide, std::vector<
     setup(narrow_, fs / 2, 16384, navg, std::move(rates_narrow));
     hlp_ = kp::fir_lowpass(31, 4000, static_cast<float>(fs));
     lbuf_.assign(2 * hlp_.size(), cf(0, 0));
+    hwide_ = kp::fir_lowpass(21, 7500, static_cast<float>(fs));
+    wbuf_.assign(2 * hwide_.size(), cf(0, 0));
     reset();
 }
 
@@ -43,7 +45,8 @@ void Acquisition::reset() {
         std::fill(b->acc.begin(), b->acc.end(), 0.0f);
     }
     std::fill(lbuf_.begin(), lbuf_.end(), cf(0, 0));
-    lpos_ = lph_ = 0;
+    std::fill(wbuf_.begin(), wbuf_.end(), cf(0, 0));
+    lpos_ = lph_ = wpos_ = 0;
     hits_.clear();
 }
 
@@ -75,7 +78,13 @@ void Acquisition::search(Band& b) {
     const int n = b.n;
     std::vector<float> tmp(b.acc);
     std::nth_element(tmp.begin(), tmp.begin() + n / 2, tmp.end());
-    const float med = std::max(tmp[n / 2], 1e-30f);
+    // the noise level; floored at 2 % of the mean, so that a band with no
+    // noise in it (a recording made from receiver audio) doesn't make every
+    // ratio huge
+    double mean = 0;
+    for (float v : b.acc) mean += v;
+    mean /= n;
+    const float med = std::max({tmp[n / 2], static_cast<float>(0.02 * mean), 1e-30f});
     const double df = b.fs / n;
     auto bin = [&](double f) {   // FFT bin of frequency f (natural order)
         long k = std::lround(f / df);
@@ -109,8 +118,9 @@ void Acquisition::search(Band& b) {
         for (double f2c = -2 * lim; f2c <= 2 * lim; f2c += df) {   // 2 fc in steps of one bin
             int a1 = 0, a2 = 0;
             const float p1 = pk(bin(f2c + R / 2), a1), p2 = pk(bin(f2c - R / 2), a2);
-            const float s = std::min(p1, p2);
-            const float sdb = 10 * std::log10(s / med);
+            // both lines well above the floor, scored by their mean
+            if (std::min(p1, p2) < 4 * med) continue;
+            const float sdb = 10 * std::log10(0.5f * (p1 + p2) / med);
             if (sdb > best.snr_db) {
                 const double f1 = refine(a1), fm = refine(a2);
                 // the two lines must be R apart (+- 2 bins)
@@ -133,9 +143,19 @@ void Acquisition::search(Band& b) {
 bool Acquisition::process(const cf* x, size_t n) {
     bool any = false;
     const size_t nl = hlp_.size();
+    const size_t nw = hwide_.size();
     for (size_t i = 0; i < n; i++) {
         const cf v = x[i];
-        push(wide_, v);
+        // wide search behind a +-7 kHz low-pass (the 10.5 kbit/s signal
+        // and +-2.5 kHz of offset): less noise into the squaring
+        wbuf_[wpos_] = wbuf_[wpos_ + nw] = v;
+        wpos_ = (wpos_ + 1) % static_cast<int>(nw);
+        {
+            cf acc(0, 0);
+            const cf* p = &wbuf_[wpos_];
+            for (size_t k = 0; k < nw; k++) acc += p[k] * hwide_[nw - 1 - k];
+            push(wide_, acc);
+        }
         if (!narrow_.rates.empty()) {
             lbuf_[lpos_] = lbuf_[lpos_ + nl] = v;
             lpos_ = (lpos_ + 1) % static_cast<int>(nl);

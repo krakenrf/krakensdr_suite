@@ -42,6 +42,7 @@ struct DemodCfg {
     float rolloff = 0.6f;   // matched filter roll-off
     float pll_bw = 0.0012f; // loop noise bandwidth x bit period, tracking
     float tim_gain = 1.2e-4f;
+    int gear_bits = 256;    // bits at 4 x the loop gains first (acquisition)
 };
 
 // One bit out of the demodulator: soft value (+ = the axis' positive

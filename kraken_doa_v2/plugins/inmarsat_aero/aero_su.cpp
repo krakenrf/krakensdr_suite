@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace aero {
 
@@ -100,6 +101,7 @@ void SuDecoder::reset() {
     st_ = Stats{};
     ges_ = -1;
     sat_.clear();
+    call_aes_.clear();
     psmc_.clear();
     asm_.clear();
     air_.clear();
@@ -169,8 +171,7 @@ void SuDecoder::p_su(const uint8_t* su, double t0, double t1, int index) {
     const bool v = host.verbose();
     if (ssu) {
         // a subsequent signal unit: continues the ISU with the same Q / ref
-        const int key = su[1];
-        auto it = asm_.find(key);
+        auto it = asm_.find(asm_key(su[1]));
         if (it == asm_.end()) return;
         Asm& a = it->second;
         const int seq = type & 0x3F;
@@ -330,11 +331,12 @@ void SuDecoder::p_su(const uint8_t* su, double t0, double t1, int index) {
         a.data.assign(su + 8, su + 10);
         a.t0 = t0;
         a.t1 = t1;
+        a.down = down_ctx_;
         if (a.nss == 0) {
             a.data.resize(std::min<size_t>(a.data.size(), static_cast<size_t>(std::max(a.last, 0))));
             user_data(a);
         } else {
-            asm_[su[5]] = a;
+            asm_[asm_key(su[5])] = a;
         }
         break;
     }
@@ -347,6 +349,7 @@ void SuDecoder::p_su(const uint8_t* su, double t0, double t1, int index) {
         a.data.assign(su + 6, su + (type == 0x74 ? 9 : 10));
         a.t0 = t0;
         a.t1 = t1;
+        a.down = down_ctx_;
         user_data(a);
         break;
     }
@@ -456,19 +459,169 @@ void SuDecoder::acars(const Asm& a, const uint8_t* d, size_t n) {
     row(a.aes);
 }
 
-void SuDecoder::r_su(const uint8_t* su19, double t0, double t1, float freq_hz) {
-    (void)su19;
+void SuDecoder::c_su(const uint8_t* su, double t0, double t1) {
     (void)t0;
     (void)t1;
-    (void)freq_hz;
+    su_ok_++;
+    const int type = su[0];
+    const bool ssu = (type & 0xC0) == 0xC0;
+    type_count_[ssu ? 0xC0 : type]++;
+    if (type == 0x01) {
+        fill_++;
+        return;
+    }
+    if (ssu) return;   // service address digits (dialled numbers are not shown)
+    const uint32_t aes = be24(su + 1);
+    char b[300];
+    switch (type) {
+    case 0x30: {   // call progress (A2-11 .. A2-16)
+        static const char* rt[8] = {"report", "channel status report", "connect", "test", "call attempt result", "channel release", "report", "report"};
+        const int r = su[6] & 15;
+        std::string cause;
+        if (r == 4 || r == 5) {
+            char c[48];
+            snprintf(c, sizeof c, ", cause %d/%d", (su[7] >> 4) & 7, su[7] & 15);
+            cause = c;
+        }
+        snprintf(b, sizeof b, "C channel: call progress, AES %s, GES 0x%02X, %s%s", aes_hex(aes).c_str(), su[4], rt[r & 7],
+                 cause.c_str());
+        host.event(b, 20);
+        call_aes_ = aes_hex(aes);
+        ges_ = su[4];
+        break;
+    }
+    case 0x60:   // telephony acknowledge (A2-26)
+        snprintf(b, sizeof b, "C channel: telephony acknowledge, AES %s, GES 0x%02X", aes_hex(aes).c_str(), su[4]);
+        if (host.verbose()) host.event(b, 20);
+        call_aes_ = aes_hex(aes);
+        break;
+    case 0x21:   // call information, service address (A2-9): the number is not shown
+        snprintf(b, sizeof b, "C channel: call information (service address), AES %s, GES 0x%02X", aes_hex(aes).c_str(), su[4]);
+        host.event(b, 20);
+        call_aes_ = aes_hex(aes);
+        break;
+    default:
+        if (host.verbose()) {
+            snprintf(b, sizeof b, "C channel signal unit type 0x%02X", type);
+            host.event(b, 30);
+        }
+        break;
+    }
+    if (!call_aes_.empty()) {
+        air_[aes];
+        air_[aes].label = "C channel";
+        row(aes);
+    }
+    if (host.raw_wanted()) {
+        std::string r = "C SU";
+        for (int i = 0; i < 12; i++) {
+            char h[4];
+            snprintf(h, sizeof h, " %02X", su[i]);
+            r += h;
+        }
+        host.raw(r);
+    }
 }
 
-void SuDecoder::t_burst(const uint8_t* id6, const std::vector<const uint8_t*>& sus, double t0, double t1, float freq_hz) {
-    (void)id6;
-    (void)sus;
-    (void)t0;
-    (void)t1;
-    (void)freq_hz;
+uint32_t SuDecoder::r_su(const uint8_t* su, double t0, double t1) {
+    // R channel signal unit (19 octets, appendix 2 A2-2, A2-44 .. A2-54)
+    su_ok_++;
+    const int seqi = su[0] >> 4, sutype = su[0] & 15;
+    char b[300];
+    if (sutype == 15) {   // signalling: message type in octet 3
+        const int type = su[2];
+        const uint32_t aes = be24(su + 3);
+        type_count_[type]++;
+        const char* what = nullptr;
+        bool always = true;
+        switch (type) {
+        case 0x10: what = "log-on request"; break;
+        case 0x12: what = "log-off request"; break;
+        case 0x13: what = "reassignment reject"; break;
+        case 0x15: what = "log-on acknowledgement"; always = false; break;
+        case 0x17: what = "ready for reassignment"; break;
+        case 0x20: what = "telephone call request"; break;
+        case 0x22: what = "request for reservation (data)"; always = false; break;
+        case 0x23: what = "abbreviated telephone call request"; break;
+        case 0x30: what = "call progress"; break;
+        case 0x60: what = "telephony acknowledgement"; always = false; break;
+        case 0x61: what = "request for acknowledgement"; always = false; break;
+        case 0x62: what = "acknowledgement (PACK)"; always = false; break;
+        default: break;
+        }
+        if (what && (always || host.verbose())) {
+            snprintf(b, sizeof b, "↓ AES %s → GES 0x%02X · R channel %s", aes_hex(aes).c_str(), su[6], what);
+            if (type == 0x10) {
+                const int cls = su[10] >> 6;
+                snprintf(b + strlen(b), sizeof b - strlen(b), " (class %d AES)", cls == 0 ? 1 : cls == 2 ? 3 : cls == 3 ? 4 : 2);
+            }
+            host.event(b, 30);
+        }
+        air_[aes];
+        row(aes);
+        return aes;
+    }
+    // user data (A2-44): sequence indicator, Q / ref, AES, GES, sutype octets of data
+    type_count_[0xF0]++;
+    const uint32_t aes = be24(su + 2);
+    const int ges = su[5];
+    const int n = std::min(sutype, 11);
+    const int64_t key = (int64_t(2) << 40) | (int64_t(aes) << 8) | (su[1] & 0xF7);
+    Asm* a = nullptr;
+    auto first = [&](int left) {
+        Asm x;
+        x.aes = aes;
+        x.ges = ges;
+        x.q = su[1] >> 4;
+        x.ref = su[1] & 7;
+        x.next = left;
+        x.t0 = t0;
+        x.down = true;
+        asm_[key] = x;
+        return &asm_[key];
+    };
+    if (seqi == 1 || seqi == 2 || seqi == 4) {
+        a = first(seqi == 1 ? 0 : seqi == 2 ? 1 : 2);
+    } else if (seqi == 3 || seqi == 5 || seqi == 6) {
+        auto it = asm_.find(key);
+        const int want = seqi == 5 ? 1 : 0;   // what this one should leave
+        if (it == asm_.end() || it->second.next != want + 1) return aes;
+        a = &it->second;
+    } else {
+        return aes;
+    }
+    a->data.insert(a->data.end(), su + 6, su + 6 + n);
+    a->t1 = t1;
+    if (seqi == 1 || seqi == 3 || seqi == 6) {
+        const Asm done = *a;
+        asm_.erase(key);
+        user_data(done);
+    } else {
+        a->next--;
+    }
+    return aes;
+}
+
+void SuDecoder::t_burst(const uint8_t* id6, const std::vector<const uint8_t*>& sus, double t0, double t1) {
+    // the burst identifier names the AES; its SUs are the P / T formats
+    const uint32_t aes = be24(id6);
+    down_ctx_ = true;
+    aes_ctx_ = aes;
+    for (const uint8_t* s : sus) p_su(s, t0, t1, 0);
+    down_ctx_ = false;
+    if (host.verbose()) {
+        char b[120];
+        snprintf(b, sizeof b, "↓ AES %s → GES 0x%02X · T burst of %zu signal units", aes_hex(aes).c_str(), id6[3], sus.size());
+        host.event(b, 5);
+    }
+    air_[aes];
+    row(aes);
+}
+
+std::string SuDecoder::label_of(uint32_t aes) const {
+    auto it = air_.find(aes);
+    if (it == air_.end()) return "";
+    return !it->second.flight.empty() ? it->second.flight : it->second.reg;
 }
 
 }  // namespace aero

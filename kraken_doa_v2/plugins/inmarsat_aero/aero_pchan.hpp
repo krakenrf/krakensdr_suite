@@ -98,6 +98,9 @@ private:
 
     int64_t idx_end() const { return base_ + static_cast<int64_t>(s_.size()); }
     bool match_uw(int64_t p, int max_err, int& err, float& sa, float& sb) const;
+    float soft_corr(int64_t p) const;
+    std::vector<float> facc_;   // soft UW correlation averaged per position in the frame
+    bool cand_soft_ = false;    // the candidate came from the averaged correlation
     void frame_at(int64_t p, int err, float sa, float sb);
     void drain(bool flush);
     void trim();

@@ -1,11 +1,18 @@
 // Inmarsat Classic Aero (AMSS, ICAO Annex 10 Vol III Part I chapter 4):
-// P channel (satellite -> aircraft) at 0.6 / 1.2 / 2.4 kbit/s A-BPSK and
-// 4.8 / 10.5 kbit/s A-QPSK, found and demodulated coherently, frames,
-// signal units checked by their CRC, decoded by type; user data
-// reassembled into ACARS messages. See README.md and
+// - P channel (GES -> aircraft, continuous TDM) at 0.6 / 1.2 / 2.4 kbit/s
+//   A-BPSK and 4.8 / 10.5 kbit/s A-QPSK: found by the acquisition (rate
+//   and carrier), demodulated coherently, frames, signal units checked by
+//   their CRC and decoded by type, user data reassembled into ACARS (and
+//   ADS-C);
+// - C channel (voice, 8.4 kbit/s A-QPSK): frames, sub-band signal units,
+//   the AMBE voice frames through the user's codec library (aero_ambe).
+// R / T channel bursts from aircraft: aero_burst.cpp. See README.md and
 // kraken_doa_v2/docs/dev/plugin-inmarsat-aero.md.
 
 #include "aero_acq.hpp"
+#include "aero_ambe.hpp"
+#include "aero_burst.hpp"
+#include "aero_cchan.hpp"
 #include "aero_demod.hpp"
 #include "aero_pchan.hpp"
 #include "aero_su.hpp"
@@ -24,20 +31,18 @@ namespace {
 
 using aero::cf;
 constexpr double FS = 24000;
-constexpr float ACQ_SNR_DB = 17.0f;     // weaker squared-spectrum line over the median (noise: ~12 dB at most)
-constexpr double HIST_S = 3.0;          // input kept to start the demodulator on
-constexpr double SYNC_TIMEOUT_FRAMES = 4.5;
-
-struct ModeDef {
-    const char* key;
-    double rate;        // 0 = any P channel rate
-};
+constexpr float ACQ_SNR_DB = 13.5f;   // mean of the two squared-spectrum lines over the median (noise: <= 10.3 dB in 220 searches)
+constexpr double HIST_S = 3.0;        // input kept to start the demodulator on
+constexpr double SYNC_TIMEOUT_FRAMES = 6.5;
 
 class AeroPlugin : public kp::Decoder {
 public:
-    explicit AeroPlugin(kp::Host& h) : Decoder(h), su_(h) {
+    explicit AeroPlugin(kp::Host& h) : Decoder(h), su_(h), burst_(h, su_) {
         pch_.on_su = [this](const uint8_t* su, const aero::PFrame& f, int idx) { su_.p_su(su, f.t0, f.t1, idx); };
-        pch_.on_frame = [this](const aero::PFrame& f) { on_frame(f); };
+        pch_.on_frame = [this](const aero::PFrame& f) { on_pframe(f); };
+        cch_.on_su = [this](const uint8_t* su, const aero::CFrame& f) { su_.c_su(su, f.t0, f.t1); };
+        cch_.on_frame = [this](const aero::CFrame& f) { on_cframe(f); };
+        host.fact("Voice codec", "AMBE (Aero 4800): " + dig::AeroAmbeLib::instance().status());
         reset();
     }
 
@@ -48,13 +53,17 @@ public:
         hist_base_ = 0;
         demod_.stop();
         pch_.stop();
+        cch_.stop();
         su_.reset();
+        burst_.reset();
         make_acq();
         state_ = ACQ;
         tried_.clear();
-        last_fact_ = -10;
-        frames_ok_ = frames_ = 0;
-        host.fact("Channel", "searching");
+        last_fact_ = last_ferr_ = -10;
+        rf_last_ = NAN;
+        voice_.reset();
+        in_call_ = false;
+        host.fact("Channel", bursts() ? "R / T bursts from aircraft: listening" : "searching");
     }
 
     void option(const std::string& k, const std::string& v) override {
@@ -73,6 +82,12 @@ public:
         if (!tbase_set_) {
             tbase_ = host.time();
             tbase_set_ = true;
+        }
+        follow_rf();
+        if (bursts()) {
+            burst_.process(x, n, host_t(static_cast<double>(n_)));
+            n_ += static_cast<int64_t>(n);
+            return;
         }
         // input history (to start the demodulator on what acquisition saw)
         hist_.insert(hist_.end(), x, x + n);
@@ -102,21 +117,41 @@ private:
     std::unique_ptr<aero::Acquisition> acq_;
     aero::Demod demod_;
     aero::PChannel pch_;
+    aero::CChannel cch_;
     aero::SuDecoder su_;
+    aero::BurstRx burst_;
+    bool cmode_ = false;            // locked on a C channel (else a P channel)
     std::vector<aero::SoftBit> bits_;
-    int64_t lock_at_ = 0;           // sample index where the demodulator started
+    int64_t lock_at_ = 0;
     double lock_rate_ = 0, lock_f0_ = 0;
     std::vector<std::pair<double, double>> tried_;   // (rate, f0) that did not sync
     double last_fact_ = -10, last_ferr_ = -10;
-    uint64_t frames_ok_ = 0, frames_ = 0;
+    double rf_last_ = NAN;
+    dig::AeroAmbeStream voice_;
+    bool in_call_ = false;
+    double call_start_ = 0, call_last_ = 0;
+    uint64_t cframes_ = 0, cframes_ok_ = 0, vframes_ = 0;
     const bool debug_ = std::getenv("AERO_DEBUG") != nullptr;
 
+    bool bursts() const { return mode_.rfind("burst", 0) == 0; }
     double host_t(double sample) const { return tbase_ + sample / FS; }
+
+    // the host's frequency correction (freq_error -> AFC) moves the input:
+    // keep the demodulator on the carrier
+    void follow_rf() {
+        const double rf = host.rf_hz();
+        if (std::isfinite(rf) && std::isfinite(rf_last_) && state_ == LOCK && std::fabs(rf - rf_last_) < 5000)
+            demod_.shift_carrier(-(rf - rf_last_));
+        rf_last_ = rf;
+    }
 
     void make_acq() {
         std::vector<double> wide, narrow;
-        auto want = [&](double r) { return mode_ == "auto" || mode_ == "p" + std::to_string(static_cast<int>(r)); };
-        for (double r : {4800.0, 10500.0})
+        auto want = [&](double r) {
+            const std::string k = r == 8400 ? "c8400" : "p" + std::to_string(static_cast<int>(r));
+            return mode_ == "auto" || mode_ == k;
+        };
+        for (double r : {4800.0, 8400.0, 10500.0})
             if (want(r)) wide.push_back(r);
         for (double r : {600.0, 1200.0, 2400.0})
             if (want(r)) narrow.push_back(r);
@@ -124,6 +159,15 @@ private:
     }
 
     void try_lock() {
+        if (debug_) {
+            std::string all = "acq: ";
+            for (const auto& h : acq_->hits()) {
+                char e[64];
+                snprintf(e, sizeof e, "%d@%+.1f/%.1fdB ", static_cast<int>(h.rate), h.f0, h.snr_db);
+                all += e;
+            }
+            host.log(all);
+        }
         const aero::AcqHit* best = nullptr;
         for (const auto& h : acq_->hits()) {
             if (h.snr_db < ACQ_SNR_DB) continue;
@@ -139,38 +183,46 @@ private:
             for (const auto& h : acq_->hits())
                 if (h.snr_db >= ACQ_SNR_DB && h.rate < best->rate && std::fabs(h.f0 - best->f0) < 10) best = &h;
         if (!best) return;
-        const aero::PRate* pr = aero::p_rate(best->rate);
-        if (!pr) return;
         aero::DemodCfg c;
-        c.mod = pr->mod;
-        c.rate = pr->rate;
         c.fs = FS;
-        c.decim = pr->rate <= 1200 ? 5 : pr->rate <= 2400 ? 2 : 1;
-        c.rolloff = pr->mod == aero::Mod::AQPSK ? 0.6f : 1.0f;
-        c.pll_bw = static_cast<float>(std::max(0.0012, 5.0 / pr->rate));   // loop ~5 Hz (A-BPSK) .. 12 Hz
-        c.tim_gain = pr->rate >= 4800 ? 1.2e-4f : 2e-4f;
+        const aero::PRate* pr = aero::p_rate(best->rate);
+        cmode_ = best->rate == 8400;
+        if (cmode_) {
+            c.mod = aero::Mod::AQPSK;
+            c.rate = 8400;
+            c.decim = 1;
+            c.rolloff = 0.6f;
+            c.pll_bw = 0.0015f;
+            c.tim_gain = 1.2e-4f;
+            cch_.start();
+        } else if (pr) {
+            c.mod = pr->mod;
+            c.rate = pr->rate;
+            c.decim = pr->rate <= 1200 ? 5 : pr->rate <= 2400 ? 2 : 1;
+            c.rolloff = pr->mod == aero::Mod::AQPSK ? 0.6f : 1.0f;
+            c.pll_bw = static_cast<float>(std::max(0.0012, 5.0 / pr->rate));   // loop ~5 Hz (A-BPSK) .. 12 Hz
+            c.tim_gain = pr->rate >= 4800 ? 1.2e-4f : 2e-4f;
+            pch_.start(*pr);
+        } else {
+            return;
+        }
         lock_rate_ = best->rate;
         lock_f0_ = best->f0;
         lock_at_ = hist_base_;
-        if (const char* e = std::getenv("AERO_BW")) c.pll_bw = static_cast<float>(atof(e));     // TUNING
-        if (const char* e = std::getenv("AERO_TG")) c.tim_gain = static_cast<float>(atof(e));   // TUNING
-        if (const char* e = std::getenv("AERO_RO")) c.rolloff = static_cast<float>(atof(e));    // TUNING
         demod_.start(c, best->f0, static_cast<double>(hist_base_));
-        if (const char* e = std::getenv("AERO_TS")) demod_.set_tsign(static_cast<float>(atof(e)));   // TUNING
-        pch_.start(*pr);
         state_ = LOCK;
-        char b[120];
-        snprintf(b, sizeof b, "P channel %d bit/s %s, carrier %+.0f Hz (line %.0f dB): syncing",
-                 static_cast<int>(pr->rate), pr->mod == aero::Mod::AQPSK ? "A-QPSK" : "A-BPSK", best->f0, best->snr_db);
-        host.fact("Channel", b);
-        if (debug_) {
-            std::string all = "lock attempt: ";
-            for (const auto& h : acq_->hits()) all += std::to_string(static_cast<int>(h.rate)) + "@" + std::to_string(h.f0) + "/" + std::to_string(h.snr_db) + " ";
-            host.log(all);
-        }
+        host.fact("Channel", channel_name() + ": syncing");
         // run it over the history first (the samples the acquisition saw)
         std::vector<cf> h(hist_.begin(), hist_.end());
         run_demod(h.data(), h.size());
+    }
+
+    std::string channel_name() const {
+        char b[96];
+        if (cmode_) snprintf(b, sizeof b, "C channel 8400 bit/s A-QPSK (voice)");
+        else
+            snprintf(b, sizeof b, "P channel %d bit/s %s", static_cast<int>(lock_rate_), lock_rate_ >= 4800 ? "A-QPSK" : "A-BPSK");
+        return b;
     }
 
     void run_demod(const cf* x, size_t n) {
@@ -178,7 +230,8 @@ private:
         demod_.process(x, n, bits_);
         // bit times are input sample indexes: make them host times
         for (auto& b : bits_) b.t = host_t(b.t);
-        pch_.push(bits_.data(), bits_.size());
+        if (cmode_) cch_.push(bits_.data(), bits_.size());
+        else pch_.push(bits_.data(), bits_.size());
     }
 
     void unlock(const char* why) {
@@ -187,51 +240,117 @@ private:
             tried_.clear();
         } else {
             tried_.push_back({lock_rate_, lock_f0_});
-            if (tried_.size() > 6) tried_.erase(tried_.begin());
+            if (tried_.size() > 1) tried_.erase(tried_.begin());   // only the last failure: a strong one is tried again next
         }
         demod_.stop();
         pch_.stop();
+        cch_.stop();
+        end_call();
         state_ = ACQ;
         host.fact("Channel", std::string("searching (") + why + ")");
     }
 
     void supervise() {
         const double since = static_cast<double>(n_ - lock_at_) / FS;
-        const aero::PRate& r = pch_.rate();
-        const double frame_s = r.frame / r.rate;
-        if (!pch_.synced() && pch_.frames() == 0 && since > SYNC_TIMEOUT_FRAMES * frame_s + HIST_S) {
+        const double frame_s = cmode_ ? 0.5 : pch_.rate().frame / pch_.rate().rate;
+        const bool synced = cmode_ ? cch_.synced() : pch_.synced();
+        const uint64_t frames = cmode_ ? cch_.frames() : pch_.frames();
+        if (!synced && frames == 0 && since > SYNC_TIMEOUT_FRAMES * frame_s + HIST_S) {
             unlock("no frame sync");
             return;
         }
-        if (pch_.frames() > 0 && !pch_.synced()) {
-            tried_.clear();
-            unlock("signal lost");
+        if (frames > 0 && !synced) {
+            unlock(cmode_ ? "C channel ended" : "signal lost");
             return;
         }
         const double t = host.time();
-        if (t - last_fact_ >= 1.0 && pch_.synced()) {
+        if (t - last_fact_ >= 1.0 && synced) {
             last_fact_ = t;
-            char b[160];
-            snprintf(b, sizeof b, "P channel %d bit/s %s", static_cast<int>(r.rate), r.mod == aero::Mod::AQPSK ? "A-QPSK" : "A-BPSK");
-            host.fact("Channel", b);
+            host.fact("Channel", channel_name());
+            char b[64];
             snprintf(b, sizeof b, "%+.1f Hz", demod_.carrier_hz());
             host.fact("Carrier offset", b);
         }
+        // the carrier offset to the host (its AFC re-centres the VFO), once
+        // every 2 s while synced
+        if (synced && t - last_ferr_ >= 2.0) {
+            last_ferr_ = t;
+            host.freq_error(static_cast<float>(demod_.carrier_hz()));
+        }
+        if (in_call_ && host.time() - call_last_ > 1.5) end_call();
     }
 
-    void on_frame(const aero::PFrame& f) {
-        frames_++;
+    void on_pframe(const aero::PFrame& f) {
         if (debug_) {
             char b[160];
             snprintf(b, sizeof b, "frame t=%.3f no=%d hdr=%d uwerr=%d sus %d/%d q=%.3f f=%.1f", f.t0, f.frame_no, f.header_ok,
                      f.uw_errors, f.sus_ok, f.sus, demod_.quality(), demod_.carrier_hz());
             host.log(b);
         }
-        if (f.sus_ok > 0) {
-            frames_ok_++;
-            host.valid(f.t0, f.t1);
-        }
+        if (f.sus_ok > 0) host.valid(f.t0, f.t1);
         su_.frame_done(f.sus, f.sus_ok);
+    }
+
+    void on_cframe(const aero::CFrame& f) {
+        cframes_++;
+        if (debug_) {
+            char b[160];
+            snprintf(b, sizeof b, "C frame t=%.3f uwerr=%d ref errors %d/26 sus %d/3 q=%.3f", f.t0, f.uw_errors, f.ref_errors,
+                     f.sus_ok, demod_.quality());
+            host.log(b);
+        }
+        // a frame counts when a sub-band SU passed its CRC, or the reference
+        // bits (26 known "1"s) came through nearly clean
+        const bool ok = f.sus_ok > 0 || f.ref_errors <= 2;
+        if (!ok) return;
+        cframes_ok_++;
+        host.valid(f.t0, f.t1);
+        su_.frame_done(3, f.sus_ok);
+        if (!in_call_) {
+            in_call_ = true;
+            call_start_ = f.t0;
+            voice_.reset();
+        }
+        call_last_ = f.t1;
+        // talker: a from-aircraft C channel (1.6 GHz) is the AES's transmission
+        talker_frame(f);
+        char b[120];
+        snprintf(b, sizeof b, "%llu frames (%llu clean), reference bit errors %d/26 in the last",
+                 static_cast<unsigned long long>(cframes_), static_cast<unsigned long long>(cframes_ok_), f.ref_errors);
+        host.fact("C channel frames", b);
+        if (!host.voice_wanted()) return;
+        if (!dig::AeroAmbeLib::instance().available()) {
+            host.voice_state("AMBE codec not installed");
+            return;
+        }
+        std::vector<float> pcm(25 * 160);
+        for (int k = 0; k < 25; k++) {
+            voice_.decode(f.voice[static_cast<size_t>(k)].data(), &pcm[static_cast<size_t>(160 * k)]);
+            vframes_++;
+        }
+        host.audio(pcm.data(), pcm.size());
+        const std::string who = su_.call_aes();
+        host.voice_state("voice" + (who.empty() ? std::string() : " · AES " + who));
+    }
+
+    void talker_frame(const aero::CFrame& f) {
+        const double rf = host.rf_hz();
+        const std::string aes = su_.call_aes();
+        if (!(std::isfinite(rf) && rf > 1600e6) || aes.empty()) return;
+        kp::Talker t;
+        t.id = aes;
+        t.label = "voice";
+        t.start_s = call_start_;
+        t.end_s = f.t1;
+        host.talker(t);
+    }
+
+    void end_call() {
+        if (!in_call_) return;
+        in_call_ = false;
+        const double rf = host.rf_hz();
+        if (std::isfinite(rf) && rf > 1600e6 && !su_.call_aes().empty()) host.talker_end(call_last_);
+        host.voice_state("");
     }
 };
 
@@ -240,17 +359,21 @@ private:
 KRAKEN_PLUGIN(AeroPlugin, {.id = "inmarsat_aero",
                            .name = "Inmarsat Aero (Classic)",
                            .category = "Aviation",
-                           .description = "Inmarsat Classic Aero, L band 1.5 GHz: P channel (0.6 / 1.2 kbit/s A-BPSK, 10.5 kbit/s "
-                                          "A-QPSK) found and decoded - signal units, log-ons, C-channel assignments, ACARS "
-                                          "and ADS-C positions",
+                           .description = "Inmarsat Classic Aero, L band: P channel (0.6 / 1.2 kbit/s A-BPSK, 10.5 kbit/s A-QPSK; "
+                                          "rate and carrier found automatically) - signal units, log-ons, C channel assignments, "
+                                          "ACARS, ADS-C positions; C channel voice (AMBE, README \"Digital voice codecs\"); "
+                                          "aircraft R / T bursts (1.6 GHz) with a DoA per aircraft. Bandwidth 15 kHz.",
                            .version = "1.0",
                            .sample_rate = 24000,
                            .min_vfo_rate = 15000,
                            .author = "KrakenRF",
                            .options = {{"mode", "Channel", "auto",
-                                        "auto=Auto|p600=P 600 bit/s|p1200=P 1200 bit/s|p2400=P 2400 bit/s|p4800=P 4800 bit/s|"
-                                        "p10500=P 10500 bit/s",
-                                        "Auto finds the rate; the others search only that one"}},
+                                        "auto=Auto (P / C channel)|p600=P 600 bit/s|p1200=P 1200 bit/s|p2400=P 2400 bit/s|"
+                                        "p4800=P 4800 bit/s|p10500=P 10500 bit/s|c8400=C channel 8400 bit/s (voice)|"
+                                        "burst=R / T bursts from aircraft (1.6 GHz)",
+                                        "Auto finds a continuous channel's rate and carrier; the P / C choices search only that "
+                                        "rate; R / T bursts listens for aircraft transmissions at every burst rate"}},
                            .map = true,
+                           .voice = true,
                            .messages = false,
                            .talkers = true})

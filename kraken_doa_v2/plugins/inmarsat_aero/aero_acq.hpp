@@ -62,9 +62,9 @@ private:
     double fs_, max_off_;
     Band wide_, narrow_;
     // narrow front end: low-pass + decimate by 2
-    std::vector<float> hlp_;
-    std::vector<cf> lbuf_;
-    int lpos_ = 0, lph_ = 0;
+    std::vector<float> hlp_, hwide_;
+    std::vector<cf> lbuf_, wbuf_;
+    int lpos_ = 0, lph_ = 0, wpos_ = 0;
     std::vector<AcqHit> hits_;
     void setup(Band& b, double fs, int n, int navg, std::vector<double> rates);
     void push(Band& b, cf v);

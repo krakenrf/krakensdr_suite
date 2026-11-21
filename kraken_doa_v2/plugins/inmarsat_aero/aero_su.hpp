@@ -27,9 +27,16 @@ public:
     // a P channel signal unit that passed its CRC; t0 / t1 = its frame
     void p_su(const uint8_t* su, double t0, double t1, int index);
     void frame_done(int sus, int sus_ok);
+    // a C channel sub-band signal unit that passed its CRC
+    void c_su(const uint8_t* su, double t0, double t1);
+    // the AES of the C channel call (from its sub-band signalling), "" = unknown
+    const std::string& call_aes() const { return call_aes_; }
     // a from-aircraft (R / T channel) signal unit or burst (Part 3)
-    void r_su(const uint8_t* su19, double t0, double t1, float freq_hz);
-    void t_burst(const uint8_t* id6, const std::vector<const uint8_t*>& sus, double t0, double t1, float freq_hz);
+    // returns the AES that sent it (0 = unknown)
+    uint32_t r_su(const uint8_t* su19, double t0, double t1);
+    void t_burst(const uint8_t* id6, const std::vector<const uint8_t*>& sus, double t0, double t1);
+    // what the aircraft table knows of an AES (flight, else registration)
+    std::string label_of(uint32_t aes) const;
 
     uint64_t su_ok() const { return su_ok_; }
 
@@ -45,7 +52,7 @@ private:
     Stats st_;
     // GES / satellite state
     int ges_ = -1;
-    std::string sat_;
+    std::string sat_, call_aes_;
     std::map<int, std::string> psmc_;   // GES -> its P / R channel advice
     double last_facts_ = -100;
     // user data being reassembled: key = (AES, Q, reference)
@@ -56,7 +63,10 @@ private:
         double t0 = 0, t1 = 0;
         bool down = false;
     };
-    std::map<int, Asm> asm_;   // P channel: key Q << 4 | ref (SSUs carry only that)
+    std::map<int64_t, Asm> asm_;   // key: [T burst: 1 << 40 | AES << 8 |] Q << 4 | ref (SSUs carry only Q / ref)
+    bool down_ctx_ = false;        // the SUs come from an aircraft (T burst)
+    uint32_t aes_ctx_ = 0;         // ... whose burst identifier named this AES
+    int64_t asm_key(int qref) const { return down_ctx_ ? (int64_t(1) << 40) | (int64_t(aes_ctx_) << 8) | qref : qref; }
     // the aircraft heard (AES ID -> row)
     struct Air {
         std::string reg, flight, label, text;

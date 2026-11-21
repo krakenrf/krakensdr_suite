@@ -41,8 +41,11 @@ public:
             }
         reset();
     }
-    void reset() {
-        pm_.fill(0);
+    // zero_start: the encoder starts from state 0 (bursts: the encoder is
+    // reset at the start of each burst's information field)
+    void reset(bool zero_start = false) {
+        pm_.fill(zero_start ? -1e6f : 0.0f);
+        pm_[0] = 0;
         hist_.clear();
         out_bits_.clear();
         nsteps_ = 0;
