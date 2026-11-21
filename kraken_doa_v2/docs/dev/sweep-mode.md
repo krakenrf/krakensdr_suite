@@ -1284,6 +1284,32 @@ used"):
   instant trace keeps the frame where the frame covers the window at least
   as finely (`swpTrace`). "Points sent" reads "1525 + 46,427 at 37.5 kHz"
   for a pooled set, "1525 + full 11,885,227" for a full one.
+- End to end (round 6, 2026-11-22; the receiver's 4295642 merged, a clean
+  test build, the fake heimdall; `t_dres.py`, `t_keep.py`, `t_pool2.py`):
+  the list from the real `full_sets` - the whole range at 146 Hz six
+  entries (150 kHz / 11 607 values ... 586 Hz / 2 971 307, Full 11 885
+  227), at Auto four, 88 - 108 MHz at Auto two; each step's sets on their
+  rows with the field's pool, values and spacing; two browsers on one
+  receiver (Full and 65 536 on 400 - 700 MHz at 4096): the pooled set =
+  the full set of the same sweep max-pooled by 8, byte for byte, its Hz of
+  value 0 and spacing as the contract says; a row of each kind on one
+  waterfall at x69 - the longest one-colour stretch 4 px (full), 7 (pool
+  8), 96 (fit), every row equal to a fresh paint by its own rule; a change
+  of step while a full set was in flight (1.57 M of 11.9 M values): the
+  part dropped at once, the snapshot and sets at the new pool, that
+  sweep's row by its own levels; the instant trace from a pooled set,
+  exact; the budget with mixed sizes (a 48 MB budget for the test: 3 full
+  sets kept, the older pooled ones given back, all older than any kept);
+  a stored step across a reload, across a range change that drops it from
+  the list (Full shown, nothing asked again) and back; Slow link; the
+  phone layout: 42 / 42. `t_keep` (the user's case: Full on, rows, then
+  off or Slow link - the old rows keep their sets byte for byte, x69 into
+  them: 495 peaks against 7 without) 21 / 21. Round 5's receiver (no
+  field): Fit / Full only, round 5's "on" carries over as Full, a stored
+  step shown and asked as Fit (never `SWEEP_FULL:65536`), no set at Fit;
+  the receiver before `SWEEP_FULL` (178f007): the same, nothing comes.
+  A full repaint, round 5's `swpWfRow` against round 6's in one browser,
+  136 fit rows: median 17 / 16 - 17 ms (no cost of the finer-first test).
 - A complete set is the trace's source while no frame for the window shown
   has come: right after a zoom or a pan the trace is cut from the set at the
   view's points (a point = the highest of its bins) - sharp at once, before
