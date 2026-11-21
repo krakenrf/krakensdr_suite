@@ -72,6 +72,11 @@ plugins/
 ├── beacon121/            121.5 / 243 MHz swept-tone homing signals (ELT / EPIRB / PLB, 406 MHz beacons' homers):
 │                         carriers found in a 32 kHz VFO, the sweep from a folded two-sided spectrogram;
 │                         no ID - a packet talker per beacon on its own 100 Hz carrier channel
+├── inmarsat_c/           Inmarsat-C (STD-C) TDM on the L-band downlink: 1200 symbols/s BPSK found within
+│                         +-3.6 kHz (spectrum shape, then the squared signal's line), Costas / Gardner,
+│                         unique word, 64 x 162 de-interleaver, soft Viterbi, group descrambler, packets
+│                         by their Fletcher sum check; EGC SafetyNET / FleetNET messages put together
+│                         across frames, repeats suppressed; the ocean region's satellite as a packet talker
 ├── lora/                 LoRa CSS in the full 2.4 MHz (lock_vfo): per-channel dechirp receiver
 │                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
 │                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet
