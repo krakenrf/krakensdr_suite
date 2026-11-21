@@ -1938,6 +1938,12 @@ the debug playback (Play only).
   the decoder code now; a click on a row was lost about one run in eight
   when the list moved between the test's pointer arriving and its press -
   the test moves the pointer onto the row first, as a hand does (the list
-  is held from then on), and a row follows on the release of a press on it;
+  is held from then on), and a row follows on the release of a press on it
+  (then t_cc 9 runs in a row green at both widths);
   the import paced by the receiver's answers waited 1.5 s per entry (an
-  unchanged status wasn't sent again): one every 50 ms now.
+  unchanged status wasn't sent again): one every 50 ms now. The whole
+  earlier pass again on the committed receiver (8039b88 merged): states 9,
+  fixtures 18, review 16, actions 15, stability 9, scale 12, touch 8, the
+  five scenes 10 each, misc 13, the DMR rule 9, the editor 27 and 29; the
+  first-pass receiver 13 (now also: no control channel part, no
+  `GET_TRUNK_CC` sent); palette check OK; no console errors.
