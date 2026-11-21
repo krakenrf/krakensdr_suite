@@ -23074,7 +23074,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       head = 'Searching';
       headTip = 'The receiver sweeps the ranges for control channels: the frequency in the top bar is the search\'s, not your tuning, and your VFOs move with it. The probe VFOs it puts on each carrier are not shown. A click on a control channel below ends the search and follows it';
       stopTip = `Stop now: back to ${tkMhz3(s.home_hz)} MHz; what was found so far is kept`;
-      d = [`${tkMhz3(s.centre_hz)} MHz · step ${Math.min(s.steps, (s.step || 0) + 1)} of ${s.steps} · ${pct} %${s.eta_s >= 0 ? ' · about ' + tkDurWords(s.eta_s) + ' left' : ''}`,
+      d = [`${tkMhz3(s.centre_hz)} MHz · step ${Math.min(s.steps, (s.step || 0) + 1)} of ${s.steps} · ${pct} %${s.eta_s > 0 ? ' · about ' + tkDurWords(s.eta_s) + ' left' : ''}`,
            `${digEsc(ph.charAt(0).toUpperCase() + ph.slice(1))}${rg && s.ranges.length > 1 ? ` · range ${ri + 1} of ${s.ranges.length} (${tkMhz3(rg[0])}-${tkMhz3(rg[1])})` : ''}`,
            `Found <b>${s.found_new || 0}</b> new, ${s.found_known || 0} known · ${s.carriers || 0} carrier${s.carriers === 1 ? '' : 's'}, ${s.probed || 0} tr${s.probed === 1 ? 'y' : 'ies'}`,
            `${s.tuner >= 0 ? 'T' + s.tuner + ' steps · back' : 'Back'} to ${tkMhz3(s.home_hz)} MHz when it ends`];
@@ -23106,7 +23106,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   function tkSrchHideLast() { tkSrchLastHide = (tkSt && tkSt.search_last && tkSt.search_last.t_end) || 0; tkSrchRender(); }
   // the top bar during a search (the excursion's banner)
   function tkSrchBanner(s) {
-    return {bk: 'SEARCHING CONTROL CHANNELS', bt: `${tkMhz3(s.centre_hz)} MHz · ${s.pct || 0} %${s.eta_s >= 0 ? ' · ' + tkDurWords(s.eta_s) + ' left' : ''} · found ${s.found_new || 0} new · yours ${tkMhz3(s.home_hz)} MHz`};
+    return {bk: 'SEARCHING CONTROL CHANNELS', bt: `${tkMhz3(s.centre_hz)} MHz · ${s.pct || 0} %${s.eta_s > 0 ? ' · ' + tkDurWords(s.eta_s) + ' left' : ''} · found ${s.found_new || 0} new · yours ${tkMhz3(s.home_hz)} MHz`};
   }
   function tkBannerAct() {
     if (tkSt && tkSt.search) tkSrchStop();
