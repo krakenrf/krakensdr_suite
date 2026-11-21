@@ -3841,8 +3841,10 @@ void tick_cc() {
                 ++it;
             }
         if (n) {
-            g_cc_note = std::to_string(n) + " entr" + (n == 1 ? "y" : "ies") + " of decoders without trunking dropped";
-            std::cerr << "Trunk following: " << g_cc_note << std::endl;
+            // (added to what the load said - e.g. entries over 1000 kept aside - as cc_load does)
+            const std::string m = std::to_string(n) + " entr" + (n == 1 ? "y" : "ies") + " of decoders without trunking dropped";
+            g_cc_note = g_cc_note.empty() ? m : g_cc_note + "; " + m;
+            std::cerr << "Trunk following: " << m << std::endl;
             cc_changed();
         }
     }
