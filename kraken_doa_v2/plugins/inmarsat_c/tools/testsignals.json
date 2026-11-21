@@ -1,0 +1,49 @@
+[
+{
+ "id": "inmarsat-c-ncs-safetynet",
+ "title": "Inmarsat-C: NCS common channel with SafetyNET messages",
+ "description": "A synthetic AOR-E NCS common channel (NCS 144) on 1541.450 MHz, carrier 700 Hz above the VFO centre, Es/N0 about 10 dB: bulletin board and signalling channel descriptor in every frame, filler packets, and three EGC messages from synthetic LESs - a two-packet METAREA 5 warning (LES 114, msg 4101), an all-ships call (LES 102, msg 77) and a coastal warning (NAVAREA 1, station A, subject B; LES 104, msg 9). Four frames, looped: after the first loop every EGC packet is a repeat and is suppressed. Expect Channel 'NCS common channel, NCS 144 (AOR-E)', three EGC events, and the talker 'Inmarsat AOR-E' (the satellite) at 70 deg.",
+ "rf_hz": 1541450000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 34.56,
+ "vfo": {"bw_khz": 9.6},
+ "commands": ["DEC_SQUELCH_METHOD:0:DIGITAL", "DEC_SQUELCH_ENABLE:0:1"],
+ "steps": [["{tools}/inmc_gen.py", "ncs.cf32", "--rate", "24000", "--frames", "4", "--start-symbol", "0", "--tail", "0",
+            "--offset", "700", "--egc-frame", "1", "--origin", "144", "--frame0", "6200", "--seed", "3",
+            "--egc", "31:05:114:4101:METAREA V\nSYNTHETIC TEST WARNING NR 001\nGALE WARNING FOR THE TEST AREA. THIS IS A GENERATED MESSAGE FOR THE KRAKENSDR DEBUG PLAYBACK. IT SPANS TWO PACKETS OF THE DOUBLE-HEADER FORMAT SO THAT THE REASSEMBLY ACROSS FRAMES IS EXERCISED. WIND FORCE 8 IN THE TEST AREA, SEA STATE ROUGH, VISIBILITY GOOD. END OF THE FIRST BLOCK AND THE START OF THE SECOND ONE.\nNNNN",
+            "--egc", "00::102:77:ALL SHIPS TEST CALL - GENERATED",
+            "--egc", "13:014142:104:9:COASTAL WARNING TEST - GENERATED"]],
+ "scene": {"rate": 24000, "snr_db": -3, "seed": 3, "sources": [
+  {"name": "Inmarsat AOR-E", "file": "ncs.cf32", "rate": 24000, "at": 0, "bearing": 70}]},
+ "expect": [
+  {"tid": "Inmarsat AOR-E", "bearing": 70},
+  {"vfo": 0, "bearing": 70},
+  {"event": "NCS common channel, NCS 144"},
+  {"event": "NAVAREA / METAREA 5, LES 114, msg 4101"},
+  {"event": "all ships, LES 102, msg 77"},
+  {"event": "LES 104, msg 9"}
+ ],
+ "tol_deg": 5
+},
+{
+ "id": "inmarsat-c-les-tdm-weak",
+ "title": "Inmarsat-C: a weak LES TDM, 1.5 kHz off, with a FleetNET group call",
+ "description": "A synthetic LES TDM of LES 102 (AOR-E) at 1539.615 MHz, carrier 1.5 kHz below the VFO centre, Es/N0 about 4 dB (a few dB above the decoding threshold): bulletin board, filler packets and a FleetNET group call (group 1234, LES 102, msg 300). Expect Channel 'LES TDM, LES 102 (AOR-E)', the carrier near -1500 Hz, one EGC event and the talker 'Inmarsat AOR-E' at 200 deg.",
+ "rf_hz": 1539615000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 34.56,
+ "vfo": {"bw_khz": 9.6},
+ "commands": ["DEC_SQUELCH_METHOD:0:DIGITAL", "DEC_SQUELCH_ENABLE:0:1"],
+ "steps": [["{tools}/inmc_gen.py", "les.cf32", "--rate", "24000", "--frames", "4", "--start-symbol", "0", "--tail", "0",
+            "--offset", "-1500", "--egc-frame", "1", "--origin", "102", "--frame0", "300", "--seed", "4",
+            "--egc", "02:04D2:102:300:FLEETNET GROUP CALL TEST - GENERATED"]],
+ "scene": {"rate": 24000, "snr_db": -9, "seed": 4, "sources": [
+  {"name": "Inmarsat AOR-E", "file": "les.cf32", "rate": 24000, "at": 0, "bearing": 200}]},
+ "expect": [
+  {"tid": "Inmarsat AOR-E", "bearing": 200},
+  {"event": "LES TDM, LES 102"},
+  {"event": "group 1234, LES 102, msg 300"}
+ ],
+ "tol_deg": 5
+}
+]
