@@ -18,7 +18,8 @@ namespace dig {
 
 // OFF, AUTO (every plugin that declares auto_detect runs and the one whose
 // frames pass their checks wins) or one fixed PLUGIN (plugins/<id>/; the
-// built-in protocols are plugins too: p25, dmr, tetra, dstar, nxdn, mpt1327)
+// built-in protocols are plugins too: p25, dmr, tetra, dstar, nxdn, ysf,
+// mpt1327)
 enum class Mode : int { OFF = 0, AUTO = 1, PLUGIN = 2 };
 const char* mode_name(Mode m);     // "OFF", "AUTO", "PLUGIN"
 // Wire / persisted form: "OFF", "AUTO" or "PLUGIN:<id>"
@@ -31,18 +32,47 @@ bool valid_plugin_id(const std::string& id);   // [a-z0-9_-]{1,32}, not "sdk"
 // "sfn" -> "dtv", "ctcss" -> "analog_id", "pocsag" -> "pagers"), else the id itself
 std::string renamed_plugin(const std::string& id);
 
-// Options of one VFO's decoder (sidebar settings)
+// The VFO decoder's logging mode (the decoder tab's "Logging"): what it writes
+// to the decoder data log while "Allow logging to disk" is on (decoder_log.cpp)
+enum : int {
+    LOG_OFF = 0,   // nothing
+    LOG_ON = 1,    // "Log": events, text messages, positions, incidents
+    LOG_ALL = 2,   // "Log All": Log + the repeated control-channel messages (the plugin's verbose) + raw frames
+};
+
+constexpr int POS_S_DEFAULT = 10, POS_S_MIN = 1, POS_S_MAX = 3600;
+
+// Options of one VFO's decoder (the decoder tab's settings)
 struct Options {
-    bool verbose = false;      // also log repeating broadcasts / idle chatter
-    bool invert = false;       // spectrum inverted (I/Q swapped source)
+    // "Show all messages" (the "Log all" tick until 2026-11-19): the plugin
+    // also reports the messages a control channel repeats constantly. The
+    // plugin's kp::Host::verbose() = this OR (log == LOG_ALL and logging to
+    // disk allowed)
+    bool verbose = false;
+    // logging mode (LOG_*); a new VFO / decoder starts at Off
+    int log = LOG_OFF;
+    // "Positions every" (2026-11-19; the global DECODER_LOG_POS_S before): the
+    // decoder log keeps at most one position per object in this many seconds,
+    // 1 .. 3600 (POS_S_*). Only the log - the map gets every point
+    int pos_s = POS_S_DEFAULT;
     bool map = false;          // plot the decoder's map points on the web UI's 🗺 Map (the decoder tab's "Plot on map")
     // the plugins' own options, "<plugin id>.<key>" -> value
     std::map<std::string, std::string> plugin;
 };
-// Persisted form "v=1&i=0&dmr.slot=1" (values percent-encoded); also reads
-// the old "verbose/slot/nac/invert" form
+// Persisted form "v=1&l=2&ps=10&dmr.slot=1" (values percent-encoded; an
+// older kraken_doa ignores "l" and "ps"). Also reads the old
+// "verbose/slot/nac/invert" form; the removed Invert option ("i", the old
+// form's 4th field; 2026-11-19) is ignored. Options stored before the logging mode
+// existed (no "l") get Log, and *no_log_key is set (the caller migrates: Log
+// All where the old log types had raw frames); stored before the per-VFO
+// "Positions every" (no "ps"): *no_pos_key is set and pos_s is the default -
+// the caller gives it the old global DECODER_LOG_POS_S
 std::string options_to_string(const Options& o);
-Options options_from_string(const std::string& s);
+Options options_from_string(const std::string& s, bool* no_log_key = nullptr, bool* no_pos_key = nullptr);
+// "1" .. "3600" (whole seconds) -> the interval; -1 = not one
+int parse_pos_s(const std::string& v);
+// "0" | "1" | "2" | "off" | "log" | "all" | "log all" | "log_all" (any case) -> LOG_*; -1 = not a mode
+int parse_log_mode(const std::string& v);
 bool valid_option_key(const std::string& k);   // "<plugin id>.<[a-z0-9_]{1,32}>"
 
 int64_t now_ms();
@@ -114,13 +144,28 @@ public:
     // table's keep time left out (with their details)
     std::string tables_json() const;
 
-    // --- Plots (kp::Host::plot): the latest per plugin, as JSON ---
-    void plot_set(const std::string& plugin, std::string json);
+    // --- Plots (kp::Host::plot): the latest per plugin and plot id, as JSON ---
+    // key: "<plugin>" (the plugin's one plot) or "<plugin>/<id>" (a named one,
+    // kp::Plot::id); a new named key past max_named of the plugin's is dropped
+    void plot_set(const std::string& plugin, const std::string& key, std::string json, size_t max_named = 0);
     void plot_clear();
-    // {"<plugin>":{t, xu, yu, x0, dx, ymin, ymax, thr, y:[..], mk:[[x, label, talker]..], age}}
+    // {"<key>":{t, xu, yu, x0, dx, ymin, ymax, thr, y:[..], mk:[[x, label, talker]..],
+    //  [id, pos, opt, also, snap, step,] age}}
     std::string plots_json() const;
 
+    // --- An option's choices sent at run time (kp::Host::option_choices) ---
+    // (checked by the caller); an empty list removes them. Run-time state
+    // only: cleared with clear_all() (retune, decoder switched) and per
+    // plugin when its process starts or crashes; never persisted
+    void choices_set(const std::string& plugin, const std::string& key, std::vector<std::pair<std::string, std::string>> list);
+    void choices_clear(const std::string& plugin);
+    // {"<plugin>.<key>":[[value, label],...]} (the keys as in the status's opts.plugin)
+    std::string choices_json() const;
+
 private:
+    // "<plugin>.<key>" -> (value, label) pairs
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> choices_;
+    static constexpr size_t MAX_CHOICES_BYTES = 32768;   // values + labels of all lists
     struct PlotEntry { std::string json; int64_t updated_ms; };
     std::map<std::string, PlotEntry> plots_;
     struct Fact { std::string key, value; int64_t updated_ms; };

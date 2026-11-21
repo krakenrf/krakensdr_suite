@@ -51,7 +51,7 @@ so its documentation applies):
   devices" time after its last message - 24 hours by default.
 - **Events**: a new device, button presses, door / alarm / tamper states,
   low battery and other alarms (unusual ones start with "⚠"); every message
-  with "Log all messages" (verbose).
+  with "Show all messages" (verbose).
 - **DoA per device** (🗺 Map → 📡 DF panel, coherent mode, DoA on): each
   decoded transmission is reported as a talker packet of its device (model +
   id), at the burst's measured carrier frequency and occupied bandwidth.

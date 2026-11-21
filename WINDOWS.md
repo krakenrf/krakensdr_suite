@@ -15,7 +15,8 @@ apps the way `run.sh` does on Linux.
    *Replace Driver* (or *Install Driver*). Repeat for each of the five entries
    (the list shows one per tuner). Do NOT replace the driver of interface 1, and
    on the KrakenSDR Wideband variant leave the moRFeus LO (`10C4 EAC9`) on
-   Windows' own HID driver.
+   Windows' own HID driver. Ordinary RTL-SDR dongles (no KrakenSDR, see
+   *Ordinary RTL-SDR dongles* in README.md) need the same driver, once each.
 2. **Build.** Double-click `build_windows.bat` (or run it in a terminal). The
    first run installs [MSYS2](https://www.msys2.org) into `C:\msys64` if it is
    not there (no administrator rights needed; ~1 GB with the compilers), then
@@ -99,7 +100,7 @@ source checkout (`build_windows.bat`), then packaged again with
 `kraken_doa_v2\transcribe\build\kraken_whisper.exe` /
 `kraken_doa_v2\plugins\<id>\build\decoder.exe` into the same folder of the
 package; ↻ in the plugin list picks up a new plugin). The package carries no
-speech models: the Voice to Text box downloads them. The build steps the web
+speech models: ⚙ Setup Settings → 🗣 Voice to Text downloads them (⬇ Get). The build steps the web
 UI shows on a Windows receiver are meant for that source checkout.
 
 The package's `LICENSE.txt` says which licence covers which program;
@@ -169,11 +170,11 @@ librtlsdr fork and its tools, libusb). Pass the folder on with the package
   `build_windows.bat` (or `make -C kraken_doa_v2 whisper` in an MSYS2 UCRT64
   shell) builds whisper.cpp and fetches the base.en model.
 - **Digital voice codecs** (not shipped - licensing, see the README's
-  "Digital voice codecs"; the web UI's "🔐 Digital Decoders" box shows the
+  "Digital voice codecs"; the web UI's ⚙ Setup Settings → 🔐 Decoders shows the
   steps below for a missing one). Build them in the MSYS2 UCRT64 shell
   (`C:\msys64\ucrt64.exe`) and put the results in the `kraken_doa_v2` folder,
   next to `kraken_doa.exe`:
-  - DMR / D-STAR / NXDN (AMBE, mbelib): `libmbe.dll` (or
+  - P25 Phase 2 / DMR / D-STAR / NXDN / Yaesu Fusion DN (AMBE, mbelib): `libmbe.dll` (or
     `KRAKEN_MBELIB=<path>`), as the `.so` on Linux:
 
     ```
@@ -210,6 +211,13 @@ librtlsdr fork and its tools, libusb). Pass the folder on with the package
     a patch file as text unless told `--binary`, and the codec's sources
     have DOS (CRLF) line ends - without it every hunk fails with
     "different line endings".
+  - DAB+ (HE-AAC v2, Fraunhofer FDK AAC): MSYS2's package, then copy
+    `C:\msys64\ucrt64\bin\libfdk-aac-2.dll` into the `kraken_doa_v2` folder
+    (or set `KRAKEN_AAC_LIB=<path>`; or have it on the PATH):
+
+    ```
+    pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac
+    ```
 
   Then switch the decoders off and on (or restart the stack); the box shows
   the codec as installed.

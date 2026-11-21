@@ -594,9 +594,11 @@ void recover_coherence(bool manual) {
     // stable frequency could never converge and would leave the noise source
     // stuck on across the scan. In both, flushing restarts positional alignment,
     // which is all that is meaningful.
+    // (generic RTL-SDR mode never leaves independent / wideband scan; checked
+    // too so nothing there can ever reach the noise-source recalibration)
     auto needs_flush_only = []() {
         return operating_mode.load() != OperatingMode::COHERENT ||
-               discrete_scanner.enabled.load();
+               discrete_scanner.enabled.load() || generic_rtlsdr();
     };
     if (needs_flush_only()) {
         // No calibration will run: the noise source must not stay on through
@@ -934,6 +936,12 @@ void periodic_calibration_monitor(CorrelationResult& correlation_result) {
         // periodic check disabled, under the same conditions
         const bool manual = calibration_check_requested.exchange(false, std::memory_order_acq_rel);
 
+        // Generic RTL-SDR mode: nothing to check (the commands refuse it)
+        if (generic_rtlsdr()) {
+            if (manual) last_cal_check_result = 3;
+            last_check = steady_clock::now();
+            continue;
+        }
         // --kerberos: the check would energize the noise source with antennas
         // connected - never run it, regardless of the enable setting.
         if (kerberos_manual_cal_only()) {

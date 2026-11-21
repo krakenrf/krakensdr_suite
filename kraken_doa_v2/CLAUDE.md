@@ -58,7 +58,8 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
   THE MAP", "👁 VIEWSHED", ...), which the topic files cite.
 - `tools/`: offline benches and validators (`decim_bench.cpp`,
   `digi_test.cpp`, `replay_validate.mjs`, `pathloss_validate.mjs`,
-  `range_validate.mjs`, `rdf_sim.cpp`, `fast_log_test.cpp`).
+  `range_validate.mjs`, `rdf_sim.cpp`, `fast_log_test.cpp`,
+  `theme_palette.py`: the page's colour palette and its check).
 
 ## Threads and the command path
 
@@ -105,6 +106,23 @@ The page (`kraken_doa.html`)
   `const`s exist.
 - The sidebar is scaled with CSS `zoom`: anything inside it positioned with
   `position:fixed` from `getBoundingClientRect()` must divide by the zoom.
+- No explanations on the controls, anywhere on the page: short labels and
+  states, the rest in a `?` help tip (`helpTip()` in JS) or a `title`; a new
+  sidebar box needs its own `data-sb` key (`docs/dev/sidebar.md`).
+- A `title` is shown by the page's own tooltip (hover, focus; on touch
+  through help mode - the `?` button - or press and hold), with no setup;
+  it moves to `data-tip` on first use, so code reads help text with
+  `tipText(el)`, never `el.title` (`docs/dev/sidebar.md`, "How help is
+  shown").
+- Pictograms come from the page's icon set: `icon('name')` (inline SVG
+  sprite), never an emoji (`docs/dev/icons.md`).
+- No browser dialogs: use `uiConfirm` / `uiAlert` / `uiPrompt` (promises;
+  the verb on the button), never `confirm` / `alert` / `prompt`
+  (`docs/dev/sidebar.md`, "Dialogs").
+- Colours come from the palette: `var(--token)` in the CSS, the token's hex
+  in JS / canvas code; data palettes (VFO colours, colour scales, category
+  swatches) are never changed (`docs/dev/theme.md`,
+  `tools/theme_palette.py --check`).
 - Shared state (saved frequencies, scan ticks, settings) lives in the
   receiver: the page sends a command and redraws from the broadcast every
   page gets - no optimistic updates.
@@ -153,6 +171,12 @@ Sandboxes and secrets
 - The AI assistant controls the receiver only through `apply_command`
   (refused while "Read only" is on) and may not edit `plugins/*/LICENSE*`;
   keep new MCP control tools on that path (`docs/dev/ai-assistant.md`).
+- `POWER:` (restart / reboot / shutdown, `power.cpp`) is taken only from a
+  page's own socket (`ControlHandler::handle_page_message`), never from
+  the replay, the assistant, a test transmission's commands or the
+  scanners, and is never persisted (`docs/dev/power.md`). `ANT_BIAS:` (the
+  antenna bias tees, DC on the antenna ports) is kept the same way, and is
+  refused during a playback (`docs/dev/bias-tees.md`).
 
 ## Testing a change
 
@@ -161,8 +185,10 @@ the job's scratch directory (not committed). The established setup:
 - A TEST build: a copy of the tree with the ports in `include/config.hpp`
   moved (e.g. 2808x / 2809x) plus `KRAKEN_AI_MCP_PORT`, run from a scratch
   directory (its own `doa_settings.json`). Never test against the live
-  stack's ports or settings. On Windows also give the exe another name - the
-  launcher's stale-process sweep stops any `kraken_doa.exe`.
+  stack's ports or settings. Give the test exe another name (e.g.
+  `kraken_doa_test`): the stale-process sweep of `run.sh` (`pgrep -x`) and
+  of the Windows launcher stops any `kraken_doa` / `kraken_doa.exe`, so a
+  live stack started meanwhile ends a test server of that name mid-test.
 - A fake heimdall in Python that streams synthetic 8091 packets (a UCA
   scene with tones / signals at known bearings, the noise flag, retunes) and
   obeys 8092 commands.
@@ -183,17 +209,23 @@ the job's scratch directory (not committed). The established setup:
 | Config constants, MUSIC DoA, UCA element ordering | `configuration.md` |
 | Arbitrary VFO bandwidth, the decimator (plans, block FIRs, shared pass, measurements) | `vfo-bandwidth.md` |
 | Operating modes, VFO cards, VFO tuning step, spectrum zoom, independent panes | `operating-modes.md` |
+| The sidebar's boxes (collapse, move, remembered layout); how controls and text are written on the whole page | `sidebar.md` |
+| The colour palette (tokens, the reasoning, rules, data colours that stay) | `theme.md` |
+| The icon set (one monochrome SVG sprite, `icon()`, the names; no emoji) | `icons.md` |
 | KrakenSDR Wideband (downconverter) variant | `wideband-variant.md` |
 | Patch / 3D topology; antenna array calculator | `patch-3d-topology.md`, `array-calculator.md` |
 | Spectrum views (FFT message type 7) | `spectrum-views.md` |
 | Noise floor (the spectrum's 0 dB) | `noise-floor.md` |
+| Bearing spectrum: the spectrum coloured by the DoA of each point (FFT message type 9, `BIN_DOA:`) | `bearing-spectrum.md` |
 | VFO audio (mixer, latency control) | `vfo-audio.md` |
 | FFT (pffft); liquid-dsp | `fft-pffft.md`, `liquid-dsp.md` |
 | Digital decoders: engine, AFC, protocol receivers, decoder tabs and tables | `digital-decoders.md` |
-| Decoder plugins (process model, registry); digital voice (codecs) | `decoder-plugins.md`, `digital-voice.md` |
+| Decoder plugins (process model, registry); digital voice (codecs, incl. DAB+'s AAC library) | `decoder-plugins.md`, `digital-voice.md` |
 | Digital squelch; fixed-frequency decoders | `digital-squelch.md`, `fixed-frequency-decoders.md` |
 | DoA per talker (ID separation, packets, covariances) | `doa-per-talker.md` |
-| Plugins: ACARS, VDL Mode 2, ADS-B, AIS, ISM, LoRa, Pagers, RDS, Radiosonde, FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME, ILS / VOR, Analog FM IDs, 406 MHz, Wildlife | `plugin-acars.md`, `plugin-vdl2.md`, `plugin-adsb.md`, `plugin-ais.md`, `plugin-ism.md`, `plugin-lora.md`, `plugin-pagers.md`, `plugin-rds.md`, `plugin-radiosonde.md`, `plugin-flarm.md`, `plugin-dtv.md`, `plugin-cells.md`, `plugin-radar.md`, `plugin-ssr1030.md`, `plugin-uat.md`, `plugin-dme.md`, `plugin-ils.md`, `plugin-analog-id.md`, `plugin-beacon406.md`, `plugin-wildlife.md` |
+| Plugins: ACARS, VDL Mode 2, ADS-B, AIS, ISM, LoRa, Pagers, RDS, DAB / DAB+, Radiosonde, FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME, ILS / VOR, Analog FM IDs, 406 MHz, 121.5 MHz beacons, Wildlife | `plugin-acars.md`, `plugin-vdl2.md`, `plugin-adsb.md`, `plugin-ais.md`, `plugin-ism.md`, `plugin-lora.md`, `plugin-pagers.md`, `plugin-rds.md`, `plugin-dab.md`, `plugin-radiosonde.md`, `plugin-flarm.md`, `plugin-dtv.md`, `plugin-cells.md`, `plugin-radar.md`, `plugin-ssr1030.md`, `plugin-uat.md`, `plugin-dme.md`, `plugin-ils.md`, `plugin-analog-id.md`, `plugin-beacon406.md`, `plugin-beacon121.md`, `plugin-wildlife.md` |
+| Analog TV (PAL/NTSC luma + display); TEMPEST screen reconstruction (auto/manual video-mode detection, display, source DoA); deep-reconstruction plan | `plugin-analogtv.md`, `plugin-tempest.md`, `tempest-deep-plan.md` |
+| Plugin video display channel (`host.video_frame`, the per-VFO canvas) | `plugins/SDK.md` *Video frames* |
 | Map pane and decoder map points | `map.md` |
 | Station on the map; map search | `station-on-map.md`, `map-search.md` |
 | Saved frequencies and map markers | `saved-frequencies.md` |
@@ -202,6 +234,7 @@ the job's scratch directory (not committed). The established setup:
 | Viewshed; path loss (P.1812, ITM, P.2108, coverage) | `viewshed.md`, `path-loss.md` |
 | Incident map (pager addresses) | `incident-map.md` |
 | Mobile direction finding; log replay | `mobile-df.md`, `log-replay.md` |
+| Drive mode (the map full-window, one big bearing, big buttons, Day / Night, wake lock) | `drive-mode.md` |
 | Range from signal strength (level -> dBm, calibration, the sweep, the posterior); a VFO's level on mouseover | `range.md` |
 | Array calibration from ADS-B (experimental) | `array-calibration.md` |
 | Debug playback | `debug-playback.md` |
@@ -210,4 +243,6 @@ the job's scratch directory (not committed). The established setup:
 | Voice to Text | `voice-to-text.md` |
 | AI assistant (MCP server, bridge, lockdown, sandbox, map layers, IQ capture) | `ai-assistant.md` |
 | Web mapper output | `web-mapper.md` |
+| Restart / Shut down from the page (power commands, platforms, privileges, safety) | `power.md` |
+| Antenna bias tees from the top bar (ANT_BIAS -> heimdall's set_antenna_bias_tees, refusals, compatibility, why two presses) | `bias-tees.md` |
 | Hot paths, DC correction, FFT dB, AM loops, MUSIC gates, dev tasks, key files, common issues | `reference.md` |

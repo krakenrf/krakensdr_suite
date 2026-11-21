@@ -10,6 +10,7 @@
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/music_processor.hpp"
+#include "signal_processing/bin_doa.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
 #include "continuous_scanner.hpp"
@@ -35,7 +36,10 @@
 #include "geo_address.hpp"   // geo::json_parse
 #include "digital/dig_plugin.hpp"
 #include "utils/parse_num.hpp"
+#include "power.hpp"
+#include "antenna_bias.hpp"
 #include <string>
+#include <utility>
 #include <sstream>
 #include <iostream>
 #include <algorithm>
@@ -354,6 +358,7 @@ static bool is_replayed_command(string_view msg) {
         // only does while beamforming is on)
         "BEAMFORMING_MODE:", "MANUAL_STEERING:", "STEERING_ANGLE:",
         "MVDR_DIAGONAL_LOADING:",
+        "BIN_DOA:",   // 🎨 bearing spectrum
         "STATION_ID:", "LOCATION_SOURCE:", "STATIC_LOCATION:",
         "LOG_INTERVAL:", "LOG_FORMAT:",
         "WEB_MAPPER:", "WEB_MAPPER_MODE:", "WEB_MAPPER_KEY:",
@@ -506,7 +511,16 @@ static bool apply_decimator_snapshot(const string& snap) {
             // or the old "verbose/slot/nac/invert")
             string tok;
             if (getline(es, tok, ',') && !dig::parse_mode_string(tok, &v.digital, &v.plugin)) v.digital = dig::Mode::OFF;
-            if (getline(es, tok, ',')) v.dopts = dig::options_from_string(tok);
+            if (getline(es, tok, ',')) {
+                // options stored before the logging mode (2026-11-19) get Log; Log All where the
+                // old log types had raw frames (DECODER_LOG_TYPES is replayed before DECIMATORS).
+                // Stored before the per-VFO Positions every: the old global DECODER_LOG_POS_S
+                // (also replayed before), so nothing changes for an updated receiver
+                bool no_log_key = false, no_pos_key = false;
+                v.dopts = dig::options_from_string(tok, &no_log_key, &no_pos_key);
+                if (no_log_key && declog::legacy_raw()) v.dopts.log = dig::LOG_ALL;
+                if (no_pos_key) v.dopts.pos_s = declog::pos_interval();
+            }
             // optional (newer files): the VFO's tuner (wideband / independent mode)
             if (getline(es, tok, ',') && !tok.empty()) v.tuner = std::clamp(stoi(tok), 0, MAX_CHANNELS - 1);
             // optional (newer files): Voice to Text on this VFO
@@ -541,7 +555,10 @@ static bool apply_decimator_snapshot(const string& snap) {
         decimator_manager.setSquelchEnabled(id, v.sq_en);
         decimator_manager.setSquelchLevel(id, v.sq_db);
         decimator_manager.setSquelchMethod(id, v.sq_method);
-        if (auto inst = decimator_manager.getDecimator(id)) inst->tuner_channel = v.tuner;
+        // a tuner this receiver doesn't have (a snapshot from a bigger array -
+        // a KrakenSDR's VFOs on one generic dongle): tuner 0
+        if (auto inst = decimator_manager.getDecimator(id))
+            inst->tuner_channel = v.tuner < std::clamp(active_num_elements.load(), 1, MAX_CHANNELS) ? v.tuner : 0;
         if (v.digital != dig::Mode::OFF) decimator_manager.setDigitalOptions(id, v.dopts);
         decimator_manager.setDigitalMode(id, v.digital, v.plugin);
         decimator_manager.setTranscribe(id, v.transcribe);
@@ -570,6 +587,10 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     out.push_back(build_wb_variant_json());
     // Operating mode + independent mode's per-tuner tuning
     out.push_back(build_operating_mode_json());
+    // ⏻ / ↻ the power actions this installation offers (and one in progress)
+    out.push_back(power::state_message());
+    // the antenna bias tees as heimdall reports them (also in every system_status)
+    out.push_back(antbias::state_message());
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     for (const auto& [key, cmd] : sync_replay_store) {
         out.push_back(make_sync_cmd_json(cmd));
@@ -691,7 +712,7 @@ static long long steady_ms_now() {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-string ControlHandler::build_operating_mode_json() {
+string ControlHandler::build_operating_mode_json(const string& error) {
     ostringstream o;
     o << "{\"operating_mode\":{\"mode\":\"" << mode_name(operating_mode_index()) << "\",\"tuners\":[";
     for (int i = 0; i < MAX_CHANNELS; i++) {
@@ -699,8 +720,42 @@ string ControlHandler::build_operating_mode_json() {
         o << "{\"f\":" << static_cast<long long>(llround(indep_tuner_freq_hz[i].load()))
           << ",\"g\":" << indep_tuner_gain_db[i].load() << "}";
     }
-    o << "]}}";
+    // generic RTL-SDRs (no KrakenSDR): the page disables Coherent (and
+    // Wideband with one tuner: system_status active_elements)
+    o << "],\"generic_rtlsdr\":" << (server_generic_rtlsdr.load() ? "true" : "false");
+    if (!error.empty()) o << ",\"error\":\"" << json_escape(error) << "\"";
+    o << "}}";
     return o.str();
+}
+
+// Why heimdall can't run mode m now ("" = it can): generic RTL-SDRs have no
+// coherent array, and one tuner no wideband scan. A debug playback is a
+// coherent array of its own (its packets never set the generic flag)
+static string generic_mode_refusal(int m) {
+    if (!server_generic_rtlsdr.load() || playback::active()) return "";
+    if (m == 0) return "coherent mode needs a KrakenSDR - generic RTL-SDRs run as independent receivers";
+    if (m == 1 && min(active_num_elements.load(), num_channels.load()) < 2)
+        return "the wideband scan needs two or more tuners";
+    return "";
+}
+
+void ControlHandler::on_generic_rtlsdr_changed() {
+    broadcast(build_operating_mode_json());
+}
+
+void ControlHandler::clamp_vfo_tuners() {
+    const int n = std::clamp(active_num_elements.load(), 1, MAX_CHANNELS);
+    bool moved = false;
+    for (const auto& inst : decimator_manager.getAllDecimators()) {
+        if (!inst || inst->being_deleted.load()) continue;
+        const int t = inst->tuner_channel.load();
+        if (t < n) continue;
+        inst->tuner_channel = 0;
+        moved = true;
+        cout << "VFO " << inst->id << ": tuner " << t << " is gone (" << n << " tuner" << (n == 1 ? "" : "s")
+             << ") - on tuner 0 now" << endl;
+    }
+    if (moved) broadcast(MessageBuilders::build_decimator_info_message());
 }
 
 bool ControlHandler::apply_operating_mode_state(int mode) {
@@ -809,14 +864,22 @@ static void persist_after_sf_scan() {
 void ControlHandler::note_server_mode(int mode) {
     static std::atomic<bool> pending{false};
     if (mode == operating_mode_index()) return;
+    // The client in coherent mode against generic RTL-SDRs (the startup
+    // default, a coherent request heimdall refused): it can't be - follow at
+    // once, and don't save it (a KrakenSDR's saved mode stays the user's)
+    auto forced = [] {
+        return operating_mode_index() == 0 && !generic_mode_refusal(0).empty();
+    };
     // A change the client made itself is still on its way through heimdall
-    if (steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000) return;
+    if (!forced() && steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000) return;
     if (!loop || pending.exchange(true)) return;
-    loop->defer([mode] {
+    loop->defer([mode, forced] {
         pending = false;
+        const bool force = forced();
         if (mode == operating_mode_index() ||
-            steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000) return;
-        cout << "heimdall is in " << mode_name(mode) << " mode - following it" << endl;
+            (!force && steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000)) return;
+        cout << "heimdall is in " << mode_name(mode) << " mode - following it"
+             << (force ? " (generic RTL-SDRs: no coherent mode)" : "") << endl;
         if (mode == 2) {
             // what the tuners actually run (the header's float frequency)
             for (int i = 0; i < min(num_channels.load(), MAX_CHANNELS); i++)
@@ -825,7 +888,7 @@ void ControlHandler::note_server_mode(int mode) {
         if (mode != 1 && scanner_manager.isRunning()) scanner_manager.stop();
         if (sfscan::running()) sfscan::stop(string("heimdall switched to ") + mode_name(mode) + " mode");
         apply_operating_mode_state(mode);
-        SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
+        if (!force) SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
     });
 }
 
@@ -1775,7 +1838,9 @@ void ControlHandler::handle_message_impl(string_view message) {
             if (size_t c2 = rest_s.find(':'); c2 != string::npos) {
                 tuner = stoi(rest_s.substr(c2 + 1));
                 rest_s = rest_s.substr(0, c2);
-                if (tuner < 0 || tuner >= MAX_CHANNELS) throw CommandRejected("no such tuner");
+                if (tuner < 0 || tuner >= MAX_CHANNELS ||
+                    (independent_mode_enabled.load() && tuner >= active_num_elements.load()))
+                    throw CommandRejected("no such tuner");
             }
             float offset_khz = stof_finite(rest_s);
             float offset_hz = offset_khz * 1000.0f;
@@ -1973,9 +2038,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         record_decimator_snapshot();
     }
     else if (message.starts_with("DIGITAL_OPT:")) {
-        // Format: DIGITAL_OPT:id:key:value - verbose 0|1, invert 0|1, map 0|1 (Plot on map), or a
-        // plugin's own option "<plugin id>.<key>" (value "" = its default;
-        // the plugin checks the value). Old keys: dmr_slot, p25_nac
+        // Format: DIGITAL_OPT:id:key:value - verbose 0|1 (Show all messages), log 0|1|2 (Logging:
+        // Off / Log / Log All; also the words off, log, all), pos_s 1-3600 (Positions every N s:
+        // the decoder log's position rate), map 0|1 (Plot on map), or a plugin's own
+        // option "<plugin id>.<key>" (value "" = its default; the plugin checks the
+        // value). Old keys: dmr_slot, p25_nac; invert (removed 2026-11-19) is refused
         string params = string(message.substr(12));
         size_t c1 = params.find(':');
         size_t c2 = c1 == string::npos ? string::npos : params.find(':', c1 + 1);
@@ -1992,7 +2059,19 @@ void ControlHandler::handle_message_impl(string_view message) {
             if (val == "any" || val == "-1") val.clear();
         }
         if (key == "verbose") o.verbose = val == "1";
-        else if (key == "invert") o.invert = val == "1";
+        else if (key == "log") {
+            const int m = dig::parse_log_mode(val);
+            if (m < 0) throw CommandRejected("log must be 0 (Off), 1 (Log) or 2 (Log All)");
+            o.log = m;
+            g_applied_cmd = "DIGITAL_OPT:" + to_string(id) + ":log:" + to_string(m);
+        }
+        else if (key == "pos_s") {
+            const int n = dig::parse_pos_s(val);
+            if (n < 0) throw CommandRejected("pos_s must be 1-3600 (seconds)");
+            o.pos_s = n;
+            g_applied_cmd = "DIGITAL_OPT:" + to_string(id) + ":pos_s:" + to_string(n);
+        }
+        else if (key == "invert") throw CommandRejected("the decoders' Invert option was removed");
         else if (key == "map") {
             o.map = val == "1";
             MessageBuilders::request_map_full();   // pages get the points back at once
@@ -2043,26 +2122,58 @@ void ControlHandler::handle_message_impl(string_view message) {
         for (const auto& m : rec::tick_messages()) broadcast(m);
     }
     else if (message.starts_with("DECODER_LOG:")) {
-        // Decoder data log (sidebar 🗂 Decoder Logging, decoder_log.cpp)
+        // Decoder data log (⚙ Setup Settings → Decoder Logging, decoder_log.cpp): "Allow logging
+        // to disk" - what is written is each VFO decoder's Logging (DIGITAL_OPT:id:log) and the
+        // transcripts' (the voice member of DECODER_LOG_TYPES)
         const bool on = parse_int(message, 12) != 0;
         declog::set_enabled(on);
         g_applied_cmd = string("DECODER_LOG:") + (on ? "1" : "0");
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_TYPES:")) {
+        // the transcripts' Logging (the Transcription panel): only "voice" counts since
+        // 2026-11-19; the other names (an older page's What to log ticks) are accepted and
+        // kept as sent, but chosen per VFO now ("raw" only migrates the stored VFOs)
         if (!declog::set_types(string(message.substr(18)))) throw CommandRejected("unknown log type");
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_DAYS:")) {
+        // Keep: the days a finished day stays plain (0 = keep forever: nothing compressed or deleted)
         const int d = parse_int(message, 17);
         if (d < 0 || d > 3650) throw CommandRejected("days must be 0-3650");
         declog::set_days(d);
         broadcast(declog::status_message());
     }
+    else if (message.starts_with("DECODER_LOG_ZIP_DAYS:")) {
+        // Then compressed: the days after Keep a day is kept gzipped, then deleted (0 = none)
+        const int d = parse_int(message, 21);
+        if (d < 0 || d > 3650) throw CommandRejected("compressed days must be 0-3650");
+        declog::set_zip_days(d);
+        broadcast(declog::status_message());
+    }
     else if (message.starts_with("DECODER_LOG_POS_S:")) {
+        // the old global Positions every (an older page; the stored value): what a VFO stored
+        // without its own pos_s gets - and, from a page, every VFO decoder's pos_s (2026-11-19)
         const int sec = parse_int(message, 18);
         if (sec < 1 || sec > 3600) throw CommandRejected("position interval must be 1-3600 s");
         declog::set_pos_interval(sec);
+        if (!g_replaying_settings.load()) {
+            bool any = false;
+            for (const auto& d : decimator_manager.getDecimatorInfoList()) {
+                auto inst = decimator_manager.getDecimator(d.id);
+                auto dd = inst ? inst->getDigital() : nullptr;
+                if (!dd) continue;
+                dig::Options o = dd->options();
+                if (o.pos_s == sec) continue;
+                o.pos_s = sec;
+                decimator_manager.setDigitalOptions(d.id, o);
+                any = true;
+            }
+            if (any) {
+                broadcast(MessageBuilders::build_decimator_info_message());
+                record_decimator_snapshot();
+            }
+        }
         broadcast(declog::status_message());
     }
     else if (message.starts_with("DECODER_LOG_DIR:")) {
@@ -2118,6 +2229,13 @@ void ControlHandler::handle_message_impl(string_view message) {
         v2t::set_keep_audio(parse_int(message, 22) != 0);
         broadcast(v2t::status_message());
     }
+    else if (message.starts_with("VOICE2TEXT_LIVE:")) {
+        // Live text: partial transcripts while a transmission lasts (CPU: see voice2text.hpp)
+        const string v(message.substr(16));
+        if (v != "0" && v != "1") throw CommandRejected("format: VOICE2TEXT_LIVE:0|1");
+        v2t::set_live(v == "1");
+        broadcast(v2t::status_message());
+    }
     else if (message.starts_with("VOICE2TEXT_DOWNLOAD:")) {
         // a model of the catalogue (fixed Hugging Face URLs) into the models folder
         string err;
@@ -2141,9 +2259,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(v2t::lobe_message(strtoull(id.c_str(), nullptr, 10)));
     }
     else if (message == "GET_VOICE2TEXT") {
-        // a page connecting: the settings / state and the latest transcripts
+        // a page connecting: the settings / state, the latest transcripts and
+        // the live rows (Live text)
         broadcast(v2t::status_message());
         broadcast(v2t::history_message(300));
+        broadcast(v2t::live_message());
     }
     else if (message.starts_with("RDF:")) {
         // Mobile DF heat map: collect bearings while driving (rdf_mapper.cpp)
@@ -2165,7 +2285,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         rdfmap::request_full();   // a page opening the map: every VFO's heat map next push
     }
     else if (message == "GET_DECODER_LOG") {
-        broadcast(declog::status_message());   // a page opening the sidebar section
+        broadcast(declog::status_message());   // a page opening (Setup Settings → Decoder Logging)
     }
     else if (message == "INCIDENTS_CLEAR") {
         incidents::clear();
@@ -2310,6 +2430,13 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message == "GET_ARRAY_CAL") {
         broadcast(array_cal::status_message());   // a page connecting
     }
+    else if (message.starts_with("BIN_DOA:")) {
+        // 🎨 Bearing spectrum on / off (bin_doa.hpp; persisted, replayed);
+        // its state goes out as {"bin_doa":...}
+        const string_view v = message.substr(8);
+        if (v != "0" && v != "1") throw CommandRejected("format: BIN_DOA:0|1");
+        bin_doa::set_enabled(v == "1");
+    }
     else if (message.starts_with("DIGITAL_CLEAR:")) {
         int id = parse_int(message, 14);
         auto inst = decimator_manager.getDecimator(id);
@@ -2355,6 +2482,15 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (mode != 0 && wb_variant_enabled.load(std::memory_order_relaxed)) {
             broadcast(build_operating_mode_json());
             throw CommandRejected("only coherent mode exists on the KrakenSDR Wideband variant");
+        }
+        // Generic RTL-SDRs (no KrakenSDR): heimdall refuses coherent mode (and
+        // the wideband scan with one tuner) - nothing changes here either, so
+        // the client never disagrees with it. The pages resync; the error is
+        // shown unless it is the settings replay (a KrakenSDR session's saved
+        // coherent mode, refused quietly on every start)
+        if (const string why = generic_mode_refusal(mode); !why.empty()) {
+            broadcast(build_operating_mode_json(g_replaying_settings.load() ? string() : why));
+            throw CommandRejected(why);
         }
         // The discrete scanner needs wideband mode; the continuous one coherent
         if (mode != 1 && scanner_manager.isRunning()) {
@@ -2476,6 +2612,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (continuous_scanner.isRunning() || sfscan::running()) {
             broadcast("{\"scanner_stopped\":true}");  // resets the browser's Start button
             throw CommandRejected(sfscan::running() ? "stop the saved-frequency scan first" : "stop the continuous scanner first");
+        }
+        // it locks onto a signal by switching to coherent mode (DoA)
+        if (const string why = generic_mode_refusal(0); !why.empty()) {
+            broadcast("{\"scanner_stopped\":true}");
+            throw CommandRejected("the discrete scanner locks in coherent mode: " + why);
         }
         if (!scanner_manager.start()) {
             // The browser switched its button to "running" already: tell
@@ -2722,10 +2863,32 @@ void ControlHandler::handle_websocket_message(string_view message) {
     apply_command(message);
 }
 
+// Set only around a page's own command; apply_command takes it at once, so a
+// command dispatched from inside that one (RESET_SETTINGS' defaults, the power
+// sequence's RECORDER_STOP) doesn't count as the page's. thread_local: a
+// dispatch on another thread (a rule break, but) can't see the loop's flag.
+static thread_local bool g_from_page = false;
+
+void ControlHandler::handle_page_message(string_view message) {
+    g_from_page = true;
+    apply_command(message);
+    g_from_page = false;
+}
+
 string ControlHandler::apply_command(string_view message) {
+    const bool from_page = std::exchange(g_from_page, false);
     // A malformed number in any command (stof/stoi throwing) must not
     // propagate into the uWS event loop, which would exit(1) the process.
     try {
+        // ⏻ / ↻ (power.cpp): a page's buttons only - not persisted (not in
+        // the settings schema), not echoed, never replayed
+        if (power::is_command(message))
+            return power::handle_command(message, from_page && !g_replaying_settings.load());
+        // Antenna bias tees (antenna_bias.cpp): the same - a page's own socket
+        // only, not persisted, not echoed (the pages draw heimdall's status);
+        // refused during a playback there
+        if (antbias::is_command(message))
+            return antbias::handle_command(message, from_page && !g_replaying_settings.load());
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
         if (playback::handle_command(message)) return "";
@@ -2809,7 +2972,10 @@ void ControlHandler::send_control_command(const string& cmd) {
 
 void ControlHandler::apply_persisted_settings() {
     auto commands = SettingsStore::apply_commands();
-    if (commands.empty()) return;
+    if (commands.empty()) {
+        declog::settings_restored();
+        return;
+    }
     cout << "Restoring " << commands.size() << " persisted setting(s)" << endl;
     g_replaying_settings.store(true);
     for (const auto& cmd : commands) {
@@ -2818,4 +2984,6 @@ void ControlHandler::apply_persisted_settings() {
         handle_websocket_message(cmd);
     }
     g_replaying_settings.store(false);
+    // the decoder log's retention pass waited for the stored Keep / Then compressed days
+    declog::settings_restored();
 }

@@ -39,10 +39,13 @@ int64_t now_ms() {
 
 namespace {
 
+constexpr float NO_SNR = -999.0f;   // (get_range_peak_db's "no spectrum")
+
 struct Vfo {
     Level lvl;
     Moment mo;
     double freq = 0;     // RF of the VFO's centre (a retune starts afresh)
+    float snr = NO_SNR;  // the band's peak over the floor as the spectrum draws it (dB)
 };
 
 std::mutex mu;
@@ -73,12 +76,16 @@ void sample() {
             Vfo v = it != prev.end() ? it->second : Vfo{};
             if (v.freq != 0 && std::fabs(freq - v.freq) > RETUNE_HZ) v.lvl = Level{};
             v.freq = freq;
+            const float bw = dec->decimator->getBandwidthMhz() * 1e6f;
+            // the SNR on the screen: always - also with the squelch closed and
+            // below the level's own test
+            v.snr = FFTProcessor::get_range_peak_db(ch, off, bw, 0);
             FFTProcessor::BandPower bp;
             // no DC bins left out (as the FFT squelch): the DC offset is tracked
             // out before the FFT, and a carrier tuned onto the centre (a CW
             // beacon, AM) is the signal itself
             if (ok && (!dec->squelch_enabled.load() || dec->squelch_open.load()) &&
-                FFTProcessor::band_power(ch, off, dec->decimator->getBandwidthMhz() * 1e6f, 0, &bp) &&
+                FFTProcessor::band_power(ch, off, bw, 0, &bp) &&
                 bp.sig > bp.thresh) {
                 const float gain = ChannelManager::get_gain(ch);
                 v.lvl.add(t, bp.sig, bp.noise, bp.total, gain);
@@ -123,6 +130,15 @@ bool moment(int vfo, Moment* out) {
     auto it = vfos.find(vfo);
     if (it == vfos.end() || !it->second.mo.seq) return false;
     *out = it->second.mo;
+    return true;
+}
+
+bool snr_db(int vfo, float* out) {
+    std::lock_guard<std::mutex> lk(mu);
+    auto it = vfos.find(vfo);
+    // (-100 dB: the averaged spectrum right after a reset, before its first frame)
+    if (it == vfos.end() || !(it->second.snr > -50.0f)) return false;
+    *out = it->second.snr;
     return true;
 }
 

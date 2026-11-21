@@ -53,7 +53,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (accepted + ignored, not echoed - `is_query_command`), the saved
   `fft_downsampling` and FFT_SIZE's auto-adjust are gone; old-format frames
   (types 0 / 6 / 4 without views) use `legacy_fft_decimation()` = FFT size /
-  2048. FFT Settings' **Slow link** tick (per browser, localStorage
+  2048. The Display box's **Slow link** switch (per browser, localStorage
   `kraken_spec_slow`) halves the points the page asks for (`specBinsMain` /
   `specBinsPane`); "Points sent" shows the selected display's frame size
 - Beamformed overlays (type 4): `MessageBuilders::beamformed_spectrum` once

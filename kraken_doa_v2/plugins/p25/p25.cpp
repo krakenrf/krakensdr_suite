@@ -1,39 +1,18 @@
 // P25 Phase 1 (TIA-102.BAAA) frame decoding: NID, HDU, LDU1/2 link control
 // and encryption sync, TDULC, TSDU trunking signalling blocks and the PDU
-// header. Voice (IMBE) frames are counted, not synthesized.
+// header. Voice: IMBE (dig_vocoder), muted unless the call is known to be clear.
 
 #include "p25.hpp"
 #include "dig_fec.hpp"
 #include "mbe_tables.hpp"
 
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 
 namespace dig {
 
 namespace {
-
-// NID: BCH(63,16), systematic - the 47 parity bits are the remainder of
-// m(x) x^47 divided by the generator polynomial g(x) = 6331141367235453
-// (octal, TIA-102.BAAA); codeword bit 62 is the first bit sent
-uint64_t nid_codeword(uint32_t m) {
-    constexpr uint64_t G = 06331141367235453ULL;
-    uint64_t r = static_cast<uint64_t>(m) << 47;
-    for (int i = 62; i >= 47; i--)
-        if ((r >> i) & 1) r ^= G << (i - 47);
-    return (static_cast<uint64_t>(m) << 47) | r;
-}
-
-std::vector<uint64_t> build_nid_table() {
-    std::vector<uint64_t> t(65536);
-    for (uint32_t m = 0; m < 65536; m++) t[m] = nid_codeword(m);
-    return t;
-}
-
-const std::vector<uint64_t>& nid_table() {
-    static const std::vector<uint64_t> t = build_nid_table();
-    return t;
-}
 
 const char* duid_name(int d) {
     switch (d) {
@@ -82,12 +61,16 @@ std::string mhz(uint64_t hz) {
 
 void P25Proto::reset() {
     imbe_.reset();
-    alg_ = 0x80;
-    lc_encrypted_ = false;
+    alg_ = -1;
+    lc_prot_ = -1;
+    held_.clear();
     iden_.clear();
     last_nac_ = -1;
+    wacn_ = sysid_ = -1;
     call_desc_.clear();
-    last_voice_ms_ = 0;
+    call_src_ = 0;
+    call_zero_lcs_ = 0;
+    call_voice_ = false;
     // the host resets its own talker state together with ours
     call_start_ = -1;
     talker_id_.clear();
@@ -101,13 +84,31 @@ void P25Proto::reset() {
 // samples out of the VFO's stream for the DoA.
 void P25Proto::begin_call_if_new() {
     if (call_start_ >= 0 && frame_a_ - voice_end_ <= gap()) return;
-    end_talker(voice_end_);
+    close_call(voice_end_);
     call_start_ = frame_a_;
     voice_end_ = frame_a_;
 }
 
+// The end of a transmission (terminator, a new header, frames stopped, or
+// the start of the next one): its talker, its "Call ended" event (only if
+// its start was announced) and its per-call state
+void P25Proto::close_call(int64_t at) {
+    end_talker(at);
+    if (call_start_ >= 0 && !call_desc_.empty()) ctx_.report->event(Mode::P25, "Call ended: " + call_desc_, 0.0);
+    if (call_start_ >= 0) ctx_.report->erase(Mode::P25, "Current call");
+    call_start_ = -1;
+    call_desc_.clear();
+    call_src_ = 0;
+    call_zero_lcs_ = 0;
+    call_voice_ = false;
+    alg_ = -1;
+    lc_prot_ = -1;
+    held_.clear();   // never known to be clear: never played
+}
+
 void P25Proto::voice_frame() {
     begin_call_if_new();
+    call_voice_ = true;
     voice_end_ = std::max(voice_end_, frame_b_);
     if (!talker_id_.empty() && ctx_.talker) ctx_.talker(talker_id_, talker_label_, call_start_, voice_end_, 0);
 }
@@ -134,57 +135,92 @@ void P25Proto::end_talker(int64_t at) {
 
 void P25Proto::tick(int64_t now) {
     if (call_start_ < 0 || now - voice_end_ <= gap()) return;
-    end_talker(voice_end_);
-    call_start_ = -1;
+    close_call(voice_end_);
 }
 
-std::string P25Proto::chan_str(uint32_t ch) const {
+std::string P25Proto::algorithm_name(int alg) { return alg_name(alg); }
+
+std::string P25Proto::chan_str(uint32_t ch, bool tdma) const {
     int id = static_cast<int>(ch >> 12);
     uint32_t num = ch & 0xFFF;
     auto it = iden_.find(id);
     std::string s = std::to_string(id) + "-" + std::to_string(num);
     if (it != iden_.end() && it->second.spacing_hz) {
         uint32_t n = it->second.tdma ? num / static_cast<uint32_t>(std::max(1, it->second.slots)) : num;
-        s += " (" + mhz(it->second.base_hz + static_cast<uint64_t>(n) * it->second.spacing_hz) + ")";
+        s += " (" + mhz(it->second.base_hz + static_cast<uint64_t>(n) * it->second.spacing_hz);
+        if (tdma && it->second.tdma && it->second.slots > 1)
+            s += ", LCH " + std::to_string(num % static_cast<uint32_t>(it->second.slots));
+        s += ")";
     }
     return s;
 }
 
-void P25Proto::voice_activity(const std::string& desc) {
-    last_voice_ms_ = now_ms();
-    if (!desc.empty() && desc != call_desc_) {
-        call_desc_ = desc;
-        ctx_.report->event(Mode::P25, "Voice: " + desc, 5.0);
-    }
+void P25Proto::voice_activity() {
     if (!call_desc_.empty()) ctx_.report->set(Mode::P25, "Current call", call_desc_);
+}
+
+// A voice user link control (group / unit-to-unit) of the open transmission:
+// one "Voice:" event per transmission, naming its unit - the first link
+// control that names one (a transmission's first LDU1 often names unit 0),
+// or, when two have named none, the talkgroup alone. Another unit later in
+// the same transmission (no terminator between) ends the first one's call,
+// as set_talker ends its talker. A terminator's link control in hang time
+// (no voice frames: often "TG n <- 0") opens and ends nothing.
+void P25Proto::voice_user(uint32_t src, const std::string& desc, const std::string& desc_nosrc, bool prot) {
+    if (call_start_ < 0 || !call_voice_) return;
+    lc_prot_ = prot ? 1 : 0;
+    Report& r = *ctx_.report;
+    if (src != 0) {
+        if (src == call_src_) return;
+        if (call_src_ != 0) r.event(Mode::P25, "Call ended: " + call_desc_, 0.0);
+        call_src_ = src;
+        call_desc_ = desc;
+    } else {
+        if (!call_desc_.empty() || ++call_zero_lcs_ < 2) return;
+        call_desc_ = desc_nosrc;
+    }
+    r.event(Mode::P25, "Voice: " + call_desc_, 0.0);
+    voice_activity();
 }
 
 void P25Proto::link_control(const uint8_t* lc, const char* where) {
     int lco = lc[0] & 0x3F;
     int mfid = lc[1];
     bool std_mfid = (mfid == 0x00 || mfid == 0x01);
+    // implicit-MFID forms (SF bit set): the 8 octets after the LCO are the
+    // body of the trunking block of the same message (as Phase 2's
+    // abbreviated messages) - established on real terminators / LDU1s against
+    // the same site's control channel: adjacent sites (8 of 8 sites and their
+    // channels), the site's own RFSS status, and channel updates naming the
+    // talkgroups and channels its grants name
+    const bool sf = lc[0] & 0x40;
+    const int as_tsbk = !sf ? -1 : lco == 0x02 ? 0x02 : lco == 0x22 ? 0x3C : lco == 0x23 ? 0x3A : -1;
     if (lco == 0x00 && std_mfid) {
         bool emerg = lc[2] & 0x80, enc = lc[2] & 0x40;
-        lc_encrypted_ = enc;
         uint32_t tg = (lc[4] << 8) | lc[5];
         uint32_t src = (lc[6] << 16) | (lc[7] << 8) | lc[8];
-        std::string d = "TG " + std::to_string(tg) + " <- " + std::to_string(src);
-        if (enc) d += " [encrypted]";
-        if (emerg) d += " [EMERGENCY]";
+        std::string flags = std::string(enc ? " [encrypted]" : "") + (emerg ? " [EMERGENCY]" : "");
         set_talker(src, "TG " + std::to_string(tg) + (emerg ? " EMERGENCY" : ""));
-        voice_activity(d);
+        voice_user(src, "TG " + std::to_string(tg) + " <- " + std::to_string(src) + flags, "TG " + std::to_string(tg) + flags,
+                   enc);
         ctx_.report->set(Mode::P25, "Last talkgroup", std::to_string(tg));
-        ctx_.report->set(Mode::P25, "Last source", std::to_string(src));
+        if (src) ctx_.report->set(Mode::P25, "Last source", std::to_string(src));
     } else if (lco == 0x03 && std_mfid) {
         uint32_t dst = (lc[3] << 16) | (lc[4] << 8) | lc[5];
         uint32_t src = (lc[6] << 16) | (lc[7] << 8) | lc[8];
-        std::string d = "Unit " + std::to_string(src) + " -> unit " + std::to_string(dst);
-        lc_encrypted_ = lc[2] & 0x40;
-        if (lc[2] & 0x40) d += " [encrypted]";
+        bool enc = lc[2] & 0x40;
+        std::string flags = enc ? " [encrypted]" : "";
         set_talker(src, "unit call to " + std::to_string(dst));
-        voice_activity(d);
+        voice_user(src, "Unit " + std::to_string(src) + " -> unit " + std::to_string(dst) + flags,
+                   "Unit call to " + std::to_string(dst) + flags, enc);
     } else if (lco == 0x0F) {
         ctx_.report->event(Mode::P25, std::string("Call termination (") + where + ")", 2.0);
+    } else if (as_tsbk >= 0) {
+        uint8_t t[10];
+        t[0] = static_cast<uint8_t>(as_tsbk);
+        t[1] = 0x00;
+        std::memcpy(t + 2, lc + 1, 8);
+        tsbk(t);
     } else if (ctx_.opts->verbose) {
         static const struct { int lco; const char* name; } names[] = {
             {0x02, "group voice channel update"}, {0x04, "group voice channel update (explicit)"},
@@ -200,7 +236,7 @@ void P25Proto::link_control(const uint8_t* lc, const char* where) {
     }
 }
 
-void P25Proto::tsbk(const uint8_t* t) {
+void P25Proto::tsbk(const uint8_t* t, bool tdma) {
     int op = t[0] & 0x3F;
     int mfid = t[1];
     uint64_t a = 0;
@@ -217,28 +253,28 @@ void P25Proto::tsbk(const uint8_t* t) {
     switch (op) {
         case 0x00: {   // GRP_V_CH_GRANT
             uint32_t opts = f(63, 8), ch = f(55, 16), grp = f(39, 16), src = f(23, 24);
-            std::string e = "Grant: TG " + std::to_string(grp) + " <- " + std::to_string(src) + " on " + chan_str(ch);
+            std::string e = "Grant: TG " + std::to_string(grp) + " <- " + std::to_string(src) + " on " + chan_str(ch, tdma);
             if (opts & 0x40) e += " [encrypted]";
             if (opts & 0x80) e += " [EMERGENCY]";
             r.event(Mode::P25, e, 3.0);
-            r.set(Mode::P25, "Last grant", "TG " + std::to_string(grp) + " on " + chan_str(ch));
+            r.set(Mode::P25, "Last grant", "TG " + std::to_string(grp) + " on " + chan_str(ch, tdma));
             break;
         }
         case 0x02: {   // GRP_V_CH_GRANT_UPDT
             uint32_t c1 = f(63, 16), g1 = f(47, 16), c2 = f(31, 16), g2 = f(15, 16);
-            r.event(Mode::P25, "Grant update: TG " + std::to_string(g1) + " on " + chan_str(c1) +
-                                   (g2 != g1 || c2 != c1 ? ", TG " + std::to_string(g2) + " on " + chan_str(c2) : ""),
+            r.event(Mode::P25, "Grant update: TG " + std::to_string(g1) + " on " + chan_str(c1, tdma) +
+                                   (g2 != g1 || c2 != c1 ? ", TG " + std::to_string(g2) + " on " + chan_str(c2, tdma) : ""),
                     10.0);
             break;
         }
         case 0x03: {   // GRP_V_CH_GRANT_UPDT_EXP
             uint32_t ch = f(47, 16), grp = f(15, 16);
-            r.event(Mode::P25, "Grant update: TG " + std::to_string(grp) + " on " + chan_str(ch), 10.0);
+            r.event(Mode::P25, "Grant update: TG " + std::to_string(grp) + " on " + chan_str(ch, tdma), 10.0);
             break;
         }
         case 0x04: {   // UU_V_CH_GRANT
             uint32_t ch = f(63, 16), dst = f(47, 24), src = f(23, 24);
-            r.event(Mode::P25, "Unit grant: " + std::to_string(src) + " -> " + std::to_string(dst) + " on " + chan_str(ch), 3.0);
+            r.event(Mode::P25, "Unit grant: " + std::to_string(src) + " -> " + std::to_string(dst) + " on " + chan_str(ch, tdma), 3.0);
             break;
         }
         case 0x28: {   // GRP_AFF_RSP
@@ -292,23 +328,67 @@ void P25Proto::tsbk(const uint8_t* t) {
             uint32_t sys = f(51, 12), rfss = f(39, 8), site = f(31, 8), ch = f(23, 16);
             r.set(Mode::P25, "System ID", hex(sys, 3));
             r.set(Mode::P25, "RFSS / Site", std::to_string(rfss) + " / " + std::to_string(site));
-            r.set(Mode::P25, "Control channel", chan_str(ch));
+            r.set(Mode::P25, "Control channel", chan_str(ch, tdma));
             r.event(Mode::P25, "RFSS status: sys " + hex(sys, 3) + " RFSS " + std::to_string(rfss) + " site " +
-                                   std::to_string(site) + " CC " + chan_str(ch), bcast);
+                                   std::to_string(site) + " CC " + chan_str(ch, tdma), bcast);
             break;
         }
         case 0x3B: {   // NET_STS_BCST
             uint32_t wacn = f(55, 20), sys = f(35, 12), ch = f(23, 16);
+            wacn_ = static_cast<int>(wacn);
+            sysid_ = static_cast<int>(sys);
             r.set(Mode::P25, "WACN", hex(wacn, 5));
             r.set(Mode::P25, "System ID", hex(sys, 3));
-            r.event(Mode::P25, "Network status: WACN " + hex(wacn, 5) + " sys " + hex(sys, 3) + " CC " + chan_str(ch), bcast);
+            r.event(Mode::P25, "Network status: WACN " + hex(wacn, 5) + " sys " + hex(sys, 3) + " CC " + chan_str(ch, tdma), bcast);
             break;
         }
         case 0x3C: {   // ADJ_STS_BCST
             uint32_t sys = f(51, 12), rfss = f(39, 8), site = f(31, 8), ch = f(23, 16);
-            std::string d = "sys " + hex(sys, 3) + " RFSS " + std::to_string(rfss) + " site " + std::to_string(site) + " on " + chan_str(ch);
-            r.set(Mode::P25, "Neighbour " + std::to_string(rfss) + "/" + std::to_string(site), chan_str(ch));
+            std::string d = "sys " + hex(sys, 3) + " RFSS " + std::to_string(rfss) + " site " + std::to_string(site) + " on " + chan_str(ch, tdma);
+            r.set(Mode::P25, "Neighbour " + std::to_string(rfss) + "/" + std::to_string(site), chan_str(ch, tdma));
             r.event(Mode::P25, "Adjacent site: " + d, bcast);
+            break;
+        }
+        // Layouts below: the message names from Phase 2's list of the Phase 1
+        // messages it carries, the fields placed as in their parsed siblings
+        // and checked against each other on real control channels of five
+        // systems (2026-11-19)
+        case 0x39: {   // SCCB (implicit): RFSS, site, 2 x (channel, service class)
+            // RFSS / site = the same site's RFSS_STS_BCST on 9 of 9 sites; the
+            // channels are in the system's tables, several of them named as
+            // control channels by the same system's ADJ_STS_BCSTs
+            uint32_t rfss = f(63, 8), site = f(55, 8), c1 = f(47, 16), c2 = f(23, 16);
+            r.event(Mode::P25, "Secondary control channel: RFSS " + std::to_string(rfss) + " site " + std::to_string(site) +
+                                   " on " + chan_str(c1, tdma) + (c2 != c1 ? ", " + chan_str(c2, tdma) : ""), bcast);
+            break;
+        }
+        case 0x29: {   // SCCB (explicit): RFSS, site, downlink channel, -, uplink channel, service class
+            // the two channels lie exactly the identifier's transmit offset apart
+            uint32_t rfss = f(63, 8), site = f(55, 8), ct = f(47, 16), cr = f(23, 16);
+            r.event(Mode::P25, "Secondary control channel: RFSS " + std::to_string(rfss) + " site " + std::to_string(site) +
+                                   " on " + chan_str(ct, tdma) + ", uplink " + chan_str(cr, tdma), bcast);
+            break;
+        }
+        case 0x14: {   // SNDCP data channel grant: options, channel T, channel R, target
+            // the channels are the ones the data channel announcements name;
+            // R is 0xFFFF on every real one (not given)
+            uint32_t ct = f(55, 16), cr = f(39, 16), tgt = f(23, 24);
+            r.event(Mode::P25, "Data channel grant: unit " + std::to_string(tgt) + " on " + chan_str(ct, tdma) +
+                                   (cr != 0xFFFF ? ", uplink " + chan_str(cr, tdma) : ""), 3.0);
+            break;
+        }
+        case 0x16: {   // SNDCP data channel announcement (explicit): -, -, channel T, channel R, -
+            uint32_t ct = f(47, 16), cr = f(31, 16);
+            r.event(Mode::P25, "Data channel announcement: " + (ct == 0xFFFF ? std::string("no channel") : chan_str(ct, tdma)) +
+                                   (cr != 0xFFFF ? ", uplink " + chan_str(cr, tdma) : ""), bcast);
+            break;
+        }
+        case 0x2B: {   // LOC_REG_RSP: -, group, RFSS, site, target
+            // RFSS / site = the broadcasting site's on 5 sites of 3 systems; the
+            // groups are talkgroups the same systems grant / affiliate
+            uint32_t grp = f(55, 16), rfss = f(39, 8), site = f(31, 8), tgt = f(23, 24);
+            r.event(Mode::P25, "Location registration: unit " + std::to_string(tgt) + ", TG " + std::to_string(grp) + " (RFSS " +
+                                   std::to_string(rfss) + " site " + std::to_string(site) + ")", 10.0);
             break;
         }
         case 0x38:
@@ -327,27 +407,54 @@ void P25Proto::tsbk(const uint8_t* t) {
 }
 
 // The 9 IMBE frames of an LDU (status-free dibit offsets after the NID),
-// deinterleaved into mbelib's [8][23] layout
+// deinterleaved into mbelib's [8][23] layout. Played only once the call is
+// known to be clear: ALGID 0x80 (header / encryption sync) or a voice user
+// link control without "protected". A call joined after its header whose
+// first LDU1 carries another link control (adjacent site status, channel
+// update - real encrypted calls: their first 180 ms played as noise) is held
+// until the next LDU2's encryption sync says: clear - its frames play, none
+// lost (the host's voice FIFO starts at 250 ms buffered: held and released,
+// two LDUs reach it as when they come 180 ms apart); encrypted - dropped.
 void P25Proto::voice_frames(const std::vector<uint8_t>& sf) {
-    if (!ctx_.voice_wanted || !ctx_.voice_wanted()) return;
-    bool enc = alg_ != 0x80 || lc_encrypted_;
-    if (enc) {
+    if (!ctx_.voice_wanted || !ctx_.voice_wanted()) {
+        held_.clear();
+        return;
+    }
+    if (encrypted()) {
+        held_.clear();
         if (ctx_.voice_state) ctx_.voice_state(call_desc_ + (call_desc_.empty() ? "" : ": ") + "encrypted, muted");
         return;
     }
     static const int start[9] = {56, 128, 220, 312, 404, 496, 588, 680, 768};
-    float pcm[9 * 160];
-    int good = 0;
+    Ldu l{};
     for (int f = 0; f < 9; f++) {
-        char fr[8][23] = {{0}};
         for (int j = 0; j < 72; j++) {
             size_t d = static_cast<size_t>(start[f] + j);
             if (2 * d + 1 >= sf.size()) return;
-            fr[mbe_tables::iW[j]][mbe_tables::iX[j]] = static_cast<char>(sf[2 * d]);
-            fr[mbe_tables::iY[j]][mbe_tables::iZ[j]] = static_cast<char>(sf[2 * d + 1]);
+            l.fr[f][mbe_tables::iW[j]][mbe_tables::iX[j]] = static_cast<char>(sf[2 * d]);
+            l.fr[f][mbe_tables::iY[j]][mbe_tables::iZ[j]] = static_cast<char>(sf[2 * d + 1]);
         }
-        if (imbe_.decode(fr, pcm + 160 * f) >= 0) good++;
     }
+    if (!clear_known()) {
+        if (held_.size() >= MAX_HELD) held_.erase(held_.begin());   // the oldest is lost
+        held_.push_back(l);
+        if (ctx_.voice_state)
+            ctx_.voice_state((call_desc_.empty() ? std::string("Voice") : call_desc_) + ": encryption not known yet, held");
+        return;
+    }
+    for (Ldu& h : held_) play_ldu(h);
+    held_.clear();
+    play_ldu(l);
+}
+
+void P25Proto::play_ldu(Ldu& l) {
+    float pcm[9 * 160];
+    int good = 0;
+    for (int f = 0; f < 9; f++)
+        if (imbe_.decode(l.fr[f], pcm + 160 * f) >= 0) good++;
+    // the talker channel of this audio: Phase 1's transmissions are channel 0
+    // (the plugin's Phase 2 LCHs are 1 / 2)
+    if (ctx_.voice_channel) ctx_.voice_channel(0);
     if (ctx_.voice) ctx_.voice(Mode::P25, pcm, 9 * 160);
     if (ctx_.voice_state)
         ctx_.voice_state((call_desc_.empty() ? std::string("Voice") : call_desc_) + ": playing (IMBE, " +
@@ -384,26 +491,11 @@ bool P25Proto::decode(const SymSrc& s) {
         return o;
     };
 
-    // NID
-    uint64_t rx = bits_to_u64(sf.data() + 48, 63);
-    const auto& tab = nid_table();
-    int best = 64;
+    // NID: BCH(63,16) (dig_fec, one table shared with the 4FSK receiver,
+    // which decodes it too for the frame's length), the last valid frame's
+    // NAC tried first
     uint32_t msg = 0;
-    // fast path: known NAC, valid DUIDs
-    static const int duids[7] = {0x0, 0x3, 0x5, 0x7, 0xA, 0xC, 0xF};
-    if (last_nac_ >= 0) {
-        for (int d : duids) {
-            uint32_t m = (static_cast<uint32_t>(last_nac_) << 4) | d;
-            int e = popcount64(tab[m] ^ rx);
-            if (e < best) { best = e; msg = m; }
-        }
-    }
-    if (best > 4) {
-        for (uint32_t m = 0; m < 65536; m++) {
-            int e = popcount64(tab[m] ^ rx);
-            if (e < best) { best = e; msg = m; }
-        }
-    }
+    const int best = p25_nid_decode(bits_to_u64(sf.data() + 48, 63), last_nac_, &msg);
     if (best > 9) return false;
     int nac = static_cast<int>(msg >> 4), duid = static_cast<int>(msg & 0xF);
     const char* dn = duid_name(duid);
@@ -472,6 +564,11 @@ bool P25Proto::decode(const SymSrc& s) {
             int e = rs64_decode(hexs, 24, nroots);
             if (e >= 0) {
                 valid = true;
+                // a frame of a new transmission: the previous one's call
+                // ends before this frame's link control / encryption sync
+                // belong to the new one
+                begin_call_if_new();
+                call_voice_ = true;
                 uint8_t bits[72], bytes[9];
                 for (int i = 0; i < 12; i++) u64_to_bits(hexs[i], 6, bits + 6 * i);
                 if (duid == 0x5) {
@@ -489,7 +586,7 @@ bool P25Proto::decode(const SymSrc& s) {
             }
             if (valid) {
                 voice_frame();
-                voice_activity("");
+                voice_activity();
                 r.set(Mode::P25, "Channel type", "Voice");
             }
             if (valid) voice_frames(sf);
@@ -509,19 +606,16 @@ bool P25Proto::decode(const SymSrc& s) {
                 for (int i = 0; i < 20; i++) u64_to_bits(hexs[i], 6, bits + 6 * i);
                 pack_bits(bits, 120, by);
                 int alg = by[10];
-                alg_ = alg;
                 uint32_t kid = (by[11] << 8) | by[12], tg = (by[13] << 8) | by[14];
                 std::string d = "TG " + std::to_string(tg);
                 if (alg != 0x80) d += " [" + alg_name(alg) + "]";
                 r.set(Mode::P25, "Encryption", alg == 0x80 ? "clear" : alg_name(alg) + ", key 0x" + hex(kid, 4));
                 r.event(Mode::P25, "Call header: " + d, 3.0);
                 // a new transmission starts here, its talker comes with the first LDU1
-                if (call_start_ >= 0) {
-                    end_talker(voice_end_);
-                    call_start_ = -1;
-                }
+                if (call_start_ >= 0) close_call(voice_end_);
                 voice_frame();
-                voice_activity("");
+                alg_ = alg;
+                voice_activity();
             }
             break;
         }
@@ -545,18 +639,10 @@ bool P25Proto::decode(const SymSrc& s) {
         }
         case 0x3:     // TDU
             if (!valid) break;
-            if (call_start_ >= 0) {
-                end_talker(std::max(voice_end_, frame_a_));
-                call_start_ = -1;
-            }
-            alg_ = 0x80;
-            lc_encrypted_ = false;
+            // the end of the transmission (in hang time a terminator ends nothing)
+            if (call_start_ >= 0) close_call(std::max(voice_end_, frame_a_));
             imbe_.reset();
             if (ctx_.voice_state) ctx_.voice_state("");
-            if (!call_desc_.empty()) {
-                r.event(Mode::P25, "Call ended: " + call_desc_, 2.0);
-                call_desc_.clear();
-            }
             r.erase(Mode::P25, "Current call");
             break;
         case 0xC: {   // PDU header block

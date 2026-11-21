@@ -10,6 +10,7 @@
 #
 # Both apps keep their state in their working directory, so each runs in its
 # own directory under /data with the read-only web files symlinked in:
+#   (VERSION, the image's version - docs/dev/version.md - is linked in too)
 #   /data/heimdall    heimdall_settings.conf, s2p_calibration/
 #   /data/kraken_doa  doa_settings.json, api_token, server.crt/.key,
 #                     fft_wisdom.dat, doa_recordings/
@@ -26,7 +27,8 @@
 #   WAIT_TIMEOUT    seconds kraken_doa waits for convergence before starting
 #                   anyway (default 300; 0 = forever)
 #   /data/codecs    optional self-built digital voice codecs: libmbe.so.1
-#                   (DMR / D-STAR), cdecoder + sdecoder (TETRA) - see README
+#                   (DMR / D-STAR), cdecoder + sdecoder (TETRA), libfdk-aac.so.2
+#                   (DAB+ audio) - see README
 set -euo pipefail
 
 APP=/opt/krakensdr
@@ -63,6 +65,19 @@ count_tuners() {
     echo "$n"
 }
 
+# Whether any attached RTL-SDR carries a KrakenSDR / KerberosSDR factory
+# serial (1000-1007). Without one, heimdall runs the dongles it finds as
+# generic RTL-SDRs (independent receivers), so there is no array to wait for.
+kraken_serial_present() {
+    local d
+    for d in /sys/bus/usb/devices/*; do
+        [[ -r $d/idVendor && -r $d/serial ]] || continue
+        [[ $(<"$d/idVendor") == 0bda && $(<"$d/idProduct") =~ ^283[28]$ && $(<"$d/serial") =~ ^100[0-7]$ ]] &&
+            return 0
+    done
+    return 1
+}
+
 link_files() {  # link_files <dir> <source dir> <file>...
     local dir="$1" src="$2"; shift 2
     local f
@@ -70,7 +85,7 @@ link_files() {  # link_files <dir> <source dir> <file>...
 }
 
 run_heimdall() {
-    local want="${KRAKEN_TUNERS:-5}" limit="${USB_WAIT:-45}" n i
+    local want="${KRAKEN_TUNERS:-5}" limit="${USB_WAIT:-45}" n i generic_s=0
     if [[ ! -d /dev/bus/usb ]]; then
         log "/dev/bus/usb is not mounted - heimdall cannot see the dongles (see DOCKER.md)"
     fi
@@ -78,6 +93,16 @@ run_heimdall() {
         for (( i = 0; ; i++ )); do
             n=$(count_tuners)
             (( n >= want )) && break
+            # Generic RTL-SDRs only (no factory serial for 10 s, no variant
+            # flag or --serials): heimdall runs them as independent receivers
+            if (( n > 0 )) && [[ ${#VARIANT[@]} -eq 0 && " $* " != *" --serials "* ]] && ! kraken_serial_present; then
+                if (( ++generic_s >= 10 )); then
+                    log "$n RTL-SDR dongle(s) without KrakenSDR serials - starting heimdall (generic RTL-SDR mode)"
+                    break
+                fi
+            else
+                generic_s=0
+            fi
             if (( i >= limit )); then
                 log "only $n of $want RTL-SDR dongles enumerated after ${limit}s; starting anyway"
                 break
@@ -87,7 +112,7 @@ run_heimdall() {
         done
     fi
     mkdir -p "$DATA/heimdall/s2p_calibration"
-    link_files "$DATA/heimdall" "$APP/heimdall_v2" index.html
+    link_files "$DATA/heimdall" "$APP/heimdall_v2" index.html VERSION
     cd "$DATA/heimdall"
     export HEIMDALL_NO_TUI=1
     log "starting heimdall ${VARIANT[*]} $*"
@@ -144,12 +169,16 @@ run_kraken_doa() {
     done
     mkdir -p "$DATA/kraken_doa"
     link_files "$DATA/kraken_doa" "$APP/kraken_doa_v2" \
-        kraken_doa.html array_calculator.html opus-decoder.min.js
+        kraken_doa.html array_calculator.html opus-decoder.min.js VERSION
     cd "$DATA/kraken_doa"
     # self-installed digital voice codecs (README "Digital voice codecs"):
-    # libmbe.so.1 and the ETSI TETRA cdecoder / sdecoder in /data/codecs
+    # libmbe.so.1, the ETSI TETRA cdecoder / sdecoder and libfdk-aac.so.2
+    # (DAB+) in /data/codecs
     if [[ -z ${KRAKEN_MBELIB:-} && -e $DATA/codecs/libmbe.so.1 ]]; then
         export KRAKEN_MBELIB=$DATA/codecs/libmbe.so.1
+    fi
+    if [[ -z ${KRAKEN_AAC_LIB:-} && -e $DATA/codecs/libfdk-aac.so.2 ]]; then
+        export KRAKEN_AAC_LIB=$DATA/codecs/libfdk-aac.so.2
     fi
     if [[ -z ${KRAKEN_TETRA_CODEC_DIR:-} && -x $DATA/codecs/cdecoder && -x $DATA/codecs/sdecoder ]]; then
         export KRAKEN_TETRA_CODEC_DIR=$DATA/codecs

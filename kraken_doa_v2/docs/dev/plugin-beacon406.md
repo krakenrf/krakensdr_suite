@@ -73,6 +73,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   the receiver's own level changes - fixed as above, 0 on 3 min re-decoded.
   SGB detection 2 / 2 down to -6 dB SNR at 100 kHz
 - Not decoded: second-generation messages (despreading with the public
-  PRN, BCH(250,202), 23-hex ID - a follow-up), 121.5 MHz homing (swept AM
-  tone - a follow-up), orbitography contents (T.006)
+  PRN, BCH(250,202), 23-hex ID - a follow-up), orbitography contents
+  (T.006). 121.5 MHz homing (swept AM tone): the `beacon121` plugin
+  (*121.5 MHz beacons*, `plugin-beacon121.md`)
 

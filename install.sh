@@ -90,9 +90,15 @@ die()  { echo "${RED}${BOLD}Error:${RST} $*" >&2; exit 1; }
 # the rest:
 #   libusb-1.0-0-dev/libusb-dev - required to build librtlsdr
 #   libopus-dev  - kraken links -lopus (missing from its `make deps`, added here)
+#   libjpeg-dev  - the decoder plugins link -ljpeg (libjpeg-turbo) to compress
+#                  video frames (plugin-only, IJG/BSD-3-Clause/zlib; the main app
+#                  never links it - without it the plugins fall back to raw pixels)
 #   zlib1g-dev   - both link -lz
 #   libsqlite3-dev - kraken links -lsqlite3
 #   tmux         - used by run.sh for the split-screen dashboards
+#   python3-numpy python3-scipy - Debug Playback's test-transmission
+#                  generators (kraken_doa runs the python3 first on its PATH:
+#                  a conda / venv one needs its own - the page says which)
 #   (no libfftw3-dev: both apps use the vendored pffft - external/pffft; no
 #    libliquid-dev: kraken_doa's make fetches liquid-dsp at a pinned commit and
 #    builds it as a static library without FFTW / libfec - liquid.mk)
@@ -102,19 +108,21 @@ PACKAGES=(
     libeigen3-dev                            # eigenvalue decomposition (both)
     libssl-dev libcrypto++-dev               # SSL for uWebSockets (both)
     libopus-dev                              # Opus audio codec (kraken)
+    libjpeg-dev                              # JPEG compression of decoder video frames (plugins only; libjpeg-turbo, IJG/BSD-3-Clause/zlib)
     zlib1g-dev                               # zlib -lz (both)
     libsqlite3-dev                           # settings store (kraken)
     tmux                                     # split-screen dashboards (run.sh)
     gpsd gpsd-tools                          # GPS daemon (kraken talks JSON to port 2947; tools = cgps/gpsmon for debugging)
     openssl                                  # self-signed cert generation for the kraken web UI
     bubblewrap socat                         # AI assistant: sandboxes (its shell commands, plugins it changed)
+    python3 python3-numpy python3-scipy      # Debug Playback: generating the test transmissions
 )
 
 # macOS (Homebrew): the same, by Homebrew's names. Not included: gpsd (not
 # needed unless a GPS is attached - `brew install gpsd`), openssl's CLI
 # (macOS has one; kraken_doa makes its certificate itself anyway) and the AI
 # assistant's sandboxes (macOS has its own: sandbox-exec)
-BREW_PACKAGES=(cmake pkg-config libusb eigen openssl@3 opus tmux)
+BREW_PACKAGES=(cmake pkg-config libusb eigen openssl@3 opus jpeg-turbo tmux)
 
 if [[ "${SKIP_DEPS:-0}" == "1" ]]; then
     say "Skipping dependency install (SKIP_DEPS=1)"

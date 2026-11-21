@@ -8,7 +8,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 
 **👁 Viewshed (UI only, kraken_doa.html "👁 VIEWSHED"):**
 - Line of sight over the terrain from the station or any picked place:
-  "Viewshed" button (`mapState.vs` layer + `vsOpen` fold). The STATION'S
+  "Viewshed" in the map's Layers popover (group Tools; a button on the map
+  until 2026-11-18 - *map.md*, *Layers popover*; the panel's ✕ closes it)
+  (`mapState.vs` layer + `vsOpen` fold). The STATION'S
   viewshed is always there (`vsEnsureStation`, from `vsToggle` / `vsRender`:
   re-added when missing; its row has no ✕, `vsRemove` refuses it - hide it
   with its colour box) - no "+ Station" button (the user's call
@@ -182,7 +184,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   while painting (phones). `vsReady` (globals block, set at the section's
   end) guards vsDraw / vsRender: rpApply can draw the map before the
   section's consts exist. Panel `#map-vs`
-  in `.map-tl` (under the top-left buttons, with the masts legend): target
+  in `.map-tl` (under the Layers button, with the masts legend): target
   + above ground / sea level + refraction, a row per viewshed (show / hide
   swatch, ⌖ fits its circle, ✕, Antenna / Radius - a change recomputes,
   "% in sight", tooltip: ground + antenna, cell size, zoom, time, spikes),

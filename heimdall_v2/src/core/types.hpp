@@ -433,6 +433,11 @@ extern std::atomic<bool> global_running;
 // Set with global_running = false by a fatal error after startup (e.g. the web
 // port is taken): the shutdown path then exits 1, so supervisors see a failure.
 extern std::atomic<bool> fatal_exit;
+// {"command":"restart"} on the control port (kraken_doa's ↻ Restart): set with
+// global_running = false to KRAKEN_RESTART_EXIT, the exit status the
+// supervisor that started heimdall restarts it on (run.sh, Docker,
+// krakensdr.exe); 0 = a normal stop
+extern std::atomic<int> restart_exit_status;
 extern std::atomic<OperatingMode> operating_mode;
 extern std::atomic<int> active_num_elements;  // Set via -n flag at startup (2 to NUM_DEVICES)
 

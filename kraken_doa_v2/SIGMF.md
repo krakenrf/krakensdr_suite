@@ -130,7 +130,7 @@ receiver's MUSIC uses (a UCA wired clockwise: ANT1 at -72°; a ULA along x
 from ANT0). `krakensdr:array_commands` are the receiver's own array settings
 at the start, exactly as its settings store keeps them - the playback puts
 them back. `krakensdr:station` / `krakensdr:track` (and `core:geolocation`)
-are only written with "Save the station's position with it" ticked
+are only written with "Include the station position" ticked
 (default on): leave it off before sharing a recording if the position is
 private.
 

@@ -3,8 +3,8 @@
 // Digital voice/data decoder attached to ONE decimator (VFO).
 //
 // Every decoder is a plugin (plugins/<id>/, dig_plugin.hpp) - the protocols
-// that ship with the suite (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX,
-// APRS) as well as ones written by hand or by the AI assistant. The
+// that ship with the suite (P25, DMR, TETRA, D-STAR, NXDN, YSF, MPT1327, POCSAG /
+// FLEX, APRS) as well as ones written by hand or by the AI assistant. The
 // decimation pipeline pushes this VFO's decimated samples (the listened-to
 // channel, or the beamformer output when beamforming runs) with push(); a
 // worker thread mixes them (AFC), resamples them to each plugin's rate and
@@ -18,6 +18,7 @@
 #include <atomic>
 #include <complex>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -55,9 +56,16 @@ struct LogRecord {
 };
 using RecordHandler = std::function<void(DigitalDecoder* dec, const LogRecord& r)>;
 void set_record_handler(RecordHandler h);
-// Raw frames wanted (the log's "Raw frames" type is on): passed to the
-// plugins as the OPTION log_raw=0|1 (kp::Host::raw_wanted)
-void set_raw_wanted(bool on);
+// "Allow logging to disk" (decoder_log.cpp). A decoder whose VFO is set to
+// Log All (Options::log) then gets raw frames - the OPTION log_raw=1
+// (kp::Host::raw_wanted) - and verbose=1 (kp::Host::verbose, also on with
+// the VFO's "Show all messages"); otherwise log_raw=0 and verbose = that tick
+void set_log_allowed(bool on);
+bool log_allowed();
+// A browser shows decoder video (a page subscribed to VIDEO): passed to the
+// video plugins as the OPTION video_wanted=0|1 (kp::Host::video_wanted), and
+// while false their frames are dropped on arrival. Set from the uWS loop.
+void set_video_wanted(bool on);
 
 // 🗣 Voice to Text (voice2text.cpp): the decoded voice of decoders whose
 // voice tap is on (DigitalDecoder::set_voice_tap - the VFO's "Transcribe"),
@@ -123,6 +131,23 @@ struct SpatialReport {
     bool remove = false;
 };
 using SpatialHandler = std::function<void(const SpatialReport&)>;
+
+// A reconstructed picture a plugin sent (kp::Host::video_frame): a
+// width x height raster drawn on the decoder panel's canvas (analog TV,
+// screen-leakage reconstruction). format 0 = GRAY8 (1 byte/pixel), 1 = RGB24
+// (3 bytes/pixel). The host forwards the image data opaquely: encoding 0 =
+// width*height*bpp raw pixel bytes (row-major, top-left first), encoding 2 = a
+// JPEG bitstream the browser decodes natively (the main app never decodes it).
+// Delivered on the decoder's worker thread; unset = dropped.
+struct VideoFrameReport {
+    int width = 0, height = 0;
+    int format = 0;              // 0 GRAY8, 1 RGB24 (describes the source frame)
+    int encoding = 0;            // 0 raw pixels, 2 JPEG bitstream
+    std::string label;           // caption ("" = none)
+    std::vector<uint8_t> pixels; // the image data (raw pixels, or the JPEG blob)
+};
+using VideoHandler = std::function<void(const VideoFrameReport&)>;
+
 // A plugin's retune request (kp::Host::tune): the RF to put at 0 Hz of the
 // VFO. Returns "" when it was passed on, else why it was refused. Called on
 // the decoder's worker thread.
@@ -167,6 +192,11 @@ public:
     void set_takes_voice(bool on) { takes_voice_.store(on, std::memory_order_relaxed); }   // Engine
     void set_options(const Options& o);
     Options options() const;
+    // Options::log (LOG_*) without the lock and copy - the decoder log's
+    // record handler asks it per record
+    int log_mode() const { return log_mode_.load(std::memory_order_relaxed); }
+    // Options::pos_s the same way (the record handler's "one position per object every N s")
+    int pos_interval_s() const { return pos_s_.load(std::memory_order_relaxed); }
 
     // Decimation pipeline: queue a block (copied; never blocks). rf_hz = the
     // VFO's RF centre - a change of more than 100 Hz resets the decoders.
@@ -201,6 +231,11 @@ public:
     void set_array_wanted(bool on, double burst_s, double period_s, bool only);   // Engine
     void set_spatial_handler(SpatialHandler h);
     void deliver_spatial(const SpatialReport& s);
+    // Reconstructed pictures (kp::Info::video plugins, kp::Host::video_frame)
+    // go to h - the websocket server publishes them to the decoder panel.
+    // Called on the decoder's worker thread.
+    void set_video_handler(VideoHandler h);
+    void deliver_video(const VideoFrameReport& f);
     // Retune requests of plugins that declare kp::Info::tunes (DecimatorManager)
     void set_tune_handler(TuneHandler h);
     std::string deliver_tune(double rf_hz);
@@ -241,6 +276,8 @@ private:
     std::atomic<bool> reset_pending_{false};   // set_mode -> worker reconfigures + resets
     mutable std::mutex opt_mu_;
     Options opts_;
+    std::atomic<int> log_mode_{LOG_OFF};   // = opts_.log
+    std::atomic<int> pos_s_{POS_S_DEFAULT};  // = opts_.pos_s
     std::string plugin_id_;            // Mode::PLUGIN (opt_mu_)
     Report report_;
     std::unique_ptr<Engine> engine_;   // only touched by the worker (or process())
@@ -260,6 +297,7 @@ private:
     std::mutex talker_mu_;
     TalkerHandler talker_handler_;
     SpatialHandler spatial_handler_;
+    VideoHandler video_handler_;
     TuneHandler tune_handler_;
     std::atomic<bool> want_array_{false};
     std::atomic<bool> array_only_{false};   // nothing but array plugins: push() only ticks

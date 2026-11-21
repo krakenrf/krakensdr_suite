@@ -34,12 +34,12 @@ of the 6; the others are erasures), interleaved column by column.
 - Ground station XID (station information): the airports it serves (ICAO
   codes) and its position (to 0.1 degree) - on the 🗺 Map ("Plot on map").
 - X.25 / ATN packets (CPDLC, ADS-C, ...) are counted and shown with
-  "Log all messages", not decoded.
+  "Show all messages", not decoded.
 
 Events: ACARS messages (`↓ D-AIBC (3C6544) LH0123 · ACARS H1 message to /
 from terminal · blk 3 · M01A: POSITION REPORT ...`, `↑` = uplink) and
 ground station information (`📡 ground station 2D4918 LSZH 47.5N 8.6E`,
-once in 10 min); link control and X.25 frames with "Log all messages".
+once in 10 min); link control and X.25 frames with "Show all messages".
 Facts: Bursts / frames, Aircraft heard, Ground stations, Last ACARS, Last
 ground station, Last carrier offset, RS corrections, Frames failed FCS.
 Table: one row per aircraft and ground station - kind, registration or

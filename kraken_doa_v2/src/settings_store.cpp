@@ -114,6 +114,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"edge_clip",                "EDGE_CLIP:",                VType::NUMBER, "0.80"},
         // FFT
         {"fft_size",                 "FFT_SIZE:",                 VType::NUMBER, "16384"},
+        // 🎨 Bearing spectrum: the spectrum coloured by direction (bin_doa.hpp)
+        {"bin_doa",                  "BIN_DOA:",                  VType::BOOL,   "0"},
         // Decimator (VFO) setup - one composite value because the set is
         // dynamic: "<heard>|<vfo>;<vfo>;..." with each <vfo> =
         // "offset_hz,bw_index,demod,squelch_en,squelch_db,squelch_method (0 FFT /
@@ -128,11 +130,15 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // Incident map: addresses in decoder messages are looked up within
         // this many km of the station
         {"geo_radius_km",            "GEO_RADIUS_KM:",            VType::NUMBER, "300"},
-        // Decoder data log (sidebar 🗂 Decoder Logging): the folder first, so
-        // switching it on doesn't create the default folder
+        // Decoder data log (⚙ Setup Settings → Decoder Logging): the folder first, so
+        // switching it on doesn't create the default folder. Of the types only
+        // "voice" (the transcripts' Logging) still decides; each VFO decoder's
+        // Logging is in its options (DECIMATORS). Before DECIMATORS: a "raw"
+        // here makes VFOs stored without a logging mode Log All (migration)
         {"decoder_log_dir",          "DECODER_LOG_DIR:",          VType::STRING, "decoder_logs"},
         {"decoder_log_types",        "DECODER_LOG_TYPES:",        VType::STRING, "event,message,position,incident,voice"},
         {"decoder_log_days",         "DECODER_LOG_DAYS:",         VType::NUMBER, "7"},
+        {"decoder_log_zip_days",     "DECODER_LOG_ZIP_DAYS:",     VType::NUMBER, "30"},
         {"decoder_log_pos_s",        "DECODER_LOG_POS_S:",        VType::NUMBER, "10"},
         {"decoder_log",              "DECODER_LOG:",              VType::BOOL,   "0"},
         // 🗣 Voice to Text (voice2text.cpp) - before DECIMATORS, whose VFOs may
@@ -144,6 +150,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"voice2text_vad",           "VOICE2TEXT_VAD:",           VType::BOOL,   "1"},
         {"voice2text_translate",     "VOICE2TEXT_TRANSLATE:",     VType::BOOL,   "0"},
         {"voice2text_keep_audio",    "VOICE2TEXT_KEEP_AUDIO:",    VType::BOOL,   "1"},
+        // Live text (partial transcripts while someone talks): off - its CPU
+        {"voice2text_live",          "VOICE2TEXT_LIVE:",          VType::BOOL,   "0"},
         // Mobile DF heat map on the 🗺 Map: collect bearings while driving,
         // half-width of the grid (km)
         {"rdf_enabled",              "RDF:",                      VType::BOOL,   "1"},

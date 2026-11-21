@@ -52,6 +52,17 @@ Fixed 32-byte header, then per-channel metadata, then payload:
 
 (`data_receiver.cpp:148-161, 252-287`; decode helpers in `include/utils/endian_utils.hpp`: `read_be32` = `memcpy` + unconditional `__builtin_bswap32` — i.e. assumes little-endian host; `read_le_float` = raw `memcpy`, host/LE float.)
 
+`phase_comp_state`: the low byte is the `PhaseCompensatorState`; the higher
+bits are flags every consumer masks off - `0x100` KerberosSDR manual mode,
+`0x200` calibration stale, `0x400` wideband scan, `0x800` independent mode,
+`0x1000` generic RTL-SDRs (heimdall started without a KrakenSDR: no coherent
+array, coherent mode unavailable; set on every frame together with `0x800`
+or `0x400`). In that generic mode `num_channels` can be **1** (a single
+dongle); heimdall's own GR source (`krakensdr_source_impl.cc`) accepts 1-16.
+
+Wire check (generic mode, one R820T dongle, 2026-11-16): `channels=1
+samples=16384 phase_state=0x1800 noise=0`, 2.400 MS/s over 10 s.
+
 Per-channel metadata is pushed into `ChannelManager::update_channel_info(ch, freq, gain)` for every packet (`data_receiver.cpp:286`), which also stores `tuner_frequencies[ch]` (uint64, `src/channel_manager.cpp:68-80`).
 
 ### 1.5 num_channels / num_samples changes mid-stream
@@ -91,7 +102,7 @@ Per-channel metadata is pushed into `ChannelManager::update_channel_info(ch, fre
   - **Newline-framed**: `cmd + "\n"` — heimdall splits commands on newlines; without it back-to-back commands coalesce (`data_receiver.cpp:1056-1060`).
   - **Lazy connect**: connection opened on first command; socket set `O_NONBLOCK` after connect (`data_receiver.cpp:1067-1070`).
   - **Two attempts** then drop with stderr `"Control command dropped (server unreachable): ..."`.
-- **The client NEVER reads from the control socket.** There is no `receive_data` call on `control_client` anywhere (grep-verified). Heimdall's control-port status JSON broadcasts are **ignored**; all status (phase_state, noise_source, frequencies, gains, retuning) is consumed from the **data-packet header** instead.
+- The client drains the control socket on its status thread (`drain_control_socket`) and takes only a few things from heimdall's status lines: the Wideband board's `downconverter` object, heimdall's `version` and, since 2026-11-18, the antenna bias tee fields and the replies to `set_antenna_bias_tees` (`kraken_doa_v2/docs/dev/bias-tees.md`; for those it also opens the control connection itself, every 5 s at most while it is down). All other status (phase_state, noise_source, frequencies, gains, retuning) is consumed from the **data-packet header**.
 
 ### 3.2 Exact JSON commands sent to heimdall
 All single-line JSON + `\n`:

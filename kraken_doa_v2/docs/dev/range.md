@@ -9,8 +9,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`).
 - The user's request (2026-10-20): from ONE DoA lobe + the received level +
   an estimate of the transmitter's EIRP and our antenna gain, a heat map of
   where the transmitter probably is - with the terrain through ITU-R P.1812
-  as the 📶 path loss does. "Range" in the 📡 DF panel's header
-  (`#map-df-rng`, `rgToggle`) -> the panel `#map-rg` (in `.map-tl`, the
+  as the 📶 path loss does. "Range" in the map's Layers popover (group
+  Tools, coherent mode; `rgToggle` - in the 📡 DF panel's header until
+  2026-11-18, *map.md*, *Layers popover*; the panel's ✕ closes it too)
+  -> the panel `#map-rg` (in `.map-tl`, the
   viewshed panels' look: `.map-vs.map-pl.map-rg`) + its layer (`rgDraw`,
   under the DF lobes). The source = the DF panel's selection (`rgSource`):
   one radio (a talker), else the selected VFO (all: the sidebar's selected
@@ -100,12 +102,42 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`).
   or a saved-frequency tag; not while dragging, nor over an AI / saved
   frequency marker on the spectrum) - shows beside the pointer
   (`.vfo-lvl-tip`, `vfoLvlRender`, kept on screen): "D0 · MHz · bandwidth",
-  dBFS · SNR (the VFO's band: signal over the band's noise) · dBm (dBFS -
-  gain + the 📏 range panel's calibration `rgState.cal`), the gain and
-  whether calibrated (± sigC), ⚠ near full scale (total > -8 dBFS), "last
-  heard N s ago" (age > 2 s), "the tuner AGC is on" (no dBm), "no level
-  yet" before a moment. `vfoLvl` from system_status (`vfoLvlNote` in
-  updateSystemStatus); updated live while shown. Checked (scratch
+  SNR · dBFS · dBm (dBFS - gain + the 📏 range panel's calibration
+  `rgState.cal`), the gain and whether calibrated (± sigC), ⚠ near full
+  scale (total > -8 dBFS), "level last heard N s ago" (age > 2 s), "the
+  tuner AGC is on" (no dBm), the SNR alone + "no level (dBFS / dBm) yet"
+  before a moment. `vfoLvl` / `vfoSnr` from system_status (`vfoLvlNote` in
+  updateSystemStatus); updated live while shown.
+  THE SNR IS THE SPECTRUM'S (the user's report 2026-11-17: "only showing 30
+  dB, when it should be more like 50 something… for signals with low SNR,
+  it doesn't even show a value at all"): `decimator_squelch[].snr_db` =
+  `vlvl::snr_db` = `FFTProcessor::get_range_peak_db` over the VFO's band -
+  the highest point of the tuner's AVERAGED spectrum over the noise floor,
+  i.e. the plot's own dB scale and the number the FFT squelch compares -
+  sampled every 100 ms for every VFO, with or without a level, the squelch
+  open or closed. Until then it was the level's `dbfs - noise`: the signal
+  over the noise SUMMED ACROSS THE WHOLE VFO. Not wrong arithmetic, but not
+  what the screen shows: a signal narrower than its VFO reads lower by
+  about the ratio of the widths (and the plot's 0 dB - the averaged
+  spectrum's 10th percentile - sits ~5 dB under the mean noise), and below
+  the level's gate (2x that summed noise) there was no number at all - in a
+  63.1 kHz VFO a carrier up to ~30 dB tall on the plot. Measured on the
+  live KrakenSDR (a passive read of the page feed; 416.59 MHz, a ~10 kHz
+  signal in a 63.1 kHz VFO, FFT 16384, gain 7.7): level -32.0 dBFS, band
+  noise -61.8 -> 29.8 dB, the plot's peak in the band 55.5 dB (54.6-56.0).
+  The range panel keeps the band figure - its "weak" warning is about the
+  level's gate - but no longer calls it SNR ("N dB over its band's noise").
+  A page from before `snr_db` ignores it; this page on a receiver without
+  it falls back to `dbfs - noise`. An empty VFO reads the noise's own peaks
+  as drawn (~5-7 dB), as the plot does. Checked (scratch, job 2dcca33c: a
+  test build on 4808x + fake_scene.py, 5 coherent channels, sigma 2 LSB;
+  ana_test.py reads snr_db and the type 0 frames; ui_hover.py = headless
+  Chromium, real mouse moves): a 9.4 kHz signal in a 63.1 kHz VFO plot 52.2
+  / snr_db 52.0 (old 34.5); carriers without a level - 63.1 kHz VFO 28.7 /
+  28.9, 12.5 kHz 11.8 / 11.8, under a closed squelch 40.0 / 40.0 - and an
+  empty 12.5 kHz VFO 6.6 / 6.5 (all four: no number before); the tooltip
+  on the spectrum's and the waterfall's bars, live update, a held level,
+  an older receiver, no exceptions (20 / 20). Earlier checks (scratch
   ui_hover.mjs, headless Chrome, real mouse moves over the bar drawn from a
   fake VFO list + spectrum frame): no level yet, live update, the
   calibration applied, AGC / full scale / age, the status handler, the
@@ -280,7 +312,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`).
   -> dBm, SNR, held), the sweep's status, the readout + warnings (edge > 5
   %, SNR < 10 dB: may read high, total > -8 dBFS: near full scale - lower the
   gain, uncalibrated, held, no place fits), legend, ◎ / Clear, hover, then
-  the fold "Transmitter, our antenna, calibration, model" (`rgState.cfg`,
+  the fold "Settings" (the transmitter, our antenna, calibration, model - `rgState.cfg`,
   open the first time: the map is narrow - the readout first): power +
   antenna - cable or EIRP (W) + presets (`RG_PRESETS`: handheld 5 W -3
   dBi 1.5 m, PMR446 0.5 W ERP, vehicle 25 W, base / repeater 50 W 6 dBi 25

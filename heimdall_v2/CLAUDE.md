@@ -14,11 +14,12 @@ are changing:
 | `config.h` settings, ingest robustness knobs, realtime scheduling | `docs/dev/configuration.md` |
 | Lag servo, phase calibration, retune timing, calibration hold, why phase-only, fixed IF VGA, calibration buttons | `docs/dev/calibration.md` |
 | Drag retunes (fast path), failed-retune replies, measurements | `docs/dev/drag-retunes.md` |
-| Operating modes (coherent / wideband scan / independent) | `docs/dev/operating-modes.md` |
+| Operating modes (coherent / wideband scan / independent), generic RTL-SDR mode | `docs/dev/operating-modes.md` |
 | Coherence-loss detection and recovery | `docs/dev/coherence-recovery.md` |
 | `--kerberos`, `--kerberos_sw`, `--ext_noise` | `docs/dev/kerberos-and-ext-noise.md` |
 | `--wideband` downconverter (moRFeus LO, mixer sides, RF switches) | `docs/dev/wideband-variant.md` |
 | FFT (pffft) | `docs/dev/fft-pffft.md` |
+| The web page (8070): layout, look (follows the client's palette and text rules), the calibration chip, page tests | `docs/dev/web-ui.md` |
 | The librtlsdr fork, Windows USB behaviour | `../docs/dev/librtlsdr-fork.md`, `../docs/dev/windows.md` |
 | 8091 / 8092 wire protocols | `../gr-krakensdr_v2/docs/heimdall_v2_data_protocol.md`, `..._control_protocol.md` |
 
@@ -39,13 +40,14 @@ startup by `html_loader.cpp`.
 - `src/core/`: `types.hpp` (state enums, `CorrelationResult`,
   `PhaseCompensationData`, `ChannelCompensation`, `OperatingMode`),
   `config.hpp` (wraps `config.h`; `kerberos_manual_cal_only()`,
-  `external_noise_mode`), `buffer_pool.hpp`, `atomic_complex.hpp`,
+  `external_noise_mode`, `generic_rtlsdr()`), `buffer_pool.hpp`, `atomic_complex.hpp`,
   `logging.hpp` (`LOG_I/W/E`), `utils` (`set_thread_realtime()`,
   `lock_process_memory()`), and the
   copies shared with kraken_doa (`net_compat.hpp`, `platform.*`,
   `fs_compat.*`, `host_check.hpp`, `log_sanitize.hpp`).
 - `src/sdr/`: `sdr_device.cpp` (L1 buffers, the RTL callback), `sdr_init.cpp`
-  (enumeration by serial, `update_sdr_settings()`,
+  (enumeration by serial - by USB index in generic RTL-SDR mode,
+  `update_sdr_settings()`,
   `set_bias_tee_all_devices()`, `set_operating_mode()`,
   `wideband_retune_rf()`, `for_each_tuner`), `sdr_pipeline.cpp` (drain,
   conversion worker, `signal_coherence_lost()`), `pipeline_control.cpp`
@@ -110,6 +112,13 @@ Calibration
 - Every "calibration stands down" check is `operating_mode != COHERENT`.
   `kerberos_manual_cal_only()` guards every automatic noise-on path - plain
   `--kerberos` must never calibrate on its own.
+- Generic RTL-SDR mode (`generic_rtlsdr()`, no KrakenSDR attached; chosen
+  once at startup): INDEPENDENT before any thread starts, coherent mode and
+  every calibration refused, and NO GPIO write ever (GPIO0 is a generic
+  dongle's antenna bias tee) - a new noise-source, GPIO or calibration path
+  must check it. Dongles are opened once by USB index (serials repeat):
+  never re-resolve one by serial. N may be 1. Gated entirely on the flag, so
+  a KrakenSDR start is unchanged.
 - A retune / gain / mixer-side / ring change goes through
   `update_sdr_settings()` and the cooldown (`STABILITY_DELAY_MS` 3 s, a
   debounce kept on purpose) -> noise on -> `NOISE_SETTLE_MS` -> snapshots ->
@@ -166,8 +175,12 @@ Performance
   document it in `README.md` and the gr protocol doc; test with
   `echo '{"command":"..."}' | nc localhost 8092`. New state belongs in the
   8092 status JSON and the web STATE message.
-- A web feature: `src/web/web_server.cpp`, plus `index.html` (read at
-  runtime).
+- A web feature: `src/web/web_server.cpp`, plus `index.html` (read once at
+  startup: restart heimdall to see an edit, no rebuild). The page follows
+  the client's palette and text rules - colours only as `var(--token)`, no
+  explanations on the controls (a `?` tip instead), no emoji, no browser
+  `confirm` / `alert` / `prompt` - the page's `uiConfirm` / `uiAlert`
+  (`docs/dev/web-ui.md`).
 - A module: add its sources to the Makefile (`SOURCES`, the build dirs) and
   `CMakeLists.txt`, and keep the dependency order of the root file.
 

@@ -78,8 +78,10 @@ channel letters A-S, in use B, C, D, F, G, S) is found and decoded:
 - **Raw frames** (decoder data log): `FFFE2F` / `FFFED0` + bits 25-144 in hex
   + C/N0 (+ "self-test")
 
-Not done: 121.5 MHz homing (swept AM tone; a follow-up), the obsolete
-short-format location protocols, orbitography contents (C/S T.006).
+Not done here: 121.5 MHz homing (the swept AM tone - the `beacon121`
+plugin, `plugins/beacon121/README.md`: a 406 MHz beacon's homer, its pauses
+for the 406 MHz burst and its Morse letter), the obsolete short-format
+location protocols, orbitography contents (C/S T.006).
 
 ## ID separation
 

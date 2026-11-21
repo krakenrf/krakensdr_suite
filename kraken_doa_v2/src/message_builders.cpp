@@ -1,4 +1,7 @@
 #include "wb_board.hpp"
+#include "app_version.hpp"
+#include "antenna_bias.hpp"
+#include "utils/version_info.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
 #include "globals.hpp"
@@ -371,7 +374,7 @@ double MessageBuilders::spectrum_center_hz() { return g_spectrum_center_hz.load(
 
 string MessageBuilders::build_spectrum_view(const SpectrumSnapshot& snap, int display, double lo_off_hz,
                                             double hi_off_hz, uint32_t bins, uint32_t seq,
-                                            double* point_step_hz) {
+                                            double* point_step_hz, SpectrumViewCut* cut) {
     if (display < 0 || display > MAX_CHANNELS) return string();
     const SpectrumDisplay& d = snap.disp[display];
     const size_t L = d.db.size();
@@ -403,6 +406,7 @@ string MessageBuilders::build_spectrum_view(const SpectrumSnapshot& snap, int di
     const size_t pool = std::max({size_t(1), (count + budget - 1) / budget, (count + want / 2) / want});
     const size_t n = (count + pool - 1) / pool;
     if (point_step_hz) *point_step_hz = d.step_hz * static_cast<double>(pool);
+    if (cut) *cut = {i0, i1, pool, n};   // 🎨 the bearing spectrum's points (bin_doa.hpp)
 
     string out;
     out.resize(64 + n);
@@ -581,7 +585,16 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"phase_state\":" << phase_state;
     json << ",\"noise_source\":" << (scanner_manager.isNoiseSourceActive() ? "true" : "false");
     json << ",\"active_elements\":" << active_num_elements.load();
+    // generic RTL-SDRs, no KrakenSDR: no coherent mode (operating_mode has it too)
+    json << ",\"generic_rtlsdr\":" << (server_generic_rtlsdr.load(std::memory_order_relaxed) ? "true" : "false");
     json << ",\"platform\":\"" << platform::os_name() << "\"";   // the UI's per-OS instructions
+    // The suite's version (utils/version_info.hpp; the sidebar's footer line) and
+    // heimdall's, from its control-port status (app_version.hpp; absent until heard)
+    json << ",\"version\":" << appver::json();
+    if (const std::string hv = heimdall_version_json(); !hv.empty()) json << ",\"heimdall_version\":" << hv;
+    // heimdall's antenna bias tees, from its control-port status (antenna_bias.hpp;
+    // state "none" / "old" when it isn't there or doesn't have them)
+    json << ",\"antenna_bias\":" << antbias::state_json();
 #ifdef _WIN32
     // running from the source folder (kraken_doa_v2/Makefile in the cwd) or
     // from a package (windows/package.sh: no sources, Makefile or MSYS2) -
@@ -611,7 +624,8 @@ string MessageBuilders::build_system_status_message() {
     }
 
     // Per-decimator squelch states (+ MUSIC's auto source estimate, + 📏 the
-    // received level - vfo_level.hpp: the page's hover readout on each VFO)
+    // received level and the SNR on the spectrum - vfo_level.hpp: the page's
+    // hover readout on each VFO)
     json << ",\"decimator_squelch\":[";
     auto info_list = decimator_manager.getDecimatorInfoList();
     bool first = true;
@@ -632,6 +646,13 @@ string MessageBuilders::build_system_status_message() {
              << ",\"open\":" << (info.squelch_open ? "true" : "false")
              << ",\"est_sources\":" << est_sources
              << ",\"power_dbfs\":" << power;
+        // snr_db: the VFO's band as the spectrum shows it - its peak over the
+        // floor (the hover readout's SNR; there with or without a level)
+        if (float snr; vlvl::snr_db(info.id, &snr)) {
+            char b[24];
+            std::snprintf(b, sizeof(b), ",\"snr_db\":%.1f", snr);
+            json << b;
+        }
         vlvl::Level lv;
         if (vlvl::level(info.id, &lv)) vlvl::write_json(json, lv);
         json << "}";
@@ -846,6 +867,32 @@ string MessageBuilders::build_beamformed_fft_message(const BeamformedSpectrum& b
     return msg.to_string();
 }
 
+string MessageBuilders::build_video_message(int vfo_id, int width, int height, int format, int encoding,
+                                            const string& label, const uint8_t* pixels, size_t pixel_len) {
+    if (width <= 0 || height <= 0 || width > 65535 || height > 65535) return string();
+    const uint8_t fmt = format == 1 ? 1 : 0;
+    const uint8_t enc = encoding == 0 ? 0 : 2;   // 0 raw pixels, 2 JPEG (opaque)
+    if (enc == 0) {   // raw pixels: the length must match the geometry
+        const size_t bpp = fmt == 1 ? 3 : 1;
+        if (pixel_len != static_cast<size_t>(width) * static_cast<size_t>(height) * bpp) return string();
+    } else if (pixel_len == 0) {   // JPEG blob: an opaque, non-empty bitstream
+        return string();
+    }
+    const size_t label_len = std::min<size_t>(label.size(), 65535);
+
+    BinaryMessage msg;
+    msg.add_value(uint32_t(8));   // Video message type
+    msg.add_value(static_cast<uint32_t>(vfo_id));
+    msg.add_value(static_cast<uint16_t>(width));
+    msg.add_value(static_cast<uint16_t>(height));
+    msg.add_value(fmt);
+    msg.add_value(enc);           // 0 raw pixels, 2 JPEG bitstream
+    msg.add_value(static_cast<uint16_t>(label_len));
+    if (label_len) msg.add_array(label.data(), label_len);
+    if (pixel_len) msg.add_array(pixels, pixel_len);
+    return msg.to_string();
+}
+
 string MessageBuilders::build_decimator_info_message() {
     auto info_list = decimator_manager.getDecimatorInfoList();
 
@@ -911,7 +958,12 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"transcribe\":" << (info.transcribe ? "true" : "false")
              << ",\"digital_mode\":\"" << json_escape(dig::mode_string(static_cast<dig::Mode>(info.digital_mode), info.digital_plugin)) << "\""
              << ",\"digital_opts\":{\"verbose\":" << (info.digital_opts.verbose ? "true" : "false")
-             << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false")
+             // the logging mode 0 Off / 1 Log / 2 Log All (a page that finds it
+             // shows the Logging select; an older receiver has none)
+             << ",\"log\":" << info.digital_opts.log
+             // Positions every (s) of the decoder log (a page that finds it shows the field
+             // in the decoder's row; an older receiver has the global one)
+             << ",\"pos_s\":" << info.digital_opts.pos_s
              << ",\"map\":" << (info.digital_opts.map ? "true" : "false") << ",\"plugin\":{";
         bool fo = true;
         for (const auto& kv : info.digital_opts.plugin) {

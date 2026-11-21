@@ -124,6 +124,12 @@ docker compose down           # stop and remove the containers
    Independent mode (the DoA page's Mode selector) no calibration runs, so it
    starts straight away.
 
+The DOA page's **↻ Restart → Restart software** works here too: both apps
+exit with status 75 (`KRAKEN_RESTART_EXIT` in `docker-compose.yml`) and the
+`restart: unless-stopped` policy starts them again. A container can't reboot
+or power off the host, so those buttons are not offered; `KRAKEN_NO_POWER=1`
+in `.env` hides the restart button as well.
+
 The logs show errors only, as in `run.sh`'s headless mode. The apps' live
 terminal dashboards aren't available in Docker. For full log output, put
 `HEIMDALL_VERBOSE_LOG=1` / `KRAKEN_DOA_VERBOSE_LOG=1` in `.env` and run
@@ -162,6 +168,7 @@ that changed.
 #   --kerberos_sw KerberosSDR with CKOVAL antenna switches (see below)
 VARIANT_FLAGS=
 
+# (ordinary RTL-SDRs without KrakenSDR serials: heimdall starts after 10 s)
 KRAKEN_TUNERS=5        # dongles to wait for at startup (4 for a KerberosSDR, 0 = don't wait)
 WAIT_TIMEOUT=300       # seconds kraken_doa waits for convergence (0 = forever)
 KRAKEN_DATA_DIR=./docker-data   # where settings and recordings are kept
@@ -187,17 +194,19 @@ docker-data/kraken_doa/server.crt/.key        TLS certificate (self-signed, made
 docker-data/kraken_doa/doa_recordings/        DoA recordings
 docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
-                                              cdecoder, sdecoder - README "Digital voice codecs")
-docker-data/whisper_models/                   Voice to Text speech models (the sidebar's "⬇ Get")
-docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (the 🗣 Voice tab)
-docker-data/kraken_doa/decoder_logs/          Decoder Logging files, and in voice_clips/ the
-                                              transcripts' audio (Opus, kept as many days as the logs)
+                                              cdecoder, sdecoder; libfdk-aac.so.2 for DAB+ -
+                                              README "Digital voice codecs")
+docker-data/whisper_models/                   Voice to Text speech models ("⬇ Get" in ⚙ Setup Settings → 🗣 Voice to Text)
+docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (🗣 Transcription)
+docker-data/kraken_doa/decoder_logs/          Decoder Logging files (a folder per decoder, transcripts/),
+                                              and in voice_clips/ the transcripts' audio (Opus, kept
+                                              for the logs' Keep days)
 ```
 
-**Voice to Text** (sidebar "🗣 Voice to Text"): the image includes the
+**Voice to Text** (⚙ Setup Settings → 🗣 Voice to Text): the image includes the
 speech-to-text helper (whisper.cpp; `--build-arg WHISPER=0` leaves it out and
 saves ~10 minutes of build). The speech models are not in the image: pick one
-in the sidebar box and press "⬇ Get" - it is downloaded once into
+on that tab and press "⬇ Get" - it is downloaded once into
 `docker-data/whisper_models/` and kept across rebuilds.
 
 **📼 Recordings on a USB drive**: the container only sees `/data` and what
@@ -234,6 +243,10 @@ a commit or an image.
 git pull
 docker compose up -d --build
 ```
+
+The web pages show the version the image was built from (bottom of the
+sidebar, e.g. `r294 · 63a4917`). The build reads it from the clone's `.git`;
+an image built from a source archive without it shows "Version unknown".
 
 ## 8. Hardware variants
 
@@ -281,7 +294,8 @@ services:
   - Empty variables from compose are removed, because the apps treat an
     empty variable as set.
   - The decoder plugins in `kraken_doa_v2/plugins/` (all the decoders: P25,
-    DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX, APRS) are built
+    DMR, TETRA, D-STAR, NXDN, Yaesu System Fusion, MPT1327, POCSAG / FLEX,
+    APRS) are built
     into the image, and kraken_doa finds them through `KRAKEN_PLUGIN_DIR`.
     The AI assistant is not available in Docker (its panel stays hidden):
     the image has no LLM CLI and no compiler. Create plugins on a native

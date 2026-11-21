@@ -6,7 +6,7 @@ loaded automatically. *Italic* topic names refer to the other files in this
 folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI), ACARS and VDL Mode 2 aircraft / ground stations; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds,acars,vdl2}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR / Yaesu Fusion callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, 121.5 MHz swept-tone beacons (by carrier), LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI), ACARS and VDL Mode 2 aircraft / ground stations, DAB transmitters (TII); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,ysf,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,beacon121,lora,wildlife,rds,acars,vdl2,dab}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -15,7 +15,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   signals), v23_telemetry (proprietary payload, no known address), dtv
   (SFN copies are identical - separated by delay instead), radiosonde's
   iMet-4 (sends no serial), glide slopes / marker beacons (no ident)
-- Goal: a VFO on a P25 / DMR / NXDN / D-STAR channel carries many radios; the VFO's DoA
+- Goal: a VFO on a P25 / DMR / NXDN / D-STAR / YSF channel carries many radios; the VFO's DoA
   mixes them. The decoder names who transmits when, the VFO's signal is cut
   at those boundaries and each radio's own samples go through MUSIC - one
   bearing (+ history + mobile DF heat map) per unit ID, picked on the map
@@ -56,6 +56,17 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   UDCH) or a VCALL, < 0.5 s apart; talker = VCALL source (label "TG n" /
   "unit call to n", " · via repeater" when the LICH says outbound); TX_REL
   ends it (its frames included); `tick()` from process()
+- YSF (`YsfReceiver`): frame `frame_a_ = sync_end - 19.5 sps` minus the
+  RRC + channel filter delay (71 samples), 480 symbols. A transmission =
+  valid frames < 1 s apart from the header to the terminator (TC frames
+  included; two headers in a row are one, a repeated TC no new one);
+  talker = the source callsign (CSD1 of HC / TC / V/D 1, V/D 2's FN 1
+  Src), trailing spaces off, label "DST · DN" (+ " · via RPT" from CSD2,
+  or "via repeater" from MR; an all-asterisk DST - `*****` in Radio ID
+  mode, seen on air - reads "ALL"); a late entry is reported from its first
+  frame once the DCH names it, a VW call joined after its header / sub
+  header only by its TC (4.4: no CSD elsewhere). A new source without a TC
+  ends the old talker where it was last named
 - D-STAR (`DstarReceiver`, no FEC on voice frames): sync events in sample
   order from correlate(): a data sync in the 420 ms cadence (<= 2 missed)
   confirms everything up to it; the first sync of a transmission exactly
@@ -79,6 +90,42 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   at the reset (RxContext::talker / talker_end, dig_common.hpp). On
   iq_143.0.u8 (-787.5 kHz): 2010621 0.134-0.314 s, 3250 0.912-2.255 s,
   2010621 6.813- s - matching the decoded frames
+- P25 Phase 2 (`P25p2Proto`, 2026-11-18; plugins/p25/README.md): OUTBOUND
+  (a site) = spans on channel LCH + 1 (as DMR's slots): a transmission =
+  checked bursts of the LCH < 0.5 s apart (`GAP`), slot boundaries from the
+  receiver (`P25p2Slot::start` / `end`, input samples, within 2 samples on
+  the generator); talker = the call's source unit, label "TG n · LCH k ·
+  via site" ("unit call to n" for unit-to-unit), "?" while the LCH is busy
+  and no unit is known. The unit comes from MAC_PTT, from the voice channel
+  user messages on the SACCH of superframes 0-2 only (superframe 3's SACCH
+  names the INBOUND talker - another unit or 0 on real calls) and from
+  Motorola's MFID 0x90 message 0x80, so a call joined late is named too;
+  another unit without an end in between ends the old talker where it was
+  last named; a MAC_PTT starts its sender's span (an unnamed "?" span
+  before it closes at the MAC_PTT burst). Both timeslots busy with different units: frames touching
+  both spans are dropped (`TalkerDoa` below: a frame may touch no other
+  talker's span), each bearing comes
+  from the time its talker was alone. INBOUND (a radio) = PACKETS, exactly
+  symbols 6-173 of a burst's slot (`freq_hz` = the burst's own carrier
+  offset, `bw_hz` 12500), label "TG n · inbound LCH k", `keep_s` 1800
+  (kept 30 min like the transmission talkers, not the packet default of 2
+  min) - and only on positive evidence that the radio sent the burst
+  (`in_named` / `in_burst`; review of 2026-11-18): a MAC_PTT / voice
+  channel user / MAC_END_PTT burst is the packet of the unit it names; a
+  voice burst continues the lane's named radio within 0.25 s (`CONT`) of
+  its last burst at its carrier offset (60 Hz, `FTOL`; measured per burst
+  to 2-13 Hz rms); voice bursts before the name wait up to 1.2 s
+  (`PENDING_MAX`, inside the host's 1.5 s RING_S) and go only to a radio
+  named by a voice channel user / MAC_END_PTT, as the unbroken chain back
+  from that burst at its offset - never to one named by its MAC_PTT (that
+  starts its transmission); a signalling burst that names nobody is
+  nobody's (a listener's superframe-3 SACCH). Unattributable bursts are not
+  reported. Found by review: before, a radio joined by its voice alone
+  handed its held bursts to the next radio that named itself on the lane
+  (11 wrong packets in a scratch scene), and a listener's SACCH became the
+  talker's packet. Two radios on the two timeslots - 28 ms bursts
+  alternating every 30 ms - get separate bearings (packets of different
+  talkers do not overlap)
 - Generators in the repo (2026-10-16): `plugins/p25/tools/p25_gen.py`
   (HDU, LDU1 link control / LDU2 encryption sync, placeholder IMBE frames
   with valid FEC, TDU / TDULC, status symbols, C4FM = raised cosine x
@@ -90,6 +137,18 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   at 300 deg with 3100001 on slot 1 and, overlapping, 3100002 on slot 2;
   3100011 direct TS1 at 60, 3100012 direct TS2 at 200): offline every
   frame / burst decoded, every talker 0.0 deg off
+- P25 Phase 2 generator (2026-11-18): `plugins/p25/tools/p25p2_gen.py`
+  (outbound site channel / inbound bursts of one radio, placed by
+  uca_scene.py) -> playback `p25p2-inbound-three-radios` (6001 at 40 deg and
+  6002 - encrypted - at 160 deg at the same time on the two timeslots, then
+  6003 at 280 deg) and `p25p2-site-two-timeslots` (a site at 120 deg, calls
+  on both timeslots, then a Phase 1 call on the same channel). Offline
+  (`--channels 5 --uca 0.12`): 40.0 / 160.0 / 280.0 deg, errors <= 0.2 deg
+  down to a scene SNR of 6 dB (12.5 kHz), no packets dropped for overlap;
+  the second radio 10 dB weaker is lost first, the others unaffected; the
+  site scene 120.0 deg for every talker. End to end: *Debug playback*.
+  Inbound is checked only against this generator (no inbound recording
+  exists publicly); outbound also on real recordings (plugin README)
 - Sample clock: `DecimatorInstance::stream_pos` counts the VFO's decimated
   samples; run_pipeline stamps each block (`MultiChannelDecimated::
   stream_pos`, fetch_add of min_samples) and passes it to MUSIC and to
@@ -246,8 +305,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   decoded at once that never reached the DF list could not be told apart
   (every drop was silent).
 - Channel filtering (AIS): `kp::Talker::freq_hz` / `bw_hz` (packet's
-  centre in the plugin's band - the engine maps it to the VFO's: + afc_hz_,
-  mirrored with invert), `avg_s` (averaging; also TTL = max(2 min, 30
+  centre in the plugin's band - the engine maps it to the VFO's: + afc_hz_),
+  `avg_s` (averaging; also TTL = max(2 min, 30
   avg_s) and the lobe kept max(60 s, 15 avg_s)). Wire TALKER fields 7-9.
   TalkerDoa keeps the raw samples while the VFO rate <= RAW_MAX_RATE (500
   kHz; 5 antennas at 100 kHz ~ 6 MB for RING_S) and `packet_cov_raw`
@@ -300,9 +359,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   talker runs MUSIC with ONE source (`Talker::coded`, like spatial ones).
   `PacketStats::coded` = how many came so (DF status `pk.coded`; the 📡 DF
   panel's line "N decoded, M with a bearing (all / k separated by code)").
-  The invert option conjugates it (every antenna's Q was negated). An older
-  kraken_doa ignores the fields (split0 stops at 13): the stream path, as
-  before
+  An older kraken_doa ignores the fields (split0 stops at 13): the stream
+  path, as before
 - ID separation added 2026-10-15 (packets, the channel always named):
   - APRS (`plugins/aprs`): a packet per frame, id = the frame's RF
     TRANSMITTER: the source, or the last path entry with the H bit ("*") when
@@ -436,6 +494,16 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     10, keep_s 30 min; label = registration + flight (from ACARS over AVLC)
     or the station's airports (its XID). UI kinds as acars (`RDF_PK_KIND`
     vdl2) - see *VDL Mode 2*
+  - DAB transmitters (`plugins/dab`, 2026-11-16): a single frequency
+    network sends one signal from every mast, but each transmitter has its
+    own TII carriers in the null symbol. Every confirmed code's null symbol
+    (coherent mode, DoA on) = a packet `EId-MainId-SubId` (`10BC-12-03`) of
+    1 ms with the plugin's own covariance of that code's unshared carriers
+    (`t.cov`, noise covariance removed; by code, not by channel), avg_s 10,
+    keep_s 30 min, label = the ensemble label. UI kind `transmitter` 🗼
+    ("TII / Ensemble / Nulls", unit null symbol, by name; in
+    `RDF_POS_KINDS`: a FIG 0/22 position, which few ensembles send, is a map
+    point with the talker's id) - see *DAB / DAB+*
   - UI (kraken_doa.html): `RDF_PK_KIND` plugin -> kind (station 📻 aprs,
     sonde 🎈, site 🗼 tetra + mpt1327, navaid 🧭 ils, radar 📡 radar - list
     "Radar / PRF · pulse · scan / Pulses", by name; ship / aircraft /
@@ -471,6 +539,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   dmr / dstar / nxdn on the dsd / dsdcc samples identical; the others only
   add their talker lines (+ the D-STAR fix). No live check: no AIS
   (162 MHz, 7 min) or APRS (144.575 MHz, 3 min) traffic at the station
+- Tests 2026-11-16 (YSF, generator `ysf/tools/ysf_gen.py` - its frames
+  and callsigns read the same by dsdcc -, no real recording): ZL1AAA (DN twice) 40°, ZL2BBB (VW) 160°, ZL3CCC (V/D mode 1)
+  280°, 20 dB, 0.3 s apart: 40.0 / 160.0 / 280.0 offline; catalogue
+  `ysf-three-radios` 50.0 / 170.0 / 285.0 offline and through a scratch
+  kraken_doa debug playback (45 s, Check 3 / 3, each +0.0, 0 packets
+  dropped)
 - Not split: MPT1327 voice (analogue). On a repeater OUTPUT every ID's
   bearing is the repeater's. A DMR repeater INPUT with both slots busy
   can't be split (MS bursts carry no slot) - the two radios' LCs land on

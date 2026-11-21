@@ -726,14 +726,18 @@ void pause_if(bool cond) {
 // ---------------------------------------------------------------------------
 // runs cmd in this console and restarts it after a crash:
 //   exit 0 (clean shutdown) / a requested stop -> done
+//   exit RESTART_EXIT (the web page's ↻)       -> restart after 1 s
 //   anything else (crash, init error)          -> restart after restart_delay s
+// The app gets KRAKEN_RESTART_EXIT: it offers / accepts ↻ Restart software
+// only then (kraken_doa_v2/docs/dev/power.md). The headless run doesn't set it.
+constexpr DWORD RESTART_EXIT = 75;
 int supervise(const std::wstring& name, const std::vector<std::wstring>& cmd, const Options& o) {
     HANDLE job = make_kill_on_close_job();
     DWORD rc = 0;
     for (;;) {
         Child c;
         std::string why;
-        if (!spawn(cmd, L"", nullptr, 0, job, {}, &c, &why)) {
+        if (!spawn(cmd, L"", nullptr, 0, job, {{L"KRAKEN_RESTART_EXIT", std::to_wstring(RESTART_EXIT)}}, &c, &why)) {
             err("cannot start " + narrow(cmd[0]) + ": " + why);
             rc = 1;
         } else {
@@ -751,6 +755,12 @@ int supervise(const std::wstring& name, const std::vector<std::wstring>& cmd, co
             CloseHandle(c.proc);
         }
         if (g_stopping || rc == 0) break;
+        if (rc == RESTART_EXIT) {
+            ok(narrow(name) + ": restart requested from the web page - starting it again");
+            stoppable_sleep(1000);
+            if (g_stopping) break;
+            continue;
+        }
         if (const char* why = fatal_exit_reason(rc)) {
             err(narrow(name) + " cannot run (status " + status_text(rc) + "): " + why);
             break;

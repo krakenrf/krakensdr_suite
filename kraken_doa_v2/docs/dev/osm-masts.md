@@ -7,7 +7,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
 **📡 OpenStreetMap masts layer (UI only, kraken_doa.html "📡 OSM MASTS"):**
-- "Masts" button (`mapState.masts`, localStorage like the other view
+- "Masts" switch in the map's Layers popover (a button on the map until
+  2026-11-18 - *map.md*, *Layers popover*) (`mapState.masts`, localStorage like the other view
   settings) + a colour legend (`#map-legend`). The BROWSER fetches from
   OpenStreetMap's Overpass API (`MAST_URL` overpass-api.de, CORS `*`), like
   the tiles - kraken_doa is not involved. overpass-api.de answers 406

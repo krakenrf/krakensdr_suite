@@ -21,9 +21,11 @@
 namespace dig {
 
 // A setting a plugin declares (kp::Option); choices "" = free text, else
-// "value=Label|value=Label|..."
+// "value=Label|value=Label|..."; hidden = the panel draws no control for it
+// (set by a table row click, kp::Option::hidden)
 struct PluginOption {
     std::string key, label, def, choices, help;
+    bool hidden = false;
 };
 
 struct PluginInfo {
@@ -46,6 +48,7 @@ struct PluginInfo {
     // array_burst_s every array_period_s, spatial covariances back
     bool array = false;
     double array_burst_s = 0.25, array_period_s = 1.0;
+    bool video = false;           // rebuilds a picture (kp::Info::video): the panel shows a video canvas
     bool tunes = false;           // kp::Info::tunes: may ask for retunes (kp::Host::tune)
     double squelch_hold_s = 0;    // kp::Info::squelch_hold_s: the Digital squelch's hold (0 = the host's)
     std::vector<PluginOption> options;
@@ -89,7 +92,9 @@ private:
 
 // Digital voice codecs as the decoder plugins find them (runs
 // plugins/lib/build/codecs; blocks ~ms - call it off the uWS thread):
-// {"codecs":{"checked":true,"imbe_ok":..,"imbe":"..","ambe_ok":..,"ambe":"..","acelp_ok":..,"acelp":".."}}
+// {"codecs":{"checked":true,"imbe_ok":..,"imbe":"..","ambe_ok":..,"ambe":"..","acelp_ok":..,"acelp":"..",
+//            "aac_ok":..,"aac":".."}}   (aac: the dab plugin's AAC library, DAB+; only when the
+//                                        codec check was built with plugins/dab/ there)
 std::string codec_status_message();
 
 // Runs argv (argv[0] = path; a bare name with search_path), returns its

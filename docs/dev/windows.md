@@ -34,6 +34,14 @@ launcher `krakensdr.exe` (repo root, from `windows/krakensdr.cpp`).
   after 10 s), `--headless` (logs\*.log, as NO_TMUX=1). Stop requests use the
   named event `Local\KrakenSDR_Stop_<pid>` that both apps and the launcher
   create (`platform::install_stop_handler`) - Windows has no SIGTERM
+- The web page's ↻ Restart / ⏻ Shut down (`kraken_doa_v2/docs/dev/power.md`,
+  2026-11-16): the supervisors give the apps `KRAKEN_RESTART_EXIT=75` and
+  restart an app that exits with 75 after 1 s (Restart software; not in
+  `--headless`, which doesn't set it). Reboot / shut down run
+  `%SystemRoot%\System32\shutdown.exe /r|/s /t 0` (no `/f`: an app with
+  unsaved work can still hold it up) when the token has
+  SeShutdownPrivilege (standard users do on Windows 10/11). Compile-checked
+  only on Linux hosts without MinGW: not built or run on Windows yet
 - Stops the OS ends a few seconds later are URGENT (`platform::stop_is_urgent`,
   always false on Linux): a closed console window, logoff / shutdown / an
   update restart (WM_ENDSESSION at a hidden top-level window in every exe -

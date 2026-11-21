@@ -209,7 +209,7 @@ private:
     double rf_of(double f) const {   // RF of an offset in the input band (NAN = unknown)
         const double rf = host.rf_hz();
         if (!std::isfinite(rf)) return NAN;
-        return host.rf_inverted() ? rf - f : rf + f;
+        return rf + f;
     }
     std::string mhz(double f, int dec = 3) const {
         const double r = rf_of(f);

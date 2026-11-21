@@ -30,10 +30,15 @@ ARG UWS_COMMIT=fe7da4cb05622b8d004718ec3ca05101782eb1c2
 ARG LIBRTLSDR_REPO=https://github.com/krakenrf/librtlsdr
 ARG LIBRTLSDR_COMMIT=578b43ddd971786e84e2a6ab3c338ee48c8739c3
 
+# libjpeg-dev (libjpeg-turbo, IJG/BSD-3-Clause/zlib): the decoder plugins link
+# -ljpeg to compress video frames; the main app never links it. The runtime
+# shared library (libjpeg-turbo8) needs no hand-adding - the runtime stage below
+# derives its packages from ldd of every binary, which includes the plugin
+# decoders.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git pkg-config ca-certificates \
         libusb-1.0-0-dev libeigen3-dev libssl-dev \
-        libopus-dev zlib1g-dev libsqlite3-dev \
+        libopus-dev libjpeg-dev zlib1g-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -92,6 +97,19 @@ COPY LICENSE LICENSE
 COPY scripts/collect-licenses.sh scripts/collect-licenses.sh
 RUN bash scripts/collect-licenses.sh /src/licenses rtlsdr=/src/librtlsdr uws=/src/uws-kraken
 
+# The version the web UIs show (docs/dev/version.md): the image has no git at
+# run time, so it is written here from the build context's git metadata into
+# /src/VERSION (empty when the context has none - a source archive, or a git
+# worktree whose .git is a file - and the apps then show "Version unknown").
+# The pattern .gi[t] lets the copy succeed without a .git; its contents land
+# in /src/gitmeta next to the script. After the builds above, so a new commit
+# re-runs only this step and the runtime stage's VERSION copies.
+# --ignore-missing: the context holds only part of the tree, absent files
+# are not local changes
+COPY scripts/version.sh .gi[t] /src/gitmeta/
+RUN GIT_DIR=/src/gitmeta GIT_WORK_TREE=/src sh /src/gitmeta/version.sh -C /src --ignore-missing > /src/VERSION \
+    && echo "version: $(tr '\n' ' ' < /src/VERSION)" && rm -rf /src/gitmeta
+
 # Runtime packages = whatever owns the shared libraries the binaries load, so
 # the runtime stage follows the Debian release without a hand-kept list
 RUN for b in heimdall_v2/heimdall kraken_doa_v2/kraken_doa librtlsdr/build/src/rtl_test \
@@ -124,6 +142,10 @@ COPY --from=build /src/kraken_doa_v2/plugins/ kraken_doa_v2/plugins/
 COPY --from=build /src/v2t/ kraken_doa_v2/transcribe/build/
 COPY --from=build /src/librtlsdr/build/src/rtl_test /src/librtlsdr/build/src/rtl_eeprom /usr/local/bin/
 COPY --from=build /src/licenses/ /usr/share/doc/krakensdr/
+# the version (VERSION, written above; linked into each app's run folder by
+# the entrypoint)
+COPY --from=build /src/VERSION heimdall_v2/
+COPY --from=build /src/VERSION kraken_doa_v2/
 COPY docker/entrypoint.sh /usr/local/bin/krakensdr-entrypoint
 RUN chmod 755 /usr/local/bin/krakensdr-entrypoint
 

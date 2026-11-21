@@ -363,7 +363,7 @@ bandwidth*)**:
   *Calibration hold*): retunes skip the 3 s cooldown + noise-source
   calibration, so bands take turns in well under a second; a lock releases
   it and the calibration starts at once (the VFO muted until it has run).
-  ⚙ "VFOs: one per active frequency" (`SFSCAN_MULTI:`, persisted, off by
+  ⚙ "VFO per signal" (`SFSCAN_MULTI:`, persisted, off by
   default; the user's request 2026-10-22, for Voice to Text): every
   frequency active at once in the band(s) watched is listened to at once -
   its VFO the first, a VFO the SCAN MAKES each further one (a copy of its VFO
@@ -408,14 +408,16 @@ the data rate doesn't; the beamformed overlays (type 4) follow each page's
 spacing. Frames carry start + step instead of a frequency per point and only
 the max envelope, and go permessage-deflate compressed: a page took ~250
 KB/s before, ~20 KB/s now. The "Downsampling" setting is gone (FFT_DECIMATION
-ignored); FFT Settings' "Slow link" tick (per browser) asks for half the
+ignored); the Display box's "Slow link" switch (per browser) asks for half the
 points. Pages that never send `FFT_VIEW` (an open tab from before) keep
 getting the old type 0 / 6 frames at 2048 points per tuner band
 
 **Digital voice/data decoders (per VFO)**: engine `kraken_doa_v2/src/digital/`,
 decoders `kraken_doa_v2/plugins/`
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):
-  p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
+  p25 (Phase 1 and Phase 2 TDMA, told apart automatically), dmr, tetra
+  (downlink), dstar, nxdn (48 and 96), ysf (Yaesu System
+  Fusion: DN, VW, V/D mode 1, Data FR), mpt1327 (analogue
   trunking signalling), pagers (POCSAG + FLEX; was pocsag), aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
   as a locked line, `kp::Info::fixed_freq_hz`; v2.0: in coherent mode with
@@ -559,21 +561,29 @@ decoders `kraken_doa_v2/plugins/`
   event log (a VFO switched to another mode or removed leaves its lines in
   the old mode's tab); a VFO in Auto detect shows up in the tab of the
   decoder it detected -
-  waterfall (its settings + data); the sidebar "🔐 Digital Decoders" box shows
+  waterfall (its settings + data); ⚙ Setup Settings → Decoders shows
   which voice codecs are installed (+ install steps for missing ones, from
   `plugins/lib/build/codecs` - the plugins' own detection) and the plugin list
   (Auto detect ticks, ↻ re-scan); WS
   `DIGITAL_MODE:id:OFF|AUTO|PLUGIN:<id>` (old names P25/DMR/... still map),
-  `DIGITAL_OPT:id:verbose|invert|<plugin>.<key>:value` (plugin-declared
+  `DIGITAL_OPT:id:verbose|log|pos_s|map|<plugin>.<key>:value` (plugin-declared
   options, e.g. `dmr.slot`, `p25.nac`); persisted in the VFO snapshot. See
   `kraken_doa_v2/CLAUDE.md` for the design
 - Voice: Demod "Digital" (or the panel's Listen button) on a VFO heard (🔊)
-  plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
-  D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
+  plays the decoded voice. P25 Phase 1 IMBE is built in (port of mbelib,
+  ISC), also used for Yaesu Fusion VW; P25 Phase 2 / DMR / D-STAR / NXDN /
+  Fusion DN and V/D mode 1 AMBE use a user-installed mbelib (dlopen,
+  `KRAKEN_MBELIB`; DN through its `mbe_processAmbe2450Dataf`, optional) -
+  Fusion written from Yaesu's
+  standard, which doesn't give the voice frames' bit order: the placement
+  checked against dsdcc (VW's corrected to the on-air order then) and
+  against off-air DN / VW recordings, whose voice decodes to speech. TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
   `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
   `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the
-  programs need file names, Windows has no /dev/stdin) - neither is shipped
+  programs need file names, Windows has no /dev/stdin), DAB+ HE-AAC v2 the
+  user's libfdk-aac (dlopen by the dab plugin, `KRAKEN_AAC_LIB`; DAB's
+  Layer II is built in, minimp3) - none of them is shipped
   (licensing); README "Digital voice codecs" has the install steps
   (Windows: WINDOWS.md). Docker:
   files in `docker-data/codecs/` are picked up by the entrypoint. Encrypted
@@ -684,8 +694,8 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   connection open after a reconnect). A
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
-  tetra, dstar, nxdn, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, acars, vdl2, dtv and cells (ARRAY
+  tetra, dstar, nxdn, ysf, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, beacon121 (121.5 / 243 MHz swept-tone beacons), lora, wildlife, rds, acars, vdl2, dab, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -733,10 +743,13 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
 
 **🗺 Map (right-hand pane)** (details: `kraken_doa_v2/CLAUDE.md` *Map*):
 - Street (OpenStreetMap) / satellite (Esri World Imagery) map drawn by the
-  page itself (no map library, no CDN): without internet it keeps working on
-  a lat/lon grid with a notice. Opened with the 🗺 Map button under the
-  waterfall; a tab next to MUSIC DoA in coherent mode, the whole right pane
-  otherwise; resizable; view settings per browser (localStorage)
+  page itself - or the tiles of Mapbox, Google Maps, Azure Maps, MapTiler,
+  Thunderforest, Stadia Maps, HERE or a custom XYZ URL with the user's own
+  API key (⚙ Setup Settings in the top bar, per browser; `kraken_doa_v2/docs/dev/map.md`)
+  (no map library, no CDN): without internet it keeps working on
+  a lat/lon grid with a notice. Shown with the 🗺 DoA & Map button on the right-hand
+  rail (it shows / hides the whole right pane, MUSIC DoA included); a tab
+  next to MUSIC DoA in coherent mode, the whole right pane otherwise; resizable; view settings per browser (localStorage)
 - 🔍 Search (2026-10-21; kraken_doa_v2/CLAUDE.md *🔍 Map search*):
   coordinates in the usual forms, UTM, MGRS, grid locators, map links and
   the page's own places (markers, decoder points ...) read OFFLINE as typed;
@@ -844,16 +857,19 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   incident listing them; kept 24 h, incidents.tsv). Code:
   `kraken_doa_v2/src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`
 
-**🗂 Decoder Logging (sidebar, all modes)** (details: `kraken_doa_v2/CLAUDE.md`
+**🗂 Decoder Logging (⚙ Setup Settings - a sidebar box until 2026-11-19; all modes)** (details: `kraken_doa_v2/CLAUDE.md`
 *Decoder data log*): what every VFO's decoder reports - events, text
 messages, positions (throttled per object), raw frames (`kp::Host::raw`,
 only while ticked: OPTION `log_raw`), incidents, voice transcripts - to
-`<dir>/decoders-YYYY-MM-DD.jsonl` (local date). Buffered in memory, written
-every 5 s (SD card); at local midnight the day is closed + gzipped in the
-background; days older than the Keep setting (default 7, 0 = forever) are
-deleted - ONLY files named `decoders-YYYY-MM-DD.jsonl[.gz]`. Writing pauses
+`<dir>/<decoder>/<decoder>-YYYY-MM-DD.jsonl` (local date; transcripts in
+`<dir>/transcripts/`; one combined `<dir>/decoders-YYYY-MM-DD.jsonl` before
+2026-11-19, still read and aged). Buffered in memory, written every 5 s (SD
+card). A finished day stays plain for Keep days (default 7, 0 = forever),
+then gzipped for Then compressed days (default 30), then deleted - ONLY
+files named like ours. Positions every N s is a per-VFO decoder option
+(`DIGITAL_OPT:<vfo>:pos_s:N`). Writing pauses
 below 100 MB free. Folder default `decoder_logs` (cwd-relative, so the
-Docker volume gets it); the box lists drives (/, /media, /mnt, /run/media,
+Docker volume gets it); the section lists drives (/, /media, /mnt, /run/media,
 /srv + the folder's own) with free space. `DECODER_LOG*:` commands,
 persisted. Code: `kraken_doa_v2/src/decoder_log.cpp`
 - Position records carry the map popup's details as `info` (ADS-B: squawk,
@@ -869,7 +885,7 @@ models + Silero VAD) - opt-in setup `cd kraken_doa_v2 && make whisper`
 base.en) or `WHISPER=1 ./install.sh`; Docker builds it in (`WHISPER=0`
 leaves it out) with the models in `docker-data/whisper_models/`
 - Source per VFO, not what the 🔊 speakers play: its digital decoder's voice when the
-  decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / TETRA vocoder
+  decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / YSF / TETRA vocoder
   output via `dig::set_voice_tap_handler`, with the talker's unit ID /
   talkgroup; cut at talker changes), else - no decoder, or one of no voice
   (`DigitalDecoder::takes_voice()`: analog_id, pagers ...) - its analog demod
@@ -882,18 +898,37 @@ leaves it out) with the models in `docker-data/whisper_models/`
   wire `include/voice2text_wire.hpp`) runs VAD (noise / tones / carriers ->
   "no speech", no transcript), whisper, hallucination filters; a vocabulary
   prompt is sent as "Glossary: ... ." (a bare word list made whisper stop
-  after one word)
+  after one word). CPU (2026-11-20): whisper's encoder runs only over the
+  clip + 1 s, rounded up to 256 frames (5.1 / 10.2 ... s windows - flash
+  attention reads its cache in 256-frame blocks), not always 30 s: ~3x less
+  CPU per transcript at the same accuracy; a decode that hits a token cap
+  (a loop) is done again the old way. 8-bit models base.en-q8_0 /
+  small.en-q8_0 are made on the receiver (`kraken_whisper --quantize`; ~15-25 %
+  less CPU on a PC, half on a Pi 4 / Pi 5 - base.en-q8_0 is the Pi's choice,
+  small.en-q8_0 the accurate one on a Pi 5), and 4-bit -q4_0 ones (least
+  memory; more CPU than 8-bit on both Pis). On Arm CPUs with the dot-product
+  instructions (a Pi 5) the helper is built with Arm's KleidiAI kernels
+  (setup.sh): on a Pi 5 15-21 % less CPU for the q8_0 models
+- Live text (option, off by default; `VOICE2TEXT_LIVE:`): while someone
+  talks the worker sends the transmission so far as a PARTIAL job about once
+  a second (finals first), words two partials agree on are confirmed, and
+  the panel shows a live row that the final transcript replaces; ~1 s from
+  speech to text on a PC, ~4-6x the CPU of transcribing at the end. Audio
+  clips, history and log hold finals only
 - Cutting: a two-way transmission is one transcript up to 25 s (longer:
   parts, cut at its latest pause after 11 s); WBFM, or anything open longer
   than 30 s, in pieces from 8 s on at a pause (at the latest 15 s, then at
   the quietest 100 ms with 0.3 s overlap) - the text follows a broadcast live.
   A pause = 240 ms under a tenth of the median energy, or twice the noise
   floor on hissy audio
-- Out: the 🗣 Voice tab under the waterfall (search, VFO filter, ▶ audio
+- Set up and set in ⚙ Setup Settings → 🗣 Voice to Text (set up or not and
+  what to run, model + ⬇ Get, language, CPU cores, words to expect, VAD,
+  keep the audio, state; a sidebar box until 2026-11-17)
+- Out: the 🗣 Transcription panel under the waterfall (search, VFO filter, ▶ audio
   clip, CSV), `transcripts.jsonl` (cwd), decoder log type "voice", the
   audio as Ogg Opus 16 kbit/s in the DECODER LOG FOLDER
   (`<dir>/voice_clips/YYYY-MM-DD/<id>.opus`, deleted with Decoder Logging's
-  Keep days, none written below 100 MB free, 2 GB backstop),
+  Keep days - not its Then compressed days -, none written below 100 MB free, 2 GB backstop),
   `GET /voice_clip/<id>.opus` (audio/ogg, token like /recordings). Commands
   `VOICE2TEXT_*` (settings persisted before DECIMATORS; the per-VFO flag
   is DECIMATORS snapshot field 11), `VOICE2TEXT_DOWNLOAD:` = a catalogue
@@ -906,6 +941,10 @@ leaves it out) with the models in `docker-data/whisper_models/`
   🗺 map - pale colours of its own, dashed, never a VFO's live-lobe colour -
   with a tag whose ✕ removes it
 - Pi 5: base.en ~280 MB RAM, ~2-3x faster than real time on 2-3 cores
+  (the old 30 s window); since 2026-11-20 base.en-q8_0 + KleidiAI 0.92
+  CPU-s per 7.5 s transcript (~15x faster than real time on 2 cores),
+  Live text with it ~0.5-0.75 of a core. Pi 4: base.en-q8_0 6.2 CPU-s
+  (2.3x faster than real time), Live text too heavy (3 of 4 cores)
 
 **📏 Range from signal strength (🗺 Map, coherent mode; the user's request
 2026-10-20)** (details: `kraken_doa_v2/docs/dev/range.md`): "Range" in the 📡 DF panel's header -> a panel (top left) + a
@@ -1001,7 +1040,7 @@ spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI, ACARS and VDL Mode 2 aircraft / ground stations)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR / Yaesu Fusion callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI, ACARS and VDL Mode 2 aircraft / ground stations, DAB transmitters by their TII code)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -1018,8 +1057,12 @@ copies identical: by delay), iMet-4 (no serial). A decoder plugin that knows who
 transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
 transmissions - DMR timeslots; id "?" = a busy channel whose radio isn't
-named yet). p25: LDU1 / TDULC link control source; dmr: full / embedded LC
-source per timeslot; nxdn: VCALL source; dstar: MY callsign of the RF
+named yet). p25: LDU1 / TDULC link control source (Phase 1); Phase 2 per
+timeslot on a site's output (MAC_PTT / voice channel user source, channel
+LCH + 1), and an inbound burst as a packet of the radio it is proven to be
+from (named in it, or continuing its named bursts at its carrier offset); dmr:
+full / embedded LC source per timeslot; nxdn: VCALL source; ysf: the source callsign (CSD1 /
+V/D mode 2 DCH); dstar: MY callsign of the RF
 header (or its slow-data copy); adsb: every accepted message as a
 `kp::Talker::packet` (exact samples) - the VFO keeps per-16-sample
 covariances for 1.5 s while packets come, each aircraft's lobe = its
@@ -1076,6 +1119,25 @@ packet "PI xxxx" per RDS group (UI kind `broadcast` 🎙). Generator
 real US station's recording (pysdr.org: PI, RT, dynamic PS, a real 67 kHz
 SCA) and end to end through kraken_doa's debug playback (two stations at
 60.0 / 200.0 deg)
+
+**📻 DAB / DAB+ plugin** (details: `kraken_doa_v2/plugins/dab/README.md`,
+`kraken_doa_v2/docs/dev/plugin-dab.md`): the plugin `dab` ("DAB / DAB+
+(digital radio)", 2026-11-16) on a 2.4 MHz `lock_vfo` VFO tuned to the block
+(e.g. 12C 227.360 MHz), transmission mode I at the native 2.4 MHz (one bin of
+a 2400-point FFT per 1 kHz carrier - no resampler), carrier and sample clock
+offsets tracked inside the plugin; FIC (Viterbi, CRC-checked FIGs: ensemble,
+services, sub-channels, programme types, languages, date / time, labels incl.
+FIG 2), the selected programme's sub-channel (option `service`) through the
+MSC to the audio layer: Layer II built in (minimp3, CC0), DAB+ HE-AAC v2 with
+the user's libfdk-aac (dlopen; never shipped), the dynamic label. Every
+transmitter of the single frequency network by its TII code (level, delay
+against the strongest, both TII pair-phase conventions seen on the air), and
+in coherent mode a talker packet per transmitter with the covariance of its
+own TII carriers (UI kind `transmitter` 🗼); FIG 0/22 positions as map points
+where an ensemble sends them. Generator `plugins/dab/tools/dab_gen.cpp`,
+playback `dab-sfn-three` / `dab-single-offset`. Checked on 8 published
+recordings (DE, AU, IT, BE, NL, UK) and ETI captures of DAB+ / Layer II
+ensembles; not yet live on the array
 
 **📟 Pagers plugin (POCSAG + FLEX)** (details:
 `kraken_doa_v2/plugins/pagers/README.md`, `kraken_doa_v2/CLAUDE.md`
@@ -1235,9 +1297,11 @@ user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
 overlay. A playback never outruns the pipeline (a busy machine plays it
-slower than real time instead of dropping packets). 37 entries in 26
-catalogues - every decoder has its own (p25, dmr, radiosonde, then rds,
-then analog_id's `analog-ids-six`, then pagers' `flex-four-speeds` last)
+slower than real time instead of dropping packets). 49 entries in 32
+catalogues (2026-11-19) - every decoder has its own (p25, dmr, radiosonde,
+then rds, then analog_id's `analog-ids-six`, then pagers'
+`flex-four-speeds`; dab's two, ysf, analogtv and tempest's four since
+2026-11-16; p25's two Phase 2 entries 2026-11-18)
 
 **📼 IQ & audio recorder + playback of recordings (sidebar "📼 IQ & Audio
 Recorder")** (details: `kraken_doa_v2/CLAUDE.md` *📼 IQ & audio recorder*,
@@ -1340,7 +1404,7 @@ see the client CLAUDE.md
   0x400 / 0x800 - the client follows heimdall's mode from them
   (`ControlHandler::note_server_mode`, after a 3 s grace for its own changes)
 - The DoA panel and DoA/coherent sidebar sections (MUSIC DoA, Beamforming,
-  Web Mapper, DoA Recording, continuous scanner, CH selector) are hidden
+  Web Mapper, DoA Recording, continuous scanner, the spectrum's antenna selector) are hidden
   outside coherent; the discrete scanner section only shows in wideband
 - The assistant's IQ captures (`capture_iq`, done inside kraken_doa -
   `ai_capture.cpp`) record the tuner whose band holds the signal outside
@@ -1622,9 +1686,9 @@ kraken_doa_v2/CLAUDE.md *Arbitrary VFO bandwidth*):
 ### Modifying Web UI
 
 **Server UI** (`heimdall_v2/index.html`):
-- Loaded at runtime by `html_loader.cpp`
+- Loaded once at startup by `html_loader.cpp` and kept in memory
 - Supports template variable substitution
-- No rebuild needed, just refresh browser
+- No rebuild needed, but heimdall must be restarted to serve an edited page
 
 **Client UI** (`kraken_doa_v2/kraken_doa.html`):
 - Loaded at runtime

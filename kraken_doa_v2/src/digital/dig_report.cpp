@@ -100,21 +100,45 @@ std::string pct_decode(const std::string& s) {
 }
 }  // namespace
 
+int parse_log_mode(const std::string& v_in) {
+    std::string v;
+    for (char c : v_in) v += static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    if (v == "0" || v == "off") return LOG_OFF;
+    if (v == "1" || v == "log" || v == "on") return LOG_ON;
+    if (v == "2" || v == "all" || v == "log all" || v == "log_all" || v == "logall") return LOG_ALL;
+    return -1;
+}
+
+int parse_pos_s(const std::string& v) {
+    if (v.empty() || v.size() > 4) return -1;
+    for (char c : v)
+        if (c < '0' || c > '9') return -1;
+    const int n = std::stoi(v);
+    return n >= POS_S_MIN && n <= POS_S_MAX ? n : -1;
+}
+
 std::string options_to_string(const Options& o) {
-    std::string s = std::string("v=") + (o.verbose ? "1" : "0") + "&i=" + (o.invert ? "1" : "0");
+    // v: Show all messages (an older kraken_doa's "Log all"); l: the logging mode; ps: Positions every
+    std::string s = std::string("v=") + (o.verbose ? "1" : "0") + "&l=" + std::to_string(o.log) +
+                    "&ps=" + std::to_string(o.pos_s);
     if (o.map) s += "&m=1";
     for (const auto& kv : o.plugin) s += "&" + kv.first + "=" + pct_encode(kv.second);
     return s;
 }
 
-Options options_from_string(const std::string& s) {
+Options options_from_string(const std::string& s, bool* no_log_key, bool* no_pos_key) {
     Options o;
+    if (no_log_key) *no_log_key = false;
+    if (no_pos_key) *no_pos_key = false;
     if (s.find('=') == std::string::npos) {
-        // old form: verbose/dmr_slot/p25_nac/invert
-        int a = 0, b = 0, c = -1, d = 0;
-        if (sscanf(s.c_str(), "%d/%d/%d/%d", &a, &b, &c, &d) >= 3) {
+        // old form: verbose/dmr_slot/p25_nac/invert (before the logging mode: Log;
+        // the removed Invert option ignored)
+        o.log = LOG_ON;
+        if (no_log_key) *no_log_key = true;
+        if (no_pos_key) *no_pos_key = true;
+        int a = 0, b = 0, c = -1;
+        if (sscanf(s.c_str(), "%d/%d/%d", &a, &b, &c) == 3) {
             o.verbose = a != 0;
-            o.invert = d != 0;
             if (b >= 1 && b <= 2) o.plugin["dmr.slot"] = std::to_string(b);
             if (c >= 0 && c <= 0xFFF) {
                 char h[8];
@@ -126,6 +150,9 @@ Options options_from_string(const std::string& s) {
     }
     std::stringstream ss(s);
     std::string kv;
+    int log = -1;   // the logging mode (-1 = stored before it existed)
+    int pos = -1;   // Positions every (-1 = a bad value: the default)
+    bool have_pos = false;   // stored since it is per VFO
     while (std::getline(ss, kv, '&')) {
         size_t eq = kv.find('=');
         if (eq == std::string::npos) continue;
@@ -133,10 +160,20 @@ Options options_from_string(const std::string& s) {
         const size_t dot = k.find('.');
         if (dot != std::string::npos) k = renamed_plugin(k.substr(0, dot)) + k.substr(dot);
         if (k == "v") o.verbose = v == "1";
-        else if (k == "i") o.invert = v == "1";
+        else if (k == "l") log = parse_log_mode(v);
+        else if (k == "ps") { pos = parse_pos_s(v); have_pos = true; }
         else if (k == "m") o.map = v == "1";
         else if (valid_option_key(k) && v.size() <= 100) o.plugin[k] = v;
     }
+    // stored before the logging mode (2026-11-19): Log, the "Log all" tick
+    // (verbose) kept - what the old version wrote (the caller makes it Log
+    // All where the old log types had raw frames)
+    if (log < 0 && no_log_key) *no_log_key = true;
+    o.log = log >= 0 ? log : LOG_ON;
+    // stored before "Positions every" was per VFO (2026-11-19): the caller gives it the old
+    // global value (a bad stored value: the default)
+    if (pos > 0) o.pos_s = pos;
+    if (!have_pos && no_pos_key) *no_pos_key = true;
     return o;
 }
 
@@ -165,6 +202,47 @@ void Report::clear_all() {
     std::lock_guard<std::mutex> lk(mu_);
     facts_.clear();
     recent_.clear();
+    choices_.clear();
+}
+
+void Report::choices_set(const std::string& plugin, const std::string& key, std::vector<std::pair<std::string, std::string>> list) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::string k = plugin + "." + key;
+    choices_.erase(k);
+    // all of a decoder's lists together stay small (they go out with every status):
+    // what doesn't fit is left off the end
+    size_t used = 0;
+    for (const auto& kv : choices_)
+        for (const auto& c : kv.second) used += c.first.size() + c.second.size();
+    size_t n = 0;
+    for (; n < list.size(); n++) {
+        const size_t b = list[n].first.size() + list[n].second.size();
+        if (used + b > MAX_CHOICES_BYTES) break;
+        used += b;
+    }
+    list.resize(n);
+    if (!list.empty()) choices_[k] = std::move(list);
+}
+
+void Report::choices_clear(const std::string& plugin) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::string pre = plugin + ".";
+    for (auto it = choices_.lower_bound(pre); it != choices_.end() && it->first.compare(0, pre.size(), pre) == 0;)
+        it = choices_.erase(it);
+}
+
+std::string Report::choices_json() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::string o = "{";
+    bool first = true;
+    for (const auto& [k, list] : choices_) {
+        o += std::string(first ? "" : ",") + "\"" + json_escape(k) + "\":[";
+        first = false;
+        for (size_t i = 0; i < list.size(); i++)
+            o += std::string(i ? "," : "") + "[\"" + json_escape(list[i].first) + "\",\"" + json_escape(list[i].second) + "\"]";
+        o += "]";
+    }
+    return o + "}";
 }
 
 void Report::set_label(const std::string& plugin, const std::string& name) {
@@ -326,9 +404,15 @@ void Report::table_clear() {
     for (auto& kv : tables_) kv.second.rows.clear();
 }
 
-void Report::plot_set(const std::string& plugin, std::string json) {
+void Report::plot_set(const std::string& plugin, const std::string& key, std::string json, size_t max_named) {
     std::lock_guard<std::mutex> lk(mu_);
-    plots_[plugin] = {std::move(json), now_ms()};
+    if (key != plugin && !plots_.count(key)) {
+        const std::string pre = plugin + "/";
+        size_t n = 0;
+        for (auto it = plots_.lower_bound(pre); it != plots_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it) n++;
+        if (n >= max_named) return;
+    }
+    plots_[key] = {std::move(json), now_ms()};
 }
 
 void Report::plot_clear() {

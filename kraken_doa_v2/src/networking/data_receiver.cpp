@@ -3,6 +3,8 @@
 // ============================================
 
 #include "wb_board.hpp"
+#include "app_version.hpp"
+#include "antenna_bias.hpp"
 #include "networking/data_receiver.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
@@ -17,6 +19,7 @@
 #include "signal_processing/shared_decimator.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/noise_floor.hpp"
+#include "signal_processing/bin_doa.hpp"
 #include "decimator_manager.hpp"
 #include "doa_logger.hpp"
 #include "voice2text.hpp"
@@ -120,6 +123,18 @@ void DataReceiver::data_receiver_thread() {
     // decimators now exist and the server is reachable for tuner commands).
     // Not repeated on reconnect, so a transient drop won't stomp live state.
     bool settings_restored = false;
+    // The replay waits for the first packet header (at most REPLAY_WAIT_MS
+    // after the connect): the saved settings must meet heimdall's channel
+    // count and generic-RTL-SDR flag, not the pre-connect defaults - a
+    // KrakenSDR session's coherent mode / 5 tuners against one plain dongle
+    // sent commands heimdall could only refuse
+    bool replay_pending = false;
+    int64_t replay_deadline_ms = 0;
+    constexpr int64_t REPLAY_WAIT_MS = 3000;
+    auto start_replay = [&]() {
+        replay_pending = false;
+        if (loop) loop->defer([] { ControlHandler::apply_persisted_settings(); });
+    };
 
     cout << "Data receiver thread started with optimized scalar IQ conversion" << endl;
     cout << "Using compiler auto-vectorized simple scalar loop (8.5% faster than NEON)" << endl;
@@ -155,7 +170,8 @@ void DataReceiver::data_receiver_thread() {
             // left heimdall's discrete scan hopping: only this client drives
             // it, and its scanner starts stopped - make heimdall agree
             ControlHandler::send_control_command("{\"stop_scanner\":true}");
-            if (loop) loop->defer([] { ControlHandler::apply_persisted_settings(); });
+            replay_pending = true;   // on the first packet (start_replay)
+            replay_deadline_ms = steady_now_ms() + REPLAY_WAIT_MS;
             settings_restored = true;
         }
 
@@ -166,6 +182,11 @@ void DataReceiver::data_receiver_thread() {
 
         while (running) {
             if (playback::active() != pb) break;   // source switched
+            if (replay_pending && !pb && steady_now_ms() >= replay_deadline_ms) {
+                cerr << "No packet from heimdall " << REPLAY_WAIT_MS / 1000
+                     << " s after connecting - restoring the saved settings anyway" << endl;
+                start_replay();
+            }
             // a playback is a file, not a receiver: it never outruns the
             // pipeline. A machine too busy for 2.4 MHz x 5 antennas in real
             // time plays it slower instead - the full raw buffer dropped
@@ -220,14 +241,12 @@ void DataReceiver::data_receiver_thread() {
                 server_kerberos_mode.store((phase_comp_state & 0x100u) != 0, std::memory_order_relaxed);
                 server_cal_stale.store((phase_comp_state & 0x200u) != 0, std::memory_order_relaxed);
                 // Bits 10 / 11: heimdall's operating mode (wideband scan /
-                // independent). Only acted on once this heimdall has shown it
-                // sends them (an older one never sets either bit)
-                {
-                    static bool mode_bits_seen = false;
-                    const int hmode = (phase_comp_state & 0x800u) ? 2 : (phase_comp_state & 0x400u) ? 1 : 0;
-                    if (hmode) mode_bits_seen = true;
-                    if (mode_bits_seen) ControlHandler::note_server_mode(hmode);
-                }
+                // independent), acted on after the sanity gate below
+                const int hmode = (phase_comp_state & 0x800u) ? 2 : (phase_comp_state & 0x400u) ? 1 : 0;
+                // Bit 12: generic RTL-SDRs, no KrakenSDR (no coherent mode).
+                // Stored after the sanity gate below (a false magic match
+                // must not flip it); bits above it are ignored
+                const bool generic_bit = (phase_comp_state & 0x1000u) != 0;
                 phase_comp_state &= 0xFFu;
                 uint32_t frequency_change_counter = EndianUtils::read_be32(buffer.data(), offset + 20);
                 uint32_t current_group_index = EndianUtils::read_be32(buffer.data(), offset + 24);
@@ -243,6 +262,27 @@ void DataReceiver::data_receiver_thread() {
                     samples == 0 || samples > MAX_SAMPLES_PER_CHANNEL) {
                     offset++;
                     continue;
+                }
+
+                // Generic RTL-SDR mode changed (first packet of a generic
+                // heimdall, or a KrakenSDR heimdall after it; a debug playback
+                // is a coherent array - its packets never set the bit): the
+                // pages get the operating_mode message with the new value
+                if (server_generic_rtlsdr.exchange(generic_bit, std::memory_order_relaxed) != generic_bit) {
+                    if (generic_bit)
+                        cout << "heimdall runs generic RTL-SDRs (no KrakenSDR): coherent mode unavailable" << endl;
+                    else if (!pb)
+                        cout << "heimdall runs a KrakenSDR array: coherent mode available" << endl;
+                    if (loop) loop->defer([] { ControlHandler::on_generic_rtlsdr_changed(); });
+                }
+                // heimdall's mode: only acted on once this heimdall has shown
+                // it sends the bits (an older one never sets either). After
+                // the generic flag: in generic mode a client in coherent mode
+                // follows at once (note_server_mode)
+                {
+                    static bool mode_bits_seen = false;
+                    if (hmode) mode_bits_seen = true;
+                    if (mode_bits_seen) ControlHandler::note_server_mode(hmode);
                 }
 
                 // Track phase calibration state changes for logging
@@ -416,19 +456,28 @@ void DataReceiver::data_receiver_thread() {
                 // gates below, so a runtime element-count change on the server
                 // applies from this very packet (MUSIC, beamformer and the UI
                 // all follow this atomic).
+                // One channel is a single generic RTL-SDR dongle (independent
+                // mode): the tuner count everything outside coherent follows
+                // (panes, TUNER_FREQ, the saved-frequency scan). MUSIC and the
+                // beamformer need >= 2 and stay off (packet_elements >= 2).
                 int current_elements = active_num_elements.load(std::memory_order_relaxed);
-                if (static_cast<int>(channels) != current_elements && channels >= 2 && channels <= MAX_CHANNELS) {
+                if (static_cast<int>(channels) != current_elements && channels >= 1 && channels <= MAX_CHANNELS) {
                     cout << "Active elements synced from server: " << current_elements << " → " << channels << endl;
                     active_num_elements.store(channels, std::memory_order_release);
                     current_elements = static_cast<int>(channels);
+                    // VFOs on a tuner that is gone move to tuner 0
+                    if (loop) loop->defer([] { ControlHandler::clamp_vfo_tuners(); });
                 }
+                if (replay_pending && !pb) start_replay();   // the count + flags are heimdall's now
 
                 // OPTIMIZATION: Determine which channels to convert upfront
                 // Use relaxed memory ordering for 5-10% faster atomic loads (flags don't need strict ordering)
                 int current_active = active_channel.load(std::memory_order_relaxed);
                 // a 📼 VFO-band IQ recording needs every antenna too
+                // (and 🎨 the bearing spectrum: bin_doa.hpp)
                 bool need_doa = (static_cast<int>(channels) >= current_elements &&
-                                 (doa_enabled.load(std::memory_order_relaxed) || rec::band_vfo() >= 0));
+                                 (doa_enabled.load(std::memory_order_relaxed) || rec::band_vfo() >= 0 ||
+                                  bin_doa::wanted()));
                 bool need_fm = (fm_enabled.load(std::memory_order_relaxed) && current_active < static_cast<int>(channels));
                 // Wideband / independent: every tuner is converted (one FFT each)
                 bool is_wideband = multi_tuner_mode();
@@ -1277,6 +1326,24 @@ void DataReceiver::decimation_processor_thread() {
             }
         }
 
+        // 🎨 Bearing spectrum (bin_doa.hpp): the packet's antennas, which
+        // nothing here reads any more, moved to its worker - with the reason
+        // when this packet must not be used (parked like the DoA)
+        if (bin_doa::enabled()) {
+            const char* park = nullptr;
+            const int ne = packet_elements;
+            if (wideband_enabled) park = "only in coherent mode";
+            else if (server_generic_rtlsdr.load(std::memory_order_relaxed)) park = "generic RTL-SDRs: no coherent array";
+            else if (ne < 2 || static_cast<int>(raw_packet.channel_iq_data.size()) < ne ||
+                     raw_packet.channel_iq_data[ne - 1].empty()) park = "waiting for every antenna";
+            else if (raw_packet.noise_source_active != 0 || doa_is_calibrating()) park = "calibrating (noise source on)";
+            else if (doa_retune_hold_active()) park = "settling after a retune";
+            else if (server_cal_stale.load(std::memory_order_relaxed)) park = "calibration stale";
+            const uint64_t chz = coherent_tuner_hz();
+            bin_doa::on_packet(std::move(raw_packet.channel_iq_data), ne, raw_packet.seq,
+                               chz ? static_cast<double>(chz) : static_cast<double>(raw_packet.freq_hz[0]), park);
+        }
+
         global_stats.increment_operations(thread_idx);
         global_stats.print_stats_if_time(thread_idx);
     }
@@ -1467,9 +1534,11 @@ static mutex control_socket_mutex;
 
 // Read whatever heimdall has pushed at us. It answers every command and
 // broadcasts a status JSON at 2 Hz to every control client. Channel metadata
-// arrives on the 8091 data stream instead; the only thing taken from here is
+// arrives on the 8091 data stream instead; the only things taken from here are
 // the Wideband board's "downconverter" object (wb_board.cpp: board telemetry
-// for the UI and its log) - everything else is discarded.
+// for the UI and its log), heimdall's "version" (app_version.cpp) and its
+// antenna bias tees (antenna_bias.cpp: the status fields and the replies to
+// set_antenna_bias_tees) - everything else is discarded.
 // Left unread it fills our 128 KB receive buffer in about two minutes, the
 // window closes, and heimdall's control server eventually wedges on a blocking
 // send() - taking its accept loop and command handling down with it.
@@ -1482,6 +1551,8 @@ static void drain_control_socket_locked() {
         ssize_t n = control_client.receive_data(scratch, sizeof(scratch));
         if (n > 0) {
             wb_board_ingest(scratch, static_cast<size_t>(n));
+            heimdall_version_ingest(scratch, static_cast<size_t>(n));
+            antbias::ingest(scratch, static_cast<size_t>(n));
             if (static_cast<size_t>(n) < sizeof(scratch)) break;  // drained
             continue;                                             // more waiting
         }
@@ -1496,6 +1567,18 @@ static void drain_control_socket_locked() {
 
 void DataReceiver::drain_control_socket() {
     lock_guard<mutex> lock(control_socket_mutex);
+    // heimdall's status (its antenna bias tees for the pages, its version) comes
+    // over this connection, which commands open lazily: open it here too - every
+    // 5 s at most while it is down - so the pages see that state before anything
+    // was sent. Not during a playback (nothing may reach heimdall).
+    if (!control_client.is_connected() && !playback::active()) {
+        static steady_clock::time_point last_try{};
+        const auto now = steady_clock::now();
+        if (now - last_try >= seconds(5)) {
+            last_try = now;
+            if (control_client.connect_to_port(TCP_CONTROL_PORT)) control_client.set_nonblocking(true);
+        }
+    }
     drain_control_socket_locked();
 }
 

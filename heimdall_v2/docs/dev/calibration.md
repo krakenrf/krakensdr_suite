@@ -334,7 +334,7 @@ the reference, EWMA-smoothed against single-snapshot jitter); both ride the
 8070 binary correlation message after the phases array
 (`build_correlation_message` in correlation.cpp ↔ `processData` in index.html).
 
-### Calibration Buttons (web UI, Compensation Status card)
+### Calibration Buttons (web UI, Calibration card - "Compensation Status" until 2026-11-18, `web-ui.md`)
 
 - **Check Calibration** (`CHECK_CAL`; control port `check_calibration`): the
   periodic monitor runs its non-destructive check at the next tick - briefly
@@ -342,7 +342,7 @@ the reference, EWMA-smoothed against single-snapshot jitter); both ride the
   stream, and sets `force_recalibration` only if out of tolerance. Works with
   the periodic check disabled; not in plain `--kerberos` (it pulses the noise).
   Result in the web STATE `cal_check` (`ok` / `drifted` / `no_verdict`, worst
-  lag + phase), shown under the buttons
+  lag + phase), shown under the buttons ("Last check")
 - **Full Recalibration** (`FORCE_RECAL`): the watchdog's full lag + phase
   recalibration from scratch (confirm dialog; KerberosSDR: disconnect antennas).
   `RESET_LAG_COMPENSATION` / `reset_lag_compensation` remain as aliases

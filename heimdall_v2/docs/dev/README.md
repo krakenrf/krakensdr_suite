@@ -15,3 +15,4 @@ every session needs and points here.
 | `kerberos-and-ext-noise.md` | KerberosSDR mode and the external noise source array |
 | `operating-modes.md` | Operating modes (coherent / wideband scan / independent) |
 | `wideband-variant.md` | KrakenSDR Wideband (downconverter) variant in heimdall |
+| `web-ui.md` | The web page on 8070: serving, layout, look (the client's palette and text rules), the calibration chip, tests |

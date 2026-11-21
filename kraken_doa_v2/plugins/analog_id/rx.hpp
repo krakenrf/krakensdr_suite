@@ -42,7 +42,6 @@ struct RxEvent {
 struct RxParams {
     float min_dev_hz = 80;     // weakest tone deviation taken as a tone
     bool nonstandard = true;   // CTCSS tones off the list (measured frequency)
-    bool invert = false;       // the input is mirrored (Host::rf_inverted)
 };
 
 class Rx {

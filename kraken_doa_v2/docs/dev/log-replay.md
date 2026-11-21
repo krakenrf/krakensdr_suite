@@ -13,7 +13,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   The receiver's own 📝 DoA Recording (doa_logger.cpp) writes the SAME
   formats, so it replays too (its box: 🗺 Replay = `replaySelected()`,
   fetched from `recordings/<name>` like the download). Opened IN THE
-  BROWSER (map button "Replay" -> the strip's 📂, a file / file pair dropped
+  BROWSER (the map's Layers -> Replay - a map button until 2026-11-18,
+  *map.md* - -> the strip's 📂, a file / file pair dropped
   on `#map-pane` - `lrDropInit` -, or that button): nothing goes to the
   receiver, no command, no route, no library (sql.js etc. would need a CDN
   or a vendored file + route: the page parses everything itself)
