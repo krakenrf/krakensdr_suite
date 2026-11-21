@@ -796,6 +796,60 @@ bin grid.
   `addLine` maps the first to the last point across the plot). Zoomed in
   past a row's detail the old rows are coarser - honest -, and the new rows
   come in the new detail.
+- Rows made while zoomed in, and colour changes (2026-11-21, the user: "When
+  we change the waterfall colors it should change the colors of the existing
+  waterfall too, not just the new scans. Also zoom causes a problem where the
+  waterfall only updates on the zoomed part. Then when I zoom out, there is
+  missing data on the other parts."):
+  - A row is `{w, o, h}`: `w` the levels of the window shown when its sweep
+    completed, `o` the whole range of the same sweep when that window was
+    narrower (the receiver's overview), `h` its height; each part `{f0, st,
+    d}` (first point Hz, spacing, u8 levels). A pixel takes `w` where it
+    reaches, `o` elsewhere, black only where a row has neither
+    (`swpWfLevel`, `swpWfRow`). Bound: the rows that fit the waterfall's
+    height, each at most 2 x 4096 bytes (a 677 px waterfall at speed 1: 677
+    rows, ~5.5 MB at the worst; measured 118 KB for 44 rows at speed 5).
+  - The overview: the page sends `SWEEP_OVERVIEW:<points>` (the contract,
+    above) with its first view and whenever the view's points change (plot
+    width, Slow link), again after a reconnect and on entering the mode. A
+    frame with flag 16 is kept as `swp.ovPend` (the trace, the readouts and
+    "Points sent" stay the view's) and taken by the next flag-2 frame of the
+    same `sweeps` and grid (`swpWfLine`; a line held back by the 20-a-second
+    limit keeps its overview with it). n, point 0 and the spacing come from
+    the overview's own header - it is a whole-range view, ~0.67 - 1.5 x the
+    points asked for. A receiver without it ignores the command silently
+    (the receiver worker's finding: no reply, no log line, the stream
+    unchanged): no overview ever comes, `o` stays null and the rows are as
+    before - black outside the window they were made in.
+  - Colours: a change of the colour map or of the contrast (Min / Max, the
+    sliders or Auto's range) repaints every row there (`swpWfRecolour` ->
+    `swpWfRepaint`, once per screen refresh while a slider is dragged; Auto's
+    500 ms tick repaints only when its range moved). The speed changes the
+    height of new rows only. Cost of a full repaint, 1573 x 677 px (a 1920
+    px window), 578 rows: 22 - 37 ms (median of 7, headless Chromium on the
+    shared dev machine, two runs); 163 rows: 8 ms.
+  - Tests (2026-11-21, scratch `t_wf.py`, the waterfall read back from its
+    ImageData; real wheel / mouse events): after a Colors change and a Min
+    drag every row equals a fresh paint with the new setting, none left in
+    the old colours, none black; the drag repainted at most once a frame;
+    Auto repaints only on a new range; Speed changes no old row; rows made
+    zoomed in (x6, 30 sweeps) then zoomed out: every pixel by the rule -
+    38 550 from the window, 190 200 from the overview, 0 black, 0 wrong;
+    the same after a pan, a zoom deeper than the rows' detail and a resize;
+    memory within the bound; Slow link and a reconnect ask for overviews
+    again; a zoom while paused makes no row; a range change clears. Mock with
+    overviews 30 / 30, mock as an older receiver 28 / 28, today's receiver
+    build (ea21532, the real engine, no overview) 28 / 28 - there the rows
+    are as before (190 200 black pixels outside the old window, the window
+    inside), the colour fix works, no error and no notice on the page, and
+    the receiver logs nothing for `SWEEP_OVERVIEW`. The earlier suites
+    again: mock `t_sweep` 160 / 160, `t_compat` 22 / 22, `t_bar` 16 / 16,
+    `t_phone` 15 / 15; today's receiver `t_sweep` 161 / 161, `t_real` 42 /
+    42, `t_bar` 16 / 16, `t_phone` 15 / 15.
+  - The other modes' waterfalls (the live one, the independent panes) do
+    not recolour their old lines after a colour change - only new lines get
+    the new colours (`WaterfallDisplay` keeps pixels, not levels); not
+    changed here.
 - Old frames: a type 10 frame outside sweep mode, one built for a view from
   before the page entered the mode (`seq < swp.seqMin`), and one whose grid id
   is not the latest `sweep` message's are dropped - the last only while that

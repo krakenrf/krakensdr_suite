@@ -4321,7 +4321,10 @@ const swp = {st: null, fr: null, tr: null, zoom: {level: 1, off: 0}, wf: null, s
              ui: {a: 0, b: 0, holdR: 0, tun: null, holdRes: 0, holdDw: 0}, view: null, viewSeq: 0, seqMin: 0,
              hover: null, drag: null, wfAt: 0, wfPend: null, wfTimer: null, gridOdd: null, readout: '', resText: '', lines: 0,
              stale: false,    // stale: a new connection, the receiver's state not told anew yet
-             rows: []};       // the waterfall's rows, newest first ({f0, st, d: u8 levels, h}: swpWfAdd)
+             rows: [],        // the waterfall's rows, newest first ({w, o, h}: swpWfAdd)
+             ovPend: null,    // the overview (flag 16) waiting for its sweep's flag-2 frame
+             ovSent: -1,      // the points this connection asked overviews for (SWEEP_OVERVIEW; -1 = not yet)
+             wfKey: '', repaints: 0};   // the colours the rows were painted with; full repaints (tests)
 // View settings (the "View" popover, see VIEW POPOVER). viewCommon: the single spectrum's - and
 // every tuner pane's that has none of its own; the receiver stores them (UI:FFT_Y, UI:WF_SPEED,
 // ...) and replays them to every browser. viewStore: this browser's per-tuner values in
@@ -5607,7 +5610,7 @@ function updateWaterfallColormap(value) {
   const v = viewValid('cmap', value);
   if (v !== undefined) viewCommon.cmap = v;
   if (waterfall) waterfall.setColormap(viewCommon.cmap);
-  if (swp.wf) swp.wf.setColormap(viewCommon.cmap);
+  if (swp.wf) { swp.wf.setColormap(viewCommon.cmap); swpWfRecolour(); }   // (sweep mode: its rows too)
   panes.forEach(paneApplyView);
   viewPopSync();
 }
@@ -5626,7 +5629,7 @@ function updateFFTYAxis(value) {
 function updateWaterfallRange() {
   const [a, b] = viewSafeRange(viewCommon.min, viewCommon.max);
   if (waterfall) waterfall.setRange(a, b);
-  if (swp.wf) swp.wf.setRange(a, b);
+  if (swp.wf) { swp.wf.setRange(a, b); swpWfRecolour(); }   // (sweep mode: its rows too)
   panes.forEach(p => {
     if (viewEff(p.ch, 'auto')) return;
     const [c, d] = viewSafeRange(viewEff(p.ch, 'min'), viewEff(p.ch, 'max'));
@@ -13033,6 +13036,7 @@ function swpNewGrid(rangeChanged) {
   clearTimeout(swp.wfTimer); swp.wfPend = null;
   if (swp.wf) swp.wf.clear();
   swp.rows = [];
+  swp.ovPend = null;
   if (rangeChanged) { swp.zoom.level = 1; swp.zoom.off = 0; document.body.classList.remove('swp-zoomed'); }
 }
 function swpOnOpen() {
@@ -13040,6 +13044,8 @@ function swpOnOpen() {
   // must not hold the other modes' hints back)
   if (swp.view && swp.view.t) clearTimeout(swp.view.t);
   swp.view = null;
+  swp.ovSent = -1;   // (and no overview asked for)
+  swp.ovPend = null;
   swp.stale = true;
 }
 function swpGainSync(db) {
@@ -13231,6 +13237,7 @@ function swpEnter() {
   swp.fr = null; swp.tr = null; swp.hover = null; swp.drag = null;
   if (swp.view && swp.view.t) clearTimeout(swp.view.t);
   swp.view = null;
+  swp.ovSent = -1; swp.ovPend = null;   // the overview asked for again with the view
   swp.seqMin = swp.viewSeq + 1;   // frames built for a view from before this are dropped
   if (!swp.wf) {
     swp.wf = new WaterfallDisplay('swp-wc', 'swp-wo');
@@ -13346,6 +13353,10 @@ function swpViewFlush() {
   const v = swp.view;
   if (!v || !v.want || applyingRemote || !ws || ws.readyState !== 1 || opMode !== 'sweep') return;
   const w = v.want;
+  // the whole range with every completed sweep while zoomed in (an overview, flag 16), at the points of
+  // a view - for the waterfall's rows. Per connection like the view; a receiver without it ignores the
+  // command (nothing comes back), and the rows are as before
+  if (swp.ovSent !== w.pts) { ws.send('SWEEP_OVERVIEW:' + w.pts); swp.ovSent = w.pts; }
   ws.send('SWEEP_VIEW:' + (++swp.viewSeq) + ':' + w.lo + ':' + w.hi + ':' + w.pts);
   v.lo = w.lo; v.hi = w.hi; v.pts = w.pts; v.at = Date.now(); v.want = null;
 }
@@ -13418,6 +13429,14 @@ function swpOnFrame(v, buf) {
     st.grid = grid; st.start_hz = start; st.stop_hz = stop;
     swp.gridOdd = null;
   }
+  if (flags & 16) {
+    // an overview (SWEEP_OVERVIEW): the whole range of the sweep whose flag-2 frame comes next - for the
+    // waterfall's row only (swpWfLine pairs them by `sweeps`); not this page's view: the trace, the
+    // readouts and "Points sent" stay the view's
+    if (!(flags & 2)) return;
+    swp.ovPend = {sweeps, grid, f0: p0, st: step, d: new Uint8Array(buf.slice(64, 64 + n))};
+    return;
+  }
   const u8 = new Uint8Array(buf, 64, n), mags = new Float32Array(n);
   for (let i = 0; i < n; i++) mags[i] = u8[i] * (120 / 255);
   swp.fr = {flags, tun, seq, sweeps, start, stop, p0, step, prog: Math.max(0, Math.min(1, prog || 0)), dur: dur > 0 ? dur : 0, grid, mags, t: Date.now()};
@@ -13438,10 +13457,14 @@ function swpTrace() {
   swp.tr = {w0: win[0], w1: win[1], freqs, mags};
 }
 // one waterfall line per complete sweep (flag 2), at most one per SWP_WF_MS - a quicker one waits
-// for its turn, the newest replacing an older one still waiting
+// for its turn, the newest replacing an older one still waiting. While zoomed in, the receiver sends
+// the whole range for that sweep just before (an overview, flag 16 - swpOnFrame keeps it in
+// swp.ovPend): the line takes it along when it belongs to the same sweep (`sweeps`) and grid.
 function swpWfLine() {
   if (!swp.wf || !swp.tr || swp.tr.freqs.length < 2) return;
-  const line = {f: swp.tr.freqs, m: swp.tr.mags};
+  const fr = swp.fr, ov = swp.ovPend;
+  const line = {f: swp.tr.freqs, m: swp.tr.mags, o: ov && fr && ov.sweeps === fr.sweeps && ov.grid === fr.grid ? ov : null};
+  swp.ovPend = null;
   const wait = SWP_WF_MS - (Date.now() - swp.wfAt);
   if (wait <= 0 && !swp.wfPend) { swpWfAdd(line); return; }
   const queued = !!swp.wfPend;
@@ -13452,19 +13475,31 @@ function swpWfLine() {
     if (l && opMode === 'sweep') swpWfAdd(l);
   }, Math.max(0, wait));
 }
-// The sweep's waterfall keeps what each row showed - its first point, spacing and levels (u8, as the
-// frames send them) and its height - and paints every row through the window shown (swpWfRow): a zoom
-// or a pan re-maps the rows it has (coarser when zoomed in past a row's detail - never at another
-// frequency), and the new rows come in the new detail. With a sweep every 8 - 40 s, rows stay for
-// minutes: "older rows keep the span they were drawn with" (the live spectrum's rule) put a line under
-// "100 MHz" that was really 800 MHz (the orchestrator's run on the KrakenSDR, 2026-11-20). Bounded: the
-// rows that fit the waterfall's height (<= 4096 bytes each), a repaint once per screen refresh.
+// The sweep's waterfall keeps what each row showed and paints every row through the window shown
+// (swpWfRow). A row: w = the levels of the window this page showed when the sweep completed, o = the
+// whole range of the same sweep when that window was narrower (the receiver's overview; null without
+// one - an older receiver, or not zoomed: then w is the whole range), h = its height in pixel rows. Each
+// is {f0: Hz of its first point, st: its spacing, d: u8 levels as the frames send them}.
+// - A zoom, a pan or a resize re-maps the rows (coarser when zoomed in past a row's detail - never at
+//   another frequency): with a sweep every 8 - 40 s rows stay for minutes, and "older rows keep the span
+//   they were drawn with" (the live spectrum's rule) put a line under "100 MHz" that was really 800 MHz
+//   (the orchestrator's run on the KrakenSDR, 2026-11-20).
+// - A pixel takes the window's levels where they reach, the overview's elsewhere - so rows made while
+//   zoomed in are whole again when zoomed out (the user, 2026-11-21: "when I zoom out, there is missing
+//   data on the other parts"); black only where a row has neither.
+// - A colour change (map, contrast - also Auto's) repaints the rows already there (the user, the same
+//   day: "it should change the colors of the existing waterfall too").
+// Bounded: only the rows that fit the waterfall's height, each <= 2 x 4096 bytes (SPECTRUM_VIEW_MAX_POINTS
+// per part); a repaint once per screen refresh.
+function swpWfSrc(f, m) {
+  const n = m.length, d = new Uint8Array(n);
+  for (let i = 0; i < n; i++) d[i] = Math.max(0, Math.min(255, Math.round(m[i] * 255 / 120)));
+  return {f0: f[0], st: n > 1 ? f[1] - f[0] : 1, d};
+}
 function swpWfAdd(l) {
   const wf = swp.wf, win = swpWindow();
   if (!wf || !wf.imageData || !win) return;
-  const n = l.m.length, d = new Uint8Array(n);
-  for (let i = 0; i < n; i++) d[i] = Math.max(0, Math.min(255, Math.round(l.m[i] * 255 / 120)));
-  const row = {f0: l.f[0], st: n > 1 ? l.f[1] - l.f[0] : 1, d, h: Math.max(1, wf.speed | 0)};
+  const row = {w: swpWfSrc(l.f, l.m), o: l.o ? {f0: l.o.f0, st: l.o.st, d: l.o.d} : null, h: Math.max(1, wf.speed | 0)};
   swp.rows.unshift(row);
   let sum = 0, k = 0;
   while (k < swp.rows.length && sum < wf.height) sum += swp.rows[k++].h;
@@ -13473,55 +13508,75 @@ function swpWfAdd(l) {
   data.copyWithin(sh, 0, data.length - sh);   // scroll down by the row's height
   swpWfRow(row, 0, win);
   wf.ctx.putImageData(wf.imageData, 0, 0);
+  swpWfKeyNote();
   swp.wfAt = Date.now();
   swp.lines++;
   swpDrawOverlay();
 }
-// paint one row at y0 (its h pixel rows) for the window win: a pixel's frequency span through the row's
-// points - the highest of the points in it, or between two points the level at its middle; black where
-// the row has nothing (outside its span)
-function swpWfRow(row, y0, win) {
-  const wf = swp.wf, data = wf.imageData.data, w = wf.width, L = wf.plotLeft, W = wf.plotWidth;
-  const h = Math.min(row.h, wf.height - y0);
+// the level (u8) a source gives the pixel spanning its points ka .. kb: the highest of its points in it,
+// or between two points the level at its middle; -1 where the source doesn't reach
+function swpWfLevel(src, ka, kb) {
+  const n = src.d.length, d = src.d;
+  if (kb < -0.5 || ka > n - 0.5) return -1;
+  if (kb - ka >= 1) {
+    let v = 0;
+    for (let k = Math.max(0, Math.ceil(ka)), e = Math.min(n - 1, Math.floor(kb)); k <= e; k++) if (d[k] > v) v = d[k];
+    return v;
+  }
+  const c = Math.max(0, Math.min(n - 1, (ka + kb) / 2)), i0 = Math.floor(c), i1 = Math.min(n - 1, i0 + 1), t = c - i0;
+  return d[i0] * (1 - t) + d[i1] * t;
+}
+// paint one row at y0 (its h pixel rows) for the window win into t (the waterfall, or a test's buffer
+// with the same fields): the window's levels where they reach, else the overview's, else black
+function swpWfRow(row, y0, win, t) {
+  t = t || swp.wf;
+  const data = t.imageData.data, w = t.width, L = t.plotLeft, W = t.plotWidth;
+  const h = Math.min(row.h, t.height - y0);
   if (h <= 0) return;
-  const span = win[1] - win[0], n = row.d.length, cm = wf.colormap, lo = wf.minDb, rng = Math.max(1e-6, wf.maxDb - wf.minDb);
-  const o0 = y0 * w * 4;
+  const span = win[1] - win[0], cm = t.colormap, lo = t.minDb, rng = Math.max(1e-6, t.maxDb - t.minDb);
+  const a = row.w, b = row.o, o0 = y0 * w * 4;
   for (let px = 0; px < w; px++) {
-    let r = 0, g = 0, b = 0;
+    let r = 0, g = 0, bl = 0;
     if (px >= L && px < L + W) {
-      const fa = win[0] + (px - L) / W * span, ka = (fa - row.f0) / row.st, kb = ka + span / W / row.st;
-      if (kb >= -0.5 && ka <= n - 0.5) {
-        let v;
-        if (kb - ka >= 1) {
-          v = 0;
-          for (let k = Math.max(0, Math.ceil(ka)), e = Math.min(n - 1, Math.floor(kb)); k <= e; k++) if (row.d[k] > v) v = row.d[k];
-        } else {
-          const c = Math.max(0, Math.min(n - 1, (ka + kb) / 2)), i0 = Math.floor(c), i1 = Math.min(n - 1, i0 + 1), t = c - i0;
-          v = row.d[i0] * (1 - t) + row.d[i1] * t;
-        }
+      const fa = win[0] + (px - L) / W * span, fb = fa + span / W;
+      let v = a ? swpWfLevel(a, (fa - a.f0) / a.st, (fb - a.f0) / a.st) : -1;
+      if (v < 0 && b) v = swpWfLevel(b, (fa - b.f0) / b.st, (fb - b.f0) / b.st);
+      if (v >= 0) {
         const col = cm[Math.floor(Math.max(0, Math.min(1, (v * 120 / 255 - lo) / rng)) * 255)];
-        r = col.r; g = col.g; b = col.b;
+        r = col.r; g = col.g; bl = col.b;
       }
     }
     const o = o0 + px * 4;
-    data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255;
+    data[o] = r; data[o + 1] = g; data[o + 2] = bl; data[o + 3] = 255;
   }
   for (let y = 1; y < h; y++) data.copyWithin(o0 + y * w * 4, o0, o0 + w * 4);
 }
-// every row again for the window shown (a zoom, a pan, a new size), once per screen refresh
+// every row again for the window shown and the colours set: now (swpWfPaintAll), or once per screen
+// refresh (swpWfRepaint: a zoom, a pan, a new size, a colour change - also while a slider is dragged)
+function swpWfPaintAll() {
+  const wf = swp.wf, win = swpWindow();
+  if (!wf || !wf.imageData || !win || opMode !== 'sweep') return false;
+  const data = wf.imageData.data;
+  let y = 0;
+  for (const row of swp.rows) { if (y >= wf.height) break; swpWfRow(row, y, win); y += row.h; }
+  for (let i = y * wf.width * 4; i < data.length; i += 4) { data[i] = 0; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 255; }
+  wf.ctx.putImageData(wf.imageData, 0, 0);
+  swpWfKeyNote();
+  swp.repaints++;
+  return true;
+}
 let swpWfRaf = 0;
 function swpWfRepaint() {
   if (swpWfRaf) return;
-  swpWfRaf = requestAnimationFrame(() => {
-    swpWfRaf = 0;
-    const wf = swp.wf, win = swpWindow();
-    if (!wf || !wf.imageData || !win || opMode !== 'sweep') return;
-    const data = wf.imageData.data;
-    let y = 0;
-    for (const row of swp.rows) { if (y >= wf.height) break; swpWfRow(row, y, win); y += row.h; }
-    for (let i = y * wf.width * 4; i < data.length; i += 4) { data[i] = 0; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 255; }
-    wf.ctx.putImageData(wf.imageData, 0, 0);
-  });
+  swpWfRaf = requestAnimationFrame(() => { swpWfRaf = 0; swpWfPaintAll(); });
+}
+// the colours the rows were painted with: a change of the map or of the contrast (Min / Max - the
+// sliders, Auto) repaints them; an unchanged value (Auto's tick finding the same range) does not
+function swpWfKey() { const wf = swp.wf; return wf ? wf.scheme + '|' + wf.minDb + '|' + wf.maxDb : ''; }
+function swpWfKeyNote() { swp.wfKey = swpWfKey(); }
+function swpWfRecolour() {
+  if (!swp.wf || opMode !== 'sweep' || !swp.rows.length) return;
+  if (swpWfKey() !== swp.wfKey) swpWfRepaint();
 }
 
 // ---- drawing ----
