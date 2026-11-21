@@ -1602,10 +1602,72 @@ strong carrier fills its pixel); at 146 Hz with dwell 5 a hop is ONE frame
 and the trace scatters by ~ +-10 dB until the dwell is raised; a faint
 hop-wide banding of the FM band's waterfall that appeared during these runs
 was there with the page before and after the change alike (the band, not
-the page). The other modes' waterfalls (the live one, the tuner panes) keep
-pixels, not levels, and still colour only new lines after a colour change.
+the page). The other modes' waterfalls (the live one, the tuner panes) kept
+pixels, not levels, and still coloured only new lines after a colour change
+(round 5 changed that).
 
-Open after round 4: the fork's commits are local (the Dockerfile's pin and
+**Round 5, 2026-11-22: the full resolution in the browser; the live
+waterfall recolours; a picture of the display.** Three more requests of the
+user. The parts' records: the contract's `SWEEP_FULL` / type 11, the
+receiver's and the page's *Full resolution*, and - for every mode -
+*Spectrum views* (the live waterfall's levels, why Auto's own moves recolour
+nothing, the picture). In one line each:
+- **Full resolution** (a switch in the Display box, sweep mode only, kept in
+  the browser, off at first, Slow link wins): the receiver sends every bin
+  of each completed sweep after its flag-2 frame (type 11, in parts paced by
+  the socket's buffer, one set at a time per socket, a snapshot when the
+  switch goes on). The page draws the trace from the latest set right after
+  a zoom or a pan, and a waterfall row keeps its sweep's set within 256 MB
+  (64 MB in the phone layout) - older rows fall back to their window /
+  overview levels.
+- **The live waterfall** (`WaterfallDisplay`, the main one and the tuner
+  panes) keeps the level each pixel was painted from (1 byte a pixel) and
+  repaints its lines when the USER changes the colour map or Min / Max or
+  switches Auto off. Auto's own range moves recolour nothing: measured, they
+  come 14 - 25 times a minute on a busy band and each one changed 92 - 100 %
+  of the picture's pixels - a whole waterfall that flashes; each line keeps
+  the range it was painted with instead. (Sweep mode's waterfall, which
+  ranges on the stitched sweep, keeps following Auto as a whole.)
+- **The picture**: a camera button right of View saves ONE PNG of the
+  display's canvases with a caption line, in the browser only.
+
+The orchestrator's runs on the Pi 5's KrakenSDR (the integrated tree as
+patches on the Pi's test build, before the merge; job scratch `pi/r5_pi.py`,
+`pi/live_pi.py`, with the earlier checks again):
+
+| | Before | Now |
+|---|---|---|
+| Live waterfall (coherent), grayscale map chosen: share of the lines already there that are still coloured 0.35 s later | 1 | 0 |
+| ... Auto off, Min + 20 dB: mean gray of those lines | 197.2 -> 197.0 | 97.9 -> 6.3 |
+| The camera button, coherent / sweep / sweep with Full resolution | - | a PNG each (906 x 986, 1573 x 986), spectrum, waterfall, caption; e.g. `krakensdr_sweep_88-108MHz_20261122_003722.png` |
+| Full resolution on, 24 - 1765 MHz at 146 Hz: "Points sent" | 1525 | 1525 + full 11,885,227 (1.2 s after the click: the snapshot) |
+| ... rows made BEFORE a zoom of 6 000x onto a carrier: longest stretch of one colour in a row (px of 1525) | 160 - 1525 (one flat band) | 2 - 4 (the sweep's detail) |
+| ... kraken_doa on the Pi, % of one core / RSS, one page | 16.7 % / 99 MB | 16.3 % / 113 MB (the set's buffer); heimdall's round 20 ms, 0 failed retunes |
+| ... 88 - 108 MHz at Auto (11 sweeps a second), Full resolution on | 5.8 % / 68 MB | 8.0 % / 68 MB, "1552 + full 17,067" |
+| The waterfall checks of round 4 with Full resolution on (rows whole after a zoom, no padded stretch, recoloured rows) | - | all pass |
+
+27 of 27 steps there, and on the same build the earlier checks again: the
+waterfall 14 of 14, the resolutions 15 of 15, the Resolution list 15 of 15,
+`run_pi.py` 20 of 20 (4.03 s / 18.97 s, 11.3 sweeps a second, coherent again
+0.53 s after the last sweep packet) - this tree also holds main's Auto detect
+change (data_receiver.cpp). No page error, both processes exit 0, 47 - 52 C,
+throttled 0x0. "A zoom is sharp at once" is the page worker's measurement
+(the zoom and the read-back in one script turn, so that no frame can arrive
+in between: the trace equals the brute-force maximum over the set's bins);
+the orchestrator's script waits a second after its wheel events and cannot
+show it. A lesson of the Pi runs themselves: sources copied with `rsync -a`
+keep the PC's older file times, so objects the Pi had built in between
+looked newer than a changed source - a link error after main was merged
+(`undefined reference to dig::DigitalDecoder::DigitalDecoder(bool, bool)`);
+the copies now go by checksum without the times, and test builds start
+clean.
+
+Open after round 5: Firefox, Safari and iOS have not run the picture's
+download or the full sets (headless Chromium only); a slow link was tried
+through a 2 MB/s proxy by the page worker, not over a real one; a 1 GB Pi 4
+(the full set adds one buffer of `bins` bytes in the receiver - 12 - 17 MB
+at the finest grids - and holds the store's lock 8.5 ms a set on the Pi 5,
+unmeasured there). And as before: the fork's commits are local (the Dockerfile's pin and
 heimdall's minimum stay 578b43d; an older fork gives the round-1
 behaviour). The cause of the one failed return. A Raspberry Pi 4 (another
 USB controller and a third of the CPU: the 9 % a core that sweeping takes

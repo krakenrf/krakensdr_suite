@@ -216,6 +216,13 @@ so the trace is noisy until the dwell is raised), and pauses the sweep. The
 mouse wheel zooms in as far as the resolution goes, dragging moves the view,
 and the waterfall keeps the whole range of every sweep, also of those made
 while zoomed in; a change of its colours repaints the lines already there.
+With **Full resolution** switched on in the Display box, every point of each
+completed sweep is sent to this browser, not only as many as the plot is wide:
+a zoom is then sharp at once, and the waterfall's lines keep their detail when
+they are zoomed into later. It costs network and browser memory (about
+3.5 MB a second for the whole range at 146 Hz, 0.1 MB a second at Auto; up
+to 256 MB in the browser), so it is off at first, kept per browser, and
+Slow link switches it off.
 The pointer shows the frequency and level under it. Gain is one setting for all
 tuners. Nothing is demodulated in this mode; the VFOs and their settings are
 kept and come back with the other modes. Going back to Coherent after a sweep
