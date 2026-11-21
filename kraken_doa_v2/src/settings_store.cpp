@@ -150,6 +150,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"voice2text_vad",           "VOICE2TEXT_VAD:",           VType::BOOL,   "1"},
         {"voice2text_translate",     "VOICE2TEXT_TRANSLATE:",     VType::BOOL,   "0"},
         {"voice2text_keep_audio",    "VOICE2TEXT_KEEP_AUDIO:",    VType::BOOL,   "1"},
+        // Live text (partial transcripts while someone talks): off - its CPU
+        {"voice2text_live",          "VOICE2TEXT_LIVE:",          VType::BOOL,   "0"},
         // Mobile DF heat map on the 🗺 Map: collect bearings while driving,
         // half-width of the grid (km)
         {"rdf_enabled",              "RDF:",                      VType::BOOL,   "1"},
