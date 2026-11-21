@@ -756,6 +756,73 @@ and the thresholds in the model's metadata.
   0.98": the model's own output on that channel - dPMR is 4-FSK at 2400
   symbols/s like NXDN48 - which the old tracker bug had hidden
 
+### Why the ISM recordings fail (2026-11-21, the core and model of 59e465e)
+
+The 128 failing ISM rows of the public set (52 OOK, 76 FSK; nearly all
+files of the rtl_433 test corpus: one device's burst(s), 0.1-2 s, mostly
+250 kS/s, rows without an offset) traced one by one, with OOK / FSK decided
+from the IQ itself (envelope keyed at one frequency, or constant envelope
+with two frequency levels - the measure finds 183 of the bank's 184 ISM
+clips right) and synthetic twins built from each file's measured bit time,
+tone spacing, packet times and SNR. Not fixed yet.
+
+- **FSK is a real gap in the training bank: 37 of the 76 FSK rows.** Clean
+  twins fail like the recordings (26 of 94 right against 22 of 98; the
+  wrong twins read LoRa, unknown FSK, unknown pulses). The pass rate
+  follows the bank: bits of 45-65 us (its WH24 / TPMS kinds) 14 of 25
+  right, bits >= 130 us 1 of 26, modulation index above 10 3 of 24, packets
+  >= 100 ms 0 of 19. 50 of the bank's 80 FSK clips are those two kinds and
+  the generic ones never exceed an index of ~5.8; 40 of the 94 measured
+  devices are above 5 - slow keyfobs, TPMS, tank gauges with 250-1000 us
+  bits and tones 40-120 kHz apart (index 20-60). The 2.4 MHz view has no
+  ism_fsk class at all (75 training rows, 100 needed): 0 of 22 real rows
+  and 0 of 36 twins right there
+- Fragments are the symptom of the same gap: with an index >= 5 the tones
+  are detected apart (46 of 90 FSK rows partly or wholly; 12 of 16 above
+  20) and each tone alone is an on / off keyed carrier - 17 FSK rows end
+  "ISM device (OOK)". The tone-pair merge of the v4 branch did nothing
+  because it tests only neighbours in frequency (there are pieces between
+  wide-shift tones) and its 427 us frames are longer than most bits, so the
+  tones are on together in a frame. Testing all pairs makes 26 fragments
+  whole, but only 5 then read ISM FSK - the model does not know that signal
+- **The evaluation, 38 rows**: for a row without an offset the track with
+  the most hits and the largest overlap with the 250 kHz recording band is
+  often a band-edge piece or splatter (rescored against the measured band:
+  OOK +17 / -4, FSK +7 / -3); files under 0.5 s are one short snapshot (62
+  of those 99 rows fail), files of 0.5-1 s lose their tail
+- **Truth: 9 rows have the wrong class** (5 indexed FSK are keyed PWM: three
+  KeeLoq, two Fineoffset; 4 indexed OOK are FSK), 14 are undetermined (no
+  sample rate, clipped, too short), 5 "OOK" rows are ASK with a residual
+  carrier. The one confidently wrong ISM OOK label that made the whole
+  class never sure (`min_p` 1.006) is one of them: the label was right.
+  With that row corrected the same threshold rule gives ism_ook 0.98 and
+  ISM sure labels on the public rows go from 6 right / 1 wrong to 29 / 2
+- OOK, ~16 rows: real hard-keyed devices with 0.4-2 ms pulses are detected
+  wide (57 % of real OOK tracks in views 2-3, 11 % of the training rows)
+  and their envelope and complex autocorrelation decay over ~1 ms where the
+  bank's decay within ~0.1 ms; replacing the `frame_*` groups by the class
+  mean turns 16 of 49 right, no other group more than 10. Also missing:
+  pulses of 10-80 us (meter transmitters), keying depths of only 6-20 dB
+- One label or two: as scored 119 of 247; with OOK <-> FSK swaps counted
+  right 140 (measured truth and band: 137 -> 160 of 240); sure labels 69 ->
+  80. A merge loses only the modulation hint (both start the `ism` plugin);
+  it does not touch the 107 rows that end outside ISM (none 33, LoRa 19,
+  unknown FSK 16, unknown pulses 15)
+- These labels are fragile: another noise-fill seed flips 26 OOK rows,
+  showing a burst in a full 0.5 s snapshot instead of a short one 58. Rows
+  never right in any of five fits: 35 OOK, 61 FSK
+- The stray "Unknown OFDM 52 %" of the `ism-six-devices` playback is a
+  keying sidelobe 54-64 kHz below one device's burst: the splatter rule
+  wants the piece at most half the burst's width and reaches 48-56 kHz
+- The work list this gives: generic FSK devices in the bank with the bit
+  time (10 us - 2 ms) and the tone spacing (10-200 kHz) drawn independently
+  (index up to ~60), packets of 2 ms - 1 s with repeats, enough of them for
+  the 2.4 MHz view (the 94 twins are the synthetic check: 26 right today);
+  OOK with long hard-keyed pulses, very short pulses and shallow keying;
+  the library's rows with their measured class, offset, width and on-air
+  times; then the all-pairs tone merge and a wider splatter rule. The bank
+  changes need a retrain, judged over several seeds
+
 ### Results (2026-11-20, phase 5, the weights still shipped)
 
 The phase 4 weights (no retraining), now model format 3 with the RF table,
