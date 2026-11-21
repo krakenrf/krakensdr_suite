@@ -506,7 +506,8 @@ off). Without it the decoder also tries `KRAKEN_MBELIB` and the system's
 `libmbe.so.1`, and uses the first one that has the Aero function - so
 installing this build in place of the standard mbelib
 (`sudo cmake --install build-aeroambe && sudo ldconfig`) serves every
-decoder. The decoder's "Voice codec" line says which library it found.
+decoder; in Docker, put it in `docker-data/codecs/` as `libmbe.so.1`. The
+decoder's "Voice codec" line says which library it found.
 
 **TETRA: the ETSI codec, with osmo-tetra's patches**
 
