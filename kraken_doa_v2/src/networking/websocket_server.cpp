@@ -1179,7 +1179,7 @@ void WebSocketServer::web_server_main() {
 bool WebSocketServer::auth_enabled() { return auth_required(); }
 
 void WebSocketServer::broadcast_json_message(const string& json) {
-    if (!global_ssl_app || !loop) return;
+    if (!global_ssl_app || !loop || json.empty()) return;   // (never an empty frame: a builder with nothing to say returns "")
 
     // CRITICAL: uWebSockets publish() is NOT thread-safe.
     // The scanner thread (and potentially others) call this from outside the
