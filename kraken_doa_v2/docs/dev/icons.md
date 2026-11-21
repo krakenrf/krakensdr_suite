@@ -67,9 +67,9 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `power` | shut down; Setup Settings' System tab (restart and shut down from the page) |
 | `edit` | edit (pencil) |
 | `trash` | delete |
-| `download` `upload` | download / get, upload |
+| `download` `upload` | download / get, upload (also Export / Import of the control channel list) |
 | `plus` `minus` | a new conversation; zoom in / out (drive mode) |
-| `search` | the map search |
+| `search` | the map search; trunk following's control-channel search (its button, the running block, the top-bar banner) |
 | `home` | the map back to the station; trunk following's Return (the receiver back to its own frequency) |
 | `wheel` | drive mode (a steering wheel: the rail's Drive button) |
 | `sun` `moon` | drive mode's Day / Night (the button shows the look it switches to) |
@@ -120,7 +120,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `plane` | aircraft, Array Calibration (from aircraft) |
 | `decoder` | the decoders |
 | `trunk` | trunk following (a trunk forking into three branches: one control channel handing out many calls; the box, its editor, the VFO cards' line; 2026-11-20, *trunk-following.md*) |
-| `more` | more actions on a row (three dots: a trunk call's / talkgroup's menu) |
+| `more` | more actions on a row (three dots: a trunk call's / talkgroup's menu, a remembered control channel's, the control channel list's Export / Import / Clear) |
 | `speech` | Voice to Text, Transcription (not the VFO card's Transcribe tick: 2026-11-18, like its neighbours it has none) |
 | `bot` | the AI assistant |
 | `map` | the map |

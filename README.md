@@ -300,6 +300,16 @@ mode it retunes there for the call, calibrates and comes back afterwards
 (your other VFOs move with it meanwhile); in independent mode it retunes the
 tuners you give it as voice tuners.
 
+Don't know the control channel? **Search bands…** under *Control channels*
+in the box sweeps the bands you tick (or ranges you type) and tries every
+trunking decoder on each steady carrier; the receiver is away from your
+frequency while it runs and comes back at the end (or on **Stop**). What it
+finds - and every control channel you tune yourself - lands in a list kept
+on the receiver (`trunk_control_channels.json`, saved by itself; Export /
+Import in its **…** menu), and **one click on an entry follows it**: a
+control VFO with the right decoder is put on it (the receiver retunes when
+it is outside the band) and following switches on.
+
 What each protocol needs:
 
 | Protocol | Tune a VFO to | Channel frequencies |

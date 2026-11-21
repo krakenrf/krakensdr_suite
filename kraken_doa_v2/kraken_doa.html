@@ -1285,6 +1285,79 @@ body.tk-away #tb-freq .freq-selector {box-shadow:0 0 0 2px var(--warn-m);border-
 /* names from the air, a plugin or a user: a right-to-left override in one must not turn the rest of its line */
 .tk-sys .nm, .tk-call .nm, .tk-call .l2, .tk-hold b, #tk-dlg-name, .tk-menu .h, .tk-note > span, #decimator-list .dec-row.dec-tk > span, .tk-dlg .tk-t td {unicode-bidi:isolate}
 .tk-tag {display:inline-block;font-size:10px;color:var(--ac-t2);border:1px solid var(--ac-d);border-radius:6px;padding:0 5px;margin-left:4px;vertical-align:1px;white-space:nowrap}
+/* control channels: the search, the memory (click to follow) */
+.tk-ccbar {display:flex;align-items:center;gap:6px;margin:0 0 4px}
+.tk-ccbar .tk-ccsp {flex:1}
+.sb-sub .tk-ccsave {font-size:10.5px;font-weight:normal;color:var(--t5);margin-left:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tk-ccbar .btn {flex:none;display:inline-flex;align-items:center;gap:4px}
+.tk-srch-set {padding:5px 6px}
+.tk-srch-l {display:flex;align-items:center;gap:6px;font-size:12px;color:var(--t1);margin:0 0 4px}
+.tk-bands {display:flex;flex-wrap:wrap;gap:4px;margin:0 0 4px}
+.tk-bands .btn {padding:2px 7px;font-size:11.5px;line-height:1.3;text-align:left}
+.tk-bands .btn small {display:block;font-size:10px;color:var(--t4)}
+.tk-bands .btn[aria-pressed="true"] {background:var(--ac-d);border-color:var(--ac);color:#fff}
+.tk-bands .btn[aria-pressed="true"] small {color:var(--ac-t2)}
+.tk-srch-set .ctrl-row input[type="text"] {flex:1;min-width:0;font-size:12px;padding:3px 5px}
+.tk-srch-set .ctrl-row.rg label:first-child {flex:none;min-width:0}
+.tk-srch-set .u {width:auto}
+.tk-srch-set .ctrl-row select {font-size:12px;padding:2px 4px;max-width:140px}
+.tk-adv {display:inline-flex;align-items:center;gap:3px;background:none;border:0;color:var(--t3);font:inherit;font-size:11.5px;padding:2px 0;cursor:pointer}
+.tk-adv:hover {color:var(--t0)}
+.tk-adv[aria-expanded="true"] .ic {transform:rotate(90deg)}
+.tk-srch-est {font-size:11px;color:var(--t2);line-height:1.45;margin:4px 0}
+.tk-srch-est:empty {display:none}
+.tk-srch-est b {color:var(--t0)}
+.tk-srch-est .w {color:var(--warn-t)}
+.tk-srch-err {font-size:11px;color:var(--bad-t);line-height:1.4;margin:2px 0}
+.tk-srch-err:empty {display:none}
+.tk-srch-go {display:flex;justify-content:flex-end;gap:6px;margin:4px 0 2px}
+.tk-srch-go .btn {display:inline-flex;align-items:center;gap:4px}
+.tk-srch .pg {height:3px;background:var(--l1);border-radius:2px;margin:3px 0 2px;overflow:hidden}
+.tk-srch .pg > i {display:block;height:100%;background:var(--warn-t);border-radius:2px;transition:width .4s}
+.tk-srch.last {background:var(--s3);border-color:var(--l1);color:var(--t2)}
+.tk-srch.last .h {font-weight:normal;font-size:11.5px}
+.tk-srch.last .h b {color:var(--t0)}
+.tk-srch .d {white-space:normal}
+.tk-srch .x {flex:none;background:none;border:0;color:var(--t4);cursor:pointer;padding:0 2px;display:inline-flex}
+.tk-srch .x:hover {color:var(--t0)}
+#tk-cc-notes .tk-note {flex-wrap:wrap}
+#tk-cc-notes .tk-note > span {flex:1 1 150px}
+#tk-cc-notes .tk-note > span + .btn {margin-left:auto}
+.tk-ccf {display:flex;flex-wrap:wrap;gap:4px;margin:0 0 4px}
+.tk-ccf input {flex:1 1 100%;min-width:0;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:3px 6px;border-radius:3px;font-size:12px}
+.tk-ccf select {flex:1 1 0;min-width:0;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:2px 3px;border-radius:3px;font-size:11.5px}
+.tk-cc-list {max-height:300px}
+.tk-cc-list:empty {display:none}
+.tk-ccr {padding:3px 4px 3px 6px;border-bottom:1px solid rgba(51,59,70,.6);border-left:3px solid transparent;font-size:11.5px;cursor:pointer;outline:none}
+.tk-ccr:last-child {border-bottom:0}
+.tk-ccr:hover {background:var(--s4)}
+.tk-ccr:focus-visible {box-shadow:inset 0 0 0 1px var(--ac-t)}
+.tk-ccr[hidden] {display:none}
+.tk-ccr .l1 {display:flex;align-items:center;gap:5px;height:20px}
+.tk-ccr .f {flex:none;font-weight:bold;color:var(--t0);font-variant-numeric:tabular-nums;min-width:62px}
+.tk-ccr .l2 .pl {color:var(--ac-t2)}
+/* the second line is redrawn when its state changes: a press on a span in it that is replaced before
+   the release would lose the click (the row, its two lines and the frequency stay the same elements) */
+.tk-ccr .l2 > * {pointer-events:none}
+.tk-ccr .nm {flex:1;min-width:0;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-ccr .nm.u {color:var(--t0);font-weight:600}
+.tk-ccr .lv {flex:none;font-size:10.5px;color:var(--t4);font-variant-numeric:tabular-nums}
+.tk-ccr .mb {flex:none;background:none;border:1px solid transparent;color:var(--t3);cursor:pointer;padding:0 3px;height:18px;border-radius:3px;display:inline-flex;align-items:center}
+.tk-ccr .mb:hover, .tk-ccr .mb:focus-visible {border-color:var(--ac-t);color:#fff;outline:none}
+.tk-ccr .l2 {color:var(--t4);font-size:10.5px;height:15px;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-ccr .l2 .ok {color:var(--ok-t)}
+.tk-ccr .l2 .w {color:var(--warn-t)}
+.tk-ccr .l2 .nw {color:var(--spec-t)}
+.tk-ccr.fol {border-left-color:var(--ok)}
+.tk-ccr.pend {border-left-color:var(--warn)}
+.tk-ccr.off .f, .tk-ccr.off .nm {color:var(--t4)}
+.tk-ccr.gone {opacity:.4;pointer-events:none}
+.tk-ccr .nm, .tk-ccr .l2 {unicode-bidi:isolate}
+.tk-ccr .dt {display:grid;grid-template-columns:auto 1fr;gap:1px 8px;font-size:10.5px;color:var(--t2);margin:3px 0 2px;cursor:text;user-select:text}
+.tk-ccr .dt > div {display:contents}
+.tk-ccr .dt span {min-width:0;overflow-wrap:anywhere}
+.tk-ccr .dt span:first-child {color:var(--t5)}
+@media (pointer:coarse) { .tk-ccr .mb {height:28px;padding:0 8px} .tk-ccr .l1 {height:28px} .tk-bands .btn {padding:5px 9px} }
 /* the system editor: a dialog in the Setup Settings look, sections as a strip across the top */
 .sf-dlg.tk-dlg {width:680px;height:580px;display:flex;flex-direction:column;overflow:hidden;padding-bottom:8px}
 .tk-dlg > .sf-dlg-h {flex:none;min-width:0}
@@ -3223,6 +3296,39 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         <div class="tk-list" id="tk-calls"></div>
         <div class="sb-sub tk-below">Recent<span class="sf-count" id="tk-hist-n"></span></div>
         <div class="tk-list hist" id="tk-hist"></div>
+        <!-- 📡 control channels: the search, the memory, click to follow (a receiver that has them) -->
+        <div id="tk-cc-sec" style="display:none">
+          <div class="sb-sub tk-below">Control channels<span class="tk-ccsave" id="tk-cc-save" title="The list lives on the receiver (trunk_control_channels.json): saved by itself a few seconds after each change and loaded at start - there is nothing to save. Export (the … button) makes a copy on this computer">saved automatically</span><span class="sf-count" id="tk-cc-n"></span></div>
+          <div class="tk-ccbar">
+            <button type="button" class="btn sm primary" id="tk-srch-btn" onclick="tkSrchToggleSet()" aria-expanded="false" title="Sweep bands for the control channels of trunked systems: no frequency or protocol needed. What it finds lands in the list below; a click on one follows it"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><span>Search bands…</span></button>
+            <span class="tk-ccsp"></span>
+            <button type="button" class="btn sm" id="tk-cc-more" onclick="tkCcFileMenu(this)" title="Export, import or clear the list" aria-haspopup="menu" aria-label="Export, import or clear"><svg class="ic" aria-hidden="true"><use href="#i-more"/></svg></button>
+          </div>
+          <div class="tk-set tk-srch-set" id="tk-srch-set" style="display:none">
+            <div class="tk-srch-l">Bands<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Tick one or more bands (or type your own ranges below). The search tunes the receiver across them step by step, looks for steady carriers and tries every decoder that can follow a trunked system on each one: what answers as a control channel is remembered.<br><br>It takes about 2-3 s per 2 MHz, more where it finds carriers. One gain is used for the whole sweep: where the front end clips (a strong broadcast or a phone band nearby), control channels can be missed - lower the gain there.</span></span></div>
+            <div class="tk-bands" id="tk-bands"></div>
+            <div class="ctrl-row rg"><label for="tk-srch-own" title="Your own ranges in MHz: from-to, several separated by commas (e.g. 451-458, 935.5-940)">Ranges</label><input type="text" id="tk-srch-own" placeholder="e.g. 451-458, 935.5-940" maxlength="300" autocomplete="off" spellcheck="false" oninput="tkSrchEst()"><span class="u">MHz</span></div>
+            <button type="button" class="tk-adv" id="tk-srch-adv-btn" onclick="tkSrchAdv()" aria-expanded="false"><svg class="ic" aria-hidden="true"><use href="#i-chev-r"/></svg><span>Advanced</span></button>
+            <div id="tk-srch-adv" style="display:none">
+              <div class="ctrl-row"><label for="tk-srch-thr" title="A carrier is tried when it stands this far above the noise floor (3-40 dB). Lower finds weaker control channels and tries more carriers (slower)">Threshold</label><input type="number" id="tk-srch-thr" min="3" max="40" step="1" value="9" oninput="tkSrchEst()"><span class="u">dB</span></div>
+              <div class="ctrl-row"><label for="tk-srch-ras" title="A found carrier's frequency is rounded to this channel raster (the measured one is kept too). None: as measured">Channel raster</label><select id="tk-srch-ras" onchange="tkSrchEst()"><option value="6250">6.25 kHz</option><option value="12500">12.5 kHz</option><option value="5000">5 kHz</option><option value="0">None (as measured)</option></select></div>
+            </div>
+            <div class="tk-srch-est" id="tk-srch-est"></div>
+            <div class="tk-srch-err" id="tk-srch-err" role="alert"></div>
+            <div class="tk-srch-go"><button type="button" class="btn sm" onclick="tkSrchToggleSet()">Close</button><button type="button" class="btn sm primary" id="tk-srch-start" onclick="tkSrchStart()"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg><span>Start search</span></button></div>
+          </div>
+          <div class="tk-exc tk-srch" id="tk-srch"></div>
+          <div id="tk-cc-notes"></div>
+          <div class="tk-ccf" id="tk-cc-filter" style="display:none">
+            <input type="search" id="tk-cc-q" placeholder="Search MHz, name, site…" oninput="tkCcRender()" title="Words in the frequency, name, system, site or decoder">
+            <select id="tk-cc-proto" onchange="tkCcRender()" title="Only this decoder's control channels (All: every decoder)"><option value="">All</option></select>
+            <select id="tk-cc-age" onchange="tkCcRender()" title="Only those found or heard within this time"><option value="0">Any time</option><option value="3600000">Last hour</option><option value="86400000">Last 24 h</option><option value="604800000">Last 7 days</option></select>
+            <select id="tk-cc-sort" onchange="tkCcSortSet(this.value)" title="Order of the list: by frequency, last seen first, strongest first, by name"><option value="hz">Frequency</option><option value="last">Last seen</option><option value="level">Strongest</option><option value="name">Name</option></select>
+          </div>
+          <div class="tk-list tk-cc-list" id="tk-cc-list"></div>
+          <div class="tk-empty" id="tk-cc-empty"></div>
+          <input type="file" id="tk-cc-file" accept=".json,application/json" style="display:none" onchange="tkCcImportFile(this)">
+        </div>
       </div>
     </div>
 
@@ -3378,7 +3484,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       <div id="pb-banner" title="A synthetic test transmission is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops."><span id="pb-banner-k"><svg class="ic" aria-hidden="true"><use href="#i-bug"/></svg><span>DEBUG PLAYBACK - not live</span></span><span class="pb-bt" id="pb-banner-t"></span><button onclick="pbStop()"><svg class="ic" aria-hidden="true"><use href="#i-stop"/></svg><span>Stop</span></button></div>
       <!-- 📡 Trunk following: the receiver is away for a call outside the span (an excursion): the centre
            shown is not the user's tuning (see 📡 TRUNK FOLLOWING, tkRenderExc) -->
-      <div id="tk-exc-banner" role="status"><span class="k"><svg class="ic" aria-hidden="true"><use href="#i-trunk"/></svg><span id="tk-exc-bk">AWAY FOR A CALL</span></span><span class="t" id="tk-exc-bt"></span><button type="button" onclick="tkReturn()" title="Back to your frequency now (the call is not followed further)"><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg><span>Return</span></button></div>
+      <div id="tk-exc-banner" role="status"><span class="k"><svg class="ic" aria-hidden="true"><use href="#i-trunk" id="tk-exc-bki"/></svg><span id="tk-exc-bk">AWAY FOR A CALL</span></span><span class="t" id="tk-exc-bt"></span><button type="button" id="tk-exc-bb" onclick="tkBannerAct()" title="Back to your frequency now (the call is not followed further)"><svg class="ic" aria-hidden="true"><use href="#i-home" id="tk-exc-bbi"/></svg><span id="tk-exc-bbt">Return</span></button></div>
       <!-- Center Frequency (SDR#-style) - FIRST. Hidden in independent mode
            (every tuner pane has its own frequency digits and gain) -->
       <div class="tb-group not-indep" id="tb-freq">
@@ -10802,6 +10908,9 @@ function vfdEditEnd(id) {
 }
 
 function updateDecimatorList(info) {
+  // 📡 the control-channel search's probe VFOs: the receiver's, a few seconds each - no card, no bar
+  // (the search's block counts them: docs/dev/trunk-following.md, Page)
+  if (info.some(d => d.trunk && d.trunk.role === 'probe')) info = info.filter(d => !(d.trunk && d.trunk.role === 'probe'));
   // Preserve local offsets during ANY drag operation (tuning bar drag, edge drag, or scroll drag)
   // to prevent server from overwriting user's intended position
   if (isDragging || isDraggingEdge || pendingOffsetTimeout || isScrollDragging || scrollDragLock) {
@@ -11242,7 +11351,7 @@ function connect() {
     setTimeout(() => send('GET_SF'), 880);
     setTimeout(() => send('GET_SFSCAN'), 885);
     // 📡 trunk following's status (then pushed on changes; an older receiver doesn't answer: the box stays hidden)
-    setTimeout(() => { tkListsAsked.clear(); send('GET_TRUNK'); }, 887);
+    setTimeout(() => { tkListsAsked.clear(); tkCcAsked = false; send('GET_TRUNK'); }, 887);
 
     // Request FFT settings on connection
     setTimeout(() => requestFFTSettings(), 600);
@@ -11285,14 +11394,16 @@ function connect() {
 
           // Handle decimator info
           if(msg.decimator_info) {
-            updateDecimatorList(msg.decimator_info);
-            digOnDecimatorInfo(msg.decimator_info);
+            const dinfo = tkProbeFilter(msg.decimator_info);   // 📡 the search's probe VFOs: not the page's
+            updateDecimatorList(dinfo);
+            digOnDecimatorInfo(dinfo);
             if (typeof recRenderVfos === 'function') recRenderVfos();
             updatePlotTitle();
           }
           else if(msg.digital) {
             if (msg.geo) geoStatus = msg.geo;
-            digOnMessage(msg.digital);
+            const dg = tkProbeIds.size && Array.isArray(msg.digital) ? msg.digital.filter(x => !(x && tkProbeIds.has(x.id))) : msg.digital;
+            if (dg.length || !Array.isArray(dg)) digOnMessage(dg);
           }
           else if(msg.map) { mapOnMessage(msg.map); }
           else if(msg.savedfreq) { sfOnMessage(msg.savedfreq); }
@@ -11300,6 +11411,7 @@ function connect() {
           else if(msg.trunk) { tkOnStatus(msg.trunk); }
           else if(msg.trunk_sys) { tkOnLists(msg.trunk_sys); }
           else if(msg.trunk_error) { tkOnError(msg.trunk_error); }
+          else if(msg.trunk_cc) { tkOnCc(msg.trunk_cc); }
           else if(msg.incidents) { incOnMessage(msg.incidents); }
           else if(msg.rdf) { rdfOnStatus(msg.rdf, false); }
           else if(msg.rdf_part) { rdfOnStatus(msg.rdf_part, true); }
@@ -22031,6 +22143,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     tkRenderCalls();
     tkRenderHist();
     tkRenderCards();
+    tkCcOnStatus(m);
     // the spectrum: only when what it shows of the voice VFOs changed
     const k = (m.vfos || []).map(v => v.vfo + ':' + v.state + ':' + v.call + ':' + ((m.calls || []).find(c => c.id === v.call) || {}).target_name).join('|');
     if (k !== tkDrawKey) { tkDrawKey = k; drawBox(); if (typeof paneDrawAllOverlays === 'function') paneDrawAllOverlays(); }
@@ -22084,7 +22197,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const st = $id('tk-state'), badge = $id('tk-badge');
     let txt = '', cls = '', tip = '', b = '', bw = false;
     if (m.playback) { txt = 'Playback'; tip = 'A playback runs: what is found now is not kept'; }
-    if (m.paused) { txt = 'Paused'; cls = 'w'; tip = 'Paused while the ' + (m.paused_why || 'scanner') + ' runs'; b = 'Paused'; bw = true; }
+    if (m.search) { txt = 'Searching'; cls = 'w'; tip = 'A control-channel search runs: following waits until it ends'; b = 'Searching'; bw = true; }
+    else if (m.paused) { txt = 'Paused'; cls = 'w'; tip = 'Paused while the ' + (m.paused_why || 'scanner') + ' runs'; b = 'Paused'; bw = true; }
     else if (m.follow) {
       txt = calls.length ? calls.length + ' followed' : (txt || 'Following');
       cls = 'on';
@@ -22537,6 +22651,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (focus && b && b.isConnected) b.focus();
     tkFreeze = !!($id('tk-calls') && $id('tk-calls').matches(':hover'));
     tkRenderCalls();
+    tkCcRender();
   }
   function tkMenuPlace() {
     if (!tkMenu || !tkMenuBtn) return;
@@ -22618,6 +22733,691 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       tkSend('TRUNK_SYS_SET:' + JSON.stringify({sys: id, name: String(r.name || '').trim()}));
     });
   }
+  // --- control channels: the search, the memory, click to follow ---------------------------------
+  // docs/dev/trunk-following.md "Control channels" (receiver) and "Page" (this). A receiver that has
+  // them sends cc_followed / search in its status; the page then asks once for the memory (trunk_cc,
+  // which the receiver sends again to every page on each change, at most once a second)
+  let tkCc = null;               // the last trunk_cc: {file, max, entries}
+  let tkCcAsked = false;
+  const tkCcPend = new Map();    // entry id -> {t, add}: a click waiting for cc_followed (or its refusal)
+  let tkCcSaid = null;           // {cls, ic, html, btn, t}: the latest refusal / import report under the search
+  let tkCcOpen = 0;              // the entry whose details are shown
+  let tkCcHover = false, tkCcTapAt = 0;
+  let tkCcOrder = [];            // the order last shown (kept while the pointer is on the list)
+  let tkCcImp = null;            // an import going on
+  let tkSrchLastHide = 0;        // search_last t_end the user closed
+  let tkSrchSetOpen = false, tkSrchWas = false;
+  // the control-channel search's probe VFOs (decimator_info trunk.role "probe"): no card, no bar,
+  // no decoder events or history asked for - an id leaves the set when a VFO of the page's has it
+  const tkProbeIds = new Set();
+  function tkProbeFilter(info) {
+    if (!Array.isArray(info)) return info;
+    for (const d of info) { if (d.trunk && d.trunk.role === 'probe') tkProbeIds.add(d.id); else tkProbeIds.delete(d.id); }
+    return info.some(d => d.trunk && d.trunk.role === 'probe') ? info.filter(d => !(d.trunk && d.trunk.role === 'probe')) : info;
+  }
+  const TK_CC_PEND_MS = 12000;
+  const TK_SRCH_STEP_S = 2.4;    // seconds per step, for the estimate before the start (the receiver's own estimate after)
+  // the bands offered: frequency ranges, nothing regional; "around here" and the whole range follow the receiver
+  const TK_BANDS = [
+    {k: 'here', t: 'Around here', d: () => '± 10 MHz', r: () => [[currentCenterFreq - 10, currentCenterFreq + 10]]},
+    {k: 'vhf', t: 'VHF', d: () => '136 - 174', r: () => [[136, 174]]},
+    {k: 'uhf1', t: 'UHF', d: () => '380 - 470', r: () => [[380, 470]]},
+    {k: 'uhf2', t: 'UHF', d: () => '450 - 520', r: () => [[450, 520]]},
+    {k: '700', t: '700 MHz', d: () => '763 - 776', r: () => [[763, 776]]},
+    {k: '800', t: '800 MHz', d: () => '851 - 870', r: () => [[851, 870]]},
+    {k: '900', t: '900 MHz', d: () => '935 - 941', r: () => [[935, 941]]},
+    {k: 'all', t: 'Whole range', d: () => Math.round(FREQ_MIN) + ' - ' + Math.round(FREQ_MAX), r: () => [[FREQ_MIN, FREQ_MAX]]}
+  ];
+  const TK_SRCH_PHASE = {tuning: 'tuning', settling: 'waiting for the spectrum', looking: 'looking for carriers', probing: 'trying the decoders'};
+  const TK_SRCH_END = {done: 'Finished', stopped: 'Stopped by you', follow: 'Ended to follow a control channel', mode: 'Ended by a mode change',
+                       user_retuned: 'Ended: you retuned the receiver (it stays where you tuned it)', shutdown: 'Ended: the receiver shut down',
+                       heimdall: 'Ended: heimdall sent nothing', playback: 'Ended: a playback started'};
+  const TK_CC_SRC = {search: 'found by a search', heard: 'heard on a control VFO', user: 'entered or imported'};
+  let tkSrchSel = {bands: [], own: '', thr: 9, ras: 6250, adv: false};
+  try { const v = JSON.parse(localStorage.getItem('kraken_tk_srch') || 'null'); if (v && typeof v === 'object') Object.assign(tkSrchSel, v); } catch (e) {}
+  if (!Array.isArray(tkSrchSel.bands)) tkSrchSel.bands = [];
+  function tkSrchKeep() { try { localStorage.setItem('kraken_tk_srch', JSON.stringify(tkSrchSel)); } catch (e) {} }
+  function tkHasCc(m) { return !!(m && Array.isArray(m.cc_followed)); }
+
+  // the status' part: shown / hidden, the memory asked for, clicks resolved, the search block
+  function tkCcOnStatus(m) {
+    const sec = $id('tk-cc-sec');
+    if (!sec) return;
+    const has = tkHasCc(m);
+    if ((sec.style.display === 'none') === has) sec.style.display = has ? '' : 'none';
+    if (!has) return;
+    if (!tkCcAsked) { tkCcAsked = true; send('GET_TRUNK_CC'); }
+    const fol = new Set(m.cc_followed.map(f => f.id));
+    for (const [id, p] of tkCcPend) if (fol.has(id) && !p.was || Date.now() - p.t > TK_CC_PEND_MS) tkCcPend.delete(id);
+    for (const [id, p] of tkCcPend) if (p.was && !fol.has(id)) p.was = false;   // (followed before the click: now replaced - wait for it again)
+    tkSrchRender();
+    tkCcRender();
+  }
+  function tkOnCc(x) {
+    tkCc = x && Array.isArray(x.entries) ? x : {file: {ok: true}, max: 1000, entries: []};
+    tkCcFileTell(tkCc.file);
+    tkCcRender();
+  }
+  function tkCcById(id) { return tkCc && (tkCc.entries || []).find(e => e.id === id) || null; }
+  function tkCcFollowedVfo(id) { const f = tkSt && (tkSt.cc_followed || []).find(x => x.id === id); return f ? f.vfo : -1; }
+  function tkCcName(e) { return e.name || e.sys_name || (e.sys ? e.sys.slice(e.sys.indexOf(':') + 1) : '') || ''; }
+  function tkCcMhz(hz) { return (hz / 1e6).toFixed(hz % 1000 ? 5 : 4).replace(/0$/, ''); }
+  function tkCcAgo(ms) {
+    if (!(ms > 0)) return 'never';
+    const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (s < 90) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    if (s < 86400 * 2) return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' days ago';
+  }
+  // in the band the receiver takes in now (coherent: the centre's usable band)
+  function tkCcInSpan(hz) {
+    if (opMode !== 'coherent') return null;   // independent: a tuner may be retuned - the receiver says
+    return Math.abs(hz - currentCenterFreq * 1e6) <= Math.min(1, Math.max(0.1, currentEdgeClip)) * 1.2e6 - 6250;
+  }
+  // why a click can't follow it (said at once, nothing sent); '' = it can be tried
+  function tkCcCant(e) {
+    const m = tkSt || {};
+    if (!(e.hz >= FREQ_MIN * 1e6 && e.hz <= FREQ_MAX * 1e6)) return `Outside this receiver's tuner range (${Math.round(FREQ_MIN)} - ${Math.round(FREQ_MAX)} MHz)`;
+    if (digPlugins.length && !digPlugin(e.plugin)) return `Its decoder (${e.plugin}) is not on this receiver: build it, or install the plugin`;
+    if (m.playback) return 'Not during a playback: stop it first';
+    if (opMode === 'wideband') return 'Not in wideband scan mode: switch to coherent or independent mode (top bar)';
+    if (m.paused && m.paused_why && !/search/.test(m.paused_why)) return `The ${m.paused_why} runs: stop it first`;
+    return '';
+  }
+
+  // --- the search: the form -------------------------------------------------------------------
+  function tkSrchToggleSet(open) {
+    tkSrchSetOpen = open === undefined ? !tkSrchSetOpen : !!open;
+    $id('tk-srch-set').style.display = tkSrchSetOpen ? '' : 'none';
+    const b = $id('tk-srch-btn');
+    b.setAttribute('aria-expanded', tkSrchSetOpen ? 'true' : 'false');
+    b.classList.toggle('on', tkSrchSetOpen);
+    if (!tkSrchSetOpen) return;
+    $id('tk-srch-thr').value = tkSrchSel.thr;
+    $id('tk-srch-ras').value = String(tkSrchSel.ras);
+    $id('tk-srch-own').value = tkSrchSel.own || '';
+    tkSrchAdv(!!tkSrchSel.adv);
+    tkSrchBands();
+    tkSrchEst();
+  }
+  function tkSrchAdv(open) {
+    const o = open === undefined ? $id('tk-srch-adv').style.display === 'none' : open;
+    $id('tk-srch-adv').style.display = o ? '' : 'none';
+    $id('tk-srch-adv-btn').setAttribute('aria-expanded', o ? 'true' : 'false');
+    if (open === undefined) { tkSrchSel.adv = o; tkSrchKeep(); }
+  }
+  function tkSrchBands() {
+    const el = $id('tk-bands');
+    const h = TK_BANDS.map(b => `<button type="button" class="btn" data-k="${b.k}" aria-pressed="${tkSrchSel.bands.includes(b.k)}" title="${digEsc(b.k === 'here' ? 'The 20 MHz around the receiver\'s frequency now' : b.k === 'all' ? 'Everything this receiver can tune: a long sweep' : b.t + ' ' + b.d() + ' MHz')}">${digEsc(b.t)}<small>${digEsc(b.d())}</small></button>`).join('');
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+  }
+  $id('tk-bands') && $id('tk-bands').addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-k]');
+    if (!b) return;
+    const k = b.dataset.k, on = !tkSrchSel.bands.includes(k);
+    tkSrchSel.bands = tkSrchSel.bands.filter(x => x !== k);
+    if (on) tkSrchSel.bands.push(k);
+    tkSrchKeep();
+    tkSrchBands();
+    tkSrchEst();
+  });
+  // the ranges asked for (MHz), merged, inside the tuner's range - or why not
+  function tkSrchRanges() {
+    const out = [], bad = [];
+    for (const b of TK_BANDS) if (tkSrchSel.bands.includes(b.k)) out.push(...b.r());
+    const own = String($id('tk-srch-own').value || '').trim();
+    if (own) for (const part of own.split(/[,;]+/)) {
+      const p = part.trim();
+      if (!p) continue;
+      const mm = /^(\d+(?:\.\d+)?)\s*(?:-|–|to|\.\.)\s*(\d+(?:\.\d+)?)$/i.exec(p);
+      if (!mm || !(+mm[1] < +mm[2])) { bad.push(p); continue; }
+      out.push([+mm[1], +mm[2]]);
+    }
+    if (bad.length) return {err: `Not a range: "${bad[0].slice(0, 30)}" - write from-to in MHz, e.g. 451-458`};
+    const r = out.map(([a, b]) => [Math.max(FREQ_MIN, a), Math.min(FREQ_MAX, b)]).filter(([a, b]) => b - a >= 0.01);
+    if (out.length && !r.length) return {err: `Outside this receiver's range (${Math.round(FREQ_MIN)} - ${Math.round(FREQ_MAX)} MHz)`};
+    r.sort((x, y) => x[0] - y[0]);
+    const m = [];
+    for (const x of r) if (m.length && x[0] <= m[m.length - 1][1] + 0.05) m[m.length - 1][1] = Math.max(m[m.length - 1][1], x[1]); else m.push(x.slice());
+    if (m.length > 16) return {err: `${m.length} separate ranges: at most 16 - join some`};
+    const total = m.reduce((s, x) => s + x[1] - x[0], 0);
+    if (total > 2000) return {err: `${Math.round(total)} MHz in all: at most 2000`};
+    const half = Math.min(1, Math.max(0.1, currentEdgeClip)) * 1.2, stepw = 2 * half - 0.05;
+    const steps = m.reduce((s, [a, b]) => s + 1 + Math.ceil(Math.max(0, (b - a) - 2 * half + 0.025) / stepw), 0);
+    return {ranges: m, total, steps};
+  }
+  function tkDurWords(s) {
+    s = Math.round(s);
+    if (s < 90) return s + ' s';
+    if (s < 5400) return Math.round(s / 60) + ' min';
+    return (s / 3600).toFixed(1) + ' h';
+  }
+  let tkSrchRx = '';   // the receiver's refusal of the last start (kept until the form is changed)
+  function tkSrchEst(keepRx) {
+    if (!keepRx) tkSrchRx = '';
+    const est = $id('tk-srch-est'), err = $id('tk-srch-err'), go = $id('tk-srch-start');
+    if (!est) return;
+    tkSrchSel.own = String($id('tk-srch-own').value || '').slice(0, 300);
+    const thr = parseFloat($id('tk-srch-thr').value);
+    if (thr >= 3 && thr <= 40) tkSrchSel.thr = thr;
+    tkSrchSel.ras = parseInt($id('tk-srch-ras').value) || 0;
+    tkSrchKeep();
+    const r = tkSrchRanges(), m = tkSt || {};
+    let h = '', e = r.err || '';
+    if (!e && !r.ranges.length) h = 'Tick a band or type a range.';
+    else if (!e) {
+      const s = r.steps * TK_SRCH_STEP_S, home = tkMhz3(currentCenterFreq * 1e6);
+      h = `<b>${r.ranges.map(([a, b]) => (+a.toFixed(3)) + '-' + (+b.toFixed(3))).join(', ')} MHz</b> · ${r.steps} step${r.steps === 1 ? '' : 's'} · about <b>${tkDurWords(s)}</b>${s > 120 ? ' (longer where it finds carriers)' : ''}<br>` +
+        (opMode === 'independent' ? 'While it runs one tuner (the one with a control VFO, else T0) leaves its frequency and your VFOs on it move with it'
+          : `While it runs the receiver leaves ${home} MHz and your VFOs move with it`) + ((m.systems || []).some(x => (x.control || []).length) || m.follow ? ', trunk following pauses' : '') +
+        `; it comes back when the search ends (or Stop). Tuning the receiver yourself ends it there.`;
+      if (s > 600) h += `<br><span class="w">A long sweep: about ${tkDurWords(s)} away from your frequency.</span>`;
+    }
+    if (!(thr >= 3 && thr <= 40)) e = e || 'Threshold: 3 - 40 dB';
+    if (est.dataset.html !== h) { est.dataset.html = h; est.innerHTML = h; }
+    tkText(err, e || tkSrchRx);
+    go.disabled = !!e || !r.ranges || !r.ranges.length || !!m.search;
+    go.title = m.search ? 'A search runs: Stop it first' : e || '';
+  }
+  function tkSrchStart() {
+    const r = tkSrchRanges(), m = tkSt || {};
+    if (r.err || !r.ranges.length || m.search) return;
+    const cmd = 'TRUNK_SEARCH:' + JSON.stringify({ranges: r.ranges.map(([a, b]) => [Math.round(a * 1e6), Math.round(b * 1e6)]),
+                                                  threshold_db: tkSrchSel.thr, raster_hz: tkSrchSel.ras});
+    const s = r.steps * TK_SRCH_STEP_S;
+    const go = () => { tkSrchRx = ''; tkText($id('tk-srch-err'), ''); tkSrchLastHide = 0; tkSend(cmd); };
+    if (s <= 300 && !tkSrchSel.bands.includes('all')) { go(); return; }
+    uiConfirm({title: 'A long search', icon: 'search', ok: 'Start',
+               text: [`${Math.round(r.total)} MHz in ${r.steps} steps: about `, {b: tkDurWords(s)}, ` (more where it finds carriers). Meanwhile the receiver is away from ${tkMhz3(currentCenterFreq * 1e6)} MHz, trunk following pauses and your VFOs move with the centre. Stop brings it back at any time.`],
+               tip: 'What it finds is kept as it goes: stopping early loses nothing found so far. One gain is used for the whole sweep - where the front end clips, control channels can be missed.'}).then(ok => { if (ok) go(); });
+  }
+  function tkSrchStop() { tkSend('TRUNK_SEARCH_STOP'); }
+
+  // --- the search: running / how it ended ------------------------------------------------------
+  function tkSrchRender() {
+    const el = $id('tk-srch');
+    if (!el) return;
+    const m = tkSt || {}, s = m.search, L = m.search_last;
+    // a search starting (from this page or another): the form folds away, the progress takes its place
+    if (s && !tkSrchWas && tkSrchSetOpen) tkSrchToggleSet(false);
+    tkSrchWas = !!s;
+    let h = '', cls = 'tk-exc tk-srch';
+    if (s) {
+      const ri = (s.ranges || []).findIndex(([a, b]) => s.centre_hz >= a - 1.3e6 && s.centre_hz <= b + 1.3e6);
+      const rg = ri >= 0 ? s.ranges[ri] : null;
+      const ph = s.phase === 'probing' && s.probing ? `trying ${s.probing} carrier${s.probing === 1 ? '' : 's'} with the decoders` : TK_SRCH_PHASE[s.phase] || s.phase || '';
+      const pct = Math.max(0, Math.min(100, s.pct || 0));
+      h = `<div class="h">${icon('search', 't')}<span title="The receiver sweeps the ranges for control channels: the frequency in the top bar is the search's, not your tuning, and your VFOs move with it. The probe VFOs it puts on each carrier are not shown. A click on a control channel below ends the search and follows it">Searching</span><button type="button" class="btn sm" onclick="tkSrchStop()" title="Stop now: the receiver goes back to ${tkMhz3(s.home_hz)} MHz; what was found so far is kept">${icon('stop')}<span>Stop</span></button></div>` +
+        `<div class="pg" title="${pct} %"><i style="width:${pct}%"></i></div>` +
+        `<div class="d">${tkMhz3(s.centre_hz)} MHz · step ${Math.min(s.steps, (s.step || 0) + 1)} of ${s.steps} · ${pct} %${s.eta_s >= 0 ? ' · about ' + tkDurWords(s.eta_s) + ' left' : ''}</div>` +
+        `<div class="d">${digEsc(ph.charAt(0).toUpperCase() + ph.slice(1))}${rg && s.ranges.length > 1 ? ` · range ${ri + 1} of ${s.ranges.length} (${tkMhz3(rg[0])}-${tkMhz3(rg[1])})` : ''}</div>` +
+        `<div class="d">Found <b>${s.found_new || 0}</b> new, ${s.found_known || 0} known · ${s.carriers || 0} carrier${s.carriers === 1 ? '' : 's'}, ${s.probed || 0} tr${s.probed === 1 ? 'y' : 'ies'}</div>` +
+        `<div class="d">${s.tuner >= 0 ? 'T' + s.tuner + ' steps · back' : 'Back'} to ${tkMhz3(s.home_hz)} MHz when it ends</div>`;
+    } else if (L && L.t_end && L.t_end !== tkSrchLastHide) {
+      cls += ' last';
+      const n = (L.found_new || 0) + (L.found_known || 0);
+      h = `<div class="h">${icon(L.end === 'done' ? 'ok' : 'search', 't')}<span>${digEsc(TK_SRCH_END[L.end] || ('Ended: ' + L.end))} ${tkClock(L.t_end)}</span><button type="button" class="x" onclick="tkSrchHideLast()" title="Close" aria-label="Close">${icon('close')}</button></div>` +
+        `<div class="d"><b>${L.found_new || 0}</b> new, ${L.found_known || 0} known control channel${n === 1 && !L.found_new ? '' : 's'} · ${L.steps_done != null ? L.steps_done : L.steps} of ${L.steps} steps in ${tkDurWords((L.dur_ms || 0) / 1000)} · ${L.carriers || 0} carriers, ${L.probed || 0} tries</div>` +
+        (!n && (L.end === 'done' || (L.steps_done || 0) > 0) ? `<div class="d">Nothing answered as a control channel: try another band, a lower threshold (Advanced) - or the gain: one gain is used for the whole sweep, and where the front end clips signals are missed.</div>` : '');
+    }
+    if (el.className !== cls) el.className = cls;
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+    // the Start button and the estimate follow (a search running, the receiver's frequency)
+    if (tkSrchSetOpen) tkSrchEst(true);
+  }
+  function tkSrchHideLast() { tkSrchLastHide = (tkSt && tkSt.search_last && tkSt.search_last.t_end) || 0; tkSrchRender(); }
+  // the top bar during a search (the excursion's banner)
+  function tkSrchBanner(s) {
+    return {bk: 'SEARCHING CONTROL CHANNELS', bt: `${tkMhz3(s.centre_hz)} MHz · ${s.pct || 0} %${s.eta_s >= 0 ? ' · ' + tkDurWords(s.eta_s) + ' left' : ''} · found ${s.found_new || 0} new · yours ${tkMhz3(s.home_hz)} MHz`};
+  }
+  function tkBannerAct() {
+    if (tkSt && tkSt.search) tkSrchStop();
+    else tkReturn();
+  }
+
+  // --- the memory: the list ---------------------------------------------------------------------
+  let tkCcSort = 'hz';
+  try { const v = localStorage.getItem('kraken_tk_cc_sort'); if (['hz', 'last', 'level', 'name'].includes(v)) tkCcSort = v; } catch (e) {}
+  function tkCcSortSet(v) {
+    tkCcSort = v;
+    try { localStorage.setItem('kraken_tk_cc_sort', v); } catch (e) {}
+    tkCcOrder = [];
+    tkCcRender(true);
+  }
+  // the list is held still while the pointer is on it, a menu of it is open or it was just tapped
+  function tkCcHeld() { return tkCcHover || (tkMenu && tkMenu.dataset.cc) || Date.now() - tkCcTapAt < 4000; }
+  function tkCcRender(force) {
+    const sec = $id('tk-cc-sec'), list = $id('tk-cc-list');
+    if (!sec || sec.style.display === 'none' || !list) return;
+    const all = (tkCc && tkCc.entries) || [];
+    const m = tkSt || {};
+    // the count and the file
+    const n = $id('tk-cc-n');
+    if (n) tkText(n, all.length ? String(all.length) : '', all.length ? `${all.length} control channel${all.length === 1 ? '' : 's'} remembered (at most ${tkCc.max || 1000})` : '');
+    tkCcNotes();
+    // the filter: shown once there are enough to need it (or a filter is set)
+    const q = String($id('tk-cc-q').value || '').trim().toLowerCase(), proto = $id('tk-cc-proto').value, age = +$id('tk-cc-age').value || 0;
+    const fl = $id('tk-cc-filter');
+    const showF = all.length > 6 || !!q || !!proto || !!age;
+    if ((fl.style.display === 'none') === showF) fl.style.display = showF ? '' : 'none';
+    const plugs = [...new Set(all.map(e => e.plugin))].sort();
+    const ph = '<option value="">All</option>' + plugs.map(p => `<option value="${digEsc(p)}">${digEsc(tkPlugName(p))}</option>`).join('');
+    const ps = $id('tk-cc-proto');
+    if (ps.dataset.html !== ph) { ps.dataset.html = ph; ps.innerHTML = ph; ps.value = plugs.includes(proto) ? proto : ''; }
+    const ss = $id('tk-cc-sort');
+    if (ss.value !== tkCcSort) ss.value = tkCcSort;
+    // the order
+    const by = {
+      hz: (a, b) => a.hz - b.hz || a.id - b.id,
+      last: (a, b) => (b.last || 0) - (a.last || 0) || a.hz - b.hz,
+      level: (a, b) => ((b.level_db ?? -99) - (a.level_db ?? -99)) || a.hz - b.hz,
+      name: (a, b) => (tkCcName(a) || '￿').localeCompare(tkCcName(b) || '￿') || a.hz - b.hz
+    }[tkCcSort] || ((a, b) => a.hz - b.hz);
+    const byId = new Map(all.map(e => [e.id, e]));
+    let ids;
+    if (!force && tkCcHeld() && tkCcOrder.length) {
+      // held: the rows keep their places; new ones go to the end, gone ones go
+      ids = tkCcOrder.filter(id => byId.has(id));
+      const have = new Set(ids);
+      ids.push(...all.filter(e => !have.has(e.id)).sort(by).map(e => e.id));
+    } else ids = all.slice().sort(by).map(e => e.id);
+    tkCcOrder = ids;
+    const now = Date.now(), fol = new Map((m.cc_followed || []).map(f => [f.id, f.vfo]));
+    const since = m.search ? m.search.since : m.search_last && m.search_last.t_end ? m.search_last.t_end - (m.search_last.dur_ms || 0) : 0;
+    const match = e => (!proto || e.plugin === proto) && (!age || now - (e.last || 0) <= age) &&
+      (!q || [tkCcMhz(e.hz), e.name, e.sys_name, e.site, e.sys, e.plugin, tkPlugName(e.plugin)].join(' ').toLowerCase().includes(q));
+    let shown = 0;
+    tkSyncRows(list, ids, id => {
+      const r = document.createElement('div');
+      r.className = 'tk-ccr';
+      r.dataset.id = id;
+      r.tabIndex = 0;
+      r.setAttribute('role', 'button');
+      r.innerHTML = '<div class="l1"><span class="f"></span><span class="nm"></span><span class="lv"></span>' +
+        `<button type="button" class="mb" aria-label="More" aria-haspopup="menu" title="Follow it too, rename, details, forget">${icon('more')}</button></div><div class="l2"></div>`;
+      return r;
+    }, (r, sid) => {
+      const e = byId.get(+sid);
+      if (!e) return;
+      const vis = match(e);
+      if (r.hidden === vis) r.hidden = !vis;
+      if (vis) shown++;
+      const vfo = fol.has(e.id) ? fol.get(e.id) : -1, pend = tkCcPend.get(e.id), cant = tkCcCant(e);
+      const isNew = since && e.src === 'search' && (e.first || 0) >= since - 1000;
+      const k = [e.hz, e.plugin, e.name, e.sys_name, e.site, e.sys, e.level_db, e.gain_db, e.src, Math.floor((now - (e.last || 0)) / 60000), e.n, vfo, !!pend, cant, isNew, tkCcOpen === e.id, opMode, Math.round(currentCenterFreq * 1000)].join('\u0001');
+      if (r.dataset.k === k) return;
+      r.dataset.k = k;
+      const name = tkCcName(e);
+      r.className = 'tk-ccr' + (vfo >= 0 ? ' fol' : '') + (pend ? ' pend' : '') + (cant ? ' off' : '');
+      const [f, nm, lv] = r.firstChild.children;
+      f.textContent = tkCcMhz(e.hz);
+      nm.textContent = name || 'System not identified';
+      nm.className = 'nm' + (e.name ? ' u' : '');
+      lv.textContent = e.level_db != null ? '+' + Math.round(e.level_db) + ' dB' : '';
+      lv.title = e.level_db != null ? 'Above the noise floor when last found' + (e.gain_db != null ? ' (gain ' + e.gain_db + ' dB)' : '') : '';
+      const l2 = [];
+      if (vfo >= 0) l2.push(`<span class="ok">Following on D${vfo}</span>`);
+      else if (pend) l2.push('<span class="w">Starting…</span>');
+      else if (cant) l2.push(`<span class="w">${digEsc(cant)}</span>`);
+      if (isNew) l2.push('<span class="nw">new</span>');
+      l2.push(`<span class="pl">${digEsc(tkPlugName(e.plugin))}</span>`);
+      if (e.name && e.sys_name && e.sys_name !== e.name) l2.push(tkBdi(e.sys_name, 30));
+      if (e.site) l2.push(tkBdi(e.site, 30));
+      l2.push((e.src === 'heard' ? 'heard ' : e.src === 'user' ? 'seen ' : 'found ') + tkCcAgo(e.last));
+      let dt = '';
+      if (tkCcOpen === e.id) {
+        const row = (a, b) => `<div><span>${a}</span><span>${b}</span></div>`;
+        const opts = Object.entries(e.opts || {});
+        dt = '<div class="dt">' + row('Frequency', tkCcMhz(e.hz) + ' MHz' + (e.meas_hz ? ' (measured ' + tkCcMhz(Math.round(e.meas_hz)) + ')' : '')) +
+          row('Decoder', digEsc(tkPlugName(e.plugin)) + (e.sys ? ' · ' + tkBdi(e.sys.slice(e.sys.indexOf(':') + 1), 48) : ' · no system key heard')) +
+          (e.sys_name ? row('System', tkBdi(e.sys_name, 64)) : '') + (e.site ? row('Site', tkBdi(e.site, 64)) : '') +
+          (e.name ? row('Your name', tkBdi(e.name, 64)) : '') +
+          row('Source', digEsc(TK_CC_SRC[e.src] || e.src)) +
+          (e.level_db != null ? row('Level', '+' + e.level_db + ' dB above the floor' + (e.gain_db != null ? ', gain ' + e.gain_db + ' dB' : '')) : '') +
+          row('First seen', e.first ? new Date(e.first).toLocaleString() : '-') + row('Last seen', e.last ? new Date(e.last).toLocaleString() : '-') +
+          row('Times seen', String(e.n || 0)) + row('Followed', e.followed ? new Date(e.followed).toLocaleString() : 'never') +
+          (opts.length ? row('Options', opts.map(([a, b]) => tkBdi(a, 32) + ' = ' + tkBdi(b, 64)).join(', ')) : '') + '</div>';
+      }
+      const h2 = l2.join(' · ');
+      const l2el = r.children[1];
+      if (l2el.innerHTML !== h2) l2el.innerHTML = h2;
+      const old = r.querySelector('.dt');
+      if (old) old.remove();
+      if (dt) r.insertAdjacentHTML('beforeend', dt);
+      const span = tkCcInSpan(e.hz);
+      tkTitle(r, cant ? cant : vfo >= 0 ? `Followed on D${vfo}: click to select its VFO` :
+        `Click to follow: a control VFO with ${tkPlugName(e.plugin)} on ${tkCcMhz(e.hz)} MHz` +
+        (span === false ? ' - outside the band now: the receiver is retuned there (your tuning)' : '') +
+        ((m.cc_followed || []).length ? '. It replaces the control channel your last click followed (its menu: Follow it too)' : ''));
+    });
+    const em = $id('tk-cc-empty');
+    const et = !all.length ? 'Nothing remembered yet. Find control channels sweeps bands for them; a control VFO you tune yourself is remembered too.'
+      : !shown ? 'None match the filter.' : '';
+    if (em && em.textContent !== et) em.textContent = et;
+    if (em) em.style.display = et ? '' : 'none';
+  }
+  // the notes under the search: the memory file, the mode, the latest refusal / import report
+  function tkCcNotes() {
+    const el = $id('tk-cc-notes');
+    if (!el) return;
+    const m = tkSt || {}, f = tkCc && tkCc.file;
+    const out = [];
+    const note = (cls, ic, html, tip, btn) => out.push(`<div class="tk-note ${cls}"${tip ? ` title="${digEsc(tip)}"` : ''}>${icon(ic)}<span>${html}</span>${btn || ''}</div>`);
+    if (f && f.ok === false)
+      note('b', 'no', 'The control channel memory was not loaded' + (f.kept_as ? ': kept as ' + tkBdi(f.kept_as, 60) : '') + (f.note && !f.kept_as ? ' (' + tkBdi(f.note, 80) + ')' : ''),
+        'The receiver could not read trunk_control_channels.json and started with an empty list; the old file is kept under that name next to it (nothing in it is lost). New finds are saved to a new file.');
+    if (m.playback) note('p', 'tape', 'Playback: following a control channel waits until it ends', 'A click to follow (and a search) is refused while a debug playback or a recording plays');
+    else if (opMode === 'wideband') note('w', 'warn', 'Wideband scan mode: switch to coherent or independent mode to follow a control channel', 'Clicks to follow are refused in wideband scan mode');
+    if (tkCcImp) note('i', 'hourglass', `Importing: ${tkCcImp.sent} of ${tkCcImp.todo.length} sent`, '', `<button type="button" class="btn sm" onclick="tkCcImportStop()">Stop</button>`);
+    if (tkCcSaid && Date.now() - tkCcSaid.t < (tkCcSaid.keep || 30000))
+      note(tkCcSaid.cls, tkCcSaid.ic, tkCcSaid.html, tkCcSaid.tip || '', (tkCcSaid.btn || '') +
+           `<button type="button" class="btn sm" onclick="tkCcSay(null)" title="Close" aria-label="Close">${icon('close')}</button>`);
+    const h = out.join('');
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+  }
+  function tkCcSay(o) { tkCcSaid = o ? Object.assign({t: Date.now()}, o) : null; tkCcNotes(); }
+  function tkCcFileTell(f) {
+    if (!f || f.ok !== false || !f.kept_as) return;
+    let seen = '';
+    try { seen = localStorage.getItem('kraken_tk_ccfile') || ''; } catch (e) {}
+    if (seen === f.kept_as) return;
+    try { localStorage.setItem('kraken_tk_ccfile', f.kept_as); } catch (e) {}
+    uiAlert({title: 'Control channels not loaded', kind: 'warn', quiet: true,
+             text: ['The receiver could not read its control channel memory and started with an empty list. The old file is kept as:', {code: f.kept_as}],
+             tip: 'It sits next to the program\'s other files (kraken_doa_v2, or the data folder in Docker). To get the entries back, mend it (it is JSON) and Import it here - or put it back as trunk_control_channels.json while the program is stopped.'});
+  }
+  // the list held still while the pointer is on it - also against what changes above it (the box's
+  // notes, a system appearing after a click, a VFO card): the sidebar scrolls by as much
+  (function () {
+    const sec = $id('tk-cc-sec'), list = $id('tk-cc-list');
+    if (!sec || !list) return;
+    let scroller = null, top = null, st = 0, raf = 0;
+    const findScroller = () => {
+      for (let e = list.parentElement; e; e = e.parentElement) {
+        const o = getComputedStyle(e).overflowY;
+        if ((o === 'auto' || o === 'scroll') && e.scrollHeight > e.clientHeight) return e;
+      }
+      return document.scrollingElement;
+    };
+    const tick = () => {
+      raf = 0;
+      if (!(tkCcHover || Date.now() - tkCcTapAt < 4000) || !list.isConnected) { top = null; return; }
+      if (!scroller || !scroller.contains(list)) scroller = findScroller();
+      const t = list.getBoundingClientRect().top, s = scroller ? scroller.scrollTop : 0;
+      if (top !== null && s === st && Math.abs(t - top) >= 1 && scroller) { scroller.scrollTop += t - top; }
+      top = list.getBoundingClientRect().top;
+      st = scroller ? scroller.scrollTop : 0;
+      raf = requestAnimationFrame(tick);
+    };
+    const go = () => { if (!raf) { top = null; raf = requestAnimationFrame(tick); } };
+    list.addEventListener('pointerenter', e => { if (e.pointerType === 'touch') return; tkCcHover = true; go(); });   // (a finger: the tap's hold below)
+    list.addEventListener('pointerleave', e => {
+      if (e.pointerType === 'touch') return;   // (a finger lifting: the tap's own hold below)
+      tkCcHover = false;
+      if (!(tkMenu && tkMenu.dataset.cc)) tkCcRender();
+    });
+    // A row follows on the release of a press on it (not on 'click'): something above the list
+    // that moves it between press and release (a status redrawn in that moment) would make the
+    // release land elsewhere and the browser drop the click - the press's row counts. A finger
+    // that scrolls the list is cancelled (pointercancel), a press that moved is not a click
+    let press = null;
+    list.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'mouse') { tkCcTapAt = Date.now(); go(); }
+      const r = e.target.closest('.tk-ccr');
+      press = e.button === 0 && r && !e.target.closest('.mb, .dt') ? {id: +r.dataset.id, x: e.clientX, y: e.clientY, t: Date.now()} : null;
+    });
+    list.addEventListener('pointercancel', () => { press = null; });
+    document.addEventListener('pointerup', e => {
+      const p = press;
+      press = null;
+      if (!p || Date.now() - p.t > 1500 || Math.hypot(e.clientX - p.x, e.clientY - p.y) > 12) return;
+      tkCcFollow(p.id, false);
+    }, true);
+    list.addEventListener('click', ev => {
+      const r = ev.target.closest('.tk-ccr');
+      if (!r) return;
+      const id = +r.dataset.id;
+      const mb = ev.target.closest('.mb');
+      if (mb) { tkCcMenuOpen(mb, id); return; }
+      if (ev.target.closest('.dt')) return;   // (the details: text to select)
+      if (ev.detail === 0) tkCcFollow(id, false);   // (a click without a pointer: assistive technology)
+    });
+    list.addEventListener('keydown', ev => {
+      const r = ev.target.closest('.tk-ccr');
+      if (!r || ev.target !== r) return;
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); tkCcFollow(+r.dataset.id, false); }
+      else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        let n = r;
+        do n = ev.key === 'ArrowDown' ? n.nextElementSibling : n.previousElementSibling; while (n && n.hidden);
+        if (n) n.focus();
+      } else if (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey)) { ev.preventDefault(); tkCcMenuOpen(r.querySelector('.mb'), +r.dataset.id); }
+    });
+    list.addEventListener('focusin', ev => { if (ev.target.matches(':focus-visible')) tkCcHover = true; });   // (the keyboard; a tap focuses too)
+    list.addEventListener('focusout', ev => { if (!list.contains(ev.relatedTarget) && !list.matches(':hover')) tkCcHover = false; });
+  })();
+  // the relative times ("5 min ago") and a stale click
+  setInterval(() => { if (tkCc && tkHasCc(tkSt)) { for (const [id, p] of tkCcPend) if (Date.now() - p.t > TK_CC_PEND_MS) tkCcPend.delete(id); tkCcRender(); } }, 30000);
+
+  // --- click to follow ------------------------------------------------------------------------
+  function tkCcFollow(id, add) {
+    const e = tkCcById(id);
+    if (!e) return;
+    tkCcTapAt = Math.max(tkCcTapAt, Date.now() - 1000);   // (held still a few seconds: the click's results come)
+    const vfo = tkCcFollowedVfo(id);
+    if (vfo >= 0 && !add) { if (typeof selectDecimator === 'function') selectDecimator(vfo); tkCcSay({cls: 'i', ic: 'ok', html: `${tkCcMhz(e.hz)} MHz is followed already on D${vfo}`, keep: 6000}); return; }
+    const cant = tkCcCant(e);
+    if (cant) { tkCcSay({cls: 'w', ic: 'warn', html: `${tkCcMhz(e.hz)} MHz: ${digEsc(cant)}`}); return; }
+    tkCcPend.set(id, {t: Date.now(), add: !!add, was: vfo >= 0});
+    if (tkCcSaid && tkCcSaid.cls !== 'i') tkCcSaid = null;
+    tkSend('TRUNK_CC_FOLLOW:' + JSON.stringify({id, add: !!add}));
+    tkCcRender();
+  }
+  // a refusal of this page's TRUNK_CC_* / TRUNK_SEARCH command: said where it was asked for, with what to do
+  function tkCcOnError(x, mine) {
+    const c = mine.c, err = String(x.error || 'refused');
+    if (c.startsWith('TRUNK_SEARCH:')) {
+      const el = $id('tk-srch-err');
+      const hint = /coherent mode only|switch to coherent/.test(err) ? ' - switch the mode in the top bar' : /scanner runs/.test(err) ? ' (the scanner\'s Stop)' : /playback/.test(err) ? ' - stop the playback first' : '';
+      if (el && tkSrchSetOpen) { tkSrchRx = 'Not started: ' + err + hint; tkText(el, tkSrchRx); }
+      else tkCcSay({cls: 'b', ic: 'no', html: 'Search not started: ' + digEsc(err + hint)});
+      return true;
+    }
+    if (c.startsWith('TRUNK_SEARCH_STOP')) return true;   // (it had ended meanwhile)
+    if (c.startsWith('TRUNK_CC_SET:') && tkCcImp) { tkCcImp.rxBad++; tkCcImp.why.set(err, (tkCcImp.why.get(err) || 0) + 1); return true; }
+    if (!c.startsWith('TRUNK_CC_')) return false;
+    const mm = /"id":(\d+)/.exec(c), id = mm ? +mm[1] : 0, e = tkCcById(id);
+    if (c.startsWith('TRUNK_CC_FOLLOW:')) {
+      tkCcPend.delete(id);
+      let what = '', btn = '', said = digEsc(err);
+      if (/doesn't fit the span/.test(err)) said = 'it doesn\'t fit the receiver\'s band together with the control channels followed now';
+      if (/doesn't fit the span/.test(err)) btn = `<button type="button" class="btn sm" onclick="tkCcFollow(${id}, false)" title="Follow it in place of the control channel your last click followed">Follow it alone</button>`;
+      else if (/16 VFOs/.test(err)) what = ': remove a VFO first';
+      else if (/scanner runs/.test(err)) what = ' (the scanner\'s Stop)';
+      else if (/not built/.test(err)) what = ' - build it (make -C kraken_doa_v2/plugins PLUGIN=' + digEsc(e ? e.plugin : '') + ')';
+      tkCcSay({cls: 'b', ic: 'no', html: `${e ? tkCcMhz(e.hz) + ' MHz' : 'The control channel'} not followed: ${said}${what}`, btn});
+    } else tkCcSay({cls: 'b', ic: 'no', html: 'Not changed: ' + digEsc(err)});
+    tkCcRender();
+    return true;
+  }
+
+  // --- an entry's menu, the list's menu ---------------------------------------------------------
+  function tkMenuShow(btn, head, items, tag) {
+    if (tkMenuBtn === btn) { tkMenuClose(false); return; }
+    if (tkMenu) tkMenuClose(false);
+    tkMenuBtn = btn;
+    tkMenu = document.createElement('div');
+    tkMenu.className = 'tk-menu';
+    tkMenu.setAttribute('role', 'menu');
+    tkMenu.dataset.cc = tag || '1';
+    tkMenu.innerHTML = `<div class="h">${head}</div>` + items.map((it, i) => it === '-' ? '<hr>' :
+      `<button type="button" role="menuitem" data-i="${i}"${it.tip ? ` title="${digEsc(it.tip)}"` : ''}${it.off ? ' disabled' : ''}><span class="ck">${it.ic ? icon(it.ic) : ''}</span><span>${digEsc(it.text)}</span></button>`).join('');
+    tkMenu.querySelectorAll('button').forEach(b => b.onclick = () => { const it = items[+b.dataset.i]; if (it.off) return; tkMenuClose(false); it.fn(); });
+    tkMenu.addEventListener('keydown', e => {
+      const bs = [...tkMenu.querySelectorAll('button:not(:disabled)')], i = bs.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length].focus(); }
+    });
+    document.body.appendChild(tkMenu);
+    tkMenuPlace();
+    tkMenuPop.opened();
+    const first = tkMenu.querySelector('button:not(:disabled)');
+    if (first) first.focus();
+  }
+  function tkCcMenuOpen(btn, id) {
+    const e = tkCcById(id);
+    if (!e || !btn) return;
+    const vfo = tkCcFollowedVfo(id), cant = tkCcCant(e), many = (tkSt && tkSt.cc_followed || []).length;
+    tkMenuShow(btn, digEsc(tkCcMhz(e.hz) + ' MHz') + ' · ' + tkBdi(tkCcName(e) || tkPlugName(e.plugin), 32), [
+      {ic: 'trunk', text: vfo >= 0 ? `Followed on D${vfo}` : 'Follow', fn: () => tkCcFollow(id, false), off: !!cant,
+       tip: cant || (vfo >= 0 ? 'Select its VFO' : many ? 'In place of the control channel your last click followed' : 'A control VFO on it, following on')},
+      {ic: 'plus', text: 'Follow it too', fn: () => tkCcFollow(id, true), off: !!cant || vfo >= 0 || !many,
+       tip: cant || (vfo >= 0 ? 'Followed already' : !many ? 'Nothing followed by a click yet: Follow' : 'Another control VFO, next to those followed now (it must fit the receiver\'s band with them)')},
+      '-',
+      {ic: 'edit', text: 'Name…', fn: () => tkCcRename(id), tip: 'Your name for it, shown in the list in place of the system\'s'},
+      {ic: 'doc', text: tkCcOpen === id ? 'Hide details' : 'Details', fn: () => { tkCcOpen = tkCcOpen === id ? 0 : id; tkCcRender(); },
+       tip: 'Measured frequency, system key, options, first and last seen'},
+      '-',
+      {ic: 'trash', text: 'Forget', fn: () => tkCcForget(id), tip: 'Take it off the list (a search or a control VFO on it brings it back)'}
+    ], 'row');
+  }
+  function tkCcRename(id) {
+    const e = tkCcById(id);
+    if (!e) return;
+    uiPrompt({title: 'Name the control channel', icon: 'edit', ok: 'Save', text: tkCcMhz(e.hz) + ' MHz · ' + tkPlugName(e.plugin) + (e.sys_name ? ' · ' + e.sys_name : ''),
+              tip: 'Shown in the list in place of the system\'s name. Empty: the system\'s name again.',
+              fields: [{name: 'name', label: 'Name', value: e.name || '', maxlength: 64, placeholder: e.sys_name || 'e.g. County system, site 3'}]}).then(r => {
+      if (!r || !tkCcById(id)) return;
+      tkSend('TRUNK_CC_NAME:' + JSON.stringify({id, name: String(r.name).trim()}));
+    });
+  }
+  function tkCcForget(id) {
+    const e = tkCcById(id);
+    if (!e) return;
+    const go = () => { tkSend('TRUNK_CC_DEL:' + JSON.stringify({id})); if (tkCcOpen === id) tkCcOpen = 0; };
+    if (!e.name) { go(); return; }
+    uiConfirm({title: 'Forget the control channel', icon: 'trash', danger: true, ok: 'Forget', text: [{b: e.name}, ` (${tkCcMhz(e.hz)} MHz) and its name go.`]}).then(ok => { if (ok) go(); });
+  }
+  function tkCcFileMenu(btn) {
+    const n = ((tkCc && tkCc.entries) || []).length;
+    tkMenuShow(btn, 'Control channel memory', [
+      {ic: 'download', text: 'Export…', fn: tkCcExport, off: !n, tip: n ? 'Save the list as a file on this computer (JSON)' : 'Nothing to export'},
+      {ic: 'upload', text: 'Import…', fn: () => $id('tk-cc-file').click(), off: !!tkCcImp, tip: 'Add the control channels of an exported file: the same decoder near the same frequency is updated, the rest are added'},
+      '-',
+      {ic: 'trash', text: 'Clear all…', fn: tkCcClear, off: !n, tip: 'Forget every control channel (asks first)'}
+    ], 'file');
+  }
+  function tkCcClear() {
+    const es = (tkCc && tkCc.entries) || [], named = es.filter(e => e.name).length;
+    uiConfirm({title: 'Clear the control channels', icon: 'trash', danger: true, ok: 'Clear all',
+               text: [`All ${es.length} go${named ? `, ${named} with your names` : ''}. This cannot be undone - Export first to keep a copy.`]}).then(ok => {
+      if (ok) { tkSend('TRUNK_CC_CLEAR'); tkCcOpen = 0; }
+    });
+  }
+
+  // --- export / import ------------------------------------------------------------------------
+  function tkCcExport() {
+    const es = (tkCc && tkCc.entries) || [];
+    const blob = new Blob([JSON.stringify({version: 1, entries: es}, null, 1) + '\n'], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'trunk_control_channels.json';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+  // an entry from a file, as the receiver takes it (TRUNK_CC_SET) - or why not. The file is someone's:
+  // only the known fields go on, each checked; the id is left out (the receiver's own ids stay)
+  function tkCcCheck(o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return [null, 'not an entry'];
+    const num = v => typeof v === 'number' && isFinite(v);
+    const str = (v, n) => typeof v === 'string' ? [...v].slice(0, n).join('') : '';
+    if (!num(o.hz) || !(o.hz > 0 && o.hz <= 6e9)) return [null, 'no frequency (hz)'];
+    if (typeof o.plugin !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(o.plugin) || o.plugin === 'sdk' || o.plugin === 'lib') return [null, 'no decoder (plugin)'];
+    const sys = typeof o.sys === 'string' ? o.sys : '';
+    if (sys && !(sys.startsWith(o.plugin + ':') && /^[A-Za-z0-9._-]{0,48}$/.test(sys.slice(o.plugin.length + 1)))) return [null, 'a bad system key'];
+    const e = {hz: Math.round(o.hz), plugin: o.plugin, sys, sys_name: str(o.sys_name, 64), site: str(o.site, 64), name: str(o.name, 64),
+               src: ['search', 'heard', 'user'].includes(o.src) ? o.src : 'user'};
+    if (num(o.meas_hz) && o.meas_hz > 0 && o.meas_hz <= 6e9) e.meas_hz = o.meas_hz;
+    if (num(o.level_db) && o.level_db > -50 && o.level_db < 200) e.level_db = o.level_db;
+    if (num(o.gain_db) && o.gain_db >= -1 && o.gain_db <= 60) e.gain_db = o.gain_db;
+    for (const k of ['first', 'last', 'followed', 'n']) if (num(o[k]) && o[k] >= 0 && o[k] <= 9e15) e[k] = Math.round(o[k]);
+    if (o.opts && typeof o.opts === 'object' && !Array.isArray(o.opts)) {
+      const kv = Object.entries(o.opts);
+      if (kv.length > 32) return [null, 'more than 32 options'];
+      const opts = {};
+      for (const [k, v] of kv) {
+        if (!/^[a-z0-9_-]{1,32}$/.test(k) || typeof v !== 'string' || new TextEncoder().encode(v).length > 128) return [null, 'a bad option'];
+        opts[k] = v;
+      }
+      e.opts = opts;
+    }
+    return [e, ''];
+  }
+  function tkCcImportFile(inp) {
+    const f = inp.files && inp.files[0];
+    inp.value = '';
+    if (!f) return;
+    if (f.size > 8 << 20) { tkCcSay({cls: 'b', ic: 'no', html: 'Not imported: the file is larger than 8 MB'}); return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      let j = null;
+      try { j = JSON.parse(String(rd.result)); } catch (e) {}
+      const list = Array.isArray(j) ? j : j && Array.isArray(j.entries) ? j.entries : null;
+      if (!list) { tkCcSay({cls: 'b', ic: 'no', html: 'Not imported: ' + tkBdi(f.name, 40) + ' is not a control channel list (exported JSON)'}); return; }
+      const todo = [], why = new Map();
+      let bad = 0;
+      for (const o of list.slice(0, 2000)) {
+        const [e, w] = tkCcCheck(o);
+        if (e) todo.push(e); else { bad++; why.set(w, (why.get(w) || 0) + 1); }
+      }
+      bad += Math.max(0, list.length - 2000);
+      if (!todo.length) { tkCcSay({cls: 'b', ic: 'no', html: `Nothing imported from ${tkBdi(f.name, 40)}: ${bad} entr${bad === 1 ? 'y' : 'ies'} not readable` + (why.size ? ' (' + digEsc([...why.keys()].slice(0, 3).join(', ')) + ')' : '')}); return; }
+      tkCcImp = {todo, sent: 0, bad, why, rxBad: 0, pre: new Set(((tkCc && tkCc.entries) || []).map(e => e.id)), name: f.name, sentAt: 0, timer: 0};
+      tkCcSaid = null;
+      tkCcImportStep();
+    };
+    rd.readAsText(f);
+  }
+  // one TRUNK_CC_SET every 50 ms (20 a second: 500 entries in 25 s; each one costs the receiver a
+  // status and, at most once a second, the list to every page)
+  function tkCcImportStep() {
+    const x = tkCcImp;
+    if (!x) return;
+    if (x.sent >= x.todo.length || x.stop) {
+      if (!x.fin) { x.fin = Date.now(); send('GET_TRUNK_CC'); }
+      clearTimeout(x.timer);
+      x.timer = setTimeout(tkCcImportDone, 1500);
+      tkCcNotes();
+      return;
+    }
+    const now = Date.now();
+    if (now - x.sentAt < 50) { x.timer = setTimeout(tkCcImportStep, 50 - (now - x.sentAt)); return; }
+    tkSend('TRUNK_CC_SET:' + JSON.stringify(x.todo[x.sent]));
+    x.sent++;
+    x.sentAt = now;
+    if (x.sent % 10 === 0 || x.sent === x.todo.length) tkCcNotes();
+    x.timer = setTimeout(tkCcImportStep, 50);
+  }
+  function tkCcImportStop() { if (tkCcImp) { tkCcImp.stop = true; tkCcImpLeft = tkCcImp.todo.length - tkCcImp.sent; } }
+  let tkCcImpLeft = 0;
+  function tkCcImportDone() {
+    const x = tkCcImp;
+    if (!x) return;
+    tkCcImp = null;
+    const now = (tkCc && tkCc.entries) || [];
+    const ids = new Set(now.map(e => e.id));
+    const added = now.filter(e => !x.pre.has(e.id)).length, dropped = [...x.pre].filter(id => !ids.has(id)).length;
+    const ok = x.sent - x.rxBad, upd = Math.max(0, ok - added);
+    const refused = x.bad + x.rxBad;
+    const why = [...x.why.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w, n]) => w + (n > 1 ? ' ×' + n : ''));
+    tkCcSay({cls: refused || x.stop ? 'w' : 'i', ic: refused || x.stop ? 'warn' : 'ok', keep: 120000,
+             html: `${x.stop ? 'Import stopped' : 'Imported'} ${tkBdi(x.name, 40)}: <b>${added}</b> added, ${upd} updated` +
+                   (refused ? `, ${refused} refused (${digEsc(why.join('; '))})` : '') + (x.stop ? `, ${tkCcImpLeft} not sent` : '') +
+                   (dropped ? ` · ${dropped} old entr${dropped === 1 ? 'y' : 'ies'} the air brought made room` : '')});
+    tkCcRender();
+  }
+
   // --- following outside the span: an excursion (coherent), voice tuners (independent) --------------
   const TK_EXC_END = {call_over: 'the call ended', no_signal: 'nothing received there', limit: 'its longest time away', command: 'Return',
                       off: 'the option switched off', mode: 'a mode change', scanner: 'a scanner', playback: 'a playback',
@@ -22671,12 +23471,21 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (el.className !== cls) el.className = cls;
     if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
     tkTitle(el, x ? 'Trunk following moved the receiver to follow this call (Outside the span, in its settings): the centre shown in the top bar is not your tuning, and your VFOs moved with it. It comes back to ' + tkMhz3(x.home_hz) + ' MHz by itself when the call is over' : '');
-    // the top bar: the centre it shows is the manager's now
-    document.body.classList.toggle('tk-away', !!x);
+    // the top bar: the centre it shows is the manager's now - or the control-channel search's
+    const sr = m.search;
+    if (sr) ({bk, bt} = tkSrchBanner(sr));
+    document.body.classList.toggle('tk-away', !!x || !!sr);
     tkText($id('tk-exc-bk'), bk);
     tkText($id('tk-exc-bt'), bt);
+    const bi = $id('tk-exc-bki'), bbi = $id('tk-exc-bbi');
+    if (bi && bi.getAttribute('href') !== (sr ? '#i-search' : '#i-trunk')) bi.setAttribute('href', sr ? '#i-search' : '#i-trunk');
+    if (bbi && bbi.getAttribute('href') !== (sr ? '#i-stop' : '#i-home')) bbi.setAttribute('href', sr ? '#i-stop' : '#i-home');
+    tkText($id('tk-exc-bbt'), sr ? 'Stop' : 'Return');
+    const bb = $id('tk-exc-bb');
+    if (bb) tkTitle(bb, sr ? 'Stop the search: back to ' + tkMhz3(sr.home_hz) + ' MHz (what was found so far is kept)' : 'Back to your frequency now (the call is not followed further)');
     const bn = $id('tk-exc-banner');
-    if (bn) tkTitle(bn, x ? 'Trunk following has the receiver on ' + tkMhz3(x.centre_hz) + ' MHz for a call outside your span: the frequency shown is not your tuning. It goes back to ' + tkMhz3(x.home_hz) + ' MHz when the call is over (or now: Return)' : '');
+    if (bn) tkTitle(bn, sr ? 'A control-channel search has the receiver on ' + tkMhz3(sr.centre_hz) + ' MHz: the frequency shown is not your tuning. It goes back to ' + tkMhz3(sr.home_hz) + ' MHz when the search ends (or now: Stop). Tuning yourself ends the search where you tune'
+      : x ? 'Trunk following has the receiver on ' + tkMhz3(x.centre_hz) + ' MHz for a call outside your span: the frequency shown is not your tuning. It goes back to ' + tkMhz3(x.home_hz) + ' MHz when the call is over (or now: Return)' : '');
   }
   function tkReturn() { tkSend('TRUNK_RETURN'); }
   function tkRetClick(e) {
@@ -22762,18 +23571,25 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (el.dataset.html !== rows) { el.dataset.html = rows; el.innerHTML = rows; }
     // the panes: a taken voice tuner's frequency is the manager's
     if (typeof panes === 'undefined') return;
+    // ... and the tuner a control-channel search steps (independent mode)
+    const sr = m.search && m.search.tuner >= 0 ? m.search : null;
     for (const p of panes) {
       const v = vt.find(x => x.tuner === p.ch && x.taken);
+      const sv = sr && sr.tuner === p.ch;
       const head = p.el && p.el.querySelector('.tpane-head');
       if (!head) continue;
-      p.el.classList.toggle('tk-taken', !!v);
+      p.el.classList.toggle('tk-taken', !!v || !!sv);
       let tag = head.querySelector('.tk-ptag');
-      if (!v) { if (tag) tag.remove(); continue; }
+      if (!v && !sv) { if (tag) tag.remove(); continue; }
       if (!tag) {
         tag = document.createElement('span');
         tag.className = 'tk-ptag';
         const nm = head.querySelector('.tpane-name');
         if (nm) nm.after(tag); else head.prepend(tag);
+      }
+      if (sv) {
+        tkText(tag, 'Searching · yours ' + tkMhz3(sr.home_hz), 'T' + p.ch + ' steps through the control-channel search\'s ranges: the frequency shown is not your tuning (your VFOs on it move with it). It goes back to ' + tkMhz3(sr.home_hz) + ' MHz when the search ends; tuning it yourself ends the search there');
+        continue;
       }
       const cs = callsOn(v.tuner);
       tkText(tag, 'Trunk' + (cs.length ? ': ' + cs.map(tkLabel).join(', ') : v.tuning_for ? ': tuning' : '') + ' · yours ' + tkMhz3(v.home_hz),
@@ -22948,6 +23764,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const now = Date.now();
     const mine = tkSent.find(s => now - s.t < 10000 && (x.cmd === s.c || s.c.startsWith(x.cmd) || x.cmd.startsWith(s.c)));
     if (!mine) return;
+    if (tkCcOnError(x, mine)) return;
     let text = x.error || 'refused';
     if (/too many systems/.test(text)) text += ' (a system\'s Edit, then Forget this system)';
     if (tkDlgId) $id('tk-dlg-err').textContent = 'Not changed: ' + text;
