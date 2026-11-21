@@ -33,6 +33,12 @@
 //    of what is left (detections replaced by the floor) at lags of 8 us to
 //    2.5 ms - a cyclic prefix, a TV line, a symbol repeat - says the "floor"
 //    is a wideband signal: one detection for the whole band.
+// 7. Then the rules that join pieces of one signal (detect(), in order): the
+//    two tones of a wide-shift FSK transmitter, found apart, become one
+//    (merge_tone_pairs: shared burst timing + complementary sample-level power,
+//    any two detections); pieces of one burst signal; a burst's splatter and its
+//    keying sidelobes (the 1 / (pi f Tp)^2 envelope test); lines in a strong
+//    signal's skirt; IQ-image candidates.
 
 #include "sc_internal.hpp"
 
@@ -872,6 +878,243 @@ void Detector::segment(const FrontEnd& fe, const Config& cfg, const float* rr, i
     }
 }
 
+// ---------------------------------------------------------- FSK tone pairs
+
+// |x(t)|^2 of the band [lo_hz, hi_hz] at fs / D, from the long blocks' spectra (the
+// band's bins with 10 % raised-cosine edges, one inverse FFT of LONG_N / D points per
+// block, the overlap-save reach dropped); the kept samples of the blocks in blks, in order
+void Detector::band_power(const FrontEnd& fe, double lo_hz, double hi_hz, int D, const std::vector<int>& blks, std::vector<float>& p) {
+    const double df = fe.fs / LONG_N;
+    const int M = LONG_N / D, skip = LONG_OV2 / D, keep = LONG_HOP / D;
+    tone_fft_.init(M, false);
+    tbuf_.resize(size_t(M));
+    tbuf2_.resize(size_t(M));
+    const int q0 = int(std::floor(lo_hz / df)), q1 = int(std::ceil(hi_hz / df));
+    const int c = (q0 + q1) / 2, nb = std::max(1, q1 - q0 + 1);
+    const int taper = std::max(1, nb / 10);
+    p.clear();
+    for (int b : blks) {
+        std::fill(tbuf_.begin(), tbuf_.end(), cf(0.0f, 0.0f));
+        const cf* X = fe.blocks.data() + size_t(b) * LONG_N;
+        for (int q = q0; q <= q1; q++) {
+            const int e = std::min(q - q0, q1 - q);
+            const float w = e >= taper ? 1.0f : float(0.5 - 0.5 * std::cos(3.14159265358979 * (e + 0.5) / taper));
+            const int src = ((q % LONG_N) + LONG_N) % LONG_N, dst = (((q - c) % M) + M) % M;
+            tbuf_[size_t(dst)] += X[src] * w;
+        }
+        tone_fft_.inv(tbuf_.data(), tbuf2_.data());
+        for (int m = 0; m < keep; m++) {
+            if (size_t(b) * LONG_HOP + size_t(m) * size_t(D) >= fe.n) break;
+            p.push_back(std::norm(tbuf2_[size_t(skip + m)]));
+        }
+    }
+}
+
+// The two tones of a wide-shift FSK transmitter (modulation index above ~5: ISM
+// sensors and keyfobs with 50 us - 2 ms bits and 20-200 kHz between the tones, FLEX,
+// DFM) are detected apart, and each tone alone looks like an on / off keyed carrier.
+// Any two detections - not only neighbours in frequency (pieces lie between the
+// tones) - are one transmitter when
+//  - they look alike: <= 400 kHz from the lower edge of one to the upper edge of the
+//    other, not overlapping, widths within 4x, max-holds within 10 dB
+//  - at burst level they share the transmitter's timing: per packet (the frames where
+//    either is on, gaps of <= 2 frames bridged) both are on in it and start and end
+//    with it (within 2 frames or 10 % of the packet) - two devices that merely overlap
+//    in time, or two radios taking turns on adjacent channels, do not
+//  - at sample level (fs / D >= 1.25 x the wider tone: bits shorter than the 427 us
+//    frame are resolved, where both tones are on in every frame) their powers are
+//    complementary over the packets: correlation of the mean-normalised powers
+//    <= -0.5 with z <= -6 over the independent samples, each tone keyed (CV >= 0.3)
+//    and their normalised sum steadier (CV <= 0.6 x either's). Two independent
+//    signals correlate ~0 (z within +-3); a keyed carrier and its keying sidelobes,
+//    DSB sidebands, a Manchester code's two lobes correlate positively
+// The pair becomes one detection over the union band; pieces inside its band no
+// stronger than its tones (+3 dB) and on only while it is (or continuous like it) go.
+void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& out) {
+    (void)cfg;
+    const int T = fe.nframes;
+    if (T < 16 || out.size() < 2) return;
+    const double fs = fe.fs, df = fs / LONG_N, dfs = fs / SPEC_N;
+    const bool dbg = std::getenv("SIGCLASS_DEBUG_TONE") != nullptr;
+    auto kof = [&](double f) { return std::clamp(int(std::floor((f + 0.5 * fs) / dfs)), 0, SPEC_N - 1); };
+    std::vector<float> ea, eb;
+    std::vector<uint8_t> onC, onP, U;
+    auto on_mask = [&](const Detection& d, std::vector<float>& e, std::vector<uint8_t>& on) {
+        int k0 = kof(d.offset_hz - 0.5 * d.bw_hz), k1 = kof(d.offset_hz + 0.5 * d.bw_hz);
+        if (k1 - k0 < 2) { k0 = std::max(0, k0 - 1); k1 = std::min(SPEC_N - 1, k1 + 1); }
+        double sig = 1.0;
+        band_series(fe, k0, k1, e, &sig);
+        const float q99 = quantile(e.data(), e.size(), 0.99, scratch_);
+        const float th = std::max(float(4.0 * sig), 0.1f * q99);
+        on.assign(size_t(T), 0);
+        for (int t = 0; t < T; t++) on[size_t(t)] = e[size_t(t)] > th;
+    };
+    static const int DS[] = {100, 50, 25, 20, 10, 5, 4, 2};
+    int tests = 0;
+    std::vector<float> pa, pb;
+    for (int guard = 0; guard < 16; guard++) {
+        std::vector<size_t> ord(out.size());
+        std::iota(ord.begin(), ord.end(), size_t(0));
+        std::sort(ord.begin(), ord.end(), [&](size_t a, size_t b) { return out[a].det.peak_db > out[b].det.peak_db; });
+        long ia_m = -1, ib_m = -1;
+        // each detection's on-frames, computed once per round (a merge starts a new one)
+        std::vector<std::vector<uint8_t>> masks(out.size());
+        auto mask_of = [&](size_t k) -> const std::vector<uint8_t>& {
+            if (masks[k].empty()) on_mask(out[k].det, ea, masks[k]);
+            return masks[k];
+        };
+        // (a tone's power: max-hold density x width - one tone may be measured wider, with
+        // its keying splatter, than the other)
+        auto tot = [](const Detection& d) { return d.peak_db + db10(std::max(d.bw_hz, 1.0)); };
+        for (size_t u = 0; u < ord.size(); u++) {
+            const size_t ia = ord[u];
+            const Detection& A = out[ia].det;
+            if (A.fills_band || A.bw_hz < 400.0) continue;
+            for (size_t v = u + 1; v < ord.size(); v++) {
+                const size_t ib = ord[v];
+                const Detection& B = out[ib].det;
+                if (B.fills_band || B.bw_hz < 400.0 || std::fabs(tot(A) - tot(B)) > 10.0f) continue;
+                const double alo = A.offset_hz - 0.5 * A.bw_hz, ahi = A.offset_hz + 0.5 * A.bw_hz;
+                const double blo = B.offset_hz - 0.5 * B.bw_hz, bhi = B.offset_hz + 0.5 * B.bw_hz;
+                if (std::max(ahi, bhi) - std::min(alo, blo) > 400e3 || std::max(A.bw_hz, B.bw_hz) > 16.0 * std::min(A.bw_hz, B.bw_hz)) continue;
+                if (std::min(ahi, bhi) - std::max(alo, blo) > 0.0) continue;   // overlapping: not two tones
+                if (tests >= 48) break;
+                // burst level
+                const std::vector<uint8_t>& onA = mask_of(ia);
+                const std::vector<uint8_t>& onB = mask_of(ib);
+                U.assign(size_t(T), 0);
+                for (int t = 0; t < T; t++) U[size_t(t)] = onA[size_t(t)] | onB[size_t(t)];
+                for (int t = 0; t < T; t++) {   // bridge gaps of <= 2 frames
+                    if (U[size_t(t)]) continue;
+                    int j = t;
+                    while (j < T && !U[size_t(j)]) j++;
+                    if (t > 0 && j < T && j - t <= 2) for (int q = t; q < j; q++) U[size_t(q)] = 1;
+                    t = j - 1;
+                }
+                int pk_frames = 0, ok_frames = 0;
+                for (int t = 0; t < T; t++) {
+                    if (!U[size_t(t)]) continue;
+                    int j = t;
+                    while (j + 1 < T && U[size_t(j + 1)]) j++;
+                    const int len = j - t + 1;
+                    int fa = -1, la = -1, fb = -1, lb = -1;
+                    for (int q = t; q <= j; q++) {
+                        if (onA[size_t(q)]) { if (fa < 0) fa = q; la = q; }
+                        if (onB[size_t(q)]) { if (fb < 0) fb = q; lb = q; }
+                    }
+                    const int tol = std::max(2, len / 10);
+                    pk_frames += len;
+                    if (fa >= 0 && fb >= 0 && fa - t <= tol && fb - t <= tol && j - la <= tol && j - lb <= tol) ok_frames += len;
+                    t = j;
+                }
+                if (pk_frames == 0 || ok_frames < 0.8 * pk_frames) {
+                    if (dbg) std::fprintf(stderr, "TONE %.0f/%.0f + %.0f/%.0f: timing %d of %d packet frames\n", A.offset_hz, A.bw_hz, B.offset_hz, B.bw_hz, ok_frames, pk_frames);
+                    continue;
+                }
+                // sample level: the long blocks holding most of the packet frames (at most 4)
+                const double wmax = std::max(A.bw_hz, B.bw_hz);
+                int D = 1;
+                for (int d : DS)
+                    if (fs / d >= 1.25 * wmax) { D = d; break; }
+                std::vector<std::pair<int, int>> bc;
+                for (int b = 0; b < fe.nblocks; b++) {
+                    int n = 0;
+                    for (int t = 0; t < T; t++) {
+                        const double s = double(t) * fe.hop + 0.5 * SPEC_N;
+                        n += U[size_t(t)] && s >= double(b) * LONG_HOP && s < double(b + 1) * LONG_HOP;
+                    }
+                    if (n) bc.push_back({-n, b});
+                }
+                std::sort(bc.begin(), bc.end());
+                std::vector<int> blks;
+                for (size_t q = 0; q < bc.size() && q < 4; q++) blks.push_back(bc[q].second);
+                std::sort(blks.begin(), blks.end());
+                tests++;
+                band_power(fe, alo, ahi, D, blks, pa);
+                band_power(fe, blo, bhi, D, blks, pb);
+                // smoothed over the tones' resolution, gated to the packets
+                const int L = std::max(1, int(std::lround(fs / D / wmax)));
+                double n = 0, xa = 0, xb = 0, qa = 0, qb = 0, cab = 0;
+                std::vector<float> ga, gb;
+                size_t idx = 0;
+                for (int b : blks) {
+                    const int keep = LONG_HOP / D;
+                    for (int m = 0; m + L <= keep && idx + size_t(m) + size_t(L) <= pa.size(); m += L) {
+                        const double s = double(b) * LONG_HOP + double(m) * D;
+                        const int t = std::clamp(int(std::lround((s - 0.5 * SPEC_N) / fe.hop)), 0, T - 1);
+                        if (!U[size_t(t)]) continue;
+                        float sa = 0.0f, sb = 0.0f;
+                        for (int k = 0; k < L; k++) { sa += pa[idx + size_t(m + k)]; sb += pb[idx + size_t(m + k)]; }
+                        ga.push_back(sa);
+                        gb.push_back(sb);
+                    }
+                    idx += size_t(std::min<int64_t>(keep, int64_t(pa.size() - idx)));
+                }
+                n = double(ga.size());
+                for (size_t k = 0; k < ga.size(); k++) { xa += ga[k]; xb += gb[k]; }
+                if (n < 16 || !(xa > 0.0) || !(xb > 0.0)) continue;
+                const double ma = xa / n, mb = xb / n;
+                double qs = 0, xs = 0;
+                for (size_t k = 0; k < ga.size(); k++) {
+                    const double u = ga[k] / ma, v = gb[k] / mb;
+                    qa += (u - 1) * (u - 1); qb += (v - 1) * (v - 1); cab += (u - 1) * (v - 1);
+                    xs += u + v; qs += (u + v) * (u + v);
+                }
+                const double cva = std::sqrt(qa / n), cvb = std::sqrt(qb / n);
+                const double r = qa > 0 && qb > 0 ? cab / std::sqrt(qa * qb) : 0.0;
+                const double cvs = std::sqrt(std::max(0.0, qs / n - (xs / n) * (xs / n))) / std::max(xs / n, 1e-30);
+                // samples L apart at a resolution of ~1 / wmax: about independent
+                const double z = r * std::sqrt(n);
+                const bool m = r <= -0.5 && z <= -6.0 && cva >= 0.3 && cvb >= 0.3 && cvs <= 0.6 * std::min(cva, cvb);
+                if (dbg) std::fprintf(stderr, "TONE %.0f/%.0f %.1f + %.0f/%.0f %.1f: D %d n %.0f r %.2f z %.1f cva %.2f cvb %.2f cvs %.2f -> %d\n",
+                                      A.offset_hz, A.bw_hz, A.peak_db, B.offset_hz, B.bw_hz, B.peak_db, D, n, r, z, cva, cvb, cvs, int(m));
+                if (m) { ia_m = long(ia); ib_m = long(ib); break; }
+            }
+            if (ia_m >= 0 || tests >= 48) break;
+        }
+        if (ia_m < 0) break;
+        const Detection A = out[size_t(ia_m)].det, B = out[size_t(ib_m)].det;
+        const double lo = std::min(A.offset_hz - 0.5 * A.bw_hz, B.offset_hz - 0.5 * B.bw_hz);
+        const double hi = std::max(A.offset_hz + 0.5 * A.bw_hz, B.offset_hz + 0.5 * B.bw_hz);
+        // the union band; its centre the tones' power centroid, its SNR their power over
+        // the union's width (not re-measured from the PSD: a strong carrier inside the band -
+        // a spur - would take the 98 % band)
+        Cand c = out[size_t(ia_m)];
+        const double pa = std::pow(10.0, A.snr_db / 10.0) * A.bw_hz, pb = std::pow(10.0, B.snr_db / 10.0) * B.bw_hz;
+        c.det.offset_hz = std::clamp((A.offset_hz * pa + B.offset_hz * pb) / std::max(pa + pb, 1e-30), lo, hi);
+        c.det.bw_hz = hi - lo;
+        c.det.snr_db = clampf(db10((pa + pb) / std::max(hi - lo, 1.0)), -20.0f, 120.0f);
+        c.det.peak_db = std::max(A.peak_db, B.peak_db);
+        c.det.duty = std::max(A.duty, B.duty);
+        c.det.bursty = A.bursty && B.bursty;
+        c.centre_bin = int(std::lround(c.det.offset_hz / df));
+        // the pieces inside its band
+        on_mask(c.det, ea, onC);
+        const float pk = std::max(A.peak_db, B.peak_db);
+        std::vector<Cand> keep;
+        for (size_t k = 0; k < out.size(); k++) {
+            if (long(k) == ia_m || long(k) == ib_m) continue;
+            const Detection& P = out[k].det;
+            bool inside = !P.fills_band && P.offset_hz - 0.5 * P.bw_hz >= lo - 0.05 * (hi - lo) &&
+                          P.offset_hz + 0.5 * P.bw_hz <= hi + 0.05 * (hi - lo) && P.peak_db <= pk + 3.0f;
+            if (inside) {
+                if (c.det.bursty) {
+                    on_mask(P, eb, onP);
+                    int np = 0, nin = 0;
+                    for (int t = 0; t < T; t++) { np += onP[size_t(t)]; nin += onP[size_t(t)] && onC[size_t(t)]; }
+                    inside = P.bursty && np > 0 && nin >= 0.8 * np;
+                } else {
+                    inside = !P.bursty;
+                }
+            }
+            if (!inside) keep.push_back(out[k]);
+        }
+        keep.push_back(c);
+        out.swap(keep);
+        if (dbg) std::fprintf(stderr, "TONE merged -> %.0f / %.0f Hz, %.1f dB, duty %.2f\n", c.det.offset_hz, c.det.bw_hz, c.det.snr_db, c.det.duty);
+    }
+}
+
 // ------------------------------------------------------------------ detect
 
 void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& out) {
@@ -1177,6 +1420,8 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
                       out.end());
         }
     }
+    // the two tones of a wide-shift FSK transmitter -> one (merge_tone_pairs)
+    if (cfg.tone_merge) merge_tone_pairs(fe, cfg, out);
     // pieces of one burst signal: a bursty detection inside a burst signal at least
     // four times wider and about as strong (its max-hold within 3 dB or more) is
     // part of it (ADS-B / DME / UAT pulse spectra found piecewise at narrower box
@@ -1197,17 +1442,36 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
     // the splatter of a strong burst signal (an OOK device's keying sidebands, a
     // DME pulse spectrum's lobes): a detection >= 6 dB weaker (max-hold), at most
     // half as wide, within three widths (30 - 150 kHz) of the burst's band, whose power
-    // comes and goes with it (the short spectrogram), is part of it
+    // comes and goes with it (the short spectrogram), is part of it.
+    // Farther out and wider (2026-11-22): a carrier keyed with pulses of length Tp has
+    // the spectrum envelope 1 / (pi f Tp)^2 - its sidelobes are 1 / Tp wide (half its
+    // 2 / Tp main lobe; two joined ones as wide as it) and fall 6 dB per octave of
+    // offset without end; a band d1..d2 off the carrier holds a mean density of
+    // 1 / (pi^2 d1 d2 Tp^2) of the main lobe's (a group of joined sidelobes is as wide
+    // as it is). With the burst's width as its main lobe (Tp = 2 / bw): a piece centred
+    // outside the burst's band, at most 4 x its width, within 8 widths (30 - 300 kHz),
+    // whose max-hold is no stronger than that envelope + 6 dB
+    // (-20 log10(2 pi sqrt(d1 d2) / bw) + 6) and which comes and goes with the burst
+    // (or is a faint "continuous" average, as above) is a sidelobe too
+    // (ism-six-devices: a 13 kHz piece 57 kHz below a 16-21 kHz OOK burst, ~32 dB
+    // under it, was a track of its own, "Unknown OFDM"; 25-45 kHz skirts 20-50 kHz off
+    // the same burst, 30 dB under it)
     if (fe.nframes >= 16) {
         std::vector<uint8_t> drop(out.size(), 0);
         for (size_t j = 0; j < out.size(); j++) {
             const Detection& s = out[j].det;
             if (!s.bursty || s.fills_band) continue;
             const double reach = 0.5 * s.bw_hz + std::min(std::max(3.0 * s.bw_hz, 30e3), 150e3);
+            const double reach2 = cfg.sidelobe_widths > 0.0f ? 0.5 * s.bw_hz + std::min(std::max(double(cfg.sidelobe_widths) * s.bw_hz, 30e3), 300e3) : 0.0;
             for (size_t i = 0; i < out.size(); i++) {
                 const Detection& w = out[i].det;
-                if (i == j || drop[i] || w.fills_band || w.bw_hz > 0.5 * s.bw_hz || w.peak_db > s.peak_db - 6.0f) continue;
-                if (std::fabs(w.offset_hz - s.offset_hz) > reach) continue;
+                if (i == j || drop[i] || w.fills_band || w.bw_hz > 4.0 * s.bw_hz || w.peak_db > s.peak_db - 6.0f) continue;
+                const double d = std::fabs(w.offset_hz - s.offset_hz);
+                const bool near = d <= reach && w.bw_hz <= 0.5 * s.bw_hz;
+                const double d1 = std::max(d - 0.5 * w.bw_hz, 0.5 * s.bw_hz), d2 = d + 0.5 * w.bw_hz;
+                const float env = 6.0f - db10(std::max(1.0, 4.0 * 9.8696044 * d1 * d2 / std::max(s.bw_hz * s.bw_hz, 1.0)));
+                const bool lobe = d > 0.5 * s.bw_hz && d <= reach2 && w.peak_db - s.peak_db <= std::min(-6.0f, env);
+                if (!near && !lobe) continue;
                 // (a faint "continuous" one 20 dB under it: its average over the snapshot -
                 // too faint for the short frames' correlation to show)
                 if ((!w.bursty && w.snr_db < 1.0f && s.peak_db - w.peak_db >= 20.0f) || corr(w, s) > 0.6) drop[i] = 1;

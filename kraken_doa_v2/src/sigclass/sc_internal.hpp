@@ -83,6 +83,10 @@ private:
     void burst_search(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& cont,
                       std::vector<Cand>& out);
     bool band_fill(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& found, Cand& c, int force);   // force: 0 the test, 1 an irregular line comb (prominence only), 2 a regular comb (no test), 3 bursty pieces kept (prominence x 1.25)
+    // the tones of one wide-shift FSK transmitter, detected apart, -> one detection
+    void merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& out);
+    // the sample-level power of the band [lo_hz, hi_hz] at fs / D over the given long blocks
+    void band_power(const FrontEnd& fe, double lo_hz, double hi_hz, int D, const std::vector<int>& blks, std::vector<float>& p);
 
     std::vector<float> p_;        // fine PSD with the DC zone bridged (centred)
     std::vector<float> pb_;       // base PSD (sum of BASE_BINS fine bins)
@@ -98,6 +102,8 @@ private:
     std::vector<uint8_t> mask_, mask2_;
     avec<cf> fbuf_, acf_;
     Fft fill_fft_;
+    Fft tone_fft_;                // band_power's inverse FFT (re-initialised per size)
+    avec<cf> tbuf_, tbuf2_;
     std::map<std::pair<int, double>, double> thr_cache_;   // gamma thresholds
     double fill_corr_ = 0.0;
 };

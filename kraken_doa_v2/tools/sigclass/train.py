@@ -677,11 +677,18 @@ def cmd_fit(o):
     vinfo = {}
     test_pack = []
     val_pack = []
+    # classes kept out of a view's model even with enough examples there (--exclude-view-classes)
+    excl = {}
+    for part in filter(None, (o.exclude_view_classes or '').split(';')):
+        vv, cs = part.split(':', 1)
+        excl[int(vv)] = set(cs.split(','))
+    if excl:
+        log('kept out of a view: %s' % '; '.join('view %d: %s' % (k, ','.join(sorted(s))) for k, s in sorted(excl.items())))
     for v in range(NUM_VIEWS):
         mv = keep & (view == v)
         ytr_all = z['y'][mv & (sp == 0)]
         cnt = np.bincount(ytr_all, minlength=len(lab))
-        cls_v = [c for c in range(len(lab)) if cnt[c] >= o.min_examples]
+        cls_v = [c for c in range(len(lab)) if cnt[c] >= o.min_examples and lab[c] not in excl.get(v, ())]
         if len(cls_v) < 2:
             log('view %d: too few classes (%d) - no model' % (v, len(cls_v)))
             continue
@@ -889,6 +896,58 @@ def report(packs, lab, thr, log, zz):
     log('  %-11s %6d %6.3f' % ('all', m.sum(), np.mean(td[m] >= 0)))
 
 
+def cmd_ensemble(o):
+    """one model file (format 4) from several fits of the same data: per view the members'
+    probabilities averaged; min_confidence refitted on the val split as cmd_fit does it
+    (averaged probabilities are softer than one fit's); the per-class thresholds come after
+    (thresholds.py)"""
+    SPLIT_WORK[0] = o.work
+    lab = label_ids()
+    metas = [model_io.read_model(m) for m in o.models]
+    meta = metas[0][0]
+    views = {}
+    for v in metas[0][1]:
+        mem = []
+        for _, V, _ in metas:
+            if v not in V:
+                sys.exit('%s has no view %d' % (o.models[len(mem)], v))
+            mem += V[v]['members'] if 'members' in V[v] else [V[v]]
+        views[v] = {'members': mem, 'classes': mem[0]['classes']}
+    z = load_data(o.data, lab)
+    sp = split_of(z['clip'])
+    view = z['det'][:, 7].astype(int)
+    none_i = lab.index('none')
+    allp, allok = [], []
+    for v, vm in views.items():
+        ids = np.array([lab.index(c['id']) for c in vm['classes']])
+        m = np.flatnonzero((sp == 1) & (view == v) & (z['y'] >= 0))
+        for a in range(0, len(m), 4000):
+            idx = m[a:a + 4000]
+            Xf = z['X'][idx].astype(np.float64)
+            if 'Q' in z:
+                Xf = np.concatenate([Xf, z['Q'][idx].astype(np.float64) / 127.0], axis=1)
+            P = model_io.forward(vm, Xf)
+            pred = ids[P.argmax(axis=1)]
+            shown = pred != none_i
+            allp.append(P.max(axis=1)[shown])
+            allok.append((pred == z['y'][idx])[shown])
+    allp, allok = np.concatenate(allp), np.concatenate(allok)
+    thr = 0.0
+    for t in np.linspace(0.0, 0.99, 100):
+        s_ = allp >= t
+        if s_.sum() and allok[s_].mean() >= o.precision:
+            thr = float(t)
+            break
+    meta['min_confidence'] = round(thr, 3)
+    meta['ensemble'] = {'members': len(o.models), 'fits': [os.path.basename(m) for m in o.models],
+                        'seeds': [(mm[0].get('trainer') or {}).get('seed') for mm in metas]}
+    for c in meta.get('classes', []):
+        c.pop('min_p', None)
+    model_io.write_model(o.out, meta, views, model_io.layout_from_tool(TOOL))
+    print('%s: %d members a view, min_confidence %.2f (val precision %.3f at %.1f %% of the shown labels)' % (
+        o.out, len(o.models), thr, allok[allp >= thr].mean(), 100 * np.mean(allp >= thr)))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -923,6 +982,11 @@ def main():
     f.add_argument('--smooth', type=float, default=0.05)
     f.add_argument('--cw-power', type=float, default=0.75)
     f.add_argument('--min-examples', type=int, default=100)
+    # (2026-11-22) the 12.5 kHz channel classes stay out of view 1 (96 kHz) even when it has
+    # enough of them: the analyzer's second look in view 0 takes view 0's answer only for a
+    # class view 1's model lacks - the rule was validated with them absent there
+    f.add_argument('--exclude-view-classes', default='1:dmr,p25p1,p25p2,nxdn,ysf,dstar,mpt1327,nfm_voice,aprs',
+                   help="'V:a,b;V:c' - classes kept out of view V's model ('' = none)")
     f.add_argument('--min-cover-t', type=float, default=0.0, help='drop fragment detections covering less of their truth')
     f.add_argument('--precision', type=float, default=0.95)
     f.add_argument('--none-weight', type=float, default=1.0, help='extra loss weight of the none class')
@@ -935,7 +999,12 @@ def main():
     f.add_argument('--conv-k', type=int, default=32)
     f.add_argument('--conv-l', type=int, default=24)
     sub.add_parser('gradcheck')
-    for p in (g, i, b, f):
+    e = sub.add_parser('ensemble', help='fits of the same data -> one averaged model (format 4)')
+    e.add_argument('out')
+    e.add_argument('models', nargs='+')
+    e.add_argument('--data', required=True)
+    e.add_argument('--precision', type=float, default=0.95)
+    for p in (g, i, b, f, e):
         p.add_argument('--work', default=default_work())
     o = ap.parse_args()
     if o.cmd == 'gen':
@@ -948,6 +1017,8 @@ def main():
         cmd_fit(o)
     elif o.cmd == 'gradcheck':
         cmd_gradcheck(o)
+    elif o.cmd == 'ensemble':
+        cmd_ensemble(o)
 
 
 if __name__ == '__main__':

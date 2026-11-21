@@ -26,6 +26,7 @@
 //       --spec-hop N (the short spectrogram's hop, Config::spectrogram_hop)
 //       rule parameters (experiments): --second-view-max HZ (Config::second_view_max_hz, 0 = off)
 //       --image-share X (Config::image_share; 0 = every image candidate dropped)
+//       --tone-merge 0|1 (Config::tone_merge), --lobe-widths X (Config::sidelobe_widths; 0 = off)
 //       --min-channel HZ, --core-ratio X (classify --track: TrackerConfig::min_channel_hz /
 //       core_energy_ratio; a huge --min-channel turns the core rule off)
 // Input scale: cu8 = (u - 127.5) / 127.5 (the runtime path); cs16 = v / 32768;
@@ -59,7 +60,8 @@ struct Opts {
     double rate = 2400000.0, snap = 0.5, hop = 0.0, centre = 0.0, offset = 0.0, rf = 0.0;
     int view = 0, reps = 20, spec_hop = 0;
     // (rule parameters for experiments; < 0 = the core's default)
-    double second_view_max = -1.0, image_share = -1.0, min_channel = -1.0, core_ratio = -1.0;
+    double second_view_max = -1.0, image_share = -1.0, min_channel = -1.0, core_ratio = -1.0, lobe_widths = -1.0;
+    int tone_merge = -1;
     bool track = false, requant = false;
     std::vector<std::string> files;
 };
@@ -277,6 +279,8 @@ sigclass::Config cfg_of(const Opts& o) {
     if (o.spec_hop > 0) c.spectrogram_hop = o.spec_hop;
     if (o.second_view_max >= 0.0) c.second_view_max_hz = o.second_view_max;
     if (o.image_share >= 0.0) c.image_share = float(o.image_share);
+    if (o.tone_merge >= 0) c.tone_merge = o.tone_merge != 0;
+    if (o.lobe_widths >= 0.0) c.sidelobe_widths = float(o.lobe_widths);
     return c;
 }
 
@@ -737,6 +741,8 @@ int main(int argc, char** argv) {
         else if (a == "--spec-hop") o.spec_hop = std::atoi(val().c_str());
         else if (a == "--second-view-max") o.second_view_max = std::atof(val().c_str());
         else if (a == "--image-share") o.image_share = std::atof(val().c_str());
+        else if (a == "--tone-merge") o.tone_merge = std::atoi(val().c_str());
+        else if (a == "--lobe-widths") o.lobe_widths = std::atof(val().c_str());
         else if (a == "--min-channel") o.min_channel = std::atof(val().c_str());
         else if (a == "--core-ratio") o.core_ratio = std::atof(val().c_str());
         else if (a == "--track") o.track = true;

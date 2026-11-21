@@ -13,7 +13,11 @@ standardised features without the slice, followed by the standardised
 pooled outputs (all the maxima, then the means). Format 3 adds the RF
 plausibility table (from meta["classes"][i]["rf_hz"] / ["generic"] and
 meta["bands"] at write time - classes.json's): rf_mask() applies it as
-model.cpp does. Formats 1 and 2 still read (no table).
+model.cpp does. Formats 1 and 2 still read (no table). Format 4 (2026-11-22)
+allows an ensemble per view: {"members": [vm, vm, ...]} (each a view dict as
+below, all with the same classes; at most MEMBERS_MAX) is written as one
+entry per member, read back the same way, and forward() averages the
+members' probabilities - as model.cpp does.
 
     layout = layout_from_tool("tools/build/sigclass_tool")   # or json.loads(...)
     views = {
@@ -38,8 +42,9 @@ import zlib
 import numpy as np
 
 MAGIC = b"KSIGCLS\0"
-FORMAT_VERSION = 3
+FORMAT_VERSION = 3          # what write_model writes by default (4 when a view is an ensemble)
 NUM_VIEWS = 4
+MEMBERS_MAX = 16
 _ACT = {"none": 0, "linear": 0, "relu": 1, 0: 0, 1: 1}
 _ACT_NAME = {0: "none", 1: "relu"}
 
@@ -94,13 +99,28 @@ def write_model(path, meta, views, layout=None, fmt=FORMAT_VERSION):
     meta_b = (meta if isinstance(meta, str) else json.dumps(meta, separators=(",", ":"))).encode("utf-8")
     out = bytearray()
     out += MAGIC
-    if fmt not in (1, 2, 3):
-        raise ValueError("format 1, 2 or 3")
+    items = _views_items(views)
+    ens = any('members' in vm for _, vm in items)
+    if ens and fmt == FORMAT_VERSION:
+        fmt = 4
+    if fmt not in (1, 2, 3, 4):
+        raise ValueError("format 1 - 4")
+    if ens and fmt < 4:
+        raise ValueError("an ensemble view needs format 4")
+    entries = []
+    for v, vm in items:
+        mem = vm['members'] if 'members' in vm else [vm]
+        if not 1 <= len(mem) <= MEMBERS_MAX:
+            raise ValueError(f"view {v}: 1 .. {MEMBERS_MAX} members")
+        c0 = [_class_pair(c) for c in mem[0]['classes']]
+        for m in mem[1:]:
+            if [_class_pair(c) for c in m['classes']] != c0:
+                raise ValueError(f"view {v}: the members have different classes")
+        entries += [(v, m) for m in mem]
     out += struct.pack("<IIQI", fmt, lv, lh, dim)
     out += struct.pack("<I", len(meta_b)) + meta_b
-    items = _views_items(views)
-    out += struct.pack("<I", len(items))
-    for v, vm in items:
+    out += struct.pack("<I", len(entries))
+    for v, vm in entries:
         classes = [_class_pair(c) for c in vm["classes"]]
         temp = float(vm.get("temperature", 1.0))
         if not 1e-3 <= temp <= 1e3:   # the C++ loader's bounds (model.cpp TEMP_MIN / TEMP_MAX)
@@ -242,7 +262,7 @@ def read_model(path):
     p = 8
     fv, lv, lh, dim = struct.unpack_from("<IIQI", data, p)
     p += 20
-    if fv not in (1, 2, 3):
+    if fv not in (1, 2, 3, 4):
         raise ValueError(f"format version {fv}")
     (ml,) = struct.unpack_from("<I", data, p)
     p += 4
@@ -302,11 +322,22 @@ def read_model(path):
             b = np.frombuffer(data, "<f4", fout, p).copy()
             p += 4 * fout
             layers.append({"W": W, "b": b, "act": _ACT_NAME[act]})
-        views[v] = {"classes": classes, "mean": mean, "std": std, "temperature": temp, "layers": layers}
+        vd = {"classes": classes, "mean": mean, "std": std, "temperature": temp, "layers": layers}
         if conv:
-            views[v]["conv"] = conv
+            vd["conv"] = conv
         if skip:
-            views[v]["skip"] = skip
+            vd["skip"] = skip
+        if v in views:
+            # format 4: another member of this view's ensemble
+            if fv < 4:
+                raise ValueError(f"view {v} twice")
+            if "members" not in views[v]:
+                views[v] = {"members": [views[v]], "classes": views[v]["classes"]}
+            if [c["id"] for c in classes] != [c["id"] for c in views[v]["classes"]]:
+                raise ValueError(f"view {v}: members with different classes")
+            views[v]["members"].append(vd)
+        else:
+            views[v] = vd
     rf = None
     if fv >= 3:
         rf = {"classes": {}, "bands": []}
@@ -385,7 +416,10 @@ def mlp_input(vm, X):
 
 
 def forward(vm, X):
-    """numpy forward pass of one view's model: X (n, D) or (D,) -> probabilities"""
+    """numpy forward pass of one view's model: X (n, D) or (D,) -> probabilities (an
+    ensemble view - format 4 - the mean of its members')"""
+    if "members" in vm:
+        return np.mean([forward(m, X) for m in vm["members"]], axis=0)
     a = mlp_input(vm, X)
     for L in vm["layers"]:
         a = a @ np.asarray(L["W"], np.float64).T + np.asarray(L["b"], np.float64)

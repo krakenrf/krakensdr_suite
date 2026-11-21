@@ -252,6 +252,24 @@ no other dependency; the same code runs in kraken_doa and in
   in AIS's range is fine - a range is not exclusive -, wildlife at 151 /
   160 / 166, LoRa at 446 / 868 / 915 / 921, the radar at 1300, DAB at
   227.36 inside both DAB's and DTV's band III)
+- **Model file** format 4 (2026-11-22): an ensemble per view - a view may have
+  up to `MEMBERS_MAX` 16 entries (fits of the same data), every one with the
+  same classes (ids and names, in order; a member with other classes is
+  refused, and so is a repeated view in formats 1-3); the view's probabilities
+  are the mean of its members' (each with its own temperature, normalisation,
+  front end and layers), before the RF mask and the tracker. `model_io`:
+  `{"members": [vm, ...]}` per view, written as one entry per member (format 4
+  chosen by itself), read back the same way, `forward()` averages - numpy vs
+  C++ (`sigclass_tool forward`) on 3-member ensembles of the shipped model and
+  perturbed copies, all four views, NaN / inf inputs: max |dp| 4.7e-6 (inputs of
+  -3e38 differ, float32 against float64, in the format-3 code before as well -
+  real features are clamped to O(1)). The fuzzer (`tmp/retrain/fuzz/`, ASan +
+  UBSan) got a format-4 model (view 0 with three members - a Conv1D front end,
+  a plain one, a "sequence not read" one -, view 3 with two, the RF table):
+  every truncation, 400 000 random byte changes, hostile values in every u32
+  field - no fault; every probability finite and summing to 1. Cost: one
+  member 0.05 ms a signal; 5 members 4.4x one (measured 0.98 against 0.22 ms a
+  signal at load ~22, i.e. ~0.25 ms at the usual load) - nothing ships one yet
 - **Model file** format 3 (phase 5): format 2 + the RF table after the
   views (classes with an entry <= 4096: id, generic flag, <= 64 [lo, hi]
   f64 ranges; <= 256 exclusive bands: f64 lo, hi, <= 256 class ids;
@@ -360,6 +378,66 @@ no other dependency; the same code runs in kraken_doa and in
     points. The analysis' synthetic twins (6 seeds at 30 / 45 / 55 dB): NXDN
     6 / 4 / 2 -> 6 / 6 / 6, P25 6 / 5 / 5 -> 6 / 6 / 6, DMR 6 / 6 / 5 ->
     6 / 6 / 6. Detector acceptance set unchanged byte for byte
+  - **wide-shift FSK tones** (2026-11-22, `merge_tone_pairs`,
+    `Config::tone_merge`): with a modulation index above ~5 (ISM sensors and
+    keyfobs with 50 us - 2 ms bits and tones 20-200 kHz apart, FLEX, DFM) the two
+    tones are detected apart and each alone is an on / off keyed carrier (46 of
+    90 real ISM FSK rows partly or wholly, 17 ended "ISM device (OOK)"). Any two
+    detections - not only neighbours in frequency: pieces lie between the tones -
+    that look alike (<= 400 kHz from one's lower edge to the other's upper, not
+    overlapping, widths within 16x, tone power = max-hold x width within 10 dB)
+    are one transmitter when (a) at burst level they share its timing: per packet
+    (the short frames where either is on, gaps <= 2 frames bridged) both are on
+    in it and start and end with it (within 2 frames or 10 %), for >= 80 % of the
+    packet frames - two devices that merely overlap in time, two radios taking
+    turns on adjacent channels do not; and (b) at sample level their powers are
+    complementary: each band's |x|^2 cut from the long blocks' spectra (its bins,
+    10 % raised-cosine edges, one inverse FFT of LONG_N / D per block, D the
+    largest of 100 .. 2 with fs / D >= 1.25 x the wider tone - bits shorter than
+    the 427 us frame are resolved, where both tones are on in every frame),
+    summed over the tones' resolution, gated to the packets: the mean-normalised
+    powers correlate <= -0.5 (z <= -6), each is keyed (CV >= 0.3) and their sum
+    is steadier (CV <= 0.6 x either's). Two independent signals correlate ~0; a
+    keyed carrier and its keying sidelobes, DSB sidebands, a Manchester code's
+    two lobes correlate positively. The pair becomes one detection over the
+    union band (centre: the tones' power centroid; SNR: their power over the
+    union's width - not re-measured from the PSD, where a spur inside the band
+    took the 98 % band); pieces inside it no stronger than the tones (+3 dB) and
+    on only while it is (or continuous like it) go. At most 48 pair tests and 4
+    long blocks a test per snapshot. `SIGCLASS_DEBUG_TONE=1` prints every test,
+    `sigclass_tool --tone-merge 0` turns it off. Measured: the 94 ISM FSK twins
+    (synthetic copies of the measured rtl_433 devices, 108 snapshots with a
+    packet), snapshots where one detection holds both tones and no other piece
+    23 -> 47 (+ 35 / 36 where it is also much wider: high-SNR splatter), one-tone
+    pieces 31 -> 7; 150 synthetic wide-range FSK captures (`synth.py ism_fsk2`
+    seeds outside the bank, 8-40 dB) whole 42 -> 105, pieces 64 -> 3; 75 pairs of
+    independent devices 12.5-150 kHz apart: one detection over both 46 -> 52 (the
+    6 new ones: the second device inside or at the edge of the FSK's own band).
+    The v4 branch's neighbour-only, frame-level test made 0 of 26 fragments whole
+  - **keying sidelobes** (2026-11-22, the burst-splatter rule widened,
+    `Config::sidelobe_widths` 8): a carrier keyed with pulses of length Tp has the
+    spectrum envelope 1 / (pi f Tp)^2: its sidelobes are 1 / Tp wide (half the
+    2 / Tp main lobe; a group of joined ones as wide as the main lobe or wider)
+    and fall 6 dB per octave of offset without end; a band d1..d2 off the carrier
+    holds a mean density of 1 / (pi^2 d1 d2 Tp^2) of the main lobe's. With the
+    burst's width as its main lobe (Tp = 2 / bw), a piece centred outside the
+    burst's band, at most 4 x its width, within 8 widths (30-300 kHz), no
+    stronger (max-hold) than that envelope + 6 dB (-10 log10(4 pi^2 d1 d2 / bw^2)
+    + 6) and >= 6 dB under the burst, that comes and goes with it (short-frame
+    correlation > 0.6) or is a faint "continuous" average (< 1 dB, >= 20 dB
+    under it) is a sidelobe too. The old rule (at most half as wide, within 3
+    widths, 30-150 kHz) missed the `ism-six-devices` playback's stray "Unknown
+    OFDM 52 %" (a 13 kHz piece 57 kHz below a 16-21 kHz OOK burst, ~32 dB under
+    it) and 25-45 kHz skirts 20-50 kHz off the same burst: on that scene (6 s,
+    looped to 42 s, snapshots every 0.97-1.31 s) 14-22 tracks -> 9-12, every one
+    of the 6 devices kept (the stray itself did not occur offline).
+    `sigclass_tool --lobe-widths 0` turns it off
+  - both rules on the synthetic regression set (below) with the shipped weights:
+    track label right 0.649 -> 0.648 (4057 -> 4056 of 6255), false labels 140 ->
+    127; FLEX -2 signals, ISM FSK and unknown FSK -1 each (every one traced: the
+    tones now merged correctly into one detection, which the old weights had not
+    seen whole), the sidelobe rule alone +3 signals, false labels 125; detector
+    acceptance set byte-identical; `selftest` passes
   - not attempted (from the same analysis): a max-hold "burst" region that
     bridges and swallows continuous detections (a 1.4-2.2 MHz bursty region
     over a busy site's strong carriers: 416.5 MHz DMR x4, the MPT1327
@@ -443,11 +521,48 @@ Everything in `tools/sigclass/` (numpy + scipy only; commands in its
   tetra 24, vor 24; LTE / NR half lightly loaded (0.02-0.2), 40 /
   32 clips; LoRa: 2 of 5 clips sparse (24 s, a packet every 1.5-8 s). Limits:
   sfn_gen has no `--seed`; dab_gen's audio is a tone per service; analogtv
-  one test card; tetra_gen's payload is the empty SCH/F every frame and its
+  one test card; tetra_gen's payload is the empty SCH/F every frame without
+  `--traffic` (the bank uses it since 2026-11-22) and its
   output does not decode for 18 of 64 colour codes (2, 3, 5, 8, 10, 17-20,
   27, 28, 34, 38-40, 46, 52, 54: the bank uses the others); radiosondes are
   RS41 and M20 only (no generator for DFM / iMet / LMS6 / M10 / MRZ / MTS01:
   left to unknown FSK)
+- **Bank additions of 2026-11-22** (after the ISM / TETRA / P25 / FM failure
+  analyses; parametric, no per-device code; the earlier clips of each class
+  unchanged): `synth.py ism_fsk2` (ism_fsk clips 80-239): 2-FSK with the bit
+  time 10 us - 2 ms and the tone spacing 10-200 kHz drawn independently
+  (log-uniform, modulation index kept to 0.5-60), NRZ / Manchester / NRZI /
+  PWM-FSK (the information in the length of one tone), Gaussian-filtered (BT
+  0.3-1) or hard keyed, packets of 2 ms - 1 s (preamble, sync word, payload)
+  sent 1-6 times 1-50 ms apart, groups 0.1-1.5 s apart, key-up pull (+-30 kHz,
+  50 us - 5 ms) and chirp (+-20 kHz/s); `synth.py ism_ook2` (ism_ook clips
+  104-203): hard-keyed long pulses (te 0.4-2 ms), very short pulses (10-80 us),
+  shallow keying (6-20 dB) and ASK with a residual carrier (6-12 dB), PWM /
+  PPM / Manchester; TETRA all 36 clips with `tetra_gen.py --traffic` (random
+  SCH/F and AACH bits in every burst - before, every normal burst was the same
+  empty one: |autocorrelation| at the slot / frame lag 0.92 / 0.69, now 0.006 /
+  0.004; without the switch the generator's output is sha256-identical) and a
+  slow carrier drift (bank.py's `drift`: an Ornstein-Uhlenbeck frequency, rms 1-15
+  Hz, 0.2-2 s); `synth.py wfm_loud` (wfm clips 48-63: a slow AGC and a hard
+  limiter, 70-80 kHz deviation - real stations are detected 100-130 kHz wide).
+  Tried and removed: P25 Phase 1 C4FM at 0.8-1.6 x its deviation in 35 % of the
+  draws (a "wide pulse" variant seen in one public recording) - the 4-FSK systems
+  differ mainly in their outer deviation (P25 +-1.8 kHz, DMR 1.08 x, NXDN96 1.33 x,
+  YSF 1.5 x), so it laid P25 over the other three in the property that separates
+  them best; on the synthetic val clips the confusion among the four at nominal
+  deviation was 21-30 (median 27) detections over 7 fits with it, 19-27 (23)
+  without (the shipped model 19); the composer is back to the +-10 % every
+  constant-envelope class has (generation B of the Results below: the same
+  caches with those rows dropped, `tmp/retrain/bin/drop_devwide.py`). classes.json: ISM FSK
+  occupies 10-500 kHz, OOK 3-300 kHz (was 20-160 / 5-120: the SNR bandwidth's
+  clamp and the evaluation's band-limited feed). Checks: the IQ measurement of
+  the failure analysis (OOK vs FSK from the envelope / IF) finds 160 of 160 new
+  FSK clips FSK and 95 of 100 new OOK clips keyed as meant (all 100 with noise
+  added: the 5 are shallow / ASK clips without noise); the tetra decoder decodes
+  composed clips (3 of 3: network, colour code, location area); 77 of the 98
+  measured real FSK devices now have a bank clip within 25 % of both their bit
+  time and tone spacing (was 35), 139 of 142 OOK devices (was 112). Not added:
+  radiosondes without a generator (DFM, MRZ, iMet-4), dPMR
 - **Composer** `scenes.py`: 0.5 s 2.4 MHz cu8 captures, 0-8 signals (+
   spurs) placed in the frequency domain (one inverse FFT): 25 % at one
   channel spacing from a neighbour, 12 % of later narrow ones ON an earlier
@@ -495,6 +610,18 @@ Everything in `tools/sigclass/` (numpy + scipy only; commands in its
   classes with >= 100 training examples there; one temperature per view
   (val NLL); `min_confidence` = the lowest p at which >= 95 % of the shown
   (not `none`) val labels are right
+- **Classes kept out of a view** (2026-11-22, `fit --exclude-view-classes`,
+  default `1:dmr,p25p1,p25p2,nxdn,ysf,dstar,mpt1327,nfm_voice,aprs`): with 59 000
+  captures of the new composer YSF, APRS and NFM voice reached the 100 examples
+  in view 1 (96 kHz) and the trainer took them in - but the analyzer's second
+  look in view 0 takes view 0's answer only for a class view 1's model lacks,
+  and that rule was validated with the 12.5 kHz channel classes absent there.
+  They are kept out (their view-1 rows are not trained, as before)
+- **Ensembles** (2026-11-22, model format 4): several fits of the same data
+  (seeds only) averaged per view; `tmp/retrain/bin/make_ens.py` builds one from
+  fits and refits `min_confidence` on the synthetic val split as the trainer
+  does (averaged probabilities are softer: 0.70-0.74 against 0.80-0.83 for one
+  fit), `thresholds.py` then works on it unchanged
 - **Per-class thresholds** (`thresholds.py`, phases 4-5): per shown class
   the lowest p >= `min_confidence` at which its synthetic val labels are
   >= 95 % right, raised above every wrong label of it on HALF A of the own
@@ -822,6 +949,93 @@ tone spacing, packet times and SNR. Not fixed yet.
   the library's rows with their measured class, offset, width and on-air
   times; then the all-pairs tone merge and a wider splatter rule. The bank
   changes need a retrain, judged over several seeds
+
+### Results (2026-11-22): corrected ISM truth, two detector rules, a wider bank, ensembles - the weights NOT replaced
+
+What changed: the library's ISM truth (9 class changes measured from the IQ,
+14 rows `truth: "undetermined"` - out of every score -, 236 rtl_433 rows with
+their measured offset, band, SNR and burst times; `eval_real.py` honours
+`truth`), the detector's FSK tone merge and keying-sidelobe rule (Core), the
+bank additions (Training), all training data regenerated (Z1-Z4, 59 000
+captures, test ZT 4 000, with the new detector), seven fits a generation,
+averaged ensembles (model format 4). Two generations: **A** with the P25
+deviation widening of the brief (0.8-1.6 x in 35 %), **B** without it (the
+same caches with those rows dropped - see Training: it laid P25 over DMR /
+NXDN / YSF). Every table below on the CORRECTED library; "shipped" = the model
+and tool of a7f3708 re-run on it; "final tree" = the shipped weights with this
+round's detector (what `sigclass.model` + the code are now). Track level; the
+evaluation of 2026-11-21. Exact (family).
+
+| set | shipped | final tree (shipped weights) | A: 7 single fits min / median / max | A: ensemble 1,2,5,6,7 | B: 7 single fits | B: ensemble 1,2,5,6,7 |
+|---|---|---|---|---|---|---|
+| public decoder-confirmed (336) | 193 (244) | 196 (253) | 245 / 253 / 263 | 263 (296) | 242 / 252 / 258 | 262 (290) |
+| ... without the ISM classes (96) | 69 (79) | 69 | 68 / 69 / 70 | 68 | 67 / 69 / 70 | 69 |
+| ... ISM (240): two classes | 124 | 127 | 176 / 183 / 195 | 195 | 173 / 182 / 189 | 193 |
+| ... ISM: OOK <-> FSK swaps right | 153 | 144 | 198 / 201 / 208 | 216 | 194 / 201 / 209 | 212 |
+| ... ISM: family | 165 | 175 | 201 / 206 / 211 | 215 | 194 / 204 / 211 | 208 |
+| ... ISM OOK (146) / FSK (94) | 94 / 30 | 94 / 33 | 101-118 / 70-77 | 114 / 81 | 100-116 / 73-78 | 115 / 78 |
+| ... half A (165, the tuning half) | 98 | 99 | 117 / 124 / 127 | 131 | 121 / 125 / 127 | 128 |
+| ... half B (171, test) | 95 | 97 | 124 / 129 / 136 | 132 | 121 / 128 / 131 | 134 |
+| own captures (122 of known class) | 112 | 112 | 104 / 108 / 111 | 110 | 105 / 110 / 113 | 108 |
+| ... busy trunked sites (83) / single (35) / IM (4) | 77 / 33 / 2 | 77 / 33 / 2 | 70-76 / 32-33 / 2 | 75 / 33 / 2 | 71-77 / 32-34 / 2 | 73 / 33 / 2 |
+| own: sure right / sure wrong | 104 / 0 | 104 / 0 | 73-103 / 0-2 | 101 / 1 | 90-104 / 0-4 | 102 / 0 |
+| public confirmed: sure right / wrong | 70 / 0 | 69 / 0 | 55-68 / 0-1 | 116 / 0 | 61-95 / 0-4 | 62 / 1 |
+| ISM FSK twins (94) / OOK twins (146) | 26 / 131 | 24 / 133 | 62-76 / 130-136 | 71 / 137 | 60-72 / 127-136 | 71 / 139 |
+| synthetic regression set: track right / false labels | 0.649 / 140 | 0.648 / 127 | 0.640-0.645 / 114-131 | 0.648 / 102 | 0.640-0.647 / 101-140 | 0.650 / 109 |
+| synthetic val / test top-1 | - | - | 0.889-0.899 / 0.866-0.875 | 0.907 / 0.883 | 0.895-0.902 / 0.870-0.883 | 0.910 / 0.886 |
+
+- **Averaging** (item 12, judged on the tuning data only): generation A, half
+  A singles 117-127 (median 124, spread 10), five 3-member ensembles 127-132
+  (spread 5), three 5-member ensembles 128-131 (3); synthetic val 0.889-0.899 /
+  0.9035-0.9062 / 0.9059-0.9068. Higher than the median single fit and a
+  smaller spread: implemented as model format 4 (Core). The public sure share
+  rose most (A: 116 right / 0 wrong against 55-68 for one fit)
+- **Choice** (synthetic val + public half A only): among the 5-member ensembles
+  the highest half A, then val: A 1,2,5,6,7 (131, 0.9068); B 1,2,5,6,7 (128,
+  0.9097). Thresholds `thresholds.py --real-group confirmed --prec 0.95`: A
+  gives `ism_ook` 0.97 and `ism_fsk` 0.99 (sure possible - a confidently wrong
+  half-A ISM row no longer forces "never"), B gives both 1.01 (a half-A ISM OOK
+  row wrong at p 1.00): B's ISM labels are never sure. Unknown families (B):
+  unk_fsk 1.01, unk_noise 0.87, unk_ofdm 0.82, unk_pulse 0.943, unk_psk the
+  global min_confidence 0.70
+- **Why not shipped** (the acceptance stated before generation B's numbers
+  were seen: own captures at most one row below with no sure-and-wrong label,
+  non-ISM public at most one below, playback 28 / 28 in one of two runs and >= 27
+  in the other, ISM / twins / public sure labels better, false labels not
+  higher): A's ensemble 110 own (-2) with one sure wrong, playback 27 and 27
+  (DVB-T read "ATSC 3.0" 71-74 % in both); B's ensemble 108 own (-4) and fewer
+  public sure labels (62 / 1 against 70 / 0). The own-capture rows lost:
+  P25 channels of the 499.8 MHz site and of the 5-antenna 142.3 MHz capture
+  (to DMR, unknown PSK, none - in 1-5 of 7 fits each, both generations) and
+  the 526.5 MHz DVB-T band-edge capture ("Unknown OFDM 0.65-0.82" in all 14
+  fits; the shipped weights on the final tree still read DVB-T, so it is the
+  training, not the detector). Not tuned on: they are test data
+- **The final tree** keeps the shipped weights: with the new detector they
+  give own 112 (unchanged), non-ISM 69, public confirmed 196 (+3), ISM family
+  175 (+10) but OOK <-> FSK-swap score 144 (-9: whole FSK detections the old
+  weights never saw), FSK twins 24 (-2), false labels on single-service public
+  recordings 9 -> 6 sure, 67 -> 56 unsure, on the synthetic regression set 140
+  -> 127. Strict playback through a TEST build of the final tree, two runs: 28
+  and 28 of 28 (25 / 24 sure; POCSAG, DVB-T 55-69 %, wildlife or DMR /
+  radiosonde unsure); `ism-six-devices` without a stray label (6 / 14 tracks,
+  all ISM). Generation A's ensemble: 27 and 27. `eval_real.py --selfcheck` 10 of
+  10 (shipped weights and A's ensemble), `selftest` passes, detector
+  acceptance set byte-identical, `make kraken_doa sigclass-tool` without a
+  warning
+- **What remains weak**: P25 against DMR on the weak channels of the two P25
+  sites (the new fits; the shipped weights get them); DVB-T read as ATSC 3.0 in
+  the playback (both generations; known since phase 3) and the 526.5 MHz edge
+  capture; the ISM rows still wrong (~45 of 240) are mostly short files read in
+  one short snapshot; the public sure labels of generation B. Not in this
+  round: generators for DFM, MRZ, iMet-4, dPMR
+- Reproduce: `tmp/retrain/bin/` - `stage_lib.py` (the library staging),
+  `frag_twins.py` / `frag_syn.py` (the fragment rates), `gen.sh` (the data),
+  `truth_regen.sh` + `drop_devwide.py` (generation B), `fit.sh` / `fit2.sh`,
+  `make_all_ens2.sh` (`train.py ensemble`), `evalm.sh` / `evalm2.sh`
+  (eval_real + thresholds + `report.py` + twins + the regression set),
+  `summary.py`, `syn_eval.py`, `fsk4_val.py`; caches kept in
+  `~/.cache/kraken_sigclass/ds_2026-11-22/`; the best new models in
+  `tmp/retrain/ev/e12567_thr.model` (A) and `ev/f12567_thr.model` (B)
 
 ### Results (2026-11-20, phase 5, the weights still shipped)
 

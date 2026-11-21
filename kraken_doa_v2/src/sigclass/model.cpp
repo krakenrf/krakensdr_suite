@@ -2,7 +2,7 @@
 //
 // sigclass.model, little-endian (tools/sigclass/model_io.py writes and reads it):
 //   char[8]  "KSIGCLS\0"
-//   u32      format version (1, 2 or 3; this build reads all)
+//   u32      format version (1 - 4; this build reads all)
 //   u32      feature layout version (FEATURE_LAYOUT_VERSION)
 //   u64      feature layout hash (layout_hash(); must match the code)
 //   u32      feature dim D
@@ -26,7 +26,12 @@
 //                (0 = none, 1 = ReLU), f32[out x in] W (row-major), f32[out] b
 //              (first in = D, or D - Cin x S + pools x K with a front end;
 //               in = previous out, last out = C, last activation 0)
-//   format 3 only - the RF plausibility table (no table = no mask):
+//   format 4: a view may have up to MEMBERS_MAX entries - the members of an
+//              ensemble (fits of the same data): every entry of a view has the
+//              same classes (ids and names, in order); the view's probabilities
+//              are the mean of the members' (each with its own temperature,
+//              normalisation, front end and layers). Formats 1 - 3: one entry a view
+//   formats 3 - 4 - the RF plausibility table (no table = no mask):
 //   u32      classes with an entry (<= 4096), per class:
 //              u16 id_len, id bytes, u8 flags (bit 0 generic: plausible anywhere),
 //              u32 ranges (<= 64), f64[2 x ranges] [lo, hi] Hz (0 = no range: anywhere)
@@ -49,7 +54,8 @@ namespace sigclass {
 namespace {
 
 constexpr char MAGIC[8] = {'K', 'S', 'I', 'G', 'C', 'L', 'S', '\0'};
-constexpr uint32_t FORMAT_VERSION = 3, FORMAT_MIN = 1;
+constexpr uint32_t FORMAT_VERSION = 4, FORMAT_MIN = 1;
+constexpr uint32_t MEMBERS_MAX = 16;   // ensemble members a view (format 4)
 constexpr uint32_t RF_CLASSES_MAX = 4096, RF_RANGES_MAX = 64, RF_BANDS_MAX = 256, RF_ONLY_MAX = 256, RF_ID_MAX = 256;
 // the front end's bounds (a hostile file must not make it allocate or loop
 // without limit): taps, filters, channels, sequence length
@@ -80,14 +86,19 @@ struct RfBand {
     double lo = 0, hi = 0;
 };
 
-struct ViewModel {
-    bool present = false;
+// one network of a view (format 4: one of its ensemble members)
+struct Net {
     Conv conv;
-    std::vector<RfClass> rf;   // per class (empty: no table)
     float temperature = 1.0f;
-    std::vector<ClassInfo> classes;
     std::vector<float> mean, inv_std;
     std::vector<Layer> layers;
+};
+
+struct ViewModel {
+    bool present = false;
+    std::vector<RfClass> rf;   // per class (empty: no table)
+    std::vector<ClassInfo> classes;
+    std::vector<Net> nets;     // 1, or the ensemble's members (format 4)
 };
 
 struct Reader {
@@ -237,36 +248,46 @@ bool Model::load_from_memory(const void* data, size_t size, std::string* err) {
     const uint32_t ml = r.u32();
     impl->meta = r.str(ml);
     const uint32_t nv = r.u32();
-    if (!r.ok || nv > uint32_t(NUM_VIEWS)) return fail("bad view count");
+    if (!r.ok || nv > uint32_t(NUM_VIEWS) * (fv >= 4 ? MEMBERS_MAX : 1u)) return fail("bad view count");
     const int D = feature_dim();
     for (uint32_t q = 0; q < nv; q++) {
         const uint32_t v = r.u32();
         if (!r.ok || v >= uint32_t(NUM_VIEWS)) return fail("bad view index");
         ViewModel& vm = impl->views[v];
-        if (vm.present) return fail("view " + std::to_string(v) + " twice");
+        // (format 4: another entry of a view is one more member of its ensemble)
+        if (vm.present && (fv < 4 || vm.nets.size() >= MEMBERS_MAX)) return fail("view " + std::to_string(v) + " twice");
         const uint32_t C = r.u32();
-        vm.temperature = r.f32();
+        Net net;
+        net.temperature = r.f32();
         if (!r.ok || C < 1 || C > 100000) return fail("bad class count");
-        if (!finite32(vm.temperature) || !(vm.temperature >= TEMP_MIN && vm.temperature <= TEMP_MAX))
+        if (!finite32(net.temperature) || !(net.temperature >= TEMP_MIN && net.temperature <= TEMP_MAX))
             return fail("bad temperature");
-        vm.classes.resize(C);
+        std::vector<ClassInfo> cls(C);
         for (uint32_t c = 0; c < C; c++) {
-            vm.classes[c].id = r.str(r.u16());
-            vm.classes[c].name = r.str(r.u16());
+            cls[c].id = r.str(r.u16());
+            cls[c].name = r.str(r.u16());
+        }
+        if (!r.ok) return fail("truncated class list");
+        if (vm.present) {
+            bool same = cls.size() == vm.classes.size();
+            for (size_t c = 0; same && c < cls.size(); c++) same = cls[c].id == vm.classes[c].id && cls[c].name == vm.classes[c].name;
+            if (!same) return fail("the members of view " + std::to_string(v) + " have different classes");
+        } else {
+            vm.classes = std::move(cls);
         }
         std::vector<float> sd;
-        if (!r.floats(vm.mean, size_t(D)) || !r.floats(sd, size_t(D))) return fail("truncated normalisation");
-        vm.inv_std.resize(size_t(D));
+        if (!r.floats(net.mean, size_t(D)) || !r.floats(sd, size_t(D))) return fail("truncated normalisation");
+        net.inv_std.resize(size_t(D));
         for (int i = 0; i < D; i++) {
-            if (!finite32(vm.mean[size_t(i)]) || !finite32(sd[size_t(i)])) return fail("non-finite normalisation");
-            vm.inv_std[size_t(i)] = std::fabs(sd[size_t(i)]) > 1e-12f ? 1.0f / sd[size_t(i)] : 0.0f;
+            if (!finite32(net.mean[size_t(i)]) || !finite32(sd[size_t(i)])) return fail("non-finite normalisation");
+            net.inv_std[size_t(i)] = std::fabs(sd[size_t(i)]) > 1e-12f ? 1.0f / sd[size_t(i)] : 0.0f;
         }
         int prev = D;
         if (fv >= 2) {
             const uint32_t fe = r.u32();
             if (!r.ok || fe > 2) return fail("bad front end in view " + std::to_string(v));
             if (fe == 2) {
-                Conv& c = vm.conv;
+                Conv& c = net.conv;
                 const uint32_t off = r.u32(), S = r.u32(), C = r.u32();
                 if (!r.ok || C < 1 || C > CONV_C_MAX || S < 1 || S > CONV_S_MAX || uint64_t(off) + uint64_t(C) * S > uint64_t(D) ||
                     uint64_t(C) * S >= uint64_t(D))
@@ -278,7 +299,7 @@ bool Model::load_from_memory(const void* data, size_t size, std::string* err) {
                 prev = D - int(C * S);
             }
             if (fe == 1) {
-                Conv& c = vm.conv;
+                Conv& c = net.conv;
                 const uint32_t off = r.u32(), S = r.u32(), C = r.u32(), K = r.u32(), L = r.u32(), pools = r.u32();
                 // every product in 64 bits, bounded before anything is allocated
                 if (!r.ok || C < 1 || C > CONV_C_MAX || S < 1 || S > CONV_S_MAX || K < 1 || K > CONV_K_MAX || L < 1 ||
@@ -323,9 +344,10 @@ bool Model::load_from_memory(const void* data, size_t size, std::string* err) {
             for (float x : L.w) if (!finite32(x)) return fail("non-finite weight");
             for (float x : L.b) if (!finite32(x)) return fail("non-finite bias");
             prev = L.out;
-            vm.layers.push_back(std::move(L));
+            net.layers.push_back(std::move(L));
         }
-        if (prev != int(C) || vm.layers.back().act != 0) return fail("last layer must be linear with one output per class");
+        if (prev != int(C) || net.layers.back().act != 0) return fail("last layer must be linear with one output per class");
+        vm.nets.push_back(std::move(net));
         vm.present = true;
     }
     if (fv >= 3) {
@@ -441,20 +463,20 @@ const std::string& Model::meta_json() const {
     return impl_ ? impl_->meta : empty;
 }
 
-bool Model::predict(int view, const float* x, std::vector<float>& probs) const {
-    probs.clear();
-    if (!has_view(view) || !x) return false;
-    const ViewModel& vm = impl_->views[view];
+namespace {
+
+// one network's probabilities (softmax of its last layer / its temperature)
+void net_forward(const Net& nt, const float* x, std::vector<float>& probs) {
     const int D = feature_dim();
     std::vector<float> a, b;
-    const Conv& cv = vm.conv;
+    const Conv& cv = nt.conv;
     const bool slice = cv.on || cv.skip;
     const int s0 = slice ? cv.off : D, s1 = slice ? cv.off + cv.C * cv.S : D;
     a.reserve(size_t(D) + (cv.on ? size_t(cv.pools * cv.K) : 0));
     for (int i = 0; i < D; i++) {
         if (i >= s0 && i < s1) continue;   // the sequence goes through the front end
         const float v = finite32(x[i]) ? x[i] : 0.0f;
-        a.push_back((v - vm.mean[size_t(i)]) * vm.inv_std[size_t(i)]);
+        a.push_back((v - nt.mean[size_t(i)]) * nt.inv_std[size_t(i)]);
     }
     if (cv.on) {
         // Conv1D (C in, K out, L taps, stride 1) + ReLU, pooled over time: per
@@ -492,7 +514,7 @@ bool Model::predict(int view, const float* x, std::vector<float>& probs) const {
         // the max of every filter, then (pools 2) the means
         for (int q = 0; q < cv.pools * cv.K; q++) a.push_back((pooled[size_t(q)] - cv.pmean[size_t(q)]) * cv.pinv[size_t(q)]);
     }
-    for (const Layer& L : vm.layers) {
+    for (const Layer& L : nt.layers) {
         b.assign(size_t(L.out), 0.0f);
         for (int o = 0; o < L.out; o++) {
             const float* w = L.w.data() + size_t(o) * size_t(L.in);
@@ -505,7 +527,7 @@ bool Model::predict(int view, const float* x, std::vector<float>& probs) const {
     }
     float mx = -3.0e38f;
     for (float& v : a) {
-        v = finite32(v) ? std::clamp(v / vm.temperature, -LOGIT_MAX, LOGIT_MAX) : 0.0f;
+        v = finite32(v) ? std::clamp(v / nt.temperature, -LOGIT_MAX, LOGIT_MAX) : 0.0f;
         mx = std::max(mx, v);
     }
     double sum = 0.0;
@@ -515,6 +537,27 @@ bool Model::predict(int view, const float* x, std::vector<float>& probs) const {
     }
     probs.resize(a.size());
     for (size_t i = 0; i < a.size(); i++) probs[i] = float(a[i] / sum);
+}
+
+}  // namespace
+
+bool Model::predict(int view, const float* x, std::vector<float>& probs) const {
+    probs.clear();
+    if (!has_view(view) || !x) return false;
+    const ViewModel& vm = impl_->views[view];
+    if (vm.nets.size() == 1) {
+        net_forward(vm.nets[0], x, probs);
+        return true;
+    }
+    // an ensemble (format 4): the mean of its members' probabilities
+    std::vector<double> acc(vm.classes.size(), 0.0);
+    std::vector<float> p;
+    for (const Net& n : vm.nets) {
+        net_forward(n, x, p);
+        for (size_t i = 0; i < acc.size() && i < p.size(); i++) acc[i] += p[i];
+    }
+    probs.resize(acc.size());
+    for (size_t i = 0; i < acc.size(); i++) probs[i] = float(acc[i] / double(vm.nets.size()));
     return true;
 }
 

@@ -73,6 +73,12 @@ struct Config {
     // a detection at the mirror frequency of a much stronger signal is its IQ image when
     // the conjugate of that signal holds at least this share of its view's energy over the noise
     float image_share = 0.1f;
+    // two detections that are the tones of one wide-shift FSK transmitter (on and off
+    // together at burst level, complementary power at sample level) become one
+    bool tone_merge = true;
+    // a burst's keying sidelobes are part of it out to this many of its widths (the
+    // 1 / (pi f Tp)^2 envelope test, detector.cpp; 0 = only the near splatter rule)
+    float sidelobe_widths = 8.0f;
 };
 
 struct Detection {

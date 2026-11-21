@@ -112,9 +112,9 @@ def times(rng, seconds, dur, gap, start=(0.2, 1.0)):
 # post-processing: rate (decimate to), recentre (shift the measured centre to
 # 0 Hz), merge_ms (gaps shorter than this inside one on-air interval)
 
-def j(steps, out, variant, rate=None, files=None, recentre=True, merge_ms=30, seconds=None):
+def j(steps, out, variant, rate=None, files=None, recentre=True, merge_ms=30, seconds=None, drift=None):
     return {'steps': steps, 'out': out, 'variant': variant, 'rate': rate, 'files': files or {},
-            'recentre': recentre, 'merge_ms': merge_ms}
+            'recentre': recentre, 'merge_ms': merge_ms, 'drift': drift}
 
 
 def rc_dmr(rng, k, quick):
@@ -224,8 +224,12 @@ def rc_tetra(rng, k, quick):
     # generator / decoder mismatch, reported - see README)
     cc = int(rng.choice(TETRA_CC_OK))
     mcc, mnc, la = int(rng.integers(200, 800)), int(rng.integers(1, 100)), int(rng.integers(1, 16000))
+    # (2026-11-22) --traffic: a loaded cell - every burst's SCH/F and AACH carry other bits.
+    # Before, every normal burst was the same empty one, so the clips' frame groups showed
+    # peaks of 2-4 at the slot and frame lags where real TETRA shows ~0
     a = [G('tetra', 'tetra_gen.py'), 'x.cf32', '--mcc', str(mcc), '--mnc', str(mnc), '--cc', str(cc), '--la', str(la),
-         '--carrier', str(int(rng.integers(0, 4096))), '--seed', str(int(rng.integers(1, 1 << 30)))]
+         '--carrier', str(int(rng.integers(0, 4096))), '--seed', str(int(rng.integers(1, 1 << 30))),
+         '--traffic', str(int(rng.integers(1, 1 << 30)))]
     if rng.random() < 0.75:
         a += ['--at', '0', '--dur', str(S)]
         v = {'keyed': False}
@@ -233,8 +237,9 @@ def rc_tetra(rng, k, quick):
         for at, d in times(rng, S, (1.5, 5.0), (0.3, 2.0)) or [(0.3, 2.0)]:
             a += ['--at', str(at), '--dur', str(d)]
         v = {'keyed': True}
-    v.update({'cc': cc})
-    return j([a], 'x.cf32', v)
+    v.update({'cc': cc, 'traffic': True})
+    # a base station's carrier wandering slowly (rms 1 - 15 Hz, correlation time 0.2 - 2 s)
+    return j([a], 'x.cf32', v, drift=(float(rng.uniform(1, 15)), float(rng.uniform(0.2, 2.0)), int(rng.integers(1, 1 << 30))))
 
 
 def rc_mpt1327(rng, k, quick):
@@ -804,6 +809,14 @@ def rc_then_synth(first, n_first, kind, S, Sq):
     return f
 
 
+def rc_then(first, n_first, second):
+    """clips 0 .. n_first-1 from the first recipe (as they were), the later ones from the
+    second (clip k keeps its index: its random generator does not change)"""
+    def f(rng, k, quick):
+        return first(rng, k, quick) if k < n_first else second(rng, k, quick)
+    return f
+
+
 def rc_split(*parts):
     """clips by index range: parts = (n, recipe), ... - the first n clips from the
     first recipe, the next n from the second, ..."""
@@ -825,13 +838,18 @@ RECIPES = {
     'p25p2': (rc_p25p2, 24),
     # NXDN96 (nxdn_gen.py) and NXDN48 (synth.py)
     'nxdn': (rc_then_synth(rc_nxdn, 20, 'nxdn48', 16, 4), 32), 'ysf': (rc_ysf, 20),
-    'dstar': (rc_dstar, 24), 'tetra': (rc_tetra, 24), 'mpt1327': (rc_mpt1327, 16), 'pocsag': (rc_pocsag, 24), 'flex': (rc_flex, 24),
+    'dstar': (rc_dstar, 24), 'tetra': (rc_tetra, 36), 'mpt1327': (rc_mpt1327, 16), 'pocsag': (rc_pocsag, 24), 'flex': (rc_flex, 24),
     'aprs': (rc_aprs, 40), 'v23': (rc_v23, 30), 'nfm_voice': (rc_nfm, 30), 'ais': (rc_ais, 40), 'acars': (rc_acars, 40),
     'vdl2': (rc_vdl2, 40), 'radiosonde': (rc_radiosonde, 16), 'beacon406': (rc_beacon406, 30), 'wildlife': (rc_wildlife, 30),
     'am_voice': (rc_synth('am', 20, 6), 30), 'ssb': (rc_synth('ssb', 20, 6), 24), 'cw': (rc_synth('cw', 20, 6), 20),
     'carrier': (rc_synth('carrier', 12, 4), 20), 'vor': (rc_then_synth(rc_vor, 12, 'vor', 16, 4), 24), 'ils_loc': (rc_ils_loc, 12),
-    'lora': (rc_lora, 48), 'ism_ook': (rc_then_synth(rc_ism(False), 64, 'ism_ook', 6, 3), 104), 'ism_fsk': (rc_then_synth(rc_ism(True), 50, 'ism_fsk', 6, 3), 80), 'flarm': (rc_flarm, 30),
-    'wfm': (rc_then_synth(rc_wfm, 24, 'wfm', 8, 3), 48), 'adsb': (rc_adsb, 16), 'uat': (rc_uat, 16), 'dme': (rc_dme, 12), 'ssr1030': (rc_ssr, 12), 'radar': (rc_radar, 24),
+    # ISM (2026-11-22): + generic FSK over the whole bit-time / tone-spacing range (ism_fsk2,
+    # clips 80-239) and OOK with long / very short / shallow keying and ASK (ism_ook2, 104-203)
+    'lora': (rc_lora, 48),
+    'ism_ook': (rc_then(rc_then_synth(rc_ism(False), 64, 'ism_ook', 6, 3), 104, rc_synth('ism_ook2', 6, 3)), 204),
+    'ism_fsk': (rc_then(rc_then_synth(rc_ism(True), 50, 'ism_fsk', 6, 3), 80, rc_synth('ism_fsk2', 6, 3)), 240), 'flarm': (rc_flarm, 30),
+    # + loud, dense stations (wfm_loud, clips 48-63: real ones are detected 100-130 kHz wide)
+    'wfm': (rc_then(rc_then_synth(rc_wfm, 24, 'wfm', 8, 3), 48, rc_synth('wfm_loud', 8, 3)), 64), 'adsb': (rc_adsb, 16), 'uat': (rc_uat, 16), 'dme': (rc_dme, 12), 'ssr1030': (rc_ssr, 12), 'radar': (rc_radar, 24),
     'dab': (rc_dab, 16), 'dvbt': (rc_dtv('dvbt'), 32), 'dvbt2': (rc_dtv('dvbt2'), 30), 'isdbt': (rc_dtv('isdbt'), 24),
     'dtmb': (rc_dtv('dtmb'), 18), 'atsc': (rc_dtv('atsc'), 16), 'atsc3': (rc_dtv('atsc3'), 28),
     'lte': (rc_cells('lte'), 40), 'nr': (rc_cells('nr'), 32), 'analogtv': (rc_analogtv, 12),
@@ -912,6 +930,19 @@ def finish(job, work_dir, dest, meta_base):
     x = read_output(os.path.join(work_dir, job['out']), side).astype(np.complex128)
     if not np.all(np.isfinite(x)):
         raise RuntimeError('non-finite samples')
+    if job.get('drift'):
+        # a slow carrier frequency drift: an Ornstein-Uhlenbeck frequency (rms sd Hz,
+        # correlation time tau s) at 100 points a second, interpolated, integrated to phase
+        sd, tau, ds = job['drift']
+        dr = np.random.default_rng(ds)
+        m = int(len(x) / rate * 100) + 2
+        a = np.exp(-0.01 / tau)
+        fq = np.zeros(m)
+        fq[0] = dr.normal(0, sd)
+        for i in range(1, m):
+            fq[i] = a * fq[i - 1] + sd * np.sqrt(1 - a * a) * dr.normal()
+        fs_ = np.interp(np.arange(len(x)) / rate, np.arange(m) / 100.0, fq)
+        x = x * np.exp(2j * np.pi * np.cumsum(fs_) / rate)
     shift = 0.0
     if job['recentre']:
         f, p = psd(x, rate)

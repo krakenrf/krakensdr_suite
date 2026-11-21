@@ -10,7 +10,7 @@ is a conda without them, run `/usr/bin/python3`.
 |---|---|
 | `classes.json` | The class table: id, name, decoder plugin, click-to-tune demod / VFO width, occupied bandwidth range, burst / continuous, family; the RF plausibility table (per class `rf_hz` ranges, `generic`, top-level exclusive `bands`: the model carries it, the receiver masks by its tuned frequency). The single source of class ids. |
 | `bank.py` | Builds the clean signal bank: per class many clips made by the plugins' own test-signal generators (`plugins/<id>/tools/*_gen.*`, run as separate programs) and `synth.py`, seeded random IDs, payloads, modes, speeds, timing. |
-| `synth.py` | The classes no plugin generator makes: AM voice (25 / 8.33 kHz), SSB (USB / LSB), CW Morse, carriers, broadcast FM, generic OOK / FSK ISM devices; the unknown families (random FSK / GFSK / AFSK, PSK / QAM, OFDM, pulse trains, band-limited noise - kept away from the known systems' symbol rates, subcarrier spacings and pulse timings); physical-layer variants the plugin generators lack: a P25 control channel in C4FM and P25 in CQPSK / LSM (p25_gen.py's frame sync, NID and voice frames, random TSBKs), NXDN48 (nxdn_gen.py's filter and sync word, random payload symbols), VOR at measured depths. |
+| `synth.py` | The classes no plugin generator makes: AM voice (25 / 8.33 kHz), SSB (USB / LSB), CW Morse, carriers, broadcast FM, generic OOK / FSK ISM devices; the unknown families (random FSK / GFSK / AFSK, PSK / QAM, OFDM, pulse trains, band-limited noise - kept away from the known systems' symbol rates, subcarrier spacings and pulse timings); physical-layer variants the plugin generators lack: a P25 control channel in C4FM and P25 in CQPSK / LSM (p25_gen.py's frame sync, NID and voice frames, random TSBKs), NXDN48 (nxdn_gen.py's filter and sync word, random payload symbols), VOR at measured depths; (2026-11-22) ISM FSK over bit times 10 us - 2 ms and tone spacings 10 - 200 kHz drawn independently (`ism_fsk2`), OOK with long / very short / shallow keying and ASK (`ism_ook2`), loud broadcast FM (`wfm_loud`). |
 | `thresholds.py` | Per-class "sure" thresholds (`min_p`) for a trained model, from the synthetic val split and half of the own native captures. |
 | `scenes.py` | The scene composer: 0.5 s (configurable) 2.4 MHz cu8 captures with 0-8 signals, channel and RTL-SDR impairments, truth as JSON lines, written in batches for the feature tool to consume. |
 
@@ -21,8 +21,9 @@ Never inside the repository. Work folder: `--work DIR`, else
 `WORK/bank/<class>/<clip>.cf32` (complex64, centred on 0 Hz, power 1 while
 on air) + `.json` (rate, measured centre / 99 % bandwidth, on-air
 intervals, duty, peak, variant tags, the generator commands) and
-`WORK/bank/index.json`. About 39 GB for the default bank (1582 clips, 4.6 h
-of signal; the 2.4 MHz classes are most of it). Captures go to `/dev/shm/kraken_sigclass/scenes`
+`WORK/bank/index.json`. About 43 GB for the default bank (1878 clips since
+2026-11-22: + 160 ISM FSK, 100 ISM OOK, 16 FM clips, TETRA 24 -> 36 made
+with `tetra_gen.py --traffic`; the 2.4 MHz classes are most of it). Captures go to `/dev/shm/kraken_sigclass/scenes`
 unless `--out`.
 
 ## Build the bank
@@ -91,7 +92,18 @@ test XT 4 000 (2). The caches keep the symbol sequence apart (`Q`, int8 x
 127) from the other features (`X`). `fit --conv-views 0,1 [--conv-k 32
 --conv-l 24]` trains the learned front end (a Conv1D over the sequence;
 `--conv-views none` = without - the shipped model, see the doc's Results);
-`--drop-groups`, `--drop-edge-none` are ablations. Then the per-class sure
+`--drop-groups`, `--drop-edge-none` are ablations; `--exclude-view-classes`
+(default: the 12.5 kHz channel classes out of view 1, which the analyzer's
+second look in view 0 relies on). The 2026-11-22 data: Z1 24 000 (seed 11), Z2
+16 000 (12), Z3 3 000 wide (13), Z4 16 000 (14), test ZT 4 000 (2), seven fits
+(`--seed 1..7`), several fits averaged into one model (format 4):
+
+```bash
+python3 $T/train.py ensemble OUT.model FIT1.model FIT2.model ... --data $W/ds/Z1.npz,... --work $W
+```
+
+(per view the members' probabilities averaged; `min_confidence` refitted on
+the val split). Then the per-class sure
 thresholds (`min_p` in the metadata's classes - the service passes it
 through on every track):
 
@@ -181,6 +193,12 @@ signal (the library's `expect` rows). Its docstring has every rule; in short
   because the fill took the stopband level. Discriminator audio: FM
   re-modulated (a weaker test, apart). 8 bits at a realistic level, >= 0.8
   LSB of receiver noise.
+- **Undetermined truth**: a row with `truth: "undetermined"` (the library
+  could not establish its class from the recording - 14 ISM rows since
+  2026-11-22: no sample rate, clipped for the whole burst, too short, no
+  keying visible) is in the group `undetermined`: listed, never scored (an
+  entry with only such rows is not fed at all). `--index FILE` evaluates
+  against another index.json than the library's (a staged one).
 - **Groups, per row** from what the library states: native (own captures in
   the receiver's format); open (no class for it, or `unknown`); disc_audio;
   confirmed (rtl_433's corpus, or `verified` reports a positive decoder count
@@ -205,6 +223,18 @@ signal (the library's `expect` rows). Its docstring has every rule; in short
   opening with 3 s of exact zeros -, a silent file, a noise-only file); exit
   1 on a failure. The old feed failed the two IF-filtered cases (unknown
   noise); the new one passes all 10.
+
+## Results (2026-11-22: corrected ISM truth, retrain - the weights not replaced)
+
+Full tables in the doc ("Results (2026-11-22)"). On the corrected library,
+track level, shipped -> the best new ensemble (5 fits averaged, chosen by
+synthetic val + public half A): public confirmed 193 -> 262-263 of 336, ISM
+124 -> 193-195 of 240, FSK twins 26 -> 71 of 94, non-ISM 69 -> 68-69, own
+captures 112 -> 108-110 of 122 (P25 channels of two sites, a DVB-T band-edge
+capture), playback 27 / 27 (DVB-T as ATSC 3.0). By the acceptance stated
+beforehand the new weights do not ship; `sigclass.model` stays, with the new
+detector (own 112, confirmed 196, fewer false labels). Seven fits a
+generation: single-fit spreads in the doc.
 
 ## Results (2026-11-21: the fair evaluation, the core fixes, global thresholds)
 
@@ -290,7 +320,7 @@ end (it was no better on real data; the code is in and off), per-class
 - dmr / dstar / nxdn / p25 / tetra generators take `--seed` (the bank seeds
   every clip); sfn_gen and dab_gen have none (dab_gen's audio is a tone per
   service), analogtv has one test card, tetra_gen's payload is the empty
-  SCH/F every frame.
+  SCH/F every frame without `--traffic` (which the bank uses since 2026-11-22).
 - tetra_gen.py's output does not decode for 18 of the 64 colour codes
   (2, 3, 5, 8, 10, 17-20, 27, 28, 34, 38-40, 46, 52, 54): the bank uses
   the others.

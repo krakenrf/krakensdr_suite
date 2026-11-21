@@ -77,7 +77,10 @@ model has no class for, or "unknown": right when labelled unk_* / none /
 below min_confidence); disc_audio; confirmed (rtl_433's test corpus, or the
 entry's `verified` reports a positive decoder count and the row's own note
 does not say it is not decoded / unverified / undetermined); probe (no
-decoder run, only the format / spectrum checked); unconfirmed (the rest).
+decoder run, only the format / spectrum checked); unconfirmed (the rest);
+undetermined (the row's `truth: "undetermined"` - the library could not
+establish its class from the recording: listed, never scored; an entry
+with only such rows is not fed at all).
 
 False labels: every drawn track that overlaps no row of its entry (any row
 with an offset, on air or not, known class or not), per capture, sure /
@@ -170,6 +173,8 @@ def entry_decoded(e):
 
 
 def group_of(e, x, known):
+    if x.get('truth') == 'undetermined':
+        return 'undetermined'       # the library could not establish the row's class: in no score
     if is_native(e):
         return 'native'
     if x['class'] not in known:
@@ -634,6 +639,9 @@ def one(args):
     exp = [x for x in (e.get('expect') or []) if x.get('class')] or [{'class': e['signals'][0], 'offset_hz': None, 'bw_hz': None}]
     site = site_of(e, exp)
     base = {'id': e['id'], 'site': site}
+    if all(x.get('truth') == 'undetermined' for x in exp):
+        return [dict(base, group='undetermined', **{'class': x['class'], 'row': i, 'scored': False, 'on_air': air_kind(x),
+                                                   'why_not': 'truth undetermined'}) for i, x in enumerate(exp)]
     try:
         plan, why = plan_windows(e, exp, o.seconds, o.max_windows)
     except Exception as ex:  # noqa: BLE001
@@ -672,6 +680,10 @@ def one(args):
             x = exp[i]
             done.add(i)
             grp = group_of(e, x, known)
+            if grp == 'undetermined':
+                rows.append(dict(base, group=grp, **{'class': x['class'], 'row': i, 'window_s': t0, 'scored': False,
+                                                     'on_air': air_kind(x), 'why_not': 'truth undetermined'}))
+                continue
             row = dict(base, group=grp, **{'class': x['class'], 'row': i, 'window_s': t0, 'scored': True, 'on_air': air_kind(x),
                                            'on_s': round(on_time(x, t0, t0 + o.seconds)[0], 1) if air_kind(x) == 'intervals' else '',
                                            'rate': rate, 'snaps': len(lines), 'pedestal_db': info.get('pedestal_db', ''),
@@ -721,6 +733,9 @@ def summarise(rows, thr, out, t_run):
         lines.append(s)
         print(s)
     p('min_confidence %.2f; per-class min_p for %d classes; run time %.0f s' % (thr, len(MIN_P), t_run))
+    nu = sum(1 for r in rows if r['group'] == 'undetermined')
+    if nu:
+        p('undetermined truth (the library could not establish the class; not scored): %d rows' % nu)
     for grp in ('native', 'confirmed', 'probe', 'unconfirmed', 'disc_audio', 'open'):
         G = [r for r in rows if r['group'] == grp]
         if not G:
@@ -916,6 +931,7 @@ def main():
     global iqlib
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--library', default=os.environ.get('KRAKEN_IQ_LIBRARY') or os.path.expanduser('~/krakensdr_iq_library'))
+    ap.add_argument('--index', default='', help="another index.json for the library's entries (a staged one; default LIBRARY/index.json)")
     ap.add_argument('--model', default=os.path.join(REPO, 'sigclass.model'))
     ap.add_argument('--work', default=default_work())
     ap.add_argument('--out', default='')
@@ -940,7 +956,7 @@ def main():
     known = {c['id'] for c in load_classes()}
     if o.selfcheck:
         sys.exit(selfcheck(o, known, thr))
-    ents = iqlib.load_index(os.path.join(o.library, 'index.json'))['entries']
+    ents = iqlib.load_index(o.index or os.path.join(o.library, 'index.json'))['entries']
     sel = [e for e in ents if (not o.classes or e['signals'][0] in o.classes.split(',')) and (not o.ids or o.ids in e['id'])]
     t0 = time.time()
     with Pool(o.jobs) as pool:

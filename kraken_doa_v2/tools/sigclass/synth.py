@@ -6,8 +6,11 @@ trains, band-limited noise). One clean, noise-free transmitter per file.
 
   synth.py KIND OUT.cf32 --seed N [--seconds S]
 
-KIND: am | ssb | cw | carrier | wfm | ism_ook | ism_fsk | unk_fsk | unk_psk | unk_ofdm |
-      unk_pulse | unk_noise | p25cc | p25lsm | nxdn48 | vor | dmr_ms
+KIND: am | ssb | cw | carrier | wfm | wfm_loud | ism_ook | ism_ook2 | ism_fsk | ism_fsk2 |
+      unk_fsk | unk_psk | unk_ofdm | unk_pulse | unk_noise | p25cc | p25lsm | nxdn48 | vor | dmr_ms
+(ism_fsk2 / ism_ook2 / wfm_loud, 2026-11-22: ISM FSK over bit times 10 us - 2 ms and
+tone spacings 10 - 200 kHz drawn independently; OOK with long, very short or shallow
+keying and ASK with a residual carrier; loud, dense broadcast FM)
 (p25cc / p25lsm / nxdn48 / vor: physical-layer variants of plugin classes that
 their generators do not make - a P25 control channel in C4FM, P25 in CQPSK /
 LSM, NXDN 4800, VOR at measured rather than nominal depths.)
@@ -499,7 +502,14 @@ def music(n, rate, rng):
     return out / max(np.max(np.abs(out)), 1e-9)
 
 
-def gen_wfm(rng, seconds):
+def gen_wfm_loud(rng, seconds):
+    """broadcast FM as most stations sound now: the programme through a slow AGC and
+    a hard limiter (dense, loud audio), so the deviation sits near its 70 - 80 kHz
+    peak most of the time and the station occupies 150 - 200 kHz"""
+    return gen_wfm(rng, seconds, loud=True)
+
+
+def gen_wfm(rng, seconds, loud=False):
     """broadcast FM: music / speech, pre-emphasis, a limiter, stereo MPX with the 19 kHz
     pilot and (often) an RDS-like BPSK subcarrier at 57 kHz, up to 75 kHz deviation"""
     arate, rate = 48000, 480000
@@ -517,8 +527,14 @@ def gen_wfm(rng, seconds):
     out = []
     for a in (Lc, Rc):
         a = bandpass_audio(a, arate, 30, 15000)
+        if loud:
+            # a slow AGC (the level over ~50 ms brought up to one): dense, loud programme
+            w = int(0.05 * arate)
+            lv = np.sqrt(np.convolve(a * a, np.ones(w) / w, mode='same')) + 1e-3 * np.sqrt(np.mean(a * a))
+            a = a / lv
         a = a + tau * arate * np.diff(a, prepend=a[0])        # pre-emphasis (first order)
-        a = np.tanh(rng.uniform(1.5, 5) * a / max(np.max(np.abs(a)), 1e-9))   # the station's limiter
+        g = rng.uniform(6, 20) if loud else rng.uniform(1.5, 5)
+        a = np.tanh(g * a / max(np.max(np.abs(a)), 1e-9))   # the station's limiter
         out.append(resample_poly(a, 10, 1)[:int(seconds * rate)])
     L, R = out
     n = len(L)
@@ -538,9 +554,9 @@ def gen_wfm(rng, seconds):
         idx = np.minimum((t * 2375).astype(int), len(sym) - 1)
         b = np.convolve(sym[idx].astype(float), np.hanning(101) / np.hanning(101).sum(), mode='same')
         mpx = mpx + 0.04 * b * np.cos(2 * np.pi * 57000 * t)
-    dev = float(rng.uniform(45e3, 80e3))
+    dev = float(rng.uniform(70e3, 80e3) if loud else rng.uniform(45e3, 80e3))
     x = np.exp(1j * 2 * np.pi * dev * np.cumsum(mpx) / rate)
-    return rate, x, {'kind': kind, 'stereo': stereo, 'rds': rds, 'dev_khz': round(dev / 1e3), 'synth': True}
+    return rate, x, {'kind': kind, 'stereo': stereo, 'rds': rds, 'dev_khz': round(dev / 1e3), 'synth': 'wfm_loud' if loud else True}
 
 
 def gen_ism_ook(rng, seconds):
@@ -639,6 +655,165 @@ def gen_ism_fsk(rng, seconds):
         x[i0:i0 + L] = e * np.exp(1j * ph)
         t += L / rate + (rng.uniform(0.005, 0.05) if rng.random() < 0.5 else rng.uniform(0.25, 1.2))
     return rate, x, {'br': round(br), 'dev_khz': round(dev / 1e3, 1), 'manchester': manch, 'gauss': gauss, 'synth': True}
+
+
+def keyup_drift(rng, n, rate):
+    """a cheap transmitter's frequency at key-up (Hz per sample, n samples): an
+    oscillator pulled by the switched supply settling exponentially, plus a slow
+    linear chirp over the packet (in 40 % of packets none of it)"""
+    if rng.random() < 0.4:
+        return np.zeros(n)
+    t = np.arange(n) / rate
+    pull = rng.uniform(-30e3, 30e3) * (rng.random() < 0.7)
+    tau = float(np.exp(rng.uniform(np.log(50e-6), np.log(5e-3))))
+    chirp = rng.uniform(-20e3, 20e3)          # Hz per second
+    return pull * np.exp(-t / tau) + chirp * t
+
+
+def gen_ism_fsk2(rng, seconds):
+    """a generic 2-FSK device over the whole parameter range real ones use: bit time
+    10 us - 2 ms and tone spacing 10 - 200 kHz drawn independently (log-uniform,
+    modulation index 0.5 - 60), NRZ, Manchester, NRZI (differential) or the
+    information in the length of one tone (PWM-FSK: a mark of 1 or 2 bit times, then
+    a space), Gaussian-filtered (BT 0.3 - 1) or hard keyed, packets of 2 ms - 1 s
+    (preamble 1010.., a sync word, a payload) sent 1 - 6 times 1 - 50 ms apart, the
+    groups 0.1 - 1.5 s apart, key-up drift / chirp (keyup_drift)"""
+    for _ in range(1000):
+        tb = float(np.exp(rng.uniform(np.log(10e-6), np.log(2e-3))))
+        sp = float(np.exp(rng.uniform(np.log(10e3), np.log(200e3))))
+        if 0.5 <= sp * tb <= 60.0:
+            break
+    coding = str(rng.choice(['nrz', 'manchester', 'nrzi', 'pwm'], p=[0.4, 0.3, 0.15, 0.15]))
+    gauss = rng.random() < 0.5
+    bt = float(rng.uniform(0.3, 1.0))
+    plen = float(np.exp(rng.uniform(np.log(2e-3), np.log(1.0))))
+    reps = int(rng.integers(1, 7))
+    occ = sp + 3.0 / tb + 60e3                 # tones + main lobes + the drift
+    rate = pick_rate(occ)
+    n = int(seconds * rate)
+    x = np.zeros(n, complex)
+    spb = tb * rate                             # samples per bit (per half bit for Manchester below)
+    t = rng.uniform(0.02, 0.3)
+    nbits_pkt = max(16, int(plen / tb))
+
+    def levels(bits):
+        if coding == 'manchester':
+            ch = np.column_stack([bits, 1 - bits]).ravel()
+            per = spb / 2
+        elif coding == 'nrzi':
+            ch = np.cumsum(bits) % 2
+            per = spb
+        elif coding == 'pwm':
+            # one symbol = mark for 1 (0) or 2 (1) bit times, then a space of 3 - that
+            ch = np.concatenate([[1] * (1 + int(b)) + [0] * (2 - int(b)) for b in bits]) if len(bits) else np.zeros(0)
+            per = spb
+        else:
+            ch, per = bits, spb
+        L = int(len(ch) * per)
+        idx = np.minimum((np.arange(L) / per).astype(int), len(ch) - 1)
+        lev = 2.0 * np.asarray(ch, float)[idx] - 1.0
+        if gauss and per >= 1.5:
+            sg = max(np.sqrt(np.log(2)) / (2 * np.pi * bt) * per, 0.5)
+            k = int(6 * sg) | 1
+            g = np.exp(-0.5 * ((np.arange(k) - k // 2) / sg) ** 2)
+            lev = np.convolve(lev, g / g.sum(), mode='same')
+        return lev
+    while t < seconds - 0.05:
+        pre = int(rng.integers(8, 64))
+        sync = rng.integers(0, 2, int(rng.choice([16, 24, 32])))
+        nb = max(8, nbits_pkt - pre - len(sync)) if coding != 'pwm' else max(8, (nbits_pkt - pre - len(sync)) // 3)
+        bits = np.concatenate([np.tile([1, 0], pre // 2), sync, rng.integers(0, 2, nb)]).astype(int)
+        lev = levels(bits)
+        off = rng.uniform(-5e3, 5e3)
+        for _r in range(reps):
+            i0 = int(t * rate)
+            L = len(lev)
+            if i0 + L >= n:
+                t = seconds
+                break
+            f = 0.5 * sp * lev + off + keyup_drift(rng, L, rate)
+            ph = 2 * np.pi * np.cumsum(f) / rate
+            e = np.ones(L)
+            r = max(2, int(rng.uniform(2e-6, 30e-6) * rate))
+            if 2 * r < L:
+                e[:r] = np.linspace(0, 1, r)
+                e[-r:] = np.linspace(1, 0, r)
+            x[i0:i0 + L] = e * np.exp(1j * ph)
+            t += L / rate + rng.uniform(1e-3, 50e-3)
+        t += rng.uniform(0.1, 1.5)
+    return rate, x, {'bit_us': round(tb * 1e6, 1), 'spacing_khz': round(sp / 1e3, 1), 'index': round(sp * tb, 2), 'coding': coding,
+                     'gauss': bool(gauss), 'packet_ms': round(plen * 1e3, 1), 'reps': reps, 'synth': 'ism_fsk2'}
+
+
+def gen_ism_ook2(rng, seconds):
+    """generic OOK / ASK devices the first generic kind does not reach: hard-keyed
+    long pulses (te 0.4 - 2 ms), very short pulses (10 - 80 us: meter
+    transmitters), shallow keying (6 - 20 dB between on and off) and ASK with a
+    residual carrier (the carrier stays on through the packet, keyed 6 - 12 dB);
+    PWM / PPM / Manchester frames, repeated, with key-up drift"""
+    kind = str(rng.choice(['long', 'short', 'shallow', 'ask'], p=[0.35, 0.25, 0.2, 0.2]))
+    if kind == 'long':
+        te = float(np.exp(rng.uniform(np.log(0.4e-3), np.log(2e-3))))
+    elif kind == 'short':
+        te = float(np.exp(rng.uniform(np.log(10e-6), np.log(80e-6))))
+    else:
+        te = float(np.exp(rng.uniform(np.log(80e-6), np.log(1e-3))))
+    depth = float(rng.uniform(6, 20)) if kind == 'shallow' else (float(rng.uniform(6, 12)) if kind == 'ask' else 80.0)
+    low = 10 ** (-depth / 20)
+    coding = str(rng.choice(['pwm', 'ppm', 'manchester']))
+    rise = float(np.exp(rng.uniform(np.log(0.2e-6), np.log(5e-6)))) if kind in ('long', 'short') else float(np.exp(rng.uniform(np.log(0.3e-6), np.log(30e-6))))
+    nbits = int(rng.integers(12, 96))
+    reps = int(rng.integers(1, 10))
+    rate = pick_rate(4.0 / te + 60e3)
+    n = int(seconds * rate)
+    env = np.zeros(n)
+    t = rng.uniform(0.02, 0.3)
+    k = max(1, int(rise * rate))
+    up = 0.5 - 0.5 * np.cos(np.pi * np.arange(k) / k)
+
+    def key(a, b, lvl=1.0):
+        i, j2 = int(a * rate), min(n, int(b * rate))
+        if j2 - i < 1:
+            return
+        e = np.full(j2 - i, lvl)
+        m = min(k, len(e))
+        e[:m] *= up[:m]
+        e[len(e) - m:] = np.minimum(e[len(e) - m:], lvl * up[:m][::-1])
+        env[i:j2] = np.maximum(env[i:j2], e)
+    iv = []
+    while t < seconds - 0.05:
+        bits = rng.integers(0, 2, nbits)
+        t0 = t
+        for _ in range(reps):
+            a = t
+            key(t, t + te)
+            t += te * rng.uniform(8, 32)
+            for b in bits:
+                if coding == 'pwm':
+                    key(t, t + te * (3 if b else 1))
+                    t += 4 * te
+                elif coding == 'ppm':
+                    key(t, t + te)
+                    t += te * (4 if b else 2)
+                else:
+                    h = te / 2
+                    key(t + (0 if b else h), t + (h if b else te))
+                    t += te
+            t += te * rng.uniform(4, 30)
+            if kind in ('shallow', 'ask'):
+                i, j2 = int(a * rate), min(n, int(t * rate))
+                env[i:j2] = np.maximum(env[i:j2], low)     # the carrier never off inside the frame
+            if t > seconds - 0.05:
+                break
+        iv.append([t0, t])
+        t += rng.uniform(0.1, 1.2)
+    fr = np.zeros(n)
+    for a, b in iv:
+        i, j2 = int(a * rate), min(n, int(b * rate))
+        fr[i:j2] = keyup_drift(rng, j2 - i, rate)
+    ph = 2 * np.pi * np.cumsum(fr) / rate
+    return rate, env * np.exp(1j * ph), {'kind': kind, 'coding': coding, 'te_us': round(te * 1e6, 1), 'depth_db': round(depth, 1),
+                                          'rise_us': round(rise * 1e6, 2), 'synth': 'ism_ook2'}
 
 
 # ---- physical-layer variants of plugin classes their generators do not make
@@ -807,7 +982,8 @@ def gen_vor(rng, seconds):
 
 KINDS = {'wfm': gen_wfm, 'ism_ook': gen_ism_ook, 'ism_fsk': gen_ism_fsk, 'am': gen_am, 'ssb': gen_ssb, 'cw': gen_cw, 'carrier': gen_carrier, 'unk_fsk': gen_unk_fsk,
          'unk_psk': gen_unk_psk, 'unk_ofdm': gen_unk_ofdm, 'unk_pulse': gen_unk_pulse, 'unk_noise': gen_unk_noise,
-         'p25cc': gen_p25cc, 'p25lsm': gen_p25lsm, 'nxdn48': gen_nxdn48, 'vor': gen_vor, 'dmr_ms': gen_dmr_ms}
+         'p25cc': gen_p25cc, 'p25lsm': gen_p25lsm, 'nxdn48': gen_nxdn48, 'vor': gen_vor, 'dmr_ms': gen_dmr_ms,
+         'ism_fsk2': gen_ism_fsk2, 'ism_ook2': gen_ism_ook2, 'wfm_loud': gen_wfm_loud}
 
 
 def main():
