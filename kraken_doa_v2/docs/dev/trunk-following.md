@@ -2090,8 +2090,10 @@ the debug playback (Play only).
   false, so every row was made again when a search started and ended; the
   age is in the key as its words now (a row changes when its text does);
   a row drawn before the plugin list came kept the plugin id for its name.
-  The whole pass again at both widths on the receiver at 88bfa58: t_cc 55 /
-  55, t_cc_scale 19 / 19, t_cc_more 13 / 13, states 9, fixtures 18, review
+  The whole pass again at both widths on the receiver at ffe1247: t_cc 55 /
+  55, t_cc_rev 49 / 46, t_cc_scale 19 / 19 (its round trip compares the
+  scene's live trunktest channels without their sightings - last, n, level:
+  the receiver hears them between the export and the import), t_cc_more 13 / 13, states 9, fixtures 18, review
   16, actions 15, stability 9, scale 12, touch 8, the five scenes 10 each,
   misc 13, the DMR rule 9, the editor 27 and 29, the first-pass receiver
   13; palette check OK; no console errors.
