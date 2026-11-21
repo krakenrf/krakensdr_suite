@@ -3308,13 +3308,13 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
             <button type="button" class="btn sm" id="tk-cc-more" onclick="tkCcFileMenu(this)" title="Export, import or clear the list" aria-haspopup="menu" aria-label="Export, import or clear"><svg class="ic" aria-hidden="true"><use href="#i-more"/></svg></button>
           </div>
           <div class="tk-set tk-srch-set" id="tk-srch-set" style="display:none">
-            <div class="tk-srch-l">Bands<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Tick one or more bands (or type your own ranges below). The search tunes the receiver across them step by step, looks for steady carriers and tries every decoder that can follow a trunked system on each one: what answers as a control channel is remembered.<br><br>It takes about 1 s per MHz on a quiet band and up to about 10 s per MHz on a busy one, where every carrier is tried with each decoder (measured on a KrakenSDR). One gain is used for the whole sweep: where the front end clips (a strong broadcast or a phone band nearby), control channels can be missed - lower the gain there.</span></span></div>
+            <div class="tk-srch-l">Bands<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Tick one or more bands (or type your own ranges below). The search tunes the receiver across them step by step, looks for steady carriers and tries every decoder that can follow a trunked system on each one: what answers as a control channel is remembered.<br><br>On a PC it takes about 1.5 s per MHz on a quiet band and up to about 6 s per MHz on a busy one, where every carrier is tried with each decoder (a band searched before goes faster); a Raspberry Pi takes several times longer. One gain is used for the whole sweep: where the front end clips (a strong broadcast or a phone band nearby), control channels can be missed - lower the gain there.</span></span></div>
             <div class="tk-bands" id="tk-bands"></div>
             <div class="ctrl-row rg"><label for="tk-srch-own" title="Your own ranges in MHz: from-to, several separated by commas (e.g. 451-458, 935.5-940)">Ranges</label><input type="text" id="tk-srch-own" placeholder="e.g. 451-458, 935.5-940" maxlength="300" autocomplete="off" spellcheck="false" oninput="tkSrchEst()"><span class="u">MHz</span></div>
             <button type="button" class="tk-adv" id="tk-srch-adv-btn" onclick="tkSrchAdv()" aria-expanded="false"><svg class="ic" aria-hidden="true"><use href="#i-chev-r"/></svg><span>Advanced</span></button>
             <div id="tk-srch-adv" style="display:none">
-              <div class="ctrl-row"><label for="tk-srch-thr" title="A carrier is tried when it stands this far above the noise floor (3-40 dB). Lower finds weaker control channels and tries more carriers (slower)">Threshold</label><input type="number" id="tk-srch-thr" min="3" max="40" step="1" value="9" oninput="tkSrchEst()"><span class="u">dB</span></div>
-              <div class="ctrl-row"><label for="tk-srch-ras" title="A found carrier's frequency is rounded to this channel raster (the measured one is kept too). None: as measured">Channel raster</label><select id="tk-srch-ras" onchange="tkSrchEst()"><option value="6250">6.25 kHz</option><option value="12500">12.5 kHz</option><option value="5000">5 kHz</option><option value="0">None (as measured)</option></select></div>
+              <div class="ctrl-row"><label for="tk-srch-thr" title="dB over the local background around a carrier (not the receiver's noise floor), 3-40; the receiver's default 6. It only decides whether a carrier is tried with the decoders: lower finds weaker control channels and takes longer">Threshold</label><input type="number" id="tk-srch-thr" min="3" max="40" step="1" value="6" oninput="tkSrchOpt('thr', this.value)"><span class="u">dB</span></div>
+              <div class="ctrl-row"><label for="tk-srch-ras" title="A found carrier's frequency is rounded to this channel raster (the measured one is kept too). None: as measured">Channel raster</label><select id="tk-srch-ras" onchange="tkSrchOpt('ras', this.value)"><option value="6250">6.25 kHz</option><option value="12500">12.5 kHz</option><option value="5000">5 kHz</option><option value="0">None (as measured)</option></select></div>
             </div>
             <div class="tk-srch-est" id="tk-srch-estl" style="display:none"><span id="tk-srch-est"></span> <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip" id="tk-srch-cost"></span></span></div>
             <div class="tk-srch-err" id="tk-srch-err" role="alert"></div>
@@ -11305,6 +11305,7 @@ function connect() {
 
   ws.onopen=()=>{
     tkCcAsked = false;   // 📡 (the memory: asked again on the first status of this connection)
+    tkCcNewConn();       // 📡 (entry ids are the receiver's per start: nothing keyed by them carries over)
     // a new connection has no spectrum views: ask again with the next frame
     specViewSent = {}; specMain = null;
     // the server resets subscriptions to the default (no VIDEO) on connect:
@@ -22748,6 +22749,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   let tkCc = null;               // the last trunk_cc: {file, max, entries}
   let tkCcAsked = false;
   const tkCcPend = new Map();    // entry id -> {t, add}: a click waiting for cc_followed (or its refusal)
+  const tkCcPartial = new Map(); // entry id -> the options a follow could not apply (while it is followed)
   let tkCcSaid = null;           // {cls, ic, html, btn, t}: the latest refusal / import report under the search
   let tkCcOpen = 0;              // the entry whose details are shown
   let tkCcHover = false, tkCcTapAt = 0;
@@ -22765,9 +22767,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   }
   const TK_CC_PEND_MS = 12000;
   // seconds per MHz for the estimate before the start: a quiet band - a busy one (every carrier tried
-  // with each decoder), from the receiver's measurements on a KrakenSDR (trunk-following.md, the table
-  // "Measured on the KrakenSDR"); while it runs the receiver's own eta_s is shown
-  const TK_SRCH_S_PER_MHZ = [1.0, 9.5];
+  // with each decoder) - the receiver's first sweeps at 6 dB on a KrakenSDR with a PC (trunk-following.md:
+  // 496-502 MHz 31 s, 453-460 23 s, 410-420 15 s, 138-146 49 s); a Pi takes several times longer (said
+  // in the tip). While it runs the receiver's eta_s shows
+  const TK_SRCH_S_PER_MHZ = [1.5, 6];
   const TK_SRCH_ASK_S = 300;     // a search that may take longer than this asks first
   // the bands offered: frequency ranges, nothing regional; "around here" and the whole range follow the receiver
   const TK_BANDS = [
@@ -22783,10 +22786,23 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   const TK_SRCH_PHASE = {tuning: 'tuning', settling: 'waiting for the spectrum', looking: 'looking for carriers', probing: 'trying the decoders'};
   const TK_SRCH_END = {done: 'Finished', stopped: 'Stopped by you', follow: 'Ended to follow a control channel', mode: 'Ended by a mode change',
                        user_retuned: 'Ended: you retuned the receiver (it stays where you tuned it)', shutdown: 'Ended: the receiver shut down',
-                       heimdall: 'Ended: heimdall sent nothing', playback: 'Ended: a playback started'};
+                       heimdall: 'Ended: heimdall sent nothing', playback: 'Ended: a playback started',
+                       no_vfo: 'Ended: no free VFO for its probes - remove a VFO, then search again'};
+  // how a search ended, in words - a reason this page doesn't know is shown as the receiver names it
+  function tkSrchEndWords(end) {
+    if (TK_SRCH_END[end]) return TK_SRCH_END[end];
+    return end && typeof end === 'string' ? 'Ended (' + end.replace(/_/g, ' ') + ')' : 'Ended';
+  }
   const TK_CC_SRC = {search: 'found by a search', heard: 'heard on a control VFO', user: 'entered or imported'};
-  let tkSrchSel = {bands: [], own: '', thr: 9, ras: 6250, adv: false};
-  try { const v = JSON.parse(localStorage.getItem('kraken_tk_srch') || 'null'); if (v && typeof v === 'object') Object.assign(tkSrchSel, v); } catch (e) {}
+  // the threshold and the raster: null = the receiver's default (not sent); set only when the user
+  // changes them (Advanced). A selection saved by the page before (v < 2, threshold 9 sent always)
+  // keeps its bands and ranges, not its threshold / raster
+  const TK_SRCH_THR_DEF = 6, TK_SRCH_RAS_DEF = 6250;
+  let tkSrchSel = {v: 2, bands: [], own: '', thr: null, ras: null, adv: false};
+  try {
+    const v = JSON.parse(localStorage.getItem('kraken_tk_srch') || 'null');
+    if (v && typeof v === 'object') { if (v.v !== 2) { delete v.thr; delete v.ras; v.v = 2; } Object.assign(tkSrchSel, v); }
+  } catch (e) {}
   if (!Array.isArray(tkSrchSel.bands)) tkSrchSel.bands = [];
   function tkSrchKeep() { try { localStorage.setItem('kraken_tk_srch', JSON.stringify(tkSrchSel)); } catch (e) {} }
   function tkHasCc(m) { return !!(m && Array.isArray(m.cc_followed)); }
@@ -22826,8 +22842,27 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   }
   function tkOnCc(x) {
     tkCc = x && Array.isArray(x.entries) ? x : {file: {ok: true}, max: 1000, entries: []};
+    // an import that has sent its last entry: this list holds them all once it comes 1.1 s after it
+    const im = tkCcImp;
+    if (im && im.fin && Date.now() - im.sentAt > 1100) { clearTimeout(im.timer); im.timer = setTimeout(tkCcImportDone, 100); }
     tkCcFileTell(tkCc.file);
     tkCcRender();
+  }
+  // a new connection (the receiver may have restarted: its entries are numbered again): clicks waiting,
+  // the open Details / menu, the held order, the latest note's buttons and an import in flight go - the
+  // list and what is followed come again from the receiver
+  function tkCcNewConn() {
+    tkCcPend.clear();
+    tkCcPartial.clear();
+    tkCcOpen = 0;
+    tkCcOrder = [];
+    tkCcSaid = null;
+    if (tkMenu && tkMenu.dataset.cc) tkMenuClose(false);
+    const im = tkCcImp;
+    if (im && !im.stop) { im.stop = true; im.lost = true; im.left = im.todo.length - im.sent; }
+    tkCc = null;
+    const list = $id('tk-cc-list');
+    if (list) list.innerHTML = '';
   }
   function tkCcById(id) { return tkCc && (tkCc.entries || []).find(e => e.id === id) || null; }
   function tkCcFollowedVfo(id) { const f = tkSt && (tkSt.cc_followed || []).find(x => x.id === id); return f ? f.vfo : -1; }
@@ -22866,8 +22901,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     b.setAttribute('aria-expanded', tkSrchSetOpen ? 'true' : 'false');
     b.classList.toggle('on', tkSrchSetOpen);
     if (!tkSrchSetOpen) return;
-    $id('tk-srch-thr').value = tkSrchSel.thr;
-    $id('tk-srch-ras').value = String(tkSrchSel.ras);
+    $id('tk-srch-thr').value = tkSrchSel.thr ?? TK_SRCH_THR_DEF;
+    $id('tk-srch-ras').value = String(tkSrchSel.ras ?? TK_SRCH_RAS_DEF);
     $id('tk-srch-own').value = tkSrchSel.own || '';
     tkSrchAdv(!!tkSrchSel.adv);
     tkSrchBands();
@@ -22973,8 +23008,6 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (!est) return;
     tkSrchSel.own = String($id('tk-srch-own').value || '').slice(0, 300);
     const thr = parseFloat($id('tk-srch-thr').value);
-    if (thr >= 3 && thr <= 40) tkSrchSel.thr = thr;
-    tkSrchSel.ras = parseInt($id('tk-srch-ras').value) || 0;
     tkSrchKeep();
     const r = tkSrchRanges(), m = tkSt || {};
     let h = '', e = r.err || '', cost = '';
@@ -22983,7 +23016,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const home = tkMhz3(tkSrchHome() * 1e6), indep = opMode === 'independent';
       h = `<b>${r.ranges.map(([a, b]) => (+a.toFixed(3)) + '-' + (+b.toFixed(3))).join(', ')} MHz</b> · ${r.steps} step${r.steps === 1 ? '' : 's'} · ` +
           `<span class="${r.hi > TK_SRCH_ASK_S ? 'w' : ''}">${tkDurSpan(r.lo, r.hi)}</span> · away from ${indep ? 'T' + tkSrchTuner() + ' ' : ''}${home}`;
-      cost = `${tkDurSpan(r.lo, r.hi)}: about ${TK_SRCH_S_PER_MHZ[0]} s per MHz on a quiet band, up to ${TK_SRCH_S_PER_MHZ[1]} s on a busy one (every carrier is tried with each decoder). ` +
+      cost = `${tkDurSpan(r.lo, r.hi)}: about ${TK_SRCH_S_PER_MHZ[0]} s per MHz on a quiet band, up to ${TK_SRCH_S_PER_MHZ[1]} s on a busy one (every carrier is tried with each decoder) on a PC - a Raspberry Pi takes several times longer. ` +
         (indep ? `While it runs T${tkSrchTuner()} (the tuner with a control VFO, else T0) leaves ${home} MHz and your VFOs on it move with it`
                : `While it runs the receiver leaves ${home} MHz and your VFOs move with it`) +
         ((m.systems || []).some(x => (x.control || []).length) || m.follow ? '; trunk following pauses' : '') +
@@ -23000,11 +23033,19 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     go.disabled = !!e || !r.ranges || !r.ranges.length || !!m.search;
     go.title = m.search ? 'A search runs: Stop it first' : e || '';
   }
+  // the Advanced settings changed by the user (the value kept; back to the default: not sent again)
+  function tkSrchOpt(k, v) {
+    if (k === 'thr') { const t = parseFloat(v); tkSrchSel.thr = t >= 3 && t <= 40 ? (t === TK_SRCH_THR_DEF ? null : t) : tkSrchSel.thr; }
+    else { const r = parseInt(v) || 0; tkSrchSel.ras = r === TK_SRCH_RAS_DEF ? null : r; }
+    tkSrchEst();
+  }
   function tkSrchStart() {
     const r = tkSrchRanges(), m = tkSt || {};
     if (r.err || !r.ranges.length || m.search) return;
-    const cmd = 'TRUNK_SEARCH:' + JSON.stringify({ranges: r.ranges.map(([a, b]) => [Math.round(a * 1e6), Math.round(b * 1e6)]),
-                                                  threshold_db: tkSrchSel.thr, raster_hz: tkSrchSel.ras});
+    const q = {ranges: r.ranges.map(([a, b]) => [Math.round(a * 1e6), Math.round(b * 1e6)])};
+    if (tkSrchSel.thr != null) q.threshold_db = tkSrchSel.thr;   // (else the receiver's default)
+    if (tkSrchSel.ras != null) q.raster_hz = tkSrchSel.ras;
+    const cmd = 'TRUNK_SEARCH:' + JSON.stringify(q);
     const go = () => { tkSrchRx = ''; tkText($id('tk-srch-err'), ''); tkSrchLastHide = 0; tkSend(cmd); };
     // asked on the pessimistic end: a busy band takes ten times a quiet one
     if (r.hi <= TK_SRCH_ASK_S && !tkSrchSel.bands.includes('all')) { go(); return; }
@@ -23041,7 +23082,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       cls += ' last';
       const n = (L.found_new || 0) + (L.found_known || 0);
       ic = L.end === 'done' ? 'ok' : 'search';
-      head = (TK_SRCH_END[L.end] || ('Ended: ' + L.end)) + ' ' + tkClock(L.t_end);
+      head = tkSrchEndWords(L.end) + ' ' + tkClock(L.t_end);
       d = [`<b>${L.found_new || 0}</b> new, ${L.found_known || 0} known control channel${n === 1 && !L.found_new ? '' : 's'} · ${L.steps_done != null ? L.steps_done : L.steps} of ${L.steps} steps in ${tkDurWords((L.dur_ms || 0) / 1000)} · ${L.carriers || 0} carriers, ${L.probed || 0} tries`,
            !n && L.end === 'done' ? 'Nothing found - another band, a lower threshold or the gain may help' : '', '', ''];
       hint = !n && L.end === 'done';
@@ -23153,7 +23194,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
           (span === false ? ' - outside the band now: the receiver is retuned there (your tuning)' : '') +
           (nfol ? '. It replaces the control channel your last click followed (its menu: Follow it too)' : ''));
       }
-      const k = [e.hz, e.plugin, tkPlugName(e.plugin), e.name, e.sys_name, e.site, e.sys, e.level_db, e.gain_db, e.src, tkCcAgo(e.last), e.n, e.first, e.followed, e.meas_hz, JSON.stringify(e.opts || {}), vfo, !!pend, cant, isNew, tkCcOpen === e.id].join('\u0001');
+      const k = [e.hz, e.plugin, tkPlugName(e.plugin), tkCcPartial.get(e.id) || '', e.name, e.sys_name, e.site, e.sys, e.level_db, e.gain_db, e.src, tkCcAgo(e.last), e.n, e.first, e.followed, e.meas_hz, JSON.stringify(e.opts || {}), vfo, !!pend, cant, isNew, tkCcOpen === e.id].join('\u0001');
       if (r.dataset.k === k) return;
       r.dataset.k = k;
       const name = tkCcName(e);
@@ -23168,6 +23209,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       tkText(lv, tkCcLv(e.level_db), tkCcLv(e.level_db) ? 'Above the noise floor when last found' + (e.gain_db != null ? ' (gain ' + e.gain_db + ' dB)' : '') : '');
       const l2 = [];
       if (vfo >= 0) l2.push(`<span class="ok">Following on D${vfo}</span>`);
+      if (vfo >= 0 && tkCcPartial.has(e.id)) l2.push(`<span class="w">${tkBdi(tkCcPartial.get(e.id), 40)} not applied</span>`);
+      else if (vfo < 0 && !pend) tkCcPartial.delete(e.id);
       else if (pend) l2.push('<span class="w">Starting…</span>');
       else if (cant) l2.push(`<span class="w">${digEsc(cant)}</span>`);
       if (isNew) l2.push('<span class="nw">new</span>');
@@ -23201,7 +23244,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       }
     });
     const em = $id('tk-cc-empty');
-    const et = !all.length ? 'Nothing remembered yet - Search bands… finds them.' : !shown ? 'None match the filter.' : '';
+    const et = !tkCc ? '' : !all.length ? 'Nothing remembered yet - Search bands… finds them.' : !shown ? 'None match the filter.' : '';
     if (em && em.textContent !== et) em.textContent = et;
     if (em) tkTitle(em, !all.length ? 'Search bands… sweeps bands for control channels and lists what it finds here; a control VFO you tune to one yourself is remembered too. A click on an entry follows it' : '');
     if (em) em.style.display = et ? '' : 'none';
@@ -23225,8 +23268,12 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const out = [];
     const note = (k, cls, ic, html, tip, btn) => out.push({k, cls, ic, html, tip: tip || '', btn: btn || ''});
     if (fs === 'not_loaded')
-      note('load', 'b', 'no', 'The control channel memory was not loaded' + (f.kept_as ? ': kept as ' + tkBdi(f.kept_as, 60) : ''),
-        'The receiver could not read trunk_control_channels.json at start and began with an empty list; the old file is kept under that name next to it (nothing in it is lost). New finds are saved to a new file.' + (f.note ? ' (' + f.note + ')' : ''));
+      note('load', 'b', 'no', 'Control channel memory not loaded: ' + (f.note ? tkBdi(f.note, 160) : 'kept as ' + tkBdi(f.kept_as || '?', 60)),
+        'The receiver could not take its trunk_control_channels.json at start (unreadable, or written by a newer version) and began with an empty list; the file is kept under that name next to it - nothing in it is lost. New finds are saved to a new file.');
+    else if (fs === 'ok' && f && f.note)
+      // loaded - with something the receiver set aside (entries of decoders without trunking, those over 1000)
+      note('fnote', 'i', 'warn', 'Control channel memory: ' + tkBdi(f.note, 160),
+        'Said by the receiver when it loaded the memory: the entries it holds are in the list; what it names was set aside (a file it names keeps them)');
     if (fs === 'not_written')
       note('write', 'b', 'no', 'The control channel memory could not be saved - kept in the receiver\'s memory, tried again every 5 s',
         'The receiver could not write trunk_control_channels.json (a full disk, a read-only folder, permissions). The entries are not lost while it runs; a restart before a save succeeds loses the changes. Export (the … button) keeps a copy.' + (f.note ? ' (' + f.note + ')' : ''));
@@ -23262,7 +23309,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (seen === f.kept_as) return;
     try { localStorage.setItem('kraken_tk_ccfile', f.kept_as); } catch (e) {}
     uiAlert({title: 'Control channels not loaded', kind: 'warn', quiet: true,
-             text: ['The receiver could not read its control channel memory and started with an empty list. The old file is kept as:', {code: f.kept_as}],
+             text: [/newer version/.test(f.note || '') ? 'The control channel memory was written by a newer version of the receiver; this one started with an empty list. The file is kept as:'
+                    : 'The receiver could not read its control channel memory and started with an empty list. The old file is kept as:', {code: f.kept_as}],
              tip: 'It sits next to the program\'s other files (kraken_doa_v2, or the data folder in Docker). To get the entries back, mend it (it is JSON) and Import it here - or put it back as trunk_control_channels.json while the program is stopped.'});
   }
   // the list held still while the pointer is on it - also against what changes above it (the box's
@@ -23367,7 +23415,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const c = mine.c, err = String(x.error || 'refused');
     if (c.startsWith('TRUNK_SEARCH:')) {
       const el = $id('tk-srch-err');
-      const hint = /coherent mode only|switch to coherent/.test(err) ? ' - switch the mode in the top bar' : /scanner runs/.test(err) ? ' (the scanner\'s Stop)' : /playback/.test(err) ? ' - stop the playback first' : '';
+      const hint = /coherent mode only|switch to coherent/.test(err) ? ' - switch the mode in the top bar' : /scanner runs/.test(err) ? ' (the scanner\'s Stop)' : /playback/.test(err) ? ' - stop the playback first'
+        : /no free VFO/.test(err) ? ' - remove a VFO (the receiver has 16 at most), then search again' : /declares trunking/.test(err) ? ' - build a decoder that follows trunked systems' : '';
       if (el && tkSrchSetOpen) { tkSrchRx = 'Not started: ' + err + hint; tkText(el, tkSrchRx); }
       else tkCcSay({cls: 'b', ic: 'no', html: 'Search not started: ' + digEsc(err + hint)});
       return true;
@@ -23375,6 +23424,15 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (c.startsWith('TRUNK_SEARCH_STOP')) return true;   // (it had ended meanwhile)
     if (!c.startsWith('TRUNK_CC_')) return false;
     const mm = /"id":(\d+)/.exec(c), id = mm ? +mm[1] : 0, e = tkCcById(id);
+    if (c.startsWith('TRUNK_CC_FOLLOW:') && /^followed on D\d+, but not applied/.test(err)) {
+      // followed - an option of the entry the decoder refused: the row goes to "Following on Dn" with it
+      const what = err.replace(/^followed on D\d+, but not applied:\s*/, '');
+      tkCcPartial.set(id, what);
+      tkCcSay({cls: 'w', ic: 'warn', html: `${e ? tkCcMhz(e.hz) + ' MHz' : 'The control channel'}: following, but ${tkBdi(what, 80)} not applied`,
+               tip: 'The control VFO is on the channel and following runs; the decoder refused this remembered option (its value or key is not one it takes now). Set the option on the VFO\'s decoder if it is needed'});
+      tkCcRender();
+      return true;
+    }
     if (c.startsWith('TRUNK_CC_FOLLOW:')) {
       tkCcPend.delete(id);
       let what = '', btn = '', said = digEsc(err);
@@ -23383,6 +23441,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       else if (/16 VFOs/.test(err)) what = ': remove a VFO first';
       else if (/scanner runs/.test(err)) what = ' (the scanner\'s Stop)';
       else if (/not built/.test(err)) what = ' - build it (make -C kraken_doa_v2/plugins PLUGIN=' + digEsc(e ? e.plugin : '') + ')';
+      else if (/does not declare trunking/.test(err)) what = ' - this decoder can\'t follow a trunked system: tune a VFO to the channel and pick its decoder yourself';
       tkCcSay({cls: 'b', ic: 'no', html: `${e ? tkCcMhz(e.hz) + ' MHz' : 'The control channel'} not followed: ${said}${what}`, btn});
     } else tkCcSay({cls: 'b', ic: 'no', html: 'Not changed: ' + digEsc(err)});
     tkCcRender();
@@ -23481,6 +23540,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const str = (v, n) => typeof v === 'string' ? [...v].slice(0, n).join('') : '';
     if (!num(o.hz) || !(o.hz > 0 && o.hz <= 6e9)) return [null, 'no frequency (hz)'];
     if (typeof o.plugin !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(o.plugin) || o.plugin === 'sdk' || o.plugin === 'lib') return [null, 'no decoder (plugin)'];
+    // (a decoder the receiver has and that can't follow a trunked system: refused as the receiver would)
+    const dp = typeof digPlugins !== 'undefined' && digPlugins.length ? digPlugin(o.plugin) : null;
+    if (dp && !dp.trunking) return [null, 'plugin: a decoder that declares trunking'];
     const sys = typeof o.sys === 'string' ? o.sys : '';
     if (sys && !(sys.startsWith(o.plugin + ':') && /^[A-Za-z0-9._-]{0,48}$/.test(sys.slice(o.plugin.length + 1)))) return [null, 'a bad system key'];
     const e = {hz: Math.round(o.hz), plugin: o.plugin, sys, sys_name: str(o.sys_name, 64), site: str(o.site, 64), name: str(o.name, 64),
@@ -23498,7 +23560,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       if (kv.length > 32) return [null, 'more than 32 options'];
       const opts = {};
       for (const [k, v] of kv) {
-        if (!/^[a-z0-9_-]{1,32}$/.test(k) || typeof v !== 'string' || new TextEncoder().encode(v).length > 128) return [null, 'a bad option'];
+        if (!/^[a-z0-9_]{1,32}$/.test(k) || typeof v !== 'string' || new TextEncoder().encode(v).length > 100 || /[\u0000-\u001f\u007f]/.test(v))
+          return [null, 'opts: the plugin\'s option keys, values <= 100 bytes, no control characters'];
         opts[k] = v;
       }
       e.opts = opts;
@@ -23532,23 +23595,23 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     };
     rd.readAsText(f);
   }
-  // One TRUNK_CC_SET at a time: the next when the receiver has answered it (every TRUNK_ command is
-  // answered with the status; a refusal comes first, as trunk_error) or after 1 s, and at least 50 ms
-  // apart. A refusal is matched to its command by the command's text (the receiver echoes its first
-  // 64 bytes) - not through tkSent, which keeps only the last 40 commands. No socket: it stops and says so
+  // One TRUNK_CC_SET every 50 ms (20 a second). An accepted one is answered only by the next list
+  // (trunk_cc, at most once a second), a refusal at once (trunk_error): a refusal is matched to its
+  // command by the command's text (the receiver echoes its first 64 bytes) - not through tkSent, which
+  // keeps only the last 40 commands. The end: the first list that comes more than 1.1 s after the last
+  // one sent (it holds them all), else after 4 s. No socket: it stops and says so
   const TK_CC_IMPORT_MAX = 2000;
   function tkCcImportStep() {
     const x = tkCcImp;
     if (!x) return;
     if (x.sent >= x.todo.length || x.stop) {
-      if (!x.fin) { x.fin = Date.now(); send('GET_TRUNK_CC'); }
+      if (!x.fin) { x.fin = Date.now(); if (!x.lost) send('GET_TRUNK_CC'); }
       clearTimeout(x.timer);
-      x.timer = setTimeout(tkCcImportDone, 1500);
+      x.timer = setTimeout(tkCcImportDone, x.lost ? 300 : 4000);
       tkCcNotes();
       return;
     }
     const now = Date.now();
-    if (x.cur && now - x.sentAt < 1000) { x.timer = setTimeout(tkCcImportStep, 25); return; }   // (its answer first)
     if (now - x.sentAt < 50) { x.timer = setTimeout(tkCcImportStep, 50 - (now - x.sentAt)); return; }
     if (!ws || ws.readyState !== 1) { x.stop = true; x.lost = true; x.left = x.todo.length - x.sent; tkCcImportStep(); return; }
     const cmd = 'TRUNK_CC_SET:' + JSON.stringify(x.todo[x.sent]);
@@ -23559,7 +23622,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     x.sent++;
     x.sentAt = now;
     if (x.sent % 10 === 0 || x.sent === x.todo.length) tkCcNotes();
-    x.timer = setTimeout(tkCcImportStep, 25);
+    x.timer = setTimeout(tkCcImportStep, 50);
   }
   // the receiver's answers during an import: a status ends the wait for the command in flight; a
   // refusal of one of its commands is counted (true: it was one of them)
@@ -23581,6 +23644,13 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const x = tkCcImp;
     if (!x) return;
     tkCcImp = null;
+    if (x.lost) {
+      // (the receiver's list is not known here - it may have restarted: what arrived shows in the list)
+      tkCcSay({cls: 'b', ic: 'no', keep: 120000, html: `Import broken off - the connection to the receiver was lost: ${tkBdi(x.name, 40)}, ${x.sent} sent, ${x.left || 0} not sent` +
+               (x.rxBad ? `, ${x.rxBad} refused` : '') + ' - the list shows what arrived; import the file again for the rest (entries already there are updated, not doubled)'});
+      tkCcRender();
+      return;
+    }
     const now = (tkCc && tkCc.entries) || [];
     const ids = new Set(now.map(e => e.id));
     const added = now.filter(e => !x.pre.has(e.id)).length, dropped = [...x.pre].filter(id => !ids.has(id)).length;
