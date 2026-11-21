@@ -3772,11 +3772,14 @@ void cc_load() {
         std::cerr << "Trunk following: " << g_cc_note << std::endl;
         return;
     }
-    int bad = 0, over = 0;
+    int bad = 0, over = 0, notrunk = 0;
     for (const auto& g : a->a) {
         CcEntry e;
-        if (g.type != geo::Json::OBJ || !cc_parse(g, &e).empty()) {
-            bad++;
+        const std::string why = g.type == geo::Json::OBJ ? cc_parse(g, &e) : std::string("not an object");
+        if (!why.empty()) {
+            // (a decoder without trunking: counted for the note, whether the registry was read before or after)
+            if (why.rfind("plugin: a decoder that declares trunking", 0) == 0) notrunk++;
+            else bad++;
             continue;
         }
         if (g_cc.size() >= CC_MAX) {
@@ -3797,6 +3800,11 @@ void cc_load() {
         k << text;
         g_cc_note = std::to_string(over) + " entries over the " + std::to_string(CC_MAX) + " kept aside in " + kept;
         std::cerr << "Trunk following: " << g_cc_note << std::endl;
+    }
+    if (notrunk) {
+        const std::string n = std::to_string(notrunk) + " entr" + (notrunk == 1 ? "y" : "ies") + " of decoders without trunking dropped";
+        g_cc_note = g_cc_note.empty() ? n : g_cc_note + "; " + n;
+        std::cerr << "Trunk following: " << n << std::endl;
     }
     std::cout << "Trunk following: " << g_cc.size() << " control channel(s) remembered (" << CC_FILE << ")"
               << (bad ? ", " + std::to_string(bad) + " unreadable skipped" : "") << std::endl;
