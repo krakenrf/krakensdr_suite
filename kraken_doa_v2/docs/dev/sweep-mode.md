@@ -1210,8 +1210,26 @@ used"):
   MB, so 16 rows keep theirs at 146 Hz over the whole range; 371 k at Auto:
   0.5 MB, every row): the newest rows keep their sets, the oldest give them
   back first and fall back to their window / overview levels
-  (`swpFullTrim`). The switch off, Slow link on, a new grid and leaving the
-  mode give every set back (`swpFullDrop`).
+  (`swpFullTrim`; strictly by age since round 6, also when the rows hold
+  sets of different sizes - a small old set never outlives a bigger newer
+  one). A new grid and leaving the mode give every set back
+  (`swpFullDrop`).
+- A change of the option changes only what NEW sweeps bring (round 6,
+  2026-11-22; the user: "when I turn off full resolution, the previous data
+  in the waterfall becomes low resolution. When we change display
+  resolution, we should only be changing the new display resolution, not
+  the old ones already on the waterfall"). Round 5 gave every set back when
+  the switch went off or Slow link on; now a row keeps the set it got until
+  it scrolls out, the budget takes it, the grid changes or the mode is
+  left, and the waterfall can hold rows of different detail, each painted
+  from its own. What a change does drop is the trace's source (`swp.full`)
+  and a set being put together (the receiver abandons it). A set that the
+  receiver finished before it saw the change still goes to its row.
+- The trace's instant source is only ever the set of the newest sweep
+  completed here (`swp.done`, from the flag-2 frames): a set skipped by a
+  slow line, or one still to come after its flag-2 frame, leaves the
+  frames' trace - never a sweep older than the one on screen, and never a
+  set kept for an old row.
 - "Points sent" reads "1525 + full 11,885,227": the view's points per frame
   and the set's bins - the second part only once a set has come (an older
   receiver never sends one: the view's points alone).

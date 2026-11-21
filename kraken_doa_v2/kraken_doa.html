@@ -2990,8 +2990,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <!-- sweep mode: every bin of each completed sweep to this browser (SWEEP MODE, swpFullSet) -->
         <div class="ctrl-row sweep-only">
-          <label title="Sweep mode: every point of each completed sweep comes to this browser, so a zoom or a pan is sharp at once and the waterfall's rows keep their sweep's detail. More data (up to ~3 MB a second at 146 Hz over the whole range) and memory (a bounded part of the waterfall keeps it). Slow link wins: with it on, this is not sent. Saved in this browser only">Full resolution</label>
-          <input type="checkbox" class="sw" id="swp-full" title="Sweep mode: every point of each completed sweep comes to this browser, so a zoom or a pan is sharp at once and the waterfall's rows keep their sweep's detail. More data (up to ~3 MB a second at 146 Hz over the whole range) and memory (a bounded part of the waterfall keeps it). Slow link wins: with it on, this is not sent. Saved in this browser only" onchange="swpFullSet(this.checked)">
+          <label title="Sweep mode: every point of each completed sweep comes to this browser, so a zoom or a pan is sharp at once and the waterfall's rows keep their sweep's detail. More data (up to ~3 MB a second at 146 Hz over the whole range) and memory (a bounded part of the waterfall keeps it). Switching it off changes only the new rows: the rows already there keep their detail. Slow link wins: with it on, this is not sent. Saved in this browser only">Full resolution</label>
+          <input type="checkbox" class="sw" id="swp-full" title="Sweep mode: every point of each completed sweep comes to this browser, so a zoom or a pan is sharp at once and the waterfall's rows keep their sweep's detail. More data (up to ~3 MB a second at 146 Hz over the whole range) and memory (a bounded part of the waterfall keeps it). Switching it off changes only the new rows: the rows already there keep their detail. Slow link wins: with it on, this is not sent. Saved in this browser only" onchange="swpFullSet(this.checked)">
         </div>
         <div class="kv" title="Spectrum points per frame to this browser: about one per pixel of the plot (half with Slow link), at most 4096. Zoomed in, the same points cover less spectrum - more detail, down to one FFT bin, at the same data rate"><span>Points sent</span><span id="fft-points-sent">-</span></div>
         <div class="ctrl-row coh-only">
@@ -4342,9 +4342,10 @@ const swp = {st: null, fr: null, tr: null, zoom: {level: 1, off: 0}, wf: null, s
              wfKey: '', repaints: 0,    // the colours the rows were painted with; full repaints (tests)
              // Full resolution (Display box, this browser): fullOn = the choice; fullSent = what this connection
              // asked (SWEEP_FULL; -1 = nothing yet); full = the latest complete set {grid, sweeps, f0, st, d, pyr,
-             // bytes} - the trace's source after a zoom / pan; fullAsm = a set being put together from its parts;
-             // fullPend = a complete set waiting for its flag-2 frame (a waterfall row's detail)
-             fullOn: false, fullSent: -1, full: null, fullAsm: null, fullPend: null};
+             // bytes} - the trace's source after a zoom / pan (only while it is of `done`, the newest sweep
+             // completed here {g, s}); fullAsm = a set being put together from its parts. The rows' own sets
+             // are their `f` (kept whatever the option becomes)
+             fullOn: false, fullSent: -1, full: null, fullAsm: null, done: null};
 // View settings (the "View" popover, see VIEW POPOVER). viewCommon: the single spectrum's - and
 // every tuner pane's that has none of its own; the receiver stores them (UI:FFT_Y, UI:WF_SPEED,
 // ...) and replays them to every browser. viewStore: this browser's per-tuner values in
@@ -13878,6 +13879,7 @@ function swpOnFrame(v, buf) {
   const u8 = new Uint8Array(buf, 64, n), mags = new Float32Array(n);
   for (let i = 0; i < n; i++) mags[i] = u8[i] * (120 / 255);
   swp.fr = {flags, tun, seq, sweeps, start, stop, p0, step, prog: Math.max(0, Math.min(1, prog || 0)), dur: dur > 0 ? dur : 0, grid, mags, t: Date.now()};
+  if (flags & 2) swp.done = {g: grid, s: sweeps};   // (the newest sweep completed here: the trace's full set must be of it)
   swpTrace();
   swpDrawSoon();   // (a quick sweep of a narrow range completes far more often than the screen refreshes)
   swpStatus();
@@ -13895,7 +13897,13 @@ function swpTrace() {
   const v = swp.view, whole = !win || swp.zoom.level <= 1;
   const forView = fr && v && !v.want && fr.seq === swp.viewSeq &&
                   v.lo === (whole ? 0 : Math.floor(win[0])) && v.hi === (whole ? 0 : Math.ceil(win[1]));
-  if (win && swp.full && swpFullWanted() && (!swp.st || swp.full.grid === swp.st.grid) && !forView) { swp.tr = swpTraceFull(win); return; }
+  // (only a set of the newest sweep completed here - never one older than the sweep on screen: a set skipped
+  // by a slow link, or one still to come after its flag-2 frame, leaves the frames' trace)
+  const f = swp.full, dn = swp.done;
+  if (win && f && swpFullWanted() && (!swp.st || f.grid === swp.st.grid) && (!dn || (f.grid === dn.g && f.sweeps >= dn.s)) && !forView) {
+    swp.tr = swpTraceFull(win);
+    return;
+  }
   if (!fr || !win) { swp.tr = null; return; }
   const [freqs, mags] = specWindow({start: fr.p0, step: fr.step, mags: fr.mags}, win[0], win[1]);
   swp.tr = {w0: win[0], w1: win[1], freqs, mags};
@@ -13947,7 +13955,7 @@ function swpWfAdd(l) {
   const wf = swp.wf, win = swpWindow();
   if (!wf || !wf.imageData || !win) return;
   const row = {w: l.w, o: l.o ? {f0: l.o.f0, st: l.o.st, d: l.o.d} : null, h: Math.max(1, wf.speed | 0), s: l.s, g: l.g,   // (s / g: its sweep count, grid)
-               f: l.f && swpFullWanted() ? l.f : null};   // (f: its sweep's full set - Full resolution; usually attached later)
+               f: l.f || null};   // (f: its sweep's full set - Full resolution; usually attached later; kept whatever the option is now)
   swp.rows.unshift(row);
   let sum = 0, k = 0;
   while (k < swp.rows.length && sum < wf.height) sum += swp.rows[k++].h;
@@ -14052,23 +14060,28 @@ function swpFullSet(on) {
   try { if (swp.fullOn) localStorage.setItem('kraken_swp_full', '1'); else localStorage.removeItem('kraken_swp_full'); } catch (e) {}
   swpFullSync();
 }
-// tell the receiver (per connection, like SWEEP_VIEW: on entering the mode, after a reconnect, on a change);
-// off = the sets this page holds are given back
+// tell the receiver (per connection, like SWEEP_VIEW: on entering the mode, after a reconnect, on a change).
+// A change only changes what NEW sweeps bring (the user, 2026-11-22: "we should only be changing the new
+// display resolution, not the old ones already on the waterfall"): the rows keep the sets they got until
+// they scroll out, the budget takes them, the grid changes or the mode is left. Only the trace's source
+// goes (and a set being put together - the receiver abandons it): a set from before the change is for its
+// row only; the receiver sends a snapshot at the new option for the trace.
 function swpFullSync() {
   const want = swpFullWanted() ? 1 : 0, cb = $id('swp-full');
   if (cb) {
     if (cb.checked !== swp.fullOn) cb.checked = swp.fullOn;
     if (cb.disabled !== specSlow) cb.disabled = specSlow;   // (Slow link wins)
   }
-  if (!want) swpFullDrop();
+  if (!want) { swp.full = null; swp.fullAsm = null; }
   if (opMode !== 'sweep' || !ws || ws.readyState !== 1 || applyingRemote || swp.fullSent === want) { swpPointsText(); return; }
   ws.send('SWEEP_FULL:' + want);
+  if (swp.fullSent !== -1) { swp.full = null; swp.fullAsm = null; }
   swp.fullSent = want;
   swpPointsText();
 }
-// every set the page holds given back (option off, leaving the mode, a new grid)
+// every set the page holds given back (leaving the mode, a new grid) - never on a change of the option
 function swpFullDrop() {
-  swp.full = null; swp.fullAsm = null; swp.fullPend = null;
+  swp.full = null; swp.fullAsm = null; swp.done = null;
   for (const r of swp.rows) r.f = null;
 }
 // one part's header (binary type 11, the receiver's contract - sweep-mode.md): u32 11 | u8 flags (1 = the
@@ -14092,7 +14105,9 @@ function swpFullParse(v, buf) {
 // window / overview levels) and is repainted with it. A snapshot (on SWEEP_FULL:1: what the receiver holds
 // now) is for the trace only.
 function swpOnFull(v, buf) {
-  if (opMode !== 'sweep' || !swpFullWanted()) return;
+  // (taken whatever the option is now: a set the receiver finished before it saw a change belongs to its
+  // sweep's row - it is only never the trace's source then, and a snapshot is for the trace only)
+  if (opMode !== 'sweep') return;
   const p = swpFullParse(v, buf);
   if (!p || (swp.st && p.grid !== swp.st.grid)) { swp.fullAsm = null; return; }
   let a = swp.fullAsm;
@@ -14103,9 +14118,10 @@ function swpOnFull(v, buf) {
   if (!p.last) return;
   swp.fullAsm = null;
   if (a.got !== a.total) return;
+  if (a.snap && !swpFullWanted()) return;
   const set = {grid: a.grid, sweeps: a.sweeps, snap: a.snap, f0: a.f0, st: a.st, d: a.d, pyr: swpPyr(a.d)};
   set.bytes = set.pyr.reduce((s, l) => s + l.length, 0);
-  swp.full = set;   // the trace's source at once
+  if (swpFullWanted()) swp.full = set;   // the trace's source at once
   swp.fullSets = (swp.fullSets || 0) + 1;
   if (!set.snap) {
     // its sweep's row: on the waterfall already, or still held back by the line limit
@@ -14172,13 +14188,14 @@ function swpFullLevel(f, ka, kb) {
   const c = Math.max(0, Math.min(n - 1, (ka + kb) / 2)), i0 = Math.floor(c), i1 = Math.min(n - 1, i0 + 1), t = c - i0;
   return f.d[i0] * (1 - t) + f.d[i1] * t;
 }
-// the waterfall's sets within the budget: the newest rows keep theirs, the oldest give them back
+// the waterfall's sets within the budget: the newest rows keep theirs, the oldest give them back - strictly
+// by age, also when the rows hold sets of different sizes (a small old set never outlives a bigger newer one)
 function swpFullTrim() {
   const budget = swpFullBudget();
-  let used = 0;
+  let used = 0, over = false;
   for (const r of swp.rows) {
     if (!r.f) continue;
-    if (used + r.f.bytes > budget) r.f = null; else used += r.f.bytes;
+    if (over || used + r.f.bytes > budget) { r.f = null; over = true; } else used += r.f.bytes;
   }
   swp.fullUsed = used;
 }
