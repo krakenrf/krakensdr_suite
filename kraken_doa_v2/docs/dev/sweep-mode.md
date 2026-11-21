@@ -1083,6 +1083,52 @@ bin grid.
   second); "No data yet" / "Paused" / "Waiting for the receiver" in the plot.
 - Nothing of the VFOs: a click on it sends nothing.
 
+**Full resolution in the browser** (2026-11-21, round 5; the user: "we can
+actually have a much better resolution sent to the browser. Perhaps even
+the full resolution. Since it's only updating every few seconds. Add an
+option to choose the full resolution under "Display" when sweep mode is
+used"):
+- The Display box's "Full resolution" (`#swp-full`, `.sweep-only`, a
+  switch; localStorage `kraken_swp_full`, this browser only, off by
+  default). Slow link wins: with Slow link on, the switch is disabled and
+  nothing full is asked for (the user picked Slow link for a slow line);
+  off again, Full resolution comes back as set.
+- The page sends `SWEEP_FULL:<1|0>` (per connection, with its first view, on
+  entering the mode, after a reconnect, when the switch or Slow link
+  changes). The receiver then sends the whole range at the sweep's own bins
+  (binary type 11, the contract above) after each completed sweep's flag-2
+  frame, in parts - and once at once, a snapshot (flag 2, the trace only).
+  `swpOnFull` puts a set together by its set id and first index; a gap, a
+  part out of order or an old grid drops it (that row keeps its window /
+  overview levels). The layout is read in one place, `swpFullParse`.
+- A complete set is the trace's source while no frame for the window shown
+  has come: right after a zoom or a pan the trace is cut from the set at the
+  view's points (a point = the highest of its bins) - sharp at once, before
+  the receiver's frame for the new window; that frame then takes over
+  (`swpTrace`: "for the view" = the frame's seq is the last view's and the
+  view sent is the window shown). A completed sweep's set is attached to its
+  waterfall row (same `sweeps` and grid; the row exists already, or still
+  waits for the line limit) and that row alone is painted again with it.
+- A row paints from its set where it has one (`row.f`), else from its window
+  / overview levels as before (never black where it has data). Each set gets
+  a max pyramid (factor 4: ~1/3 more bytes; `swpPyr`, `swpPyrMax` - a
+  pixel's max over any number of bins in a few dozen steps), so a repaint
+  stays fast at 11.9 M bins a row.
+- Memory: the rows' sets within `swpFullBudget()` - 256 MB on a desktop, 64
+  MB on a phone layout. A set costs its bins x ~1.33 (11.9 M bins: 15.8
+  MB, so 16 rows keep theirs at 146 Hz over the whole range; 371 k at Auto:
+  0.5 MB, every row): the newest rows keep their sets, the oldest give them
+  back first and fall back to their window / overview levels
+  (`swpFullTrim`). The switch off, Slow link on, a new grid and leaving the
+  mode give every set back (`swpFullDrop`).
+- "Points sent" reads "1525 + full 11,885,227": the view's points per frame
+  and the set's bins - the second part only once a set has come (an older
+  receiver never sends one: the view's points alone).
+- Measured (headless Chromium, the mock, 1573 x 677 px waterfall): a full
+  repaint with 57 rows, 16 of them with an 11.9 M-bin set, 16 ms; a wheel
+  step (window, trace from the set, plot, full repaint) 21 ms; at 4096
+  (512 k bins), 40 rows, 29 with a set: 6 - 8 ms.
+
 **Finer resolutions on the page** (2026-11-21, with the receiver's 178f007;
 the user asked for a finer resolution):
 - The Resolution list is the receiver's: `sizes` (run as asked at this
