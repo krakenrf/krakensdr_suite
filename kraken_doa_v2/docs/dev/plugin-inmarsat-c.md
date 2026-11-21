@@ -74,7 +74,8 @@ changed since (the receivers in service still decode it).
   later repeat that completes it reports it again (IEC 61097-4 5.4.10).
   Memory 48 h / 1000 messages.
 - Talkers: the satellite (see README). Packets rather than a transmission
-  so kraken_doa filters the carrier's 3 kHz out of the VFO; avg 60 s,
+  so kraken_doa filters the carrier's 3 kHz out of the VFO; 4 per frame
+  from its last second (the host's 1.5 s packet ring); avg 60 s,
   keep 30 min. Considered and rejected: no talker (the VFO's DoA is the
   satellite's anyway) - but a named talker lists each satellite in the DF
   panel, which two VFOs on one satellite share, and lets the offline
@@ -131,7 +132,34 @@ offline with the playback's noise (`noise_rms`) added, 3 loops: NCS entry
 11 of 12 frames (the last ends with the file), 3 / 3 EGC messages,
 16 repeated packets suppressed, talker 70.0 deg (truth 70);
 LES entry (Es/N0 3.7 dB) 11 of 12 frames, the group call, 200.0 deg (truth 200).
-Not run: the debug playback in a TEST kraken_doa (UI checks).
+Debug playback end to end (2026-11-22, a TEST kraken_doa on ports
+2918x / 2919x, no heimdall, driven over the WebSocket - `PLAYBACK_START`,
+the DF status's talkers, the VFO's DoA plot (binary type 3), the decoder's
+events and facts - 100 s per entry = 2.9 loops): every expect row met.
+
+| Entry | Es/N0 / carrier (facts) | Frames | Packets | EGC | Talker / VFO DoA | Plugin CPU |
+|---|---|---|---|---|---|---|
+| `inmarsat-c-ncs-safetynet` | 9.6 dB, +700.0 Hz | 11 / 0 failed | 112 | 3 complete, 16 repeats suppressed | 70.0 / 70.0 (truth 70) | 0.7 % of a core |
+| `inmarsat-c-les-tdm-weak` | 3.5 dB, -1500.1 Hz | 11 / 0 failed | 94 | the group call, 4 repeats suppressed | 200.0 / 200.0 (truth 200) | 0.7 % |
+
+Two things the live path showed that the offline host can't:
+- The first version reported the carrier with `host.freq_error()`: the
+  host's AFC then moves the input by half the report every 300 ms - each
+  step a frequency jump the ~10 Hz Costas loop can't follow; the carrier
+  was lost after every frame and only 4 of 11 frames decoded (the rows
+  still passed). Now no `freq_error`: the plugin follows +-3.6 kHz itself
+  and gives the carrier's place to the talker packets (`freq_hz`).
+- kraken_doa keeps the stream for packet talkers only 1.5 s (`RING_S`):
+  of the first version's 8 packets spread over the frame only the last
+  one was used. Now 4 packets from the frame's last second (44 of 44
+  used). The Digital squelch's valid spans have the same limit: only the
+  newest part of each frame's spans reaches the DoA.
+- The decoder status flapped "Receiving" / "Signal lost" every frame (10 /
+  11 times in 100 s): the engine's detection window is 4 s, frames come
+  every 8.64 s. A one-line engine change (detection held for the plugin's
+  `squelch_hold_s` when that is longer than the window; only inmarsat_c
+  sets one that long) removed it in the TEST build (0 "Signal lost");
+  proposed to the orchestrator, not committed (`src/` is shared).
 
 ## Uplinks (ship / land terminals, 1626.5-1646.5 MHz)
 The one Inmarsat-C transmitter worth a bearing. What the published SDM
