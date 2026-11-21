@@ -404,6 +404,7 @@ uint64_t g_learned_n = 0, g_learn_refused = 0, g_learn_dropped = 0;
 
 // --- other --------------------------------------------------------------
 bool g_dispatching = false;
+bool g_srch_skip_restore = false;   // the user's retune ended a search: its pause's end puts nothing back
 bool g_paused = false;
 std::string g_pause_why, g_pause_why_last;
 int g_mode = -1;                            // operating mode last seen
@@ -3800,6 +3801,7 @@ struct Probe {
     std::string plugin;
     int64_t t0 = 0, t_ctl = 0;
     uint64_t f0 = 0;        // the stream's spectrum frames when it was made (its deadlines count stream time)
+    uint64_t f_ctl = 0;     // ... when its control flag came (the key waited for in stream time)
     bool control = false, done = false;
     std::string key, name, site;
     double ctl_hz = NAN;    // the signalling's own control channel frequency (CONTROL / CHANNEL near the probe)
@@ -3828,6 +3830,9 @@ struct Search {
     int64_t t_step = 0;
     bool kerberos = false;
     int mode = 0;           // 0 coherent (the centre steps, calibration held), 2 independent (one tuner steps)
+    double asked = 0;       // what the receiver took for the step (its FREQ refused: unchanged)
+    int64_t t_noroom = 0;   // no free VFO for a probe since
+    bool skip_restore = false;
     uint64_t frames0 = 0;   // the step's spectrum frames counted from here (the search's clock is data, not time)
     std::vector<double> probed_hz;   // every candidate probed in this run, found or not (skipped again)
     std::vector<std::pair<double, double>> covered;   // the bands already looked at (the last step's overlap)
@@ -3860,7 +3865,7 @@ void srch_remove_probes() {
     for (auto& p : g_srch.probes) {
         auto inst = decimator_manager.getDecimator(p.vfo);
         if (!inst || inst->serial != p.serial) continue;
-        meta_erase(p.vfo, false);
+        meta_erase(p.vfo, true);
         if (!decimator_manager.removeDecimator(p.vfo)) {
             inst->enabled = true;   // (the receiver's last VFO: a plain one, as a voice VFO's hand-back)
             decimator_manager.setDigitalMode(p.vfo, dig::Mode::OFF, "");
@@ -3912,6 +3917,7 @@ void srch_end(const std::string& why, bool home) {
       << g_srch.found_new << ",\"found_known\":" << g_srch.found_known << ",\"steps\":" << g_srch.centres.size()
       << ",\"steps_done\":" << g_srch.step << ",\"dur_ms\":" << (now - g_srch.t_start) << ",\"t_end\":" << wall_ms() << "}";
     g_srch_last = o.str();
+    if (why == "user_retuned") g_srch_skip_restore = true;   // (his retune: the VFOs keep their offsets, as on any retune)
     std::cout << "Trunk following: control channel search over (" << why << "): " << g_srch.found_new << " new, "
               << g_srch.found_known << " known, " << g_srch.carriers << " carriers, " << (now - g_srch.t_start) / 1000.0 << " s"
               << std::endl;
@@ -3944,12 +3950,26 @@ std::string srch_start(const geo::Json& j) {
     if (!(thr >= 3 && thr <= 40)) return "threshold_db: 3-40";
     if (!(ras == 0 || ras == 5000 || ras == 6250 || ras == 12500)) return "raster_hz: 0, 5000, 6250 or 12500";
     if (trunking_plugins().empty()) return "no built plugin declares trunking";
+    if (static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) return "no free VFO for the probes (16 in use)";
     s.thr_db = thr;
     s.raster = ras;
     const double half = usable_half_hz(), stepw = 2 * half - SRCH_OVERLAP_HZ;
     for (const auto& rg : s.ranges)
         for (double c = rg.first + half - SRCH_OVERLAP_HZ / 2; ; c += stepw) {
-            s.centres.push_back(std::round(std::min(c, std::max(rg.first + half, rg.second - half + SRCH_OVERLAP_HZ / 2))));
+        {
+            double cc = std::min(c, std::max(rg.first + half, rg.second - half + SRCH_OVERLAP_HZ / 2));
+            // (half a raster off it: a channel on the raster is never at the centre's DC, which can't be seen)
+            if (ras > 0) cc = std::round(cc / ras) * ras + ras / 2;
+            double lo_t = RTL_TUNER_MIN_HZ, hi_t = RTL_TUNER_MAX_HZ;
+            if (wb_variant_enabled.load()) {
+                uint64_t a, b;
+                wb_variant_rf_union_range(a, b);
+                lo_t = static_cast<double>(a);
+                hi_t = static_cast<double>(b);
+            }
+            cc = std::clamp(cc, lo_t, hi_t);   // (the band covers the edge from inside)
+            if (s.centres.empty() || std::fabs(s.centres.back() - cc) > 1000) s.centres.push_back(std::round(cc));
+        }
             if (c + half >= rg.second) break;
         }
     // the receiver stands down: an excursion home, voice tuners back, calls freed
@@ -4125,7 +4145,7 @@ void srch_probe_batch() {
             p.t0 = now;
             p.f0 = srch_frames(g_srch.centres[g_srch.step]);
             g_srch.probes.push_back(p);
-            meta_set(id, inst.get(), false, ",\"trunk\":{\"role\":\"probe\"}");
+            meta_set(id, inst.get(), true, ",\"trunk\":{\"role\":\"probe\"}");   // (true: never saved, never the user's)
             const int bw = efficient_bandwidth_at_least(static_cast<int>(std::ceil(std::max(12500.0, std::min(50000.0, pi.min_vfo_rate)))));
             char f[96];
             // (on the raster when one is set: control channels sit on it, and the decoders track the rest)
@@ -4163,6 +4183,8 @@ void srch_record(const Probe& p) {
     for (auto it = g_srch_recs.begin(); it != g_srch_recs.end(); ++it)
         if (it->plugin == p.plugin && it->key == p.key && std::fabs(it->hz - cd.hz) < 15000) {
             if (it->level >= cd.level) return;   // (the weaker one beside it: the same channel heard off its centre)
+            auto ue = g_cc.find(it->id);
+            if (ue != g_cc.end() && ue->second.user()) return;   // (the user's: never erased by the search)
             if (it->made) {
                 g_cc.erase(it->id);
                 g_srch.found_new--;
@@ -4194,6 +4216,7 @@ void srch_event(int vfo, const PluginEvent& ev) {
             if (ev.control && !p.control) {
                 p.control = true;
                 p.t_ctl = now_ms();
+                p.f_ctl = g_srch.step < g_srch.centres.size() ? srch_frames(g_srch.centres[g_srch.step]) : 0;
             }
             if (!ev.sys_key.empty()) p.key = ev.sys_key;
             if (!ev.sys_name.empty()) p.name = ev.sys_name;
@@ -4210,9 +4233,9 @@ void tick_search() {
     const int64_t now = now_ms();
     if (playback::active()) return srch_end("playback", false);
     const double asked = g_srch.mode == 2 ? indep_tuner_freq_hz[g_srch.tuner].load() : static_cast<double>(requested_freq_hz.load());
-    if (g_srch.st != 0 && g_srch.step < g_srch.centres.size() && std::fabs(asked - g_srch.centres[g_srch.step]) > 1000)
+    if (g_srch.st != 0 && g_srch.step < g_srch.centres.size() && std::fabs(asked - g_srch.asked) > 1000)
         return srch_end("user_retuned", false);
-    if (operating_mode_index() != g_srch.mode) return srch_end("mode", false);
+    if (operating_mode_index() != g_srch.mode) return srch_end("mode", true);   // (the receiver's requested state home)
     if (g_srch.mode == 0 && !g_srch.kerberos && now - g_srch.hold_sent >= EXC_HOLD_RENEW_MS && heimdall_up()) {
         heimdall_hold(static_cast<int>(EXC_HOLD_LEASE_MS));
         g_srch.hold_sent = now;
@@ -4233,6 +4256,7 @@ void tick_search() {
             if (g_srch.mode == 2) snprintf(f, sizeof f, "TUNER_FREQ:%d:%.6f", g_srch.tuner, c / 1e6);
             else snprintf(f, sizeof f, "FREQ:%.6f", c / 1e6);
             dispatch({f});
+            g_srch.asked = g_srch.mode == 2 ? indep_tuner_freq_hz[g_srch.tuner].load() : static_cast<double>(requested_freq_hz.load());
             g_srch.st = 1;
             g_srch.t_st = g_srch.t_step = now;
             return;
@@ -4247,7 +4271,7 @@ void tick_search() {
                 g_srch.st = 2;
                 g_srch.t_st = now;
             } else if (now - g_srch.t_st > SRCH_ARRIVE_MAX_MS * 3) {
-                if (!heimdall_up()) return srch_end("heimdall", false);
+                if (!heimdall_up()) return srch_end("heimdall", true);   // (home asked for: home when the stream is back)
                 next();
             }
             return;
@@ -4319,7 +4343,9 @@ void tick_search() {
                 const double age_s = static_cast<double>(srch_frames(c) - std::min(srch_frames(c), p.f0)) / srch_fps();
                 const int64_t age = static_cast<int64_t>(age_s * 1000) + (now - p.t0 > 30000 ? SRCH_PROBE_MAX_MS : 0);
                 const bool frames = dd && dd->frames_within(1500);
-                if (p.control && (!p.key.empty() || now - p.t_ctl >= SRCH_KEY_WAIT_MS)) {
+                const double key_wait_s = static_cast<double>(srch_frames(c) - std::min(srch_frames(c), p.f_ctl)) / srch_fps();
+                if (p.control && (!p.key.empty() || key_wait_s * 1000 >= SRCH_KEY_WAIT_MS || age >= SRCH_PROBE_MAX_MS ||
+                                  now - p.t0 > 30000)) {   // (the control flag: always recorded, with or without its key)
                     srch_record(p);
                     g_srch.found_hz.push_back({g_srch.cands[p.cand].hz, 0});
                     p.done = true;
@@ -4338,8 +4364,17 @@ void tick_search() {
             bool more = false;
             for (const auto& cd : g_srch.cands)
                 if (!cd.found && !cd.todo.empty()) more = true;
-            if (more) srch_probe_batch();
-            else next();
+            if (more) {
+                if (static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) {   // (the user added VFOs)
+                    if (!g_srch.t_noroom) g_srch.t_noroom = now;
+                    if (now - g_srch.t_noroom > 10000) return srch_end("no_vfo", true);
+                    return;
+                }
+                g_srch.t_noroom = 0;
+                srch_probe_batch();
+            } else {
+                next();
+            }
             return;
         }
     }
@@ -4659,7 +4694,11 @@ void pause_check() {
         remove_all_voices();
     } else {
         std::cout << "Trunk following: resumed" << std::endl;
-        if (resumed && !playback::active() && g_set.follow) restore_homes();
+        if (resumed && !playback::active() && g_set.follow && !g_srch_skip_restore) restore_homes();
+        if (resumed && g_srch_skip_restore) {
+            g_srch_skip_restore = false;
+            g_home.clear();
+        }
     }
     if (p) {
         g_pending.clear();   // (a scan again: its own end decides)
@@ -4991,7 +5030,7 @@ bool is_trunk_vfo(int id) {
     {
         std::lock_guard<std::mutex> lk(g_meta_mu);
         auto it = g_meta.find(id);
-        if (it == g_meta.end() || !it->second.voice) return false;
+        if (it == g_meta.end() || !it->second.voice) return false;   // (voice = a voice VFO or a search probe)
         p = it->second.inst;
     }
     auto now = decimator_manager.getDecimator(id);
