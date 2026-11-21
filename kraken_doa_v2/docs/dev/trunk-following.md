@@ -718,10 +718,18 @@ Commands (all `TRUNK_` / `GET_TRUNK_CC`, answered with the status, errors as
   `TRUNK_CC_DEL:{"id":n}`, `TRUNK_CC_CLEAR`, `TRUNK_CC_SET:{entry}` (the
   fields below; with an existing `id` it replaces that entry, else it adds /
   updates the one at that plugin + frequency - the import path: one per
-  entry), `TRUNK_CC_FOLLOW:{"id":n,"add":false}`.
+  entry; times clamped to 0 or 2020-01-01 .. now, `n` <= 1e9, `level_db`
+  0-120, `gain_db` -1-60, `meas_hz` within 50 kHz of `hz`, `src` one of the
+  three else "user" - the same when the file is loaded),
+  `TRUNK_CC_FOLLOW:{"id":n,"add":false}` (the entry already followed on its
+  VFO - same plugin, same frequency: a no-op; with `add`: refused "already
+  followed on D<n>").
 
 Messages:
-- `{"trunk_cc":{file:{ok,note,kept_as}, max:1000, entries:[{id, hz
+- `{"trunk_cc":{file:{ok, state ("ok" | "not_loaded" - the file at start
+  could not be read, kept as `kept_as`, the memory started empty |
+  "not_written" - a save failed, the entries are kept in memory and saved
+  again in 5 s), note, kept_as}, max:1000, entries:[{id, hz
   (nominal), meas_hz (null = none), plugin, sys ("<plugin>:<key>", "" =
   no key heard), sys_name, site, name (the user's), src ("search" | "heard" |
   "user"), level_db (above the floor when last found, null), gain_db (the

@@ -3520,7 +3520,7 @@ constexpr int64_t CC_HEARD_MS = 60000;        // a control VFO in normal use ref
 constexpr int64_t SRCH_LOOK_GAP_MS = 400;     // the two looks at a step's spectrum this far apart
 constexpr int64_t SRCH_ARRIVE_MAX_MS = 4000;  // a step whose centre the stream never shows: skipped
 constexpr int64_t SRCH_PROBE_MIN_MS = 2500;   // a probe without any valid frame this long (stream time): given up ...
-constexpr int64_t SRCH_PROBE_MAX_MS = 8000;   // ... and none longer
+constexpr int64_t SRCH_PROBE_MAX_MS = 5000;   // ... and none longer (valid frames but no control report by then: traffic)
 constexpr int64_t SRCH_KEY_WAIT_MS = 2500;    // control = true without a key yet: the key waited for this long
 constexpr double SRCH_OVERLAP_HZ = 50000;     // neighbouring steps' usable bands overlap this much
 constexpr double SRCH_MIN_W_HZ = 4000, SRCH_MAX_W_HZ = 32000;   // a candidate's width above the threshold
@@ -3540,6 +3540,7 @@ uint64_t g_cc_next = 1;
 int64_t g_cc_dirty = 0, g_cc_list_sent = 0;
 bool g_cc_list_now = false;
 std::string g_cc_note, g_cc_bad;
+std::string g_cc_state = "ok";   // trunk_cc.file.state: ok | not_loaded (kept as kept_as) | not_written (kept in memory, tried again)
 std::map<int, int64_t> g_cc_heard;            // control VFO -> last time it refreshed its entry
 std::map<int, std::pair<uint64_t, uint64_t>> g_cc_follow;   // control VFO -> (its instance serial, the entry it follows)
 
@@ -3624,7 +3625,8 @@ std::string cc_entry_json(const CcEntry& e) {
 
 std::string cc_list_json() {
     std::ostringstream o;
-    o << "{\"trunk_cc\":{\"file\":{\"ok\":" << jb(g_cc_note.empty()) << ",\"note\":" << js(g_cc_note) << ",\"kept_as\":" << js(g_cc_bad)
+    o << "{\"trunk_cc\":{\"file\":{\"ok\":" << jb(g_cc_note.empty()) << ",\"state\":" << js(g_cc_state) << ",\"note\":" << js(g_cc_note)
+      << ",\"kept_as\":" << js(g_cc_bad)
       << "},\"max\":" << CC_MAX << ",\"entries\":[";
     bool f = true;
     for (const auto& kv : g_cc) {
@@ -3653,6 +3655,7 @@ void cc_save() {
         if (f2) f2 << o.str();
         if (!f2) {
             g_cc_note = std::string(CC_FILE) + " could not be written (kept in memory, tried again)";
+        g_cc_state = "not_written";
             g_cc_dirty = now_ms();
             g_cc_list_now = true;
             return;
@@ -3665,12 +3668,15 @@ void cc_save() {
             std::cerr << "Trunk following: " << CC_FILE << " could not be written" << std::endl;
         }
         g_cc_note = std::string(CC_FILE) + " could not be written (kept in memory, tried again)";
+        g_cc_state = "not_written";
         g_cc_dirty = now_ms();   // (again in CC_SAVE_MS)
         g_cc_list_now = true;
         return;
     }
-    if (g_cc_note.find("could not be written") != std::string::npos) {
+    if (g_cc_state == "not_written") {
         g_cc_note.clear();
+        g_cc_state = g_cc_bad.empty() ? "ok" : "not_loaded";
+        if (!g_cc_bad.empty()) g_cc_note = "the control channel memory could not be read - kept as " + g_cc_bad;
         g_cc_list_now = true;
     }
     g_cc_dirty = 0;
@@ -3685,7 +3691,7 @@ std::string cc_parse(const geo::Json& g, CcEntry* e) {
     e->hz = std::round(hz);
     e->plugin = plugin;
     const double m = jnum(g, "meas_hz");
-    e->meas_hz = hz_ok(m) ? m : 0;
+    e->meas_hz = hz_ok(m) && std::fabs(m - e->hz) <= 50000 ? m : 0;   // (a measurement belongs near its channel)
     const std::string sys = g.str("sys");
     const size_t c = sys.find(':');
     if (!sys.empty() && (c == std::string::npos || sys.substr(0, c) != plugin || !valid_key(sys.substr(c + 1)))) return "sys: <plugin>:<key>";
@@ -3696,12 +3702,19 @@ std::string cc_parse(const geo::Json& g, CcEntry* e) {
     const std::string src = g.str("src");
     e->src = src == "search" || src == "heard" ? src : "user";
     const double lv = jnum(g, "level_db"), gn = jnum(g, "gain_db");
-    e->level_db = fin(lv) && lv > -50 && lv < 200 ? static_cast<float>(lv) : NAN;
+    e->level_db = fin(lv) && lv >= 0 && lv <= 120 ? static_cast<float>(lv) : NAN;
     e->gain_db = fin(gn) && gn >= -1 && gn <= 60 ? static_cast<float>(gn) : NAN;
-    e->first = int_or(jnum(g, "first", 0), 0, 9000000000000000LL, 0);
-    e->last = int_or(jnum(g, "last", 0), 0, 9000000000000000LL, 0);
-    e->followed = int_or(jnum(g, "followed", 0), 0, 9000000000000000LL, 0);
-    e->n = static_cast<uint64_t>(int_or(jnum(g, "n", 0), 0, 1LL << 53, 0));
+    // times: 0 (never) or 2020-01-01 .. now - a file from elsewhere can't make an entry "seen just now" for ever
+    const long long lo_t = 1577836800000LL, now_t = wall_ms();
+    auto when = [&](const char* k) {
+        const long long t = int_or(jnum(g, k, 0), 0, 9000000000000000LL, 0);
+        return t <= 0 ? 0LL : std::clamp(t, lo_t, now_t);
+    };
+    e->first = when("first");
+    e->last = when("last");
+    e->followed = when("followed");
+    if (e->first > e->last && e->last > 0) e->first = e->last;
+    e->n = static_cast<uint64_t>(int_or(jnum(g, "n", 0), 0, 1000000000LL, 0));
     e->opts.clear();
     if (const geo::Json* o = g.get("opts"); o && o->type == geo::Json::OBJ) {
         if (o->o.size() > 32) return "opts: at most 32";
@@ -3731,6 +3744,7 @@ void cc_load() {
         for (int k = 1; std::ifstream(kept).good() && k < 100; k++) kept = std::string(CC_FILE) + ".bad-" + ts + "-" + std::to_string(k);
         if (std::rename(CC_FILE, kept.c_str()) == 0) g_cc_bad = kept;
         g_cc_note = "the control channel memory could not be read - kept as " + kept + ", starting empty";
+        g_cc_state = "not_loaded";
         std::cerr << "Trunk following: " << g_cc_note << std::endl;
         return;
     }
@@ -4002,17 +4016,27 @@ std::vector<Cand> srch_carriers(double c, double thr) {
     const double bin = SAMPLE_RATE / static_cast<double>(n), half = usable_half_hz();
     auto fq = [&](double i) { return c - SAMPLE_RATE / 2.0 + i * bin; };
     std::vector<char> used(static_cast<size_t>(n), 0);
-    for (int guard = 0; guard < 400; guard++) {
-        int pk = -1;
-        for (int i = 1; i + 1 < n; i++)
-            if (!used[i] && spec[i] - floor_db >= thr && (pk < 0 || spec[i] > spec[pk])) pk = i;
-        if (pk < 0) break;
+    // every bin over the threshold, strongest first (all of them: a busy band's noise peaks can't use up a budget)
+    std::vector<int> order;
+    for (int i = 1; i + 1 < n; i++)
+        if (spec[i] - floor_db >= thr) order.push_back(i);
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return spec[a] > spec[b]; });
+    for (int pk : order) {
+        if (used[pk]) continue;
+        // the width: the run within 20 dB of the peak; the centre: between the edges of the run within 10 dB
+        // (a neighbour merging into the skirt moves the -20 dB edge, not the -10 dB one)
         const float lim = std::max(spec[pk] - 20.0f, floor_db + static_cast<float>(thr) / 2);
+        const float lim10 = std::max(spec[pk] - 10.0f, floor_db + static_cast<float>(thr) / 2);
         int lo = pk, hi = pk;
         while (lo - 1 >= 0 && !used[lo - 1] && spec[lo - 1] >= lim) lo--;
         while (hi + 1 < n && !used[hi + 1] && spec[hi + 1] >= lim) hi++;
+        int clo = pk, chi = pk;
+        while (clo - 1 >= lo && spec[clo - 1] >= lim10) clo--;
+        while (chi + 1 <= hi && spec[chi + 1] >= lim10) chi++;
         for (int k = lo; k <= hi; k++) used[k] = 1;
-        const double w = (hi - lo + 1) * bin, f = fq((lo + hi) / 2.0);
+        // (a narrow spike on top - a pilot, a carrier inside a wider signal: the -20 dB run's centre)
+        const bool spike = (chi - clo + 1) * 10 < (hi - lo + 1) * 4;
+        const double w = (hi - lo + 1) * bin, f = spike ? fq((lo + hi) / 2.0) : fq((clo + chi) / 2.0);
         if (w >= SRCH_MIN_W_HZ && w <= SRCH_MAX_W_HZ && std::fabs(f - c) + w / 2 <= half && std::fabs(f - c) > 3 * bin) {
             Cand cd;
             cd.hz = f;
@@ -4058,7 +4082,8 @@ void srch_probe_batch() {
             const int bw = efficient_bandwidth_at_least(static_cast<int>(std::ceil(std::max(12500.0, std::min(50000.0, pi.min_vfo_rate)))));
             char f[96];
             // (on the raster when one is set: control channels sit on it, and the decoders track the rest)
-            const double at = g_srch.raster > 0 ? snap(cd.hz, g_srch.raster) : cd.hz;
+            const double sn = g_srch.raster > 0 ? snap(cd.hz, g_srch.raster) : cd.hz;
+            const double at = std::fabs(sn - cd.hz) <= g_srch.raster / 4 ? sn : cd.hz;
             if (g_srch.mode == 2)
                 snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", id, (at - static_cast<double>(exact_tuner_hz(g_srch.tuner))) / 1000.0,
                          g_srch.tuner);
@@ -4254,6 +4279,9 @@ void tick_search() {
                 } else if (age >= SRCH_PROBE_MAX_MS || (age >= SRCH_PROBE_MIN_MS && !frames && !p.control) ||
                            g_srch.cands[p.cand].found) {
                     p.done = true;
+                    // (its plugin decoded the carrier - valid frames - but it is no control channel: no other
+                    // plugin needs to try it - a traffic channel of that protocol)
+                    if (frames && !p.control) g_srch.cands[p.cand].todo.clear();
                 } else {
                     live = true;
                 }
@@ -4354,6 +4382,17 @@ std::string cc_follow(uint64_t id, bool add) {
             auto inst = decimator_manager.getDecimator(kv.first);
             if (inst && inst->serial == kv.second.first) reuse = kv.first;
         }
+    // (already followed: a double click - nothing re-applied; add of the same channel: no second VFO)
+    for (const auto& kv : g_cc_follow) {
+        auto inst = decimator_manager.getDecimator(kv.first);
+        if (!inst || inst->serial != kv.second.first || kv.second.second != id) continue;
+        auto dd = inst->getDigital();
+        const double rf = vfo_rf(*inst);
+        if (dd && dd->plugin_id() == e.plugin && rf > 0 && std::fabs(rf - e.hz) < 1000) {
+            if (add) return "already followed on D" + std::to_string(kv.first);
+            return "";
+        }
+    }
     std::vector<std::string> cmds;
     Place p = place_for(e.hz, bw, -1);
     if (!p.ok) {
