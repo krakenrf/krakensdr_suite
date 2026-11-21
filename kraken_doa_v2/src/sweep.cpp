@@ -140,6 +140,16 @@ float median_db(int m) {
     return static_cast<float>(10.0 * std::log10(std::pow(1.0 - a, 3.0)));
 }
 
+// SWEEP_FULL:<n>'s pool: the smallest power of two with ceil(bins / pool) <= n
+// (n >= 2; at least FULL_MIN_VALUES); 1 = every bin
+uint32_t pool_for(int64_t bins, uint32_t n) {
+    if (n <= 1 || bins <= 0) return 1;
+    const uint64_t want = std::max(n, FULL_MIN_VALUES);
+    uint32_t pool = 1;
+    while (pool < (1u << 30) && (static_cast<uint64_t>(bins) + pool - 1) / pool > want) pool *= 2;
+    return pool;
+}
+
 // The smallest dwell whose hop holds n samples (whole packets, as hop_samples)
 int dwell_for(int n) {
     const int64_t packets = (static_cast<int64_t>(n) + 16383) / 16384;
@@ -1035,6 +1045,27 @@ std::string state_json() {
         }
         o << ",\"sizes\":[" << ok << "],\"sizes_capped\":{" << capped << "},\"min_dwell_ms\":{" << dw << "}";
     }
+    // (additive, for the page's Display list) the full-resolution steps this
+    // receiver sends for the running grid: SWEEP_FULL:<n> and what it gives;
+    // a step that would be the same as full is left out; full (n 1) last
+    {
+        o << ",\"full_sets\":[";
+        const uint32_t steps[] = {16384, 65536, 262144, 1048576, 4194304};
+        bool first = true;
+        auto entry = [&](uint32_t n, uint32_t pool) {
+            char e[160];
+            snprintf(e, sizeof e, "%s{\"n\":%u,\"pool\":%u,\"values\":%lld,\"step_hz\":%.8f}", first ? "" : ",", n, pool,
+                     static_cast<long long>((std::max<int64_t>(p.bins, 0) + pool - 1) / pool), p.bin_hz * pool);
+            o << e;
+            first = false;
+        };
+        if (p.ok && p.bins > 0) {
+            for (uint32_t n : steps)
+                if (const uint32_t pool = pool_for(p.bins, n); pool > 1) entry(n, pool);
+            entry(1, 1);
+        }
+        o << "]";
+    }
     // (additive) a size asked for that is not used: what caps it - "bins" (the
     // sweep would hold more than SWEEP_MAX_BINS: a narrower range gets it) or
     // "dwell" (a hop holds fewer samples: dwell_ms_needed gets it)
@@ -1227,27 +1258,68 @@ inline uint8_t level_u8(int16_t m) {
     return static_cast<uint8_t>(std::min(static_cast<int>(x), 255));
 }
 
-std::shared_ptr<const FullSet> build_full() {
-    auto out = std::make_shared<FullSet>();
-    // (the buffer first, outside the lock; the bins can't change size meanwhile:
-    // only the loop thread - this one - makes a new grid)
-    out->lv.resize(static_cast<size_t>(std::max<int64_t>(S.plan.bins, 0)));
+uint32_t full_pool(uint32_t n) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    return pool_for(S.plan.ok ? S.plan.bins : 0, n);
+}
+
+std::vector<std::shared_ptr<const FullSet>> build_fulls(const std::vector<uint32_t>& pools) {
+    std::vector<std::shared_ptr<const FullSet>> done;
+    std::vector<std::shared_ptr<FullSet>> out;
+    std::vector<int> levels;
+    // (the buffers first, outside the lock; the bins can't change size meanwhile:
+    // only the loop thread - this one - makes a new grid). Level l of the max
+    // pyramid holds ceil(bins / 2^l) values, value i = the max over bins
+    // [i 2^l, (i + 1) 2^l): the pooled set, nothing pooled anew
+    const int64_t bins = std::max<int64_t>(S.plan.bins, 0);
+    for (uint32_t pool : pools) {
+        pool = std::max<uint32_t>(pool, 1);
+        const int level = std::countr_zero(pool);
+        if ((1u << level) != pool || pool > 65535) continue;   // (a power of two the header's u16 carries)
+        bool dup = false;
+        for (const auto& o : out) dup = dup || o->pool == pool;
+        if (dup) continue;
+        auto f = std::make_shared<FullSet>();
+        f->pool = static_cast<uint16_t>(pool);
+        f->lv.resize(static_cast<size_t>((bins + pool - 1) / pool));
+        out.push_back(f);
+        levels.push_back(level);
+    }
+    if (out.empty()) return done;
     const auto t0 = std::chrono::steady_clock::now();
     {
+        // every pool from ONE state of the store: the sets of a tick are the same
+        // sweep whatever their pool (a pooled set = the full set max-pooled)
         std::lock_guard<std::mutex> lk(g_mu);
         const Plan& p = S.plan;
-        if (!p.ok || S.lv.empty() || !S.any || S.lv[0].size() != out->lv.size()) return nullptr;
-        out->grid = p.grid;
-        out->sweeps = S.done;
-        out->f0_hz = static_cast<double>(p.start);
-        out->step_hz = p.bin_hz;
-        const int16_t* src = S.lv[0].data();
-        uint8_t* dst = out->lv.data();
-        const size_t n = out->lv.size();
-        for (size_t i = 0; i < n; i++) dst[i] = level_u8(src[i]);
+        if (!p.ok || S.lv.empty() || !S.any || S.lv[0].size() != static_cast<size_t>(bins)) return done;
+        for (size_t k = 0; k < out.size(); k++) {
+            FullSet& f = *out[k];
+            const size_t level = static_cast<size_t>(levels[k]);
+            if (S.lv.size() <= level || S.lv[level].size() != f.lv.size()) continue;
+            f.grid = p.grid;
+            f.sweeps = S.done;
+            // the centre of the first group (as type 10's point 0), the groups' spacing
+            f.f0_hz = static_cast<double>(p.start) + (static_cast<double>(f.pool) - 1.0) / 2.0 * p.bin_hz;
+            f.step_hz = p.bin_hz * static_cast<double>(f.pool);
+            const int16_t* src = S.lv[level].data();
+            uint8_t* dst = f.lv.data();
+            const size_t n = f.lv.size();
+            for (size_t i = 0; i < n; i++) dst[i] = level_u8(src[i]);
+        }
     }
-    out->lock_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    return out;
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    for (auto& f : out)
+        if (f->grid) {
+            f->lock_ms = ms;
+            done.push_back(f);
+        }
+    return done;
+}
+
+std::shared_ptr<const FullSet> build_full(uint32_t pool) {
+    auto v = build_fulls({pool});
+    return v.empty() ? nullptr : v[0];
 }
 
 std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t first, size_t n) {

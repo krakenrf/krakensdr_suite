@@ -88,8 +88,15 @@ struct FullSet {
     std::vector<uint8_t> lv;
     double lock_ms = 0;              // how long the store's lock was held for it
 };
-// nullptr = no data on this grid yet
-std::shared_ptr<const FullSet> build_full();
+// SWEEP_FULL:<n>: 1 = every bin; n >= 2 = at most n values (n < FULL_MIN_VALUES
+// taken as FULL_MIN_VALUES): pool = the smallest power of two with
+// ceil(bins / pool) <= n - one level of the store's max pyramid
+constexpr uint32_t FULL_MIN_VALUES = 1024;
+uint32_t full_pool(uint32_t n);   // for the running grid (1 = every bin)
+// pool = a power of two (full_pool); nullptr = no data on this grid yet
+std::shared_ptr<const FullSet> build_full(uint32_t pool = 1);
+// several pools from one state of the store (one lock): the sets of one tick
+std::vector<std::shared_ptr<const FullSet>> build_fulls(const std::vector<uint32_t>& pools);
 constexpr size_t FULL_PART_VALUES = 524288;   // a type 11 part's values at most
 // one type 11 part: flags 1 = last part, 2 = snapshot, 4 = paused
 std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t first, size_t n);
