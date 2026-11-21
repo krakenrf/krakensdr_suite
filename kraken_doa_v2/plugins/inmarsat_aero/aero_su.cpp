@@ -387,7 +387,7 @@ void SuDecoder::user_data(const Asm& a) {
     char b[240];
     std::string x25;
     bool notable = false;   // call set-up / clearing / resets: shown without "Show all messages"
-    if (n >= 3 && ((d[0] >> 4) == 1 || (d[0] >> 4) == 2 || (d[0] >> 4) == 3 || (d[0] >> 4) == 9 || (d[0] >> 4) == 0xA)) {
+    if (n >= 3 && ((d[0] >> 4) == 1 || (d[0] >> 4) == 2)) {   // GFI: modulo 8 or 128, Q = D = 0
         const int lcn = ((d[0] & 15) << 8) | d[1], pt = d[2];
         const char* t = (pt & 1) == 0                 ? "data"
                         : pt == 0x0B                  ? "call request"
@@ -412,8 +412,15 @@ void SuDecoder::user_data(const Asm& a) {
             notable = (pt & 1) && (pt & 0x1F) != 0x01 && (pt & 0x1F) != 0x05;
         }
     }
-    snprintf(b, sizeof b, "%s AES %s · GES 0x%02X · %s user data, %zu octets%s", a.down ? "↓" : "↑", aes_hex(a.aes).c_str(), a.ges,
-             q_name(a.q), n, x25.c_str());
+    // the first octets (a header) in hex, for the protocol's sake
+    std::string head;
+    for (size_t i = 0; i < n && i < 4; i++) {
+        char h[4];
+        snprintf(h, sizeof h, "%s%02X", i ? " " : "", d[i]);
+        head += h;
+    }
+    snprintf(b, sizeof b, "%s AES %s · GES 0x%02X · %s user data, %zu octets [%s ...]%s", a.down ? "↓" : "↑",
+             aes_hex(a.aes).c_str(), a.ges, q_name(a.q), n, head.c_str(), x25.c_str());
     if (host.verbose() || notable) host.event(b, 30);
     air.label = "data";
     row(a.aes);
