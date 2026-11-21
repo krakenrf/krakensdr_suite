@@ -22851,7 +22851,12 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   // a new connection (the receiver may have restarted: its entries are numbered again): clicks waiting,
   // the open Details / menu, the held order, the latest note's buttons and an import in flight go - the
   // list and what is followed come again from the receiver
+  // tkCcGen: the connection's number - an entry id is good only with the generation it came with. What
+  // outlives a connection and acts on an id later (a rename / forget dialog left open, a note's button)
+  // carries its generation and does nothing when it changed
+  let tkCcGen = 0;
   function tkCcNewConn() {
+    tkCcGen++;
     tkCcPend.clear();
     tkCcPartial.clear();
     tkCcOpen = 0;
@@ -22863,6 +22868,12 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     tkCc = null;
     const list = $id('tk-cc-list');
     if (list) list.innerHTML = '';
+    tkCcRender();   // (the notes at once too: a note from before - its buttons name old ids - doesn't wait for the first message)
+  }
+  // a note's button that names an entry: only with the connection it was made on
+  function tkCcFollowIf(gen, id, add) {
+    if (gen !== tkCcGen) { tkCcSay({cls: 'w', ic: 'warn', html: 'The receiver was reconnected meanwhile: click the control channel in the list again'}); return; }
+    tkCcFollow(id, add);
   }
   function tkCcById(id) { return tkCc && (tkCc.entries || []).find(e => e.id === id) || null; }
   function tkCcFollowedVfo(id) { const f = tkSt && (tkSt.cc_followed || []).find(x => x.id === id); return f ? f.vfo : -1; }
@@ -23283,7 +23294,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (m.playback) note('pb', 'p', 'tape', 'Playback: following a control channel waits until it ends', 'A click to follow (and a search) is refused while a debug playback or a recording plays');
     else if (opMode === 'wideband') note('wb', 'w', 'warn', 'Wideband scan mode: switch to coherent or independent mode to follow a control channel', 'Clicks to follow are refused in wideband scan mode');
     if (tkCcImp) note('imp', 'i', 'hourglass', `Importing: ${tkCcImp.sent} of ${tkCcImp.todo.length} sent`, '', `<button type="button" class="btn sm" onclick="tkCcImportStop()">Stop</button>`);
-    if (tkCcSaid && Date.now() - tkCcSaid.t < (tkCcSaid.keep || 30000))
+    if (tkCcSaid && Date.now() - tkCcSaid.t < (tkCcSaid.keep || (tkCcSaid.cls === 'i' ? 30000 : Infinity)))
       note('said:' + tkCcSaid.t, tkCcSaid.cls, tkCcSaid.ic, tkCcSaid.html, tkCcSaid.tip || '', (tkCcSaid.btn || '') +
            `<button type="button" class="btn sm" onclick="tkCcSay(null)" title="Close" aria-label="Close">${icon('close')}</button>`);
     const byK = new Map(out.map(n => [n.k, n]));
@@ -23440,7 +23451,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       tkCcPend.delete(id);
       let what = '', btn = '', said = digEsc(err);
       if (/doesn't fit the span/.test(err)) said = 'it doesn\'t fit the receiver\'s band together with the control channels followed now';
-      if (/doesn't fit the span/.test(err)) btn = `<button type="button" class="btn sm" onclick="tkCcFollow(${id}, false)" title="Follow it in place of the control channel your last click followed">Follow it alone</button>`;
+      if (/doesn't fit the span/.test(err)) btn = `<button type="button" class="btn sm" onclick="tkCcFollowIf(${tkCcGen}, ${id}, false)" title="Follow it in place of the control channel your last click followed">Follow it alone</button>`;
       else if (/16 VFOs/.test(err)) what = ': remove a VFO first';
       else if (/scanner runs/.test(err)) what = ' (the scanner\'s Stop)';
       else if (/not built/.test(err)) what = ' - build it (make -C kraken_doa_v2/plugins PLUGIN=' + digEsc(e ? e.plugin : '') + ')';
@@ -23491,19 +23502,26 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     ], 'row');
   }
   function tkCcRename(id) {
-    const e = tkCcById(id);
+    const e = tkCcById(id), gen = tkCcGen;
     if (!e) return;
     uiPrompt({title: 'Name the control channel', icon: 'edit', ok: 'Save', text: tkCcMhz(e.hz) + ' MHz · ' + tkPlugName(e.plugin) + (e.sys_name ? ' · ' + e.sys_name : ''),
               tip: 'Shown in the list in place of the system\'s name. Empty: the system\'s name again.',
               fields: [{name: 'name', label: 'Name', value: e.name || '', maxlength: 64, placeholder: e.sys_name || 'e.g. County system, site 3'}]}).then(r => {
-      if (!r || !tkCcById(id)) return;
+      if (!r) return;
+      // (a reconnect while the dialog was open: the ids are the new receiver's - this one may be another entry)
+      if (gen !== tkCcGen) { tkCcSay({cls: 'w', ic: 'warn', html: 'Not renamed: the receiver was reconnected meanwhile - name it again'}); return; }
+      if (!tkCcById(id)) return;
       tkSend('TRUNK_CC_NAME:' + JSON.stringify({id, name: String(r.name).trim()}));
     });
   }
   function tkCcForget(id) {
-    const e = tkCcById(id);
+    const e = tkCcById(id), gen = tkCcGen;
     if (!e) return;
-    const go = () => { tkSend('TRUNK_CC_DEL:' + JSON.stringify({id})); if (tkCcOpen === id) tkCcOpen = 0; };
+    const go = () => {
+      if (gen !== tkCcGen) { tkCcSay({cls: 'w', ic: 'warn', html: 'Not forgotten: the receiver was reconnected meanwhile - forget it again'}); return; }
+      tkSend('TRUNK_CC_DEL:' + JSON.stringify({id}));
+      if (tkCcOpen === id) tkCcOpen = 0;
+    };
     if (!e.name) { go(); return; }
     uiConfirm({title: 'Forget the control channel', icon: 'trash', danger: true, ok: 'Forget', text: [{b: e.name}, ` (${tkCcMhz(e.hz)} MHz) and its name go.`]}).then(ok => { if (ok) go(); });
   }
