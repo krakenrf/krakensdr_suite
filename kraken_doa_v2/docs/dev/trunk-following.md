@@ -1929,9 +1929,16 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   receiver's per start: on every new connection (`tkCcNewConn`) the clicks
   waiting, the open Details and menu, the held order, the latest note (its
   buttons name ids) and an import in flight ("broken off", the list shows
-  what arrived) go, and the list is drawn again from the receiver's (what is
-  followed too - a control VFO on a followed entry is followed again after
-  a restart). The row's tooltip says when the receiver will be
+  what arrived) go - in the open handler itself, so a note with an old id
+  on its button is gone before the first message of the new connection -,
+  and the list is drawn again from the receiver's (what is followed too - a
+  control VFO on a followed entry is followed again after a restart). What
+  can still act on an id later carries the connection's number
+  (`tkCcGen`): a Name… or Forget dialog left open across a reconnect sends
+  nothing ("Not renamed: the receiver was reconnected meanwhile"), a note's
+  "Follow it alone" likewise. A refusal or a warning under the search stays
+  until the user closes it or the next note replaces it (information goes
+  after 30 s). The row's tooltip says when the receiver will be
   retuned (coherent: outside the usable band now) and that it replaces the
   last click's control channel. The menu: Follow, **Follow it too**
   (`add:true`; only when something is followed by a click), Name… (`TRUNK_CC_NAME`,
