@@ -262,7 +262,10 @@ is switched on).
   time-out (nothing received) - then that call can't send it out again for
   30 s (why `retry`); `limit` - `TRUNK_RETUNE_MAX` (a wrong table entry or
   a continuous carrier can't strand the receiver; also 30 s retry);
-  `command` (`TRUNK_RETURN`); `off` (following or the option switched
+  `follow` - a click to follow (`TRUNK_CC_FOLLOW`) while away: the user took
+  the receiver, the call that had it away is held off for the 30 s too (its
+  next grant update sent it straight out again and parked the VFO just
+  clicked - 2026-11-22); `command` (`TRUNK_RETURN`); `off` (following or the option switched
   off); `mode` / `scanner` / `playback` - the command that changes the mode
   or starts a scanner or a playback goes home first, then runs
   (`trunk::before_command` in `apply_command` - also when that command is
@@ -802,11 +805,22 @@ and found at 6 here.
   excursion goes home first, voice tuners back; never the stream's stale
   header); a replaced channel's plugin options go back to the defaults (only
   the entry's are set); options the receiver refuses are named in the
-  answer ("followed on D<n>, but not applied: ...").
+  answer ("followed on D<n>, but not applied: ..."). The one way an entry
+  gets such an option (2026-11-22): a control VFO whose options come from a
+  hand-edited VFO snapshot in doa_settings.json (the snapshot's reader checks
+  the key and the length, not control characters - `%01` decodes to one),
+  heard in normal use; SET and the file are checked by the DIGITAL_OPT rule,
+  and DIGITAL_OPT itself doesn't ask the plugin. Such an entry is written to
+  the file and dropped as unreadable at the next load unless a later heard
+  refresh replaced its options - not fixed (a hand edit only).
 - Only decoders that declare `trunking`: refused at `TRUNK_CC_SET` ("plugin:
   a decoder that declares trunking"), dropped from a loaded file (counted in
-  `file.note`), refused at follow ("its decoder (<id>) does not declare
-  trunking"). Options: what `DIGITAL_OPT` takes (its key rule, <= 100 bytes,
+  `file.note`; when the registry is read after the file - only if the
+  start-up scan found no plugin folder at all and a later rescan fills it -
+  the drop comes at that rescan and its count is ADDED to what the load said,
+  e.g. entries over 1000 kept aside; in that order a non-trunking entry has
+  taken one of the 1000 places at the load, so one entry fewer remains),
+  refused at follow ("its decoder (<id>) does not declare trunking"). Options: what `DIGITAL_OPT` takes (its key rule, <= 100 bytes,
   no control characters) - checked at SET / load by the same rule.
 - `cc_followed`: a clicked VFO that is gone, runs another plugin or was
   moved more than 3 kHz off its entry is dropped; after a restart a control
@@ -868,9 +882,24 @@ Messages:
   opts: {<key>: <value>} (plugin options without the prefix)}]}}` - on
   change (at most once a second) and on `GET_TRUNK_CC`; not in the status.
   The file holds `{"version":1,"entries":[<the same objects>]}`.
+- The progress (2026-11-22, after the KrakenSDR showed "about 2 s left" one
+  second into a 38 s sweep - a quick empty first step counted as a quarter
+  done): `eta_s` = the current step's time left from its tries still to run
+  (in batches of what fits at once, a batch as long as this run's finished
+  batches took on the mean - before the first: the probe's no-frames limit +
+  0.5 s; in the second look: the first look's carriers x the plugins) + each
+  step not looked at yet valued at the mean finished step. Null until a step
+  with carriers has finished (an empty step is no evidence that the next one
+  is empty) unless no step is left to look at; `pct` = elapsed / (elapsed +
+  that time), the unknown steps then valued at the longest step so far (at
+  least 3 s), never going back. Steps not looked at yet can't be known: a
+  quiet last step after busy ones is counted as a mean step (A below: 9-13 s
+  said for the last 1-5 s), and so are the quiet steps after a busy first
+  one (B: 28 s said for 0.7 s, for half a second).
 - In the status: `search`: null, or `{since, ranges, mode ("coherent" |
   "independent"), tuner (the stepping tuner, -1 = coherent), threshold_db,
-  raster_hz, home_hz, centre_hz, step, steps, pct, eta_s, phase ("tuning" |
+  raster_hz, home_hz, centre_hz, step, steps, pct (0-100, never back), eta_s
+  (s, null = can't say; never 0), phase ("tuning" |
   "settling" | "looking" | "probing"), carriers (candidates this run),
   probing (probe VFOs now), probed (probes so far), found_new, found_known,
   elapsed_ms}`; `search_last`: null or `{end, carriers, probed, found_new,
@@ -1506,6 +1535,52 @@ the broadcasts:
   repeated click to follow re-applies nothing, add of the followed one is
   refused; a sighting without a site keeps the site the entry has. `t17_idle` also: `DIGITAL_HISTORY` of a VFO that is gone sends no
   frame (an empty one used to reach every page).
+- The review fixes that had been made by code only (2026-11-22, scratch
+  `tests3/`; the fake heimdall got a scene `rate` - the stream at a fraction
+  of real time - and trunktest `ctldelay` / `ctldelayrf`: the control flag
+  and the key only after so much of an instance's stream): `t30_late` 10 - a
+  probe whose control flag comes after 2.6 s of its stream is recorded with
+  the key that follows at 3.2 s, and without one when none comes; at half
+  rate a key 1.7 s of stream (3.4 s wall) after the flag is still waited
+  for, and a key 3 s after it is not (recorded 7.1 s wall after the probing
+  began: the 2.5 s wait counted in stream time). `t31_follow_away` 38 - click
+  to follow during an excursion (an entry in the home span, one outside it)
+  and in independent mode with a voice tuner taken: the new control VFO's
+  centre + offset is the entry, it receives its system, the snapshot holds
+  its offset and the user's control VFO's home offset, the same after a
+  restart; found: the call that had the receiver away sent it straight out
+  again with its next grant update and parked the VFO just clicked (fixed:
+  `follow` holds that call off for the retry time). `t32_dup` 7 - two probes
+  12.5 kHz apart confirming one system, the weaker recorded first: one entry,
+  the stronger; the weaker named or marked followed (`TRUNK_CC_SET` with its
+  id) meanwhile: kept - and then the stronger is not recorded at all; a click
+  on it meanwhile ends the search (`follow`). `t33_notapplied` 8 - the "not
+  applied" answer, reached through a hand-edited VFO snapshot (above): the
+  VFO right, the accepted option set, the refused one named. `t34_progress`
+  19 of 21 - shapes "empty, busy, busy, empty" (27 s), "busy, empty, empty"
+  and one busy step (13 s): pct moves inside a step and never back, eta_s
+  null at the start and never 0; before the first busy step finished null
+  or within a factor of three; after it within a factor of two except where
+  a step not looked at yet is valued at the mean step (the two failing
+  checks - unknowable from what the receiver has seen; before the fix eta_s
+  said 1-2 s for 7-13 s left). `t35_order` 5 - the registry read after the
+  file (staged: `KRAKEN_PLUGIN_DIR` on an empty folder, the plugins linked
+  in, `PLUGINS_RESCAN`): the same note and drop count as registry-first, also
+  with a trunking control VFO replayed; found: with over 1000 entries the
+  late drop replaced the load's "kept aside" note (fixed). `t14_exc` cases
+  1-2 failed in 1 of 2 runs here (load 13-15): the calibration on
+  arrival (the lag tick 0-1 s after the retune + 0.6 s of noise source in the
+  fake) cut the first over when the tick came late, and trunktest sends
+  RELEASED 0.3 s after any gap - a network release no real decoder makes of a
+  reception gap - so the over ended early and the second over came after the
+  return: a second excursion. The test's (the scratch plugin's) timing, not
+  the hang logic: its first over now starts 1.8 s after the grant, after the
+  calibration window - 36 / 36 in three runs since (one pinned to two
+  cores), the lag tick 0.55-0.59 s after the retune in them, where the old
+  timing failed. Re-run on the final build: t16 30, t18 8, t19 6, t21 8,
+  t22 4, t23 4, t14 36, t15 12 - all passing; t20 15-16 of 18 in two runs
+  (in its file section one restart did not happen and the checks read the
+  previous receiver - a kit flake, 18 / 18 in a third run with prints).
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
   / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a

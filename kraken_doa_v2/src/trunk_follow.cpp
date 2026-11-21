@@ -3143,7 +3143,9 @@ void exc_return(const std::string& why, bool retune) {
     g_exc_stats.ends[why]++;
     g_exc_stats.away_ms += now - g_exc.t_left;
     g_exc.end = why;
-    if (why == "no_signal" || why == "limit") g_exc_retry[g_exc.key] = now + EXC_RETRY_MS;
+    // (a click to follow ended it: the user took the receiver - the call that had it away waits too, else its next
+    // grant update sent it straight out again and parked the VFO just clicked)
+    if (why == "no_signal" || why == "limit" || why == "follow") g_exc_retry[g_exc.key] = now + EXC_RETRY_MS;
     if (why == "not_arrived") {
         // (heimdall refusing / busy / gone: every call waits, 30 s doubling to 8 min)
         g_exc_fail = std::min(g_exc_fail + 1, 5);
@@ -3839,8 +3841,10 @@ void tick_cc() {
                 ++it;
             }
         if (n) {
-            g_cc_note = std::to_string(n) + " entr" + (n == 1 ? "y" : "ies") + " of decoders without trunking dropped";
-            std::cerr << "Trunk following: " << g_cc_note << std::endl;
+            // (added to what the load said - e.g. entries over 1000 kept aside - as cc_load does)
+            const std::string m = std::to_string(n) + " entr" + (n == 1 ? "y" : "ies") + " of decoders without trunking dropped";
+            g_cc_note = g_cc_note.empty() ? m : g_cc_note + "; " + m;
+            std::cerr << "Trunk following: " << m << std::endl;
             cc_changed();
         }
     }
@@ -3909,6 +3913,10 @@ struct Search {
     std::vector<double> probed_hz;   // every candidate probed in this run, found or not (skipped again)
     std::vector<std::pair<double, double>> covered;   // the bands already looked at (the last step's overlap)
     int tuner = 0;          // independent: the tuner that steps
+    int64_t t_batch = 0;    // the probe batch running since (0 = none)
+    uint64_t busy_steps = 0;   // finished steps that had carriers to probe
+    int pct_shown = 0;      // (pct never goes back)
+    std::vector<int64_t> batch_ms;   // how long this run's finished batches took (the time-left estimate)
 };
 Search g_srch;
 std::string g_srch_last;   // the last run's summary (JSON object)
@@ -4228,7 +4236,10 @@ void srch_probe_batch() {
             made++;
         }
     }
-    if (made) broadcast(MessageBuilders::build_decimator_info_message());
+    if (made) {
+        g_srch.t_batch = now;
+        broadcast(MessageBuilders::build_decimator_info_message());
+    }
 }
 
 struct SrchRec {
@@ -4308,6 +4319,7 @@ void tick_search() {
     auto next = [&] {
         srch_remove_probes();
         g_srch.step_ms.push_back(now - g_srch.t_step);
+        if (!g_srch.cands.empty()) g_srch.busy_steps++;
         g_srch.step++;
         g_srch.st = 0;
         g_srch.cands.clear();
@@ -4427,6 +4439,10 @@ void tick_search() {
                 }
             }
             if (live) return;
+            if (g_srch.t_batch) {
+                g_srch.batch_ms.push_back(now - g_srch.t_batch);
+                g_srch.t_batch = 0;
+            }
             srch_remove_probes();
             bool more = false;
             for (const auto& cd : g_srch.cands)
@@ -4454,23 +4470,60 @@ std::string srch_status_json(int64_t now) {
         o << "null";
     } else {
         const size_t n = g_srch.centres.size();
-        // progress inside a step counts: the share of its tries done (a probe step can last tens of seconds);
-        // the time left from the elapsed time and that fraction - null while there is nothing to base it on
-        double frac = 0;
-        if (g_srch.st == 4 && g_srch.tries)
-            frac = std::clamp(static_cast<double>(g_srch.probed - g_srch.probed0) / static_cast<double>(g_srch.tries), 0.0, 0.95);
-        else if (g_srch.st >= 2)
-            frac = 0.05;
-        const double done = n ? (static_cast<double>(g_srch.step) + frac) / static_cast<double>(n) : 1.0;
-        const int pct = static_cast<int>(std::floor(100.0 * done));
+        // The time left (s): the current step's from its tries still to run (in batches of what fits at once, a
+        // batch as long as the run's finished batches took - before the first one: the probe's no-frames limit
+        // + 0.5 s; in the second look: the first look's carriers x the plugins), each step not looked at yet as
+        // long as the finished steps took on the mean (an empty step is no evidence that the next one is empty:
+        // until a step with carriers has finished, eta_s is null unless no step is left to look at). Not from the
+        // step count: a quick empty first step was "25 %" after 0.5 s and "2 s left" of 38 s on the KrakenSDR.
+        // pct by the same measure (elapsed / (elapsed + left), the unknown steps valued at the longest step so far,
+        // at least 3 s), never back
         std::string eta = "null";
-        if (done >= 0.05 && !(g_srch.step == 0 && g_srch.st < 4)) {
+        int pct = 0;
+        {
             const double el = static_cast<double>(now - g_srch.t_start) / 1000.0;
-            eta = std::to_string(std::max<long long>(1, std::llround(el * (1.0 - done) / done)));
+            const double el_step = g_srch.st == 0 ? 0.0 : static_cast<double>(now - g_srch.t_step) / 1000.0;   // (st 0: t_step is the last step's)
+            double avg_step = 0, max_step = 0;
+            for (int64_t x : g_srch.step_ms) {
+                avg_step += static_cast<double>(x) / 1000.0;
+                max_step = std::max(max_step, static_cast<double>(x) / 1000.0);
+            }
+            if (!g_srch.step_ms.empty()) avg_step /= static_cast<double>(g_srch.step_ms.size());
+            double tb = (SRCH_PROBE_MIN_MS + 500) / 1000.0;
+            if (!g_srch.batch_ms.empty()) {
+                tb = 0;
+                for (int64_t x : g_srch.batch_ms) tb += static_cast<double>(x) / 1000.0;
+                tb /= static_cast<double>(g_srch.batch_ms.size());
+            }
+            const int others = static_cast<int>(decimator_manager.getDecimatorCount()) - static_cast<int>(g_srch.probes.size());
+            const double room = std::max(1, std::min(srch_batch_max(), VFO_LIMIT - others));
+            double cur = -1;   // the current step's time left (-1: not known yet - before its first look)
+            if (g_srch.st == 4) {
+                size_t todo = 0, live = 0;
+                for (const auto& cd : g_srch.cands)
+                    if (!cd.found) todo += cd.todo.size();
+                for (const auto& p : g_srch.probes)
+                    if (!p.done) live++;
+                const double in_batch = live && g_srch.t_batch ? std::max(0.5, tb - static_cast<double>(now - g_srch.t_batch) / 1000.0) : 0;
+                cur = in_batch + std::ceil(static_cast<double>(todo) / room) * tb;
+            } else if (g_srch.st == 3) {
+                const double tries = static_cast<double>(g_srch.look1.size() * trunking_plugins().size());
+                cur = 0.3 + std::ceil(tries / room) * tb;
+            }
+            const double later = g_srch.step < n ? static_cast<double>(n - g_srch.step - 1) : 0;
+            const bool known = g_srch.busy_steps > 0;   // a step with carriers has finished: the mean step means something
+            const double v = known ? avg_step : std::max({3.0, max_step, cur >= 0 ? el_step + cur : 0.0});
+            if (g_srch.step < n) {
+                const double left = (cur >= 0 ? cur : std::max(0.5, v - el_step)) + later * v;
+                if (known || (cur >= 0 && later == 0))
+                    eta = std::to_string(std::max<long long>(1, std::llround(left)));
+                pct = std::clamp(static_cast<int>(std::floor(100.0 * el / (el + left))), 0, 99);
+            } else {
+                pct = 100;
+            }
+            pct = std::max(pct, g_srch.pct_shown);
+            g_srch.pct_shown = pct;
         }
-        int64_t avg = 0;
-        for (int64_t x : g_srch.step_ms) avg += x;
-        avg = g_srch.step_ms.empty() ? 2000 : avg / static_cast<int64_t>(g_srch.step_ms.size());
         static const char* names[] = {"tuning", "tuning", "settling", "looking", "probing"};
         o << "{\"since\":" << g_srch.w_start << ",\"ranges\":[";
         for (size_t i = 0; i < g_srch.ranges.size(); i++)
