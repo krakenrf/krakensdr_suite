@@ -374,7 +374,8 @@ bool DecimatorManager::setDigitalOptions(int id, const dig::Options& opts) {
 
 void DecimatorManager::ensureDigital(DecimatorInstance& inst) {
     if (inst.digital) return;
-    inst.digital = std::make_shared<dig::DigitalDecoder>();
+    // threaded; the pipeline makes Auto detect's internal streams (data_receiver.cpp)
+    inst.digital = std::make_shared<dig::DigitalDecoder>(true, true);
     inst.digital->set_vfo(inst.id);
     inst.digital->set_voice_tap(inst.transcribe.load(std::memory_order_relaxed));
     // who transmits when -> the per-talker DoA (holds the TalkerDoa, not the

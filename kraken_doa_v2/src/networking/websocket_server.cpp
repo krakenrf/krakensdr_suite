@@ -1080,21 +1080,28 @@ void WebSocketServer::web_server_main() {
                     global_ssl_app->publish(TOPIC_CTL, array_cal::status_message(), uWS::TEXT, false);
                 }, 2000, 2000);
 
-                // 🗣 Voice to Text: new transcripts as they come (1 Hz), the
-                // status when it changed (a connecting page asks with GET_VOICE2TEXT)
+                // 🗣 Voice to Text: new transcripts as they come and the live
+                // rows (Live text) when they changed - every 250 ms, the new
+                // transcripts first, so a final replaces its live row in the
+                // same tick -; the status when it changed, once a second (a
+                // connecting page asks with GET_VOICE2TEXT)
                 struct us_timer_t* v2t_timer = us_create_timer(native_loop, 0, 0);
                 us_timer_set(v2t_timer, [](struct us_timer_t* /*timer*/) {
                     static std::string last_status;
+                    static unsigned tick = 0;
                     if (!global_ssl_app) return;
-                    const std::string fresh = v2t::take_new_message();
+                    std::string fresh, live;
+                    v2t::take_pushes(&fresh, &live);   // (one lock: a final with its row's removal)
                     if (global_ssl_app->numSubscribers(TOPIC_CTL) == 0) return;
                     if (!fresh.empty()) global_ssl_app->publish(TOPIC_CTL, fresh, uWS::TEXT, false);
+                    if (!live.empty()) global_ssl_app->publish(TOPIC_CTL, live, uWS::TEXT, false);
+                    if (tick++ % 4) return;
                     std::string st = v2t::status_message();
                     if (st != last_status) {
                         global_ssl_app->publish(TOPIC_CTL, st, uWS::TEXT, false);
                         last_status = std::move(st);
                     }
-                }, 1000, 1000);
+                }, 250, 250);
 
                 // 🧪 Debug playback: status when it changed, every 2 s while
                 // playing / generating

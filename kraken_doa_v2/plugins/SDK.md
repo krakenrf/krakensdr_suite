@@ -239,12 +239,24 @@ offline test prints the final lists in its summary.
 
 **Auto detect**: when a VFO's decoder is on "Auto detect", every plugin the
 user left ticked (sidebar plugin list, "Auto detect"; all are by default)
-runs side by side - except plugins that set `.manual_only = true` (they get
-no Auto detect tick at all; ADS-B) and plugins whose `min_vfo_rate` is more
-than twice the VFO's rate (they couldn't decode there); the one whose `valid()` frames dominate is shown, and only
-its voice / carrier offset is used. So a plugin must never call `valid()` on
-noise or on other protocols - it would steal the detection. (`Info::auto_detect`
-is deprecated and ignored; it is only kept so older plugins compile.)
+runs side by side, whatever the VFO's width - except plugins that set
+`.manual_only = true` (they get no Auto detect tick at all; ADS-B). A plugin
+whose `min_vfo_rate` is more than the VFO's bandwidth gets an internal
+stream instead of the VFO's own: the VFO's centre frequency decimated to the
+narrowest efficient width that holds its `min_vfo_rate` (plugins with needs
+close together share one, the widest of them) - exactly what it would get if
+the user widened the VFO to that width, except that it is never the
+beamformer's output (the listened-to antenna instead). Nothing changes for
+the plugin: the same `process()` / `process_multi()`, `host.time()`,
+`talker()` / `valid(start, end)` times (the host maps them into the VFO's
+stream), carrier offset; a plugin at `.sample_rate = 0` gets that stream's
+rate. The one whose `valid()` frames dominate is shown, and only its voice /
+carrier offset is used. So a plugin must never call `valid()` on noise or
+on other protocols - it would steal the detection. (`Info::auto_detect` is
+deprecated and ignored; it is only kept so older plugins compile.) Hosts
+from before 2026-11 left out the plugins whose `min_vfo_rate` was more than
+twice the VFO's rate; the offline test harness (`tools/digi_test.cpp`, which
+has no internal streams) still does.
 
 **Fixed frequency.** A decoder for one frequency (ADS-B: 1090 MHz) sets
 `.fixed_freq_hz`: picking it for a VFO sets the narrowest VFO bandwidth of at
@@ -300,7 +312,9 @@ frequency, already resampled to `Info::sample_rate`, in blocks of a few ms
 (normalize yourself). Choose a sample rate that is an integer multiple of the
 symbol rate when that helps (e.g. 38400 = 32 x 1200 = 16 x 2400), and keep it
 as low as the signal allows: it is the main CPU cost. `min_vfo_rate` is the
-VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
+VFO bandwidth the signal needs; with the plugin set on a VFO the panel warns
+when the VFO is narrower (in Auto detect the plugin gets a stream that wide
+instead - above).
 
 **The VFO's own rate.** `.sample_rate = 0`: no resampling - `process()`
 (and `process_multi()`) get the VFO's samples at whatever bandwidth the user

@@ -25,15 +25,25 @@ constexpr uint32_t JOB = 1;      // uint32 job id, then int16 PCM, 16 kHz mono
 constexpr uint32_t OPTION = 2;   // "key=value": language (auto|en|de|..), prompt,
                                  // threads (1-4), vad (0|1), vad_threshold (0.1-0.9),
                                  // translate (0|1), beam (0 = greedy | 2-8)
+constexpr uint32_t PARTIAL = 3;  // Live text: as JOB (uint32 id, then int16 PCM, 16 kHz mono) -
+                                 // the transmission so far, decoded quickly (no retries, no
+                                 // temperature fallback, a token cap) and answered with
+                                 // PARTIAL_RESULT. Counts as the one job in flight. Only sent
+                                 // to a helper whose READY said live=1 (an older helper
+                                 // ignores unknown types and would never answer)
 
 // helper -> kraken_doa
 constexpr uint32_t READY = 16;   // '\0'-separated key=value: model, type, multilingual (0|1),
-                                 // vad (0|1: VAD model loaded), version, system
+                                 // vad (0|1: VAD model loaded), version, system,
+                                 // live (1: takes PARTIAL; absent = an older helper)
 constexpr uint32_t RESULT = 17;  // uint32 id, float conf (0-1), float no_speech (0-1),
                                  // uint32 proc_ms, int32 speech_ms (-1 = no VAD),
                                  // then '\0'-separated: lang, text, dropped reason
                                  // ("" = kept; text is "" when dropped)
 constexpr uint32_t ERROR = 18;   // text (fatal ones are followed by exit)
+constexpr uint32_t PARTIAL_RESULT = 19;   // uint32 id, uint32 proc_ms, int32 speech_ms (-1 =
+                                          // no VAD), then the text so far, cleaned as a
+                                          // RESULT's ("" = no speech yet / nothing kept)
 
 constexpr uint32_t MAX_PAYLOAD = 4u << 20;   // 4 MB: > 2 min of int16 audio
 constexpr int SAMPLE_RATE = 16000;

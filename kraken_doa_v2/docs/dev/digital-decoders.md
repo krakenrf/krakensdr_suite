@@ -49,10 +49,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   user left in Auto detect (rebuilt when the registry generation changes)
   minus `manual_only` plugins (`kp::Info::manual_only`, ADS-B - the plugin
   list shows no Auto detect tick for them, `digAutoPlugins()` leaves them
-  out) and those whose `min_vfo_rate` is more than 2x the VFO's rate
-  (`auto_ids()`, `AUTO_MAX_RATE_SHORTFALL`: ADS-B's 2.4 MHz upsampled from a
-  12.5 kHz VFO only burned CPU) - so AUTO starts its plugins with the first
-  block (rate known) and rebuilds when the VFO's rate changes the set;
+  out), whatever the VFO's width: a plugin whose `min_vfo_rate` is more than
+  the VFO's bandwidth runs on an internal stream (below, *Internal
+  streams*; 2026-11-20 - until then such a plugin was left out when it
+  needed more than 2x the VFO's rate, `AUTO_MAX_RATE_SHORTFALL`, and ran
+  starved on upsampled samples within 2x: on a narrow VFO Auto detect could
+  never find RDS or analog TV, and TETRA ran on a 12.5 kHz VFO's samples.
+  The offline harness, which has no internal streams -
+  `DigitalDecoder(threaded, internal_streams = false)` -, keeps that rule);
   detection = majority of `valid()` frames in a 4 s window. Only the "lead"
   plugin (the fixed one, or the detected one) gets VOICE_WANTED and has its
   audio / voice state / carrier offset used. AFC: plugin offset reports are
@@ -68,6 +72,148 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   of lora-mesh-five after dstar-two-radios had no separation by code). A VFO
   retune (> 100 Hz) or mode change resets everything (RESET to the plugins,
   facts + map points cleared; `reset_pending_` is consumed by the worker)
+- **Internal streams** (2026-11-20; the user: "I often see the error message
+  D0: VFO bandwidth 25.5 kHz is too narrow for Auto detect (needs 2000 kHz)
+  ... Is there a way to make autodetect work with just the center freq, and
+  it will create multiple internal VFO sizes for autodetection of
+  decoders?"). Auto detect works from the VFO's centre frequency alone:
+  - Per plugin (`Engine::assign_streams`, `Runner::stream_w`): the VFO's own
+    stream when the VFO's BANDWIDTH (`push(.., bw_hz)` =
+    `MultiChannelDecimated::bandwidth_hz`, not the rate - the page's "too
+    narrow" test) holds its `min_vfo_rate`; else an internal stream at
+    `efficient_bandwidth_at_least(min_vfo_rate)` (what the page's "Set X kHz"
+    sets). Fixed modes, the offline harness (`internal_streams` false), array
+    plugins, and the time before the first block: always the VFO's own.
+    Grouping: the unmet needs sorted, a need joins the current group while
+    its width is <= `AUTO_STREAM_MERGE_RATIO` (2) x the group's narrowest,
+    the group's stream = its widest; more than `DigitalDecoder::MAX_STREAMS`
+    (4) groups: the two neighbours closest in width merge. Today's ticked
+    plugins on a 12.5 kHz VFO: 25 kHz (aprs, v23_telemetry, radiosonde,
+    tetra, vdl2), 48 kHz (ils), 150 kHz (rds, every antenna), 2.4 MHz
+    (analogtv); on 25.5 kHz: 48 kHz, 150 kHz, 2.4 MHz; from 2 MHz: none
+  - Equivalence: an internal stream is what the plugin would get from the
+    VFO widened to that width at the same centre - a real `SharedDecimator`
+    at that bandwidth and the VFO's offset (read once with the VFO's block),
+    decimated in the SAME `decimateVfos` pass (extra `VfoBlock`s), the same
+    AFC mixer (per stream, its own phase), the VFO's channel choice (the
+    listened-to channel; the VFO's tuner in wideband-scan / independent
+    mode; one channel in `fm_only`), every antenna for a `multichannel`
+    plugin on it (`StreamWant::mc`) exactly when the VFO's own stream would
+    get them (coherent, not `fm_only`, no AFC correction, the plugin at the
+    stream's rate). The one exception: never the beamformer output (the
+    listened-to channel). A plugin at `sample_rate` 0 runs at the stream's
+    rate (`--rate` = the width; moving to another stream restarts it, as "new
+    VFO rate" does); the others are resampled from it
+  - Not VFOs: no `DecimatorInstance`, never in MUSIC / squelch / the VFO list
+    / settings / the per-VFO pipeline loop, nothing drawn. The pipeline
+    (`data_receiver.cpp`, `AutoStreamSet` / `AutoStream`, a vector local to
+    the decimation thread) creates, reconfigures and frees them - the only
+    thread touching them: per block, a VFO in AUTO whose decoder
+    `wants_streams()` gets a set (keyed by its instance, weak_ptr-checked);
+    `streams_gen()` changed -> `wanted_streams()` read under the decoder's
+    `streams_mu_` and the decimators reconciled (a width kept keeps its
+    filter state; only a change allocates); a set its VFO no longer wants
+    (decoder off / fixed / wide enough / VFO deleted / not decimated) goes in
+    the same block ("Auto detect: VFO N internal streams: ..." / "...
+    freed" on stdout). The engine publishes the wants from its worker
+    (`set_wanted_streams`, like `set_array_wanted`). A VFO not in AUTO, or
+    wide enough: one atomic load per block, nothing else
+  - Hand-over: the stream blocks go in the VFO's `push` (`AuxStream`, copied
+    into the same queue `Block`, so the 1 s cap - now counted in seconds of
+    signal, `queued_s_` - bounds them; a 2.4 MHz stream is 19 MB a second).
+    An internal stream is continuous whatever happens to the VFO's block:
+    when the beamformer holds the VFO's samples back - FD-DAS's 256-point
+    frames (hop 128) are longer than the ~85 samples a 12.5 kHz VFO gets per
+    16384-sample block, so it returns nothing on about one block in three,
+    and more in the next - the block goes as a `push` with no VFO samples
+    (n = 0) and its internal streams; the engine then feeds only the
+    internal streams' plugins and leaves the VFO stream's AFC phase,
+    resamplers and positions alone. Such a block's length in the queue is
+    its internal streams' (every block has the same), so the 1 s cap stays
+    right; positions come from the decimated block's `stream_pos`, never
+    from the beamformer. (The first version skipped the internal blocks
+    with a withheld VFO block, as the brief said: TETRA on a 12.5 kHz VFO
+    with FD-DAS gave 0 frames - the orchestrator's review, 2026-11-20.) A
+    wanted stream a block lacks (the pipeline makes it from the next one)
+    gives its plugins nothing for that block - never upsampled VFO samples
+  - Positions: the VFO block starts at `stream_pos`; an internal sample j of
+    the block is VFO position `stream_pos + (D_vfo - D_stream) x vfo_rate + j
+    x vfo_rate / stream_rate` (`AuxStream::pos`, the `run()` step) - D = the
+    cascade's group delay (`SharedDecimator::groupDelaySeconds`: each
+    linear-phase stage's (taps - 1) / 2 of its input; 12.5 kHz 0.79 ms = 10
+    VFO samples, 25 kHz 0.45, 25.5 kHz 0.40, 48 kHz 0.23, 150 kHz 0.07, 2.4
+    MHz 0 - the wider stream sees a signal earlier; ignoring the first
+    output's phase in the block costs < 1 VFO sample). `pos_map` takes
+    fractional positions, so talker spans,
+    `valid(start, end)` (Digital squelch) and packets land in the VFO's
+    stream and per-talker DoA works from the VFO's MUSIC frames as before
+    (only the VFO's band of the signal: widening gives DoA the whole one)
+  - Protocol (compatible both ways): status `plugins[].stream_hz` (absent =
+    the VFO's own); `rate_ok` / `min_rate` count only the plugins on the
+    VFO's own stream; capability marker `"auto_streams":true` next to the
+    plugin list (`AiManager::plugins_message`, every page gets it at
+    connect and after a rescan) - an older page ignores both. Page
+    (`digAutoStreams`): no "too narrow" warning in Auto detect, nothing
+    widens a VFO for it (Demod -> Digital, `digFixBandwidthFor`,
+    `digMinRateK(mode, id)` = 0 while searching); locked onto a plugin that
+    needs more than the VFO has: a `.dig-note` "D0: RDS decoded from a 150
+    kHz stream" + "Set 150 kHz" (title: what widening adds), and a "Stream"
+    row in its facts; fixed modes and an older receiver (no marker): as
+    before. `sf_scanner`'s `decoder_need_hz` gives Auto detect no minimum
+    (was 24 kHz)
+  - Tests (2026-11-20, x86_64 TEST builds of the change and of the tree
+    before it, machine load 15-30; scratch impl/: `tpb.py` + `batch.sh` -
+    debug playback, VFO 0 set by WebSocket, valid frames counted over 30-42 s
+    = 2.5-3 loops -, `t_trans.py`, `t_indep.py` + the fake heimdall
+    replaying a playback .dat, `t_ui.py`, `cpu_all.sh`). Frames, narrow VFO
+    in Auto detect vs the same scene widened by hand vs the catalogue's
+    fixed mode (the old build's fixed count in brackets): RDS 12.5 kHz 348,
+    25.5 kHz 341, 150 kHz 340, fixed 400 kHz 352 (352), talkers PI 9201 60.0
+    / PI 3DF5 200.0 deg in every one; TETRA 12.5 kHz (25 kHz stream) 2517,
+    24 kHz 2533, fixed 30 kHz 2517 (2517), CC12 70.0 / CC33 235.0 deg - the
+    old build on 12.5 kHz in Auto detect: 0 frames; analog TV 12.5 kHz (2.4
+    MHz stream) 443, fixed 440 (439) - widened to 2.4 MHz in Auto detect 206,
+    the decoder queue dropping (17 plugins resampled from 2.4 MHz - so as
+    before); DMR 12.5 kHz (own stream) 547, 25.5 kHz 548, fixed 547 (546),
+    old build 12.5 kHz Auto 546, talkers 300 / 300 / 60 / 200 deg; P25 12.5
+    kHz 167 (old 167), fixed 167 (166), 60 / 200 / 300 deg. No internal
+    stream for fixed modes nor a VFO wide enough (RDS at 150 kHz with
+    analogtv unticked 344, old 347; no "internal streams" log line).
+    Transitions (`t_trans.py`, 34 checks, also under ASan + UBSan: no
+    report, clean exit, only the slowed decoder's queue dropped 101 blocks):
+    bandwidth across RDS's need (150 kHz -> its own stream, back), a 30 kHz
+    retune and back, PLUGIN:rds / OFF / AUTO, analogtv unticked / ticked,
+    the rds exe touched (restarted on its stream), a second VFO in Auto
+    detect with its own four streams then deleted, DoA off (`fm_only`), the
+    playback stopped and started - streams created / freed as logged, RDS
+    decoding after each step. Independent mode and `fm_only` with the fake
+    heimdall (`t_indep.py`, 7 checks): RDS from its 150 kHz stream on a
+    25.5 kHz VFO, 286-292 frames per 30 s in every case. Offline:
+    `digi_test` before / after gives the same plugin set (the old rule) at
+    25 and 300 kHz. Beamforming (`sc_bf2.txt`, `bf_run.sh`, after the fix
+    above): FD-DAS, TETRA on 12.5 kHz 2528 (0 before the fix; old build 0 -
+    it ran TETRA starved), RDS on 25.5 kHz 349 (old build: no RDS), DMR on
+    its own 12.5 kHz stream 540 (old build 540); DAS RDS 25.5 kHz 342; MVDR
+    DMR 12.5 kHz 544 (old 535); `t_trans.py` with an FD-DAS step 37 checks.
+    Shutdown (SIGTERM during an FD-DAS Auto detect session, 17 / 14 plugin
+    processes): new 1.46 / 1.56 s, old 1.35 / 1.72 s, the plugins gone with
+    it - unchanged (the process ends with `fast_exit`; decoders aren't torn
+    down). Page (headless Chromium, real key / mouse events; 10
+    checks): the marker, no warning locked onto DMR at 25.5 kHz, Demod ->
+    Digital (End key) sends no bandwidth, the RDS note + facts row, its Set
+    button (a click) -> 150 kHz and the note gone, fixed TETRA's warning +
+    Set 24 kHz as before; the old receiver serving the new page (7 checks):
+    the old "needs 2000 kHz" warning and the widening to 2.4 MHz as before.
+  - CPU (x86_64 under load, user time of kraken_doa + its plugin processes,
+    % of one core, the old and the new build playing the DMR scene AT THE
+    SAME TIME, 3 x 60 s, one 12.5 kHz VFO): decoder off 25.9 / 26.6; Auto
+    detect 50.7 -> 63.7 (+12.9: kraken_doa +7.2 - four internal streams,
+    their copies, AFC and resamplers -, plugins +5.7: analogtv 3.8 idle
+    (no TV signal, nobody watching), rds 1.3, ils 0.5); analogtv unticked
+    49.5 -> 56.1 (+6.7); a 25.5 kHz VFO (three streams) 49.0 -> 61.0
+    (+12.0). Auto detect's own cost (minus the decoder-off figure) grows
+    by about half, a quarter without analogtv - on a Pi count on it,
+    and untick what isn't needed (not measured on a Pi)
 - Station location for the plugins: `dig::set_station_location()` (called
   by `build_map_message` every second from `station_info.resolve()`; 0,0 =
   unknown) bumps a generation; each Runner sends wire STATION "lat,lon" (""
@@ -746,15 +892,20 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   mbelib once, so a newly installed codec needs the decoder switched off and
   on
   `DIGITAL_HISTORY:id` is asked once per VFO / mode. Demod "Digital" keeps the
-  VFO's bandwidth (widened only below the decoder's need - it used to force
-  NBFM's 16 kHz, too narrow for TETRA / AUTO)
+  VFO's bandwidth (widened only below a fixed decoder's need - it used to
+  force NBFM's 16 kHz, too narrow for TETRA; never for Auto detect on a
+  receiver with internal streams)
 - Bandwidth: each plugin's `min_vfo_rate` (12 kHz for the 4FSK ones, 24 kHz
-  for TETRA; AUTO = the largest of the ticked set) - the panel warns and
-  offers the narrowest wide-enough option
+  for TETRA). A fixed decoder: the panel warns and offers the narrowest
+  wide-enough option. Auto detect needs none (*Internal streams*); an older
+  receiver (no `auto_streams`): the largest of the ticked set, warned and
+  widened as before
 - CPU (Pi 5, 24 kHz VFO): one plugin ~3% of a core, AUTO ~11% with the six
   protocol plugins and ~15% with all nine shipped/user plugins ticked (each
   process has its own front end; was ~4.5% in-process) - unticking unused
-  decoders saves it
+  decoders saves it. Since 2026-11-20 a narrow VFO's Auto detect also runs
+  the wide plugins on internal streams (rds, ils, analogtv): ~+50 % on top
+  of that, measured on x86_64 (*Internal streams*)
 - Offline test harness: `tools/digi_test.cpp` (runs the plugins like a VFO,
   synchronously: waits for slow plugins instead of dropping, SYNC-drains at
   the end; .dis files are FM-modulated again; `--opt dmr.slot=1`; run from

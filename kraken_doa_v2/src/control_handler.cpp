@@ -2246,6 +2246,13 @@ void ControlHandler::handle_message_impl(string_view message) {
         v2t::set_keep_audio(parse_int(message, 22) != 0);
         broadcast(v2t::status_message());
     }
+    else if (message.starts_with("VOICE2TEXT_LIVE:")) {
+        // Live text: partial transcripts while a transmission lasts (CPU: see voice2text.hpp)
+        const string v(message.substr(16));
+        if (v != "0" && v != "1") throw CommandRejected("format: VOICE2TEXT_LIVE:0|1");
+        v2t::set_live(v == "1");
+        broadcast(v2t::status_message());
+    }
     else if (message.starts_with("VOICE2TEXT_DOWNLOAD:")) {
         // a model of the catalogue (fixed Hugging Face URLs) into the models folder
         string err;
@@ -2269,9 +2276,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(v2t::lobe_message(strtoull(id.c_str(), nullptr, 10)));
     }
     else if (message == "GET_VOICE2TEXT") {
-        // a page connecting: the settings / state and the latest transcripts
+        // a page connecting: the settings / state, the latest transcripts and
+        // the live rows (Live text)
         broadcast(v2t::status_message());
         broadcast(v2t::history_message(300));
+        broadcast(v2t::live_message());
     }
     else if (message.starts_with("RDF:")) {
         // Mobile DF heat map: collect bearings while driving (rdf_mapper.cpp)

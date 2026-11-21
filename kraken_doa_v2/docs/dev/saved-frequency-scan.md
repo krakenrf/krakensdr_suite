@@ -129,7 +129,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (the entry's, exactly - any width since the arbitrary VFO bandwidth, merged
   2026-10-22: the scanner used to snap it to the nearest of the 30 old sizes;
   Digital: widened to the narrowest efficient size holding the decoder's
-  `min_vfo_rate`, `efficient_bandwidth_at_least` - 24 kHz for Auto; `Cfg::bw`
+  `min_vfo_rate`, `efficient_bandwidth_at_least` - nothing for Auto since
+  2026-11, it works at any width, *digital-decoders.md* "Internal streams";
+  24 kHz before; `Cfg::bw`
   is Hz), SET_DECIMATOR_FREQ (offset from the slot's centre; independent
   `:tuner`), the VFO heard (pre-placing: muted). LISTEN: the entry measured
   on its slot; over squelch - 3 dB keeps it, not ready (calibration) counts

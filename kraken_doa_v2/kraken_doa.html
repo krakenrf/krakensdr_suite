@@ -200,6 +200,8 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .btn.sm {padding:3px 8px;font-size:12px}
 .cv {color:var(--ac-t);font-size:12px;margin-left:5px}
 .dig-warn {background:#3a2a10;border:1px solid var(--warn-m);color:var(--warn-t2);font-size:11px;padding:5px 6px;border-radius:3px;margin:4px 0;display:flex;gap:6px;align-items:center;justify-content:space-between}
+/* information in the same place (Auto detect on an internal stream): no warning colours */
+.dig-note {background:var(--s3);border:1px solid var(--l2);color:var(--t2);font-size:11px;padding:5px 6px;border-radius:3px;margin:4px 0;display:flex;gap:6px;align-items:center;justify-content:space-between}
 .dig-help {font-size:11px;color:var(--t3);line-height:1.4;margin:4px 0}
 .dig-status {font-size:12px;color:var(--t3);line-height:1.7;margin-top:4px}
 .dig-status div {display:flex;justify-content:space-between}
@@ -397,6 +399,17 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .v2t-text {color:var(--t0);font-size:13px;line-height:1.35;margin-top:1px;white-space:pre-wrap;word-break:break-word}
 .v2t-text.low {color:var(--t3);font-style:italic}
 .v2t-text mark {background:#624701;color:#fff;border-radius:2px}
+/* Live text (v2tRenderLive): a transmission still on the air, its confirmed words as a
+   transcript's, the pending ones dimmed; the final transcript replaces the row */
+.v2t-row.live {border-left:2px solid var(--bad);padding-left:4px}
+.v2t-row.live.end {border-left-color:var(--l4)}
+.v2t-meta .v2t-live {display:inline-flex;align-items:center;color:var(--bad-t)}
+.v2t-row.live.end .v2t-live {color:var(--t5)}
+.v2t-text .pend {color:var(--t5)}
+.v2t-list.has-live .v2t-empty {display:none}
+/* v2tRenderLive keeps the rows being read in place itself (the browser's scroll anchoring on
+   top of it moved them twice; Safari has none) */
+.v2t-list {overflow-anchor:none}
 .v2t-play {background:var(--s3);border:1px solid var(--l2);color:var(--t1);border-radius:3px;font-size:10px;padding:0 5px;cursor:pointer;line-height:16px}
 .v2t-play:hover {border-color:var(--ac);color:#fff}
 .v2t-play.on {background:#0068bb;border-color:var(--ac);color:#fff}
@@ -3608,7 +3621,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
               <button class="btn sm" type="button" onclick="v2tClear()" title="Delete every transcript and its audio on the receiver">Clear</button>
             </div>
             <div class="v2t-head" id="v2t-tab-head"></div>
-            <div class="scroll v2t-list" id="v2t-list"></div>
+            <!-- the live rows (Live text, v2tRenderLive) above the transcripts (v2tRenderTab) -->
+            <div class="scroll v2t-list" id="v2t-list"><div id="v2t-live-rows"></div><div id="v2t-rows"></div></div>
           </div>
         </div>
       </div>
@@ -3961,7 +3975,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <label class="ck v2t-tr" title="Write the text in English, whatever language is spoken (multilingual models)"><input type="checkbox" id="v2t-translate" onchange="send('VOICE2TEXT_TRANSLATE:' + (this.checked ? 1 : 0))"> → English</label>
         </div>
       </div>
-      <div class="lbl" title="CPU cores the speech model may use. It runs below the receiver's priority; more = faster transcripts">CPU cores</div>
+      <div class="lbl" title="CPU cores the speech model may use. It runs below the receiver's priority.&#10;1 or 2 use the least CPU in total; more finish each transcript sooner, but use more CPU altogether">CPU cores</div>
       <div class="row">
         <select id="v2t-threads" class="v2t-threads" onchange="send('VOICE2TEXT_THREADS:' + this.value)">
           <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
@@ -3973,6 +3987,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         <input type="text" id="v2t-prompt" maxlength="300" placeholder="Callsigns, places…" title="Vocabulary hint for the model: callsigns, unit names, place names, phrases - spelled as you want them written. Helps with names it would otherwise mishear." onkeydown="if(event.key==='Enter')v2tApplyPrompt()">
         <button class="btn sm" type="button" onclick="v2tApplyPrompt()" title="Use these words">Apply</button>
       </div>
+      <!-- Live text (VOICE2TEXT_LIVE, voice2text.cpp maybe_partial; the rows: v2tRenderLive) -->
+      <label class="swr" id="v2t-live-l"><span>Live text<span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Shows what is said <b>while the transmission is still on the air</b>: every second the model transcribes the transmission so far again. Words two passes in a row agree on are shown in full, the newest ones dimmed until the next pass confirms them. When the transmission ends, the final transcript replaces the live text, as without this option (the final, its audio clip and the log are the same either way).<br><b>It costs CPU:</b> while someone talks, the model runs all the time - 4 to 6 times the CPU of transcribing each transmission at its end. Measured on a PC (Intel i7, 8 cores): base.en-q8_0 on 2 cores used about 0.4 of a core while someone talked, showed each word about 0.8 s after it was said and confirmed it after about 1.8 s; base.en 0.6 of a core; small.en on 4 cores about 2.6 cores. Measured on a Raspberry Pi 4: base.en-q8_0 on 4 cores updated the text every 1.2 to 2 s and used 3 to 3.5 of its 4 cores while someone talked (on 2 cores: every 2 to 2.5 s, about 2 cores) - too much next to the receiver, so leave it off on a Pi 4. On a Pi 5 (measured) it is fine: base.en-q8_0 on 2 cores updated the text every 1 s, each pass in 0.3 to 0.4 s, and used half to three quarters of a core while someone talked; small.en-q4_0 on 4 cores about 2 to 2.5 cores. VFOs talking at the same time share the model: each gets fewer updates, and finished transmissions always go first.</span></span></span><input type="checkbox" class="sw" id="v2t-live" onchange="send('VOICE2TEXT_LIVE:' + (this.checked ? 1 : 0))"></label>
       <div class="sec"><span>Audio</span></div>
       <label class="swr" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><span>Skip non-speech</span><input type="checkbox" class="sw" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"></label>
       <label class="swr" title="Keep each transcript's audio to play it back in the Transcription panel: Opus files (~7 MB an hour of speech) in the decoder log's folder (Decoder Logging, Save to; voice_clips/, one folder a day), deleted after the Keep days of the log files (the plain days - Then compressed does not apply: they are compressed already). Not saved while that disk has less than 100 MB free."><span>Keep the audio</span><input type="checkbox" class="sw" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"></label>
@@ -3983,6 +3999,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         <div class="kv"><span>VFOs</span><span id="v2t-vfos">&mdash;</span></div>
         <div class="kv"><span>Waiting</span><span id="v2t-queue">&mdash;</span></div>
         <div class="kv"><span>Transcribed</span><span id="v2t-done">&mdash;</span></div>
+        <div class="kv" id="v2t-live-row" style="display:none"><span>Live text</span><span id="v2t-live-st">&mdash;</span></div>
         <div class="kv"><span>To disk</span><span id="v2t-log">&mdash;</span></div>
       </div>
     </div>
@@ -4592,7 +4609,8 @@ let fpHover = null;
 // 🗣 Voice to Text (see 🗣 VOICE TO TEXT): the backend's status, the
 // transcripts (oldest first), how many came while the Transcription panel wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
-let v2tStatus = null, v2tList = [], v2tUnseen = 0;
+// and the live rows (Live text: transmissions still on the air or waiting for their final)
+let v2tStatus = null, v2tList = [], v2tUnseen = 0, v2tLive = [];
 // 🗂 Decoder Logging (see dlOnStatus): the receiver's last {"declog"} status, the key of its
 // problems / permission the panels were drawn for. The decoder tabs' Logging select
 // (digLogCtlHtml): its options, the Show all messages tick's tooltip. infoRenderDecoder and
@@ -10568,10 +10586,13 @@ function setDecimatorDemodMode(id, mode, keepBw) {
   }
 
   // Digital voice: keep the VFO's bandwidth, widened only if its decoder
-  // needs more (TETRA / Auto detect need 24 kHz - the NBFM 16 kHz below
-  // starved them)
+  // needs more (TETRA needs 24 kHz - the NBFM 16 kHz below starved it).
+  // Auto detect on a receiver that makes internal streams works at any
+  // width: nothing is widened for it (an older receiver: its largest need)
   if (mode === 'DIGITAL') {
-    const need = digMinRateK(dec && dec.digital_mode && dec.digital_mode !== 'OFF' ? dec.digital_mode : 'AUTO') || 24;
+    const dm = dec && dec.digital_mode && dec.digital_mode !== 'OFF' ? dec.digital_mode : 'AUTO';
+    if (dm === 'AUTO' && digAutoStreams) return;
+    const need = digMinRateK(dm, id) || 24;
     const have = dec ? decBwHz(dec) / 1000 : 0;
     if (have + 1e-6 < need) digFixBandwidthFor(id);
     return;
@@ -11283,7 +11304,7 @@ function connect() {
           else if(msg.rdf) { rdfOnStatus(msg.rdf, false); }
           else if(msg.rdf_part) { rdfOnStatus(msg.rdf_part, true); }
           else if(msg.rdf_grid) { rdfOnGrid(msg.rdf_grid); }
-          else if(msg.plugins) { digOnPlugins(msg.plugins); }
+          else if(msg.plugins) { digOnPlugins(msg.plugins, msg); }
           else if(msg.codecs) { digOnCodecs(msg.codecs); }
           else if(msg.declog) { dlOnStatus(msg.declog); }
           else if(msg.playback) { pbOnMessage(msg.playback); }
@@ -13878,6 +13899,10 @@ function addTouchHandlers(el, down, move, up) {
   const digHistoryAsked = {};   // VFO id -> mode the history was asked for
   const DIG_MAX_EVENTS = 400;
   let digPlugins = [];          // {"plugins":[...]} (dig_plugin.cpp list_json)
+  // the receiver runs Auto detect at any VFO width - a plugin that needs more
+  // gets an internal stream of its own ("auto_streams" next to the plugin
+  // list, 2026-11); false = an older receiver: the page warns / widens as before
+  let digAutoStreams = false;
   let digTabShown = null;       // decoder tab shown: plugin id
   // removed VFOs' events, for their modes' tabs: [{vfo, mhz, ev}] (this page only)
   let digArchive = [];
@@ -14151,9 +14176,19 @@ function addTouchHandlers(el, down, move, up) {
     drawBox();
     if (typeof paneDrawAllOverlays === 'function') paneDrawAllOverlays();
   }
-  // VFO bandwidth (kHz) the mode needs
-  function digMinRateK(mode) {
-    if (mode === 'AUTO') return Math.max(0, ...digAutoPlugins().map(p => p.min_vfo_rate || 0)) / 1000;
+  // VFO bandwidth (kHz) the mode needs. Auto detect: on a receiver that makes
+  // internal streams (digAutoStreams) none - it works at any width; once it
+  // locked onto a plugin, that plugin's (the note + "Set" in its tab; id = the
+  // VFO). On an older receiver: the largest of the ticked plugins, as before
+  function digMinRateK(mode, id) {
+    if (mode === 'AUTO') {
+      if (digAutoStreams) {
+        const st = id !== undefined ? digStatus[id] : null;
+        const p = st && st.detected ? digPlugin(st.detected) : null;
+        return p ? (p.min_vfo_rate || 0) / 1000 : 0;
+      }
+      return Math.max(0, ...digAutoPlugins().map(p => p.min_vfo_rate || 0)) / 1000;
+    }
     const p = digPlugin(digModePlugin(mode));
     return p ? (p.min_vfo_rate || 12500) / 1000 : 0;
   }
@@ -14448,8 +14483,9 @@ function addTouchHandlers(el, down, move, up) {
     return ['#f4c170', mode === 'AUTO' ? 'Searching…' : 'No ' + digShort(digModeLabel(mode)) + ' signal'];
   }
 
-  function digOnPlugins(list) {
+  function digOnPlugins(list, msg) {
     digPlugins = list || [];
+    digAutoStreams = !!(msg && msg.auto_streams);
     // the panel opened (page load) before the plugin list: now there may be
     // tabs - or the restored one is not installed here any more
     if (infoOpen('dec') && !digTabList().includes(infoTab.slice(4))) infoPanelOpen('dec');
@@ -14628,11 +14664,14 @@ function addTouchHandlers(el, down, move, up) {
     infoRenderDecoder(true);
   }
 
-  // the narrowest efficient size at or above the mode's minimum
+  // the narrowest efficient size at or above the mode's minimum (Auto detect
+  // with internal streams: the plugin it locked onto - nothing while it searches)
   function digFixBandwidthFor(id) {
     const d = digDec(id);
     if (!d) return;
-    setDecimatorBandwidthHzFromUI(d.id, bwAtLeastEfficient((digMinRateK(d.digital_mode) || 24) * 1000));
+    const need = digMinRateK(d.digital_mode, d.id);
+    if (!need && d.digital_mode === 'AUTO' && digAutoStreams) return;
+    setDecimatorBandwidthHzFromUI(d.id, bwAtLeastEfficient((need || 24) * 1000));
     digRenderAll();
   }
 
@@ -14696,6 +14735,11 @@ function addTouchHandlers(el, down, move, up) {
     const frames = fr[tab] ? `${fr[tab][0]} (total ${fr[tab][1]})` : '0';
     rows += `<tr><td>Carrier offset</td><td>${st.detected ? (st.offset_hz > 0 ? '+' : '') + st.offset_hz + ' Hz' : '-'}</td></tr>` +
             `<tr><td>Valid frames (4 s)</td><td>${digEsc(frames)}</td></tr>`;
+    // Auto detect runs this plugin on an internal stream wider than the VFO (status stream_hz)
+    const sp = (st.plugins || []).find(x => x.id === tab);
+    if (sp && sp.stream_hz > 0)
+      rows += `<tr title="Auto detect decodes it from a stream of its own at the VFO's centre, as wide as it needs"><td>Stream</td>` +
+              `<td>${digEsc(bwLabel(sp.stream_hz))}${d ? ' (VFO ' + digEsc(bwLabel(decBwHz(d))) + ')' : ''}</td></tr>`;
     const info = st.info || {};
     for (const p of Object.keys(info).filter(p => p === tab)) {
       for (const [k, v, age] of info[p])
@@ -15982,10 +16026,22 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         opts += `<label${tip}>${digEsc(op.label || op.key)} <input type="text" data-key="${digEsc(key)}" value="${digEsc(v)}" placeholder="${digEsc(op.default || 'default')}" style="width:70px"` +
                 ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetOptFor(${id}, this.dataset.key, this.value.trim())"></label>`;
     }
-    const needK = digMinRateK(mode);
+    const needK = digMinRateK(mode, id);
     const haveK = d ? decBwHz(d) / 1000 : 0;
     let warn = '';
-    if (d && haveK + 1e-6 < needK) {
+    if (d && haveK + 1e-6 < needK && mode === 'AUTO' && digAutoStreams) {
+      // Auto detect locked onto a plugin that needs more than the VFO has: it
+      // decodes from an internal stream of its own (status stream_hz) - a note,
+      // not a fault; Set widens the VFO (DoA, squelch and the bar then take the
+      // whole signal, the plugin the VFO's own stream)
+      const fix = bwAtLeastEfficient(needK * 1000);
+      const pl = (st && st.plugins || []).find(x => x.id === st.detected);
+      const sw = pl && pl.stream_hz > 0 ? pl.stream_hz : fix;
+      const nm = digShort(digName(st.detected));
+      warn += `<div class="dig-note" title="${digEsc(`Auto detect gives ${nm} the ${bwLabel(sw)} it needs from a stream of its own, centred on this VFO; the VFO stays ${bwLabel(haveK * 1000)}, so its DoA, squelch and level take only that part of the signal.`)}">` +
+              `<span>D${id}: ${digEsc(nm)} decoded from a ${digEsc(bwLabel(sw))} stream</span>` +
+              `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})" title="${digEsc(`Widen this VFO to ${bwLabel(fix)}: DoA, squelch and the bar then take the whole signal, and ${nm} the VFO's own stream`)}">Set ${digEsc(bwLabel(fix))}</button></div>`;
+    } else if (d && haveK + 1e-6 < needK) {
       const fix = bwAtLeastEfficient(needK * 1000);
       warn += `<div class="dig-warn"><span>D${id}: VFO bandwidth ${digEsc(bwLabel(haveK * 1000))} is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
               `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})">Set ${digEsc(bwLabel(fix))}</button></div>`;
@@ -16653,7 +16709,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
 
   // Escapes text for element content AND attribute values (quotes too: names
   // are placed inside title="..." attributes)
-  // --- 🗣 VOICE TO TEXT (voice2text.cpp, {"voice2text":{status | history | new | error}}) ---
+  // --- 🗣 VOICE TO TEXT (voice2text.cpp, {"voice2text":{status | history | new | live | error}}) ---
   // The backend transcribes the VFOs with Transcribe ticked; this shows its
   // settings (⚙ Setup Settings' 🗣 Voice to Text tab), each VFO's tick + state (cards) and the
   // transcripts (the 🗣 Transcription panel). State: see the globals block.
@@ -16691,6 +16747,11 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const ids = new Set(v2tList.map(t => t.id));
       for (const id of [...v2tLobes.keys()]) if (!ids.has(id)) v2tLobeRemove(id);
       v2tRenderTab(true);
+    }
+    // Live text: every live row now (an older receiver never sends it)
+    if (Array.isArray(m.live)) {
+      v2tLive = m.live;
+      v2tRenderTab(false);
     }
     if (m.lobe && v2tLobeWant.has(m.lobe.id)) {
       v2tLobeWant.delete(m.lobe.id);
@@ -16857,11 +16918,18 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     $id('v2t-dl-row').style.display = todo.length ? '' : 'none';
     const dl = s.download, dst = $id('v2t-dl-state');
     $id('v2t-dl-btn').disabled = !!(dl && dl.running);
-    if (dl && dl.running) { dst.style.display = ''; dst.textContent = `Downloading ${dl.name}… ${dl.pct} %`; }
+    // a derived model (from: base.en-q8_0 of base.en): its f16 model downloaded, then quantized here
+    const dce = dl && s.catalogue.find(c => c.name === dl.name), from = dce && dce.from;
+    if (dl && dl.running) {
+      dst.style.display = '';
+      dst.textContent = dl.stage === 'quantize' ? `Making ${dl.name} from ${from || 'its model'}… ${dl.pct} %`
+                      : dl.stage === 'vad' ? 'Downloading the voice detection model…'
+                      : from ? `Downloading ${from} to make ${dl.name}… ${dl.pct} %` : `Downloading ${dl.name}… ${dl.pct} %`;
+    }
     else if (dl && dl.error) { dst.style.display = ''; dst.innerHTML = `<span style="color:#fb8d85">${icon('warn', 't')}<span>${digEsc(dl.name)}: ${digEsc(dl.error)}</span></span>`; }
     else if (dl && dl.name) {
       dst.style.display = '';
-      dst.innerHTML = icon('ok', 't') + '<span>' + digEsc(`${dl.name} downloaded` + (s.model === dl.name ? '' : ' - pick it as the model above')) + '</span>';
+      dst.innerHTML = icon('ok', 't') + '<span>' + digEsc(`${dl.name} ${from ? 'made' : 'downloaded'}` + (s.model === dl.name ? '' : ' - pick it as the model above')) + '</span>';
     }
     // the model this page downloaded: used at once when the chosen one isn't installed
     if (v2tAutoPick && dl && dl.name === v2tAutoPick && !dl.running) {
@@ -16894,6 +16962,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         '): every transmission goes to the speech model';
     const keep = $id('v2t-keep');
     if (idle(keep)) keep.checked = !!s.keep_audio;
+    // Live text (a receiver without it sends no "live")
+    const live = $id('v2t-live');
+    $id('v2t-live-l').style.display = s.live === undefined ? 'none' : '';
+    if (idle(live)) live.checked = !!s.live;
     // where the clips are, how many, how long they're kept, disk trouble
     let ch = '';
     if (s.clip_dir !== undefined) {
@@ -16923,6 +16995,14 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     v2tSetHtml($id('v2t-done'), `${s.done}` + (s.nospeech ? ` · <span title="Transmissions without speech (noise, tones, data) - skipped">${s.nospeech} no speech</span>` : '') +
       (s.failed ? ` · <span style="color:#fb8d85">${s.failed} failed</span>` : ''));
     v2tSetHtml($id('v2t-speed'), s.rtf > 0 ? `<span title="Audio seconds transcribed per second of work (last transmissions)">${(1 / s.rtf).toFixed(1)}× real time</span>` : '');
+    // Live text: on, and whether the helper can (an older one can't: it answers no partial)
+    $id('v2t-live-row').style.display = s.live ? '' : 'none';
+    v2tSetHtml($id('v2t-live-st'), !s.live ? ''
+      : s.live_ok === false
+        ? `<span style="color:#f4c170" title="The speech helper installed is older than Live text: update it (cd kraken_doa_v2 &amp;&amp; make whisper). Transcripts come at the end of each transmission meanwhile">${icon('warn', 't')}<span>not with this helper</span></span>`
+      : s.partials ? `<span title="Live updates so far, the time each took (mean)${s.partials_stale ? ' - ' + s.partials_stale + ' came after their transmission ended (not shown)' : ''}">${s.partials} updates · ${(s.partial_ms / 1000).toFixed(1)} s each</span>` +
+        (s.partials_slow ? ` · <span style="color:#f4c170" title="Transmissions whose live text stopped early: the next update would have taken over 4 s (a long transmission, a busy moment of the computer, or a slow model) - their final transcripts come as ever, and each new transmission starts again. If it happens often: a smaller or 8-bit model, or more CPU cores">${s.partials_slow} stopped early</span>` : '')
+      : 'on');
     // (the files' section is in this dialog: a link to it; a problem of the log shows here too)
     // (the receiver's log.enabled = allowed and the transcripts at Log; the reasons from dlState.
     // A receiver with the transcripts' own Logging: "turn on" sets it to Log - allowing logging
@@ -17000,7 +17080,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const low = t.conf < 0.5;
     const play = t.clip ? `<button type="button" class="v2t-play${v2tPlaying === t.id ? ' on' : ''}" onclick="v2tPlay(${t.id})" title="${v2tPlaying === t.id ? 'Stop' : 'Play the audio'}">${icon(v2tPlaying === t.id ? 'stop' : 'play')}</button>` : '';
     const text = v2tMark(t.text || '', q);
-    return `<div class="v2t-row"><div class="v2t-meta">${play}<span class="t" title="${digEsc(d.toLocaleString())}">${time}</span>` +
+    return `<div class="v2t-row" data-id="${+t.id}"><div class="v2t-meta">${play}<span class="t" title="${digEsc(d.toLocaleString())}">${time}</span>` +
            `<span class="dig-vfo-tag" style="color:${col}">D${t.vfo}</span><span class="v2t-mhz">${(+t.mhz).toFixed(4)} MHz</span>` +
            `<span>${digEsc(v2tSrcName(t.src))}</span>${who}${brg}<span>${(+t.dur).toFixed(1)} s${t.part ? ' · part ' + t.part : ''}</span>` +
            (low ? `<span class="v2t-low" title="The model was unsure (confidence ${Math.round(t.conf * 100)} %)">?</span>` : '') +
@@ -17008,35 +17088,84 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
            `</div><div class="v2t-text${low ? ' low' : ''}">${text}</div></div>`;
   }
 
+  // A live row (Live text): a transmission still on the air - or ended, its final transcript
+  // coming - with the words confirmed so far and the pending ones dimmed. Not a transcript:
+  // no id, clip, bearing or export; the final row replaces it (voice2text.cpp on_result)
+  function v2tLiveHtml(r, q) {
+    const d = new Date(r.t);
+    const time = d.toLocaleTimeString([], {hour12: false});
+    const col = getDecimatorColor(r.vfo);
+    const who = r.tid ? `<span class="v2t-who" title="Who talked (radio ID) and to whom">${digEsc(r.tid)}${r.tl ? ' → ' + digEsc(r.tl) : ''}</span>` : '';
+    const tag = r.open
+      ? `<span class="v2t-live" title="On the air: the text so far, transcribed again every second. The final transcript replaces it when the transmission ends">${icon('mic', 't')}<span>Live</span></span>`
+      : `<span class="v2t-live" title="The transmission ended: its final transcript is being made">${icon('hourglass', 't')}<span>Finishing</span></span>`;
+    const conf = v2tMark(r.confirmed || '', q);
+    const pend = r.pending ? `<span class="pend" title="Not confirmed yet: the next pass may change it">${v2tMark(r.pending, q)}</span>` : '';
+    return `<div class="v2t-row live${r.open ? '' : ' end'}" data-key="${+r.key}"><div class="v2t-meta">${tag}<span class="t" title="${digEsc(d.toLocaleString())}">${time}</span>` +
+           `<span class="dig-vfo-tag" style="color:${col}">D${+r.vfo}</span><span class="v2t-mhz">${(+r.mhz).toFixed(4)} MHz</span>` +
+           `<span>${digEsc(v2tSrcName(r.src))}</span>${who}<span>${(+r.secs).toFixed(0)} s${r.part ? ' · part ' + (+r.part) : ''}</span>` +
+           `</div><div class="v2t-text">${conf}${conf && pend ? ' ' : ''}${pend}</div></div>`;
+  }
+  // the live rows above the transcripts, newest first, through the same VFO filter and search;
+  // someone reading older rows further down keeps them in place while the live rows change
+  function v2tRenderLive(vf, q) {
+    const el = $id('v2t-live-rows'), list = $id('v2t-list');
+    if (!el || !list) return;
+    const ql = q.toLowerCase();
+    const rows = v2tLive.filter(r => (vf === '' || String(r.vfo) === vf) &&
+      (!ql || [r.confirmed, r.pending, r.tid, r.tl, r.src, (+r.mhz).toFixed(4)].join(' ').toLowerCase().includes(ql)))
+      .sort((a, b) => b.t - a.t || b.key - a.key);
+    const html = rows.map(r => v2tLiveHtml(r, q)).join('');
+    list.classList.toggle('has-live', rows.length > 0);
+    if (el.dataset.html === html) return;
+    const h0 = el.offsetHeight, top = list.scrollTop;
+    el.dataset.html = html;
+    el.innerHTML = html;
+    if (top >= 8) list.scrollTop = top + el.offsetHeight - h0;
+  }
+
   function v2tRenderTab(force) {
     if (!infoOpen('voice')) return;
     if (v2tUnseen) { v2tUnseen = 0; infoRenderTabs(); }
     v2tRenderHead();
     const sel = $id('v2t-vfo-filter');
-    const vfos = [...new Set(v2tList.map(t => t.vfo))].sort((a, b) => a - b);
+    // the VFOs of the transcripts and live rows - and the one chosen, while it is (a VFO with only a
+    // live row that went without a transcript would otherwise drop out and the filter reset unseen)
+    const cur = sel.value;
+    const vfos = [...new Set(v2tList.map(t => t.vfo).concat(v2tLive.map(r => r.vfo), cur === '' ? [] : [+cur]))].sort((a, b) => a - b);
     const opts = '<option value="">All VFOs</option>' + vfos.map(v => `<option value="${v}">D${v}</option>`).join('');
-    if (sel.dataset.html !== opts) { const cur = sel.value; sel.dataset.html = opts; sel.innerHTML = opts; sel.value = cur; }
+    if (sel.dataset.html !== opts) { sel.dataset.html = opts; sel.innerHTML = opts; sel.value = cur; }
     const q = ($id('v2t-filter').value || '').trim();
     const ql = q.toLowerCase(), vf = sel.value;
+    v2tRenderLive(vf, q);
     v2tShown = v2tList.filter(t => (vf === '' || String(t.vfo) === vf) &&
       (!ql || [t.text, t.tid, t.tl, t.src, (+t.mhz).toFixed(4)].join(' ').toLowerCase().includes(ql)));
-    const list = $id('v2t-list');
+    const list = $id('v2t-list'), rowsEl = $id('v2t-rows');
     const key = v2tShown.length + ':' + (v2tShown.length ? v2tShown[v2tShown.length - 1].id : 0) + '|' + ql + '|' + vf + '|' + v2tPlaying;
     if (!force && list.dataset.key === key) return;
     list.dataset.key = key;
     if (!v2tShown.length) {
-      list.innerHTML = `<div class="dig-help" style="padding:6px">${v2tList.length ? 'Nothing matches.' :
+      rowsEl.innerHTML = `<div class="dig-help v2t-empty" style="padding:6px">${v2tList.length ? 'Nothing matches.' :
         'No transcripts yet' + helpTip('Each transmission appears here a few seconds after it ends (one longer than 25 s in ' +
         'parts); a continuous signal (broadcast FM, or anything on air longer than 30 s) in pieces of about 10 s, ' +
-        'cut where the speech pauses.')}</div>`;
+        'cut where the speech pauses. With <b>Live text</b> on (Setup Settings → Voice to Text) the words show while ' +
+        'it is still on the air, and the final transcript replaces them.')}</div>`;
       return;
     }
     // newest first, at most 400 rows (the CSV export has them all)
     const rows = v2tShown.slice(-400).reverse();
+    // scrolled down: the row at the top of the view stays where it is (a new transcript - or a
+    // final replacing its live row - comes in above it); at the top: the list stays at the top
     const atTop = list.scrollTop < 8;
-    const top = list.scrollTop;
-    list.innerHTML = rows.map(t => v2tRowHtml(t, q)).join('');
-    list.scrollTop = atTop ? 0 : top;
+    const top = list.scrollTop, lt = list.getBoundingClientRect().top;
+    let anchor = null;
+    if (!atTop) {
+      const r = [...rowsEl.children].find(e => e.getBoundingClientRect().bottom > lt + 1);
+      if (r && r.dataset.id) anchor = [r.dataset.id, r.getBoundingClientRect().top - lt];
+    }
+    rowsEl.innerHTML = rows.map(t => v2tRowHtml(t, q)).join('');
+    const ar = anchor && rowsEl.querySelector(`.v2t-row[data-id="${anchor[0]}"]`);
+    list.scrollTop = atTop ? 0 : ar ? top + ar.getBoundingClientRect().top - lt - anchor[1] : top;
   }
 
   // An Ogg Opus clip -> 48 kHz PCM with the page's own Opus decoder (the live
