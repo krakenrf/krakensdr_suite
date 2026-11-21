@@ -193,7 +193,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   The trunk manager's voice tuners (`TRUNK_TUNERS`, trunk-following.md)
   are given back to their own frequencies before `SFSCAN_START` runs and
   the manager pauses while the scan runs: the scan and the manager never
-  hold a tuner at once.
+  hold a tuner at once. The trunk manager's control-channel search
+  (`TRUNK_SEARCH`) is a fourth scanner: it refuses to start while any of
+  the three runs, and `SFSCAN_START` / `SCANNER_START` /
+  `CONTINUOUS_SCANNER_START` are refused while it runs.
   A made VFO the user removes (`extra_vfo` -2) = that frequency done this
   pass (else it got a new VFO at once); one that couldn't be made (-3) =
   not done. Switching multi off while listening ends the made VFOs' locks.

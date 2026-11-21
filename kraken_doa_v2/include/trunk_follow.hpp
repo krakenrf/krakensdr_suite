@@ -50,7 +50,7 @@ bool dispatching();
 // ControlHandler::apply_command, before every command (uWS loop): a command
 // that ends an excursion outside the span (the user's FREQ - no return; a mode
 // change, a scanner or a playback start - home first)
-void before_command(std::string_view m);
+const char* before_command(std::string_view m);   // non-null: the command is refused (why)
 // What is SAVED while the manager has moved things (uWS loop): a control VFO an
 // excursion moved / parked -> its offset at home; a voice tuner -> the
 // frequency and gain it had before the manager took it. false = as it is

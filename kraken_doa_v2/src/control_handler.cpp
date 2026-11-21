@@ -2419,7 +2419,7 @@ void ControlHandler::handle_message_impl(string_view message) {
     // Trunk following (trunk_follow.hpp, docs/dev/trunk-following.md): every
     // command answered with {"trunk":...} to every page, a refusal also with
     // {"trunk_error":...}; its settings saved here (TRUNK_ is a query command)
-    else if (message.starts_with("TRUNK_") || message == "GET_TRUNK" || message.starts_with("GET_TRUNK_SYS:")) {
+    else if (message.starts_with("TRUNK_") || message == "GET_TRUNK" || message == "GET_TRUNK_CC" || message.starts_with("GET_TRUNK_SYS:")) {
         string err, persist;
         if (!trunk::handle_command(string(message), &err, &persist)) throw CommandRejected("unknown trunk command");
         if (!err.empty()) throw CommandRejected(err);
@@ -2918,7 +2918,11 @@ string ControlHandler::apply_command(string_view message) {
             return antbias::handle_command(message, from_page && !g_replaying_settings.load());
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
-        trunk::before_command(message);   // (an excursion outside the span ends first)
+        // (an excursion outside the span ends first; a control-channel search refuses the other scanners / a playback)
+        if (const char* why = trunk::before_command(message)) {
+            cout << "Rejected control message: '" << string(message.substr(0, 100)) << "' (" << why << ")" << endl;
+            return why;
+        }
         if (playback::handle_command(message)) return "";
         if (playback::active() && !playback::internal() && !g_replaying_settings.load()) {
             uint64_t f = 0;
