@@ -13461,9 +13461,16 @@ function swpTrace() {
 // the whole range for that sweep just before (an overview, flag 16 - swpOnFrame keeps it in
 // swp.ovPend): the line takes it along when it belongs to the same sweep (`sweeps`) and grid.
 function swpWfLine() {
-  if (!swp.wf || !swp.tr || swp.tr.freqs.length < 2) return;
   const fr = swp.fr, ov = swp.ovPend;
-  const line = {f: swp.tr.freqs, m: swp.tr.mags, o: ov && fr && ov.sweeps === fr.sweeps && ov.grid === fr.grid ? ov : null};
+  if (!swp.wf || !fr || fr.mags.length < 2) return;
+  // the row's window levels are exactly what the receiver sent for this sweep (the completing frame's own
+  // point 0, spacing and points) - never the trace, which is padded with 0 dB where the frame doesn't
+  // reach the window shown: a sweep completing during a zoom-out or a pan, before the wider frame came,
+  // stored that padding as levels, and it painted over the overview (dark-blue steps at the plot's
+  // edges - the orchestrator's run on the KrakenSDR, 2026-11-21)
+  const n = fr.mags.length, d = new Uint8Array(n);
+  for (let i = 0; i < n; i++) d[i] = Math.max(0, Math.min(255, Math.round(fr.mags[i] * 255 / 120)));
+  const line = {w: {f0: fr.p0, st: fr.step, d}, o: ov && ov.sweeps === fr.sweeps && ov.grid === fr.grid ? ov : null, s: fr.sweeps};
   swp.ovPend = null;
   const wait = SWP_WF_MS - (Date.now() - swp.wfAt);
   if (wait <= 0 && !swp.wfPend) { swpWfAdd(line); return; }
@@ -13491,15 +13498,10 @@ function swpWfLine() {
 //   day: "it should change the colors of the existing waterfall too").
 // Bounded: only the rows that fit the waterfall's height, each <= 2 x 4096 bytes (SPECTRUM_VIEW_MAX_POINTS
 // per part); a repaint once per screen refresh.
-function swpWfSrc(f, m) {
-  const n = m.length, d = new Uint8Array(n);
-  for (let i = 0; i < n; i++) d[i] = Math.max(0, Math.min(255, Math.round(m[i] * 255 / 120)));
-  return {f0: f[0], st: n > 1 ? f[1] - f[0] : 1, d};
-}
 function swpWfAdd(l) {
   const wf = swp.wf, win = swpWindow();
   if (!wf || !wf.imageData || !win) return;
-  const row = {w: swpWfSrc(l.f, l.m), o: l.o ? {f0: l.o.f0, st: l.o.st, d: l.o.d} : null, h: Math.max(1, wf.speed | 0)};
+  const row = {w: l.w, o: l.o ? {f0: l.o.f0, st: l.o.st, d: l.o.d} : null, h: Math.max(1, wf.speed | 0), s: l.s};   // (s: its sweep count)
   swp.rows.unshift(row);
   let sum = 0, k = 0;
   while (k < swp.rows.length && sum < wf.height) sum += swp.rows[k++].h;

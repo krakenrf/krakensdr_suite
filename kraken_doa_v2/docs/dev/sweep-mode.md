@@ -855,8 +855,14 @@ bin grid.
   waterfall too, not just the new scans. Also zoom causes a problem where the
   waterfall only updates on the zoomed part. Then when I zoom out, there is
   missing data on the other parts."):
-  - A row is `{w, o, h}`: `w` the levels of the window shown when its sweep
-    completed, `o` the whole range of the same sweep when that window was
+  - A row is `{w, o, h, s}`: `w` the levels of the window shown when its sweep
+    completed - exactly the completing frame's points (its point 0, spacing
+    and n), never the trace: the trace is padded with 0 dB where the frame
+    doesn't reach the window shown, and a sweep that completed during a
+    zoom-out or a pan, before the wider frame came, stored that padding as
+    levels which then painted over the overview (dark-blue steps from the
+    plot's edges in the orchestrator's run on the KrakenSDR, 2026-11-21; fixed
+    the same day) -, `s` its sweep count, `o` the whole range of the same sweep when that window was
     narrower (the receiver's overview), `h` its height; each part `{f0, st,
     d}` (first point Hz, spacing, u8 levels). A pixel takes `w` where it
     reaches, `o` elsewhere, black only where a row has neither
