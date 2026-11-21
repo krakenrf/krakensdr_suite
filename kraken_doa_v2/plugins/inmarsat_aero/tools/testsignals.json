@@ -1,0 +1,72 @@
+[
+{
+ "id": "aero-p10500-ges",
+ "title": "Inmarsat Aero: P channel 10.5 kbit/s (A-QPSK) from the satellite",
+ "description": "A synthetic GES's P channel at 10 500 bit/s, carrier +400 Hz off the VFO centre, arriving from 75 deg (the satellite: one transmitter, no talker). System table broadcasts, then a log-on confirm for AES 4CA2B1, an ACARS uplink to EI-ABC (label H1, 'METAR UPDATE FOLLOWS') and a C channel assignment, repeated. Expect the Channel fact 'P channel 10500 bit/s A-QPSK', every signal unit passing its CRC, those events, and the VFO's DoA (Digital squelch) at 75 deg.",
+ "rf_hz": 1546000000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 20,
+ "vfo": {"bw_khz": 25, "opts": {"mode": "auto"}},
+ "commands": ["DEC_SQUELCH_METHOD:0:DIGITAL", "DEC_SQUELCH_ENABLE:0:1"],
+ "steps": [["{tools}/aero_gen.py", "p.cf32", "p", "--rate", "10500", "--seconds", "20", "--offset", "400", "--script",
+            "logon:4CA2B1", "acars:4CA2B1:EI-ABC:H1:A:METAR UPDATE FOLLOWS", "cass:4CA2B1:8F12:0B50"]],
+ "scene": {"rate": 24000, "snr_db": 18, "seed": 3, "radius_m": 0.06, "sources": [
+   {"name": "satellite", "file": "p.cf32", "rate": 24000, "at": 0, "bearing": 75}]},
+ "expect": [{"vfo": 0, "bearing": 75}, {"event": "C channel assignment"}, {"event": "METAR UPDATE FOLLOWS"}],
+ "tol_deg": 5
+},
+{
+ "id": "aero-p600-ges",
+ "title": "Inmarsat Aero: P channel 600 bit/s (A-BPSK) from the satellite",
+ "description": "A synthetic GES's 600 bit/s P channel (frames of 2 s), carrier -1200 Hz off the VFO centre, from 220 deg. Acquisition takes a few seconds (the squared spectrum's lines at 600 Hz spacing), then system tables, a log-on confirm for AES C0FFEE and an ACARS uplink to C-GABC ('CLEARED AS FILED'). Expect 'P channel 600 bit/s A-BPSK', the events and the VFO's DoA at 220 deg.",
+ "rf_hz": 1545100000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 36,
+ "vfo": {"bw_khz": 25, "opts": {"mode": "auto"}},
+ "commands": ["DEC_SQUELCH_METHOD:0:DIGITAL", "DEC_SQUELCH_ENABLE:0:1"],
+ "steps": [["{tools}/aero_gen.py", "p.cf32", "p", "--rate", "600", "--seconds", "36", "--offset", "-1200", "--script",
+            "logon:C0FFEE", "acars:C0FFEE:C-GABC:H1:B:CLEARED AS FILED"]],
+ "scene": {"rate": 24000, "snr_db": 20, "seed": 5, "radius_m": 0.06, "sources": [
+   {"name": "satellite", "file": "p.cf32", "rate": 24000, "at": 0, "bearing": 220}]},
+ "expect": [{"vfo": 0, "bearing": 220}, {"event": "Log-on confirm"}, {"event": "CLEARED AS FILED"}],
+ "tol_deg": 5
+},
+{
+ "id": "aero-bursts-three-aircraft",
+ "title": "Inmarsat Aero: R / T bursts from three aircraft (1.2 kbit/s, 1.6 GHz)",
+ "description": "Aircraft transmissions received directly (L-band uplink, 1645 MHz), the plugin in its 'R / T bursts' mode: AES 4CA2B1 (EI-ABC, 40 deg, carrier +300 Hz) sends an R channel log-on request and, in a T burst, an ADS-C report (flight EIN123) near the station; C0FFEE (C-GABC, 165 deg, -500 Hz) an ACARS downlink ('FUEL 0123') and a log-on request; A1B2C3 (VH-XYZ, 290 deg, +900 Hz) an ADS-C report (QFA001). The bursts don't overlap. Each burst names its AES (24-bit ICAO address): expect talkers 4CA2B1, C0FFEE, A1B2C3 at those bearings and two aircraft on the map. Array radius 6 cm (0.39 wavelengths between neighbours at 1.6 GHz).",
+ "rf_hz": 1645000000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 20,
+ "vfo": {"bw_khz": 25, "opts": {"mode": "burst"}},
+ "steps": [
+  ["{tools}/aero_gen.py", "a1.cf32", "burst", "--rate", "1200", "--offset", "300", "--seconds", "20",
+   "--at", "0.5", "logon:4CA2B1", "--at", "9.0", "adsc:4CA2B1:EI-ABC:{lat+0.3}:{lon-0.2}:37000:EIN123"],
+  ["{tools}/aero_gen.py", "a2.cf32", "burst", "--rate", "1200", "--offset", "-500", "--seconds", "20",
+   "--at", "2.0", "acars:C0FFEE:C-GABC:H1:3:FUEL 0123", "--at", "14.0", "logon:C0FFEE"],
+  ["{tools}/aero_gen.py", "a3.cf32", "burst", "--rate", "1200", "--offset", "900", "--seconds", "20",
+   "--at", "4.5", "adsc:A1B2C3:VH-XYZ:{lat-0.2}:{lon+0.4}:41000:QFA001"]],
+ "scene": {"rate": 24000, "snr_db": 20, "seed": 4, "radius_m": 0.06, "sources": [
+   {"name": "4CA2B1", "file": "a1.cf32", "rate": 24000, "at": 0, "bearing": 40},
+   {"name": "C0FFEE", "file": "a2.cf32", "rate": 24000, "at": 0, "bearing": 165},
+   {"name": "A1B2C3", "file": "a3.cf32", "rate": 24000, "at": 0, "bearing": 290}]},
+ "expect": [{"tid": "4CA2B1", "bearing": 40}, {"tid": "C0FFEE", "bearing": 165}, {"tid": "A1B2C3", "bearing": 290},
+            {"event": "ADS-C"}],
+ "tol_deg": 5
+},
+{
+ "id": "aero-c8400-voice",
+ "title": "Inmarsat Aero: C channel 8.4 kbit/s (voice) - framing and signalling",
+ "description": "A synthetic to-aircraft C channel (8 400 bit/s A-QPSK, carrier -600 Hz) from 130 deg: unique words, the rate 2/3 code, 25 voice frames and three sub-band signal units per 500 ms frame, a call progress for AES 4CA2B1 every 2 s. The voice fields are random bits (no AMBE encoder is available to make speech): with the user's Aero AMBE library installed, Listen plays codec noise; without it the Voice codec fact says 'not installed'. Expect 'C channel 8400 bit/s', the call progress events and the VFO's DoA at 130 deg.",
+ "rf_hz": 1545500000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 12,
+ "vfo": {"bw_khz": 25, "opts": {"mode": "auto"}},
+ "commands": ["DEC_SQUELCH_METHOD:0:DIGITAL", "DEC_SQUELCH_ENABLE:0:1"],
+ "steps": [["{tools}/aero_gen.py", "c.cf32", "c", "--seconds", "12", "--offset", "-600", "--aes", "4CA2B1"]],
+ "scene": {"rate": 24000, "snr_db": 20, "seed": 6, "radius_m": 0.06, "sources": [
+   {"name": "GES", "file": "c.cf32", "rate": 24000, "at": 0, "bearing": 130}]},
+ "expect": [{"vfo": 0, "bearing": 130}, {"event": "call progress"}],
+ "tol_deg": 5
+}
+]

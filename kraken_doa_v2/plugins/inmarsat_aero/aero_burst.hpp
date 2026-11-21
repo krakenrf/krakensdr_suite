@@ -67,11 +67,27 @@ private:
     int64_t start_ = 0, tone_seen_ = 0;
     double f0_ = 0;
     uint64_t bursts_ = 0, decoded_ = 0;
+    // the long FFT (slow rates' preambles)
+    static constexpr int NL = 4096, HL = 1024;
+    kfft_complex* inl_ = nullptr;
+    kfft_complex* outl_ = nullptr;
+    kfft_plan planl_ = nullptr;
+    std::vector<float> winl_, pwl_;
+    int64_t next_l_ = NL, start_l_ = 0;
+    int hits_l_ = 0, bin_l_ = -1;
+    // following the burst
+    float noise_bin_ = 0, nar_ = -1, wid_ = -1;
+    int start_unc_ = 1024;   // how early the burst may have started before start_ (samples)
+    void activate(int unc);
+    void fft_long(int64_t end);
     const bool debug_ = std::getenv("AERO_DEBUG") != nullptr;
 
     void fft_at(int64_t end);
     void decode(int64_t s0, int64_t s1, double f);
     bool try_rate(double rate, int64_t s0, int64_t s1, double f);
+    // decode the field after a unique word found at bit p (polarities sa / sb)
+    bool decode_cand(double rate, int uwl, bool qpsk, double f, const std::vector<float>& s, const std::vector<double>& t, int64_t p,
+                     float sa, float sb);
     double host_t(double s) const { return t0_base_ + s / 24000.0; }
 };
 
