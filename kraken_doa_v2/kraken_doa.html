@@ -1940,6 +1940,8 @@ body.drive.drive-day .ui-dlg .btn.danger {background:var(--bad);border-color:var
    View button (its display settings are in the popover, .view-pop) and ? - one line */
 .spectrum-header {justify-content:flex-start;flex-wrap:wrap;gap:5px 14px;padding:5px 10px}
 .spectrum-header .view-btn {margin-left:auto}
+/* the picture button right after View (SPECTRUM PICTURE): 6 px from it, as tall as it */
+.spectrum-header .view-btn.snap-btn {margin-left:-8px;height:24px}
 .spectrum-header .view-btn + .view-pop + .help,.spectrum-header .view-btn + .help,.spectrum-header .help + .help.sweep-only {margin-left:-6px}
 .spectrum-header .spec-ch {background:var(--s1);border:1px solid var(--l2);color:var(--t0);border-radius:5px;height:24px;padding:0 4px;font-size:12px}
 .spectrum-header .spec-ch:focus {border-color:var(--ac-l);outline:none;box-shadow:0 0 0 2px rgba(72,160,244,.22)}
@@ -2028,6 +2030,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   /* the View button and its popover: finger-sized, the popover inside the window */
   .view-btn {height:32px;padding:0 11px 0 9px}
   .view-btn.icon {width:32px;height:30px;padding:0}
+  .spectrum-header .view-btn.snap-btn {height:32px}
   .view-pop {width:min(300px, calc(100vw - 24px));padding:10px 14px 12px;--vp-lw:50px;--vp-vw:52px}
   .vp-row {min-height:38px}
   .view-pop input[type="range"] {height:6px}
@@ -2340,6 +2343,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
 <symbol id="i-log" viewBox="0 0 16 16"><path d="M6 4h7.5M6 8h7.5M6 12h7.5"/><circle cx="2.8" cy="4" r="1.05" fill="currentColor"/><circle cx="2.8" cy="8" r="1.05" fill="currentColor"/><circle cx="2.8" cy="12" r="1.05" fill="currentColor"/></symbol>
 <symbol id="i-tape" viewBox="0 0 16 16"><rect x="1.4" y="3.2" width="13.2" height="9.6" rx="1.4"/><circle cx="5.4" cy="7.3" r="1.5"/><circle cx="10.6" cy="7.3" r="1.5"/><path d="M4.4 12.8l1.2-2.2h4.8l1.2 2.2"/></symbol>
 <symbol id="i-speaker" viewBox="0 0 16 16"><path d="M2.2 6.1h2.6l3.6-3v9.8l-3.6-3H2.2z"/><path d="M10.8 5.6a3.4 3.4 0 0 1 0 4.8M12.7 3.7a6 6 0 0 1 0 8.6"/></symbol>
+<symbol id="i-camera" viewBox="0 0 16 16"><path d="M1.6 5h3.1l1.3-2h4l1.3 2h3.1v8.2H1.6z"/><circle cx="8" cy="8.9" r="2.5"/></symbol>
 <symbol id="i-display" viewBox="0 0 16 16"><rect x="1.5" y="2.4" width="13" height="8.8" rx="1.1"/><path d="M8 11.2v2.6M4.8 13.8h6.4"/></symbol>
 <symbol id="i-radio" viewBox="0 0 16 16"><rect x="1.6" y="5.4" width="12.8" height="8.6" rx="1.3"/><path d="M4 5.4l7.6-3.6M9.8 8.6h2.4M9.8 11h2.4"/><circle cx="5.6" cy="9.7" r="1.8"/></symbol>
 <symbol id="i-sweep" viewBox="0 0 16 16"><path d="M1.5 13.5h13M2.5 13.5c2 0 2-4.6 3.8-4.6s1.8 4.6 3.8 4.6"/><path d="M7.5 3.6h6M11.4 1.6l2 2-2 2"/></symbol>
@@ -3436,6 +3440,10 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
               </div>
             </div>
           </div>
+          <!-- a picture (PNG) of the spectrum and the waterfall with a caption line, saved by the browser
+               (SPECTRUM PICTURE in the script; independent mode: the selected tuner's) -->
+          <button type="button" class="view-btn icon snap-btn" id="snap-btn-main" aria-label="Save a picture"
+                  title="Save a picture (PNG) of the spectrum and the waterfall" onclick="snapSave('main')"><svg class="ic" aria-hidden="true"><use href="#i-camera"/></svg></button>
           <span class="help not-sweep" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
           <span class="help sweep-only" tabindex="0" role="button" aria-label="Help">?<span class="tip">The sweep: the tuners step through the top bar's range and the receiver puts their spectra together - not live, nothing is demodulated. The trace fills in as the sweep goes on; the waterfall gets one line per complete sweep. Mouse wheel: zoom (down to one FFT bin per point); drag: pan. Nothing is retuned.</span></span>
         </div>
@@ -5046,6 +5054,26 @@ window.addEventListener('mouseup', () => {
 });
 
 // WaterfallDisplay Class - High-performance spectrum waterfall
+//
+// The lines' levels are kept, not only their pixels (2026-11-21, the user: "Do the same recolour fix
+// for the live waterfall too"), so a change the USER makes - the colour map, Min / Max (also from
+// another browser or a pane's own View), switching Auto off - repaints the lines already there, at
+// most once per screen refresh (a slider drag), and only when something really changed. Auto's own
+// moves (setRange(.., true)) colour only the new lines, as before: each line keeps the range it was
+// painted with (rowMin / rowMax), and a colour-map change with Auto on repaints each line with its
+// own range. Measured, the orchestrator's call: Auto moving the whole picture made it flash 16 - 22
+// times a minute on a band where signals come and go, 92 - 100 % of the pixels changing at each
+// (docs/dev/spectrum-views.md) - don't make Auto recolour without reading that. One byte a pixel (`lv`,
+// laid out as the ImageData): the level the pixel was painted from, 0..254 = WF_LV_MIN .. WF_LV_MIN +
+// WF_LV_SPAN dB (0.39 dB steps - the frames' own are 0.47 dB) - every level the contrast can tell
+// apart, since Min >= -20 and Max <= 80 dB (a level under / over that gets the same colour as the
+// end); 255 = no line there (black). A line is painted from its stored levels, so a repaint equals a
+// fresh paint. The bearing spectrum's hue (the main waterfall only, `tint`) is a second plane (`hue`,
+// two bytes a pixel), there only while a coloured line is on screen. Both are made by the first
+// addLine: sweep mode's waterfall, which only uses the canvas (its rows are its own, swpWfRow), never
+// gets them. A line keeps the span it was drawn with (only its colours follow).
+const WF_LV_MIN = -20, WF_LV_SPAN = 100, WF_LV_NONE = 255, WF_LV_K = 254 / WF_LV_SPAN, WF_HUE_NONE = 0xFFFF;
+const WF_LE = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;   // byte order of a Uint32 pixel
 class WaterfallDisplay {
   constructor(canvasId, overlayId) {
     this.canvas = document.getElementById(canvasId);
@@ -5063,6 +5091,18 @@ class WaterfallDisplay {
     this.lastFrequencies = [];
     this.plotLeft = 0;  // Left edge of plot area (matching uPlot)
     this.plotWidth = 0; // Width of plot area (matching uPlot)
+    // the lines' levels (above): lv (Uint8Array, a byte a pixel), hue (Uint16Array or null) + the
+    // pixel rows since the last coloured line (hueAge; the plane goes once none is left); dirty =
+    // the pixels on screen show other colours than their levels and ranges now give
+    this.lv = null;
+    this.hue = null; this.hueAge = 0; this.tintRgb = null;
+    this.d32 = null;
+    // each pixel row's range (the one it was painted with) and the colour tables per range
+    // ({lut32: a packed pixel per level, lutN: its 0..1 on the colour scale}, for lutScheme)
+    this.rowMin = null; this.rowMax = null;
+    this.luts = new Map(); this.lutScheme = '';
+    this.dirty = false; this.raf = 0;
+    this.repaints = 0;   // full repaints (tests)
 
     // Pre-generate default colormap (SDR# Youssef style)
     this.scheme = 'sdryoussef';
@@ -5215,8 +5255,112 @@ class WaterfallDisplay {
         }
       }
     }
+    this.d32 = new Uint32Array(data.buffer, data.byteOffset, width * height);
+    // the levels (and hues) are stretched the same way, so a repaint shows the same picture
+    const stretch = (src, Ctor, none) => {
+      const dst = new Ctor(width * height).fill(none);
+      if (!src || !old || !old.width) return dst;
+      const ow = old.width, rows = Math.min(old.height, height, Math.floor(src.length / ow));
+      for (let y = 0; y < rows; y++) {
+        const so = y * ow, dO = y * width;
+        for (let x = 0; x < width; x++) dst[dO + x] = src[so + Math.min(ow - 1, Math.floor(x * ow / width))];
+      }
+      return dst;
+    };
+    if (this.lv) {
+      this.lv = stretch(this.lv, Uint8Array, WF_LV_NONE);
+      // the rows' ranges: the same rows (the new ones below have no line yet)
+      const rmn = new Float64Array(height).fill(this.minDb), rmx = new Float64Array(height).fill(this.maxDb);
+      if (this.rowMin) { const k = Math.min(height, this.rowMin.length); rmn.set(this.rowMin.subarray(0, k)); rmx.set(this.rowMax.subarray(0, k)); }
+      this.rowMin = rmn; this.rowMax = rmx;
+    }
+    if (this.hue) this.hue = stretch(this.hue, Uint16Array, WF_HUE_NONE);
+    if (this.dirty && this.lv) this.paintAll(false);   // (a recolour waiting for its screen refresh)
     this.ctx.putImageData(this.imageData, 0, 0);
     this.initialized = true;
+  }
+
+  // the colours of the levels for the colour map set and the range mn .. mx (kept per range: the
+  // rows of a waterfall have a few - Auto's 5 dB steps)
+  lutFor(mn, mx) {
+    if (this.lutScheme !== this.scheme) { this.luts.clear(); this.lutScheme = this.scheme; }
+    const key = mn + '|' + mx;
+    let l = this.luts.get(key);
+    if (l) return l;
+    if (this.luts.size >= 64) this.luts.clear();
+    l = {lut32: new Uint32Array(256), lutN: new Float32Array(256)};
+    const cm = this.colormap, rng = Math.max(1e-6, mx - mn);
+    for (let c = 0; c < 255; c++) {
+      const n = Math.max(0, Math.min(1, (WF_LV_MIN + c / WF_LV_K - mn) / rng)), col = cm[Math.floor(n * 255)];
+      l.lutN[c] = n;
+      l.lut32[c] = WF_LE ? (0xFF000000 | (col.b << 16) | (col.g << 8) | col.r) >>> 0
+                         : ((col.r << 24) | (col.g << 16) | (col.b << 8) | 0xFF) >>> 0;
+    }
+    l.lutN[WF_LV_NONE] = 0;
+    l.lut32[WF_LV_NONE] = WF_LE ? 0xFF000000 : 0x000000FF;   // no line: black
+    this.luts.set(key, l);
+    return l;
+  }
+  // a row with a line painted with another range than the one set (Auto moved since)
+  mixedRanges() {
+    if (!this.lv || !this.rowMin) return false;
+    const w = this.width, [xa] = this.plotPx();
+    for (let y = 0; y < this.height; y++)
+      if ((this.rowMin[y] !== this.minDb || this.rowMax[y] !== this.maxDb) && this.lv[y * w + xa] !== WF_LV_NONE) return true;
+    return false;
+  }
+
+  // the plot area's pixel columns [xa, xb): those addLine paints (px >= plotLeft, < plotLeft + plotWidth)
+  plotPx() {
+    return [Math.max(0, Math.ceil(this.plotLeft)), Math.min(this.width, Math.ceil(this.plotLeft + this.plotWidth))];
+  }
+
+  // the pixels of rows y0 .. y1 - 1 of the plot area from their levels (and hues); the margins (the
+  // calibration burst's marker) are left as they are
+  paintRows(y0, y1) {
+    const w = this.width, d32 = this.d32, lv = this.lv, rmn = this.rowMin, rmx = this.rowMax;
+    const [xa, xb] = this.plotPx();
+    if (!d32 || !lv || !rmn || xb <= xa) return;
+    for (let y = y0; y < y1; y++) {
+      const lut = this.lutFor(rmn[y], rmx[y]).lut32, e = y * w + xb;
+      for (let i = y * w + xa; i < e; i++) d32[i] = lut[lv[i]];
+    }
+    const hue = this.hue, rgb = this.tintRgb;
+    if (!hue || !rgb) return;
+    const data = this.imageData.data;
+    for (let y = Math.max(y0, this.hueAge); y < y1; y++) {   // (the newest hueAge rows have none)
+      const ln = this.lutFor(rmn[y], rmx[y]).lutN, e = y * w + xb;
+      for (let i = y * w + xa; i < e; i++) {
+        const h = hue[i];
+        if (h === WF_HUE_NONE || lv[i] === WF_LV_NONE) continue;
+        // the bearing's hue at the level's brightness (binDoaWfTint)
+        const v = 0.2 + 0.8 * ln[lv[i]], o = i * 4;
+        data[o] = rgb[h * 3] * v; data[o + 1] = rgb[h * 3 + 1] * v; data[o + 2] = rgb[h * 3 + 2] * v;
+      }
+    }
+  }
+
+  // every line again in the colours set (now); put = also onto the canvas
+  paintAll(put) {
+    this.raf && cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.dirty = false;
+    if (!this.lv || !this.imageData) return;
+    this.paintRows(0, this.height);
+    this.repaints++;
+    if (put !== false) this.ctx.putImageData(this.imageData, 0, 0);
+  }
+
+  // the colour map or the rows' ranges changed: the lines on screen follow, once per screen refresh
+  // (a hidden waterfall - another mode's - waits until it is shown: its next line or resize)
+  recolour() {
+    if (!this.lv) return;   // no line of its own (sweep mode's: it repaints its rows itself)
+    this.dirty = true;
+    if (this.raf) return;
+    this.raf = requestAnimationFrame(() => {
+      this.raf = 0;
+      if (this.dirty && this.canvas.offsetParent !== null) this.paintAll();
+    });
   }
 
   // Add new FFT line to waterfall (scrolls existing data down)
@@ -5230,25 +5374,42 @@ class WaterfallDisplay {
     const w = this.width;
     const h = this.height;
     const rowSize = w * 4;
-    const linesToScroll = this.speed;
+    const linesToScroll = Math.min(this.speed, h);
+    if (!this.lv || this.lv.length !== w * h) {
+      this.lv = new Uint8Array(w * h).fill(WF_LV_NONE); this.hue = null;
+      this.rowMin = new Float64Array(h).fill(this.minDb); this.rowMax = new Float64Array(h).fill(this.maxDb);
+    }
+    const lv = this.lv;
 
     // Scroll existing image down by 'speed' lines using optimized copyWithin
-    // This is much faster than element-by-element copy
+    // This is much faster than element-by-element copy (the levels and hues with it)
     const scrollBytes = linesToScroll * rowSize;
     data.copyWithin(scrollBytes, 0, data.length - scrollBytes);
+    lv.copyWithin(linesToScroll * w, 0, lv.length - linesToScroll * w);
+    // the rows' ranges with them; the new rows get the range set now (Auto's too)
+    this.rowMin.copyWithin(linesToScroll, 0, h - linesToScroll); this.rowMax.copyWithin(linesToScroll, 0, h - linesToScroll);
+    this.rowMin.fill(this.minDb, 0, linesToScroll); this.rowMax.fill(this.maxDb, 0, linesToScroll);
 
     // Calculate frequency-to-pixel mapping
     // The FFT data should map to the plot area (matching uPlot's data area)
     const minFreq = frequencies[0];
     const maxFreq = frequencies[frequencies.length - 1];
     const freqRange = maxFreq - minFreq;
-    const dbRange = this.maxDb - this.minDb;
-    const tint = this.tint ? this.tint() : null;   // bearing spectrum: (freq, level 0..1, rgb) -> rgb
+    // bearing spectrum: {at: freq -> hue 0..359 | -1, rgb: the hues' colours} (binDoaWfTint)
+    const tint = this.tint ? this.tint() : null;
+    if (tint && !this.hue) this.hue = new Uint16Array(w * h).fill(WF_HUE_NONE);
+    const hue = this.hue;
+    if (hue) {
+      hue.copyWithin(linesToScroll * w, 0, hue.length - linesToScroll * w);
+      this.hueAge = tint ? 0 : this.hueAge + linesToScroll;
+      if (tint) this.tintRgb = tint.rgb;
+      if (this.hueAge >= h) this.hue = null;   // no coloured line left on screen
+    }
 
-    // Draw the new line into row 0 (each pixel in the plot area maps to a
-    // frequency/magnitude), then copy it into the other new rows
+    // The new line's levels into row 0 (each pixel in the plot area maps to a
+    // frequency/magnitude), its pixels from them, then copied into the other new rows
     for (let px = 0; px < w; px++) {
-      let r = 0, g = 0, b = 0;
+      let code = WF_LV_NONE, hu = WF_HUE_NONE;
 
       // Only draw in the plot area
       if (px >= this.plotLeft && px < this.plotLeft + this.plotWidth) {
@@ -5268,25 +5429,26 @@ class WaterfallDisplay {
         } else if (idx0 >= 0 && idx0 < magnitudes.length) {
           mag = magnitudes[idx0];
         } else {
-          mag = this.minDb;
+          mag = -Infinity;   // (the darkest colour, whatever the contrast)
         }
-
-        // Map magnitude to color index (0-255)
-        const normalized = Math.max(0, Math.min(1, (mag - this.minDb) / dbRange));
-        const colorIdx = Math.floor(normalized * 255);
-        const color = this.colormap[colorIdx];
-        r = color.r;
-        g = color.g;
-        b = color.b;
-        if (tint) { const t = tint(freq, normalized, r, g, b); if (t) { r = t[0]; g = t[1]; b = t[2]; } }
+        // its level code (NaN: the lowest)
+        const c = Math.round((mag - WF_LV_MIN) * WF_LV_K);
+        code = c > 254 ? 254 : c >= 0 ? c : 0;
+        if (tint) { const t = tint.at(freq); if (t >= 0) hu = t; }
       }
-
-      // Set pixel (RGBA)
-      const offset = px * 4;
-      data[offset] = r;
-      data[offset + 1] = g;
-      data[offset + 2] = b;
-      data[offset + 3] = 255;
+      lv[px] = code;
+      if (hue) hue[px] = hu;
+    }
+    this.paintRows(0, 1);
+    // a recolour still to come (its screen refresh; a waterfall that was hidden): the older lines
+    // follow at the next one - never more than one full repaint a refresh
+    if (this.dirty && !this.raf) this.recolour();
+    // the margins: black, the calibration burst's marker in the left one
+    const [xa, xb] = this.plotPx();
+    for (let px = 0; px < w; px++) {
+      if (px >= xa && px < xb) { px = xb - 1; continue; }
+      const o = px * 4;
+      data[o] = 0; data[o + 1] = 0; data[o + 2] = 0; data[o + 3] = 255;
     }
     if (noiseOn && this.plotLeft >= 4) {
       for (let px = Math.max(0, this.plotLeft - 8); px < this.plotLeft - 2; px++) {
@@ -5296,6 +5458,8 @@ class WaterfallDisplay {
     }
     for (let line = 1; line < linesToScroll; line++) {
       data.copyWithin(line * rowSize, 0, rowSize);
+      lv.copyWithin(line * w, 0, w);
+      if (hue) hue.copyWithin(line * w, 0, w);
     }
 
     // Render the updated image data
@@ -5481,9 +5645,19 @@ class WaterfallDisplay {
     }
   }
 
-  setRange(minDb, maxDb) {
+  // the contrast. auto = Auto's own move: only the new lines get it (each line keeps the range it was
+  // painted with). Otherwise (the user's Min / Max, from any browser or a pane's View; Auto switched
+  // off) every line takes it and is repainted - unless nothing changes (the same range, and every
+  // line already in it: the View settings applied again repaint nothing)
+  setRange(minDb, maxDb, auto) {
+    const same = minDb === this.minDb && maxDb === this.maxDb;
+    if (auto) { this.minDb = minDb; this.maxDb = maxDb; return; }
+    if (same && !this.mixedRanges()) return;
     this.minDb = minDb;
     this.maxDb = maxDb;
+    if (!this.rowMin) return;
+    this.rowMin.fill(minDb); this.rowMax.fill(maxDb);
+    this.recolour();
   }
 
   // every row black again (sweep mode: a new grid - the old rows show another range / resolution)
@@ -5493,6 +5667,8 @@ class WaterfallDisplay {
     for (let i = 0; i < d.length; i += 4) { d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 255; }
     this.ctx.putImageData(this.imageData, 0, 0);
     this.lastFrequencies = [];
+    if (this.lv) { this.lv.fill(WF_LV_NONE); this.rowMin.fill(this.minDb); this.rowMax.fill(this.maxDb); }
+    this.hue = null;
   }
 
   setSpeed(speed) {
@@ -5503,6 +5679,7 @@ class WaterfallDisplay {
     if (scheme === this.scheme) return;   // (the View settings re-apply it often)
     this.scheme = scheme;
     this.generateColormap(scheme);
+    this.recolour();
   }
 }
 
@@ -5637,10 +5814,13 @@ function updateFFTYAxis(value) {
 }
 
 // the main waterfall's colour range from viewCommon.min / max (Auto writes
-// them, as it wrote the sliders before); the panes that take the common range
-function updateWaterfallRange() {
+// them, as it wrote the sliders before); the panes that take the common range.
+// auto = Auto's own move: the main waterfall's new lines take it, the lines
+// already there keep theirs (WaterfallDisplay.setRange); sweep mode's waterfall
+// repaints its rows either way (its own rule, sweep-mode.md)
+function updateWaterfallRange(auto) {
   const [a, b] = viewSafeRange(viewCommon.min, viewCommon.max);
-  if (waterfall) waterfall.setRange(a, b);
+  if (waterfall) waterfall.setRange(a, b, !!auto);
   if (swp.wf) { swp.wf.setRange(a, b); swpWfRecolour(); }   // (sweep mode: its rows too)
   panes.forEach(p => {
     if (viewEff(p.ch, 'auto')) return;
@@ -5670,6 +5850,8 @@ function toggleAutoRange(enabled) {
       clearInterval(autoRangeInterval);
       autoRangeInterval = null;
     }
+    // the range where Auto left it is the manual one now: every line takes it
+    updateWaterfallRange();
   }
   // the panes that take the common Auto: their range now comes from Min / Max
   panes.forEach(paneApplyView);
@@ -5693,7 +5875,7 @@ function viewSet(k, raw) {
     o[k] = v;
     viewSave();
     if (p) {
-      if (k === 'auto' && v) { const r = computeAutoRange(p.mags); if (r) p.wf.setRange(r[0], r[1]); }
+      if (k === 'auto' && v) { const r = computeAutoRange(p.mags); if (r) p.wf.setRange(r[0], r[1], true); }   // (Auto on repaints nothing)
       paneApplyView(p);
     }
     viewPopSync();
@@ -5782,6 +5964,7 @@ function viewTitleOf(t) {
 function viewBtnTitle() {
   const b = $id('view-btn-main');
   if (b) b.title = 'View: scale, zoom, waterfall' + (opMode === 'independent' ? ' - all tuners' : '');
+  snapBtnTitle();   // (its neighbour, the picture: in independent mode the selected tuner's)
 }
 function viewPopToggle(btn, target) {
   if (viewBtn === btn) { viewPopClose(false); return; }
@@ -5890,6 +6073,194 @@ function popDismiss(o) {
     else o.place();
   });
   return {opened() { win = innerWidth + 'x' + innerHeight; }};
+}
+
+// ============================================================================
+// SPECTRUM PICTURE: one PNG of the spectrum and the waterfall shown, with a caption line
+// ----------------------------------------------------------------------------
+// The camera button right of View on the spectrum's header (every mode - in independent mode it
+// takes the selected tuner) and on each tuner pane's header (the user's wish, 2026-11-21: "an option
+// to save a screenshot of the FFT and waterfall together"). In the browser only - nothing is sent, no
+// library: the display's canvases are drawn onto one canvas where they are on screen, in device
+// pixels (devicePixelRatio: the spectrum's own resolution; a waterfall kept in CSS pixels is scaled
+// up without smoothing), on the backgrounds the page shows; the caption under them (one line, more
+// only where the picture is too narrow for it - a tuner pane, a phone);
+// saved by an <a download> of a blob: URL. In it: what is drawn on the canvases - the trace, grid,
+// axes and their labels, tuning bars, squelch lines and their labels, the bearing colours and their
+// ring, sweep mode's progress bar and messages, the waterfall. Not in it: what is DOM over them (the
+// pointer's level box, uPlot's cursor lines, the "DEBUG PLAYBACK" banner - the caption says so -
+// and a pane's header: its frequency and gain are in the caption).
+// ============================================================================
+function snapCss(name, dflt) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || dflt;
+}
+// MHz with 3 decimals, more only where the value has them (to the Hz)
+function snapMhz(mhz) {
+  let s = (+mhz).toFixed(6).replace(/0+$/, '');
+  const d = s.length - s.indexOf('.') - 1;
+  if (d < 3) s = (+mhz).toFixed(3);
+  return s;
+}
+// a range shown: about a thousandth of its span as the last digit (3 decimals at least)
+function snapRange(f0, f1) {
+  const d = Math.max(3, Math.min(6, Math.ceil(-Math.log10(Math.max(1e-9, (f1 - f0) / 1000)))));
+  return (+f0).toFixed(d) + ' - ' + (+f1).toFixed(d) + ' MHz';
+}
+function snapMhzFile(mhz) { return String(+(+mhz).toFixed(3)); }   // a file name's: 24, 433.92
+function snapTime(d) {
+  const p = n => String(n).padStart(2, '0');
+  const off = -d.getTimezoneOffset(), a = Math.abs(off);
+  const day = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  const tm = p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  return {cap: day + ' ' + tm + ' UTC' + (off >= 0 ? '+' : '-') + p(Math.floor(a / 60)) + ':' + p(a % 60),
+          file: day.replace(/-/g, '') + '_' + tm.replace(/:/g, '')};
+}
+// what the picture is of: {region: [elements whose rects together are its area], layers: [elements in
+// drawing order - a canvas is drawn, anything else gives its background and top border], cap: [the
+// caption's parts], name: the file name's middle} or null (nothing shown yet)
+function snapWhat(target) {
+  const txt = txt0;
+  const fft = () => { const e = $id('fft-size-sel'); return e && e.value ? 'FFT ' + e.value : ''; };
+  const gain = t => t ? 'Gain ' + t : '';
+  const zoom = l => l > 1.0001 ? 'Zoom ' + zoomText(l) : '';
+  if (opMode === 'independent' || typeof target === 'number') {
+    const p = panes[typeof target === 'number' ? target : selTuner];
+    if (!p || p.freqs.length < 2) return null;
+    const f0 = p.freqs[0], f1 = p.freqs[p.freqs.length - 1];
+    return {region: ['tpane-s-' + p.ch, 'tpane-w-' + p.ch],
+            layers: ['tpane-s-' + p.ch, 'tpane-w-' + p.ch, 'tpane-wc-' + p.ch, 'tpane-wo-' + p.ch, 'tpane-ov-' + p.ch],
+            cap: ['Independent · Tuner ' + p.ch, 'Centre ' + snapMhz(p.freqMhz) + ' MHz',
+                  'Shown ' + snapRange(f0, f1), fft(), p.resText ? p.resText + ' a point' : '',
+                  zoom(p.zoom.level), gain(txt('tpane-gv-' + p.ch))],
+            name: 'T' + p.ch + '_' + snapMhzFile(f0) + '-' + snapMhzFile(f1) + 'MHz'};
+  }
+  if (opMode === 'sweep') {
+    const s = swpSpan(), win = swpWindow(), st = swp.st;
+    if (!s || !win) return null;
+    const n = st && st.tuners ? st.tuners.length : 0;
+    return {region: ['swp-spec-box', 'swp-wf-box'],
+            layers: ['swp-spec-box', 'fp-split', 'swp-wf-box', 'swp-spec', 'swp-spec-ov', 'swp-wc', 'swp-wo'],
+            cap: ['Sweep' + (n ? ' · ' + n + (n === 1 ? ' tuner' : ' tuners') : ''),
+                  'Range ' + snapMhz(s[0] / 1e6) + ' - ' + snapMhz(s[1] / 1e6) + ' MHz',
+                  swp.zoom.level > 1.0001 ? 'Shown ' + snapRange(win[0] / 1e6, win[1] / 1e6) : '',
+                  st && st.fft_size ? 'FFT ' + st.fft_size + (st.bin_hz > 0 ? ' (' + swpFmtHz(st.bin_hz) + ' bins)' : '') : '',
+                  swp.resText ? swp.resText + ' a point' : '', zoom(swp.zoom.level), gain(txt('gn-value'))],
+            name: 'sweep_' + snapMhzFile(win[0] / 1e6) + '-' + snapMhzFile(win[1] / 1e6) + 'MHz'};
+  }
+  if (!fftPlot || !fftPlot.ctx || currentFrequencies.length < 2) return null;
+  const f0 = currentFrequencies[0], f1 = currentFrequencies[currentFrequencies.length - 1];
+  const wb = opMode === 'wideband';
+  return {region: ['fp', 'wf-container'],
+          layers: ['fp', 'fp-split', 'wf-container', fftPlot.ctx.canvas, 'fo', 'wf-canvas', 'wf-overlay'],
+          cap: [wb ? 'Wideband scan' : 'Coherent · Antenna ' + activeChannel,
+                wb ? '' : 'Centre ' + snapMhz(currentCenterFreq) + ' MHz',
+                'Shown ' + snapRange(f0, f1), fft(), specMainRes ? specMainRes + ' a point' : '',
+                zoom(mainZoom.level), gain(txt('gn-value'))],
+          name: (wb ? 'wideband_' : 'coherent_') + snapMhzFile(f0) + '-' + snapMhzFile(f1) + 'MHz'};
+}
+// the picture as a canvas (and its file name), or null
+function snapRender(target, when) {
+  const w = snapWhat(target);
+  if (!w) return null;
+  const el = x => typeof x === 'string' ? $id(x) : x;
+  const shown = e => e && e.isConnected && e.getClientRects().length > 0;
+  let L = Infinity, T = Infinity, R = -Infinity, B = -Infinity;
+  for (const x of w.region) {
+    const e = el(x);
+    if (!shown(e)) continue;
+    const r = e.getBoundingClientRect();
+    L = Math.min(L, r.left); T = Math.min(T, r.top); R = Math.max(R, r.right); B = Math.max(B, r.bottom);
+  }
+  if (!(R > L && B > T)) return null;
+  const s = window.devicePixelRatio || 1;
+  const X = v => Math.round((v - L) * s), Y = v => Math.round((v - T) * s);
+  const W = X(R), H = Y(B);
+  // the caption: one line (12 px, down to 10 px where it would not fit); a picture too narrow for
+  // that (a tuner pane, a phone) gets it on as many lines as it needs, broken between its parts
+  const t = snapTime(when || new Date());
+  const pb = document.body.classList.contains('pb-on') ? [txt0('pb-overlay-k') || 'DEBUG PLAYBACK'] : [];
+  const parts = ['KrakenSDR'].concat(w.cap.filter(Boolean), pb, [t.cap]);
+  const cap = parts.join('  ·  ');
+  const mc = document.createElement('canvas').getContext('2d');
+  const room = W - 16 * s;
+  let fs = 12 * s, lines = [cap];
+  mc.font = fs + 'px sans-serif';
+  const tw = mc.measureText(cap).width;
+  if (tw > room) {
+    fs = Math.max(10 * s, fs * room / tw);
+    mc.font = fs + 'px sans-serif';
+    if (mc.measureText(cap).width > room) {
+      fs = 11 * s; mc.font = fs + 'px sans-serif'; lines = [];
+      let cur = '';
+      for (const q of parts) {
+        const tr = cur ? cur + '  ·  ' + q : q;
+        if (cur && mc.measureText(tr).width > room) { lines.push(cur); cur = q; } else cur = tr;
+      }
+      lines.push(cur);
+    }
+  }
+  const lh = Math.round(fs * 1.35), capH = lines.length === 1 ? Math.round(22 * s) : lines.length * lh + Math.round(8 * s);
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H + capH;
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = snapCss('--s3', '#171c23');
+  ctx.fillRect(0, 0, W, H);
+  for (const x of w.layers) {
+    const e = el(x);
+    if (!shown(e)) continue;
+    const r = e.getBoundingClientRect();
+    const dx = X(r.left), dy = Y(r.top), dw = X(r.right) - dx, dh = Y(r.bottom) - dy;
+    if (dw <= 0 || dh <= 0) continue;
+    if (e.tagName === 'CANVAS') {
+      if (e.width > 0 && e.height > 0) ctx.drawImage(e, 0, 0, e.width, e.height, dx, dy, dw, dh);
+      continue;
+    }
+    const cs = getComputedStyle(e);
+    if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') {
+      ctx.fillStyle = cs.backgroundColor;
+      ctx.fillRect(dx, dy, dw, dh);
+    }
+    const bt = parseFloat(cs.borderTopWidth) || 0;
+    if (bt > 0 && cs.borderTopStyle !== 'none') { ctx.fillStyle = cs.borderTopColor; ctx.fillRect(dx, dy, dw, Math.max(1, Math.round(bt * s))); }
+  }
+  // the caption's strip under the picture
+  ctx.fillStyle = snapCss('--s2', '#11151b');
+  ctx.fillRect(0, H, W, capH);
+  ctx.fillStyle = snapCss('--l1', '#333b46');
+  ctx.fillRect(0, H, W, Math.max(1, Math.round(s)));
+  ctx.font = fs + 'px sans-serif';
+  ctx.fillStyle = snapCss('--t1', '#cdd5df');
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  if (lines.length === 1) ctx.fillText(cap, 8 * s, H + capH / 2 + 0.5 * s);
+  else lines.forEach((l, i) => ctx.fillText(l, 8 * s, H + Math.round(4 * s) + lh * (i + 0.5) + 0.5 * s));
+  return {canvas: cv, name: 'krakensdr_' + w.name + '_' + t.file + '.png', caption: cap, lines: lines.length, w: W, h: H, capH};
+}
+function txt0(id) { const e = $id(id); return e ? e.textContent.trim() : ''; }
+let snapLast = null;   // the last picture's name, caption and size (tests)
+// the button: the picture now, saved as a file (target: 'main' or a tuner number)
+function snapSave(target) {
+  const r = snapRender(target === 'main' ? null : target);
+  if (!r) { uiAlert('Nothing to save yet: the spectrum has no data.'); return; }
+  snapLast = {name: r.name, caption: r.caption, lines: r.lines, w: r.w, h: r.h, capH: r.capH};
+  const save = blob => {
+    if (!blob) { uiAlert('The picture could not be made in this browser.'); return; }
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = r.name; a.rel = 'noopener'; a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    // (revoked late: Firefox and Safari read the blob after the click returns)
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 60000);
+  };
+  if (r.canvas.toBlob) r.canvas.toBlob(save, 'image/png');
+  else fetch(r.canvas.toDataURL('image/png')).then(x => x.blob()).then(save, () => save(null));
+}
+// the spectrum header's button: in independent mode it takes the selected tuner
+function snapBtnTitle() {
+  const b = $id('snap-btn-main');
+  if (b) b.title = 'Save a picture (PNG) of the spectrum and the waterfall' + (opMode === 'independent' ? ' - the selected tuner' : '');
 }
 
 // BIAS TEE: the antenna bias tees (docs/dev/bias-tees.md). The top bar's Bias tee button (right of
@@ -6103,7 +6474,7 @@ function autoRangeWaterfall() {
   // over rows that already showed the antennas again.
   if (opMode === 'sweep') {   // the sweep's waterfall: from the sweep's trace (no calibration bursts there)
     const r = swp.tr && computeAutoRange(swp.tr.mags);
-    if (r) { [viewCommon.min, viewCommon.max] = r; updateWaterfallRange(); }
+    if (r) { [viewCommon.min, viewCommon.max] = r; updateWaterfallRange(true); }
     return;
   }
   if (noiseLive || Date.now() - noiseOffAt < 1000) return;
@@ -6117,9 +6488,10 @@ function autoRangeWaterfall() {
 
   const r = computeAutoRange(magnitudes);
   if (!r) return;
-  // the common Min / Max follow (they were the sliders' values; not sent)
+  // the common Min / Max follow (they were the sliders' values; not sent);
+  // only the new lines take them (Auto's move: no recolour - spectrum-views.md)
   [viewCommon.min, viewCommon.max] = r;
-  updateWaterfallRange();
+  updateWaterfallRange(true);
 }
 
 // Per-decimator squelch functions
@@ -11881,6 +12253,8 @@ function panesBuild(n) {
         <span class="tpane-vfos" id="tpane-v-${ch}"></span>
         <button type="button" class="view-btn icon" id="tpane-vb-${ch}" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-pop"
                 title="View: scale, zoom, waterfall - tuner ${ch}" aria-label="View, tuner ${ch}">${VIEW_ICON}</button>
+        <button type="button" class="view-btn icon snap-btn" id="tpane-pb-${ch}" title="Save a picture (PNG) of tuner ${ch}'s spectrum and waterfall"
+                aria-label="Save a picture, tuner ${ch}">${icon('camera')}</button>
       </div>
       <div class="tpane-body">
         <canvas class="tpane-spec" id="tpane-s-${ch}"></canvas>
@@ -11899,6 +12273,7 @@ function panesBuild(n) {
     // its View button (the click then selects the pane too, above)
     const vb = $id('tpane-vb-' + ch);
     vb.addEventListener('click', () => viewPopToggle(vb, ch));
+    $id('tpane-pb-' + ch).addEventListener('click', () => snapSave(ch));   // its picture (SPECTRUM PICTURE)
     const p = {ch, el, wf: new WaterfallDisplay('tpane-wc-' + ch, 'tpane-wo-' + ch),
                freqs: [], mags: [], freqMhz: 0, gainDb: 0, sr: 2.4e6, sw: 0, sh: 0, oh: 0, dpr: 1,
                L: 34, bars: [], ai: [], holdF: 0, holdG: 0, zoom: {level: 1, off: 0}};
@@ -12581,7 +12956,7 @@ setInterval(() => {
   for (const p of panes) {
     if (!viewEff(p.ch, 'auto')) continue;
     const r = computeAutoRange(p.mags);
-    if (r) p.wf.setRange(r[0], r[1]);
+    if (r) p.wf.setRange(r[0], r[1], true);   // (Auto's move: its new lines only)
   }
   if (typeof viewTarget === 'number') viewPopSync();   // a pane's popover shows what Auto set
 }, 500);
@@ -14010,8 +14385,9 @@ const binDoaLut = (() => {
   }
   return t;
 })();
+function binDoaHue(az) { return ((Math.round(360 - az) % 360) + 360) % 360; }   // 0..359, the row of binDoaLut
 function binDoaRgb(az) {
-  const h = ((Math.round(360 - az) % 360) + 360) % 360;
+  const h = binDoaHue(az);
   return [binDoaLut[h * 3], binDoaLut[h * 3 + 1], binDoaLut[h * 3 + 2]];
 }
 // the azimuth as the DoA plots show it (Display > DOA Angles)
@@ -14123,21 +14499,14 @@ function binDoaAt(fr, fMhz) {
   if (!(fr.flags & 4) && fr.conf[j] === 0) return null;
   return {conf: fr.conf[j] / 255, az: fr.az[j] * (360 / 65536)};
 }
-// the main waterfall's row: a function per row (WaterfallDisplay.addLine);
-// every pixel: the bearing's hue at the level's brightness
-const binDoaWfOut = [0, 0, 0];
+// the main waterfall's row (WaterfallDisplay.addLine): per pixel the bearing's
+// hue (at: frequency -> 0..359, -1 = no bearing there; rgb: the hues' colours);
+// the waterfall keeps it and paints it at the level's brightness, 0.2 + 0.8 x
+// the colour scale's 0..1 - so a contrast change repaints coloured rows too
 function binDoaWfTint() {
   const fr = binDoaFresh();
   if (!fr) return null;
-  return (f, lvl) => {
-    const p = binDoaAt(fr, f);
-    if (!p) return null;
-    const v = 0.2 + 0.8 * lvl, [hr, hg, hb] = binDoaRgb(p.az);
-    binDoaWfOut[0] = hr * v;
-    binDoaWfOut[1] = hg * v;
-    binDoaWfOut[2] = hb * v;
-    return binDoaWfOut;
-  };
+  return {rgb: binDoaLut, at: f => { const p = binDoaAt(fr, f); return p ? binDoaHue(p.az) : -1; }};
 }
 // uPlot draw hook: the trace line itself, point by point in the colour of
 // its bearing (uPlot's own stroke is transparent while a frame is fresh -

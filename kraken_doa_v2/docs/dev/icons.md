@@ -61,6 +61,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `menu` | the sidebar (top bar, three lines) |
 | `chev-r` `chev-l` `chev-d` | fold / unfold (sidebar boxes, map panels, table details, categories), step, the dropdown arrow, collapse the assistant |
 | `sliders` | View (display settings) |
+| `camera` | a picture of the spectrum and the waterfall (the button right of View, on the spectrum's and each tuner pane's header: a camera body with its lens; 2026-11-21, *spectrum-views.md*) |
 | `gear` | settings: Setup Settings, Categories, scan settings, model and effort, Generate |
 | `refresh` | refresh, check, rescan, regenerate, restart |
 | `reset` | reset to defaults, the boxes' order; drive mode's Reset (bearings) |
