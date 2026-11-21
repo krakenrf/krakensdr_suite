@@ -1797,14 +1797,22 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   typed ranges ("451-458, 935.5-940" MHz; a decimal comma is taken when that
   is the only reading that works - "451,5-458" - else the error says to
   write a point; a range under 10 kHz: "Too narrow"),
-  an Advanced fold (threshold 3-40 dB, default 9; raster 6.25 / 12.5 / 5 kHz
-  / none). Ranges are merged, clipped to the tuner's range, at most 16 and
+  an Advanced fold (threshold 3-40 dB over the local background around a
+  carrier - it only decides whether a carrier is tried; raster 6.25 / 12.5
+  / 5 kHz / none): shown at the receiver's defaults (6 dB, 6.25 kHz) and
+  sent only when the user changed them (`tkSrchSel.thr` / `ras` null = the
+  receiver's default; a selection saved by an earlier page, which always
+  sent 9 dB, keeps its bands and ranges only). Ranges are merged, clipped to the tuner's range, at most 16 and
   2000 MHz (said in the form, Start disabled otherwise). The estimate under
   them, one line: the ranges, the steps (the receiver's own stepping:
   usable band from the edge clip, 50 kHz overlap), the time as a span -
-  `TK_SRCH_S_PER_MHZ` 1.0 s per MHz on a quiet band to 9.5 s on a busy one,
-  from the receiver's table "Measured on the KrakenSDR" above (the low end
-  at least 1.5 s a step) - amber when its busy end is over 5 min, and "away
+  `TK_SRCH_S_PER_MHZ` 1.5 s per MHz on a quiet band to 6 s on a busy one,
+  what a user sees on a PC (the receiver's first sweeps at 6 dB on the
+  KrakenSDR: 496-502 MHz 31 s, 453-460 23 s, 410-420 15 s, 138-146 49 s; a
+  band already in the memory goes faster; the tip says a Raspberry Pi
+  takes several times longer; the low end at least 1.5 s a step) - amber
+  when its slow
+  end is over 5 min, and "away
   from <home>"; its `?` tip has the cost in words (the receiver leaves
   <home> MHz, the user's VFOs move, following pauses, it comes back at the
   end or on Stop, tuning ends it there, what it finds is kept as it goes).
@@ -1838,7 +1846,9 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
 - **How it ended** (`search_last`, until closed or the next search): "Finished
   / Stopped by you / Ended to follow a control channel / Ended by a mode
   change / Ended: you retuned the receiver (it stays where you tuned it) /
-  ... <time>", "n new, m known control channels · steps done of N in T ·
+  Ended: no free VFO for its probes - remove a VFO, then search again
+  (`no_vfo`) / ... <time>" - a reason the page doesn't know as the receiver
+  names it ("Ended (some reason)"), none as "Ended", "n new, m known control channels · steps done of N in T ·
   c carriers, p tries"; a finished search that found nothing adds one line
   of what to try (another band, a lower threshold, the gain), the reasons in
   its tooltip (one gain for the whole sweep, clipping hides channels).
@@ -1876,7 +1886,19 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   on this receiver, a playback, wideband scan mode, a scanner running. The
   receiver's refusals come as a note under the search with what to do
   ("Follow it alone" when an added one doesn't fit the span; remove a VFO;
-  build the plugin). The row's tooltip says when the receiver will be
+  build the plugin; a decoder that "does not declare trunking": tune a VFO
+  to the channel and pick its decoder yourself; a search refused with "no
+  free VFO for the probes": remove a VFO). A follow that is done but with an
+  option the decoder refused (the receiver's `trunk_error` "followed on Dn,
+  but not applied: ...") is no failed click: the row goes to "Following on
+  Dn" with "... not applied" after it (`tkCcPartial`, while it is followed)
+  and the note says "following, but ... not applied". Entry ids are the
+  receiver's per start: on every new connection (`tkCcNewConn`) the clicks
+  waiting, the open Details and menu, the held order, the latest note (its
+  buttons name ids) and an import in flight ("broken off", the list shows
+  what arrived) go, and the list is drawn again from the receiver's (what is
+  followed too - a control VFO on a followed entry is followed again after
+  a restart). The row's tooltip says when the receiver will be
   retuned (coherent: outside the usable band now) and that it replaces the
   last click's control channel. The menu: Follow, **Follow it too**
   (`add:true`; only when something is followed by a click), Name… (`TRUNK_CC_NAME`,
@@ -1889,13 +1911,16 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   the page - no receiver route), Import… (a file input: JSON of that form or
   a bare array, at most 8 MB / 2000 entries; each entry checked as the
   receiver checks it - frequency, plugin id, system key of that plugin,
-  strings cut to 64, options, times after now set to now, `n` up to 1e9,
-  a level outside 0-120 dB dropped - and sent without its id as one
-  `TRUNK_CC_SET` at a time: the next when the receiver has answered it
-  (every `TRUNK_` command is answered with the status; a refusal comes
-  first) or after 1 s, at least 50 ms apart. A refusal is matched to its
-  command by the command's first 64 bytes (the receiver's echo), not
-  through `tkSent` (the last 40 commands); a socket that is not open stops
+  strings cut to 64, options as the receiver takes them (keys `[a-z0-9_]`,
+  values up to 100 bytes, no control characters), a decoder this receiver
+  has that doesn't declare trunking refused as the receiver would, times
+  after now set to now, `n` up to 1e9, a level outside 0-120 dB dropped -
+  and sent without its id as one `TRUNK_CC_SET` every 50 ms (an accepted
+  one is answered only by the next list, at most once a second; the end is
+  the first list more than 1.1 s after the last one sent, else 4 s). A
+  refusal (`trunk_error`, at once) is matched to its command by the
+  command's first 64 bytes (the receiver's echo), not through `tkSent` (the
+  last 40 commands); a socket that is not open stops
   it ("Import broken off - the connection to the receiver was lost", n not
   sent); entries past the first 2000 are said apart ("n not imported (more
   than 2000 entries in the file)"), not as refused. A note counts
@@ -1906,7 +1931,11 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   export first). The memory file (`trunk_cc.file.state`; a receiver without
   it: `kept_as` set = not loaded): "not_loaded" - a dialog once per kept file
   in this browser (`kraken_tk_ccfile`) with the kept name as a selectable
-  line, and a note while it lasts; "not_written" - "could not be saved -
+  line (written by a newer version: said so), and a note with the
+  receiver's own words while it lasts; "ok" with a `note` (entries of
+  decoders without trunking dropped, those over 1000 kept aside in a file
+  it names) - a note with the receiver's words, the list as loaded, the
+  heading still "saved automatically"; "not_written" - "could not be saved -
   kept in the receiver's memory, tried again every 5 s" and the heading
   "not saved" until a save succeeds. Whatever an older receiver holds is
   shown safely: a time in the future "at an unknown time" (never "new",
