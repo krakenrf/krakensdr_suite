@@ -210,7 +210,9 @@ bool BurstRx::try_rate(double rate, int64_t s0, int64_t s1, double f) {
             }
         }
         const int64_t nb = static_cast<int64_t>(s.size());
-        const int64_t hi = std::min<int64_t>(nb - uwl - 320, pre + 320);
+        // the UW: after the preamble, counted from the start the detector saw
+        // (it may be up to two FFTs early: 1024 samples)
+        const int64_t hi = std::min<int64_t>(nb - uwl - 320, pre + 64 + static_cast<int64_t>(1024 / sps_in) + 64);
         for (int64_t p = 0; p <= hi; p++) {
             int e = 0, ea = 0, eb = 0;
             if (qpsk) {
@@ -320,10 +322,10 @@ bool BurstRx::try_rate(double rate, int64_t s0, int64_t s1, double f) {
         for (int64_t k = 1; k < std::min<int64_t>(nblk, 31); k++) cols.push_back(3);
         run(cols, info);
     } else {
-        // one block of 2 + 3n columns: n from the burst's length
-        const int64_t nest = std::clamp<int64_t>((avail / 64 - 2) / 3, 2, 31);
+        // one block of 2 + 3n columns: the n whose block structure checks
+
         bool ok = false;
-        for (int64_t n : {nest, nest - 1, nest + 1, nest - 2}) {
+        for (int64_t n = 2; n <= 31; n++) {
             if (n < 2 || n > 31 || 64 * (2 + 3 * n) > avail) continue;
             run({static_cast<int>(2 + 3 * n)}, info);
             std::vector<uint8_t> b(info);

@@ -74,6 +74,13 @@ private:
         double lat = NAN, lon = NAN, alt = NAN;
     };
     std::map<uint32_t, Air> air_;
+    struct Multi {
+        std::string text;
+        int blocks = 0;
+        char last_bid = 0;
+        double t = 0;
+    };
+    std::map<std::string, Multi> multi_;   // ACARS messages of several blocks being joined
 
     void facts(bool force);
     void row(uint32_t aes);

@@ -105,6 +105,7 @@ void SuDecoder::reset() {
     psmc_.clear();
     asm_.clear();
     air_.clear();
+    multi_.clear();
     last_facts_ = -100;
 }
 
@@ -381,11 +382,39 @@ void SuDecoder::user_data(const Asm& a) {
         acars(a, d, n);
         return;
     }
-    // other user data (Data-3: X.25 / ATN packets): header only
-    char b[200];
-    snprintf(b, sizeof b, "%s AES %s · GES 0x%02X · %s user data, %zu octets", a.down ? "↓" : "↑", aes_hex(a.aes).c_str(), a.ges,
-             q_name(a.q), n);
-    if (host.verbose()) host.event(b, 30);
+    // other user data (Data-3: X.25 / ISO 8208 packets carrying ATN):
+    // the packet header only - GFI, logical channel, packet type
+    char b[240];
+    std::string x25;
+    bool notable = false;   // call set-up / clearing / resets: shown without "Show all messages"
+    if (n >= 3 && ((d[0] >> 4) == 1 || (d[0] >> 4) == 2 || (d[0] >> 4) == 3 || (d[0] >> 4) == 9 || (d[0] >> 4) == 0xA)) {
+        const int lcn = ((d[0] & 15) << 8) | d[1], pt = d[2];
+        const char* t = (pt & 1) == 0                 ? "data"
+                        : pt == 0x0B                  ? "call request"
+                        : pt == 0x0F                  ? "call accepted"
+                        : pt == 0x13                  ? "clear request"
+                        : pt == 0x17                  ? "clear confirmation"
+                        : pt == 0x23                  ? "interrupt"
+                        : pt == 0x27                  ? "interrupt confirmation"
+                        : (pt & 0x1F) == 0x01         ? "receive ready"
+                        : (pt & 0x1F) == 0x05         ? "receive not ready"
+                        : (pt & 0x1F) == 0x09         ? "reject"
+                        : pt == 0x1B                  ? "reset request"
+                        : pt == 0x1F                  ? "reset confirmation"
+                        : pt == 0xFB                  ? "restart request"
+                        : pt == 0xFF                  ? "restart confirmation"
+                        : pt == 0xF1                  ? "diagnostic"
+                                                      : nullptr;
+        if (t) {
+            char e[96];
+            snprintf(e, sizeof e, " · X.25 %s, LCN %d", t, lcn);
+            x25 = e;
+            notable = (pt & 1) && (pt & 0x1F) != 0x01 && (pt & 0x1F) != 0x05;
+        }
+    }
+    snprintf(b, sizeof b, "%s AES %s · GES 0x%02X · %s user data, %zu octets%s", a.down ? "↓" : "↑", aes_hex(a.aes).c_str(), a.ges,
+             q_name(a.q), n, x25.c_str());
+    if (host.verbose() || notable) host.event(b, 30);
     air.label = "data";
     row(a.aes);
 }
@@ -425,6 +454,30 @@ void SuDecoder::acars(const Asm& a, const uint8_t* d, size_t n) {
     if (!one.empty()) ev += ": " + one;
     if (blk.etb) ev += " …";
     if (!one.empty() || host.verbose()) host.event(ev, 30);
+    // a message of several blocks (ETB on all but the last): put together
+    // and reported whole with its last block (as plugins/acars)
+    {
+        const double now = host.time();
+        for (auto it = multi_.begin(); it != multi_.end();)
+            it = now - it->second.t > 300 ? multi_.erase(it) : std::next(it);
+        const std::string k = std::string(down ? "D" : "U") + aes_hex(a.aes) + blk.label;
+        auto it = multi_.find(k);
+        if (blk.etb) {
+            Multi& m = multi_[k];
+            if (m.blocks == 0 || blk.bid != m.last_bid) {   // a retransmitted block once
+                m.text += text;
+                m.blocks++;
+                m.last_bid = blk.bid;
+            }
+            m.t = now;
+        } else if (it != multi_.end() && blk.bid != it->second.last_bid) {
+            const Multi m = it->second;
+            multi_.erase(it);
+            host.event(std::string(down ? "↓ " : "↑ ") + (reg.empty() ? aes_hex(a.aes) : reg) + " · " + lab + " · message of " +
+                           std::to_string(m.blocks + 1) + " blocks: " + acars::one_line(m.text + text),
+                       30);
+        }
+    }
     if (host.raw_wanted()) {
         char h[64];
         snprintf(h, sizeof h, "ACARS %s AES %s GES %02X ", down ? "DL" : "UL", aes_hex(a.aes).c_str(), a.ges);
