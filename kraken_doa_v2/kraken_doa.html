@@ -1320,6 +1320,9 @@ body.tk-away #tb-freq .freq-selector {box-shadow:0 0 0 2px var(--warn-m);border-
 .tk-srch .d {white-space:normal}
 .tk-srch .x {flex:none;background:none;border:0;color:var(--t4);cursor:pointer;padding:0 2px;display:inline-flex}
 .tk-srch .x:hover {color:var(--t0)}
+#tk-cc-notes .tk-note {flex-wrap:wrap}
+#tk-cc-notes .tk-note > span {flex:1 1 150px}
+#tk-cc-notes .tk-note > span + .btn {margin-left:auto}
 .tk-ccf {display:flex;flex-wrap:wrap;gap:4px;margin:0 0 4px}
 .tk-ccf input {flex:1 1 100%;min-width:0;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:3px 6px;border-radius:3px;font-size:12px}
 .tk-ccf select {flex:1 1 0;min-width:0;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:2px 3px;border-radius:3px;font-size:11.5px}
@@ -1333,6 +1336,9 @@ body.tk-away #tb-freq .freq-selector {box-shadow:0 0 0 2px var(--warn-m);border-
 .tk-ccr .l1 {display:flex;align-items:center;gap:5px;height:20px}
 .tk-ccr .f {flex:none;font-weight:bold;color:var(--t0);font-variant-numeric:tabular-nums;min-width:62px}
 .tk-ccr .l2 .pl {color:var(--ac-t2)}
+/* the second line is redrawn when its state changes: a press on a span in it that is replaced before
+   the release would lose the click (the row, its two lines and the frequency stay the same elements) */
+.tk-ccr .l2 > * {pointer-events:none}
 .tk-ccr .nm {flex:1;min-width:0;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tk-ccr .nm.u {color:var(--t0);font-weight:600}
 .tk-ccr .lv {flex:none;font-size:10.5px;color:var(--t4);font-variant-numeric:tabular-nums}
@@ -11388,14 +11394,16 @@ function connect() {
 
           // Handle decimator info
           if(msg.decimator_info) {
-            updateDecimatorList(msg.decimator_info);
-            digOnDecimatorInfo(msg.decimator_info);
+            const dinfo = tkProbeFilter(msg.decimator_info);   // 📡 the search's probe VFOs: not the page's
+            updateDecimatorList(dinfo);
+            digOnDecimatorInfo(dinfo);
             if (typeof recRenderVfos === 'function') recRenderVfos();
             updatePlotTitle();
           }
           else if(msg.digital) {
             if (msg.geo) geoStatus = msg.geo;
-            digOnMessage(msg.digital);
+            const dg = tkProbeIds.size && Array.isArray(msg.digital) ? msg.digital.filter(x => !(x && tkProbeIds.has(x.id))) : msg.digital;
+            if (dg.length || !Array.isArray(dg)) digOnMessage(dg);
           }
           else if(msg.map) { mapOnMessage(msg.map); }
           else if(msg.savedfreq) { sfOnMessage(msg.savedfreq); }
@@ -22739,6 +22747,14 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   let tkCcImp = null;            // an import going on
   let tkSrchLastHide = 0;        // search_last t_end the user closed
   let tkSrchSetOpen = false, tkSrchWas = false;
+  // the control-channel search's probe VFOs (decimator_info trunk.role "probe"): no card, no bar,
+  // no decoder events or history asked for - an id leaves the set when a VFO of the page's has it
+  const tkProbeIds = new Set();
+  function tkProbeFilter(info) {
+    if (!Array.isArray(info)) return info;
+    for (const d of info) { if (d.trunk && d.trunk.role === 'probe') tkProbeIds.add(d.id); else tkProbeIds.delete(d.id); }
+    return info.some(d => d.trunk && d.trunk.role === 'probe') ? info.filter(d => !(d.trunk && d.trunk.role === 'probe')) : info;
+  }
   const TK_CC_PEND_MS = 12000;
   const TK_SRCH_STEP_S = 2.4;    // seconds per step, for the estimate before the start (the receiver's own estimate after)
   // the bands offered: frequency ranges, nothing regional; "around here" and the whole range follow the receiver
@@ -22893,7 +22909,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     else if (!e) {
       const s = r.steps * TK_SRCH_STEP_S, home = tkMhz3(currentCenterFreq * 1e6);
       h = `<b>${r.ranges.map(([a, b]) => (+a.toFixed(3)) + '-' + (+b.toFixed(3))).join(', ')} MHz</b> · ${r.steps} step${r.steps === 1 ? '' : 's'} · about <b>${tkDurWords(s)}</b>${s > 120 ? ' (longer where it finds carriers)' : ''}<br>` +
-        `While it runs the receiver leaves ${home} MHz and your VFOs move with it` + ((m.systems || []).some(x => (x.control || []).length) || m.follow ? ', trunk following pauses' : '') +
+        (opMode === 'independent' ? 'While it runs one tuner (the one with a control VFO, else T0) leaves its frequency and your VFOs on it move with it'
+          : `While it runs the receiver leaves ${home} MHz and your VFOs move with it`) + ((m.systems || []).some(x => (x.control || []).length) || m.follow ? ', trunk following pauses' : '') +
         `; it comes back when the search ends (or Stop). Tuning the receiver yourself ends it there.`;
       if (s > 600) h += `<br><span class="w">A long sweep: about ${tkDurWords(s)} away from your frequency.</span>`;
     }
@@ -22936,7 +22953,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         `<div class="d">${tkMhz3(s.centre_hz)} MHz · step ${Math.min(s.steps, (s.step || 0) + 1)} of ${s.steps} · ${pct} %${s.eta_s >= 0 ? ' · about ' + tkDurWords(s.eta_s) + ' left' : ''}</div>` +
         `<div class="d">${digEsc(ph.charAt(0).toUpperCase() + ph.slice(1))}${rg && s.ranges.length > 1 ? ` · range ${ri + 1} of ${s.ranges.length} (${tkMhz3(rg[0])}-${tkMhz3(rg[1])})` : ''}</div>` +
         `<div class="d">Found <b>${s.found_new || 0}</b> new, ${s.found_known || 0} known · ${s.carriers || 0} carrier${s.carriers === 1 ? '' : 's'}, ${s.probed || 0} tr${s.probed === 1 ? 'y' : 'ies'}</div>` +
-        `<div class="d">Back to ${tkMhz3(s.home_hz)} MHz when it ends</div>`;
+        `<div class="d">${s.tuner >= 0 ? 'T' + s.tuner + ' steps · back' : 'Back'} to ${tkMhz3(s.home_hz)} MHz when it ends</div>`;
     } else if (L && L.t_end && L.t_end !== tkSrchLastHide) {
       cls += ' last';
       const n = (L.found_new || 0) + (L.found_known || 0);
@@ -23134,13 +23151,29 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       raf = requestAnimationFrame(tick);
     };
     const go = () => { if (!raf) { top = null; raf = requestAnimationFrame(tick); } };
-    list.addEventListener('pointerenter', () => { tkCcHover = true; go(); });
+    list.addEventListener('pointerenter', e => { if (e.pointerType === 'touch') return; tkCcHover = true; go(); });   // (a finger: the tap's hold below)
     list.addEventListener('pointerleave', e => {
       if (e.pointerType === 'touch') return;   // (a finger lifting: the tap's own hold below)
       tkCcHover = false;
       if (!(tkMenu && tkMenu.dataset.cc)) tkCcRender();
     });
-    list.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') { tkCcTapAt = Date.now(); go(); } });
+    // A row follows on the release of a press on it (not on 'click'): something above the list
+    // that moves it between press and release (a status redrawn in that moment) would make the
+    // release land elsewhere and the browser drop the click - the press's row counts. A finger
+    // that scrolls the list is cancelled (pointercancel), a press that moved is not a click
+    let press = null;
+    list.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'mouse') { tkCcTapAt = Date.now(); go(); }
+      const r = e.target.closest('.tk-ccr');
+      press = e.button === 0 && r && !e.target.closest('.mb, .dt') ? {id: +r.dataset.id, x: e.clientX, y: e.clientY, t: Date.now()} : null;
+    });
+    list.addEventListener('pointercancel', () => { press = null; });
+    document.addEventListener('pointerup', e => {
+      const p = press;
+      press = null;
+      if (!p || Date.now() - p.t > 1500 || Math.hypot(e.clientX - p.x, e.clientY - p.y) > 12) return;
+      tkCcFollow(p.id, false);
+    }, true);
     list.addEventListener('click', ev => {
       const r = ev.target.closest('.tk-ccr');
       if (!r) return;
@@ -23148,7 +23181,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const mb = ev.target.closest('.mb');
       if (mb) { tkCcMenuOpen(mb, id); return; }
       if (ev.target.closest('.dt')) return;   // (the details: text to select)
-      tkCcFollow(id, false);
+      if (ev.detail === 0) tkCcFollow(id, false);   // (a click without a pointer: assistive technology)
     });
     list.addEventListener('keydown', ev => {
       const r = ev.target.closest('.tk-ccr');
@@ -23161,7 +23194,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         if (n) n.focus();
       } else if (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey)) { ev.preventDefault(); tkCcMenuOpen(r.querySelector('.mb'), +r.dataset.id); }
     });
-    list.addEventListener('focusin', () => { tkCcHover = true; });
+    list.addEventListener('focusin', ev => { if (ev.target.matches(':focus-visible')) tkCcHover = true; });   // (the keyboard; a tap focuses too)
     list.addEventListener('focusout', ev => { if (!list.contains(ev.relatedTarget) && !list.matches(':hover')) tkCcHover = false; });
   })();
   // the relative times ("5 min ago") and a stale click
@@ -23197,12 +23230,13 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const mm = /"id":(\d+)/.exec(c), id = mm ? +mm[1] : 0, e = tkCcById(id);
     if (c.startsWith('TRUNK_CC_FOLLOW:')) {
       tkCcPend.delete(id);
-      let what = '', btn = '';
+      let what = '', btn = '', said = digEsc(err);
+      if (/doesn't fit the span/.test(err)) said = 'it doesn\'t fit the receiver\'s band together with the control channels followed now';
       if (/doesn't fit the span/.test(err)) btn = `<button type="button" class="btn sm" onclick="tkCcFollow(${id}, false)" title="Follow it in place of the control channel your last click followed">Follow it alone</button>`;
       else if (/16 VFOs/.test(err)) what = ': remove a VFO first';
       else if (/scanner runs/.test(err)) what = ' (the scanner\'s Stop)';
       else if (/not built/.test(err)) what = ' - build it (make -C kraken_doa_v2/plugins PLUGIN=' + digEsc(e ? e.plugin : '') + ')';
-      tkCcSay({cls: 'b', ic: 'no', html: `${e ? tkCcMhz(e.hz) + ' MHz' : 'The control channel'} not followed: ${digEsc(err)}${what}`, btn});
+      tkCcSay({cls: 'b', ic: 'no', html: `${e ? tkCcMhz(e.hz) + ' MHz' : 'The control channel'} not followed: ${said}${what}`, btn});
     } else tkCcSay({cls: 'b', ic: 'no', html: 'Not changed: ' + digEsc(err)});
     tkCcRender();
     return true;
@@ -23537,18 +23571,25 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (el.dataset.html !== rows) { el.dataset.html = rows; el.innerHTML = rows; }
     // the panes: a taken voice tuner's frequency is the manager's
     if (typeof panes === 'undefined') return;
+    // ... and the tuner a control-channel search steps (independent mode)
+    const sr = m.search && m.search.tuner >= 0 ? m.search : null;
     for (const p of panes) {
       const v = vt.find(x => x.tuner === p.ch && x.taken);
+      const sv = sr && sr.tuner === p.ch;
       const head = p.el && p.el.querySelector('.tpane-head');
       if (!head) continue;
-      p.el.classList.toggle('tk-taken', !!v);
+      p.el.classList.toggle('tk-taken', !!v || !!sv);
       let tag = head.querySelector('.tk-ptag');
-      if (!v) { if (tag) tag.remove(); continue; }
+      if (!v && !sv) { if (tag) tag.remove(); continue; }
       if (!tag) {
         tag = document.createElement('span');
         tag.className = 'tk-ptag';
         const nm = head.querySelector('.tpane-name');
         if (nm) nm.after(tag); else head.prepend(tag);
+      }
+      if (sv) {
+        tkText(tag, 'Searching · yours ' + tkMhz3(sr.home_hz), 'T' + p.ch + ' steps through the control-channel search\'s ranges: the frequency shown is not your tuning (your VFOs on it move with it). It goes back to ' + tkMhz3(sr.home_hz) + ' MHz when the search ends; tuning it yourself ends the search there');
+        continue;
       }
       const cs = callsOn(v.tuner);
       tkText(tag, 'Trunk' + (cs.length ? ': ' + cs.map(tkLabel).join(', ') : v.tuning_for ? ': tuning' : '') + ' · yours ' + tkMhz3(v.home_hz),

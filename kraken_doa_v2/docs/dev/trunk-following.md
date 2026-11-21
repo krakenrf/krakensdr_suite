@@ -1686,10 +1686,15 @@ Export for a copy) and the count.
   carriers, p tries", "Back to <home> MHz when it ends". The top bar: the
   excursion's banner ("SEARCHING CONTROL CHANNELS", centre, %, time left,
   found, "yours <home>", its button Stop) and the frequency digits outlined
-  - the frequency shown is the search's. The box's state and badge say
-  "Searching". **Probe VFOs** (`trunk.role` "probe") are dropped from
-  decimator_info where it arrives (`updateDecimatorList`): no card, no bar,
-  no DoA plot - only the count in the block. The list fills as the receiver
+  - the frequency shown is the search's. In independent mode (one tuner
+  steps: `search.tuner`) the block says "Tn steps", the estimate "one tuner
+  (the one with a control VFO, else T0) leaves its frequency", and that
+  tuner's pane gets the voice tuners' tag and outline ("Searching · yours
+  <home>"). The box's state and badge say "Searching". **Probe VFOs**
+  (`trunk.role` "probe") are dropped from decimator_info where it arrives
+  (`tkProbeFilter`): no card, no bar, no DoA plot, no decoder history asked
+  for, their decoder messages dropped (an id leaves the probe set when a VFO
+  of the page's gets it) - only the count in the block. The list fills as the receiver
   sends `trunk_cc`; entries first found by this search are marked "new".
 - **How it ended** (`search_last`, until closed or the next search): "Finished
   / Stopped by you / Ended to follow a control channel / Ended by a mode
@@ -1713,7 +1718,10 @@ Export for a copy) and the count.
   as anything above the list (notes, a system appearing, a VFO card) moved
   it. Keyboard: Tab to a row, Enter / Space follow, arrows move, Shift+F10
   the menu.
-- **One click follows** (`TRUNK_CC_FOLLOW`, no question): the row says
+- **One click follows** (`TRUNK_CC_FOLLOW`, no question; taken on the
+  release of a press on the row - the press's row counts, so a redraw that
+  moves the list between press and release can't lose it; a press that
+  moved or a finger that scrolled is not a click): the row says
   "Starting…" at once and "Following on Dn" when `cc_followed` has it; a
   click on one followed already selects its VFO. Said without sending (the
   row's second line and a note): outside the tuner's range, its decoder not
@@ -1882,3 +1890,54 @@ the debug playback (Play only).
   editor 27 and 29, the five scenes 10 each (their test signals generated
   again first, 21-27 s each: the cache had lost them); palette check OK; no
   console errors.
+- Control channels (2026-11-22, the receiver with `TRUNK_SEARCH` /
+  `trunk_cc`; the host worker's fake heimdall with a band of control
+  channels - six 10 kHz blocks with the `trunktest` pilots of two systems,
+  a tone, a 200 kHz block and a block without a pilot as decoys - on the
+  TEST stack 28779 / 28780-1 / 28791-2). `t_cc` (55 checks at 1500 px, 55
+  at 390): the form (a band ticked: steps, time and the cost; nothing
+  ticked or a bad typed range: Start disabled, said), typed ranges
+  "849-853, 855-856.6" -> the form folds, the block (step, %, time left,
+  "trying 8 carriers with the decoders", found, home), the top-bar banner
+  and outlined digits, a second page the same, no probe VFO card or bar
+  while probes ran (13 looks), the list growing 1 -> 7 while it ran,
+  "Finished: 6 new" with the six marked new, home at 851.000; the 800 MHz
+  preset stopped from the banner ("Stopped by you", back home; at 390 px
+  with the sidebar closed); Whole range asks first (Cancel: nothing
+  started); the receiver's refusal in the form; a reload mid-search (block,
+  banner, list back) and the block's Stop; click to follow in the span (the
+  row under the pointer stays the same row; "Following on D1"), a second
+  click replacing, Follow it too (two), out of the span (the receiver
+  retuned to 855.75, followed), Follow it too where it doesn't fit (the
+  refusal with "Follow it alone", which follows); a hostile name (markup,
+  quotes, RTL override) literal on both pages; details; forgetting a named
+  one asks; sort by level; export -> Clear all (asks) -> import: the same
+  entries (ids aside); an import with 8 bad entries of 10 (no frequency,
+  bad plugin id, another plugin's key, 40 options, a string, null, an
+  array, 1 THz) and control characters / markup / a 500-character name:
+  "2 added, 8 refused (the reasons)", the receiver's cleaning, a name cut to
+  64; a file that isn't JSON: said, nothing sent. `t_cc_scale` (17 at
+  both widths): 500 entries (five decoders, four bands, three weeks of
+  ages) - listed in 67-76 ms from empty, 5-7 ms again, typing a filter
+  12-18 ms a key, sorts 31-38 ms, decoder / age filters right; with the
+  pointer on a row: a rename from page 2 that sorts first, an entry added
+  and a note appearing above - the same row stays under the pointer;
+  re-sorted when the pointer leaves; click to follow among 500; export ->
+  clear -> import of 502 in 31-32 s ("502 added"), identical, page 2 in
+  sync. `t_cc_more` (13 at both widths): an idle receiver (no control
+  VFO) shows the box and the memory to a page that connects later (found
+  on the way: the receiver answered `GET_TRUNK` only when the status had
+  changed - fixed in the receiver); a memory file that doesn't read - the
+  dialog once per kept file (not after a reload) and the note; independent
+  mode: a search from the page (the stepping tuner's pane tagged
+  "Searching · yours 851.000", "T0 steps"), finished, one click follows
+  there; a touch tap follows and the list isn't held afterwards. Found and
+  fixed on the way: the page asked `DIGITAL_HISTORY` for probe VFOs, which
+  were gone by the answer - the receiver then broadcast an empty frame
+  (a JSON parse error on every page; reported) - probes are filtered before
+  the decoder code now; a click on a row was lost about one run in eight
+  when the list moved between the test's pointer arriving and its press -
+  the test moves the pointer onto the row first, as a hand does (the list
+  is held from then on), and a row follows on the release of a press on it;
+  the import paced by the receiver's answers waited 1.5 s per entry (an
+  unchanged status wasn't sent again): one every 50 ms now.
