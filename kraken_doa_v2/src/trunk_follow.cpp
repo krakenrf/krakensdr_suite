@@ -3518,7 +3518,6 @@ constexpr size_t CC_MAX = 1000;               // memory entries (the oldest the 
 constexpr int64_t CC_SAVE_MS = 5000;          // saved this long after a change
 constexpr int64_t CC_LIST_MS = 1000;          // the list message at most this often
 constexpr int64_t CC_HEARD_MS = 60000;        // a control VFO in normal use refreshes its entry at most this often
-constexpr int64_t SRCH_LOOK_GAP_MS = 400;     // the two looks at a step's spectrum this far apart
 constexpr int64_t SRCH_ARRIVE_MAX_MS = 4000;  // a step whose centre the stream never shows: skipped
 constexpr int64_t SRCH_PROBE_MIN_MS = 2500;   // a probe without any valid frame this long (stream time): given up ...
 constexpr int64_t SRCH_PROBE_MAX_MS = 5000;   // ... and none longer (valid frames but no control report by then: traffic)
@@ -3773,11 +3772,14 @@ void cc_load() {
         std::cerr << "Trunk following: " << g_cc_note << std::endl;
         return;
     }
-    int bad = 0, over = 0;
+    int bad = 0, over = 0, notrunk = 0;
     for (const auto& g : a->a) {
         CcEntry e;
-        if (g.type != geo::Json::OBJ || !cc_parse(g, &e).empty()) {
-            bad++;
+        const std::string why = g.type == geo::Json::OBJ ? cc_parse(g, &e) : std::string("not an object");
+        if (!why.empty()) {
+            // (a decoder without trunking: counted for the note, whether the registry was read before or after)
+            if (why.rfind("plugin: a decoder that declares trunking", 0) == 0) notrunk++;
+            else bad++;
             continue;
         }
         if (g_cc.size() >= CC_MAX) {
@@ -3798,6 +3800,11 @@ void cc_load() {
         k << text;
         g_cc_note = std::to_string(over) + " entries over the " + std::to_string(CC_MAX) + " kept aside in " + kept;
         std::cerr << "Trunk following: " << g_cc_note << std::endl;
+    }
+    if (notrunk) {
+        const std::string n = std::to_string(notrunk) + " entr" + (notrunk == 1 ? "y" : "ies") + " of decoders without trunking dropped";
+        g_cc_note = g_cc_note.empty() ? n : g_cc_note + "; " + n;
+        std::cerr << "Trunk following: " << n << std::endl;
     }
     std::cout << "Trunk following: " << g_cc.size() << " control channel(s) remembered (" << CC_FILE << ")"
               << (bad ? ", " + std::to_string(bad) + " unreadable skipped" : "") << std::endl;
@@ -3895,6 +3902,7 @@ struct Search {
     bool kerberos = false;
     int mode = 0;           // 0 coherent (the centre steps, calibration held), 2 independent (one tuner steps)
     double asked = 0;       // what the receiver took for the step (its FREQ refused: unchanged)
+    uint64_t tries = 0, probed0 = 0;   // this step's (candidate, plugin) tries planned; probed when they were
     int64_t t_noroom = 0;   // no free VFO for a probe since
     bool skip_restore = false;
     uint64_t frames0 = 0;   // the step's spectrum frames counted from here (the search's clock is data, not time)
@@ -3907,16 +3915,6 @@ std::string g_srch_last;   // the last run's summary (JSON object)
 
 bool searching() { return g_srch.active; }
 void srch_recs_clear();
-
-// the averaged spectrum holds only the new band after this long (as the
-// saved-frequency scan reckons it: 95 % of the average replaced)
-int64_t srch_settle_ms() {
-    float a = averaging_alpha.load(std::memory_order_relaxed);
-    if (!(a > 0.001f)) a = 0.001f;
-    const double frames = a >= 1.0f ? 1.0 : std::log(0.05) / std::log(1.0 - a);
-    const double frame_s = std::max(1, current_fft_size.load()) / static_cast<double>(SAMPLE_RATE);
-    return std::clamp<int64_t>(std::llround((frames * frame_s + 0.1) * 1000), 250, 2500);
-}
 
 bool is_probe(int vfo) {
     for (const auto& p : g_srch.probes)
@@ -4393,6 +4391,9 @@ void tick_search() {
                 std::cout << std::defaultfloat << std::setprecision(6) << std::endl;
             }
             if (g_srch.cands.empty()) return next();
+            g_srch.tries = 0;
+            for (const auto& cd : g_srch.cands) g_srch.tries += cd.todo.size();
+            g_srch.probed0 = g_srch.probed;
             g_srch.st = 4;
             g_status_now = true;   // (the page sees the probing phase, however short)
             srch_probe_batch();
@@ -4453,6 +4454,20 @@ std::string srch_status_json(int64_t now) {
         o << "null";
     } else {
         const size_t n = g_srch.centres.size();
+        // progress inside a step counts: the share of its tries done (a probe step can last tens of seconds);
+        // the time left from the elapsed time and that fraction - null while there is nothing to base it on
+        double frac = 0;
+        if (g_srch.st == 4 && g_srch.tries)
+            frac = std::clamp(static_cast<double>(g_srch.probed - g_srch.probed0) / static_cast<double>(g_srch.tries), 0.0, 0.95);
+        else if (g_srch.st >= 2)
+            frac = 0.05;
+        const double done = n ? (static_cast<double>(g_srch.step) + frac) / static_cast<double>(n) : 1.0;
+        const int pct = static_cast<int>(std::floor(100.0 * done));
+        std::string eta = "null";
+        if (done >= 0.05 && !(g_srch.step == 0 && g_srch.st < 4)) {
+            const double el = static_cast<double>(now - g_srch.t_start) / 1000.0;
+            eta = std::to_string(std::max<long long>(1, std::llround(el * (1.0 - done) / done)));
+        }
         int64_t avg = 0;
         for (int64_t x : g_srch.step_ms) avg += x;
         avg = g_srch.step_ms.empty() ? 2000 : avg / static_cast<int64_t>(g_srch.step_ms.size());
@@ -4463,7 +4478,7 @@ std::string srch_status_json(int64_t now) {
         o << "],\"mode\":\"" << (g_srch.mode == 2 ? "independent" : "coherent") << "\",\"tuner\":"
           << (g_srch.mode == 2 ? g_srch.tuner : -1) << ",\"threshold_db\":" << g_srch.thr_db << ",\"raster_hz\":" << g_srch.raster << ",\"home_hz\":" << num_json(g_srch.home)
           << ",\"centre_hz\":" << num_json(g_srch.step < n ? g_srch.centres[g_srch.step] : NAN) << ",\"step\":" << g_srch.step
-          << ",\"steps\":" << n << ",\"pct\":" << (n ? 100 * g_srch.step / n : 100) << ",\"eta_s\":" << (static_cast<int64_t>(n - g_srch.step) * avg / 1000)
+          << ",\"steps\":" << n << ",\"pct\":" << pct << ",\"eta_s\":" << eta
           << ",\"phase\":\"" << names[std::clamp(g_srch.st, 0, 4)] << "\",\"carriers\":" << g_srch.carriers << ",\"probing\":"
           << g_srch.probes.size() << ",\"probed\":" << g_srch.probed << ",\"found_new\":" << g_srch.found_new << ",\"found_known\":"
           << g_srch.found_known << ",\"elapsed_ms\":" << (now - g_srch.t_start) << ",\"frames\":" << (g_srch.step < n ? srch_frames(g_srch.centres[g_srch.step]) : 0) << ",\"frame_hz\":" << fft_frame_hz[srch_ch()].load() << "}";
