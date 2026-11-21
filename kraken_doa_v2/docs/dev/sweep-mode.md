@@ -1056,8 +1056,10 @@ is used; CPU per thread from /proc on the Pi), beside the PC's:
 | heimdall, % of one core: sweep / coherent | 23 / 31 - 38 (the conversion worker 17 - 19 / 25 - 32) | - |
 | kraken_doa with one page, % of one core: sweep whole range / FM band / coherent | 4.7 / 5.5 - 6.0 / 22 - 26 | 4.6 / - / 17 (the receiver's table) |
 
-20 of 20 steps on both runs (before and after heimdall's safety net of this
-round), 0 coherence events, 0 failed retunes, no gate failed or late, no
+20 of 20 steps in each of three runs (before heimdall's safety net of this
+round, after it, and after main - Voice to Text's Live text - was merged
+into the branch; the PC's run on that last tree 20 of 20 as well, 4.00 s /
+18.9 s, 11.8 sweeps a second), 0 coherence events, 0 failed retunes, no gate failed or late, no
 stalled or slow tuner, no unquiet flush, no page error, both processes exit
 0; no core more than 9 % busy while sweeping (12 - 21 % in coherent mode).
 So a Pi 5 sweeps exactly as fast as the PC - the hop is USB and PLL time,
