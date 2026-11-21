@@ -1780,9 +1780,9 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   / Stopped by you / Ended to follow a control channel / Ended by a mode
   change / Ended: you retuned the receiver (it stays where you tuned it) /
   ... <time>", "n new, m known control channels · steps done of N in T ·
-  c carriers, p tries"; nothing found adds what to try (another band, a lower
-  threshold, the gain - one gain for the whole sweep, clipping hides
-  channels).
+  c carriers, p tries"; a finished search that found nothing adds one line
+  of what to try (another band, a lower threshold, the gain), the reasons in
+  its tooltip (one gain for the whole sweep, clipping hides channels).
 - **The list** (`#tk-cc-list`, keyed rows in a 300 px scroller): the
   frequency, the name (the user's in bold, else the system's name, else its
   key, else "System not identified"), the level ("+18 dB", gain in the
@@ -2053,3 +2053,45 @@ the debug playback (Play only).
   five scenes 10 each, misc 13, the DMR rule 9, the editor 27 and 29; the
   first-pass receiver 13 (now also: no control channel part, no
   `GET_TRUNK_CC` sent); palette check OK; no console errors.
+- After the independent review of the control-channel page (2026-11-22,
+  13 findings; the receiver at 88bfa58: `trunk_cc.file.state`, a repeated
+  follow a no-op / "already followed", bounded numbers, no empty frames).
+  `t_cc_rev` (49 checks at 1500 px, 46 at 390 - the zoom part is
+  desktop-only): `GET_TRUNK_CC` once per connection and once again after a
+  reconnect; the estimate one line (28 px) with the cost in its `?` tip;
+  every preset but Whole range "4-36 min" and asked first, Cancel starts
+  nothing, 849-853 under 5 min at its busy end; the Bands tip 1-10 s per
+  MHz; "451-451.005" too narrow, "451,5-458" / "451,5-458, 460-462" /
+  "451,5-458,5" with a decimal comma, "450-460,470-480" two ranges, "451 x
+  458" says to write a point; a band button by Enter and Space keeps the
+  focus; the search block's Stop keeps the focus and stays the same element
+  through statuses, pressed 0.1 / 0.45 / 1 s it stops each time (sent
+  once); a double follow sends one; "Follow it too" on the one followed
+  shows the receiver's "already followed on D1"; at sidebar zoom 0.8 / 1 /
+  1.5 a four-line note appearing above moves the row under the pointer by
+  0.1-0.2 px; an older receiver's future time / negative level shows "at an
+  unknown time" / "-12 dB", no "Invalid Date"; imported future times set to
+  now, a negative level dropped; 2100 entries: "100 not imported (more than
+  2000 ...)", not refused; the socket closed mid-import: "Import broken off
+  - the connection ... lost", n not sent; 1000 named entries, then 60 more
+  refused by the full memory - all 60 counted (past `tkSent`'s 40); the
+  import's Stop keeps the focus and stops on presses of 0.1 / 0.45 / 1 s;
+  a failed write ("not saved" in amber, "could not be saved") and the save
+  succeeding again ("saved automatically", the note gone); the probe
+  filter switched off during a search: no JSON parse error (the receiver
+  sends no empty frame now); independent mode with the control VFO on T1 at
+  460 MHz: Around here 450-470, the tip and the estimate name T1, the
+  receiver steps T1; at 390 px with touch: holds of 0.75 and 1.2 s on a row
+  in and out of the band (the tip shown) follow nothing, help mode follows
+  nothing, a short tap follows once. `t_cc_scale` 19 at both widths (new: a
+  search over 500 rows - 111 list mutations in 10 s, status handling median
+  7.8 ms, max 22 ms, an open Details block and a text selection in it kept
+  through the steps). Found on the way: the rows' key had `isNew` as 0 /
+  false, so every row was made again when a search started and ended; the
+  age is in the key as its words now (a row changes when its text does);
+  a row drawn before the plugin list came kept the plugin id for its name.
+  The whole pass again at both widths on the receiver at 88bfa58: t_cc 55 /
+  55, t_cc_scale 19 / 19, t_cc_more 13 / 13, states 9, fixtures 18, review
+  16, actions 15, stability 9, scale 12, touch 8, the five scenes 10 each,
+  misc 13, the DMR rule 9, the editor 27 and 29, the first-pass receiver
+  13; palette check OK; no console errors.

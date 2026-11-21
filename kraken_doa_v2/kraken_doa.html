@@ -23024,7 +23024,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     tkSrchWas = !!s;
     // the block is made once (markup): only its texts, its bar and which button shows change - a Stop
     // that was replaced under a press or the keyboard focus would lose them
-    let cls = 'tk-exc tk-srch', show = true, head = '', ic = 'search', d = ['', '', '', ''], pct = -1, stopTip = '', headTip = '';
+    let cls = 'tk-exc tk-srch', show = true, head = '', ic = 'search', d = ['', '', '', ''], pct = -1, stopTip = '', headTip = '', hint = false;
     if (s) {
       const ri = (s.ranges || []).findIndex(([a, b]) => s.centre_hz >= a - 1.3e6 && s.centre_hz <= b + 1.3e6);
       const rg = ri >= 0 ? s.ranges[ri] : null;
@@ -23043,7 +23043,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       ic = L.end === 'done' ? 'ok' : 'search';
       head = (TK_SRCH_END[L.end] || ('Ended: ' + L.end)) + ' ' + tkClock(L.t_end);
       d = [`<b>${L.found_new || 0}</b> new, ${L.found_known || 0} known control channel${n === 1 && !L.found_new ? '' : 's'} · ${L.steps_done != null ? L.steps_done : L.steps} of ${L.steps} steps in ${tkDurWords((L.dur_ms || 0) / 1000)} · ${L.carriers || 0} carriers, ${L.probed || 0} tries`,
-           !n && (L.end === 'done' || (L.steps_done || 0) > 0) ? 'Nothing answered as a control channel: try another band, a lower threshold (Advanced) - or the gain: one gain is used for the whole sweep, and where the front end clips signals are missed.' : '', '', ''];
+           !n && L.end === 'done' ? 'Nothing found - another band, a lower threshold or the gain may help' : '', '', ''];
+      hint = !n && L.end === 'done';
     } else show = false;
     if ((el.style.display === 'none') === show) el.style.display = show ? '' : 'none';
     if (el.className !== cls) el.className = cls;
@@ -23057,6 +23058,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (pg.hidden !== !s) pg.hidden = !s;
     if (s) { const w = pct + '%'; const pi = $id('tk-srch-pgi'); if (pi.style.width !== w) pi.style.width = w; tkTitle(pg, pct + ' %'); }
     d.forEach((t, i) => { const e = $id('tk-srch-d' + (i + 1)); if (e && e.dataset.html !== t) { e.dataset.html = t; e.innerHTML = t; } });
+    tkTitle($id('tk-srch-d2'), hint ? 'No carrier answered as a control channel. Try another band; a lower threshold (Advanced) for weaker channels; or the gain - one gain is used for the whole sweep, and where the front end clips (a strong broadcast or phone band nearby) signals are missed' : '');
     // the Start button and the estimate follow (a search running, the receiver's frequency)
     if (tkSrchSetOpen) tkSrchEst(true);
   }
@@ -23143,7 +23145,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       // the title follows the band the receiver takes in now (in / out of it) - set in place; the
       // rest only when the entry or its state changed (not at each step of a search)
       const span = tkCcInSpan(e.hz), nfol = (m.cc_followed || []).length;
-      const tk = [cant, vfo, span, nfol > 0].join('\u0001');
+      const tk = [cant, vfo, span, nfol > 0, tkPlugName(e.plugin)].join('\u0001');
       if (r._tk !== tk) {
         r._tk = tk;
         tkTitle(r, cant ? cant : vfo >= 0 ? `Followed on D${vfo}: click to select its VFO` :
@@ -23151,7 +23153,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
           (span === false ? ' - outside the band now: the receiver is retuned there (your tuning)' : '') +
           (nfol ? '. It replaces the control channel your last click followed (its menu: Follow it too)' : ''));
       }
-      const k = [e.hz, e.plugin, e.name, e.sys_name, e.site, e.sys, e.level_db, e.gain_db, e.src, tkCcAgo(e.last), e.n, e.first, e.followed, e.meas_hz, JSON.stringify(e.opts || {}), vfo, !!pend, cant, isNew, tkCcOpen === e.id].join('\u0001');
+      const k = [e.hz, e.plugin, tkPlugName(e.plugin), e.name, e.sys_name, e.site, e.sys, e.level_db, e.gain_db, e.src, tkCcAgo(e.last), e.n, e.first, e.followed, e.meas_hz, JSON.stringify(e.opts || {}), vfo, !!pend, cant, isNew, tkCcOpen === e.id].join('\u0001');
       if (r.dataset.k === k) return;
       r.dataset.k = k;
       const name = tkCcName(e);
