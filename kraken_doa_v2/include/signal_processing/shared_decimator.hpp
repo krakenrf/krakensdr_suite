@@ -310,6 +310,11 @@ public:
         std::string describe() const;        // "8F:31 5:23 2h:39" (factor, F folded, h halfband : taps)
     };
     static Plan planStages(int bandwidth_hz);
+    // The cascade's delay (s): an input sample shows in the output this much
+    // later - each linear-phase stage (taps - 1) / 2 of its input samples.
+    // Auto detect's internal streams (data_receiver.cpp) map a wider stream's
+    // positions into the VFO's stream with it
+    static double groupDelaySeconds(int bandwidth_hz);
 
 private:
     // One channel of one VFO through a block: begin, chunk(at) for at = 0,

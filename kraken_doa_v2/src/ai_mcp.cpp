@@ -890,8 +890,11 @@ void t_list_decoders(const Json&, Reply r) {
         o << "}";
     }
     o << "],\"note\":" << q("set one on a VFO with set_vfo(decoder=<id>) or add_vfo; \"auto\" tries every decoder the user "
-                           "ticked for Auto detect except manual_only ones. fixed_freq_hz decoders tune the receiver "
-                           "there; whole_band ones take the tuner's whole 2.4 MHz") << "}";
+                           "ticked for Auto detect except manual_only ones, at any VFO bandwidth (one that needs more "
+                           "than the VFO has decodes from a stream of its own at the VFO's centre - widening the VFO "
+                           "to its min_vfo_bandwidth_hz gives the DoA and squelch the whole signal too). A decoder set "
+                           "by id needs a VFO of at least its min_vfo_bandwidth_hz. fixed_freq_hz decoders tune the "
+                           "receiver there; whole_band ones take the tuner's whole 2.4 MHz") << "}";
     r(o.str(), false);
 }
 
