@@ -1593,6 +1593,97 @@ it - checked against the first-pass build).
   control tuners), next to Centre; "N calls waiting for a free
   voice tuner" with a ⚙ to Voice tuners.
 
+**Control channels: the search, the memory, click to follow.** At the
+bottom of the box (under Recent: the calls don't move when it grows),
+`#tk-cc-sec`, shown only by a receiver whose status has `cc_followed`
+(the page then sends `GET_TRUNK_CC` once per connection; `trunk_cc` comes
+to every page on each change). The sub-heading says "saved automatically"
+(its tooltip: the file on the receiver, saved by itself, loaded at start,
+Export for a copy) and the count.
+- **Search bands…** folds out the form: band buttons (several at once:
+  "Around here" ±10 MHz around the receiver's frequency, VHF 136-174, UHF
+  380-470, UHF 450-520, 700 MHz 763-776, 800 MHz 851-870, 900 MHz 935-941,
+  "Whole range" = the tuner's range from `FREQ_MIN`/`FREQ_MAX`; frequency
+  ranges only, nothing regional), typed ranges ("451-458, 935.5-940" MHz),
+  an Advanced fold (threshold 3-40 dB, default 9; raster 6.25 / 12.5 / 5 kHz
+  / none). Ranges are merged, clipped to the tuner's range, at most 16 and
+  2000 MHz (said in the form, Start disabled otherwise). The estimate under
+  them: the ranges, the steps (the receiver's own stepping: usable band
+  from the edge clip, 50 kHz overlap) and the time at 2.4 s a step, then
+  the cost in words - the receiver leaves <home> MHz, the user's VFOs move,
+  following pauses, it comes back at the end or on Stop, tuning ends it
+  there; over 10 min "A long sweep". Start sends `TRUNK_SEARCH` at once up
+  to 5 min, else (and always for Whole range) after a `uiConfirm` with the
+  MHz, steps and time ("what it finds is kept as it goes"). The selection
+  is remembered in this browser (`kraken_tk_srch`). The receiver's refusal
+  shows in the form ("Not started: ..." + what to do: switch the mode, the
+  scanner's Stop, stop the playback). The mode is not checked by the page
+  (the receiver decides: independent mode may search too).
+- **While it runs** (`search`): the form folds away; an amber block where
+  the form was - "Searching", Stop, a progress bar, "<centre> MHz · step n
+  of N · p % · about T left", the phase in words (tuning, waiting for the
+  spectrum, looking for carriers, "trying n carriers with the decoders"),
+  "range i of n (lo-hi)" with several ranges, "Found n new, m known · c
+  carriers, p tries", "Back to <home> MHz when it ends". The top bar: the
+  excursion's banner ("SEARCHING CONTROL CHANNELS", centre, %, time left,
+  found, "yours <home>", its button Stop) and the frequency digits outlined
+  - the frequency shown is the search's. The box's state and badge say
+  "Searching". **Probe VFOs** (`trunk.role` "probe") are dropped from
+  decimator_info where it arrives (`updateDecimatorList`): no card, no bar,
+  no DoA plot - only the count in the block. The list fills as the receiver
+  sends `trunk_cc`; entries first found by this search are marked "new".
+- **How it ended** (`search_last`, until closed or the next search): "Finished
+  / Stopped by you / Ended to follow a control channel / Ended by a mode
+  change / Ended: you retuned the receiver (it stays where you tuned it) /
+  ... <time>", "n new, m known control channels · steps done of N in T ·
+  c carriers, p tries"; nothing found adds what to try (another band, a lower
+  threshold, the gain - one gain for the whole sweep, clipping hides
+  channels).
+- **The list** (`#tk-cc-list`, keyed rows in a 300 px scroller): the
+  frequency, the name (the user's in bold, else the system's name, else its
+  key, else "System not identified"), the level ("+18 dB", gain in the
+  tooltip), a ⋯ menu; second line: "Following on Dn" / "Starting…" / why it
+  can't be followed, "new", the decoder, the system name under a user's
+  name, the site, "found / heard / seen 3 min ago". Sort (by frequency, last
+  seen, strongest, by name; remembered, `kraken_tk_cc_sort`) and, from 7
+  entries on, a filter row: text (MHz, names, site, key, decoder), decoder,
+  seen within 1 h / 24 h / 7 days. **Rows don't move under the pointer:**
+  while the pointer is on the list (or focus, a menu of it open, or 4 s
+  after a tap) the order is kept - new entries go to the end, re-sorted
+  when the pointer leaves - and a rAF watch scrolls the sidebar by as much
+  as anything above the list (notes, a system appearing, a VFO card) moved
+  it. Keyboard: Tab to a row, Enter / Space follow, arrows move, Shift+F10
+  the menu.
+- **One click follows** (`TRUNK_CC_FOLLOW`, no question): the row says
+  "Starting…" at once and "Following on Dn" when `cc_followed` has it; a
+  click on one followed already selects its VFO. Said without sending (the
+  row's second line and a note): outside the tuner's range, its decoder not
+  on this receiver, a playback, wideband scan mode, a scanner running. The
+  receiver's refusals come as a note under the search with what to do
+  ("Follow it alone" when an added one doesn't fit the span; remove a VFO;
+  build the plugin). The row's tooltip says when the receiver will be
+  retuned (coherent: outside the usable band now) and that it replaces the
+  last click's control channel. The menu: Follow, **Follow it too**
+  (`add:true`; only when something is followed by a click), Name… (`TRUNK_CC_NAME`,
+  empty = the system's name), Details (inline: frequency and measured,
+  decoder and key, system, site, the user's name, source, level and gain,
+  first / last seen, times seen, last followed, options), Forget
+  (`TRUNK_CC_DEL`; asks only for a named one).
+- **The ⋯ menu of the list**: Export… (the `trunk_cc` entries as
+  `{"version":1,"entries":[...]}`, `trunk_control_channels.json`, made in
+  the page - no receiver route), Import… (a file input: JSON of that form or
+  a bare array, at most 8 MB / 2000 entries; each entry checked as the
+  receiver checks it - frequency, plugin id, system key of that plugin,
+  strings cut to 64, options - and sent without its id as one
+  `TRUNK_CC_SET`, one every 50 ms (500 entries in about 25 s; not paced
+  by the answers: an unchanged status is not sent again); a note counts "Importing: n of N sent" with Stop, then "Imported
+  <file>: a added, u updated, r refused (the reasons)" and old air entries
+  dropped to make room), Clear all… (`TRUNK_CC_CLEAR`, asks: how many,
+  how many named, export first). The memory not loaded (`file.ok` false): a
+  dialog once per kept file in this browser (`kraken_tk_ccfile`) with the
+  kept name as a selectable line, and a note while it lasts.
+- Notes there also say: a playback (following waits), wideband scan mode.
+
 **Trunk VFOs elsewhere.** The VFO card gets a line under its header
 (`tkRenderCards`, called from `digRenderCards`): a voice VFO "TG 1201 Fire
 · Active · 1-412" (its state and call from the status' `vfos` / `calls` -

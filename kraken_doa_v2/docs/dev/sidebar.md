@@ -538,7 +538,10 @@ as it was (a hidden box keeps its place in a stored order, as the Wideband
 Board box does). Its rarely used settings fold out under the ⚙ in its first
 row (the saved-frequency scan's pattern); a system's names, talkgroups and
 channel table are in its own dialog (the Setup Settings look, sections as a
-strip across the top on every width).
+strip across the top on every width). Its last part, *Control channels* (2026-11-22), holds
+the control-channel search (a form folding out of its Search bands…
+button) and the remembered control channels, a list kept still under the
+pointer (*trunk-following.md*, "Page").
 
 ### Array diagrams (2026-11-17)
 
