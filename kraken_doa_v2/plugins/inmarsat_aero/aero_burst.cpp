@@ -333,16 +333,16 @@ bool BurstRx::try_rate(double rate, int64_t s0, int64_t s1, double f) {
                 best.sb = eb <= 16 ? 1.0f : -1.0f;
             }
         }
+        if (debug_) {
+            char b[160];
+            snprintf(b, sizeof b, "burst try %.0f phase %d: UW errors %d at bit %lld of %lld (window %lld), carrier %+.1f Hz", rate,
+                     ph, best.err, static_cast<long long>(best.p), static_cast<long long>(nb), static_cast<long long>(hi), f);
+            host.log(b);
+        }
         if (best.err <= (qpsk ? 6 : 3)) {
             best.s = std::move(s);
             best.t = std::move(t);
             cands.push_back(std::move(best));
-        }
-        if (debug_) {
-            char b[160];
-            snprintf(b, sizeof b, "burst try %.0f phase %d: UW errors %d at bit %lld, carrier %+.1f Hz", rate, ph,
-                     cands.empty() ? -1 : cands.back().err, static_cast<long long>(cands.empty() ? -1 : cands.back().p), f);
-            host.log(b);
         }
     }
     std::stable_sort(cands.begin(), cands.end(), [](const Best& a, const Best& b) { return a.err < b.err; });
@@ -387,14 +387,17 @@ bool BurstRx::decode_cand(double rate, int uwl, bool qpsk, double f, const std::
         for (size_t i = 0; i < n && i < b.size(); i++) b[i] ^= static_cast<uint8_t>(sc.next());
     };
     auto talker = [&](uint32_t aes, double t_end) {
-        host.valid(t_uw, t_end);
+        host.valid(std::max(t_uw, t_end - 1.2), t_end);   // the part still in kraken_doa's 1.5 s stream
         if (!aes) return;
         kp::Talker t;
         t.id = aes_hex(aes);
         const std::string l = su_.label_of(aes);
         t.label = l.empty() ? "aircraft" : l;
-        t.start_s = t_uw;
-        t.end_s = std::min(t_end, t_uw + 0.24);
+        // the burst's LAST 0.24 s (from the UW on, all of it is the
+        // aircraft's): kraken_doa keeps the VFO's samples for packets only
+        // ~1.5 s, and a long T burst is decoded seconds after its UW
+        t.end_s = t_end;
+        t.start_s = std::max(t_uw, t_end - 0.24);
         t.packet = true;
         t.freq_hz = static_cast<float>(f);
         t.bw_hz = static_cast<float>(qpsk ? 10000 : 2 * rate + 400);
@@ -475,7 +478,9 @@ bool BurstRx::decode_cand(double rate, int uwl, bool qpsk, double f, const std::
     if (sus.empty()) return false;
     std::vector<const uint8_t*> ptrs;
     for (const auto& v : sus) ptrs.push_back(v.data());
-    const double t_end = t_uw + (uwl + 64 * (5 + 3 * static_cast<double>(sus.size() - 1))) * bit_s;
+    // the end of the field: the blocks that held the SUs (A-BPSK: 5 + 3 (n - 1) columns; 10.5k: 2 + 3n)
+    const double cols_used = qpsk ? 2 + 3 * static_cast<double>(sus.size()) : 5 + 3 * static_cast<double>(sus.size() - 1);
+    const double t_end = t_uw + (uwl + 64 * cols_used) * bit_s;
     su_.t_burst(id, ptrs, t_uw, t_end);
     if (host.raw_wanted()) {
         char h[64];

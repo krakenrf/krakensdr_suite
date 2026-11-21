@@ -62,12 +62,23 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
   (top bar, `docs/dev/bias-tees.md`). The R820T tuners reach 1.76 GHz.
 - A VFO of 15 - 25 kHz on the channel frequency (min_vfo_rate 15 kHz). The
   carrier may be off by up to +-2.5 kHz (an RTL-SDR's 1 ppm is 1.5 kHz at
-  1.5 GHz): the plugin finds it, tracks it, reports it (Carrier offset fact
-  and to the receiver's AFC).
+  1.5 GHz): the plugin finds it, tracks it and shows it (Carrier offset
+  fact). It doesn't hand it to the receiver's AFC: the steps that moves
+  the input cost frames (measured, under Test results).
 - Aircraft bursts (Channel "R / T bursts"): a VFO on the aircraft's
   transmit channel in 1626.5 - 1660.5 MHz; only aircraft in line of sight
   (near an airport) are strong enough. The DoA of a P channel or a
   to-aircraft C channel is the satellite's.
+- **Array size for direction finding at L band.** A uniform circular
+  array gives unambiguous bearings only while neighbouring elements are
+  less than half a wavelength apart. With 5 elements the spacing is
+  2 R sin(pi/5) = 1.176 R, so the radius must stay under 8.3 cm at 1545
+  MHz (wavelength 19.4 cm) and under 7.7 cm at 1650 MHz (18.2 cm). The
+  usual VHF / UHF radius of 12 cm (14.1 cm between neighbours: 0.73
+  wavelengths at 1545 MHz) gives ambiguous bearings here. The test scenes
+  (`tools/testsignals.json`) use 6 cm: 7.1 cm between neighbours, 0.36
+  wavelengths at 1545 MHz and 0.39 at 1645 MHz. Set the array's radius in
+  the receiver to the real one.
 
 ## Options
 
@@ -129,9 +140,10 @@ SU .."), T bursts, ACARS blocks.
 - Aircraft bursts: each R / T burst that passed its CRC names its sender -
   the AES ID (R SUs carry it, a T burst's identifier does): a talker
   packet with that ID (the same key as the table row and the map point),
-  label = flight or registration, `start_s` at the unique word, at most
-  0.24 s, `freq_hz` / `bw_hz` = the burst's carrier and width, avg 10 s,
-  kept 30 min.
+  label = flight or registration, the burst's last 0.24 s (kraken_doa
+  keeps the stream ~1.5 s, and a long 600 bit/s T burst is decoded ~6 s
+  after its unique word), `freq_hz` / `bw_hz` = the burst's carrier and
+  width, avg 10 s, kept 30 min.
 - A from-aircraft C channel (VFO above 1600 MHz): the call's AES (from the
   sub-band signalling) as a transmission talker.
 
@@ -237,6 +249,9 @@ Real recordings (local IQ library; none is in the repo):
 | sigidwiki "600bps Aero" (receiver audio, MP3, 120 s; turned into IQ) | P 600 found, 58 frames, 348 / 348 SUs, 3 ACARS | 1.1 % |
 | sigidwiki "10.5k-inmarsat" (receiver audio, MP3, 89.5 s) | P 10500, 175 frames, 4524 / 4576 SUs, 62 user data messages (41 ACARS, BCS good; 21 other user data) | 1.5 % |
 | sigidwiki "Inmarsat AERO" (receiver audio, MP3, 24 s) | P 10500, 44 frames, 1144 / 1170 SUs, 3 ACARS | 1.3 % |
+| JAERO sample "10.5k" (receiver audio, 240.8 s) | P 10500, 12428 / 12454 SUs, 193 user data messages (143 ACARS, BCS good) | 1.2 % |
+| JAERO sample "dish 4 x 600 aligned" (receiver audio, 488 s, four 600 bit/s channels side by side) | the strongest channel: 1446 / 1446 SUs, 4 user data messages (3 ACARS) | 0.8 % |
+| JAERO sample "1200 C-band burst" (receiver audio, 14.8 s, C-band 1200 bit/s bursts) | 8 bursts detected, 1 decoded (UW without errors, CRC good, AES named); the others overlap in time with another burst - one burst at a time is followed (Limitations) | 3.0 % |
 | 300 s of noise; the Inmarsat-C TDM recording | no frames, no events (Auto and bursts) | 0.6 % / 1.2 % |
 
 Generated (`tools/aero_gen.py`, AWGN; Eb/N0 per channel bit; SUs passing
@@ -272,6 +287,27 @@ aircraft on the map. The four debug-playback entries generate and decode
 offline (`make_testsignal.py`, then `decoder --file ... --channels 5 --uca
 0.06`).
 
+Debug playback through kraken_doa (a test instance, 2026-11-22; each
+entry played 2.2 - 2.7 loops, 6 cm array):
+
+| Entry | Signal units (live) | DoA / talkers | "Receiving" / "Signal lost" | CPU |
+|---|---|---|---|---|
+| aero-p10500-ges | 2366 / 2444 (the first frame, and one frame at each loop seam) | VFO 75.0 deg steady | 1 / 0 | 1.8 % |
+| aero-p600-ges | 210 / 210 after lock | VFO 220.0 deg steady | 1 / 0 | 1.0 % |
+| aero-bursts-four-aircraft | every burst decoded; 14 of the 15 heard gave a talker bearing (1200 bit/s: 12 of 13 - 4CA2B1 4 of 5 -, the long 600 bit/s T burst: 2 of 2) | 4CA2B1 40.0, C0FFEE 165.0, A1B2C3 290.0, 7C0123 330.0 deg | 7 / 6 (between bursts) | 1.5 % |
+| aero-c8400-voice | 186 / 192 (a frame at each loop seam) | VFO 130.0 deg | 1 / 0 | 1.7 % without the codec, 3.7 % with it |
+
+Every `expect` row was met. The C channel listened to (Demod Digital,
+speaker on): with the codec, the voice state "voice · AES 4CA2B1" and
+502 of 551 Opus packets carrying sound; with `KRAKEN_AERO_AMBE=none`, the
+fact "disabled (KRAKEN_AERO_AMBE=none)", the voice state "AMBE codec not
+installed" and only silence packets. Two fixes came from these runs: the
+plugin no longer feeds the receiver's AFC (with it, aero-p10500-ges lost
+four more frames to the frequency steps: 2262 / 2444), and a P frame's
+span is reported the moment the frame is in (at 600 bit/s the released
+bits came 2 s late, past the receiver's 1.5 s stream, and the VFO's DoA
+read 127 - 311 deg instead of 220).
+
 Voice: generated C channel frames (random voice bits - no AMBE encoder
 exists to make speech) go through libaeroambe's codec built in job
 scratch: 3.4 % CPU with the codec; "not installed" without it. **Not
@@ -283,8 +319,6 @@ unconfirmed.
 
 - One continuous channel per VFO (the strongest); one burst at a time
   (bursts on two frequencies at once: the first is followed).
-- The receiver's AFC (freq_error, every 2 s while synced) moves the input
-  in steps; the plugin follows `rf_hz()` - not tried live.
 - Not decoded: CPDLC contents (ASN.1 PER), ADS-C contract requests'
   contents, Data-3 beyond the packet header, the 21 kbit/s C channel
   (and its 9.6 kbit/s LPC voice), the 5.25 / 6.0 / 10.5 kbit/s C

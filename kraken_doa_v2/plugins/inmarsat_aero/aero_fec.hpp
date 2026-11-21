@@ -79,6 +79,22 @@ public:
     void flush() {
         if (!hist_.empty()) traceback(static_cast<int>(hist_.size()));
     }
+    // the decisions not released yet, traced back from the best state now
+    // (no look-ahead for the newest ones), WITHOUT releasing them: a frame
+    // can be decoded the moment it is in, instead of when the next one is
+    void peek(std::vector<uint8_t>& dst) const {
+        dst.clear();
+        int s = 0;
+        for (int k = 1; k < NS; k++)
+            if (pm_[k] > pm_[s]) s = k;
+        const int L = static_cast<int>(hist_.size());
+        dst.resize(static_cast<size_t>(L));
+        for (int t = L - 1; t >= 0; t--) {
+            dst[static_cast<size_t>(t)] = static_cast<uint8_t>(s & 1);
+            const int x = static_cast<int>((hist_[static_cast<size_t>(t)] >> s) & 1);
+            s = (s >> 1) | (x << 5);
+        }
+    }
     size_t ready() const { return out_bits_.size(); }
     // moves the decided bits out (oldest first)
     void take(std::vector<uint8_t>& dst) {

@@ -44,6 +44,7 @@ void PChannel::start(const PRate& r) {
     dec_base_ = 0;
     pending_.clear();
     vit_steps_ = 0;
+    rel_ = 0;
     facc_.assign(static_cast<size_t>(r.frame), 0.0f);
     cand_soft_ = false;
 }
@@ -147,6 +148,7 @@ void PChannel::push(const SoftBit* b, size_t n) {
                     dec_.clear();
                     dec_base_ = 0;
                     vit_steps_ = 0;
+                    rel_ = 0;
                 }
                 frame_at(best, best_err, bsa, bsb);
                 synced_ = true;
@@ -159,6 +161,7 @@ void PChannel::push(const SoftBit* b, size_t n) {
                 dec_.clear();
                 dec_base_ = 0;
                 vit_steps_ = 0;
+                rel_ = 0;
                 if (missed_ >= 3) {
                     synced_ = false;
                     search_from_ = next_uw_;
@@ -245,37 +248,74 @@ void PChannel::frame_at(int64_t p, int err, float sa, float sb) {
 
 void PChannel::drain(bool flush) {
     if (flush) vit_.flush();
-    vit_.take(dec_);
-    const int64_t have = dec_base_ + static_cast<int64_t>(dec_.size());
+    // released decisions: keep those from dec_base_ on (frames before it are done)
+    std::vector<uint8_t> nb;
+    vit_.take(nb);
+    for (size_t i = 0; i < nb.size(); i++) {
+        const int64_t idx = rel_ + static_cast<int64_t>(i);
+        if (idx == dec_base_ + static_cast<int64_t>(dec_.size())) dec_.push_back(nb[i]);
+    }
+    rel_ += static_cast<int64_t>(nb.size());
+    // Two passes per frame. Early: the moment its bits are in, the pairs not
+    // released yet traced back from the best state now (no look-ahead for
+    // the newest ~30 bits) - the SUs passing their CRC go out at once, and
+    // on_early gives the frame's span while kraken_doa still has its
+    // samples for the Digital squelch's DoA (the released bits come one
+    // frame later: 2 s at 600 bit/s, beyond its 1.5 s). Final: once the
+    // Viterbi released the frame's bits, the SUs that failed early are
+    // tried again on them (the look-ahead is worth ~0.5 dB on the last SU).
+    std::vector<uint8_t> tail;
+    if (!flush && rel_ < vit_steps_) vit_.peek(tail);
+    auto bit_at = [&](int64_t idx, bool early) -> uint8_t {
+        if (idx >= dec_base_ && idx < dec_base_ + static_cast<int64_t>(dec_.size())) return dec_[static_cast<size_t>(idx - dec_base_)];
+        if (early && idx >= rel_ && idx - rel_ < static_cast<int64_t>(tail.size())) return tail[static_cast<size_t>(idx - rel_)];
+        return 0;
+    };
+    const int64_t have = rel_ + static_cast<int64_t>(tail.size());
     const int nbits = r_.sus * 96;
-    size_t done = 0;
-    for (auto& pd : pending_) {
-        if (pd.start + nbits > have) break;
-        done++;
-        frames_++;
-        const uint8_t* bits = &dec_[static_cast<size_t>(pd.start - dec_base_)];
-        std::vector<uint8_t> d(static_cast<size_t>(nbits));
+    std::vector<uint8_t> d(static_cast<size_t>(nbits));
+    auto try_sus = [&](Pending& pd, bool early) {
         Scrambler sc;
-        for (int i = 0; i < nbits; i++) d[static_cast<size_t>(i)] = static_cast<uint8_t>(bits[i] ^ sc.next());
-        PFrame& f = pd.f;
-        for (int k = 0; k < r_.sus; k++) {
+        for (int i = 0; i < nbits; i++) d[static_cast<size_t>(i)] = static_cast<uint8_t>(bit_at(pd.start + i, early) ^ sc.next());
+        for (int k = 0; k < r_.sus && k < 32; k++) {
+            if (pd.ok_mask & (1u << k)) continue;
             uint8_t su[12];
             pack_lsb(&d[static_cast<size_t>(96 * k)], 12, su);
             if (su_crc_ok(su, 12)) {
-                f.sus_ok++;
-                if (on_su) on_su(su, f, k);
+                pd.ok_mask |= 1u << k;
+                pd.f.sus_ok++;
+                if (early) pd.f.sus_early++;
+                if (on_su) on_su(su, pd.f, k);
             }
         }
-        if (on_frame) on_frame(f);
+    };
+    size_t done = 0;
+    bool prefix = true;   // frames are finished in order
+    int64_t done_until = dec_base_;
+    for (auto& pd : pending_) {
+        if (prefix && pd.start + nbits <= rel_) {
+            try_sus(pd, false);
+            done++;
+            frames_++;
+            done_until = pd.start + nbits;
+            if (on_frame) on_frame(pd.f);
+            continue;
+        }
+        prefix = false;
+        if (pd.start + nbits > have) break;
+        if (!pd.peeked) {
+            pd.peeked = true;
+            try_sus(pd, true);
+            if (pd.f.sus_early > 0 && on_early) on_early(pd.f);
+        }
     }
     if (flush) done = pending_.size();   // a frame without all its bits is dropped
     pending_.erase(pending_.begin(), pending_.begin() + static_cast<long>(done));
-    // keep only what pending frames still need
-    const int64_t keep = pending_.empty() ? have : pending_.front().start;
-    if (keep > dec_base_) {
-        const size_t drop = static_cast<size_t>(std::min<int64_t>(keep - dec_base_, static_cast<int64_t>(dec_.size())));
+    // drop the bits of the frames done (released ones of later frames stay)
+    if (done_until > dec_base_) {
+        const size_t drop = static_cast<size_t>(std::min<int64_t>(done_until - dec_base_, static_cast<int64_t>(dec_.size())));
         dec_.erase(dec_.begin(), dec_.begin() + static_cast<long>(drop));
-        dec_base_ += static_cast<int64_t>(drop);
+        dec_base_ = done_until;
     }
 }
 

@@ -64,10 +64,6 @@ public:
     float quality() const { return q_; }   // E|d| / sqrt(E d^2): ~1 locked, 0.8 noise
     uint64_t bits() const { return nbits_; }
     const DemodCfg& cfg() const { return cfg_; }
-    void shift_carrier(double hz) {
-        f_nco_ += hz;
-        w_ = -2 * M_PI * f_nco_ / cfg_.fs;
-    }
     void set_tsign(float s) { tsign_ = s; }
 
 private:
