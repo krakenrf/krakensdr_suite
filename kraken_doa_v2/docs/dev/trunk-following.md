@@ -1859,7 +1859,9 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   icon and which button shows change - a Stop made again under a press or
   the keyboard focus lost them) - "Searching", Stop, a progress bar, "<centre> MHz · step n
   of N · p % · about T left", the phase in words (tuning, waiting for the
-  spectrum, looking for carriers, "trying n carriers with the decoders"),
+  spectrum, looking for carriers, "trying n carriers with the decoders";
+  the time left only while `eta_s` is a number above 0 - null / 0 /
+  missing: none, in the block and the banner, never "0 s left"),
   "range i of n (lo-hi)" with several ranges, "Found n new, m known · c
   carriers, p tries", "Back to <home> MHz when it ends". The top bar: the
   excursion's banner ("SEARCHING CONTROL CHANNELS", centre, %, time left,
@@ -2246,3 +2248,11 @@ the debug playback (Play only).
   review 16, actions 15, stability 9, scale 12, touch 8, the five scenes 10
   each, misc 13, the DMR rule 9, the editor 27 and 29, the first-pass
   receiver 13; palette check OK; no console errors.
+- After the live run on the KrakenSDR (the receiver's `eta_s` was 0 for
+  most of a sweep: "0 s left" at 25 %): `t_cc_r6` (10 at both widths) - a
+  status with `eta_s` null, 0 and missing shows no time left in the block
+  and the banner (the % still), 12 shows "about 12 s left" / "12 s left";
+  a row's tip that covers the row below (it does: the page's tooltip sits
+  under the pointer's row) takes no pointer events - the point on the row
+  below hits that row, a click there follows it, and the tip goes when the
+  pointer leaves the list.
