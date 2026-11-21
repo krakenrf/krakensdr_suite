@@ -633,15 +633,95 @@ closed:
    of `IR_RX_BUF` - code RAM at 0xFC00 that `rtlsdr_ir_query` resets right
    after: harmless, said at the padding.
 
-**Not tested** (say so plainly): the Raspberry Pi (the settle wait's history
-was host dependent - the margin above is this PC's; the Pi's own transfers
-are ~2.4 ms, like this PC's), Windows (3-4 ms per transfer, one dongle at a
+**On a Raspberry Pi 5 (2026-11-21).** The user's test Pi (192.168.86.62:
+Pi 5 Model B Rev 1.1, 8 GB, kernel 6.18.34, the KrakenSDR behind its hub on
+the Pi's xHCI bus 1, 480M; idle apart from the other workers' turns), the
+fork built there from clean clones (88993d3 = the two commits above, and
+3ad1746 without them), the same tools (job scratch `fork/pi/`, outputs
+`fork/pi/out/`). 46-53 °C, `get_throttled` 0x0, load 0.0-3.3 in every run.
+Everything the PC showed, the Pi shows too:
+- the rule: raw control INs of 1-16 bytes, USB block and tuner I2C reads
+  alike: 3, 7, 11, 15 bytes -2.000 samples each, every other length 0.000;
+- the slip (lag probe, 300 tunes a pattern on 1001, all five streaming):
+  without the fix -2.000 per tune on every lock-read path (fast KEEP +
+  finish -2.013, a finish after every step -4.000, random jumps -2.127 with
+  18 lock retries - no VCO-jump settle there), 0.000 for gain / IF / AGC /
+  GPIO / lock-API calls; with it 0.000 on every pattern (largest change over
+  a pattern 0.02), the sweep path included, 0 retries on random jumps;
+- the time: a control transfer 1.87 ms (PC 1.73-1.83), the demod read 2.37;
+  full tune 14.4 ms / 6 transfers, KEEP 9.9 / 4, KEEP + NO_DUMMY_READ 7.5 /
+  3, the finish 19.2 incl. its KEEP tune, a band change 24.2 / 19.6, sweep
+  hops of 1.9125 MHz at 89-108 / 600-619 / 1200-1219 MHz full 14.5 / 14.5 /
+  14.5, KEEP + NO_DUMMY_READ 7.6 / 7.5 / 7.5, a 900 <-> 1500 MHz VCO jump
+  (the new settle) 19.5 / 12.6 - five parallel threads cost what one does,
+  idle or streaming, as on the PC;
+- NO_DUMMY_READ: the sweep path over the full range 8 min, 59720 tunes, and
+  the same without the flag (KEEP only) 56555 tunes: 0 lock retries /
+  failures / I2C errors / register mismatches / lazy-read retries, no
+  control error during tuning (only the tuner probe's 2 IN + 8 OUT PIPE
+  stalls at `rtlsdr_open`, on every dongle, as since 578b43d); 3.0 against
+  4.0 transfers a hop, 7.95 against 10.34 ms per 5-tuner step - the flag
+  is safe here as far as that goes, but the stall it relates to was not
+  produced on the Pi either (no positive control);
+- heimdall's sweep exit on the bare library (`exitsim.py`, 50 repetitions,
+  ~49000 KEEP + NO_DUMMY_READ hops of all five in parallel, a finish, a
+  full tune of all five, noise on, the lags measured +-131072 samples): 0
+  lag changes >= 1 sample (largest 0.05), the delivered buffers equal on
+  all five each time, 46582 bulk transfers per dongle all COMPLETED (0
+  error / stall / overflow / short);
+- frequency truth on both paths: the strong carriers within 1.0-12.3 Hz
+  (bins 36.6 Hz), the weak ones here (SNR 8-17 dB - another antenna /
+  site) up to 243 Hz of estimation noise, 0 failed tunes.
+- every dongle as the operated one (100 tunes a pattern): 0.000 on every
+  pattern, the raw 3-byte IN -2.000;
+- random jumps 24-1766 MHz (the VCO-jump settle), 27500 tunes: 0 lock
+  retries, 0 failures, 0 mismatches (the PC before that settle: 548 retries
+  in 16490);
+- the sweep path with a 600 ms idle spell before every 7th step, 11235
+  tunes (1605 after a pause): 0 PIPE, 0 I2C errors, 0 lazy-read retries;
+- the default path, 20000 scanner-like full-path tunes on one dongle at a
+  time (FM steps of 1.9125 MHz, every 13th a band change to 433.92 MHz,
+  every 29th a random frequency; 17.6 ms each), the others streaming:
+  each of the five dongles in turn, 100000 tunes in all: lag change over
+  the 20000 -0.02 ... +0.03 samples (0.000 a tune), 0 lock retries, 0
+  failures, 0 control errors; a raw 3-byte IN x 100 after each -200.00;
+- The two-state level at the top of the range: here only dongle 1002 at
+  1698.4 MHz in the random plan (-14.7 dB, 3 times), not in the full-range
+  sweeps (the PC: 1001 at 1.56-1.73 GHz).
+- the settle margin (bounds plan, 5 dongles, the committed library with the
+  early-read repair):
+
+  | settle | tunes | lock retries (repaired) | tunes off the cache | level drops (0x1c, no retry) | lock off at rest | PC (same library) |
+  |---|---|---|---|---|---|---|
+  | 5000 (8 min) | 44615 | 0 | 0 | 0 | 0 | 0 retries in 27900 |
+  | 3000 | 29665 | 0 | 0 | 0 | 2 | 2 retries in ~30000 (read 4, no repair) |
+  | 2500 | 29665 | 0 | 0 | 0 | 0 | 1 |
+  | 1500 | 28125 | 1609 | 0 | 11 | 0 | 1578 (no repair) |
+  | 0 | 27605 | 2214 | 0 | 6 | 2 | 2278, 0, 1 |
+
+  So the Pi's PLL needs what the PC's does: early reads start between
+  2500 and 1500 us, 5000 us is a 2x margin over the last value without a
+  retry on both - no change needed.
+
+The library's async path, read for a whole-buffer loss (asked after a
+sweep exit in heimdall left one channel without a correlation peak on the
+Pi): on Linux a bulk transfer that ends ERROR, STALL or OVERFLOW (TIMED_OUT
+can't: `BULK_TIMEOUT` 0) is neither delivered nor resubmitted and nothing
+is logged until `xfer_errors` (ERROR only) reaches the buffer count - that
+dongle's stream silently loses up to one transfer (16384 samples) and runs
+on with one transfer fewer in flight; a failed resubmit (its result ignored)
+shrinks the queue without losing data. None of those statuses occurred in
+any run here.
+
+**Not tested** (say so plainly): a Raspberry Pi 4, and the Pi 5 with the
+noise source off for the margin runs (all with it on); Windows (3-4 ms per transfer, one dongle at a
 time: the transfer counts above should carry over, the times not; the
 padding and the VCO-jump settle are plain C, every platform), macOS; other
 tuners than the R820T (the padding covers their reads; their tune paths
-make no 3-byte read); a dongle without a KrakenSDR's noise source; the
-NO_DUMMY_READ flag on the Pi, where the dummy read was found necessary; the
-I2C clock change under load. No MinGW / zig on this machine: the Windows and
+make no 3-byte read); a dongle without a KrakenSDR's noise source; a
+positive control for NO_DUMMY_READ (the stall the dummy read guards was
+produced neither on the PC nor on the Pi 5 above - the flag was clean on
+both, 60k + 11k tunes on the Pi); the I2C clock change under load. No MinGW / zig on this machine: the Windows and
 glibc syntax checks of the suite rule were not run (the changes are plain C99
 / C++ without new platform calls).
 
