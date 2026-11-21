@@ -87,6 +87,8 @@ static_assert(MAX_CHANNELS <= 8, "indep_tuner_* hold 8 tuners");
 atomic<bool> fm_enabled_before_scanner{false};     // Store FM state before discrete scanner
 atomic<uint32_t> fft_reset_generation{0};          // Generation counter for FFT reset (scanner retune)
 atomic<bool> fft_data_valid{true};                 // False after reset until first valid FFT frame
+std::array<std::atomic<uint64_t>, MAX_CHANNELS> fft_frame_hz{};
+std::array<std::atomic<uint64_t>, MAX_CHANNELS> fft_frames_here{};
 atomic<bool> server_retuning{false};               // heimdall's header: retuning (packets skipped)
 array<atomic<uint64_t>, MAX_CHANNELS> tuner_frequencies;
 

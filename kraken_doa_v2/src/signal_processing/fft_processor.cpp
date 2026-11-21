@@ -433,6 +433,16 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
     nfloor::on_frame(channel, fft_magnitudes[channel], fft_averaged[channel], fft_size, should_reset,
                      placed_hz[channel]);
 
+    // (the frame's RF and how many in a row at it - the search's clock)
+    {
+        const uint64_t fh = freq_hz > 0.0 ? static_cast<uint64_t>(std::llround(freq_hz)) : 0;
+        if (fft_frame_hz[channel].load(std::memory_order_relaxed) != fh) {
+            fft_frame_hz[channel].store(fh, std::memory_order_relaxed);
+            fft_frames_here[channel].store(0, std::memory_order_relaxed);
+        }
+        fft_frames_here[channel].fetch_add(1, std::memory_order_release);
+    }
+
     // Mark FFT data as valid now that we've written real data
     // This flag prevents build_fft_message from using stale/reset data
     if (!fft_data_valid.load(std::memory_order_relaxed)) {
