@@ -57,7 +57,11 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   never find RDS or analog TV, and TETRA ran on a 12.5 kHz VFO's samples.
   The offline harness, which has no internal streams -
   `DigitalDecoder(threaded, internal_streams = false)` -, keeps that rule);
-  detection = majority of `valid()` frames in a 4 s window. Only the "lead"
+  detection = majority of `valid()` frames in a 4 s window (`DETECT_WINDOW_MS`;
+  a plugin whose `squelch_hold_s` is longer than the window stays detected
+  for that hold after its last valid frame, in both modes while no other
+  plugin takes over - inmarsat_c's frames are 8.64 s apart and the status
+  said "Signal lost" / "Receiving" once per frame, 2026-11-22). Only the "lead"
   plugin (the fixed one, or the detected one) gets VOICE_WANTED and has its
   audio / voice state / carrier offset used. AFC: plugin offset reports are
   averaged and applied at most every 300 ms, ignoring reports from the 300 ms

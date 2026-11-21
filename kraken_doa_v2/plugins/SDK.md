@@ -526,6 +526,10 @@ a few hundred ms apart; a decoder of a continuous signal that reports short
 pieces (analog_id: every 50 ms while the tone is there) sets
 `.squelch_hold_s` (analog_id 0.35), so the squelch closes soon after the
 signal ends instead of passing 1.5 s of noise after every transmission.
+A decoder whose frames are further apart than 1.5 s sets a longer hold
+(inmarsat_c 9.5 for 8.64 s frames; the host clamps it to 10 s): the squelch
+stays open between frames, and a hold over 4 s also keeps the decoder's
+status at "Receiving" between them (without it: "Signal lost" every frame).
 The shipped plugins: the lib protocols report through
 `RxContext::valid_at` (`dig::report_valid(ctx, mode, start, end)` with the
 receiver's own sample indexes; `Bridge::clock(rate)` + `restart_clock()`
