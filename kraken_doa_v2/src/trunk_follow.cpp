@@ -3909,6 +3909,8 @@ struct Search {
     std::vector<double> probed_hz;   // every candidate probed in this run, found or not (skipped again)
     std::vector<std::pair<double, double>> covered;   // the bands already looked at (the last step's overlap)
     int tuner = 0;          // independent: the tuner that steps
+    int64_t t_batch = 0;    // the probe batch running since (0 = none)
+    std::vector<int64_t> batch_ms;   // how long this run's finished batches took (the time-left estimate)
 };
 Search g_srch;
 std::string g_srch_last;   // the last run's summary (JSON object)
@@ -4228,7 +4230,10 @@ void srch_probe_batch() {
             made++;
         }
     }
-    if (made) broadcast(MessageBuilders::build_decimator_info_message());
+    if (made) {
+        g_srch.t_batch = now;
+        broadcast(MessageBuilders::build_decimator_info_message());
+    }
 }
 
 struct SrchRec {
@@ -4427,6 +4432,10 @@ void tick_search() {
                 }
             }
             if (live) return;
+            if (g_srch.t_batch) {
+                g_srch.batch_ms.push_back(now - g_srch.t_batch);
+                g_srch.t_batch = 0;
+            }
             srch_remove_probes();
             bool more = false;
             for (const auto& cd : g_srch.cands)
@@ -4463,14 +4472,42 @@ std::string srch_status_json(int64_t now) {
             frac = 0.05;
         const double done = n ? (static_cast<double>(g_srch.step) + frac) / static_cast<double>(n) : 1.0;
         const int pct = static_cast<int>(std::floor(100.0 * done));
+        // the time left: the current step's from its tries still to run (in batches of what fits at once, a batch
+        // as long as the run's finished batches took - before the first one: the probe's no-frames limit + 0.5 s),
+        // each later step as long as the finished ones took (none finished: this one). Not from the elapsed
+        // share: a quick empty step before a busy one made a 13 s step "1 s left". Null while nothing tells:
+        // the first step before its probing
         std::string eta = "null";
-        if (done >= 0.05 && !(g_srch.step == 0 && g_srch.st < 4)) {
-            const double el = static_cast<double>(now - g_srch.t_start) / 1000.0;
-            eta = std::to_string(std::max<long long>(1, std::llround(el * (1.0 - done) / done)));
+        {
+            double cur = -1;   // s, the current step
+            const double el_step = static_cast<double>(now - g_srch.t_step) / 1000.0;
+            double avg_step = 0;
+            for (int64_t x : g_srch.step_ms) avg_step += static_cast<double>(x) / 1000.0;
+            if (!g_srch.step_ms.empty()) avg_step /= static_cast<double>(g_srch.step_ms.size());
+            if (g_srch.st == 4) {
+                size_t todo = 0, live = 0;
+                for (const auto& cd : g_srch.cands)
+                    if (!cd.found) todo += cd.todo.size();
+                for (const auto& p : g_srch.probes)
+                    if (!p.done) live++;
+                double tb = (SRCH_PROBE_MIN_MS + 500) / 1000.0;
+                if (!g_srch.batch_ms.empty()) {
+                    tb = 0;
+                    for (int64_t x : g_srch.batch_ms) tb += static_cast<double>(x) / 1000.0;
+                    tb /= static_cast<double>(g_srch.batch_ms.size());
+                }
+                const int others = static_cast<int>(decimator_manager.getDecimatorCount()) - static_cast<int>(g_srch.probes.size());
+                const double room = std::max(1, std::min(srch_batch_max(), VFO_LIMIT - others));
+                const double in_batch = live && g_srch.t_batch ? std::max(0.5, tb - static_cast<double>(now - g_srch.t_batch) / 1000.0) : 0;
+                cur = in_batch + std::ceil(static_cast<double>(todo) / room) * tb;
+            } else if (!g_srch.step_ms.empty()) {
+                cur = std::max(0.5, avg_step - el_step);
+            }
+            if (cur >= 0 && g_srch.step < n) {
+                const double per_step = g_srch.step_ms.empty() ? el_step + cur : avg_step;
+                eta = std::to_string(std::max<long long>(1, std::llround(cur + static_cast<double>(n - g_srch.step - 1) * per_step)));
+            }
         }
-        int64_t avg = 0;
-        for (int64_t x : g_srch.step_ms) avg += x;
-        avg = g_srch.step_ms.empty() ? 2000 : avg / static_cast<int64_t>(g_srch.step_ms.size());
         static const char* names[] = {"tuning", "tuning", "settling", "looking", "probing"};
         o << "{\"since\":" << g_srch.w_start << ",\"ranges\":[";
         for (size_t i = 0; i < g_srch.ranges.size(); i++)
