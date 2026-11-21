@@ -75,6 +75,7 @@ struct PerSocketData {
     bool sweep_dirty = false;
     uint64_t sweep_version = 0;
     uint32_t sweep_completions = 0;
+    uint32_t sweep_overview = 0;   // SWEEP_OVERVIEW:<points> (0 = off): the whole range with each completed sweep
 };
 
 // Data-stream subscription bits (the heavy/optional streams).
@@ -344,6 +345,19 @@ void handle_sweep_view(WS* ws, string_view args) {
     }
 }
 
+// SWEEP_OVERVIEW:<points> (sweep mode; transport level, this connection only):
+// with every completed sweep a zoomed page also gets the whole range at about
+// that many points (type 10 flag 16, before the flag-2 frame) - its waterfall
+// rows then hold the whole range. 0 = off (every socket's default), else 16 ...
+// SPECTRUM_VIEW_MAX_POINTS. Junk is ignored
+template<typename WS>
+void handle_sweep_overview(WS* ws, string_view arg) {
+    uint32_t n = 0;
+    auto r = std::from_chars(arg.data(), arg.data() + arg.size(), n);
+    if (arg.empty() || r.ec != std::errc() || r.ptr != arg.data() + arg.size()) return;
+    ws->getUserData()->sweep_overview = n == 0 ? 0 : std::clamp<uint32_t>(n, 16, SPECTRUM_VIEW_MAX_POINTS);
+}
+
 // Sweep mode, every 50 ms tick: each page with a sweep view gets a frame when
 // something changed (at most 20 a second while hops arrive); a completed sweep
 // marks its frame (flag 2: the page's waterfall line). A slow link skips
@@ -355,8 +369,10 @@ void send_sweep_views() {
         if (!(ud->sub_mask & SUB_FFT) || ws->getBufferedAmount() > SPEC_MAX_BUFFERED) continue;
         const bool completes = ud->sweep_completions != done;
         if (!ud->sweep_dirty && !completes && ud->sweep_version == ver) continue;
-        const string m = sweep::build_frame(ud->sweep, completes);
+        string ov;
+        const string m = sweep::build_frame(ud->sweep, completes, ud->sweep_overview, &ov);
         if (m.empty()) continue;
+        if (!ov.empty()) ws->send(ov, uWS::BINARY, true);   // (the overview first: the page pairs them by sweeps)
         ws->send(m, uWS::BINARY, true);
         ud->sweep_dirty = false;
         ud->sweep_version = ver;
@@ -990,6 +1006,12 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             // (type 10 frames; an older page never sends it)
             if (message.starts_with("SWEEP_VIEW:")) {
                 handle_sweep_view(ws, message.substr(11));
+                return;
+            }
+            // SWEEP_OVERVIEW:<points> - the whole range with each completed sweep
+            // for a zoomed page's waterfall (0 = off; an older receiver ignores it)
+            if (message.starts_with("SWEEP_OVERVIEW:")) {
+                handle_sweep_overview(ws, message.substr(15));
                 return;
             }
             // 🎨 BIN_DOA_VIEW:1|0 (transport-level, this connection only):

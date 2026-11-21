@@ -1032,21 +1032,21 @@ Cut cut_for(double lo, double hi, uint32_t points) {
 }
 }  // namespace
 
-std::string build_frame(const View& v, bool completes) {
-    std::lock_guard<std::mutex> lk(g_mu);
+namespace {
+// (g_mu) one type 10 frame of a cut; overview = flag 16 (the whole range for the
+// waterfall's history of a zoomed page, sent before its flag-2 frame)
+std::string frame_locked(const Cut& c, uint32_t seq, bool completes, bool overview) {
     const Plan& p = S.plan;
-    if (!p.ok || S.lv.empty()) return std::string();
-    const Cut c = cut_for(v.lo_hz, v.hi_hz, v.points);
-    if (c.n == 0) return std::string();
     std::string out;
     out.resize(64 + c.n);
     char* o = out.data();
     auto put = [&o](const auto& x) { std::memcpy(o, &x, sizeof x); o += sizeof x; };
     put(uint32_t(10));
-    put(static_cast<uint8_t>((c.windowed ? 1 : 0) | (completes ? 2 : 0) | (g_run.load() ? 0 : 4) | (S.any ? 0 : 8)));
+    put(static_cast<uint8_t>((c.windowed ? 1 : 0) | (completes ? 2 : 0) | (g_run.load() ? 0 : 4) | (S.any ? 0 : 8) |
+                             (overview ? 16 : 0)));
     put(static_cast<uint8_t>(p.Kp));
     put(uint16_t(0));
-    put(v.seq);
+    put(seq);
     put(S.done);
     put(static_cast<double>(p.start));
     put(static_cast<double>(p.stop));
@@ -1065,6 +1065,24 @@ std::string build_frame(const View& v, bool completes) {
         *o++ = static_cast<char>(static_cast<uint8_t>(std::clamp(q, 0, 255)));
     }
     return out;
+}
+}  // namespace
+
+std::string build_frame(const View& v, bool completes, uint32_t overview_points, std::string* overview) {
+    if (overview) overview->clear();
+    std::lock_guard<std::mutex> lk(g_mu);
+    const Plan& p = S.plan;
+    if (!p.ok || S.lv.empty()) return std::string();
+    const Cut c = cut_for(v.lo_hz, v.hi_hz, v.points);
+    if (c.n == 0) return std::string();
+    // the overview: only with a completed sweep, only for a zoomed view (a whole-range
+    // view's frame is one), cut as a whole-range view of that many points, under the
+    // same lock as the frame (the same state of the sweep)
+    if (overview && overview_points && completes && c.windowed) {
+        const Cut w = cut_for(0, 0, overview_points);
+        if (w.n) *overview = frame_locked(w, v.seq, true, true);
+    }
+    return frame_locked(c, v.seq, completes, false);
 }
 
 bool pooled_db(double lo_hz, double hi_hz, int points, std::vector<float>& db, double* first_hz, double* step_hz,

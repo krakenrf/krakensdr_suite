@@ -192,7 +192,7 @@ the hops into the sweep spectrum, the page shows it.
   | Offset | Type | |
   |---|---|---|
   | 0 | u32 | 10 |
-  | 4 | u8 | flags: 1 = the requested window (else the whole range), 2 = this frame completes a sweep (one waterfall line), 4 = paused, 8 = no data yet |
+  | 4 | u8 | flags: 1 = the requested window (else the whole range), 2 = this frame completes a sweep (one waterfall line), 4 = paused, 8 = no data yet, 16 = overview (added 2026-11-21, below) |
   | 5 | u8 | tuners taking part |
   | 6 | u16 | 0 |
   | 8 | u32 | the view's seq |
@@ -209,6 +209,29 @@ the hops into the sweep spectrum, the page shows it.
 
   Points: the bins whose centres lie in the window, max-pooled as type 7
   does (*Spectrum views*). A bin that was never measured is 0.
+- Added 2026-11-21 (the user: rows of the waterfall made while zoomed in
+  held only the zoomed window): `SWEEP_OVERVIEW:<points>` - transport level,
+  per connection, like `SWEEP_VIEW` (not persisted, not replayed, not
+  echoed, not a control command); 0 = off (every socket's default), else
+  clamped to 16 ... `SPECTRUM_VIEW_MAX_POINTS`; junk (no whole number) is
+  ignored and the setting stays. While it is on AND the socket's view is
+  narrower than the whole range (its frames carry flag 1), every type 10
+  frame with flag 2 that the socket gets is preceded IMMEDIATELY by one more
+  type 10 frame, the **overview**: flags 16 | 2 (| 4 when paused; never 1,
+  never 8 - a completed sweep has data); `seq` = the view's seq; `sweeps`,
+  start / stop / grid, progress (1.0, as on every flag-2 frame) and
+  duration as in the frame that follows (the page pairs the two by
+  `sweeps`); point 0, spacing, n and the levels = exactly what a
+  whole-range `SWEEP_VIEW` of that many points gets (n is about `points`,
+  0.67 ... 1.5x of it, never above 4096 - read it from the frame). Both
+  frames are built under one lock, so they show the same state of the
+  sweep. They go out on the 50 ms tick like every type 10 frame (at most one
+  flag-2 frame, so at most one overview, per socket and tick); a socket
+  skipped for backpressure misses both. A socket whose view is the whole
+  range gets no overview (its frame is one); a socket that never sent the
+  command gets what it got before, frame for frame. An older receiver
+  ignores the command (no reply, no log line, no echo, not saved: checked
+  on 3919d64); an older page never sends it.
 - Levels: ONE reference for the whole sweep (never one per hop: a signal
   that fills a hop must keep its height), the tuners' common in-band shape
   removed (`nfloor::shape_db`, *Noise floor*).
@@ -500,6 +523,37 @@ refused; out-of-range numbers are clamped:
   pause changed, or a sweep completed (flag 2, progress 1.0); compressed;
   skipped past 256 KB buffered. One completion frame per tick at most: a
   sweep faster than 50 ms gives one waterfall line per tick.
+- The overview (2026-11-21): `handle_sweep_overview` (websocket_server.cpp)
+  keeps the points per socket (`PerSocketData::sweep_overview`);
+  `send_sweep_views` asks `sweep::build_frame(view, completes, points,
+  &overview)` for both frames and sends the overview first. `build_frame`
+  cuts the overview as a whole-range view (`cut_for(0, 0, points)`) inside
+  the lock it takes for the frame (`frame_locked`, the frame builder both
+  share). Cost (x86, load 2.5-3.3, `t_ovcpu.py`, % of one core, the
+  receiver; the views zoomed, overview 1600 points; no packet dropped):
+
+  | range / FFT | 1 page off / on | 4 pages off / on | messages a page off / on |
+  |---|---|---|---|
+  | 24-1765 MHz, auto (512) | 2.6 / 2.5 % | 3.1 / 3.0 % | 26 / 27 (a sweep every 3.7 s) |
+  | 24-1765 MHz, 16384 -> 4096 | 4.5 / 4.7 % | 5.6 / 5.4 % | 27 / 27 |
+  | 88-108 MHz, auto (2048: 16 sweeps a second) | 3.9 / 3.9 % | 3.9 / 4.2 % | 26 / 43, 21.5 / 33.3 KB/s |
+
+  The overview is one more frame per completed sweep and page: within the
+  noise of the measurement in CPU; in bytes, at a fast sweep, +12 KB/s a
+  page at 1600 points. Tests (fake heimdall, x86, normal and ASan + UBSan
+  builds): `t_overview.py` 23 / 23 (only asked-for and zoomed, the pairing
+  and order over 61 sweeps, the header, n / first point / spacing against a
+  whole-range view, 60 of 61 sweeps byte-identical to a whole-range page's
+  frame of the same sweep - the one other differs in 50 of 1004 points, a
+  hop stored between the two pages' builds, not between the two frames of
+  one page -, several sockets at 300 / 1000 / 2000 points, the clamps, junk,
+  0 = off, a view change, zooming out, pause); `t_ovcompat.py` 3 / 3 (a page
+  that never asks gets the same frames from this receiver as from 3919d64 -
+  every header field and size, the same count -, and 3919d64 ignores the
+  command); the earlier suites unchanged (sweep 213, edge 50, fix 29, modes
+  15, MCP 9). Note: a page that sends its view as the explicit whole range
+  (not `0:0`) gets flag 1 (the window is clamped to the range) and so an
+  overview of the same content; a page zoomed out sends `0:0`.
 - Threads: settings and frames on the uWS loop, the producer on the data
   receiver, the engine on its worker; the array, pyramid and per-hop state
   under one mutex (a hop's write ~U values + their ancestors; a frame ~4096

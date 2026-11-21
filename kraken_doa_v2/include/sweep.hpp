@@ -71,8 +71,12 @@ struct View {
 // What changed since a socket's last frame (websocket_server.cpp)
 uint64_t data_version();     // + 1 per hop written (and per level rewrite)
 uint32_t completions();      // sweeps completed since the engine started (any grid)
-// Binary type 10 (the contract's table) for one view; completes = flag 2
-std::string build_frame(const View& v, bool completes);
+// Binary type 10 (the contract's table) for one view; completes = flag 2. With
+// overview_points (SWEEP_OVERVIEW:<points>, 16 ... SPECTRUM_VIEW_MAX_POINTS), a
+// completed sweep and a view narrower than the whole range, *overview gets the
+// overview frame (flag 16 | 2: the whole range as a whole-range view of that many
+// points gets it, same seq / sweeps) to send BEFORE the frame; else it is cleared
+std::string build_frame(const View& v, bool completes, uint32_t overview_points = 0, std::string* overview = nullptr);
 
 // The levels of a window max-pooled to at most `points` points (dB over the
 // reference; NaN = never measured) - the AI assistant's get_spectrum
