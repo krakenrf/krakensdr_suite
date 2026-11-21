@@ -156,10 +156,21 @@ Two things the live path showed that the offline host can't:
   newest part of each frame's spans reaches the DoA.
 - The decoder status flapped "Receiving" / "Signal lost" every frame (10 /
   11 times in 100 s): the engine's detection window is 4 s, frames come
-  every 8.64 s. A one-line engine change (detection held for the plugin's
-  `squelch_hold_s` when that is longer than the window; only inmarsat_c
-  sets one that long) removed it in the TEST build (0 "Signal lost");
-  proposed to the orchestrator, not committed (`src/` is shared).
+  every 8.64 s. Fixed in the engine (`digital_decoder.cpp` housekeeping):
+  a plugin stays detected for its `squelch_hold_s` when that is longer
+  than the window (only inmarsat_c sets one that long), in the fixed-plugin
+  mode and in Auto detect while no other plugin takes over. Tested with a
+  build of the committed engine against one of the old engine: 0 "Signal
+  lost" in 100 s in both modes; "Signal lost" 9.5 s (Auto detect 9.3 s)
+  after the last frame of a signal that ends; aprs (no long hold) lost
+  4.0 s after its last packet on both engines. Not exercised: another
+  plugin taking over while inmarsat_c is held (*Digital decoders*).
+- L band and the array: bearings are unambiguous only with neighbouring
+  antennas under half a wavelength apart - five antennas at 1541 MHz: a
+  radius under about 8.3 cm. Both playback entries use the default 12 cm
+  scene (14 cm between antennas) and still give the true bearing for one
+  clean source; a real 12 cm array can show false bearings beside it
+  (README *How to receive*).
 
 ## Uplinks (ship / land terminals, 1626.5-1646.5 MHz)
 The one Inmarsat-C transmitter worth a bearing. What the published SDM

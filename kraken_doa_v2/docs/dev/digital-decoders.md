@@ -61,7 +61,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   a plugin whose `squelch_hold_s` is longer than the window stays detected
   for that hold after its last valid frame, in both modes while no other
   plugin takes over - inmarsat_c's frames are 8.64 s apart and the status
-  said "Signal lost" / "Receiving" once per frame, 2026-11-22). Only the "lead"
+  said "Signal lost" / "Receiving" once per frame, 2026-11-22; in Auto
+  detect the hold only keeps a plugin that is already detected - being
+  detected still needs 2+ frames in the window. Tested with playbacks:
+  inmarsat_c 0 "Signal lost" in 100 s in both modes and "Signal lost" 9.3 -
+  9.5 s after its last frame; aprs, no long hold, lost 4.0 s after its last
+  packet on the old and the new engine; another plugin taking over from a
+  held one was not exercised). Only the "lead"
   plugin (the fixed one, or the detected one) gets VOICE_WANTED and has its
   audio / voice state / carrier offset used. AFC: plugin offset reports are
   averaged and applied at most every 300 ms, ignoring reports from the 300 ms

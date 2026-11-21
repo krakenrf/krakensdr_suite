@@ -93,10 +93,11 @@ carrier's own 3 kHz filtered out of the VFO, averaged over 60 s - the
 bearing (and, with a vertical array model, the elevation) of the
 satellite, a fixed reference. Two VFOs on carriers of the same satellite
 give the same talker. The Digital squelch opens on decoded frames and holds
-9.5 s (a frame lasts 8.64 s). The decoder status says "Signal lost" between
-frames (kraken_doa's detection window is 4 s) unless kraken_doa keeps a
-plugin detected for its squelch hold - a one-line change proposed with this
-plugin.
+9.5 s (a frame lasts 8.64 s). kraken_doa keeps a plugin detected for its
+squelch hold when that is longer than its 4 s detection window, so the
+decoder status stays "Receiving" between frames and says "Signal lost" 9.5 s
+after the last one (tested in both decoder modes, 2026-11-22; before that
+change it said "Signal lost" after every frame).
 
 Ship and land terminals (the transmitters worth a bearing) transmit on
 1626.5-1646.5 MHz; their bursts are not decoded - see
@@ -108,6 +109,12 @@ Ship and land terminals (the transmitters worth a bearing) transmit on
   the antenna bias tee (top bar, `docs/dev/bias-tees.md`), and a filter
   against strong nearby signals if needed. Each KrakenSDR channel needs
   its own antenna for direction finding; for decoding one is enough.
+- For a bearing the array must be small enough for L band: a circular
+  array is unambiguous only with neighbouring antennas under half a
+  wavelength apart (9.7 cm at 1541 MHz) - five antennas: a radius under
+  about 8.3 cm (spacing = 2 x radius x sin 36 deg). The 12 cm radius of a
+  VHF / UHF array has them 14 cm apart: the true bearing can come with
+  false ones. Set the array's real radius in the DoA settings.
 - Tune a VFO to the channel; **VFO width 9.6 kHz** (the plugin's input is
   9600 Hz; it finds and follows the carrier within +-3.6 kHz of the VFO
   centre itself - it reports no frequency error to the host: kraken_doa's
