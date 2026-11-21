@@ -51,12 +51,20 @@ constexpr int64_t SWEEP_MIN_HZ = 24000000;
 constexpr int64_t SWEEP_MAX_HZ = 1765000000;
 constexpr int64_t SWEEP_MIN_SPAN_HZ = 100000;
 constexpr int SWEEP_FFT_MIN = 128;
-constexpr int SWEEP_FFT_MAX = 16384;
+// SWEEP_RES:<N> up to SWEEP_FFT_MAX (37 Hz bins). An N over one 8091 packet
+// (16384 samples) spans the packets of a hop, so it needs a hop of at least
+// N samples: 32768 from dwell 7 ms (2 packets), 65536 from 21 ms (4).
+// Auto never goes past one packet (SWEEP_AUTO_FFT_MAX)
+constexpr int SWEEP_FFT_MAX = 65536;
+constexpr int SWEEP_AUTO_FFT_MAX = 16384;
 // The bins of one sweep: SWEEP_RES:<N> takes a smaller N when its sweep
-// would hold more (the applied size is reported as fft_size); auto picks the
-// largest N whose sweep holds at most SWEEP_AUTO_BINS and whose hops still
-// average SWEEP_AUTO_FRAMES frames (50 % overlap) at the dwell
-constexpr int64_t SWEEP_MAX_BINS = 1 << 22;
+// would hold more, or when a hop at the dwell holds fewer than N samples (the
+// applied size is reported as fft_size); auto picks the largest N whose sweep
+// holds at most SWEEP_AUTO_BINS and whose hops still average
+// SWEEP_AUTO_FRAMES frames (50 % overlap) at the dwell. The store costs ~4
+// bytes a bin (the bins + their max pyramid, int16): 1 << 24 = 64 MB at most;
+// the whole range at 16384 (146 Hz bins) is 11.9 M bins, 48 MB
+constexpr int64_t SWEEP_MAX_BINS = 1 << 24;
 constexpr int64_t SWEEP_AUTO_BINS = 1 << 19;
 constexpr int SWEEP_AUTO_FRAMES = 8;
 constexpr int SWEEP_DWELL_MIN_MS = 5;

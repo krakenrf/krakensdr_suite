@@ -21,8 +21,9 @@ the hops into the sweep spectrum, the page shows it.
 
 ### The grid
 
-- Sample rate fs = 2.4 MS/s. FFT size N = a power of two, 128 ... 16384;
-  bin = fs / N.
+- Sample rate fs = 2.4 MS/s. FFT size N = a power of two, 128 ... 65536
+  (16384 until 2026-11-21); bin = fs / N (18.75 kHz ... 36.6 Hz). An N over
+  16384 (one 8091 packet) spans the packets of a hop.
 - Every hop contributes its centre `U = N * 51 / 64` bins (79.7 % of the
   tuner's band; the edges roll off), so the hop spacing is the same for
   every N: `SWEEP_STEP_HZ = 1 912 500` Hz, an integer.
@@ -158,8 +159,12 @@ the hops into the sweep spectrum, the page shows it.
 - `SWEEP_RANGE:<start MHz>:<stop MHz>` - clamped into the grid's limits.
 - `SWEEP_TUNERS:<i,j,...>|all` - the tuners that take part; indices that
   are not there are dropped, none left = all.
-- `SWEEP_RES:<N>|auto` - the FFT size (128 ... 16384); `auto` (0) picks
-  one from the span.
+- `SWEEP_RES:<N>|auto` - the FFT size (128 ... 65536; 16384 until
+  2026-11-21); `auto` (0) picks one from the span (never over 16384). What
+  is used is at most what fits: the sweep's bins (`SWEEP_MAX_BINS`, 2^24 =
+  16.8 M since 2026-11-21, 2^22 before) and a hop's samples at the dwell
+  (`ceil(dwell x 2.4e6 / (1000 x 16384))` packets of 16384: 32768 from
+  7 ms, 65536 from 21 ms). The `sweep` message says what is used.
 - `SWEEP_DWELL:<ms>` - 5 ... 1000, default 5 (one packet a hop; 20 until
   2026-11-21).
 - `SWEEP_RUN:<1|0>` - run / pause. Not persisted: entering the mode runs.
@@ -179,6 +184,19 @@ the hops into the sweep spectrum, the page shows it.
   `res` = what was asked for (0 = auto), `fft_size` = what is used;
   `available` = the tuner count. A page takes this message as "the
   receiver knows sweep mode" (an older receiver never sends it).
+  Optional, added 2026-11-21: when `fft_size` < `res`, `"cap":"bins"` (the
+  sweep would hold more than 2^24 bins: a narrower range gets the size) or
+  `"cap":"dwell"` plus `"dwell_ms_needed":D` (a hop holds fewer samples
+  than the size: dwell D gets it - or the largest size the bins allow, if
+  that is smaller). Neither field when the size asked is used. `bin_hz`
+  carries 8 decimals (exact to 65536: 36.62109375; 6 before). Also added
+  2026-11-21, for the page's Resolution list (always sent): `"sizes":[128,
+  ...]` = the sizes that run as asked at this range and dwell;
+  `"sizes_capped":{"32768":"bins"|"dwell",...}` = every other size of 128
+  ... 65536 and why - `bins` when the range is too wide for it (a longer
+  dwell doesn't help), else `dwell`; `"min_dwell_ms":{"32768":7,
+  "65536":21}` = the dwell each size past one packet needs. A page without
+  these fields assumes 128 ... 16384; an older page ignores them.
   Optional, added by the page worker 2026-11-20: `"gain_db"` = the common
   gain (heimdall's `set_gain` value, -1 = AGC). Sweep mode has no type 7
   frame whose header carries the gain, so a page shows another page's gain
@@ -350,7 +368,7 @@ refused; out-of-range numbers are clamped:
   the plan is made (indices not there dropped, none left = all), so a saved
   `1,3` survives a start with fewer tuners. The plan follows a tuner-count
   change (`clamp_vfo_tuners` -> `sweep::on_elements`).
-- `SWEEP_RES:` - `auto` / 0, else the nearest power of two in 128 .. 16384.
+- `SWEEP_RES:` - `auto` / 0, else the nearest power of two in 128 .. 65536.
 - `SWEEP_DWELL:` - 5 .. 1000 ms. `SWEEP_RUN:` - 1 / 0 / true / false, else
   refused (junk paused the sweep: review finding 6); not saved; `set_sweep
   {"run":..}` alone.
@@ -380,10 +398,13 @@ refused; out-of-range numbers are clamped:
   grid id = FNV-1a of (start, stop, N) - the same grid has the same id after
   a restart, so a page keeps its waterfall. A new grid (range or N) gets new
   arrays (allocated on the loop thread, never per packet) - only while the
-  mode runs: a receiver that never sweeps holds none (~16 MB at the cap).
+  mode runs: a receiver that never sweeps holds none, and leaving the mode
+  gives them back (since 2026-11-21; *Finer resolutions*).
 - FFT size: `SWEEP_RES:N` takes N unless the sweep would hold more than
-  `SWEEP_MAX_BINS` (2^22, 4.2 M) bins - then the largest N that fits (the
-  full range at 16384 runs at 4096: 2.97 M bins); `fft_size` says what runs.
+  `SWEEP_MAX_BINS` (2^24, 16.8 M; 2^22 until 2026-11-21) bins or N is more
+  than a hop's samples at the dwell - then the largest N that fits (the
+  full range at 32768 runs at 16384: 11.9 M bins); `fft_size` says what
+  runs, `cap` why.
   `auto` = the largest N whose sweep holds at most `SWEEP_AUTO_BINS` (2^19)
   AND whose hop still averages `SWEEP_AUTO_FRAMES` (8) frames at the dwell.
   A hop's samples are `ceil(dwell x 2.4e6 / (1000 x 16384))` whole packets
@@ -413,6 +434,109 @@ refused; out-of-range numbers are clamped:
   plot, so every zoom down to 1/128 of the span still gets one bin per point.
   A user who wants 146 Hz sets the size (and raises the dwell; `avg` says 1
   at 16384 / dwell 20).
+- **Finer resolutions** (2026-11-21; the user: "the full band sweep of 24 MHz
+  - 1.766 GHz tops out at 586 Hz"). The cap was `SWEEP_MAX_BINS` = 2^22: the
+  whole range is 911 hops, 2.97 M bins at 4096, 5.94 M at 8192, 11.9 M at
+  16384. Nothing else in the engine or the frames depends on the bin count
+  (the pyramid makes a frame a few node reads a point whatever the bins;
+  every index is 64-bit). Now: 2^24 (16.8 M bins; the whole range at 8192
+  and 16384), and N up to 65536 across the packets of a hop - a frame's
+  samples already went through `pend` across a packet boundary, so the only
+  new rule is N <= a hop's samples at the dwell (`fft_size_for`; 32768 from
+  dwell 7 ms, 65536 from 21 ms). The same 2^24 bounds them: 32768 up to
+  642 hops (24-1250 MHz), 65536 up to 321 (~614 MHz of span). Auto is
+  unchanged (it starts at 16384: `SWEEP_AUTO_FFT_MAX`; t_res.py compares it
+  with the old rule for 48 range / dwell pairs). The `sweep` message says
+  why a size is capped (`cap`, `dwell_ms_needed`).
+  - The store: ~4 bytes a bin (int16 bins + their max pyramid; bench 49 MB
+    for 11.9 M bins), made on the loop thread outside `g_mu` - the old one
+    freed first, so two never exist together (the worker, meanwhile, stores
+    nothing; no frame is built). A grid change answers in 6-14 ms (x86 and
+    Pi 5 alike; the bench: 2.3 / 4.9 / 10.0 ms for the whole range at 4096
+    / 8192 / 16384 on the Pi 5, 12.5 ms for 16.4 M bins). Leaving the mode
+    gives it back (before: kept until the next grid; ~16 MB at the old cap).
+    On Linux its arrays get their own pages (`BigAlloc`: mmap / munmap):
+    with glibc's heap, whole range 4096 -> 8192 -> 16384 -> 4096 held 69 MB
+    instead of 57 and leaving the mode then held all 91 MB (its mmap
+    threshold rises with every big block freed, so later stores landed in a
+    thread arena whose freed top is never returned; malloc_trim did not
+    help). Elsewhere the C library maps blocks that big itself.
+  - The receiver's RSS (t_res.py mem; x86 / Pi 5): coherent mode, never
+    swept 45.6 / 51.3 MB; whole range at 4096 56.8 / 64.3, 8192 68.3 /
+    76.0, 16384 91.7 / 99.6; back to 4096 57.8 / 65.7; out of the mode 47.2
+    / 54.6; a small grid (400-430 MHz) 47.6 / 55.0; 100-700 MHz at 65536
+    (16.4 M bins, near the cap) 114 / 117 MB.
+  - CPU (t_rescpu.py: the receiver, % of one core, 5 tuners, one page
+    zoomed out at 1600 points / zoomed in to 50 kHz; the fake heimdall at
+    real time; tb_ov = before, where 16384 ran at 4096):
+
+    | range, N, dwell | x86 | Raspberry Pi 5 |
+    |---|---|---|
+    | 24-1765, before (16384 -> 4096), 5 ms | 4.9 / 4.3 | 9.2 / 8.0 |
+    | 24-1765, before (16384 -> 4096), 20 ms | 6.2 / 6.0 | 12.8 / 11.7 |
+    | 24-1765, 4096, 5 ms | 5.3 / 4.4 | 9.1 / 8.0 |
+    | 24-1765, 8192, 5 ms (3 frames a hop) | 6.6 / 5.6 | 10.8 / 9.7 |
+    | 24-1765, 16384, 5 ms (1 frame) | 7.8 / 7.4 | 13.3 / 12.4 |
+    | 24-1765, 8192, 20 ms | 7.3 / 7.4 | 14.6 / 13.4 |
+    | 24-1765, 16384, 20 ms (5 frames) | 8.5 / 7.9 | 16.7 / 15.6 |
+    | 100-700, 32768, 10 ms (1 frame) | 10.7 / 11.0 | 18.9 / 18.7 |
+    | 100-700, 65536, 25 ms (1 frame) | 14.2 / 13.5 | 25.8 / 26.9 |
+    | 100-700, 16384, 25 ms (7 frames) | 8.6 / 9.3 | 16.9 / 16.6 |
+
+    The worker thread is most of it (a hop's commit costs per bin: log10,
+    the 10th percentile, the pyramid - the bins a second are the same at
+    every N, the FFT and the cache misses grow with N). One packet dropped
+    (of ~4400) on the Pi in the 65536 run: a hop's frames are done at once
+    when it ends (5 tuners x a 65536 FFT + 52 k bins). Engine bench
+    (`bench/bench_res.cpp`, CPU a packet of 5 x 16384 samples; x86 / Pi 5):
+    4096 627 / 1206 us, 8192 857 / 1533, 16384 1192 / 1779 (one packet a
+    hop), 32768 1176 / 1789, 65536 1095 / 1602 - at real time (146
+    packets/s) 9-17 % / 18-26 % of a core.
+  - `build_frame` at 11.9 M bins (bench, with a 1600-point overview each;
+    x86 / Pi 5): the whole range at 4096 points 165 / 404 us, at 1600 70 /
+    103 us, a 100 MHz window 126 / 301, 1 MHz 81 / 136, one bin a point
+    70 / 119 us.
+  - Levels (t_res.py levels = t_sweep's grid checks at 400-430 MHz, x86 and
+    Pi 5): at 8192 / 16384 / 32768 / 65536 (dwell 25: 15 / 7 / 3 / 1
+    frames), 16384 at dwell 5 and 32768 at dwell 10 (one frame) - six
+    carriers on their point (within half a bin: 36.6 Hz bins at 65536) and
+    height, the noise median at 1.88 dB (one level step under 2) for every
+    size, the floor flat over hops and the five tuners (spread <= 0.47 dB),
+    edges vs centre, the band 10.35-10.82 dB (10.41). With one frame a hop
+    a carrier stands 1.6 dB higher over the noise median than with many
+    (the noise's median is 1.59 dB under its mean at one frame and is what
+    sits at +2 dB - as at 16384 / dwell 5 before); the test expects it. No
+    DC artefact at the hop centres at one frame (t_dcprobe.py, 12 sweeps:
+    the bins within 6 of the centres as the bins 300 kHz away - median,
+    90th / 99th percentile, 33 / 28 % at 0 dB); the check's limits were the
+    many-frame ones (a max of 39 one-frame bins passes 8 dB ~40 % of the
+    time) and are now set by the frames.
+  - Tests (fake heimdall; x86 normal and ASan + UBSan, Pi 5 normal):
+    `t_res.py` plan 102 / 102 (the size used, `cap`, `dwell_ms_needed`,
+    `sizes` / `sizes_capped` / `min_dwell_ms` for 6 ranges x 8 dwells x 7
+    sizes; auto against the old rule), levels 141 / 141 (Pi 5: 3 x 49),
+    mem 10 / 10; `t_sweep.py` 214 / 214 (its expectations moved: 99999 ->
+    65536, the whole range at 16384 now runs at 16384, 32768 there is
+    capped by the bins); overview 23 / 23, `t_ovcompat.py` 3 / 3, edge 50,
+    fix 29, modes 15, MCP 9. `t_fix.py dead` sits at the edge of its limit
+    (2.82 dB usually, 3.29 > 3.2 in 1 of 5 runs - also on the build before
+    this change with the same fake): not from this change.
+  - The fake heimdall's carriers are phase-continuous across packets now
+    (each packet restarted the phase: unlike a dongle, and a frame past one
+    packet - or an overlapped one - smeared the carrier).
+  - A packet missing inside a hop: one the receiver drops (the ring full)
+    now marks the next one, and a frame begun before the gap is dropped
+    (the frames already summed stay; at one frame a hop that hop keeps its
+    last sweep's values). One heimdall never sends can't be seen (the 8091
+    header carries no packet count; heimdall reports an L1 overflow as a
+    coherence loss).
+  - The memory on a 1 GB Raspberry Pi 4 (not measured: .62 is a Pi 5,
+    8 GB): the largest grid is 2^24 x ~4 bytes = 64 MB more than not
+    sweeping, the whole range at 16384 48 MB, never two at once. That is
+    7 % of the Pi 4's memory, on top of kraken_doa's own 51 MB (Pi 5,
+    before sweeping; heimdall's not measured here). If small machines need it, a rule (not
+    built): the cap = min(2^24, MemAvailable at the grid change / 16 / 4
+    bytes), reported as `cap: "bins"` like the fixed cap.
 - Overlap's cost (bench, x86, 5 tuners x 16384-sample packets): 394 us of CPU
   a packet at N 4096 without overlap, 714-853 us with it (~2x: twice the
   FFTs), 230-390 us at N 128 / 1024 (no overlap there at dwell 20). On a Pi
@@ -540,7 +664,8 @@ refused; out-of-range numbers are clamped:
 
   The overview is one more frame per completed sweep and page: within the
   noise of the measurement in CPU; in bytes, at a fast sweep, +12 KB/s a
-  page at 1600 points. Tests (fake heimdall, x86, normal and ASan + UBSan
+  page at 1600 points. On the Raspberry Pi 5 (24-1765 MHz, auto): 4.7 /
+  4.7 % with one zoomed page, 6.1 / 6.1 % with four. Tests (fake heimdall, x86, normal and ASan + UBSan
   builds): `t_overview.py` 23 / 23 (only asked-for and zoomed, the pairing
   and order over 61 sweeps, the header, n / first point / spacing against a
   whole-range view, 60 of 61 sweeps byte-identical to a whole-range page's

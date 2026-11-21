@@ -20,6 +20,9 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#if defined(__linux__)
+#include <sys/mman.h>   // BigAlloc
+#endif
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -137,15 +140,24 @@ float median_db(int m) {
     return static_cast<float>(10.0 * std::log10(std::pow(1.0 - a, 3.0)));
 }
 
+// The smallest dwell whose hop holds n samples (whole packets, as hop_samples)
+int dwell_for(int n) {
+    const int64_t packets = (static_cast<int64_t>(n) + 16383) / 16384;
+    return static_cast<int>((packets - 1) * 16384 * 1000 / 2400000 + 1);
+}
+
 // The FFT size for the sweep's hops: the request (0 = auto), never more than
-// SWEEP_MAX_BINS bins in the sweep; auto = the largest N with at most
-// SWEEP_AUTO_BINS bins that still averages SWEEP_AUTO_FRAMES frames in a hop
-// at this dwell (docs: why)
+// SWEEP_MAX_BINS bins in the sweep nor more than a hop's samples at the dwell
+// (an N past one packet spans the hop's packets); auto = the largest N up to
+// one packet with at most SWEEP_AUTO_BINS bins that still averages
+// SWEEP_AUTO_FRAMES frames in a hop at this dwell (docs: why)
 int fft_size_for(int res, int64_t hops, int dwell_ms) {
     const int64_t cap = res == 0 ? SWEEP_AUTO_BINS : SWEEP_MAX_BINS;
-    int n = res == 0 ? SWEEP_FFT_MAX : res;
+    int n = res == 0 ? SWEEP_AUTO_FFT_MAX : res;
     const int64_t smp = hop_samples(dwell_ms);
-    while (n > SWEEP_FFT_MIN && (hops * u_of(n) > cap || (res == 0 && frames_for(n, smp) < SWEEP_AUTO_FRAMES))) n /= 2;
+    while (n > SWEEP_FFT_MIN &&
+           (hops * u_of(n) > cap || n > smp || (res == 0 && frames_for(n, smp) < SWEEP_AUTO_FRAMES)))
+        n /= 2;
     return n;
 }
 
@@ -235,6 +247,42 @@ int tuner_of_rank(uint32_t mask, int k) {
 }
 
 // --- the shared store (g_mu) -----------------------------------------------------------
+// The store's big arrays get their own pages on Linux, so freeing them gives
+// the memory back: glibc's heap kept it (measured: whole range 4096 -> 8192 ->
+// 16384 -> 4096 held 69 MB instead of 56, leaving the mode then held all 91 -
+// its mmap threshold rises with every big block freed, so later stores landed
+// in a thread arena whose freed top is never returned, malloc_trim included).
+// Elsewhere the C library's allocator maps big blocks itself
+template<typename T>
+struct BigAlloc {
+    using value_type = T;
+    BigAlloc() = default;
+    template<typename U> BigAlloc(const BigAlloc<U>&) {}
+    static constexpr size_t MAP_MIN = 256 * 1024;
+    T* allocate(size_t n) {
+#if defined(__linux__)
+        if (n * sizeof(T) >= MAP_MIN) {
+            void* q = mmap(nullptr, n * sizeof(T), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (q == MAP_FAILED) throw std::bad_alloc();
+            return static_cast<T*>(q);
+        }
+#endif
+        return std::allocator<T>().allocate(n);
+    }
+    void deallocate(T* q, size_t n) {
+#if defined(__linux__)
+        if (n * sizeof(T) >= MAP_MIN) {
+            munmap(q, n * sizeof(T));
+            return;
+        }
+#endif
+        std::allocator<T>().deallocate(q, n);
+    }
+    template<typename U> bool operator==(const BigAlloc<U>&) const { return true; }
+    template<typename U> bool operator!=(const BigAlloc<U>&) const { return false; }
+};
+using Level = std::vector<int16_t, BigAlloc<int16_t>>;
+
 // lv[0] = the sweep bins in 0.01 dB over the reference (NONE = never measured),
 // lv[l][i] = max(lv[l-1][2i], lv[l-1][2i + 1]): a frame's pool is the max over
 // a few nodes (range_max), whatever the number of bins - no page re-pools the
@@ -242,7 +290,7 @@ int tuner_of_rank(uint32_t mask, int k) {
 std::mutex g_mu;
 struct Store {
     Plan plan;
-    std::vector<std::vector<int16_t>> lv;
+    std::vector<Level> lv;
     std::vector<float> floor;     // per hop: its 10th percentile (dB, shape off, as measured), NaN = none
     std::vector<float> applied;   // per hop: the reference its bins are stored against
     std::vector<float> delta;     // per hop: median_db(its frames) - NOISE_SHOWN_DB (its reference = base + step + delta)
@@ -269,23 +317,13 @@ int16_t q16(float db) {
     return static_cast<int16_t>(std::clamp(v, -32767.0f, 32767.0f));
 }
 
-void pyr_alloc(size_t n) {
-    S.lv.clear();
-    S.lv.emplace_back(n, NONE);
-    size_t m = n;
-    while (m > 1) {
-        m = (m + 1) / 2;
-        S.lv.emplace_back(m, NONE);
-    }
-}
-
 // level-0 bins [a, b] (inclusive) changed: their ancestors
 void pyr_update(size_t a, size_t b) {
     for (size_t l = 1; l < S.lv.size(); l++) {
         a >>= 1;
         b >>= 1;
-        const std::vector<int16_t>& c = S.lv[l - 1];
-        std::vector<int16_t>& d = S.lv[l];
+        const Level& c = S.lv[l - 1];
+        Level& d = S.lv[l];
         for (size_t i = a; i <= b && i < d.size(); i++) {
             const size_t k = 2 * i;
             d[i] = std::max(c[k], k + 1 < c.size() ? c[k + 1] : NONE);
@@ -297,7 +335,7 @@ void pyr_update(size_t a, size_t b) {
 int16_t range_max(size_t a, size_t b) {
     int16_t m = NONE;
     for (size_t l = 0; a < b && l < S.lv.size(); l++) {
-        const std::vector<int16_t>& v = S.lv[l];
+        const Level& v = S.lv[l];
         if (a & 1) m = std::max(m, v[a++]);
         if (b & 1) m = std::max(m, v[--b]);
         a >>= 1;
@@ -319,7 +357,7 @@ void shift_hop(int h, float d) {
     const int64_t a = static_cast<int64_t>(h) * p.U, b = std::min<int64_t>(a + p.U, p.bins);
     if (a >= b) return;
     const int dq = static_cast<int>(std::lround(d * 100.0f));
-    std::vector<int16_t>& v = S.lv[0];
+    Level& v = S.lv[0];
     for (int64_t i = a; i < b; i++) {
         if (v[static_cast<size_t>(i)] == NONE) continue;
         v[static_cast<size_t>(i)] = static_cast<int16_t>(std::clamp(v[static_cast<size_t>(i)] + dq, -32767, 32767));
@@ -389,51 +427,100 @@ void evaluate() {
     if (moved) g_version.fetch_add(1, std::memory_order_release);
 }
 
-// (loop thread) the settings -> the plan; a new grid gets a new array. True =
-// what heimdall's plan holds (centres, tuners, dwell) changed
+// The store's arrays: made and freed outside g_mu (apply_plan)
+struct Arrays {
+    std::vector<Level> lv;
+    std::vector<float> floor, applied, delta;
+    std::vector<int8_t> tuner;
+    void swap_with_store() {
+        lv.swap(S.lv);
+        floor.swap(S.floor);
+        applied.swap(S.applied);
+        delta.swap(S.delta);
+        tuner.swap(S.tuner);
+    }
+};
+
+void pyr_alloc(std::vector<Level>& lv, size_t n) {
+    lv.clear();
+    lv.emplace_back(n, NONE);
+    size_t m = n;
+    while (m > 1) {
+        m = (m + 1) / 2;
+        lv.emplace_back(m, NONE);
+    }
+}
+
+// (loop thread) the settings -> the plan; a new grid gets a new array, and
+// leaving the mode gives it back (the sweep count stays: a page keeps pairing
+// by it). The old arrays go first, then the new ones are made - both outside
+// g_mu (tens of MB at the bin cap: the worker isn't held, and the two never
+// exist together). Meanwhile the store is empty: no hop is stored, no frame
+// built. True = what heimdall's plan holds (centres, tuners, dwell) changed
 bool apply_plan(bool bump) {
     Plan np = make_plan(g_set, active_num_elements.load(std::memory_order_relaxed));
-    std::lock_guard<std::mutex> lk(g_mu);
-    const Plan& op = S.plan;
-    const bool grid = !op.ok || np.start != op.start || np.stop != op.stop || np.N != op.N;
-    const bool heim = !op.ok || np.f0 != op.f0 || np.H != op.H || np.tuners != op.tuners || np.dwell != op.dwell;
-    const bool any = grid || heim || np.res != op.res || np.overlap != op.overlap;
-    np.gen = op.gen + ((any || bump) ? 1 : 0);
-    np.grid_gen = op.grid_gen + (grid ? 1 : 0);
-    if (grid) {
-        // a new grid: no data; its arrays are made when the mode runs (a
-        // receiver that never sweeps holds none - ~16 MB at the bin cap)
-        std::vector<std::vector<int16_t>>().swap(S.lv);
-        std::vector<float>().swap(S.floor);
-        std::vector<float>().swap(S.applied);
-        std::vector<float>().swap(S.delta);
-        std::vector<int8_t>().swap(S.tuner);
-        S.base = NAN;
-        S.off = {};
-        S.any = false;
-        S.done = 0;
-        S.last_s = 0;
-        g_progress.store(0.0f);
+    const bool active = g_active.load();
+    bool grid = false, heim = false, want = false;
+    {
+        Arrays old;   // (destroyed after the lock is released)
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            const Plan& op = S.plan;
+            grid = !op.ok || np.start != op.start || np.stop != op.stop || np.N != op.N;
+            heim = !op.ok || np.f0 != op.f0 || np.H != op.H || np.tuners != op.tuners || np.dwell != op.dwell;
+            const bool any = grid || heim || np.res != op.res || np.overlap != op.overlap;
+            np.gen = op.gen + ((any || bump) ? 1 : 0);
+            np.grid_gen = op.grid_gen + (grid ? 1 : 0);
+            if (grid || !active) {
+                // a new grid, or out of the mode: no data (a receiver that doesn't
+                // sweep holds none - up to 64 MB at the bin cap). A new grid also
+                // starts its sweep count again
+                old.swap_with_store();
+                S.base = NAN;
+                S.off = {};
+                S.any = false;
+                if (grid) {
+                    S.done = 0;
+                    S.last_s = 0;
+                    g_progress.store(0.0f);
+                }
+            }
+            want = np.ok && active && S.lv.empty();
+            S.plan = np;
+            g_mask.store(np.tuners, std::memory_order_relaxed);
+            g_plan_gen.store(np.gen, std::memory_order_release);
+            if (grid || heim) g_version.fetch_add(1, std::memory_order_release);
+            if (heim) g_heim_dirty.store(true);
+        }
+        old = Arrays{};   // (outside the lock: tens of MB unmapped)
     }
-    if (np.ok && S.lv.empty() && g_active.load()) {
+    if (want) {
+        // (S.plan and S.lv change only on this thread: still np's grid, still empty)
+        Arrays fresh;
+        bool made = false;
         try {
-            pyr_alloc(static_cast<size_t>(np.bins));
-            S.floor.assign(static_cast<size_t>(np.H), NAN);
-            S.applied.assign(static_cast<size_t>(np.H), 0.0f);
-            S.delta.assign(static_cast<size_t>(np.H), 0.0f);
-            S.tuner.assign(static_cast<size_t>(np.H), -1);
-            S.scratch.reserve(static_cast<size_t>(np.H));
+            pyr_alloc(fresh.lv, static_cast<size_t>(np.bins));
+            fresh.floor.assign(static_cast<size_t>(np.H), NAN);
+            fresh.applied.assign(static_cast<size_t>(np.H), 0.0f);
+            fresh.delta.assign(static_cast<size_t>(np.H), 0.0f);
+            fresh.tuner.assign(static_cast<size_t>(np.H), -1);
+            made = true;
         } catch (const std::bad_alloc&) {
             std::cerr << "Sweep: out of memory for " << np.bins << " bins" << std::endl;
-            S.lv.clear();
-            np.ok = false;
+            fresh = Arrays{};
         }
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (made) {
+            fresh.swap_with_store();
+            S.scratch.reserve(static_cast<size_t>(np.H));
+        } else {
+            // no store: the plan is not ok (the worker reloads and stops)
+            S.plan.ok = false;
+            S.plan.gen++;
+            g_plan_gen.store(S.plan.gen, std::memory_order_release);
+        }
+        g_version.fetch_add(1, std::memory_order_release);
     }
-    S.plan = np;
-    g_mask.store(np.tuners, std::memory_order_relaxed);
-    g_plan_gen.store(np.gen, std::memory_order_release);
-    if (grid || heim) g_version.fetch_add(1, std::memory_order_release);
-    if (heim) g_heim_dirty.store(true);
     return heim;
 }
 
@@ -441,6 +528,7 @@ bool apply_plan(bool bump) {
 struct Slot {
     uint32_t counter = 0, round = 0, samples = 0;
     bool retuning = false;
+    bool gap = false;                   // a packet before this one was dropped (the ring was full)
     int n = 0;                          // channels in data
     int8_t ch[MAX_CHANNELS] = {};
     float freq[MAX_CHANNELS] = {};
@@ -645,7 +733,7 @@ struct Worker {
         const float r = S.base + ((sp.tuners >> t) & 1u ? S.off[static_cast<size_t>(t)] : 0.0f) + dlt;
         S.applied[static_cast<size_t>(h)] = r;
         const int64_t a = static_cast<int64_t>(h) * sp.U, b = std::min<int64_t>(a + sp.U, sp.bins);
-        std::vector<int16_t>& v = S.lv[0];
+        Level& v = S.lv[0];
         for (int64_t i = a; i < b; i++) v[static_cast<size_t>(i)] = q16(db[static_cast<size_t>(i - a)] - r);
         if (a < b) pyr_update(static_cast<size_t>(a), static_cast<size_t>(b - 1));
         S.any = true;
@@ -692,6 +780,12 @@ struct Worker {
     void process(const Slot& s) {
         if (g_plan_gen.load(std::memory_order_acquire) != p.gen || !have) reload();
         if (!have) return;
+        // samples are missing before this packet: a frame begun in the packets
+        // before would join two pieces of the stream (a frame past one packet,
+        // or an overlapped one, spans packets) - it is dropped, the frames
+        // already summed stay
+        if (s.gap)
+            for (Acc& a : acc) a.pend_n = 0;
         if (!have_counter || s.counter != counter) {
             commit_all();
             round_event(static_cast<int>(s.round));
@@ -916,11 +1010,43 @@ std::string state_json() {
             first = false;
         }
     char bin[32];
-    snprintf(bin, sizeof bin, "%.6f", p.bin_hz);
+    snprintf(bin, sizeof bin, "%.8f", p.bin_hz);   // (exact up to N = 65536: 36.62109375)
     o << "],\"available\":" << std::clamp(active_num_elements.load(), 1, MAX_CHANNELS) << ",\"res\":" << p.res
       << ",\"fft_size\":" << p.N << ",\"bin_hz\":" << bin << ",\"bins\":" << p.bins << ",\"hops\":" << p.H
       << ",\"rounds\":" << p.R << ",\"dwell_ms\":" << p.dwell << ",\"running\":" << (g_run.load() ? "true" : "false")
       << ",\"grid\":" << p.grid << ",\"avg\":" << p.avg;
+    // (additive, for the page's Resolution list) every size and whether it runs
+    // as asked at this range and dwell: "sizes" = those that do; "sizes_capped"
+    // = the others and why - "bins" (the sweep would hold more than
+    // SWEEP_MAX_BINS: only a narrower range gets it; a longer dwell doesn't) or
+    // "dwell" (a hop holds fewer samples); "min_dwell_ms" = the dwell each size
+    // past one packet needs (fixed)
+    {
+        const int64_t smp = hop_samples(p.dwell);
+        std::string ok, capped, dw;
+        for (int n = SWEEP_FFT_MIN; n <= SWEEP_FFT_MAX; n *= 2) {
+            const bool bins_ok = static_cast<int64_t>(p.H) * u_of(n) <= SWEEP_MAX_BINS;
+            if (bins_ok && n <= smp) {
+                ok += (ok.empty() ? "" : ",") + std::to_string(n);
+            } else {
+                capped += std::string(capped.empty() ? "" : ",") + "\"" + std::to_string(n) + "\":\"" + (bins_ok ? "dwell" : "bins") + "\"";
+            }
+            if (n > 16384) dw += std::string(dw.empty() ? "" : ",") + "\"" + std::to_string(n) + "\":" + std::to_string(dwell_for(n));
+        }
+        o << ",\"sizes\":[" << ok << "],\"sizes_capped\":{" << capped << "},\"min_dwell_ms\":{" << dw << "}";
+    }
+    // (additive) a size asked for that is not used: what caps it - "bins" (the
+    // sweep would hold more than SWEEP_MAX_BINS: a narrower range gets it) or
+    // "dwell" (a hop holds fewer samples: dwell_ms_needed gets it)
+    if (p.res > p.N) {
+        int nb = p.res;   // the bins alone
+        while (nb > SWEEP_FFT_MIN && static_cast<int64_t>(p.H) * u_of(nb) > SWEEP_MAX_BINS) nb /= 2;
+        if (nb > p.N) {
+            o << ",\"cap\":\"dwell\",\"dwell_ms_needed\":" << std::min(dwell_for(nb), SWEEP_DWELL_MAX_MS);
+        } else {
+            o << ",\"cap\":\"bins\"";
+        }
+    }
     // the common gain (optional: once known)
     if (const float g = g_gain.load(); is_finite_value(g)) {
         char gb[24];
@@ -960,10 +1086,12 @@ void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const flo
     last_retuning = retuning;
     if (retuning && !event) return;
     uint64_t head;
+    static bool gap = false;
     {
         std::lock_guard<std::mutex> lk(g_rmu);
         if (g_head - g_tail >= SLOTS) {
             g_drops.fetch_add(1, std::memory_order_relaxed);
+            gap = true;
             return;   // the worker is behind: the next packet's counter / frequency still tell it what changed
         }
         head = g_head;
@@ -973,6 +1101,8 @@ void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const flo
     s.counter = counter;
     s.round = round;
     s.retuning = retuning;
+    s.gap = gap;
+    gap = false;
     s.samples = samples;
     s.n = 0;
     if (!retuning) {
