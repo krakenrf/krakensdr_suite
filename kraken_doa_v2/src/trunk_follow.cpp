@@ -3589,10 +3589,15 @@ CcEntry* cc_seen(const std::string& plugin, double nominal, double measured, con
     CcEntry* e = cc_ensure(plugin, nominal, tol, made);
     if (!e) return nullptr;
     const std::string sys = key.empty() ? "" : plugin + ":" + key;
-    if (!sys.empty() || *made) {
+    if (*made || (!sys.empty() && sys != e->sys)) {
+        // new, or another system on that frequency: its fields as reported
         e->sys = sys;
-        if (!name.empty() || !sys.empty()) e->sys_name = clean(name, 64);
+        e->sys_name = clean(name, 64);
         e->site = clean(site, 64);
+    } else {
+        // the same system (or no key this time): a sighting with LESS keeps what the entry has
+        if (!name.empty()) e->sys_name = clean(name, 64);
+        if (!site.empty()) e->site = clean(site, 64);
     }
     if (*made) e->hz = nominal;
     if (fin(measured)) e->meas_hz = measured;
