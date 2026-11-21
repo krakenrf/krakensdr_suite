@@ -2216,3 +2216,33 @@ the debug playback (Play only).
   16, actions 15, stability 9, scale 12, touch 8, the five scenes 10 each,
   misc 13, the DMR rule 9, the editor 27 and 29, the first-pass receiver
   13; palette check OK; no console errors.
+- After the receiver's own review (2026-11-22, the receiver at 0e6bc7e:
+  `no_vfo`, the new refusals, "followed on Dn, but not applied", ids
+  renumbered per start, `TRUNK_CC_SET` / `GET_TRUNK_CC` answered with the
+  list at most once a second, the file's notes, the default threshold 6
+  dB). `t_cc_r5` (22 at both widths): an unknown end reason "Ended (zzz new
+  reason)", none "Ended"; VFOs added up to 16 during a search - it ends
+  `no_vfo`, "no free VFO for its probes - remove a VFO, then search again";
+  a new search refused "no free VFO for the probes (16 in use) - remove a
+  VFO ..."; a saved selection with 9 dB from the earlier page shows 6 and
+  keeps its ranges; the threshold untouched - `threshold_db` not sent, 8 -
+  sent, back to 6 - not sent, the raster changed - sent alone; the
+  threshold's tip (the local background, whether a carrier is tried); an
+  import of an ADS-B entry, an unknown decoder, a key with `-` and a 101-byte
+  value: 1 added, 4 refused with the two reasons; "does not declare
+  trunking" for a follow with what to do; a follow answered "followed on
+  D1, but not applied: ..." - the row "Following on D1 · ... not applied",
+  the note "following, but ... not applied", no failed click; the receiver
+  restarted with the page open (a click waiting and a Details block set
+  before): nothing stale after the reconnect, the highlight the receiver's
+  `cc_followed`; a file of a newer version (the dialog and the note say
+  so), one with an ADS-B entry (this receiver skips it at load - only its
+  log says so; the page's note for "N entries of decoders without trunking
+  dropped" checked with the receiver's words), 1005 entries ("5 entries
+  over the 1000 kept aside in ...", 1000 listed, still "saved
+  automatically"). The import of 504 entries on the fixed 50 ms pace: 31
+  s. The whole pass again at both widths on 0e6bc7e: t_cc 55 / 55, t_cc_rev
+  49 / 46, t_cc_scale 19 / 19, t_cc_more 13 / 13, states 9, fixtures 18,
+  review 16, actions 15, stability 9, scale 12, touch 8, the five scenes 10
+  each, misc 13, the DMR rule 9, the editor 27 and 29, the first-pass
+  receiver 13; palette check OK; no console errors.
