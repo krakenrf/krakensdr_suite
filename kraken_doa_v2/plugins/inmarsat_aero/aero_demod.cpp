@@ -161,7 +161,7 @@ void Demod::bit(std::vector<SoftBit>& out) {
         // the mid point between bit n-1 (axis a/j) and bit n (axis a): axis a e^-j45
         const cf am = a * cf(0.70710678f, -0.70710678f);
         const float m = (ym * std::conj(am)).real();
-        te = (d - dprev_[1]) * m / std::max(ad_ * ad_, 1e-12f) * tsign_;
+        te = (dprev_[1] - d) * m / std::max(ad_ * ad_, 1e-12f) * tsign_;
         dprev_[1] = d;
     }
     te = std::clamp(te, -2.0f, 2.0f);

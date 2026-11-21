@@ -24,7 +24,7 @@ namespace {
 
 using aero::cf;
 constexpr double FS = 24000;
-constexpr float ACQ_SNR_DB = 11.0f;     // weaker squared-spectrum line over the median
+constexpr float ACQ_SNR_DB = 17.0f;     // weaker squared-spectrum line over the median (noise: ~12 dB at most)
 constexpr double HIST_S = 3.0;          // input kept to start the demodulator on
 constexpr double SYNC_TIMEOUT_FRAMES = 4.5;
 
@@ -133,6 +133,11 @@ private:
             if (bad) continue;
             if (!best || h.snr_db > best->snr_db) best = &h;
         }
+        // a lower rate's harmonics look like a higher rate's pair at the
+        // same carrier: prefer the lowest rate found there
+        if (best)
+            for (const auto& h : acq_->hits())
+                if (h.snr_db >= ACQ_SNR_DB && h.rate < best->rate && std::fabs(h.f0 - best->f0) < 10) best = &h;
         if (!best) return;
         const aero::PRate* pr = aero::p_rate(best->rate);
         if (!pr) return;
@@ -142,18 +147,27 @@ private:
         c.fs = FS;
         c.decim = pr->rate <= 1200 ? 5 : pr->rate <= 2400 ? 2 : 1;
         c.rolloff = pr->mod == aero::Mod::AQPSK ? 0.6f : 1.0f;
-        c.pll_bw = pr->rate >= 4800 ? 0.0012f : 0.004f;
+        c.pll_bw = static_cast<float>(std::max(0.0012, 5.0 / pr->rate));   // loop ~5 Hz (A-BPSK) .. 12 Hz
         c.tim_gain = pr->rate >= 4800 ? 1.2e-4f : 2e-4f;
         lock_rate_ = best->rate;
         lock_f0_ = best->f0;
         lock_at_ = hist_base_;
+        if (const char* e = std::getenv("AERO_BW")) c.pll_bw = static_cast<float>(atof(e));     // TUNING
+        if (const char* e = std::getenv("AERO_TG")) c.tim_gain = static_cast<float>(atof(e));   // TUNING
+        if (const char* e = std::getenv("AERO_RO")) c.rolloff = static_cast<float>(atof(e));    // TUNING
         demod_.start(c, best->f0, static_cast<double>(hist_base_));
+        if (const char* e = std::getenv("AERO_TS")) demod_.set_tsign(static_cast<float>(atof(e)));   // TUNING
         pch_.start(*pr);
         state_ = LOCK;
         char b[120];
         snprintf(b, sizeof b, "P channel %d bit/s %s, carrier %+.0f Hz (line %.0f dB): syncing",
                  static_cast<int>(pr->rate), pr->mod == aero::Mod::AQPSK ? "A-QPSK" : "A-BPSK", best->f0, best->snr_db);
         host.fact("Channel", b);
+        if (debug_) {
+            std::string all = "lock attempt: ";
+            for (const auto& h : acq_->hits()) all += std::to_string(static_cast<int>(h.rate)) + "@" + std::to_string(h.f0) + "/" + std::to_string(h.snr_db) + " ";
+            host.log(all);
+        }
         // run it over the history first (the samples the acquisition saw)
         std::vector<cf> h(hist_.begin(), hist_.end());
         run_demod(h.data(), h.size());
