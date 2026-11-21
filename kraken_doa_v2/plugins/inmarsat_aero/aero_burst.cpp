@@ -4,6 +4,7 @@
 #include "aero_pchan.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 
@@ -12,14 +13,40 @@ namespace aero {
 namespace {
 constexpr double FS = 24000;
 constexpr double RING_S = 14.0;        // longest burst kept (a T burst of 31 SUs at 600 bit/s is ~11 s)
-constexpr float TONE_DB = 14.0f;       // the preamble's tone over the median of the spectrum
+constexpr double SHORT_MAX_S = 3.0;    // a burst with a short preamble tone (2400 / 10500 bit/s) lasts at most this
+// a preamble tone this short (as measured: from the start of the first FFT
+// with it to the end of the last, ~40 ms more than the tone) is a 2400 or
+// 10500 bit/s burst's (24 / 33 ms: 0.05 - 0.08 s; 1200 bit/s: 105 ms, ~0.17 s)
+constexpr double SHORT_TONE_S = 0.1;
+constexpr float TONE_DB = 14.0f;       // the preamble's tone over its bin's noise (as over a median: 12.4 dB over the mean)
 constexpr float TONE_ISO_DB = 10.0f;   // ... and over the bins 3..6 away (a tone, not a modulated spectrum)
+constexpr float NOISE_A = 0.05f;       // the noise spectrum's smoothing per 512-point FFT (~0.2 s)
+constexpr float NOISE_AL = 0.1f;       // ... per 4096-point FFT (~0.4 s)
+constexpr int HN = 15, HW = 250;       // a burst's narrow (+-0.7 kHz) and wide (+-11.7 kHz) band, 512-point bins
 
 struct BurstRate {
     double rate;
     int unmod, mod;   // preamble: unmodulated bit periods, modulated bits (table 4-12)
 };
 const BurstRate RATES[] = {{600, 150, 74}, {1200, 126, 74}, {2400, 78, 74}, {10500, 248, 256}};
+
+inline float db_ratio(float db) { return std::pow(10.0f, db / 10); }
+// distance of two bins on a circle of n
+inline int cdist(int a, int b, int n) {
+    const int d = ((a - b) % n + n) % n;
+    return std::min(d, n - d);
+}
+// a bin's power as it goes into its noise mean: clipped at 4 x the noise
+// (6 dB; noise alone gets there 1.8 % of the time) - one FFT of a preamble
+// tone 15 dB up would otherwise lift its own bin's noise 2.5 times and the
+// second FFT, which confirms it, no longer stands out. A signal that stays
+// still raises the noise by up to 15 % per FFT. Not clipped while the mean
+// starts up.
+inline float clip_noise(float p, float noise, int navg) { return navg < 10 ? p : std::min(p, 4 * noise); }
+inline double bin_to_hz(double b, int n) {
+    double f = b * FS / n;
+    return f >= FS / 2 ? f - FS : f;
+}
 }  // namespace
 
 BurstRx::BurstRx(kp::Host& h, SuDecoder& su) : host(h), su_(su) {
@@ -52,12 +79,15 @@ void BurstRx::reset() {
     ring_base_ = nin_ = 0;
     next_fft_ = NFFT;
     next_l_ = NL;
-    hits_l_ = 0;
-    noise_bin_ = 0;
     tbase_ = false;
-    active_ = false;
-    tone_bin_ = -1;
-    tone_hits_ = quiet_ = 0;
+    slots_.clear();
+    recent_.clear();
+    pend_.clear();
+    pend_l_.clear();
+    noise_.assign(NFFT, 0.0f);
+    smooth_.assign(NFFT, 0.0f);
+    noise_l_.assign(NL, 0.0f);
+    navg_ = navg_l_ = 0;
     bursts_ = decoded_ = 0;
 }
 
@@ -68,9 +98,11 @@ void BurstRx::process(const cf* x, size_t n, double t0) {
     }
     ring_.insert(ring_.end(), x, x + n);
     nin_ += static_cast<int64_t>(n);
-    const size_t keep = static_cast<size_t>(RING_S * FS);
-    if (ring_.size() > keep && !active_) {
-        const size_t d = ring_.size() - keep;
+    // keep RING_S, or from the earliest burst still followed
+    int64_t need = nin_ - static_cast<int64_t>(RING_S * FS);
+    for (const auto& s : slots_) need = std::min(need, s.start - s.unc - 1024);
+    if (need > ring_base_) {
+        const size_t d = static_cast<size_t>(std::min<int64_t>(need - ring_base_, static_cast<int64_t>(ring_.size())));
         ring_.erase(ring_.begin(), ring_.begin() + static_cast<long>(d));
         ring_base_ += static_cast<int64_t>(d);
     }
@@ -85,6 +117,127 @@ void BurstRx::process(const cf* x, size_t n, double t0) {
     }
 }
 
+// the tones in a power spectrum: local maxima at least TONE (+ extra) over
+// their bin's noise and TONE_ISO over the bins 3..6 away
+void BurstRx::find_tones(const std::vector<float>& p, const std::vector<float>& noise, float extra_db, std::vector<Tone>& out) const {
+    out.clear();
+    const int n = static_cast<int>(p.size());
+    // a floor under the noise: bins with no input at all (band-limited
+    // input, the edges of a decimator's filter) would otherwise make
+    // anything a tone
+    // anything when there's no noise at all (a generated file before its
+    // noise is added: spurs 80 dB under the burst), so also no more than
+    // 70 dB under this FFT's strongest bin
+    double mean = 0;
+    for (float v : noise) mean += v;
+    const float pmax = *std::max_element(p.begin(), p.end());
+    const float floor_abs = std::max(static_cast<float>(1e-4 * mean / n), 1e-7f * pmax) + 1e-30f;
+    const float thr = db_ratio(TONE_DB + extra_db) * 0.693f;   // over a median = over 0.693 x the mean
+    const float iso = db_ratio(TONE_ISO_DB);
+    auto at = [&](int i) { return p[static_cast<size_t>(((i % n) + n) % n)]; };
+    for (int k = 0; k < n; k++) {
+        const float v = p[static_cast<size_t>(k)];
+        const float nk = std::max(noise[static_cast<size_t>(k)], floor_abs);
+        if (v < thr * nk) continue;
+        if (v < at(k - 1) || v < at(k + 1) || v < at(k - 2) || v < at(k + 2)) continue;
+        float side = 0;
+        for (int d = 3; d <= 6; d++) side = std::max({side, at(k - d), at(k + d)});
+        if (v < iso * side) continue;
+        const float l = at(k - 1), r = at(k + 1);
+        const float den = l - 2 * v + r;
+        const double frac = den != 0 ? std::clamp(0.5 * (l - r) / den, -0.5, 0.5) : 0.0;
+        out.push_back({k, v / (thr * nk), frac});
+    }
+}
+
+// A burst followed covers its spectrum: there, no new preamble is looked
+// for (the modulated spectrum's random peaks, and at R / 4 and R / 2 the
+// lines of its preamble's alternating bits, would pass for tones - at R / 2
+// its differential detection even gives the same bits) and the noise is
+// not updated. A-BPSK (a long preamble tone): +-2 HN (+-1.4 kHz); a short
+// preamble tone (2400 / 10500 bit/s) once it is over: the wide band.
+bool BurstRx::slot_wide(const Slot& s, int64_t now) const {
+    return now - s.tone_seen > 4 * HOP && s.tone_seen - s.start < static_cast<int64_t>(SHORT_TONE_S * FS);
+}
+
+int BurstRx::slot_covering(int bin, int64_t now, int skip) const {
+    for (size_t i = 0; i < slots_.size(); i++) {
+        if (static_cast<int>(i) == skip) continue;
+        const Slot& s = slots_[i];
+        if (cdist(bin, s.bin, NFFT) <= (slot_wide(s, now) ? HW : 2 * HN)) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+// a tone within 4 kHz of a burst followed and 40 dB or more under that
+// burst's carrier: its spectrum's far lines (they only stand out with
+// little noise), not a burst of its own
+bool BurstRx::under_strong(int bin, float p, bool long_fft) const {
+    for (const auto& s : slots_)
+        if (cdist(bin, s.bin, NFFT) <= 85 && p < 1e-4f * (long_fft ? s.peak_tl : s.peak_t)) return true;
+    return false;
+}
+
+void BurstRx::open_slot(int64_t start, double f0, int unc, int64_t now) {
+    if (slots_.size() >= MAX_SLOTS) return;   // more at once than that: the later ones are missed
+    // the preamble's alternating bits put lines at R / 4 and R / 2 from the
+    // carrier, just after its tone: for 10.5 kbit/s (2625 / 5250 Hz) beyond
+    // the band a burst covers while its tone is on (the slower rates' lines
+    // are inside it)
+    for (const auto& o : slots_) {
+        if (now - o.start > static_cast<int64_t>(0.6 * FS)) continue;
+        const double d = std::fabs(f0 - o.f0);
+        for (double g : {150.0, 300.0, 600.0, 1200.0, 2625.0, 5250.0})
+            if (std::fabs(d - g) <= 60) return;
+    }
+    Slot s;
+    s.start = start;
+    s.tone_seen = now;
+    s.f0 = f0;
+    s.unc = unc;
+    s.bin = static_cast<int>(std::lround(f0 * NFFT / FS));
+    if (s.bin < 0) s.bin += NFFT;
+    for (int i = -HW; i <= HW; i++) s.noise_w += noise_[static_cast<size_t>(((s.bin + i) % NFFT + NFFT) % NFFT)];
+    // the narrow band's noise: the median of its bins (the preamble tone
+    // lifted its own bins' noise before it was confirmed - the 4096-point
+    // detector takes ~0.2 s - and with the sum the burst seemed gone early)
+    std::array<float, 2 * HN + 1> nb{};
+    for (int i = -HN; i <= HN; i++) nb[static_cast<size_t>(i + HN)] = noise_[static_cast<size_t>(((s.bin + i) % NFFT + NFFT) % NFFT)];
+    std::nth_element(nb.begin(), nb.begin() + HN, nb.end());
+    s.noise_n = nb[HN] * (2 * HN + 1);
+    slots_.push_back(s);
+}
+
+void BurstRx::end_slot(size_t i, int64_t end, bool too_long) {
+    const Slot s = slots_[i];
+    slots_.erase(slots_.begin() + static_cast<long>(i));
+    bursts_++;
+    const double tone_s = static_cast<double>(s.tone_seen - s.start) / FS;
+    if (debug_) {
+        char b[160];
+        snprintf(b, sizeof b, "burst at %.3f s, %.3f s long, carrier %+.1f Hz, tone %.3f s%s", host_t(static_cast<double>(s.start)),
+                 static_cast<double>(end - s.start) / FS, s.f0, tone_s, too_long ? " (too long: not a burst?)" : "");
+        host.log(b);
+    }
+    if (too_long) {
+        // a signal that stays (a continuous carrier, another system): its
+        // level becomes this band's noise, or it would open a burst again
+        // and again, each one decoded at every rate (not in another burst's
+        // band: its noise from before it stays)
+        for (int k = -HN; k <= HN; k++) {
+            const int b = ((s.bin + k) % NFFT + NFFT) % NFFT;
+            if (slot_covering(b, end) >= 0) continue;
+            noise_[static_cast<size_t>(b)] = std::max(noise_[static_cast<size_t>(b)], smooth_[static_cast<size_t>(b)]);
+        }
+        for (int k = -8 * HN; k <= 8 * HN; k++) {
+            const int j = ((8 * s.bin + k) % NL + NL) % NL;
+            if (slot_covering(j / 8, end) >= 0) continue;
+            noise_l_[static_cast<size_t>(j)] = std::max(noise_l_[static_cast<size_t>(j)], pwl_[static_cast<size_t>(j)]);
+        }
+    }
+    decode(s.start - 512, end, s.f0, std::max(0.0, tone_s - 0.04), s.unc);   // the tone as measured runs ~40 ms long
+}
+
 void BurstRx::fft_at(int64_t end) {
     const int64_t a = end - NFFT;
     if (a < ring_base_) return;
@@ -95,103 +248,96 @@ void BurstRx::fft_at(int64_t end) {
     }
     kfft_execute(plan_);
     for (int k = 0; k < NFFT; k++) pw_[static_cast<size_t>(k)] = out_[k][0] * out_[k][0] + out_[k][1] * out_[k][1];
-    std::vector<float> tmp(pw_);
-    std::nth_element(tmp.begin(), tmp.begin() + NFFT / 2, tmp.end());
-    const float med = std::max(tmp[NFFT / 2], 1e-30f);
-    // the strongest bin, and whether it is a tone
-    int k = 0;
-    for (int i = 1; i < NFFT; i++)
-        if (pw_[static_cast<size_t>(i)] > pw_[static_cast<size_t>(k)]) k = i;
-    auto at = [&](int i) { return pw_[static_cast<size_t>(((i % NFFT) + NFFT) % NFFT)]; };
-    float side = 0;
-    for (int d = 3; d <= 6; d++) side = std::max({side, at(k - d), at(k + d)});
-    const bool tone = 10 * std::log10(at(k) / med) >= TONE_DB && 10 * std::log10(at(k) / std::max(side, 1e-30f)) >= TONE_ISO_DB;
-    auto bin_hz = [&](double b) {
-        double f = b * FS / NFFT;
-        return f >= FS / 2 ? f - FS : f;
-    };
-    if (!active_) {
-        // the noise per bin while nothing is on
-        const float nbin = med / 0.69f;
-        noise_bin_ = noise_bin_ <= 0 ? nbin : noise_bin_ + 0.05f * (nbin - noise_bin_);
-        if (!tone) {
-            tone_hits_ = 0;
-            return;
+    auto wrap = [](int i) { return static_cast<size_t>(((i % NFFT) + NFFT) % NFFT); };
+    for (int k = 0; k < NFFT; k++) smooth_[static_cast<size_t>(k)] += 0.3f * (pw_[static_cast<size_t>(k)] - smooth_[static_cast<size_t>(k)]);
+
+    // the bursts followed: still there? (the band around the carrier
+    // against its noise from before the burst; the wide band too for a
+    // burst whose preamble tone was short: 2400 / 10500 bit/s)
+    for (size_t i = 0; i < slots_.size();) {
+        Slot& s = slots_[i];
+        for (int k = -1; k <= 1; k++) s.peak_t = std::max(s.peak_t, pw_[wrap(s.bin + k)]);
+        float narrow = 0, wide = 0;
+        for (int k = -HW; k <= HW; k++) {
+            const size_t j = wrap(s.bin + k);
+            wide += smooth_[j];
+            if (std::abs(k) <= HN) {
+                narrow += smooth_[j];
+            }
         }
-        if (tone_hits_ > 0 && std::abs(k - tone_bin_) <= 1) {
-            tone_hits_++;
-        } else {
-            tone_hits_ = 1;
-            start_ = a;
+        const double tone_s = static_cast<double>(s.tone_seen - s.start) / FS;
+        const bool tone_over = end - s.tone_seen > 4 * HOP;
+        const bool short_tone = tone_over && tone_s < SHORT_TONE_S;
+        s.peak_n = std::max(s.peak_n, narrow);
+        s.peak_w = std::max(s.peak_w, wide);
+        // over the noise from before it - and within 20 dB of its most (with
+        // no noise at all - a generated file before the player adds it -
+        // anything is over the noise)
+        const bool present = narrow > std::max(1.4f * s.noise_n, 0.01f * s.peak_n) ||
+                             (short_tone && wide > std::max(1.2f * s.noise_w, 0.01f * s.peak_w));
+        s.quiet = present ? 0 : s.quiet + 1;
+        const bool too_long = end - s.start > static_cast<int64_t>((short_tone ? SHORT_MAX_S : RING_S - 1) * FS);
+        if (s.quiet >= 8 || too_long) {
+            end_slot(i, end, too_long);   // end: 3 hops after the signal left
+            continue;
         }
-        tone_bin_ = k;
-        tone_seen_ = end;
-        // two FFTs in a row - or one, well above the floor (the 10.5 kbit/s
-        // burst's unmodulated preamble lasts only 24 ms)
-        if (tone_hits_ >= 2 || 10 * std::log10(at(k) / med) >= TONE_DB + 4) {
-            // the carrier: parabolic interpolation of the peak
-            const float l = at(k - 1), c = at(k), r = at(k + 1);
-            const float den = l - 2 * c + r;
-            const double d = den != 0 ? std::clamp(0.5 * (l - r) / den, -0.5, 0.5) : 0.0;
-            f0_ = bin_hz(k + d);
-            activate(1024);
-        }
-        return;
+        i++;
     }
-    // following a burst: the band around the carrier above the noise
-    // (smoothed over ~4 FFTs; the noise per bin from before the burst)
-    if (tone && std::abs(k - tone_bin_) <= 2) tone_seen_ = end;
-    // another burst's preamble on another frequency: this one is over
-    if (tone && std::abs(k - tone_bin_) > 8 && std::abs(k - tone_bin_) < NFFT - 8 && end - start_ > 4 * NFFT &&
-        10 * std::log10(at(k) / med) >= TONE_DB + 4) {
-        bursts_++;
-        const int64_t s = start_;
-        const double f = f0_;
-        active_ = false;
-        decode(s - 512, a + NFFT / 2, f);
-        start_ = a;
-        tone_seen_ = end;
-        const float l = at(k - 1), cc = at(k), r = at(k + 1);
-        const float den = l - 2 * cc + r;
-        f0_ = bin_hz(k + (den != 0 ? std::clamp(0.5 * (l - r) / den, -0.5, 0.5) : 0.0));
-        activate(1024);
-        return;
+
+    if (navg_ >= 8) detect(end, a);
+    // the noise per bin, outside the bursts followed - after the detection:
+    // with this FFT in it, a tone could never stand more than 1 / NOISE_A
+    // (13 dB) over its own bin's noise
+    const float al = navg_ < 20 ? 1.0f / static_cast<float>(navg_ + 1) : NOISE_A;
+    for (int k = 0; k < NFFT; k++) {
+        if (slot_covering(k, end) >= 0) continue;
+        float& nz = noise_[static_cast<size_t>(k)];
+        nz += al * (clip_noise(pw_[static_cast<size_t>(k)], nz, navg_) - nz);
     }
-    const int c = static_cast<int>(std::lround(f0_ * NFFT / FS));
-    float narrow = 0, wide = 0;
-    const int hn = 15, hw = 250;   // +-0.7 kHz, +-11.7 kHz
-    for (int i = -hw; i <= hw; i++) {
-        const float v = at(c + i);
-        wide += v;
-        if (std::abs(i) <= hn) narrow += v;
-    }
-    const float nb = noise_bin_ > 0 ? noise_bin_ : med / 0.69f;
-    nar_ = nar_ < 0 ? narrow : nar_ + 0.3f * (narrow - nar_);
-    wid_ = wid_ < 0 ? wide : wid_ + 0.3f * (wide - wid_);
-    const bool present = nar_ > 1.4f * nb * (2 * hn + 1) || wid_ > 1.2f * nb * (2 * hw + 1);
-    quiet_ = present ? 0 : quiet_ + 1;
-    const bool too_long = end - start_ > static_cast<int64_t>((RING_S - 1) * FS);
-    if (quiet_ >= 8 || too_long) {
-        active_ = false;
-        tone_hits_ = 0;
-        bursts_++;
-        if (debug_) {
-            char b[120];
-            snprintf(b, sizeof b, "burst at %.3f s, %.3f s long, carrier %+.1f Hz", host_t(static_cast<double>(start_)),
-                     static_cast<double>(end - start_) / FS, f0_);
-            host.log(b);
-        }
-        decode(start_ - 512, end, f0_);   // end: 3 hops after the signal left
-    }
+    navg_++;
 }
 
-void BurstRx::activate(int unc) {
-    active_ = true;
-    quiet_ = 0;
-    nar_ = wid_ = -1;
-    start_unc_ = unc;
-    tone_bin_ = static_cast<int>(std::lround(f0_ * NFFT / FS));
-    if (tone_bin_ < 0) tone_bin_ += NFFT;
+// preamble tones: a new burst after two FFTs in a row - or one, well above
+// the noise (the 10.5 kbit/s burst's unmodulated preamble lasts only 24
+// ms). Several bursts on different frequencies are followed at once.
+void BurstRx::detect(int64_t end, int64_t a) {
+    find_tones(pw_, noise_, 0, tones_);
+    for (auto& p : pend_) p.hit = false;
+    for (const Tone& t : tones_) {
+        // on a burst's own carrier: its tone, or the next burst there
+        int sl = -1;
+        for (size_t i = 0; i < slots_.size(); i++)
+            if (cdist(t.bin, slots_[i].bin, NFFT) <= 2) sl = static_cast<int>(i);
+        if (slot_covering(t.bin, end, sl) >= 0) continue;   // inside another burst's spectrum
+        if (sl < 0 && under_strong(t.bin, pw_[static_cast<size_t>(t.bin)], false)) continue;
+        bool restart = false;
+        if (sl >= 0) {
+            Slot& s = slots_[static_cast<size_t>(sl)];
+            if (end - s.tone_seen <= static_cast<int64_t>(0.15 * FS)) {
+                s.tone_seen = end;   // its preamble, still on
+                continue;
+            }
+            restart = true;   // a new preamble where a burst is still followed: the next burst on that frequency
+        }
+        Pend* p = nullptr;
+        for (auto& q : pend_)
+            if (cdist(q.bin, t.bin, NFFT) <= 1) p = &q;
+        if (p) {
+            p->hits++;
+            p->bin = t.bin;
+        } else {
+            pend_.push_back({t.bin, 1, a, false});
+            p = &pend_.back();
+        }
+        p->hit = true;
+        const bool go = restart ? p->hits >= 6 : (p->hits >= 2 || t.ratio >= db_ratio(4));
+        if (!go) continue;
+        const int64_t st = p->start;
+        p->hits = -1000;   // used
+        if (restart) end_slot(static_cast<size_t>(sl), a + NFFT / 2, false);
+        open_slot(st, bin_to_hz(t.bin + t.frac, NFFT), 1024, end);
+    }
+    pend_.erase(std::remove_if(pend_.begin(), pend_.end(), [](const Pend& p) { return !p.hit || p.hits < 0; }), pend_.end());
 }
 
 // the slow rates' long unmodulated preambles (250 ms at 600, 105 ms at 1200
@@ -199,7 +345,7 @@ void BurstRx::activate(int unc) {
 // 512-point one
 void BurstRx::fft_long(int64_t end) {
     const int64_t a = end - NL;
-    if (a < ring_base_ || active_) return;
+    if (a < ring_base_) return;
     for (int i = 0; i < NL; i++) {
         const cf v = ring_[static_cast<size_t>(a - ring_base_ + i)] * winl_[static_cast<size_t>(i)];
         inl_[i][0] = v.real();
@@ -207,57 +353,71 @@ void BurstRx::fft_long(int64_t end) {
     }
     kfft_execute(planl_);
     for (int k = 0; k < NL; k++) pwl_[static_cast<size_t>(k)] = outl_[k][0] * outl_[k][0] + outl_[k][1] * outl_[k][1];
-    std::vector<float> tmp(pwl_);
-    std::nth_element(tmp.begin(), tmp.begin() + NL / 2, tmp.end());
-    const float med = std::max(tmp[NL / 2], 1e-30f);
-    int k = 0;
-    for (int i = 1; i < NL; i++)
-        if (pwl_[static_cast<size_t>(i)] > pwl_[static_cast<size_t>(k)]) k = i;
-    auto at = [&](int i) { return pwl_[static_cast<size_t>(((i % NL) + NL) % NL)]; };
-    float side = 0;
-    for (int d = 3; d <= 6; d++) side = std::max({side, at(k - d), at(k + d)});
-    const bool tone = 10 * std::log10(at(k) / med) >= TONE_DB - 1 && 10 * std::log10(at(k) / std::max(side, 1e-30f)) >= TONE_ISO_DB;
-    if (!tone) {
-        hits_l_ = 0;
-        return;
+    for (auto& s : slots_)
+        for (int k = -8; k <= 8; k++) s.peak_tl = std::max(s.peak_tl, pwl_[static_cast<size_t>(((8 * s.bin + k) % NL + NL) % NL)]);
+    if (navg_l_ >= 4) detect_long(end, a);
+    const float al = navg_l_ < 10 ? 1.0f / static_cast<float>(navg_l_ + 1) : NOISE_AL;
+    for (int k = 0; k < NL; k++) {
+        if (slot_covering(k / 8, end) >= 0) continue;
+        float& nz = noise_l_[static_cast<size_t>(k)];
+        nz += al * (clip_noise(pwl_[static_cast<size_t>(k)], nz, navg_l_) - nz);
     }
-    if (hits_l_ > 0 && std::abs(k - bin_l_) <= 1) {
-        hits_l_++;
-    } else {
-        hits_l_ = 1;
-        start_l_ = a;
-    }
-    bin_l_ = k;
-    if (hits_l_ < 2) return;
-    const float l = at(k - 1), c = at(k), r = at(k + 1);
-    const float den = l - 2 * c + r;
-    const double d = den != 0 ? std::clamp(0.5 * (l - r) / den, -0.5, 0.5) : 0.0;
-    double f = (k + d) * FS / NL;
-    if (f >= FS / 2) f -= FS;
-    f0_ = f;
-    start_ = start_l_;
-    tone_seen_ = end;
-    hits_l_ = 0;
-    activate(NL + HL);
+    navg_l_++;
 }
 
-void BurstRx::decode(int64_t s0, int64_t s1, double f) {
+void BurstRx::detect_long(int64_t end, int64_t a) {
+    find_tones(pwl_, noise_l_, -1, tones_);
+    for (auto& p : pend_l_) p.hit = false;
+    for (const Tone& t : tones_) {
+        const double fb = (t.bin + t.frac) / 8.0;   // in 512-point bins
+        const int kb = static_cast<int>(std::lround(fb)) % NFFT;
+        if (slot_covering(kb, end) >= 0 || under_strong(kb, pwl_[static_cast<size_t>(t.bin)], true)) continue;
+        Pend* p = nullptr;
+        for (auto& q : pend_l_)
+            if (cdist(q.bin, t.bin, NL) <= 1) p = &q;
+        if (p) {
+            p->hits++;
+            p->bin = t.bin;
+        } else {
+            pend_l_.push_back({t.bin, 1, a, false});
+            p = &pend_l_.back();
+        }
+        p->hit = true;
+        if (p->hits < 2) continue;
+        const int64_t st = p->start;
+        p->hits = -1000;
+        open_slot(st, bin_to_hz(t.bin + t.frac, NL), NL + HL, end);
+    }
+    pend_l_.erase(std::remove_if(pend_l_.begin(), pend_l_.end(), [](const Pend& p) { return !p.hit || p.hits < 0; }), pend_l_.end());
+}
+
+// the same burst decoded twice (two of the bursts followed were one: a line
+// of its spectrum taken for another preamble): same unique word time, same
+// CRC
+bool BurstRx::seen_before(double t_uw, uint32_t key) {
+    while (!recent_.empty() && recent_.front().first < t_uw - 30) recent_.pop_front();
+    for (const auto& r : recent_)
+        if (r.second == key && std::fabs(r.first - t_uw) < 0.02) return true;
+    recent_.push_back({t_uw, key});
+    return false;
+}
+
+void BurstRx::decode(int64_t s0, int64_t s1, double f, double tone_s, int unc) {
     s0 = std::max(s0, ring_base_);
     s1 = std::min(s1, nin_);
     if (s1 - s0 < 1200) return;
     // rates in order of the tone's length (the unmodulated preamble)
-    const double tone_s = static_cast<double>(tone_seen_ - start_) / FS;
     std::vector<std::pair<double, double>> order;
     for (const auto& r : RATES) order.push_back({std::fabs(r.unmod / r.rate - tone_s), r.rate});
     std::sort(order.begin(), order.end());
     for (const auto& o : order)
-        if (try_rate(o.second, s0, s1, f)) {
+        if (try_rate(o.second, s0, s1, f, unc)) {
             decoded_++;
             return;
         }
 }
 
-bool BurstRx::try_rate(double rate, int64_t s0, int64_t s1, double f) {
+bool BurstRx::try_rate(double rate, int64_t s0, int64_t s1, double f, int unc) {
     const BurstRate* br = nullptr;
     for (const auto& r : RATES)
         if (r.rate == rate) br = &r;
@@ -273,8 +433,13 @@ bool BurstRx::try_rate(double rate, int64_t s0, int64_t s1, double f) {
     c.pll_bw = static_cast<float>(std::max(0.002, 10.0 / rate));
     c.tim_gain = 4e-4f;
     c.gear_bits = br->unmod + br->mod + 64 + static_cast<int>(512 / (FS / rate));   // fast loops through the preamble
-    std::vector<cf> x(ring_.begin() + static_cast<long>(s0 - ring_base_), ring_.begin() + static_cast<long>(s1 - ring_base_));
     const double sps_in = FS / rate;
+    // no more than this rate's longest burst (31 SUs) after the start: a
+    // long window (a burst followed while another signal kept its band
+    // busy) costs the demodulator at four phases for nothing
+    const int64_t longest = unc + 512 + static_cast<int64_t>((br->unmod + br->mod + uwl + 64 * 95 + 128) * sps_in);
+    s1 = std::min(s1, s0 + longest);
+    std::vector<cf> x(ring_.begin() + static_cast<long>(s0 - ring_base_), ring_.begin() + static_cast<long>(s1 - ring_base_));
     // the demodulator from four starting timing phases; each one's best
     // unique word is a candidate, decoded in order of its UW errors until
     // one passes its CRC
@@ -311,7 +476,7 @@ bool BurstRx::try_rate(double rate, int64_t s0, int64_t s1, double f) {
         const int64_t nb = static_cast<int64_t>(s.size());
         // the UW: after the preamble, counted from the start the detector saw
         // (it may be up to two FFTs early: 1024 samples)
-        const int64_t hi = std::min<int64_t>(nb - uwl - 320, pre + 64 + static_cast<int64_t>(start_unc_ / sps_in) + 64);
+        const int64_t hi = std::min<int64_t>(nb - uwl - 320, pre + 64 + static_cast<int64_t>(unc / sps_in) + 64);
         for (int64_t p = 0; p <= hi; p++) {
             int e = 0, ea = 0, eb = 0;
             if (qpsk) {
@@ -415,6 +580,7 @@ bool BurstRx::decode_cand(double rate, int uwl, bool qpsk, double f, const std::
         uint8_t su[19];
         pack_lsb(b.data(), 19, su);
         if (su_crc_ok(su, 19)) {
+            if (seen_before(t_uw, 0x1000000u | su[17] | (su[18] << 8))) return true;
             const uint32_t aes = su_.r_su(su, t_uw, t_uw + (uwl + 320) * bit_s);
             if (host.raw_wanted()) {
                 std::string r = "R SU";
@@ -481,6 +647,7 @@ bool BurstRx::decode_cand(double rate, int uwl, bool qpsk, double f, const std::
     // the end of the field: the blocks that held the SUs (A-BPSK: 5 + 3 (n - 1) columns; 10.5k: 2 + 3n)
     const double cols_used = qpsk ? 2 + 3 * static_cast<double>(sus.size()) : 5 + 3 * static_cast<double>(sus.size() - 1);
     const double t_end = t_uw + (uwl + 64 * cols_used) * bit_s;
+    if (seen_before(t_uw, 0x2000000u | (static_cast<uint32_t>(sus.size()) << 16) | id[4] | (id[5] << 8))) return true;
     su_.t_burst(id, ptrs, t_uw, t_end);
     if (host.raw_wanted()) {
         char h[64];

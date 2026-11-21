@@ -17,8 +17,9 @@
 //   (10.5 kbit/s).
 //
 // Detection: the unmodulated preamble is a tone - a short FFT finds it
-// (two FFTs in a row, a peak well over the median); the burst lasts while
-// the band around it stays above the noise. Each burst is then demodulated
+// (two FFTs in a row, a peak well over its bin's noise; a long FFT for the
+// slow rates); the burst lasts while the band around it stays above the
+// noise. Up to four bursts on different frequencies are followed at once. Each burst is then demodulated
 // from its start at every burst rate (four starting timing phases each)
 // until a unique word and a checked signal unit come out. Every burst that
 // passed its CRC is a talker packet of its AES (its 24-bit ICAO address).
@@ -61,30 +62,64 @@ private:
     int64_t next_fft_ = NFFT;      // absolute index where the next FFT ends
     double t0_base_ = 0;           // host time of sample 0
     bool tbase_ = false;
-    // the burst being followed
-    bool active_ = false;
-    int tone_bin_ = -1, tone_hits_ = 0, quiet_ = 0;
-    int64_t start_ = 0, tone_seen_ = 0;
-    double f0_ = 0;
     uint64_t bursts_ = 0, decoded_ = 0;
+    // the bursts being followed (several at once, on different frequencies)
+    static constexpr size_t MAX_SLOTS = 4;
+    struct Slot {
+        int64_t start = 0, tone_seen = 0;   // first sample; last FFT with its preamble tone
+        double f0 = 0;                      // carrier (Hz)
+        int bin = 0;                        // ... as a 512-point bin
+        int unc = 1024;                     // how early it may have started before `start` (samples)
+        float noise_w = 0;                  // the wide band's noise before it
+        float noise_n = 0;                  // the narrow band's: its median bin x the bins (the tone has lifted its own bins' noise a little before it was confirmed)
+        float peak_n = 0, peak_w = 0;       // the most its narrow / wide band held (smoothed)
+        float peak_t = 0, peak_tl = 0;      // its carrier bin's most in the 512- / 4096-point FFT
+        int quiet = 0;                      // FFTs in a row without it
+    };
+    std::vector<Slot> slots_;
+    // tones seen in the last FFT(s), not a burst yet
+    struct Pend {
+        int bin, hits;
+        int64_t start;
+        bool hit;
+    };
+    std::vector<Pend> pend_, pend_l_;
+    struct Tone {
+        int bin;
+        float ratio;   // over the threshold
+        double frac;   // interpolated offset from bin
+    };
+    std::vector<Tone> tones_;
+    std::deque<std::pair<double, uint32_t>> recent_;   // bursts decoded: unique word time, CRC key
+    bool seen_before(double t_uw, uint32_t key);
+    // the noise per bin (mean power; not updated inside a burst's band) and
+    // the spectrum smoothed over ~4 FFTs. A per-bin noise, not the median of
+    // the spectrum: an input with power in only part of the band (receiver
+    // audio turned into IQ, a narrow decimator filter) has a median far
+    // under the noise where the signals are
+    std::vector<float> noise_, smooth_, noise_l_;
+    int navg_ = 0, navg_l_ = 0;
     // the long FFT (slow rates' preambles)
     static constexpr int NL = 4096, HL = 1024;
     kfft_complex* inl_ = nullptr;
     kfft_complex* outl_ = nullptr;
     kfft_plan planl_ = nullptr;
     std::vector<float> winl_, pwl_;
-    int64_t next_l_ = NL, start_l_ = 0;
-    int hits_l_ = 0, bin_l_ = -1;
-    // following the burst
-    float noise_bin_ = 0, nar_ = -1, wid_ = -1;
-    int start_unc_ = 1024;   // how early the burst may have started before start_ (samples)
-    void activate(int unc);
+    int64_t next_l_ = NL;
     void fft_long(int64_t end);
     const bool debug_ = std::getenv("AERO_DEBUG") != nullptr;
 
     void fft_at(int64_t end);
-    void decode(int64_t s0, int64_t s1, double f);
-    bool try_rate(double rate, int64_t s0, int64_t s1, double f);
+    void detect(int64_t end, int64_t a);
+    void detect_long(int64_t end, int64_t a);
+    void find_tones(const std::vector<float>& p, const std::vector<float>& noise, float extra_db, std::vector<Tone>& out) const;
+    bool slot_wide(const Slot& s, int64_t now) const;
+    int slot_covering(int bin, int64_t now, int skip = -1) const;
+    bool under_strong(int bin, float p, bool long_fft) const;
+    void open_slot(int64_t start, double f0, int unc, int64_t now);
+    void end_slot(size_t i, int64_t end, bool too_long);
+    void decode(int64_t s0, int64_t s1, double f, double tone_s, int unc);
+    bool try_rate(double rate, int64_t s0, int64_t s1, double f, int unc);
     // decode the field after a unique word found at bit p (polarities sa / sb)
     bool decode_cand(double rate, int uwl, bool qpsk, double f, const std::vector<float>& s, const std::vector<double>& t, int64_t p,
                      float sa, float sb);
