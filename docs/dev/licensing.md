@@ -150,3 +150,24 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   where they are used. NO similarity audit against SDRTrunk / OP25 /
   GopherTrunk code was run
 
+- INMARSAT (2026-11-22, `plugins/inmarsat_c` 1.0 and `plugins/inmarsat_aero`
+  1.0, both source-available, written new; no GPL decoder - SatDump,
+  Scytale-C, cropinghigh/inmarsatc, gr-* - was opened, none was run).
+  `inmarsat_aero`: from ICAO Annex 10 Vol III Part I chapter 4 (the full
+  AMSS chapter, consolidated to amendment 77). Permissive projects read for
+  FACTS, no code taken: libacars (MIT) as the description of ARINC 622 / 745
+  (ADS-C layouts, scaling, CRC parameters), JAERO (MIT) to confirm the C
+  channel's field offsets. Code taken: libaeroambe's (MIT) 96-entry voice
+  frame deinterleave table in `plugins/lib/aero_ambe.cpp`, notice kept
+  (THIRD_PARTY_NOTICES text M) - a bit order like DSD's tables in
+  `mbe_tables.hpp`; the Aero AMBE codec itself stays the user's library
+  (libaeroambe's mbelib, dlopened; section 3 of the notices).
+  `inmarsat_c`: the frame facts (unique word, interleaver, scrambler, code,
+  packet lengths, sum check) were first read in an UNOFFICIAL online copy of
+  the Inmarsat-C System Definition Manual (CD004, Volumes 1-3; Inmarsat does
+  not publish the manual; Volume 4, the packet layouts, was not available
+  and is why most packet types are only counted), then each one settled
+  independently by measurement on a public recording (the table in
+  `kraken_doa_v2/docs/dev/plugin-inmarsat-c.md`); the EGC codes from IMO
+  MSC.1/Circ.1364 (SafetyNET manual) and IEC 61097-4. Whether that copy is
+  cited / relied on is the user's call (raised 2026-11-22, open)

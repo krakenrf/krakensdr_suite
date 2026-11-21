@@ -35,7 +35,8 @@ plugins/
 │                         TETRA ACELP), dig_common (front ends, the Bridge below),
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
 │                         beam - radar, ssr1030), acars_msg.hpp (ACARS block fields -
-│                         acars, vdl2)
+│                         acars, vdl2, inmarsat_aero), aero_ambe (the Inmarsat Aero AMBE
+│                         codec, the user's library loaded at run time - inmarsat_aero)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ ysf/ mpt1327/   the shipped protocol decoders
 ├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
@@ -77,6 +78,11 @@ plugins/
 │                         unique word, 64 x 162 de-interleaver, soft Viterbi, group descrambler, packets
 │                         by their Fletcher sum check; EGC SafetyNET / FleetNET messages put together
 │                         across frames, repeats suppressed; the ocean region's satellite as a packet talker
+├── inmarsat_aero/        Inmarsat Classic Aero (L band): P channel at 0.6 - 10.5 kbit/s (rate + carrier
+│                         from the squared spectrum's line pair), coherent A-BPSK / A-QPSK, frame sync,
+│                         de-interleaver, streaming soft Viterbi, signal units by type, ACARS + ADS-C
+│                         (map); C channel voice through the user's Aero AMBE (lib/aero_ambe); R / T
+│                         bursts from aircraft: a packet talker per aircraft (ICAO address)
 ├── lora/                 LoRa CSS in the full 2.4 MHz (lock_vfo): per-channel dechirp receiver
 │                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
 │                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet

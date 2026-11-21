@@ -243,6 +243,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [UAT](kraken_doa_v2/plugins/uat/README.md) (978 MHz, United States) | Aircraft, rebroadcast traffic, ground stations and their weather / NOTAM text |
 | [SSR / Mode S / TCAS interrogations](kraken_doa_v2/plugins/ssr1030/README.md) (1030 MHz) | The radars, multilateration stations and aircraft that ask the questions ADS-B answers |
 | [ACARS](kraken_doa_v2/plugins/acars/README.md), [VDL Mode 2](kraken_doa_v2/plugins/vdl2/README.md) | Aircraft datalink messages: registration, flight, label, text; VDL2 ground stations on the map |
+| [Inmarsat Classic Aero](kraken_doa_v2/plugins/inmarsat_aero/README.md) (L-band satellite, 1545-1555 MHz; aircraft at 1626-1660 MHz) | The satellite datalink to aircraft (P channel, every rate, found automatically): log-ons, channel assignments, ACARS messages, ADS-C positions on the map; C channel voice (see [Digital voice codecs](#digital-voice-codecs)); the aircraft's own bursts with a bearing per aircraft |
 | [FLARM / OGN](kraken_doa_v2/plugins/flarm/README.md) (868 / 915 MHz) | Gliders and light aircraft. OGN trackers give a position; FLARM is encrypted, so only its ID and bearing |
 | [DME / TACAN](kraken_doa_v2/plugins/dme/README.md) (962-1213 MHz) | Morse ident, channel and its VOR / ILS pairing, TACAN bearing, aircraft interrogations |
 | [ILS / VOR / markers](kraken_doa_v2/plugins/ils/README.md) | Localizer and glide slope deviation, VOR radial, marker beacons, Morse idents |
@@ -444,6 +445,7 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 | NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
 | Yaesu System Fusion (C4FM) | DN and V/D mode 1: AMBE+2; VW: IMBE | DN / V/D mode 1: mbelib, installed by you; VW: nothing - built in |
 | TETRA | ACELP | the ETSI reference codec, built by you |
+| Inmarsat Classic Aero (C channel) | AMBE 4.8 kbit/s | libaeroambe's mbelib, built by you |
 | MPT1327 | analogue FM | nothing - listen to the traffic channel with NBFM |
 | DAB | MPEG Layer II | nothing - built in |
 | DAB+ | HE-AAC v2 | libfdk-aac, installed by you |
@@ -484,6 +486,27 @@ kraken_doa finds `libmbe.so.1` in the system library path. Set
 `KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere. Fusion's DN
 voice needs mbelib's `mbe_processAmbe2450Dataf`; a library without it plays
 no DN voice (the decoder's voice status says so).
+
+**Inmarsat Classic Aero (C channel voice): libaeroambe's mbelib**
+
+The Aero codec is not in the standard mbelib. libaeroambe carries an mbelib
+1.3 with it added (`mbe_processAmbe4800x3600Framef`); only that folder is
+needed, without Qt:
+
+```
+sudo apt-get install -y git cmake build-essential
+git clone https://github.com/jontio/libaeroambe.git
+cmake -S libaeroambe/mbelib-master -B build-aeroambe -DCMAKE_BUILD_TYPE=Release
+cmake --build build-aeroambe -j3
+export KRAKEN_AERO_AMBE=$PWD/build-aeroambe/libmbe.so.1
+```
+
+Set `KRAKEN_AERO_AMBE` where kraken_doa is started (`none` turns the voice
+off). Without it the decoder also tries `KRAKEN_MBELIB` and the system's
+`libmbe.so.1`, and uses the first one that has the Aero function - so
+installing this build in place of the standard mbelib
+(`sudo cmake --install build-aeroambe && sudo ldconfig`) serves every
+decoder. The decoder's "Voice codec" line says which library it found.
 
 **TETRA: the ETSI codec, with osmo-tetra's patches**
 
