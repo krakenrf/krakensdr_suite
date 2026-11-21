@@ -216,7 +216,12 @@ private:
         for (int i = 0; i < pieces; i++)
             host.valid(t0 + (t1 - t0) * i / pieces, t0 + (t1 - t0) * (i + 1) / pieces);
         const double fe = demod_.carrier_hz();
-        host.freq_error(static_cast<float>(fe));
+        // No host.freq_error(): the host's AFC moves the input in steps (half
+        // the reported offset every 300 ms), and each step is a frequency jump
+        // the ~10 Hz Costas loop cannot follow - in the debug playback the
+        // carrier was lost after every report and only 4 of 11 frames decoded.
+        // The demodulator tracks +-3.6 kHz itself; the talker packets carry
+        // the carrier's place (freq_hz) instead.
         host.fact("Carrier", fmt("%+.1f Hz", fe) + ", Es/N0 " + fmt("%.1f dB", demod_.esn0_db()));
         have_origin_ = false;
         for (const inmc::Packet& p : w.packets) packet(fr.bytes.data() + p.offset, p.len, t0, t1);
@@ -303,21 +308,24 @@ private:
 
     // The RF transmitter of a TDM is the ocean region's satellite (the NCS /
     // LES only feeds it): one talker per ocean region. Each decoded frame
-    // gives 8 packets of 0.24 s spread over it (the carrier's own 3 kHz
+    // gives 4 packets of 0.24 s from its last second (the carrier's own 3 kHz
     // filtered out of the VFO), averaged over 60 s - a fixed transmitter.
+    // Only the last second: kraken_doa keeps the stream for packets 1.5 s
+    // (talker_doa.hpp RING_S), and a frame is known good only at its end.
     void satellite_talker(double t0, double t1) {
+        (void)t0;
         if (!have_origin_) return;
         const std::string id = std::string("Inmarsat ") + inmc::region_name(inmc::station_region(origin_));
         const std::string label = std::string(inmc::station_is_ncs(origin_) ? "NCS " : "LES ") + inmc::station_id(origin_);
-        constexpr int K = 8;
+        constexpr int K = 4;
         for (int k = 0; k < K; k++) {
             kp::Talker t;
             t.id = id;
             t.label = label;
             t.packet = true;
-            t.start_s = t0 + (t1 - t0) * (k + 0.5) / K - 0.12;
-            t.end_s = t.start_s + 0.24;
-            t.freq_hz = demod_.carrier_hz();   // where the carrier is in the input (the host AFC moves it to 0)
+            t.end_s = t1 - 0.005 - 0.25 * k;
+            t.start_s = t.end_s - 0.24;
+            t.freq_hz = demod_.carrier_hz();   // where the carrier is in the input (no host AFC: see frame())
             t.bw_hz = 3000;
             t.avg_s = 60;
             t.keep_s = 1800;

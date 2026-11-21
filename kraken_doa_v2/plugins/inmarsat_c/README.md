@@ -85,13 +85,18 @@ hex. Option: Repeated EGC messages (Suppress / Show again).
 ## Talkers (DoA)
 Everything on a TDM comes from one transmitter: the ocean region's
 satellite (the NCS or LES only feeds it from the ground). Each decoded
-frame gives 8 talker packets of 0.24 s spread over it, id `Inmarsat
+frame gives 4 talker packets of 0.24 s from its last second (kraken_doa
+keeps the stream for packets only 1.5 s, and a frame is known good only at
+its end), id `Inmarsat
 <ocean region>` (e.g. `Inmarsat AOR-E`), label the NCS / LES, the
 carrier's own 3 kHz filtered out of the VFO, averaged over 60 s - the
 bearing (and, with a vertical array model, the elevation) of the
 satellite, a fixed reference. Two VFOs on carriers of the same satellite
 give the same talker. The Digital squelch opens on decoded frames and holds
-9.5 s (a frame lasts 8.64 s).
+9.5 s (a frame lasts 8.64 s). The decoder status says "Signal lost" between
+frames (kraken_doa's detection window is 4 s) unless kraken_doa keeps a
+plugin detected for its squelch hold - a one-line change proposed with this
+plugin.
 
 Ship and land terminals (the transmitters worth a bearing) transmit on
 1626.5-1646.5 MHz; their bursts are not decoded - see
@@ -104,8 +109,10 @@ Ship and land terminals (the transmitters worth a bearing) transmit on
   against strong nearby signals if needed. Each KrakenSDR channel needs
   its own antenna for direction finding; for decoding one is enough.
 - Tune a VFO to the channel; **VFO width 9.6 kHz** (the plugin's input is
-  9600 Hz; it finds the carrier within +-3.6 kHz of the VFO centre and the
-  host's AFC then centres it). In Auto detect a narrower VFO gets a 9.6 kHz
+  9600 Hz; it finds and follows the carrier within +-3.6 kHz of the VFO
+  centre itself - it reports no frequency error to the host: kraken_doa's
+  AFC moves the input in steps, which a coherent 1200-baud demodulator
+  can't follow). In Auto detect a narrower VFO gets a 9.6 kHz
   stream of its own.
 - NCS common channel frequencies, as published by decoder vendors and
   sigidwiki (checked 2026-11; not re-measured - check what you receive):
@@ -179,7 +186,15 @@ opened; nothing here is translated from one.
   the end of the first frame the signal covers (8.64 s) down to Es/N0 0 dB.
 - **Noise** (10 min) and **Classic Aero 10500 baud** (the other worker's
   recording): no frame, no event; 1.4 % of real time while searching.
-- **Debug playback entries** (`tools/testsignals.json`), built with
+- **Debug playback end to end** (a TEST kraken_doa, the playback's
+  interpolation to 2.4 MHz, live noise, decimator, plugin, Digital squelch,
+  talker DoA; 100 s = 2.9 loops each): `inmarsat-c-ncs-safetynet` - Es/N0
+  9.6 dB, carrier +700.0 Hz, 11 frames decoded / 0 failed, 112 packets, 3
+  EGC messages, 16 repeated packets suppressed, talker 70.0 deg, VFO DoA
+  70.0; `inmarsat-c-les-tdm-weak` - Es/N0 3.5 dB, -1500.1 Hz, 11 / 0, 94
+  packets, the group call, talker 200.0 deg, VFO DoA 200.0. Every expect
+  row met; plugin 0.7 % of one core.
+- **Debug playback entries offline** (`tools/testsignals.json`), built with
   `make_testsignal.py` and decoded offline with the noise the playback
   adds, 3 loops each: `inmarsat-c-ncs-safetynet` - 3 EGC messages
   complete, 16 repeated packets suppressed, talker `Inmarsat AOR-E` at

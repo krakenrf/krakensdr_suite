@@ -28,7 +28,7 @@
 {
  "id": "inmarsat-c-les-tdm-weak",
  "title": "Inmarsat-C: a weak LES TDM, 1.5 kHz off, with a FleetNET group call",
- "description": "A synthetic LES TDM of LES 102 (AOR-E) at 1539.615 MHz, carrier 1.5 kHz below the VFO centre, Es/N0 about 4 dB (a few dB above the decoding threshold): bulletin board, filler packets and a FleetNET group call (group 1234, LES 102, msg 300). Expect Channel 'LES TDM, LES 102 (AOR-E)', the carrier near -1500 Hz, one EGC event and the talker 'Inmarsat AOR-E' at 200 deg.",
+ "description": "A synthetic LES TDM of LES 102 (AOR-E) at 1539.615 MHz, carrier 1.5 kHz below the VFO centre, Es/N0 about 3.5 dB as the plugin measures it in the playback (a few dB above the decoding threshold): bulletin board, filler packets and a FleetNET group call (group 1234, LES 102, msg 300). Expect Channel 'LES TDM, LES 102 (AOR-E)', the carrier near -1500 Hz, one EGC event and the talker 'Inmarsat AOR-E' at 200 deg.",
  "rf_hz": 1539615000.0,
  "tuner_offset_hz": 300000,
  "seconds": 34.56,
