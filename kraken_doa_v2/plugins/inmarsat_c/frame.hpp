@@ -67,6 +67,7 @@ inline int data_symbol_pos(int e) {
 struct FrameResult {
     std::array<uint8_t, FRAME_BYTES> bytes{};
     int symbol_errors = 0;   // hard decisions the decoded path disagrees with (channel errors corrected)
+    int symbols = 0;         // symbols that were there (not erased)
 };
 
 // soft[0..10367]: one frame from its first symbol, polarity resolved
@@ -84,8 +85,11 @@ inline FrameResult decode_frame(const float* soft) {
     FrameResult r;
     // re-encode: the number of corrected channel symbols (a quality figure)
     const std::vector<uint8_t> re = kp::conv_encode(bits.data(), FRAME_BITS, 7, polys);
-    for (int e = 0; e < DATA_SYMS; e++)
+    for (int e = 0; e < DATA_SYMS; e++) {
+        if (d[e] == 0) continue;   // erased (before the carrier was found)
+        r.symbols++;
         if ((d[e] < 0) != (re[e] != 0)) r.symbol_errors++;
+    }
     const auto& g = scramble_groups();
     for (int k = 0; k < FRAME_BYTES; k++) {
         uint8_t v = 0;

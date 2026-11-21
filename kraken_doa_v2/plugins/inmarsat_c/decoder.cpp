@@ -25,6 +25,7 @@ constexpr int RING = 2 * inmc::FRAME_SYMS;
 constexpr float SYNC_SEARCH = 0.50f;   // unique-word correlation to take a frame when not locked
 constexpr float SYNC_LOCKED = 0.25f;   // ... at the expected place, when locked
 constexpr int SYNC_WINDOW = 4;         // +- symbols around the expected place
+constexpr int MAX_ERASED = inmc::FRAME_SYMS * 4 / 10;   // a first frame may miss up to 40 % (its start)
 constexpr double PARTIAL_S = 180;      // an EGC message with no new packet for this long is reported as it is
 constexpr double KEEP_S = 48 * 3600;   // repeat suppression memory (repeats come up to 24 h apart, twice)
 
@@ -63,6 +64,7 @@ public:
     explicit InmarsatC(kp::Host& h) : Decoder(h), demod_(FS) {
         ring_.assign(RING, 0.0f);
         pos_.assign(RING, 0.0);
+        sync_reset();
         host.table_columns({"Service", "Address", "LES", "Msg", "Packets", "State", "Text"});
         host.table_keep(24 * 3600);
     }
@@ -98,7 +100,7 @@ public:
             sync_reset();
         }
         for (const inmc::Symbol& s : syms_) push_symbol(s);
-        if (!demod_.tracking() && sym_count_ > 0) sync_reset();
+        if (!demod_.tracking() && sym_count_ > first_real_) sync_reset();
         // partial EGC messages whose packets stopped coming
         const double now = host.time();
         if (now - last_housekeeping_ > 10) {
@@ -112,8 +114,14 @@ private:
     // ---- symbols -> frames -------------------------------------------------------
     double time_of(double input_index) const { return base_time_ + (input_index - static_cast<double>(base_index_)) / FS; }
 
+    // A frame whose start came before the carrier was found is still decoded
+    // when most of it is there: the symbol count starts one frame "late",
+    // over erased (zero) symbols, which the interleaver spreads thinly over
+    // the code.
     void sync_reset() {
-        sym_count_ = 0;
+        std::fill(ring_.begin(), ring_.end(), 0.0f);
+        sym_count_ = inmc::FRAME_SYMS;
+        first_real_ = sym_count_;
         locked_ = false;
         pending_ = -1;
         misses_ = 0;
@@ -134,9 +142,9 @@ private:
         ring_[sym_count_ % RING] = s.soft;
         pos_[sym_count_ % RING] = s.pos;
         sym_count_++;
-        if (sym_count_ < inmc::FRAME_SYMS) return;
         const int64_t start = sym_count_ - inmc::FRAME_SYMS;   // a frame ending with this symbol
         if (!locked_) {
+            if (start < first_real_ - MAX_ERASED) return;
             const float c = uw_corr(start);
             if (std::fabs(c) > SYNC_SEARCH && (pending_ < 0 || std::fabs(c) > std::fabs(pending_c_))) {
                 pending_ = start;
@@ -178,8 +186,9 @@ private:
         const float pol = corr < 0 ? -1.0f : 1.0f;
         for (int k = 0; k < inmc::FRAME_SYMS; k++) soft[k] = pol * ring_[(start + k) % RING];
         const inmc::FrameResult fr = inmc::decode_frame(soft.data());
-        const double t0 = time_of(pos_[start % RING]) - 0.5 / inmc::SYMBOL_RATE;
         const double t1 = time_of(pos_[(start + inmc::FRAME_SYMS - 1) % RING]) + 0.5 / inmc::SYMBOL_RATE;
+        const double t0 = start >= first_real_ ? time_of(pos_[start % RING]) - 0.5 / inmc::SYMBOL_RATE
+                                               : time_of(pos_[first_real_ % RING]) - 0.5 / inmc::SYMBOL_RATE;
         frame(fr, t0, t1, corr);
     }
 
@@ -195,7 +204,7 @@ private:
         }
         frames_ok_++;
         sym_err_ += fr.symbol_errors;
-        sym_tot_ += inmc::DATA_SYMS;
+        sym_tot_ += fr.symbols;
         if (w.bad) {
             packets_lost_++;
             char b[64];
@@ -445,7 +454,7 @@ private:
     std::vector<inmc::Symbol> syms_;
     std::vector<float> ring_;
     std::vector<double> pos_;
-    int64_t sym_count_ = 0;
+    int64_t sym_count_ = 0, first_real_ = 0;
     bool locked_ = false;
     int64_t pending_ = -1, expected_ = 0;
     float pending_c_ = 0;
