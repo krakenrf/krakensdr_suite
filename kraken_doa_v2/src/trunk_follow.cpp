@@ -2730,6 +2730,7 @@ std::string lists_json(const System& s) {
 void send_status(bool force, bool answer = false) {
     const int64_t now = now_ms();
     bool active = !g_calls.empty() || !g_voices.empty();
+    if (searching()) active = true;   // (whatever following is: the page shows its progress)
     if (!active)
         for (const auto& kv : g_sys)
             if (!kv.second.ctl.empty()) {
@@ -3514,8 +3515,8 @@ constexpr int64_t CC_LIST_MS = 1000;          // the list message at most this o
 constexpr int64_t CC_HEARD_MS = 60000;        // a control VFO in normal use refreshes its entry at most this often
 constexpr int64_t SRCH_LOOK_GAP_MS = 400;     // the two looks at a step's spectrum this far apart
 constexpr int64_t SRCH_ARRIVE_MAX_MS = 4000;  // a step whose centre the stream never shows: skipped
-constexpr int64_t SRCH_PROBE_MIN_MS = 1500;   // a probe without any valid frame this long: given up ...
-constexpr int64_t SRCH_PROBE_MAX_MS = 7000;   // ... and none longer
+constexpr int64_t SRCH_PROBE_MIN_MS = 2500;   // a probe without any valid frame this long (stream time): given up ...
+constexpr int64_t SRCH_PROBE_MAX_MS = 8000;   // ... and none longer
 constexpr int64_t SRCH_KEY_WAIT_MS = 2500;    // control = true without a key yet: the key waited for this long
 constexpr double SRCH_OVERLAP_HZ = 50000;     // neighbouring steps' usable bands overlap this much
 constexpr double SRCH_MIN_W_HZ = 4000, SRCH_MAX_W_HZ = 32000;   // a candidate's width above the threshold
@@ -3645,11 +3646,29 @@ void cc_save() {
     const std::string tmp = std::string(CC_FILE) + ".tmp";
     {
         std::ofstream f2(tmp, std::ios::binary | std::ios::trunc);
-        if (!f2) return;
-        f2 << o.str();
-        if (!f2) return;
+        if (f2) f2 << o.str();
+        if (!f2) {
+            g_cc_note = std::string(CC_FILE) + " could not be written (kept in memory, tried again)";
+            g_cc_dirty = now_ms();
+            g_cc_list_now = true;
+            return;
+        }
     }
-    if (!fs_replace(tmp, CC_FILE)) std::cerr << "Trunk following: " << CC_FILE << " not written" << std::endl;
+    if (fs_replace(tmp, CC_FILE) != 0) {
+        static int64_t warned = 0;
+        if (now_ms() - warned > 60000) {
+            warned = now_ms();
+            std::cerr << "Trunk following: " << CC_FILE << " could not be written" << std::endl;
+        }
+        g_cc_note = std::string(CC_FILE) + " could not be written (kept in memory, tried again)";
+        g_cc_dirty = now_ms();   // (again in CC_SAVE_MS)
+        g_cc_list_now = true;
+        return;
+    }
+    if (g_cc_note.find("could not be written") != std::string::npos) {
+        g_cc_note.clear();
+        g_cc_list_now = true;
+    }
     g_cc_dirty = 0;
 }
 
@@ -3757,6 +3776,7 @@ struct Probe {
     size_t cand = 0;
     std::string plugin;
     int64_t t0 = 0, t_ctl = 0;
+    uint64_t f0 = 0;        // the stream's spectrum frames when it was made (its deadlines count stream time)
     bool control = false, done = false;
     std::string key, name, site;
     double ctl_hz = NAN;    // the signalling's own control channel frequency (CONTROL / CHANNEL near the probe)
@@ -3785,6 +3805,9 @@ struct Search {
     int64_t t_step = 0;
     bool kerberos = false;
     int mode = 0;           // 0 coherent (the centre steps, calibration held), 2 independent (one tuner steps)
+    uint64_t frames0 = 0;   // the step's spectrum frames counted from here (the search's clock is data, not time)
+    std::vector<double> probed_hz;   // every candidate probed in this run, found or not (skipped again)
+    std::vector<std::pair<double, double>> covered;   // the bands already looked at (the last step's overlap)
     int tuner = 0;          // independent: the tuner that steps
 };
 Search g_srch;
@@ -3931,10 +3954,31 @@ std::string srch_start(const geo::Json& j) {
 }
 
 // the spectrum's carriers of channel width >= thr above the floor (Hz), at centre c
+int srch_ch() { return g_srch.mode == 2 ? g_srch.tuner : std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1); }
+// spectrum frames taken in a row at centre c (0 = none there yet)
+uint64_t srch_frames(double c) {
+    const int ch = srch_ch();
+    if (std::fabs(static_cast<double>(fft_frame_hz[ch].load(std::memory_order_relaxed)) - c) > 1000) return 0;
+    return fft_frames_here[ch].load(std::memory_order_acquire);
+}
+double srch_fps() { return SAMPLE_RATE / static_cast<double>(std::max(256, current_fft_size.load())); }
+// frames that replace 95 % of the average (at least 3)
+uint64_t srch_refill_frames() {
+    float a = averaging_alpha.load(std::memory_order_relaxed);
+    if (!(a > 0.001f)) a = 0.001f;
+    const double f = a >= 1.0f ? 1.0 : std::log(0.05) / std::log(1.0 - a);
+    return static_cast<uint64_t>(std::max(3.0, std::ceil(f) + 2));
+}
+
+// The spectrum's carriers at centre c: every local peak >= thr above the
+// floor; its width is measured relative to its OWN peak (the run of bins
+// within 20 dB of it - a strong carrier's skirt at a fixed threshold over the
+// floor is far wider than the channel), its centre between those edges. 4-32
+// kHz wide; one run above the threshold can hold several (12.5 kHz apart)
 std::vector<Cand> srch_carriers(double c, double thr) {
     std::vector<Cand> out;
     std::vector<float> spec;
-    const int ch = g_srch.mode == 2 ? g_srch.tuner : std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
+    const int ch = srch_ch();
     {
         std::lock_guard<std::mutex> lk(fft_mutex);
         if (ch >= static_cast<int>(fft_averaged.size())) return out;
@@ -3946,33 +3990,25 @@ std::vector<Cand> srch_carriers(double c, double thr) {
     if (!(floor_db > -190.0f)) return out;
     const double bin = SAMPLE_RATE / static_cast<double>(n), half = usable_half_hz();
     auto fq = [&](double i) { return c - SAMPLE_RATE / 2.0 + i * bin; };
-    for (int i = 0; i < n;) {
-        if (spec[i] - floor_db < thr) { i++; continue; }
-        int j = i, gap = 0, last = i;
-        while (j + 1 < n && gap <= 2) {
-            j++;
-            if (spec[j] - floor_db >= thr) { last = j; gap = 0; } else gap++;
-        }
-        double wsum = 0, fsum = 0;
-        float peak = -999;
-        for (int k = i; k <= last; k++) {
-            const double p = std::pow(10.0, (spec[k] - floor_db) / 10.0);
-            wsum += p;
-            fsum += p * k;
-            peak = std::max(peak, spec[k] - floor_db);
-        }
-        // (the centre between the run's edges: a narrow spike inside - a pilot, a carrier - can't pull it)
-        const double w = (last - i + 1) * bin, f = fq((i + last) / 2.0);
-        (void)fsum;
-        (void)wsum;
+    std::vector<char> used(static_cast<size_t>(n), 0);
+    for (int guard = 0; guard < 400; guard++) {
+        int pk = -1;
+        for (int i = 1; i + 1 < n; i++)
+            if (!used[i] && spec[i] - floor_db >= thr && (pk < 0 || spec[i] > spec[pk])) pk = i;
+        if (pk < 0) break;
+        const float lim = std::max(spec[pk] - 20.0f, floor_db + static_cast<float>(thr) / 2);
+        int lo = pk, hi = pk;
+        while (lo - 1 >= 0 && !used[lo - 1] && spec[lo - 1] >= lim) lo--;
+        while (hi + 1 < n && !used[hi + 1] && spec[hi + 1] >= lim) hi++;
+        for (int k = lo; k <= hi; k++) used[k] = 1;
+        const double w = (hi - lo + 1) * bin, f = fq((lo + hi) / 2.0);
         if (w >= SRCH_MIN_W_HZ && w <= SRCH_MAX_W_HZ && std::fabs(f - c) + w / 2 <= half && std::fabs(f - c) > 3 * bin) {
             Cand cd;
             cd.hz = f;
             cd.width = w;
-            cd.level = peak;
+            cd.level = spec[pk] - floor_db;
             out.push_back(cd);
         }
-        i = last + 1;
     }
     return out;
 }
@@ -3997,6 +4033,7 @@ void srch_probe_batch() {
             p.cand = ci;
             p.plugin = plugin;
             p.t0 = now;
+            p.f0 = srch_frames(g_srch.centres[g_srch.step]);
             g_srch.probes.push_back(p);
             meta_set(id, inst.get(), false, ",\"trunk\":{\"role\":\"probe\"}");
             const int bw = efficient_bandwidth_at_least(static_cast<int>(std::ceil(std::max(12500.0, std::min(50000.0, pi.min_vfo_rate)))));
@@ -4087,37 +4124,48 @@ void tick_search() {
             return;
         }
         case 1:
-            if (std::fabs(static_cast<double>(tuner_frequencies[g_srch.mode == 2 ? g_srch.tuner : 0].load()) - c) < 1000 &&
-                !server_retuning.load()) {
+            // the stream at the new centre AND a spectrum frame taken there: the average reset now (frames of the
+            // old centre still queued can't land in it), counted from here
+            if (srch_frames(c) >= 1 && !server_retuning.load()) {
                 fft_reset_generation.fetch_add(1, std::memory_order_release);
                 fft_data_valid.store(false, std::memory_order_release);
+                g_srch.frames0 = srch_frames(c);
                 g_srch.st = 2;
                 g_srch.t_st = now;
-            } else if (now - g_srch.t_st > SRCH_ARRIVE_MAX_MS) {
+            } else if (now - g_srch.t_st > SRCH_ARRIVE_MAX_MS * 3) {
                 if (!heimdall_up()) return srch_end("heimdall", false);
                 next();
             }
             return;
         case 2:
-            if (fft_data_valid.load(std::memory_order_acquire) && now - g_srch.t_st >= srch_settle_ms()) {
+            // the average refilled by frames taken here (+1: the reset lands on the next one)
+            if (srch_frames(c) >= g_srch.frames0 + srch_refill_frames() + 1) {
                 g_srch.look1.clear();
                 for (const auto& cd : srch_carriers(c, g_srch.thr_db)) g_srch.look1.push_back(cd.hz);
+                g_srch.frames0 = srch_frames(c);
                 g_srch.st = 3;
                 g_srch.t_st = now;
+            } else if (now - g_srch.t_st > 15000) {
+                next();   // (the spectrum never came: a dead stream - the next step / the end decide)
             }
             return;
         case 3: {
-            if (now - g_srch.t_st < SRCH_LOOK_GAP_MS) return;
-            // a carrier in both looks (control channels are continuous), not found already in this run (an overlap)
+            if (srch_frames(c) < g_srch.frames0 + std::max<uint64_t>(3, srch_refill_frames() / 2) && now - g_srch.t_st < 15000) return;
+            // a carrier in both looks (control channels are continuous), not probed already in this run, not in
+            // a band an earlier step looked at (the overlap; the last step's clamp)
             const std::vector<std::string> all = trunking_plugins();
+            const double tol = std::max(3000.0, g_srch.raster / 2);
             for (auto& cd : srch_carriers(c, g_srch.thr_db)) {
                 bool twice = false, seen = false;
                 for (double h : g_srch.look1)
-                    if (std::fabs(h - cd.hz) < 3000) twice = true;
-                for (const auto& fh : g_srch.found_hz)
-                    if (std::fabs(fh.first - cd.hz) < 6000) seen = true;
+                    if (std::fabs(h - cd.hz) < tol) twice = true;
+                for (double h : g_srch.probed_hz)
+                    if (std::fabs(h - cd.hz) < tol) seen = true;
+                for (const auto& cv : g_srch.covered)
+                    if (cd.hz - cd.width / 2 >= cv.first && cd.hz + cd.width / 2 <= cv.second) seen = true;
                 if (!twice || seen) continue;
                 g_srch.carriers++;
+                g_srch.probed_hz.push_back(cd.hz);
                 // a remembered control channel there: its plugin first
                 std::vector<std::string> order;
                 for (const auto& kv : g_cc)
@@ -4130,8 +4178,18 @@ void tick_search() {
                 cd.todo = order;
                 g_srch.cands.push_back(cd);
             }
+            {
+                const double h = usable_half_hz();
+                g_srch.covered.push_back({c - h, c + h});
+            }
+            if (getenv("KRAKEN_TRUNK_SEARCH_LOG")) {
+                std::cout << "Trunk following: search step " << g_srch.step << " at " << c / 1e6 << " MHz: candidates";
+                for (const auto& cd : g_srch.cands) std::cout << " " << cd.hz / 1e6 << "(" << static_cast<int>(cd.width / 1000) << "k," << static_cast<int>(cd.level) << "dB)";
+                std::cout << std::endl;
+            }
             if (g_srch.cands.empty()) return next();
             g_srch.st = 4;
+            g_status_now = true;   // (the page sees the probing phase, however short)
             srch_probe_batch();
             return;
         }
@@ -4141,8 +4199,11 @@ void tick_search() {
                 if (p.done) continue;
                 auto inst = decimator_manager.getDecimator(p.vfo);
                 auto dd = inst && inst->serial == p.serial ? inst->getDigital() : nullptr;
-                const int64_t age = now - p.t0;
-                const bool frames = dd && dd->frames_within(SRCH_PROBE_MIN_MS);
+                // (its age in STREAM time since it was made: a slow receiver's plugin that starts late isn't cut short;
+                // a wall-clock ceiling only against a dead stream)
+                const double age_s = static_cast<double>(srch_frames(c) - std::min(srch_frames(c), p.f0)) / srch_fps();
+                const int64_t age = static_cast<int64_t>(age_s * 1000) + (now - p.t0 > 30000 ? SRCH_PROBE_MAX_MS : 0);
+                const bool frames = dd && dd->frames_within(1500);
                 if (p.control && (!p.key.empty() || now - p.t_ctl >= SRCH_KEY_WAIT_MS)) {
                     srch_record(p);
                     g_srch.found_hz.push_back({g_srch.cands[p.cand].hz, 0});
@@ -4186,7 +4247,7 @@ std::string srch_status_json(int64_t now) {
           << ",\"steps\":" << n << ",\"pct\":" << (n ? 100 * g_srch.step / n : 100) << ",\"eta_s\":" << (static_cast<int64_t>(n - g_srch.step) * avg / 1000)
           << ",\"phase\":\"" << names[std::clamp(g_srch.st, 0, 4)] << "\",\"carriers\":" << g_srch.carriers << ",\"probing\":"
           << g_srch.probes.size() << ",\"probed\":" << g_srch.probed << ",\"found_new\":" << g_srch.found_new << ",\"found_known\":"
-          << g_srch.found_known << ",\"elapsed_ms\":" << (now - g_srch.t_start) << "}";
+          << g_srch.found_known << ",\"elapsed_ms\":" << (now - g_srch.t_start) << ",\"frames\":" << (g_srch.step < n ? srch_frames(g_srch.centres[g_srch.step]) : 0) << ",\"frame_hz\":" << fft_frame_hz[srch_ch()].load() << "}";
     }
     o << ",\"search_last\":" << (g_srch_last.empty() ? "null" : g_srch_last);
     // the control VFOs a click made, and the entries they follow
@@ -4204,12 +4265,25 @@ std::string srch_status_json(int64_t now) {
 void cc_heard(int vfo, const std::string& plugin, const PluginEvent& ev) {
     if (playback::active() || g_srch.active || g_exc.st != 0) return;
     const int64_t now = now_ms();
-    auto it = g_cc_heard.find(vfo);
-    if (it != g_cc_heard.end() && now - it->second < CC_HEARD_MS) return;
     auto inst = decimator_manager.getDecimator(vfo);
     if (!inst) return;
     const double rf = vfo_rf(*inst);
     if (rf <= 0) return;
+    auto it = g_cc_heard.find(vfo);
+    if (it != g_cc_heard.end() && now - it->second < CC_HEARD_MS) {
+        // (within the minute: only what it says about its system - the key comes after the control flag)
+        if (CcEntry* e = cc_find(plugin, snap(rf, 6250), 3125)) {
+            const std::string sys = ev.sys_key.empty() ? "" : plugin + ":" + ev.sys_key;
+            if ((!sys.empty() && e->sys != sys) || (!ev.sys_site.empty() && e->site != clean(ev.sys_site, 64)) ||
+                (!ev.sys_name.empty() && e->sys_name != clean(ev.sys_name, 64))) {
+                if (!sys.empty()) e->sys = sys;
+                if (!ev.sys_name.empty()) e->sys_name = clean(ev.sys_name, 64);
+                if (!ev.sys_site.empty()) e->site = clean(ev.sys_site, 64);
+                cc_changed();
+            }
+        }
+        return;
+    }
     g_cc_heard[vfo] = now;
     bool made = false;
     CcEntry* e = cc_seen(plugin, snap(rf, 6250), rf, ev.sys_key, ev.sys_name, ev.sys_site, vfo_plugin_opts(vfo, plugin), NAN, "heard",

@@ -1351,6 +1351,12 @@ the broadcasts:
   the system followed), add, replace, an add that doesn't fit refused;
   independent mode: only tuner 0 steps, back at the end. One trunking test
   plugin kind (trunktest) - the two-protocol case is the hardware sweep's.
+- `t17_idle` 6 (2026-11-22): an idle receiver (no control VFO, no call)
+  answers GET_TRUNK and a TRUNK_ command that changes nothing, for two pages
+  connecting one after the other, and GET_TRUNK_SYS after a restart (4 of
+  the 6 failed before: from the first review round on, an unchanged status
+  body was not sent again - a page that connected later to an idle receiver
+  never got `{"trunk"}` and kept the box hidden).
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
   / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a

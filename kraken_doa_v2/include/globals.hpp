@@ -89,6 +89,11 @@ extern std::atomic<float> indep_tuner_gain_db[8];
 extern std::atomic<bool> fm_enabled_before_scanner;     // Store FM state before discrete scanner
 extern std::atomic<uint32_t> fft_reset_generation;      // Generation counter for FFT reset (scanner retune)
 extern std::atomic<bool> fft_data_valid;                // False after reset until first valid FFT frame
+// per channel: the RF (Hz) of the latest frame averaged into fft_averaged,
+// and how many frames in a row were taken there (the trunk manager's search
+// waits in frames, not wall time - a loaded receiver averages late)
+extern std::array<std::atomic<uint64_t>, MAX_CHANNELS> fft_frame_hz;
+extern std::array<std::atomic<uint64_t>, MAX_CHANNELS> fft_frames_here;
 // heimdall is retuning (the latest packet header's retuning flag): its packets
 // are skipped, so the spectrum still shows the old frequency meanwhile
 extern std::atomic<bool> server_retuning;

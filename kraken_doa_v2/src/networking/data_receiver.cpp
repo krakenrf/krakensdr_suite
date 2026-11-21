@@ -1507,6 +1507,8 @@ void DataReceiver::decimation_processor_thread() {
 
                         FFTWorkItem work_item(current_active, dest, num_samples,
                                               persistent_buffer_generation.load(std::memory_order_relaxed));
+                        work_item.freq_hz = raw_packet.freq_hz[current_active];   // (where its spectrum is: the search counts frames by it)
+                        work_item.seq = raw_packet.seq;
 
                         // OPTIMIZATION: ConcurrentQueue is already lock-free, no mutex needed
                         // Removing mutex reduces contention and improves performance by 10-20%
