@@ -96,12 +96,14 @@ thresholds (`min_p` in the metadata's classes - the service passes it
 through on every track):
 
 ```bash
-python3 $T/thresholds.py MODEL MODEL_OUT $W/ds/X1.npz,... NATIVE_EVAL.tsv --prec 0.95 --work $W
+python3 $T/thresholds.py MODEL MODEL_OUT $W/ds/X1.npz,... EVAL.tsv --prec 0.95 --work $W --real-group confirmed
 ```
 
-(the synthetic val split + half A of the own native captures, crc32 of the
-capture id even, from an `eval_real.py` table of the model; half B and the
-public library stay test data). `fit --no-merge` trains `merged_into` classes as their own (the
+(the synthetic val split + half A of one `eval_real.py` group of the model's
+table: `--real-group confirmed` = the decoder-confirmed public recordings,
+crc32 of the entry id even - the global recipe of the shipped model since
+2026-11-21, no own capture in the fit, so the own captures and public half B
+are test data; `native` = half A of the own captures, the recipe before). `fit --no-merge` trains `merged_into` classes as their own (the
 DVB-T2 / ISDB-T separation test). `KRAKEN_SIGCLASS_TOOL=path` makes
 `eval_real.py` use another build of `sigclass_tool` (an older layout's, to
 compare an older model on the same evaluation path).
@@ -131,30 +133,129 @@ view's class ids, train / val sizes, temperature), `dataset`, `trainer`,
 
 `eval_real.py` runs the model over a local library of public and own
 recordings (`--library`, `$KRAKEN_IQ_LIBRARY`, else `~/krakensdr_iq_library`;
-read-only) the way the receiver sees them: the receiver's own 2.4 MS/s
-bytes as they are; narrower IQ resampled to 2.4 MHz, placed 300 kHz off
-the centre and the band filled with noise at the recording's own density
-(pedestal measured: median 1.0 dB, > 3 dB in 3 of 377); discriminator
-audio FM re-modulated (weaker test); then `sigclass_tool classify --track`
-and the tracks of the last snapshot (track level, not per detection)
-compared with the entry's expected signals. Recording artefacts that a
-receiver tuned elsewhere would not see are removed first: a squelch-gated
-file's exact-zero runs (>= 1 ms) get noise at its own quiet level; for
-classes without a carrier the recording receiver's DC spike (a line within
-+-100 Hz, >= 10 dB over its surroundings) is replaced by noise; the 4 s
-window is the busiest of the first 120 s when that is clearly busier than
-the start (files that open with silence); a recording with more SNR than 8
-bits hold keeps >= 0.8 LSB of receiver noise (below that the noise vanished
-with the signal: a whole-band "burst"). Scored exact (the class) and by
-family (`coarse_family`: classes.json's modulation grouped into fsk, psk,
-ofdm, vsb, pulse, am, fm, css, noise, none - unknown FSK for a DMR signal
-is family-right). With `--rf-mask on` (the default) the entry's
-`center_hz` (less the placement shift) goes to `classify --rf`: the model's
-RF mask, as the receiver applies it (`off` to compare; the library knows
-the centre of 201 of 338 confirmed entries and of every own capture).
-False labels: every drawn track (p >= 0.5, not `none`) that matches no
-identified signal of an own capture goes into `false_tracks` (sure / unsure
-by the model's thresholds) and the summary.
+read-only; the library's `iqlib` reads one antenna of a multi-channel entry
+by its `channel_layout`) the way the receiver sees them, track level (the
+tracks after the last snapshot of a 4 s window), one table row per expected
+signal (the library's `expect` rows). Its docstring has every rule; in short
+(2026-11-21 rework, after the per-recording failure analysis found that 44 of
+85 failing real rows were evaluation / truth faults):
+
+- **Only while on air.** A row with `on_air: "intermittent"` is scored only
+  in a window that holds >= 2 s of its `on_air_s` intervals (half the
+  window's 8 snapshots: the track's evidence then rests mostly on looks with
+  the signal present) or one of its transmissions whole (a burst or packet is
+  seen complete in one snapshot); without intervals it is "not known on air"
+  and stays out of the score. Long captures with intermittent rows get
+  several windows, chosen greedily from the intervals (each adds the most
+  rows not yet on air in an earlier one, `--max-windows`, default 12); every
+  row is scored once, in the window where it is on air longest; continuous
+  rows in the entry's usual window (the busiest stretch, after an opening
+  run of exact zeros).
+- **Matching.** Among the tracks overlapping a row's band, a band-wide row
+  (>= 2 MHz) takes only tracks >= 25 % of its width (a spur inside is not its
+  track); a narrower one prefers tracks <= max(4 x bw, 30 kHz); of those only
+  the tracks within 10 dB of the strongest compete (a track's strength = the
+  highest in-band SNR of the detections in its band, any snapshot: a row
+  describes the dominant signal in its band, a ~1 dB receiver hump must not
+  beat the VOR's own track); then the best band overlap (intersection /
+  union), then hits (most hits alone picked a band-edge spur over the right
+  track). The table's `iou_pick` column holds the track the overlap-first
+  rule would take: on the whole library 4 rows change, none for the worse
+  (the VOR wrong -> right; two radiosondes wrong -> wrong; a CW row right ->
+  right). Right = the row's class or any of its `classes` (one channel
+  alternating two systems).
+- **Feed.** The feed may remove what the recording device added (its band
+  edge, its DC line, its squelch gaps), never clean the signal. Own captures:
+  the bytes as they are. IQ >= 2 MS/s: resampled. IQ below 2 MS/s: gaps
+  (exact-zero runs >= 1 ms) get noise at the quiet level; the recording's DC
+  line (classes without a carrier) is attenuated to the floor beside it - no
+  noise injected; resampled, placed +300 kHz off the centre, then
+  band-limited: each row's signal band (half = min(row bw, the class's widest
+  occupied bw) / 2) plus a margin (crop = max(1.8 x half, half + 2 kHz)),
+  clipped to the recording's passband (bins whose quiet floor is within 10 dB
+  of the floor around the signal), is kept, the rest of the 2.4 MHz band is
+  white noise at the passband floor just beside the signal. Before, a
+  recording's own floor ~1 dB over a white fill was detected as a 70-100 kHz
+  "signal" (fixed 9 of 9 such rows in the analysis), and an IF-filtered
+  recording's passband noise (APRS, VDL2) became a "noise-like signal"
+  because the fill took the stopband level. Discriminator audio: FM
+  re-modulated (a weaker test, apart). 8 bits at a realistic level, >= 0.8
+  LSB of receiver noise.
+- **Groups, per row** from what the library states: native (own captures in
+  the receiver's format); open (no class for it, or `unknown`); disc_audio;
+  confirmed (rtl_433's corpus, or `verified` reports a positive decoder count
+  and the row's own note does not call it undecoded / unverified /
+  undetermined); probe (no decoder run); unconfirmed (the rest). The old
+  whole-entry text match filed a decoder-confirmed DMR entry as unconfirmed
+  because its second carrier's note said "0 frames".
+- **RF mask** (`--rf-mask on`, the default): the entry's `center_hz` (less
+  the placement shift) goes to `classify --rf`.
+- **Output**: the table (scored or not, with the reason; window, on-air
+  seconds, crop, fill level), and TABLE.txt: per group and class (exact,
+  family, shown), the trust table per group (sure right / sure wrong /
+  unsure right / unsure wrong / hidden, sure share; sure = p >= the class's
+  `min_p`, else `min_confidence`), and the false labels - every drawn track
+  (p >= 0.5, not `none`) overlapping no row of its entry, sure / unsure, with
+  single-service recordings, busy sites (>= 5 rows: their unidentified
+  channels are mostly real transmitters) and captures the library marks as
+  intermodulation-dominated (real RF, not transmitters) apart.
+- `--selfcheck [--bank DIR]`: the feed path on synthetic captures with known
+  answers (a `scenes.py --single` DMR and POCSAG as a native 2.4 MS/s file
+  and as 48 kHz recordings - plain, IF-filtered with a raised passband floor,
+  opening with 3 s of exact zeros -, a silent file, a noise-only file); exit
+  1 on a failure. The old feed failed the two IF-filtered cases (unknown
+  noise); the new one passes all 10.
+
+## Results (2026-11-21: the fair evaluation, the core fixes, global thresholds)
+
+Same weights (layout v3) throughout. Columns: (1) the old evaluation + the
+shipped core (old library), (2) the new evaluation + the shipped core, (3)
+the new evaluation + the core of 2026-11-21 (tracker / view-0 alternative /
+image rule). Rows scored / top-1 / family; whole library (506 entries, 364
+rows), 390-400 s with 5 jobs.
+
+| set | (1) | (2) | (3) |
+|---|---|---|---|
+| own captures, all | 110 / 68 / 69 | 123 / 103 / 104 | 123 / 113 / 112 |
+| own, single-service | 41 / 32 / 30 | 36 / 34 / 33 | 36 / 34 / 33 |
+| own, busy trunked sites | 57 / 30 / 33 | 83 / 67 / 69 | 83 / 77 / 77 |
+| own, IM-dominated capture | 12 / 6 / 6 | 4 / 2 / 2 | 4 / 2 / 2 |
+| public, decoder-confirmed | 357 / 177 / 227 | 343 / 187 / 228 | 343 / 188 / 229 |
+| ... without ISM OOK / FSK | 110 / 59 / 78 | 96 / 67 / 77 | 96 / 69 / 79 |
+| probe | 30 / 7 / 15 | 35 / 13 / 22 | 35 / 14 / 22 |
+| unconfirmed | 27 / 3 / 4 | 31 / 6 / 7 | 31 / 6 / 7 |
+| discriminator audio | 29 / 11 / 16 | 29 / 13 / 18 | 29 / 13 / 18 |
+| open set (right) | 42 of 51 | 43 of 53 | 42 of 53 |
+
+Confirmed per class, (1) -> (3): DMR 3/5 -> 5/6, P25 9/19 -> 12/15 (the
+library moved rows to P25 Phase 2: 1/2 -> 2/5), NXDN 2/5 -> 5/5, YSF 1/3 ->
+3/3, radiosonde 3/14 -> 6/14, AIS 0/2 -> 2/2, ISM FSK 21/98 -> 22/98, ISM
+OOK 97/149 -> 97/149. Own-capture rows still wrong in (3), 10: four DMR
+channels and two MPT1327 control channels swallowed by a wide max-hold burst
+track (416.5 MHz, a 1.4 / 2.0 MHz "LoRa" / "carrier" track), a P25 voice
+channel merged with the receiver's ~251 kHz-comb hump, a weak DMR channel
+merged with a neighbour, LoRa below the noise, a weak FM station.
+
+Thresholds (the per-class `min_p`; `min_confidence` 0.82 in all): T0 =
+shipped (synthetic val + own half A, old evaluation), T1 = that recipe
+refitted on the new evaluation (identical to T0), T2 = the global recipe
+(synthetic val + public confirmed half A, crc32 even; no own capture): T0's
+min_p plus `radar` 0.86, `ism_ook` 1.01 (never sure), `unk_fsk` 0.99. Track
+level, new evaluation + new core, sure right / sure wrong (precision) /
+unsure right / unsure wrong / hidden / sure share:
+
+| set | T0 = T1 | T2 (shipped) |
+|---|---|---|
+| own captures (test data for T2) | 104 / 0 (1.00) / 4 / 7 / 7 / 0.85 | 104 / 0 (1.00) / 4 / 7 / 7 / 0.85 |
+| public half B (not fitted) | 44 / 5 (0.90) / 38 / 34 / 53 / 0.28 | 35 / 1 (0.97) / 47 / 38 / 53 / 0.21 |
+| public half B without ISM | 30 / 0 (1.00) / 3 / 5 / 8 / 0.65 | the same |
+
+What T2 gives up: ISM OOK labels are never sure (a public half-A ISM OOK
+label was confidently wrong at 1.00); public sure share 0.28 -> 0.21.
+False labels (drawn at no row; (3), sure / unsure): single-service own
+captures 0 / 2, public single-service 1 / 15, busy sites 22 / 33 (mostly
+real unidentified channels), the IM-dominated capture 4 / 0; the same under
+T0 and T2.
 
 ## Results (2026-11-20, phase 5: the phase 4 weights + the RF mask, model format 3)
 

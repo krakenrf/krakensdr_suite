@@ -19,7 +19,15 @@
 // one fills the band - a carrier on a DAB block, which the detector reports
 // apart on purpose), else into the one with more hits (two transmitters
 // taking turns on one channel). Neighbouring channels barely overlap and stay
-// apart.
+// apart. A channel (>= min_channel_hz) holding most of a wider track's energy
+// (the wider one <= core_energy_ratio x its energy) is that track's core and
+// stays its own - the wider one is its skirt, a receiver plateau or a key-up
+// transient - and is not a piece of it either (not between two bursts: pieces of
+// one pulsed signal); a burst seen once does not take a continuous channel that
+// lasts (the transient rule drops it once the channel has twice its looks); a
+// faint continuous pedestal (< pedestal_db) does not take a signal >=
+// pedestal_contrast_db stronger; a lasting narrow track absorbed into a wide one
+// seen for the first time gives it its looks.
 
 #include "sigclass/sigclass.hpp"
 
@@ -59,11 +67,19 @@ double overlap_hz(double c1, double w1, double c2, double w2) {
     return std::max(0.0, hi - lo);
 }
 
+// a detection's energy over the floor in one snapshot: mean excess x width (the SNR of a
+// bursty detection is its level while on: x duty)
+double energy_of(const Detection& d) {
+    const double snr = std::clamp(double(d.snr_db), -20.0, 120.0);
+    return std::pow(10.0, 0.1 * snr) * std::max(d.bw_hz, 1.0) * (d.bursty ? std::clamp(double(d.duty), 0.0, 1.0) : 1.0);
+}
+
 }  // namespace
 
 const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, double centre_hz, double t_s) {
     expire(t_s);
     for (Track& t : tracks_) t.updated = false;
+    for (Evidence& e : ev_) e.look_snr -= 1.0f;   // (its strongest look, forgotten at 1 dB a snapshot)
     struct Pair {
         double score;
         size_t det, trk;
@@ -89,7 +105,11 @@ const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, do
             else if (iou >= cfg_.min_iou) score = 1.0 + iou;
             else if (df <= cfg_.freq_tol_hz && ratio <= 4.0) score = 1.0 - df / (cfg_.freq_tol_hz + 1.0);
             else if (cfg_.merge_overlap > 0.0 && w < std::max(tw, e.hi - e.lo) && inter_env >= cfg_.merge_overlap * w &&
-                     !(tr.fills_band && !det.bursty)) {
+                     !(tr.fills_band && !det.bursty) &&
+                     // (a channel holding most of the wider track's energy is that track's
+                     // core, not its piece: it is matched on its own)
+                     !(!tr.fills_band && !(det.bursty && tr.bursty) && w >= cfg_.min_channel_hz && 2.0 * w <= std::max(tw, e.hi - e.lo) &&
+                       e.energy <= cfg_.core_energy_ratio * energy_of(det))) {
                 score = 0.5 * inter_env / w;
                 inside = true;
             }
@@ -119,6 +139,8 @@ const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, do
             Track& tr = tracks_[size_t(det_trk[d])];
             tr.last_s = t_s;
             tr.updated = true;
+            Evidence& pe = ev_[size_t(det_trk[d])];
+            pe.look_snr = std::max(pe.look_snr, s.det.snr_db);
             continue;
         }
         if (det_trk[d] < 0) {
@@ -158,6 +180,9 @@ const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, do
         tr.duty = s.det.duty;
         tr.bursty = s.det.bursty;
         tr.fills_band = s.det.fills_band;
+        ev.energy = energy_of(s.det);
+        ev.look_snr = std::max(ev.look_snr, s.det.snr_db);
+        ev.det_bw = s.det.bw_hz;
         const int v = std::clamp(s.det.view, 0, NUM_VIEWS - 1);
         ev.view_hits[v]++;
         if (!s.probs.empty()) {
@@ -209,6 +234,24 @@ const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, do
                             if (!B.bursty) continue;
                             drop = j;
                             keep_i = i;
+                        } else {
+                            // a channel holding most of the wide one's energy is its core: the
+                            // wide one is the channel's skirt, its receiver's plateau or a key-up
+                            // transient around it, not the signal - the channel stays its own
+                            // (not when both are bursts: then they are pieces of one pulsed signal
+                            // - DME, radar - found at two widths)
+                            if (!B.fills_band && !(A.bursty && B.bursty) && EA.det_bw >= cfg_.min_channel_hz &&
+                                EB.energy <= cfg_.core_energy_ratio * EA.energy) continue;
+                            // a burst seen once does not take a continuous channel that lasts: wait
+                            // until it repeats (else the transient rule above drops it later); two
+                            // bursts are pieces of one pulsed signal
+                            if (!B.fills_band && B.bursty && !A.bursty && B.hits < 2 && A.hits >= 2) continue;
+                            // a faint continuous pedestal (under 3 dB of mean excess over its band:
+                            // a receiver hump, a noise skirt) is not the band of a strong signal
+                            // standing on it (>= 10 dB more): that one stays its own (a modulated
+                            // signal's own sidebands around its carrier are far denser)
+                            if (!B.fills_band && !B.bursty && B.snr_db < cfg_.pedestal_db &&
+                                std::max(A.snr_db, EA.look_snr) >= B.snr_db + cfg_.pedestal_contrast_db) continue;
                         }
                     } else if (!(A.hits < B.hits || (A.hits == B.hits && A.id > B.id))) {
                         drop = j;   // similar widths: the one with fewer hits goes
@@ -220,6 +263,24 @@ const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, do
                         ev_[keep_i].lo = std::min(EB.lo, EA.lo);
                         ev_[keep_i].hi = std::max(EB.hi, EA.hi);
                         keep.bw_hz = ev_[keep_i].hi - ev_[keep_i].lo;
+                    } else if (keep_i == j && keep.hits <= 1 && !keep.bursty && !keep.fills_band && gone.hits > keep.hits) {
+                        // a lasting narrow track absorbed into a wide one seen for the first
+                        // time (the same signal measured wider, a hump over it): its looks
+                        // stay - the evidence per view weighted by the looks, its hits
+                        Evidence& K = ev_[keep_i];
+                        const Evidence& G = ev_[drop];
+                        for (int v = 0; v < NUM_VIEWS; v++) {
+                            if (G.logp[v].empty()) continue;
+                            if (K.logp[v].size() != G.logp[v].size() || K.view_hits[v] <= 0) {
+                                K.logp[v] = G.logp[v];
+                            } else {
+                                const double wk = K.view_hits[v], wg = G.view_hits[v];
+                                for (size_t c = 0; c < K.logp[v].size(); c++)
+                                    K.logp[v][c] = float((wk * K.logp[v][c] + wg * G.logp[v][c]) / std::max(wk + wg, 1.0));
+                            }
+                            K.view_hits[v] += G.view_hits[v];
+                        }
+                        keep.hits = gone.hits;
                     }
                     keep.last_s = std::max(keep.last_s, gone.last_s);
                     keep.first_s = std::min(keep.first_s, gone.first_s);

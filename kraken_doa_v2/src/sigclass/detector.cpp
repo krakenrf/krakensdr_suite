@@ -1239,21 +1239,31 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
         if (skirt) out.erase(out.begin() + long(i));
         else i++;
     }
-    // the IQ image of a strong signal (the tuner's gain / phase imbalance mirrors it to
-    // -f, 25-40 dB down): a detection at the mirror frequency of one >= 15 dB stronger,
-    // at most twice as wide, is the image - not a transmitter (a strong signal's image
-    // carried its modulation: the model called it by the signal's class)
-    for (size_t i = 0; i < out.size();) {
-        const Detection& w = out[i].det;
-        bool image = false;
-        if (!w.fills_band)
-            for (size_t j = 0; j < out.size() && !image; j++) {
-                const Detection& s = out[j].det;
-                if (j == i || s.fills_band || std::fabs(s.offset_hz) < std::max(s.bw_hz, 20e3) || w.bw_hz > 2.0 * s.bw_hz) continue;
-                image = std::fabs(s.offset_hz + w.offset_hz) <= 0.5 * std::max(s.bw_hz, w.bw_hz) && s.snr_db >= w.snr_db + 15.0f;
-            }
-        if (image) out.erase(out.begin() + long(i));
-        else i++;
+    // the IQ image of a strong signal (the tuner's gain / phase imbalance mirrors it to -f,
+    // 25-40 dB down): a detection whose mirrored band (-f) holds >= 15 dB more power than
+    // its own band (the fine PSD: also a strong signal's pilot line, not only its mean) and
+    // that lies >= 20 kHz from the centre may be an image - not a transmitter (an image
+    // carries the signal's modulation: the model called it by the signal's class). The
+    // image is the conjugate copy, so the analyzer confirms it by a projection before
+    // dropping it (a transmitter of its own near the mirror frequency - a control channel
+    // 1.5 kHz off the mirror of a voice channel 28 dB stronger - is independent)
+    {
+        const double df = fs / LONG_N;
+        auto band_pow = [&](double lo, double hi) {
+            const int a = std::clamp(int(std::floor(lo / df)) + LONG_N / 2, 0, LONG_N - 1);
+            const int b = std::clamp(int(std::ceil(hi / df)) + LONG_N / 2, 0, LONG_N - 1);
+            double p = 0.0;
+            for (int k = a; k <= b; k++) p += fe.psd[size_t(k)];
+            return p;
+        };
+        for (Cand& c : out) {
+            const Detection& w = c.det;
+            if (w.fills_band || std::fabs(w.offset_hz) < std::max(w.bw_hz, 20e3)) continue;
+            const double h = 0.5 * std::max(w.bw_hz, 2.0 * df);
+            const double pw = band_pow(w.offset_hz - h, w.offset_hz + h);
+            const double pm = band_pow(-w.offset_hz - h, -w.offset_hz + h);
+            c.maybe_image = pm >= 31.6 * pw && pw > 0.0;
+        }
     }
     // strongest first - a band-filling detection (peak 0 dB by definition) before all: the
     // max_candidates cut must not drop it
@@ -1261,7 +1271,17 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
         if (a.det.fills_band != b.det.fills_band) return a.det.fills_band;
         return a.det.peak_db > b.det.peak_db;
     });
-    if (int(out.size()) > cfg.max_candidates) out.resize(size_t(std::max(0, cfg.max_candidates)));
+    // (image candidates do not count: the analyzer drops the confirmed ones and then cuts)
+    {
+        size_t k = 0;
+        int real = 0;
+        for (size_t i = 0; i < out.size(); i++)
+            if (out[i].maybe_image || real < cfg.max_candidates) {
+                real += out[i].maybe_image ? 0 : 1;
+                out[k++] = out[i];
+            }
+        out.resize(k);
+    }
     for (Cand& c : out) {
         if (!c.det.fills_band) c.det.view = Analyzer::view_for_bandwidth(c.det.bw_hz, fs, cfg.view_occupancy);
         c.centre_bin = std::clamp(c.centre_bin, -LONG_N / 2, LONG_N / 2 - 1);

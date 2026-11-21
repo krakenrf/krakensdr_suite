@@ -64,11 +64,31 @@ no other dependency; the same code runs in kraken_doa and in
     detection >= 3 dB stronger and at most 10x narrower than the hump is
     dropped: a 2.7 dB pedestal beside a real DMR channel came out as a 42 kHz
     "burst" that the tracker then merged the channel into ("AIS")
-  - IQ image: a detection at the mirror frequency (-f) of one >= 15 dB
-    stronger and at most twice as wide is dropped - the tuner's imbalance
-    image carries the strong signal's modulation, and the model named it by
-    that class (in the training data the largest group of confident wrong
-    labels; with 25-55 dB signals in the composer: images 25-40 dB down)
+  - IQ image (2026-11-21, after the failure analysis): the tuner's gain /
+    phase imbalance puts eps x conj(x(-f)) at f, 25-40 dB under the signal at
+    -f; the image carries that signal's modulation and the model named it by
+    its class (in the training data the largest group of confident wrong
+    labels). A detection >= 20 kHz from the centre whose MIRRORED band (-f, its
+    own width) holds >= 15 dB more power than its own band in the fine PSD is
+    a candidate (was: the mirror of a detection >= 15 dB stronger in mean SNR,
+    +-0.5 x its bandwidth - that missed the images of a strong signal's pilot
+    lines, denser than its mean, and took a real P25 control channel 1.5 kHz
+    off the mirror of a voice channel 27.7 dB stronger). The analyzer then
+    confirms it: the candidate's view at f and the view at exactly -f (mirrored
+    fine bins, same view), the samples where the mirrored side is on (>= 0.1 x
+    its 90th-percentile power), the projection of the candidate's view onto
+    conj(the mirrored view) = the image's energy; an image when that holds >=
+    `Config::image_share` 0.1 of the view's energy over its noise (on the
+    composer's IQ imbalance up to 0.5 dB / 3 deg: images median share ~1.0;
+    independent signals at a mirror 0.002-0.01; the real control channel
+    0.000 - kept, p25p1 1.00 with 8 hits). Candidates in views 2-3 (wider than
+    43 kHz) go without the test, as before: a wide view holds other signals,
+    whose energy hides the image's share. Image candidates do not count
+    against `max_candidates` (the analyzer drops the confirmed ones, then
+    cuts: otherwise busy captures lost real detections to image slots).
+    Synthetic regression set (below): detections at a truth's mirror band
+    1357 -> 820, false labels there 61 -> 30; `SIGCLASS_DEBUG_IMAGE=1` prints
+    each candidate's share
   - an irregular comb of >= 10 lines forces the band-fill test only on its
     prominence (>= 4), no longer unconditionally; a regular comb (a TV line
     comb) still forces it. A real trunked-radio site (own heimdall capture,
@@ -97,6 +117,35 @@ no other dependency; the same code runs in kraken_doa and in
   (views 0 / 1 / 2). View 3 (no decimation) mixes by a block of exact table
   phasors x the block's start phasor (vectorised; was a table lookup per
   sample: 1.85 -> 1.25 ms per wide signal)
+- **Second look in view 0** (`analyzer.cpp`, 2026-11-21): the trainer keeps
+  a class in a view only with >= 100 examples there, so view 1's model (96
+  kHz) has no 12.5 kHz class at all (DMR, P25, P25 Phase 2, NXDN, YSF,
+  D-STAR, MPT1327, NFM voice: 46-96 view-1 examples each); a narrow channel
+  measured a little wider than view 0's 10.8 kHz (a shoulder of its own
+  transmitter, a neighbour 12.5 kHz away, a strong signal's skirt, a low-SNR
+  width) cannot be named there. A view-1 detection at most
+  `Config::second_view_max_hz` 40 kHz wide is therefore also cut and
+  classified in view 0, its width clamped to view 0's 10.8 kHz (as view 0
+  would have seen it: the meta features and the symbol group's channel filter
+  take the channel's core), unless view 1 is already >= `second_view_skip_p`
+  0.99 sure. View 0's answer is taken when its class is one view 1's model
+  does not have (a class native to view 1 - TETRA, AIS, VDL2, pagers, wide
+  FSK - cannot be taken from it, and the generic classes exist in both), >=
+  `second_view_min_p` 0.5 and more probable than view 1's best. The
+  detection then reports view 0 and view 0's probabilities (the tracker's
+  evidence per view and the service's `class_info(view, best)` stay
+  consistent) and keeps its band. Off when the caller takes the features
+  (training rows stay those of the detection's own view) and for models
+  without views 0 and 1. Synthetic regression set: +23 signals right (p25p2
+  +4, nxdn, ysf, aprs, acars, am, ssb, wildlife +2 each ...), no class lost;
+  cost: a second pass is a view-0 feature pass (~1.5 ms here): a busy own
+  capture (142.3 MHz, 32 signals) 88-90 -> 98 ms a snapshot (5 second
+  passes), one narrow or one wide signal unchanged (21.6 / 29.7 ms);
+  40 kHz beat 20 kHz (+12), the clamp +3; on its crowded scenes 19.5 % of
+  the detections (31 % before the 0.99 skip, which lost no takes) take the
+  second pass, 0.27 % take its answer. `Analyzer::Timing::second_view` / `second_view_taken`;
+  `sigclass_tool classify` adds `"second_view": [passes, taken]` per
+  snapshot; `SIGCLASS_DEBUG_SV=1` prints each second look
 - **Features** (`features.cpp`, layout v2, hash da962d2a45310d8f, D = 1082;
   `FEATURE_LAYOUT_VERSION` 2): the v1 groups - meta 16, psd 128, env_hist
   32, env_mom 12, env_spec 128, env_spec_lo 32, if_hist 64, if_mom 8,
@@ -154,7 +203,10 @@ no other dependency; the same code runs in kraken_doa and in
   the whole-view box powers on <= 16384 of them. `sigclass_tool layout`
   prints each group's meaning; every value finite and O(1) (clamped); a
   model of another hash is refused. `SIGCLASS_DEBUG_SYM=1` prints the two
-  lines per detection
+  lines per detection (debug output to stderr, any of the tools / the app:
+  also `SIGCLASS_DEBUG_FILL` - the band-fill test -, `SIGCLASS_DEBUG_IMAGE`
+  - each IQ-image candidate's share - and `SIGCLASS_DEBUG_SV` - each
+  second look in view 0)
 - **RF plausibility mask** (phase 5; model format 3): the receiver knows
   where it is tuned, and many services exist only in their worldwide
   allocations. `Analyzer::analyze(..., double centre_hz = 0.0)` (0 =
@@ -254,6 +306,65 @@ no other dependency; the same code runs in kraken_doa and in
   in 3 of 8 snapshots (0.54-0.99), the direct-mode part DMR 0.95-0.99; with
   0.3 the last three looks decided, and the live run's 40 s end at 4 s into
   the loop, inside the repeater part
+  - (2026-11-21, after the failure analysis: a correctly labelled channel was
+    absorbed into a wide weak track - the recording's plateau, a key-up
+    click's splatter, a packet's splatter, a receiver hump - at the first
+    snapshot both had 1 hit, so the transient rule never fired, and later the
+    channel's detections only kept the wide track alive as "inside pieces")
+    four rules, every one with its reason:
+    - **a channel's core**: a detection / track >= `min_channel_hz` 2 kHz wide
+      (a modulated channel, not a carrier line - lines stay pieces of the
+      signal around them: an NFM carrier, a VOR) inside a track >= 2x wider
+      that holds at most `core_energy_ratio` 1.5 x its energy (energy =
+      10^(SNR / 10) x width, x duty when bursty: the excess power over the
+      floor) is that track's core: neither absorbed into it nor counted as
+      its piece. A skirt, a receiver plateau or a key-up transient adds little
+      energy to the channel inside it; a second signal adds its own (two FSK
+      tones: ~2x - still one signal). Not between two bursts (pieces of one
+      pulsed signal - DME, radar - found at two widths: without this DME lost
+      3 of 123 synthetic signals) and not under a band-filling track
+    - **a burst seen once** (1 hit) does not take a continuous narrow track
+      with >= 2 hits: it waits until it repeats; the transient rule (a burst
+      with less than half the channel's hits goes) then drops it
+    - **a faint pedestal**: a continuous wide track under `pedestal_db` 3 dB
+      of mean SNR does not take a track >= `pedestal_contrast_db` 10 dB
+      stronger (its strongest look, hits and pieces, forgotten at 1 dB a
+      snapshot); a modulated signal's own sidebands around its carrier are far
+      denser than a faint hump. The VOR own capture (114.5 MHz: its width flips
+      0.1 / 2 kHz, a ~1 dB receiver hump beside it) now ends "VOR 0.95, 3
+      hits" instead of a 1-hit track
+    - **looks kept**: a lasting narrow track absorbed into a continuous wide
+      one seen for the first time (the same signal measured wider) gives it
+      its looks - the evidence per view weighted by the looks, its hits (not
+      into a burst or a band-filling track: a band-wide burst took a pager's
+      evidence and DTMB / DME / FLARM lost 2-4 points)
+    Each rule turned off on the synthetic regression set (below): core -52
+    signals (top-1 of 6255; final code), burst seen once -19, pedestal -1,
+    looks kept -1 (these three measured on the code just before the last
+    two changes - the image candidacy, burst seen once only over a continuous
+    channel - with env toggles since removed); `TrackerConfig::min_channel_hz`,
+    `core_energy_ratio`, `pedestal_db`, `pedestal_contrast_db`;
+    `sigclass_tool classify --min-channel HZ --core-ratio X` (and
+    `--second-view-max HZ`, `--image-share X` for the analyzer rules)
+  - **the synthetic regression set** these rules were validated on (not on
+    the recordings that suggested them): 2000 composed captures of 2 s (4
+    snapshots), composer seed 31 (no training set used it), 6255 signals,
+    `classify --track`, scored on the last snapshot's tracks (job scratch
+    `fix_core/run_syn.py`, `score_syn.py`). Shipped core -> the three rules:
+    track label right 0.631 -> 0.648 (drawn 0.610 -> 0.626); false labels
+    (drawn tracks with >= 2 hits overlapping no signal) 176 -> 140 per 2000
+    captures, at a signal's mirror band 61 -> 30; narrow signals with two or
+    more drawn tracks 3.4 -> 3.8 %; no class loses more than one signal
+    (CW, FLEX, AM voice, wildlife, radar, FLARM, ACARS one each); APRS +11,
+    NXDN +7.8, P25 Phase 2 +6.6, NFM voice +5.7, D-STAR +5.3, YSF +4.1
+    points. The analysis' synthetic twins (6 seeds at 30 / 45 / 55 dB): NXDN
+    6 / 4 / 2 -> 6 / 6 / 6, P25 6 / 5 / 5 -> 6 / 6 / 6, DMR 6 / 6 / 5 ->
+    6 / 6 / 6. Detector acceptance set unchanged byte for byte
+  - not attempted (from the same analysis): a max-hold "burst" region that
+    bridges and swallows continuous detections (a 1.4-2.2 MHz bursty region
+    over a busy site's strong carriers: 416.5 MHz DMR x4, the MPT1327
+    control channels of the intermodulation capture) and a band-wide level
+    flutter of about +-1 dB taken for a burst
 - **Cost** (`sigclass_tool bench`, i7-11800H, load ~1.5, layout v1 tool of
   commit 8b7c707 and v2 run alternately on the same three files,
   2026-11-20): fixed per snapshot 21 ms both (front end 11 ms, detector 8-12
@@ -503,7 +614,8 @@ synthetic twins; an experiment per cause): 38 failing rows of the public
 narrowband digital recordings, 47 of the own native captures. **The
 real-recording tables above understate the classifier: most failures are
 in the evaluation and around the model, not in the features or the
-training.** Not fixed yet - this is the work list.
+training.** The evaluation, the tracker, the view fallback and the image
+rule were fixed the same day (the next section); the rest is the work list.
 
 - **Evaluation and truth, 44 of the 85 rows** (`eval_real.py`, the
   library's index): the 5-channel capture was read as one interleaved
@@ -564,7 +676,87 @@ training.** Not fixed yet - this is the work list.
   right (81 %); on 27 further channels identified with the decoders 23
   (P25 14 of 16, DMR 6 of 8, MPT1327 3 of 3)
 
-### Results (2026-11-20, phase 5, the shipped `sigclass.model`)
+### Results (2026-11-21): a fair evaluation, core fixes without retraining, global thresholds
+
+The same weights as phase 5 (layout v3, no retraining); what changed is how
+the real recordings are scored, three rules around the model (Core: the
+tracker's absorption rules, the second look in view 0, the IQ-image test)
+and the thresholds in the model's metadata.
+
+- **The evaluation** (`tools/sigclass/eval_real.py`; its docstring has
+  every rule; `--selfcheck` feeds synthetic signals four ways and a silent
+  and a noise file: 10 of 10, and the OLD feed fails both IF-filtered
+  cases): multi-channel files one antenna at a time; a row is scored only
+  while on air (the library's `on_air` / `on_air_s`: an intermittent row
+  needs >= 2 s on air in a 4 s window or one whole transmission; several
+  windows per long capture, each row once); `classes` on a shared channel;
+  a row takes the strongest overlapping track (within 10 dB of the
+  strongest, then best overlap; a band-wide row only tracks >= 25 % of its
+  width); narrow recordings are band-limited to the signal band plus a
+  margin and filled at the level beside the signal (the recording's own
+  floor and band edges are not presented as a signal), IF-filtered files
+  are filled from inside their passband, leading zeros are skipped,
+  `notch_dc` attenuates instead of injecting noise; confirmed / probe /
+  unconfirmed per row from what the library states; false labels = drawn
+  tracks on no row, per capture. The feed may remove what the recording
+  device added, never clean the signal itself
+- Rows scored / top-1 / family - (1) old evaluation + the core of f045b13,
+  (2) new evaluation + that core, (3) new evaluation + this core:
+
+  | set | (1) | (2) | (3) |
+  |---|---|---|---|
+  | own native captures | 110 / 68 / 69 | 123 / 103 / 104 | 123 / 113 / 112 |
+  | ... the busy trunked sites | 57 / 30 / 33 | 83 / 67 / 69 | 83 / 77 / 77 |
+  | public, decoder-confirmed | 357 / 177 / 227 | 343 / 187 / 228 | 343 / 188 / 229 |
+  | ... without ISM OOK / FSK | 110 / 59 / 78 | 96 / 67 / 77 | 96 / 69 / 79 |
+  | discriminator audio | 29 / 11 / 16 | 29 / 13 / 18 | 29 / 13 / 18 |
+  | open set (right) | 42 of 51 | 43 of 53 | 42 of 53 |
+
+  Confirmed per class (1) -> (3): DMR 3 of 5 -> 5 of 6, P25 Phase 1 9 of
+  19 -> 12 of 15, P25 Phase 2 1 of 2 -> 2 of 5, NXDN 2 of 5 -> 5 of 5, YSF
+  1 of 3 -> 3 of 3, TETRA 2 of 3 -> 2 of 3, AIS 0 of 2 -> 2 of 2,
+  radiosonde 3 of 14 -> 6 of 14, ISM FSK 21 -> 22 of 98, ISM OOK 97 of 149
+  (unchanged), WFM 10 of 13, DAB 9 of 9, VOR 3 of 3. **ISM is now the
+  public set's weak spot (128 of its 155 wrong rows) and has not been
+  analysed row by row**
+- Sure labels (p >= the class's `min_p`, else `min_confidence`), right /
+  wrong: own captures 61 / 0 -> 96 / 0 -> 104 / 0 (sure share 0.56 -> 0.85);
+  public confirmed 78 / 8 -> 84 / 8 -> 86 / 8. False labels on single-service
+  own captures 0 sure / 2 unsure throughout; the busy sites 22 / 33 (mostly
+  real channels nobody identified), the intermodulation capture 4 sure
+- Synthetic capture-level regression set (2,000 composed captures of 2 s,
+  composer seed 31, 6,255 signals, track labels): right 0.631 -> 0.648,
+  false labels 176 -> 140 (at a signal's mirror band 61 -> 30); no class
+  loses more than one signal; NXDN / P25 / DMR twins at 30 / 45 / 55 dB now
+  6 of 6 each (NXDN was 6 / 4 / 2). Detector acceptance byte-identical
+- Strict debug playback through a TEST build, two runs: 27 and 28 of 28
+  (f045b13: 28 and 27); the miss is one stray "Unknown OFDM 52 %" among
+  the 14 tracks of `ism-six-devices`; DMR (73-78 %) and DVB-T (72-73 %) are
+  right but unsure
+- Cost per snapshot (i7-11800H, load ~3): one narrow signal 21.6 ms, one
+  wide 29.7 ms (both unchanged); a busy capture with 31 signals 89 -> 98 ms
+  (the second look: 19.5 % of detections on synthetic scenes take it,
+  0.27 % take its answer)
+- **Thresholds, now fitted without any own capture** (`thresholds.py
+  --real-group confirmed`: synthetic validation + the public confirmed rows
+  with crc32(entry id) even): the phase 5 values plus radar 0.863, unk_fsk
+  0.992 and ism_ook 1.006 (never sure); `min_confidence` 0.82. Against the
+  old recipe (which refits to exactly the phase 5 values): own captures 104
+  / 0 either way; the held-out public half 44 / 5 (0.90) -> 35 / 1 (0.97),
+  sure share 0.28 -> 0.21. The price: an "ISM device (OOK)" label is always
+  drawn with "?" - one confidently wrong label in the fitting half does
+  that (the rule is zero-tolerance per class; a precision target would be
+  less blunt), and the OOK / FSK truth of the rtl_433 files is itself
+  unchecked
+- Still wrong on the own captures (10 of 123): 6 channels inside 1.4-2 MHz
+  max-hold "burst" tracks at one crowded site (the bridging rule was not
+  attempted), 1 P25 voice channel merged with the receiver's ~251 kHz hump
+  comb, 1 weak DMR channel merged with a neighbour, a LoRa packet below
+  the noise, a weak FM station. A dPMR recording (no class) reads "NXDN
+  0.98": the model's own output on that channel - dPMR is 4-FSK at 2400
+  symbols/s like NXDN48 - which the old tracker bug had hidden
+
+### Results (2026-11-20, phase 5, the weights still shipped)
 
 The phase 4 weights (no retraining), now model format 3 with the RF table,
 per-class thresholds refitted (`thresholds.py --prec 0.95` on the synthetic

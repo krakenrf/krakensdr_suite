@@ -24,6 +24,10 @@
 //       --snap S (0.5)  --hop S (= snap)  --list FILELIST  --centre HZ (classify)
 //       --requant (cs16 / cf32: quantise to 8 bits like an RTL-SDR first)
 //       --spec-hop N (the short spectrogram's hop, Config::spectrogram_hop)
+//       rule parameters (experiments): --second-view-max HZ (Config::second_view_max_hz, 0 = off)
+//       --image-share X (Config::image_share; 0 = every image candidate dropped)
+//       --min-channel HZ, --core-ratio X (classify --track: TrackerConfig::min_channel_hz /
+//       core_energy_ratio; a huge --min-channel turns the core rule off)
 // Input scale: cu8 = (u - 127.5) / 127.5 (the runtime path); cs16 = v / 32768;
 // cf32 as is (full scale 1.0). --requant turns cs16 / cf32 into cu8 bytes
 // (round(x * 127.5 + 127.5), clipped) and takes the cu8 path.
@@ -54,6 +58,8 @@ struct Opts {
     std::string mode, out, model, list, format, in;
     double rate = 2400000.0, snap = 0.5, hop = 0.0, centre = 0.0, offset = 0.0, rf = 0.0;
     int view = 0, reps = 20, spec_hop = 0;
+    // (rule parameters for experiments; < 0 = the core's default)
+    double second_view_max = -1.0, image_share = -1.0, min_channel = -1.0, core_ratio = -1.0;
     bool track = false, requant = false;
     std::vector<std::string> files;
 };
@@ -269,6 +275,8 @@ std::vector<WView> random_views(int classes, int hidden, uint32_t seed) {
 sigclass::Config cfg_of(const Opts& o) {
     sigclass::Config c;
     if (o.spec_hop > 0) c.spectrogram_hop = o.spec_hop;
+    if (o.second_view_max >= 0.0) c.second_view_max_hz = o.second_view_max;
+    if (o.image_share >= 0.0) c.image_share = float(o.image_share);
     return c;
 }
 
@@ -313,7 +321,10 @@ int mode_classify(const Opts& o) {
     sigclass::Model m;
     if (!load_model(o, m)) { std::fprintf(stderr, "classify: --model needed\n"); return 2; }
     sigclass::Analyzer an(cfg_of(o));
-    sigclass::Tracker tr;
+    sigclass::TrackerConfig tcfg;
+    if (o.min_channel >= 0.0) tcfg.min_channel_hz = o.min_channel;
+    if (o.core_ratio >= 0.0) tcfg.core_energy_ratio = o.core_ratio;
+    sigclass::Tracker tr(tcfg);
     std::string cur;
     auto top3 = [&](int view, const std::vector<float>& p) {
         std::vector<int> idx(p.size());
@@ -336,6 +347,9 @@ int mode_classify(const Opts& o) {
             line += (i ? "," : "") + std::string("{") + det_json(res[i].det) + ",\"top\":" +
                     top3(res[i].det.view, res[i].probs) + "}";
         line += "]";
+        // (the detections also classified in view 0 / those that took its answer)
+        line += ",\"second_view\":[" + std::to_string(an.last_timing().second_view) + "," +
+                std::to_string(an.last_timing().second_view_taken) + "]";
         if (o.track) {
             const auto& ts = tr.update(res, o.centre, t0);   // (offsets relative to the capture unless --centre)
             line += ",\"tracks\":[";
@@ -383,6 +397,7 @@ int mode_bench(const Opts& o) {
         const auto& t = an.last_timing();
         acc.convert_ms += t.convert_ms; acc.frontend_ms += t.frontend_ms; acc.detect_ms += t.detect_ms;
         acc.channelize_ms += t.channelize_ms; acc.features_ms += t.features_ms; acc.model_ms += t.model_ms;
+        acc.second_view += t.second_view; acc.second_view_taken += t.second_view_taken;
         const double t1 = now_ms();
         run(an, snap, o.rate, nullptr, nullptr);
         det_only += now_ms() - t1;
@@ -400,6 +415,8 @@ int mode_bench(const Opts& o) {
     std::printf("  features    %8.3f ms  (%.3f ms / signal)\n", acc.features_ms * k, ns ? acc.features_ms * k / ns : 0.0);
     std::printf("  model       %8.3f ms  (%.3f ms / signal)\n", acc.model_ms * k, ns ? acc.model_ms * k / ns : 0.0);
     std::printf("  total       %8.3f ms per snapshot (wall); detector only %.3f ms\n", wall * k, det_only * k);
+    std::printf("  second view %d of %d detections also classified in view 0, %d took its answer\n", acc.second_view / reps, ns,
+                acc.second_view_taken / reps);
     return 0;
 }
 
@@ -718,6 +735,10 @@ int main(int argc, char** argv) {
         else if (a == "--view") o.view = std::clamp(std::atoi(val().c_str()), 0, sigclass::NUM_VIEWS - 1);
         else if (a == "--reps") o.reps = std::atoi(val().c_str());
         else if (a == "--spec-hop") o.spec_hop = std::atoi(val().c_str());
+        else if (a == "--second-view-max") o.second_view_max = std::atof(val().c_str());
+        else if (a == "--image-share") o.image_share = std::atof(val().c_str());
+        else if (a == "--min-channel") o.min_channel = std::atof(val().c_str());
+        else if (a == "--core-ratio") o.core_ratio = std::atof(val().c_str());
         else if (a == "--track") o.track = true;
         else if (a == "--requant") o.requant = true;
         else if (a.size() > 1 && a[0] == '-' && a[1] == '-') { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }

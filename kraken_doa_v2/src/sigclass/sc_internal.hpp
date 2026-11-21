@@ -53,6 +53,9 @@ struct FrontEnd {
 struct Cand {
     Detection det;
     int centre_bin = 0;     // fine bin of the view centre, -LONG_N/2 .. LONG_N/2-1
+    // at the mirror frequency of a much stronger signal: the analyzer drops it if it
+    // is that signal's conjugate copy
+    bool maybe_image = false;
 };
 
 class Detector {

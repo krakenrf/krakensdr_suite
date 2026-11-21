@@ -64,6 +64,15 @@ struct Config {
     float band_fill_corr = 0.012f;  // ... when its residual autocorrelation exceeds this
     float band_fill_prominence = 4.0f;  // ... as a peak this many times the lags around it
     int spectrogram_hop = 512;      // short spectrogram: 1024-point frames, this hop
+    // a detection a little too wide for view 0 (at most this wide; 0 = off) is also
+    // classified in view 0: a narrow channel measured wide (a shoulder, a neighbour, a
+    // strong signal's skirt) whose class view 1's model does not have - see analyzer.cpp
+    double second_view_max_hz = 40e3;
+    float second_view_min_p = 0.5f;
+    float second_view_skip_p = 0.99f;   // ... not when view 1 is already this sure of its answer
+    // a detection at the mirror frequency of a much stronger signal is its IQ image when
+    // the conjugate of that signal holds at least this share of its view's energy over the noise
+    float image_share = 0.1f;
 };
 
 struct Detection {
@@ -148,6 +157,7 @@ public:
     struct Timing {
         double convert_ms = 0, frontend_ms = 0, spectrogram_ms = 0, detect_ms = 0,
                channelize_ms = 0, features_ms = 0, model_ms = 0, total_ms = 0;
+        int second_view = 0, second_view_taken = 0;   // detections also classified in view 0 / that took its answer
     };
     const Timing& last_timing() const;
     const Config& config() const;
@@ -175,6 +185,16 @@ struct TrackerConfig {
     // one signal = one track: a track whose band lies mostly (this fraction of its
     // width) inside another's is merged into it (see tracker.cpp); 0 = never
     double merge_overlap = 0.5;
+    // ... except a channel's core: a detection / track at least min_channel_hz wide (a
+    // modulated channel, not a carrier line) is not a piece of a wider track that holds
+    // at most core_energy_ratio times its energy (that wider track is its skirt, its
+    // receiver's plateau or a key-up transient around it - not a signal of its own)
+    double min_channel_hz = 2000.0;
+    double core_energy_ratio = 1.5;
+    // ... and a faint continuous pedestal (mean SNR under pedestal_db) is not the band of a
+    // signal at least pedestal_contrast_db stronger inside it
+    float pedestal_db = 3.0f;
+    float pedestal_contrast_db = 10.0f;
 };
 
 struct Track {
@@ -210,6 +230,9 @@ private:
         std::vector<float> logp[NUM_VIEWS];
         int view_hits[NUM_VIEWS] = {0, 0, 0, 0};
         double lo = 0.0, hi = 0.0;   // the band its detections cover (grows at once, shrinks slowly)
+        double energy = 0.0;         // its latest detection's power over the floor x width (x duty when bursty)
+        double det_bw = 0.0;         // ... and that detection's width
+        float look_snr = -100.0f;    // the strongest SNR of its detections (hits and pieces), - 1 dB a snapshot
     };
     TrackerConfig cfg_;
     std::vector<Track> tracks_;
