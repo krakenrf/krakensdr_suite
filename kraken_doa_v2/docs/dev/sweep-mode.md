@@ -1219,6 +1219,29 @@ used"):
   repaint with 57 rows, 16 of them with an 11.9 M-bin set, 16 ms; a wheel
   step (window, trace from the set, plot, full repaint) 21 ms; at 4096
   (512 k bins), 40 rows, 29 with a set: 6 - 8 ms.
+- End to end (2026-11-22, the receiver's 6d5866f and the live-waterfall
+  page work 2eab7de merged with this; a clean test build, the fake
+  heimdall): `t_full.py` against the real engine - the snapshot (or a first
+  completion set), sets after their flag-2 frames on the right rows, the
+  instant zoom (x69 at 433.92 MHz, read back in the same script turn as the
+  zoom: the trace from the set, exact against a brute-force max over its
+  bins, 218 points, 0 wrong; then the live frame takes over), a row made
+  before the zoom with its detail (494 peaks across the plot against 6
+  without its set, exact, 0 black), 146 Hz over the whole range (24 sets,
+  the 16 newest rows keep theirs: 241.8 MB of the 256 MB budget; repaint
+  9 - 10 ms, a wheel step 8 - 9 ms) and 16.4 M bins at 37 Hz (1000 - 1600
+  MHz, dwell 25: 12 rows with a set, 250 MB; repaint 7 ms, wheel step 7
+  ms), Slow link, a range change, a range change while a set is on its way
+  (nothing of the old grid kept), pause, leaving the mode: 31 / 31.
+  `t_slow.py` through a 2 MB/s proxy (`slowproxy.py`; on localhost a set
+  takes milliseconds and a busy page thread doesn't make the socket back up
+  - the browser keeps reading): 16.4 M-bin sets every ~2.8 s, 9 rows, 3
+  sets - the 7 rows without one painted from their window / overview
+  levels, 0 black pixels, every set that came complete; the browser
+  stopped 20 s: 0 black: 9 / 9. Against the receiver before SWEEP_FULL
+  (178f007): no set, the page as before, 10 / 10. The other page worker's
+  picture in sweep mode with Full resolution on (its `t_snap.py` with the
+  switch on): 22 / 22.
 
 **Finer resolutions on the page** (2026-11-21, with the receiver's 178f007;
 the user asked for a finer resolution):
