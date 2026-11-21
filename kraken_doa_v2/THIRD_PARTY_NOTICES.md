@@ -28,6 +28,7 @@ built separately from them: `plugins/ism` and `plugins/flarm` (section 1a).
 | redsea (Oona Räisänen's RDS decoder, github.com/windytan/redsea, commit 7555c9f): the RDS / RBDS lookup tables (character set, PTY names, countries, languages, ODA names, RT+ types, call signs) follow its tables.cc / rdsstring.cc, `rbds_callsign()` its getCallsignFromPI(); two design ideas credited in place (block-sync conditions, biphase pairing) | `plugins/rds/rds_tables.hpp` (+ credits in `rds_block.hpp`, `rds_demod.hpp`) | MIT (the project), ISC (those files' headers), text I |
 | minimp3 (lieff, github.com/lieff/minimp3, commit ea99364): the MPEG audio decoder that turns DAB's MPEG-1 / MPEG-2 Layer II frames into PCM, vendored unchanged | `plugins/dab/minimp3.h` - compiled into the dab plugin | CC0-1.0 (public domain dedication), text J |
 | VisualOn vo-aacenc (`aacenc/src/aac_rom.c`): AAC spectrum code book 11, the scale-factor code book and the 48 kHz long-window scale-factor band offsets, values unchanged | `plugins/dab/tools/dab_gen_aac_tables.hpp` - only in the dab plugin's test-signal generator (`tools/dab_gen.cpp`; the Windows package carries it prebuilt), not in kraken_doa or the plugin | Apache-2.0, text K |
+| whisper.cpp v1.9.4's quantize example (`examples/quantize/quantize.cpp` whisper_model_quantize, `examples/common-ggml.cpp` ggml_common_quantize_0), ported: makes the 8-bit models (`--quantize`) | `transcribe/quantize.cpp` - compiled into the Voice to Text helper `transcribe/build/kraken_whisper` | MIT, text L |
 
 The decoder plugins are written from the published standards and protocol
 descriptions; some protocol facts (frame layouts, constants, calibration
@@ -64,6 +65,7 @@ These are not under the KrakenSDR Source Available Licence (its section 6):
 | GCC runtime (libstdc++, libgcc) | | every program | GPL-3.0 with the GCC Runtime Library Exception | https://gcc.gnu.org/ |
 | GNU C library (glibc) | the system's (Linux, linked dynamically) | every program | LGPL-2.1-or-later | https://www.gnu.org/software/libc/ |
 | whisper.cpp + ggml (optional Voice to Text helper `transcribe/build/kraken_whisper`) | v1.9.4 (`transcribe/setup.sh`) | kraken_whisper | MIT - Copyright (c) 2023-2026 The ggml authors | https://github.com/ggml-org/whisper.cpp |
+| KleidiAI (Arm's matrix kernels for 4- / 8-bit weights, through ggml's `GGML_CPU_KLEIDIAI`) | v1.24.0 (pinned by ggml, fetched by its CMake) - only in builds on 64-bit Arm Linux whose CPU has the dot-product instructions (a Pi 5; `transcribe/setup.sh`) | kraken_whisper | Apache-2.0 - Copyright 2024-2026 Arm Limited and/or its affiliates | https://github.com/ARM-software/kleidiai |
 
 ## 3. Software you install separately
 
@@ -663,4 +665,34 @@ make_aac_tables.py; values unchanged, layout reformatted. Distributed on an
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+```
+
+### L. whisper.cpp quantize example (MIT)
+
+The notice kept at the top of `transcribe/quantize.cpp`
+(https://github.com/ggml-org/whisper.cpp, v1.9.4, `examples/quantize/`,
+`examples/common-ggml.cpp`):
+
+```
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```

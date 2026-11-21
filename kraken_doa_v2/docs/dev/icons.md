@@ -136,7 +136,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `ship` `anchor` | a ship, an aid to navigation |
 | `glider` `heli` `balloon` | FLARM / OGN paraglider, helicopter, balloon (also a radiosonde) |
 | `pager` `phone` | a device / pager, a cell |
-| `sos` `paw` `mic` | a SAR beacon, a wildlife collar, a broadcast |
+| `sos` `paw` `mic` | a SAR beacon, a wildlife collar, a broadcast; `mic` also a transmission still on the air in the Transcription panel (Live text, 2026-11-20; `hourglass` once it ended, its final coming) |
 | `car` `person` | a vehicle, a person (map search) |
 
 The kinds in the last rows are what the DF panel's talker list and the map
