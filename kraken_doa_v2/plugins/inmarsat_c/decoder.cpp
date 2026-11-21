@@ -50,6 +50,12 @@ std::string fmt(const char* f, double v) {
     return b;
 }
 
+std::string fmti(const char* f, unsigned v) {
+    char b[128];
+    std::snprintf(b, sizeof b, f, v);
+    return b;
+}
+
 }  // namespace
 
 class InmarsatC : public kp::Decoder {
@@ -203,7 +209,9 @@ private:
         const double fe = demod_.carrier_hz();
         host.freq_error(static_cast<float>(fe));
         host.fact("Carrier", fmt("%+.1f Hz", fe) + ", Es/N0 " + fmt("%.1f dB", demod_.esn0_db()));
+        have_origin_ = false;
         for (const inmc::Packet& p : w.packets) packet(fr.bytes.data() + p.offset, p.len, t0, t1);
+        satellite_talker(t0, t1);
         update_counters();
     }
 
@@ -280,6 +288,32 @@ private:
             host.event("Receiving " + who + fmt(", carrier %+.0f Hz", demod_.carrier_hz()), 60);
         }
         if (!std::isnan(host.rf_hz())) last_rf_ok_ = true;
+        origin_ = bb.origin;
+        have_origin_ = true;
+    }
+
+    // The RF transmitter of a TDM is the ocean region's satellite (the NCS /
+    // LES only feeds it): one talker per ocean region. Each decoded frame
+    // gives 8 packets of 0.24 s spread over it (the carrier's own 3 kHz
+    // filtered out of the VFO), averaged over 60 s - a fixed transmitter.
+    void satellite_talker(double t0, double t1) {
+        if (!have_origin_) return;
+        const std::string id = std::string("Inmarsat ") + inmc::region_name(inmc::station_region(origin_));
+        const std::string label = std::string(inmc::station_is_ncs(origin_) ? "NCS " : "LES ") + inmc::station_id(origin_);
+        constexpr int K = 8;
+        for (int k = 0; k < K; k++) {
+            kp::Talker t;
+            t.id = id;
+            t.label = label;
+            t.packet = true;
+            t.start_s = t0 + (t1 - t0) * (k + 0.5) / K - 0.12;
+            t.end_s = t.start_s + 0.24;
+            t.freq_hz = demod_.carrier_hz();   // where the carrier is in the input (the host AFC moves it to 0)
+            t.bw_hz = 3000;
+            t.avg_s = 60;
+            t.keep_s = 1800;
+            host.talker(t);
+        }
     }
 
     void sig_descriptor(const uint8_t* p, int n) {
@@ -335,7 +369,7 @@ private:
         const char* name = inmc::egc_service_name(m.service);
         char b[160];
         std::snprintf(b, sizeof b, "%s %s, %s, LES %s, msg %d", inmc::egc_service_family(m.service),
-                      name ? name : fmt("service %02X", m.service).c_str(), inmc::egc_address_text(m.service, m.address).c_str(),
+                      name ? name : fmti("service %02X", m.service).c_str(), inmc::egc_address_text(m.service, m.address).c_str(),
                       inmc::station_id(m.les).c_str(), m.msn);
         return b;
     }
@@ -349,16 +383,16 @@ private:
         if (perr) state += fmt(", %.0f parity errors", perr);
         char pk[32];
         std::snprintf(pk, sizeof pk, "%d%s", static_cast<int>(m.have.size()), m.last_seq ? fmt(" / %.0f", m.last_seq).c_str() : "");
-        host.table_row(m.key, {name ? name : fmt("%02X", m.service), inmc::egc_address_text(m.service, m.address),
+        host.table_row(m.key, {name ? name : fmti("%02X", m.service), inmc::egc_address_text(m.service, m.address),
                                inmc::station_id(m.les), std::to_string(m.msn), pk, state,
                                kp::printable(one_line(text, 80))});
         std::vector<std::pair<std::string, std::string>> d;
-        d.push_back({"Service", fmt("%02X ", m.service) + (name ? name : "") + " (" + inmc::egc_service_family(m.service) + ")"});
+        d.push_back({"Service", fmti("%02X ", m.service) + (name ? name : "") + " (" + inmc::egc_service_family(m.service) + ")"});
         d.push_back({"Address", inmc::egc_address_text(m.service, m.address)});
         d.push_back({"LES", inmc::station_id(m.les) + " (" + inmc::region_name(inmc::station_region(m.les)) + ")"});
         d.push_back({"Message sequence number", std::to_string(m.msn)});
-        d.push_back({"Flags", fmt("%02X (bit 7 = more packets follow; the priority's coding is not decoded)", m.flags)});
-        d.push_back({"Presentation", fmt("%02X ", m.presentation) + inmc::presentation_name(m.presentation)});
+        d.push_back({"Flags", fmti("%02X (bit 7 = more packets follow; the priority's coding is not decoded)", m.flags)});
+        d.push_back({"Presentation", fmti("%02X ", m.presentation) + inmc::presentation_name(m.presentation)});
         std::string ms;
         for (int s : miss) ms += (ms.empty() ? "" : ", ") + std::to_string(s);
         if (!ms.empty()) d.push_back({"Missing packets", ms});
@@ -428,6 +462,8 @@ private:
     long long egc_msgs_ = 0, egc_complete_ = 0, egc_repeats_ = 0, egc_bad_header_ = 0;
     bool show_repeats_ = false;
     bool locked_reported_ = false, last_rf_ok_ = false;
+    uint8_t origin_ = 0;
+    bool have_origin_ = false;
     std::string channel_;
 };
 
@@ -444,4 +480,6 @@ KRAKEN_PLUGIN(InmarsatC, {.id = "inmarsat_c",
                           .author = "KrakenRF",
                           .options = {{"repeats", "Repeated EGC messages", "0", "0=Suppress|1=Show again",
                                        "EGC messages are broadcast several times (minutes to 24 h apart): each one is "
-                                       "shown once; Show again adds an event for each repeat"}}})
+                                       "shown once; Show again adds an event for each repeat"}},
+                          .talkers = true,
+                          .squelch_hold_s = 9.5})

@@ -8,10 +8,17 @@ content only.
 
   inmc_gen.py OUT.cf32 [--rate 48000] [--frames 3] [--start-symbol 3000]
       [--offset HZ] [--drift HZ_PER_S] [--esn0 DB] [--seed N] [--invert]
-      [--origin 144] [--frame0 5000] [--lead S]
+      [--origin 144] [--frame0 5000] [--lead S] [--tail S] [--egc-frame N]
       [--egc "SERVICE:ADDRESS:LES:MSN:TEXT"] ...   (repeat for more messages)
       [--repeat]     every EGC message is sent a second time after the first
       [--drop SEQ]   leave packet SEQ of the first message out of its first sending
+
+--origin is the NCS / LES whose channel it is (x44..x63 = an NCS common
+channel, else a LES TDM); --tail 0 with --start-symbol 0 makes a file of whole
+frames that loops without a seam (keep offset x duration a whole number of
+cycles). The physical layer was checked against the real recording: the
+frames this script builds from the 639 bytes decoded off the air reproduce
+every received symbol.
 
 SERVICE is the hex service code (31 = MET / NAVAREA, 00 = all ships, 13 =
 coastal, 14 = distress alert to a circular area, 02 = group call ...),
@@ -134,6 +141,7 @@ def main():
     ap.add_argument("--frames", type=int, default=3)
     ap.add_argument("--start-symbol", type=int, default=3000, help="the file starts this many symbols into a frame")
     ap.add_argument("--lead", type=float, default=0.0, help="seconds of noise before the signal")
+    ap.add_argument("--tail", type=float, default=0.3, help="seconds of noise after it (0: a seamless loop of whole frames)")
     ap.add_argument("--offset", type=float, default=0.0)
     ap.add_argument("--drift", type=float, default=0.0)
     ap.add_argument("--esn0", type=float, default=None)
@@ -144,6 +152,7 @@ def main():
     ap.add_argument("--egc", action="append", default=[])
     ap.add_argument("--repeat", action="store_true")
     ap.add_argument("--drop", type=int, default=0)
+    ap.add_argument("--egc-frame", type=int, default=0, help="the first frame that carries EGC packets")
     ap.add_argument("--fill", type=int, default=6, help="filler packets per frame")
     a = ap.parse_args()
     rng = np.random.default_rng(a.seed)
@@ -172,7 +181,7 @@ def main():
         info += packet(0x6C, [0xB4, 10056 >> 8, 10056 & 255] + [0x02, 0x00, 0x08, 0x00, 0x08, 0x00, 0x02])
         # EGC packets while they fit (at most ~2 messages' worth per frame, as on the air)
         used = 0
-        while queue and len(info) + len(queue[0]) <= 600 and used < 6:
+        while f >= a.egc_frame and queue and len(info) + len(queue[0]) <= 600 and used < 6:
             info += queue.pop(0)
             used += 1
         for _ in range(a.fill):
@@ -196,7 +205,7 @@ def main():
     ph = 2 * np.pi * (a.offset * t + 0.5 * a.drift * t * t) + rng.uniform(0, 2 * np.pi)
     x = x * np.exp(1j * ph)
     lead = int(a.lead * a.rate)
-    x = np.concatenate([np.zeros(lead, complex), x])
+    x = np.concatenate([np.zeros(lead, complex), x, np.zeros(int(a.tail * a.rate), complex)])
     if a.esn0 is not None:
         # unit symbol energy: Es/N0 = 1 / (sigma^2 / sps) -> sigma^2 = sps / 10^(esn0/10) ... per sample
         p = np.mean(np.abs(x[lead:]) ** 2)
