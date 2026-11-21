@@ -162,7 +162,11 @@ double decoder_need_hz(const std::string& dec) {
         dig::PluginInfo pi;
         if (dig::PluginRegistry::instance().get(dec.substr(7), &pi)) return pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500;
     }
-    return 24000;   // Auto detect / off (TETRA's 24 kHz)
+    // Auto detect / off: none - Auto detect runs every plugin at any VFO
+    // width (the ones that need more on internal streams; until 2026-11 it
+    // was TETRA's 24 kHz, and Auto detect left out what needed more than
+    // twice the VFO's rate)
+    return 0;
 }
 
 void tunable_range(uint64_t* lo, uint64_t* hi) {

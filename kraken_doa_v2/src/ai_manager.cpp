@@ -834,8 +834,11 @@ std::string AiManager::conversation_dir() const {
 }
 
 std::string AiManager::plugins_message() {
+    // auto_streams: Auto detect works at any VFO width - plugins that need a
+    // wider one run on internal streams (digital-decoders.md); an older
+    // receiver sends no such key, and its page then warns / widens as before
     return "{\"plugins\":" + dig::PluginRegistry::instance().list_json() + ",\"plugin_dir\":\"" +
-           json_escape(dig::PluginRegistry::dir()) + "\"}";
+           json_escape(dig::PluginRegistry::dir()) + "\",\"auto_streams\":true}";
 }
 
 std::string AiManager::state_json(bool with_log) const {

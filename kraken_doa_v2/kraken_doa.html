@@ -200,6 +200,8 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .btn.sm {padding:3px 8px;font-size:12px}
 .cv {color:var(--ac-t);font-size:12px;margin-left:5px}
 .dig-warn {background:#3a2a10;border:1px solid var(--warn-m);color:var(--warn-t2);font-size:11px;padding:5px 6px;border-radius:3px;margin:4px 0;display:flex;gap:6px;align-items:center;justify-content:space-between}
+/* information in the same place (Auto detect on an internal stream): no warning colours */
+.dig-note {background:var(--s3);border:1px solid var(--l2);color:var(--t2);font-size:11px;padding:5px 6px;border-radius:3px;margin:4px 0;display:flex;gap:6px;align-items:center;justify-content:space-between}
 .dig-help {font-size:11px;color:var(--t3);line-height:1.4;margin:4px 0}
 .dig-status {font-size:12px;color:var(--t3);line-height:1.7;margin-top:4px}
 .dig-status div {display:flex;justify-content:space-between}
@@ -10274,10 +10276,13 @@ function setDecimatorDemodMode(id, mode, keepBw) {
   }
 
   // Digital voice: keep the VFO's bandwidth, widened only if its decoder
-  // needs more (TETRA / Auto detect need 24 kHz - the NBFM 16 kHz below
-  // starved them)
+  // needs more (TETRA needs 24 kHz - the NBFM 16 kHz below starved it).
+  // Auto detect on a receiver that makes internal streams works at any
+  // width: nothing is widened for it (an older receiver: its largest need)
   if (mode === 'DIGITAL') {
-    const need = digMinRateK(dec && dec.digital_mode && dec.digital_mode !== 'OFF' ? dec.digital_mode : 'AUTO') || 24;
+    const dm = dec && dec.digital_mode && dec.digital_mode !== 'OFF' ? dec.digital_mode : 'AUTO';
+    if (dm === 'AUTO' && digAutoStreams) return;
+    const need = digMinRateK(dm, id) || 24;
     const have = dec ? decBwHz(dec) / 1000 : 0;
     if (have + 1e-6 < need) digFixBandwidthFor(id);
     return;
@@ -10983,7 +10988,7 @@ function connect() {
           else if(msg.rdf) { rdfOnStatus(msg.rdf, false); }
           else if(msg.rdf_part) { rdfOnStatus(msg.rdf_part, true); }
           else if(msg.rdf_grid) { rdfOnGrid(msg.rdf_grid); }
-          else if(msg.plugins) { digOnPlugins(msg.plugins); }
+          else if(msg.plugins) { digOnPlugins(msg.plugins, msg); }
           else if(msg.codecs) { digOnCodecs(msg.codecs); }
           else if(msg.declog) { dlOnStatus(msg.declog); }
           else if(msg.playback) { pbOnMessage(msg.playback); }
@@ -13572,6 +13577,10 @@ function addTouchHandlers(el, down, move, up) {
   const digHistoryAsked = {};   // VFO id -> mode the history was asked for
   const DIG_MAX_EVENTS = 400;
   let digPlugins = [];          // {"plugins":[...]} (dig_plugin.cpp list_json)
+  // the receiver runs Auto detect at any VFO width - a plugin that needs more
+  // gets an internal stream of its own ("auto_streams" next to the plugin
+  // list, 2026-11); false = an older receiver: the page warns / widens as before
+  let digAutoStreams = false;
   let digTabShown = null;       // decoder tab shown: plugin id
   // removed VFOs' events, for their modes' tabs: [{vfo, mhz, ev}] (this page only)
   let digArchive = [];
@@ -13845,9 +13854,19 @@ function addTouchHandlers(el, down, move, up) {
     drawBox();
     if (typeof paneDrawAllOverlays === 'function') paneDrawAllOverlays();
   }
-  // VFO bandwidth (kHz) the mode needs
-  function digMinRateK(mode) {
-    if (mode === 'AUTO') return Math.max(0, ...digAutoPlugins().map(p => p.min_vfo_rate || 0)) / 1000;
+  // VFO bandwidth (kHz) the mode needs. Auto detect: on a receiver that makes
+  // internal streams (digAutoStreams) none - it works at any width; once it
+  // locked onto a plugin, that plugin's (the note + "Set" in its tab; id = the
+  // VFO). On an older receiver: the largest of the ticked plugins, as before
+  function digMinRateK(mode, id) {
+    if (mode === 'AUTO') {
+      if (digAutoStreams) {
+        const st = id !== undefined ? digStatus[id] : null;
+        const p = st && st.detected ? digPlugin(st.detected) : null;
+        return p ? (p.min_vfo_rate || 0) / 1000 : 0;
+      }
+      return Math.max(0, ...digAutoPlugins().map(p => p.min_vfo_rate || 0)) / 1000;
+    }
     const p = digPlugin(digModePlugin(mode));
     return p ? (p.min_vfo_rate || 12500) / 1000 : 0;
   }
@@ -14142,8 +14161,9 @@ function addTouchHandlers(el, down, move, up) {
     return ['#f4c170', mode === 'AUTO' ? 'Searching…' : 'No ' + digShort(digModeLabel(mode)) + ' signal'];
   }
 
-  function digOnPlugins(list) {
+  function digOnPlugins(list, msg) {
     digPlugins = list || [];
+    digAutoStreams = !!(msg && msg.auto_streams);
     // the panel opened (page load) before the plugin list: now there may be
     // tabs - or the restored one is not installed here any more
     if (infoOpen('dec') && !digTabList().includes(infoTab.slice(4))) infoPanelOpen('dec');
@@ -14322,11 +14342,14 @@ function addTouchHandlers(el, down, move, up) {
     infoRenderDecoder(true);
   }
 
-  // the narrowest efficient size at or above the mode's minimum
+  // the narrowest efficient size at or above the mode's minimum (Auto detect
+  // with internal streams: the plugin it locked onto - nothing while it searches)
   function digFixBandwidthFor(id) {
     const d = digDec(id);
     if (!d) return;
-    setDecimatorBandwidthHzFromUI(d.id, bwAtLeastEfficient((digMinRateK(d.digital_mode) || 24) * 1000));
+    const need = digMinRateK(d.digital_mode, d.id);
+    if (!need && d.digital_mode === 'AUTO' && digAutoStreams) return;
+    setDecimatorBandwidthHzFromUI(d.id, bwAtLeastEfficient((need || 24) * 1000));
     digRenderAll();
   }
 
@@ -14390,6 +14413,11 @@ function addTouchHandlers(el, down, move, up) {
     const frames = fr[tab] ? `${fr[tab][0]} (total ${fr[tab][1]})` : '0';
     rows += `<tr><td>Carrier offset</td><td>${st.detected ? (st.offset_hz > 0 ? '+' : '') + st.offset_hz + ' Hz' : '-'}</td></tr>` +
             `<tr><td>Valid frames (4 s)</td><td>${digEsc(frames)}</td></tr>`;
+    // Auto detect runs this plugin on an internal stream wider than the VFO (status stream_hz)
+    const sp = (st.plugins || []).find(x => x.id === tab);
+    if (sp && sp.stream_hz > 0)
+      rows += `<tr title="Auto detect decodes it from a stream of its own at the VFO's centre, as wide as it needs"><td>Stream</td>` +
+              `<td>${digEsc(bwLabel(sp.stream_hz))}${d ? ' (VFO ' + digEsc(bwLabel(decBwHz(d))) + ')' : ''}</td></tr>`;
     const info = st.info || {};
     for (const p of Object.keys(info).filter(p => p === tab)) {
       for (const [k, v, age] of info[p])
@@ -15669,10 +15697,22 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         opts += `<label${tip}>${digEsc(op.label || op.key)} <input type="text" data-key="${digEsc(key)}" value="${digEsc(v)}" placeholder="${digEsc(op.default || 'default')}" style="width:70px"` +
                 ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetOptFor(${id}, this.dataset.key, this.value.trim())"></label>`;
     }
-    const needK = digMinRateK(mode);
+    const needK = digMinRateK(mode, id);
     const haveK = d ? decBwHz(d) / 1000 : 0;
     let warn = '';
-    if (d && haveK + 1e-6 < needK) {
+    if (d && haveK + 1e-6 < needK && mode === 'AUTO' && digAutoStreams) {
+      // Auto detect locked onto a plugin that needs more than the VFO has: it
+      // decodes from an internal stream of its own (status stream_hz) - a note,
+      // not a fault; Set widens the VFO (DoA, squelch and the bar then take the
+      // whole signal, the plugin the VFO's own stream)
+      const fix = bwAtLeastEfficient(needK * 1000);
+      const pl = (st && st.plugins || []).find(x => x.id === st.detected);
+      const sw = pl && pl.stream_hz > 0 ? pl.stream_hz : fix;
+      const nm = digShort(digName(st.detected));
+      warn += `<div class="dig-note" title="${digEsc(`Auto detect gives ${nm} the ${bwLabel(sw)} it needs from a stream of its own, centred on this VFO; the VFO stays ${bwLabel(haveK * 1000)}, so its DoA, squelch and level take only that part of the signal.`)}">` +
+              `<span>D${id}: ${digEsc(nm)} decoded from a ${digEsc(bwLabel(sw))} stream</span>` +
+              `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})" title="${digEsc(`Widen this VFO to ${bwLabel(fix)}: DoA, squelch and the bar then take the whole signal, and ${nm} the VFO's own stream`)}">Set ${digEsc(bwLabel(fix))}</button></div>`;
+    } else if (d && haveK + 1e-6 < needK) {
       const fix = bwAtLeastEfficient(needK * 1000);
       warn += `<div class="dig-warn"><span>D${id}: VFO bandwidth ${digEsc(bwLabel(haveK * 1000))} is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
               `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})">Set ${digEsc(bwLabel(fix))}</button></div>`;

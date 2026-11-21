@@ -101,6 +101,68 @@ static inline bool doa_retune_hold_active() {
     return t != 0 && (steady_now_ms() - t) < RETUNE_DOA_MIN_HOLD_MS;
 }
 
+// Auto detect's internal streams (dig::StreamWant; docs/dev/digital-decoders.md
+// "Internal streams"): a VFO whose decoder in Auto detect runs plugins that
+// need more bandwidth than the VFO has gets, per width its decoder wants, a
+// SharedDecimator of that width at the VFO's offset - decimated in the VFO's
+// pass, handed to the decoder with the VFO's block. Not VFOs: no
+// DecimatorInstance, no MUSIC / squelch / list / settings. Owned by the
+// decimation thread alone (created, reconfigured, freed there); a set goes
+// as soon as its VFO no longer wants one (decoder off / fixed / VFO wide
+// enough / deleted)
+namespace {
+struct AutoStream {
+    int width = 0;
+    bool mc = false;                                  // every antenna (a multichannel plugin on it)
+    std::unique_ptr<SharedDecimator> dec;
+    double delay_s = 0;                               // its cascade's delay (groupDelaySeconds)
+    SharedDecimator::MultiChannelDecimated out;       // this block
+    size_t src = 0;                                   // the listened-to channel's index in out
+    vector<complex<int16_t>> mcbuf;                   // every antenna packed for the decoder
+};
+struct AutoStreamSet {
+    weak_ptr<DecimatorManager::DecimatorInstance> vfo;
+    const DecimatorManager::DecimatorInstance* key = nullptr;
+    uint32_t gen = 0;
+    bool have_gen = false;
+    vector<AutoStream> streams;
+    int vfo_bw = 0;
+    double vfo_delay_s = 0;                           // the VFO's own cascade's delay
+    bool seen = false;                                // in this block's pass
+};
+
+// The set's decimators follow the decoder's wanted widths (a width kept keeps
+// its filter state; only a change allocates)
+void sync_auto_streams(AutoStreamSet& set, const dig::DigitalDecoder& dd, int vfo_id) {
+    const uint32_t gen = dd.streams_gen();
+    if (set.have_gen && gen == set.gen) return;
+    set.gen = gen;
+    set.have_gen = true;
+    dig::StreamWant w[dig::DigitalDecoder::MAX_STREAMS];
+    const int n = dd.wanted_streams(w);
+    vector<AutoStream> next;
+    next.reserve(static_cast<size_t>(n));
+    std::string list;
+    for (int i = 0; i < n; i++) list += (i ? ", " : "") + std::to_string(w[i].width_hz) + (w[i].mc ? " Hz (every antenna)" : " Hz");
+    cout << "Auto detect: VFO " << vfo_id << " internal streams: " << (n ? list : "none") << endl;
+    for (int i = 0; i < n; i++) {
+        AutoStream s;
+        for (auto& o : set.streams)
+            if (o.dec && o.width == w[i].width_hz) s = std::move(o);
+        if (!s.dec) {
+            s.width = w[i].width_hz;
+            s.dec = make_unique<SharedDecimator>();
+            s.dec->initialize(MAX_CHANNELS);
+            s.dec->setBandwidthHz(s.width);
+            s.delay_s = SharedDecimator::groupDelaySeconds(s.width);
+        }
+        s.mc = w[i].mc;
+        next.push_back(std::move(s));
+    }
+    set.streams = std::move(next);   // the ones not wanted any more go here
+}
+}  // namespace
+
 
 void DataReceiver::data_receiver_thread() {
     // OPTIMIZATION: Register thread and get index for lock-free stats access
@@ -601,7 +663,12 @@ void DataReceiver::decimation_processor_thread() {
     
     cout << "Decimation processor thread started" << endl;
     cout << "Working with pre-converted float IQ data for efficiency" << endl;
-    
+
+    // Auto detect's internal streams, per VFO that wants them (this thread
+    // only); vfo_auto = each VFO's set in the block being processed
+    vector<AutoStreamSet> auto_sets;
+    vector<AutoStreamSet*> vfo_auto;
+
     while (running) {
         RawDataPacket raw_packet;
 
@@ -773,6 +840,76 @@ void DataReceiver::decimation_processor_thread() {
                 }
             }
 
+            // Auto detect's internal streams (AutoStreamSet above): extra
+            // blocks in the same pass, at the VFO's offset (read once, with
+            // its block), on the VFO's channel choice - the listened-to
+            // channel (wideband / independent: the VFO's tuner); every
+            // antenna only for a stream with a multichannel plugin, when the
+            // VFO's own stream would get them (coherent, not FM only). Nothing
+            // at all for a VFO that wants none
+            for (auto& s : auto_sets) s.seen = false;
+            vfo_auto.assign(num_vfos, nullptr);
+            for (size_t v = 0; v < num_vfos; v++) {
+                const auto& inst = active_decimators[v];
+                if (inst->digital_mode.load(std::memory_order_relaxed) != static_cast<int>(dig::Mode::AUTO)) continue;
+                const auto dd = inst->getDigital();
+                if (!dd || !dd->internal_streams() || !dd->wants_streams()) continue;
+                AutoStreamSet* set = nullptr;
+                for (auto& s : auto_sets)
+                    if (s.key == inst.get() && s.vfo.lock() == inst) set = &s;
+                if (!set) {
+                    auto_sets.emplace_back();
+                    set = &auto_sets.back();
+                    set->vfo = inst;
+                    set->key = inst.get();
+                }
+                set->seen = true;
+                sync_auto_streams(*set, *dd, inst->id);
+                if (set->vfo_bw != vfo_blocks[v].bandwidth_hz) {
+                    set->vfo_bw = vfo_blocks[v].bandwidth_hz;
+                    set->vfo_delay_s = SharedDecimator::groupDelaySeconds(set->vfo_bw);
+                }
+            }
+            // a set no VFO wants any more goes (its decimators with it)
+            auto_sets.erase(std::remove_if(auto_sets.begin(), auto_sets.end(),
+                                           [](const AutoStreamSet& s) {
+                                               if (!s.seen) cout << "Auto detect: internal streams freed" << endl;
+                                               return !s.seen;
+                                           }),
+                            auto_sets.end());
+            for (auto& s : auto_sets)
+                for (size_t v = 0; v < num_vfos; v++)
+                    if (active_decimators[v].get() == s.key) vfo_auto[v] = &s;
+            for (size_t v = 0; v < num_vfos; v++) {
+                if (!vfo_auto[v]) continue;
+                const auto& inst = active_decimators[v];
+                for (auto& st : vfo_auto[v]->streams) {
+                    SharedDecimator::VfoBlock b;
+                    b.decimator = st.dec.get();
+                    b.bandwidth_hz = st.width;
+                    b.freq_offset_hz = vfo_blocks[v].freq_offset_hz;
+                    b.out = &st.out;
+                    auto take = [&raw_packet, &b](int ch) {
+                        if (b.num_channels >= static_cast<size_t>(MAX_CHANNELS)) return;
+                        if (ch >= 0 && ch < static_cast<int>(raw_packet.channel_iq_data.size())) {
+                            b.ptrs[b.num_channels] = raw_packet.channel_iq_data[ch].data();
+                            b.lens[b.num_channels] = raw_packet.channel_iq_data[ch].size();
+                        }
+                        b.num_channels++;
+                    };
+                    st.src = 0;
+                    if (wideband_enabled) {
+                        take(inst->tuner_channel.load(std::memory_order_relaxed));
+                    } else if (fm_only || !st.mc) {
+                        take(current_active);
+                    } else {
+                        for (int ch = 0; ch < packet_elements; ch++) take(ch);
+                        st.src = static_cast<size_t>(std::max(0, current_active));
+                    }
+                    vfo_blocks.push_back(b);
+                }
+            }
+
             // Timed for the dashboard's "decimate" figure: the whole pass up
             // to the barrier (the decimation + every VFO's MUSIC task).
             const auto pass_start = steady_clock::now();
@@ -783,10 +920,12 @@ void DataReceiver::decimation_processor_thread() {
             // VFO's own decimateMultiChannel read every antenna's block
             // again). One VFO: exactly its decimateMultiChannel
             try {
-                SharedDecimator::decimateVfos(vfo_blocks.data(), num_vfos);
+                SharedDecimator::decimateVfos(vfo_blocks.data(), vfo_blocks.size());   // the VFOs + internal streams
             } catch (const std::exception& e) {
                 cerr << "Decimation error: " << e.what() << endl;
                 for (auto& r : results) r.decimated_data = SharedDecimator::MultiChannelDecimated();
+                for (auto& s : auto_sets)
+                    for (auto& st : s.streams) st.out = SharedDecimator::MultiChannelDecimated();
             }
 
             // Per VFO after the decimation: its stream position, squelch,
@@ -1003,19 +1142,22 @@ void DataReceiver::decimation_processor_thread() {
 
             // Digital decoders: fed the same stream as the FM audio would be -
             // the beamformer output when beamforming ran for this VFO (empty
-            // while FD-DAS fills: skip, never mix in raw blocks), else the
-            // listened-to channel. Before the FM queueing, which moves the
-            // beamformed samples out.
+            // while FD-DAS fills, and on about one block in three after: its
+            // 256-point frames are longer than a narrow VFO's ~85 samples a
+            // block - no VFO samples then, never mixed-in raw blocks), else
+            // the listened-to channel. Before the FM queueing, which moves
+            // the beamformed samples out. Auto detect's internal streams go
+            // with every block they were decimated in, VFO samples or not
             if (digital_needs_processing) {
                 for (auto& result : results) {
                     const auto& inst = result.instance;
                     if (!inst || inst->digital_mode.load(std::memory_order_relaxed) == 0) continue;
-                    if (result.decimated_data.channels.empty() || result.decimated_data.min_samples == 0) continue;
+                    const bool vfo_ok = !result.decimated_data.channels.empty() && result.decimated_data.min_samples > 0;
                     auto dd = inst->getDigital();
                     if (!dd) continue;
                     // array plugins (kp::Info::array): every antenna's block, not
                     // during a noise-source calibration / retune hold (like MUSIC)
-                    if (dd->wants_array() && !doa_is_calibrating() && !doa_retune_hold_active()) {
+                    if (vfo_ok && dd->wants_array() && !doa_is_calibrating() && !doa_retune_hold_active()) {
                         const auto& chs = result.decimated_data.channels;
                         const size_t ns = result.decimated_data.min_samples;
                         const complex<float>* ptr[8];
@@ -1032,14 +1174,16 @@ void DataReceiver::decimation_processor_thread() {
                                            result.decimated_data.stream_pos);
                     }
                     const vector<complex<float>>* src = nullptr;
-                    if (result.beamformer_ran) {
+                    if (!vfo_ok) {
+                        // (no VFO samples this block)
+                    } else if (result.beamformer_ran) {
                         if (result.have_beamformed) src = &result.beamformed_samples;
                     } else {
                         int idx = (wideband_enabled || fm_only) ? 0 : current_active;
                         if (idx < static_cast<int>(result.decimated_data.channels.size()))
                             src = &result.decimated_data.channels[idx].samples;
                     }
-                    if (!src || src->empty()) continue;
+                    if (src && src->empty()) src = nullptr;
                     int tuner = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : 0;
                     if (tuner < 0 || tuner >= MAX_CHANNELS) tuner = 0;
                     double rf = static_cast<double>(exact_tuner_hz(tuner)) + result.decimated_data.freq_offset_hz;
@@ -1052,8 +1196,8 @@ void DataReceiver::decimation_processor_thread() {
                     const std::complex<int16_t>* mc = nullptr;
                     int mc_m = 0;
                     const auto& chs = result.decimated_data.channels;
-                    const size_t n = src->size();
-                    if (dd->wants_multichannel() && !wideband_enabled && !fm_only && chs.size() >= 2 &&
+                    const size_t n = src ? src->size() : 0;
+                    if (n && dd->wants_multichannel() && !wideband_enabled && !fm_only && chs.size() >= 2 &&
                         n == result.decimated_data.min_samples) {
                         const int m = static_cast<int>(std::min<size_t>(chs.size(), 8));
                         bool ok = true;
@@ -1072,8 +1216,57 @@ void DataReceiver::decimation_processor_thread() {
                             mc_m = m;
                         }
                     }
-                    dd->push(src->data(), n, result.decimated_data.output_rate_hz, rf,
-                             result.decimated_data.stream_pos, mc, mc_m);
+                    // Auto detect's internal streams of this block, in the
+                    // VFO's stream positions: the VFO's block starts at
+                    // stream_pos, and a wider stream's cascade is shorter - what
+                    // it shows reaches the VFO's stream (vfo_delay - its
+                    // delay) later. Pushed with the VFO's block - and without
+                    // one when the VFO has none this time (the beamformer held
+                    // its samples back: they come later, in a bigger block;
+                    // an internal block not pushed now would be lost). Its
+                    // positions come from the decimated block's stream_pos,
+                    // never from the beamformer's output. Every antenna as the
+                    // VFO's own stream would get them
+                    dig::AuxStream aux[dig::DigitalDecoder::MAX_STREAMS];
+                    size_t naux = 0;
+                    const size_t vi = static_cast<size_t>(&result - results.data());
+                    if (AutoStreamSet* set = vi < vfo_auto.size() ? vfo_auto[vi] : nullptr) {
+                        const double vrate = result.decimated_data.output_rate_hz;
+                        for (auto& st : set->streams) {
+                            if (naux >= static_cast<size_t>(dig::DigitalDecoder::MAX_STREAMS)) break;
+                            const auto& o = st.out;
+                            if (o.min_samples == 0 || st.src >= o.channels.size()) continue;
+                            const auto& ss = o.channels[st.src].samples;
+                            if (ss.empty()) continue;
+                            dig::AuxStream& a = aux[naux++];
+                            a.width_hz = st.width;
+                            a.rate_hz = o.output_rate_hz;
+                            a.x = ss.data();
+                            a.n = ss.size();
+                            a.pos = static_cast<double>(result.decimated_data.stream_pos) +
+                                    (set->vfo_delay_s - st.delay_s) * vrate;
+                            if (st.mc && !wideband_enabled && !fm_only && o.channels.size() >= 2 && a.n == o.min_samples) {
+                                const int m = static_cast<int>(std::min<size_t>(o.channels.size(), 8));
+                                bool ok = true;
+                                for (int k = 0; k < m; k++) ok = ok && o.channels[static_cast<size_t>(k)].samples.size() >= a.n;
+                                if (ok) {
+                                    st.mcbuf.resize(a.n * static_cast<size_t>(m));
+                                    const float sc = dig::DigitalDecoder::MC_SCALE;
+                                    auto s16 = [](float v) { return static_cast<int16_t>(std::clamp(v, -32767.0f, 32767.0f)); };
+                                    for (int k = 0; k < m; k++) {
+                                        const complex<float>* q = o.channels[static_cast<size_t>(k)].samples.data();
+                                        for (size_t i = 0; i < a.n; i++)
+                                            st.mcbuf[i * static_cast<size_t>(m) + static_cast<size_t>(k)] = {s16(q[i].real() * sc), s16(q[i].imag() * sc)};
+                                    }
+                                    a.mc = st.mcbuf.data();
+                                    a.mc_m = m;
+                                }
+                            }
+                        }
+                    }
+                    if (n == 0 && naux == 0) continue;
+                    dd->push(src ? src->data() : nullptr, n, result.decimated_data.output_rate_hz, rf,
+                             result.decimated_data.stream_pos, mc, mc_m, result.decimated_data.bandwidth_hz, aux, naux);
                 }
             }
 

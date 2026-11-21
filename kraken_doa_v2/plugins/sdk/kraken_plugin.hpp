@@ -265,9 +265,16 @@ struct Info {
     // complex input rate process() gets (Hz). 0 = the VFO's own rate, whatever
     // the user set (no resampling - a decoder of carriers / pulses anywhere in
     // a narrow or a 2.4 MHz VFO: wildlife): Host::sample_rate() says which; a
-    // change of the VFO's bandwidth restarts the plugin at the new rate
+    // change of the VFO's bandwidth restarts the plugin at the new rate (in
+    // Auto detect on a narrower VFO: the rate of the stream it runs on, below)
     double sample_rate = 48000;
-    double min_vfo_rate = 12500;    // VFO bandwidth the signal needs (Hz) - the UI warns below it
+    // VFO bandwidth the signal needs (Hz). A plugin set on a VFO by hand: the
+    // panel warns below it and offers to widen the VFO. In Auto detect on a
+    // narrower VFO the host decodes the VFO's centre at the narrowest
+    // efficient width >= this for the plugin (an internal stream - what it
+    // would get from a VFO that wide); an older host left it out of Auto
+    // detect below half of it
+    double min_vfo_rate = 12500;
     const char* author = "";
     // Deprecated and ignored: which decoders run in the Digital Decoder's
     // "Auto detect" is the user's choice (the Auto detect ticks in the
