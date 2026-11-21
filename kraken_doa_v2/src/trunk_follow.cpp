@@ -3518,7 +3518,6 @@ constexpr size_t CC_MAX = 1000;               // memory entries (the oldest the 
 constexpr int64_t CC_SAVE_MS = 5000;          // saved this long after a change
 constexpr int64_t CC_LIST_MS = 1000;          // the list message at most this often
 constexpr int64_t CC_HEARD_MS = 60000;        // a control VFO in normal use refreshes its entry at most this often
-constexpr int64_t SRCH_LOOK_GAP_MS = 400;     // the two looks at a step's spectrum this far apart
 constexpr int64_t SRCH_ARRIVE_MAX_MS = 4000;  // a step whose centre the stream never shows: skipped
 constexpr int64_t SRCH_PROBE_MIN_MS = 2500;   // a probe without any valid frame this long (stream time): given up ...
 constexpr int64_t SRCH_PROBE_MAX_MS = 5000;   // ... and none longer (valid frames but no control report by then: traffic)
@@ -3907,16 +3906,6 @@ std::string g_srch_last;   // the last run's summary (JSON object)
 
 bool searching() { return g_srch.active; }
 void srch_recs_clear();
-
-// the averaged spectrum holds only the new band after this long (as the
-// saved-frequency scan reckons it: 95 % of the average replaced)
-int64_t srch_settle_ms() {
-    float a = averaging_alpha.load(std::memory_order_relaxed);
-    if (!(a > 0.001f)) a = 0.001f;
-    const double frames = a >= 1.0f ? 1.0 : std::log(0.05) / std::log(1.0 - a);
-    const double frame_s = std::max(1, current_fft_size.load()) / static_cast<double>(SAMPLE_RATE);
-    return std::clamp<int64_t>(std::llround((frames * frame_s + 0.1) * 1000), 250, 2500);
-}
 
 bool is_probe(int vfo) {
     for (const auto& p : g_srch.probes)
