@@ -906,6 +906,29 @@ bin grid.
     again: mock `t_sweep` 160 / 160, `t_compat` 22 / 22, `t_bar` 16 / 16,
     `t_phone` 15 / 15; today's receiver `t_sweep` 161 / 161, `t_real` 42 /
     42, `t_bar` 16 / 16, `t_phone` 15 / 15.
+  - End to end with the receiver's overview (2026-11-21, bb1cb6d merged, a
+    clean test build, the fake heimdall): `t_wf.py` 37 / 37 on each of
+    400 - 700 MHz, 87.5 - 108 MHz at dwell 5 (~11 - 16 sweeps a second: 812
+    flag-2 frames and 160 overviews seen, the 50 ms line limit holding lines
+    back with their overviews) and the whole range (a sweep every ~4 s).
+    Rows made zoomed in, then zoomed out: 30 rows, 189 880 pixels from the
+    overview, 38 870 from the window, 0 black, 0 wrong (whole range: 63 400
+    / 12 850). Rows completed during a wheel zoom-out and a pan - the new
+    "late frame" check, each row's window levels equal to its completing
+    frame's span (matched by `sweeps`), every pixel by the rule: 74 rows on
+    the fast sweep, 7 on 400 - 700 MHz, 1 on the whole range, all exact, 0
+    black (the page before the fix fails it). Zoomed out by the wheel, by
+    the Zoom slider and by a range change while zoomed in the page asks for
+    `0:0`; at 1x no overview and no flag-1 frame comes. The older page
+    (ea21532) against this receiver, `t_oldpage.py` 7 / 7: it never asks,
+    no flag-16 frame reaches it (61 + 80 type 10 frames counted, at 1x and
+    zoomed x6), its sweep works as before. Mock: `t_wf` 37 / 37, as an
+    older receiver 35 / 35; the earlier suites unchanged (mock 160 / 22 /
+    16 / 15, real `t_sweep` 161 / 161, `t_real` 42 / 42, `t_bar` 16 / 16,
+    `t_phone` 15 / 15). The page's cost of two level sets a row: only
+    where the window's levels don't reach is the overview read, so a full
+    repaint costs the same per pixel - 21.4 ms for 570 rows at 1573 x 677
+    px on the fast sweep, 7.6 ms for 162 rows, 3.3 ms for 35.
   - The other modes' waterfalls (the live one, the independent panes) do
     not recolour their old lines after a colour change - only new lines get
     the new colours (`WaterfallDisplay` keeps pixels, not levels); not
