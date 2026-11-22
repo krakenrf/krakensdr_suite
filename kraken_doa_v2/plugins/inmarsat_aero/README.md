@@ -589,10 +589,22 @@ single-channel VFOs on the same channels: 432 / 432 vs 432, 882 vs 888,
 few seconds after the singles). CPU of the All channels plugin: 32 % of a
 core at 2.4 MHz (22 channels), 20 % at 1.2 MHz (13), 14 % at 300 kHz (13);
 kraken_doa 75 - 77 % with it and 75 % with one 15 kHz VFO instead. Offline
-on the Pi 5 (perf, cycles): the bank alone 10.0 % of a 2.4 GHz core at
-2.4 MHz (+0.07 % per channel; an empty band a quarter of it after 2 s),
-4.9 % at 1.2 MHz, 1.3 % at 300 kHz; a channel's decoder 0.8 % (600 / 1200
-bit/s), 1.3 % (10.5 kbit/s), a searching trial 0.7 %.
+on the Pi 5 (perf, cycles; the benchmark's own sample generation, ~3 %
+at 2.4 MHz, included): the bank alone 9.7 - 10.0 % of a 2.4 GHz core at
+2.4 MHz (+0.07 % per channel; an empty band, after 2 s, 7.0 %), 4.6 - 4.9
+% at 1.2 MHz (empty 3.4 %), 1.1 - 1.3 % at 300 kHz (0.8 %); a channel's
+decoder 0.8 % (600 / 1200 bit/s), 1.3 % (10.5 kbit/s), a searching trial
+0.7 %. The whole plugin on 20 s of the capture, file reading included:
+44 %; on noise: 15 %.
+
+A real call caught by the mode itself (live, 2026-11-23, tuner 0 at
+1544.02 MHz, VFO 0 2.4 MHz in All channels, listened to; 9 P channels in
+the VFO - 8 x 600, 1200): within 2 minutes the survey found a C channel at
+1542.9400 MHz (no assignment for it was heard - its GES's P channel is
+outside the VFO) and held it 6.5 minutes, 752 of 822 frames clean; a
+second at 1542.9500 MHz joined 5.5 minutes later (157 / 157 clean); the
+first ended (quiet) and was dropped with its event. Receiver offset -1.44
+kHz from the P channels. No audio kept; counts only.
 
 ## Limitations
 
