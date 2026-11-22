@@ -71,7 +71,10 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
   1.5 GHz): the plugin finds it, tracks it and shows it (Carrier offset
   fact). It doesn't hand it to the receiver's AFC: the steps that moves
   the input cost frames (measured, under Test results). Moving the VFO
-  (or retuning) starts the search over.
+  by up to 2 kHz while a channel is synced keeps it (the demodulator
+  follows the move - nothing lost); a larger move, or a retune, starts the
+  search over. Or the whole band at once: a wide VFO in **All channels
+  in the VFO** (below).
 - Where to look (off air, Inmarsat-4 F1 at 143.5 E, a patch antenna,
   2026-11-22): sixteen 600 bit/s P channels on a 5 kHz raster from
   1545.010 to 1545.210 MHz, a 1200 bit/s one at 1545.070, two 10.5 kbit/s
@@ -97,7 +100,61 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
 
 - **Channel**: Auto (default: the acquisition finds a P or C channel and
   its rate), P 600 / 1200 / 2400 / 4800 / 10500 bit/s or C channel 8400
-  (search that rate only), R / T bursts from aircraft (every burst rate).
+  (search that rate only), R / T bursts from aircraft (every burst rate),
+  **All channels in the VFO** (every P and C channel in a wide VFO at
+  once; a VFO under 96 kHz holds one channel and runs Auto).
+- **Calls (all channels)**: with All channels, several calls at once are
+  **mixed** (default: every call, summed through a limiter so that two at
+  once don't clip), or only **the newest** is heard - the call that began
+  last, until it ends; then the one before it again if it still runs.
+
+The plugin takes the VFO's own rate (`sample_rate` 0) and brings it to 24
+kHz itself for the single-channel modes, with the receiver's own
+resampler (liquid `msresamp`, 60 dB; nothing at 24 kHz): those modes get
+exactly the samples they got before.
+
+## All channels in the VFO
+
+A VFO as wide as the band (up to 2.4 MHz, the tuner's whole span) with
+Channel "All channels in the VFO": every Aero carrier in it is found,
+decoded and listened to at once, in one plugin process.
+
+- How: one FFT filter bank (6400 points every 3200 samples at 2.4 MHz -
+  375 Hz bins) cuts a 24 kHz channel out for each carrier (flat to +-8.6
+  kHz, gone at +-12 kHz; one 64-point inverse FFT per channel and block).
+  Each channel is the single-channel decoder (Auto) unchanged - the same
+  counts by construction (measured below). The bank's bins are also the
+  survey's spectrum: every 0.25 s narrow peaks (4 dB over the local
+  floor in 1.1 kHz: 600 / 1200 / 2400 bit/s) and flat-topped wide bumps
+  (1.5 dB in 6.4 kHz: 4.8 / 8.4 / 10.5 kbit/s) not yet followed get a
+  trial decoder (up to 24 narrow and 16 wide at a time; a strong newcomer
+  replaces a trial that hasn't locked). A trial that never locks is
+  closed after 4 s, one that locks but passes no CRC after 9 s, and its
+  frequency is left alone for 90 s: the other systems' carriers between
+  the Aero channels (1545.27 - 1546.29 MHz and others) never become
+  channels. A C channel assignment on any channel naming a frequency in
+  the VFO opens that C channel at once (it is often outside: then not
+  followed - a retune would take the whole band away).
+- The window: "Channels" (how many of each kind, how many carriers are
+  being tried), one "Ch" line per channel - its nominal frequency (the
+  received one corrected by the receiver's offset, measured from the
+  locked P channels against the frequencies the signalling advertises;
+  "~" before it while that isn't known), kind and rate, GES, signal units
+  (C: clean frames), level over the floor, how long since its last good
+  frame, its voice state -, "Receiver offset", "Signal units" over all
+  channels, the satellite table and the GES advice once. Every event
+  carries its channel's frequency first ("1545.1050 · Log-on confirm:
+  ..."); a channel that goes quiet (40 s; C: 8 s) is dropped with an event
+  of what it brought. The aircraft table is one table over all channels
+  (an aircraft heard on two channels is one row, its messages summed).
+- Listening: the decoded calls go to the VFO's audio (Demod Digital):
+  mixed or the newest (option above); the voice state names the call(s)
+  ("2 calls, mixed: 1545.7515 1544.8718"). Each C channel keeps its own
+  codec state.
+- Cost (Pi 5, live, below): ~1/3 of a core at 2.4 MHz with 22 channels;
+  the bank alone is what an empty band costs.
+- Not in it: R / T bursts (their own mode), following a C channel outside
+  the VFO.
 
 ## What is decoded
 
@@ -197,13 +254,31 @@ decoded: no public decoder of its codec is known.
 
 ## Implementation
 
+- `decoder.cpp`: the plugin - the VFO's rate to 24 kHz for the
+  single-channel modes, or the All channels mode; `aero_channel.hpp`: one
+  channel's decoder (acquisition, demodulator, P / C channel, bursts, SUs)
+  - the single-channel modes, and every channel of the All channels mode.
+- `aero_bank.*`: the All channels mode's overlap-save FFT filter bank
+  (N ~ rate / 375 Hz points every N/2 samples; a channel = 64 bins, a
+  flat-topped weighting, a 64-point inverse FFT, the middle half kept, the
+  block's phase; 24 kHz out at 2.4 / 1.2 MHz, 600 / 300 kHz, other rates
+  through a resampler per channel). A tone through it: the right
+  frequency, level 1.000, phase continuous across blocks (worst step error
+  0.0004 rad). `aero_all.*`: the survey, trials, channel list, merged
+  table, audio mixer.
 - `aero_acq.*`: rate and carrier from the squared signal's two spectral
-  lines (2 fc +- R/2; A-BPSK and A-QPSK alike), FFT 16384, two averaged;
-  a wide search at 24 kHz behind a +-7.5 kHz low-pass (4.8 / 8.4 / 10.5)
-  and a narrow one at 12 kHz behind +-4 kHz (0.6 / 1.2 / 2.4); scored by
-  the two lines' mean over the median (floored at 2 % of the mean),
-  threshold 13.5 dB (noise: at most 10.3 dB in 220 searches of every
-  rate). The lowest rate at one carrier wins (harmonics).
+  lines (2 fc +- R/2; A-BPSK and A-QPSK alike), FFT 16384, a search after
+  every half-overlapping FFT on the last 1 - 3 summed; a wide search at
+  24 kHz behind a +-7.5 kHz low-pass (4.8 / 8.4 / 10.5) and a narrow one
+  at 12 kHz behind +-4 kHz (0.6 / 1.2 / 2.4); scored by the two lines'
+  mean over the median (floored at 2 % of the mean), threshold by the
+  number summed: 16.5 / 13.5 / 12.5 dB (noise: at most 13.5 / 10.4 / 9.9
+  dB in 70 / 70 / 1435 searches). The lowest rate at one carrier wins
+  (harmonics); the wide rates only after the narrow search's first result
+  unless 4 dB over the threshold (A-BPSK gives 4800 bit/s lines up to 16
+  dB). A demodulator stuck on a strong P carrier (quality < 0.93 after 1
+  s, no SU) starts again half a bit later; a C channel without a clean
+  frame for 1.5 s, up to three times.
 - `aero_demod.*`: one coherent demodulator for both: the bit-rate samples
   on a turning axis (j^n for A-BPSK, j^(n mod 2) for A-QPSK), decision-
   directed Costas loop (2nd order, ~5 Hz for A-BPSK, ~12 Hz for 10.5
@@ -234,8 +309,10 @@ decoded: no public decoder of its codec is known.
   sets by their sequence indicator), ACARS (`plugins/lib/acars_msg.hpp`),
   the aircraft table; `adsc.*` ADS-C.
 - `tools/aero_gen.py`: test transmissions built from the standard (all
-  of the above, synthetic content); `tools/testsignals.json`: the debug
-  playback's entries.
+  of the above, synthetic content); `tools/aero_band.py`: a 2.4 MHz band
+  of them (several P channels, a C channel opened by an assignment,
+  carriers of other systems; 5 antennas, cu8); `tools/testsignals.json`:
+  the debug playback's entries.
 
 ## Sources / specifications
 
@@ -364,7 +441,9 @@ unmodulated line (1545.476 MHz) made the acquisition pair that line with
 noise and sync falsely - the two lines must now be alike (this also made
 the 600 / 1200 bit/s channels lock a frame sooner); a VFO moved under a
 running decoder kept its state and locked 900 Hz beside a 1200 bit/s
-carrier for a minute (408 / 960 SUs) - a move now restarts the search.
+carrier for a minute (408 / 960 SUs) - a move now restarts the search
+(since 2026-11-23 except a move of <= 2 kHz while synced: the carrier is
+known, the demodulator follows it).
 The 10.5 kbit/s channels are weak here (Eb/N0 near 0 dB, demodulator
 quality 0.85, failures scattered) and their level changes by the
 minute: a fixed capture of one channel passed 86, 74, 54, 71, 63, 66, 39,
@@ -423,7 +502,10 @@ Both calls are private captures in the local IQ library.
 
 ## Limitations
 
-- One continuous channel per VFO (the strongest). Bursts: up to four at
+- One continuous channel per VFO (the strongest) - except in All
+  channels in the VFO, which doesn't follow a C channel outside the VFO
+  (that would need a second tuner, or the band given up for the call)
+  and doesn't do bursts. Bursts: up to four at
   once on different frequencies; one that starts within ~1.4 kHz of a
   burst being followed (within its whole band for 2400 / 10500 bit/s) is
   missed, and so is a fifth at once.

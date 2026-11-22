@@ -15,6 +15,7 @@
 #include "aero_demod.hpp"
 #include "kraken_fft.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <cstdint>
 #include <map>
@@ -41,8 +42,11 @@ public:
     // input samples; per block, `out(id, samples, n)` for every channel (24 kHz)
     template <class F>
     void push(const cf* x, size_t n, F&& out) {
-        for (size_t i = 0; i < n; i++) {
-            buf_[static_cast<size_t>(fill_++)] = x[i];
+        for (size_t i = 0; i < n;) {
+            const size_t k = std::min(n - i, static_cast<size_t>(N_ - fill_));
+            std::copy(x + i, x + i + k, buf_.begin() + fill_);
+            fill_ += static_cast<int>(k);
+            i += k;
             if (fill_ == N_) {
                 block();
                 for (auto& [id, c] : ch_)

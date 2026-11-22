@@ -105,6 +105,12 @@ int FilterBank::take_spectrum(std::vector<float>& p) {
 }
 
 void FilterBank::block() {
+    // no channel open: only the survey needs the spectrum - one block in
+    // four is enough for it (an empty band costs a quarter)
+    if (ch_.empty() && (blocks_ & 3) != 0) {
+        blocks_++;
+        return;
+    }
     for (int i = 0; i < N_; i++) {
         fin_[i][0] = buf_[static_cast<size_t>(i)].real();
         fin_[i][1] = buf_[static_cast<size_t>(i)].imag();

@@ -13,9 +13,16 @@ this folder (index: `README.md` here, or the table in
   libacars (MIT) as the description of ARINC 622 / 745, JAERO (MIT) to
   confirm the C channel layout, libaeroambe (MIT) for the voice frame's
   de-interleave table. No GPL decoder was opened.
-- Input 24 kHz (`sample_rate`), `min_vfo_rate` 15000, category Aviation,
+- Input: the VFO's own rate (`sample_rate` 0, since 2026-11-23; was 24
+  kHz) - the single-channel modes resample to 24 kHz inside with the
+  host's own call (liquid `msresamp_crcf_create(24000 / rate, 60)`,
+  nothing at 24 kHz), so they get the very samples the host gave them
+  before (the acceptance set, the off-air cuts and both calls identical,
+  line by line); `min_vfo_rate` 15000, category Aviation,
   `map`, `voice`, `talkers`; option `mode` (auto / p600 .. p10500 / c8400
-  / burst). One plugin for every channel: the slow modes decimate inside
+  / burst / all), `listen` (mix / newest; All channels only). The page
+  picks a decoder's VFO width from `min_vfo_rate` only, so its default
+  for this plugin didn't move. One plugin for every channel: the slow modes decimate inside
   (by 5 to 4.8 kHz for 0.6 / 1.2, by 2 for 2.4 kbit/s); CPU stays 1 - 1.5
   % of real time on x86 (3.4 % with the voice codec running).
 - Acquisition from the squared signal: A-BPSK (+-90 deg per bit) and

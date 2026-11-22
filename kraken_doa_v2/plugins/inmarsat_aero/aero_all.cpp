@@ -21,6 +21,10 @@ constexpr double ASSIGNED_S = 20;      // a C channel opened from an assignment
 constexpr double QUIET_P_S = 40;       // a channel that stops passing CRCs: closed after
 constexpr double QUIET_C_S = 8;
 constexpr double BLACKLIST_S = 90;     // a closed trial's frequency is left alone this long
+// the part of the VFO channels are taken from (+- this x its rate, less half a channel): a 2.4 MHz VFO
+// is the tuner unfiltered (+-1.09 MHz), a narrower one has the decimator's filter (flat to 0.4 W, -6 dB at 0.5 W)
+inline double usable(double rate) { return rate >= 2.0e6 ? 0.46 : 0.42; }
+constexpr int64_t MIX_LAT = 4800;     // the mixed audio runs 0.6 s behind the input (a C frame is 0.5 s)
 constexpr double SEPARATE_HZ = 3000;   // a new carrier this close to a channel is that channel
 constexpr double DUP_HZ = 1500;        // a trial locked this close to a validated channel's carrier is that channel
 
@@ -353,7 +357,7 @@ void AllChannels::survey() {
     for (auto it = blacklist_.begin(); it != blacklist_.end();)
         it = it->second < t ? blacklist_.erase(it) : std::next(it);
     // the usable part: the VFO's flat band, a channel's half width in from its edge
-    const double edge = 0.42 * rate_ - 12000;
+    const double edge = usable(rate_) * rate_ - 12000;
     struct Cand {
         double f;
         float db;
@@ -445,7 +449,7 @@ void AllChannels::on_assign(double to_aircraft_hz) {
     if (!std::isfinite(rf)) return;
     const double off = std::isfinite(offset_hz_) ? offset_hz_ : 0.0;
     const double f = to_aircraft_hz + off - rf;   // where it is in the input
-    if (std::fabs(f) > 0.45 * rate_ - 12000) return;   // outside the VFO: not followed (no retune)
+    if (std::fabs(f) > usable(rate_) * rate_ - 12000) return;   // outside the VFO: not followed (no retune)
     for (auto& [id, c] : ch_)
         if (std::fabs(c->centre_hz - f) < 2000 || std::fabs(carrier_abs(*c) - f) < 2000) return;   // already there
     for (auto it = blacklist_.begin(); it != blacklist_.end();)
@@ -619,32 +623,42 @@ void AllChannels::table_row(int ch, const std::string& key, const std::vector<st
     host.table_row(key, m);
 }
 
+// The calls' audio to the VFO, clocked by the input: each call's decoder
+// hands its sound over a C frame (0.5 s) at a time, at its own moments;
+// summed as it came, two calls would give twice real time. So: what the
+// input's time allows (8 kHz, MIX_LAT behind), each call's next samples
+// summed (silence where one has none yet); idle while no call has sound.
 void AllChannels::mix() {
+    const int64_t target = static_cast<int64_t>(std::llround((now() - t_base_) * 8000.0)) - MIX_LAT;
     std::vector<Chan*> act;
     for (auto& [id, c] : ch_) {
         if (!c->audio.empty()) act.push_back(c.get());
         else if (c->audio_start >= 0 && c->voice.empty()) c->audio_start = -1;   // that call ended
+        while (c->audio.size() > 16000) c->audio.pop_front();                     // > 2 s behind: let go
     }
-    if (act.empty()) return;
+    if (act.empty()) {
+        aud_out_ = target;
+        return;
+    }
     if (listen_ == "newest" && act.size() > 1) {
         Chan* nw = *std::max_element(act.begin(), act.end(), [](Chan* a, Chan* b) { return a->audio_start < b->audio_start; });
         for (Chan* c : act)
             if (c != nw) c->audio.clear();
         act = {nw};
     }
-    size_t n = 0;
-    for (Chan* c : act) n = std::max(n, c->audio.size());
+    int64_t n = target - aud_out_;
     n -= n % 160;
-    if (!n) return;
-    std::vector<float> out(n, 0.0f);
+    if (n <= 0) return;
+    std::vector<float> out(static_cast<size_t>(n), 0.0f);
     for (Chan* c : act) {
-        const size_t k = std::min(n, c->audio.size());
+        const size_t k = std::min(static_cast<size_t>(n), c->audio.size());
         for (size_t i = 0; i < k; i++) out[i] += c->audio[i];
         c->audio.erase(c->audio.begin(), c->audio.begin() + static_cast<long>(k));
     }
     if (act.size() > 1)
-        for (size_t i = 0; i < n; i += 160) lim_.process(&out[i], 160);
-    host.audio(out.data(), n);
+        for (size_t i = 0; i < out.size(); i += 160) lim_.process(&out[i], 160);
+    host.audio(out.data(), out.size());
+    aud_out_ += n;
 }
 
 void AllChannels::voice_state() {

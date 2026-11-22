@@ -81,6 +81,7 @@ private:
     std::string listen_ = "mix";
     bool verbose_opt_ = false;
     dig::VoiceLimiter lim_;
+    int64_t aud_out_ = 0;                    // mixed audio samples given out (8 kHz, on the input's clock)
     std::map<std::string, std::map<int, std::vector<std::string>>> rows_;   // aircraft table: key -> channel -> cells
     std::set<std::string> global_facts_;
     const bool debug_ = std::getenv("AERO_DEBUG") != nullptr;
