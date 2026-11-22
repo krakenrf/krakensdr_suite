@@ -1037,6 +1037,134 @@ evaluation of 2026-11-21. Exact (family).
   `~/.cache/kraken_sigclass/ds_2026-11-22/`; the best new models in
   `tmp/retrain/ev/e12567_thr.model` (A) and `ev/f12567_thr.model` (B)
 
+### Experiment (2026-11-22): other classifiers on the same features - boosted trees and a tree + MLP stack are better; nothing shipped
+
+The question: does another CLASSIFIER on the same 1,086 features and the same
+synthetic rows (generation B above) do better than the per-view MLP - more
+accurate, steadier across seeds, less prone to one class's data moving
+another's? Left out on the user's instruction: decoder confirmation and deep
+networks on raw samples / spectrograms. Nothing in the tree changed.
+
+**Harness** (only the classifier is swapped): a scratch build of the core
+dumps every detection of every evaluated capture with its features, plus the
+view-0 second look of every detection that qualifies; Python applies the
+second-look rule and the RF mask to any method's per-view probabilities; a
+tracker-only replay mode of the tool turns them into tracks; scoring is
+`eval_real.py`'s own functions and `thresholds.py`'s recipe. Validated before
+use: numpy against the dumped C++ max |dp| < 1e-6 with every second-look
+decision equal; with the shipped weights the library table equals
+`eval_real.py`'s in every column (checked again against the table of the
+round above: 663 of 663 rows the same label; the averaged model 662 of 663),
+the regression set gives 0.648 / 127 and the playback emulation 28 of 28; the
+in-harness MLP trainer reproduces a fit of the round above to 1.6e-6. One
+method costs ~15 s to evaluate. The playback column is that offline emulation
+(each entry looped 40 s at the live cadence, the service's publish rule), not
+a live run.
+
+Choices (the LightGBM configuration, stack weights, thresholds) used the
+synthetic validation split and public half A only; half B and the own
+captures were looked at once per finished method. Cells are min / median / max
+over seeds or draws (count in the header). LGB = LightGBM 4.7.0, one model
+per view, 7 leaves, learning rate 0.05, early stop on val macro recall, the
+trainer's class weights; the stack averages probabilities with the weight
+picked by val NLL (0.3 MLP / 0.7 LGB).
+
+| | shipped weights | MLP single (7) | MLP 5-average (6) | LGB single (5) | LGB 3-average (5) | MLP 5-avg + LGB (5) | 1 MLP + 1 LGB (5) |
+|---|---|---|---|---|---|---|---|
+| synthetic val / test top-1 | .895 / .866 | .900 / .876 | .910 / .885 | .914 / .881 | .915 / .880 | .920 / .889 | .917 / .888 |
+| val cross-confusions 4-FSK / OFDM / ISM | 38 / 66 / 31 | 43 / 87 / 22 | 36 / 56 / 20 | 29 / 31 / 22 | 29 / 27 / 21 | 28 / 21 / 19 | 30 / 26 / 20 |
+| public decoder-confirmed (336) | 196 | 242 / 252 / 258 | 257 / 258 / 262 | 270 / 278 / 281 | 274 / 278 / 280 | 279 / 279 / 281 | 270 / 279 / 280 |
+| ... without ISM (96) | 69 | 67 / 69 / 70 | 68 / 69 / 69 | 69 / 71 / 72 | 69 / 70 / 71 | 70 / 71 / 71 | 70 / 71 / 72 |
+| ... ISM, two classes (240) | 127 | 173 / 182 / 189 | 188 / 189 / 193 | 201 / 207 / 209 | 204 / 208 / 209 | 208 / 209 / 210 | 200 / 208 / 209 |
+| ... half A (choice) / half B (test), median | 99 / 97 | 125 / 128 | 127 / 132 | 136 / 140 | 138 / 140 | 138 / 142 | 136 / 141 |
+| own captures (122) | 112 | 105 / 110 / 113 | 108 / 109.5 / 112 | 109 / 111 / 112 | 111 / 111 / 111 | 111 / 111 / 111 | 111 / 111 / 112 |
+| ... P25 channels of the busy sites (50) | 49 | 43 / 47 / 49 | 45 / 46.5 / 49 | 47 / 49 / 49 | 49 / 49 / 49 | 49 / 49 / 49 | 49 / 49 / 49 |
+| own: sure right / sure wrong (median; range of wrong) | 104 / 0 | 95 / 0 (0-4) | 103 / 0 (0) | 108 / 2 (1-4) | 108 / 3 (2-3) | 109 / 2 (2-3) | 109 / 2 (0-3) |
+| public half B: sure right / wrong (median) | 35 / 0 | 31 / 0 | 31 / 0 | 30 / 2 | 30 / 2 | 44 / 3 | 44 / 4 |
+| FSK twins (94) / OOK twins (146), median | 24 / 133 | 67 / 134 | 68.5 / 138 | 73 / 137 | 75 / 136 | 75 / 141 | 73 / 140 |
+| synthetic regression set: right / false labels, median | .648 / 127 | .645 / 120 | .648 / 101.5 | .652 / 90 | .654 / 85 | .658 / 65 | .656 / 80 |
+| playback emulation (28): right, sure (median) | 28, 26 | 27, 25 | 27, 25 | 28, 27 | 28, 27 | 28, 28 | 28, 28 |
+| global `min_confidence` the recipe gives (median) | 0.82 | 0.81 | 0.70 | 0.73 | 0.72 | 0.64 | 0.64 |
+
+The others (medians): extra-trees public 275, non-ISM 68, own 105,
+regression set .610 / 62, 255 MB; multinomial logistic regression 225 / 68 /
+108 / .633 / 124; class prototypes in the MLP's last hidden layer 252 / 70 /
+107 / .637 (many rows end hidden); a family stage then a specialist per
+family, MLP stages 238 (227-258) / 70 / 111 / .630, LGB stages 268 / 71 / 110
+/ .639; the flat model with specialists only inside the confusable groups
+(4-FSK, OFDM, ISM OOK / FSK), MLP 251 / 69 / 110 / .643, LGB 269 / 71 / 111 /
+.654. DMR 5 of 6, P25 12 of 15, P25 Phase 2 2 of 5, NXDN 5 of 5 and YSF 3 of
+3 on the public rows with EVERY method: those rows are not the classifier's
+to win.
+
+- **LightGBM is better than the MLP by more than the seed spread**: public
+  278 against 252 (single) and 258 (five averaged), the regression set's
+  false labels 85-90 against 101-120, the playback emulation 28 of 28 in every
+  fit with DVB-T right, half as much seed churn (below). Almost all of the
+  gain is ISM (+18 to +20 of 240); the rest of the public rows gain 2 of 96
+  (radiosonde, FLEX). The own captures do not gain (111 against 108-112): the
+  busy sites' P25 channels come back to the shipped weights' 49 of 50, the
+  DVB-T band-edge capture reads "Unknown OFDM" in every new fit of every
+  method, 5G NR reads LTE (unsure, 0.52-0.61) in the stacks
+- **The stack is the best and the steadiest** (public spread 2, own 111 in
+  all five draws, regression set .658 / 65, playback 28 right and 28 sure);
+  one MLP + one LGB keeps nearly all of it
+- **The open cost is trust**: the tree-based methods are sure and wrong on
+  2-3 own rows (the averaged MLP on none) and on 2-4 public half-B rows.
+  The own rows are in every fit the two MPT1327 control channels of the
+  intermodulation-dominated 416.5 MHz capture, read "carrier" at 0.84-0.86;
+  the public ones sit at p 0.65-0.72 - above the 0.64 the threshold recipe
+  gives the stack, below the shipped 0.82: the recipe trades a larger sure
+  share (half B 0.28 against 0.18) for them. A stricter precision target was
+  not tried
+- **The isolation test** (each method trained with and without the new ISM
+  kinds, the bank's ism_fsk clips 80-239 and ism_ook 104-203; decisions
+  changed on NON-ISM signals: 40,182 synthetic val rows / 96 public / own):
+
+  | | seed alone: val / public / own | data change: val / public / own | public ISM, full -> without |
+  |---|---|---|---|
+  | MLP single | 2603 / 15 / 5 | 2626 / 14 / 8 | 182 -> 124 |
+  | LGB single | 1246 / 3 / 5 | 1447 / 3 / 6 | 207 -> 131 |
+  | family stage + specialists, MLP | 2398 / 9 / 7 | 1900 / 7 / 8 | 168 -> 121 |
+  | family stage + specialists, LGB | 1022 / 7 / 6 | 1008 / 3 / 6 | 197 -> 122 |
+  | MLP 5-average (against a disjoint five) | 1115 / 10 / 5 | 1331 / 9 / 6 | 189 -> 139 |
+  | MLP 5-avg + LGB 5-avg | 465 / 3 / 1 | 728 / 2 / 2 | 208 -> 137 |
+
+  For the flat MLP, taking the new ISM data away changes as many non-ISM
+  decisions as a different seed does: the "unrelated decisions moved" of the
+  round above (P25 to DMR, DVB-T to ATSC 3.0) was seed noise, not one
+  family's data disturbing another's - and the shipped weights' own-capture
+  score sits at the top of the single-fit range. An ISM specialist bolted
+  onto the model trained without the new kinds is perfectly isolated (0
+  public non-ISM decisions change) and recovers 5-9 of the ~58 ISM rows: the
+  gain comes from the shared model routing the new kinds INTO the ISM family
+  (away from unknown FSK / LoRa / none), not from the OOK / FSK split. No
+  method keeps ISM's gain and leaves the rest where it was; what reduces the
+  churn is averaging and trees
+- **Not worth pursuing**: the hierarchy (worse on ISM, the twins and the
+  regression set), specialists where needed (no gain), extra-trees, logistic
+  regression, prototypes. Logistic regression still gets 108 own and 68
+  non-ISM: the features do most of the work outside ISM
+- **Cost**: MLP 0.05 ms per detection (3.7 MB, ~2 min to train); one LGB
+  0.31-0.48 ms in LightGBM's own C++ predictor on one core of the loaded dev
+  machine (view 0 is 6-8 thousand trees; 1.9-3.2 MB; 10-19 min to train),
+  estimated 0.7-1.2 ms on a Pi 5 - not measured there, and against the ~0.5 ms
+  the model was budgeted; 1 MLP + 1 LGB ~0.35 ms, 5 MLP + 5 LGB 1.7-2.9 ms.
+  Shipping it would need a tree evaluator in `model.cpp` (a member type of
+  model format 4, bounded loading, fuzzing, parity against LightGBM),
+  LightGBM (MIT) as a training-only dependency, and thresholds that deal with
+  the "carrier" case
+- **Not tested**: XGBoost, a random forest, one-vs-rest, feature-group
+  dropout; the LGB grid was small (5 configurations on view 1, 2 full
+  candidates); the LGB and stack validation numbers are optimistic (early
+  stopping and the stack weight used val); timings under load
+- Kept in `~/.cache/kraken_sigclass/arch_2026-11-22/` (`bin/` the harness and
+  the methods - paths point at the job scratch -, `src/` the dump / replay
+  tool, `sets/` the cached dumps with the pinned library index, `tables/`
+  the full 79-row table and the churn table, `models/` the LGB, MLP,
+  averaged and stacked models) and `ds_2026-11-22/genB/` (the generation-B
+  rows)
+
 ### Results (2026-11-20, phase 5, the weights still shipped)
 
 The phase 4 weights (no retraining), now model format 3 with the RF table,
