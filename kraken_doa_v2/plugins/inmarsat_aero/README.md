@@ -64,7 +64,14 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
   carrier may be off by up to +-2.5 kHz (an RTL-SDR's 1 ppm is 1.5 kHz at
   1.5 GHz): the plugin finds it, tracks it and shows it (Carrier offset
   fact). It doesn't hand it to the receiver's AFC: the steps that moves
-  the input cost frames (measured, under Test results).
+  the input cost frames (measured, under Test results). Moving the VFO
+  (or retuning) starts the search over.
+- Where to look (off air, Inmarsat-4 F1 at 143.5 E, a patch antenna,
+  2026-11-22): sixteen 600 bit/s P channels on a 5 kHz raster from
+  1545.010 to 1545.210 MHz, a 1200 bit/s one at 1545.070, two 10.5 kbit/s
+  ones at 1546.055 and 1546.070 MHz. The GESs' channel advice names the R
+  channels (1646.5075 to 1646.6075 MHz). Other carriers nearby (1545.27 to
+  1546.29, 1548.2 to 1548.4, 1549.4 to 1551.5 MHz) are other systems.
 - Aircraft bursts (Channel "R / T bursts"): a VFO on the aircraft's
   transmit channel in 1626.5 - 1660.5 MHz; only aircraft in line of sight
   (near an airport) are strong enough. The DoA of a P channel or a
@@ -90,10 +97,14 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
 
 Facts: Channel (rate, modulation; "syncing" / "searching (why)"), Carrier
 offset, Signal units (passed / total, fill-in), SU types (counts per
-message type), GES (ID), GES time (UTC broadcast), Satellite (ID,
-longitude, P channel), GES 0x.. channels (its P / R channel advice), User
-data (messages, ACARS, bad BCS), Aircraft heard, Last ACARS, Voice codec,
-C channel frames.
+message type), GES (ID), GES time (UTC broadcast), Satellites (system
+table: every satellite's ID and longitude, broadcast one SU per
+satellite), Satellite (the entry whose P channel is the one received -
+the nearest within 2.5 kHz - and how far off the receiver hears it: the
+RTL-SDR's error), GES 0x.. channels (its P / R channel advice), User data
+(messages, ACARS, bad BCS), Aircraft heard, Last ACARS, Voice codec, C
+channel frames, Voice codec frames (mbelib's Golay corrections per 20 ms
+frame: near 0 for a cleanly received voice frame, ~4.3 for random bits).
 
 Events (signal units that passed their CRC, by type; appendix 3's message
 type list):
@@ -320,12 +331,58 @@ span is reported the moment the frame is in (at 600 bit/s the released
 bits came 2 s late, past the receiver's 1.5 s stream, and the VFO's DoA
 read 127 - 311 deg instead of 220).
 
+### Off air (Raspberry Pi 5, KrakenSDR CH0, patch antenna + LNA, 2026-11-22)
+
+Inmarsat-4 F1 (143.5 E), received with an L-band patch antenna and an LNA
+on CH0's bias tee, gain 49.6 dB (by measurement: the 10.5 kbit/s channel
+passed 92 % of its SUs at 49.6 dB, 75 / 66 / 74 % at 44.5 / 40.2 / 33.8
+dB; no clipping, -34 dBFS rms). The receiver hears the carriers 1.49 kHz
+low (-0.96 ppm); a carrier drifted +40 Hz in an hour and +-2 Hz within 5 minutes - tracked without the AFC.
+
+| P channel | Live (kraken_doa on the Pi) | Offline, a capture of it (Pi = x86) | Lock | CPU (Pi 5, live) |
+|---|---|---|---|---|
+| 600 bit/s (16 seen, 1545.010 - 1545.210 MHz) | 476 / 480 SUs in 170 s; 148 / 150 | each channel of a 60 s wide capture: 156 - 168, all passed; 70 s narrow: 198 / 198 | 4 - 10 s | 1.2 - 1.3 % |
+| 1200 bit/s (1545.070 MHz) | 1278 / 1290; with the VFO 2 kHz off: 594 / 594, 462 / 462 | 342 / 342 (wide); 558 / 558 (narrow, 2 kHz off) | 3 - 11 s | 1.3 - 1.6 % |
+| 10.5 kbit/s (1546.055 / 1546.070 MHz) | 7485 / 8736, 4805 / 5512, 12907 / 15314, 10300 / 13806 (75 - 87 %); the other channel 12516 / 13936 (90 %) | 2927 / 3042 (96 %, wide), 4456 / 4810 (93 %) | 0.3 - 1.6 s | 1.9 - 2.0 % |
+
+No samples dropped. Offline on the Pi 5 every count equals x86 (the
+acceptance set and 24 off-air cuts); 0.2 - 1.2 % of real time, 8 - 34
+Mcycles per second of signal (600 bit/s 16.7, 10.5 kbit/s 27.7).
+
+What the real signal showed (fixed): the satellite identification SUs
+are a table of every satellite of the system (IDs 0 - 7, one SU each),
+not this channel's - now shown whole, and the satellite named by the
+received P channel's frequency (ID 2, 142.5 E - and ID 5, 144.0 E for
+GES 0x50's channel); a carrier of another system with one strong
+unmodulated line (1545.476 MHz) made the acquisition pair that line with
+noise and sync falsely - the two lines must now be alike (this also made
+the 600 / 1200 bit/s channels lock a frame sooner); a VFO moved under a
+running decoder kept its state and locked 900 Hz beside a 1200 bit/s
+carrier for a minute (408 / 960 SUs) - a move now restarts the search.
+The 10.5 kbit/s channels are weak here (Eb/N0 near 0 dB, demodulator
+quality 0.85, failures scattered; the level changes by the minute): the live path stays 5 - 9 points under
+offline decodes of captures; loop bandwidths and roll-off changed nothing
+by more than 2 points.
+
+Not seen: the UTC broadcast (type 0x09) on any of these channels; C
+channel assignments (none in 31 minutes on the 10.5 kbit/s, 600 and 1200
+bit/s P channels) and 8.4 kbit/s carriers (two surveys of 1543 - 1556
+MHz); ADS-C reports (on P channels only contract requests travel - the
+reports go up on R / T channels); aircraft bursts (8 minutes on the R
+channels the GESs advertise, 1646.5075 - 1646.5475 MHz: nothing - the
+floor there is 3.7 dB under 1545 MHz, the patch / LNA hardly pass 1.6
+GHz). Unknown SU types counted, not decoded: 0x18 / 0x19 / 0x1A / 0x2B
+(600 bit/s channels), 0x0A / 0x26 (half of every 10.5 kbit/s channel).
+
 Voice: generated C channel frames (random voice bits - no AMBE encoder
 exists to make speech) go through libaeroambe's codec built in job
-scratch: 3.4 % CPU with the codec; "not installed" without it. **Not
-verified on a real C channel: no recording was found** - the framing and
-signalling follow the standard and JAERO's layout, intelligible speech is
-unconfirmed.
+scratch: 3.4 % CPU with the codec (2.6 % of real time on the Pi 5,
+where the same codec was built); "not installed" without it; the codec's
+own error count for random bits: 4.3 corrections per frame. **Not
+verified on a real C channel: no recording was found, and none was heard
+off air** (no C channel assignment or 8.4 kbit/s carrier in 31 minutes,
+above) - the framing and signalling follow the standard and JAERO's
+layout, intelligible speech is unconfirmed.
 
 ## Limitations
 
