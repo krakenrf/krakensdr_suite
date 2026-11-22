@@ -141,6 +141,18 @@ private:
     double call_start_ = 0, call_last_ = 0;
     uint64_t cframes_ = 0, cframes_ok_ = 0, vframes_ = 0, verr_sum_ = 0, verr_bad_ = 0;
     const bool debug_ = std::getenv("AERO_DEBUG") != nullptr;
+    // the debug lines (AERO_DEBUG=1): the host's log, and with AERO_DEBUG_FILE
+    // also appended to that file with the stream time - kraken_doa keeps only
+    // a plugin's last stderr lines, and only for its status, so a live test
+    // reads the file
+    void dbg(const std::string& s) {
+        host.log(s);
+        static FILE* f = std::getenv("AERO_DEBUG_FILE") ? std::fopen(std::getenv("AERO_DEBUG_FILE"), "a") : nullptr;
+        if (f) {
+            std::fprintf(f, "[%9.3f s] log: %s\n", host.time(), s.c_str());
+            std::fflush(f);
+        }
+    }
 
     bool bursts() const { return mode_.rfind("burst", 0) == 0; }
     double host_t(double sample) const { return tbase_ + sample / FS; }
@@ -166,7 +178,7 @@ private:
                 snprintf(e, sizeof e, "%d@%+.1f/%.1fdB ", static_cast<int>(h.rate), h.f0, h.snr_db);
                 all += e;
             }
-            host.log(all);
+            dbg(all);
         }
         const aero::AcqHit* best = nullptr;
         for (const auto& h : acq_->hits()) {
@@ -236,7 +248,7 @@ private:
     }
 
     void unlock(const char* why) {
-        if (debug_) host.log(std::string("unlock: ") + why + " q=" + std::to_string(demod_.quality()));
+        if (debug_) dbg(std::string("unlock: ") + why + " q=" + std::to_string(demod_.quality()));
         if (std::string(why) == "signal lost") {
             tried_.clear();
         } else {
@@ -299,7 +311,7 @@ private:
             char b[160];
             snprintf(b, sizeof b, "frame t=%.3f no=%d hdr=%d uwerr=%d sus %d/%d q=%.3f f=%.1f", f.t0, f.frame_no, f.header_ok,
                      f.uw_errors, f.sus_ok, f.sus, demod_.quality(), demod_.carrier_hz());
-            host.log(b);
+            dbg(b);
         }
         if (f.sus_ok > 0 && f.sus_early == 0) valid_span(f.t0, f.t1);   // else on_early gave it
         su_.frame_done(f.sus, f.sus_ok);
@@ -311,7 +323,7 @@ private:
             char b[160];
             snprintf(b, sizeof b, "C frame t=%.3f uwerr=%d ref errors %d/26 sus %d/3 q=%.3f", f.t0, f.uw_errors, f.ref_errors,
                      f.sus_ok, demod_.quality());
-            host.log(b);
+            dbg(b);
         }
         // a frame counts when a sub-band SU passed its CRC, or the reference
         // bits (26 known "1"s) came through nearly clean
@@ -361,7 +373,7 @@ private:
             host.fact("Voice codec frames", b);
             if (debug_) {
                 snprintf(b, sizeof b, "voice t=%.3f errs2 sum %d max %d (25 frames)", f.t0, esum, emax);
-                host.log(b);
+                dbg(b);
             }
         }
         const std::string who = su_.call_aes();

@@ -178,10 +178,23 @@ this folder (index: `README.md` here, or the table in
     max / min <= 6): a non-Aero carrier with a strong unmodulated part
     (1545.476 MHz) has one x^2 line 20 - 25 dB over the rest.
   - A VFO move (`host.rf_hz()` changing by > 100 Hz) resets the decoder.
-  - The 10.5 kbit/s channels are noise-limited with a patch (Eb/N0 ~0 dB):
-    84 - 87 % of SUs live, 93 - 96 % offline from captures; pll_bw 0.6 -
+  - The 10.5 kbit/s channels are noise-limited with a patch (Eb/N0 ~0 dB)
+    and fade by the minute (39 - 96 % of SUs over an hour); pll_bw 0.6 -
     2.5e-3, tim_gain 0.6 - 2.5e-4, roll-off 0.35 - 0.7 changed the
     capture's count by at most 2 points (none better than the defaults).
+  - Live vs offline (the coordinator's open question - 75-87 % live
+    against 93-96 % from captures): not the live path. Measured frame by
+    frame: `AERO_DEBUG_FILE` gives the live decoder's frame lines (stream
+    time), `sigtool.py capture` alongside records the same seconds, the
+    offline decode of it is aligned on frame times (a whole number of
+    frames plus the grids' phase; job scratch compare.py): over ~190
+    common frames live and offline agree within 0.1 - 0.7 % of SUs at VFO
+    widths 15 / 20 / 25 / 30 / 48 kHz (SU counts per frame correlate 0.98 -
+    1.00); the stream time kept the wall clock to 4e-5. The earlier gap
+    was different seconds of a fading signal. A VFO emulated on the 2.4
+    MS/s capture (decimation to 2.4 MHz / D, flat to 0.4 W, -6 dB at 0.5
+    W) passes 2906 - 2926 of 3042 SUs from 15 to 48 kHz: `min_vfo_rate`
+    stays 15 kHz.
 - Not done: CPDLC decoding, the 21 kbit/s C channel (no public 9.6 kbit/s
   LPC decoder), the other C rates, bursts closer than ~1.4 kHz at once (or more than four), verification of
   satellite / beam table fields (not on the recordings). Windows / Linux

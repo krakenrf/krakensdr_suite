@@ -360,9 +360,18 @@ the 600 / 1200 bit/s channels lock a frame sooner); a VFO moved under a
 running decoder kept its state and locked 900 Hz beside a 1200 bit/s
 carrier for a minute (408 / 960 SUs) - a move now restarts the search.
 The 10.5 kbit/s channels are weak here (Eb/N0 near 0 dB, demodulator
-quality 0.85, failures scattered; the level changes by the minute): the live path stays 5 - 9 points under
-offline decodes of captures; loop bandwidths and roll-off changed nothing
-by more than 2 points.
+quality 0.85, failures scattered) and their level changes by the
+minute: a fixed capture of one channel passed 86, 74, 54, 71, 63, 66, 39,
+43, 56 % of its SUs in nine 100 s runs within 25 minutes. The live path
+loses nothing: frame by frame against an offline decode of a capture of
+the same seconds (taken alongside from heimdall's stream), live 3598 /
+offline 3601, 3185 / 3187, 2119 / 2114, 1973 / 1963, 2109 / 2077 SUs at
+VFO widths 25, 20, 30, 15, 48 kHz (190 frames each; 15 kHz with the VFO
+on the carrier: 54.2 / 55.5 % over the run); the plugin's stream kept
+time with the wall clock to 4e-5, nothing dropped. The width doesn't
+matter from 15 to 48 kHz (a VFO emulated on the 2.4 MS/s capture: 2906 -
+2926 of 3042 SUs at 15 - 48 kHz). Loop bandwidths and roll-off changed
+nothing by more than 2 points.
 
 Not seen: the UTC broadcast (type 0x09) on any of these channels; C
 channel assignments (none in 31 minutes on the 10.5 kbit/s, 600 and 1200
