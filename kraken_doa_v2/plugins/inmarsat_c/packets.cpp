@@ -116,21 +116,24 @@ bool parse_0x81(const uint8_t* p, int n, LesTdmRef& r) {
     return plausible_code(r.tdm_code) && !station_is_ncs(r.les);
 }
 
-bool parse_0x92(const uint8_t* p, int n, std::vector<LesListEntry>& out) {
+bool parse_station_list(const uint8_t* p, int n, std::vector<LesListEntry>& out, int* network_version) {
     out.clear();
-    if (p[0] != 0x92 || n < 9 + 6 + 2 || (n - 9 - 2) % 6 != 0) return false;
-    for (int i = 9; i + 6 <= n - 2; i += 6) {
+    int h;
+    if (p[0] == 0x92) h = 9;
+    else if (p[0] == 0xAB) h = 4;
+    else return false;
+    if (n < h + 2) return false;
+    const int count = p[h - 1];
+    if (count < 1 || n != h + 6 * count + 2) return false;
+    if (network_version) *network_version = p[h - 2];
+    for (int i = h; i + 6 <= n - 2; i += 6) {
         LesListEntry e;
         e.les = p[i];
         e.status = (static_cast<uint32_t>(p[i + 1]) << 16) | (p[i + 2] << 8) | p[i + 3];
         e.tdm_code = (p[i + 4] << 8) | p[i + 5];
-        if (!plausible_code(e.tdm_code) || station_is_ncs(e.les)) {
-            out.clear();
-            return false;
-        }
-        out.push_back(e);
+        if (plausible_code(e.tdm_code)) out.push_back(e);   // (an entry with code 0: a station without a TDM)
     }
-    return !out.empty();
+    return true;
 }
 
 // ---- EGC -------------------------------------------------------------------------

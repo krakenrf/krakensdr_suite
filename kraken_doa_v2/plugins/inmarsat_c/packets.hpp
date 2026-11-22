@@ -78,14 +78,18 @@ struct LesTdmRef {
     int counter = 0;
 };
 bool parse_0x81(const uint8_t* p, int n, LesTdmRef& r);
-// Type 0x92, long form (measured): 9 header bytes, then 6-byte entries
-// {LES id, 3 status bytes, TDM channel code}.
+// Station lists (measured on the AOR-E 2008 recording and the POR NCS off air
+// in 2026, every entry checked by tuning to it): type 0x92 = type, length,
+// an MES id (3 bytes), 2 bytes, network version, entry count; type 0xAB
+// (broadcast) = type, length, network version, entry count. Then `count`
+// 6-byte entries {station id (an LES or an NCS), 3 status bytes, TDM channel
+// code}. The network version equals the bulletin board's.
 struct LesListEntry {
     uint8_t les = 0;
     uint32_t status = 0;
     int tdm_code = 0;
 };
-bool parse_0x92(const uint8_t* p, int n, std::vector<LesListEntry>& out);
+bool parse_station_list(const uint8_t* p, int n, std::vector<LesListEntry>& out, int* network_version);
 
 // ---- EGC -------------------------------------------------------------------------
 // Header (measured on SafetyNET packets; field order as published for the

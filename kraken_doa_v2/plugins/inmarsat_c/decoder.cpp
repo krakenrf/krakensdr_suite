@@ -77,6 +77,7 @@ public:
         locked_reported_ = false;
         type_counts_.clear();
         les_tdm_.clear();
+        sig_.clear();
         frames_ok_ = frames_bad_ = packets_ok_ = packets_lost_ = 0;
         sym_err_ = sym_tot_ = 0;
         egc_msgs_ = egc_complete_ = egc_repeats_ = 0;
@@ -295,9 +296,10 @@ private:
             }
             break;
         }
-        case 0x92: {
+        case 0x92:
+        case 0xAB: {
             std::vector<inmc::LesListEntry> v;
-            if (inmc::parse_0x92(p, n, v))
+            if (inmc::parse_station_list(p, n, v, nullptr))
                 for (const auto& e : v) note_les_tdm(e.les, e.tdm_code);
             break;
         }
@@ -365,13 +367,17 @@ private:
     void sig_descriptor(const uint8_t* p, int n) {
         inmc::SigChannelDescriptor sd;
         if (!inmc::parse_sig_descriptor(p, n, sd)) return;
-        char b[200];
-        std::snprintf(b, sizeof b,
-                      "uplink channel code %d (%.4f MHz if the uplink raster is 1611.5 MHz + code x 2.5 kHz), flags %02X, "
-                      "28 slot markers: %d / %d / %d / %d (states 0/1/2/3)",
-                      sd.uplink_code, 1611.5 + sd.uplink_code * 0.0025, sd.flags, sd.slots[0], sd.slots[1], sd.slots[2],
-                      sd.slots[3]);
-        host.fact("Signalling channel", b);
+        // a TDM may describe several signalling channels (the POR NCS: two per frame)
+        sig_[sd.uplink_code] = sd;
+        std::string t;
+        for (const auto& [code, d] : sig_) {
+            char b[160];
+            std::snprintf(b, sizeof b, "%scode %d (%.4f MHz), flags %02X, slot markers %d/%d/%d/%d", t.empty() ? "" : "; ", code,
+                          1611.5 + code * 0.0025, d.flags, d.slots[0], d.slots[1], d.slots[2], d.slots[3]);
+            if (t.size() + std::strlen(b) > 330) break;
+            t += b;
+        }
+        host.fact("Signalling channels", t + " (uplink MHz if the raster is 1611.5 MHz + code x 2.5 kHz; markers = slots in state 0/1/2/3)");
     }
 
     void note_les_tdm(uint8_t les, int code) {
@@ -380,11 +386,12 @@ private:
         std::string t;
         for (const auto& [id, c] : les_tdm_) {
             char b[48];
-            std::snprintf(b, sizeof b, "%s%s %.4f", t.empty() ? "" : ", ", inmc::station_id(id).c_str(), inmc::downlink_mhz(c));
+            std::snprintf(b, sizeof b, "%s%s%s %.4f", t.empty() ? "" : ", ", inmc::station_is_ncs(id) ? "NCS " : "",
+                          inmc::station_id(id).c_str(), inmc::downlink_mhz(c));
             if (t.size() + std::strlen(b) > 390) break;
             t += b;
         }
-        host.fact("LES TDMs (MHz)", t);
+        host.fact("TDMs of the stations (MHz)", t);
     }
 
     // ---- EGC -----------------------------------------------------------------------
@@ -503,6 +510,7 @@ private:
     inmc::EgcAssembler egc_;
     std::map<uint8_t, long long> type_counts_;
     std::map<uint8_t, int> les_tdm_;
+    std::map<int, inmc::SigChannelDescriptor> sig_;
     long long frames_ok_ = 0, frames_bad_ = 0, packets_ok_ = 0, packets_lost_ = 0;
     long long sym_err_ = 0, sym_tot_ = 0;
     long long egc_msgs_ = 0, egc_complete_ = 0, egc_repeats_ = 0, egc_bad_header_ = 0;
