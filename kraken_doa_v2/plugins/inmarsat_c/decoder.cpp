@@ -55,7 +55,7 @@ std::string one_line(const std::string& s, size_t max) {
 }
 
 std::string fmt(const char* f, double v) {
-    char b[64];
+    char b[256];
     std::snprintf(b, sizeof b, f, v);
     return b;
 }
