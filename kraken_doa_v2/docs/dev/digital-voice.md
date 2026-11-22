@@ -154,6 +154,51 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   below 2.x and a library missing a function are refused. Never shipped or
   linked (THIRD_PARTY_NOTICES section 3); without it DAB+ still syncs, its
   RS / AU CRCs and the dynamic label run, only PCM is missing
+- Inmarsat Classic Aero C channel (2026-11-22, `plugins/inmarsat_aero`;
+  *plugin-inmarsat-aero*): AMBE 4.8 kbit/s (96-bit frames, 25 per 500 ms C
+  channel frame) through `dig::AeroAmbeLib` / `AeroAmbeStream`
+  (`plugins/lib/aero_ambe.*`), which dlopens an mbelib that has
+  `mbe_processAmbe4800x3600Framef` - libaeroambe's `mbelib-master` (mbelib
+  1.3 + the Aero codec, CMake, no Qt): `$KRAKEN_AERO_AMBE` (`none` / `off`
+  disables it), then `$KRAKEN_MBELIB`, then the names `MbeLib` tries - the
+  first library with the function (the standard mbelib 1.3 lacks it and is
+  skipped; libaeroambe's build exports everything `MbeLib` needs too, so
+  one file can serve both - checked with `nm -D`). The frame's 96-entry
+  deinterleave table is libaeroambe's (MIT, notice in the file and in
+  THIRD_PARTY_NOTICES text M) - a bit order like DSD's tables in
+  `mbe_tables.hpp`; no codec code or codec table is in the repo. "Voice
+  codec" fact: "AMBE (Aero 4800): <file> (mbelib 1.3.0, with the 4800x3600
+  codec)" / "not installed (libmbe.so.1 lacks the Aero AMBE 4800x3600
+  functions - see README: Digital voice codecs)" / "disabled
+  (KRAKEN_AERO_AMBE=none)"; output through `VoiceLimiter`. The Setup box's
+  codec list (`lib/tools/codecs.cpp`) does not show it. STATE OF TESTING:
+  the path runs end to end in a playback (generated C channel, random
+  voice bits: 502 of 551 Opus packets non-silent with the codec, all
+  silent without). Off air (2026-11-22, a Pi 5 with one patch antenna,
+  Inmarsat-4 F1): two real to-aircraft C channels followed from their
+  assignments on the P channel - 20 and 41 C channel frames, 23 of 42 and
+  65 of 102 sub-band signal units passing their CRC (the failures in faded
+  frames), and the codec's own Golay decoder as the oracle for the voice
+  frames: 0.91 and 0.66 corrections per 20 ms frame on the two calls
+  against 4.32 on random voice bits; with the frames arranged any other
+  way (bits reversed, inverted, shifted by 1 or 8 bits, the table
+  shuffled) no frame comes out clean. So position, bit order, polarity
+  and deinterleave are right. Those two captures carried no talk (one
+  call: 567 of 675 clean frames the same frame, which decodes to digital
+  silence). SPEECH CONFIRMED BY MEASUREMENT on a third call (2026-11-23,
+  found by the All channels mode itself, 174 s, 347 of 347 C channel
+  frames clean, 0.13 Golay corrections per voice frame): from the codec's
+  own parameters (the plugin author's analysis) voiced runs of median 120
+  ms / longest 640 ms, 91 % of voiced frames in runs of 100 ms or more
+  (random voice bits: 24 %), pitch steps of 2.3 % between voiced
+  neighbours within 0.58 octave (random: 75 % steps over 1.94 octaves),
+  talk spurts of 0.4-2.7 s between pauses of up to 26 s; and independently
+  from the decoded waveform alone (autocorrelation pitch per 20 ms): voiced
+  runs median 100 ms / longest 620 ms, 82 % in runs of 100 ms or more
+  (random: 24 %), pitch steps of median 0.027 octave within 0.56 octave
+  (random: 1.46 octaves), 28 % of the time active. Nobody listened to any
+  call; decoded audio existed only in memory for these figures. The L-band
+  downlink carries only the ground-to-aircraft half of a call
 - Codec availability: ⚙ Setup Settings → Decoders (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens. The page
