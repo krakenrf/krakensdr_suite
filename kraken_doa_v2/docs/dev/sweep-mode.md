@@ -2076,6 +2076,25 @@ zoomed place. Before the change "pause stops the sweep" counted one more
 sweep once on the FM band (11 a second, localhost: the step's own race;
 passed in the three later runs).
 
+After main's 93be402 (the Inmarsat decoder plugins; outside them 21 lines
+of the decoder engine and 3 of the page) was merged in, the dev machine's
+KrakenSDR again: the compression check 40 / 40 (0.599 of raw at Full, 1.82
+against 3.02 MB/s), the Data rate 19 / 19, the kept rows 10 / 10, round 5's
+27 / 27, the waterfall 14 / 14, the resolutions 15 / 15 and 15 / 15; the
+display list 14 / 15 and end to end 19 / 20 with the two steps named above
+("each row keeps its own detail": 4 - 9 px at Full, 27 - 38 at the step,
+1299 at Fit; "pause stops the sweep" 73 -> 74 - both checks ask for more
+than the page promises: a step of four bins is not five times coarser, and
+the sweep in flight ends after the pause is acknowledged); the steadiness
+check 23 / 26 - coherent mode 27 - 29 KB/s (one KB/s either side of 28 is
+7 %), Fit to the plot 28 - 30 KB/s against 30.0. That last one is round
+7's rate over whole sweeps with the receiver's counters where there is no
+set: the receiver's sample is up to a second older than the sweep's end, a
+second of the 30 KB/s trickle is 6 % of four sweeps' bytes, and with a
+sweep of 3.98 s the two clocks drift against each other (steady on the
+Pi's 4.02 s sweep). Harmless, and removable: at Fit to the plot the 5 s
+window would do.
+
 Not tested: Firefox, Safari, iOS (a browser without `DecompressionStream`
 stays raw; with it, untried there); a slow link with deflated parts; a
 Windows or macOS receiver (zlib is in their link lines; not built); a Pi 4;
