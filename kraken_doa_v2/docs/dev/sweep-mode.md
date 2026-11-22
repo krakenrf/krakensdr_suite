@@ -1983,6 +1983,105 @@ comparison coherent mode 28 KB/s, wideband scan 28, independent 46. The
 record, with every shown value against the kernel's count, is in *Spectrum
 views*.
 
+**Round 8, 2026-11-23: the sets compressed** (`SWEEP_FULL_Z`; the receiver
+section's "Compressed for a page that asks", the page section's deflated
+parts). The user asked whether the full-resolution data could be compressed
+better, then: "Implement the sweep full resolution compression".
+
+*What was measured first* (real sets taken from the dev machine's KrakenSDR
+through the page, 24 - 1765 MHz, gain 49.6: job scratch `e2e/sets`,
+`cap_full.py`, `comp_study.py`, `comp_more.py`, `comp_time.py`). The 146 Hz
+set, 11.9 M values: 17 % of them 0, 0.6 % more than 10 dB over their block's
+median - one FFT a point, so nearly all of it is noise; 5.96 bits a value
+over the whole set, 4.79 given the value before.
+
+| coding (lossless) | size | one core, x86 / Pi 5 |
+|---|---|---|
+| deflate, Huffman only (the one built) | 60.1 % | 83 / 186 ms |
+| deflate level 1, default strategy | 66.4 % | 212 / 297 ms |
+| deflate level 6 | 72.6 % | 340 ms / - |
+| bzip2 / LZMA | 72 % / 69 % | far slower |
+| an adaptive coder that knows the value before (bound) | 58 % | - |
+
+No gain from the differences against the sweep before (5.74 bits a value:
+the noise is new every sweep) or from taking the local floor out first
+(61 - 63 %). More frames a point compress better: dwell 21 ms 51.6 %, the
+586 Hz grid 55.0 %. The sets max-pooled to a step: 61 - 63 % (37.5 kHz:
+69 %). Not built, lossy (not asked for): level steps of 0.94 dB in place of
+0.47 would give 49.8 %, 1.88 dB 39.0 %. "Should we only compress when the
+sweep takes longer than the compression?" (the user): it never comes near -
+2.1 % of the sweep time on x86, 4.7 % on a Pi 5 at most, and both grow with
+the points; the rule in use is the receiver's deadline (a part not ready in
+time goes raw). The live modes were looked at too and left alone: their
+spectrum (type 7) already goes through permessage-deflate to 62 - 67 % of
+its bytes (coherent mode's 27.7 KB/s on the wire: spectrum 11.1, the DoA
+message 7.5 uncompressed, audio 4.0, JSON 3.9; `e2e/live`, `live_study.py` -
+the wire rebuilt from the captured messages matches the receiver's counter
+within 1 %); coding each frame against the one before, or a window kept
+across frames, would save 2.4 / 8.6 / 5.3 KB/s (coherent / independent /
+wideband scan), and Huffman-only is no better there (the averaged spectrum
+is smooth).
+
+*End to end on real hardware* (the page in headless Chromium; the reference
+is the kernel's own count of each connection, as in round 7). The Pi's
+receiver has been a KrakenSDR Wideband since round 7 (plain mode: sweeps of
+its noise, nothing converges), so the checks that need signals ran on the
+dev machine's KrakenSDR (the Pi checks with the stack local), and the Pi ran
+what needs none. The compression check (`zip_pi.py`): a normal page and a
+page whose browser has no `DecompressionStream` (it must not ask) take the
+same sweeps.
+
+| | dev machine (x86), its KrakenSDR | Pi 5, the Wideband unit's noise |
+|---|---|---|
+| the check | 40 / 40 | 40 / 40 |
+| the two pages' sets of the same sweeps, at Full (146 Hz), 2.34 kHz, 586 Hz, the FM band at Full | identical, value for value | identical |
+| the normal page's parts deflated | all (115 of 115 at Full) | all |
+| size at Full / 2.34 kHz / 586 Hz / FM | 0.600 / 0.606 / 0.629 / 0.583 | 0.545 / 0.513 / 0.580 / 0.419 |
+| a third page at a step beside one at Full | both all deflated | both all deflated |
+| every set whose last part arrived completed (the inflate is asynchronous) | yes, both pages | yes |
+| Data rate, Full: the deflating page / the raw page (the two add up to the wire) | 1.82 / 3.01 MB/s | 1.64 / 2.98 MB/s |
+| `SWEEP_FULL_Z:0`, then `:1`, from the page | raw, then deflated again | the same |
+| the receiver, one page at Full, raw -> deflating (% of a core) | 8.7 -> 10.4 | 14.6 -> 19.4 (the compressor thread 5.4) |
+| packets dropped by the engine; page errors; exit codes | none; none; 0 | none; none; 0 |
+
+The Data rate after the change on the dev machine's KrakenSDR (shown,
+against the kernel within 3 %): the 2.34 kHz step 217 -> 143 KB/s, Full
+3.03 -> 1.82 MB/s, the FM band at Full 228 -> 138 KB/s, a 14 s sweep at
+Full 873 -> 424 KB/s; Fit to the plot and the other modes as before (30,
+28, 47 KB/s). The Pi's earlier checks there with the pair: the display list
+15 / 15, the kept rows 10 / 10, round 5's 27 / 27, the waterfall 14 / 14, the
+resolutions 15 / 15 and 15 / 15, end to end 20 / 20, the Data rate 19 / 19 -
+the same before the change at 82572e1, which also carries main's da35b40
+(heimdall's retune cooldown, the Wideband mixer crossover). Mixed versions
+on that hardware: the new receiver under the page of before (it never asks:
+raw, identical sets, 24 / 24, end to end 20 / 20) and the new page on the
+receiver of before (it asks, the receiver ignores it: raw, 36 / 36, the
+display list 15 / 15, the kept rows 10 / 10).
+
+Misses, none in the compression. The Pi's "CONVERGED" step (the Wideband
+unit). The steadiness check (round 7's, every shown Data rate against the
+kernel): before the change, on the dev machine loaded by other tests, the
+2.34 kHz step shown 207 - 217 KB/s against a reference of 194, and the FM
+band's values 6.6 % apart (5 % allowed); with the pair, at Fit to the plot -
+where no set is sent - 28 - 30 KB/s, 6.8 % apart; on the Pi after a resume
+1.57 - 1.61 MB/s, steady, against a reference of 1.75. In the two reference
+cases the check's window is a whole number of sweeps of the duration it
+read at its start (after the resume 4.22 s read, 4.03 real), which puts the
+reference off by up to a set in eight. The display list's "each row keeps
+its own detail" once of four runs (the new receiver under the page of
+before): the rows in the right order - longest one-colour stretch 5 - 15 px
+at Full, 41 - 101 at the step, 1347 at Fit - but the step less than the five
+times coarser the check asks for; it depends on what is on the air at the
+zoomed place. Before the change "pause stops the sweep" counted one more
+sweep once on the FM band (11 a second, localhost: the step's own race;
+passed in the three later runs).
+
+Not tested: Firefox, Safari, iOS (a browser without `DecompressionStream`
+stays raw; with it, untried there); a slow link with deflated parts; a
+Windows or macOS receiver (zlib is in their link lines; not built); a Pi 4;
+the thread sanitizer (unusable on the dev machine's kernel - the receiver
+section).
+
 Open after round 6, as after round 5: Firefox, Safari and iOS have not run the picture's
 download or the full sets (headless Chromium only); a slow link was tried
 through a 2 MB/s proxy by the page worker, not over a real one; a 1 GB Pi 4
