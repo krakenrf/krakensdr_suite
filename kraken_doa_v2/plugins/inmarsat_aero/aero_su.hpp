@@ -12,6 +12,7 @@
 #include "kraken_plugin.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -42,6 +43,20 @@ public:
     // the P channel's frequency as received (Hz, the VFO's RF + the carrier
     // offset): picks the satellite whose entry names it
     void set_channel_hz(double hz) { chan_hz_ = hz; }
+    // a C channel assignment (its to-aircraft frequency, Hz) - the "all
+    // channels" mode opens that channel
+    std::function<void(double)> on_c_assign;
+    // the P channel frequencies the signalling names (GES advice, the
+    // satellite table), Hz: against them the receiver's offset is measured
+    std::vector<double> advertised_hz() const {
+        std::vector<double> v;
+        for (const auto& [g, f] : adv_) v.push_back(f);
+        for (const auto& [id, e] : sats_)
+            for (double f : {e.psmc1, e.psmc2})
+                if (f > 0) v.push_back(f);
+        return v;
+    }
+    int ges() const { return ges_; }
 
     struct Stats {
         uint64_t acars = 0, acars_bad_bcs = 0, user_msgs = 0, adsc = 0;
@@ -64,6 +79,7 @@ private:
     std::map<int, SatEntry> sats_;
     double chan_hz_ = 0;
     std::map<int, std::string> psmc_;   // GES -> its P / R channel advice
+    std::map<int, double> adv_;         // GES -> its P channel (Hz)
     double last_facts_ = -100;
     // user data being reassembled: key = (AES, Q, reference)
     struct Asm {

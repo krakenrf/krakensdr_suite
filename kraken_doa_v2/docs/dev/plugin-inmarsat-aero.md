@@ -13,9 +13,16 @@ this folder (index: `README.md` here, or the table in
   libacars (MIT) as the description of ARINC 622 / 745, JAERO (MIT) to
   confirm the C channel layout, libaeroambe (MIT) for the voice frame's
   de-interleave table. No GPL decoder was opened.
-- Input 24 kHz (`sample_rate`), `min_vfo_rate` 15000, category Aviation,
+- Input: the VFO's own rate (`sample_rate` 0, since 2026-11-23; was 24
+  kHz) - the single-channel modes resample to 24 kHz inside with the
+  host's own call (liquid `msresamp_crcf_create(24000 / rate, 60)`,
+  nothing at 24 kHz), so they get the very samples the host gave them
+  before (the acceptance set, the off-air cuts and both calls identical,
+  line by line); `min_vfo_rate` 15000, category Aviation,
   `map`, `voice`, `talkers`; option `mode` (auto / p600 .. p10500 / c8400
-  / burst). One plugin for every channel: the slow modes decimate inside
+  / burst / all), `listen` (mix / newest; All channels only). The page
+  picks a decoder's VFO width from `min_vfo_rate` only, so its default
+  for this plugin didn't move. One plugin for every channel: the slow modes decimate inside
   (by 5 to 4.8 kHz for 0.6 / 1.2, by 2 for 2.4 kbit/s); CPU stays 1 - 1.5
   % of real time on x86 (3.4 % with the voice codec running).
 - Acquisition from the squared signal: A-BPSK (+-90 deg per bit) and
@@ -223,6 +230,79 @@ this folder (index: `README.md` here, or the table in
     MS/s capture (decimation to 2.4 MHz / D, flat to 0.4 W, -6 dB at 0.5
     W) passes 2906 - 2926 of 3042 SUs from 15 to 48 kHz: `min_vfo_rate`
     stays 15 kHz.
+- **All channels in the VFO** (2026-11-23; `aero_bank.*`, `aero_all.*`,
+  `aero_channel.hpp`; README *All channels in the VFO* for what the user
+  sees, and the measurements):
+  - A plugin mode, one process, no kraken_doa / page / SDK change: the
+    plugin declares `sample_rate` 0 and channelizes the VFO itself. The
+    single-channel decoder moved from decoder.cpp into `aero::AeroChannel`
+    unchanged; each channel of the mode is one, behind a `ChanHost`
+    (kp::Host) that keeps its facts (the channel list is built from them),
+    prefixes its events with the channel's frequency, merges its aircraft
+    rows (per AES: messages summed, empty cells from any channel), maps
+    its times into the host's (`time()` = the channel's first sample's
+    host time + samples / 24 kHz; `valid(start, end)` / talkers pass
+    through) and queues its audio for the mixer. A trial that locks a
+    validated channel's carrier (within 1.5 kHz) is muted from that moment
+    - two survey peaks on one signal never report twice.
+  - Bank: overlap-save, N = nearest pffft size to rate / 375 Hz (6400 at
+    2.4 MHz), hop N/2, a channel = 64 bins weighted flat to +-8.6 kHz and
+    raised-cosine to 0 at +-12 kHz (divided by N: the output level equals
+    the input's), 64-point inverse FFT, the middle 32 outputs (the
+    zero-phase filter's valid part: its taps fall to ~-58 dB at N/4), the
+    block's phase e^(-2 pi i bin b L / N). 24 kHz exactly when rate x 64 /
+    N is (2.4 / 1.2 MHz, 600 / 300 kHz), else a liquid msresamp per
+    channel. Checked with a tone: frequency exact, level 1.000, worst
+    phase step error 0.0004 rad across blocks.
+  - Survey every 0.25 s from the bank's |X|^2 (no extra FFT): local floor
+    = median of 64-bin pieces, median of 7 such; narrow = 3-bin mean >= 4
+    dB and a local maximum over +-6 bins; wide = 17-bin mean >= 1.5 dB,
+    local max over +-16 bins, flat-topped (no 3-bin peak more than 2.5 dB
+    above it - a bump of 600 bit/s carriers is not a wide signal) and
+    inside +-0.42 of the rate (the RTL-SDR's roll-off makes bumps beyond).
+    Narrow candidates to +-0.46 at 2.4 MHz. Trials: up to 24 narrow and
+    16 wide at once, each a searching AeroChannel in Auto (0.7 % of a Pi 5
+    core); a narrow trial searches only +-1 kHz around its peak - two
+    synchronous 600 bit/s neighbours 5 kHz apart make a false line pair
+    half way between them (it locked, never passed a CRC, and blocked the
+    real channel 2.5 kHz away); an unlocked trial gives way to a candidate
+    3 dB (wide: 0.75 dB) stronger - the capture's first quarter second
+    shows the real 600 bit/s carriers 5 dB lower than later (the receiver
+    settling?) and 60 weak peaks filled every slot. Never locked: closed
+    after 4 s; locked without a CRC: 9 s; both frequencies left alone for
+    90 s. Validated channels close after 40 s (C: 8 s) without a CRC and
+    leave an event with their counts.
+  - An empty band (no channel, no candidate for 2 s) computes one bank
+    block in four for the survey; from the start that made the first
+    survey too noisy (47 FFTs) and filled the wide slots with noise
+    bumps, so the full rate comes first.
+  - Receiver offset: the median over validated P channels of (received -
+    the nearest frequency advertised in the GES advice / system table
+    within 3 kHz); then the names are nominal (rounded to 100 Hz), "~"
+    before. Off air -1.49 kHz from 3 channels, as measured by hand.
+  - C channel assignment: `SuDecoder::on_c_assign` with the to-aircraft
+    frequency; inside the VFO a `c8400` channel opens at once (20 s to
+    validate). Outside: not followed. Following it would need the plugin
+    to retune (`host.tune`, the whole band moves away for the call) or a
+    second tuner/VFO on it: a page / host feature, not done (brief).
+  - Audio: each call's decoder hands its sound over 0.5 s at a time; the
+    mixer is clocked by the input (8 kHz, 0.6 s behind), sums the calls
+    (VoiceLimiter when two or more) or plays the newest only - summing as
+    it came gave twice real time with two calls.
+  - Acceptance and CPU: README.
+- **Faster recognition** (2026-11-23): README *Time to recognition*. The
+  acquisition FFTs half-overlap and every one is searched on the last 1 -
+  3 summed; thresholds by count (16.5 / 13.5 / 12.5 dB) from noise (max
+  13.5 / 10.4 / 9.9 dB in 70 / 70 / 1435 searches). Wide-band rates before
+  the narrow search's first result: 4800 / 8400 never (multiples of 600 /
+  1200: a strong A-BPSK channel scores up to 20.4 dB there), 10500 when 4
+  dB clear. Stuck demodulator: P, lock >= 20 dB, 1 s, quality < 0.93, no
+  SU -> start again half a bit later (once); C, 1.5 s without a clean
+  frame -> again (up to 3 times; call 2 from its worst start: 16.7 -> 8.7
+  s). Small VFO move (<= 2 kHz, synced): `Demod::shift_carrier`, no
+  reset. The live times before were longer than offline for one reason:
+  the false 4800 bit/s lock on the strong live 1200 bit/s channel; the
+  receiver path itself adds nothing (stream to plugin, plugin start).
 - Not done: CPDLC decoding, the 21 kbit/s C channel (no public 9.6 kbit/s
   LPC decoder), the other C rates, bursts closer than ~1.4 kHz at once (or more than four), verification of
   satellite / beam table fields (not on the recordings). Windows / Linux

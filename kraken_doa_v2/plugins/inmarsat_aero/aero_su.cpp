@@ -103,6 +103,7 @@ void SuDecoder::reset() {
     sats_.clear();
     call_aes_.clear();
     psmc_.clear();
+    adv_.clear();
     asm_.clear();
     air_.clear();
     multi_.clear();
@@ -229,6 +230,10 @@ void SuDecoder::p_su(const uint8_t* su, double t0, double t1, int index) {
         char k[40];
         snprintf(k, sizeof k, "GES 0x%02X channels %d", ges, lsu <= 1 ? 0 : lsu - 1);
         host.fact(k, s);
+        if (lsu <= 1) {
+            const int code = be16(su + 4);
+            if (code & 0x7FFF) adv_[ges] = (1510.0 + (code & 0x7FFF) * 0.0025) * 1e6;
+        }
         break;
     }
     case 0x09: {   // system broadcast: universal time (A2-35), BCD
@@ -312,6 +317,10 @@ void SuDecoder::p_su(const uint8_t* su, double t0, double t1, int index) {
         Air& a = air_[aes];
         a.label = "C channel";
         row(aes);
+        {
+            const int code = be16(su + 6);
+            if ((code & 0x7FFF) && on_c_assign) on_c_assign((1510.0 + (code & 0x7FFF) * 0.0025) * 1e6);
+        }
         break;
     }
     case 0x40: case 0x41: {   // P/R or T channel control (ISU)
