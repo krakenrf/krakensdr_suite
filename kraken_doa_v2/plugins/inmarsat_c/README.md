@@ -238,7 +238,12 @@ calibration burst (~0.5 s of noise source and missing samples, ~4.7 s
 after the retune) come first: recognised 7.3-9.4 s, first frame 11.9-18.7 s
 (before: 11.9 / 18.6 s, and once nothing within 28 s). The burst rows are
 now taken out (erasures, search restarted) instead of weighing on the
-search for a whole frame.
+search for a whole frame. In 2 of 7 coherent retunes (and 1 of 5 before)
+heimdall's calibration ran much longer - its log shows sample slips during
+the phase recalibration and the lags re-acquired - and no BPSK reached the
+decoder for ~30 s (recognised 36.7 / 39.7 s); that is heimdall's, on this
+array with one antenna. The LES TDM 217 live: the same pattern (independent
+recognised 3.5-3.6 s, first frame 5.1-12.3 s; before 7.8-11.5 s).
 
 ## Off air (2026-11-22, roof Pi 5, KrakenSDR CH0, satellite patch + LNA on the CH0 bias tee)
 - **NCS 244 (POR)**, gain 49.6 dB, VFO 9.6 kHz on 1541.450 MHz: 55 minutes

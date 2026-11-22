@@ -294,7 +294,10 @@ recognised now at 3.5 s, the first frame announced correctly.
 
 Live (roof Pi, NCS 244 and LES 217, before / now, see the README for the
 lines): independent - recognised 3.4-3.8 s, the countdown right to 0.1 s;
-coherent retune - recognition after heimdall's burst, 7.3-9.4 s. Single
+coherent retune - recognition after heimdall's burst, 7.3-9.4 s, but 36.7 /
+39.7 s in 2 of 7 (1 of 5 before: nothing in 28 s) when heimdall's
+recalibration slipped samples and re-acquired the lags (heimdall's log) -
+nothing the decoder can shorten. Single
 samples of the first frame vary by the frame phase (0-8.64 s); only the
 offline distributions show the mean.
 
