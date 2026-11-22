@@ -1,5 +1,6 @@
 #include "sweep.hpp"
 #include "networking/websocket_server.hpp"
+#include "networking/net_stats.hpp"
 #include "ai_mcp.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
@@ -78,6 +79,8 @@ struct PerSocketData {
     uint32_t sweep_overview = 0;   // SWEEP_OVERVIEW:<points> (0 = off): the whole range with each completed sweep
     // SWEEP_FULL:1 - the whole range at the sweep's own bins (type 11) with each
     // completed sweep, in parts paced by this socket's buffer, one set at a time
+    bool net_stats = false;       // NET_STATS:1 - this connection's byte counters about once a second
+    int64_t net_ms = 0;           // when they last went
     uint32_t sweep_full = 0;      // SWEEP_FULL:<n>: 0 off, 1 every bin, else at most n values (sweep::full_pool)
     bool full_snapshot = false;   // the store as it is, once (on SWEEP_FULL:1)
     bool full_due = false;        // its flag-2 frame went this tick: a completed sweep's set
@@ -387,6 +390,51 @@ void handle_sweep_full(WS* ws, string_view arg) {
     ud->full_due = false;
     ud->full_snapshot = n != 0;        // a new n: the store as it is, at that n, on the next tick
     ud->sweep_full = n;
+}
+
+// NET_STATS:<1|0> (every mode; transport level, this connection only): the
+// kernel's byte counters of this connection (net_stats.hpp: Linux TCP_INFO) as
+// {"net":{"tx_bytes","tx_sent"?,"rx_bytes","t_ms"}} at once and then every
+// second - for the page's network rate. No counter (other platforms): no
+// message. Junk is ignored
+std::unordered_set<ClientWS*> g_net_sockets;   // sockets with NET_STATS on (uWS loop only)
+template<typename WS>
+void send_net_stats(WS* ws, int64_t now) {
+    PerSocketData* ud = ws->getUserData();
+    ud->net_ms = now;
+    net_stats::Counters c;
+    // (a uWS WebSocket is its us_socket_t; an SSL socket's struct begins with it,
+    // and that with the poll: the TCP descriptor under the TLS)
+    if (!net_stats::read(static_cast<int>(us_poll_fd(reinterpret_cast<us_poll_t*>(ws))), c)) return;
+    char b[160];
+    if (c.has_sent)
+        snprintf(b, sizeof b, "{\"net\":{\"tx_bytes\":%llu,\"tx_sent\":%llu,\"rx_bytes\":%llu,\"t_ms\":%lld}}",
+                 static_cast<unsigned long long>(c.tx_acked), static_cast<unsigned long long>(c.tx_sent),
+                 static_cast<unsigned long long>(c.rx), static_cast<long long>(now));
+    else
+        snprintf(b, sizeof b, "{\"net\":{\"tx_bytes\":%llu,\"rx_bytes\":%llu,\"t_ms\":%lld}}",
+                 static_cast<unsigned long long>(c.tx_acked), static_cast<unsigned long long>(c.rx), static_cast<long long>(now));
+    ws->send(b, uWS::TEXT);
+}
+template<typename WS>
+void handle_net_stats(WS* ws, string_view arg) {
+    PerSocketData* ud = ws->getUserData();
+    if (arg == "1" || arg == "true") {
+        if (ud->net_stats) return;
+        ud->net_stats = true;
+        g_net_sockets.insert(ws);
+        send_net_stats(ws, steady_ms());   // a baseline at once
+    } else if (arg == "0" || arg == "false") {
+        ud->net_stats = false;
+        g_net_sockets.erase(ws);
+    }
+}
+// on the broadcast tick (every mode): each such socket's counters every 1000 ms
+void net_stats_tick() {
+    if (g_net_sockets.empty()) return;
+    const int64_t now = steady_ms();
+    for (ClientWS* ws : g_net_sockets)
+        if (now - ws->getUserData()->net_ms >= 1000) send_net_stats(ws, now);
 }
 
 // The full set's parts go while this socket has less than FULL_QUEUE queued
@@ -1124,6 +1172,12 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 handle_sweep_full(ws, message.substr(11));
                 return;
             }
+            // NET_STATS:<1|0> - this connection's byte counters about once a
+            // second (every mode; Linux; an older receiver ignores it)
+            if (message.starts_with("NET_STATS:")) {
+                handle_net_stats(ws, message.substr(10));
+                return;
+            }
             // 🎨 BIN_DOA_VIEW:1|0 (transport-level, this connection only):
             // the page takes type 9 frames with its main view's frames
             // (bin_doa.hpp); answered with the mode's state
@@ -1150,6 +1204,7 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             g_pending_auth.erase(ws);
             g_spec_sockets.erase(ws);
             g_sweep_sockets.erase(ws);
+            g_net_sockets.erase(ws);
             g_video_sockets.erase(ws);
             dig::set_video_wanted(!g_video_sockets.empty());
             if (g_bin_doa_sockets.erase(ws)) bin_doa::set_viewers(static_cast<int>(g_bin_doa_sockets.size()));
@@ -1182,6 +1237,7 @@ void WebSocketServer::web_server_main() {
                 doa_timer = us_create_timer(native_loop, 0, 0);
                 
                 us_timer_set(broadcast_timer, [](struct us_timer_t* /*timer*/) {
+                    net_stats_tick();   // NET_STATS (every mode)
                     // Sweep mode: the sweep frames only - no regular spectrum
                     // (nothing is FFT'd but the sweep's hops)
                     if (sweep_mode_enabled.load(std::memory_order_relaxed)) {
