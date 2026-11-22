@@ -1599,7 +1599,7 @@ the broadcasts:
   sites): one, the stronger; signalled frequencies different: two; the
   weaker named or marked followed (`TRUNK_CC_SET` with its id) meanwhile:
   kept, and the stronger gets its own entry (before: not recorded at all); a
-  click on it meanwhile ends the search (`follow`). `t36_d0` 210 (a plain
+  click on it meanwhile ends the search (`follow`). `t36_d0` 209 (a plain
   click always on D0, 2026-11-22): D0 a plain listening VFO (WBFM, heard),
   another system's control VFO, parked by an excursion, disabled by a search
   (the click during it), with 16 VFOs in use; in / out of the span (the
