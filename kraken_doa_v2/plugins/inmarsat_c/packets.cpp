@@ -116,21 +116,24 @@ bool parse_0x81(const uint8_t* p, int n, LesTdmRef& r) {
     return plausible_code(r.tdm_code) && !station_is_ncs(r.les);
 }
 
-bool parse_0x92(const uint8_t* p, int n, std::vector<LesListEntry>& out) {
+bool parse_station_list(const uint8_t* p, int n, std::vector<LesListEntry>& out, int* network_version) {
     out.clear();
-    if (p[0] != 0x92 || n < 9 + 6 + 2 || (n - 9 - 2) % 6 != 0) return false;
-    for (int i = 9; i + 6 <= n - 2; i += 6) {
+    int h;
+    if (p[0] == 0x92) h = 9;
+    else if (p[0] == 0xAB) h = 4;
+    else return false;
+    if (n < h + 2) return false;
+    const int count = p[h - 1];
+    if (count < 1 || n != h + 6 * count + 2) return false;
+    if (network_version) *network_version = p[h - 2];
+    for (int i = h; i + 6 <= n - 2; i += 6) {
         LesListEntry e;
         e.les = p[i];
         e.status = (static_cast<uint32_t>(p[i + 1]) << 16) | (p[i + 2] << 8) | p[i + 3];
         e.tdm_code = (p[i + 4] << 8) | p[i + 5];
-        if (!plausible_code(e.tdm_code) || station_is_ncs(e.les)) {
-            out.clear();
-            return false;
-        }
-        out.push_back(e);
+        if (plausible_code(e.tdm_code)) out.push_back(e);   // (an entry with code 0: a station without a TDM)
     }
-    return !out.empty();
+    return true;
 }
 
 // ---- EGC -------------------------------------------------------------------------
@@ -142,8 +145,8 @@ bool parse_egc_header(const uint8_t* p, int n, EgcHeader& h) {
     h.service = p[2];
     h.flags = p[3];
     h.more = (p[3] & 0x80) != 0;
-    h.p_bit = (p[3] >> 6) & 1;
-    h.repetition = p[3] & 0x3F;
+    h.priority = (p[3] >> 5) & 3;
+    h.low_bits = p[3] & 0x1F;
     h.msn = (p[4] << 8) | p[5];
     h.packet_seq = p[6];
     h.presentation = p[7];
@@ -250,10 +253,23 @@ std::string egc_address_text(uint8_t s, const std::vector<uint8_t>& a) {
     case 0x04: case 0x34:
         return "rectangular area (" + raw + ", layout not decoded)";
     case 0x14: case 0x24: case 0x44:
+        if (n == 4) {
+            // the first two bytes are the centre's whole degrees of latitude / longitude
+            // (one real distress relay matched its text); how the hemispheres and the
+            // radius are coded in bytes 3-4 has not been seen yet
+            std::snprintf(b, sizeof b, "circular area: centre %d deg lat, %d deg lon (hemispheres not decoded), bytes 3-4 %02X %02X",
+                          a[0], a[1], a[2], a[3]);
+            return b;
+        }
         return "circular area (" + raw + ", layout not decoded)";
     default: break;
     }
     return n ? raw : "-";
+}
+
+const char* priority_name(int p) {
+    static const char* n[4] = {"Routine", "Safety", "Urgency", "Distress"};
+    return n[p & 3];
 }
 
 const char* presentation_name(uint8_t p) {

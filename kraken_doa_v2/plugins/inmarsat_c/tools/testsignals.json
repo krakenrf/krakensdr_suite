@@ -9,7 +9,7 @@
  "vfo": {"bw_khz": 9.6},
  "commands": ["DEC_SQUELCH_METHOD:0:DIGITAL", "DEC_SQUELCH_ENABLE:0:1"],
  "steps": [["{tools}/inmc_gen.py", "ncs.cf32", "--rate", "24000", "--frames", "4", "--start-symbol", "0", "--tail", "0",
-            "--offset", "700", "--egc-frame", "1", "--origin", "144", "--frame0", "6200", "--seed", "3",
+            "--offset", "700", "--egc-frame", "1", "--continued", "--origin", "144", "--frame0", "6200", "--seed", "3",
             "--egc", "31:05:114:4101:METAREA V\nSYNTHETIC TEST WARNING NR 001\nGALE WARNING FOR THE TEST AREA. THIS IS A GENERATED MESSAGE FOR THE KRAKENSDR DEBUG PLAYBACK. IT SPANS TWO PACKETS OF THE DOUBLE-HEADER FORMAT SO THAT THE REASSEMBLY ACROSS FRAMES IS EXERCISED. WIND FORCE 8 IN THE TEST AREA, SEA STATE ROUGH, VISIBILITY GOOD. END OF THE FIRST BLOCK AND THE START OF THE SECOND ONE.\nNNNN",
             "--egc", "00::102:77:ALL SHIPS TEST CALL - GENERATED",
             "--egc", "13:014142:104:9:COASTAL WARNING TEST - GENERATED"]],

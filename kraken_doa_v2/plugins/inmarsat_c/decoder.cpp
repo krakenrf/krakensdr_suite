@@ -65,7 +65,7 @@ public:
         ring_.assign(RING, 0.0f);
         pos_.assign(RING, 0.0);
         sync_reset();
-        host.table_columns({"Service", "Address", "LES", "Msg", "Packets", "State", "Text"});
+        host.table_columns({"Service", "Priority", "Address", "LES", "Msg", "Packets", "State", "Text"});
         host.table_keep(24 * 3600);
     }
 
@@ -77,6 +77,8 @@ public:
         locked_reported_ = false;
         type_counts_.clear();
         les_tdm_.clear();
+        sig_.clear();
+        cont_.clear();
         frames_ok_ = frames_bad_ = packets_ok_ = packets_lost_ = 0;
         sym_err_ = sym_tot_ = 0;
         egc_msgs_ = egc_complete_ = egc_repeats_ = 0;
@@ -122,6 +124,7 @@ private:
         std::fill(ring_.begin(), ring_.end(), 0.0f);
         sym_count_ = inmc::FRAME_SYMS;
         first_real_ = sym_count_;
+        last_start_ = -(int64_t(1) << 40);
         locked_ = false;
         pending_ = -1;
         misses_ = 0;
@@ -143,22 +146,36 @@ private:
         pos_[sym_count_ % RING] = s.pos;
         sym_count_++;
         const int64_t start = sym_count_ - inmc::FRAME_SYMS;   // a frame ending with this symbol
-        if (!locked_) {
-            if (start < first_real_ - MAX_ERASED) return;
+        if (start < first_real_ - MAX_ERASED) return;
+        // The search runs while locked too: after samples went missing (a
+        // heimdall calibration cuts its noise-source packets out; a capture
+        // that fell behind) the next frame starts somewhere else, and is taken
+        // as soon as it is whole instead of after two misses
+        const bool near_expected = locked_ && start >= expected_ - SYNC_WINDOW && start <= expected_ + SYNC_WINDOW;
+        if (!near_expected && start > last_start_ + inmc::FRAME_SYMS / 2) {
             const float c = uw_corr(start);
             if (std::fabs(c) > SYNC_SEARCH && (pending_ < 0 || std::fabs(c) > std::fabs(pending_c_))) {
                 pending_ = start;
                 pending_c_ = c;
             }
-            if (pending_ >= 0 && start >= pending_ + SYNC_WINDOW) {
-                decode_at(pending_, pending_c_);
-                locked_ = true;
-                expected_ = pending_ + inmc::FRAME_SYMS;
-                pending_ = -1;
-                misses_ = 0;
+        }
+        if (pending_ >= 0 && start >= pending_ + SYNC_WINDOW) {
+            if (locked_) {
+                int64_t d = (pending_ - expected_) % inmc::FRAME_SYMS;
+                if (d > inmc::FRAME_SYMS / 2) d -= inmc::FRAME_SYMS;
+                if (d < -inmc::FRAME_SYMS / 2) d += inmc::FRAME_SYMS;
+                host.log("a frame " + std::to_string(static_cast<long long>(d)) +
+                         " symbols from the expected place - resynchronised (samples missing or extra)");
             }
+            decode_at(pending_, pending_c_);
+            locked_ = true;
+            last_start_ = pending_;
+            expected_ = pending_ + inmc::FRAME_SYMS;
+            pending_ = -1;
+            misses_ = 0;
             return;
         }
+        if (!locked_) return;
         if (start < expected_ + SYNC_WINDOW) return;
         // the window around the expected start is complete
         int64_t best = expected_;
@@ -170,9 +187,23 @@ private:
         }
         if (std::fabs(bc) >= SYNC_LOCKED) {
             decode_at(best, bc);
+            last_start_ = best;
             expected_ = best + inmc::FRAME_SYMS;
             misses_ = 0;
         } else {
+            // where is it? (diagnostics: a wide look around the expected place)
+            int64_t wb = expected_;
+            float wc = 0;
+            for (int64_t s2 = expected_ - 400; s2 <= expected_ + 400; s2++) {
+                if (s2 < 0 || s2 + inmc::FRAME_SYMS > sym_count_ || sym_count_ - s2 > RING) continue;
+                const float c = uw_corr(s2);
+                if (std::fabs(c) > std::fabs(wc)) wc = c, wb = s2;
+            }
+            char b[200];
+            std::snprintf(b, sizeof b, "no unique word at the expected place (best %.2f there; %.2f at %+lld symbols); lock %.2f, "
+                          "%.4f samples/symbol, carrier %+.1f Hz", bc, wc, static_cast<long long>(wb - expected_),
+                          demod_.lock_quality(), demod_.sps_estimate(), demod_.carrier_hz());
+            host.log(b);
             expected_ += inmc::FRAME_SYMS;
             if (++misses_ >= 2) {
                 locked_ = false;
@@ -240,8 +271,10 @@ private:
             std::snprintf(b, sizeof b, "%s%02X x%lld", t.empty() ? "" : ", ", ty, static_cast<long long>(n));
             t += b;
         }
-        std::snprintf(b, sizeof b, "%lld passed their sum check%s", static_cast<long long>(packets_ok_),
-                      packets_lost_ ? fmt(", %.0f frame(s) cut short by a failed one", packets_lost_).c_str() : "");
+        std::snprintf(b, sizeof b, "%lld passed their sum check%s; %lld continued across frames (BD + BE) joined%s",
+                      static_cast<long long>(packets_ok_),
+                      packets_lost_ ? fmt(", %.0f frame(s) cut short by a failed one", packets_lost_).c_str() : "",
+                      cont_ok_, cont_lost_ ? fmt(", %.0f lost", cont_lost_).c_str() : "");
         host.fact("Packets", b);
         if (!t.empty()) host.fact("Packet types", t);
     }
@@ -251,6 +284,35 @@ private:
         type_counts_[p[0]]++;
         if (host.raw_wanted()) host.raw(inmc::hex(p, n));
         switch (p[0]) {
+        case 0xBD:   // first part of a packet continued in the next frame
+            cont_.assign(p + 2, p + n - 2);
+            cont_t0_ = t0;
+            cont_t_ = t1;
+            break;
+        case 0xBE: {   // its rest: join, check the inner packet, take it
+            if (cont_.empty() || std::fabs(t0 - cont_t_) > 1.0) {
+                cont_lost_++;
+                cont_.clear();
+                break;
+            }
+            std::vector<uint8_t> inner = cont_;
+            inner.insert(inner.end(), p + 2, p + n - 2);
+            cont_.clear();
+            // the parts carry the packet without its own sum check (each part has
+            // one): measured - joined = declared length - 2, every time
+            const int len = inmc::packet_length(inner.data(), static_cast<int>(inner.size()));
+            if (len == static_cast<int>(inner.size()) + 2) {
+                uint8_t c0, c1;
+                inmc::fletcher_make(inner.data(), static_cast<int>(inner.size()), &c0, &c1);
+                inner.push_back(c0);
+                inner.push_back(c1);
+                cont_ok_++;
+                packet(inner.data(), len, cont_t0_, t1);
+            } else {
+                cont_lost_++;
+            }
+            break;
+        }
         case 0x7D: bulletin_board(p, n); break;
         case 0x6C: sig_descriptor(p, n); break;
         case 0x81: {
@@ -266,9 +328,10 @@ private:
             }
             break;
         }
-        case 0x92: {
+        case 0x92:
+        case 0xAB: {
             std::vector<inmc::LesListEntry> v;
-            if (inmc::parse_0x92(p, n, v))
+            if (inmc::parse_station_list(p, n, v, nullptr))
                 for (const auto& e : v) note_les_tdm(e.les, e.tdm_code);
             break;
         }
@@ -336,13 +399,17 @@ private:
     void sig_descriptor(const uint8_t* p, int n) {
         inmc::SigChannelDescriptor sd;
         if (!inmc::parse_sig_descriptor(p, n, sd)) return;
-        char b[200];
-        std::snprintf(b, sizeof b,
-                      "uplink channel code %d (%.4f MHz if the uplink raster is 1611.5 MHz + code x 2.5 kHz), flags %02X, "
-                      "28 slot markers: %d / %d / %d / %d (states 0/1/2/3)",
-                      sd.uplink_code, 1611.5 + sd.uplink_code * 0.0025, sd.flags, sd.slots[0], sd.slots[1], sd.slots[2],
-                      sd.slots[3]);
-        host.fact("Signalling channel", b);
+        // a TDM may describe several signalling channels (the POR NCS: two per frame)
+        sig_[sd.uplink_code] = sd;
+        std::string t;
+        for (const auto& [code, d] : sig_) {
+            char b[160];
+            std::snprintf(b, sizeof b, "%scode %d (%.4f MHz), flags %02X, slot markers %d/%d/%d/%d", t.empty() ? "" : "; ", code,
+                          1611.5 + code * 0.0025, d.flags, d.slots[0], d.slots[1], d.slots[2], d.slots[3]);
+            if (t.size() + std::strlen(b) > 330) break;
+            t += b;
+        }
+        host.fact("Signalling channels", t + " (uplink MHz if the raster is 1611.5 MHz + code x 2.5 kHz; markers = slots in state 0/1/2/3)");
     }
 
     void note_les_tdm(uint8_t les, int code) {
@@ -351,11 +418,12 @@ private:
         std::string t;
         for (const auto& [id, c] : les_tdm_) {
             char b[48];
-            std::snprintf(b, sizeof b, "%s%s %.4f", t.empty() ? "" : ", ", inmc::station_id(id).c_str(), inmc::downlink_mhz(c));
+            std::snprintf(b, sizeof b, "%s%s%s %.4f", t.empty() ? "" : ", ", inmc::station_is_ncs(id) ? "NCS " : "",
+                          inmc::station_id(id).c_str(), inmc::downlink_mhz(c));
             if (t.size() + std::strlen(b) > 390) break;
             t += b;
         }
-        host.fact("LES TDMs (MHz)", t);
+        host.fact("TDMs of the stations (MHz)", t);
     }
 
     // ---- EGC -----------------------------------------------------------------------
@@ -384,10 +452,10 @@ private:
 
     std::string summary(const inmc::EgcMessage& m) const {
         const char* name = inmc::egc_service_name(m.service);
-        char b[160];
-        std::snprintf(b, sizeof b, "%s %s, %s, LES %s, msg %d", inmc::egc_service_family(m.service),
-                      name ? name : fmti("service %02X", m.service).c_str(), inmc::egc_address_text(m.service, m.address).c_str(),
-                      inmc::station_id(m.les).c_str(), m.msn);
+        char b[320];
+        std::snprintf(b, sizeof b, "%s %s (%s), %s, LES %s, msg %d", inmc::egc_service_family(m.service),
+                      name ? name : fmti("service %02X", m.service).c_str(), inmc::priority_name((m.flags >> 5) & 3),
+                      inmc::egc_address_text(m.service, m.address).c_str(), inmc::station_id(m.les).c_str(), m.msn);
         return b;
     }
 
@@ -400,7 +468,8 @@ private:
         if (perr) state += fmt(", %.0f parity errors", perr);
         char pk[32];
         std::snprintf(pk, sizeof pk, "%d%s", static_cast<int>(m.have.size()), m.last_seq ? fmt(" / %.0f", m.last_seq).c_str() : "");
-        host.table_row(m.key, {name ? name : fmti("%02X", m.service), inmc::egc_address_text(m.service, m.address),
+        host.table_row(m.key, {name ? name : fmti("%02X", m.service), inmc::priority_name((m.flags >> 5) & 3),
+                               inmc::egc_address_text(m.service, m.address),
                                inmc::station_id(m.les), std::to_string(m.msn), pk, state,
                                kp::printable(one_line(text, 80))});
         std::vector<std::pair<std::string, std::string>> d;
@@ -408,7 +477,8 @@ private:
         d.push_back({"Address", inmc::egc_address_text(m.service, m.address)});
         d.push_back({"LES", inmc::station_id(m.les) + " (" + inmc::region_name(inmc::station_region(m.les)) + ")"});
         d.push_back({"Message sequence number", std::to_string(m.msn)});
-        d.push_back({"Flags", fmti("%02X (bit 7 = more packets follow; the priority's coding is not decoded)", m.flags)});
+        d.push_back({"Priority", inmc::priority_name((m.flags >> 5) & 3)});
+        d.push_back({"Flags", fmti("%02X (bit 7 = more packets follow, bits 6-5 = priority, bits 4-0 not decoded)", m.flags)});
         d.push_back({"Presentation", fmti("%02X ", m.presentation) + inmc::presentation_name(m.presentation)});
         std::string ms;
         for (int s : miss) ms += (ms.empty() ? "" : ", ") + std::to_string(s);
@@ -433,7 +503,7 @@ private:
     void report_egc(inmc::EgcMessage& m, bool complete) {
         int perr = 0;
         const std::string text = m.text(&perr);
-        std::string ev = (m.service == 0x14 ? "⚠ " : "") + std::string("EGC ") + summary(m);
+        std::string ev = (m.service == 0x14 || ((m.flags >> 5) & 3) >= 2 ? "⚠ " : "") + std::string("EGC ") + summary(m);
         char b[96];
         std::snprintf(b, sizeof b, " (%d packets, %d bytes%s%s): ", static_cast<int>(m.have.size()), m.body_bytes(),
                       complete ? "" : ", INCOMPLETE", perr ? fmt(", %.0f parity errors", perr).c_str() : "");
@@ -464,7 +534,7 @@ private:
     std::vector<double> pos_;
     int64_t sym_count_ = 0, first_real_ = 0;
     bool locked_ = false;
-    int64_t pending_ = -1, expected_ = 0;
+    int64_t pending_ = -1, expected_ = 0, last_start_ = -(int64_t(1) << 40);
     float pending_c_ = 0;
     int misses_ = 0;
     double base_time_ = 0;
@@ -474,6 +544,10 @@ private:
     inmc::EgcAssembler egc_;
     std::map<uint8_t, long long> type_counts_;
     std::map<uint8_t, int> les_tdm_;
+    std::vector<uint8_t> cont_;          // a continued packet's first part (type BD)
+    double cont_t_ = -1e9, cont_t0_ = 0;
+    long long cont_ok_ = 0, cont_lost_ = 0;
+    std::map<int, inmc::SigChannelDescriptor> sig_;
     long long frames_ok_ = 0, frames_bad_ = 0, packets_ok_ = 0, packets_lost_ = 0;
     long long sym_err_ = 0, sym_tot_ = 0;
     long long egc_msgs_ = 0, egc_complete_ = 0, egc_repeats_ = 0, egc_bad_header_ = 0;
