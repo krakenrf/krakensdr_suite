@@ -787,8 +787,12 @@ void downconverter_rf_union_range(uint64_t& min_hz, uint64_t& max_hz) {
 }
 
 MixerSide downconverter_auto_side(uint64_t rf_hz) {
-    return rf_hz <= WB_LO_MAX_HZ - WB_VARIANT_IF_HZ ? MixerSide::HIGH
-                                                    : MixerSide::BELOW;
+    return rf_hz < WB_SIDE_CROSSOVER_HZ ? MixerSide::HIGH : MixerSide::BELOW;
+}
+
+MixerSide downconverter_side_for_retune(MixerSide current, uint64_t prev_rf_hz, uint64_t rf_hz) {
+    const bool crossed = (prev_rf_hz < WB_SIDE_CROSSOVER_HZ) != (rf_hz < WB_SIDE_CROSSOVER_HZ);
+    return (crossed || !downconverter_rf_valid(rf_hz, current)) ? downconverter_auto_side(rf_hz) : current;
 }
 
 int wb_ring_for_rf(uint64_t rf_hz) {
@@ -901,9 +905,9 @@ bool downconverter_init(uint64_t initial_rf_hz) {
     // board's LO output is always on; the stock-moRFeus generator-mode
     // command is not sent (unimplemented there).
     if (!downconverter_set_current(WB_LO_CURRENT)) return false;
-    // Startup follows the same rule as a retune: keep the default side when it
-    // reaches the RF, otherwise auto-select (e.g. below side above 4132 MHz).
-    if (!downconverter_rf_valid(initial_rf_hz, downconverter.side.load())) {
+    // Startup has no manual choice to keep: the preferred side for the RF
+    // (high below WB_SIDE_CROSSOVER_HZ, below from it up).
+    if (downconverter_auto_side(initial_rf_hz) != downconverter.side.load()) {
         if (!downconverter_set_side(downconverter_auto_side(initial_rf_hz), initial_rf_hz)) return false;
     } else if (!downconverter_apply_rf(initial_rf_hz)) return false;
 
