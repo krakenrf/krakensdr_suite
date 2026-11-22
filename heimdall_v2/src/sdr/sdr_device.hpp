@@ -73,6 +73,13 @@ struct SDRDevice {
     std::array<float, 8> frac_coeff{{0, 0, 0, 1, 0, 0, 0, 0}};
     std::array<Complex, 7> frac_tail{};
     float frac_coeff_for = 0.0f;
+    // the flush epoch frac_tail was saved under (conversion thread only): a
+    // set after a flush starts a new stream piece - in sweep mode another
+    // hop, another frequency and gain - so its tail is the set's own first
+    // sample, not the last samples before the flush (those reached the first
+    // 3 output samples: a hop's first valid packet held 3 samples of the
+    // previous one - with auto gain, values clipped at another gain)
+    uint32_t frac_tail_epoch = ~0u;
 
     // Optional per-bin phase-equalizer FIR (complex taps). Designed once at the
     // end of calibration when per-bin mode is on; applied as the final hot-path

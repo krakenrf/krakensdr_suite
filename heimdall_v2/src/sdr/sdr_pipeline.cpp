@@ -480,6 +480,10 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
         auto& tail = dev->frac_tail;
         const Complex* __restrict x = tmp.data();
         Complex* __restrict y = fir_out.data();
+        if (dev->frac_tail_epoch != st.epoch) {   // the first set after a flush (see frac_tail_epoch)
+            if (count > 0) tail.fill(x[0]);
+            dev->frac_tail_epoch = st.epoch;
+        }
 
         // Head: taps reach into the previous chunk's tail
         const int head = std::min(7, count);
@@ -835,6 +839,7 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
         auto complex_samples = l2_buffer_pool.acquire();
         complex_samples.resize(num_elements);
         snapshot_conversion_state(conv_state, num_elements);
+        conv_state.epoch = epoch;
         for (int i = 0; i < num_elements; ++i) {
             auto& sb = raw_set[i];
             // sb.size() is bytes of interleaved IQ; divide by 2 for complex count

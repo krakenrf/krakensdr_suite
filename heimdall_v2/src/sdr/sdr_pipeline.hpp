@@ -34,6 +34,9 @@ struct SetConversionState {
     Complex comp[NUM_DEVICES];  // closed-loop phase vector x forward S2P comp
     bool spectral_inversion = false;
     bool eq_active = false;
+    // the downstream flush epoch the set was dequeued under: a channel's lag
+    // FIR tail from before a flush is not this stream's past (frac_tail_epoch)
+    uint32_t epoch = 0;
 };
 
 // Sample conversion and processing

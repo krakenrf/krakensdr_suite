@@ -244,11 +244,16 @@ per-channel frequencies, after the settle. From the code:
   below and in *Hop timing*, through the real pipeline. (A Pi 5 since:
   *On the Raspberry Pi 5* - its packets arrive ~0.7 ms later than the PC's,
   and the default is 2 ms now.)
-One exception, negligible: the lag FIR's 7-sample tail (`frac_tail`, kept
-across sets for the coherent conversion) is not reset by a flush, so the
-first 3-7 output samples of each channel in a hop's first valid packet are
-a weighted sum reaching into the last pre-flush set (a fraction of a
-sample's energy, out of 16384).
+There used to be one exception, thought negligible: the lag FIR's 7-sample
+tail (`frac_tail`, kept across sets for the coherent conversion) was not
+reset by a flush. So the first 3 output samples of each channel in a hop's
+first valid packet were the last 3 samples before the flush - another hop,
+and with auto gain another gain (2026-11-23: after independent -> sweep, 3
+full-scale samples from a saturated hop at 49.6 dB opened a packet headed
+8.7 dB, 0.02 % of its values clipped). Since then a set after a flush
+replaces the tail with its own first sample (`frac_tail_epoch` against the
+set's flush epoch, sdr_pipeline.cpp), in every mode. A stream that runs on
+without a flush (K' = H, coherent between flushes) keeps its tail.
 The reordering of the header's reads is invisible in coherent mode (the
 same values; the discrete scanner's hops are ordered the same way and gain
 the same property).
@@ -1479,14 +1484,20 @@ same measurement (448-466 MHz, manual) found no products and even floors:
 its signal was off at the time. The release (the cause raised again) was
 not timed on hardware.
 
-*Open*: on the fake, 1 run in about 10 of `t_agplan.py` saw one valid
-packet 14 ms after independent -> sweep mode whose header said 8.7 dB at
-415.52 MHz while 0.02 % of its values clipped. At 8.7 dB the fake's carrier
-sits at -18.9 dBFS, so those samples were taken at a higher gain. The cause
-is not found. The fake applies the gain a packet is generated with (not
-the gain at each sample's time), so the fake itself is a suspect. It was
-never seen on the KrakenSDR: the orchestrator's check found every hop's
-packets at one gain, and `t_autogain.py --check-fake` found 0 mismatches.
+*Found and fixed (the lag FIR's tail)*: on the fake, 1 run in about 10 of
+`t_agplan.py` saw one valid packet 14 ms after independent -> sweep mode
+whose header said 8.7 dB at 415.52 MHz while 0.02 % of its values clipped.
+The fake's trace (`FAKE_TRACE_FILE`) showed that the fake never generated
+that packet with a clipped value: its packets at 49.6 dB ended 0.75 ms
+before the gain write, and the ones after it had none. The clipped values
+sat at bytes 0-5, i.e. the first 3 samples. That is the lag FIR's tail: the
+kernel is a delta at tap 3, so the first 3 output samples of a set are the
+last 3 input samples of the set converted before it, here the saturated
+independent-mode packet. Fixed in heimdall: a set after a flush starts its
+tail fresh (*The guarantee*, above). Rarely seen in normal sweeping,
+because a hop's predecessor on that tuner is rarely that much louder. But
+6 such values are 0.018 % of a packet, enough for auto gain to count a
+mild clip.
 
 *Not tested*: Windows (3-4 ms a USB transfer: the fallback call there would
 add about a second a sweep, F's call ~0.15 s); the Pi; the neighbour rule's
