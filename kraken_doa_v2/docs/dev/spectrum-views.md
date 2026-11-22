@@ -126,6 +126,67 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   page's whole WebSocket traffic (audio + DoA + status included): 262 KB/s
   -> 26-27 KB/s
 
+## Network rate: the receiver's byte counters (NET_STATS, 2026-11-22)
+
+The user: "show the network bandwidth used ... where it shows Points sent.
+Show it for all modes." The page can count only what it gets after TLS and
+permessage-deflate; the true number for its connection is the kernel's.
+
+**Contract.**
+- `NET_STATS:<1|0>` (also true / false; junk ignored) - transport level, per
+  connection, every mode, behind the AUTH gate like `FFT_VIEW`; off by
+  default. An older receiver ignores it (no reply, no log line).
+- While on: `{"net":{"tx_bytes":N,"tx_sent":S,"rx_bytes":M,"t_ms":T}}` at
+  once (a baseline) and then every 1 000 ms (on the 50 ms broadcast tick:
+  measured 1 000 ms apart). `t_ms` = the receiver's monotonic clock; the
+  page takes the rate from differences. Whole numbers below 2^53.
+  - `tx_bytes` = `tcpi_bytes_acked`: receiver -> browser bytes the
+    browser's TCP acknowledged - TCP payload: the TLS records (their
+    overhead included) carrying the WebSocket frames, after
+    permessage-deflate. Not in it: TCP / IP headers (~3-4 % more on the
+    wire), retransmissions, and what still waits (uWS's queue, the kernel's
+    send buffer, in flight) - so on a link that can't keep up it rises at
+    the link's real throughput. The number to show.
+  - `tx_sent` = `tcpi_bytes_sent` (only when the running kernel fills it,
+    Linux 4.19+): sent incl. retransmissions; `tx_sent - tx_bytes` = in
+    flight + retransmitted.
+  - `rx_bytes` = `tcpi_bytes_received`: browser -> receiver (the page's
+    commands).
+  - The counters run since the TCP connection opened (TLS handshake and the
+    HTTP upgrade included): differences only.
+- No counter (Windows, macOS, a kernel without TCP_INFO's byte fields): no
+  message; the page counts by itself.
+
+**The receiver.** `net_stats::read` (src/networking/net_stats.cpp; Linux:
+`getsockopt(TCP_INFO)` with `<linux/tcp.h>` - glibc's `<netinet/tcp.h>` may
+lack the newer fields and the two don't mix; a field past the length the
+kernel returns is not taken; elsewhere a stub that says "no counter"). The
+descriptor: `us_poll_fd((us_poll_t *) ws)` - uWS's WebSocket is its
+`us_socket_t`, an SSL socket's struct begins with it and that with the poll,
+so this is the TCP socket under the TLS (no OpenSSL call).
+websocket_server.cpp: `handle_net_stats`, `g_net_sockets`,
+`net_stats_tick()` at the top of the broadcast timer. Cost: one getsockopt
+a second a page - 0.46 us a call on x86 (timed from Python, an upper bound),
+0.60 us on the Pi 5 - and a ~90-byte message.
+
+**Measured against an independent count** (t_net.py: a TCP proxy in front
+of the receiver counts what it forwards; the fake heimdall; x86 / Pi 5):
+
+| case | receiver | proxy | the page's own count (after inflate / TLS) |
+|---|---|---|---|
+| coherent mode (spectrum, audio, JSON) | 117.1 KB/s | 117.1 (+0.00 %) | 291 KB/s (2.5x) |
+| sweep, fit | 19.1 | 19.2 (-0.36 %) | 41.7 (2.2x) |
+| sweep, a step (65 536) | 32.0 | 32.0 (+0.00 %) | 56.7 (1.8x) |
+| sweep, full (11.9 M bins) | 3 266 | 3 266 (+0.00 %) | 3 285 (1.01x) |
+| two pages: full / fit | 3 986 / 18.9 | the same | 4 007 / 41.3 |
+
+The Pi 5 the same within 0.4 KB/s in every case (coherent 116.8 / 116.8, full 3 265 / 3 265; the page's own count 2.5x / 1.01x). Audio was already on in coherent mode (250 Opus messages in 9 s; the VFO's speaker toggle added ~25). The x86 ASan + UBSan build: the same numbers, 14 / 15 (it dropped engine packets during the full sets, as before - not this change). So the page's own count, the fallback, reads 1.8-2.7x high where
+the frames are deflated (spectrum, JSON) and right where they are not (full
+sets, audio). Tests (t_net.py 15 / 15, x86 normal and ASan + UBSan, Pi 5):
+off by default, junk ignored, a baseline at once, `tx_sent` >= `tx_bytes`,
+the five cases above within 3 % (all within 0.4 %), each page its own
+counter, `NET_STATS:0` stops, a page that never asked gets none.
+
 ## The live waterfall recolours (2026-11-21)
 
 The user: "Do the same recolour fix for the live waterfall too" (sweep mode's

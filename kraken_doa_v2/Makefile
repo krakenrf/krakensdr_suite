@@ -171,6 +171,7 @@ NETWORKING_SRCS = \
 	$(SRCDIR)/networking/data_receiver.cpp \
 	$(SRCDIR)/networking/tcp_client.cpp \
 	$(SRCDIR)/networking/gpsd_client.cpp \
+	$(SRCDIR)/networking/net_stats.cpp \
 	$(SRCDIR)/networking/web_mapper.cpp \
 	$(SRCDIR)/networking/websocket_server.cpp
 
