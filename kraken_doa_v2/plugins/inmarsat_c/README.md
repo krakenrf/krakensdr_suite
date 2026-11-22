@@ -189,20 +189,21 @@ opened; nothing here is translated from one.
   (41472 of 41472).
 
 ## Off air (2026-11-22, roof Pi 5, KrakenSDR CH0, satellite patch + LNA on the CH0 bias tee)
-- **NCS 244 (POR)**, gain 49.6 dB, VFO 9.6 kHz on 1541.450 MHz: 48 minutes
-  live over 7 turns - 323 frames decoded, 4 failed (each one at a heimdall
+- **NCS 244 (POR)**, gain 49.6 dB, VFO 9.6 kHz on 1541.450 MHz: 55 minutes
+  live over 8 turns - 368 frames decoded, 5 failed (each one at a heimdall
   calibration gap, where samples are cut out), 0 dropped samples; Es/N0
   9.1-12.8 dB (mostly 10.5-12); 0-0.27 % channel symbol errors corrected;
-  carrier -1356 Hz at the start, -1288 Hz 100 minutes later (the RTL-SDR
+  carrier -1356 Hz at the start, -1265 Hz two hours later (the RTL-SDR
   warming up); frame numbers advance by one per frame, their time of day
   agrees with UTC within ~2 s; the status stays "Receiving" between frames
   (the engine's squelch-hold change), "Signal lost" only at the calibration
   gaps (8 s with the resynchronisation of 0ab82be, 25 s before it).
-- **EGC**: none for the first hour (04:02-05:01 UTC), then (05:15-05:34 UTC)
-  three SafetyNET messages - a shore-to-ship distress relay (3 packets,
+- **EGC**: none for the first hour (04:02-05:01 UTC), then (05:15-05:57 UTC)
+  four SafetyNET messages - a shore-to-ship distress relay (3 packets,
   Distress, circular area), a 32-packet MET forecast for METAREA XII
-  (Safety; 17 of its packets crossed frames as BD + BE) and one 2-packet
-  message the live run caught only partly. Every header passed its own sum
+  (Safety; 17 of its packets crossed frames as BD + BE), a 3-packet SAR
+  coordination to a circular area (Urgency) with the new build live, and
+  one 2-packet message a run caught only partly. Every header passed its own sum
   check, every text byte its parity; repeats: none came within the turns
   (their intervals are hours). Packet types seen on the NCS: 6C 7D 81 92
   93 99 A2 A3 A8 AB AC B1 B2 BD BE.
