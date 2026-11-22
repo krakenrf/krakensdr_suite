@@ -4348,7 +4348,8 @@ const swp = {st: null, fr: null, tr: null, zoom: {level: 1, off: 0}, wf: null, s
              // bytes} - the trace's source after a zoom / pan (only while it is of `done`, the newest sweep
              // completed here {g, s}); fullAsm = a set being put together from its parts. The rows' own sets
              // are their `f` (kept whatever the option becomes)
-             dres: 0, fullSent: -1, full: null, fullAsm: null, done: null};
+             dres: 0, fullSent: -1, full: null, fullAsm: null, done: null,
+             zSent: -1, zFails: 0, zOff: false};   // (deflated parts: what this connection asked; failed inflates; switched off)
 // View settings (the "View" popover, see VIEW POPOVER). viewCommon: the single spectrum's - and
 // every tuner pane's that has none of its own; the receiver stores them (UI:FFT_Y, UI:WF_SPEED,
 // ...) and replays them to every browser. viewStore: this browser's per-tuner values in
@@ -13564,7 +13565,8 @@ function swpNorm(r) {
     // (round 6, 2026-11-22: the display resolutions this receiver offers for the running grid - SWEEP_FULL:<n>,
     // what each gives; the last is full (n 1). null: round 5's receiver - fit / full only - or an older one)
     full_sets: Array.isArray(r.full_sets) ? r.full_sets.filter(o => o && Number.isInteger(o.n) && o.n >= 1 && num(o.values, 0) >= 1 && num(o.step_hz, 0) > 0)
-      .map(o => ({n: o.n, pool: num(o.pool, 1), values: o.values, step_hz: o.step_hz})) : null};
+      .map(o => ({n: o.n, pool: num(o.pool, 1), values: o.values, step_hz: o.step_hz})) : null,
+    full_z: r.full_z === true};   // (round 8: this receiver sends deflated parts when asked)
   if (s.full_sets && !s.full_sets.some(o => o.n === 1)) s.full_sets = null;   // (malformed: as if absent)
   return s.stop_hz > s.start_hz ? s : null;
 }
@@ -13607,7 +13609,7 @@ function swpOnOpen() {
   swp.view = null;
   swp.ovSent = -1;   // (and no overview asked for)
   swp.ovPend = null;
-  swp.fullSent = -1; swp.fullAsm = null;   // (nor the full resolution; a set in flight is gone with the old connection)
+  swp.fullSent = -1; swp.fullAsm = null; swp.zSent = -1;   // (nor the full resolution, nor deflated parts; a set in flight is gone with the old connection)
   swp.stale = true;
 }
 function swpGainSync(db) {
@@ -13833,7 +13835,7 @@ function swpEnter() {
   if (swp.view && swp.view.t) clearTimeout(swp.view.t);
   swp.view = null;
   swp.ovSent = -1; swp.ovPend = null;   // the overview asked for again with the view
-  swp.fullSent = -1;                      // and the full resolution (the receiver sends a snapshot for it)
+  swp.fullSent = -1; swp.zSent = -1;      // and the full resolution (the receiver sends a snapshot for it), deflated parts
   netMarksReset();                        // (the Data rate over this mode's sweeps)
   swp.seqMin = swp.viewSeq + 1;   // frames built for a view from before this are dropped
   if (!swp.wf) {
@@ -14293,7 +14295,11 @@ function swpFullSync() {
   const want = swpFullAsk();
   swpDresRender();
   if (!want) { swp.full = null; swp.fullAsm = null; }
-  if (opMode !== 'sweep' || !ws || ws.readyState !== 1 || applyingRemote || swp.fullSent === want) { swpPointsText(); return; }
+  if (opMode !== 'sweep' || !ws || ws.readyState !== 1 || applyingRemote) { swpPointsText(); return; }
+  // deflated parts (round 8): asked once a connection, before SWEEP_FULL so its snapshot comes deflated too
+  const z = swpZWant();
+  if (want && swp.zSent !== z && (z || swp.zSent === 1)) { ws.send('SWEEP_FULL_Z:' + z); swp.zSent = z; }
+  if (swp.fullSent === want) { swpPointsText(); return; }
   ws.send('SWEEP_FULL:' + want);
   if (swp.fullSent !== -1) { swp.full = null; swp.fullAsm = null; netMarksReset(); }   // (the Data rate: the new option's sweeps)
   swp.fullSent = want;
@@ -14313,11 +14319,35 @@ const SWP_FULL_HDR = 48;
 function swpFullParse(v, buf) {
   if (buf.byteLength < SWP_FULL_HDR) return null;
   const fl = v.getUint8(4);
-  const p = {last: !!(fl & 1), snap: !!(fl & 2), pool: v.getUint16(6, true) || 1, grid: v.getUint32(8, true), sweeps: v.getUint32(12, true), f0: v.getFloat64(16, true),
+  const p = {last: !!(fl & 1), snap: !!(fl & 2), z: !!(fl & 8), pool: v.getUint16(6, true) || 1, grid: v.getUint32(8, true), sweeps: v.getUint32(12, true), f0: v.getFloat64(16, true),
              st: v.getFloat64(24, true), total: v.getUint32(32, true), first: v.getUint32(36, true), n: v.getUint32(40, true),
              id: v.getUint32(44, true), off: SWP_FULL_HDR};
-  if (!(p.st > 0) || !Number.isFinite(p.f0) || p.total < 1 || p.total > (1 << 25) || p.first + p.n > p.total || buf.byteLength < p.off + p.n) return null;
+  // (flags & 8: the bytes after the header are ONE zlib stream of the n values - round 8; else the n values)
+  if (!(p.st > 0) || !Number.isFinite(p.f0) || p.total < 1 || p.total > (1 << 25) || p.first + p.n > p.total || p.n < 1 ||
+      buf.byteLength < p.off + (p.z ? 6 : p.n)) return null;
   return p;
+}
+// ---- deflated parts (round 8, 2026-11-23; the user: "Implement the sweep full resolution compression") ----
+// The page says it can inflate (SWEEP_FULL_Z:1, per connection, with SWEEP_FULL) when the browser has
+// DecompressionStream("deflate") - zlib format, RFC 1950. A part with flags & 8 is one zlib stream that
+// inflates to exactly its n values; a set may mix deflated and raw parts. Each deflated part is inflated by
+// the browser (native zlib: the real 146 Hz set's 23 parts in 69 - 87 ms, no long task - a decoder of the
+// page's own, written for the measurement from RFC 1951, took 250 - 275 ms) and put in its place whatever
+// order the promises resolve in; the set is complete when every part is in. A part that fails to inflate
+// (or to the wrong length) drops its set like a gap; SWP_Z_FAILS of them switch the request off for this
+// page (SWEEP_FULL_Z:0 - a safety net; the sets come raw again).
+const SWP_Z_FAILS = 3;
+const SWP_Z_OK = (() => { try { return typeof DecompressionStream === 'function' && !!new DecompressionStream('deflate'); } catch (e) { return false; } })();
+function swpZWant() { return SWP_Z_OK && !swp.zOff ? 1 : 0; }
+function swpInflate(bytes) {
+  return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+}
+function swpZFail() {
+  swp.zFails = (swp.zFails || 0) + 1;
+  if (swp.zFails >= SWP_Z_FAILS && !swp.zOff) {
+    swp.zOff = true;
+    if (ws && ws.readyState === 1 && opMode === 'sweep') { ws.send('SWEEP_FULL_Z:0'); swp.zSent = 0; }
+  }
 }
 // The set FOLLOWS its sweep's flag-2 frame in parts (paced by the socket's buffer): put together by its set
 // id and first index (anything with a gap, out of order or of an old grid is dropped), then the trace's
@@ -14332,13 +14362,40 @@ function swpOnFull(v, buf) {
   if (!p || (swp.st && p.grid !== swp.st.grid)) { swp.fullAsm = null; return; }
   let a = swp.fullAsm;
   // (a set is known by its set id and pool - never by what was asked: a change of n abandons a set in flight)
-  if (p.first === 0) a = swp.fullAsm = {id: p.id, pool: p.pool, grid: p.grid, sweeps: p.sweeps, snap: p.snap, f0: p.f0, st: p.st, total: p.total, got: 0, d: new Uint8Array(p.total)};
-  if (!a || a.id !== p.id || a.pool !== p.pool || a.grid !== p.grid || a.total !== p.total || p.first !== a.got) { swp.fullAsm = null; return; }
-  a.d.set(new Uint8Array(buf, p.off, p.n), p.first);
-  a.got += p.n;
-  if (!p.last) return;
+  // next = the first value the next part must start at (parts arrive in order); filled = values in place;
+  // pend = parts still inflating; last = its last part has come
+  if (p.first === 0) a = swp.fullAsm = {id: p.id, pool: p.pool, grid: p.grid, sweeps: p.sweeps, snap: p.snap, f0: p.f0, st: p.st, total: p.total,
+                                        next: 0, filled: 0, pend: 0, last: false, d: new Uint8Array(p.total)};
+  if (!a || a.id !== p.id || a.pool !== p.pool || a.grid !== p.grid || a.total !== p.total || p.first !== a.next) { swp.fullAsm = null; return; }
+  a.next += p.n;
+  if (p.last) a.last = true;
+  if (!p.z) {
+    a.d.set(new Uint8Array(buf, p.off, p.n), p.first);
+    a.filled += p.n;
+    swpFullPartIn(a);
+    return;
+  }
+  a.pend++;
+  swpInflate(new Uint8Array(buf, p.off)).then(r => {
+    if (r.byteLength !== p.n) throw new Error('inflated to ' + r.byteLength + ', not ' + p.n);
+    if (swp.fullAsm !== a) return;   // (dropped meanwhile: a gap, a change, a new grid, leaving the mode)
+    a.d.set(new Uint8Array(r), p.first);
+    a.filled += p.n;
+    a.pend--;
+    swpFullPartIn(a);
+  }).catch(() => {
+    if (swp.fullAsm === a) swp.fullAsm = null;   // (like a gap: this set is lost, its row keeps its own levels)
+    swpZFail();
+  });
+}
+// a part is in: complete when the last has come, nothing still inflating and every value in place
+function swpFullPartIn(a) {
+  if (!a.last || a.pend) return;
   swp.fullAsm = null;
-  if (a.got !== a.total) return;
+  if (a.filled !== a.total) return;
+  swpFullDone(a);
+}
+function swpFullDone(a) {
   if (a.snap && !swpFullWanted()) return;
   const set = {grid: a.grid, sweeps: a.sweeps, snap: a.snap, pool: a.pool, f0: a.f0, st: a.st, d: a.d, pyr: swpPyr(a.d)};
   set.bytes = set.pyr.reduce((s, l) => s + l.length, 0);

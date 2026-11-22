@@ -1284,6 +1284,44 @@ used"):
   instant trace keeps the frame where the frame covers the window at least
   as finely (`swpTrace`). "Points sent" reads "1525 + 46,427 at 37.5 kHz"
   for a pooled set, "1525 + full 11,885,227" for a full one.
+- **Deflated parts** (round 8, 2026-11-23; the user: "Implement the sweep
+  full resolution compression"). The page asks `SWEEP_FULL_Z:1` when the
+  browser has `DecompressionStream("deflate")` (`SWP_Z_OK`: the
+  constructor tried once; a browser without it, or one where it throws,
+  never asks and gets raw sets as before), once a connection, just
+  before `SWEEP_FULL` so that its snapshot comes deflated too; again
+  after a reconnect (`swp.zSent`). A part with `flags & 8` is one zlib
+  stream (RFC 1950) of its `n` values: `swpInflate` hands it to the
+  browser's own zlib, and the value lands at its `first` whatever order
+  the promises resolve in. The assembly (`swpOnFull`) still checks the
+  parts' ARRIVAL order (`next`: no gap, nothing out of order); `filled`
+  counts the values in place, `pend` the parts still inflating; the set is
+  complete when its last part has come, nothing is pending and every value
+  is in (`swpFullPartIn`) - then everything as before (`swpFullDone`: the
+  pyramid, the row, the trace). Raw parts in a deflating page's set are
+  normal (the receiver sends a part raw when it isn't smaller or wasn't
+  ready in time). A part that fails to inflate - or inflates to another
+  length - drops its set like a gap (that row keeps its own levels); after
+  `SWP_Z_FAILS` (3) the page sends `SWEEP_FULL_Z:0` and stays raw until it
+  is loaded again (a safety net).
+  - Native or the page's own? Measured on the real 146 Hz set (the PC's
+    KrakenSDR, its 23 parts deflated Huffman-only, 7.14 MB for 11.9 MB;
+    headless Chromium, `zbench/`): `DecompressionStream` 77 - 87 ms one part
+    after another, 69 - 84 ms all at once, no long task; a decoder of my
+    own written for the measurement from RFC 1951 (all three block types,
+    length / distance codes, Adler-32) 250 - 275 ms, 7 - 18 ms a part
+    synchronous on the main thread. Both byte for byte; a corrupted part:
+    both fail (the browser's rejects with TypeError, mine at the Adler-32).
+    So the browser's, and no decoder in the page.
+  - Through the page's own handler (`t_zip.py`): the real set's 23 parts
+    handed over in 11 - 12 ms, the set complete 114 - 115 ms after the first,
+    byte for byte (FNV), no long task; the mock's deflated sets (the
+    browser's `CompressionStream`), and sets mixing deflated and raw
+    parts, byte for byte; a corrupted part drops its set, the next ones
+    come right; three switch the request off and the sets come raw again;
+    no `DecompressionStream`, or one that throws: never asked; memory over
+    200 more sets flat (the renderer 295 -> 290 MB, the JS heap 5.2 MB);
+    the phone layout.
 - End to end (round 6, 2026-11-22; the receiver's 4295642 merged, a clean
   test build, the fake heimdall; `t_dres.py`, `t_keep.py`, `t_pool2.py`):
   the list from the real `full_sets` - the whole range at 146 Hz six
