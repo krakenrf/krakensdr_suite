@@ -127,10 +127,16 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     // frequency only once it took it, so a header that holds a new frequency
     // also holds the flag that covers it (the sweep's guarantee, sweep.cpp;
     // the discrete scanner's hops are ordered the same way)
+    // The per-tuner gains with them (independent / sweep mode): sweep mode's
+    // auto gain writes a hop's gain with its retune and stores it after the
+    // tuner took it, like the frequency - so the header's gain is the one
+    // this packet's samples were taken with
     float ch_frequency_hz[NUM_DEVICES];
+    int ch_tuner_gain[NUM_DEVICES];
     for (uint32_t ch = 0; ch < num_channels && ch < NUM_DEVICES; ch++) {
         ch_frequency_hz[ch] = is_wideband ? static_cast<float>(wideband_config.get_tuner_frequency(ch))
                                           : static_cast<float>(current_frequency.load());
+        ch_tuner_gain[ch] = wideband_config.get_tuner_gain(static_cast<int>(ch));
     }
 
     if (first_broadcast) {
@@ -230,8 +236,8 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
         packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&f_hz),
                       reinterpret_cast<const uint8_t*>(&f_hz) + sizeof(float));
         float ch_gain_db = gain_db;
-        if (independent) {
-            const int g = wideband_config.get_tuner_gain(ch);
+        if ((independent || sweep) && ch < NUM_DEVICES) {
+            const int g = ch_tuner_gain[ch];
             ch_gain_db = (g == -1) ? -1.0f : g / 10.0f;
         }
         packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&ch_gain_db),

@@ -1131,6 +1131,12 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
     } else {
         if (frequency > 0) current_frequency = frequency;
         if (gain != -999) current_gain = gain;
+        // sweep mode: the 8091 header carries each tuner's gain (auto gain
+        // sets it per hop) - every tuner took the common gain now (still
+        // under the flag: _change_done above only restarted the settle)
+        if (sweep && gain != -999)
+            for (const auto& d : devices)
+                if (d && d->dev) wideband_config.tuner_gains[d->index] = gain;
         settings::note_tuning(frequency > 0 ? current_frequency.load() : 0, gain);  // saved once stable
     }
 
@@ -1536,6 +1542,10 @@ bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<
         park_calibration_locked(devices);
     } else if (cur == OperatingMode::INDEPENDENT) {
         restore_common_gain_locked(devices);
+    } else if (cur == OperatingMode::SWEEP) {
+        // auto gain: every tuner back at the common gain before anything
+        // else (the return to coherent's flush and calibration follow)
+        sweep_restore_common_gain();
     }
     // (leaving SWEEP: the sweep thread re-checks the mode under
     // settings_mutex, held here, before every retune - it can't retune over
