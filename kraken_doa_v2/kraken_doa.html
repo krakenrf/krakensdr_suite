@@ -11451,16 +11451,15 @@ function connect() {
             resetAudioWorklet(); // Reset audio worklet to clear buffers and restart
           }
           else if(msg.decimator_demod) {
-            // Update demod mode for a specific decimator
-            const dec = decimatorInfo.find(d => d.id === msg.decimator_demod.id);
-            if (dec) {
-              dec.demod_mode = msg.decimator_demod.mode;
-              // Update the dropdown if it exists
-              const demodEl = $id('dec-demod-' + msg.decimator_demod.id);
-              if (demodEl) {
-                demodEl.value = msg.decimator_demod.mode;
-              }
-            }
+            // A VFO's demod changed - by another page or by the receiver itself (a click to follow a
+            // control channel, the saved-frequency scan): everything that depends on it is drawn again
+            // as for a decimator_info - the card (its controls depend on the demod), the spectrum's
+            // title (the demods heard), not only the dropdown
+            const dd = msg.decimator_demod;
+            const dec = decimatorInfo.find(d => d.id === dd.id);
+            if (dec && dec.demod_mode !== dd.mode) updateDecimatorList(decimatorInfo.map(d => d.id === dd.id ? {...d, demod_mode: dd.mode} : d));
+            else if (dec) { const demodEl = $id('dec-demod-' + dd.id); if (demodEl && demodEl.value !== dd.mode) demodEl.value = dd.mode; }
+            updatePlotTitle();
           }
           else if(msg.operating_mode) { opOnMessage(msg.operating_mode); }
           else if(msg.power) { pwOnState(msg.power); }
@@ -22834,9 +22833,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if ((sec.style.display === 'none') === has) sec.style.display = has ? '' : 'none';
     if (!has) return;
     if (!tkCcAsked) { tkCcAsked = true; send('GET_TRUNK_CC'); }
-    const fol = new Set(m.cc_followed.map(f => f.id));
-    for (const [id, p] of tkCcPend) if (fol.has(id) && !p.was || Date.now() - p.t > TK_CC_PEND_MS) tkCcPend.delete(id);
-    for (const [id, p] of tkCcPend) if (p.was && !fol.has(id)) p.was = false;   // (followed before the click: now replaced - wait for it again)
+    const fol = new Map(m.cc_followed.map(f => [f.id, f.vfo]));
+    for (const [id, p] of tkCcPend) if ((p.add ? fol.has(id) : fol.get(id) === 0) || Date.now() - p.t > TK_CC_PEND_MS) tkCcPend.delete(id);
     tkSrchRender();
     tkCcRender();
   }
@@ -23199,14 +23197,14 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const isNew = !!(since && e.src === 'search' && (e.first || 0) >= since - 1000 && (e.first || 0) <= now + 60000);
       // the title follows the band the receiver takes in now (in / out of it) - set in place; the
       // rest only when the entry or its state changed (not at each step of a search)
-      const span = tkCcInSpan(e.hz), nfol = (m.cc_followed || []).length;
-      const tk = [cant, vfo, span, nfol > 0, tkPlugName(e.plugin)].join('\u0001');
+      const span = tkCcInSpan(e.hz), nadd = (m.cc_followed || []).some(f => f.vfo !== 0);
+      const tk = [cant, vfo, span, nadd, tkPlugName(e.plugin)].join('\u0001');
       if (r._tk !== tk) {
         r._tk = tk;
         tkTitle(r, cant ? cant : vfo >= 0 ? `Followed on D${vfo}: click to select its VFO` :
-          `Click to follow: a control VFO with ${tkPlugName(e.plugin)} on ${tkCcMhz(e.hz)} MHz` +
-          (span === false ? ' - outside the band now: the receiver is retuned there (your tuning)' : '') +
-          (nfol ? '. It replaces the control channel your last click followed (its menu: Follow it too)' : ''));
+          `Click to follow: puts ${tkCcMhz(e.hz)} MHz on D0 with ${tkPlugName(e.plugin)} - D0's frequency, bandwidth and decoder are replaced and its demod set to Digital` +
+          (span === false ? '; outside the band now: the receiver is retuned there (your tuning)' + (nadd ? ' and the VFOs "Follow it too" made go' : '') : '') +
+          '. "Follow it too" (its menu) adds another VFO beside D0 instead');
       }
       const k = [e.hz, e.plugin, tkPlugName(e.plugin), tkCcPartial.get(e.id) || '', e.name, e.sys_name, e.site, e.sys, e.level_db, e.gain_db, e.src, tkCcAgo(e.last), e.n, e.first, e.followed, e.meas_hz, JSON.stringify(e.opts || {}), vfo, !!pend, cant, isNew, tkCcOpen === e.id].join('\u0001');
       if (r.dataset.k === k) return;
@@ -23416,10 +23414,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (!e || tkCcPend.has(id)) return;   // (the same click again - a double click, a held Enter - goes once)
     tkCcTapAt = Math.max(tkCcTapAt, Date.now() - 1000);   // (held still a few seconds: the click's results come)
     const vfo = tkCcFollowedVfo(id);
-    if (vfo >= 0 && !add) { if (typeof selectDecimator === 'function') selectDecimator(vfo); tkCcSay({cls: 'i', ic: 'ok', html: `${tkCcMhz(e.hz)} MHz is followed already on D${vfo}`, keep: 6000}); return; }
+    if (vfo === 0 && !add) { if (typeof selectDecimator === 'function') selectDecimator(0); tkCcSay({cls: 'i', ic: 'ok', html: `${tkCcMhz(e.hz)} MHz is followed already on D0`, keep: 6000}); return; }
     const cant = tkCcCant(e);
     if (cant) { tkCcSay({cls: 'w', ic: 'warn', html: `${tkCcMhz(e.hz)} MHz: ${digEsc(cant)}`}); return; }
-    tkCcPend.set(id, {t: Date.now(), add: !!add, was: vfo >= 0});
+    tkCcPend.set(id, {t: Date.now(), add: !!add});
     if (tkCcSaid && tkCcSaid.cls !== 'i') tkCcSaid = null;
     tkSend('TRUNK_CC_FOLLOW:' + JSON.stringify({id, add: !!add}));
     tkCcRender();
@@ -23450,9 +23448,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (c.startsWith('TRUNK_CC_FOLLOW:')) {
       tkCcPend.delete(id);
       let what = '', btn = '', said = digEsc(err);
-      if (/doesn't fit the span/.test(err)) said = 'it doesn\'t fit the receiver\'s band together with the control channels followed now';
-      if (/doesn't fit the span/.test(err)) btn = `<button type="button" class="btn sm" onclick="tkCcFollowIf(${tkCcGen}, ${id}, false)" title="Follow it in place of the control channel your last click followed">Follow it alone</button>`;
-      else if (/16 VFOs/.test(err)) what = ': remove a VFO first';
+      if (/doesn't fit the span/.test(err)) said = 'it doesn\'t fit the receiver\'s band together with the control channels followed now - follow it on D0 instead';
+      if (/doesn't fit the span/.test(err)) btn = `<button type="button" class="btn sm" onclick="tkCcFollowIf(${tkCcGen}, ${id}, false)" title="A plain click: on D0 in place of the control channel there (the receiver retunes if it has to, and the VFOs Follow it too made go)">On D0 instead</button>`;
+      else if (/16 VFOs/.test(err)) what = ': remove a VFO first (a plain click on D0 needs none)';
       else if (/scanner runs/.test(err)) what = ' (the scanner\'s Stop)';
       else if (/not built/.test(err)) what = ' - build it (make -C kraken_doa_v2/plugins PLUGIN=' + digEsc(e ? e.plugin : '') + ')';
       else if (/does not declare trunking/.test(err)) what = ' - this decoder can\'t follow a trunked system: tune a VFO to the channel and pick its decoder yourself';
@@ -23489,10 +23487,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (!e || !btn) return;
     const vfo = tkCcFollowedVfo(id), cant = tkCcCant(e), many = (tkSt && tkSt.cc_followed || []).length;
     tkMenuShow(btn, digEsc(tkCcMhz(e.hz) + ' MHz') + ' · ' + tkBdi(tkCcName(e) || tkPlugName(e.plugin), 32), [
-      {ic: 'trunk', text: vfo >= 0 ? `Followed on D${vfo}` : 'Follow', fn: () => tkCcFollow(id, false), off: !!cant,
-       tip: cant || (vfo >= 0 ? 'Select its VFO' : many ? 'In place of the control channel your last click followed' : 'A control VFO on it, following on')},
+      {ic: 'trunk', text: vfo === 0 ? 'Followed on D0' : 'Follow on D0', fn: () => tkCcFollow(id, false), off: !!cant,
+       tip: cant || (vfo === 0 ? 'Select D0' : 'The same as a click: D0\'s frequency, bandwidth and decoder are replaced and its demod set to Digital; following on')},
       {ic: 'plus', text: 'Follow it too', fn: () => tkCcFollow(id, true), off: !!cant || vfo >= 0 || !many,
-       tip: cant || (vfo >= 0 ? 'Followed already' : !many ? 'Nothing followed by a click yet: Follow' : 'Another control VFO, next to those followed now (it must fit the receiver\'s band with them)')},
+       tip: cant || (vfo >= 0 ? 'Followed already (D' + vfo + ')' : !many ? 'Nothing followed by a click yet: Follow on D0 first' : 'Another VFO beside D0, for a second control channel in the receiver\'s band (it must fit with those followed now)')},
       '-',
       {ic: 'edit', text: 'Name…', fn: () => tkCcRename(id), tip: 'Your name for it, shown in the list in place of the system\'s'},
       {ic: 'doc', text: tkCcOpen === id ? 'Hide details' : 'Details', fn: () => { tkCcOpen = tkCcOpen === id ? 0 : id; tkCcRender(); },

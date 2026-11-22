@@ -2034,10 +2034,21 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
 - **One click follows** (`TRUNK_CC_FOLLOW`, no question; taken on the
   release of a press on the row - the press's row counts, so a redraw that
   moves the list between press and release can't lose it; a press that
-  moved or a finger that scrolled is not a click): the row says
-  "Starting…" at once and "Following on Dn" when `cc_followed` has it; a
-  click on one followed already selects its VFO; a second click while one
-  is on its way sends nothing (`tkCcPend`). A finger or a pen follows on
+  moved or a finger that scrolled is not a click). A plain click puts the
+  channel on **D0** (the receiver replaces D0's frequency, bandwidth and
+  decoder and sets its demod to Digital; no VFO is added, so it is never
+  held back for 16 VFOs): the row says "Starting…" at once and "Following
+  on D0" when `cc_followed` has it on D0 (a "Follow it too" click waits for
+  any VFO); a click on the entry D0 already follows selects D0 and sends
+  nothing, one on an entry a "Follow it too" VFO follows is sent (D0 takes
+  it); a second click while one is on its way sends nothing (`tkCcPend`).
+  D0's card, bar and speaker redraw from the broadcast (demod Digital, the
+  decoder, the narrow bandwidth; its speaker as the user set it). The
+  receiver's demod change comes as `decimator_demod` (as another page's
+  does): the page used to set only the card's dropdown from it - the
+  spectrum's title ("Spectrum · WBFM", the demods heard) and the card's
+  demod-dependent controls stayed stale until the next `decimator_info`;
+  now that message redraws them as a `decimator_info` would. A finger or a pen follows on
   `click` instead: the page's press-and-hold help eats the click after a
   hold, so a hold to read the row's tip never follows (in help mode the
   page eats the whole press). The held list's correction divides by the
@@ -2049,7 +2060,8 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   row's second line and a note): outside the tuner's range, its decoder not
   on this receiver, a playback, wideband scan mode, a scanner running. The
   receiver's refusals come as a note under the search with what to do
-  ("Follow it alone" when an added one doesn't fit the span; remove a VFO;
+  ("On D0 instead" when an added one doesn't fit the span; "16 VFOs in use"
+  for "Follow it too": remove a VFO - a plain click on D0 needs none;
   build the plugin; a decoder that "does not declare trunking": tune a VFO
   to the channel and pick its decoder yourself; a search refused with "no
   free VFO for the probes": remove a VFO). A follow that is done but with an
@@ -2067,12 +2079,15 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   can still act on an id later carries the connection's number
   (`tkCcGen`): a Name… or Forget dialog left open across a reconnect sends
   nothing ("Not renamed: the receiver was reconnected meanwhile"), a note's
-  "Follow it alone" likewise. A refusal or a warning under the search stays
+  "On D0 instead" likewise. A refusal or a warning under the search stays
   until the user closes it or the next note replaces it (information goes
-  after 30 s). The row's tooltip says when the receiver will be
-  retuned (coherent: outside the usable band now) and that it replaces the
-  last click's control channel. The menu: Follow, **Follow it too**
-  (`add:true`; only when something is followed by a click), Name… (`TRUNK_CC_NAME`,
+  after 30 s). The row's tooltip says what a click does (on D0: its
+  frequency, bandwidth and decoder replaced, demod Digital), when the
+  receiver will be retuned (coherent: outside the usable band now) and that
+  the VFOs "Follow it too" made go then. The menu: **Follow on D0** (the
+  plain click; "Followed on D0" when it is), **Follow it too** (`add:true`:
+  another VFO beside D0 for a second channel in the band; only when
+  something is followed), Name… (`TRUNK_CC_NAME`,
   empty = the system's name), Details (inline: frequency and measured,
   decoder and key, system, site, the user's name, source, level and gain,
   first / last seen, times seen, last followed, options), Forget
