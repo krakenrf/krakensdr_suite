@@ -120,7 +120,8 @@ KRAKEN_PLUGIN(AeroPlugin, {.id = "inmarsat_aero",
                            .description = "Inmarsat Classic Aero, L band: P channel (0.6 / 1.2 kbit/s A-BPSK, 10.5 kbit/s A-QPSK; "
                                           "rate and carrier found automatically) - signal units, log-ons, C channel assignments, "
                                           "ACARS, ADS-C positions; C channel voice (AMBE, README \"Digital voice codecs\"); "
-                                          "aircraft R / T bursts (1.6 GHz) with a DoA per aircraft. Bandwidth 15 kHz.",
+                                          "aircraft R / T bursts (1.6 GHz) with a DoA per aircraft. Bandwidth 15 kHz - or a wide VFO (up to "
+                                          "2.4 MHz) with Channel \"All channels in the VFO\": every P and C channel in it at once.",
                            .version = "1.0",
                            .sample_rate = 0,
                            .min_vfo_rate = 15000,
