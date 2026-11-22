@@ -222,8 +222,9 @@ many points as the plot is wide. A spacing (for example 37.5 kHz) or Full
 (every point) sends the whole range at that detail: a zoom is then sharp at
 once, down to that spacing, and the waterfall's lines keep their detail when
 they are zoomed into later. The finer, the more network and browser memory it
-costs (Full: 3 - 3.5 MB a second for the whole range at 146 Hz, 0.1 MB a
-second at Auto; up to 256 MB in the browser). The choice is kept per browser,
+costs (Full: about 1.8 MB a second for the whole range at 146 Hz, 0.06 MB a
+second at Auto - the sets travel compressed, without loss, to about 60 % of
+their size; up to 256 MB in the browser). The choice is kept per browser,
 and Slow link switches it off. A change affects only the lines that come
 after it; the lines already on the waterfall keep their detail. In every
 mode, **Data rate** under "Points sent" in the Display box shows how fast

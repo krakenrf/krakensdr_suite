@@ -79,7 +79,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     second. That is after permessage-deflate: the receiver worker's counting
     proxy measured it 1.8 - 2.7x HIGH where frames travel deflated
     (coherent 291 KB/s counted against 117 on the wire; full sets and audio
-    are counted right). So it is shown as an upper bound, "≤ 291 KB/s", and
+    are counted right - since round 8 the sweep's sets come deflated for a
+    page that can inflate, and the page counts them as they travel: at Full
+    on the whole range "≤ 1.60 - 1.61 MB/s" against 1.59 on the wire, never
+    below it). So it is shown as an upper bound, "≤ 291 KB/s", and
     the tip says so (counted after decompression, the link carries less -
     often about half -, a Linux receiver of 2026-11-22 or later gives the
     exact figure). No estimate of the compression, no second number.

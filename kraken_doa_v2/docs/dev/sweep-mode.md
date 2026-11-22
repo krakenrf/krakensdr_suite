@@ -1389,6 +1389,21 @@ used"):
     no `DecompressionStream`, or one that throws: never asked; memory over
     200 more sets flat (the renderer 295 -> 290 MB, the JS heap 5.2 MB);
     the phone layout.
+  - With the receiver's ca62c27 (`t_zip2.py`, the fake heimdall, through
+    the counting proxy): a page that inflates and one whose browser has no
+    `DecompressionStream`, on one receiver, hold the SAME sets for the same
+    sweeps (FNV of every row's set) at Full on the whole range at 146 Hz,
+    at the 2.34 kHz and 37.5 kHz steps, on 400 - 700 MHz and on the FM
+    band; every part of the inflating page came deflated. Full on the whole
+    range: 1.59 MB/s on the wire deflated against 3.19 raw (49.9 % - the
+    fake's scene compresses to 47.9 %, the real 146 Hz set to 60.1 %: about
+    3 -> 1.8 MB a second on the Pi's 4 s sweep, the figure the tips and the
+    README quote); the Data rate 1.59 - 1.60 MB/s; the page's own count
+    "≤ 1.60 - 1.61" - never below the wire. With the receiver's
+    `KRAKEN_DOA_TEST_Z_DELAY_MS=300` (every part raw for a page that asked)
+    the sets the same as the raw page's. Long tasks of 52 - 60 ms come with
+    a 146 Hz set raw or deflated alike (the pyramid of 11.9 M values, the
+    row) - none from inflating.
 - End to end (round 6, 2026-11-22; the receiver's 4295642 merged, a clean
   test build, the fake heimdall; `t_dres.py`, `t_keep.py`, `t_pool2.py`):
   the list from the real `full_sets` - the whole range at 146 Hz six
