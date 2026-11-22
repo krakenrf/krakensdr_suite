@@ -85,7 +85,7 @@ this folder (index: `README.md` here, or the table in
   libaeroambe's 96-entry table (MIT notice in the file). Checked off air
   on two real calls (below, "Off air"): framing, reference bits, sub-band
   SUs and the voice frames' arrangement (the codec's Golay words come out
-  clean); speech itself not confirmed.
+  clean); speech confirmed on a third call (2026-11-23, below).
 - Bursts (`aero_burst.cpp`): the unmodulated preamble is a tone: a
   512-point FFT (one hit 18 dB, or two in a row at 14 dB, over its bin's
   noise as over a median, and 10 dB over the bins 3 - 6 away - a
@@ -205,6 +205,17 @@ this folder (index: `README.md` here, or the table in
     stay (no encoder). Speech not confirmed: one call's clean frames are
     84 % one identical frame (decodes to silence); the other's decode with
     6 % voiced frames and no voiced run over one frame (random bits: 20 %).
+    SPEECH CONFIRMED 2026-11-23 on a third call (found by All channels,
+    recorded narrow at once; 174 s, 347 clean C frames; README table):
+    the codec's parameters per frame (mbe_parms cur: w0, Vl[]) read beside
+    random bits through the same path - voiced runs median 6 / max 32
+    frames (random 3 / 14), pitch 158 Hz moving 2.3 % per frame within
+    0.58 octave (random 75 %, 1.94 octave), sound spurts up to 2.7 s
+    between pauses up to 26 s (random 0.3 / 1.1 s), level 20 dB over
+    random. The decode path (W / X, uvquality 3, x 7 / 32768) is right;
+    the earlier calls were silence frames (no one talking in them). Tool:
+    job scratch speech2.py on the voice bits of a scratch build (env
+    AERO_VBITS, not in the repo); audio only in RAM.
   - The acquisition's line pair must be balanced (`Acquisition::search`:
     max / min <= 6): a non-Aero carrier with a strong unmodulated part
     (1545.476 MHz) has one x^2 line 20 - 25 dB over the rest.

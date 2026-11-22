@@ -500,13 +500,43 @@ checked against the real signal for the first time:
   wrongly (reversed, inverted, 1 or 8 bits late, the de-interleave table
   shuffled) give 0 % of frames without corrections and 2.4 - 4.9 per
   frame, random bits 4.3. The arrangement is right; nothing was changed;
-- speech: not confirmed. In one call 567 of the 675 clean voice frames
+- speech: not confirmed on these two (confirmed on a third call, below). In one call 567 of the 675 clean voice frames
   are one and the same frame, which the codec turns into silence; in the
   other the clean frames decode to sound with little voicing (voiced 6 %
   of active frames, no voiced run longer than one frame; random bits:
   20 %, runs of up to 4), and the carrier was good for only ~10 s. No
   audio was kept or listened to; statistics only.
 Both calls are private captures in the local IQ library.
+
+**Speech confirmed (2026-11-23)**, on a third call that the All channels
+mode found and that was recorded narrow at once (1542.9550 MHz, 174 s of
+call, 347 C frames, every one clean). Its 8675 voice frames through the
+same codec path as the plugin (libaeroambe's mbelib, 4800x3600, uvquality
+3, the plugin's de-interleave), the codec's own parameters read per frame,
+the decoded audio only in RAM; beside it the same number of random voice
+frames through the same path:
+
+| Measure | The call | Random voice bits |
+|---|---|---|
+| Golay corrections per 20 ms frame; frames with none | 0.13; 96 % | 4.30; 0 % (59 % concealed by repetition) |
+| Level, 95th percentile | -13.6 dBFS | -34.1 dBFS |
+| Voiced frames of the non-silent | 58 % | 52 % |
+| Voiced runs: median / longest; voiced frames in runs >= 100 ms | 6 / 32 frames (120 / 640 ms); 91 % | 3 / 14 frames; 24 % |
+| Pitch in voiced frames: median, 10 - 90 % spread | 158 Hz, 0.58 octave | 110 Hz, 1.94 octave |
+| Pitch change between voiced neighbours: median; under 0.1 octave | 2.3 %; 90 % | 75 %; 6 % |
+| Sound spurts: median / longest; silences: longest | 0.44 / 2.7 s; 26 s | 0.08 / 0.3 s; 1.1 s |
+| Long-term spectrum < 1 kHz; flatness | 88 %; 0.20 | 86 %; 0.35 |
+| Envelope modulation peak (1 - 16 Hz) | 1.8 Hz | 1.2 Hz |
+
+Syllable-length voiced runs, a smooth pitch track in one speaker's range,
+talk spurts of seconds between long pauses (the other side talking):
+speech comes out. The envelope modulation and long-term spectra separate
+little here (the codec's concealment of random frames is bursty and
+low-pass too). The two earlier calls carried mostly the same frame
+(81 % of call 2's voice frames: it decodes to digital silence) - no one
+was talking in what was received of them. Nothing was listened to,
+transcribed or kept but the private IQ capture (library:
+`inmarsat/offair_roof_2026-11-23/aero_c8400_call_034445_1542.9550`).
 
 ### Time to recognition (2026-11-23)
 
