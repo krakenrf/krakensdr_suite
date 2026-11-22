@@ -65,7 +65,7 @@ public:
         ring_.assign(RING, 0.0f);
         pos_.assign(RING, 0.0);
         sync_reset();
-        host.table_columns({"Service", "Address", "LES", "Msg", "Packets", "State", "Text"});
+        host.table_columns({"Service", "Priority", "Address", "LES", "Msg", "Packets", "State", "Text"});
         host.table_keep(24 * 3600);
     }
 
@@ -78,6 +78,7 @@ public:
         type_counts_.clear();
         les_tdm_.clear();
         sig_.clear();
+        cont_.clear();
         frames_ok_ = frames_bad_ = packets_ok_ = packets_lost_ = 0;
         sym_err_ = sym_tot_ = 0;
         egc_msgs_ = egc_complete_ = egc_repeats_ = 0;
@@ -270,8 +271,10 @@ private:
             std::snprintf(b, sizeof b, "%s%02X x%lld", t.empty() ? "" : ", ", ty, static_cast<long long>(n));
             t += b;
         }
-        std::snprintf(b, sizeof b, "%lld passed their sum check%s", static_cast<long long>(packets_ok_),
-                      packets_lost_ ? fmt(", %.0f frame(s) cut short by a failed one", packets_lost_).c_str() : "");
+        std::snprintf(b, sizeof b, "%lld passed their sum check%s; %lld continued across frames (BD + BE) joined%s",
+                      static_cast<long long>(packets_ok_),
+                      packets_lost_ ? fmt(", %.0f frame(s) cut short by a failed one", packets_lost_).c_str() : "",
+                      cont_ok_, cont_lost_ ? fmt(", %.0f lost", cont_lost_).c_str() : "");
         host.fact("Packets", b);
         if (!t.empty()) host.fact("Packet types", t);
     }
@@ -281,6 +284,35 @@ private:
         type_counts_[p[0]]++;
         if (host.raw_wanted()) host.raw(inmc::hex(p, n));
         switch (p[0]) {
+        case 0xBD:   // first part of a packet continued in the next frame
+            cont_.assign(p + 2, p + n - 2);
+            cont_t0_ = t0;
+            cont_t_ = t1;
+            break;
+        case 0xBE: {   // its rest: join, check the inner packet, take it
+            if (cont_.empty() || std::fabs(t0 - cont_t_) > 1.0) {
+                cont_lost_++;
+                cont_.clear();
+                break;
+            }
+            std::vector<uint8_t> inner = cont_;
+            inner.insert(inner.end(), p + 2, p + n - 2);
+            cont_.clear();
+            // the parts carry the packet without its own sum check (each part has
+            // one): measured - joined = declared length - 2, every time
+            const int len = inmc::packet_length(inner.data(), static_cast<int>(inner.size()));
+            if (len == static_cast<int>(inner.size()) + 2) {
+                uint8_t c0, c1;
+                inmc::fletcher_make(inner.data(), static_cast<int>(inner.size()), &c0, &c1);
+                inner.push_back(c0);
+                inner.push_back(c1);
+                cont_ok_++;
+                packet(inner.data(), len, cont_t0_, t1);
+            } else {
+                cont_lost_++;
+            }
+            break;
+        }
         case 0x7D: bulletin_board(p, n); break;
         case 0x6C: sig_descriptor(p, n); break;
         case 0x81: {
@@ -420,10 +452,10 @@ private:
 
     std::string summary(const inmc::EgcMessage& m) const {
         const char* name = inmc::egc_service_name(m.service);
-        char b[160];
-        std::snprintf(b, sizeof b, "%s %s, %s, LES %s, msg %d", inmc::egc_service_family(m.service),
-                      name ? name : fmti("service %02X", m.service).c_str(), inmc::egc_address_text(m.service, m.address).c_str(),
-                      inmc::station_id(m.les).c_str(), m.msn);
+        char b[320];
+        std::snprintf(b, sizeof b, "%s %s (%s), %s, LES %s, msg %d", inmc::egc_service_family(m.service),
+                      name ? name : fmti("service %02X", m.service).c_str(), inmc::priority_name((m.flags >> 5) & 3),
+                      inmc::egc_address_text(m.service, m.address).c_str(), inmc::station_id(m.les).c_str(), m.msn);
         return b;
     }
 
@@ -436,7 +468,8 @@ private:
         if (perr) state += fmt(", %.0f parity errors", perr);
         char pk[32];
         std::snprintf(pk, sizeof pk, "%d%s", static_cast<int>(m.have.size()), m.last_seq ? fmt(" / %.0f", m.last_seq).c_str() : "");
-        host.table_row(m.key, {name ? name : fmti("%02X", m.service), inmc::egc_address_text(m.service, m.address),
+        host.table_row(m.key, {name ? name : fmti("%02X", m.service), inmc::priority_name((m.flags >> 5) & 3),
+                               inmc::egc_address_text(m.service, m.address),
                                inmc::station_id(m.les), std::to_string(m.msn), pk, state,
                                kp::printable(one_line(text, 80))});
         std::vector<std::pair<std::string, std::string>> d;
@@ -444,7 +477,8 @@ private:
         d.push_back({"Address", inmc::egc_address_text(m.service, m.address)});
         d.push_back({"LES", inmc::station_id(m.les) + " (" + inmc::region_name(inmc::station_region(m.les)) + ")"});
         d.push_back({"Message sequence number", std::to_string(m.msn)});
-        d.push_back({"Flags", fmti("%02X (bit 7 = more packets follow; the priority's coding is not decoded)", m.flags)});
+        d.push_back({"Priority", inmc::priority_name((m.flags >> 5) & 3)});
+        d.push_back({"Flags", fmti("%02X (bit 7 = more packets follow, bits 6-5 = priority, bits 4-0 not decoded)", m.flags)});
         d.push_back({"Presentation", fmti("%02X ", m.presentation) + inmc::presentation_name(m.presentation)});
         std::string ms;
         for (int s : miss) ms += (ms.empty() ? "" : ", ") + std::to_string(s);
@@ -469,7 +503,7 @@ private:
     void report_egc(inmc::EgcMessage& m, bool complete) {
         int perr = 0;
         const std::string text = m.text(&perr);
-        std::string ev = (m.service == 0x14 ? "⚠ " : "") + std::string("EGC ") + summary(m);
+        std::string ev = (m.service == 0x14 || ((m.flags >> 5) & 3) >= 2 ? "⚠ " : "") + std::string("EGC ") + summary(m);
         char b[96];
         std::snprintf(b, sizeof b, " (%d packets, %d bytes%s%s): ", static_cast<int>(m.have.size()), m.body_bytes(),
                       complete ? "" : ", INCOMPLETE", perr ? fmt(", %.0f parity errors", perr).c_str() : "");
@@ -510,6 +544,9 @@ private:
     inmc::EgcAssembler egc_;
     std::map<uint8_t, long long> type_counts_;
     std::map<uint8_t, int> les_tdm_;
+    std::vector<uint8_t> cont_;          // a continued packet's first part (type BD)
+    double cont_t_ = -1e9, cont_t0_ = 0;
+    long long cont_ok_ = 0, cont_lost_ = 0;
     std::map<int, inmc::SigChannelDescriptor> sig_;
     long long frames_ok_ = 0, frames_bad_ = 0, packets_ok_ = 0, packets_lost_ = 0;
     long long sym_err_ = 0, sym_tot_ = 0;

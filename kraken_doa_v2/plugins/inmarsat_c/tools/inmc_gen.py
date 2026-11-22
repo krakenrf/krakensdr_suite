@@ -35,6 +35,10 @@ UW = 0x07EACDDA4E2F28C2
 G1, G2 = 0x6D, 0x4F   # bit 0 = newest input (SDM G(1) = 1011011, G(2) = 1111001)
 
 
+# synthetic LES TDMs (codes: 1510 MHz + code x 2.5 kHz) for the filler / station-list packets
+LES_TDMS = {"101": 11982, "102": 11846, "104": 11838, "112": 11854}
+
+
 def fletcher(data):
     a = b = 0
     for x in data:
@@ -63,7 +67,7 @@ def station(s):
     return ((s // 100) << 6) | (s % 100)
 
 
-def egc_packets(service, address, les, msn, text):
+def egc_packets(service, address, les, msn, text, priority=None):
     """Double-header EGC packets: blocks of 256 text bytes, 16 in part 1 (0xB1)
     and the rest in part 2 (0xB2), each part with the same header + its own sum check."""
     body = [odd_parity(ord(c)) for c in text.replace("\n", "\r\n")]
@@ -72,7 +76,10 @@ def egc_packets(service, address, les, msn, text):
     for k, blk in enumerate(blocks):
         seq = k + 1
         more = k < len(blocks) - 1
-        flags = (0x80 if more else 0) | 0x40   # C = more packets follow; P set as seen on the air
+        # bit 7: more packets follow; bits 6-5: priority (as measured off air: a
+        # distress relay 3, a MET forecast 1); bits 4-0 left 0
+        prio = priority if priority is not None else (3 if service == 0x14 else 1)
+        flags = (0x80 if more else 0) | (prio << 5)
         parts = [(0xB1, blk[:16]), (0xB2, blk[16:])] if len(blk) > 16 else [(0xB1, blk), (0xB2, [])]
         for t, data in parts:
             hdr = [t, 0, service, flags, (msn >> 8) & 255, msn & 255, seq, 0x00, station(les)] + address
@@ -154,6 +161,7 @@ def main():
     ap.add_argument("--drop", type=int, default=0)
     ap.add_argument("--egc-frame", type=int, default=0, help="the first frame that carries EGC packets")
     ap.add_argument("--fill", type=int, default=6, help="filler packets per frame")
+    ap.add_argument("--continued", action="store_true", help="split a packet that doesn't fit the frame into BD + BE")
     a = ap.parse_args()
     rng = np.random.default_rng(a.seed)
     sps = a.rate // 1200
@@ -175,21 +183,42 @@ def main():
             queue.extend(p for _, p in pk)
     origin = station(a.origin)
     syms = []
+    carry = []
     for f in range(a.frames):
         fn = (a.frame0 + f) % 10000
         info = packet(0x7D, [109, fn >> 8, fn & 255, 0x04, 0x08, 0x20, origin, 0xF0, 0xF1, 0x39, 0x0A])
         info += packet(0x6C, [0xB4, 10056 >> 8, 10056 & 255] + [0x02, 0x00, 0x08, 0x00, 0x08, 0x00, 0x02])
         # EGC packets while they fit (at most ~2 messages' worth per frame, as on the air)
+        if carry:
+            # the rest of a packet continued from the previous frame (type BE)
+            info += packet(0xBE, carry)
+            carry = []
         used = 0
         while f >= a.egc_frame and queue and len(info) + len(queue[0]) <= 600 and used < 6:
             info += queue.pop(0)
             used += 1
+        # the station list (type AB, as broadcast off air: network version, count,
+        # {station, 3 status bytes, TDM channel code}), every 4th frame
+        if f % 4 == 1:
+            ent = []
+            for les, code in sorted(LES_TDMS.items()):
+                ent += [station(les), 0xFF, 0xFF, 0xFF, code >> 8, code & 255]
+            info += packet(0xAB, [109, len(LES_TDMS)] + ent)
         for _ in range(a.fill):
-            body = [int(x) for x in rng.integers(0, 256, 3)] + [station(rng.choice(["101", "102", "104", "112"]))] + \
-                   [0x2E, 0x46] + [int(x) for x in rng.integers(0, 256, 9)]
+            les = str(rng.choice(sorted(LES_TDMS)))
+            code = LES_TDMS[les]
+            body = [int(x) for x in rng.integers(0, 256, 3)] + [station(les)] + [code >> 8, code & 255] + \
+                   [int(x) for x in rng.integers(0, 256, 9)]
             p = packet(0x81, body)
             if len(info) + len(p) <= 639:
                 info += p
+        if a.continued and f >= a.egc_frame and queue and 639 - len(info) >= 8:
+            # the next packet doesn't fit: its first part goes at the end of this frame
+            # (type BD), the rest - without the packet's own sum check - starts the next
+            nxt = queue.pop(0)
+            k = min(639 - len(info) - 4, len(nxt) - 3)   # the rest is never empty
+            info += packet(0xBD, nxt[:k])
+            carry = nxt[k:-2]
         info += [0] * (639 - len(info))
         syms.append(frame_symbols(info))
     s = np.concatenate(syms)[a.start_symbol:]

@@ -32,10 +32,14 @@ interleaved over the whole frame with a 64-bit unique word.
   channel it is (NCS common channel or LES TDM, the station ID and ocean
   region), the frame number and its time of day (UTC), network version,
   status, services and randomising interval (raw values).
-- **Signalling channel descriptor** (6C): the uplink channel code and the
-  28 slot-state markers (counted by state).
-- **LES TDMs**: the TDM channel of each LES, from packet types 81 and 92
-  (layout measured, see below) - fact "LES TDMs (MHz)".
+- **Signalling channel descriptors** (6C, one per signalling channel - the
+  POR NCS sends two per frame): each uplink channel code and its 28
+  slot-state markers (counted by state).
+- **The stations' TDMs**: the TDM channel of each LES (and of the other
+  NCSs) from the station lists (types 92 and AB: network version, entry
+  count, 6-byte entries {station, 3 status bytes, channel code}) and type 81
+  - fact "TDMs of the stations (MHz)". Layout measured; off air every
+  listed TDM was found where its code says.
 - **EGC** (types B1 / B2, the two halves of a double-header block):
   - header checked by its own sum check; service code with its name and
     SafetyNET / FleetNET / system family, LES, message sequence number,
@@ -43,9 +47,11 @@ interleaved over the whole frame with a 64-bit unique word.
   - addresses: all ships, NAVAREA / METAREA number, coastal warning area
     (NAVAREA, station and subject letters), group (FleetNET ENID), MES
     (system messages, download group identity), chart-correction areas;
-    rectangular and circular areas are shown as their raw bytes (their bit
-    layout is not public and no recording had one - **not decoded, so not
-    on the map**);
+    a circular area's first two bytes are the centre's whole degrees of
+    latitude and longitude (one real distress relay, its text naming the
+    position); its hemisphere bits and radius (bytes 3-4) have not been seen
+    coded yet, nor any rectangular area - so **areas are not put on the
+    map** (a point needs the hemispheres);
   - messages reassembled from their packets in sequence-number order; the
     last packet is the one without the continuation flag; missing packets
     show as `[...]`; a message whose packets stop coming is reported as
@@ -57,12 +63,18 @@ interleaved over the whole frame with a 64-bit unique word.
   - text: IA5 with odd parity (a parity error becomes `_`, as IEC 61097-4
     asks), ITA2 (one character per byte - unverified, no recording), data
     as hex;
-  - a shore-to-ship distress alert (service 14) starts with ⚠.
-  - **Not decoded: the priority.** The header's flag byte (bit 7 = more
-    packets follow) also carries the P bit, but how distress / urgency /
-    safety / routine are coded is not public and the one recorded message
-    (a METAREA warning, priority Safety by the SafetyNET manual's rules)
-    cannot tell it. The flag byte is shown raw.
+  - **priority** from bits 6-5 of the flag byte (bit 7 = more packets
+    follow): 0 Routine, 1 Safety, 2 Urgency, 3 Distress - measured off air on
+    a shore-to-ship distress relay (3; the SafetyNET manual: service 14 is
+    always Distress) and a MET forecast (1; forecasts are always Safety);
+    the 2008 METAREA V gale warning reads 2, Urgency. Bits 4-0 are not
+    decoded (shown in the details). An urgency / distress message or a
+    service-14 alert starts with ⚠;
+  - **continued packets**: a packet that does not fit the frame comes as a
+    BD part at the end of the frame and a BE part at the start of the next,
+    each with its own sum check; joined (without the inner packet's own sum
+    check, which is not sent) they are the original packet - measured off
+    air, 17 of 17 (EGC halves, a station list).
 - Other packet types (announcements, acknowledgements, polls, logical
   channel assignments, LES TDM message packets ...): counted by type; with
   "Show all messages" each one is an event with its first bytes in hex.
@@ -76,7 +88,7 @@ the generator's debug playback entry).
 Table: one row per EGC message (service, address, LES, message number,
 packets received / total, state, the start of the text); its details hold
 every header field and the whole text. Facts: Carrier (offset, Es/N0),
-Channel, Frame number, Bulletin board, Signalling channel, LES TDMs (MHz),
+Channel, Frame number, Bulletin board, Signalling channels, TDMs of the stations (MHz),
 EGC (messages, complete, repeated packets suppressed), Frames (decoded,
 failed, channel symbol errors the Viterbi decoder corrected), Packets,
 Packet types. Raw frames (decoder data log, "Log All"): every packet in
@@ -122,16 +134,19 @@ Ship and land terminals (the transmitters worth a bearing) transmit on
   can't follow). In Auto detect a narrower VFO gets a 9.6 kHz
   stream of its own.
 - NCS common channel frequencies, as published by decoder vendors and
-  sigidwiki (checked 2026-11; not re-measured - check what you receive):
-  AOR-W 1537.700 MHz, AOR-E 1541.450 MHz, POR 1541.450 MHz, IOR
-  1537.100 MHz (channel codes 11080 / 12580 / 12580 / 10840: frequency =
-  1510 MHz + code x 2.5 kHz). Since the move to the Inmarsat-4 / Alphasat
-  satellites the region names may not match the satellite you see: the
-  bulletin board tells which NCS it is. LES TDMs are near them
-  (1537-1545 MHz); the "LES TDMs" fact lists the ones the NCS names.
+  sigidwiki (checked 2026-11): AOR-W 1537.700 MHz, AOR-E 1541.450 MHz,
+  POR 1541.450 MHz, IOR 1537.100 MHz (channel codes 11080 / 12580 / 12580
+  / 10840: frequency = 1510 MHz + code x 2.5 kHz). **Measured 2026-11-22
+  (roof Pi 5, patch antenna, POR satellite):** NCS 244 on 1541.450 MHz, a
+  standby NCS 245 on 1539.575 MHz, LES TDMs 201, 202, 203, 204, 206, 211,
+  212, 217, 221, 230 between 1539.505 and 1539.725 MHz - all exactly on the
+  codes the NCS lists. The bulletin board tells which NCS it is; the "TDMs of
+  the stations" fact lists the LES TDMs to tune to next.
 - The decoder needs Es/N0 >= ~0.5 dB on a clean synthetic signal and
   ~3 dB on the real recording with noise added (C/N0 31-34 dB-Hz), see the
-  test results; the "Carrier" fact shows the Es/N0 it measures.
+  test results; the "Carrier" fact shows the Es/N0 it measures. Off air with
+  a satellite patch antenna and its LNA on a KrakenSDR at gain 49.6 dB the
+  POR NCS read Es/N0 9-13 dB and the LES TDMs 8-10 dB: 6-10 dB of margin.
 
 ## Sources
 No GPL decoder of this signal (Scytale-C, stdcdec, SatDump, ...) was
@@ -172,6 +187,42 @@ opened; nothing here is translated from one.
   81 and 92, the pulse shape's roll-off. The generator rebuilds each of
   the recording's frames from its 639 decoded bytes symbol for symbol
   (41472 of 41472).
+
+## Off air (2026-11-22, roof Pi 5, KrakenSDR CH0, satellite patch + LNA on the CH0 bias tee)
+- **NCS 244 (POR)**, gain 49.6 dB, VFO 9.6 kHz on 1541.450 MHz: 48 minutes
+  live over 7 turns - 323 frames decoded, 4 failed (each one at a heimdall
+  calibration gap, where samples are cut out), 0 dropped samples; Es/N0
+  9.1-12.8 dB (mostly 10.5-12); 0-0.27 % channel symbol errors corrected;
+  carrier -1356 Hz at the start, -1288 Hz 100 minutes later (the RTL-SDR
+  warming up); frame numbers advance by one per frame, their time of day
+  agrees with UTC within ~2 s; the status stays "Receiving" between frames
+  (the engine's squelch-hold change), "Signal lost" only at the calibration
+  gaps (8 s with the resynchronisation of 0ab82be, 25 s before it).
+- **EGC**: none for the first hour (04:02-05:01 UTC), then (05:15-05:34 UTC)
+  three SafetyNET messages - a shore-to-ship distress relay (3 packets,
+  Distress, circular area), a 32-packet MET forecast for METAREA XII
+  (Safety; 17 of its packets crossed frames as BD + BE) and one 2-packet
+  message the live run caught only partly. Every header passed its own sum
+  check, every text byte its parity; repeats: none came within the turns
+  (their intervals are hours). Packet types seen on the NCS: 6C 7D 81 92
+  93 99 A2 A3 A8 AB AC B1 B2 BD BE.
+- **Time to the first frame**: 10-15 s after a retune (heimdall's
+  calibration, then the first whole frame); 5-7 s after moving only the VFO
+  (the partly received first frame decodes). With the VFO put off on purpose
+  - carrier at -3624, -3324, +1677 Hz from the VFO centre - every frame
+  decoded.
+- **LES TDMs** (centre 1539.600 MHz, 52 s each): all eight the NCS listed
+  decode (202, 203, 204, 206, 211, 212, 217, 221; 5-9 frames each, 1 failed
+  frame in all), Es/N0 8.0-10.4 dB; a 20 s capture showed LES 201, 230 and the
+  standby NCS 245 as well. LES TDM packet types: 08 27 2A 5E 83 85 91 99 9A A0
+  AA AC AD BD BE (header fields not decoded; counted).
+- **CPU on the Pi 5**: the plugin live 0.55 % of one core (`/proc` over 60 s);
+  offline 15.7 M cycles per second of signal on a 48 kHz capture (0.65 % of a
+  2.4 GHz core, the host's resampler included), 29 M cycles/s while searching
+  noise. The offline harness at 2.4 MS/s spends ~15 % of real time in its own
+  resampler (not the plugin).
+- Recordings of all this are in the IQ library (`inmarsat/offair_roof_2026-11-22/`,
+  local only).
 
 ## Test results (2026-11-22, x86 test machine)
 - **Real recording** (sigidwiki, 49 s): 5 frames (the first 73 % present),

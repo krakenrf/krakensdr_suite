@@ -145,8 +145,8 @@ bool parse_egc_header(const uint8_t* p, int n, EgcHeader& h) {
     h.service = p[2];
     h.flags = p[3];
     h.more = (p[3] & 0x80) != 0;
-    h.p_bit = (p[3] >> 6) & 1;
-    h.repetition = p[3] & 0x3F;
+    h.priority = (p[3] >> 5) & 3;
+    h.low_bits = p[3] & 0x1F;
     h.msn = (p[4] << 8) | p[5];
     h.packet_seq = p[6];
     h.presentation = p[7];
@@ -253,10 +253,23 @@ std::string egc_address_text(uint8_t s, const std::vector<uint8_t>& a) {
     case 0x04: case 0x34:
         return "rectangular area (" + raw + ", layout not decoded)";
     case 0x14: case 0x24: case 0x44:
+        if (n == 4) {
+            // the first two bytes are the centre's whole degrees of latitude / longitude
+            // (one real distress relay matched its text); how the hemispheres and the
+            // radius are coded in bytes 3-4 has not been seen yet
+            std::snprintf(b, sizeof b, "circular area: centre %d deg lat, %d deg lon (hemispheres not decoded), bytes 3-4 %02X %02X",
+                          a[0], a[1], a[2], a[3]);
+            return b;
+        }
         return "circular area (" + raw + ", layout not decoded)";
     default: break;
     }
     return n ? raw : "-";
+}
+
+const char* priority_name(int p) {
+    static const char* n[4] = {"Routine", "Safety", "Urgency", "Distress"};
+    return n[p & 3];
 }
 
 const char* presentation_name(uint8_t p) {

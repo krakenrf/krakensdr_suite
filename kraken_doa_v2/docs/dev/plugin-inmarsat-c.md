@@ -29,12 +29,18 @@ used, and how each item was settled:
 | Signalling channel descriptor 6C (13 bytes): flags, uplink channel code, 28 x 2-bit slot markers | Nera service manual (field names) | the length is right for 1 + 1 + 2 + 7 + 2 bytes |
 | EGC header: type, length, service, flags (bit 7 = C), message sequence number (16 bits), packet sequence number, presentation, LES ID, address (service low digit bytes), own sum check | field names from the SDM figures (web search snippets), "the second hex digit of the service code = address length" (SDM Vol. 2), "each packet, other than the last, has a continuation marker" (SDM Vol. 1 13) | the recorded SafetyNET message: header sum check at 12 bytes in all four packets, service 31h, address byte agrees with the area the message names, LES byte 4Eh = 114 agrees with the LES the message names, packet sequence 1 then 2, text continuous across the packets |
 | Types 81 (19 bytes) and 92 (6-byte entries) name LESs and their TDM channel codes | not public | every LES ID always pairs with the same code; the codes give 1539.6-1540.0 MHz; type 92's entries repeat the pairs of type 81 |
+| Station lists 92 / AB: [MES (3), 2 bytes] (92 only), network version, entry count, then {station, 3 status bytes, channel code} x count; entries may be NCSs; code FFFF = no TDM | not public | off air on the POR NCS (2026-11-22): the version byte equals the bulletin board's (222; 109 in the 2008 AOR-E recording), the count byte equals the number of entries in every packet, and tuning to each listed code found that very station's TDM (13 of 13, the RTL-SDR's -1.3 kHz aside) |
 | Channel code -> 1510 MHz + code x 2.5 kHz | Furuno manual (NCS codes) + Wavecom / sigidwiki (NCS frequencies) | three points on one line |
 | Pulse shape RRC, roll-off ~1 | not public | the recording's spectrum: -5 dB at 750 Hz, -22 dB at 1-1.5 kHz, as the alpha = 1 raised cosine |
 
-Not settled: the EGC priority coding (P bit / repetition bits), the
-rectangular / circular area address layouts, ITA2 packing, the meaning of
-the other packet types. The decoder shows these raw and says so.
+| EGC priority = flag bits 6-5 (0 routine .. 3 distress) | the SafetyNET manual's priority per service | off air 2026-11-22: a shore-to-ship distress relay (service 14, always Distress) reads 3, a MET forecast (always Safety) 1; the 2008 METAREA V gale warning reads 2 (Urgency - not checkable). b5 as the high bit would make the forecast Urgency |
+| Circular address: byte 1 = centre latitude, byte 2 = longitude, whole degrees | SafetyNET C3 form D1D2N(S)D3D4D5E(W)M1M2M3 | one real distress relay: 02, 54h = 84 against its text's 02 deg 01 min N, 084 deg 14 min E; bytes 3-4 (00 78) hold hemispheres and radius in some form - not settled |
+| Service 31 address = the NAVAREA / METAREA number | as above | a second message: 0Ch = 12, a forecast for METAREA XII |
+| Continued packets BD + BE | SDM: a packet overlapping the frame boundary is sent as two "continued" packets | off air: BD last in the frame, BE after the bulletin board / descriptors of the next; their payloads joined = the packet without its own last two bytes (sum check), 17 of 17 |
+
+Not settled: bits 4-0 of the EGC flag byte, the hemisphere / radius bytes of
+circular areas, rectangular areas, ITA2 packing, the meaning of the other
+packet types. The decoder shows these raw and says so.
 
 The recording is from 2008 (AOR-E NCS); the frame structure has not
 changed since (the receivers in service still decode it).
@@ -211,6 +217,36 @@ Viasat IoT Nano news (2025-07), EGNOS service notice 33 (2025-08), GPS.gov
 PRN assignments (2026-01), ETSI TS 102 744 / TS 101 377 catalogue pages,
 the Ruhr University Bochum GMR cipher paper (2012). Statuses not
 confirmed by an official notice are marked so.
+
+## Off air on the roof Pi 5 (2026-11-22)
+KrakenSDR CH0, a satellite patch with its LNA on the CH0 bias tee, gain 49.6
+dB, coherent mode, the stack from the integration branch; the plugin built
+there with gcc 14.2 / -mcpu=native without a warning. The README has the
+numbers (46 min of the POR NCS 244: 249 frames, 3 failed - all at heimdall
+calibration gaps; Es/N0 9-13 dB; every listed LES TDM decodes; no EGC packet
+in that hour). What the live signal showed that the recordings had not:
+- **Samples cut out.** heimdall's calibration bursts (noise source on, ~5
+  min after a retune) are cut out of the stream, and a capture written to
+  the SD card lost 0.14 s once (its reader fell behind). The frame grid then
+  jumps (-164 and -8 symbols measured); the locked tracker looked only +-4
+  symbols around the expected place and needed two misses plus a whole new
+  frame (25 s without frames). Since 0ab82be the unique-word search runs
+  while locked too and takes the next whole frame at once (8 s).
+- **Two signalling channels per frame** (two 6C descriptors), a standby NCS
+  (245: version 0, only the bulletin board and descriptor), and station lists
+  that include NCSs - the fact now lists every station with its channel.
+- **A CW line** at 1541.4139 MHz as received (1541.4152 corrected for the
+  RTL-SDR's error): unmodulated (no sidebands above 1.5 Hz resolution within
+  +-6 kHz), at the same RF with the receiver centred 200 kHz away (not a tuner
+  spur); not identified - a satellite pilot or a fixed local emitter.
+- The frame numbers' times agree with UTC; carriers drift with the RTL-SDR
+  (-1356 -> -1302 Hz in an hour), which the plugin follows without help.
+- **EGC on the air** (three messages after an hour without any): the
+  priority bits, a circular area's centre degrees and the BD + BE continued
+  packets came from them (table above); the first decoder version dropped
+  every continued packet - 15 of the forecast's 32 halves - so the message
+  never completed. Bits 4-0, the circle's hemispheres and radius,
+  rectangles and ITA2 are still raw.
 
 ## Test history
 - 2026-11-22: first version. The research pass found Vol. 1-3 of the SDM

@@ -94,7 +94,9 @@ bool parse_station_list(const uint8_t* p, int n, std::vector<LesListEntry>& out,
 // ---- EGC -------------------------------------------------------------------------
 // Header (measured on SafetyNET packets; field order as published for the
 // EGC header): type, length, service code, flags (bit 7 = C: more packets
-// follow; bit 6 = P; bits 5..0 'repetition'), message sequence number (16
+// follow; bits 6-5 = priority 0 routine .. 3 distress - measured off air:
+// a shore-to-ship distress relay 3, a MET forecast 1; bits 4-0 not decoded),
+// message sequence number (16
 // bits), packet sequence number (from 1), presentation, LES id, address
 // (as many bytes as the service code's low hex digit), then a sum check of
 // its own over all of that (Fletcher mod 256, like a packet's).
@@ -103,8 +105,8 @@ struct EgcHeader {
     uint8_t service = 0;
     uint8_t flags = 0;
     bool more = false;             // C bit
-    int p_bit = 0;
-    int repetition = 0;
+    int priority = 0;              // 0 routine, 1 safety, 2 urgency, 3 distress
+    int low_bits = 0;              // bits 4-0 of the flags byte (not decoded)
     int msn = 0;
     int packet_seq = 0;
     uint8_t presentation = 0;
@@ -120,6 +122,12 @@ const char* egc_service_name(uint8_t service);
 const char* egc_service_family(uint8_t service);   // "SafetyNET", "FleetNET", "System"
 std::string egc_address_text(uint8_t service, const std::vector<uint8_t>& a);
 const char* presentation_name(uint8_t p);
+const char* priority_name(int p);
+// Continued packets: a packet that does not fit the frame is sent as type BD
+// (its first part) at the end of the frame and BE (the rest) at the start of
+// the next one, each with a sum check of its own; the parts' payloads joined
+// are the original packet WITHOUT its last two bytes (its sum check) -
+// measured off air on 17 of 17 (EGC B2 halves, a station list).
 
 struct EgcMessage {
     std::string key;               // "<LES>-<service hex>-<msn>"
