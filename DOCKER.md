@@ -195,7 +195,9 @@ docker-data/kraken_doa/doa_recordings/        DoA recordings
 docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
                                               cdecoder, sdecoder; libfdk-aac.so.2 for DAB+ -
-                                              README "Digital voice codecs")
+                                              README "Digital voice codecs"; for Inmarsat Aero
+                                              voice the libmbe.so.1 is libaeroambe's build, which
+                                              serves the other decoders too)
 docker-data/whisper_models/                   Voice to Text speech models ("⬇ Get" in ⚙ Setup Settings → 🗣 Voice to Text)
 docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (🗣 Transcription)
 docker-data/kraken_doa/decoder_logs/          Decoder Logging files (a folder per decoder, transcripts/),

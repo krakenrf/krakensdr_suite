@@ -295,6 +295,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [UAT](kraken_doa_v2/plugins/uat/README.md) (978 MHz, United States) | Aircraft, rebroadcast traffic, ground stations and their weather / NOTAM text |
 | [SSR / Mode S / TCAS interrogations](kraken_doa_v2/plugins/ssr1030/README.md) (1030 MHz) | The radars, multilateration stations and aircraft that ask the questions ADS-B answers |
 | [ACARS](kraken_doa_v2/plugins/acars/README.md), [VDL Mode 2](kraken_doa_v2/plugins/vdl2/README.md) | Aircraft datalink messages: registration, flight, label, text; VDL2 ground stations on the map |
+| [Inmarsat Classic Aero](kraken_doa_v2/plugins/inmarsat_aero/README.md) (L-band satellite, 1545-1555 MHz; aircraft at 1626-1660 MHz) | The satellite datalink to aircraft (P channel, every rate, found automatically): log-ons, channel assignments, ACARS messages, ADS-C positions on the map; C channel voice (see [Digital voice codecs](#digital-voice-codecs)); the aircraft's own bursts with a bearing per aircraft |
 | [FLARM / OGN](kraken_doa_v2/plugins/flarm/README.md) (868 / 915 MHz) | Gliders and light aircraft. OGN trackers give a position; FLARM is encrypted, so only its ID and bearing |
 | [DME / TACAN](kraken_doa_v2/plugins/dme/README.md) (962-1213 MHz) | Morse ident, channel and its VOR / ILS pairing, TACAN bearing, aircraft interrogations |
 | [ILS / VOR / markers](kraken_doa_v2/plugins/ils/README.md) | Localizer and glide slope deviation, VOR radial, marker beacons, Morse idents |
@@ -302,6 +303,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [AIS](kraken_doa_v2/plugins/ais/README.md) (162 MHz) | Ships, base stations, aids to navigation |
 | [406 MHz distress beacons](kraken_doa_v2/plugins/beacon406/README.md) | EPIRB / ELT / PLB: beacon ID, country, type, position. Self-tests are shown as tests |
 | [121.5 / 243 MHz distress beacons](kraken_doa_v2/plugins/beacon121/README.md) | ELT / EPIRB / PLB swept-tone homing, also 406 MHz beacons' homers: carrier, sweep, rate, pauses, Morse letter, a bearing per beacon. AM voice and plain carriers are not beacons |
+| [Inmarsat-C / STD-C](kraken_doa_v2/plugins/inmarsat_c/README.md) (L-band satellite, 1530-1545 MHz) | The NCS common channel and the LES TDM channels: network and station identity, EGC SafetyNET / FleetNET messages (navigational and weather warnings, search and rescue, group calls) put together from their packets, repeats shown once |
 | [Radiosondes](kraken_doa_v2/plugins/radiosonde/README.md) (400-406 MHz) | Weather balloons (RS41, DFM, M10 / M20, iMet, LMS6, MRZ): position, weather data, flight track, a sounding |
 | [ISM devices](kraken_doa_v2/plugins/ism/README.md) (315 / 345 / 433 / 868 / 915 MHz) | About 140 device models: weather stations, tyre pressure sensors, key fobs, alarm sensors, energy meters |
 | [LoRa / Meshtastic / LoRaWAN](kraken_doa_v2/plugins/lora/README.md) | Meshtastic's public default channel (text, node names, positions); the clear headers of everything else |
@@ -495,6 +497,7 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 | NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
 | Yaesu System Fusion (C4FM) | DN and V/D mode 1: AMBE+2; VW: IMBE | DN / V/D mode 1: mbelib, installed by you; VW: nothing - built in |
 | TETRA | ACELP | the ETSI reference codec, built by you |
+| Inmarsat Classic Aero (C channel) | AMBE 4.8 kbit/s | libaeroambe's mbelib, built by you |
 | MPT1327 | analogue FM | nothing - listen to the traffic channel with NBFM |
 | DAB | MPEG Layer II | nothing - built in |
 | DAB+ | HE-AAC v2 | libfdk-aac, installed by you |
@@ -519,6 +522,15 @@ control channels); what the radios themselves send on Phase 2 has only been
 tested with the decoder's own test signals, as no recording of it could be
 found.
 
+The Inmarsat decoders were checked against recordings and off air on a
+Raspberry Pi 5 with one patch antenna (Inmarsat-4 F1): Inmarsat-C's NCS
+and LES channels with real EGC messages, Classic Aero's P channels at 600,
+1200 and 10500 bit/s. Two real Aero voice channels were followed from
+their assignments: the channel decodes and the codec accepts its voice
+frames, but both were silent or faded where they were clean, so real
+speech has not been heard through it yet. A satellite sends only the
+ground-to-aircraft half of a call.
+
 **P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 
 ```
@@ -535,6 +547,28 @@ kraken_doa finds `libmbe.so.1` in the system library path. Set
 `KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere. Fusion's DN
 voice needs mbelib's `mbe_processAmbe2450Dataf`; a library without it plays
 no DN voice (the decoder's voice status says so).
+
+**Inmarsat Classic Aero (C channel voice): libaeroambe's mbelib**
+
+The Aero codec is not in the standard mbelib. libaeroambe carries an mbelib
+1.3 with it added (`mbe_processAmbe4800x3600Framef`); only that folder is
+needed, without Qt:
+
+```
+sudo apt-get install -y git cmake build-essential
+git clone https://github.com/jontio/libaeroambe.git
+cmake -S libaeroambe/mbelib-master -B build-aeroambe -DCMAKE_BUILD_TYPE=Release
+cmake --build build-aeroambe -j3
+export KRAKEN_AERO_AMBE=$PWD/build-aeroambe/libmbe.so.1
+```
+
+Set `KRAKEN_AERO_AMBE` where kraken_doa is started (`none` turns the voice
+off). Without it the decoder also tries `KRAKEN_MBELIB` and the system's
+`libmbe.so.1`, and uses the first one that has the Aero function - so
+installing this build in place of the standard mbelib
+(`sudo cmake --install build-aeroambe && sudo ldconfig`) serves every
+decoder; in Docker, put it in `docker-data/codecs/` as `libmbe.so.1`. The
+decoder's "Voice codec" line says which library it found.
 
 **TETRA: the ETSI codec, with osmo-tetra's patches**
 

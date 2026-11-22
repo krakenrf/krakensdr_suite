@@ -35,7 +35,8 @@ plugins/
 │                         TETRA ACELP), dig_common (front ends, the Bridge below),
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
 │                         beam - radar, ssr1030), acars_msg.hpp (ACARS block fields -
-│                         acars, vdl2)
+│                         acars, vdl2, inmarsat_aero), aero_ambe (the Inmarsat Aero AMBE
+│                         codec, the user's library loaded at run time - inmarsat_aero)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ ysf/ mpt1327/   the shipped protocol decoders
 ├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
@@ -72,6 +73,16 @@ plugins/
 ├── beacon121/            121.5 / 243 MHz swept-tone homing signals (ELT / EPIRB / PLB, 406 MHz beacons' homers):
 │                         carriers found in a 32 kHz VFO, the sweep from a folded two-sided spectrogram;
 │                         no ID - a packet talker per beacon on its own 100 Hz carrier channel
+├── inmarsat_c/           Inmarsat-C (STD-C) TDM on the L-band downlink: 1200 symbols/s BPSK found within
+│                         +-3.6 kHz (spectrum shape, then the squared signal's line), Costas / Gardner,
+│                         unique word, 64 x 162 de-interleaver, soft Viterbi, group descrambler, packets
+│                         by their Fletcher sum check; EGC SafetyNET / FleetNET messages put together
+│                         across frames, repeats suppressed; the ocean region's satellite as a packet talker
+├── inmarsat_aero/        Inmarsat Classic Aero (L band): P channel at 0.6 - 10.5 kbit/s (rate + carrier
+│                         from the squared spectrum's line pair), coherent A-BPSK / A-QPSK, frame sync,
+│                         de-interleaver, streaming soft Viterbi, signal units by type, ACARS + ADS-C
+│                         (map); C channel voice through the user's Aero AMBE (lib/aero_ambe); R / T
+│                         bursts from aircraft: a packet talker per aircraft (ICAO address)
 ├── lora/                 LoRa CSS in the full 2.4 MHz (lock_vfo): per-channel dechirp receiver
 │                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
 │                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet
@@ -463,7 +474,15 @@ sample (`host.time()` of the block + the packet's index in it / the rate):
 kraken_doa then computes the covariance from exactly those samples and
 averages each talker's packets over the last ~2 s (its lobe on the map).
 No `talker_end`. A packet may be at most 0.25 s long (kraken_doa drops
-longer ones). The adsb plugin is the reference (`talker_packet`); its
+longer ones). Report a packet while its samples are still there: kraken_doa
+keeps the VFO's stream for 1.5 s (`RING_S`, 2.5 s on a VFO wider than
+500 kHz), and a packet - or a `host.valid` span - older than that when it
+arrives is not used. A decoder that knows a frame is good only later (a
+long interleaver, a late Viterbi decision, a burst checked at its end)
+takes its packets and spans from the last ~1.2 s before it reports
+(inmarsat_c: the last second of its 8.64 s frame; inmarsat_aero: the end
+of a burst). The offline `--uca` test does not show this - it has every
+sample. The adsb plugin is the reference (`talker_packet`); its
 start times are within half a sample of the true ones. Which talker to
 report and how to test it: *ID separation* below. Two optional packet
 fields: `t.freq_hz` / `t.bw_hz` = the packet's channel inside your band
@@ -521,6 +540,10 @@ a few hundred ms apart; a decoder of a continuous signal that reports short
 pieces (analog_id: every 50 ms while the tone is there) sets
 `.squelch_hold_s` (analog_id 0.35), so the squelch closes soon after the
 signal ends instead of passing 1.5 s of noise after every transmission.
+A decoder whose frames are further apart than 1.5 s sets a longer hold
+(inmarsat_c 9.5 for 8.64 s frames; the host clamps it to 10 s): the squelch
+stays open between frames, and a hold over 4 s also keeps the decoder's
+status at "Receiving" between them (without it: "Signal lost" every frame).
 The shipped plugins: the lib protocols report through
 `RxContext::valid_at` (`dig::report_valid(ctx, mode, start, end)` with the
 receiver's own sample indexes; `Bridge::clock(rate)` + `restart_clock()`
@@ -882,7 +905,14 @@ least recently played go).
 2. **Handle polarity and offset.** FSK can arrive inverted (try both sync
    polarities, or use `kp::SyncWord::inverted_distance()`); the carrier can be
    a few hundred Hz to a few kHz off (track the discriminator's DC, or report
-   `freq_error`).
+   `freq_error`). Do one or the other: the host moves your input by half
+   the mean of your `freq_error` reports, at most every 300 ms, and each
+   move is a frequency STEP in your samples. A coherent decoder with its own
+   narrow carrier loop that also reports `freq_error` is thrown off by them
+   (inmarsat_c's ~10 Hz Costas loop lost the carrier after every frame,
+   inmarsat_aero lost frames at every step - only in the live path: the
+   offline test has no AFC). Such a decoder tracks the carrier itself and
+   gives its place to talker packets as `freq_hz`.
 3. **Be cheap.** It runs live on a Raspberry Pi next to the receiver. Avoid
    per-sample allocations, `std::map` lookups and `std::string` building in
    the sample loop. The offline test prints the decode time as a % of real

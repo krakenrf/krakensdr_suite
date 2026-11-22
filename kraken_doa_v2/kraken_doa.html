@@ -21263,7 +21263,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
                        ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', beacon121: 'sar', lora: 'node',
-                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft', vdl2: 'aircraft', dab: 'transmitter'};
+                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft', vdl2: 'aircraft', dab: 'transmitter',
+                       inmarsat_aero: 'aircraft'};   // its R / T bursts: tid = the ICAO address, ADS-C points under the same id
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check. Some only now and then: LoRa
   // nodes (POSITION packets), DAB transmitters (only an ensemble that sends
