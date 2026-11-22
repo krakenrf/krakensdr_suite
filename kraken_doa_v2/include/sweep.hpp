@@ -13,7 +13,9 @@
 // The array and its max-pyramid (the frames' pooling) are shared under one
 // short mutex.
 
+#include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -87,7 +89,25 @@ struct FullSet {
     uint16_t pool = 1;               // bins per value
     std::vector<uint8_t> lv;
     double lock_ms = 0;              // how long the store's lock was held for it
+    // SWEEP_FULL_Z: a deflated copy of each part, made by the compressor thread
+    // (z_submit) and freed with the set. Sized before the hand-over; part k's
+    // copy is read only once zstate[k] says READY (release / acquire)
+    mutable std::vector<std::string> zpart;
+    mutable std::unique_ptr<std::atomic<uint8_t>[]> zstate;   // Z_PENDING / Z_READY / Z_RAW
+    mutable std::atomic<bool> z_dropped{false};               // the compressor left it (a newer hand-over)
+    mutable int64_t z_t0_ms = 0;                               // when it was handed over
 };
+enum : uint8_t { Z_PENDING = 0, Z_READY = 1, Z_RAW = 2 };
+// SWEEP_FULL_Z (2026-11-23): hand this tick's sets to the compressor thread
+// (zlib, Z_HUFFMAN_ONLY, one stream a part of FULL_PART_VALUES); a newer
+// hand-over replaces what it has not done (no queue). wake is called from that
+// thread when a part is ready (the server posts its pump to the uWS loop)
+void z_submit(const std::vector<std::shared_ptr<const FullSet>>& sets);
+void z_set_wake(std::function<void()> wake);
+// the latest a socket waits for part k's deflated copy: the hand-over + a tick
+// + the parts up to k at Z_MIN_RATE (half the Pi 5's measured 64 MB/s)
+int64_t z_deadline_ms(const FullSet& s, size_t k);
+int64_t z_now_ms();
 // SWEEP_FULL:<n>: 1 = every bin; n >= 2 = at most n values (n < FULL_MIN_VALUES
 // taken as FULL_MIN_VALUES): pool = the smallest power of two with
 // ceil(bins / pool) <= n - one level of the store's max pyramid
@@ -98,8 +118,9 @@ std::shared_ptr<const FullSet> build_full(uint32_t pool = 1);
 // several pools from one state of the store (one lock): the sets of one tick
 std::vector<std::shared_ptr<const FullSet>> build_fulls(const std::vector<uint32_t>& pools);
 constexpr size_t FULL_PART_VALUES = 524288;   // a type 11 part's values at most
-// one type 11 part: flags 1 = last part, 2 = snapshot, 4 = paused
-std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t first, size_t n);
+// one type 11 part: flags 1 = last part, 2 = snapshot, 4 = paused; with z (the
+// part's deflated copy) flag 8 and the zlib stream in place of the n values
+std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t first, size_t n, const std::string* z = nullptr);
 uint32_t grid_id();   // the current grid's id (0 = none)
 
 // The levels of a window max-pooled to at most `points` points (dB over the

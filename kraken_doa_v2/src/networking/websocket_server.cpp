@@ -85,6 +85,7 @@ struct PerSocketData {
     bool full_snapshot = false;   // the store as it is, once (on SWEEP_FULL:1)
     bool full_due = false;        // its flag-2 frame went this tick: a completed sweep's set
     std::shared_ptr<const sweep::FullSet> full;   // the set being sent
+    bool full_z = false;          // SWEEP_FULL_Z:1 - this page inflates deflated parts (type 11 flag 8)
     size_t full_off = 0;
     uint32_t full_id = 0;
     uint8_t full_flags = 0;
@@ -437,6 +438,15 @@ void net_stats_tick() {
         if (now - ws->getUserData()->net_ms >= 1000) send_net_stats(ws, now);
 }
 
+// SWEEP_FULL_Z:<1|0> (transport level, this connection only): the page can
+// inflate - its parts go deflated when the compressor made them in time and
+// they are smaller (pump_full). Read per part; junk ignored
+template<typename WS>
+void handle_sweep_full_z(WS* ws, string_view arg) {
+    if (arg == "1" || arg == "true") ws->getUserData()->full_z = true;
+    else if (arg == "0" || arg == "false") ws->getUserData()->full_z = false;
+}
+
 // The full set's parts go while this socket has less than FULL_QUEUE queued
 // (uWS drops past maxBackpressure, 2 MB): every tick, and when it drains. A set
 // starts only with a tick (the tick's sets: every pool in use from one state of
@@ -467,10 +477,28 @@ void pump_full(WS* ws, FullCache* lazy, uint32_t grid) {
     }
     if (lazy) ud->full_due = ud->full_snapshot = false;
     while (ud->full && ws->getBufferedAmount() < FULL_QUEUE) {
-        const size_t total = ud->full->lv.size();
+        const sweep::FullSet& set = *ud->full;
+        const size_t total = set.lv.size();
         const size_t n = std::min(sweep::FULL_PART_VALUES, total - ud->full_off);
         const bool last = ud->full_off + n >= total;
-        ws->send(sweep::full_part(*ud->full, static_cast<uint8_t>(ud->full_flags | (last ? 1 : 0)), ud->full_id, ud->full_off, n),
+        // SWEEP_FULL_Z: the part deflated when the compressor has it (and it is
+        // smaller); not yet - wait, but never past its deadline (then raw:
+        // never behind); a set the compressor never saw or left goes raw
+        const std::string* z = nullptr;
+        if (ud->full_z && set.zstate) {
+            const size_t k = ud->full_off / sweep::FULL_PART_VALUES;
+            const uint8_t st = set.zstate[k].load(std::memory_order_acquire);
+            if (st == sweep::Z_READY) {
+                z = &set.zpart[k];
+            } else if (st == sweep::Z_PENDING && !set.z_dropped.load(std::memory_order_acquire) &&
+                       (k == 0 || set.zstate[k - 1].load(std::memory_order_acquire) != sweep::Z_PENDING) &&
+                       sweep::z_now_ms() < sweep::z_deadline_ms(set, k)) {
+                // (only for the part the compressor is on: one still pending before it
+                // = the compressor is behind, and the rest of the set goes raw at once)
+                return;   // (the compressor's wake, or the next tick, comes back)
+            }
+        }
+        ws->send(sweep::full_part(set, static_cast<uint8_t>(ud->full_flags | (last ? 1 : 0)), ud->full_id, ud->full_off, n, z),
                  uWS::BINARY, false);
         ud->full_off += n;
         if (last) ud->full.reset();
@@ -500,15 +528,24 @@ void send_sweep_views() {
     }
     // the full sets (SWEEP_FULL): after the frames, so the live trace goes first
     // the sets that start this tick, every pool from one state of the store
-    std::vector<uint32_t> pools;
+    std::vector<uint32_t> pools, zpools;
     for (ClientWS* ws : g_sweep_sockets) {
         PerSocketData* ud = ws->getUserData();
         if (ud->sweep_full && !ud->full && (ud->full_due || ud->full_snapshot) && (ud->sub_mask & SUB_FFT) &&
-            ws->getBufferedAmount() <= SPEC_MAX_BUFFERED)
+            ws->getBufferedAmount() <= SPEC_MAX_BUFFERED) {
             pools.push_back(sweep::full_pool(ud->sweep_full));
+            if (ud->full_z) zpools.push_back(pools.back());
+        }
     }
     FullCache lazy;
     if (!pools.empty()) lazy = sweep::build_fulls(pools);
+    // the sets a deflating page starts go to the compressor (it drops older work)
+    if (!zpools.empty()) {
+        FullCache z;
+        for (const auto& s : lazy)
+            if (s && std::find(zpools.begin(), zpools.end(), s->pool) != zpools.end()) z.push_back(s);
+        if (!z.empty()) sweep::z_submit(z);
+    }
     uint32_t grid = 0;
     bool have_grid = false;
     for (ClientWS* ws : g_sweep_sockets) {
@@ -521,9 +558,28 @@ void send_sweep_views() {
     }
 }
 
+// the compressor made a part: the sockets waiting for it go on (posted to the loop)
+std::atomic<bool> g_z_wake_posted{false};
+void pump_full_waiting() {
+    g_z_wake_posted.store(false);
+    if (!sweep_mode_enabled.load(std::memory_order_relaxed)) return;
+    uint32_t grid = 0;
+    bool have = false;
+    for (ClientWS* ws : g_sweep_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        if (!ud->full || !ud->full_z) continue;
+        if (!have) {
+            grid = sweep::grid_id();
+            have = true;
+        }
+        pump_full(ws, nullptr, grid);
+    }
+}
+
 // out of sweep mode: no set stays in flight (its memory goes)
 void release_full_sets() {
     if (!g_full_active) return;
+    sweep::z_submit({});   // (the compressor drops its work too)
     for (ClientWS* ws : g_sweep_sockets) {
         PerSocketData* ud = ws->getUserData();
         ud->full.reset();
@@ -1172,6 +1228,11 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 handle_sweep_full(ws, message.substr(11));
                 return;
             }
+            // SWEEP_FULL_Z:<1|0> - this page inflates deflated parts of type 11
+            if (message.starts_with("SWEEP_FULL_Z:")) {
+                handle_sweep_full_z(ws, message.substr(13));
+                return;
+            }
             // NET_STATS:<1|0> - this connection's byte counters about once a
             // second (every mode; Linux; an older receiver ignores it)
             if (message.starts_with("NET_STATS:")) {
@@ -1231,6 +1292,10 @@ void WebSocketServer::web_server_main() {
                 cout << "HTTPS server listening on port " << WEB_PORT << endl;
                 
                 loop = uWS::Loop::get();
+                // SWEEP_FULL_Z: the compressor's "a part is ready" -> the waiting sockets, on this loop
+                sweep::z_set_wake([] {
+                    if (loop && !g_z_wake_posted.exchange(true)) loop->defer([] { pump_full_waiting(); });
+                });
                 struct us_loop_t* native_loop = (struct us_loop_t*)loop;
                 broadcast_timer = us_create_timer(native_loop, 0, 0);
                 audio_timer = us_create_timer(native_loop, 0, 0);
