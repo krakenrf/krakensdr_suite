@@ -108,15 +108,21 @@ public:
         n_total_ += static_cast<int64_t>(n);
         if (was && !demod_.tracking()) {
             host.log("carrier lost - searching again");
-            host.fact("Sync", "searching for a carrier");
+            if (carrier_announced_) host.fact("Sync", "carrier lost - searching for a carrier");
             sync_reset();
         }
-        if (!was && demod_.tracking()) {
+        if (!was && demod_.tracking()) carrier_announced_ = false;
+        // the carrier is announced once the loops hold a BPSK signal (300
+        // symbols, 0.25 s, with a clear lock) - the acquisition alone takes a noise
+        // peak about once in 10 minutes
+        if (demod_.tracking() && !carrier_announced_ && sym_count_ - first_real_ >= 300 && demod_.lock_quality() > 0.35f) {
+            carrier_announced_ = true;
             char b[120];
             std::snprintf(b, sizeof b, "carrier found at %+.1f Hz (squared-signal line %.1f dB)", demod_.carrier_hz(),
                           demod_.last_acq_peak_db());
             host.log(b);
-            host.fact("Sync", fmt("a carrier at %+.0f Hz - looking for the Inmarsat-C unique word", demod_.carrier_hz()));
+            if (!locked_)
+                host.fact("Sync", fmt("a carrier at %+.0f Hz - looking for the Inmarsat-C unique word", demod_.carrier_hz()));
         }
         for (const inmc::Symbol& s : syms_) push_symbol(s);
         if (!demod_.tracking() && sym_count_ > first_real_) sync_reset();
@@ -277,7 +283,7 @@ private:
                           b.rows, b.corr, b.phase, b.second);
             host.log(d);
         }
-        if (got % (inmc::COLS * 8) == 0) sync_fact_searching();
+        if (got % (inmc::COLS * 8) == 0 && carrier_announced_) sync_fact_searching();
         if (b.phase < 0 || b.rows < EARLY_ROWS || std::fabs(b.corr) < EARLY_CORR ||
             std::fabs(b.corr) * std::sqrt(2.0f * b.rows) < EARLY_Z)
             return;
@@ -669,6 +675,7 @@ private:
     long long first_partial_failed_ = 0;
     int early_rows_ = 0;
     float row_re_ = 0, row_im_ = 0;
+    bool carrier_announced_ = false;
     bool disrupted_logged_ = false;
     float early_corr_ = 0;
     bool early_debug_ = std::getenv("INMC_EARLY_DEBUG") != nullptr;

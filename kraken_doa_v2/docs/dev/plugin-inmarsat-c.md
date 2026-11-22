@@ -46,8 +46,10 @@ The recording is from 2008 (AOR-E NCS); the frame structure has not
 changed since (the receivers in service still decode it).
 
 ## Design
-- Demodulator (`demod.cpp`): acquisition on 8192 samples (0.85 s, blocks
-  overlapping by half): a zero-mean raised-cosine PSD template slid over
+- Demodulator (`demod.cpp`): acquisition first on 2048 samples (0.21 s; a
+  carrier only if the squared-signal line is >= 20 dB over its noise - a
+  strong carrier, as the NCS off air at 26-33 dB), then on 8192 samples
+  (0.85 s, blocks overlapping by half): a zero-mean raised-cosine PSD template slid over
   +-3.6 kHz (coarse, ~1 Hz bins), then the squared signal's line within
   +-60 Hz of it, parabolic interpolation; a carrier only if the line is
   >= 11 dB over the squared spectrum 300-2400 Hz from it (noise: never in
@@ -61,10 +63,33 @@ changed since (the receivers in service still decode it).
   take a frame when hunting (peak within 4 symbols), >= 0.25 within +-4
   symbols of the expected place when locked, 2 misses -> hunting. The
   symbol count starts one frame "late" over zeros, so a first frame that
-  began before the carrier was found decodes when >= 60 % of it is there
-  (the interleaver spreads the erasures over the code) - this gained the
-  first frame in 30-60 % of the runs at Es/N0 0-2 dB, and the real
-  recording's first (73 %) frame.
+  began before the carrier was found decodes when at least half of it is
+  there (the interleaver spreads the erasures over the code; first 60 %,
+  since 2026-11-23 50 % - measured: on the real NCS (11 dB) every partial
+  frame with >= 50 % decoded and none below, on generated 3-6 dB from 55 %;
+  a failed partial frame is not counted as failed).
+- Early recognition (`early.hpp`, 2026-11-23): for each of the 10368 frame
+  phases the correlation of the unique-word rows received so far, kept up
+  to date per symbol (the pair (n-1, n) is row j of the phase 162 j earlier:
+  64 additions a symbol; a row's older occurrence is subtracted when the
+  next frame's arrives). Every row (0.135 s): the best phase is taken when
+  rows >= 16, |corr| >= 0.6 and |corr| x sqrt(2 rows) >= 7. On noise or a
+  wrong signal the best of 2 x 10368 phases is the maximum of Gaussians
+  (random data: of binomials); P(z >= 7) is ~1e-12 each, ~1e-3 an hour.
+  Measured on everything else at hand (Aero P 600 / 1200 / 10500, C-channel
+  calls, 17 carriers of the wide Aero capture, the CW line, empty offsets,
+  10 min of noise; ~5500 evaluations): largest z 5.9, never a recognition.
+  The floor for an honest recognition is ~22-25 rows (3 s): with 2 x 10368
+  hypotheses even a perfect match of 2R hard symbols has to beat 2^-2R x
+  2e4 x evaluations, which needs 2R >= ~45. Recognised -> locked on the frame
+  in progress (tried if >= 50 % of it was received) or the next; the Sync
+  fact counts down to it.
+- Rows with no BPSK in them before the first frame (a row's (re^2 - im^2) /
+  (re^2 + im^2) < 0.2: heimdall's calibration burst after a coherent retune,
+  the loops re-locking) are zeroed (erasures) and restart the early search -
+  else the burst's huge rows dragged every phase's correlation down until a
+  frame later replaced them (recognition 9.0 s instead of 5.5 s, the same
+  9.04 s live and in an offline copy with the burst put in).
 - Frame decode (`frame.hpp`): de-interleave by a position table, `kp::
   viterbi_decode` (soft, terminated), re-encode to count corrected symbol
   errors, descramble, bytes LSB first.
@@ -247,6 +272,48 @@ in that hour). What the live signal showed that the recordings had not:
   every continued packet - 15 of the forecast's 32 halves - so the message
   never completed. Bits 4-0, the circle's hemispheres and radius,
   rectangles and ITA2 are still raw.
+
+## Recognition time (G2, 2026-11-23)
+The user saw the delay between tuning and the decoder recognising the
+signal. Where the seconds went (before):
+
+| Part | Time | Notes |
+|---|---|---|
+| receiver, independent mode | ~0.2 s | samples of the new frequency reach the plugin at once |
+| receiver, coherent mode, after a retune | 3.6-4 s cooldown, then a ~0.5 s calibration burst with samples cut (-16 symbols measured) at ~4.7 s | heimdall's (not changed); only moving the VFO or switching the decoder on avoids it |
+| plugin start / `reset()` | 0.0-0.3 s | the decoder switched on: plugin started within 0.3 s; `reset()` restarts acquisition and sync (nothing kept: a retune can't keep the carrier) |
+| acquisition | 0.85 s (now 0.21 s for strong carriers) | the block is fed through the tracker again: no symbols lost |
+| Costas / Gardner settling | < 0.1 s | invisible in the frame results |
+| unique word | a whole frame before (the frame had to end) | now 3.4 s of symbols (25 rows) at 9-13 dB, ~3.5-4.5 s at 1-3 dB |
+| the frame's end | U(0, 8.64 s) + a frame when < 60 % (now 50 %) received | the floor: 8.64 s on average |
+
+Offline distributions (decoder started every 0.25 s; README table): first
+frame mean 9.3 -> 8.3 s on the NCS, 9.5 -> 8.6 s on a second capture, 8.7
+-> 8.3 s on a LES TDM (where 3 of 29 starts got none within 13 s before);
+recognised now at 3.5 s, the first frame announced correctly.
+
+Live (roof Pi, NCS 244 and LES 217, before / now, see the README for the
+lines): independent - recognised 3.4-3.8 s, the countdown right to 0.1 s;
+coherent retune - recognition after heimdall's burst, 7.3-9.4 s. Single
+samples of the first frame vary by the frame phase (0-8.64 s); only the
+offline distributions show the mean.
+
+Kept: sensitivity (100 % of packets at Es/N0 >= 0.5 dB, 416 / 416), the
++-3.6 kHz acquisition, the resynchronisation after a gap (32 / 2 on the
+capture with a calibration gap), every real capture's counts, both
+playback entries offline (70.0 / 200.1 deg), nothing on noise / other signals.
+
+An "all TDMs in the VFO" mode (the NCS and its LES TDMs side by side, as
+the Aero plugin's all-channels mode): feasible, not built. What it would
+take: `.sample_rate = 0`, a shared channelizer (the TDMs sit on the 2.5 kHz
+raster; POR's eleven span 1539.50-1539.73 MHz, the NCS 1.7 MHz away - a
+2.4 MHz VFO holds them all), one demodulator + frame sync + packet / EGC
+state per carrier (the per-carrier state moved out of decoder.cpp into a
+class; ~0.5 % of a Pi 5 core each), and the station lists (types 92 / AB)
+give every TDM's exact channel code, so channels open without a search
+once rf_hz is known (the -1.3 kHz RTL-SDR error then found once from the
+NCS). Facts / table per channel are the larger part. A few hundred lines
+plus a channelizer - one shared with the Aero plugin's would be the way.
 
 ## Test history
 - 2026-11-22: first version. The research pass found Vol. 1-3 of the SDM

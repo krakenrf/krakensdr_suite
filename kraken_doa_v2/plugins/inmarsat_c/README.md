@@ -24,8 +24,23 @@ interleaved over the whole frame with a 64-bit unique word.
   of the VFO centre; RRC matched filter, Gardner timing, Costas loop;
   unique word (either polarity) -> de-interleaver -> soft-decision Viterbi
   (K=7) -> descrambler. A frame whose start came before the carrier was
-  found is still decoded when >= 60 % of it is there (the missing symbols
-  are erasures). Only packets that pass their 16-bit sum check are used.
+  found is still tried when at least half of it is there (the missing
+  symbols are erasures; the measured limit: 50 % at Es/N0 ~11 dB, 55 % at
+  3-6 dB). Only packets that pass their 16-bit sum check are used.
+- **Early recognition** (`early.hpp`): the unique word runs through the
+  whole frame (two symbols at the start of each of its 64 rows), so the TDM
+  and its frame boundary show long before a frame can be decoded. The
+  decoder tab's **Sync** fact says what is known, honestly, as it becomes
+  known: "a carrier at -1290 Hz ... looking for the Inmarsat-C unique word"
+  (0.2 s after tuning to a strong carrier), then "Inmarsat-C TDM found
+  (unique word, 25 rows, 0.99) ... frame-synchronised, the first frame
+  completes in 7 s" (3.4 s after tuning; counted down), then
+  "frame-synchronised" with the usual facts once a frame decoded. The TDM is
+  declared only when at least 16 rows agree to 0.6 and correlation x
+  sqrt(2 x rows) >= 7 against all 2 x 10368 frame phases - never seen on
+  noise, the Aero carriers, the CW line or other carriers (largest 5.9).
+  Nothing is reported as a frame (no `valid()`) before a packet passed its
+  sum check.
 - **Packets** (`packets.cpp`): every packet's type, length and sum check;
   all packets are counted by type (fact "Packet types").
 - **Bulletin board** (type 7D, the first packet of every frame): whose
@@ -193,6 +208,37 @@ opened; nothing here is translated from one.
   81 and 92, the pulse shape's roll-off. The generator rebuilds each of
   the recording's frames from its 639 decoded bytes symbol for symbol
   (41472 of 41472).
+
+## Recognition time (2026-11-23)
+From tuning to the decoder knowing the channel, on real captures (the
+decoder started every 0.25 s over two frame periods; times from the start):
+
+| | carrier | TDM recognised | first decoded frame (mean / median / max) |
+|---|---|---|---|
+| before (NCS 244, 81 starts) | ~0.85 s (not shown) | - | 9.3 / 9.0 / 13.8 s |
+| now (NCS 244, 81 starts) | 0.21 s | 3.5 s | 8.3 / 7.9 / 12.9 s |
+| before / now (NCS, a second capture, 71 starts) | | - / 3.5 s | 9.5 / 8.6 s |
+| before / now (LES 203, Es/N0 8 dB, 29 starts) | | - / 3.7 s | 8.7 (3 of 29 none in 13 s) / 8.3 s |
+| now, generated Es/N0 3 dB / 1 dB | 1.0 s | 4.4 / 4.7 s | 9.7 / 9.2 s |
+
+The first frame cannot come before the end of the frame in progress, and
+that frame decodes only if at least half of it was received (a rate-1/2
+code cannot do with less); for a tune at a random moment that is 8.64 s
+on average however fast everything else is - the decoder is there now.
+What it can say earlier, it says: the carrier in 0.2 s, the TDM and when
+its first frame will complete in 3.5 s (25 rows of the unique word - the
+fewest that keep false recognitions out).
+
+Through the real receiver (roof Pi 5, one sample per line; first frames
+vary with the frame phase): independent mode - carrier 0.2-0.5 s,
+recognised 3.4-3.8 s, first frame 5.5-12.2 s, the announced time right to
+0.1 s; coherent mode - the same after moving the VFO or switching the
+decoder on, but after a retune heimdall's cooldown (3.6-4 s) and its
+calibration burst (~0.5 s of noise source and missing samples, ~4.7 s
+after the retune) come first: recognised 7.3-9.4 s, first frame 11.9-18.7 s
+(before: 11.9 / 18.6 s, and once nothing within 28 s). The burst rows are
+now taken out (erasures, search restarted) instead of weighing on the
+search for a whole frame.
 
 ## Off air (2026-11-22, roof Pi 5, KrakenSDR CH0, satellite patch + LNA on the CH0 bias tee)
 - **NCS 244 (POR)**, gain 49.6 dB, VFO 9.6 kHz on 1541.450 MHz: 55 minutes
