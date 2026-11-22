@@ -2995,7 +2995,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <div class="kv" title="Spectrum points per frame to this browser: about one per pixel of the plot (half with Slow link), at most 4096. Zoomed in, the same points cover less spectrum - more detail, down to one FFT bin, at the same data rate"><span>Points sent</span><span id="fft-points-sent">-</span></div>
         <!-- every mode: the rate this browser's connection receives at (NETWORK RATE, netTick) -->
-        <div class="kv" id="net-rate-row" title="How fast this browser's connection to the receiver brings data - spectrum, waterfall, sweep data, audio, decoder output, map points, status - averaged over the last 5 seconds (KB/s = 1000 bytes a second). Not in it: the page and its files, map tiles (they come from the tile servers). This browser only - each tab its own"><span>Data rate</span><span id="net-rate">-</span></div>
+        <div class="kv" id="net-rate-row" title="How fast this browser's connection to the receiver brings data - spectrum, waterfall, sweep data, audio, decoder output, map points, status - averaged over the last 5 seconds - in sweep mode, with sweeps of 2 seconds or more, over whole sweeps instead: from one completed sweep to another (a sweep's data comes in one burst), up to the last 15 seconds or more (KB/s = 1000 bytes a second). Not in it: the page and its files, map tiles (they come from the tile servers). This browser only - each tab its own"><span>Data rate</span><span id="net-rate">-</span></div>
         <div class="ctrl-row coh-only">
           <label>DoA angles<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
           <select id="doa-convention" onchange="setDoaConvention(this.value)" style="flex:1">
@@ -11417,7 +11417,7 @@ function askForToken() {
 // socket's send) and the receiver's rx_bytes give the other direction, for the tip.
 const NET_WIN_S = 5;
 const NET_RCV_STALE_MS = 3500;   // (no receiver message for this long: back to the page's own count)
-const net = {rx: 0, tx: 0, samples: [], rcv: [], rcvAt: 0, asks: [], on: false, shown: '', tip: ''};
+const net = {rx: 0, tx: 0, samples: [], rcv: [], rcvAt: 0, marks: [], asks: [], on: false, shown: '', tip: ''};
 function netWrapSend(sock) {
   const raw = sock.send;
   sock.send = function (d) {
@@ -11432,19 +11432,19 @@ function netAsk() {
   try { ws.send('NET_STATS:1'); } catch (e) {}
 }
 function netOnOpen() {
-  net.rx = 0; net.tx = 0; net.samples = [{t: performance.now(), rx: 0, tx: 0}]; net.rcv = []; net.rcvAt = 0; net.on = true;
+  net.rx = 0; net.tx = 0; net.samples = [{t: performance.now(), rx: 0, tx: 0}]; net.rcv = []; net.rcvAt = 0; net.on = true; net.marks = [];
   for (const t of net.asks) clearTimeout(t);
   net.asks = [setTimeout(netAsk, 3000), setTimeout(netAsk, 10000)];
   netShow();
 }
-function netOnClose() { net.on = false; net.samples = []; net.rcv = []; for (const t of net.asks) clearTimeout(t); net.asks = []; netShow(); }
+function netOnClose() { net.on = false; net.samples = []; net.rcv = []; net.marks = []; for (const t of net.asks) clearTimeout(t); net.asks = []; netShow(); }
 // the receiver's message: whole numbers (below 2^53), its clock rising
 function netOnStats(m) {
   const ok = v => typeof v === 'number' && Number.isFinite(v) && v >= 0;
   if (!m || !ok(m.tx_bytes) || !ok(m.t_ms)) return;
   const last = net.rcv[net.rcv.length - 1];
   if (last && (m.t_ms <= last.t || m.tx_bytes < last.tx)) net.rcv = [];   // (a new count: its counters / clock restarted)
-  net.rcv.push({t: m.t_ms, tx: m.tx_bytes, rx: ok(m.rx_bytes) ? m.rx_bytes : NaN});
+  net.rcv.push({t: m.t_ms, tx: m.tx_bytes, rx: ok(m.rx_bytes) ? m.rx_bytes : NaN, at: performance.now()});
   if (net.rcv.length > NET_WIN_S + 1) net.rcv.shift();
   net.rcvAt = performance.now();
   netShow();
@@ -11456,18 +11456,66 @@ function netFmt(bps) {
   const m = bps / 1e6;
   return String(m >= 10 ? +m.toFixed(1) : +m.toFixed(2)) + ' MB/s';
 }
+// Sweep mode with sets (round 7, the orchestrator's run on the Pi: the whole range at 146 Hz, a 4 s sweep,
+// Full shown 2.41 MB/s three seconds of four and 4.79 the fourth, the wire's mean 3.00): a set is one burst
+// a sweep, and a 5 s window holds one burst or two. So in sweep mode the rate is taken over WHOLE sweeps: a
+// mark at each frame that completes a sweep (flag 2, not paused) - its arrival time, the page's count then,
+// the receiver's latest tx_bytes then (sent before the sweep's frames in a tick, the set's parts after the
+// flag-2 frame: it holds the earlier sets whole and nothing of the new one) - and the rate = the bytes
+// between two marks over their arrival times; the older mark = the newest at least NET_SWEEP_WIN_MS back, else the
+// oldest (at least one whole sweep). Marks start anew on a reconnect, a mode change, a new grid (range,
+// resolution, dwell, tuners), a change of the display resolution, a pause; at most one per NET_MARK_MIN_MS
+// (11 sweeps a second on the FM band).
+// NET_SWEEP_WIN_MS: the older mark is the newest at least this far back (else the oldest): measured on the
+// fake heimdall, a 4.5 s sweep's period jitters 4.3 - 4.8 s - over two sweeps that alone moves the rate
+// +-5 %, over 15 s ~2 %. NET_SWEEP_MIN_GAP_MS: only for sweeps at least this far apart - the receiver's
+// sample comes once a second, so it is clean at a mark only when the previous set is through a second before
+// it; faster sweeps bring many small sets in any 5 s window, which is steady already (the FM band at Full:
+// 1.8 % on the Pi).
+const NET_MARK_MIN_MS = 250, NET_MARK_MAX = 64, NET_SWEEP_WIN_MS = 15000, NET_SWEEP_MIN_GAP_MS = 2000;
+function netMarksReset() { net.marks = []; }
+function netSweepMark() {
+  const now = performance.now(), m = net.marks || (net.marks = []), last = m[m.length - 1];
+  if (last && now - last.t < NET_MARK_MIN_MS) return;
+  const r = net.rcv[net.rcv.length - 1];
+  m.push({t: now, rx: net.rx, rtx: r && now - net.rcvAt < 1500 ? r.tx : null});
+  if (m.length > NET_MARK_MAX) m.shift();
+}
+// the rate over whole sweeps, or null (not sweeping now: the 5 s window)
+function netSweepRate(rcvOn) {
+  const m = (net.marks || []).filter(x => !rcvOn || x.rtx !== null);
+  if (opMode !== 'sweep' || m.length < 2) return null;
+  const b = m[m.length - 1], now = performance.now(), gap = b.t - m[m.length - 2].t;
+  if (now - b.t > 2 * gap + 2000) return null;   // (sweeps stopped coming)
+  // (fast sweeps with the receiver's counters: the 5 s window - its samples are whole seconds apart; the
+  // page's own count is exact at every mark, so it keeps the marks)
+  if (rcvOn && (b.t - m[0].t) / (m.length - 1) < NET_SWEEP_MIN_GAP_MS) return null;
+  let ia = 0;
+  for (let i = m.length - 2; i >= 0; i--) if (b.t - m[i].t >= NET_SWEEP_WIN_MS) { ia = i; break; }
+  const a = m[ia], dt = (b.t - a.t) / 1000, n = m.length - 1 - ia;
+  if (!(dt > 0.2)) return null;
+  return {src: rcvOn ? 'receiver' : 'page', down: ((rcvOn ? b.rtx - a.rtx : b.rx - a.rx)) / dt, sweeps: true, n,
+          w0: performance.timeOrigin + a.t, w1: performance.timeOrigin + b.t};
+}
 // the rates over the window: {src: 'receiver' | 'page', down, up} in bytes a second, or null (no rate yet)
 function netRates() {
   if (!net.on) return null;
+  const w = netRates5();
+  if (!w) return null;
+  const s = netSweepRate(w.src === 'receiver');
+  return s ? {src: s.src, down: s.down, up: w.up, sweeps: true, n: s.n, w0: s.w0, w1: s.w1} : w;   // (n, w0, w1: the window - tests)
+}
+function netRates5() {
   const r = net.rcv;
   if (r.length >= 2 && performance.now() - net.rcvAt < NET_RCV_STALE_MS) {
     const a = r[0], b = r[r.length - 1], dt = (b.t - a.t) / 1000;
-    if (dt > 0.5) return {src: 'receiver', down: (b.tx - a.tx) / dt, up: (b.rx - a.rx) / dt};
+    // (w0 / w1: the window's edges as this page saw them, wall ms - for tests)
+    if (dt > 0.5) return {src: 'receiver', down: (b.tx - a.tx) / dt, up: (b.rx - a.rx) / dt, w0: performance.timeOrigin + a.at, w1: performance.timeOrigin + b.at};
   }
   const s = net.samples;
   if (s.length < 2) return null;
   const a = s[0], b = s[s.length - 1], dt = (b.t - a.t) / 1000;
-  return dt > 0.5 ? {src: 'page', down: (b.rx - a.rx) / dt, up: (b.tx - a.tx) / dt} : null;
+  return dt > 0.5 ? {src: 'page', down: (b.rx - a.rx) / dt, up: (b.tx - a.tx) / dt, w0: performance.timeOrigin + a.t, w1: performance.timeOrigin + b.t} : null;
 }
 const NET_TIP_RCV = 'Measured by the receiver: the bytes of this connection that this browser acknowledged - TLS and WebSocket framing included, after compression; the IP and TCP headers not (a few % more on the wire)';
 const NET_TIP_PAGE = '"≤": counted by this page as it receives the data - after decompression, so the link carries less, often about half (the spectrum frames and the status messages travel compressed; sweep sets and audio do not). A Linux receiver of 2026-11-22 or later gives the exact figure';
@@ -13549,6 +13597,7 @@ function swpNewGrid(rangeChanged) {
   swp.rows = [];
   swp.ovPend = null;
   swpFullDrop();   // (a set of the old grid is no use)
+  netMarksReset();   // (the Data rate's sweeps: a new grid's)
   if (rangeChanged) { swp.zoom.level = 1; swp.zoom.off = 0; document.body.classList.remove('swp-zoomed'); }
 }
 function swpOnOpen() {
@@ -13785,6 +13834,7 @@ function swpEnter() {
   swp.view = null;
   swp.ovSent = -1; swp.ovPend = null;   // the overview asked for again with the view
   swp.fullSent = -1;                      // and the full resolution (the receiver sends a snapshot for it)
+  netMarksReset();                        // (the Data rate over this mode's sweeps)
   swp.seqMin = swp.viewSeq + 1;   // frames built for a view from before this are dropped
   if (!swp.wf) {
     swp.wf = new WaterfallDisplay('swp-wc', 'swp-wo');
@@ -13806,6 +13856,7 @@ function swpLeave() {
   clearTimeout(swp.wfTimer); swp.wfPend = null;
   swp.hover = null; swp.drag = null; swp.readout = '';
   swpFullDrop();   // (the full sets' memory given back; the rows keep their window / overview levels)
+  netMarksReset();   // (the Data rate: the 5 s window again)
   document.body.classList.remove('swp-zoomed', 'swp-panning');
 }
 function swpResize() {
@@ -13991,6 +14042,8 @@ function swpOnFrame(v, buf) {
   for (let i = 0; i < n; i++) mags[i] = u8[i] * (120 / 255);
   swp.fr = {flags, tun, seq, sweeps, start, stop, p0, step, prog: Math.max(0, Math.min(1, prog || 0)), dur: dur > 0 ? dur : 0, grid, mags, t: Date.now()};
   if (flags & 2) swp.done = {g: grid, s: sweeps};   // (the newest sweep completed here: the trace's full set must be of it)
+  // the Display box's "Data rate" over whole sweeps: a mark at each sweep completed; a pause starts anew
+  if (flags & 4) netMarksReset(); else if (flags & 2) netSweepMark();
   swpTrace();
   swpDrawSoon();   // (a quick sweep of a narrow range completes far more often than the screen refreshes)
   swpStatus();
@@ -14242,7 +14295,7 @@ function swpFullSync() {
   if (!want) { swp.full = null; swp.fullAsm = null; }
   if (opMode !== 'sweep' || !ws || ws.readyState !== 1 || applyingRemote || swp.fullSent === want) { swpPointsText(); return; }
   ws.send('SWEEP_FULL:' + want);
-  if (swp.fullSent !== -1) { swp.full = null; swp.fullAsm = null; }
+  if (swp.fullSent !== -1) { swp.full = null; swp.fullAsm = null; netMarksReset(); }   // (the Data rate: the new option's sweeps)
   swp.fullSent = want;
   swpPointsText();
 }

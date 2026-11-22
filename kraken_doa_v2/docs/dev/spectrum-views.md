@@ -83,6 +83,55 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     the tip says so (counted after decompression, the link carries less -
     often about half -, a Linux receiver of 2026-11-22 or later gives the
     exact figure). No estimate of the compression, no second number.
+  - **Sweep mode: over whole sweeps** (2026-11-22, the orchestrator's run
+    on the Pi's KrakenSDR at cd91c8a, the whole range at 146 Hz, a 4.02 s
+    sweep: at Full the 5 s window showed 2.41 MB/s three seconds of four and
+    4.79 the fourth against 3.00 on the wire, at the 2.34 kHz step 179 - 328
+    KB/s against 216, the fallback "≤ 2.41" a third of the time against 2.99
+    - an upper bound below the truth; a 7.8 s sweep 30 KB/s .. 2.41 MB/s):
+    a set is one burst a sweep, and a 5 s window holds one or two. So
+    `netSweepMark` notes at each frame that completes a sweep (flag 2, not
+    paused) its arrival time, `net.rx` and the receiver's latest `tx_bytes`
+    (sent before the sweep's frames in a tick, the set's parts after the
+    flag-2 frame: it holds the earlier sets whole and nothing of the new
+    one); `netSweepRate` = the bytes between two marks over their ARRIVAL
+    times (not `t_ms`: whole seconds, 8 or 9 for 8.04), the older mark the
+    newest at least 15 s back (`NET_SWEEP_WIN_MS`), else the oldest - one
+    whole sweep at least. 15 s, not 5: on the fake a 4.5 s sweep's period
+    jitters 4.3 - 4.8 s, over two sweeps that alone moves the rate +-5 %.
+    Used while sweeps come (two marks or more, the newest no older than two
+    gaps + 2 s) - with the receiver's counters only while sweeps are at
+    least 2 s apart on average (`NET_SWEEP_MIN_GAP_MS`: its sample comes
+    once a second, so it is clean at a mark only when the previous set is
+    through a second before; faster sweeps bring many small sets in any 5 s
+    window - the FM band at Full was 1.8 % steady on the Pi with it). The
+    page's own count is exact at every mark and keeps the marks for fast
+    sweeps too (its 5 s window dipped to 0.95x the proxy on the FM band at
+    Full on the loaded dev machine: the page's own message backlog).
+    Otherwise - the other
+    modes, paused, the first sweep after a change, fast sweeps - the 5 s
+    window, so a change shows at once and then settles. Marks start anew on
+    a reconnect, entering / leaving the mode, a new grid (range,
+    resolution, dwell, tuners), a change of what `SWEEP_FULL` asks, a pause
+    (a flag-4 frame); at most one per 250 ms, 64 kept.
+    Measured (`t_netsw.py`, the fake heimdall, through the counting proxy;
+    values read twice a second once settled - 3 sweeps + 6 s after a
+    change; each against the proxy's bytes over the SAME sweeps as the
+    page's window, every completion read without its set, the way the
+    marks are): the new receiver -0.9 % .. +4.8 % in every case (a 4 - 5 s
+    sweep at the 2.34 kHz step and at Full, 7.5 s, 13.7 s); against the
+    proxy's mean over the whole watch 0 - 1.5 % swing where the fake's
+    sweep period is steady (7.5 s Full 1.61 MB/s against 1.60, 13.7 s Full
+    877 - 881 KB/s against 878, the step 67 - 68 against 67.8). The fake's
+    4 - 5 s sweep is not steady on the loaded dev machine (periods 4.0 - 5.3
+    s, each sweep exactly one 12.02 MB set): there the number follows the
+    real rate, 9 - 16 % up and down. The fallback ("≤", round 6's
+    receiver): +0.2 .. +1.4 % at Full over the same sweeps (never below, far
+    under 1.15x), +7 .. +19 % at a step (the deflated spectrum frames
+    counted decompressed). The FM band at Full: the receiver's 5 s window
+    -1.1 .. +1.0 % of the proxy over the same window, the page's marks +2.4
+    .. +3.2 %. Full followed a step within 1.5 - 2.0 sweeps; resumed after a
+    pause: over whole sweeps again within three.
   - Both: the average over the last 5 s (`NET_WIN_S`; fewer right after a
     connect), shown once a second; "-" before there is a rate and while not
     connected; a reconnect counts anew; each tab its own. Units decimal

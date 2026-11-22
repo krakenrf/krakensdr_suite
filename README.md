@@ -227,7 +227,8 @@ second at Auto; up to 256 MB in the browser). The choice is kept per browser,
 and Slow link switches it off. A change affects only the lines that come
 after it; the lines already on the waterfall keep their detail. In every
 mode, **Data rate** under "Points sent" in the Display box shows how fast
-this browser's connection brings data (KB/s or MB/s, the last 5 seconds),
+this browser's connection brings data (KB/s or MB/s, over the last 5 seconds;
+in sweep mode over whole sweeps, since a sweep's data comes in one burst),
 so the cost of a setting can be seen at once. A Linux receiver measures it
 itself; elsewhere the page counts what it receives after decompression and
 shows it as an upper bound ("≤ 291 KB/s": the link carries less, often about
