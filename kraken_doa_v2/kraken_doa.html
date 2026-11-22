@@ -2430,7 +2430,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <label for="swp-agc" title="Each step of the sweep gets its own gain: the Gain in the top bar is the ceiling, and a step that overloads the receiver (a strong transmitter nearby) is taken 3 - 18 dB lower at its next visit, sweep after sweep, until it no longer does; it comes back up 3 dB at a time after a while without overload. What was learned is kept by frequency when the range, dwell or resolution changes. The sweep stays as fast, and levels stay comparable: a signal keeps its height; on a reduced step the noise floor can show higher - the sensitivity lost there. With the Gain at Auto (the tuners' own AGC) it does nothing. For every browser on this receiver">Auto gain</label>
           <input type="checkbox" class="sw" id="swp-agc" onchange="swpAgcSet(this.checked)" title="Each step of the sweep gets its own gain: the Gain in the top bar is the ceiling, and a step that overloads the receiver (a strong transmitter nearby) is taken 3 - 18 dB lower at its next visit, sweep after sweep, until it no longer does; it comes back up 3 dB at a time after a while without overload. What was learned is kept by frequency when the range, dwell or resolution changes. The sweep stays as fast, and levels stay comparable: a signal keeps its height; on a reduced step the noise floor can show higher - the sensitivity lost there. With the Gain at Auto (the tuners' own AGC) it does nothing. For every browser on this receiver">
         </div>
-        <div class="kv" title="The gain the sweep uses: the top bar's Gain on every step, or - with Auto gain - at most that, with the steps that had to be taken lower and the lowest of them. Where on the spectrum: the amber strip on the plot's bottom edge (the stronger, the lower - a noise floor raised just above it is the sensitivity lost there), and the step's gain under the pointer"><span>Gain</span><span id="swp-agc-st">-</span></div>
+        <div class="kv" title="The gain the sweep uses: the top bar's Gain on every step, or - with Auto gain - at most that ("≤ 49.6 dB · 53 lower, min 16.6 dB": 53 steps of the sweep had to be taken lower, the lowest to 16.6 dB). Where on the spectrum: the amber strip on the plot's bottom edge (the stronger, the lower - a noise floor raised just above it is the sensitivity lost there), and the step's gain under the pointer"><span>Gain</span><span id="swp-agc-st">-</span></div>
         <div class="ctrl-row">
           <button type="button" class="btn primary" id="swp-run" style="flex:1" onclick="swpRunToggle()"><svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause</span></button>
         </div>
@@ -13713,7 +13713,7 @@ function swpAgcText() {
   if (!swpAgcOn()) return gt + (st.auto_gain_known === true ? ', every step' : '');
   if (swpAgcIdle()) return gt + ' · Auto idle (tuners\' AGC)';
   if (!Number.isFinite(s.n)) return '≤ ' + gt;
-  return '≤ ' + gt + (s.n > 0 ? ' · ' + s.n + (s.n === 1 ? ' step' : ' steps') + ' lower, min ' + s.lo.toFixed(1) + ' dB' : ' · none lower');
+  return '≤ ' + gt + (s.n > 0 ? ' · ' + s.n + ' lower, min ' + s.lo.toFixed(1) + ' dB' : ' · none lower');   // (n: steps; "steps" wrapped at 911)
 }
 const SWP_AGC_TIP = (document.getElementById('swp-agc') || {getAttribute: () => ''}).getAttribute('title') || '';
 function swpAgcRender() {

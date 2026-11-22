@@ -1476,13 +1476,14 @@ used"):
   - The ceiling: in sweep mode with Auto on the top bar's gain reads
     "≤ 49.6 dB" (`updateGainDisplay`; off again on leaving the mode). The
     Sweep box's "Gain" line (`#swp-agc-st`, `swpAgcText`): "49.6 dB, every
-    step" / "≤ 49.6 dB · 53 steps lower, min 16.6 dB" / "≤ 49.6 dB ·
+    step" / "≤ 49.6 dB · 53 lower, min 16.6 dB" / "≤ 49.6 dB ·
     none lower" / "49.6 dB · Auto idle (tuners' AGC)" - the receiver's
     `gain_reduced_hops` / `gain_min_db`, else counted from the map. Short
     on purpose: the first wording ("up to 49.6 dB, 62 steps reduced,
     lowest 8.7 dB") wrapped to two lines at the sidebar's default width on
-    the KrakenSDR (the orchestrator's run); this one stays on one line,
-    also for 911 steps.
+    the KrakenSDR (the orchestrator's run); "≤ 49.6 dB · 911 steps lower,
+    min 16.6 dB" still wrapped by a character, so the line leaves "steps"
+    to its label and tip and stays on one line, also for 911 steps.
   - The map: `{"sweep_gain":{grid, sweeps, f0_hz, step_hz, hops,
     ceiling_db, gain_db:[...]}}` (JSON - an older page ignores it; a
     binary type would fall into its FFT path), hop h centred at
@@ -1512,11 +1513,11 @@ used"):
     the strip's pixel in it), a range change (the old map dropped, the new
     grid's drawn), idle at the tuners' AGC, an older receiver and an older
     heimdall (disabled with the reason, nothing sent, nothing drawn), the
-    phone layout: 35 / 35.
-  - The pair (the receiver's 66f358f on heimdall's f3ca686; the receiver
+    phone layout, the line on one line (also for 911 steps): 36 / 36.
+  - The pair (the receiver's 66f358f + 83760a1 on heimdall's f3ca686; the receiver
     worker's fake heimdall with heimdall's rule and a scene whose carriers
     at 415.1, 457.2 and 499.3 MHz overload at 49.6 dB; `t_agc2.py`, 25 / 25;
-    `t_agc.py` against it 28 / 28): two tabs - one switches, the other
+    `t_agc.py` against it 29 / 29): two tabs - one switches, the other
     follows the broadcast, both ways; the map of the grid with one gain a
     hop, every value from the R820T's list; on 400 - 520 MHz 16 hops
     reduced (lowest 19.7 dB): the three carriers' hops, their neighbours
