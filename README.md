@@ -473,11 +473,13 @@ found.
 The Inmarsat decoders were checked against recordings and off air on a
 Raspberry Pi 5 with one patch antenna (Inmarsat-4 F1): Inmarsat-C's NCS
 and LES channels with real EGC messages, Classic Aero's P channels at 600,
-1200 and 10500 bit/s. Two real Aero voice channels were followed from
-their assignments: the channel decodes and the codec accepts its voice
-frames, but both were silent or faded where they were clean, so real
-speech has not been heard through it yet. A satellite sends only the
-ground-to-aircraft half of a call.
+1200 and 10500 bit/s. Aero voice was checked on real calls by measurement,
+not by listening: the channel decodes, the codec accepts its voice frames,
+and the decoded sound of a clean three-minute call has the structure of
+speech (syllable-length voiced stretches, one speaker's smoothly moving
+pitch, talk spurts between pauses), which the same path fed random bits
+does not have. A satellite sends only the ground-to-aircraft half of a
+call, so long silences are normal.
 
 **P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 
