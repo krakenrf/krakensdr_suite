@@ -12,7 +12,7 @@ session automatically; read the one for the area you are changing.
 | `librtlsdr-fork.md` | The krakenrf/librtlsdr fork: WinUSB fixes, fast retunes, USB transfer counts and measurements |
 | `macos.md` | macOS port |
 | `compiler-flags.md` | Compiler flags of every component and the measurements behind them |
-| `licensing.md` | Licence of each part, the GPL rules, audits, clean-room rewrites |
+| `licensing.md` | Licence of each part, the GPL rules, audits, clean-room rewrites, contribution terms (the pull request agreement and its check) |
 
 Each app has the same layout: `heimdall_v2/CLAUDE.md` and
 `kraken_doa_v2/CLAUDE.md` hold its rules, and `heimdall_v2/docs/dev/` and
