@@ -225,7 +225,10 @@ they are zoomed into later. The finer, the more network and browser memory it
 costs (Full: about 3.5 MB a second for the whole range at 146 Hz, 0.1 MB a
 second at Auto; up to 256 MB in the browser). The choice is kept per browser,
 and Slow link switches it off. A change affects only the lines that come
-after it; the lines already on the waterfall keep their detail.
+after it; the lines already on the waterfall keep their detail. In every
+mode, **Data rate** under "Points sent" in the Display box shows how fast
+this browser's connection brings data (KB/s or MB/s, the last 5 seconds),
+so the cost of a setting can be seen at once.
 The pointer shows the frequency and level under it. Gain is one setting for all
 tuners. Nothing is demodulated in this mode; the VFOs and their settings are
 kept and come back with the other modes. Going back to Coherent after a sweep

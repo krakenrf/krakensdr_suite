@@ -2994,6 +2994,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <select id="swp-dres" style="flex:1;min-width:0" title="Sweep mode: how much of each completed sweep comes to this browser. Fit to the plot: about a point a pixel of the view shown (the least data). A spacing: the whole range at that spacing, so a zoom or a pan is sharp at once down to it and the waterfall's rows keep that detail. Full: every bin. The finer, the more data (up to ~3 MB a second at 146 Hz over the whole range) and memory (a bounded part of the waterfall keeps it). A change affects only the new rows: the rows already there keep their detail. Slow link wins: with it on, only Fit to the plot. Saved in this browser only" onchange="swpDresSet(this.value)"><option value="0">Fit to the plot</option><option value="1">Full</option></select>
         </div>
         <div class="kv" title="Spectrum points per frame to this browser: about one per pixel of the plot (half with Slow link), at most 4096. Zoomed in, the same points cover less spectrum - more detail, down to one FFT bin, at the same data rate"><span>Points sent</span><span id="fft-points-sent">-</span></div>
+        <!-- every mode: the rate this browser's connection receives at (NETWORK RATE, netTick) -->
+        <div class="kv" id="net-rate-row" title="How fast this browser's connection to the receiver brings data, averaged over the last 5 seconds (KB/s = 1000 bytes a second). Counted by this page: everything its WebSocket delivers - spectrum, waterfall, sweep data, audio, decoder output, map points, status - as the page receives it, after decompression. The link may carry less: the spectrum frames and the status messages travel compressed. Not counted: TLS, TCP and WebSocket framing, the page and its files, map tiles (they come from the tile servers). This browser only - each tab its own"><span>Data rate</span><span id="net-rate">-</span></div>
         <div class="ctrl-row coh-only">
           <label>DoA angles<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
           <select id="doa-convention" onchange="setDoaConvention(this.value)" style="flex:1">
@@ -11399,6 +11401,60 @@ function askForToken() {
   });
 }
 
+// ---- NETWORK RATE: the Display box's "Data rate", every mode ----
+// The user, 2026-11-22: "Have it show the network bandwidth used in MB/s or KB/s where it shows "Points
+// sent". Show it for all modes." Counted by the page (phase 1; a receiver's own per-connection counters can
+// replace it later): net.rx = everything this connection's WebSocket delivered since it opened (ws.onmessage:
+// binary bytes, text characters), net.tx = what this page sent on it. Sampled once a second; the rate shown
+// is the average over the last NET_WIN_S seconds (fewer right after a connect), "-" until the first second.
+// Decompressed - the link carries less where the spectrum frames and the JSON travel compressed; no TLS /
+// TCP / WebSocket framing; nothing fetched over HTTP (the page, map tiles). Each tab its own.
+const NET_WIN_S = 5;
+const net = {rx: 0, tx: 0, samples: [], on: false, shown: '', tip: ''};
+function netWrapSend(sock) {
+  const raw = sock.send;
+  sock.send = function (d) {
+    net.tx += typeof d === 'string' ? d.length : (d && d.byteLength) || 0;
+    return raw.call(this, d);
+  };
+}
+function netOnOpen() { net.rx = 0; net.tx = 0; net.samples = [{t: performance.now(), rx: 0, tx: 0}]; net.on = true; netShow(); }
+function netOnClose() { net.on = false; net.samples = []; netShow(); }
+// "85 KB/s", "8.5 KB/s", "1.2 MB/s", "3.17 MB/s", "12.5 MB/s" (decimal units)
+function netFmt(bps) {
+  if (!(bps >= 0)) return '-';
+  if (bps < 999500) { const k = bps / 1000; return (k >= 9.95 ? String(Math.round(k)) : String(+k.toFixed(1))) + ' KB/s'; }
+  const m = bps / 1e6;
+  return String(m >= 10 ? +m.toFixed(1) : +m.toFixed(2)) + ' MB/s';
+}
+// the rates over the window: [received, sent] in bytes a second, or null before the first full second
+function netRates() {
+  const s = net.samples;
+  if (!net.on || s.length < 2) return null;
+  const a = s[0], b = s[s.length - 1], dt = (b.t - a.t) / 1000;
+  return dt > 0.5 ? [(b.rx - a.rx) / dt, (b.tx - a.tx) / dt] : null;
+}
+function netShow() {
+  const r = netRates(), t = r ? netFmt(r[0]) : '-';
+  if (t !== net.shown) { net.shown = t; const e = $id('net-rate'); if (e) e.textContent = t; }
+  const tip = r ? 'Sent by this browser: ' + netFmt(r[1]) + '. Counted by this page (the receiver does not report its own count)' : '';
+  if (tip !== net.tip) {
+    net.tip = tip;
+    const row = $id('net-rate-row');
+    // (the page's tooltip moves a title to data-tip at the first hover: the base text is taken once at load)
+    if (row) { row.title = NET_TIP + (tip ? '. ' + tip : ''); row.removeAttribute('data-tip'); }
+  }
+}
+const NET_TIP = (document.getElementById('net-rate-row') || {getAttribute: () => ''}).getAttribute('title') || '';
+function netTick() {
+  if (net.on) {
+    net.samples.push({t: performance.now(), rx: net.rx, tx: net.tx});
+    if (net.samples.length > NET_WIN_S + 1) net.samples.shift();
+  }
+  netShow();
+}
+setInterval(netTick, 1000);
+
 function connect() {
   const proto=location.protocol==='https:'?'wss:':'ws:';
   // location.host keeps whatever port the page came from - an empty port is
@@ -11409,6 +11465,7 @@ function connect() {
   if(connEl){connEl.textContent='Connecting…';connEl.style.background='#d8625c';connEl.style.color='#fff';}
   ws=new WebSocket(url);
   ws.binaryType='arraybuffer';
+  netWrapSend(ws);   // (the Display box's "Data rate": what this browser sends, for its tip)
 
   // An attempt that gets no reply at all (SYN or upgrade black-holed, e.g. a
   // phone on a no-internet hotspot) never fires onclose and would sit in
@@ -11417,6 +11474,7 @@ function connect() {
   setTimeout(()=>{if(attempt===ws&&attempt.readyState===WebSocket.CONNECTING)attempt.close();},6000);
 
   ws.onopen=()=>{
+    netOnOpen();   // the Display box's "Data rate": counted anew for the new connection
     // a new connection has no spectrum views: ask again with the next frame
     specViewSent = {}; specMain = null;
     swpOnOpen();   // sweep mode: its view again too, and the receiver says anew whether it knows sweep mode
@@ -11480,6 +11538,7 @@ function connect() {
   };
   
   ws.onclose=()=>{
+    netOnClose();   // (no rate without a connection)
     pwOnClose();
     biasRender();   // the Bias tee button: disabled while not connected
     const connEl = $id('status-connection');
@@ -11492,6 +11551,10 @@ function connect() {
   };
   
   ws.onmessage=(e)=>{
+    // the Display box's "Data rate" - the one place every message passes: a binary one's bytes, a text
+    // one's characters (JSON, nearly all ASCII: = its UTF-8 bytes)
+    const d0 = e.data;
+    net.rx += typeof d0 === 'string' ? d0.length : (d0 && d0.byteLength) || 0;
     try {
       // Check if it's a text message (JSON control message)
       if(typeof e.data === 'string') {

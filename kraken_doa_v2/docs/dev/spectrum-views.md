@@ -56,6 +56,31 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   2048. The Display box's **Slow link** switch (per browser, localStorage
   `kraken_spec_slow`) halves the points the page asks for (`specBinsMain` /
   `specBinsPane`); "Points sent" shows the selected display's frame size
+- **Data rate** (the Display box, under "Points sent", every operating mode;
+  2026-11-22, the user: "Have it show the network bandwidth used in MB/s or
+  KB/s where it shows "Points sent". Show it for all modes"): how fast this
+  browser's connection to kraken_doa brings data. Phase 1 (the page's own
+  count, any receiver): `net.rx` counts in ONE place, the top of
+  `ws.onmessage`, every message's size - a binary one's `byteLength`, a text
+  one's length (JSON, nearly all ASCII); `net.tx` (a wrapper on this
+  socket's `send`) what the page sends, for the tip. `netTick` samples both
+  once a second; the number is the average over the last 5 s (`NET_WIN_S`;
+  fewer right after a connect), "-" until the first second and while not
+  connected; a reconnect counts anew; each tab its own. Units decimal
+  (`netFmt`): "8.5 KB/s", "85 KB/s", "999 KB/s", "1.2 MB/s", "3.17 MB/s",
+  "12.5 MB/s". What is in: everything that socket delivers - spectrum and
+  waterfall frames, the sweep's frames and sets, audio (Opus), decoder
+  output, map points, status JSON - as the page receives it, i.e. after
+  permessage-deflate: the link carries less where frames and JSON travel
+  compressed (the full sets and the audio don't). Not in: TLS, TCP and
+  WebSocket framing; what comes over HTTP (the page, its files, map tiles
+  from the tile servers). Cost: one addition per message.
+  - Measured (headless Chromium, the fake heimdall, round 6's receiver): the
+    page's count over 8 s equals DevTools' count of the frames the socket
+    delivered (`Network.webSocketFrameReceived`) byte for byte in all four
+    modes - coherent 33 KB/s, wideband scan 39, independent 61, sweep at Fit
+    37, sweep at Full on 400 - 700 MHz at 4096 0.80 MB/s; two tabs each
+    their own (Full 848 KB/s beside Fit 29 KB/s) (`t_net.py`).
 - Beamformed overlays (type 4): `MessageBuilders::beamformed_spectrum` once
   per VFO per tick (normalized, the beamformer's 1024 bins), then
   `build_beamformed_fft_message(bf, point_step_hz)` per page: max-pooled by a
