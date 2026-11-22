@@ -2,7 +2,7 @@
 """A 2.4 MHz Inmarsat Aero band for the "All channels in the VFO" mode: several
 P channels (aero_gen.py) side by side, a C channel opened by an assignment
 on one of them, and carriers of other systems between them - every antenna
-of a 5-element UCA (r 0.12 m), the satellite at one bearing, noise per
+of a 5-element UCA (r 0.06 m: L band, README), the satellite at one bearing, noise per
 antenna. Writes OUT.cu8 (2.4 MHz, sample-major, rms 0.15 like heimdall's) +
 OUT.json {rate, channels, rf_hz, radius_m}.
 
@@ -11,7 +11,7 @@ OUT.json {rate, channels, rf_hz, radius_m}.
                [--cw OFFSET_HZ:SNR_DB] [--other OFFSET_HZ:SNR_DB]
 
 KIND p (RATE 600 / 1200 / 2400 / 4800 / 10500) or c (RATE 8400); ITEMs as
-aero_gen.py --script. --cw: an unmodulated carrier; --other: a carrier with a
+aero_gen.py --script (a C channel: aes:HEX, its aircraft). --cw: an unmodulated carrier; --other: a carrier with a
 strong unmodulated part and 1200 Bd BPSK on it (another system). Without
 --chan: the default scene (see DEFAULT). Content is synthetic.
 """
@@ -37,7 +37,7 @@ DEFAULT = [
     "p:2400:-120000:14",
     "p:4800:60000:14",
     "p:10500:200000:14:0.3:logon:4CA2B1;acars:4CA2B1:EI-ABC:H1:A:METAR UPDATE FOLLOWS;cass:4CA2B1:3778:0B50",
-    "c:8400:400000:12:6.5",
+    "c:8400:400000:12:6.5:aes:4CA2B1",
 ]
 DEFAULT_CW = ["-200000:25"]
 DEFAULT_OTHER = ["-50000:22"]
@@ -50,6 +50,10 @@ def gen(tools, kind, rate, seconds, start, script, seed, path):
         cmd += ["--rate", str(rate)]
         if script:
             cmd += ["--script"] + script
+    else:   # a C channel: its AES (ITEM aes:HEX)
+        for it in script:
+            if it.startswith("aes:"):
+                cmd += ["--aes", it[4:]]
     subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
     x = np.fromfile(path, dtype=np.complex64).astype(np.complex128)
     p = np.mean(np.abs(x[np.abs(x) > 1e-3]) ** 2)
@@ -62,7 +66,7 @@ def main():
     ap.add_argument("--seconds", type=float, default=12)
     ap.add_argument("--rf", type=float, default=1545.1e6)
     ap.add_argument("--bearing", type=float, default=120)
-    ap.add_argument("--radius", type=float, default=0.12)
+    ap.add_argument("--radius", type=float, default=0.06)
     ap.add_argument("--seed", type=int, default=5)
     ap.add_argument("--chan", action="append", default=None)
     ap.add_argument("--cw", action="append", default=None)

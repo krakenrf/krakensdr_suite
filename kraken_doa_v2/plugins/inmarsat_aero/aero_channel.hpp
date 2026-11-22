@@ -166,6 +166,8 @@ private:
     float lock_snr_ = 0;
     aero::DemodCfg lock_cfg_;
     bool restarted_ = false;
+    int c_restarts_ = 0;
+    int64_t c_check_from_ = 0;
     double max_off_ = 2900;
     uint64_t su_at_lock_ = 0;
     std::vector<std::pair<double, double>> tried_;   // (rate, f0) that did not sync
@@ -266,6 +268,8 @@ private:
         su_at_lock_ = su_.su_ok();
         lock_cfg_ = c;
         restarted_ = false;
+        c_restarts_ = 0;
+        c_check_from_ = n_;
         state_ = LOCK;
         host.fact("Channel", channel_name() + ": syncing");
         start_demod(0);
@@ -288,9 +292,22 @@ private:
     // carrier, a second of demodulation, low quality and no SU yet -> start
     // the demodulator again on the history, half a bit later (once)
     void check_stuck() {
-        if (restarted_ || cmode_ || lock_snr_ < 20 || su_.su_ok() > su_at_lock_) return;
+        if (cmode_) {
+            // a C channel (A-QPSK, 15 dB less margin): its quality says
+            // little (0.8 working or not), so: 1.5 s since the lock / the last
+            // restart without a clean frame -> again, up to 3 times
+            if (c_restarts_ >= 3 || cframes_ok_ > 0) return;
+            if (static_cast<double>(n_ - c_check_from_) / FS < 1.5) return;
+            c_restarts_++;
+            c_check_from_ = n_;
+            if (debug_) dbg("restart C demod (" + std::to_string(c_restarts_) + ")");
+            cch_.start();
+            start_demod(static_cast<size_t>(std::lround(0.5 * c_restarts_ * FS / lock_rate_)));
+            return;
+        }
+        if (restarted_ || su_.su_ok() > su_at_lock_) return;
         const double since = static_cast<double>(n_ - lock_at_) / FS;
-        if (since < 1.0 || demod_.quality() >= 0.93) return;
+        if (lock_snr_ < 20 || since < 1.0 || demod_.quality() >= 0.93) return;
         restarted_ = true;
         if (debug_) dbg("restart demod (quality " + std::to_string(demod_.quality()) + ")");
         const aero::PRate* pr = aero::p_rate(lock_rate_);

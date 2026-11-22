@@ -77,6 +77,7 @@ private:
     std::vector<float> spec_, ratio_;        // the last survey's spectrum (dB over the floor), frequency order
     double offset_hz_ = NAN;                 // the receiver's offset (measured - advertised)
     int offset_n_ = 0;
+    uint64_t closed_ok_ = 0, closed_tot_ = 0;   // the signal units of channels closed since
     std::string listen_ = "mix";
     bool verbose_opt_ = false;
     dig::VoiceLimiter lim_;
@@ -94,6 +95,7 @@ private:
     void mix();
     void voice_state();
     std::string name_of(const Chan& c) const;
+    std::string summary(const Chan& c, uint64_t* ok, uint64_t* tot) const;
     double carrier_abs(const Chan& c) const;
     void on_assign(double to_aircraft_hz);
     void table_row(int ch, const std::string& key, const std::vector<std::string>& cells);

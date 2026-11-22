@@ -11,10 +11,10 @@ namespace {
 constexpr double CH_RATE = 24000;
 constexpr double SURVEY_S = 0.25;      // the survey's integration and period
 constexpr float NARROW_DB = 4.0f;      // a narrow peak (750 Hz smoothing) over the local floor
-constexpr float WIDE_DB = 2.5f;        // a wide bump (6.4 kHz smoothing)
+constexpr float WIDE_DB = 1.5f;        // a wide bump (6.4 kHz smoothing)
 constexpr double NARROW_SEARCH_HZ = 1000;   // a trial on a narrow peak searches this near it
 constexpr int MAX_TRIALS = 24;         // trials on narrow peaks at once (a searching decoder: ~0.25 % of an x86 core)
-constexpr int MAX_WIDE_TRIALS = 8;     // and on wide bumps
+constexpr int MAX_WIDE_TRIALS = 16;    // and on wide bumps
 constexpr double TRIAL_NOLOCK_S = 4;   // a trial that never locks is closed after this
 constexpr double TRIAL_S = 9;          // one that locks passes a CRC within this (600 bit/s: first frame <= 4.2 s)
 constexpr double ASSIGNED_S = 20;      // a C channel opened from an assignment
@@ -162,7 +162,15 @@ AllChannels::AllChannels(kp::Host& h, double rate) : host(h), rate_(rate), bank_
     global_facts_.insert("Channels");
 }
 
-AllChannels::~AllChannels() = default;
+AllChannels::~AllChannels() {
+    // the test tools compare each channel with a single-channel decode of it
+    if (!debug_) return;
+    for (auto& [id, c] : ch_)
+        if (c->validated && !c->dup)
+            host.log("final " + c->name + " id " + std::to_string(id) + " opened " + std::to_string(c->opened) + " input " +
+                     std::to_string(std::lround(c->centre_hz)) + " carrier " + std::to_string(std::lround(carrier_abs(*c))) + ": " +
+                     summary(*c, nullptr, nullptr));
+}
 
 double AllChannels::now() const { return t_base_ + static_cast<double>(nin_) / rate_; }
 
@@ -176,6 +184,7 @@ void AllChannels::reset() {
     rows_.clear();
     offset_hz_ = NAN;
     offset_n_ = 0;
+    closed_ok_ = closed_tot_ = 0;
     for (const auto& k : global_facts_) host.fact(k, "");
     global_facts_.clear();
     host.fact("Channels", "searching the VFO");
@@ -248,7 +257,9 @@ AllChannels::Chan* AllChannels::open(double centre_hz, const std::string& mode, 
     if (search_hz < 2900) r.dec->set_search_hz(search_hz + std::fabs(centre_hz - r.centre_hz));
     if (verbose_opt_) r.dec->option("verbose", "1");
     r.dec->on_c_assign([this](double hz) { on_assign(hz); });
-    if (debug_) host.log("open " + r.name + " (" + mode + ") at " + std::to_string(r.opened).substr(0, 6) + " s");
+    if (debug_)
+        host.log("open " + r.name + " (" + mode + ") at " + std::to_string(r.opened).substr(0, 6) + " s, input " +
+                 std::to_string(std::lround(r.centre_hz)) + " Hz, id " + std::to_string(r.id));
     ch_[r.id] = std::move(c);
     return &r;
 }
@@ -263,6 +274,15 @@ void AllChannels::close(int id, bool blacklist) {
     if (debug_)
         host.log("close " + c.name + (c.validated ? " (quiet)" : c.ever_locked ? " (no CRC passed)" : " (no lock)") + " after " +
                  std::to_string(now() - c.opened).substr(0, 5) + " s");
+    if (c.validated && !c.dup) {
+        // what it brought, as an event (the list forgets it now)
+        uint64_t ok = 0, tot = 0;
+        char b[64];
+        snprintf(b, sizeof b, ", heard %.0f s", std::max(0.0, c.last_valid - c.first_valid));
+        host.event(c.name + " · channel ended (quiet): " + summary(c, &ok, &tot) + b, 0);
+        closed_ok_ += ok;
+        closed_tot_ += tot;
+    }
     for (auto r = rows_.begin(); r != rows_.end(); ++r) r->second.erase(id);   // the merged rows stay as they were
     if (!c.voice.empty()) {
         c.voice.clear();
@@ -370,10 +390,12 @@ void AllChannels::survey() {
     int trials[2] = {0, 0};
     for (auto& [id, c] : ch_)
         if (!c->validated) trials[c->open_wide ? 1 : 0]++;
-    // a trial that has not locked yet gives way to a candidate 3 dB stronger
-    // (a band's first quarter second may show the weak carriers first)
-    auto weak_trial = [&](const Chan& c, float db) {
-        return !c.validated && !c.assigned && !c.open_wide && !c.ever_locked && !c.dec->locked() && db > c.open_db + 3;
+    // a trial that has not locked yet gives way to a candidate of its kind
+    // clearly stronger (narrow: 3 dB, wide: 0.75 dB; a band's first quarter
+    // second may show the weak carriers first)
+    auto weak_trial = [&](const Chan& c, const Cand& cd) {
+        return !c.validated && !c.assigned && c.open_wide == cd.wide && !c.ever_locked && !c.dec->locked() &&
+               cd.db > c.open_db + (cd.wide ? 0.75f : 3.0f);
     };
     for (const auto& cd : cands) {
         bool near = false;
@@ -388,7 +410,7 @@ void AllChannels::survey() {
             const bool wide_there = lk && c->dec->locked_rate() >= 4800;
             const bool wide_near = (c->open_wide && d < 4500) || (wide_there && d < 4500) || (lk && d < 1500);
             if (!(cd.wide ? wide_near : d < SEPARATE_HZ)) continue;
-            if (!cd.wide && weak_trial(*c, cd.db)) give_way.push_back(id);
+            if (weak_trial(*c, cd)) give_way.push_back(id);
             else near = true;
         }
         for (const auto& [f, until] : blacklist_)
@@ -397,13 +419,12 @@ void AllChannels::survey() {
             host.log("cand " + std::to_string(cd.f) + (cd.wide ? " wide " : " narrow ") + std::to_string(cd.db) + (near ? " near" : ""));
         if (near) continue;
         int& tr = trials[cd.wide ? 1 : 0];
-        if (cd.wide && tr >= MAX_WIDE_TRIALS) continue;
-        if (!cd.wide && tr - static_cast<int>(give_way.size()) >= MAX_TRIALS) {
+        if (tr - static_cast<int>(give_way.size()) >= (cd.wide ? MAX_WIDE_TRIALS : MAX_TRIALS)) {
             // full: the weakest trial that has not locked, if this is clearly stronger
             int weakest = 0;
             float wdb = 1e9f;
             for (auto& [id, c] : ch_)
-                if (weak_trial(*c, cd.db) && c->open_db < wdb) wdb = c->open_db, weakest = id;
+                if (weak_trial(*c, cd) && c->open_db < wdb) wdb = c->open_db, weakest = id;
             if (!weakest) continue;
             give_way.push_back(weakest);
         }
@@ -485,6 +506,38 @@ void AllChannels::housekeeping() {
     }
 }
 
+// a channel as the list shows it: kind and rate, GES, signal units (C channel: frames)
+std::string AllChannels::summary(const Chan& c, uint64_t* ok, uint64_t* tot) const {
+    const bool cm = c.dec->is_cchannel();
+    std::string v;
+    char b[96];
+    if (cm) v = "C 8400 bit/s voice";
+    else {
+        snprintf(b, sizeof b, "P %d bit/s", static_cast<int>(c.dec->locked_rate()));
+        v = b;
+    }
+    auto g = c.facts.find("GES");
+    if (g != c.facts.end()) v += " · GES " + g->second.substr(0, g->second.find(' '));
+    int a = 0, n = 0;
+    auto su = c.facts.find("Signal units");
+    if (su != c.facts.end() && (a = parse_two(su->second, "(\\d+) of (\\d+)", n)) >= 0) {
+        snprintf(b, sizeof b, " · %d/%d SUs", a, n);
+        v += b;
+        if (ok) *ok = static_cast<uint64_t>(a);
+        if (tot) *tot = static_cast<uint64_t>(n);
+    }
+    auto cf = c.facts.find("C channel frames");
+    if (cm && cf != c.facts.end()) {
+        int clean = 0;
+        const int fr = parse_two(cf->second, "(\\d+) frames \\((\\d+) clean\\)", clean);
+        if (fr >= 0) {
+            snprintf(b, sizeof b, " · %d/%d frames", clean, fr);
+            v += b;
+        }
+    }
+    return v;
+}
+
 void AllChannels::show() {
     const double t = now();
     int np = 0, nc = 0, trials = 0;
@@ -498,32 +551,11 @@ void AllChannels::show() {
         c->name = name_of(*c);
         const bool cm = c->dec->is_cchannel();
         cm ? nc++ : (np++, by_rate[static_cast<int>(c->dec->locked_rate())]++);
-        std::string v;
+        uint64_t a = 0, n = 0;
+        std::string v = summary(*c, &a, &n);
+        ok += a;
+        tot += n;
         char b[96];
-        if (cm) v = "C 8400 bit/s voice";
-        else {
-            snprintf(b, sizeof b, "P %d bit/s", static_cast<int>(c->dec->locked_rate()));
-            v = b;
-        }
-        auto g = c->facts.find("GES");
-        if (g != c->facts.end()) v += " · GES " + g->second.substr(0, g->second.find(' '));
-        int a = 0, n = 0;
-        auto su = c->facts.find("Signal units");
-        if (su != c->facts.end() && (a = parse_two(su->second, "(\\d+) of (\\d+)", n)) >= 0) {
-            snprintf(b, sizeof b, " · %d/%d SUs", a, n);
-            v += b;
-            ok += static_cast<uint64_t>(a);
-            tot += static_cast<uint64_t>(n);
-        }
-        auto cf = c->facts.find("C channel frames");
-        if (cm && cf != c->facts.end()) {
-            int fr = 0;
-            const int cl = parse_two(cf->second, "(\\d+) frames \\((\\d+) clean\\)", fr);
-            if (cl >= 0) {
-                snprintf(b, sizeof b, " · %d/%d frames", fr, cl);
-                v += b;
-            }
-        }
         snprintf(b, sizeof b, " · %+.1f dB · %.0f s ago", c->level_db, std::max(0.0, t - c->last_valid));
         v += b;
         if (!c->voice.empty()) v += " · " + c->voice;
@@ -548,6 +580,8 @@ void AllChannels::show() {
     snprintf(b, sizeof b, "; %.0f kHz of input", rate_ / 1e3);
     host.fact("Channels", s + b);
     global_facts_.insert("Channels");
+    ok += closed_ok_;
+    tot += closed_tot_;
     if (tot) {
         snprintf(b, sizeof b, "%llu of %llu passed the CRC (all channels)", static_cast<unsigned long long>(ok),
                  static_cast<unsigned long long>(tot));
