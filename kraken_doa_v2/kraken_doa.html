@@ -2995,7 +2995,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <div class="kv" title="Spectrum points per frame to this browser: about one per pixel of the plot (half with Slow link), at most 4096. Zoomed in, the same points cover less spectrum - more detail, down to one FFT bin, at the same data rate"><span>Points sent</span><span id="fft-points-sent">-</span></div>
         <!-- every mode: the rate this browser's connection receives at (NETWORK RATE, netTick) -->
-        <div class="kv" id="net-rate-row" title="How fast this browser's connection to the receiver brings data, averaged over the last 5 seconds (KB/s = 1000 bytes a second). Counted by this page: everything its WebSocket delivers - spectrum, waterfall, sweep data, audio, decoder output, map points, status - as the page receives it, after decompression. The link may carry less: the spectrum frames and the status messages travel compressed. Not counted: TLS, TCP and WebSocket framing, the page and its files, map tiles (they come from the tile servers). This browser only - each tab its own"><span>Data rate</span><span id="net-rate">-</span></div>
+        <div class="kv" id="net-rate-row" title="How fast this browser's connection to the receiver brings data - spectrum, waterfall, sweep data, audio, decoder output, map points, status - averaged over the last 5 seconds (KB/s = 1000 bytes a second). Not in it: the page and its files, map tiles (they come from the tile servers). This browser only - each tab its own"><span>Data rate</span><span id="net-rate">-</span></div>
         <div class="ctrl-row coh-only">
           <label>DoA angles<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
           <select id="doa-convention" onchange="setDoaConvention(this.value)" style="flex:1">
@@ -11403,14 +11403,21 @@ function askForToken() {
 
 // ---- NETWORK RATE: the Display box's "Data rate", every mode ----
 // The user, 2026-11-22: "Have it show the network bandwidth used in MB/s or KB/s where it shows "Points
-// sent". Show it for all modes." Counted by the page (phase 1; a receiver's own per-connection counters can
-// replace it later): net.rx = everything this connection's WebSocket delivered since it opened (ws.onmessage:
-// binary bytes, text characters), net.tx = what this page sent on it. Sampled once a second; the rate shown
-// is the average over the last NET_WIN_S seconds (fewer right after a connect), "-" until the first second.
-// Decompressed - the link carries less where the spectrum frames and the JSON travel compressed; no TLS /
-// TCP / WebSocket framing; nothing fetched over HTTP (the page, map tiles). Each tab its own.
+// sent". Show it for all modes." Two sources, one number (#net-rate):
+// - the receiver's own counters of this connection (NET_STATS:1 -> {"net":{"tx_bytes","tx_sent"?,"rx_bytes",
+//   "t_ms"}} about once a second; Linux receivers of 2026-11-22 on): tx_bytes = what this browser's TCP
+//   acknowledged - TLS and WebSocket framing included, after compression, IP / TCP headers not. The rate =
+//   tx_bytes differences over t_ms differences (the receiver's clock: a late message doesn't distort it).
+// - otherwise (an older receiver, Windows / macOS) the page's own count: net.rx = everything this
+//   connection's WebSocket delivered (ws.onmessage: binary bytes, text characters), after decompression -
+//   it reads up to ~2.5x HIGH where frames travel deflated (the receiver worker's counting proxy: coherent
+//   291 KB/s counted against 117 on the wire), so it is shown as an upper bound, "≤ 291 KB/s".
+// Both averaged over the last NET_WIN_S seconds (fewer right after a connect), shown once a second; "-"
+// before there is a rate and while not connected; a reconnect counts anew; each tab its own. net.tx (this
+// socket's send) and the receiver's rx_bytes give the other direction, for the tip.
 const NET_WIN_S = 5;
-const net = {rx: 0, tx: 0, samples: [], on: false, shown: '', tip: ''};
+const NET_RCV_STALE_MS = 3500;   // (no receiver message for this long: back to the page's own count)
+const net = {rx: 0, tx: 0, samples: [], rcv: [], rcvAt: 0, asks: [], on: false, shown: '', tip: ''};
 function netWrapSend(sock) {
   const raw = sock.send;
   sock.send = function (d) {
@@ -11418,8 +11425,30 @@ function netWrapSend(sock) {
     return raw.call(this, d);
   };
 }
-function netOnOpen() { net.rx = 0; net.tx = 0; net.samples = [{t: performance.now(), rx: 0, tx: 0}]; net.on = true; netShow(); }
-function netOnClose() { net.on = false; net.samples = []; netShow(); }
+// ask this connection's receiver for its counters: with the first commands (after AUTH), and again a little
+// later while none came (an API token entered later; an older receiver ignores it silently)
+function netAsk() {
+  if (net.rcv.length || !ws || ws.readyState !== 1) return;
+  try { ws.send('NET_STATS:1'); } catch (e) {}
+}
+function netOnOpen() {
+  net.rx = 0; net.tx = 0; net.samples = [{t: performance.now(), rx: 0, tx: 0}]; net.rcv = []; net.rcvAt = 0; net.on = true;
+  for (const t of net.asks) clearTimeout(t);
+  net.asks = [setTimeout(netAsk, 3000), setTimeout(netAsk, 10000)];
+  netShow();
+}
+function netOnClose() { net.on = false; net.samples = []; net.rcv = []; for (const t of net.asks) clearTimeout(t); net.asks = []; netShow(); }
+// the receiver's message: whole numbers (below 2^53), its clock rising
+function netOnStats(m) {
+  const ok = v => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  if (!m || !ok(m.tx_bytes) || !ok(m.t_ms)) return;
+  const last = net.rcv[net.rcv.length - 1];
+  if (last && (m.t_ms <= last.t || m.tx_bytes < last.tx)) net.rcv = [];   // (a new count: its counters / clock restarted)
+  net.rcv.push({t: m.t_ms, tx: m.tx_bytes, rx: ok(m.rx_bytes) ? m.rx_bytes : NaN});
+  if (net.rcv.length > NET_WIN_S + 1) net.rcv.shift();
+  net.rcvAt = performance.now();
+  netShow();
+}
 // "85 KB/s", "8.5 KB/s", "1.2 MB/s", "3.17 MB/s", "12.5 MB/s" (decimal units)
 function netFmt(bps) {
   if (!(bps >= 0)) return '-';
@@ -11427,17 +11456,25 @@ function netFmt(bps) {
   const m = bps / 1e6;
   return String(m >= 10 ? +m.toFixed(1) : +m.toFixed(2)) + ' MB/s';
 }
-// the rates over the window: [received, sent] in bytes a second, or null before the first full second
+// the rates over the window: {src: 'receiver' | 'page', down, up} in bytes a second, or null (no rate yet)
 function netRates() {
+  if (!net.on) return null;
+  const r = net.rcv;
+  if (r.length >= 2 && performance.now() - net.rcvAt < NET_RCV_STALE_MS) {
+    const a = r[0], b = r[r.length - 1], dt = (b.t - a.t) / 1000;
+    if (dt > 0.5) return {src: 'receiver', down: (b.tx - a.tx) / dt, up: (b.rx - a.rx) / dt};
+  }
   const s = net.samples;
-  if (!net.on || s.length < 2) return null;
+  if (s.length < 2) return null;
   const a = s[0], b = s[s.length - 1], dt = (b.t - a.t) / 1000;
-  return dt > 0.5 ? [(b.rx - a.rx) / dt, (b.tx - a.tx) / dt] : null;
+  return dt > 0.5 ? {src: 'page', down: (b.rx - a.rx) / dt, up: (b.tx - a.tx) / dt} : null;
 }
+const NET_TIP_RCV = 'Measured by the receiver: the bytes of this connection that this browser acknowledged - TLS and WebSocket framing included, after compression; the IP and TCP headers not (a few % more on the wire)';
+const NET_TIP_PAGE = '"≤": counted by this page as it receives the data - after decompression, so the link carries less, often about half (the spectrum frames and the status messages travel compressed; sweep sets and audio do not). A Linux receiver of 2026-11-22 or later gives the exact figure';
 function netShow() {
-  const r = netRates(), t = r ? netFmt(r[0]) : '-';
+  const r = netRates(), t = !r ? '-' : (r.src === 'page' ? '≤ ' : '') + netFmt(r.down);
   if (t !== net.shown) { net.shown = t; const e = $id('net-rate'); if (e) e.textContent = t; }
-  const tip = r ? 'Sent by this browser: ' + netFmt(r[1]) + '. Counted by this page (the receiver does not report its own count)' : '';
+  const tip = !r ? '' : (r.src === 'receiver' ? NET_TIP_RCV : NET_TIP_PAGE) + '. Sent by this browser: ' + (Number.isFinite(r.up) ? netFmt(r.up) : '-');
   if (tip !== net.tip) {
     net.tip = tip;
     const row = $id('net-rate-row');
@@ -11490,6 +11527,7 @@ function connect() {
     // no token configured needs none, and one that has will ask (onmessage).
     const token = storedToken();
     if (token) { try { ws.send("AUTH:" + token); } catch (e) {} }
+    netAsk();   // the Display box's "Data rate": this connection's counters from the receiver (after AUTH)
 
     const connEl = $id('status-connection');
     if (connEl) {
@@ -11560,6 +11598,7 @@ function connect() {
       if(typeof e.data === 'string') {
         try {
           const msg = JSON.parse(e.data);
+          if (msg.net && typeof msg.net === 'object') { netOnStats(msg.net); return; }   // (NET_STATS: the Display box's "Data rate")
 
           // API auth (see askForToken)
           if (msg.auth_required) {

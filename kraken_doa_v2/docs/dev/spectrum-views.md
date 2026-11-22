@@ -59,28 +59,53 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 - **Data rate** (the Display box, under "Points sent", every operating mode;
   2026-11-22, the user: "Have it show the network bandwidth used in MB/s or
   KB/s where it shows "Points sent". Show it for all modes"): how fast this
-  browser's connection to kraken_doa brings data. Phase 1 (the page's own
-  count, any receiver): `net.rx` counts in ONE place, the top of
-  `ws.onmessage`, every message's size - a binary one's `byteLength`, a text
-  one's length (JSON, nearly all ASCII); `net.tx` (a wrapper on this
-  socket's `send`) what the page sends, for the tip. `netTick` samples both
-  once a second; the number is the average over the last 5 s (`NET_WIN_S`;
-  fewer right after a connect), "-" until the first second and while not
-  connected; a reconnect counts anew; each tab its own. Units decimal
-  (`netFmt`): "8.5 KB/s", "85 KB/s", "999 KB/s", "1.2 MB/s", "3.17 MB/s",
-  "12.5 MB/s". What is in: everything that socket delivers - spectrum and
-  waterfall frames, the sweep's frames and sets, audio (Opus), decoder
-  output, map points, status JSON - as the page receives it, i.e. after
-  permessage-deflate: the link carries less where frames and JSON travel
-  compressed (the full sets and the audio don't). Not in: TLS, TCP and
-  WebSocket framing; what comes over HTTP (the page, its files, map tiles
-  from the tile servers). Cost: one addition per message.
-  - Measured (headless Chromium, the fake heimdall, round 6's receiver): the
-    page's count over 8 s equals DevTools' count of the frames the socket
-    delivered (`Network.webSocketFrameReceived`) byte for byte in all four
-    modes - coherent 33 KB/s, wideband scan 39, independent 61, sweep at Fit
-    37, sweep at Full on 400 - 700 MHz at 4096 0.80 MB/s; two tabs each
-    their own (Full 848 KB/s beside Fit 29 KB/s) (`t_net.py`).
+  browser's connection to kraken_doa brings data (`#net-rate`, in
+  `#net-rate-row`). Two sources, one number:
+  - **The receiver's counters** (*Network rate* below; Linux receivers from
+    2026-11-22): the page sends `NET_STATS:1` with its first commands
+    (after `AUTH`), again at 3 s and 10 s while none came (`netAsk`; an
+    older receiver ignores it silently). Each `{"net":...}` message
+    (`netOnStats`, the JSON branch's first test) goes into a window of the
+    last 6; the rate = `tx_bytes` difference over `t_ms` difference (the
+    receiver's clock - a late message doesn't distort it): the bytes of this
+    connection the browser acknowledged, TLS and WebSocket framing
+    included, after compression. Shown plainly ("85 KB/s"). A counter or
+    clock that goes back starts the window anew; no message for 3.5 s
+    (`NET_RCV_STALE_MS`) = back to the page's count.
+  - **The page's own count** (any receiver - round 6's, an older one,
+    Windows / macOS): `net.rx` counts in ONE place, the top of
+    `ws.onmessage`, every message's size (a binary one's `byteLength`, a
+    text one's length - JSON, nearly all ASCII); `netTick` samples it once a
+    second. That is after permessage-deflate: the receiver worker's counting
+    proxy measured it 1.8 - 2.7x HIGH where frames travel deflated
+    (coherent 291 KB/s counted against 117 on the wire; full sets and audio
+    are counted right). So it is shown as an upper bound, "≤ 291 KB/s", and
+    the tip says so (counted after decompression, the link carries less -
+    often about half -, a Linux receiver of 2026-11-22 or later gives the
+    exact figure). No estimate of the compression, no second number.
+  - Both: the average over the last 5 s (`NET_WIN_S`; fewer right after a
+    connect), shown once a second; "-" before there is a rate and while not
+    connected; a reconnect counts anew; each tab its own. Units decimal
+    (`netFmt`): "8.5 KB/s", "85 KB/s", "999 KB/s", "1 MB/s", "3.17 MB/s",
+    "12.5 MB/s". The other direction (the receiver's `rx_bytes`, or `net.tx`
+    from a wrapper on this socket's `send`) only in the tip. What is in:
+    everything the socket carries - spectrum and waterfall frames, the
+    sweep's frames and sets, audio, decoder output, map points, status JSON.
+    Not in: the page and its files, map tiles (the tile servers); with the
+    page's count also TLS / TCP / WebSocket framing. Cost: one addition per
+    message, one small JSON message a second.
+  - Measured (`t_net.py`, headless Chromium, the fake heimdall, the page
+    loaded through a counting TCP proxy in front of kraken_doa,
+    `slowproxy.py` at rate 0; KB/s - the receiver's / the proxy's / shown):
+    coherent 32.3 / 32.4 / 32, wideband scan 33.8 / 34.0 / 34, independent
+    52.5 / 52.6 / 52, sweep at Fit 29.2 / 29.0 / 29, at 65 536 85.4 / 86.3
+    / 85, at Full (400 - 700 MHz at 4096) shown 534 against the proxy's 526.
+    The page's own count = DevTools' count of the frames the socket
+    delivered (`Network.webSocketFrameReceived`) within the frames at the
+    window's edges (0.4 % at most). Round 6's receiver and 178f007: "≤"
+    every mode, the count above the proxy's (coherent ≤ 35 against 31.8,
+    a sweep step ≤ 114 against 84.9; the fake's spectra compress less than
+    real ones). Two tabs each their own (Full 531 KB/s beside Fit 19).
 - Beamformed overlays (type 4): `MessageBuilders::beamformed_spectrum` once
   per VFO per tick (normalized, the beamformer's 1024 bins), then
   `build_beamformed_fft_message(bf, point_step_hz)` per page: max-pooled by a
