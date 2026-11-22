@@ -1444,7 +1444,7 @@ void z_main() {
 int64_t z_now_ms() { return now_ms(); }
 
 int64_t z_deadline_ms(const FullSet& s, size_t k) {
-    const double bytes = static_cast<double>(std::min(s.lv.size(), (k + 1) * FULL_PART_VALUES));
+    const double bytes = static_cast<double>(s.z_before + std::min(s.lv.size(), (k + 1) * FULL_PART_VALUES));
     return s.z_t0_ms + Z_TICK_MS + static_cast<int64_t>(bytes / Z_MIN_RATE_BYTES_MS);
 }
 
@@ -1453,16 +1453,25 @@ void z_set_wake(std::function<void()> wake) {
     g_zwake = std::move(wake);
 }
 
-void z_submit(const std::vector<std::shared_ptr<const FullSet>>& sets) {
+void z_submit(const std::vector<std::shared_ptr<const FullSet>>& sets_in) {
+    // smallest first: a page at a step is not held behind a page at Full (a
+    // step is at most a quarter of it - a few ms), and each set's deadline
+    // counts the bytes ahead of it
+    std::vector<std::shared_ptr<const FullSet>> sets(sets_in);
+    std::stable_sort(sets.begin(), sets.end(), [](const auto& a, const auto& b) { return a->lv.size() < b->lv.size(); });
     // (loop thread) the parts' slots first: their size is fixed before the
     // compressor sees the set
+    const int64_t t0 = now_ms();
+    size_t before = 0;
     for (const auto& s : sets) {
         if (s->zstate) continue;   // (already handed over once: a set is compressed once)
         const size_t parts = (s->lv.size() + FULL_PART_VALUES - 1) / FULL_PART_VALUES;
         s->zpart.resize(parts);
         s->zstate.reset(new std::atomic<uint8_t>[parts]);
         for (size_t k = 0; k < parts; k++) s->zstate[k].store(Z_PENDING, std::memory_order_relaxed);
-        s->z_t0_ms = now_ms();
+        s->z_t0_ms = t0;
+        s->z_before = before;
+        before += s->lv.size();
     }
     std::lock_guard<std::mutex> lk(g_zmu);
     if (!g_zthread.joinable() && !g_zstop) {
