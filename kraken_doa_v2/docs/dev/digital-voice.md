@@ -174,8 +174,20 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   codec list (`lib/tools/codecs.cpp`) does not show it. STATE OF TESTING:
   the path runs end to end in a playback (generated C channel, random
   voice bits: 502 of 551 Opus packets non-silent with the codec, all
-  silent without) - but NO real C channel recording could be found, so
-  that speech comes out of a real call is unverified
+  silent without). Off air (2026-11-22, a Pi 5 with one patch antenna,
+  Inmarsat-4 F1): two real to-aircraft C channels followed from their
+  assignments on the P channel - 20 and 41 C channel frames, 23 of 42 and
+  65 of 102 sub-band signal units passing their CRC (the failures in faded
+  frames), and the codec's own Golay decoder as the oracle for the voice
+  frames: 0.91 and 0.66 corrections per 20 ms frame on the two calls
+  against 4.32 on random voice bits; with the frames arranged any other
+  way (bits reversed, inverted, shifted by 1 or 8 bits, the table
+  shuffled) no frame comes out clean. So position, bit order, polarity
+  and deinterleave are right. NOT confirmed: that speech is heard - the
+  clean frames of both captures were silence (one call: 567 of 675 frames
+  the same frame) or weak, unvoiced sound, and the carrier faded; nothing
+  was listened to. The L-band downlink carries only the ground-to-aircraft
+  half of a call
 - Codec availability: ⚙ Setup Settings → Decoders (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens. The page

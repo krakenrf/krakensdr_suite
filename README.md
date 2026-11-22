@@ -470,10 +470,14 @@ control channels); what the radios themselves send on Phase 2 has only been
 tested with the decoder's own test signals, as no recording of it could be
 found.
 
-The Inmarsat Classic Aero decoder's data channels were checked against
-off-air recordings. Its C channel voice has only been run on the decoder's
-own test signals: no recording of a real call could be found, so real
-speech has not been heard through it yet.
+The Inmarsat decoders were checked against recordings and off air on a
+Raspberry Pi 5 with one patch antenna (Inmarsat-4 F1): Inmarsat-C's NCS
+and LES channels with real EGC messages, Classic Aero's P channels at 600,
+1200 and 10500 bit/s. Two real Aero voice channels were followed from
+their assignments: the channel decodes and the codec accepts its voice
+frames, but both were silent or faded where they were clean, so real
+speech has not been heard through it yet. A satellite sends only the
+ground-to-aircraft half of a call.
 
 **P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 

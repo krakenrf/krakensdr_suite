@@ -127,6 +127,12 @@ Ship and land terminals (the transmitters worth a bearing) transmit on
   about 8.3 cm (spacing = 2 x radius x sin 36 deg). The 12 cm radius of a
   VHF / UHF array has them 14 cm apart: the true bearing can come with
   false ones. Set the array's real radius in the DoA settings.
+- With one antenna (decoding only), use **independent mode** (top bar):
+  in coherent mode heimdall cuts samples out of the stream each time it
+  recalibrates, and every frame that failed in the off-air test (5 of 373)
+  sat at such a gap. Independent mode has no calibration; on the same
+  receiver its stream ran 7 minutes without a gap (measured with the
+  Inmarsat Aero decoder; this decoder was not re-run in that mode).
 - Tune a VFO to the channel; **VFO width 9.6 kHz** (the plugin's input is
   9600 Hz; it finds and follows the carrier within +-3.6 kHz of the VFO
   centre itself - it reports no frequency error to the host: kraken_doa's
