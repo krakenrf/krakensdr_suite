@@ -690,14 +690,43 @@ dropped because a channel is gone - `last` says when it was seen.
 **Click to follow** (`TRUNK_CC_FOLLOW`): ends a running search; if the
 channel is not in the usable band now, retunes so that it is - THE USER'S
 tuning (saved, a normal `FREQ:` / in independent mode `TUNER_FREQ` of the
-control tuner): the system's suggested centre when that holds the channel,
-else the channel 250 kHz off the centre; puts a control VFO on it with the
-remembered plugin, its options (`DIGITAL_OPT`) and the bandwidth the plugin
-needs (12.5-50 kHz) - a VFO of the user's (saved); switches following on. A
-second click REPLACES the VFO the previous click made (the user's own VFOs
-are never taken); `"add":true` adds another one instead, refused when the
-new channel doesn't fit the span with them. Refused during a playback, in
-wideband scan mode, while a scanner runs. The entry's `followed` is set.
+control tuner - D0's tuner for a plain click): the system's suggested
+centre when that holds the channel, else the channel 250 kHz off the centre.
+A plain click (`"add":false`) ALWAYS puts the channel on D0 (the owner's
+request, 2026-11-22): D0's offset, the bandwidth the plugin needs (12.5-50
+kHz), the remembered plugin and its options (`DIGITAL_OPT`; every other
+plugin option back to its default), the Digital demod, enabled - whatever
+D0 did is replaced, and it is saved like any change of his. No VFO is
+added, so 16 VFOs in use don't refuse a plain click. A second click replaces
+the channel on D0 again; a click on the entry D0 already follows is a no-op.
+`"add":true` ("Follow it too") adds a further control VFO (D1 and up) as
+before - also when nothing was clicked yet - refused when the new channel
+doesn't fit the span with the ones followed, or with 16 VFOs in use. The
+VFOs "Follow it too" made are removed by a plain click that retunes (they'd
+sit on offsets of the old span) and by a plain click on the channel one of
+them follows (D0 takes it - no duplicate of a click's making); without a
+retune the others stay and stay in `cc_followed`. The user's own VFOs are
+never removed (a hand-made one on the clicked channel stays; on a retune
+they move with the centre as always). Independent mode: D0 stays on the
+tuner it is on and that tuner is the one retuned (it carries the control VFO
+now: the control tuner); taken as a voice tuner, it goes home first. D0 in a
+state the manager set: parked by an excursion or disabled by a search
+(both end first, home), a home offset kept for it from before a search /
+scan and a "put back on ... after the ..." restore pending (both dropped for
+D0) - after the click D0 is enabled on the entry at home and nothing moves it
+back (tested: 6 s after the excursion's / the search's end). D0 removed by
+the user and its id taken by a voice VFO: that call ends, the voice VFO
+goes, D0 is made again (16 in use with no D0: "16 VFOs in use"). What is
+HEARD: D0 is usually the VFO heard; a control channel through an analogue
+demod (WBFM / NBFM) is a continuous data buzz (the FFT squelch opens on the
+carrier, the Digital squelch on its valid frames - both open all the time
+on a control channel), so the click sets D0's demod to Digital (it plays only
+the voice its decoder decodes - nothing on a control channel) and leaves
+the speaker as the user set it: muting it would leave a speaker off he'd
+have to find, and the Digital demod shows on D0's card like any demod he
+picks (the VFOs "Follow it too" adds get Digital too, muted as new VFOs
+are). Refused during a playback, in wideband scan mode, while a scanner
+runs. The entry's `followed` is set; following switches on.
 
 **After the review (2026-11-22), the acceptance on the KrakenSDR**: 496-502
 MHz at 33.8 dB, coherent, the receiver and its plugins pinned to 2 cores
@@ -805,7 +834,7 @@ and found at 6 here.
   user keeps his, the true channel is recorded too).
 - Click to follow checks every refusal (not built / doesn't declare
   `trunking`, wideband scan mode, outside the tuner range, an add that
-  doesn't fit, 16 VFOs in use) before it changes anything; it places the
+  doesn't fit, 16 VFOs in use for an add) before it changes anything; it places the
   control VFO against where the receiver WILL be (a running search or an
   excursion goes home first, voice tuners back; never the stream's stale
   header); a replaced channel's plugin options go back to the defaults (only
@@ -817,7 +846,9 @@ and found at 6 here.
   heard in normal use; SET and the file are checked by the DIGITAL_OPT rule,
   and DIGITAL_OPT itself doesn't ask the plugin. Such an entry is written to
   the file and dropped as unreadable at the next load unless a later heard
-  refresh replaced its options - not fixed (a hand edit only).
+  refresh replaced its options; a click to follow drops the options the
+  receiver refused from the entry (since the click reuses D0, whose heard
+  refresh is a minute away, t33 lost the followed entry at the restart).
 - Only decoders that declare `trunking`: refused at `TRUNK_CC_SET` ("plugin:
   a decoder that declares trunking"), dropped from a loaded file (counted in
   `file.note`; when the registry is read after the file - only if the
@@ -827,7 +858,8 @@ and found at 6 here.
   taken one of the 1000 places at the load, so one entry fewer remains),
   refused at follow ("its decoder (<id>) does not declare trunking"). Options: what `DIGITAL_OPT` takes (its key rule, <= 100 bytes,
   no control characters) - checked at SET / load by the same rule.
-- `cc_followed`: a clicked VFO that is gone, runs another plugin or was
+- `cc_followed`: the plain click's is `{vfo: 0, id}`, the "Follow it too"
+  ones' their VFOs; a clicked VFO that is gone, runs another plugin or was
   moved more than 3 kHz off its entry is dropped; after a restart a control
   VFO with the plugin and frequency of an entry followed before is the
   followed one again (the most recently followed entry) - the highlight and
@@ -852,8 +884,9 @@ and found at 6 here.
 - `cc_followed` after a restart is found by plugin + frequency of a
   previously followed entry: a control VFO the user made by hand on such a
   frequency is taken as the followed one too (there is nothing saved on a
-  VFO that tells a click's from his) - the next click then replaces it. A
-  known limit.
+  VFO that tells a click's from his) - a plain click then removes it if it
+  is on the clicked channel or the click retunes (as a "Follow it too" VFO).
+  A known limit.
 
 Commands (all `TRUNK_` / `GET_TRUNK_CC`, answered with the status, errors as
 `trunk_error`):
@@ -1562,7 +1595,22 @@ the broadcasts:
   sites): one, the stronger; signalled frequencies different: two; the
   weaker named or marked followed (`TRUNK_CC_SET` with its id) meanwhile:
   kept, and the stronger gets its own entry (before: not recorded at all); a
-  click on it meanwhile ends the search (`follow`). `t33_notapplied` 8 - the "not
+  click on it meanwhile ends the search (`follow`). `t36_d0` 174 (a plain
+  click always on D0, 2026-11-22): D0 a plain listening VFO (WBFM, heard),
+  another system's control VFO, parked by an excursion, disabled by a search
+  (the click during it), with 16 VFOs in use; in / out of the span (the
+  retune saved, D0's saved offset right, after a restart too); a second click
+  (the old options gone), the same entry again (no-op); add before and after
+  a plain click; a retuning plain click with two "Follow it too" VFOs
+  (removed), one that doesn't retune (kept); the channel of a "Follow it too"
+  VFO (removed) and of a hand-made one (left alone); independent mode with D0
+  on tuner 0 and on tuner 2 (only that tuner retuned), with a voice tuner
+  taken (home first); after each: D0's RF = the entry's, its system received,
+  `cc_followed`, the snapshot, D0 enabled with the Digital demod and its
+  speaker as it was, no stray VFO or plugin process; 6 s after an excursion's
+  / a search's end D0 still on the entry. (A user can't disable a VFO - there
+  is no command for it: not tested.) t31 / t33 changed with it (the click
+  takes D0). `t33_notapplied` 8 - the "not
   applied" answer, reached through a hand-edited VFO snapshot (above): the
   VFO right, the accepted option set, the refused one named. `t34_progress`
   19 of 21 - shapes "empty, busy, busy, empty" (27 s), "busy, empty, empty"

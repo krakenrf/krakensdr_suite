@@ -4599,7 +4599,9 @@ void cc_heard(int vfo, const std::string& plugin, const PluginEvent& ev) {
     if (e && made) std::cout << "Trunk following: control channel " << e->hz / 1e6 << " MHz (" << plugin << ") remembered" << std::endl;
 }
 
-// click to follow: the remembered control channel id on a control VFO, following on
+// click to follow: the remembered control channel id on a control VFO, following on. A plain click always
+// puts it on D0 (the owner's wish, 2026-11-22: whatever D0 did is replaced - his VFO, saved like any change of
+// his); "add" ("Follow it too") adds a further control VFO
 std::string cc_follow(uint64_t id, bool add) {
     auto it = g_cc.find(id);
     if (it == g_cc.end()) return "no such control channel";
@@ -4613,12 +4615,21 @@ std::string cc_follow(uint64_t id, bool add) {
     if (mode == 1) return "not in wideband scan mode";
     const double bw = std::max(12500.0, std::min(50000.0, pi.min_vfo_rate));
     const double need = bw / 2 + PLACE_GUARD_HZ, half = usable_half_hz();
-    // where the receiver WILL be (a search / an excursion goes home first; the stream may still show a step)
+    // D0 (the user may have removed it - then a voice VFO may hold the id: that call ends, D0 is made again)
+    auto d0 = decimator_manager.getDecimator(0);
+    const bool d0_voice = d0 && voice_of_vfo(0);
+    const bool d0_ok = d0 && !d0_voice;
+    // where the receiver WILL be (a search / an excursion goes home first; the stream may still show a step).
+    // Independent mode: a plain click's tuner is D0's (it becomes the control tuner), "add"'s the control tuner
     int tuner = 0;
     double centre = 0;
     if (mode == 2) {
-        const std::set<int> ct = vt_control_tuners();
-        tuner = ct.empty() ? 0 : *ct.begin();
+        if (!add && d0_ok) {
+            tuner = std::clamp(d0->tuner_channel.load(), 0, std::max(0, std::min(active_num_elements.load(), MAX_CHANNELS) - 1));
+        } else {
+            const std::set<int> ct = vt_control_tuners();
+            tuner = ct.empty() ? 0 : *ct.begin();
+        }
         centre = indep_tuner_freq_hz[tuner].load();
         if (g_srch.active && g_srch.mode == 2 && g_srch.tuner == tuner) centre = g_srch.home;
         if (g_vt[tuner].taken) centre = g_vt[tuner].home_hz;
@@ -4627,21 +4638,18 @@ std::string cc_follow(uint64_t id, bool add) {
     }
     if (centre <= 0) return "the receiver's frequency is not known yet";
     auto rf_of = [&](const Inst& i) { return centre + i.frequency_offset_hz.load(); };
-    // the VFO a previous click made (replaced) - unless adding
-    int reuse = -1;
-    if (!add)
-        for (const auto& kv : g_cc_follow) {
-            auto inst = decimator_manager.getDecimator(kv.first);
-            if (inst && inst->serial == kv.second.first) reuse = kv.first;
-        }
-    // (already followed: a double click - nothing re-applied; add of the same channel: no second VFO)
+    auto clicked = [&](int vfo, uint64_t serial) {
+        auto inst = decimator_manager.getDecimator(vfo);
+        return inst && inst->serial == serial ? inst : nullptr;
+    };
+    // (already followed: a double click on D0's entry - nothing re-applied; add of a channel a click follows: no second VFO)
     for (const auto& kv : g_cc_follow) {
-        auto inst = decimator_manager.getDecimator(kv.first);
-        if (!inst || inst->serial != kv.second.first || kv.second.second != id) continue;
+        auto inst = clicked(kv.first, kv.second.first);
+        if (!inst || kv.second.second != id) continue;
         auto dd = inst->getDigital();
         if (dd && dd->plugin_id() == e.plugin && std::fabs(rf_of(*inst) - e.hz) < 1000) {
             if (add) return "already followed on D" + std::to_string(kv.first);
-            return "";
+            if (kv.first == 0) return "";
         }
     }
     // every refusal before anything changes
@@ -4650,7 +4658,7 @@ std::string cc_follow(uint64_t id, bool add) {
     if (!fits) {
         bool others = false;
         for (const auto& kv : g_cc_follow)
-            if (auto inst = decimator_manager.getDecimator(kv.first); inst && inst->serial == kv.second.first) others = true;
+            if (clicked(kv.first, kv.second.first)) others = true;
         if (add && others) return "it doesn't fit the span with the control channel(s) followed now - follow it alone";
         c = e.hz + 250000;
         if (System* s2 = sys_of(e.sys)) {
@@ -4660,7 +4668,7 @@ std::string cc_follow(uint64_t id, bool add) {
         if (!exc_range(c)) c = e.hz - 250000;
         if (!exc_range(c)) return "outside the tuner's range";
     }
-    if (reuse < 0 && static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) return "16 VFOs in use";
+    if ((add || !d0) && static_cast<int>(decimator_manager.getDecimatorCount()) >= VFO_LIMIT) return "16 VFOs in use";
     // now: a search / an excursion ends (home), voice tuners back
     if (g_srch.active) srch_end("follow", true);
     if (g_exc.st == 1) exc_return("follow", true);
@@ -4672,7 +4680,43 @@ std::string cc_follow(uint64_t id, bool add) {
         const std::string why = ControlHandler::apply_command(f);   // (the user's tuning - he asked for it: saved)
         if (!why.empty()) return "the retune was refused: " + why;
     }
-    int vfo = reuse;
+    int vfo = -1;
+    if (!add) {
+        // the VFOs earlier "Follow it too" clicks made: after a retune they'd sit on offsets of the old span, and
+        // one on this very channel would be a duplicate of a click's own making - removed (the user's own VFOs
+        // never: they move with the centre as on any retune)
+        std::vector<int> drop;
+        for (const auto& kv : g_cc_follow) {
+            if (kv.first == 0) continue;
+            auto inst = clicked(kv.first, kv.second.first);
+            if (!inst) continue;
+            auto dd = inst->getDigital();
+            const bool same = dd && dd->plugin_id() == e.plugin && std::fabs(c + inst->frequency_offset_hz.load() - e.hz) < 1000;
+            if (!fits || same) drop.push_back(kv.first);
+        }
+        for (int k : drop) {
+            g_cc_follow.erase(k);
+            ControlHandler::apply_command("REMOVE_DECIMATOR:" + std::to_string(k));
+            std::cout << "Trunk following: D" << k << " (a \"follow it too\" click's) removed - the control channel goes on D0" << std::endl;
+        }
+        g_cc_follow.erase(0);
+        if (d0_voice) {
+            // (a voice VFO on id 0: its call ends, the VFO goes, D0 is made again)
+            if (Voice* v = voice_of_vfo(0); v && v->call) end_call(v->call, "stopped");
+            for (size_t i = 0; i < g_voices.size(); i++)
+                if (g_voices[i].vfo == 0) {
+                    remove_voice_at(i);
+                    break;
+                }
+        }
+        if (decimator_manager.getDecimator(0)) {
+            vfo = 0;
+            // (nothing of the manager's puts D0 back afterwards: no home kept for it from before a search /
+            // scan, no restore pending)
+            g_home.erase(0);
+            g_pending.erase(0);
+        }
+    }
     if (vfo < 0) {
         std::set<int> before;
         for (const auto& d : decimator_manager.getDecimatorInfoList()) before.insert(d.id);
@@ -4702,12 +4746,25 @@ std::string cc_follow(uint64_t id, bool add) {
     std::string refused;
     for (const auto& kv : e.opts) c2.push_back("DIGITAL_OPT:" + sid + ":" + e.plugin + "." + kv.first + ":" + kv.second);
     c2.push_back("DIGITAL_MODE:" + sid + ":PLUGIN:" + e.plugin);
+    // what is heard: the decoder's voice only (Digital demod) - a control channel through an analogue demod
+    // is a continuous data buzz on D0, which is usually the VFO heard; the speaker stays as the user set it
+    c2.push_back("SET_DECIMATOR_DEMOD:" + sid + ":DIGITAL");
+    std::vector<std::string> bad_opts;
     for (const auto& cmd : c2) {
         const std::string why = ControlHandler::apply_command(cmd);   // (the user's VFO now: saved)
-        if (!why.empty()) refused += (refused.empty() ? "" : "; ") + cmd.substr(0, 80) + ": " + why;
+        if (why.empty()) continue;
+        refused += (refused.empty() ? "" : "; ") + cmd.substr(0, 80) + ": " + why;
+        const std::string pre = "DIGITAL_OPT:" + sid + ":" + e.plugin + ".";
+        if (cmd.compare(0, pre.size(), pre) == 0) bad_opts.push_back(cmd.substr(pre.size(), cmd.find(':', pre.size()) - pre.size()));
     }
+    // (an option the receiver refuses leaves the entry: the file holds only what loads again - one with such an
+    // option was dropped as unreadable at the next start, its followed / name with it)
+    for (const auto& k : bad_opts) e.opts.erase(k);
     auto inst = decimator_manager.getDecimator(vfo);
-    if (!add) g_cc_follow.clear();
+    if (inst && !inst->enabled.load()) {
+        inst->enabled = true;   // (parked by an excursion / disabled by a search: the click's placement wins)
+        broadcast(MessageBuilders::build_decimator_info_message());
+    }
     if (inst) g_cc_follow[vfo] = {inst->serial, e.id};
     e.followed = wall_ms();
     cc_changed();
