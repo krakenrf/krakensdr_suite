@@ -1360,6 +1360,56 @@ used"):
   instant trace keeps the frame where the frame covers the window at least
   as finely (`swpTrace`). "Points sent" reads "1525 + 46,427 at 37.5 kHz"
   for a pooled set, "1525 + full 11,885,227" for a full one.
+- **Auto gain** (round 9, 2026-11-23; the user: "Could we auto adjust the
+  gain based on the current swath, and still have the sweep update fast,
+  and have the sweep stitch together well?"). heimdall learns a gain per
+  step; the page shows the switch and what it does:
+  - The switch: the Sweep box's "Auto gain" (`#swp-agc`, under Dwell).
+    Shared state: a click sends `SWEEP_AUTO_GAIN:<1|0>` and puts the
+    switch back to what the receiver last said (`swpAgcSet`: no
+    optimistic update); the `sweep` message's `auto_gain` sets it
+    (`swpAgcRender`, from `swpRenderCtl`). Disabled, with the reason
+    added to its tip, when `auto_gain_known` is not true: `false` = this
+    heimdall has none (older), absent (`null` in `swpNorm`) = an older
+    receiver; nothing else changes then. With the gain at the tuners' own
+    AGC (-1) it is on but idle (`auto_gain_active` false when the
+    receiver says so, else derived) and the line says so.
+  - The ceiling: in sweep mode with Auto on the top bar's gain reads
+    "≤ 49.6 dB" (`updateGainDisplay`; off again on leaving the mode). The
+    Sweep box's "Gain" line (`#swp-agc-st`, `swpAgcText`): "49.6 dB, every
+    step" / "up to 49.6 dB, 53 steps reduced, lowest 16.6 dB" / "up to
+    49.6 dB, no step reduced" - the receiver's `gain_reduced_hops` /
+    `gain_min_db`, else counted from the map.
+  - The map: `{"sweep_gain":{grid, sweeps, f0_hz, step_hz, hops,
+    ceiling_db, gain_db:[...]}}` (JSON - an older page ignores it; a
+    binary type would fall into its FFT path), hop h centred at
+    `f0_hz + h x step_hz`, +- step_hz / 2; `swpGainMapParse` is the one
+    reader. A map of another grid is dropped, a new grid drops the one
+    held (the receiver sends the new grid's); kept across mode changes
+    (the receiver sends one only on a page's first view and after a grid
+    change).
+  - On the plot: a 3 px strip on the plot's bottom edge (under the
+    lowest level, over the frequency labels, which moved down 2 px) where
+    steps are reduced, step by step in whole pixels, amber - the stronger,
+    the lower (full at 33 dB under the ceiling) - with the zoom and the
+    pan; nothing with Auto off or no step reduced. The levels stay
+    referred to the ceiling (the receiver shifts a step's levels by
+    ceiling - its gain), so a signal keeps its height; on a reduced step
+    sitting on the converter's own floor the noise floor shows higher -
+    the strip right under it says why. On the spectrum's canvas, so the
+    picture has it; its caption gets "Auto gain: up to 49.6 dB, ...".
+  - The pointer's readout adds the step's gain: "415.106 MHz  31.4 dB
+    gain 16.6 dB".
+  - Tests (`t_agc.py`, the mock speaking the receiver worker's contract):
+    the switch (sent, not checked until the broadcast; off; kept across a
+    mode change), the line and the "≤", the strip against the map at x1,
+    x4, x20, x80 and after a pan (every visible step's centre pixel: amber
+    exactly where the map is under the ceiling), the readout over the
+    lowest step and over one at the ceiling, the picture (its caption and
+    the strip's pixel in it), a range change (the old map dropped, the new
+    grid's drawn), idle at the tuners' AGC, an older receiver and an older
+    heimdall (disabled with the reason, nothing sent, nothing drawn), the
+    phone layout: 35 / 35.
 - **Deflated parts** (round 8, 2026-11-23; the user: "Implement the sweep
   full resolution compression"). The page asks `SWEEP_FULL_Z:1` when the
   browser has `DecompressionStream("deflate")` (`SWP_Z_OK`: the

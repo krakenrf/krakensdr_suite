@@ -2425,6 +2425,12 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <input type="number" id="swp-dwell" min="5" max="1000" step="5" value="5" onchange="swpSetDwell(this.value)" title="How long each step of the sweep is listened to, 5 - 1000 ms">
           <span class="u">ms</span>
         </div>
+        <!-- the gain per step (round 9, swpAgcSet): shared, the receiver's state shown -->
+        <div class="ctrl-row" id="swp-agc-row">
+          <label for="swp-agc" title="Each step of the sweep gets its own gain: the Gain in the top bar is the ceiling, and a step that overloads the receiver (a strong transmitter nearby) is taken 3 - 18 dB lower at its next visit, sweep after sweep, until it no longer does; it comes back up 3 dB at a time after a while without overload. What was learned is kept by frequency when the range, dwell or resolution changes. The sweep stays as fast, and levels stay comparable: a signal keeps its height; on a reduced step the noise floor can show higher - the sensitivity lost there. With the Gain at Auto (the tuners' own AGC) it does nothing. For every browser on this receiver">Auto gain</label>
+          <input type="checkbox" class="sw" id="swp-agc" onchange="swpAgcSet(this.checked)" title="Each step of the sweep gets its own gain: the Gain in the top bar is the ceiling, and a step that overloads the receiver (a strong transmitter nearby) is taken 3 - 18 dB lower at its next visit, sweep after sweep, until it no longer does; it comes back up 3 dB at a time after a while without overload. What was learned is kept by frequency when the range, dwell or resolution changes. The sweep stays as fast, and levels stay comparable: a signal keeps its height; on a reduced step the noise floor can show higher - the sensitivity lost there. With the Gain at Auto (the tuners' own AGC) it does nothing. For every browser on this receiver">
+        </div>
+        <div class="kv" title="The gain the sweep uses: the top bar's Gain on every step, or - with Auto gain - at most that, with the steps that had to be taken lower and the lowest of them. Where on the spectrum: the amber strip on the plot's bottom edge (the stronger, the lower - a noise floor raised just above it is the sensitivity lost there), and the step's gain under the pointer"><span>Gain</span><span id="swp-agc-st">-</span></div>
         <div class="ctrl-row">
           <button type="button" class="btn primary" id="swp-run" style="flex:1" onclick="swpRunToggle()"><svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause</span></button>
         </div>
@@ -6150,7 +6156,8 @@ function snapWhat(target) {
                   'Range ' + snapMhz(s[0] / 1e6) + ' - ' + snapMhz(s[1] / 1e6) + ' MHz',
                   swp.zoom.level > 1.0001 ? 'Shown ' + snapRange(win[0] / 1e6, win[1] / 1e6) : '',
                   st && st.fft_size ? 'FFT ' + st.fft_size + (st.bin_hz > 0 ? ' (' + swpFmtHz(st.bin_hz) + ' bins)' : '') : '',
-                  swp.resText ? swp.resText + ' a point' : '', zoom(swp.zoom.level), gain(txt('gn-value'))],
+                  swp.resText ? swp.resText + ' a point' : '', zoom(swp.zoom.level), gain(txt('gn-value')),
+                  swpAgcOn() ? 'Auto gain: ' + swpAgcText() : ''],   // (round 9: the reduced steps, as in the Sweep box)
             name: 'sweep_' + snapMhzFile(win[0] / 1e6) + '-' + snapMhzFile(win[1] / 1e6) + 'MHz'};
   }
   if (!fftPlot || !fftPlot.ctx || currentFrequencies.length < 2) return null;
@@ -9095,7 +9102,9 @@ function updateGainDisplay(sliderValue) {
   const idx = parseInt(sliderValue);
   const gainDb = GAIN_VALUES[idx];
   const displayText = gainDb === -1 ? 'Auto' : gainDb.toFixed(1) + ' dB';
-  vbarShow($id('gn-slider'), displayText);
+  // (sweep mode with Auto gain: the gain is the ceiling - "≤ 49.6 dB")
+  const ceil = gainDb !== -1 && typeof swpAgcOn === 'function' && swpAgcOn();
+  vbarShow($id('gn-slider'), (ceil ? '≤ ' : '') + displayText);
 }
 
 let gainTrailingSendTimeout = null;
@@ -11719,6 +11728,7 @@ function connect() {
           }
           else if(msg.operating_mode) { opOnMessage(msg.operating_mode); }
           else if(msg.sweep && typeof msg.sweep === 'object') { swpOnState(msg.sweep); }   // sweep mode (SWEEP MODE)
+          else if(msg.sweep_gain && typeof msg.sweep_gain === 'object') { swpOnGainMap(msg.sweep_gain); }   // sweep mode: the gain per step (round 9)
           else if(msg.power) { pwOnState(msg.power); }
           else if(msg.antenna_bias) { biasOnState(msg.antenna_bias); }
           else if(msg.decimator_freq_offset) {
@@ -13566,7 +13576,12 @@ function swpNorm(r) {
     // what each gives; the last is full (n 1). null: round 5's receiver - fit / full only - or an older one)
     full_sets: Array.isArray(r.full_sets) ? r.full_sets.filter(o => o && Number.isInteger(o.n) && o.n >= 1 && num(o.values, 0) >= 1 && num(o.step_hz, 0) > 0)
       .map(o => ({n: o.n, pool: num(o.pool, 1), values: o.values, step_hz: o.step_hz})) : null,
-    full_z: r.full_z === true};   // (round 8: this receiver sends deflated parts when asked)
+    full_z: r.full_z === true,   // (round 8: this receiver sends deflated parts when asked)
+    // (round 9: the gain per step - auto_gain_known: true / false = its heimdall has it or not, null = an older
+    // receiver; the reduced steps and the lowest gain of the last sweep)
+    auto_gain: r.auto_gain === true, auto_gain_known: r.auto_gain_known === true ? true : r.auto_gain_known === false ? false : null,
+    gain_reduced_hops: num(r.gain_reduced_hops, NaN), gain_min_db: num(r.gain_min_db, NaN),
+    auto_gain_active: r.auto_gain_active === true ? true : r.auto_gain_active === false ? false : null};   // (null: not sent - derived)
   if (s.full_sets && !s.full_sets.some(o => o.n === 1)) s.full_sets = null;   // (malformed: as if absent)
   return s.stop_hz > s.start_hz ? s : null;
 }
@@ -13600,6 +13615,7 @@ function swpNewGrid(rangeChanged) {
   swp.ovPend = null;
   swpFullDrop();   // (a set of the old grid is no use)
   netMarksReset();   // (the Data rate's sweeps: a new grid's)
+  swp.gmap = null;   // (Auto gain: the new grid's map follows)
   if (rangeChanged) { swp.zoom.level = 1; swp.zoom.off = 0; document.body.classList.remove('swp-zoomed'); }
 }
 function swpOnOpen() {
@@ -13616,6 +13632,102 @@ function swpGainSync(db) {
   if (gainUserChanging) return;
   const gi = gainIndexOf(db), gs = $id('gn-slider');
   if (gs && document.activeElement !== gs && parseInt(gs.value) !== gi) { gs.value = gi; updateGainDisplay(gi); }
+}
+
+// ---- Auto gain (round 9, 2026-11-23; the user: "Could we auto adjust the gain based on the current swath,
+// and still have the sweep update fast, and have the sweep stitch together well?") ----
+// heimdall learns a gain per step (hop): the top bar's Gain is the CEILING, a step that overloads the
+// converter is taken lower, sweep after sweep. The page:
+// - the switch (SWEEP_AUTO_GAIN:<1|0>; shared - it shows what the sweep message says, auto_gain, never an
+//   optimistic guess; disabled where auto_gain_known is not true: false = this heimdall has none, null = an
+//   older receiver);
+// - what it does: the gain map ({"sweep_gain":{grid, sweeps, f0_hz, step_hz, hops, ceiling_db, gain_db: [one a
+//   step, 0.1 dB, null = not measured yet]}} - after a sweep when it changed, on a page's first view, after a
+//   grid change) as a strip on the plot's bottom edge where steps are reduced, the step's gain under the
+//   pointer, the Sweep box's "Gain" line, "≤" before the top bar's gain, the picture's caption.
+// The levels stay referred to the ceiling (the receiver shifts a step's levels by ceiling - its gain): a
+// signal keeps its height across steps; a reduced step on the converter's own floor shows a higher noise
+// floor - the sensitivity really lost there, which the strip right under it explains.
+function swpAgcOn() { return opMode === 'sweep' && !!(swp.st && swp.st.auto_gain && swp.st.auto_gain_known === true); }
+// on but doing nothing: the gain is the tuners' own AGC (heimdall's rule; the receiver's auto_gain_active when
+// it says, else derived from the gain)
+function swpAgcIdle() {
+  const st = swp.st;
+  if (!swpAgcOn()) return false;
+  return st.auto_gain_active === false || (st.auto_gain_active === null && swpCeilDb() === -1);
+}
+// the common gain (the ceiling): the receiver's, else the slider's; -1 = the tuners' own AGC
+function swpCeilDb() {
+  if (swp.st && Number.isFinite(swp.st.gain_db)) return swp.st.gain_db;
+  const gs = $id('gn-slider');
+  return gs ? GAIN_VALUES[parseInt(gs.value)] : NaN;
+}
+function swpAgcSet(on) {
+  const cb = $id('swp-agc'), st = swp.st;
+  if (cb) cb.checked = !!(st && st.auto_gain && st.auto_gain_known === true);   // (until the receiver's broadcast says otherwise)
+  if (!st || st.auto_gain_known !== true) return;
+  send('SWEEP_AUTO_GAIN:' + (on ? 1 : 0));
+}
+// the gain map (the receiver's sweep_gain message; the only place that reads its layout): hop h is centred at
+// f0_hz + h x step_hz and covers +- step_hz / 2; a map of another grid than the current one is dropped
+function swpGainMapParse(r) {
+  const num = (x, d) => typeof x === 'number' && Number.isFinite(x) ? x : d;
+  const f0 = num(r.f0_hz, NaN), step = num(r.step_hz, NaN), a = Array.isArray(r.gain_db) ? r.gain_db : null;
+  if (!a || !(step > 0) || !Number.isFinite(f0) || a.length < 1 || a.length > 65536) return null;
+  const g = new Float32Array(a.length);
+  for (let i = 0; i < a.length; i++) g[i] = num(a[i], NaN);
+  return {grid: num(r.grid, 0), sweeps: num(r.sweeps, 0), f0, step, ceil: num(r.ceiling_db, NaN), g};
+}
+function swpOnGainMap(r) {
+  const m = swpGainMapParse(r);
+  if (!m || (swp.st && m.grid !== swp.st.grid)) return;   // (kept in the other modes too: drawn only in sweep mode)
+  swp.gmap = m;
+  swpAgcRender();
+  swpDrawSoon();
+}
+// the gain of the step that holds f (NaN: no map, or outside it)
+function swpGainAt(f) {
+  const m = swp.gmap;
+  if (!m) return NaN;
+  const k = Math.round((f - m.f0) / m.step);
+  return k >= 0 && k < m.g.length ? m.g[k] : NaN;
+}
+// the steps reduced and the lowest gain: the receiver's figures, else counted from the map
+function swpAgcSummary() {
+  const st = swp.st, ceil = swpCeilDb();
+  let n = st ? st.gain_reduced_hops : NaN, lo = st ? st.gain_min_db : NaN;
+  if ((!Number.isFinite(n) || !Number.isFinite(lo)) && swp.gmap) {
+    let c = 0, m = Infinity;
+    for (const g of swp.gmap.g) if (g < ceil - 0.05) { c++; if (g < m) m = g; }
+    if (!Number.isFinite(n)) n = c;
+    if (!Number.isFinite(lo)) lo = c ? m : ceil;
+  }
+  return {n, lo, ceil};
+}
+function swpAgcText() {
+  const st = swp.st;
+  if (!st) return '-';
+  const s = swpAgcSummary(), gt = s.ceil === -1 ? 'Auto' : Number.isFinite(s.ceil) ? s.ceil.toFixed(1) + ' dB' : '-';
+  if (!swpAgcOn()) return gt + (st.auto_gain_known === true ? ', every step' : '');
+  if (swpAgcIdle()) return gt + ' - Auto gain idle (the tuners\' own AGC)';
+  if (!Number.isFinite(s.n)) return 'up to ' + gt;
+  return 'up to ' + gt + (s.n > 0 ? ', ' + s.n + (s.n === 1 ? ' step' : ' steps') + ' reduced, lowest ' + s.lo.toFixed(1) + ' dB' : ', no step reduced');
+}
+const SWP_AGC_TIP = (document.getElementById('swp-agc') || {getAttribute: () => ''}).getAttribute('title') || '';
+function swpAgcRender() {
+  const st = swp.st, cb = $id('swp-agc');
+  if (cb) {
+    const known = !!(st && st.auto_gain_known === true), on = !!(known && st.auto_gain);
+    if (cb.checked !== on) cb.checked = on;
+    if (cb.disabled !== !known) cb.disabled = !known;
+    const why = !st ? '' : st.auto_gain_known === false ? 'Not available: this receiver\'s heimdall has no gain per step (an older version)'
+              : st.auto_gain_known === null ? 'Not available: this receiver does not offer it (an older version)' : '';
+    const t = SWP_AGC_TIP + (why ? '. ' + why : '');
+    if (cb.dataset.tipk !== t) { cb.dataset.tipk = t; cb.title = t; cb.removeAttribute('data-tip'); }
+  }
+  swpTxt('swp-agc-st', swpAgcText());
+  const gs = $id('gn-slider');
+  if (gs) updateGainDisplay(gs.value);   // ("≤" before the top bar's gain while it is a ceiling)
 }
 
 // ---- the controls (top bar: range, tuners; the Sweep box) ----
@@ -13642,6 +13754,7 @@ function swpRenderCtl() {
     swpTxt('swp-hops', st.hops + ' · ' + k + (k === 1 ? ' tuner' : ' tuners'));
     swpTxt('swp-bins', Math.round(st.bins).toLocaleString('en-US') + ' · ' + swpFmtHz(st.bin_hz));
   }
+  swpAgcRender();
 }
 // a held control shows the receiver's value again once its hold is over
 let swpHoldTimer = null;
@@ -13857,8 +13970,11 @@ function swpLeave() {
   swp.view = null;
   clearTimeout(swp.wfTimer); swp.wfPend = null;
   swp.hover = null; swp.drag = null; swp.readout = '';
+  setTimeout(() => { const gs = $id('gn-slider'); if (gs) updateGainDisplay(gs.value); }, 0);   // (Auto gain's "≤" off with the mode)
   swpFullDrop();   // (the full sets' memory given back; the rows keep their window / overview levels)
   netMarksReset();   // (the Data rate: the 5 s window again)
+  // (Auto gain's map kept: the receiver sends one on a page's first view and after a grid change only - a
+  // grid change drops it, swpNewGrid; in the other modes it isn't drawn)
   document.body.classList.remove('swp-zoomed', 'swp-panning');
 }
 function swpResize() {
@@ -14570,7 +14686,7 @@ function swpDraw() {
       const f = k * fs, x = Math.round(L + (f - win[0]) / span * W) + 0.5;
       ctx.strokeStyle = '#272e37';
       ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke();
-      if (x > L + 18 && x < R - 18) { ctx.fillStyle = '#707883'; ctx.fillText((f / 1e6).toFixed(dec), x, bot + 3); }
+      if (x > L + 18 && x < R - 18) { ctx.fillStyle = '#707883'; ctx.fillText((f / 1e6).toFixed(dec), x, bot + 5); }
     }
   }
   const tr = swp.tr;
@@ -14591,6 +14707,23 @@ function swpDraw() {
     ctx.strokeStyle = '#7ab8f7';
     ctx.stroke();
     ctx.restore();
+  }
+  // Auto gain: where steps are reduced, a strip on the plot's bottom edge, step by step (3 px, amber - the
+  // stronger, the lower: full at 33 dB under the ceiling), with the spectrum's zoom and pan; nothing with Auto
+  // off or no step reduced. On this canvas, so the picture (the camera button) has it too.
+  if (win && swpAgcOn() && swp.gmap) {
+    const m = swp.gmap, ceil = swpCeilDb(), span = win[1] - win[0];
+    const k0 = Math.max(0, Math.floor((win[0] - m.f0) / m.step)), k1 = Math.min(m.g.length - 1, Math.ceil((win[1] - m.f0) / m.step));
+    for (let k = k0; k <= k1; k++) {
+      const red = ceil - m.g[k];
+      if (!(red > 0.05)) continue;
+      const a = m.f0 + (k - 0.5) * m.step, x0 = Math.max(L, L + (a - win[0]) / span * W), x1 = Math.min(R, L + (a + m.step - win[0]) / span * W);
+      if (x1 <= x0) continue;
+      // (whole pixels: zoomed out a step is ~1.6 px - smoothed edges would leave it a faint smear)
+      const xa = Math.floor(x0), xb = Math.max(xa + 1, Math.round(x1));
+      ctx.fillStyle = 'rgba(227,168,66,' + (0.4 + 0.6 * Math.min(1, red / 33)).toFixed(3) + ')';
+      ctx.fillRect(xa, bot + 1, xb - xa, 3);
+    }
   }
   // the sweep under way: a bar along the top of the plot (amber while paused)
   const paused = swpPaused();
@@ -14630,7 +14763,9 @@ function swpDrawOverlay() {
   }
   const res = Math.max(tr && tr.freqs.length > 1 ? tr.freqs[1] - tr.freqs[0] : 0, (win[1] - win[0]) / W);
   const dec = res < 100 ? 5 : res < 1000 ? 4 : 3;
-  const t = (f / 1e6).toFixed(dec) + ' MHz' + (Number.isFinite(db) ? '  ' + db.toFixed(1) + ' dB' : '');
+  // (Auto gain: the gain the step under the pointer was taken with in its last sweep)
+  const gk = swpAgcOn() ? swpGainAt(f) : NaN;
+  const t = (f / 1e6).toFixed(dec) + ' MHz' + (Number.isFinite(db) ? '  ' + db.toFixed(1) + ' dB' : '') + (Number.isFinite(gk) ? '  gain ' + gk.toFixed(1) + ' dB' : '');
   swp.readout = t;
   ctx.font = '12px sans-serif';
   const tw = Math.ceil(ctx.measureText(t).width) + 12, th = 20;
