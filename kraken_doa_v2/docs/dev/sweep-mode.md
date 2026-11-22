@@ -167,6 +167,15 @@ the hops into the sweep spectrum, the page shows it.
   7 ms, 65536 from 21 ms). The `sweep` message says what is used.
 - `SWEEP_DWELL:<ms>` - 5 ... 1000, default 5 (one packet a hop; 20 until
   2026-11-21).
+- `SWEEP_AUTO_GAIN:<1|0>` (2026-11-23; also true / false, else refused) -
+  heimdall's automatic gain per hop: the common gain is the ceiling, a hop
+  that clips is taken lower (heimdall's rule: `heimdall_v2/docs/dev/
+  operating-modes.md`). Default 0; persisted and replayed like the others;
+  sent on to heimdall as `{"command":"set_sweep_auto_gain","enable":..}`
+  right after `set_sweep` wherever the plan goes (mode entry, the settings
+  replay, a data-port reconnect) and at once on a change in sweep mode
+  (heimdall doesn't keep it). Not refused outside sweep mode: it takes
+  effect on entry.
 - `SWEEP_RUN:<1|0>` - run / pause. Not persisted: entering the mode runs.
 - All but `SWEEP_RUN` persisted. Each is answered by the `sweep` message
   to every page, never by an echo.
@@ -202,6 +211,25 @@ the hops into the sweep spectrum, the page shows it.
   frame whose header carries the gain, so a page shows another page's gain
   change only through this field; a receiver without it leaves each page's
   gain control as that page set it (nothing else depends on it).
+- Auto gain (2026-11-23), additive fields of the `sweep` message:
+  `"auto_gain"` (the setting), `"auto_gain_known"` (true once a heimdall
+  reply line carries `"auto_gain"` - its answer to `set_sweep_auto_gain`,
+  `{"status":"success","auto_gain":b}`, or its status; false before, and
+  when "Unknown command" answers the command within 2 s with no such line:
+  an older heimdall), `"auto_gain_active"` (on, heimdall has it, sweep mode,
+  a manual ceiling - with the tuner's AGC, gain -1, heimdall's Auto does
+  nothing), `"gain_reduced_hops"` / `"gain_min_db"` (null when none) of the
+  last completed sweep's gain map. And a JSON message, the **gain map**:
+  `{"sweep_gain":{"grid":G,"sweeps":k,"f0_hz":F0,"step_hz":1912500,
+  "hops":H,"ceiling_db":49.6,"gain_db":[g0,...]}}` - per hop in plan order
+  (centre `f0_hz + h step_hz`) the gain its packets of the last completed
+  sweep were taken with (the 8091 header's per-channel gain), 0.1 dB, `null`
+  = not measured on this grid or the tuner's AGC. Sent to every page with a
+  sweep view after a completed sweep when it differs from the last one
+  sent, to a page on its first `SWEEP_VIEW`, after a grid change; in manual
+  gain every value is the ceiling. JSON, not a binary type: an older page
+  sends unknown binary types into its old FFT parser, and ignores unknown
+  JSON keys.
 - `{"operating_mode":{"mode":"sweep",...}}` as for the other modes.
 - Binary type 10, the sweep spectrum for one page's view (little-endian,
   64-byte header), sent to every socket that sent a `SWEEP_VIEW`, at most
@@ -324,7 +352,13 @@ the hops into the sweep spectrum, the page shows it.
   exactly what it got before. Lossless: one byte a value after inflating.
 - Levels: ONE reference for the whole sweep (never one per hop: a signal
   that fills a hop must keep its height), the tuners' common in-band shape
-  removed (`nfloor::shape_db`, *Noise floor*).
+  removed (`nfloor::shape_db`, *Noise floor*). With heimdall's auto gain
+  (2026-11-23) a hop's levels are referred to the ceiling: shifted by
+  (ceiling - the gain its packets were taken with) - a signal keeps its
+  true height across hops of different gain; the floor stays flat where the
+  tuner's noise dominates, and shows higher where the lower gain puts the
+  hop on the converter's own floor (the sensitivity actually lost - not
+  hidden by forcing it flat). Manual gain: no shift.
 
 ## heimdall
 
@@ -453,7 +487,49 @@ refused; out-of-range numbers are clamped:
   data port.
 - `gain_db` in the `sweep` message (the contract's optional field, asked for
   by the page worker): the common gain from heimdall's 8091 header in sweep
-  mode, or a `GAIN:` command; the message goes again when it changes. The
+  mode, or a `GAIN:` command; the message goes again when it changes. With
+  Auto on a header's gain is that hop's: the ceiling then comes from `GAIN:`
+  and from the highest gain of a completed sweep's map.
+- Auto gain (2026-11-23): `sweep::set_auto_gain` / `auto_gain_command`,
+  `ControlHandler::send_sweep_plan_now` (the plan, then the switch: every
+  place that sent the plan); heimdall's answers through
+  `sweep::ingest_control_reply` (data_receiver's drain of the control
+  socket, ~1 s). The engine: the slot carries each channel's header gain,
+  the accumulator the gain of its hop's packets; `commit` shifts the hop's
+  dB values and its floor estimate by (ceiling - gain) before the floor's
+  percentile is used (the dead-tuner check stays on the raw floor); `store`
+  keeps the hop's gain; at a completion `update_gain_map` builds the map,
+  its counts, and (Auto on) the ceiling. The server sends the map when its
+  version moves and the state when its counts change (the broadcast tick).
+  - Measured with the fake heimdall (`t_agc.py`; a scene: tuner noise 6
+    counts at the ceiling 49.6, the converter's own 1.5, clipping at 0 /
+    255; a carrier 34 dB (amp 400) and one 52 dB (amp 3 500) over the others
+    in hop 7, which hop 6's tuner also sees at its band edge; the fake's rule
+    is heimdall's (f3ca686): -18 / -9 / -4.5 dB for a clipped share > 1 % /
+    > 0.1 % / > 0.01 %, +3 dB after 8 clean visits and 20 s with 6 dB of
+    headroom, the hold doubling after a raise that clips; the tests shorten
+    the hold to 4 visits, 0 s for the way back):
+    - manual: the clipped hop's carrier 8 / 27 dB short of its height (the
+      converter clipped: 59.8 dB for 68.0 / 86.9 expected), and its floor
+      estimate off (the carrier captures the converter: the noise under it
+      is suppressed - the hop's median fell below the others in most runs);
+    - Auto: no clipped hop from sweep 2 - 4; steady at 29.7 / 8.7 dB for
+      hops 6 and 7, the rest at the ceiling (heimdall on the real antenna:
+      415.1 MHz at 8.7 dB); the map = the headers' gains (= the fake's), its
+      counts in the `sweep` message; not sent again while steady;
+    - the levels: the quiet hops as in manual (within one level step); the
+      carrier at its true height referred to the ceiling (67.8 dB for 68.0
+      expected at 29.7 dB; 86.6 for 86.9 at 8.7 dB); the reduced hop's floor
+      8.0 / 28.7 dB over the others for 8.5 / 28.9 predicted from the two
+      noises - the sensitivity lost at that gain, the converter's floor
+      dominating (a 41 dB reduction leaves ~29 dB of it);
+    - the signal gone: the gain back at the ceiling after 20 / 41 sweeps
+      (+3 dB a step, 11 steps from 8.7 dB), the hop's floor with the others
+      again, the counts 0 - nothing sticks;
+    - a heimdall without the command: `auto_gain_known` false, active
+      false, the setting kept, sweeps go on at the common gain; a restart
+      replays the setting, heimdall gets it after the plan; a data-port
+      reconnect sends both again. The
   header trails a command by a few packets: within 1.5 s of a `GAIN:` a
   different header value is not taken (the test saw 25 -> 49.6 -> 25 before).
 - `SWEEP_VIEW` (websocket_server.cpp `handle_sweep_view`, per socket like

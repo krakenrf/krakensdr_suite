@@ -564,9 +564,14 @@ void DataReceiver::data_receiver_thread() {
                     note_calibration_state(phase_comp_state, noise_source);
                     // the common gain as heimdall runs it: the pages learn a change
                     // (another page's, the assistant's) from the sweep message
-                    if (sweep::note_gain(EndianUtils::read_le_float(buffer.data(), offset + 32 + 4), true) && loop)
+                    // (with Auto on a header's gain is that hop's, not the common one: the
+                    // engine takes the ceiling from the sweep's gain map then)
+                    if (!sweep::auto_gain() && sweep::note_gain(EndianUtils::read_le_float(buffer.data(), offset + 32 + 4), true) && loop)
                         loop->defer([] { WebSocketServer::broadcast_json_message(sweep::state_json()); });
-                    sweep::on_packet(buffer.data() + offset + header_size, channels, samples, ch_freq_hz.data(),
+                    std::array<float, MAX_CHANNELS> ch_gain{};
+                    for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++)
+                        ch_gain[ch] = EndianUtils::read_le_float(buffer.data(), offset + 32 + ch * 8 + 4);
+                    sweep::on_packet(buffer.data() + offset + header_size, channels, samples, ch_freq_hz.data(), ch_gain.data(),
                                      frequency_change_counter, current_group_index, is_retuning);
                     num_channels = channels;
                     data_ready = true;
@@ -1792,6 +1797,7 @@ static void drain_control_socket_locked() {
             heimdall_version_ingest(scratch, static_cast<size_t>(n));
             antbias::ingest(scratch, static_cast<size_t>(n));
             ControlHandler::ingest_sweep_reply(scratch, static_cast<size_t>(n));   // an older heimdall's refusal
+            sweep::ingest_control_reply(scratch, static_cast<size_t>(n));          // set_sweep_auto_gain's answer
             if (static_cast<size_t>(n) < sizeof(scratch)) break;  // drained
             continue;                                             // more waiting
         }

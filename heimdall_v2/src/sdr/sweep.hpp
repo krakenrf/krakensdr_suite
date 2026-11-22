@@ -72,6 +72,23 @@ void sweep_note_valid_set();
 // re-pairing flush on the way back to coherent is then the last one)
 void sweep_quiesce_flushes();
 
+// ---- Auto gain (8092 set_sweep_auto_gain; docs/dev/operating-modes.md,
+// "Auto gain"): a gain per hop frequency, learned from the hops' valid
+// samples; the common gain is the ceiling. Not saved. ----
+// Switch it (settings_mutex taken here). Off in sweep mode: every tuner back
+// at the common gain at once (under the 8091 flag).
+void set_sweep_auto_gain(bool enable);
+bool sweep_auto_gain();          // the switch
+// The switch on, sweep mode, and a manual common gain (with the tuner's own
+// AGC, -1, there is no ceiling: auto does nothing)
+bool sweep_auto_gain_active();
+// The conversion worker, for a set it sent as valid in sweep mode: each
+// tuner's frequency and gain as the header read them (before the flag)
+void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32_t* hz, const int* gain, int n);
+// Leaving sweep mode (set_operating_mode, settings_mutex held, the mode still
+// SWEEP): every tuner whose gain differs back at the common gain, under the flag
+void sweep_restore_common_gain();
+
 // The sweep thread (started once from main): hops while the mode is SWEEP,
 // the plan runs and the pipeline is up; idle otherwise.
 void sweep_thread();

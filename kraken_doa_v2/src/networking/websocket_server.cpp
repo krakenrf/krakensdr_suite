@@ -355,6 +355,7 @@ void handle_sweep_view(WS* ws, string_view args) {
         ud->sweep_view = true;
         ud->sweep_completions = sweep::completions();   // its first frame is no waterfall line
         g_sweep_sockets.insert(ws);
+        ws->send(sweep::gain_map_json(), uWS::TEXT, true);   // (the gain map once: it goes again only when it changes)
     }
 }
 
@@ -508,7 +509,14 @@ void pump_full(WS* ws, FullCache* lazy, uint32_t grid) {
 // Sweep mode, every 50 ms tick: each page with a sweep view gets a frame when
 // something changed (at most 20 a second while hops arrive); a completed sweep
 // marks its frame (flag 2: the page's waterfall line). A slow link skips
+uint64_t g_gain_map_sent = ~0ull;
 void send_sweep_views() {
+    // auto gain: the gain map when it changed (at a completion)
+    if (const uint64_t gv = sweep::gain_map_version(); gv != g_gain_map_sent) {
+        g_gain_map_sent = gv;
+        const string gm = sweep::gain_map_json();
+        for (ClientWS* ws : g_sweep_sockets) ws->send(gm, uWS::TEXT, true);
+    }
     const uint64_t ver = sweep::data_version();
     const uint32_t done = sweep::completions();
     for (ClientWS* ws : g_sweep_sockets) {
@@ -1303,6 +1311,9 @@ void WebSocketServer::web_server_main() {
                 
                 us_timer_set(broadcast_timer, [](struct us_timer_t* /*timer*/) {
                     net_stats_tick();   // NET_STATS (every mode)
+                    // the sweep state again when auto gain's counts changed or heimdall
+                    // answered set_sweep_auto_gain (every page: the state is shared)
+                    if (global_ssl_app && sweep::take_state_dirty()) WebSocketServer::broadcast_json_message(sweep::state_json());
                     // Sweep mode: the sweep frames only - no regular spectrum
                     // (nothing is FFT'd but the sweep's hops)
                     if (sweep_mode_enabled.load(std::memory_order_relaxed)) {

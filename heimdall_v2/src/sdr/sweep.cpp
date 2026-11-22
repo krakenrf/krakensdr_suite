@@ -67,8 +67,11 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <sstream>
 
 namespace {
@@ -327,6 +330,7 @@ struct HopTiming {
     float round = 0;        // the hop's start -> its dwell's end
     uint32_t valid = 0;     // sets broadcast as valid in the hop
     bool moved = false;     // a tuner was retuned (else the retune fields are 0)
+    float gain_max = 0;     // auto gain: the slowest gain write of the hop, ms (0: none)
 };
 constexpr int TIMING_HOPS = 64;
 std::mutex timing_mutex;
@@ -354,7 +358,8 @@ std::string timing_json() {
     const uint32_t n = std::min<uint32_t>(timing_count, TIMING_HOPS);
     double flag = 0, locked = 0, retune = 0, tune_max = 0, settle = 0, gate = 0, clear = 0, fv = 0, dwell = 0,
            round = 0, valid = 0;
-    uint32_t moved = 0, fv_n = 0;
+    uint32_t moved = 0, fv_n = 0, gain_n = 0;
+    double gain = 0;
     float round_min = 0, round_max = 0;
     uint32_t valid_min = 0, valid_max = 0;
     for (uint32_t i = 0; i < n; i++) {
@@ -365,6 +370,7 @@ std::string timing_json() {
         }
         settle += h.settle; gate += h.gate; clear += h.clear; dwell += h.dwell; round += h.round; valid += h.valid;
         if (h.first_valid >= 0) { fv += h.first_valid; fv_n++; }
+        if (h.gain_max > 0) { gain += h.gain_max; gain_n++; }
         round_min = i ? std::min(round_min, h.round) : h.round;
         round_max = i ? std::max(round_max, h.round) : h.round;
         valid_min = i ? std::min(valid_min, h.valid) : h.valid;
@@ -381,6 +387,7 @@ std::string timing_json() {
       << ",\"first_valid_ms\":" << avg(fv, fv_n) << ",\"dwell_ms\":" << avg(dwell, n)
       << ",\"round_ms\":" << avg(round, n) << ",\"round_min_ms\":" << round_min << ",\"round_max_ms\":" << round_max
       << ",\"valid_per_hop\":" << avg(valid, n) << ",\"valid_min\":" << valid_min << ",\"valid_max\":" << valid_max
+      << ",\"gain_hops\":" << gain_n << ",\"gain_write_ms\":" << avg(gain, gain_n)
       << "}";
     return o.str();
 }
@@ -391,7 +398,257 @@ std::string tuners_json(const std::vector<int>& t) {
     return s + "]";
 }
 
+// ---- Auto gain (docs/dev/operating-modes.md, "Auto gain") ----
+//
+// A gain per hop centre frequency (gain_map), learned from that hop's valid
+// packets of the sweeps before: the common gain (current_gain) is the
+// ceiling; a hop whose values clip (I or Q at 0 / 255) goes down - by a step
+// that grows with how much clips - from its next visit on; it comes back up
+// by AG_RAISE only after a hold without a single clipped value and with its
+// peaks AG_RAISE_HEADROOM below full scale. A raise that is followed by
+// clipping doubles the hold (a transmitter that keys on and off must not
+// make the gain pump). No extra hop, dwell or measuring pass: the gain is
+// written with the hop's retune, and only when it differs from that tuner's
+// gain now (gain_writes). Only the hop thread touches the map; the
+// conversion worker hands each tuner's statistics over in hop_acc.
+std::atomic<bool> auto_gain_on{false};
+
+constexpr double AG_CLIP_SHARE = 1e-4;          // more than 0.01 % of the values clipped: down
+constexpr int AG_RAISE = 30;                    // tenths of a dB
+constexpr double AG_RAISE_HEADROOM_DBFS = -6.0; // the peak after a raise at most this
+constexpr uint32_t AG_HOLD_VISITS = 8, AG_HOLD_VISITS_MAX = 256;
+constexpr int64_t AG_HOLD_NS = 20'000'000'000LL, AG_HOLD_NS_MAX = 640'000'000'000LL;
+constexpr size_t AG_MAP_MAX = 200000;           // entries (hop centres) kept
+constexpr uint32_t AG_SWATH_HZ = 1'200'000;     // a new centre takes the lowest gain learned within this
+
+// The down step (tenths of a dB) for the share of clipped values: a hop
+// that clips hard says nothing about how far it is over (its RMS saturates -
+// 415.1 MHz read -2.6 dBFS at 49.6, 38.6 and 28.0 dB alike), so the step is
+// large there and the next visits refine it
+int ag_down_step(double share) {
+    if (share > 0.01) return 180;
+    if (share > 0.001) return 90;
+    return 45;
+}
+// A gain write costs ~9 ms on the KrakenSDR (5-6 USB control transfers -
+// more than the fast retune itself), so a tuner goes UP only when its next
+// hop wants at least this much more (down: always - it must not clip)
+constexpr int AG_UP_MIN = 30;
+
+struct GainEntry {
+    int gain = 0;                 // tenths of a dB (the tuner takes the largest list value <= min(this, ceiling))
+    uint32_t clean = 0;           // visits in a row without a clipped value
+    int64_t clean_since_ns = 0;
+    uint32_t hold_visits = AG_HOLD_VISITS;
+    int64_t hold_ns = AG_HOLD_NS;
+    bool last_raise = false;      // the last change was a raise (clipping after it doubles the hold)
+    float peak_max_dbfs = -200;   // the highest peak over the clean visits since the last change
+};
+std::map<uint32_t, GainEntry> gain_map;   // the hop thread only
+
+// One tuner's valid packets of the hop it is on (the conversion worker adds,
+// the hop thread takes them at the dwell's end)
+struct HopAcc {
+    uint32_t hz = 0;
+    int gain = -999;
+    uint64_t values = 0, clipped = 0, sumsq = 0;   // sumsq of (2u - 255), per value
+    int peak = 0;                                   // max |2u - 255| (255 = full scale)
+    uint32_t packets = 0;
+};
+std::mutex acc_mutex;
+HopAcc hop_acc[NUM_DEVICES];
+std::atomic<uint32_t> stats_mask{0};   // the tuners of the plan (the hop thread sets it)
+
+// Status (of the last completed sweep)
+std::atomic<uint32_t> ag_reduced_hops{0}, ag_clipped_hops{0}, ag_changes{0}, ag_writes{0}, ag_write_failures{0};
+std::atomic<int> ag_min_gain{-999};
+// ... being counted in the sweep that runs
+uint32_t ag_cur_clipped = 0, ag_cur_changes = 0, ag_cur_writes = 0;
+
+// Each tuner's gain list (rtlsdr_get_tuner_gains, tenths of a dB, ascending),
+// cached per handle (an element-count change reopens the devices)
+struct GainList { rtlsdr_dev_t* dev = nullptr; std::vector<int> g; };
+GainList gain_lists[NUM_DEVICES];
+const std::vector<int>& gains_of(int t) {
+    GainList& l = gain_lists[t];
+    rtlsdr_dev_t* dev = (t < static_cast<int>(devices.size()) && devices[t]) ? devices[t]->dev : nullptr;
+    if (l.dev != dev || l.g.empty()) {
+        l.dev = dev;
+        l.g.clear();
+        if (dev) {
+            const int n = rtlsdr_get_tuner_gains(dev, nullptr);
+            if (n > 0) {
+                l.g.resize(static_cast<size_t>(n));
+                if (rtlsdr_get_tuner_gains(dev, l.g.data()) != n) l.g.clear();
+                std::sort(l.g.begin(), l.g.end());
+            }
+        }
+    }
+    return l.g;
+}
+// The largest list value <= g (the lowest if none); g itself without a list
+int quantize_down(const std::vector<int>& L, int g) {
+    if (L.empty()) return g;
+    auto it = std::upper_bound(L.begin(), L.end(), g);
+    return it == L.begin() ? L.front() : *(it - 1);
+}
+// The smallest list value > g (g if none)
+int next_up(const std::vector<int>& L, int g) {
+    auto it = std::upper_bound(L.begin(), L.end(), g);
+    return it == L.end() ? g : *it;
+}
+
+// The gain learned for a hop centre (the ceiling if none): its own entry,
+// else the lowest within AG_SWATH_HZ (a plan with other centres)
+int learned_gain(uint32_t hz, int ceiling) {
+    auto it = gain_map.find(hz);
+    if (it != gain_map.end()) return std::min(it->second.gain, ceiling);
+    int g = ceiling;
+    for (auto lo = gain_map.lower_bound(hz > AG_SWATH_HZ ? hz - AG_SWATH_HZ : 0);
+         lo != gain_map.end() && lo->first <= hz + AG_SWATH_HZ; ++lo)
+        g = std::min(g, lo->second.gain);
+    return g;
+}
+
+// The gain tuner t takes for hop centre hz now: the common gain unless auto
+// is active (then the learned gain, on the tuner's own list)
+int wanted_gain(int t, uint32_t hz) {
+    const int ceiling = current_gain.load();
+    if (!auto_gain_on.load() || ceiling < 0) return ceiling;
+    return quantize_down(gains_of(t), learned_gain(hz, ceiling));
+}
+
+// A hop visit's statistics -> its entry (the hop thread, after the dwell)
+void ag_learn(int t, const HopAcc& a, int64_t now) {
+    const int ceiling = current_gain.load();
+    if (ceiling < 0 || a.values == 0 || a.gain < 0) return;
+    const std::vector<int>& L = gains_of(t);
+    const double share = static_cast<double>(a.clipped) / static_cast<double>(a.values);
+    const float peak_dbfs = a.peak > 0 ? 20.0f * std::log10(static_cast<float>(a.peak) / 255.0f) : -200.0f;
+    auto it = gain_map.find(a.hz);
+    if (share > AG_CLIP_SHARE) {
+        ag_cur_clipped++;
+        const int lowest = L.empty() ? 0 : L.front();
+        if (a.gain <= lowest) return;   // nothing lower to take
+        const bool fresh = it == gain_map.end();
+        if (fresh) {
+            if (gain_map.size() >= AG_MAP_MAX) gain_map.clear();
+            it = gain_map.emplace(a.hz, GainEntry{}).first;
+        }
+        GainEntry& e = it->second;
+        const int down = std::max(lowest, quantize_down(L, a.gain - ag_down_step(share)));
+        // (a visit taken before the last change must not undo it)
+        e.gain = fresh ? down : std::min(e.gain, down);
+        if (e.last_raise) {   // it clipped again after a raise: wait longer next time
+            e.hold_visits = std::min(e.hold_visits * 2, AG_HOLD_VISITS_MAX);
+            e.hold_ns = std::min(e.hold_ns * 2, AG_HOLD_NS_MAX);
+        }
+        e.last_raise = false;
+        e.clean = 0;
+        e.peak_max_dbfs = -200;
+        ag_cur_changes++;
+        return;
+    }
+    if (it == gain_map.end()) return;   // at the ceiling and fine
+    GainEntry& e = it->second;
+    if (a.gain != quantize_down(L, std::min(e.gain, ceiling))) return;   // taken with another gain (changed meanwhile)
+    if (a.clipped > 0) { e.clean = 0; e.peak_max_dbfs = -200; return; }   // a few clipped values: hold, no raise
+    if (e.clean++ == 0) e.clean_since_ns = now;
+    e.peak_max_dbfs = std::max(e.peak_max_dbfs, peak_dbfs);
+    if (e.clean < e.hold_visits || now - e.clean_since_ns < e.hold_ns) return;
+    const int up = std::min(ceiling, std::max(next_up(L, a.gain), quantize_down(L, a.gain + AG_RAISE)));
+    const float rise_db = static_cast<float>(up - a.gain) / 10.0f;
+    if (up <= a.gain || e.peak_max_dbfs + rise_db > AG_RAISE_HEADROOM_DBFS) return;
+    ag_cur_changes++;
+    if (up >= ceiling) { gain_map.erase(it); return; }   // back at the ceiling
+    e.gain = up;
+    e.last_raise = true;
+    e.clean = 0;
+    e.peak_max_dbfs = -200;
+}
+
+// At a sweep's end: the status of that sweep (the plan's hops)
+void ag_publish(const SweepPlan& p) {
+    const int ceiling = current_gain.load();
+    uint32_t reduced = 0;
+    int lowest = ceiling;
+    if (auto_gain_on.load() && ceiling >= 0 && !gain_map.empty()) {
+        for (uint32_t h = 0; h < p.steps; h++) {
+            const int g = learned_gain(static_cast<uint32_t>(p.first_center_hz + h * p.step_hz), ceiling);
+            if (g < ceiling) { reduced++; lowest = std::min(lowest, g); }
+        }
+    }
+    ag_reduced_hops.store(reduced);
+    ag_min_gain.store(lowest);
+    ag_clipped_hops.store(ag_cur_clipped);
+    ag_changes.store(ag_cur_changes);
+    ag_writes.store(ag_cur_writes);
+    ag_cur_clipped = ag_cur_changes = ag_cur_writes = 0;
+}
+
+// One gain write (under device_io_mutex, on the tuner's own thread): once
+// more on failure. The tuner is in manual gain mode (the common gain is).
+bool write_gain(rtlsdr_dev_t* dev, int g) {
+    return rtlsdr_set_tuner_gain(dev, g) >= 0 || rtlsdr_set_tuner_gain(dev, g) >= 0;
+}
+
 }  // namespace
+
+void set_sweep_auto_gain(bool enable) {
+    std::lock_guard<std::mutex> lock(settings_mutex);
+    const bool was = auto_gain_on.exchange(enable);
+    if (was && !enable && in_sweep()) sweep_restore_common_gain();
+    sweep_notify();
+}
+
+bool sweep_auto_gain() { return auto_gain_on.load(); }
+
+bool sweep_auto_gain_active() { return auto_gain_on.load() && in_sweep() && current_gain.load() >= 0; }
+
+void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32_t* hz, const int* gain, int n) {
+    const uint32_t mask = stats_mask.load(std::memory_order_relaxed);
+    for (int t = 0; t < n && t < NUM_DEVICES && t < static_cast<int>(raw_set.size()); t++) {
+        if (!(mask & (1u << t)) || hz[t] == 0 || gain[t] < 0) continue;
+        const uint8_t* b = raw_set[t].data();
+        const size_t nb = raw_set[t].size();
+        uint64_t clipped = 0, ss = 0;
+        int peak = 0;
+        for (size_t k = 0; k < nb; k++) {
+            const int d = 2 * static_cast<int>(b[k]) - 255;
+            const int ad = d < 0 ? -d : d;
+            clipped += ad == 255;
+            ss += static_cast<uint32_t>(d * d);
+            peak = ad > peak ? ad : peak;
+        }
+        std::lock_guard<std::mutex> lk(acc_mutex);
+        HopAcc& a = hop_acc[t];
+        if (a.hz != hz[t] || a.gain != gain[t]) a = HopAcc{hz[t], gain[t]};
+        a.values += nb;
+        a.clipped += clipped;
+        a.sumsq += ss;
+        a.peak = std::max(a.peak, peak);
+        a.packets++;
+    }
+}
+
+void sweep_restore_common_gain() {
+    const int g = current_gain.load();
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+    int idx[NUM_DEVICES];
+    size_t k = 0;
+    for (int t = 0; t < NUM_DEVICES && t < static_cast<int>(devices.size()); t++)
+        if (devices[t] && devices[t]->dev && wideband_config.get_tuner_gain(t) != g && g >= 0) idx[k++] = t;
+    if (k == 0) return;
+    const bool in_mode = in_sweep();
+    if (in_mode) sweep_note_tuner_change();
+    char ok[NUM_DEVICES] = {};
+    for_each_tuner(k, [&](size_t i) { ok[i] = write_gain(devices[idx[i]]->dev, g); });
+    for (size_t i = 0; i < k; i++) {
+        wideband_config.tuner_gains[idx[i]] = g;
+        if (!ok[i]) std::cerr << "Sweep: tuner " << idx[i] << " failed to return to the common gain" << std::endl;
+    }
+    if (in_mode) sweep_note_tuner_change_done();
+}
 
 std::vector<int> sweep_tuners(uint32_t tuner_mask) {
     const int n = std::clamp(active_num_elements.load(), 0, std::min<int>(NUM_DEVICES, static_cast<int>(devices.size())));
@@ -534,6 +791,15 @@ std::string sweep_status_json() {
              return tuners_json(f);
          }()
       << ",\"gates_failed\":" << sweep_gates_failed() << ",\"gates_late\":" << sweep_gates_late()
+      // auto gain (round 9; the counts of the last completed sweep)
+      << ",\"auto_gain\":" << (auto_gain_on.load() ? "true" : "false")
+      << ",\"auto_gain_active\":" << (sweep_auto_gain_active() ? "true" : "false")
+      << ",\"gain_ceiling_db\":" << current_gain.load() / 10.0
+      << ",\"gain_reduced_hops\":" << ag_reduced_hops.load()
+      << ",\"gain_min_db\":" << (ag_min_gain.load() == -999 ? current_gain.load() : ag_min_gain.load()) / 10.0
+      << ",\"clipped_hops\":" << ag_clipped_hops.load()
+      << ",\"gain_changes\":" << ag_changes.load() << ",\"gain_writes\":" << ag_writes.load()
+      << ",\"gain_write_failures\":" << ag_write_failures.load()
       << ",\"timing\":" << timing_json() << "}";
     return o.str();
 }
@@ -605,6 +871,10 @@ void sweep_thread() {
     std::vector<char> move_ok;
     std::vector<int64_t> move_ns;            // each tuner's tune call, ns
     std::vector<char> move_fast;             // ... left on the fast path's state
+    std::vector<char> move_tune;             // the frequency changes (else: the gain only)
+    std::vector<int> move_gain;              // the gain it takes (auto gain; -999: unchanged)
+    std::vector<char> move_gain_ok;
+    std::vector<int64_t> move_gain_ns;       // its gain write, ns
     // the counter steps once per round: a round retried (a dongle stalled
     // its gate, a pause or plan change before its dwell) is not a new one
     bool round_open = false;
@@ -655,22 +925,42 @@ void sweep_thread() {
         if (r >= R) r = 0;
         move_tuner.clear();
         move_hz.clear();
+        move_tune.clear();
+        move_gain.clear();
         uint32_t hopping = 0;   // tuners that move from round to round (a block of 2+ hops)
+        uint32_t plan_mask = 0;
+        for (int t : sel) plan_mask |= 1u << t;
+        stats_mask.store(auto_gain_on.load() ? plan_mask : 0, std::memory_order_relaxed);
         for (size_t k = 0; k < kp; k++) {
             const uint64_t b0 = static_cast<uint64_t>(k) * H / kp, b1 = static_cast<uint64_t>(k + 1) * H / kp;
             if (b1 - b0 > 1) hopping |= 1u << sel[k];
             const uint32_t hz = static_cast<uint32_t>(p.first_center_hz + (b0 + r) * p.step_hz);
             // a tuner already there isn't retuned (K' = H: every round is the
             // same - the stream then runs on without a gap); one whose last
-            // retune failed is (its frequency entry is 0)
-            if (b0 + r < b1 && wideband_config.get_tuner_frequency(sel[k]) != hz) {
-                move_tuner.push_back(sel[k]);
-                move_hz.push_back(hz);
+            // retune failed is (its frequency entry is 0). Auto gain: the
+            // gain this hop wants, written with the retune - and alone, under
+            // the same flag, settle and gate, if only the gain differs
+            if (b0 + r < b1) {
+                const bool tune = wideband_config.get_tuner_frequency(sel[k]) != hz;
+                const int g = wanted_gain(sel[k], hz);
+                const int now_g = wideband_config.get_tuner_gain(sel[k]);
+                // (a small step up isn't worth a write: the hop is taken a
+                // little lower - and its header says so)
+                const bool gain = g >= 0 && g != now_g &&
+                                  (!auto_gain_on.load() || now_g < 0 || g < now_g || g - now_g >= AG_UP_MIN);
+                if (tune || gain) {
+                    move_tuner.push_back(sel[k]);
+                    move_hz.push_back(hz);
+                    move_tune.push_back(tune);
+                    move_gain.push_back(gain ? g : -999);
+                }
             }
         }
         move_ok.assign(move_tuner.size(), 0);
         move_ns.assign(move_tuner.size(), 0);
         move_fast.assign(move_tuner.size(), 0);
+        move_gain_ok.assign(move_tuner.size(), 1);
+        move_gain_ns.assign(move_tuner.size(), 0);
         // the flag may be on without a retune: the mode just entered, a gain
         // change - then the settle + flush below run all the same
         const bool retune = !move_tuner.empty();
@@ -713,26 +1003,46 @@ void sweep_thread() {
                     if (t < 0 || t >= static_cast<int>(devices.size()) || !devices[t] || !devices[t]->dev) return;
                     const int64_t a = now_ns();
                     bool fast = false;
-                    move_ok[i] = sweep_tune(devices[t]->dev, move_hz[i], fast);
+                    move_ok[i] = move_tune[i] ? sweep_tune(devices[t]->dev, move_hz[i], fast) : 1;
                     move_fast[i] = fast;
+                    // the hop's gain after its frequency (a tuner whose
+                    // retune failed gets it on its next try)
+                    if (move_ok[i] && move_gain[i] != -999) {
+                        const int64_t g0 = now_ns();
+                        move_gain_ok[i] = write_gain(devices[t]->dev, move_gain[i]);
+                        move_gain_ns[i] = now_ns() - g0;
+                    }
                     move_ns[i] = now_ns() - a;
                 });
                 for (size_t i = 0; i < move_tuner.size(); i++) {
+                    if (!move_tune[i]) continue;
                     if (move_fast[i]) fast_pending.fetch_or(1u << move_tuner[i]);
                     else fast_pending.fetch_and(~(1u << move_tuner[i]));   // a full tune ends it
                 }
                 t_retune_end = now_ns();
                 tm.retune = ms_between(t_locked, t_retune_end);
                 for (int64_t ns : move_ns) tm.tune_max = std::max(tm.tune_max, static_cast<float>(ns) / 1e6f);
+                for (int64_t ns : move_gain_ns) tm.gain_max = std::max(tm.gain_max, static_cast<float>(ns) / 1e6f);
                 // Only now the new frequencies (the header reads them before
                 // the flag). A tuner that failed is NOT on its old frequency
                 // (the R820T / E4000 drivers fail after N / SDM are written,
                 // librtlsdr then reports 0): its entry is 0, which no client
                 // takes for a hop, until a retune succeeds
+                // The gain likewise, after the tuner took it (the header
+                // reads it with the frequency, before the flag). A gain
+                // write that failed twice leaves the tuner's gain unknown:
+                // its frequency entry 0 (no valid data) and its gain -2, so
+                // the next hop writes both again.
                 uint32_t failed_now = 0;
                 for (size_t i = 0; i < move_tuner.size(); i++) {
-                    wideband_config.set_tuner_frequency(move_tuner[i], move_ok[i] ? move_hz[i] : 0);
-                    if (!move_ok[i]) failed_now |= 1u << move_tuner[i];
+                    const int t = move_tuner[i];
+                    if (move_ok[i] && move_gain[i] != -999) {
+                        ag_cur_writes++;
+                        wideband_config.tuner_gains[t] = move_gain_ok[i] ? move_gain[i] : -2;
+                        if (!move_gain_ok[i]) { move_ok[i] = 0; ag_write_failures.fetch_add(1); }
+                    }
+                    if (move_tune[i] || !move_ok[i]) wideband_config.set_tuner_frequency(t, move_ok[i] ? move_hz[i] : 0);
+                    if (!move_ok[i]) failed_now |= 1u << t;
                 }
                 uint32_t moved = 0;
                 for (int t : move_tuner) moved |= 1u << t;
@@ -740,7 +1050,8 @@ void sweep_thread() {
                 if (failed_now)
                     sweep_state.failed_retunes.fetch_add(static_cast<uint32_t>(std::popcount(failed_now)));
                 sweep_state.last_retune_ns.store(now_ns());
-                for (int t : move_tuner) note_tuner_retuned(t);   // (also: --kerberos marks the calibration stale)
+                for (size_t i = 0; i < move_tuner.size(); i++)
+                    if (move_tune[i]) note_tuner_retuned(move_tuner[i]);   // (also: --kerberos marks the calibration stale)
             }
             if (!cancelled) {
                 // tuners that won't move again (out of the plan, or on the
@@ -807,6 +1118,23 @@ void sweep_thread() {
         if (!wait_dwell(pg, valid_from, t_clear)) continue;
 
         const int64_t t_end = now_ns();
+        // Auto gain: what each tuner's valid packets of this hop showed
+        // (handed over by the conversion worker before it counted them)
+        if (auto_gain_on.load() && current_gain.load() >= 0) {
+            for (size_t k = 0; k < kp; k++) {
+                const uint64_t b0 = static_cast<uint64_t>(k) * H / kp, b1 = static_cast<uint64_t>(k + 1) * H / kp;
+                if (b0 + r >= b1) continue;
+                const int t = sel[k];
+                const uint32_t hz = static_cast<uint32_t>(p.first_center_hz + (b0 + r) * p.step_hz);
+                HopAcc a;
+                {
+                    std::lock_guard<std::mutex> lk(acc_mutex);
+                    a = hop_acc[t];
+                    hop_acc[t] = HopAcc{};
+                }
+                if (a.hz == hz && a.packets > 0) ag_learn(t, a, t_end);
+            }
+        }
         tm.dwell = ms_between(t_clear, t_end);
         tm.round = ms_between(t0, t_end);
         tm.valid = sweep_state.valid_sets.load() - valid_from;
@@ -817,6 +1145,7 @@ void sweep_thread() {
         round_open = false;
         if (++r >= R) {
             r = 0;
+            ag_publish(p);
             std::lock_guard<std::mutex> plock(sweep_state.mutex);
             if (sweep_state.plan_generation.load() == pg) sweep_state.sweeps.fetch_add(1);
         }

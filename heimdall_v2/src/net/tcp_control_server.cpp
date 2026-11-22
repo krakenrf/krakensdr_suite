@@ -712,6 +712,34 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         return o.str();
     }
 
+    // Sweep mode's auto gain: {"command":"set_sweep_auto_gain","enable":true|false}.
+    // Accepted in every mode, acts in sweep mode; not saved. The reply names
+    // the state ("auto_gain"): that is how a client tells this heimdall from
+    // one without it (whose unknown-command error names nothing).
+    if (json_str.find("\"set_sweep_auto_gain\"") != std::string::npos) {
+        size_t p = json_str.find("\"enable\"");
+        if (p != std::string::npos) {
+            p += 8;
+            while (p < json_str.size() && std::isspace(static_cast<unsigned char>(json_str[p]))) p++;
+            if (p < json_str.size() && json_str[p] == ':') {
+                p++;
+                while (p < json_str.size() && std::isspace(static_cast<unsigned char>(json_str[p]))) p++;
+                auto literal = [&](const char* w) {
+                    const size_t n = std::strlen(w);
+                    return json_str.compare(p, n, w) == 0 &&
+                           (p + n >= json_str.size() || std::strchr(",} \t\r\n", json_str[p + n]) != nullptr);
+                };
+                int v = literal("true") ? 1 : literal("false") ? 0 : -1;
+                if (v >= 0) {
+                    set_sweep_auto_gain(v == 1);
+                    return std::string("{\"status\":\"success\",\"auto_gain\":") + (sweep_auto_gain() ? "true" : "false") +
+                           "}";
+                }
+            }
+        }
+        return "{\"status\":\"error\",\"message\":\"set_sweep_auto_gain needs \\\"enable\\\": true or false\"}";
+    }
+
     // Sweep mode's plan (kraken_doa_v2/docs/dev/sweep-mode.md, "The contract"):
     // {"command":"set_sweep"[,"first_center_hz":F0,"step_hz":S,"steps":H]
     //  [,"tuners":[i,j,..]][,"dwell_ms":D][,"settle_ms":T][,"run":true|false]}

@@ -62,6 +62,7 @@ public:
     static void ingest_sweep_reply(const char* data, size_t n);
     // The sweep's plan to heimdall (set_sweep) - on a reconnect. uWS loop only.
     static void send_sweep_plan();
+    static void send_sweep_plan_now();   // the plan + the auto gain switch
 
     // Generic RTL-SDR mode (server_generic_rtlsdr, header bit 12) switched
     // on / off: tells the pages (operating_mode carries generic_rtlsdr).
