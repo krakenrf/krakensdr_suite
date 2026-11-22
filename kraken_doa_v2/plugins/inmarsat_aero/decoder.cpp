@@ -31,7 +31,10 @@ namespace {
 
 using aero::cf;
 constexpr double FS = 24000;
-constexpr float ACQ_SNR_DB = 13.5f;   // mean of the two squared-spectrum lines over the median (noise: <= 10.3 dB in 220 searches)
+// the line pair's score over the median that makes a carrier, by the number of
+// (half-overlapping) FFTs summed: noise reached 13.5 / 10.4 / 9.9 dB in 70 / 70 /
+// 1435 searches with 1 / 2 / 3 (noise300 in 4 s starts and whole); ~3 dB above
+inline float acq_threshold_db(int k) { return k <= 1 ? 16.5f : k == 2 ? 13.5f : 12.5f; }
 constexpr double HIST_S = 3.0;        // input kept to start the demodulator on
 constexpr double SYNC_TIMEOUT_FRAMES = 6.5;
 
@@ -82,10 +85,22 @@ public:
         // the VFO moved (or the receiver was retuned): another channel - start
         // over. Off air, a VFO moved from a 600 bit/s channel to a 1200 bit/s
         // one 2 kHz off kept the old state and locked 900 Hz beside the
-        // carrier for a minute (408 of 960 SUs); from a fresh start, 594 / 594
+        // carrier for a minute (408 of 960 SUs); from a fresh start, 594 / 594.
+        // A small move (<= 2 kHz) with the carrier still in range while a
+        // channel is synced keeps the lock: the demodulator follows the move
         const double rf = host.rf_hz();
         if (std::isfinite(rf) && rf > 0) {
-            if (rf_seen_ > 0 && std::fabs(rf - rf_seen_) > 100) reset();
+            const double d = rf_seen_ > 0 ? rf - rf_seen_ : 0;
+            if (std::fabs(d) > 100) {
+                const double nc = demod_.carrier_hz() - d;
+                if (state_ == LOCK && synced_now() && std::fabs(d) <= 2000 && std::fabs(nc) <= 2900) {
+                    demod_.shift_carrier(-d);
+                    lock_f0_ -= d;
+                    if (debug_) dbg("VFO moved " + std::to_string(d) + " Hz: carrier followed");
+                } else {
+                    reset();
+                }
+            }
             rf_seen_ = rf;
         }
         if (!tbase_set_) {
@@ -109,6 +124,7 @@ public:
         if (acq_ && acq_->process(x, n) && state_ == ACQ) try_lock();
         // a lock just now ran the demodulator over the history, x included
         if (state_ == LOCK && before == LOCK) run_demod(x, n);
+        if (state_ == LOCK) check_stuck();
         n_ += static_cast<int64_t>(n);
         if (state_ == LOCK) supervise();
     }
@@ -132,6 +148,10 @@ private:
     std::vector<aero::SoftBit> bits_;
     int64_t lock_at_ = 0;
     double lock_rate_ = 0, lock_f0_ = 0;
+    float lock_snr_ = 0;
+    aero::DemodCfg lock_cfg_;
+    bool restarted_ = false;
+    uint64_t su_at_lock_ = 0;
     std::vector<std::pair<double, double>> tried_;   // (rate, f0) that did not sync
     double last_fact_ = -10;
     double latest_t_ = 0;   // host time of the newest bit the demodulator gave
@@ -147,6 +167,7 @@ private:
     void dbg(const std::string& s) { host.log(s); }
 
     bool bursts() const { return mode_.rfind("burst", 0) == 0; }
+    bool synced_now() const { return cmode_ ? cch_.synced() : pch_.synced(); }
     double host_t(double sample) const { return tbase_ + sample / FS; }
 
     void make_acq() {
@@ -159,7 +180,7 @@ private:
             if (want(r)) wide.push_back(r);
         for (double r : {600.0, 1200.0, 2400.0})
             if (want(r)) narrow.push_back(r);
-        acq_ = std::make_unique<aero::Acquisition>(FS, wide, narrow, 2900.0, 2);
+        acq_ = std::make_unique<aero::Acquisition>(FS, wide, narrow, 2900.0, 3);
     }
 
     void try_lock() {
@@ -167,14 +188,22 @@ private:
             std::string all = "acq: ";
             for (const auto& h : acq_->hits()) {
                 char e[64];
-                snprintf(e, sizeof e, "%d@%+.1f/%.1fdB ", static_cast<int>(h.rate), h.f0, h.snr_db);
+                snprintf(e, sizeof e, "%d@%+.1f/%.1fdB/k%d ", static_cast<int>(h.rate), h.f0, h.snr_db, h.k);
                 all += e;
             }
             dbg(all);
         }
         const aero::AcqHit* best = nullptr;
+        const bool narrow_wanted = mode_ == "auto" || mode_ == "p600" || mode_ == "p1200" || mode_ == "p2400";
+        bool narrow_seen = false;
+        for (const auto& h : acq_->hits())
+            if (h.rate <= 2400) narrow_seen = true;
         for (const auto& h : acq_->hits()) {
-            if (h.snr_db < ACQ_SNR_DB) continue;
+            if (h.snr_db < acq_threshold_db(h.k)) continue;
+            // a wide-band rate before the narrow band's first result only when
+            // clearly so: a strong 600 / 1200 bit/s carrier scores up to 16 dB
+            // as 4800 / 8400 bit/s there
+            if (h.rate >= 4800 && narrow_wanted && !narrow_seen && h.snr_db < acq_threshold_db(h.k) + 4) continue;
             bool bad = false;
             for (const auto& t : tried_)
                 if (t.first == h.rate && std::fabs(t.second - h.f0) < 20) bad = true;
@@ -185,7 +214,7 @@ private:
         // same carrier: prefer the lowest rate found there
         if (best)
             for (const auto& h : acq_->hits())
-                if (h.snr_db >= ACQ_SNR_DB && h.rate < best->rate && std::fabs(h.f0 - best->f0) < 10) best = &h;
+                if (h.snr_db >= acq_threshold_db(h.k) && h.rate < best->rate && std::fabs(h.f0 - best->f0) < 10) best = &h;
         if (!best) return;
         aero::DemodCfg c;
         c.fs = FS;
@@ -210,15 +239,47 @@ private:
         } else {
             return;
         }
+        if (debug_) {
+            char e[64];
+            snprintf(e, sizeof e, "lock %d@%+.1f", static_cast<int>(best->rate), best->f0);
+            dbg(e);
+        }
         lock_rate_ = best->rate;
         lock_f0_ = best->f0;
-        lock_at_ = hist_base_;
-        demod_.start(c, best->f0, static_cast<double>(hist_base_));
+        lock_snr_ = best->snr_db;
+        su_at_lock_ = su_.su_ok();
+        lock_cfg_ = c;
+        restarted_ = false;
         state_ = LOCK;
         host.fact("Channel", channel_name() + ": syncing");
-        // run it over the history first (the samples the acquisition saw)
-        std::vector<cf> h(hist_.begin(), hist_.end());
+        start_demod(0);
+    }
+
+    // the demodulator from the oldest sample of the history (the samples the
+    // acquisition saw), `skip` input samples later
+    void start_demod(size_t skip) {
+        skip = std::min(skip, hist_.size());
+        lock_at_ = hist_base_ + static_cast<int64_t>(skip);
+        demod_.start(lock_cfg_, lock_f0_, static_cast<double>(lock_at_));
+        std::vector<cf> h(hist_.begin() + static_cast<long>(skip), hist_.end());
         run_demod(h.data(), h.size());
+    }
+
+    // Off air, from some starting points the A-BPSK demodulator settled on a
+    // wrong timing / phase equilibrium (quality ~0.87 instead of ~0.98 on a
+    // strong carrier) and stayed there - UWs found, every SU failing - for
+    // up to 16 s; started half a bit later it locks at once. So: a strong
+    // carrier, a second of demodulation, low quality and no SU yet -> start
+    // the demodulator again on the history, half a bit later (once)
+    void check_stuck() {
+        if (restarted_ || cmode_ || lock_snr_ < 20 || su_.su_ok() > su_at_lock_) return;
+        const double since = static_cast<double>(n_ - lock_at_) / FS;
+        if (since < 1.0 || demod_.quality() >= 0.93) return;
+        restarted_ = true;
+        if (debug_) dbg("restart demod (quality " + std::to_string(demod_.quality()) + ")");
+        const aero::PRate* pr = aero::p_rate(lock_rate_);
+        if (pr) pch_.start(*pr);
+        start_demod(static_cast<size_t>(std::lround(0.5 * FS / lock_rate_)));
     }
 
     std::string channel_name() const {

@@ -28,14 +28,19 @@ using cf = std::complex<float>;
 struct AcqHit {
     double rate = 0;     // bit/s
     double f0 = 0;       // carrier offset (Hz) at the input
-    float snr_db = 0;    // weaker line over the median of the squared spectrum
+    float snr_db = 0;    // mean of the two lines over the median of the squared spectrum
     float bw = 0;        // not used
+    int k = 0;           // FFTs summed for it (1 .. navg; they overlap by half)
 };
 
 class Acquisition {
 public:
     // fs: input rate; rates_wide / rates_narrow: the candidates; max_off:
-    // the carrier offsets searched (+- Hz); navg: FFTs averaged
+    // the carrier offsets searched (+- Hz); navg: at most this many FFTs
+    // summed. The FFTs overlap by half and a search runs after each one on
+    // the sum of the last 1 .. navg (AcqHit::k says how many): an early
+    // estimate for a strong signal, a better one later for a weak one -
+    // the caller's threshold depends on k
     Acquisition(double fs, std::vector<double> rates_wide, std::vector<double> rates_narrow, double max_off, int navg);
     ~Acquisition();
     Acquisition(const Acquisition&) = delete;
@@ -56,7 +61,10 @@ private:
         kfft_complex* out = nullptr;
         kfft_plan plan = nullptr;
         std::vector<float> acc;
-        int fill = 0, nacc = 0;
+        std::vector<cf> sq;                    // the squared input, a ring of n
+        std::vector<std::vector<float>> spec;  // the last navg FFTs' power
+        int fill = 0, nacc = 0, since = 0, nspec = 0, head = 0;
+        int64_t total = 0;
         bool ready = false;
     };
     double fs_, max_off_;

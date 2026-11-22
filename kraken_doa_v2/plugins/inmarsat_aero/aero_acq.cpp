@@ -35,14 +35,21 @@ void Acquisition::setup(Band& b, double fs, int n, int navg, std::vector<double>
     b.out = kfft_alloc_complex(n);
     b.plan = kfft_plan_dft_1d(n, b.in, b.out, KFFT_FORWARD);
     b.acc.assign(n, 0.0f);
+    b.sq.assign(n, cf(0, 0));
+    b.spec.assign(static_cast<size_t>(navg), std::vector<float>(n, 0.0f));
 }
 
 void Acquisition::reset() {
     for (Band* b : {&wide_, &narrow_}) {
         b->fill = 0;
         b->nacc = 0;
+        b->since = 0;
+        b->nspec = 0;
+        b->head = 0;
+        b->total = 0;
         b->ready = false;
         std::fill(b->acc.begin(), b->acc.end(), 0.0f);
+        std::fill(b->sq.begin(), b->sq.end(), cf(0, 0));
     }
     std::fill(lbuf_.begin(), lbuf_.end(), cf(0, 0));
     std::fill(wbuf_.begin(), wbuf_.end(), cf(0, 0));
@@ -52,25 +59,37 @@ void Acquisition::reset() {
 
 double Acquisition::seconds_per_result() const {
     const Band& b = narrow_.rates.empty() ? wide_ : narrow_;
-    return b.n * b.navg / b.fs;
+    return b.n * (b.navg + 1) / 2 / b.fs;
 }
 
 void Acquisition::push(Band& b, cf v) {
     if (b.rates.empty()) return;
-    // Hann window on the squared signal
-    const int i = b.fill;
-    const float w = 0.5f - 0.5f * std::cos(2 * kp::PI * static_cast<float>(i) / static_cast<float>(b.n));
-    const cf s = v * v * w;
-    b.in[i][0] = s.real();
-    b.in[i][1] = s.imag();
-    if (++b.fill < b.n) return;
-    b.fill = 0;
+    // the squared signal into a ring of n; every n/2 samples (once n are
+    // in) an FFT of the last n, Hann-windowed
+    b.sq[static_cast<size_t>(b.fill)] = v * v;
+    b.fill = (b.fill + 1) % b.n;
+    b.total++;
+    if (++b.since < b.n / 2 || b.total < b.n) return;
+    b.since = 0;
+    for (int i = 0; i < b.n; i++) {
+        const float w = 0.5f - 0.5f * std::cos(2 * kp::PI * static_cast<float>(i) / static_cast<float>(b.n));
+        const cf s = b.sq[static_cast<size_t>((b.fill + i) % b.n)] * w;
+        b.in[i][0] = s.real();
+        b.in[i][1] = s.imag();
+    }
     kfft_execute(b.plan);
-    for (int k = 0; k < b.n; k++) b.acc[k] += b.out[k][0] * b.out[k][0] + b.out[k][1] * b.out[k][1];
-    if (++b.nacc < b.navg) return;
-    search(b);
-    b.nacc = 0;
+    std::vector<float>& sp = b.spec[static_cast<size_t>(b.head)];
+    for (int k = 0; k < b.n; k++) sp[static_cast<size_t>(k)] = b.out[k][0] * b.out[k][0] + b.out[k][1] * b.out[k][1];
+    b.head = (b.head + 1) % b.navg;
+    b.nspec = std::min(b.nspec + 1, b.navg);
+    // the sum of the last nspec spectra
     std::fill(b.acc.begin(), b.acc.end(), 0.0f);
+    for (int j = 0; j < b.nspec; j++) {
+        const std::vector<float>& s = b.spec[static_cast<size_t>((b.head - 1 - j + b.navg) % b.navg)];
+        for (int k = 0; k < b.n; k++) b.acc[static_cast<size_t>(k)] += s[static_cast<size_t>(k)];
+    }
+    b.nacc = b.nspec;
+    search(b);
     b.ready = true;
 }
 
@@ -112,6 +131,7 @@ void Acquisition::search(Band& b) {
     };
     for (double R : b.rates) {
         AcqHit best;
+        best.k = b.nacc;
         best.rate = R;
         best.snr_db = -100;
         const double lim = std::min(max_off_, (b.fs / 2 - R / 2) / 2 - 2 * df);
