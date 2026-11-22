@@ -15,35 +15,41 @@ constexpr float COSTAS_KP = 0.022f, COSTAS_KI = 2.5e-4f;
 constexpr float TIMING_KP = 0.02f, TIMING_KI = 2e-5f;
 }  // namespace
 
-BpskDemod::BpskDemod(double fs) : fs_(fs), sps_nom_(fs / 1200.0) {
-    acq_buf_.reserve(NACQ);
-    win_.resize(NACQ);
-    for (int i = 0; i < NACQ; i++) win_[i] = 0.5f - 0.5f * std::cos(2 * kp::PI * i / (NACQ - 1));
-    fin_ = kfft_alloc_complex(NACQ);
-    fout_ = kfft_alloc_complex(NACQ);
-    plan_ = kfft_plan_dft_1d(NACQ, fin_, fout_, KFFT_FORWARD);
+BpskDemod::Stage::Stage(int n, double fs, double thr) : N(n), thr_db(thr) {
+    win.resize(N);
+    for (int i = 0; i < N; i++) win[i] = 0.5f - 0.5f * std::cos(2 * kp::PI * i / (N - 1));
+    in = kfft_alloc_complex(N);
+    out = kfft_alloc_complex(N);
+    plan = kfft_plan_dft_1d(N, in, out, KFFT_FORWARD);
     // spectrum template: raised cosine (alpha 1) PSD over +-1200 Hz, zero mean
-    const double df = fs_ / NACQ;
+    const double df = fs / N;
     const int w = static_cast<int>(std::lround(1200 / df));
-    tmpl_.resize(2 * w + 1);
+    tmpl.resize(2 * w + 1);
     double mean = 0;
     for (int m = -w; m <= w; m++) {
         const double c = std::cos(kp::PI * m * df / 2400.0);
-        tmpl_[m + w] = static_cast<float>(c * c);
+        tmpl[m + w] = static_cast<float>(c * c);
         mean += c * c;
     }
-    mean /= tmpl_.size();
-    for (float& t : tmpl_) t -= static_cast<float>(mean);
+    mean /= tmpl.size();
+    for (float& t : tmpl) t -= static_cast<float>(mean);
+}
+
+BpskDemod::Stage::~Stage() {
+    kfft_destroy_plan(plan);
+    kfft_free(in);
+    kfft_free(out);
+}
+
+BpskDemod::BpskDemod(double fs)
+    : fs_(fs), sps_nom_(fs / 1200.0), quick_(NQUICK, fs, QUICK_DB), full_(NACQ, fs, FULL_DB) {
+    acq_buf_.reserve(NACQ);
     mf_.set_taps(kp::fir_rrc(static_cast<int>(std::lround(sps_nom_)), MF_SPAN, 1.0f));
     hist_.assign(HIST, kp::cf(0, 0));
     reset();
 }
 
-BpskDemod::~BpskDemod() {
-    kfft_destroy_plan(plan_);
-    kfft_free(fin_);
-    kfft_free(fout_);
-}
+BpskDemod::~BpskDemod() = default;
 
 void BpskDemod::reset() {
     state_ = ACQ;
@@ -51,6 +57,7 @@ void BpskDemod::reset() {
     acq_start_ = n_in_;
     lock_ = 0;
     unlocked_symbols_ = 0;
+    quick_tried_ = false;
 }
 
 double BpskDemod::carrier_hz() const { return freq_ * fs_ / TWO_PI; }
@@ -67,8 +74,12 @@ void BpskDemod::process(const kp::cf* x, size_t n, std::vector<Symbol>& out) {
             if (acq_buf_.empty()) acq_start_ = n_in_;
             acq_buf_.push_back(x[i]);
             n_in_++;
-            if (static_cast<int>(acq_buf_.size()) == NACQ) {
-                acquire();
+            const int have = static_cast<int>(acq_buf_.size());
+            // a strong carrier is taken from the first 0.21 s; the rest wait for 0.85 s
+            const bool quick = !quick_tried_ && have == NQUICK;
+            if (quick || have == NACQ) {
+                if (quick) quick_tried_ = true;
+                acquire(quick ? quick_ : full_);
                 if (state_ == TRACK) {
                     std::vector<kp::cf> buf;
                     buf.swap(acq_buf_);
@@ -76,7 +87,7 @@ void BpskDemod::process(const kp::cf* x, size_t n, std::vector<Symbol>& out) {
                         if (state_ != TRACK) break;
                         track_sample(v, out);
                     }
-                } else {
+                } else if (!quick) {
                     // slide by half a block: the next try overlaps this one
                     acq_buf_.erase(acq_buf_.begin(), acq_buf_.begin() + NACQ / 2);
                     acq_start_ += NACQ / 2;
@@ -89,36 +100,37 @@ void BpskDemod::process(const kp::cf* x, size_t n, std::vector<Symbol>& out) {
     }
 }
 
-void BpskDemod::acquire() {
+void BpskDemod::acquire(Stage& st) {
     acq_count_++;
-    const int N = NACQ;
+    const int N = st.N;
     const double df = fs_ / N;
     // 1) coarse: spectrum shape
     for (int i = 0; i < N; i++) {
-        fin_[i][0] = acq_buf_[i].real() * win_[i];
-        fin_[i][1] = acq_buf_[i].imag() * win_[i];
+        st.in[i][0] = acq_buf_[i].real() * st.win[i];
+        st.in[i][1] = acq_buf_[i].imag() * st.win[i];
     }
-    kfft_execute(plan_);
+    kfft_execute(st.plan);
     std::vector<float> P(N);   // centred: P[k + N/2] = bin k
     for (int k = 0; k < N; k++) {
         const int c = (k + N / 2) % N;
-        P[c] = fout_[k][0] * fout_[k][0] + fout_[k][1] * fout_[k][1];
+        P[c] = st.out[k][0] * st.out[k][0] + st.out[k][1] * st.out[k][1];
     }
-    const int w = static_cast<int>(tmpl_.size() / 2);
+    const int w = static_cast<int>(st.tmpl.size() / 2);
     const int lim = std::min(static_cast<int>(search_hz_ / df), N / 2 - w - 1);
     auto score = [&](int c) {
         double s = 0;
         const float* p = &P[N / 2 + c - w];
-        for (int m = 0; m <= 2 * w; m++) s += tmpl_[m] * p[m];
+        for (int m = 0; m <= 2 * w; m++) s += st.tmpl[m] * p[m];
         return s;
     };
+    const int step = std::max(1, N / 2048);
     int best = 0;
     double bs = -1e300;
-    for (int c = -lim; c <= lim; c += 4) {
+    for (int c = -lim; c <= lim; c += step) {
         const double s = score(c);
         if (s > bs) bs = s, best = c;
     }
-    for (int c = std::max(-lim, best - 4); c <= std::min(lim, best + 4); c++) {
+    for (int c = std::max(-lim, best - step); c <= std::min(lim, best + step); c++) {
         const double s = score(c);
         if (s > bs) bs = s, best = c;
     }
@@ -129,15 +141,15 @@ void BpskDemod::acquire() {
         const kp::cf r(static_cast<float>(std::cos(w0 * i)), static_cast<float>(std::sin(w0 * i)));
         const kp::cf y = acq_buf_[i] * r;
         const kp::cf q = y * y;
-        fin_[i][0] = q.real() * win_[i];
-        fin_[i][1] = q.imag() * win_[i];
+        st.in[i][0] = q.real() * st.win[i];
+        st.in[i][1] = q.imag() * st.win[i];
     }
-    kfft_execute(plan_);
+    kfft_execute(st.plan);
     auto pw = [&](int k) {
         const int b = (k % N + N) % N;
-        return static_cast<double>(fout_[b][0]) * fout_[b][0] + static_cast<double>(fout_[b][1]) * fout_[b][1];
+        return static_cast<double>(st.out[b][0]) * st.out[b][0] + static_cast<double>(st.out[b][1]) * st.out[b][1];
     };
-    const int kmax = static_cast<int>(120 / df);
+    const int kmax = std::max(2, static_cast<int>(120 / df));
     int kb = 0;
     double pb = -1;
     for (int k = -kmax; k <= kmax; k++)
@@ -145,13 +157,14 @@ void BpskDemod::acquire() {
     // noise reference: the squared spectrum between 300 Hz and 2.4 kHz from the line
     double nref = 0;
     int nn = 0;
-    for (int k = static_cast<int>(300 / df); k < static_cast<int>(2400 / df); k += 3) {
+    for (int k = static_cast<int>(300 / df); k < static_cast<int>(2400 / df); k += std::max(1, 3 * N / NACQ)) {
         nref += pw(kb + k) + pw(kb - k);
         nn += 2;
     }
     nref /= std::max(1, nn);
     acq_peak_db_ = 10 * std::log10(pb / std::max(nref, 1e-30));
-    if (acq_peak_db_ < 11) return;   // no BPSK carrier here
+    if (acq_peak_db_ < st.thr_db) return;   // no BPSK carrier here (or not strong enough to take it this early)
+    acq_used_ = N;
     // parabolic interpolation of the peak
     const double a = pw(kb - 1), b = pb, c = pw(kb + 1);
     double d = 0;

@@ -7,12 +7,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "demod.hpp"
+#include "early.hpp"
 #include "frame.hpp"
 #include "kraken_dsp.hpp"
 #include "kraken_plugin.hpp"
@@ -25,7 +27,14 @@ constexpr int RING = 2 * inmc::FRAME_SYMS;
 constexpr float SYNC_SEARCH = 0.50f;   // unique-word correlation to take a frame when not locked
 constexpr float SYNC_LOCKED = 0.25f;   // ... at the expected place, when locked
 constexpr int SYNC_WINDOW = 4;         // +- symbols around the expected place
-constexpr int MAX_ERASED = inmc::FRAME_SYMS * 4 / 10;   // a first frame may miss up to 40 % (its start)
+constexpr int MAX_ERASED = inmc::FRAME_SYMS / 2;   // a first frame may miss up to half (its start): rate 1/2 - measured, README
+// early recognition from the unique word's first rows (early.hpp): decided
+// when at least EARLY_ROWS rows agree to EARLY_CORR and no other frame phase
+// comes near (measured on noise, the Aero carriers and the CW line: README)
+constexpr int EARLY_ROWS = 16;        // at least this many rows
+constexpr float EARLY_CORR = 0.60f;   // and this agreement
+constexpr float EARLY_Z = 7.0f;       // and corr x sqrt(2 x rows) >= this: on noise / other signals the best of
+                                      // the 2 x 10368 hypotheses is a Gaussian maximum, P(z >= 7) ~ 1e-12 each
 constexpr double PARTIAL_S = 180;      // an EGC message with no new packet for this long is reported as it is
 constexpr double KEEP_S = 48 * 3600;   // repeat suppression memory (repeats come up to 24 h apart, twice)
 
@@ -99,7 +108,15 @@ public:
         n_total_ += static_cast<int64_t>(n);
         if (was && !demod_.tracking()) {
             host.log("carrier lost - searching again");
+            host.fact("Sync", "searching for a carrier");
             sync_reset();
+        }
+        if (!was && demod_.tracking()) {
+            char b[120];
+            std::snprintf(b, sizeof b, "carrier found at %+.1f Hz (squared-signal line %.1f dB)", demod_.carrier_hz(),
+                          demod_.last_acq_peak_db());
+            host.log(b);
+            host.fact("Sync", fmt("a carrier at %+.0f Hz - looking for the Inmarsat-C unique word", demod_.carrier_hz()));
         }
         for (const inmc::Symbol& s : syms_) push_symbol(s);
         if (!demod_.tracking() && sym_count_ > first_real_) sync_reset();
@@ -128,6 +145,9 @@ private:
         locked_ = false;
         pending_ = -1;
         misses_ = 0;
+        early_.reset(first_real_);
+        early_found_ = false;
+        first_frame_done_ = false;
     }
 
     float uw_corr(int64_t s) const {
@@ -145,8 +165,10 @@ private:
         ring_[sym_count_ % RING] = s.soft;
         pos_[sym_count_ % RING] = s.pos;
         sym_count_++;
+        if (!locked_ && !early_found_) early_step();
+        else if (early_found_ && !first_frame_done_ && sym_count_ % (inmc::COLS * 8) == 0) sync_fact_due();
         const int64_t start = sym_count_ - inmc::FRAME_SYMS;   // a frame ending with this symbol
-        if (start < first_real_ - MAX_ERASED) return;
+        if (start < first_real_ - (locked_ ? max_erased_early_ : MAX_ERASED)) return;
         // The search runs while locked too: after samples went missing (a
         // heimdall calibration cuts its noise-source packets out; a capture
         // that fell behind) the next frame starts somewhere else, and is taken
@@ -207,9 +229,74 @@ private:
             expected_ += inmc::FRAME_SYMS;
             if (++misses_ >= 2) {
                 locked_ = false;
+                early_.reset(sym_count_);
+                early_found_ = false;
+                first_frame_done_ = false;
                 host.log("unique word lost - searching");
             }
         }
+    }
+
+    // ---- early recognition ------------------------------------------------------
+    void early_step() {
+        early_.push(sym_count_ - 1, ring_.data(), RING);
+        const int64_t got = sym_count_ - first_real_;
+        if (got % inmc::COLS != 0) return;
+        const inmc::UwEarly::Best b = early_.best();
+        if (early_debug_) {
+            char d[160];
+            std::snprintf(d, sizeof d, "early: %lld symbols, rows %d, best %+.3f (phase %d), next %.3f", static_cast<long long>(got),
+                          b.rows, b.corr, b.phase, b.second);
+            host.log(d);
+        }
+        if (got % (inmc::COLS * 8) == 0) sync_fact_searching();
+        if (b.phase < 0 || b.rows < EARLY_ROWS || std::fabs(b.corr) < EARLY_CORR ||
+            std::fabs(b.corr) * std::sqrt(2.0f * b.rows) < EARLY_Z)
+            return;
+        // recognised: the frame in progress started at s_cur
+        const int64_t n = sym_count_;
+        const int64_t s_cur = n - 1 - ((n - 1 - b.phase) % inmc::FRAME_SYMS + inmc::FRAME_SYMS) % inmc::FRAME_SYMS;
+        const bool this_one = first_real_ - s_cur <= max_erased_early_;
+        early_found_ = true;
+        locked_ = true;
+        expected_ = this_one ? s_cur : s_cur + inmc::FRAME_SYMS;
+        last_start_ = expected_ - inmc::FRAME_SYMS;
+        misses_ = 0;
+        pending_ = -1;
+        const double due = static_cast<double>(expected_ + inmc::FRAME_SYMS - n) / inmc::SYMBOL_RATE;
+        char t[300];
+        std::snprintf(t, sizeof t,
+                      "Inmarsat-C TDM found: unique word in %d of %d rows (%.2f), carrier %+.0f Hz, Es/N0 %.1f dB - "
+                      "frame-synchronised, the first frame completes in %.1f s",
+                      static_cast<int>(std::lround(b.rows * (0.5 + 0.5 * std::fabs(b.corr)))), b.rows, std::fabs(b.corr),
+                      demod_.carrier_hz(), demod_.esn0_db(), due);
+        host.fact("Sync", t);
+        host.event(t, 60);
+        early_rows_ = b.rows;
+        early_corr_ = std::fabs(b.corr);
+        char l[120];
+        std::snprintf(l, sizeof l, "TDM recognised after %.2f s of symbols; first frame due in %.2f s", static_cast<double>(got) / inmc::SYMBOL_RATE,
+                      due);
+        host.log(l);
+    }
+
+    void sync_fact_due() {
+        const double due = static_cast<double>(expected_ + inmc::FRAME_SYMS - sym_count_) / inmc::SYMBOL_RATE;
+        if (due < 0) return;
+        char t[300];
+        std::snprintf(t, sizeof t,
+                      "Inmarsat-C TDM found (unique word, %d rows, %.2f), carrier %+.0f Hz, Es/N0 %.1f dB - frame-synchronised, "
+                      "the first frame completes in %.0f s",
+                      early_rows_, early_corr_, demod_.carrier_hz(), demod_.esn0_db(), due);
+        host.fact("Sync", t);
+    }
+
+    void sync_fact_searching() {
+        char t[200];
+        std::snprintf(t, sizeof t,
+                      "a carrier at %+.0f Hz, Es/N0 %.1f dB - looking for the Inmarsat-C unique word (%.1f s of symbols so far)",
+                      demod_.carrier_hz(), demod_.esn0_db(), static_cast<double>(sym_count_ - first_real_) / inmc::SYMBOL_RATE);
+        host.fact("Sync", t);
     }
 
     void decode_at(int64_t start, float corr) {
@@ -226,12 +313,28 @@ private:
     // ---- frames -> packets -------------------------------------------------------
     void frame(const inmc::FrameResult& fr, double t0, double t1, float corr) {
         const inmc::WalkResult w = inmc::walk_frame(fr.bytes.data(), inmc::INFO_BYTES);
+        const double present = static_cast<double>(fr.symbols) / inmc::DATA_SYMS;
         if (w.packets.empty()) {
+            // a first frame tried with part of it missing doesn't count as failed
+            if (present < 0.995) {
+                first_partial_failed_++;
+                host.log("first, partly received frame (" + fmt("%.0f", 100 * present) + " % there) did not decode");
+                if (!first_frame_done_)
+                    host.fact("Sync", fmt("frame-synchronised; the first, partial frame did not decode - the next completes in %.1f s",
+                                          static_cast<double>(inmc::FRAME_SYMS) / inmc::SYMBOL_RATE));
+                return;
+            }
             frames_bad_++;
             host.log("frame at " + fmt("%.1f", t0) + " s: unique word " + fmt("%.2f", corr) +
                      ", no packet passed its sum check");
             update_counters();
             return;
+        }
+        if (!first_frame_done_) {
+            first_frame_done_ = true;
+            host.fact("Sync", present < 0.995 ? fmt("frame-synchronised (the first frame decoded with %.0f %% of it received)", 100 * present)
+                                              : std::string("frame-synchronised"));
+            host.log("first frame decoded, " + fmt("%.0f", 100 * present) + " % of it received");
         }
         frames_ok_++;
         sym_err_ += fr.symbol_errors;
@@ -533,6 +636,15 @@ private:
     std::vector<float> ring_;
     std::vector<double> pos_;
     int64_t sym_count_ = 0, first_real_ = 0;
+    inmc::UwEarly early_;
+    bool early_found_ = false, first_frame_done_ = false;
+    long long first_partial_failed_ = 0;
+    int early_rows_ = 0;
+    float early_corr_ = 0;
+    bool early_debug_ = std::getenv("INMC_EARLY_DEBUG") != nullptr;
+    // how much of a first frame may be missing for it to be tried (measured: README)
+    int64_t max_erased_early_ = std::getenv("INMC_MAX_ERASED") ? static_cast<int64_t>(atof(std::getenv("INMC_MAX_ERASED")) * inmc::FRAME_SYMS)
+                                                               : inmc::FRAME_SYMS / 2;
     bool locked_ = false;
     int64_t pending_ = -1, expected_ = 0, last_start_ = -(int64_t(1) << 40);
     float pending_c_ = 0;

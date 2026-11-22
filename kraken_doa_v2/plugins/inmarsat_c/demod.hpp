@@ -43,12 +43,14 @@ public:
     double sps_estimate() const { return sps_; }
     int acquisitions() const { return acq_count_; }
     double last_acq_peak_db() const { return acq_peak_db_; }
+    int last_acq_samples() const { return acq_used_; }
     // Shift the carrier estimate by df Hz (the host moved the input - not used now)
     void set_search_limit(double hz) { search_hz_ = hz; }
 
 private:
     enum State { ACQ, TRACK };
-    void acquire();
+    struct Stage;
+    void acquire(Stage& st);
     void track_sample(kp::cf x, std::vector<Symbol>& out);
     kp::cf interp(double idx) const;
 
@@ -57,13 +59,27 @@ private:
     State state_ = ACQ;
     double search_hz_ = 3600;
 
-    // acquisition
+    // acquisition: a quick 0.21 s try for strong carriers, then 0.85 s blocks
+    static constexpr int NQUICK = 2048;
     static constexpr int NACQ = 8192;
+    static constexpr double QUICK_DB = 20.0;   // the squared-signal line over its noise, 2048 points
+    static constexpr double FULL_DB = 11.0;    // ... 8192 points
+    struct Stage {
+        Stage(int n, double fs, double thr);
+        ~Stage();
+        Stage(const Stage&) = delete;
+        Stage& operator=(const Stage&) = delete;
+        int N;
+        double thr_db;
+        std::vector<float> win, tmpl;
+        kfft_complex* in = nullptr;
+        kfft_complex* out = nullptr;
+        kfft_plan plan = nullptr;
+    };
+    Stage quick_, full_;
+    bool quick_tried_ = false;
+    int acq_used_ = 0;
     std::vector<kp::cf> acq_buf_;
-    std::vector<float> win_, tmpl_;
-    kfft_complex* fin_ = nullptr;
-    kfft_complex* fout_ = nullptr;
-    kfft_plan plan_ = nullptr;
     int acq_count_ = 0;
     double acq_peak_db_ = 0;
     int64_t acq_start_ = 0;   // input index of acq_buf_[0]
