@@ -122,6 +122,7 @@ private:
         std::fill(ring_.begin(), ring_.end(), 0.0f);
         sym_count_ = inmc::FRAME_SYMS;
         first_real_ = sym_count_;
+        last_start_ = -(int64_t(1) << 40);
         locked_ = false;
         pending_ = -1;
         misses_ = 0;
@@ -143,22 +144,36 @@ private:
         pos_[sym_count_ % RING] = s.pos;
         sym_count_++;
         const int64_t start = sym_count_ - inmc::FRAME_SYMS;   // a frame ending with this symbol
-        if (!locked_) {
-            if (start < first_real_ - MAX_ERASED) return;
+        if (start < first_real_ - MAX_ERASED) return;
+        // The search runs while locked too: after samples went missing (a
+        // heimdall calibration cuts its noise-source packets out; a capture
+        // that fell behind) the next frame starts somewhere else, and is taken
+        // as soon as it is whole instead of after two misses
+        const bool near_expected = locked_ && start >= expected_ - SYNC_WINDOW && start <= expected_ + SYNC_WINDOW;
+        if (!near_expected && start > last_start_ + inmc::FRAME_SYMS / 2) {
             const float c = uw_corr(start);
             if (std::fabs(c) > SYNC_SEARCH && (pending_ < 0 || std::fabs(c) > std::fabs(pending_c_))) {
                 pending_ = start;
                 pending_c_ = c;
             }
-            if (pending_ >= 0 && start >= pending_ + SYNC_WINDOW) {
-                decode_at(pending_, pending_c_);
-                locked_ = true;
-                expected_ = pending_ + inmc::FRAME_SYMS;
-                pending_ = -1;
-                misses_ = 0;
+        }
+        if (pending_ >= 0 && start >= pending_ + SYNC_WINDOW) {
+            if (locked_) {
+                int64_t d = (pending_ - expected_) % inmc::FRAME_SYMS;
+                if (d > inmc::FRAME_SYMS / 2) d -= inmc::FRAME_SYMS;
+                if (d < -inmc::FRAME_SYMS / 2) d += inmc::FRAME_SYMS;
+                host.log("a frame " + std::to_string(static_cast<long long>(d)) +
+                         " symbols from the expected place - resynchronised (samples missing or extra)");
             }
+            decode_at(pending_, pending_c_);
+            locked_ = true;
+            last_start_ = pending_;
+            expected_ = pending_ + inmc::FRAME_SYMS;
+            pending_ = -1;
+            misses_ = 0;
             return;
         }
+        if (!locked_) return;
         if (start < expected_ + SYNC_WINDOW) return;
         // the window around the expected start is complete
         int64_t best = expected_;
@@ -170,9 +185,23 @@ private:
         }
         if (std::fabs(bc) >= SYNC_LOCKED) {
             decode_at(best, bc);
+            last_start_ = best;
             expected_ = best + inmc::FRAME_SYMS;
             misses_ = 0;
         } else {
+            // where is it? (diagnostics: a wide look around the expected place)
+            int64_t wb = expected_;
+            float wc = 0;
+            for (int64_t s2 = expected_ - 400; s2 <= expected_ + 400; s2++) {
+                if (s2 < 0 || s2 + inmc::FRAME_SYMS > sym_count_ || sym_count_ - s2 > RING) continue;
+                const float c = uw_corr(s2);
+                if (std::fabs(c) > std::fabs(wc)) wc = c, wb = s2;
+            }
+            char b[200];
+            std::snprintf(b, sizeof b, "no unique word at the expected place (best %.2f there; %.2f at %+lld symbols); lock %.2f, "
+                          "%.4f samples/symbol, carrier %+.1f Hz", bc, wc, static_cast<long long>(wb - expected_),
+                          demod_.lock_quality(), demod_.sps_estimate(), demod_.carrier_hz());
+            host.log(b);
             expected_ += inmc::FRAME_SYMS;
             if (++misses_ >= 2) {
                 locked_ = false;
@@ -464,7 +493,7 @@ private:
     std::vector<double> pos_;
     int64_t sym_count_ = 0, first_real_ = 0;
     bool locked_ = false;
-    int64_t pending_ = -1, expected_ = 0;
+    int64_t pending_ = -1, expected_ = 0, last_start_ = -(int64_t(1) << 40);
     float pending_c_ = 0;
     int misses_ = 0;
     double base_time_ = 0;
