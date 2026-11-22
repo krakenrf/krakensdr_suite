@@ -772,7 +772,7 @@ void ControlHandler::clamp_vfo_tuners() {
     if (moved) broadcast(MessageBuilders::build_decimator_info_message());
     // the sweep's tuners: indices that are gone drop out (none left = all)
     sweep::on_elements();
-    if (sweep_mode_enabled.load() && sweep::take_plan_changed()) send_control_command(sweep::plan_command());
+    if (sweep_mode_enabled.load() && sweep::take_plan_changed()) send_sweep_plan_now();
     broadcast(sweep::state_json());
 }
 
@@ -931,7 +931,7 @@ void ControlHandler::note_server_mode(int mode) {
             // a recording (IQ: a fixed band; audio: nothing is demodulated) ends here
             if (rec::writing()) handle_websocket_message("RECORDER_STOP");
             sweep::set_running(true);
-            if (g_settings_replayed.load()) send_control_command(sweep::plan_command());
+            if (g_settings_replayed.load()) send_sweep_plan_now();
         }
         apply_operating_mode_state(mode);
         if (!force) SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
@@ -1020,11 +1020,19 @@ void ControlHandler::ingest_sweep_reply(const char* data, size_t n) {
 static void sweep_plan_after_replay() {
     if (!sweep_mode_enabled.load()) return;
     sweep::take_plan_changed();
-    ControlHandler::send_control_command(sweep::plan_command());
+    ControlHandler::send_sweep_plan_now();
+}
+
+// the plan, then the auto gain switch (SWEEP_AUTO_GAIN: heimdall doesn't keep
+// it - it goes wherever the plan goes); its answer says whether heimdall has it
+void ControlHandler::send_sweep_plan_now() {
+    send_control_command(sweep::plan_command());
+    sweep::note_auto_gain_asked();
+    send_control_command(sweep::auto_gain_command());
 }
 
 void ControlHandler::send_sweep_plan() {
-    if (sweep_mode_enabled.load()) send_control_command(sweep::plan_command());
+    if (sweep_mode_enabled.load()) send_sweep_plan_now();
 }
 
 // Handle legacy FREQ_OFFSET[_n] for a decimator by POSITION. Decimator IDs
@@ -2611,7 +2619,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         handle_message_impl("GET_DECIMATOR_INFO");  // push restored state to browsers
     }
     else if (message.starts_with("SWEEP_RANGE:") || message.starts_with("SWEEP_TUNERS:") ||
-             message.starts_with("SWEEP_RES:") || message.starts_with("SWEEP_DWELL:") || message.starts_with("SWEEP_RUN:")) {
+             message.starts_with("SWEEP_RES:") || message.starts_with("SWEEP_DWELL:") || message.starts_with("SWEEP_RUN:") ||
+             message.starts_with("SWEEP_AUTO_GAIN:")) {
         // Sweep mode's settings (sweep.hpp, docs/dev/sweep-mode.md): each is
         // answered by the sweep message to every page (no echo); all but
         // SWEEP_RUN saved; heimdall gets the plan when it changed in sweep
@@ -2635,6 +2644,16 @@ void ControlHandler::handle_message_impl(string_view message) {
                 applied = sweep::set_res(val);
             } else if (key == "SWEEP_DWELL:") {
                 applied = sweep::set_dwell(parse_double(message, key.size()));
+            } else if (key == "SWEEP_AUTO_GAIN:") {
+                // heimdall's per-hop gain under the common gain (the ceiling); kept,
+                // replayed, sent with the plan and at once in sweep mode
+                if (val != "1" && val != "0" && val != "true" && val != "false")
+                    throw std::invalid_argument("SWEEP_AUTO_GAIN takes 1 or 0");
+                applied = sweep::set_auto_gain(parse_bool(val));
+                if (sweep_mode_enabled.load() && !g_replaying_settings.load()) {
+                    sweep::note_auto_gain_asked();
+                    send_control_command(sweep::auto_gain_command());
+                }
             } else {
                 if (val != "1" && val != "0" && val != "true" && val != "false")
                     throw std::invalid_argument("SWEEP_RUN takes 1 or 0");
@@ -2652,7 +2671,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             g_applied_cmd = applied;
             if (!g_replaying_settings.load() && !sfscan::dispatching()) SettingsStore::record(applied);
             if (sweep_mode_enabled.load() && !g_replaying_settings.load() && sweep::take_plan_changed())
-                send_control_command(sweep::plan_command());
+                send_sweep_plan_now();
         }
         broadcast(sweep::state_json());
     }
@@ -2704,7 +2723,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             if (rec::writing()) handle_websocket_message("RECORDER_STOP");
             // entering runs; the plan goes first (heimdall starts hopping with it)
             sweep::set_running(true);
-            send_control_command(sweep::plan_command());
+            send_sweep_plan_now();
             {
                 std::lock_guard<std::mutex> lk(g_sweep_reason_mu);
                 g_sweep_reason.clear();
