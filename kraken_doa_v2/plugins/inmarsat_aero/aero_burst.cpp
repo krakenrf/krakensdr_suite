@@ -407,11 +407,20 @@ void BurstRx::decode(int64_t s0, int64_t s1, double f, double tone_s, int unc) {
     s1 = std::min(s1, nin_);
     if (s1 - s0 < 1200) return;
     // rates in order of the tone's length (the unmodulated preamble)
-    std::vector<std::pair<double, double>> order;
-    for (const auto& r : RATES) order.push_back({std::fabs(r.unmod / r.rate - tone_s), r.rate});
-    std::sort(order.begin(), order.end());
-    for (const auto& o : order)
-        if (try_rate(o.second, s0, s1, f, unc)) {
+    // (a plain array, not a sorted vector of pairs: gcc on aarch64 notes the
+    // pair's changed parameter passing in std::sort's heap helpers)
+    std::array<double, std::size(RATES)> order{}, dist{};
+    for (size_t i = 0; i < std::size(RATES); i++) {
+        order[i] = RATES[i].rate;
+        dist[i] = std::fabs(RATES[i].unmod / RATES[i].rate - tone_s);
+    }
+    for (size_t i = 1; i < order.size(); i++)   // insertion sort by dist (four rates)
+        for (size_t j = i; j > 0 && dist[j] < dist[j - 1]; j--) {
+            std::swap(dist[j], dist[j - 1]);
+            std::swap(order[j], order[j - 1]);
+        }
+    for (double rate : order)
+        if (try_rate(rate, s0, s1, f, unc)) {
             decoded_++;
             return;
         }

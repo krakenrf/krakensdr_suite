@@ -79,6 +79,15 @@ public:
     }
 
     void process(const cf* x, size_t n) override {
+        // the VFO moved (or the receiver was retuned): another channel - start
+        // over. Off air, a VFO moved from a 600 bit/s channel to a 1200 bit/s
+        // one 2 kHz off kept the old state and locked 900 Hz beside the
+        // carrier for a minute (408 of 960 SUs); from a fresh start, 594 / 594
+        const double rf = host.rf_hz();
+        if (std::isfinite(rf) && rf > 0) {
+            if (rf_seen_ > 0 && std::fabs(rf - rf_seen_) > 100) reset();
+            rf_seen_ = rf;
+        }
         if (!tbase_set_) {
             tbase_ = host.time();
             tbase_set_ = true;
@@ -126,6 +135,7 @@ private:
     std::vector<std::pair<double, double>> tried_;   // (rate, f0) that did not sync
     double last_fact_ = -10;
     double latest_t_ = 0;   // host time of the newest bit the demodulator gave
+    double rf_seen_ = 0;    // the VFO's RF last seen (a move restarts the search)
     dig::AeroAmbeStream voice_;
     bool in_call_ = false;
     double call_start_ = 0, call_last_ = 0;
@@ -261,6 +271,8 @@ private:
             char b[64];
             snprintf(b, sizeof b, "%+.1f Hz", demod_.carrier_hz());
             host.fact("Carrier offset", b);
+            const double rf = host.rf_hz();
+            if (std::isfinite(rf) && rf > 0) su_.set_channel_hz(rf + demod_.carrier_hz());
         }
         // No freq_error: kraken_doa's AFC moves the input by half of each
         // report every 300 ms - frequency steps the carrier loop has to
