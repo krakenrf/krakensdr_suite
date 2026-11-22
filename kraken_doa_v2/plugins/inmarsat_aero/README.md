@@ -60,6 +60,12 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
   (right-hand circular: a patch or a short helix) and an LNA at the
   antenna - it can be powered from the receiver: the antenna bias tees
   (top bar, `docs/dev/bias-tees.md`). The R820T tuners reach 1.76 GHz.
+- With one antenna, decode in **independent mode** (top bar; the antenna's
+  tuner on the band, the others idle): no calibration, so heimdall never
+  cuts the noise-source bursts out of the stream - in coherent mode those
+  gaps fall into frames and calls (off air, 2026-11-22: 0 gaps in 420 s
+  independent, the same P channel counts as coherent, `sigtool.py capture
+  --channel 0` records the tuner).
 - A VFO of 15 - 25 kHz on the channel frequency (min_vfo_rate 15 kHz). The
   carrier may be off by up to +-2.5 kHz (an RTL-SDR's 1 ppm is 1.5 kHz at
   1.5 GHz): the plugin finds it, tracks it and shows it (Carrier offset
@@ -373,10 +379,13 @@ matter from 15 to 48 kHz (a VFO emulated on the 2.4 MS/s capture: 2906 -
 2926 of 3042 SUs at 15 - 48 kHz). Loop bandwidths and roll-off changed
 nothing by more than 2 points.
 
-Not seen: the UTC broadcast (type 0x09) on any of these channels; C
-channel assignments (none in 31 minutes on the 10.5 kbit/s, 600 and 1200
-bit/s P channels) and 8.4 kbit/s carriers (two surveys of 1543 - 1556
-MHz); ADS-C reports (on P channels only contract requests travel - the
+C channel calls: none in the first 31 minutes; in a 70-minute watch (six
+P channels at once, independent mode) two C channel assignments came, on
+the two 10.5 kbit/s channels (GES 0x82 and 0x85, to-aircraft 1542.980
+and 1542.990 MHz - outside the 1545 - 1546 MHz P channel band), each
+followed within a second (VFO in c8400 mode, tuner retuned, a capture) -
+see Voice below. Not seen: the UTC broadcast (type 0x09) on any of these
+channels; ADS-C reports (on P channels only contract requests travel - the
 reports go up on R / T channels); aircraft bursts (8 minutes on the R
 channels the GESs advertise, 1646.5075 - 1646.5475 MHz: nothing - the
 floor there is 3.7 dB under 1545 MHz, the patch / LNA hardly pass 1.6
@@ -387,11 +396,30 @@ Voice: generated C channel frames (random voice bits - no AMBE encoder
 exists to make speech) go through libaeroambe's codec built in job
 scratch: 3.4 % CPU with the codec (2.6 % of real time on the Pi 5,
 where the same codec was built); "not installed" without it; the codec's
-own error count for random bits: 4.3 corrections per frame. **Not
-verified on a real C channel: no recording was found, and none was heard
-off air** (no C channel assignment or 8.4 kbit/s carrier in 31 minutes,
-above) - the framing and signalling follow the standard and JAERO's
-layout, intelligible speech is unconfirmed.
+own error count for random bits: 4.3 corrections per frame.
+
+**Off air, two real calls (to-aircraft C channels, 2026-11-22)** -
+checked against the real signal for the first time:
+- framing: unique words found (0 - 10 errors of 104 while the carrier was
+  good; 0 - 16 in the faded parts), reference bits 0 - 3 / 26 wrong, 15 + 34 clean frames of 20 +
+  41;
+- sub-band signal units: 23 / 42 and 65 / 102 passed their CRC (the rest
+  from frames where the carrier had faded), with call progress units
+  decoded;
+- the voice frames' position, bit order, polarity and de-interleave, with
+  the codec's FEC as the oracle: on the voice frames of frames with <= 1
+  reference bit error mbelib corrected 0.55 - 0.60 Golay bits per 20 ms
+  frame and 82 - 84 % of the frames needed none; the same bits arranged
+  wrongly (reversed, inverted, 1 or 8 bits late, the de-interleave table
+  shuffled) give 0 % of frames without corrections and 2.4 - 4.9 per
+  frame, random bits 4.3. The arrangement is right; nothing was changed;
+- speech: not confirmed. In one call 567 of the 675 clean voice frames
+  are one and the same frame, which the codec turns into silence; in the
+  other the clean frames decode to sound with little voicing (voiced 6 %
+  of active frames, no voiced run longer than one frame; random bits:
+  20 %, runs of up to 4), and the carrier was good for only ~10 s. No
+  audio was kept or listened to; statistics only.
+Both calls are private captures in the local IQ library.
 
 ## Limitations
 

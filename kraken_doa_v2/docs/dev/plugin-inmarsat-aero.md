@@ -75,8 +75,10 @@ this folder (index: `README.md` here, or the table in
   errors). Codec: `plugins/lib/aero_ambe.*` dlopens libaeroambe's mbelib
   (`mbe_processAmbe4800x3600Framef`; Qt-free, its CMake build makes
   libmbe.so.1, a superset of mbelib 1.3); the bit order goes through
-  libaeroambe's 96-entry table (MIT notice in the file). No real C channel
-  recording was found: the voice path is checked with random frames only.
+  libaeroambe's 96-entry table (MIT notice in the file). Checked off air
+  on two real calls (below, "Off air"): framing, reference bits, sub-band
+  SUs and the voice frames' arrangement (the codec's Golay words come out
+  clean); speech itself not confirmed.
 - Bursts (`aero_burst.cpp`): the unmodulated preamble is a tone: a
   512-point FFT (one hit 18 dB, or two in a row at 14 dB, over its bin's
   noise as over a median, and 10 dB over the bins 3 - 6 away - a
@@ -153,8 +155,8 @@ this folder (index: `README.md` here, or the table in
   wiki and issues (#32 and #67 link Google Drive files that are gone),
   the Wayback Machine's copies of jontio.zapto.org (only the three
   samples above), the DecAero and OnAir READMEs (DecAero names an
-  "8400bps_ambe_sample" without a link), InmarScope, rtl-sdr.com. The
-  voice path is checked on generated frames only.
+  "8400bps_ambe_sample" without a link), InmarScope, rtl-sdr.com. Two
+  calls were then captured off air (below).
 - Debug playback through a TEST kraken_doa (2026-11-22, 2+ loops per
   entry): plugin README, Test results.
 - Off air (2026-11-22, Raspberry Pi 5 + KrakenSDR CH0, patch antenna with
@@ -172,8 +174,30 @@ this folder (index: `README.md` here, or the table in
     (+13 dB in 600 Hz here); the 10.5 kbit/s channels carry mostly types
     0x0A and 0x26 (about half each); the 600 bit/s ones types 0x19 (the
     commonest), 0x0C, 0x05, 0x18, 0x1A, 0x2B, 0x40, 0x41 - 0x18 - 0x1A and
-    0x2B are not decoded. No type 0x09 (UTC) and no C channel assignment
-    seen in 31 minutes.
+    0x2B are not decoded. No type 0x09 (UTC) seen.
+  - C channel calls: none in the first 31 minutes of P channel watching;
+    then a 70-minute unattended watch (job scratch watch.py on the Pi:
+    independent mode, tuner 0 at 1545.6 MHz, six VFOs on the P channels
+    and a spare in c8400 mode listening, reading the decoders' events over
+    the WebSocket; on a "C channel assignment" event the spare jumps to the
+    to-aircraft frequency - tuner retuned when outside the span - and
+    `sigtool.py capture --channel 0` records 160 s at 48 kHz; a 5 s look for
+    8.4 kbit/s carriers every 5 minutes, a 1545 - 1556 MHz sweep every 25)
+    caught two assignments, both on the 10.5 kbit/s channels (GES 0x82 /
+    0x85 -> 1542.980 / 1542.990 MHz), followed within a second, call
+    progress SUs on the C channel itself. Offline (Pi = x86): 20 / 41
+    frames, 15 / 34 clean, sub-band SUs 23 / 42 and 65 / 102.
+  - The voice frame arrangement, by the codec's own FEC: the 96 bits of
+    each voice frame of frames with <= 1 reference error into
+    `mbe_processAmbe4800x3600Framef` (ctypes, the plugin's W / X table):
+    82 - 84 % of frames with no Golay correction (0.55 - 0.60 per frame);
+    bits reversed 0 % (4.5 - 4.9), inverted 0 % (2.4 - 3.2: the extended
+    Golay code holds the complement of a codeword, C1's PN differs), 1 bit
+    late 0 % (4.1 - 4.9), 8 bits late 0 % (3.1 - 3.3), W / X shuffled 0 %
+    (4.0 - 4.4), random bits 0 % (4.3). The generator's random voice bits
+    stay (no encoder). Speech not confirmed: one call's clean frames are
+    84 % one identical frame (decodes to silence); the other's decode with
+    6 % voiced frames and no voiced run over one frame (random bits: 20 %).
   - The acquisition's line pair must be balanced (`Acquisition::search`:
     max / min <= 6): a non-Aero carrier with a strong unmodulated part
     (1545.476 MHz) has one x^2 line 20 - 25 dB over the rest.
@@ -184,8 +208,12 @@ this folder (index: `README.md` here, or the table in
     capture's count by at most 2 points (none better than the defaults).
   - Live vs offline (the coordinator's open question - 75-87 % live
     against 93-96 % from captures): not the live path. Measured frame by
-    frame: `AERO_DEBUG_FILE` gives the live decoder's frame lines (stream
-    time), `sigtool.py capture` alongside records the same seconds, the
+    frame: a test build deployed only on the Pi (commit 5632841, taken out
+    again - a plugin writes no files, SDK rule 5) appended the live
+    decoder's `AERO_DEBUG=1` frame lines ("frame t=<stream time> ... sus
+    n/26") to a file named by AERO_DEBUG_FILE (kraken_doa keeps only a
+    plugin's last 30 stderr lines, for its status), `sigtool.py capture`
+    alongside records the same seconds from heimdall's 8091, the
     offline decode of it is aligned on frame times (a whole number of
     frames plus the grids' phase; job scratch compare.py): over ~190
     common frames live and offline agree within 0.1 - 0.7 % of SUs at VFO
