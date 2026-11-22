@@ -833,7 +833,12 @@ refused; out-of-range numbers are clamped:
     part by part (`zpart[k]`, then `zstate[k]` = READY or RAW with release;
     the loop reads with acquire) - the deflated copies live and die with
     the set's buffer. A newer hand-over replaces what the compressor has not
-    done (it marks the old sets dropped): no queue. Out of the mode
+    done (it marks the old sets dropped): no queue. The sets of a hand-over
+    go smallest first and each deadline counts the bytes handed over ahead
+    of it (the review of 2026-11-23: in build order, a page at Full ahead of
+    one at a step held the step's part 0 past its deadline - 11.9 MB, 210
+    ms on a Pi 5 - and that page's sets went raw while the other was at
+    Full; a step is at most a quarter of Full, a few ms). Out of the mode
     `z_submit({})` drops the work. `pump_full` sends part k of a deflating
     socket deflated when READY; raw when RAW (not smaller), when the set
     was dropped, when the part before it is still pending (the compressor
@@ -863,7 +868,11 @@ refused; out-of-range numbers are clamped:
     zlib makes it smaller (sets of 54, 107 and 51 201 values); the slowed
     compressor: raw, complete, not late; mid-set with it busy:
     `SWEEP_FULL_Z:0`, `SWEEP_FULL:65536`, a grid change, pause, leaving the
-    mode and coming back. TSan builds and runs (`setarch -R`: this kernel's
+    mode and coming back; deflating pages at Full + 65 536 and at Full +
+    65 536 + 4 194 304 at once: every part of every set deflated, each the
+    raw full page's set of the same sweep pooled - x86 and Pi 5, where the 4 194 304 step (2.97 MB, ~50 ms) goes ahead of Full and Full's part 0 deadline counts it (161 ms); SIGTERM while a
+    set is compressed and sent (the slow compressor): exit 0 after 2.4 s, no
+    crash (normal and ASan + UBSan builds). TSan builds and runs (`setarch -R`: this kernel's
     address layout), but its mutex tracking is broken here - it reports
     "double lock" on plain lock_guards and races between two threads
     holding the same mutex all over the program; none of its ~120 reports

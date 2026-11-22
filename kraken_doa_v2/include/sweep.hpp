@@ -96,6 +96,7 @@ struct FullSet {
     mutable std::unique_ptr<std::atomic<uint8_t>[]> zstate;   // Z_PENDING / Z_READY / Z_RAW
     mutable std::atomic<bool> z_dropped{false};               // the compressor left it (a newer hand-over)
     mutable int64_t z_t0_ms = 0;                               // when it was handed over
+    mutable size_t z_before = 0;                               // bytes handed over ahead of it (the deadline counts them)
 };
 enum : uint8_t { Z_PENDING = 0, Z_READY = 1, Z_RAW = 2 };
 // SWEEP_FULL_Z (2026-11-23): hand this tick's sets to the compressor thread
@@ -105,7 +106,8 @@ enum : uint8_t { Z_PENDING = 0, Z_READY = 1, Z_RAW = 2 };
 void z_submit(const std::vector<std::shared_ptr<const FullSet>>& sets);
 void z_set_wake(std::function<void()> wake);
 // the latest a socket waits for part k's deflated copy: the hand-over + a tick
-// + the parts up to k at Z_MIN_RATE (half the Pi 5's measured 64 MB/s)
+// + the bytes ahead of it (smaller sets of the same hand-over) and its parts up
+// to k at Z_MIN_RATE (half the Pi 5's measured 56-64 MB/s)
 int64_t z_deadline_ms(const FullSet& s, size_t k);
 int64_t z_now_ms();
 // SWEEP_FULL:<n>: 1 = every bin; n >= 2 = at most n values (n < FULL_MIN_VALUES
