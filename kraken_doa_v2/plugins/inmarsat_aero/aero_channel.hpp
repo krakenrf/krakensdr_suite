@@ -220,8 +220,14 @@ private:
             if (h.snr_db < acq_threshold_db(h.k)) continue;
             // a wide-band rate before the narrow band's first result only when
             // clearly so: a strong 600 / 1200 bit/s carrier scores up to 16 dB
-            // as 4800 / 8400 bit/s there
-            if (h.rate >= 4800 && narrow_wanted && !narrow_seen && h.snr_db < acq_threshold_db(h.k) + 4) continue;
+            // as 4800 / 8400 bit/s there - off air, a 1200 bit/s channel 18 dB
+            // over the floor up to 20.4 dB as 4800 (a false lock, 5 s lost
+            // until "no frame sync"): 4800 and 8400 are multiples of 600 /
+            // 1200 and wait for the narrow search; 10500 isn't (its false
+            // scores there: <= 17.5 dB) and goes first when 4 dB clear
+            if (h.rate >= 4800 && narrow_wanted && !narrow_seen &&
+                (h.rate != 10500 || h.snr_db < acq_threshold_db(h.k) + 4))
+                continue;
             bool bad = false;
             for (const auto& t : tried_)
                 if (t.first == h.rate && std::fabs(t.second - h.f0) < 20) bad = true;

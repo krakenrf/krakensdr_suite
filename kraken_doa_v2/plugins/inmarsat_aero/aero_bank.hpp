@@ -62,6 +62,8 @@ public:
     // input samples consumed into whole blocks (the time of a channel's next sample)
     int64_t blocks() const { return blocks_; }
     int hop() const { return L_; }
+    // nothing in the band for a while: the survey's spectrum from one block in four
+    void set_idle(bool idle) { idle_ = idle; }
     // a block's first output is N/4 input samples after its start
     int first_offset() const { return N_ / 4; }
 
@@ -77,6 +79,7 @@ private:
     std::vector<float> win_;              // M bin weights, centre at M/2
     std::vector<float> spec_;
     int nspec_ = 0;
+    bool idle_ = false;
     struct Chan {
         int bin = 0;
         int64_t b0 = 0;                   // the block it was opened at

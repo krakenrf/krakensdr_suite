@@ -189,6 +189,8 @@ void AllChannels::reset() {
     offset_hz_ = NAN;
     offset_n_ = 0;
     closed_ok_ = closed_tot_ = 0;
+    quiet_surveys_ = 0;
+    bank_.set_idle(false);
     for (const auto& k : global_facts_) host.fact(k, "");
     global_facts_.clear();
     host.fact("Channels", "searching the VFO");
@@ -357,7 +359,7 @@ void AllChannels::survey() {
     for (auto it = blacklist_.begin(); it != blacklist_.end();)
         it = it->second < t ? blacklist_.erase(it) : std::next(it);
     // the usable part: the VFO's flat band, a channel's half width in from its edge
-    const double edge = usable(rate_) * rate_ - 12000;
+    const double edge = usable(rate_) * rate_ - 12000, wide_edge = 0.42 * rate_ - 12000;
     struct Cand {
         double f;
         float db;
@@ -374,7 +376,10 @@ void AllChannels::survey() {
         };
         const float n_db = rn[static_cast<size_t>(i)], w_db = rw[static_cast<size_t>(i)];
         if (n_db >= NARROW_DB && peak(rn, 6)) cands.push_back({f, n_db, false});
-        if (w_db >= WIDE_DB && peak(rw, 16)) {
+        // wide bumps only inside +-0.42 of the rate: further out the tuner's
+        // roll-off bends the floor and every bump looks like one (narrow
+        // carriers, and channels named by an assignment, to the edge)
+        if (w_db >= WIDE_DB && std::fabs(f) <= wide_edge && peak(rw, 16)) {
             // a wide signal is flat-topped: a bump made of narrow carriers
             // (a group of 600 bit/s channels) has peaks far over its mean,
             // and those are narrow candidates of their own
@@ -389,6 +394,9 @@ void AllChannels::survey() {
         return a.wide != b.wide ? a.wide : a.db > b.db;
     });
     if (debug_ && !cands.empty()) host.log("survey: " + std::to_string(cands.size()) + " candidates");
+    // an empty band (no channel, no candidate for 2 s) is surveyed on a quarter of the blocks
+    quiet_surveys_ = ch_.empty() && cands.empty() ? quiet_surveys_ + 1 : 0;
+    bank_.set_idle(quiet_surveys_ >= 8);
     // trials on narrow peaks and on wide bumps are counted apart: the few
     // wide ones (10.5 / 8.4 kbit/s) never wait behind the many narrow ones
     int trials[2] = {0, 0};

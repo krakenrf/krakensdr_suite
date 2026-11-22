@@ -105,9 +105,9 @@ int FilterBank::take_spectrum(std::vector<float>& p) {
 }
 
 void FilterBank::block() {
-    // no channel open: only the survey needs the spectrum - one block in
-    // four is enough for it (an empty band costs a quarter)
-    if (ch_.empty() && (blocks_ & 3) != 0) {
+    // an idle band (no channel, nothing found for a while - set_idle): only
+    // the survey needs the spectrum, one block in four is enough for it
+    if (idle_ && ch_.empty() && (blocks_ & 3) != 0) {
         blocks_++;
         return;
     }
