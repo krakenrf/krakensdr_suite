@@ -36,6 +36,9 @@ void Acquisition::setup(Band& b, double fs, int n, int navg, std::vector<double>
     b.plan = kfft_plan_dft_1d(n, b.in, b.out, KFFT_FORWARD);
     b.acc.assign(n, 0.0f);
     b.sq.assign(n, cf(0, 0));
+    b.win.resize(static_cast<size_t>(n));   // Hann
+    for (int i = 0; i < n; i++)
+        b.win[static_cast<size_t>(i)] = 0.5f - 0.5f * std::cos(2 * kp::PI * static_cast<float>(i) / static_cast<float>(n));
     b.spec.assign(static_cast<size_t>(navg), std::vector<float>(n, 0.0f));
 }
 
@@ -71,9 +74,8 @@ void Acquisition::push(Band& b, cf v) {
     b.total++;
     if (++b.since < b.n / 2 || b.total < b.n) return;
     b.since = 0;
-    for (int i = 0; i < b.n; i++) {
-        const float w = 0.5f - 0.5f * std::cos(2 * kp::PI * static_cast<float>(i) / static_cast<float>(b.n));
-        const cf s = b.sq[static_cast<size_t>((b.fill + i) % b.n)] * w;
+    for (int i = 0, j = b.fill; i < b.n; i++, j = j + 1 == b.n ? 0 : j + 1) {
+        const cf s = b.sq[static_cast<size_t>(j)] * b.win[static_cast<size_t>(i)];
         b.in[i][0] = s.real();
         b.in[i][1] = s.imag();
     }
@@ -107,18 +109,33 @@ void Acquisition::search(Band& b) {
     const double df = b.fs / n;
     auto bin = [&](double f) {   // FFT bin of frequency f (natural order)
         long k = std::lround(f / df);
+        if (k < 0 && k >= -n) return static_cast<int>(k + n);
+        if (k >= 0 && k < n) return static_cast<int>(k);
         return static_cast<int>(((k % n) + n) % n);
     };
-    auto pk = [&](int k, int& at) {   // the strongest of the bins around k
+    // the strongest of the bins around each k (k - 1, k, k + 1; the first of
+    // equals), once per search: the line pair loop below only looks it up
+    b.pkv.resize(static_cast<size_t>(n));
+    b.pka.resize(static_cast<size_t>(n));
+    const float* acc = b.acc.data();
+    for (int k = 0; k < n; k++) {
         float m = -1;
+        int at = 0;
         for (int d = -1; d <= 1; d++) {
-            const int j = ((k + d) % n + n) % n;
-            if (b.acc[j] > m) {
-                m = b.acc[j];
+            int j = k + d;
+            if (j < 0) j += n;
+            else if (j >= n) j -= n;
+            if (acc[j] > m) {
+                m = acc[j];
                 at = j;
             }
         }
-        return m;
+        b.pkv[static_cast<size_t>(k)] = m;
+        b.pka[static_cast<size_t>(k)] = at;
+    }
+    auto pk = [&](int k, int& at) {
+        at = b.pka[static_cast<size_t>(k)];
+        return b.pkv[static_cast<size_t>(k)];
     };
     auto refine = [&](int k) {   // parabolic peak interpolation, Hz
         const float a = b.acc[((k - 1) % n + n) % n], c = b.acc[k], e = b.acc[(k + 1) % n];

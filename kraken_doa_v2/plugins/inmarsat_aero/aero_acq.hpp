@@ -63,6 +63,9 @@ private:
         std::vector<float> acc;
         std::vector<cf> sq;                    // the squared input, a ring of n
         std::vector<std::vector<float>> spec;  // the last navg FFTs' power
+        std::vector<float> win;                // the FFT window
+        std::vector<float> pkv;                // search(): the strongest of 3 bins around each
+        std::vector<int> pka;                  // and which
         int fill = 0, nacc = 0, since = 0, nspec = 0, head = 0;
         int64_t total = 0;
         bool ready = false;
