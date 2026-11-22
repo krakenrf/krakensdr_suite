@@ -67,8 +67,8 @@ struct Downconverter {
 extern Downconverter downconverter;
 
 // Open the LO synthesizer and program it for initial_rf_hz on the current
-// side (frequency only - the WB firmware's output is always on and it does
-// not implement the stock-moRFeus mode/current functions). Call once at
+// side, after selecting generator mode (function 130 = 1: without it the
+// board only gets the mixer's LO leakage) and the drive current. Call once at
 // startup (after --wideband set downconverter.enabled). Returns false if the
 // device is missing/unopenable - wideband mode cannot run without its LO.
 bool downconverter_init(uint64_t initial_rf_hz);

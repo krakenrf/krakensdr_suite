@@ -9,12 +9,14 @@ names refer to sections of the other files in this folder (index:
 - Hardware variant with per-tuner mixers driven by ONE shared LO: an on-board
   synthesizer speaking the Othernet moRFeus USB HID protocol (`10c4:eac9`,
   custom "WB fw" firmware; driver in `src/sdr/downconverter.cpp` - hidraw /
-  Windows HID, no extra library). SET/GET frequency are implemented and the
-  LO output is always on. heimdall programs the LO drive current (`WB_LO_CURRENT` default
+  Windows HID, no extra library). heimdall selects GENERATOR MODE on every start
+  (function 130 = 1, with 's' - no Flash write): the RFFC507x has no LO
+  output pin, its LO only leaves through the mixer, and in mixer mode (the
+  firmware's power-up default on a fresh board) with nothing on the mixer
+  input only the LO leakage comes out - measured 35-60 dB lower at the
+  synthesizer output. heimdall then programs the LO drive current (`WB_LO_CURRENT` default
   3; runtime `set_lo_current` control command, 0-7, surfaced as the "Cur"
-  selector in the client UI next to Mix) and the frequency; the stock-moRFeus
-  generator-mode command is not sent (unimplemented on this firmware, which
-  answers unknown functions with an ident string). A current change is
+  selector in the client UI next to Mix) and the frequency. A current change is
   common-mode across channels (one shared LO) so it triggers no phase recal.
   Malformed HID frames wedge the parser until a power cycle - reports must be
   exactly 17 bytes with a leading 0 report-id byte.

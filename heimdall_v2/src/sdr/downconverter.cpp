@@ -59,8 +59,14 @@ constexpr uint8_t CMD_SAVE = 'w';
 constexpr uint8_t FUNC_FREQUENCY = 129;    // value = LO in Hz
 constexpr uint8_t FUNC_CURRENT   = 131;    // LO output drive current, 0..7
 constexpr uint8_t FUNC_FW        = 136;    // r: low word date code, high word build
-// Stock-moRFeus function 130 (mixer/generator mode) is deliberately NOT used:
-// the WB board's firmware doesn't implement it (its output is always on).
+// Function 130: 0 = mixer, 1 = generator. The RFFC507x has no LO output pin;
+// its LO only leaves through the mixer, and with nothing on the mixer input
+// (the WB board) a balanced mixer passes just its LO leakage, 35-60 dB below
+// 0 dBm. Generator mode offsets the mixer so the LO appears at full level.
+// The firmware powers up in whatever was last saved to Flash (0 on a fresh
+// board), so it is set on every start, with 's' (no Flash write).
+constexpr uint8_t FUNC_MODE      = 130;
+constexpr uint64_t MODE_GENERATOR = 1;
 constexpr uint8_t ADDR_INA219 = 80;        // data[0] = register (1 shunt, 2 bus)
 constexpr uint8_t ADDR_SHT4X  = 81;        // data[0] = SHT4x command (0xFD)
 constexpr uint8_t ADDR_SI70XX = 82;        // data[0] = Si70xx command (0xF5)
@@ -901,9 +907,14 @@ bool downconverter_init(uint64_t initial_rf_hz) {
     }
     probe_firmware();
 
-    // Drive current, then the frequency, both with 's' (no Flash wear). The
-    // board's LO output is always on; the stock-moRFeus generator-mode
-    // command is not sent (unimplemented there).
+    // Generator mode, drive current, then the frequency, all with 's' (no
+    // Flash wear).
+    // Not fatal: a firmware that rejects it keeps running as before (LO at
+    // leakage level, far weaker reception - the message says why).
+    if (mrf_set(FUNC_MODE, MODE_GENERATOR))
+        std::cout << "Downconverter: generator mode selected (LO at full level on the mixer output)" << std::endl;
+    else
+        std::cerr << "Downconverter: WARNING - generator mode (function 130) rejected, the LO stays at leakage level" << std::endl;
     if (!downconverter_set_current(WB_LO_CURRENT)) return false;
     // Startup has no manual choice to keep: the preferred side for the RF
     // (high below WB_SIDE_CROSSOVER_HZ, below from it up).
