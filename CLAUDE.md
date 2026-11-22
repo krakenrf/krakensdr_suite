@@ -183,7 +183,8 @@ One file per feature in `kraken_doa_v2/docs/dev/` (the full index is at
 the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 `kraken_doa_v2/plugins/<id>/README.md`.
 
-- Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7),
+- Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7; the Data
+  rate readout, `NET_STATS:`),
   `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9),
   `sweep-mode.md` (sweep mode: `SWEEP_*`, `SWEEP_VIEW:`, type 10)
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),

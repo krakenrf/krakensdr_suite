@@ -155,6 +155,58 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     every mode, the count above the proxy's (coherent ≤ 35 against 31.8,
     a sweep step ≤ 114 against 84.9; the fake's spectra compress less than
     real ones). Two tabs each their own (Full 531 KB/s beside Fit 19).
+  - **On a Raspberry Pi 5 with its KrakenSDR** (the end-to-end record,
+    2026-11-22: the stack on the Pi, the page in headless Chromium on
+    another machine over the LAN). The reference is the Pi kernel's own
+    count of that connection, read by another program over the same window
+    (`ss -tin`, `bytes_acked`) - the same kernel counter the receiver reads,
+    so it checks the receiver's bookkeeping, the page's arithmetic and what
+    is shown, not the kernel. The interface's own tx counter read 1 - 18 %
+    above it (TCP / IP headers, the test's ssh).
+    - The receiver's messages before the page showed them (7e35fa3; B/s,
+      messages / reference): coherent 28 266 / 28 281, wideband scan 27 774
+      / 27 770, independent 46 146 / 45 884, sweep (24 - 1765 MHz at 146 Hz,
+      4.02 s a sweep) at Fit 29 950 / 29 940, at Full 2 998 798 / 2 997 645,
+      the FM band 23 699 / 23 670 - all within 0.6 %; the 2.34 kHz step
+      228 231 / 215 788 (the two 16 s windows were not the same four
+      sweeps); the messages exactly 1 000 ms apart.
+    - The readout (cd91c8a; shown / reference): coherent 28 KB/s / 28 096,
+      wideband scan 28 / 27 930, independent 46 / 46 009, sweep at Fit 30 /
+      30 102, the FM band 23 / 23 157. The fallback (`NET_STATS:0` sent
+      from the page): "≤ 34 KB/s" against 27 766 in coherent mode (1.22x on
+      this receiver's real spectra), the plain "28 KB/s" again with
+      `NET_STATS:1`.
+    - Every shown value, read twice a second through a window of a whole
+      number of sweeps, against the reference's mean over that window -
+      the 5 s window (cd91c8a) -> whole sweeps (5498e27):
+
+      | case | 5 s window: shown (x the mean) | whole sweeps: shown (x the mean) |
+      |---|---|---|
+      | the 2.34 kHz step | 178 - 328 KB/s (0.83 - 1.53) | 207 - 209 KB/s (0.995 - 1.004) |
+      | Full | 2.41 - 4.79 MB/s (0.81 - 1.61) | 2.97 - 2.99 MB/s (1.000 - 1.007) |
+      | Full, the fallback | "≤ 2.41" - "≤ 3.94" MB/s (0.81 - 1.32: below the truth a third of the time) | "≤ 2.98" - "≤ 2.99" against 2.981 (never below) |
+      | Full, a longer sweep | 30 KB/s - 2.41 MB/s (0.02 - 1.55; 7.8 s a sweep) | 864 - 865 KB/s (1.002 - 1.003; 14.0 s a sweep) |
+      | Full, the FM band (11 sweeps a second; the 5 s window in both) | 215 - 219 KB/s (0.995 - 1.013) | 212 - 216 KB/s (0.996 - 1.015) |
+      | Fit; coherent; independent | steady, within 3 % (once 7 % low, in a connection's first half minute) | steady, within 2.5 % |
+
+      A change from the step to Full showed after 1.5 s; paused, the number
+      fell to 3.9 KB/s; resumed, 2.97 - 2.98 MB/s against 2.976. 26 / 26.
+    - The Pi's earlier sweep checks (*Sweep mode*, its Tests) with the new
+      receiver under the page of before and with cd91c8a: all pass (the
+      display list 15 / 15, the kept rows 10 / 10, round 5's 27 / 27, the
+      waterfall 14 / 14, the resolutions 15 / 15 and 15 / 15, end to end 20
+      / 20). With 5498e27 the steps that need the receiver's own signals
+      could not be repeated: the Pi's KrakenSDR had been exchanged for a
+      KrakenSDR Wideband between the runs (heimdall, started without
+      `--wideband`, found no noise-source peak - "peak/mean=3.5" - from its
+      start, before a page was loaded), so "CONVERGED" (six steps) and a
+      known carrier (two) failed in four checks; every other step passed
+      (15 / 15, 10 / 10, 14 / 14, 15 / 15, 25 / 27, 12 / 15, 18 / 20), and
+      the change from cd91c8a is the Data rate's marks alone.
+    - Not tested: a link too slow for a set to be through before the next
+      sweep ends, Firefox / Safari / iOS, a Windows or macOS receiver (the
+      fallback was tested by switching the counters off and against older
+      Linux receivers).
 - Beamformed overlays (type 4): `MessageBuilders::beamformed_spectrum` once
   per VFO per tick (normalized, the beamformer's 1024 bins), then
   `build_beamformed_fft_message(bf, point_step_hz)` per page: max-pooled by a

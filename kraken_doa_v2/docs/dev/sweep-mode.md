@@ -1841,6 +1841,19 @@ Pi figures for a step: a set of 11.6 KB ... 2.97 MB (full: 11.9 MB), the
 store's lock held 0.009 ... 2.2 ms (full: 8.7 ms), the CPU of a page at a
 step within noise of none.
 
+**Round 7, 2026-11-22: the Data rate.** The Display box shows what this
+browser's connection carries, in every mode (*Spectrum views*: "Data rate"
+and "Network rate" - the receiver's `NET_STATS` counters, the page's own
+count as an upper bound, and in this mode the rate over whole sweeps, since
+a set is one burst a sweep). What the display resolutions cost on the Pi 5's
+KrakenSDR, the whole range at 146 Hz (4.02 s a sweep), as the kernel counts
+it: Fit to the plot 30 KB/s, the 2.34 kHz step 208 - 216 KB/s, Full 2.97 -
+3.00 MB/s (a longer dwell: 12 MB a sweep whatever its length - 1.56 MB/s at
+7.8 s, 0.86 MB/s at 14 s); the FM band at Full 213 - 216 KB/s; for
+comparison coherent mode 28 KB/s, wideband scan 28, independent 46. The
+record, with every shown value against the kernel's count, is in *Spectrum
+views*.
+
 Open after round 6, as after round 5: Firefox, Safari and iOS have not run the picture's
 download or the full sets (headless Chromium only); a slow link was tried
 through a 2 MB/s proxy by the page worker, not over a real one; a 1 GB Pi 4
