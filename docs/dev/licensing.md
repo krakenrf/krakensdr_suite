@@ -170,4 +170,22 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   independently by measurement on a public recording (the table in
   `kraken_doa_v2/docs/dev/plugin-inmarsat-c.md`); the EGC codes from IMO
   MSC.1/Circ.1364 (SafetyNET manual) and IEC 61097-4. Whether that copy is
-  cited / relied on is the user's call (raised 2026-11-22, open)
+  cited / relied on is the user's call (raised 2026-11-22, open).
+  CHECKED afterwards from the two authors' sessions (every fetch they made)
+  and their scratch folders, not from their reports: no source file of a
+  GPL project was fetched. inmarsat_c's author fetched documents only (the
+  SDM copy, a Nera manual, WAVECOM's manual page, IEC 61097-4, the SafetyNET
+  manual) and one decoder repository's front page, asked only for its
+  licence and sample files. inmarsat_aero's author fetched source from
+  JAERO (aerol.cpp / .h, oqpskdemodulator.cpp, jconvolutionalcodec.cpp),
+  libacars (adsc, arinc, crc) and libaeroambe - all MIT, JAERO's LICENSE
+  re-read independently; a mechanical comparison of the plugin with those
+  nine files found no identical code line (30+ characters, whitespace
+  removed) and only ordinary words as shared identifiers. ONE THING TO KNOW:
+  while looking for a C channel voice sample - after all protocol code was
+  committed (c01243d; those files did not change later) - documentation of
+  three GPL-3.0 Aero decoders was downloaded and keyword-searched for
+  download links (DecAero README.md + docs/DESIGN.md, OnAir docs/CODECS.md,
+  InmarScope README + TESTING.md; at most 80 matching lines were shown, none
+  of their source). NO similarity audit against the GPL decoders' own code
+  (SatDump, Scytale-C, DecAero ...) was run
