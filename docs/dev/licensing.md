@@ -161,7 +161,17 @@ the right to use the code in paid commercial software).
   KrakenRF to use, copy, modify, distribute and sublicense under any terms,
   commercial licences included, a patent licence, and the contributor's
   word that the work is theirs and third-party material is named. In
-  LICENSE since e9e6c73 (2026-10-21).
+  LICENSE since e9e6c73 (2026-10-21). Section 5 (licence version 1.0) was
+  NOT changed; the root paragraph was reworded the same day to close two
+  gaps in how it pointed there: section 5 speaks of "the Software"
+  (kraken_doa only), so the paragraph now says to read it as the part
+  contributed to (GPL programs, MIT parts, own-licence plugins), and it
+  spells out the commercial use ("the commercial licences and products
+  KrakenRF sells, without payment to you"; the contributor keeps the
+  copyright). Open points for a lawyer, deliberately left alone: section 5
+  names "successors" but not assigns, lists no "communicate to the public"
+  right next to "distribute", and states no consideration for the
+  irrevocable grant.
 - WHAT WAS MISSING was the contributor's agreement on record: nothing
   showed a pull request's author the terms, and GitHub's own rule
   (a contribution is under the repository's licence) gives KrakenRF only

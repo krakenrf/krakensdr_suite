@@ -72,11 +72,23 @@ heimdall_v2/THIRD_PARTY_NOTICES.md and kraken_doa_v2/THIRD_PARTY_NOTICES.md.
 Contributions
 -------------
 
-By submitting a contribution to any part of the suite, you license it under
-the licence of the part you contribute to AND grant KrakenRF Inc. the rights
-described in section 5 ("Contributions") of the KrakenSDR Source Available
-Licence (kraken_doa_v2/LICENSE). This lets KrakenRF use the same code in the
-GPL programs and in the source-available software.
+By submitting a contribution to any part of the suite (for example code,
+documentation or data sent as a pull request, patch or issue attachment), you
+license it under the licence of the part you contribute to AND grant KrakenRF
+Inc. the rights described in section 5 ("Contributions") of the KrakenSDR
+Source Available Licence (kraken_doa_v2/LICENSE). For a contribution to a
+part under another licence (the GPL programs, the MIT parts, a decoder plugin
+with a LICENSE file of its own), read "the Software" in that section as that
+part.
+
+This lets KrakenRF use the same code in the GPL programs and in the
+source-available software, and use, distribute and license it under any
+terms - including in the commercial licences and products KrakenRF sells -
+without payment to you. You keep the copyright in your contribution.
+
+A pull request confirms these terms in its description; CONTRIBUTING.md in
+the repository (https://github.com/krakenrf/krakensdr_suite) explains how,
+and what a contribution may contain.
 
 
 MIT License (for the scripts listed above; the plugin SDK's copy is
