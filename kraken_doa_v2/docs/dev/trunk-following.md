@@ -702,7 +702,9 @@ the channel on D0 again; a click on the entry D0 already follows is a no-op.
 `"add":true` ("Follow it too") adds a further control VFO (D1 and up) as
 before - also when nothing was clicked yet - refused when the new channel
 doesn't fit the span with the ones followed, or with 16 VFOs in use. The
-VFOs "Follow it too" made are removed by a plain click that retunes (they'd
+VFOs "Follow it too" made IN THIS RUN of the receiver (known by their
+instance serial; after a restart they are simply saved VFOs of the user's)
+are removed by a plain click that retunes (they'd
 sit on offsets of the old span) and by a plain click on the channel one of
 them follows (D0 takes it - no duplicate of a click's making); without a
 retune the others stay and stay in `cc_followed`. The user's own VFOs are
@@ -860,10 +862,11 @@ and found at 6 here.
   no control characters) - checked at SET / load by the same rule.
 - `cc_followed`: the plain click's is `{vfo: 0, id}`, the "Follow it too"
   ones' their VFOs; a clicked VFO that is gone, runs another plugin or was
-  moved more than 3 kHz off its entry is dropped; after a restart a control
-  VFO with the plugin and frequency of an entry followed before is the
-  followed one again (the most recently followed entry) - the highlight and
-  "replace" work across restarts.
+  moved more than 3 kHz off its entry is dropped; after a restart EVERY
+  control VFO with the plugin and frequency of an entry followed before is a
+  followed one again (the most recently followed entry there) - the highlight
+  works across restarts. Shown as followed is not "made by a click": a plain
+  click removes only VFOs a "Follow it too" click created in this run.
 - The file: its size is checked before it is read; a newer `version` is kept
   aside untouched (`file.state` "not_loaded", the note says "newer
   version"); ids are renumbered 1.. on load; entries over 1000 are kept aside
@@ -883,10 +886,11 @@ and found at 6 here.
   a page must take them from the latest list message.
 - `cc_followed` after a restart is found by plugin + frequency of a
   previously followed entry: a control VFO the user made by hand on such a
-  frequency is taken as the followed one too (there is nothing saved on a
-  VFO that tells a click's from his) - a plain click then removes it if it
-  is on the clicked channel or the click retunes (as a "Follow it too" VFO).
-  A known limit.
+  frequency is shown as followed too (there is nothing saved on a VFO that
+  tells a click's from his) - but a click never removes a VFO adopted so:
+  only those a "Follow it too" click created in this run (their serials)
+  are removed (2026-11-22; before, an adopted hand-made VFO was removed by a
+  plain click on its channel or one that retuned).
 
 Commands (all `TRUNK_` / `GET_TRUNK_CC`, answered with the status, errors as
 `trunk_error`):
@@ -1595,7 +1599,7 @@ the broadcasts:
   sites): one, the stronger; signalled frequencies different: two; the
   weaker named or marked followed (`TRUNK_CC_SET` with its id) meanwhile:
   kept, and the stronger gets its own entry (before: not recorded at all); a
-  click on it meanwhile ends the search (`follow`). `t36_d0` 174 (a plain
+  click on it meanwhile ends the search (`follow`). `t36_d0` 209 (a plain
   click always on D0, 2026-11-22): D0 a plain listening VFO (WBFM, heard),
   another system's control VFO, parked by an excursion, disabled by a search
   (the click during it), with 16 VFOs in use; in / out of the span (the
@@ -1608,7 +1612,11 @@ the broadcasts:
   taken (home first); after each: D0's RF = the entry's, its system received,
   `cc_followed`, the snapshot, D0 enabled with the Digital demod and its
   speaker as it was, no stray VFO or plugin process; 6 s after an excursion's
-  / a search's end D0 still on the entry. (A user can't disable a VFO - there
+  / a search's end D0 still on the entry; a restart with a "Follow it too"
+  VFO and a hand-made control VFO on followed entries: both shown in
+  `cc_followed`, a retuning plain click and a plain click on the hand-made
+  one's channel remove neither, while a "Follow it too" VFO made after the
+  restart is still removed. (A user can't disable a VFO - there
   is no command for it: not tested.) t31 / t33 changed with it (the click
   takes D0). `t33_notapplied` 8 - the "not
   applied" answer, reached through a hand-edited VFO snapshot (above): the

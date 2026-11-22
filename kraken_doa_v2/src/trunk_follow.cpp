@@ -3545,6 +3545,9 @@ std::string g_cc_note, g_cc_bad;
 std::string g_cc_state = "ok";   // trunk_cc.file.state: ok | not_loaded (kept as kept_as) | not_written (kept in memory, tried again)
 std::map<int, int64_t> g_cc_heard;            // control VFO -> last time it refreshed its entry
 std::map<int, std::pair<uint64_t, uint64_t>> g_cc_follow;   // control VFO -> (its instance serial, the entry it follows)
+// the VFOs a "Follow it too" click created in THIS run (instance serials): the only ones a plain click may remove.
+// Never one adopted after a restart (cc_follow_tick) - whatever made it then, it is a saved VFO of the user's now
+std::set<uint64_t> g_cc_added;
 
 double snap(double hz, double raster) { return raster > 0 ? std::round(hz / raster) * raster : std::round(hz); }
 
@@ -4682,12 +4685,13 @@ std::string cc_follow(uint64_t id, bool add) {
     }
     int vfo = -1;
     if (!add) {
-        // the VFOs earlier "Follow it too" clicks made: after a retune they'd sit on offsets of the old span, and
-        // one on this very channel would be a duplicate of a click's own making - removed (the user's own VFOs
-        // never: they move with the centre as on any retune)
+        // the VFOs earlier "Follow it too" clicks made in this run: after a retune they'd sit on offsets of the old
+        // span, and one on this very channel would be a duplicate of a click's own making - removed. A VFO the user
+        // made - also one adopted as followed after a restart, whatever made it before - never: it moves with the
+        // centre as on any retune
         std::vector<int> drop;
         for (const auto& kv : g_cc_follow) {
-            if (kv.first == 0) continue;
+            if (kv.first == 0 || !g_cc_added.count(kv.second.first)) continue;
             auto inst = clicked(kv.first, kv.second.first);
             if (!inst) continue;
             auto dd = inst->getDigital();
@@ -4695,6 +4699,7 @@ std::string cc_follow(uint64_t id, bool add) {
             if (!fits || same) drop.push_back(kv.first);
         }
         for (int k : drop) {
+            g_cc_added.erase(g_cc_follow[k].first);
             g_cc_follow.erase(k);
             ControlHandler::apply_command("REMOVE_DECIMATOR:" + std::to_string(k));
             std::cout << "Trunk following: D" << k << " (a \"follow it too\" click's) removed - the control channel goes on D0" << std::endl;
@@ -4725,6 +4730,8 @@ std::string cc_follow(uint64_t id, bool add) {
         for (const auto& d : decimator_manager.getDecimatorInfoList())
             if (!before.count(d.id)) vfo = d.id;
         if (vfo < 0) return "a VFO couldn't be added";
+        if (add)
+            if (auto ni = decimator_manager.getDecimator(vfo)) g_cc_added.insert(ni->serial);
     }
     // the plugin options of a replaced channel go back to the defaults (only the entry's own are set)
     if (auto inst = decimator_manager.getDecimator(vfo)) {
@@ -4779,8 +4786,8 @@ std::string cc_follow(uint64_t id, bool add) {
 }
 
 // the clicked control VFOs: a VFO gone, or changed by hand (another plugin, or moved more than 3 kHz off its
-// entry), is no longer the followed one; with none (a restart), a control VFO on a followed entry's frequency
-// with its plugin is (the most recently followed entry)
+// entry), is no longer the followed one; with none (a restart), every control VFO on a followed entry's frequency
+// with its plugin is (the most recently followed entry there)
 void cc_follow_tick() {
     for (auto it = g_cc_follow.begin(); it != g_cc_follow.end();) {
         auto inst = decimator_manager.getDecimator(it->first);
@@ -4805,9 +4812,10 @@ void cc_follow_tick() {
                 (!best || kv.second.followed > best->followed))
                 best = &kv.second;
         if (best) {
+            // (every one of them: D0's and the earlier "Follow it too" ones - only shown as followed, never in
+            // g_cc_added: a plain click doesn't remove them)
             g_cc_follow[id] = {inst->serial, best->id};
             g_status_now = true;
-            return;
         }
     }
 }
