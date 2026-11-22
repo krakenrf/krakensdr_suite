@@ -846,7 +846,9 @@ and found at 6 here.
   heard in normal use; SET and the file are checked by the DIGITAL_OPT rule,
   and DIGITAL_OPT itself doesn't ask the plugin. Such an entry is written to
   the file and dropped as unreadable at the next load unless a later heard
-  refresh replaced its options - not fixed (a hand edit only).
+  refresh replaced its options; a click to follow drops the options the
+  receiver refused from the entry (since the click reuses D0, whose heard
+  refresh is a minute away, t33 lost the followed entry at the restart).
 - Only decoders that declare `trunking`: refused at `TRUNK_CC_SET` ("plugin:
   a decoder that declares trunking"), dropped from a loaded file (counted in
   `file.note`; when the registry is read after the file - only if the

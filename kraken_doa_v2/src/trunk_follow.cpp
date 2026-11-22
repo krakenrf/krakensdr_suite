@@ -4749,10 +4749,17 @@ std::string cc_follow(uint64_t id, bool add) {
     // what is heard: the decoder's voice only (Digital demod) - a control channel through an analogue demod
     // is a continuous data buzz on D0, which is usually the VFO heard; the speaker stays as the user set it
     c2.push_back("SET_DECIMATOR_DEMOD:" + sid + ":DIGITAL");
+    std::vector<std::string> bad_opts;
     for (const auto& cmd : c2) {
         const std::string why = ControlHandler::apply_command(cmd);   // (the user's VFO now: saved)
-        if (!why.empty()) refused += (refused.empty() ? "" : "; ") + cmd.substr(0, 80) + ": " + why;
+        if (why.empty()) continue;
+        refused += (refused.empty() ? "" : "; ") + cmd.substr(0, 80) + ": " + why;
+        const std::string pre = "DIGITAL_OPT:" + sid + ":" + e.plugin + ".";
+        if (cmd.compare(0, pre.size(), pre) == 0) bad_opts.push_back(cmd.substr(pre.size(), cmd.find(':', pre.size()) - pre.size()));
     }
+    // (an option the receiver refuses leaves the entry: the file holds only what loads again - one with such an
+    // option was dropped as unreadable at the next start, its followed / name with it)
+    for (const auto& k : bad_opts) e.opts.erase(k);
     auto inst = decimator_manager.getDecimator(vfo);
     if (inst && !inst->enabled.load()) {
         inst->enabled = true;   // (parked by an excursion / disabled by a search: the click's placement wins)
