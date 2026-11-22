@@ -60,6 +60,12 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
   (right-hand circular: a patch or a short helix) and an LNA at the
   antenna - it can be powered from the receiver: the antenna bias tees
   (top bar, `docs/dev/bias-tees.md`). The R820T tuners reach 1.76 GHz.
+- With one antenna, decode in **independent mode** (top bar; the antenna's
+  tuner on the band, the others idle): no calibration, so heimdall never
+  cuts the noise-source bursts out of the stream - in coherent mode those
+  gaps fall into frames and calls (off air, 2026-11-22: 0 gaps in 420 s
+  independent, the same P channel counts as coherent, `sigtool.py capture
+  --channel 0` records the tuner).
 - A VFO of 15 - 25 kHz on the channel frequency (min_vfo_rate 15 kHz). The
   carrier may be off by up to +-2.5 kHz (an RTL-SDR's 1 ppm is 1.5 kHz at
   1.5 GHz): the plugin finds it, tracks it and shows it (Carrier offset
