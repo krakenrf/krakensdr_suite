@@ -82,7 +82,10 @@ plugins/
 │                         from the squared spectrum's line pair), coherent A-BPSK / A-QPSK, frame sync,
 │                         de-interleaver, streaming soft Viterbi, signal units by type, ACARS + ADS-C
 │                         (map); C channel voice through the user's Aero AMBE (lib/aero_ambe); R / T
-│                         bursts from aircraft: a packet talker per aircraft (ICAO address)
+│                         bursts from aircraft: a packet talker per aircraft (ICAO address). At the
+│                         VFO's own rate (sample_rate 0): "All channels in the VFO" runs an overlap-save
+│                         FFT bank, surveys its bins for carriers and decodes every P / C channel of a
+│                         VFO up to 2.4 MHz side by side in the one process, every call's voice mixed
 ├── lora/                 LoRa CSS in the full 2.4 MHz (lock_vfo): per-channel dechirp receiver
 │                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
 │                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet
@@ -901,7 +904,11 @@ least recently played go).
 
 1. **Report only what passed a check.** A sync word match alone is not a
    frame: verify CRC / FEC / parity before `host.valid()` and before showing
-   decoded content. Random noise must produce no events.
+   decoded content. Random noise must produce no events. A signal whose
+   first frame takes seconds (inmarsat_c: 8.64 s) may say earlier that it
+   was recognised - carrier, kind, when the first frame is due - but in a
+   fact, never through `valid()`, and with a false-alarm rate measured on
+   noise and on the neighbouring signals.
 2. **Handle polarity and offset.** FSK can arrive inverted (try both sync
    polarities, or use `kp::SyncWord::inverted_distance()`); the carrier can be
    a few hundred Hz to a few kHz off (track the discriminator's DC, or report
