@@ -259,7 +259,7 @@ the hops into the sweep spectrum, the page shows it.
   | Offset | Type | |
   |---|---|---|
   | 0 | u32 | 11 |
-  | 4 | u8 | flags: 1 = the set's last part, 2 = a snapshot (the store as it is, not a completed sweep: the trace only, no waterfall row), 4 = paused |
+  | 4 | u8 | flags: 1 = the set's last part, 2 = a snapshot (the store as it is, not a completed sweep: the trace only, no waterfall row), 4 = paused, 8 = deflated (added 2026-11-23, below) |
   | 5 | u8 | 0 |
   | 6 | u16 | pool = bins per value (1: the sweep's own bins) |
   | 8 | u32 | grid id |
@@ -283,7 +283,8 @@ the hops into the sweep spectrum, the page shows it.
   while a set is in flight, or with more than 256 KB queued, gets no set
   (skipped whole: the row keeps its overview / window levels). A set in
   flight is abandoned at a grid change, at `SWEEP_FULL:0` and out of the
-  mode (the page drops what is incomplete). Not compressed. No bin cap and
+  mode (the page drops what is incomplete). Not compressed (until
+  2026-11-23: `SWEEP_FULL_Z` below). No bin cap and
   no rate limit (the measurements below); `pool` is there for one. A socket
   that never sent the command gets what it got before.
 - Added 2026-11-22 (the user: "other resolution options for the display
@@ -307,6 +308,20 @@ the hops into the sweep spectrum, the page shows it.
   - and full (n 1) last. Absent: a receiver of 2026-11-21 (`SWEEP_FULL`
   on / off only; it ignores `SWEEP_FULL:65536` as junk) or older. "Fit to
   the plot" (0) is the page's and not in the list.
+- Added 2026-11-23 (the user: "the sweep full resolution compression"):
+  `SWEEP_FULL_Z:<1|0>` (also true / false; junk ignored) - transport
+  level, per connection, default 0: this page can inflate. Its type 11
+  parts then go deflated where the receiver has them in time and they are
+  smaller: flag 8, and the bytes after the 48-byte header are ONE complete
+  zlib stream (RFC 1950: header, deflate data, Adler-32) inflating to
+  exactly `n` values (`total`, `first`, `n` count values as before; the
+  message is 48 + the stream). A part without flag 8 is raw as before; a
+  set may mix both (one stream a part: the parts inflate independently,
+  the page assembles them in order). Read per part, so a change of the
+  command mid-set changes only the parts still to go. The `sweep` message
+  carries `"full_z":true` (this receiver deflates). An older receiver
+  ignores the command (raw sets); an older page never sends it and gets
+  exactly what it got before. Lossless: one byte a value after inflating.
 - Levels: ONE reference for the whole sweep (never one per hop: a signal
   that fills a hop must keep its height), the tuners' common in-band shape
   removed (`nfloor::shape_db`, *Noise floor*).
@@ -798,9 +813,61 @@ refused; out-of-range numbers are clamped:
   - Memory: one buffer of `bins` bytes per set (11.9 MB at 146 Hz, 16.8 MB
     at most), alive while a socket still sends it - the latest and any a
     slower socket is still on; released out of the mode.
-  - Not compressed: deflate of a part (the scene's noise and signals) to
-    57 % costs 12.8 ms at level 1 (the set 291 ms), to 54 % 49 ms at level
-    6 (1.1 s), on x86, on the uWS loop.
+  - Compressed for a page that asks (`SWEEP_FULL_Z`, 2026-11-23; until then
+    not: deflate's default strategy on the fake's scene, 57 % for 291 ms a
+    set on the loop, did not pay). zlib, `Z_HUFFMAN_ONLY`, windowBits 15,
+    memLevel 9, one stream a part, on a compressor thread (`z_main`,
+    sweep.cpp): the levels of one FFT a point are noise to an LZ search -
+    Huffman alone is at the bound for this data and the fastest. On the
+    REAL sets of the PC's KrakenSDR (job scratch `e2e/sets`; bench
+    `bench/zbench.cpp`, this exact call; x86 / Pi 5): the whole range at
+    146 Hz 60.1 % in 82 / 210 ms (145 / 56 MB/s; inflate 40 / 63 ms),
+    dwell 21 ms 51.6 %, 586 Hz 55.0 % in 20 / 48 ms, Auto 55.0 % in 2.5 /
+    6.3 ms, the FM band 58.1 % in 0.12 / 0.32 ms - every part inflating back
+    byte for byte; a part of uniformly random values does not shrink and
+    goes raw. Default strategy level 1: 66.4 % at a third of the speed
+    (the orchestrator's study, `e2e/comp_*.py`).
+  - The mechanics. After the tick's `build_fulls` (the lock as before) the
+    sets that a deflating socket starts are handed over (`z_submit`): their
+    per-part slots are made on the loop thread, the compressor fills them
+    part by part (`zpart[k]`, then `zstate[k]` = READY or RAW with release;
+    the loop reads with acquire) - the deflated copies live and die with
+    the set's buffer. A newer hand-over replaces what the compressor has not
+    done (it marks the old sets dropped): no queue. Out of the mode
+    `z_submit({})` drops the work. `pump_full` sends part k of a deflating
+    socket deflated when READY; raw when RAW (not smaller), when the set
+    was dropped, when the part before it is still pending (the compressor
+    is behind: the rest of the set goes raw at once), or past its deadline
+    = the hand-over + 50 ms + parts 0..k at 32 MB/s (half the Pi 5's
+    rate); else the socket waits - the compressor wakes the loop
+    (`loop->defer`, coalesced) as each part is ready. So a set is late by
+    at most about a tick plus its own compression: measured 0.08 s (x86) /
+    0.15 s (Pi 5) after the raw page's for 11.9 M bins; with a compressor
+    slowed to 300 ms a part (`KRAKEN_DOA_TEST_Z_DELAY_MS`, a test hook)
+    every part goes raw, every set complete, 0.09 s late.
+  - What it saves and costs (t_zipcpu.py: the whole range at 146 Hz; one
+    normal page and one full page raw / deflating; % of one core; no packet
+    dropped): x86 8.6 / 11.3 %, Pi 5 15.8-18.8 / 24.0 % - the compressor
+    is ~5.6 % of a Pi 5 core at a 3.75 s sweep (210 ms a set). The wire: the
+    fake's scene goes to 47.9 % (a step: 38.8 %), the real 146 Hz set to
+    60.1 % - 3.5 MB/s raw -> about 2.1 MB/s on the user's KrakenSDR. 586 Hz
+    (2.97 M): x86 5.5 / 6.4 %, Pi 5 11.2 / 13.3 %; 400-430 MHz at 16384
+    (12 sets a second): x86 8.0 / 9.8 %, Pi 5 15.3 / 18.3 %.
+  - Tests (`t_zip.py`; x86 normal 25 / 25, ASan + UBSan the same but the
+    "no packet dropped" checks (that build drops engine packets during
+    full sets, as before), Pi 5 25 / 25): a deflating and a raw socket,
+    full and a step, get the same sets byte for byte after inflating; every
+    deflated part one complete zlib stream inflating to `n`, smaller than
+    raw; an older socket's parts raw, `n` bytes as before (and
+    `t_ovcompat.py` against 3919d64); a part deflated exactly when
+    zlib makes it smaller (sets of 54, 107 and 51 201 values); the slowed
+    compressor: raw, complete, not late; mid-set with it busy:
+    `SWEEP_FULL_Z:0`, `SWEEP_FULL:65536`, a grid change, pause, leaving the
+    mode and coming back. TSan builds and runs (`setarch -R`: this kernel's
+    address layout), but its mutex tracking is broken here - it reports
+    "double lock" on plain lock_guards and races between two threads
+    holding the same mutex all over the program; none of its ~120 reports
+    names the compressor or its pump, which with that noise proves little.
   - CPU (t_fullcpu.py, the receiver, % of one core; one normal page plus 0
     / 1 / 2 full-resolution pages; then 0 again; type 11 KB/s a full page;
     dwell 5, 5 tuners, the fake at real time; no packet dropped):

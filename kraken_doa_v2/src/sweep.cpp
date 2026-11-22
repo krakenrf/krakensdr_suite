@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -27,6 +28,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <zlib.h>
 
 namespace sweep {
 namespace {
@@ -1049,6 +1051,7 @@ std::string state_json() {
     // receiver sends for the running grid: SWEEP_FULL:<n> and what it gives;
     // a step that would be the same as full is left out; full (n 1) last
     {
+        o << ",\"full_z\":true";   // SWEEP_FULL_Z: deflated parts (type 11 flag 8)
         o << ",\"full_sets\":[";
         const uint32_t steps[] = {16384, 65536, 262144, 1048576, 4194304};
         bool first = true;
@@ -1322,9 +1325,10 @@ std::shared_ptr<const FullSet> build_full(uint32_t pool) {
     return v.empty() ? nullptr : v[0];
 }
 
-std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t first, size_t n) {
+std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t first, size_t n, const std::string* z) {
+    if (z) flags = static_cast<uint8_t>(flags | 8);
     std::string out;
-    out.resize(48 + n);
+    out.resize(48 + (z ? z->size() : n));
     char* o = out.data();
     auto put = [&o](const auto& x) { std::memcpy(o, &x, sizeof x); o += sizeof x; };
     put(uint32_t(11));
@@ -1339,7 +1343,10 @@ std::string full_part(const FullSet& s, uint8_t flags, uint32_t set_id, size_t f
     put(static_cast<uint32_t>(first));
     put(static_cast<uint32_t>(n));
     put(set_id);
-    std::memcpy(o, s.lv.data() + first, n);
+    if (z)
+        std::memcpy(o, z->data(), z->size());
+    else
+        std::memcpy(o, s.lv.data() + first, n);
     return out;
 }
 
@@ -1366,6 +1373,107 @@ bool pooled_db(double lo_hz, double hi_hz, int points, std::vector<float>& db, d
     return true;
 }
 
+// --- the compressor (SWEEP_FULL_Z) ------------------------------------------------------
+namespace {
+constexpr double Z_MIN_RATE_BYTES_MS = 32000.0;   // 32 MB/s: a part's expected compression
+constexpr int64_t Z_TICK_MS = 50;
+std::mutex g_zmu;
+std::condition_variable g_zcv;
+std::vector<std::shared_ptr<const FullSet>> g_zjob;   // the latest hand-over
+uint64_t g_zgen = 0;
+bool g_zstop = false;
+std::thread g_zthread;
+std::function<void()> g_zwake;
+int g_ztest_delay_ms = -1;   // KRAKEN_DOA_TEST_Z_DELAY_MS: a test build's slow compressor
+
+void z_main() {
+    z_stream zs{};
+    if (deflateInit2(&zs, 1, Z_DEFLATED, 15, 9, Z_HUFFMAN_ONLY) != Z_OK) return;
+    std::string out;
+    for (;;) {
+        std::vector<std::shared_ptr<const FullSet>> job;
+        uint64_t gen;
+        std::function<void()> wake;
+        {
+            std::unique_lock<std::mutex> lk(g_zmu);
+            g_zcv.wait(lk, [] { return g_zstop || !g_zjob.empty(); });
+            if (g_zstop) break;
+            job.swap(g_zjob);
+            gen = g_zgen;
+            wake = g_zwake;
+        }
+        bool replaced = false;
+        for (const auto& s : job) {
+            const size_t parts = s->zpart.size();
+            for (size_t k = 0; k < parts; k++) {
+                {
+                    std::lock_guard<std::mutex> lk(g_zmu);
+                    replaced = g_zstop || g_zgen != gen;
+                }
+                if (replaced) break;
+                if (s->zstate[k].load(std::memory_order_acquire) != Z_PENDING) continue;
+                const size_t first = k * FULL_PART_VALUES;
+                const size_t n = std::min(FULL_PART_VALUES, s->lv.size() - first);
+                out.resize(deflateBound(&zs, static_cast<uLong>(n)));
+                deflateReset(&zs);
+                zs.next_in = const_cast<Bytef*>(s->lv.data() + first);
+                zs.avail_in = static_cast<uInt>(n);
+                zs.next_out = reinterpret_cast<Bytef*>(out.data());
+                zs.avail_out = static_cast<uInt>(out.size());
+                const int r = deflate(&zs, Z_FINISH);
+                const size_t used = out.size() - zs.avail_out;
+                if (g_ztest_delay_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(g_ztest_delay_ms));
+                if (r == Z_STREAM_END && used < n) {
+                    s->zpart[k].assign(out.data(), used);
+                    s->zstate[k].store(Z_READY, std::memory_order_release);
+                } else {
+                    s->zstate[k].store(Z_RAW, std::memory_order_release);   // not smaller: raw
+                }
+                if (wake) wake();
+            }
+            if (replaced) break;
+        }
+        if (replaced)
+            for (const auto& s : job) s->z_dropped.store(true, std::memory_order_release);
+        // (the job's references go here: a set lives as long as a socket still sends it)
+    }
+    deflateEnd(&zs);
+}
+}  // namespace
+
+int64_t z_now_ms() { return now_ms(); }
+
+int64_t z_deadline_ms(const FullSet& s, size_t k) {
+    const double bytes = static_cast<double>(std::min(s.lv.size(), (k + 1) * FULL_PART_VALUES));
+    return s.z_t0_ms + Z_TICK_MS + static_cast<int64_t>(bytes / Z_MIN_RATE_BYTES_MS);
+}
+
+void z_set_wake(std::function<void()> wake) {
+    std::lock_guard<std::mutex> lk(g_zmu);
+    g_zwake = std::move(wake);
+}
+
+void z_submit(const std::vector<std::shared_ptr<const FullSet>>& sets) {
+    // (loop thread) the parts' slots first: their size is fixed before the
+    // compressor sees the set
+    for (const auto& s : sets) {
+        if (s->zstate) continue;   // (already handed over once: a set is compressed once)
+        const size_t parts = (s->lv.size() + FULL_PART_VALUES - 1) / FULL_PART_VALUES;
+        s->zpart.resize(parts);
+        s->zstate.reset(new std::atomic<uint8_t>[parts]);
+        for (size_t k = 0; k < parts; k++) s->zstate[k].store(Z_PENDING, std::memory_order_relaxed);
+        s->z_t0_ms = now_ms();
+    }
+    std::lock_guard<std::mutex> lk(g_zmu);
+    if (!g_zthread.joinable() && !g_zstop) {
+        if (const char* d = std::getenv("KRAKEN_DOA_TEST_Z_DELAY_MS")) g_ztest_delay_ms = std::atoi(d);
+        g_zthread = std::thread(z_main);
+    }
+    g_zjob = sets;   // replaces what the compressor has not started
+    g_zgen++;
+    g_zcv.notify_one();
+}
+
 void start() {
     apply_plan(false);
     g_stop.store(false);
@@ -1376,6 +1484,13 @@ void stop() {
     g_stop.store(true);
     g_rcv.notify_all();
     if (g_thread.joinable()) g_thread.join();
+    {
+        std::lock_guard<std::mutex> lk(g_zmu);
+        g_zstop = true;
+        g_zjob.clear();
+    }
+    g_zcv.notify_all();
+    if (g_zthread.joinable()) g_zthread.join();
 }
 
 }  // namespace sweep
