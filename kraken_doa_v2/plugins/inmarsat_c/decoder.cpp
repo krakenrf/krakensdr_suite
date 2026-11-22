@@ -148,6 +148,8 @@ private:
         early_.reset(first_real_);
         early_found_ = false;
         first_frame_done_ = false;
+        row_re_ = row_im_ = 0;
+        disrupted_logged_ = false;
     }
 
     float uw_corr(int64_t s) const {
@@ -165,6 +167,9 @@ private:
         ring_[sym_count_ % RING] = s.soft;
         pos_[sym_count_ % RING] = s.pos;
         sym_count_++;
+        row_re_ += s.soft * s.soft;
+        row_im_ += s.quad * s.quad;
+        if (sym_count_ % inmc::COLS == 0) row_check();
         if (!locked_ && !early_found_) early_step();
         else if (early_found_ && !first_frame_done_ && sym_count_ % (inmc::COLS * 8) == 0) sync_fact_due();
         const int64_t start = sym_count_ - inmc::FRAME_SYMS;   // a frame ending with this symbol
@@ -234,6 +239,29 @@ private:
                 first_frame_done_ = false;
                 host.log("unique word lost - searching");
             }
+        }
+    }
+
+    // A row of symbols that is no BPSK (a heimdall calibration burst after a
+    // coherent retune: ~0.5 s of the noise source; the loops re-locking after
+    // it) before the first frame: its symbols become erasures and the early
+    // search starts again after it - else the burst's rows weigh on every
+    // frame phase until a whole frame has replaced them (measured: 9 s to
+    // recognition instead of 3.4 s, live and offline).
+    void row_check() {
+        const float q = row_re_ + row_im_ > 0 ? (row_re_ - row_im_) / (row_re_ + row_im_) : 0.0f;
+        row_re_ = row_im_ = 0;
+        if (q >= 0.2f || first_frame_done_ || sym_count_ - inmc::COLS < first_real_) return;
+        for (int64_t k = sym_count_ - inmc::COLS; k < sym_count_; k++) ring_[k % RING] = 0.0f;
+        early_.reset(sym_count_);
+        if (early_found_) {   // the grid may have moved with it: search again
+            early_found_ = false;
+            locked_ = false;
+            pending_ = -1;
+        }
+        if (!disrupted_logged_) {
+            disrupted_logged_ = true;
+            host.log("a row without a BPSK signal (quality " + fmt("%.2f", q) + ") - unique-word search restarted after it");
         }
     }
 
@@ -640,6 +668,8 @@ private:
     bool early_found_ = false, first_frame_done_ = false;
     long long first_partial_failed_ = 0;
     int early_rows_ = 0;
+    float row_re_ = 0, row_im_ = 0;
+    bool disrupted_logged_ = false;
     float early_corr_ = 0;
     bool early_debug_ = std::getenv("INMC_EARLY_DEBUG") != nullptr;
     // how much of a first frame may be missing for it to be tried (measured: README)
