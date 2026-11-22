@@ -306,9 +306,12 @@ trunking decoder on each steady carrier; the receiver is away from your
 frequency while it runs and comes back at the end (or on **Stop**). What it
 finds - and every control channel you tune yourself - lands in a list kept
 on the receiver (`trunk_control_channels.json`, saved by itself; Export /
-Import in its **…** menu), and **one click on an entry follows it**: a
-control VFO with the right decoder is put on it (the receiver retunes when
-it is outside the band) and following switches on.
+Import in its **…** menu), and **one click on an entry follows it**: D0
+becomes the control VFO with the right decoder on it (whatever D0 did is
+replaced; it is set to the Digital demod, so you hear decoded voice only, not
+the control channel's data; the receiver retunes when it is outside the
+band) and following switches on. **Follow it too** adds a further control
+VFO for a second channel in the band.
 
 What each protocol needs:
 
