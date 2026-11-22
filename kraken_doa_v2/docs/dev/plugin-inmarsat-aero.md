@@ -157,6 +157,31 @@ this folder (index: `README.md` here, or the table in
   voice path is checked on generated frames only.
 - Debug playback through a TEST kraken_doa (2026-11-22, 2+ loops per
   entry): plugin README, Test results.
+- Off air (2026-11-22, Raspberry Pi 5 + KrakenSDR CH0, patch antenna with
+  an LNA on the bias tee, Inmarsat-4 F1): numbers in the plugin README,
+  Test results, "Off air". Layout facts learned there:
+  - Type 0x0B / 0x0C ("satellite identification") is a table, one SU per
+    satellite of the system: octet 2 counts down by 4 per entry (0x18 ..
+    0x00), octet 3's high nibble is the ID (0 - 7), octet 5 x 1.5 the
+    longitude (deg E; 0: 99.0 W, 1: 54.0 W, 2: 142.5 E, 3: 84.0 E, 4:
+    145.5 E, 5: 144.0 E, 6: 25.5 E, 7: 97.5 W), octets 6 - 9 two P channel
+    codes. The satellite being received is the entry naming the received
+    P channel (`SuDecoder::set_channel_hz`, nearest within 2.5 kHz): ID 2
+    for GES 0x82 / 0x85's channels, ID 5 for GES 0x50's.
+  - Real P channels: 600 bit/s on a 5 kHz raster, all the same level
+    (+13 dB in 600 Hz here); the 10.5 kbit/s channels carry mostly types
+    0x0A and 0x26 (about half each); the 600 bit/s ones types 0x19 (the
+    commonest), 0x0C, 0x05, 0x18, 0x1A, 0x2B, 0x40, 0x41 - 0x18 - 0x1A and
+    0x2B are not decoded. No type 0x09 (UTC) and no C channel assignment
+    seen in 31 minutes.
+  - The acquisition's line pair must be balanced (`Acquisition::search`:
+    max / min <= 6): a non-Aero carrier with a strong unmodulated part
+    (1545.476 MHz) has one x^2 line 20 - 25 dB over the rest.
+  - A VFO move (`host.rf_hz()` changing by > 100 Hz) resets the decoder.
+  - The 10.5 kbit/s channels are noise-limited with a patch (Eb/N0 ~0 dB):
+    84 - 87 % of SUs live, 93 - 96 % offline from captures; pll_bw 0.6 -
+    2.5e-3, tim_gain 0.6 - 2.5e-4, roll-off 0.35 - 0.7 changed the
+    capture's count by at most 2 points (none better than the defaults).
 - Not done: CPDLC decoding, the 21 kbit/s C channel (no public 9.6 kbit/s
   LPC decoder), the other C rates, bursts closer than ~1.4 kHz at once (or more than four), verification of
   satellite / beam table fields (not on the recordings). Windows / Linux

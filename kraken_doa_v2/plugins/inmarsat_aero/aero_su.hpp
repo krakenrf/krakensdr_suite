@@ -39,6 +39,9 @@ public:
     std::string label_of(uint32_t aes) const;
 
     uint64_t su_ok() const { return su_ok_; }
+    // the P channel's frequency as received (Hz, the VFO's RF + the carrier
+    // offset): picks the satellite whose entry names it
+    void set_channel_hz(double hz) { chan_hz_ = hz; }
 
     struct Stats {
         uint64_t acars = 0, acars_bad_bcs = 0, user_msgs = 0, adsc = 0;
@@ -52,7 +55,14 @@ private:
     Stats st_;
     // GES / satellite state
     int ges_ = -1;
-    std::string sat_, call_aes_;
+    std::string call_aes_;
+    // the satellite identification table (type 0x0B / 0x0C, one SU per
+    // satellite of the system): ID -> longitude (deg E), its P channels (Hz)
+    struct SatEntry {
+        double lon = 0, psmc1 = 0, psmc2 = 0;
+    };
+    std::map<int, SatEntry> sats_;
+    double chan_hz_ = 0;
     std::map<int, std::string> psmc_;   // GES -> its P / R channel advice
     double last_facts_ = -100;
     // user data being reassembled: key = (AES, Q, reference)

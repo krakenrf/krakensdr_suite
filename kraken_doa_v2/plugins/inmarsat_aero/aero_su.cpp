@@ -100,7 +100,7 @@ void SuDecoder::reset() {
     type_count_.clear();
     st_ = Stats{};
     ges_ = -1;
-    sat_.clear();
+    sats_.clear();
     call_aes_.clear();
     psmc_.clear();
     asm_.clear();
@@ -134,7 +134,32 @@ void SuDecoder::facts(bool force) {
         snprintf(b, sizeof b, "0x%02X (%d)", ges_, ges_);
         host.fact("GES", b);
     }
-    if (!sat_.empty()) host.fact("Satellite", sat_);
+    if (!sats_.empty()) {
+        // the table, and the satellite whose entry names this P channel (the
+        // nearest within 2.5 kHz - half the 5 kHz raster; an RTL-SDR at 1.5 GHz
+        // is off by 1 - 2 kHz)
+        auto lon_str = [](double lon) {
+            char s[24];
+            snprintf(s, sizeof s, "%.1f deg %s", lon > 180 ? 360 - lon : lon, lon > 180 ? "W" : "E");
+            return std::string(s);
+        };
+        std::string all;
+        int best = -1;
+        double bd = 2500;
+        for (const auto& [id, e] : sats_) {
+            all += (all.empty() ? "" : ", ") + std::to_string(id) + ": " + lon_str(e.lon);
+            for (double f : {e.psmc1, e.psmc2})
+                if (chan_hz_ > 0 && f > 0 && std::fabs(f - chan_hz_) < bd) bd = std::fabs(f - chan_hz_), best = id;
+        }
+        host.fact("Satellites (system table)", all);
+        if (best >= 0) {
+            const SatEntry& e = sats_[best];
+            const double pf = std::fabs(e.psmc1 - chan_hz_) <= std::fabs(e.psmc2 - chan_hz_) ? e.psmc1 : e.psmc2;
+            snprintf(b, sizeof b, "ID %d, %s (its P channel %.4f MHz; received %+.2f kHz from it)", best, lon_str(e.lon).c_str(),
+                     pf / 1e6, (chan_hz_ - pf) / 1e3);
+            host.fact("Satellite", b);
+        }
+    }
     if (st_.user_msgs) {
         snprintf(b, sizeof b, "%llu user data messages, %llu ACARS (%llu with a bad BCS)",
                  static_cast<unsigned long long>(st_.user_msgs), static_cast<unsigned long long>(st_.acars),
@@ -215,11 +240,12 @@ void SuDecoder::p_su(const uint8_t* su, double t0, double t1, int index) {
         break;
     }
     case 0x0B: case 0x0C: {   // satellite identification (A2-32)
+        // one SU per satellite of the system, the table broadcast in turn
+        // (off air, I-4 F1: IDs 1 - 7 one after the other, octet 2 counting
+        // down) - not the satellite this channel comes from
         const int sat = ((su[2] & 3) << 4) | (su[3] >> 4);
-        const double lon = su[5] * 1.5;
-        snprintf(b, sizeof b, "ID %d, %.1f deg %s, Psmc %s / %s", sat, lon > 180 ? 360 - lon : lon, lon > 180 ? "W" : "E",
-                 freq_str(be16(su + 6), false).c_str(), freq_str(be16(su + 8), false).c_str());
-        sat_ = b;
+        auto hz = [](int code) { return code & 0x7FFF ? (1510.0 + (code & 0x7FFF) * 0.0025) * 1e6 : 0.0; };
+        sats_[sat] = {su[5] * 1.5, hz(be16(su + 6)), hz(be16(su + 8))};
         break;
     }
     case 0x0A: case 0x26: case 0x03: case 0x04: case 0x06: case 0x07: case 0x08: case 0x28: case 0x29:

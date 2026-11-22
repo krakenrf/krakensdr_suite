@@ -79,6 +79,15 @@ public:
     }
 
     void process(const cf* x, size_t n) override {
+        // the VFO moved (or the receiver was retuned): another channel - start
+        // over. Off air, a VFO moved from a 600 bit/s channel to a 1200 bit/s
+        // one 2 kHz off kept the old state and locked 900 Hz beside the
+        // carrier for a minute (408 of 960 SUs); from a fresh start, 594 / 594
+        const double rf = host.rf_hz();
+        if (std::isfinite(rf) && rf > 0) {
+            if (rf_seen_ > 0 && std::fabs(rf - rf_seen_) > 100) reset();
+            rf_seen_ = rf;
+        }
         if (!tbase_set_) {
             tbase_ = host.time();
             tbase_set_ = true;
@@ -126,10 +135,11 @@ private:
     std::vector<std::pair<double, double>> tried_;   // (rate, f0) that did not sync
     double last_fact_ = -10;
     double latest_t_ = 0;   // host time of the newest bit the demodulator gave
+    double rf_seen_ = 0;    // the VFO's RF last seen (a move restarts the search)
     dig::AeroAmbeStream voice_;
     bool in_call_ = false;
     double call_start_ = 0, call_last_ = 0;
-    uint64_t cframes_ = 0, cframes_ok_ = 0, vframes_ = 0;
+    uint64_t cframes_ = 0, cframes_ok_ = 0, vframes_ = 0, verr_sum_ = 0, verr_bad_ = 0;
     const bool debug_ = std::getenv("AERO_DEBUG") != nullptr;
 
     bool bursts() const { return mode_.rfind("burst", 0) == 0; }
@@ -261,6 +271,8 @@ private:
             char b[64];
             snprintf(b, sizeof b, "%+.1f Hz", demod_.carrier_hz());
             host.fact("Carrier offset", b);
+            const double rf = host.rf_hz();
+            if (std::isfinite(rf) && rf > 0) su_.set_channel_hz(rf + demod_.carrier_hz());
         }
         // No freq_error: kraken_doa's AFC moves the input by half of each
         // report every 300 ms - frequency steps the carrier loop has to
@@ -326,11 +338,32 @@ private:
             return;
         }
         std::vector<float> pcm(25 * 160);
+        int esum = 0, emax = 0;
         for (int k = 0; k < 25; k++) {
-            voice_.decode(f.voice[static_cast<size_t>(k)].data(), &pcm[static_cast<size_t>(160 * k)]);
+            const int e = voice_.decode(f.voice[static_cast<size_t>(k)].data(), &pcm[static_cast<size_t>(160 * k)]);
             vframes_++;
+            if (e > 0) {
+                esum += e;
+                emax = std::max(emax, e);
+                verr_sum_ += static_cast<uint64_t>(e);
+                if (e > 2) verr_bad_++;
+            }
         }
         host.audio(pcm.data(), pcm.size());
+        // the codec's own error count (mbelib's Golay corrections, errs2)
+        // per 20 ms frame: near 0 for a voice frame received cleanly, high
+        // for random bits - the check of the frame layout on a real call
+        {
+            char b[120];
+            snprintf(b, sizeof b, "%llu frames, %.2f corrections per frame, %llu with more than 2",
+                     static_cast<unsigned long long>(vframes_), static_cast<double>(verr_sum_) / static_cast<double>(vframes_),
+                     static_cast<unsigned long long>(verr_bad_));
+            host.fact("Voice codec frames", b);
+            if (debug_) {
+                snprintf(b, sizeof b, "voice t=%.3f errs2 sum %d max %d (25 frames)", f.t0, esum, emax);
+                host.log(b);
+            }
+        }
         const std::string who = su_.call_aes();
         host.voice_state("voice" + (who.empty() ? std::string() : " · AES " + who));
     }

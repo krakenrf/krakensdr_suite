@@ -120,6 +120,12 @@ void Acquisition::search(Band& b) {
             const float p1 = pk(bin(f2c + R / 2), a1), p2 = pk(bin(f2c - R / 2), a2);
             // both lines well above the floor, scored by their mean
             if (std::min(p1, p2) < 4 * med) continue;
+            // and alike: the two lines of A-BPSK / A-QPSK are equal (+- a
+            // few dB of noise); off air, a carrier with a strong unmodulated
+            // part (another system, 1545.476 MHz on I-4 F1) has one line 20 -
+            // 25 dB over everything else, and with the mean as the score it
+            // paired with any noise bin R away
+            if (std::max(p1, p2) > 6 * std::min(p1, p2)) continue;
             const float sdb = 10 * std::log10(0.5f * (p1 + p2) / med);
             if (sdb > best.snr_db) {
                 const double f1 = refine(a1), fm = refine(a2);
