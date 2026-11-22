@@ -13708,10 +13708,12 @@ function swpAgcText() {
   const st = swp.st;
   if (!st) return '-';
   const s = swpAgcSummary(), gt = s.ceil === -1 ? 'Auto' : Number.isFinite(s.ceil) ? s.ceil.toFixed(1) + ' dB' : '-';
+  // (short, one line at the sidebar's default width - the orchestrator saw "up to 49.6 dB, 62 steps reduced,
+  // lowest 8.7 dB" wrap on the KrakenSDR; the tip says it in full)
   if (!swpAgcOn()) return gt + (st.auto_gain_known === true ? ', every step' : '');
-  if (swpAgcIdle()) return gt + ' - Auto gain idle (the tuners\' own AGC)';
-  if (!Number.isFinite(s.n)) return 'up to ' + gt;
-  return 'up to ' + gt + (s.n > 0 ? ', ' + s.n + (s.n === 1 ? ' step' : ' steps') + ' reduced, lowest ' + s.lo.toFixed(1) + ' dB' : ', no step reduced');
+  if (swpAgcIdle()) return gt + ' · Auto idle (tuners\' AGC)';
+  if (!Number.isFinite(s.n)) return '≤ ' + gt;
+  return '≤ ' + gt + (s.n > 0 ? ' · ' + s.n + (s.n === 1 ? ' step' : ' steps') + ' lower, min ' + s.lo.toFixed(1) + ' dB' : ' · none lower');
 }
 const SWP_AGC_TIP = (document.getElementById('swp-agc') || {getAttribute: () => ''}).getAttribute('title') || '';
 function swpAgcRender() {

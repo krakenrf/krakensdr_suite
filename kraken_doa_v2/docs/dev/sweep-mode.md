@@ -1453,9 +1453,13 @@ used"):
   - The ceiling: in sweep mode with Auto on the top bar's gain reads
     "≤ 49.6 dB" (`updateGainDisplay`; off again on leaving the mode). The
     Sweep box's "Gain" line (`#swp-agc-st`, `swpAgcText`): "49.6 dB, every
-    step" / "up to 49.6 dB, 53 steps reduced, lowest 16.6 dB" / "up to
-    49.6 dB, no step reduced" - the receiver's `gain_reduced_hops` /
-    `gain_min_db`, else counted from the map.
+    step" / "≤ 49.6 dB · 53 steps lower, min 16.6 dB" / "≤ 49.6 dB ·
+    none lower" / "49.6 dB · Auto idle (tuners' AGC)" - the receiver's
+    `gain_reduced_hops` / `gain_min_db`, else counted from the map. Short
+    on purpose: the first wording ("up to 49.6 dB, 62 steps reduced,
+    lowest 8.7 dB") wrapped to two lines at the sidebar's default width on
+    the KrakenSDR (the orchestrator's run); this one stays on one line,
+    also for 911 steps.
   - The map: `{"sweep_gain":{grid, sweeps, f0_hz, step_hz, hops,
     ceiling_db, gain_db:[...]}}` (JSON - an older page ignores it; a
     binary type would fall into its FFT path), hop h centred at
@@ -1473,7 +1477,7 @@ used"):
     ceiling - its gain), so a signal keeps its height; on a reduced step
     sitting on the converter's own floor the noise floor shows higher -
     the strip right under it says why. On the spectrum's canvas, so the
-    picture has it; its caption gets "Auto gain: up to 49.6 dB, ...".
+    picture has it; its caption gets "Auto gain: ≤ 49.6 dB · ...".
   - The pointer's readout adds the step's gain: "415.106 MHz  31.4 dB
     gain 16.6 dB".
   - Tests (`t_agc.py`, the mock speaking the receiver worker's contract):
@@ -1486,6 +1490,22 @@ used"):
     grid's drawn), idle at the tuners' AGC, an older receiver and an older
     heimdall (disabled with the reason, nothing sent, nothing drawn), the
     phone layout: 35 / 35.
+  - The pair (the receiver's 66f358f on heimdall's f3ca686; the receiver
+    worker's fake heimdall with heimdall's rule and a scene whose carriers
+    at 415.1, 457.2 and 499.3 MHz overload at 49.6 dB; `t_agc2.py`, 25 / 25;
+    `t_agc.py` against it 28 / 28): two tabs - one switches, the other
+    follows the broadcast, both ways; the map of the grid with one gain a
+    hop, every value from the R820T's list; on 400 - 520 MHz 16 hops
+    reduced (lowest 19.7 dB): the three carriers' hops, their neighbours
+    (a tuner takes 2.4 MHz, wider than the 1.9 MHz step, so it sees the
+    carrier too) and the scene's strong TV-band noise - no quiet hop; the
+    line = the map = the receiver's figures; both pages' strips = the map,
+    zoomed too; the readout over the lowest hop its gain; off: heimdall
+    puts every hop back at the ceiling (the map), no strip; a restart of
+    kraken_doa with Auto on: `set_sweep_auto_gain` replayed, the page
+    shows it on; an older heimdall (the fake's `fake_no_auto_gain`, then a
+    restart): `auto_gain_known` false, the control disabled with the
+    reason, nothing drawn.
 - **Deflated parts** (round 8, 2026-11-23; the user: "Implement the sweep
   full resolution compression"). The page asks `SWEEP_FULL_Z:1` when the
   browser has `DecompressionStream("deflate")` (`SWP_Z_OK`: the
