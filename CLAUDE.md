@@ -19,7 +19,7 @@ measurements and decisions; when they disagree with the code, the code wins.
 | Windows port; the librtlsdr fork (WinUSB fixes, fast retunes, USB transfer counts) | `docs/dev/windows.md`, `docs/dev/librtlsdr-fork.md` |
 | macOS port | `docs/dev/macos.md` |
 | Compiler flags and the measurements behind them | `docs/dev/compiler-flags.md` |
-| Licence of each part, audits, clean-room rewrites | `docs/dev/licensing.md`, `LICENSE` |
+| Licence of each part, audits, clean-room rewrites, contribution terms | `docs/dev/licensing.md`, `LICENSE`, `CONTRIBUTING.md` |
 | Long-form suite overview (architecture, configuration, every feature, algorithms) | `docs/dev/suite-reference.md` |
 | Version indicator (from git; VERSION file, compiled-in fallbacks; Docker, package) | `docs/dev/version.md` |
 | 8091 data / 8092 control wire protocols | `gr-krakensdr_v2/docs/heimdall_v2_data_protocol.md`, `..._control_protocol.md` |
@@ -40,6 +40,7 @@ gr-krakensdr_v2/  GNU Radio source for heimdall's stream
 librtlsdr/        krakenrf/librtlsdr checkout (gitignored; built by make / install.sh)
 windows/          MSYS2 setup, build.sh, package.sh, krakensdr.cpp (the launcher)
 docker/ scripts/ .githooks/   container entrypoint; git clean filter + licence collection; pre-push hook
+.github/          pull request template + the contribution-terms check
 install.sh  run.sh  install-pi-service.sh  build_windows.bat  run.bat  Dockerfile  docker-compose.yml
 ```
 
@@ -296,7 +297,15 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   binary also goes into `scripts/collect-licenses.sh`.
 - `heimdall_v2/`, `gr-krakensdr_v2/`: GPL-3.0-or-later. `plugins/sdk/` and
   `win/`: MIT. Root build / run / packaging scripts, `docker/`, `windows/`,
-  `scripts/`, `.githooks/`: MIT.
+  `scripts/`, `.githooks/`, `.github/`: MIT.
+- Contributions: a pull request's author agrees to the contribution terms
+  (root `LICENSE`, section 5 of `kraken_doa_v2/LICENSE`: KrakenRF may use
+  and license the code under any terms, commercially too) by ticking one
+  sentence in the description. The sentence is identical in
+  `.github/PULL_REQUEST_TEMPLATE.md`, `CONTRIBUTING.md` and
+  `.github/workflows/contribution-terms.yml`, which fails a pull request
+  without it; that workflow runs on `pull_request_target` and must never
+  check out or run pull request code.
 
 ### Secrets and git
 - `doa_settings.json`, `api_token` and `server.key` stay untracked. A clean

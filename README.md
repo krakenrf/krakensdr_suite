@@ -821,3 +821,10 @@ Third-party components keep their own licences:
 [kraken_doa_v2/THIRD_PARTY_NOTICES.md](kraken_doa_v2/THIRD_PARTY_NOTICES.md),
 [heimdall_v2/THIRD_PARTY_NOTICES.md](heimdall_v2/THIRD_PARTY_NOTICES.md).
 The Windows package and the Docker image carry every licence text.
+
+**Contributing**: pull requests are welcome under the contribution terms in
+[CONTRIBUTING.md](CONTRIBUTING.md). You license your contribution under the
+licence of the part it changes and also grant KrakenRF Inc. the right to use
+and license it under any terms, including commercially (section 5 of the
+KrakenSDR Source Available Licence). A pull request confirms this with a
+tick box in its description.

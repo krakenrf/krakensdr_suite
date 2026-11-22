@@ -275,3 +275,6 @@ not yet relying on it in their work). Deploying it, and any other commercial
 use, requires a licence from KrakenRF Inc. (standard terms:
 `COMMERCIAL_TERMS.md`); contact thekraken@krakenrf.com for details.
 Third-party components keep their own licences: `THIRD_PARTY_NOTICES.md`.
+Contributions are made under section 5 of the licence (KrakenRF may use and
+license them under any terms, including commercially); a pull request
+confirms that in its description: `../CONTRIBUTING.md`.

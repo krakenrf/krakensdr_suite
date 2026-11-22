@@ -1,0 +1,175 @@
+# SPDX-License-Identifier: MIT
+#
+# Contribution terms: a pull request can be merged only when its author has
+# agreed to the contribution terms (LICENSE "Contributions", section 5 of
+# kraken_doa_v2/LICENSE; explained in CONTRIBUTING.md) by ticking the
+# agreement line of the pull request template. Those terms are what lets
+# KrakenRF use a contribution in the commercially licensed software.
+#
+# What the check wants:
+#  - the pull request description holds the agreement sentence with its box
+#    ticked ("- [x] I agree to the KrakenSDR contribution terms ...");
+#  - for commits GitHub attributes to somebody other than the pull request's
+#    author: a comment by that person on the pull request with the sentence.
+# Not checked: commits whose e-mail address belongs to no GitHub account
+# (taken as the author's own), merge commits, bots, Co-authored-by trailers,
+# and anything by the repository owner.
+#
+# SECURITY: this runs on pull_request_target, i.e. with the workflow file of
+# the base branch (a pull request cannot change its own check) and for pull
+# requests from forks too. Keep it that way safely: never check out or run
+# the pull request's code here, never put ${{ github.event... }} text into
+# the script (it reads everything through the API), and keep the token
+# read-only.
+#
+# The sentence below is also in .github/PULL_REQUEST_TEMPLATE.md and in
+# CONTRIBUTING.md: change all three together (docs/dev/licensing.md).
+
+name: Contribution terms
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: contribution-terms-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  contribution-terms:
+    name: Contribution terms agreed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the agreement in the pull request
+        shell: python3 {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          import json
+          import os
+          import re
+          import sys
+          import urllib.request
+
+          STATEMENT = (
+              "I agree to the KrakenSDR contribution terms (CONTRIBUTING.md): "
+              "I license my contribution under the licence of the part of the suite it changes, "
+              "and I grant KrakenRF Inc. the rights in section 5 of the KrakenSDR Source Available Licence - "
+              "KrakenRF may use, copy, modify, distribute and sublicense it under any terms, "
+              "including in commercial products and licences it sells, without payment to me. "
+              "It is my own work, or I have the right to contribute it on these terms, "
+              "and this pull request names any third-party material in it and its licence."
+          )
+
+          API = os.environ["GITHUB_API_URL"].rstrip("/")
+          REPO = os.environ["GITHUB_REPOSITORY"]
+          OWNER = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
+          TOKEN = os.environ["GH_TOKEN"]
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
+              NUMBER = int(json.load(f)["pull_request"]["number"])
+
+
+          def norm(text):
+              """One line, single spaces, lower case: wrapping, line endings and case don't matter."""
+              return " ".join((text or "").split()).lower()
+
+
+          def fetch(url):
+              if not url.startswith(API + "/"):
+                  sys.exit(f"::error title=Contribution terms::refusing to fetch {url!r}")
+              request = urllib.request.Request(url, headers={
+                  "Authorization": f"Bearer {TOKEN}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "contribution-terms-check",
+              })
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response), response.headers.get("Link") or ""
+
+
+          def fetch_all(path):
+              items, url = [], f"{API}/repos/{REPO}/{path}?per_page=100"
+              while url:
+                  page, link = fetch(url)
+                  items += page
+                  following = re.search(r'<([^>]+)>;\s*rel="next"', link)
+                  url = following.group(1) if following else None
+              return items
+
+
+          # The pull request as it is now (the event's copy is stale on a re-run)
+          pull, _ = fetch(f"{API}/repos/{REPO}/pulls/{NUMBER}")
+          author = pull["user"]["login"]
+          want = norm(STATEMENT)
+          problems = []
+
+          if author.lower() == OWNER:
+              print(f"{author} owns the repository: no agreement needed")
+          else:
+              description = norm(pull.get("body"))
+              if "[x] " + want in description:
+                  print(f"{author} agreed in the description")
+              elif "[ ] " + want in description:
+                  problems.append(
+                      f"The agreement box in the description is not ticked. {author}: "
+                      "tick it (edit the description and put an x between the brackets)."
+                  )
+              else:
+                  problems.append(
+                      "The description does not hold the agreement sentence, or its wording was changed. "
+                      f"{author}: edit the description and add the line shown in this run's summary, unchanged."
+                  )
+
+          # Commits GitHub attributes to somebody else
+          others, unlinked = {}, 0
+          for commit in fetch_all(f"pulls/{NUMBER}/commits"):
+              if len(commit.get("parents") or []) > 1:
+                  continue  # a merge commit ("Update branch")
+              account = commit.get("author")
+              if not account:
+                  unlinked += 1  # its e-mail address is no GitHub account's: taken as the author's own
+                  continue
+              login = account.get("login") or ""
+              if account.get("type") == "Bot" or login.lower() in ("", author.lower(), OWNER):
+                  continue
+              others[login.lower()] = login
+          if unlinked:
+              print(f"{unlinked} commit(s) with an e-mail address of no GitHub account: taken as {author}'s own work")
+          if others:
+              agreed = set()
+              for comment in fetch_all(f"issues/{NUMBER}/comments"):
+                  if want in norm(comment.get("body")):
+                      agreed.add(((comment.get("user") or {}).get("login") or "").lower())
+              for key in sorted(others):
+                  if key in agreed:
+                      print(f"{others[key]} (commit author) agreed in a comment")
+                  else:
+                      problems.append(
+                          f"This pull request has commits by {others[key]}, who has not agreed. {others[key]}: "
+                          "add a comment to this pull request with the agreement sentence shown in this run's "
+                          "summary; then this check has to run again (edit the description, or a maintainer re-runs it)."
+                      )
+
+          if not problems:
+              print("Contribution terms agreed.")
+              sys.exit(0)
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as f:
+                  f.write("## Contribution terms\n\n")
+                  f.write("".join(f"- {problem}\n" for problem in problems))
+                  f.write("\nThe line for the pull request description (the box ticked, the sentence unchanged):\n\n")
+                  f.write(f"```\n- [x] {STATEMENT}\n```\n\n")
+                  f.write("Somebody else whose commits are in the pull request puts the sentence in a comment:\n\n")
+                  f.write(f"```\n{STATEMENT}\n```\n\n")
+                  server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+                  f.write(f"What it means: {server}/{REPO}/blob/HEAD/CONTRIBUTING.md\n")
+          for problem in problems:
+              print(f"::error title=Contribution terms::{problem}")
+          sys.exit(1)

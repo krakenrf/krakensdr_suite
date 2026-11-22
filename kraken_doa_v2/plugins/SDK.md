@@ -1311,6 +1311,11 @@ project's licence allows (GPL-2.0-or-later code: GPL-2.0-or-later or
 GPL-3.0-or-later), with its copyright notices kept and the files it follows
 named in each file.
 
+A plugin sent to KrakenRF for the suite (a pull request) comes under the
+contribution terms in `../../CONTRIBUTING.md`, whatever its licence: for the
+parts you wrote yourself you also grant KrakenRF the rights in section 5 of
+`kraken_doa_v2/LICENSE`, and you name the third-party code it follows.
+
 ## The shared library (`lib/`)
 
 The shipped protocol decoders are thin plugins around `lib/` (`dstar/decoder.cpp`
