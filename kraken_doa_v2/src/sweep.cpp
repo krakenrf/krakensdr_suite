@@ -555,6 +555,80 @@ std::atomic<int> g_ag_known{0};            // 0 not answered yet, 1 heimdall has
 std::atomic<int64_t> g_ag_asked_ms{0};
 std::atomic<bool> g_ag_on{false};          // g_set.auto_gain for the other threads
 
+// The tuner's real gain against its gain list (heimdall's "gain_real_db" in its
+// status: [[list gain, real dB relative to the list's top], ...], measured - the
+// R820T's list is not true: 8.7 is -34.2 dB, not -40.9). Empty = none (an older
+// heimdall, an unmeasured tuner): the list's difference is taken
+std::mutex g_curve_mu;
+std::vector<std::pair<float, float>> g_curve;
+std::atomic<uint32_t> g_curve_ver{0};
+
+// real(g) from a curve: linear between its points, clamped to its ends
+float curve_real(const std::vector<std::pair<float, float>>& c, float g) {
+    if (g <= c.front().first) return c.front().second;
+    if (g >= c.back().first) return c.back().second;
+    for (size_t i = 1; i < c.size(); i++)
+        if (g <= c[i].first) {
+            const float a = c[i - 1].first, b = c[i].first;
+            const float t = b > a ? (g - a) / (b - a) : 0.0f;
+            return c[i - 1].second + t * (c[i].second - c[i - 1].second);
+        }
+    return c.back().second;
+}
+
+// "gain_real_db":[[g,r],...] out of a status line; false = absent or malformed
+// (then nothing changes): at least 2 points, finite, the gains rising, each
+// within 0 .. 100 dB and the real gains within -100 .. 10 dB
+bool parse_curve(const std::string& line, std::vector<std::pair<float, float>>& out) {
+    const size_t k = line.find("\"gain_real_db\"");
+    if (k == std::string::npos) return false;
+    size_t p = line.find(':', k);
+    if (p == std::string::npos) return false;
+    const char* s = line.c_str();
+    p++;
+    auto ws = [&] { while (s[p] == ' ' || s[p] == '\t') p++; };
+    auto num = [&](float& v) {
+        char* e = nullptr;
+        const double d = std::strtod(s + p, &e);
+        if (e == s + p || !std::isfinite(d)) return false;
+        v = static_cast<float>(d);
+        p = static_cast<size_t>(e - s);
+        return true;
+    };
+    ws();
+    if (s[p] != '[') return false;
+    p++;
+    std::vector<std::pair<float, float>> c;
+    for (;;) {
+        ws();
+        if (s[p] == ']') { p++; break; }
+        if (s[p] != '[') return false;
+        p++;
+        ws();
+        float g, r;
+        if (!num(g)) return false;
+        ws();
+        if (s[p] != ',') return false;
+        p++;
+        ws();
+        if (!num(r)) return false;
+        ws();
+        if (s[p] != ']') return false;
+        p++;
+        ws();
+        if (g < 0.0f || g > 100.0f || r < -100.0f || r > 10.0f || (!c.empty() && g <= c.back().first)) return false;
+        c.emplace_back(g, r);
+        if (c.size() > 256) return false;
+        if (s[p] == ',') { p++; continue; }
+        ws();
+        if (s[p] == ']') { p++; break; }
+        return false;
+    }
+    if (c.size() < 2) return false;
+    out.swap(c);
+    return true;
+}
+
 // (g_mu, at a completion) the gain map of the sweep just completed: per hop its
 // packets' gain; a change moves its version (the server sends it). With Auto on
 // the ceiling (the common gain) is the highest gain of the sweep - channel 0's
@@ -628,6 +702,8 @@ struct Worker {
     int fft_n = 0;
     std::vector<float> win, db, tmp, shape;
     uint32_t shape_ver = 0;
+    std::vector<std::pair<float, float>> curve;   // heimdall's real gain curve (g_curve, copied when it moves)
+    uint32_t curve_ver = 0;
     // rounds
     bool have_counter = false;
     uint32_t counter = 0;
@@ -777,8 +853,18 @@ struct Worker {
             // the lower gain puts the hop on the converter's floor, that floor
             // shows higher: the sensitivity lost). Manual gain: 0. The tuner's AGC
             // (-1) or an unknown gain: no correction
+            // (with heimdall's measured curve: real(ceiling) - real(gain); without, the
+            // list's difference - which over-corrects a far reduced hop by several dB)
             const float hg = a.gain, ceil_db = g_gain.load(std::memory_order_relaxed);
-            const float corr = (is_finite_value(hg) && hg >= 0.0f && is_finite_value(ceil_db) && ceil_db >= 0.0f) ? ceil_db - hg : 0.0f;
+            float corr = 0.0f;
+            if (is_finite_value(hg) && hg >= 0.0f && is_finite_value(ceil_db) && ceil_db >= 0.0f) {
+                if (const uint32_t cv = g_curve_ver.load(std::memory_order_acquire); cv != curve_ver) {
+                    std::lock_guard<std::mutex> lk(g_curve_mu);
+                    curve = g_curve;
+                    curve_ver = cv;
+                }
+                corr = curve.size() >= 2 ? curve_real(curve, ceil_db) - curve_real(curve, hg) : ceil_db - hg;
+            }
             if (corr != 0.0f)
                 for (int i = 0; i < p.U; i++) db[static_cast<size_t>(i)] += corr;
             const float phi = p10 + corr + spread_db(fr) - median_db(fr);
@@ -1059,6 +1145,15 @@ void ingest_control_reply(const char* data, size_t n) {
         // (a heimdall replaced by an older one answers "Unknown command" to the next
         // ask: known goes back to false - a stray unknown-command reply of a new one
         // is corrected by its next status line, which carries "auto_gain")
+        // heimdall's measured gain curve (in its status): the latest valid one is kept
+        if (std::vector<std::pair<float, float>> c; parse_curve(line, c)) {
+            std::lock_guard<std::mutex> lk2(g_curve_mu);
+            if (c != g_curve) {
+                g_curve.swap(c);
+                g_curve_ver.fetch_add(1, std::memory_order_release);
+                g_state_dirty.store(true);
+            }
+        }
         int known = 0;
         if (line.find("\"auto_gain\"") != std::string::npos) {
             known = 1;
@@ -1216,7 +1311,12 @@ std::string state_json() {
             const float c = g_gain.load();
             const bool active = g_set.auto_gain && known == 1 && sweep_mode_enabled.load() && is_finite_value(c) && c >= 0.0f;
             o << ",\"auto_gain\":" << (g_set.auto_gain ? "true" : "false") << ",\"auto_gain_known\":" << (known == 1 ? "true" : "false")
-              << ",\"auto_gain_active\":" << (active ? "true" : "false")
+              << ",\"auto_gain_active\":" << (active ? "true" : "false");
+            {
+                std::lock_guard<std::mutex> lk(g_curve_mu);
+                o << ",\"gain_curve_points\":" << g_curve.size();   // (heimdall's real gain curve: 0 = the list's values)
+            }
+            o
               << ",\"gain_reduced_hops\":" << reduced << ",\"gain_min_db\":";
             if (is_finite_value(mn)) {
                 char gb[24];

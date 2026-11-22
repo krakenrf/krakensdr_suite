@@ -354,11 +354,19 @@ the hops into the sweep spectrum, the page shows it.
   that fills a hop must keep its height), the tuners' common in-band shape
   removed (`nfloor::shape_db`, *Noise floor*). With heimdall's auto gain
   (2026-11-23) a hop's levels are referred to the ceiling: shifted by
-  (ceiling - the gain its packets were taken with) - a signal keeps its
+  real(ceiling) - real(the gain its packets were taken with), real() =
+  heimdall's measured curve (`"gain_real_db"` in its status' sweep object:
+  per value of the tuner's gain list the real dB against the list's top;
+  linear between its points, clamped at its ends), or - no curve: an older
+  heimdall, a tuner it has not measured - the list's own difference (which
+  over-corrects: the R820T's 8.7 is -34.2 dB, not -40.9) - so a signal keeps its
   true height across hops of different gain; the floor stays flat where the
   tuner's noise dominates, and shows higher where the lower gain puts the
   hop on the converter's own floor (the sensitivity actually lost - not
-  hidden by forcing it flat). Manual gain: no shift.
+  hidden by forcing it flat). Manual gain: no shift. Not corrected: the
+  curve's dependence on frequency (2 - 3 dB, the FM band's top end more),
+  the spread between units (not measured); the header and the gain map stay
+  the list's values (the gain set).
 
 ## heimdall
 
@@ -490,6 +498,21 @@ refused; out-of-range numbers are clamped:
   mode, or a `GAIN:` command; the message goes again when it changes. With
   Auto on a header's gain is that hop's: the ceiling then comes from `GAIN:`
   and from the highest gain of a completed sweep's map.
+- The gain curve (2026-11-23): `sweep::ingest_control_reply` takes
+  `"gain_real_db":[[g, real], ...]` from heimdall's status lines
+  (`parse_curve`: at least 2 points, the gains rising within 0 .. 100 dB,
+  the real gains within -100 .. 10 dB, else ignored and the last good one
+  kept); the worker copies it when its version moves (`curve_real`). The
+  `sweep` message carries `"gain_curve_points"` (0 = the list's values).
+  Tested (`t_agc.py curve`; the fake's tuner applies the KrakenSDR's
+  measured curve - 44.5: -3.2, 38.6: -7.9, 29.7: -15.6, 22.9: -21.2, 16.6:
+  -27.8, 12.5: -31.9, 8.7: -34.2, 7.7: -35.7 dB): the 52 dB carrier at its
+  hop's 8.7 dB reads +6.3 dB over its true height without the curve (the
+  list's error there: 6.7) and -0.3 with it once heimdall publishes it
+  after the first sweeps; the reduced hop's floor 21.7 dB over the others
+  for 22.2 predicted from the real gain; five malformed curves ignored (one
+  point, falling gains, a string, a string value, unclosed); manual gain
+  with the curve unchanged.
 - Auto gain (2026-11-23): `sweep::set_auto_gain` / `auto_gain_command`,
   `ControlHandler::send_sweep_plan_now` (the plan, then the switch: every
   place that sent the plan); heimdall's answers through
