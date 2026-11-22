@@ -141,18 +141,10 @@ private:
     double call_start_ = 0, call_last_ = 0;
     uint64_t cframes_ = 0, cframes_ok_ = 0, vframes_ = 0, verr_sum_ = 0, verr_bad_ = 0;
     const bool debug_ = std::getenv("AERO_DEBUG") != nullptr;
-    // the debug lines (AERO_DEBUG=1): the host's log, and with AERO_DEBUG_FILE
-    // also appended to that file with the stream time - kraken_doa keeps only
-    // a plugin's last stderr lines, and only for its status, so a live test
-    // reads the file
-    void dbg(const std::string& s) {
-        host.log(s);
-        static FILE* f = std::getenv("AERO_DEBUG_FILE") ? std::fopen(std::getenv("AERO_DEBUG_FILE"), "a") : nullptr;
-        if (f) {
-            std::fprintf(f, "[%9.3f s] log: %s\n", host.time(), s.c_str());
-            std::fflush(f);
-        }
-    }
+    // the debug lines (AERO_DEBUG=1), to the host's log. A plugin writes no
+    // files (SDK rule 5); the off-air same-sample comparison used a test
+    // build that also appended them to a file - docs/dev/plugin-inmarsat-aero.md
+    void dbg(const std::string& s) { host.log(s); }
 
     bool bursts() const { return mode_.rfind("burst", 0) == 0; }
     double host_t(double sample) const { return tbase_ + sample / FS; }

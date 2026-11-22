@@ -184,8 +184,12 @@ this folder (index: `README.md` here, or the table in
     capture's count by at most 2 points (none better than the defaults).
   - Live vs offline (the coordinator's open question - 75-87 % live
     against 93-96 % from captures): not the live path. Measured frame by
-    frame: `AERO_DEBUG_FILE` gives the live decoder's frame lines (stream
-    time), `sigtool.py capture` alongside records the same seconds, the
+    frame: a test build deployed only on the Pi (commit 5632841, taken out
+    again - a plugin writes no files, SDK rule 5) appended the live
+    decoder's `AERO_DEBUG=1` frame lines ("frame t=<stream time> ... sus
+    n/26") to a file named by AERO_DEBUG_FILE (kraken_doa keeps only a
+    plugin's last 30 stderr lines, for its status), `sigtool.py capture`
+    alongside records the same seconds from heimdall's 8091, the
     offline decode of it is aligned on frame times (a whole number of
     frames plus the grids' phase; job scratch compare.py): over ~190
     common frames live and offline agree within 0.1 - 0.7 % of SUs at VFO
