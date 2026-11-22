@@ -725,6 +725,77 @@ both, 60k + 11k tunes on the Pi); the I2C clock change under load. No MinGW / zi
 glibc syntax checks of the suite rule were not run (the changes are plain C99
 / C++ without new platform calls).
 
+## A fast tuner gain write (2026-11-23, third commit on `lock-read-no-slip`)
+
+Sweep mode's automatic gain writes a tuner's gain with its retune whenever
+the next hop wants another (30-44 writes in a 4 s sweep of 911 hops). The
+ordinary `rtlsdr_set_tuner_gain` costs 4 control transfers on Linux - the
+dummy demod read, `r82xx_set_gain`'s read of tuner registers 0..3 (its
+result is not used), the LNA write (0x05), the mixer write (0x07) - and
+heimdall's gain change (gain mode + gain + IF mode) 10.
+
+The patch (`docs/dev/librtlsdr-patches/0003-*`, on 88993d3; macro
+`RTLSDR_HAS_GAIN_FAST`):
+- `r82xx_set_gain_fast()`: the manual gain the ordinary call sets - the same
+  table and rounding (`r82xx_get_rf_gain_index`), the same cache and
+  `last_*` values, the IF VGA left as it is - without the 0..3 read, and
+  with LNA and mixer in ONE I2C write of 0x05..0x07 when both change (0x06
+  goes out with its cached value); one changed: that register; neither: no
+  transfer. In AGC or extended mode: the ordinary path (which switches to
+  manual, as `rtlsdr_set_tuner_gain` does).
+- `rtlsdr_set_tuner_gain_fast(dev, gain, flags)`: that write alone (the
+  dummy read stays - a write comes first).
+- `rtlsdr_set_center_freq_gain_fast(dev, freq, gain, flags)`: the fast tune
+  (`flags` as for `rtlsdr_set_center_freq_fast`), then the gain in the same
+  hold of the I2C repeater - the tune's transfers come first, so the gain
+  needs no dummy read: +1 transfer when it changes, +0 when not. The gain is
+  written even when the tune fails; the tune's error is returned first.
+- Other tuners than the R820T / R828D, direct sampling: the ordinary calls.
+  Neither call reads 3 mod 4 bytes: no sample is dropped.
+
+Measured on the dev machine's KrakenSDR (2026-11-23, x86_64, all five
+streaming, five in parallel threads, 200 calls each, load 4-9 - other jobs;
+`gaintest.py`, job scratch `fork/out/g9_x11.out`):
+
+| | ms (median) | transfers |
+|---|---|---|
+| `rtlsdr_set_tuner_gain`, 20.7 <-> 29.7 dB | 9.13 | 4.0 |
+| heimdall's gain change (mode 1 + gain + IF mode) | 22.82 | 10.0 |
+| `rtlsdr_set_tuner_gain_fast`, the same gains | 4.79 | 2.0 |
+| `rtlsdr_set_tuner_gain_fast`, unchanged / LNA only | 0.00 / 4.54 | 0 / 2.0 |
+| fast tune (KEEP_AUTOTUNE \| NO_DUMMY_READ) alone, FM hops | 7.44 | 3.38 |
+| that fast tune + the ordinary gain (today's sweep) | 16.58 | 7.36 |
+| `rtlsdr_set_center_freq_gain_fast`, gain changing every hop | 9.86 | 4.36 |
+| the same, gain unchanged | 7.40 | 3.36 |
+| the same on the full path (flags 0) | 16.63 | 7.18 |
+
+So a hop that changes the gain costs 2.4 ms more than one that doesn't,
+instead of 9.1 ms. The gain itself: every value of the table (29) and 30
+odd ones from -10 to 509, set from a far gain by the ordinary call, by
+`rtlsdr_set_tuner_gain_fast` and by `rtlsdr_set_center_freq_gain_fast` on
+all five: the same LNA / mixer registers in the cache and on the chip (the
+16-register readback, 0x05..0x0f = the cache every time), the same
+`rtlsdr_get_tuner_gain`, the same stream level (noise source, 100 MHz)
+within 0.07 dB (median 0.03); 0 of 59 differ. The cache after fast calls:
+20 rounds of 30 tune + gain calls per dongle followed by heimdall's ordinary
+calls (gain mode, gain, IF mode, a full tune) - 0 of 100 readbacks with the
+chip off the cache; the fast call in AGC mode switched to manual exactly as
+the ordinary one (chip = cache). The stream: 200 fast gain writes, and 200
+tune + gain calls, on 1001 with all five streaming - lag change 0.00 / -0.01
+samples (0.0000 a call), the others 0.00. The earlier lag-probe sets (every
+tune path, the sweep path) on this library (`fork/out/g9_probe.out`, 100
+tunes a pattern on 1001): 0.000 samples a tune on every pattern, the same
+times as before (full 13.8 ms / 6 transfers, KEEP 9.7 / 4, the sweep path
+KEEP + NO_DUMMY_READ 9.5 / 3.45 over the full range), 0 retries; the raw
+3-byte IN -2.000.
+
+Not tested: Windows (expected, from the code: Windows makes no dummy read,
+so the gain is 1 transfer inside the tune and 1 alone, against 3 for the
+ordinary call - read 0..3, LNA, mixer - at 3-4 ms each: a gain-changing hop
+~+3.5 ms instead of ~+10.5), the Raspberry Pi
+(its transfers measured like the PC's: the same counts and times expected),
+other tuners (they take the ordinary call), heimdall's use of it (worker S).
+
 ## Zero-copy USB buffers (investigated 2026-11-12/14)
 
 **State since 2026-11-14** (librtlsdr 701a832 + 3ad1746, on the local
