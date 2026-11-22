@@ -67,11 +67,15 @@ struct Downconverter {
 extern Downconverter downconverter;
 
 // Open the LO synthesizer and program it for initial_rf_hz on the current
-// side, after selecting generator mode (function 130 = 1: without it the
-// board only gets the mixer's LO leakage) and the drive current. Call once at
-// startup (after --wideband set downconverter.enabled). Returns false if the
-// device is missing/unopenable - wideband mode cannot run without its LO.
+// side, after the drive current and generator mode (function 130 = 1:
+// without it the board only gets the mixer's LO leakage; status fw.lo_mode
+// says what the board answered). A device reopened later (USB replug) gets
+// all three again. Call once at startup (after --wideband set
+// downconverter.enabled). Returns false if the device is missing/unopenable -
+// wideband mode cannot run without its LO.
 bool downconverter_init(uint64_t initial_rf_hz);
+// Clean exit: saves LO, drive current and generator mode as the board's
+// power-on default (fw >= WB_MIN_SENSOR_FW), then releases the device.
 void downconverter_close();
 
 // Achievable RF range for a given injection side, derived from the moRFeus LO
