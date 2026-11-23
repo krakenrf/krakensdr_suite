@@ -1,6 +1,6 @@
-# librtlsdr fork: two commits that are not upstream yet (2026-11-21)
+# librtlsdr fork: three commits that are not upstream yet (2026-11-21 / 23)
 
-The two patches here go on top of krakenrf/librtlsdr 3ad1746 (the fork's
+The patches here go, in order, on top of krakenrf/librtlsdr 3ad1746 (the fork's
 `master`). They are kept in this repository only until the fork has them;
 then this folder goes, and the Dockerfile's `LIBRTLSDR_COMMIT` can move.
 
@@ -16,6 +16,12 @@ then this folder goes, and the Dockerfile's `LIBRTLSDR_COMMIT` can move.
    the new flag is retried by the library; the header says exactly what the
    no-slip promise covers.
 
+3. `0003-fast-tuner-gain-write-...` (2026-11-23): `rtlsdr_set_tuner_gain_fast`
+   and `rtlsdr_set_center_freq_gain_fast` (macro `RTLSDR_HAS_GAIN_FAST`):
+   sweep mode's per-hop gain written with the retune in 1 more USB transfer
+   instead of 4 (the same gain table and register cache as
+   `rtlsdr_set_tuner_gain`); `../librtlsdr-fork.md`, *A fast tuner gain write*.
+
 What was measured, and what was not (a Raspberry Pi, Windows, macOS):
 `../librtlsdr-fork.md`, *A 3-register tuner read drops 2 samples*, *The
 rule, and the fix*, *Review round*.
@@ -24,7 +30,7 @@ Apply, from the repository root (the fork checkout is `librtlsdr/`):
 
 ```bash
 git -C librtlsdr switch -c lock-read-no-slip
-git -C librtlsdr am ../docs/dev/librtlsdr-patches/0001-*.patch ../docs/dev/librtlsdr-patches/0002-*.patch
+git -C librtlsdr am ../docs/dev/librtlsdr-patches/0001-*.patch ../docs/dev/librtlsdr-patches/0002-*.patch ../docs/dev/librtlsdr-patches/0003-*.patch
 make -C heimdall_v2        # rebuilds the static library from the fork's sources, then heimdall
 ```
 
