@@ -145,7 +145,9 @@ the internet and writes / changes decoder plugins):
     shipped ones too, the user's call), `ai/knowledge/`
   - denied: Read + Edit of api_token, doa_settings.json, server.key,
     krakensdr-ca.key (the receiver's CA key), `*.unreadable-*` (a key
-    moved aside), `*.key.tmp`, `.make-cert.*` (make-cert.sh's folders; a
+    moved aside), `*.retired-*` (a replaced CA's key kept because the CA was
+    the user's own - https-certificate.md fine rule 32), `*.key.tmp`,
+    `.make-cert.*` (make-cert.sh's folders; a
     pattern is denied as a file and with `/**`, and is in the sandbox's
     denyRead as a pattern and by the names it matches when the conversation
     starts - https-certificate.md fine rule 21), ai/ai_config.json, ai/run,
@@ -182,15 +184,25 @@ the internet and writes / changes decoder plugins):
   `turn_finished`) is added to `ai/state/sandboxed_plugins.json`; its
   `--info` scan, its decoder process (`PluginProcess::start`) and a debug
   playback generator (and, for `dab`, the codec check `lib/build/codecs`,
-  which compiles in its AAC loader - `codec_status_message`) are wrapped in `bwrap --ro-bind / / --dev /dev --proc
-  /proc --tmpfs /tmp [--bind <rw>] [masks] --unshare-net --unshare-ipc
-  --die-with-parent --new-session` (read-only filesystem, no network). The
+  which compiles in its AAC loader - `codec_status_message`) are wrapped in
+  `bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc --tmpfs /tmp
+  --unsetenv KRAKEN_API_TOKEN --unsetenv KRAKEN_AI_MCP_TOKEN --unsetenv
+  KRAKEN_MCP_TOKEN [--bind <rw>] [masks] --unshare-net --unshare-ipc --die-with-parent --new-session`
+  (read-only filesystem, no network, its own PID namespace - its `/proc`
+  shows its own processes only, not kraken_doa's `cwd` / `environ` -, no
+  tokens in its environment; macOS: `env -u`). Every debug playback
+  generator runs wrapped too while bwrap is there (`playback.cpp`). The
   masks hide the secrets - the same list as kraken_ai.py's SECRETS (the key
   patterns too) and HOME_SECRETS, those that exist when the plugin starts:
   `--ro-bind /dev/null <file>` / `--tmpfs <folder>` on the real paths
   (macOS: `(deny file-read* ...)`), so a changed plugin can't read a key
   and pass it on in its output (tested: 17 secret files readable without,
-  none with).
+  none with). One difference to the agent's list: of `~/.config` and
+  `~/.local/share` only the credential stores in them are masked (gh, git
+  credentials, gcloud, rclone, browsers' profiles, keyrings, wallets ... -
+  `HOME_SECRETS` in ai_sandbox.cpp), not the whole folders: a python3
+  installed under `~/.local/share` (uv; `~/.local/bin/python3` links there)
+  could not start in the sandbox, and every test signal failed.
   Without bwrap such a plugin doesn't run ("install bubblewrap"). A crash
   mid-turn is caught at the next start (`ai/state/turn` left behind ->
   `recover()` marks what changed). `python3 ai/kraken_ai.py trust <id>`

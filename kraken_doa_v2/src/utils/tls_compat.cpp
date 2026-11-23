@@ -1565,9 +1565,14 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
     bool make_new_ca = new_ca || new_ca_req || cakey_aside || !ca || (!cakey && !key_away) ||
                        (cakey && !same_key(X509_get0_pubkey(ca), cakey.get())) || !is_ca_cert(ca) ||
                        expires_within(ca, CA_RENEW_DAYS) || ca_scope(ca) != (wide ? "wide" : "narrow");
-    vector<string> not_covered;
+    vector<string> not_covered, ca_exact;
     if (!make_new_ca) {
         const Constraints c = constraints_of(ca);
+        // fine rule 35: the CA's EXACT permitted names (not the wide scope's
+        // subtrees `local` / `lan`) stay in the server certificate
+        for (const string& d : c.dns)
+            if (d != "local" && d != "lan" && valid_dns(d) && std::find(ca_exact.begin(), ca_exact.end(), d) == ca_exact.end())
+                ca_exact.push_back(d);
         make_new_ca = c.dns.empty() || c.ip.empty() || !server_auth_only(ca);
         if (!make_new_ca && starts_after(ca, 86400)) {
             if (clock_synced()) make_new_ca = true;
@@ -1584,26 +1589,46 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
 
     const bool make_key = !skey;
     // the server certificate is re-issued (same key) when: other names / IPs;
-    // less than 60 days left; it starts more than a day after the clock (fine
-    // rule 23); it isn't issued by the current CA (a migrated one);
-    // server.crt isn't exactly it + the CA; it doesn't match server.key; asked to
-    auto leaf_names_of = [&]() {
-        vector<string> v;
-        for (const string& n : names)
-            if (std::find(not_covered.begin(), not_covered.end(), n) == not_covered.end()) v.push_back(n);
-        return v;
-    };
-    if (make_new_ca) not_covered.clear();   // a new CA takes every name in
-    vector<string> leaf_names = leaf_names_of();
+    // less than 60 days left; it isn't issued by the current CA (a migrated
+    // one); server.crt isn't exactly it + the CA; it doesn't match
+    // server.key; asked to; and - only when nothing else is due - it starts
+    // more than a day after a synchronized clock (fine rule 23)
+    // its names: the wanted ones the CA permits (fine rule 18) and the CA's
+    // exact names (fine rule 35); a new CA takes every name in
+    if (make_new_ca) {
+        not_covered.clear();
+        ca_exact.clear();
+    }
+    vector<string> leaf_names;
+    for (const string& n : names)
+        if (std::find(not_covered.begin(), not_covered.end(), n) == not_covered.end()) leaf_names.push_back(n);
+    for (const string& n : ca_exact)
+        if (std::find(leaf_names.begin(), leaf_names.end(), n) == leaf_names.end()) leaf_names.push_back(n);
     bool issue = force || make_new_ca || make_key || !leaf || !ours;
     if (!issue) {
         vector<string> dns, sips, wips;
         bool other = false;
         san_of(leaf, &dns, &sips, &other);
         for (const string& ip : ips) wips.push_back(ip_normal(ip));
+        // (the CN too: with the CA's names staying in - rule 35 - a rename
+        // inside the CA or an unusable host name can leave the names as they were)
         issue = !same_key(X509_get0_pubkey(leaf), skey.get()) || other || !same_set(dns, leaf_names) ||
-                !same_set(sips, wips) || expires_within(leaf, SERVER_RENEW_DAYS) || starts_after(leaf, 86400) ||
-                chain.size() != 2 || X509_cmp(chain[1].get(), ca) != 0;
+                !same_set(sips, wips) || name_entry(X509_get_subject_name(leaf), NID_commonName) != cn ||
+                expires_within(leaf, SERVER_RENEW_DAYS) || chain.size() != 2 || X509_cmp(chain[1].get(), ca) != 0;
+        // fine rule 23: dated from a clock that was ahead - re-issued only when
+        // this clock is known to be right (else the new one would be dated from
+        // a wrong time), and never a reason for a new CA (with the CA key away
+        // too: kept)
+        if (!issue && starts_after(leaf, 86400)) {
+            if (!clock_synced())
+                notes.push_back(string(SERVER_CRT) + " starts more than a day after this clock, which is not known to "
+                                "be synchronized - kept");
+            else if (key_away)
+                notes.push_back(string(SERVER_CRT) + " starts more than a day after the clock - kept: " + CA_KEY +
+                                " is missing (a clock is never a reason for a new CA)");
+            else
+                issue = true;
+        }
     }
     // fine rule 31: something to sign and the CA key away - a new CA after all
     if (issue && !make_new_ca && key_away) {
@@ -1732,15 +1757,16 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
         if (ca && !is_symlink(cac_p)) {
             const string retired = free_dated_name(join(dir, "krakensdr-ca."), today("%Y%m%d"), ".retired.crt");
             if (!keep(cac_p, retired)) return false;
-            const bool ours_ca = any_entry(X509_get_subject_name(ca), NID_organizationName,
-                                           [](const string& v) { return v == tlscert::ORG; });
-            if (!ours_ca && cakey_there && !cakey_aside) {
-                const string kept = free_dated_name(join(dir, string(CA_KEY) + ".retired-"), today("%Y%m%d"), "");
-                if (!move(cak_p, kept)) return false;
-                tighten_key(kept);
-                std::cerr << "HTTPS certificate: the replaced CA is not one of a KrakenSDR receiver - its key kept as "
-                          << kept << std::endl;
-            }
+        }
+        // fine rule 32 whatever the certificate file is (a symlink too: its
+        // CA's key is still in krakensdr-ca.key, which the new one replaces)
+        if (ca && cakey_there && !cakey_aside &&
+            !any_entry(X509_get_subject_name(ca), NID_organizationName, [](const string& v) { return v == tlscert::ORG; })) {
+            const string kept = free_dated_name(join(dir, string(CA_KEY) + ".retired-"), today("%Y%m%d"), "");
+            if (!move(cak_p, kept)) return false;
+            tighten_key(kept);
+            std::cerr << "HTTPS certificate: the replaced CA is not one of a KrakenSDR receiver - its key kept as " << kept
+                      << std::endl;
         }
         if (cakey_aside) {
             const string aside = free_dated_name(join(dir, string(CA_KEY) + ".unreadable-"), today("%Y%m%d"), "");

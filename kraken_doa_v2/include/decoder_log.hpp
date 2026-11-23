@@ -34,9 +34,11 @@
 // settings are replayed, at the day change, on a settings change, every 10 min):
 // a finished day stays plain for days_to_keep days, then gzip
 // (<file>.jsonl.gz) for zip_days more, then it is deleted (days 0 = forever:
-// nothing compressed or deleted; only files named like ours are touched). The
-// rule, the gzip and the pass are utils/log_retention.hpp's, shared with the
-// Wideband board / host telemetry logs (wb_board.cpp).
+// nothing compressed or deleted; only files named like ours are touched).
+// After a settings change the passes only compress until 10 min after the
+// last change (the deletion grace, as the telemetry logs'). The rule, the
+// gzip, the pass and its scheduler are utils/log_retention.hpp's, shared with
+// the Wideband board / host telemetry logs (wb_board.cpp).
 // Writing pauses below MIN_FREE_MB free space.
 // Settings (persisted, control_handler.cpp): DECODER_LOG:0|1,
 // DECODER_LOG_TYPES:event,message,position,raw,incident,voice, DECODER_LOG_DAYS:N

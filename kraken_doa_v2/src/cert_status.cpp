@@ -192,23 +192,28 @@ void init() {
     {
         // Fine rule 20: names this device is reached by that the host
         // allow-list (gethostname-based) doesn't know - of the served
-        // certificate's names only the host's own (<host>, <host>.local: the
-        // avahi conflict name, KRAKEN_CERT_HOST), KRAKEN_CERT_NAMES' and
-        // <host>.<d> for the suffixes the allow-list trusts anyway. Not a
-        // name from an arbitrary DHCP search domain: a network that says
-        // `search attacker.example` must not open DNS rebinding from it.
+        // certificate's names only the host's own (<host>, <host>.local,
+        // KRAKEN_CERT_HOST), KRAKEN_CERT_NAMES' and <host>.<d> for the
+        // suffixes the allow-list trusts anyway. Not a name from an arbitrary
+        // DHCP search domain: a network that says `search attacker.example`
+        // must not open DNS rebinding from it.
         State& c = st();
         std::lock_guard<std::mutex> lk(c.mu);
         vector<string> ok = tlscert::own_names(c.host), allow;
-        if (!c.host.avahi.empty()) {   // fine rule 24's extra name
-            ok.push_back(c.host.avahi);
-            ok.push_back(c.host.avahi + ".local");
-        }
         for (const string& n : tlscert::env_names()) ok.push_back(n);
         if (c.host.usable)
             for (const char* d : {".lan", ".home", ".localdomain", ".home.arpa"}) ok.push_back(c.host.name + d);
         for (const string& n : c.ins.server.dns)
             if (std::find(ok.begin(), ok.end(), n) != ok.end()) allow.push_back(n);
+        // fine rule 24: the name avahi announces (another after an mDNS
+        // conflict: krakensdr-2) and its .local DIRECTLY - this device's own
+        // mDNS name, not a DNS-rebinding source - also when the certificate
+        // leaves it out (narrow scope: the CA doesn't cover it). The page then
+        // still answers there, with a certificate warning
+        if (!c.host.avahi.empty()) {
+            allow.push_back(c.host.avahi);
+            allow.push_back(c.host.avahi + ".local");
+        }
         host_add_allowed_names(allow);
     }
     {

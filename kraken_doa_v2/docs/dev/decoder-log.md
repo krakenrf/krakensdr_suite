@@ -123,14 +123,28 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   zlib's reader - a member appended after them was invisible and the plain
   file unlinked); a damaged one is remembered (size + time) and not inflated
   again until it changes; "cannot gzip <file>" is said once per file per run.
-  **Not changed here, a known limit**: the telemetry logs got a 10-min grace
-  before the deletions of a settings change (a person setting Keep, then
-  Then compressed seconds or minutes later, got the deletions of the rule in
-  between); the decoder log keeps only the 5 s debounce - its two number
-  fields send `DECODER_LOG_DAYS` / `DECODER_LOG_ZIP_DAYS` separately, so the
-  same two-step change made more than 5 s apart can still delete days the
-  final rule would gzip. The fix is one argument (`Scheduler`'s
-  `delete_grace`, as in wb_board.cpp) if wanted. **Disk lasts' ratio**
+  **The deletion grace (2026-11-23, the final review)**: like the telemetry
+  logs, after a Keep / Then compressed / folder change the passes only
+  compress; what the new rule deletes is deleted 10 min after the LAST
+  change (`Scheduler`'s `delete_grace`; `KRAKEN_LOGRET_GRACE_S` shortens it
+  for tests - the same variable as the telemetry logs'). The page's two
+  number fields send `DECODER_LOG_DAYS` / `DECODER_LOG_ZIP_DAYS` separately:
+  a person setting Keep 7 and a minute later Then compressed 1 year (stored
+  30 / 0) got days 8-30 deleted in between, which the final rule gzips. The
+  startup replay is no change (`setting_changed()`: only once the passes
+  are allowed - before `settings_restored()` no pass runs, and the first
+  one applies the stored values with its deletions, as the telemetry logs
+  apply theirs): otherwise every start with stored values other than the
+  defaults would hold the deletions back 10 min, and a receiver that never
+  runs that long would never delete a day. Tested (a TEST receiver, a fake
+  heimdall, stored 30 / 0, `KRAKEN_LOGRET_GRACE_S=10`; 1980d55 -> now 6 ->
+  9 / 9): the startup deletes days 31-40 at once in both; `DECODER_LOG_DAYS:7`
+  from a page deleted days 8-30 within 7 s, now they go ~10 s after the
+  command; Keep 7 and 7 s later Then compressed 1 year deleted all 23, now
+  they end gzipped (3 s apart both join them: the debounce). The logs
+  suites rerun with no expectation changed (retention rule 35 M checks and
+  its 9 mutants, the e2e 68 / 68, the old build's files identical, review
+  round 2 28 / 28, the page 25 + 7 + 5, cadence, durability). **Disk lasts' ratio**
   (`gz_isize`) reads a gz file's ISIZE trailer, which is the LAST member's
   size only: a day the clock-back path appended a member to is measured by
   that member (usually a smaller ISIZE than the file -> not counted; else a

@@ -22,7 +22,9 @@ doa_settings.json.tmp
 # this receiver's CA (the key is a secret: it can vouch for this receiver's
 # names - in wide scope for every .local / .lan name and private address),
 # the server pair, replaced CAs, the scope, an unusable key moved aside
-# (*.unreadable-YYYYMMDD: a private key), a migrated server.crt's copy, the
+# (*.unreadable-YYYYMMDD: a private key), a replaced CA's key kept because
+# the CA was the user's own (krakensdr-ca.key.retired-YYYYMMDD: usually an
+# unconstrained CA, fine rule 32), a migrated server.crt's copy, the
 # generator's temporary files, ../scripts/make-cert.sh's work, lock and
 # stale-lock folders (fine rule 21)
 krakensdr-ca.key
@@ -32,6 +34,7 @@ server.key
 server.crt
 cert_options
 *.unreadable-*
+*.retired-*
 *.replaced-*
 *.key.tmp
 *.crt.tmp

@@ -171,8 +171,9 @@ the compression came with its follow-up, 2026-11-23):**
     commands more than 10 min apart (an older page, a script) do apply the
     rule in between - it was in force for 10 min. The assistant has no tool
     for these settings. The decoder log's identical pattern (its two number
-    fields, `DECODER_LOG_DAYS` / `DECODER_LOG_ZIP_DAYS`, the 5 s debounce,
-    no grace) predates this work and is unchanged (*decoder-log.md*);
+    fields, `DECODER_LOG_DAYS` / `DECODER_LOG_ZIP_DAYS`) has the same
+    10-min grace since the final review (2026-11-23; its startup replay is
+    no change - *decoder-log.md*);
   - at the UTC day change and every hour: `retention_timer()`, its own
     thread (the sampler asked before - a hung statfs stopped retention);
     `KRAKEN_TELEMETRY_PASS_S` shortens the hour for tests;
