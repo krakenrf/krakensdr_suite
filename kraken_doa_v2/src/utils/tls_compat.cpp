@@ -1161,6 +1161,67 @@ string retired_date(const string& name) {
     return mid.substr(0, 4) + "-" + mid.substr(4, 2) + "-" + mid.substr(6, 2);
 }
 
+// The names in a folder (UTF-8). Nothing here may throw (into
+// certstatus::init: a crash at every start): the iterator is advanced with an
+// error_code, and a name MinGW's path can't give as UTF-8 is skipped
+vector<string> folder_names(const string& dir) {
+    vector<string> v;
+    try {
+        std::error_code ec;
+        std::filesystem::directory_iterator it(dir.empty() ? "." : dir, ec), end;
+        for (; !ec && it != end; it.increment(ec)) {
+            try {
+                const auto u = it->path().filename().u8string();
+                v.emplace_back(reinterpret_cast<const char*>(u.data()), u.size());
+            } catch (...) {
+            }
+        }
+    } catch (...) {
+    }
+    return v;
+}
+
+// Fine rule 22: a name of the folder's krakensdr-ca.*.retired.crt (make-cert.sh's glob)
+bool retired_name(const string& name) {
+    static const string pre = "krakensdr-ca.", post = ".retired.crt";
+    return name.size() >= pre.size() + post.size() && name.compare(0, pre.size(), pre) == 0 &&
+           name.compare(name.size() - post.size(), post.size(), post) == 0;
+}
+
+// any entry of that kind in the name for which f(its UTF-8 value) holds
+template <typename F>
+bool any_entry(X509_NAME* n, int nid, F f) {
+    for (int i = n ? X509_NAME_get_index_by_NID(n, nid, -1) : -1; i >= 0; i = X509_NAME_get_index_by_NID(n, nid, i)) {
+        unsigned char* u = nullptr;
+        const int len = ASN1_STRING_to_UTF8(&u, X509_NAME_ENTRY_get_data(X509_NAME_get_entry(n, i)));
+        if (len < 0) continue;
+        const string v(reinterpret_cast<char*>(u), static_cast<size_t>(len));
+        OPENSSL_free(u);
+        if (f(v)) return true;
+    }
+    return false;
+}
+
+// Fine rule 22: ours, from a CA of ours that was deleted or replaced (by a
+// copied one - sharing a CA): subject and issuer both with O=KrakenSDR
+// receiver, the issuer's CN starting "KrakenSDR " and containing " CA " (as
+// make-cert.sh's kraken_issued); or issued (no time check) by one of the
+// folder's retired CAs
+bool prior_ours(X509* leaf, const string& dir) {
+    auto org = [](const string& v) { return v == tlscert::ORG; };
+    if (any_entry(X509_get_subject_name(leaf), NID_organizationName, org) &&
+        any_entry(X509_get_issuer_name(leaf), NID_organizationName, org) &&
+        any_entry(X509_get_issuer_name(leaf), NID_commonName,
+                  [](const string& v) { return v.compare(0, 10, "KrakenSDR ") == 0 && v.find(" CA ") != string::npos; }))
+        return true;
+    for (const string& name : folder_names(dir)) {
+        if (!retired_name(name)) continue;
+        const vector<X509Ptr> rc = load_certs(join(dir, name));
+        if (!rc.empty() && verifies(leaf, rc[0].get(), nullptr, false)) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 namespace tlscert {
@@ -1344,7 +1405,10 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
     // fine rule 10), or a legacy subject that is self-signed (fine rule 15)
     const bool ours = leaf && verifies(leaf, ca, nullptr, false);
     const bool legacy = leaf && !ours && old_managed_subject(leaf) && self_signed(leaf);
-    if (leaf && !ours && !legacy) {
+    // fine rule 22: ours from a CA of ours that was replaced or deleted -
+    // re-issued from the current CA (or a new one), its key kept
+    const bool prior = leaf && !ours && !legacy && prior_ours(leaf, dir);
+    if (leaf && !ours && !legacy && !prior) {
         *state = State::NotManaged;   // a certificate of the user's own: left alone
         if (key_there) return true;
         *err = string(SERVER_CRT) + " is not one of the receiver's own and " + SERVER_KEY + " is missing";
@@ -1548,32 +1612,18 @@ Inspect inspect(const string& dir) {
         r.ca = info_of(cas[0].get());
     }
     r.managed = !is_symlink(crt_p) && !is_symlink(join(dir, SERVER_KEY)) &&
-                (r.has_ca || (old_managed_subject(leaf) && self_signed(leaf)));
-    // the retired CAs. Nothing here may throw into certstatus::init (a
-    // crash at every start): the iterator is advanced with an error_code, and
-    // a name MinGW's path can't give as UTF-8 is skipped
-    try {
-        std::error_code ec;
-        std::filesystem::directory_iterator it(dir.empty() ? "." : dir, ec), end;
-        for (; !ec && it != end; it.increment(ec)) {
-            string name;
-            try {
-                const auto u = it->path().filename().u8string();
-                name.assign(reinterpret_cast<const char*>(u.data()), u.size());
-            } catch (...) {
-                continue;
-            }
-            const string date = retired_date(name);
-            if (date.empty()) continue;
-            const vector<X509Ptr> rc = load_certs(join(dir, name));
-            if (rc.empty()) continue;
-            Inspect::Retired ret;
-            ret.date = date;
-            ret.cert = info_of(rc[0].get());
-            ret.cert.pem.clear();
-            r.retired.push_back(std::move(ret));
-        }
-    } catch (...) {
+                (r.has_ca || (old_managed_subject(leaf) && self_signed(leaf)) || prior_ours(leaf, dir));
+    // the retired CAs (folder_names: no exceptions into certstatus::init)
+    for (const string& name : folder_names(dir)) {
+        const string date = retired_date(name);
+        if (date.empty()) continue;
+        const vector<X509Ptr> rc = load_certs(join(dir, name));
+        if (rc.empty()) continue;
+        Inspect::Retired ret;
+        ret.date = date;
+        ret.cert = info_of(rc[0].get());
+        ret.cert.pem.clear();
+        r.retired.push_back(std::move(ret));
     }
     std::sort(r.retired.begin(), r.retired.end(), [](const Inspect::Retired& a, const Inspect::Retired& b) {
         return a.date != b.date ? a.date > b.date : a.cert.not_after > b.cert.not_after;

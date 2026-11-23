@@ -338,9 +338,26 @@ and its Fine rules leave open. Each finds the other's files `kept`
   signature algorithms, so an RSA-PSS / Ed25519 legacy certificate is a
   user's own in both. Before a legacy (migrated) `server.crt` is replaced,
   it is copied to `server.crt.replaced-YYYYMMDD` (0644; the script prints
-  `saved: <file>`). Anything else - also a `CN=krakensdr` certificate from a
-  home CA, or a self-issued one signed by another key - is `not-managed`
-  with every file untouched (it needs `server.key`; without it exit 1).
+  `saved: <file>`). Else (rule 22) ours from a CA of ours that was replaced
+  or deleted: subject and issuer each with an `O=KrakenSDR receiver` entry
+  and an issuer CN starting `KrakenSDR ` and containing ` CA ` (any entry
+  of the kind, in both makers; the script reads the RFC 2253 text), or
+  issued - no time check - by the first certificate of one of the folder's
+  `krakensdr-ca.*.retired.crt` (any name of that glob, not only the dated
+  ones; one `openssl verify` per file, only reached for a certificate that is
+  none of the above). Such a pair is re-issued from the current CA
+  (`issued`, reason "issued by an earlier CA of this receiver"; with no
+  usable CA `ca-created`, "the CA that issued server.crt is gone"), the key
+  kept, no `.replaced-` copy (the old leaf was ours). Anything else - also
+  a `CN=krakensdr` certificate from a home CA, a self-issued one signed by
+  another key, a name that only looks like ours (no O in the subject, an
+  issuer `Home CA` / `KrakenSDR rx` without ` CA ` / of another O) - is
+  `not-managed` with every file untouched (it needs `server.key`; without it
+  exit 1). Sharing a CA ("The CA"): the copied CA keeps this receiver's
+  certificate only when it permits this receiver's OWN names (rule 18) -
+  `KRAKEN_CERT_NAMES` with them on the first receiver, made with
+  `--new-ca`; a wide CA alone doesn't (it permits `<host>.local`, not the
+  bare `<host>`: checked - a new CA, the copied one retired).
 - **Unreadable files** (rule 12): after the symlink check, a `server.crt`,
   `server.key`, `krakensdr-ca.crt` or `krakensdr-ca.key` this user may not
   read (script `test -r`, generator `fopen` failing with EACCES / EPERM) is a
@@ -390,7 +407,12 @@ and its Fine rules leave open. Each finds the other's files `kept`
   lock's time again - not the one judged dead (a live lock made meanwhile)
   -> renamed back. A read-only `<dir>` gets no lock (a dead lock that can't
   be renamed there neither). Removed on exit, also after TERM / INT (the
-  script's trap; the generator's guard object).
+  script's trap; the generator's guard object). Known limit: with THREE
+  makers at once, a third one's `mkdir` can fall between a waiter's two
+  renames of a live lock it renamed by mistake (away and back) - then two
+  hold "the" lock and the first to finish removes the other's. Two at once
+  are safe (tested); three at the same moment on one dead lock are not
+  covered (run.sh, install.sh and kraken_doa never start three makers).
 - **Output** before the last line: `reason: <text>` (issued / ca-created /
   not-managed), `retired: <file>`, `moved: <file>`, `saved: <file>`,
   `not-covered: <names>` (also on `kept`); a fresh install says exactly
@@ -432,23 +454,24 @@ and its Fine rules leave open. Each finds the other's files `kept`
   warning for `ca-created` (fresh: install it once on every device; else:
   every device must install the new certificate and remove the old one -
   Telemetry sheet, HTTPS certificate; before a supervised start it stays 5 s
-  on screen before kraken_doa's dashboard takes the pane); run.sh also warns
-  for `not-covered:` names and for files kept aside (`moved:` / `saved:`); a
-  warning with the reason on failure, and the start goes on.
+  on screen before kraken_doa's dashboard takes the pane); all three also
+  warn for `not-covered:` names (with the `--new-ca` command) and for files
+  kept aside (`moved:` / `saved:`); a warning with the reason on failure,
+  and the start goes on.
   `windows/build.sh` makes no certificate any more (kraken_doa's generator
   does, at every start); it only locks down `server.key` /
   `krakensdr-ca.key` already there (icacls).
 
 ## Tested
 
-### Both makers, Fine rules 1-21 (2026-11-23, x86_64 dev box, no hardware)
+### Both makers, Fine rules 1-22 (2026-11-23, x86_64 dev box, no hardware)
 
 Scripts in the job's scratch folder (`w_certalign/`, not in the repo); the
 generator is `tlscert::ensure` of this tree built as a small driver with
 make-cert.sh's interface (`doa/certgen.cpp` + `tls_compat.cpp`,
 `fs_compat.cpp`, `process_posix.cpp`), against OpenSSL 3.0.2 and 1.1.1w.
 
-- **Cross-test** (`script/cross.sh`): **824 / 824**, four pairings (the
+- **Cross-test** (`script/cross.sh`): **952 / 952**, four pairings (the
   script with 3.0.2 / 1.1.1w x the generator against 3.0.2 / 1.1.1w), both
   on the real machine (the real resolv.conf and interfaces - `ip` vs
   `getifaddrs`; avahi shimmed for both). For narrow and wide, with each maker
@@ -463,8 +486,13 @@ make-cert.sh's interface (`doa/certgen.cpp` + `tls_compat.cpp`,
   PR #5's (1.1.1, two Basic Constraints) migrated with `server.crt.replaced-`,
   a leaf-only `server.crt`, `server.crt` deleted, the CA key deleted, a CA
   without name constraints, without extendedKeyUsage, with IP subtrees only,
-  a wide-looking CA without 10/8, the system host name, avahi via busctl /
-  gdbus / avahi-resolve - the other then says `kept` with every file
+  a wide-looking CA without 10/8, another receiver's CA (made with this
+  one's names by the OTHER maker) copied in (`issued`, that CA used, the key
+  kept), both CA files deleted (`ca-created`, the key kept), a Home CA's
+  certificate with that CA as `krakensdr-ca.20260101.retired.crt`
+  (`issued`), a certificate of a vanished `KrakenSDR gone CA ...`
+  (`ca-created`), the system host name, avahi via busctl / gdbus /
+  avahi-resolve - the other then says `kept` with every file
   byte-identical (content, mode, the names in the folder). States made by
   hand that both decide alike: 12 `cert_options` spellings (CRLF too), 4
   `KRAKEN_CERT_NAMES` spellings of one set, 6 unusable host spellings, the
@@ -472,9 +500,10 @@ make-cert.sh's interface (`doa/certgen.cpp` + `tls_compat.cpp`,
   date UTC), a leaf valid only from in 2 days (kept), garbage / a broken PEM
   block in `server.crt` (exit 1 both), a user's own certificate beside an
   unusable key, `CN=krakensdr` from a home CA, a self-issued `O=KrakenSDR
-  receiver` signed by another key (not-managed both, nothing touched), a CA
-  key this user may not read (exit 1 both).
-- **The script** (`script/harness.sh <openssl> <port>`): **122 / 122** with
+  receiver` signed by another key, 4 names that only look like ours (rule
+  22: not-managed both, nothing touched), a CA key this user may not read
+  (exit 1 both).
+- **The script** (`script/harness.sh <openssl> <port>`): **132 / 132** with
   OpenSSL 1.1.1w, 3.0.2 and 3.6.0 as its openssl, under `dash`, and under
   `bash --posix` with `BASH_COMPAT=3.2`. PATH shims stand in for
   `hostname`, `ip`, `busctl`, `gdbus`, `avahi-resolve`, `uname`, `scutil`.
@@ -505,7 +534,12 @@ make-cert.sh's interface (`doa/certgen.cpp` + `tls_compat.cpp`,
   build_page.py's (no keyCertSign) and an EC P-256 pair migrated; rule 17 41-
   and 63-character host names; rule 18 names added later (kept +
   `not-covered:`), `--new-ca`, roaming between `search fritz.box` and `lan`
-  (`ca-created issued issued issued`, no retired CA). Negatives (a leaf
+  (`ca-created issued issued issued`, no retired CA); rule 22 another
+  receiver's CA copied in (`issued`, rerun `kept`), both CA files deleted
+  (`ca-created`, key kept), a Home CA's certificate without (`not-managed`)
+  and with that CA as a retired file (`issued`), 4 look-alike names
+  (`not-managed`, untouched), a vanished `KrakenSDR gone CA` (`ca-created`).
+  Negatives (a leaf
   signed by the receiver's own CA key for a name / address outside its
   constraints) refused by OpenSSL 1.1.1w, 3.0.2, 3.6, NSS and curl.
 - **The generator** (`doa/gen_tests.sh`, `doa/align_tests.sh`,
@@ -528,7 +562,7 @@ make-cert.sh's interface (`doa/certgen.cpp` + `tls_compat.cpp`,
   and is gone afterwards; the script killed by TERM mid-way (folder empty,
   the generator's next run `ca-created`).
 - **kraken_doa's status** (`review/certstatus_test.sh`, the review's driver
-  linking the real `cert_status.cpp` + `tls_compat.cpp`): 20 / 20 - the
+  linking the real `cert_status.cpp` + `tls_compat.cpp`): 22 / 22 - the
   download of a CA file holding cert + key or key + cert is the certificate
   alone (re-encoded, equal to `openssl x509` of it), a plain file's
   byte-identical, an own `server.crt` with a key in it gives its certificate
@@ -538,7 +572,8 @@ make-cert.sh's interface (`doa/certgen.cpp` + `tls_compat.cpp`,
   name out; the allow-list for a certificate made with `search lan
   attacker.example`: krakensdr-2, .local, .lan, `KRAKEN_CERT_NAMES`' name,
   localhost allowed, `krakensdr-2.attacker.example` (in the certificate) and
-  evil.example refused.
+  evil.example refused; another receiver's CA copied in: managed before the
+  next run (no CA served yet) and after it (that CA served).
 - The review's own tests (`review/t1-t8`) rerun against this tree: the CA
   download holds no key; an encrypted key is moved aside (script and
   generator), keys this user can't read fail with "check its owner",
@@ -559,8 +594,9 @@ make-cert.sh's interface (`doa/certgen.cpp` + `tls_compat.cpp`,
   `server.crt.replaced-*`, `docs/myserver.key` not. `.gitignore`
   (`git check-ignore --no-index`): 16 / 16 of these names ignored in
   `kraken_doa_v2/`, `docker-data/` and any other folder.
-- Callers (`script/callers.sh`): 26 / 26 (the first round's 24, plus run.sh's
-  `not-covered:` warning and the `moved:` / `saved:` line); supervisor
+- Callers (`script/callers.sh`): 30 / 30 (the first round's 24, plus the
+  `not-covered:` warning and the `moved:` / `saved:` line for run.sh,
+  install.sh and the entrypoint each); supervisor
   (`script/supervise_test.sh`): 8 / 8. The page's `cert*` block in node with
   stubs (`page_cert_test.js`): 9 / 9 (the `names_not_covered` text, escaped
   names, the banner hidden until the names change, an older status without

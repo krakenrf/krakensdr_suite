@@ -22,9 +22,12 @@
 # search domain of another network) is left out of the server certificate
 # and reported. The old CA certificate is kept as
 # krakensdr-ca.YYYYMMDD.retired.crt (its key deleted) so the page can name
-# what devices should remove. A certificate of the user's own (also one with
-# CN=krakensdr from another CA, or a symlinked server.crt / server.key) is
-# never touched; a key that can't be used is moved aside, never overwritten.
+# what devices should remove. A server certificate of an earlier CA of ours
+# (one retired, deleted, or replaced by another receiver's CA copied in -
+# sharing a CA) is re-issued from the current one. A certificate of the
+# user's own (also one with CN=krakensdr from another CA, or a symlinked
+# server.crt / server.key) is never touched; a key that can't be used is
+# moved aside, never overwritten.
 #
 #   <dir>      kraken_doa's working directory (kraken_doa_v2, /data/kraken_doa)
 #   --force    re-issue the server certificate (same key, same CA)
@@ -466,6 +469,38 @@ self_signed() {
     printf '%s\n' "$L_PUB" > "$WORK/ss.pub"
     ossl dgst $md -verify "$WORK/ss.pub" -signature "$WORK/ss.sig" "$WORK/ss.tbs" 2>/dev/null | grep -q 'Verified OK'
 }
+# kraken_cn (stdin: CN values, one per line): one starts "KrakenSDR " and
+# contains " CA " - the name of a CA of ours (fine rule 22)
+kraken_cn() {
+    local cn
+    while IFS= read -r cn; do
+        case "$cn" in "KrakenSDR "*) case "$cn" in *" CA "*) return 0 ;; esac ;; esac
+    done
+    return 1
+}
+# kraken_issued <subject> <issuer> (RFC 2253): both with O=KrakenSDR receiver,
+# the issuer's CN that of a CA of ours (fine rule 22: a CA that was deleted,
+# or replaced by a copied one)
+kraken_issued() {
+    case ",$1," in *",O=KrakenSDR receiver,"*) ;; *) return 1 ;; esac
+    case ",$2," in *",O=KrakenSDR receiver,"*) ;; *) return 1 ;; esac
+    printf '%s\n' "$2" | tr ',' '\n' | sed -n 's/^CN=//p' | kraken_cn
+}
+# from_retired <pem>: issued (no time check) by the first certificate of one
+# of the folder's krakensdr-ca.*.retired.crt (fine rule 22)
+from_retired() {
+    local f n=0
+    set +f
+    for f in "$D"/krakensdr-ca.*.retired.crt; do
+        set -f
+        [ -f "$f" ] || continue
+        n=$((n + 1))
+        [ "$(blocks "$f" "$WORK/rt$n.")" -ge 1 ] 2>/dev/null || continue
+        if verifies "$1" "$WORK/rt$n.1.pem" notime; then return 0; fi
+    done
+    set -f
+    return 1
+}
 # blocks <file> <prefix>: its PEM certificates as <prefix>1.pem, 2, ... -> how many
 blocks() {
     awk -v p="$2" '/-----BEGIN CERTIFICATE-----/ { n++; f = p n ".pem" }
@@ -508,7 +543,7 @@ done
 # the CA certificate: its first certificate counts (as tlscert's)
 CA_NB=0
 [ ! -s "$CA_CRT" ] || CA_NB=$(blocks "$CA_CRT" "$WORK/cablk")
-HAVE_CRT=0; OURS=0; LEGACY=0
+HAVE_CRT=0; OURS=0; LEGACY=0; PRIOR=0
 if [ -s "$CRT" ]; then
     # fine rule 11: a server.crt with no certificate in it is not replaced blindly
     nb=$(blocks "$CRT" "$WORK/blk")
@@ -529,9 +564,11 @@ if [ -s "$CRT" ]; then
         legacy=0
         if [ "$L_SUBJ" = "CN=krakensdr" ]; then legacy=1
         else case ",$L_SUBJ," in *",O=KrakenSDR receiver,"*) legacy=1 ;; esac; fi
-        if [ $legacy = 1 ] && self_signed "$WORK/blk1.pem"; then LEGACY=1; fi
+        if [ $legacy = 1 ] && self_signed "$WORK/blk1.pem"; then LEGACY=1
+        # fine rule 22: ours from a CA of ours that was replaced or deleted
+        elif kraken_issued "$L_SUBJ" "$L_ISSUER" || from_retired "$WORK/blk1.pem"; then PRIOR=1; fi
     fi
-    [ $OURS = 1 ] || [ $LEGACY = 1 ] ||
+    [ $OURS = 1 ] || [ $LEGACY = 1 ] || [ $PRIOR = 1 ] ||
         not_managed "server.crt is not a KrakenSDR certificate ($L_SUBJ, issued by $L_ISSUER)"
 fi
 
@@ -575,6 +612,7 @@ elif [ -n "$CA_ASIDE" ]; then
 elif [ $CA_OK = 0 ]; then
     NEED_CA=1
     if [ -e "$CA_CRT" ] || [ -e "$CA_KEY" ]; then REASON="the CA key is missing or does not match"
+    elif [ $PRIOR = 1 ]; then REASON="the CA that issued server.crt is gone"
     elif [ $HAVE_CRT = 1 ]; then REASON="replaces the self-signed certificate"
     else REASON="first certificate"; fi
 elif [ $C_VALID = 0 ]; then
@@ -626,6 +664,7 @@ if [ $ISSUE = 0 ]; then
     elif [ $HAVE_CRT = 0 ]; then REASON="no server certificate"
     elif [ -n "$ASIDE" ]; then REASON="server.key could not be read (moved aside to $ASIDE) - a new server key"
     elif [ $KEY_NEW = 1 ]; then REASON="a new server key"
+    elif [ $PRIOR = 1 ]; then REASON="issued by an earlier CA of this receiver - now from the current one"
     elif [ $OURS = 0 ]; then REASON="replaces the self-signed certificate"
     elif [ "$L_PUB" != "$K_PUB" ]; then REASON="server.crt does not match server.key"
     elif [ "$L_SAN" != "$WANT_SAN" ]; then
