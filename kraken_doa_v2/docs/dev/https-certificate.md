@@ -97,6 +97,61 @@ the whole certificate, including its other names.
 - Anything else - a user's own certificate - and any `server.crt` /
   `server.key` that is a symlink: never touched ("not managed").
 
+## Fine rules *(contract, settled 2026-11-23)*
+
+The script and the in-process generator must agree on every detail, or
+each re-issues what the other made. Where the two first implementations
+differed, this is the rule both follow (the orchestrator's choice; a later
+change goes into both and this list):
+
+1. **Dates in UTC**: the CA's CN date and the retired-file date.
+2. **Retired CA**: `krakensdr-ca.YYYYMMDD.retired.crt`, then `-2`, `-3` ...
+   by which names exist; only a readable, non-symlink CA certificate is
+   retired; its key is deleted.
+3. **An existing CA's scope**: wide when its permitted IP subtrees include
+   `10.0.0.0/8`; narrow when it has name constraints without that; a CA
+   with NO name constraints is scope `none` and is always replaced by a new
+   CA (an unconstrained CA is never kept).
+4. **`KRAKEN_CERT_NAMES`**: split on commas and whitespace, lowercased,
+   trailing dots removed; an entry that parses as an IPv4 / IPv6 address is
+   dropped (browsers never match an address against a DNS name), as is an
+   invalid DNS name - each with a note (stderr / the log).
+5. **`cert_options`**: lines `scope=VALUE`, spaces around `=` allowed, key
+   and value case-insensitive, the last such line wins; `wide` means wide,
+   anything else narrow. kraken_doa writes exactly `scope=wide` /
+   `scope=narrow` and a newline.
+6. **Host name**: `KRAKEN_CERT_HOST` trimmed of whitespace and lowercased,
+   NOT cut at a dot (a dot makes it unusable); every other source cut at the
+   first dot and lowercased. Usable = one DNS label, 1-63 of `a-z 0-9 -`,
+   not starting or ending with `-`. Unusable -> `CN=localhost`, DNS names
+   `localhost` + `KRAKEN_CERT_NAMES`.
+7. **avahi**: busctl, then gdbus (2 s timeouts each, after avahi's GetState
+   has settled, waiting at most 3 s for it), then `avahi-resolve -a` on a
+   private IPv4 address accepting only a `.local` answer, then the system
+   host name.
+8. **Wide scope's addresses**: the IPv4 addresses of interfaces that are up,
+   without `lo`, 127/8 and 169.254/16, and only those inside the CA's
+   private ranges (10/8, 172.16/12, 192.168/16, 100.64/10); plus 127.0.0.1
+   and ::1. Compared with the server certificate as a set.
+9. **Validity**: notBefore = now - 1 h; notAfter = notBefore + 825 days
+   (server) / 3650 days (CA). Re-issue below 60 days left (or expired); a
+   new CA below 365 days left.
+10. **Verification** for "issued by our CA" / "managed": chain and signature
+    WITHOUT the time check (`-no_check_time`); time is only the rule above.
+11. **An unparseable `server.crt`** (the file exists, no certificate in it):
+    failure - exit 1 / an error, every file untouched.
+12. **An unreadable / unparseable `server.key`**: never deleted or
+    overwritten. If `server.crt` is a user's own certificate: not managed,
+    nothing touched. Otherwise the key is moved aside to
+    `server.key.unreadable-YYYYMMDD` (`-2`, `-3` ...; UTC) and a new key is
+    made (`issued` / `ca-created`).
+13. **Modes**: `server.key` and `krakensdr-ca.key` set to 0600 on every run,
+    `kept` included.
+14. **Lock**: `<dir>/.make-cert.lock` (a directory holding its creation time;
+    wait up to 10 s, a lock older than 120 s is taken over, removed on exit)
+    - taken by the script AND by the in-process generator, so a manual run,
+    install.sh and kraken_doa never write at the same time.
+
 ## make-cert.sh *(contract)*
 
 `scripts/make-cert.sh <dir> [--force] [--new-ca]` - exit 0 when a usable
