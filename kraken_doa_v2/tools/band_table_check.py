@@ -3,9 +3,12 @@
 
 Reads the rows of BAND_TABLE in kraken_doa.html - the lines between
 "// BAND TABLE BEGIN" and "// BAND TABLE END", one JSON array per row:
-[lo Hz, hi Hz, short label, full name, category, ITU RR provision] - and
-checks them:
+[lo Hz, hi Hz, short label, full name, category, ITU RR provision] plus,
+for a regional row only, its Region - and checks them:
 
+- regional rows: only the two ISM bands the RR designate for one Region
+  (REGIONAL: 433.05-434.79 MHz Region 1, 902-928 MHz Region 2), category
+  ism, "(R<n>)" in the label and "Region <n> only" in the full name;
 - every row: integer Hz, lo < hi, inside the receiver's range (24 MHz to
   the Wideband variant's 6668 MHz, rounded out to 6.7 GHz), a short label of
   at most LABEL_MAX characters, a full name, a known category, a provision;
@@ -34,6 +37,9 @@ CLASSES = os.path.join(HERE, 'sigclass', 'classes.json')
 
 LABEL_MAX = 16
 RANGE_LO, RANGE_HI = 24_000_000, 6_700_000_000
+# the only regional rows allowed (lo, hi, Region): ISM designated for one Region by the RR itself
+REGIONAL = {(433_050_000, 434_790_000, 1),   # No. 5.138 (and 5.280)
+            (902_000_000, 928_000_000, 2)}   # No. 5.150
 CATS = {'broadcast', 'aero', 'marine', 'amateur', 'satellite', 'nav', 'ism', 'science', 'mobile'}
 # classes.json's exclusive bands: the categories a row inside one may have
 EXCLUSIVE_CATS = {
@@ -75,15 +81,23 @@ def main():
     rows = read_rows(page)
     errs = []
 
-    good = []
+    good, regional = [], set()
     for n, r in rows:
         if isinstance(r, Exception):
             errs.append('line %d: not one JSON array: %s' % (n, r))
             continue
-        if not (isinstance(r, list) and len(r) == 6):
-            errs.append('line %d: a row has 6 fields' % n)
+        if not (isinstance(r, list) and len(r) in (6, 7)):
+            errs.append('line %d: a row has 6 fields (7 for a regional row)' % n)
             continue
-        lo, hi, short, full, cat, ref = r
+        lo, hi, short, full, cat, ref = r[:6]
+        if len(r) == 7:
+            # the ONE exception to "worldwide": the ISM bands the RR designate for a single Region
+            if (lo, hi, r[6]) not in REGIONAL:
+                errs.append('line %d: %s-%s MHz marked as Region %r - only %s may be regional'
+                            % (n, mhz(lo), mhz(hi), r[6], ', '.join('%s-%s MHz (R%d)' % (mhz(a), mhz(b), g) for a, b, g in sorted(REGIONAL))))
+            elif cat != 'ism' or '(R%d)' % r[6] not in short or 'Region %d only' % r[6] not in full:
+                errs.append('line %d: a regional row is ISM and says its Region in the label "(R%d)" and the full name "Region %d only"'
+                            % (n, r[6], r[6]))
         if not (isinstance(lo, int) and isinstance(hi, int)):
             errs.append('line %d: lo / hi are integer Hz' % n)
             continue
@@ -103,6 +117,10 @@ def main():
             if isinstance(s, str) and re.search(r'[\U0001F000-\U0001FFFF☀-➿]', s):
                 errs.append('line %d: an emoji / pictogram in %r' % (n, s))
         good.append((n, lo, hi, short, cat))
+        if len(r) == 7:
+            regional.add((lo, hi, r[6]))
+    if regional != REGIONAL:
+        errs.append('regional rows: %s, expected exactly %s' % (sorted(regional), sorted(REGIONAL)))
 
     for (n0, lo0, hi0, s0, _), (n1, lo1, hi1, s1, _) in zip(good, good[1:]):
         if lo1 < lo0:

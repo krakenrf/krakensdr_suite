@@ -1164,8 +1164,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .band-strip {display:none;position:relative;height:16px;flex-shrink:0;box-sizing:border-box;background:var(--s2);border-bottom:1px solid var(--l1);overflow:hidden;cursor:default;user-select:none;-webkit-user-select:none}
 body.bands-on .band-strip {display:block}
 body.mode-independent #band-strip-main {display:none}
-.bs-seg {position:absolute;top:1px;height:13px;box-sizing:border-box;background:var(--s4);border:1px solid var(--l2);border-radius:2px;color:var(--t3);font:10px/11px sans-serif;text-align:center;white-space:nowrap;overflow:hidden}
-.bs-seg:hover {background:var(--s5);color:var(--t1)}
+.bs-seg {position:absolute;top:1px;height:14px;box-sizing:border-box;background:var(--s4);border:1px solid var(--l2);border-radius:2px;color:var(--t2);font:11px/12px sans-serif;text-align:center;white-space:nowrap;overflow:hidden}
+.bs-seg:hover {background:var(--s5);color:var(--t0)}
 .sf-cat-row {display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:12px}
 .sf-cat-row:last-child {margin-bottom:0}
 .sf-cat-row input[type=text] {flex:1;min-width:0;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:3px 5px;border-radius:3px;font-size:12px}
@@ -3000,7 +3000,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
     <!-- Signal ID: every signal in the band labelled with its type (see SIGNAL ID) -->
     <div class="sb-section" data-sb="signal-id" id="sig-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-tag"/></svg><span>Signal ID</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Labels every signal the receiver finds in the band with its type - DMR, POCSAG, NFM voice, LoRa, ADS-B, DAB and some 50 more - on the spectrum and in the list here. <b>Click a label</b> (or a row) to tune the selected VFO to that signal with its decoder, demod and bandwidth. A label with a <b>?</b> is a less certain guess; a grey one is a signal of an unknown kind or one not seen for a while (bursts keep their label between transmissions). Hover a label for the next likely types, the bandwidth and the SNR.<br><br>The receiver looks at half a second of one tuner's samples at a time (coherent mode: the selected antenna; independent and wideband scan modes: each tuner in turn), every one to ten seconds - a few percent of one core. It never retunes anything. Paused while heimdall calibrates. Needs the model file sigclass.model on the receiver.<br><br><b>Bands</b> draws a thin bar over every spectrum naming the radio bands in view - only bands the ITU Radio Regulations agree for the whole world (all three Regions): broadcasting, aeronautical, maritime, amateur, satellite, navigation and radar, ISM, science. Regional and national plans (433 / 868 / 915 MHz devices, PMR446, cellular bands) are left out: a gap in the bar means no worldwide band there. Hover a band for its full name and range. It works with Signal ID off. <b>Confidence</b> (the least certainty shown) and <b>Bands</b> are for this browser only.</span></span></h3>
+        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-tag"/></svg><span>Signal ID</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Labels every signal the receiver finds in the band with its type - DMR, POCSAG, NFM voice, LoRa, ADS-B, DAB and some 50 more - on the spectrum and in the list here. <b>Click a label</b> (or a row) to tune the selected VFO to that signal with its decoder, demod and bandwidth. A label with a <b>?</b> is a less certain guess; a grey one is a signal of an unknown kind or one not seen for a while (bursts keep their label between transmissions). Hover a label for the next likely types, the bandwidth and the SNR.<br><br>The receiver looks at half a second of one tuner's samples at a time (coherent mode: the selected antenna; independent and wideband scan modes: each tuner in turn), every one to ten seconds - a few percent of one core. It never retunes anything. Paused while heimdall calibrates. Needs the model file sigclass.model on the receiver.<br><br><b>Bands</b> draws a thin bar over every spectrum naming the radio bands in view - only bands the ITU Radio Regulations agree for the whole world (all three Regions): broadcasting, aeronautical, maritime, amateur, satellite, navigation and radar, ISM, science. The one exception: the two ISM bands the Regulations give a single Region, marked with it - 433.92 MHz (R1) and 915 MHz (R2). National and regional plans (868 MHz devices, PMR446, cellular bands) are left out: a gap in the bar means no worldwide band there. Hover a band for its full name, range and the services that share it. It works with Signal ID off. <b>Confidence</b> (the least certainty shown) and <b>Bands</b> are for this browser only.</span></span></h3>
         <span class="sf-count" id="sig-count"></span>
         <span class="sb-toggle"></span>
       </div>
@@ -3020,7 +3020,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <div class="ctrl-row">
           <label for="sig-bands">Bands</label>
-          <input type="checkbox" class="sw" id="sig-bands" onchange="bandSet(this.checked)" title="A bar over every spectrum naming the radio bands in view - worldwide (ITU) bands only (this browser)">
+          <input type="checkbox" class="sw" id="sig-bands" onchange="bandSet(this.checked)" title="A bar over every spectrum naming the radio bands in view - the ITU's worldwide bands, and the two Region-only ISM bands (this browser)">
         </div>
         <div class="sig-list" id="sig-list"></div>
       </div>
@@ -4219,15 +4219,21 @@ const sigUi = (() => {
 // Bands (see BANDS below): the radio bands agreed for the whole world, for
 // the bar over the spectra. One row per band: [lo Hz, hi Hz, short label,
 // full name with the service(s), category (BAND_CATS), the ITU Radio
-// Regulations provision that makes it worldwide]. A band is in the table
-// when the ITU Radio Regulations' Table of Frequency Allocations (Article 5)
-// allocates that service in all three Regions over the range, or a
-// footnote / appendix designates it for the whole world (ISM 5.150, maritime
-// VHF 5.226 + Appendix 18, RLAN 5.446A); only the common part of a band.
-// Plain fixed / mobile allocations, regional and national plans are not in
-// it. Sorted, no overlaps and no nesting (a sub-band, e.g. 121.5 MHz in the
-// airband, is named in its band's full name). The rows, their sources and the
-// rule for adding one: docs/dev/signal-classifier.md, "Bands"; checked by
+// Regulations provision, and - for a regional row only - its Region]. A band
+// is in the table when the ITU Radio Regulations' Table of Frequency
+// Allocations (Article 5) allocates that service in all three Regions over
+// the range, or a footnote / appendix designates it for the whole world (ISM
+// 5.150, maritime VHF 5.226 + Appendix 18, RLAN 5.446A); only the common part
+// of a band. The ONE exception: the ISM bands the Radio Regulations designate
+// for a single Region (433.05-434.79 MHz Region 1, No. 5.138; 902-928 MHz
+// Region 2, No. 5.150) are in, marked with their Region (7th field; label and
+// tooltip say it). Where another service is co-primary in a Region and often
+// defines what is on air there, the full name says so. Plain fixed / mobile
+// allocations and national or regional plans (868 MHz devices, PMR446,
+// cellular bands) are not in it. Sorted, no overlaps and no nesting (a
+// sub-band, e.g. 121.5 MHz in the airband, is named in its band's full name).
+// The rows, their sources and the rule for adding one:
+// docs/dev/signal-classifier.md, "Bands"; checked by
 // tools/band_table_check.py, which reads the lines between the markers (one
 // JSON array per row). Hz as plain numbers: up to 6.7 GHz, no 32-bit maths.
 // BAND TABLE BEGIN
@@ -4241,46 +4247,49 @@ const BAND_TABLE = [
   [28000000, 29700000, "10 m amateur", "Amateur, amateur-satellite: the 10 m band", "amateur", "Art. 5"],
   [40660000, 40700000, "ISM 40 MHz", "Industrial, scientific and medical (ISM) applications, centre 40.68 MHz", "ism", "5.150"],
   [50000000, 52000000, "6 m amateur", "Amateur: the 6 m band - secondary in Region 1 (since WRC-19), primary in Regions 2 and 3 (there 50-54 MHz)", "amateur", "Art. 5, 5.169B"],
-  [54000000, 68000000, "Band I TV", "Broadcasting: VHF band I (Region 1 from 47 MHz, Region 2 to 72 MHz)", "broadcast", "Art. 5"],
+  [54000000, 68000000, "Band I TV", "Broadcasting: VHF band I (Region 1 from 47 MHz, Region 2 to 72 MHz); fixed and mobile co-primary in Region 3, secondary in Region 2", "broadcast", "Art. 5"],
   [74800000, 75200000, "Marker beacons", "Aeronautical radionavigation: ILS marker beacons on 75 MHz", "aero", "Art. 5, 5.180"],
-  [88000000, 108000000, "FM broadcast", "Broadcasting: FM sound (Region 1 from 87.5 MHz, Region 3 from 87 MHz)", "broadcast", "Art. 5"],
+  [88000000, 108000000, "FM broadcast", "Broadcasting: FM sound (Region 1 from 87.5 MHz, Region 3 from 87 MHz); fixed and mobile co-primary in Region 3 below 100 MHz", "broadcast", "Art. 5"],
   [108000000, 117975000, "VOR / ILS", "Aeronautical radionavigation: VOR, ILS localizer (108-112 MHz), GBAS", "aero", "Art. 5"],
   [117975000, 137000000, "Airband", "Aeronautical mobile (R): air traffic voice (AM), ACARS, VDL; 121.5 MHz is the aeronautical emergency frequency", "aero", "Art. 5, 5.200"],
   [137000000, 138000000, "Weather sats 137", "Space-to-Earth: meteorological-satellite (APT, LRPT images), mobile-satellite, space operation, space research", "satellite", "Art. 5"],
   [144000000, 146000000, "2 m amateur", "Amateur, amateur-satellite: the 2 m band (Regions 2 and 3 to 148 MHz)", "amateur", "Art. 5"],
-  [156000000, 162050000, "Marine VHF", "Maritime mobile VHF, the Appendix 18 channels: 156.8 MHz (ch 16) distress and calling, 156.525 MHz (ch 70) DSC, AIS 161.975 / 162.025 MHz", "marine", "5.226, App. 18"],
-  [174000000, 216000000, "Band III bcast", "Broadcasting: VHF band III - TV, DAB (Regions 1 and 3 to 223 MHz)", "broadcast", "Art. 5"],
-  [322000000, 328600000, "Radio astr.", "Radio astronomy, with fixed and mobile", "science", "Art. 5, 5.149"],
+  [156000000, 162050000, "Marine VHF", "Maritime mobile VHF, the Appendix 18 channels: 156.8 MHz (ch 16) distress and calling, 156.525 MHz (ch 70) DSC, AIS 161.975 / 162.025 MHz. The band is fixed / mobile everywhere: maritime has priority on its channels (5.226), land mobile uses the rest", "marine", "5.226, App. 18"],
+  [174000000, 216000000, "Band III bcast", "Broadcasting: VHF band III - TV, DAB (Regions 1 and 3 to 223 MHz); fixed and mobile co-primary in Region 3, secondary in Region 2", "broadcast", "Art. 5"],
+  [322000000, 328600000, "Radio astr.", "Radio astronomy, co-primary with fixed and mobile", "science", "Art. 5, 5.149"],
   [328600000, 335400000, "ILS glide path", "Aeronautical radionavigation: ILS glide path", "aero", "Art. 5, 5.258"],
   [400150000, 406000000, "Radiosondes", "Meteorological aids (radiosondes); meteorological-satellite 400.15-403 MHz", "science", "Art. 5"],
   [406000000, 406100000, "406 beacons", "Mobile-satellite (Earth-to-space): distress beacons only (EPIRB, ELT, PLB - Cospas-Sarsat)", "satellite", "Art. 5, 5.266"],
-  [406100000, 410000000, "Radio astr.", "Radio astronomy, with fixed and mobile", "science", "Art. 5, 5.149"],
-  [430000000, 440000000, "70 cm amateur", "Amateur (primary in Region 1, secondary in Regions 2 and 3) with radiolocation; amateur-satellite 435-438 MHz", "amateur", "Art. 5, 5.282"],
-  [470000000, 608000000, "UHF TV", "Broadcasting: UHF bands IV / V (TV)", "broadcast", "Art. 5"],
-  [614000000, 698000000, "UHF TV", "Broadcasting: UHF band V (TV)", "broadcast", "Art. 5"],
-  [698000000, 862000000, "UHF TV / mobile", "Broadcasting and mobile (IMT 700 / 800 MHz), both primary in all three Regions", "broadcast", "Art. 5"],
+  [406100000, 410000000, "Radio astr.", "Radio astronomy, co-primary with fixed and mobile (land-mobile networks in many countries)", "science", "Art. 5, 5.149"],
+  [430000000, 433050000, "70 cm amateur", "Amateur (primary in Region 1, secondary in Regions 2 and 3), radiolocation primary everywhere: the 70 cm band (430-440 MHz)", "amateur", "Art. 5"],
+  [433050000, 434790000, "ISM 433 (R1)", "Industrial, scientific and medical (ISM) applications, centre 433.92 MHz - in Region 1 only (No. 5.138; in the countries of No. 5.280 as under No. 5.150). Worldwide this is the 70 cm amateur band (amateur, radiolocation)", "ism", "5.138, 5.280", 1],
+  [434790000, 440000000, "70 cm amateur", "Amateur (primary in Region 1, secondary in Regions 2 and 3), radiolocation primary everywhere; amateur-satellite 435-438 MHz", "amateur", "Art. 5, 5.282"],
+  [470000000, 608000000, "UHF TV", "Broadcasting: UHF bands IV / V (TV) - the worldwide allocation. Region 3: fixed and mobile co-primary (land-mobile networks there; radionavigation 585-610 MHz; IMT in some countries, 5.296A); Region 2: fixed / mobile secondary, primary by footnote in some countries 470-512 MHz (5.292, 5.293)", "broadcast", "Art. 5"],
+  [614000000, 698000000, "UHF TV", "Broadcasting: UHF band V (TV) - the worldwide allocation. Region 3: fixed and mobile co-primary (IMT in some countries, 5.296A); Region 2: fixed / mobile secondary, primary by footnote and IMT in some countries (5.293, 5.308A)", "broadcast", "Art. 5"],
+  [698000000, 862000000, "UHF TV / mobile", "Broadcasting and mobile (IMT 700 / 800 MHz), both primary in all three Regions; fixed co-primary in Region 1 above 790 MHz, Regions 2 and 3", "broadcast", "Art. 5"],
+  [902000000, 928000000, "ISM 915 (R2)", "Industrial, scientific and medical (ISM) applications, centre 915 MHz - in Region 2 only (No. 5.150); there fixed is primary, amateur, mobile and radiolocation secondary. In Regions 1 and 3 the band is fixed / mobile (cellular)", "ism", "5.150", 2],
   [960000000, 1164000000, "DME / SSR", "Aeronautical radionavigation: DME / TACAN, SSR and Mode S (1030 / 1090 MHz), ADS-B 1090, UAT 978; aeronautical mobile (R)", "aero", "Art. 5, 5.328"],
   [1164000000, 1215000000, "GNSS L5", "Radionavigation-satellite (GPS L5, Galileo E5, BeiDou B2, GLONASS L3) with aeronautical radionavigation (DME)", "nav", "Art. 5, 5.328A"],
   [1215000000, 1240000000, "GNSS L2", "Radionavigation-satellite (GPS L2), radiolocation, Earth exploration-satellite (active)", "nav", "Art. 5"],
   [1240000000, 1300000000, "GNSS E6 / 23 cm", "Radionavigation-satellite (GLONASS L2, Galileo E6, BeiDou B3), radiolocation; amateur, secondary (the 23 cm band)", "nav", "Art. 5, 5.282"],
   [1300000000, 1400000000, "L-band radar", "Radiolocation; aeronautical radionavigation 1300-1350 MHz (ground-based radars)", "nav", "Art. 5, 5.337"],
   [1400000000, 1427000000, "Radio astr. 1420", "Radio astronomy (hydrogen line 1420.4 MHz), passive Earth exploration and space research - all emissions prohibited", "science", "Art. 5, 5.340"],
-  [1452000000, 1492000000, "L-band bcast", "Broadcasting, broadcasting-satellite (digital radio), with fixed and mobile", "broadcast", "Art. 5"],
-  [1518000000, 1559000000, "L-band satcom", "Mobile-satellite (space-to-Earth): Inmarsat and other L-band systems, maritime and aeronautical safety", "satellite", "Art. 5"],
+  [1452000000, 1492000000, "L-band bcast", "Broadcasting, broadcasting-satellite (digital radio); fixed and mobile co-primary everywhere (IMT in many countries: 5.346, 5.346A)", "broadcast", "Art. 5"],
+  [1518000000, 1559000000, "L-band satcom", "Mobile-satellite (space-to-Earth): Inmarsat and other L-band systems, maritime and aeronautical safety; fixed and mobile co-primary 1518-1525 MHz", "satellite", "Art. 5"],
   [1559000000, 1610000000, "GNSS L1", "Radionavigation-satellite (GPS L1, Galileo E1, GLONASS L1, BeiDou B1) with aeronautical radionavigation", "nav", "Art. 5"],
   [1610000000, 1626500000, "Sat phones", "Mobile-satellite (Earth-to-space: Iridium, Globalstar), aeronautical radionavigation; radio astronomy 1610.6-1613.8 MHz; mobile-satellite (space-to-Earth) 1613.8-1626.5 MHz", "satellite", "Art. 5"],
   [1626500000, 1660000000, "L-band sat up", "Mobile-satellite (Earth-to-space): Inmarsat and other L-band uplinks", "satellite", "Art. 5"],
   [1660000000, 1668400000, "Radio astr. 1665", "Radio astronomy (OH lines 1665 / 1667 MHz), space research (passive)", "science", "Art. 5, 5.149"],
   [1668400000, 1710000000, "Met sats/sondes", "Meteorological aids (radiosondes) to 1700 MHz; meteorological-satellite (space-to-Earth) 1670-1710 MHz", "science", "Art. 5"],
-  [2025000000, 2110000000, "S-band sat up", "Space operation, Earth exploration-satellite, space research (Earth-to-space)", "satellite", "Art. 5"],
-  [2200000000, 2290000000, "S-band sat down", "Space operation, Earth exploration-satellite, space research (space-to-Earth)", "satellite", "Art. 5"],
-  [2300000000, 2400000000, "13 cm amateur", "Amateur, secondary, with fixed, mobile and radiolocation: the 13 cm band (2300-2450 MHz)", "amateur", "Art. 5"],
-  [2400000000, 2500000000, "ISM 2.4 GHz", "Industrial, scientific and medical (ISM) applications, centre 2450 MHz (Wi-Fi, Bluetooth); amateur 2400-2450 MHz (secondary); mobile-satellite (space-to-Earth) 2483.5-2500 MHz", "ism", "5.150"],
+  [2025000000, 2110000000, "S-band sat up", "Space operation, Earth exploration-satellite, space research (Earth-to-space), co-primary with fixed and mobile", "satellite", "Art. 5"],
+  [2200000000, 2290000000, "S-band sat down", "Space operation, Earth exploration-satellite, space research (space-to-Earth), co-primary with fixed and mobile", "satellite", "Art. 5"],
+  [2300000000, 2400000000, "13 cm amateur", "Amateur, secondary: the 13 cm band (2300-2450 MHz). Fixed and mobile are primary (IMT in many countries, 5.384A), radiolocation primary in Regions 2 and 3", "amateur", "Art. 5"],
+  [2400000000, 2500000000, "ISM 2.4 GHz", "Industrial, scientific and medical (ISM) applications, centre 2450 MHz (Wi-Fi, Bluetooth); fixed and mobile primary, amateur 2400-2450 MHz (secondary); mobile-satellite (space-to-Earth) 2483.5-2500 MHz", "ism", "5.150"],
   [2690000000, 2700000000, "Radio astr. 2.7G", "Radio astronomy, passive Earth exploration and space research - all emissions prohibited", "science", "Art. 5, 5.340"],
   [2700000000, 2900000000, "ATC radar", "Aeronautical radionavigation: ground-based radars (airport surveillance, weather); radiolocation", "nav", "Art. 5, 5.337"],
   [2900000000, 3100000000, "Radar 3 GHz", "Radionavigation (ship radars, ground-based aeronautical radars) and radiolocation", "nav", "Art. 5, 5.426"],
   [3100000000, 3400000000, "Radar 3.1-3.4", "Radiolocation", "nav", "Art. 5"],
-  [3400000000, 4200000000, "C-band sat", "Fixed-satellite (space-to-Earth), with fixed and mobile (IMT in parts)", "satellite", "Art. 5"],
+  [3400000000, 4200000000, "C-band sat", "Fixed-satellite (space-to-Earth); fixed co-primary, and mobile co-primary in most of the band - IMT / 5G around 3.3-3.8 GHz in many countries (5.430A, 5.431B, 5.433A)", "satellite", "Art. 5"],
   [4200000000, 4400000000, "Radio altimeters", "Aeronautical radionavigation: aircraft radio altimeters only; aeronautical mobile (R) (wireless avionics)", "aero", "Art. 5, 5.438"],
   [4990000000, 5000000000, "Radio astr. 5G", "Radio astronomy, space research (passive), with fixed and mobile", "science", "Art. 5, 5.149"],
   [5000000000, 5150000000, "Aero 5 GHz", "Aeronautical radionavigation (microwave landing system 5030-5150 MHz), aeronautical mobile (R) and mobile-satellite (R); radionavigation-satellite 5000-5030 MHz", "aero", "Art. 5, 5.444"],
@@ -4288,7 +4297,7 @@ const BAND_TABLE = [
   [5350000000, 5470000000, "Radar 5.4 GHz", "Radiolocation, aeronautical radionavigation (airborne radars), Earth exploration-satellite (active)", "nav", "Art. 5, 5.449"],
   [5470000000, 5725000000, "Wi-Fi 5.6 GHz", "Mobile except aeronautical: RLANs (Wi-Fi) under Resolution 229; radiolocation (weather radars), maritime radionavigation 5470-5650 MHz; amateur, secondary, 5650-5725 MHz", "mobile", "Art. 5, 5.446A"],
   [5725000000, 5875000000, "ISM 5.8 GHz", "Industrial, scientific and medical (ISM) applications, centre 5800 MHz; radiolocation and amateur (secondary) to 5850 MHz, amateur-satellite (space-to-Earth) 5830-5850 MHz", "ism", "5.150"],
-  [5925000000, 6700000000, "C-band sat up", "Fixed-satellite (Earth-to-space), with fixed and mobile", "satellite", "Art. 5"],
+  [5925000000, 6700000000, "C-band sat up", "Fixed-satellite (Earth-to-space), co-primary with fixed (point-to-point links) and mobile (IMT 6425-7125 MHz in Region 1, 5.457E)", "satellite", "Art. 5"],
 ];
 // BAND TABLE END
 const BAND_CATS = {broadcast: 'Broadcasting', aero: 'Aeronautical', marine: 'Maritime', amateur: 'Amateur', satellite: 'Satellite',
@@ -13752,7 +13761,8 @@ sigRender();
 // of every spectrum - the main display (coherent, zoomed, the wideband-scan
 // stitch, a playback: whatever its frequency axis shows, also the Wideband
 // variant's RF up to 6.7 GHz) and each independent-mode pane - naming the
-// worldwide bands in view (BAND_TABLE in the globals block): one segment per
+// worldwide bands in view, and the two Region-only ISM bands marked with
+// their Region (BAND_TABLE in the globals block): one segment per
 // band over its visible part, the short label centred when it fits, the full
 // name, range and service in its tooltip, nothing where no worldwide band
 // applies. Independent of the classifier: drawn from the page's own
@@ -13785,15 +13795,17 @@ function bandLabelW(s) {
   let w = bandTextW.get(s);
   if (w === undefined) {
     const c = bandLabelW.ctx || (bandLabelW.ctx = document.createElement('canvas').getContext('2d'));
-    c.font = '10px sans-serif';
+    c.font = '11px sans-serif';                  // (.bs-seg's font)
     w = Math.ceil(c.measureText(s).width);
     bandTextW.set(s, w);
   }
   return w;
 }
 function bandFmtMhz(hz) { return String(+(hz / 1e6).toFixed(4)); }
+// (a regional row - the 7th field, the Region - says so instead of "Worldwide")
 function bandTip(r) {
-  return `${r[3]}\n${bandFmtMhz(r[0])} - ${bandFmtMhz(r[1])} MHz · ${BAND_CATS[r[4]] || r[4]}\nWorldwide: ITU Radio Regulations ${r[5]}`;
+  return `${r[3]}\n${bandFmtMhz(r[0])} - ${bandFmtMhz(r[1])} MHz · ${BAND_CATS[r[4]] || r[4]}\n` +
+         (r[6] ? `Region ${r[6]} only: ITU Radio Regulations ${r[5]}` : `Worldwide: ITU Radio Regulations ${r[5]}`);
 }
 // The strip el over a spectrum whose frequency axis runs from f0 MHz at x0 to
 // f1 MHz at x1 (px from the strip's left edge): one segment per band in view,
