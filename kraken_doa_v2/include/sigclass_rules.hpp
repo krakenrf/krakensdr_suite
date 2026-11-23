@@ -29,12 +29,25 @@ bool same_signal(const T& a, const T& b) {
 // its own antenna: live, one MPT1327 control channel read 15 dB SNR on CH0
 // and 3.6 dB on CH1 - the newer CH1 view, p 0.40, hid CH0's sure label),
 // then the more recently seen, then the more often seen (then the lower
-// tuner, the lower frequency: a strict order)
+// tuner, the lower frequency: a strict order).
+// Sticky (INV-J): the view sent last (`sent`: its id was in the previous
+// publish) counts STICKY_DB stronger - so it stays the one sent unless
+// another view is fresh and it is not, or has a class and it has none, or
+// is at least STICKY_DB stronger (exactly the margin: the challenger). Two
+// antennas within a few dB of each other used to take turns as either band
+// got its look: live, one signal at 416.090 MHz sent as CH0's view (26.6 dB,
+// "DMR") and as CH1's (26.4 dB, "MPT1327") in turn - its label's id and
+// even its text flipped. (A margin on the comparison itself would not be an
+// order - a 1 dB chain a < b < c with c 3 dB over a - the bonus keeps it one:
+// a lexicographic key.)
+constexpr double STICKY_DB = 3.0;
 template <class T>
 bool better(const T& a, const T& b) {
     if (a.fresh != b.fresh) return a.fresh;
     if (a.cls.empty() != b.cls.empty()) return !a.cls.empty();
-    if (a.snr != b.snr) return a.snr > b.snr;
+    const double sa = double(a.snr) + (a.sent ? STICKY_DB : 0.0), sb = double(b.snr) + (b.sent ? STICKY_DB : 0.0);
+    if (sa != sb) return sa > sb;
+    if (a.sent != b.sent) return !a.sent;
     if (a.seen_real != b.seen_real) return a.seen_real > b.seen_real;
     if (a.hits != b.hits) return a.hits > b.hits;
     if (a.tuner != b.tuner) return a.tuner < b.tuner;
@@ -47,7 +60,15 @@ bool better(const T& a, const T& b) {
 // unchanged (a self-move once emptied the strings of every track in front of
 // the first dropped one); no two kept tracks are same_signal(); every
 // dropped one has a kept same_signal() one of another tuner that is better();
-// one tuner's tracks never drop each other; sorted by hz.
+// one tuner's tracks never drop each other; sorted by hz. INV-J (sticky):
+// with the views kept marked `sent` and fed back, the same views are kept
+// as long as no view's fresh / class changes and no SNR moves by 1.5 dB or
+// more from where it was when they were chosen (pairwise less than
+// STICKY_DB): every view dropped before is still
+// preceded by the view that dropped it (sent: + STICKY_DB), and the kept
+// ones never meet each other. A sent view that went, went stale while
+// another is fresh, lost its class to a classed one, or was overtaken by
+// STICKY_DB is replaced at once.
 template <class T>
 void drop_overlap_duplicates(std::vector<T>& pub) {
     const auto by_hz = [](const T& a, const T& b) { return a.hz < b.hz; };

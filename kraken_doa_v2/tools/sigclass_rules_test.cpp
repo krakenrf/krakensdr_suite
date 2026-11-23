@@ -47,10 +47,11 @@ struct T {   // the fields of the service's PubTrack the rules read, + strings
     double hz = 0, bw = 0, seen_real = 0;
     float snr = 0;
     bool fresh = false;
+    bool sent = false;   // (its id was in the previous publish - INV-J)
     std::string cls, name;
     bool operator==(const T& o) const {
         return id == o.id && tuner == o.tuner && hits == o.hits && snr == o.snr && hz == o.hz && bw == o.bw && seen_real == o.seen_real &&
-               fresh == o.fresh && cls == o.cls && name == o.name;
+               fresh == o.fresh && sent == o.sent && cls == o.cls && name == o.name;
     }
 };
 
@@ -200,6 +201,7 @@ std::vector<T> random_tracks(std::mt19937_64& rng) {
                 x.hits = 1 + int(rng() % 4);
                 x.snr = float(rng() % 3 == 0 ? 10 : rng() % 40);   // (ties happen)
                 x.cls = rng() % 8 == 0 ? std::string() : "c" + std::to_string(x.id % 7);   // (sometimes a view without a class)
+                x.sent = rng() % 5 == 0;   // (sent in the previous publish - INV-J)
                 x.name = "Class name number " + std::to_string(x.id);
                 v.push_back(x);
             }
@@ -231,6 +233,187 @@ void run_dedupe(int rounds, uint64_t seed) {
             if (!e.empty() && !rb++ && first.empty()) first = e;
         }
         report(name, mutant, db, int(dir.size()), rb, rounds, first);
+    }
+}
+
+// --- the sent view is sticky (INV-J) -----------------------------------------------
+constexpr double STICKY_TEST_DB = R::STICKY_DB + 0.05;   // (clearly over the margin, float rounding aside)
+// mutants: run the real rule on a changed copy, keep the originals of the views it keeps
+Dedupe on_copy(const std::function<void(T&)>& change) {
+    return [change](std::vector<T>& pub) {
+        std::vector<T> c = pub;
+        for (T& k : c) change(k);
+        R::drop_overlap_duplicates(c);
+        std::vector<T> out;
+        for (const T& k : c)
+            for (const T& o : pub)
+                if (o.id == k.id) out.push_back(o);
+        pub = out;
+    };
+}
+const Dedupe m_not_sticky = on_copy([](T& k) { k.sent = false; });                      // 1e8871d..be18a73
+const Dedupe m_no_margin = on_copy([](T& k) { if (k.sent) k.snr += 1000.0f; });          // the sent view always stays
+const Dedupe m_over_fresh = on_copy([](T& k) { if (k.sent) k.fresh = true; });           // ... even stale against a fresh one
+const Dedupe m_over_class = on_copy([](T& k) { if (k.sent && k.cls.empty()) k.cls = "x"; });   // ... or without a class
+
+std::set<int> ids_of(const std::vector<T>& v) {
+    std::set<int> s;
+    for (const T& k : v) s.insert(k.id);
+    return s;
+}
+std::vector<T> marked(std::vector<T> in, const std::set<int>& sent) {
+    for (T& k : in) k.sent = sent.count(k.id) > 0;
+    return in;
+}
+std::vector<T> run_rule(const Dedupe& f, std::vector<T> in) {
+    f(in);
+    return in;
+}
+
+// x0: views (none marked). Publishes again and again, each the views fed back as sent and every SNR moved by
+// less than 1.5 dB from x0 (pairwise < STICKY_DB): the same views every time; the earlier invariants each time
+std::string check_sticky_steady(const std::vector<T>& x0_in, const Dedupe& f, std::mt19937_64& rng) {
+    std::uniform_real_distribution<double> J(-1.49, 1.49);
+    const std::vector<T> x0 = marked(x0_in, {});   // (chosen without marks: the SNRs then are the reference)
+    const std::set<int> y0 = ids_of(run_rule(f, x0));
+    std::set<int> prev = y0;
+    for (int r = 0; r < 8; r++) {
+        std::vector<T> x = marked(x0, prev);
+        for (T& k : x) k.snr = float(double(k.snr) + J(rng));
+        const std::string e = check_dedupe(x, f);
+        if (!e.empty()) return e;
+        prev = ids_of(run_rule(f, x));
+        if (prev != y0) return "the view sent changed with SNRs within the margin (INV-J: no alternation)";
+    }
+    return "";
+}
+
+// signals seen by 2-3 tuners (one view each, the same centre), none chained: the sent view S and the best other O.
+// Within the margin S stays; O 3 dB over S, S gone, S stale while O fresh, S without a class while O has one: O
+std::vector<T> random_multiview(std::mt19937_64& rng) {
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    const int signals = 1 + int(rng() % 8), tuners = 2 + int(rng() % 3);
+    std::vector<T> v;
+    int id = 1;
+    for (int s = 0; s < signals; s++) {
+        const double hz = 416e6 + s * 100e3, bw = 1000 + 20000 * U(rng);
+        const int views = 2 + int(rng() % uint64_t(tuners - 1));
+        for (int t = 0; t < views; t++) {
+            T x = mk(id++, t, hz, bw, float(5.0 + 30.0 * U(rng)), true);
+            x.seen_real = 1000.0 + std::floor(U(rng) * 3.0);
+            x.hits = 1 + int(rng() % 4);
+            v.push_back(x);
+        }
+    }
+    std::shuffle(v.begin(), v.end(), rng);
+    return v;
+}
+std::string check_takeover(const std::vector<T>& x0, const Dedupe& f, std::mt19937_64& rng) {
+    const std::set<int> y0 = ids_of(run_rule(f, x0));
+    // per signal (hz): S = the one sent, O = a random other view
+    std::map<long long, std::vector<size_t>> by;   // (a signal's views: within 5 kHz - the test inputs space signals 100 kHz)
+    for (size_t i = 0; i < x0.size(); i++) by[std::llround(x0[i].hz / 10000.0)].push_back(i);
+    for (const auto& [hz, ix] : by) {
+        size_t s = SIZE_MAX;
+        for (size_t i : ix)
+            if (y0.count(x0[i].id)) s = i;
+        if (s == SIZE_MAX) return "a signal not sent";
+        std::vector<size_t> others;
+        for (size_t i : ix)
+            if (i != s) others.push_back(i);
+        if (others.empty()) return "a signal with one view (the test input)";
+        const size_t o = others[rng() % others.size()];
+        const int sid = x0[s].id, oid = x0[o].id;
+        const auto sent_now = [&](std::vector<T> x) {   // the view of this signal sent now
+            const std::set<int> y = ids_of(run_rule(f, marked(std::move(x), y0)));
+            int n = 0, which = -1;
+            for (size_t i : ix)
+                if (y.count(x0[i].id)) n++, which = x0[i].id;
+            return n == 1 ? which : -1;
+        };
+        std::vector<T> x = x0;
+        // the others all within the margin below or above S: S stays
+        for (size_t i : others) x[i].snr = float(double(x0[s].snr) + 2.9 * (2.0 * (double(rng() % 1000) / 1000.0) - 1.0));
+        if (sent_now(x) != sid) return "the sent view lost to one less than 3 dB stronger (INV-J)";
+        // (c) O 3 dB over S, the rest below S
+        x = x0;
+        for (size_t i : others) x[i].snr = float(double(x0[s].snr) - 1.0);
+        x[o].snr = float(double(x0[s].snr) + STICKY_TEST_DB);
+        if (sent_now(x) != oid) return "a view 3 dB stronger did not take over (INV-J c)";
+        // (a) S gone; S stale while O fresh
+        x = x0;
+        for (size_t i : others) x[i].snr = float(double(x0[s].snr) - 5.0);
+        x[o].snr = x0[s].snr - 2.0f;
+        std::vector<T> gone;
+        for (size_t i = 0; i < x.size(); i++)
+            if (i != s) gone.push_back(x[i]);
+        {
+            const std::set<int> y = ids_of(run_rule(f, marked(gone, y0)));
+            if (!y.count(oid)) return "the sent view went, the other not sent (INV-J a)";
+        }
+        x[s].fresh = false;
+        for (size_t i : others)
+            if (i != o) x[i].fresh = false;
+        if (sent_now(x) != oid) return "the sent view stale, a fresh one not sent (INV-J a)";
+        // (b) S without a class while O has one
+        x = x0;
+        for (size_t i : others) x[i].snr = x0[s].snr - 2.0f, x[i].cls.clear();
+        x[o].cls = "class-o";
+        x[s].cls.clear();
+        if (sent_now(x) != oid) return "the sent view without a class, a classed one not sent (INV-J b)";
+    }
+    return "";
+}
+
+// the live case: two tuners on one signal 0.2 dB apart, the lead swapping with every look
+std::vector<T> sticky_live() {
+    T a = mk(1, 0, 416090000, 6500, 26.6f, true), b = mk(2, 1, 416090050, 6400, 26.4f, true);
+    a.cls = "dmr", b.cls = "mpt1327";
+    return {a, b};
+}
+
+void run_sticky(int rounds, uint64_t seed) {
+    const std::vector<std::tuple<const char*, Dedupe, bool>> cases = {
+        {"the sent view sticky (INV-J)", [](std::vector<T>& v) { R::drop_overlap_duplicates(v); }, false},
+        {"mutant: be18a73's rule (not sticky)", m_not_sticky, true},
+        {"mutant: sticky without the 3 dB margin", m_no_margin, true},
+        {"mutant: sticky over a fresh view", m_over_fresh, true},
+        {"mutant: sticky over a classed view", m_over_class, true},
+    };
+    for (const auto& [name, f, mutant] : cases) {
+        int db = 0, dn = 0, rb = 0;
+        std::string first;
+        const auto dir = [&](const std::string& e) {
+            dn++;
+            if (!e.empty() && !db++) first = e;
+        };
+        {   // directed: the live case (the SNRs swap by 0.4 dB between publishes) ...
+            std::mt19937_64 g(1);
+            std::vector<T> x = sticky_live();
+            std::set<int> prev = ids_of(run_rule(f, x));
+            std::string e;
+            for (int r = 0; r < 6 && e.empty(); r++) {
+                std::swap(x[0].snr, x[1].snr);
+                const std::set<int> y = ids_of(run_rule(f, marked(x, prev)));
+                if (y != prev) e = "the view sent alternates with the SNRs 0.2 dB apart (INV-J)";
+                prev = y;
+            }
+            dir(e);
+            dir(check_sticky_steady(sticky_live(), f, g));
+            // ... and the takeovers on fixed signals: two and three views, a chain a ~ b ~ c
+            std::mt19937_64 g2(2);
+            dir(check_takeover(sticky_live(), f, g2));
+            std::vector<T> three = {mk(1, 0, 100e6, 5000, 20, true), mk(2, 1, 100e6, 5000, 19, true), mk(3, 2, 100e6, 5000, 18, true)};
+            dir(check_takeover(three, f, g2));
+            std::vector<T> chain = {mk(1, 0, 100e6, 2000, 20, true), mk(2, 1, 100e6 + 1400, 2000, 21, true), mk(3, 2, 100e6 + 2800, 2000, 20.5f, true)};
+            dir(check_sticky_steady(chain, f, g2));
+        }
+        std::mt19937_64 rng(seed);
+        for (int r = 0; r < rounds / 20; r++) {
+            const std::string e = r % 2 ? check_takeover(random_multiview(rng), f, rng) : check_sticky_steady(random_tracks(rng), f, rng);
+            if (!e.empty() && !rb++ && first.empty()) first = e;
+        }
+        report(name, mutant, db, dn, rb, rounds / 20, first);
     }
 }
 
@@ -1419,6 +1602,7 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::printf("rounds %d, seed %llu\n", rounds, static_cast<unsigned long long>(seed));
     run_dedupe(rounds, seed);
+    run_sticky(rounds, seed);
     run_reps(rounds, seed);
     run_bands(rounds, seed);
     run_sched(rounds, seed);
