@@ -332,6 +332,12 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .dig-table tr.choice {cursor:pointer}
 .dig-table tr.choice td:first-child {color:var(--ok-t)}
 .dig-table-wrap > .cap {color:var(--ac-t);font-size:11px;padding:3px 7px;position:sticky;left:0}
+/* a held list's Latest button (digHoldPill), taking no room: the table's in a zero-height sticky
+   holder over the right end of the heading row, the log's over the right end of its filter box */
+.dig-hold {position:sticky;top:0;left:0;height:0;z-index:2}
+.btn.sm.dig-latest {position:absolute;right:4px;top:1px;padding:0 8px;font-size:11px;line-height:15px;white-space:nowrap;z-index:2}
+.info-dec-log > .info-row {position:relative}
+.info-dec-log > .info-row > .btn.sm.dig-latest {top:50%;transform:translateY(-50%)}
 .dig-inc {display:flex;align-items:center;gap:5px;flex-wrap:wrap;width:100%}
 .dig-inc input {background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:2px 4px;border-radius:3px;font-size:12px}
 #info-dec-top {flex-shrink:0}
@@ -4163,6 +4169,15 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
 // the latest type 9 frame, the receiver's {"bin_doa"} state. Up here: the
 // spectrum's draw hook, the waterfall and the DoA plots read them
 let binDoaOn = false, binDoaFrame = null, binDoaState = null;
+
+// A decoder tab's lists held while they are read (see digHoldCheck): a list scrolled away
+// from its top keeps what it showed. digHold: per list ('table' / 'log') null = live, else
+// table {tab, data: the tables as drawn, keys: their row keys} / log {tab, q, cleared,
+// newest: time of the newest line drawn}; digTblDrawn / digLogDrawn: what the last live
+// draw showed; digHoldTab: the tab the lists show; digHoldEl: the Latest buttons
+let digHold = {table: null, log: null}, digTblDrawn = null, digLogDrawn = null, digHoldTab = null, digHoldInit = false;
+const digHoldEl = {table: null, log: null};
+const DIG_HOLD_PX = 8;   // scrolled further than this from the top = held
 
 // Plugin plots beside the video display (see digRenderVideo): canvas id ->
 // {vfo, tab, pl, geometry} as last drawn, the pointer over one ({id, px,
@@ -13698,6 +13713,7 @@ function addTouchHandlers(el, down, move, up) {
     const s = digTableSort[p] || {c: -1, d: 1};
     digTableSort[p] = {c, d: s.c === c ? -s.d : 1};
     try { localStorage.setItem('kraken_dig_table_sort', JSON.stringify(digTableSort)); } catch (e) {}
+    digHoldStop('table', true);   // a new order: the current table from its top
     infoRenderDecoder(true);
   }
   // one table: name (sort key), caption, cols, rows [{k: map key, age, cells}]
@@ -13737,8 +13753,10 @@ function addTouchHandlers(el, down, move, up) {
     return `<div class="cap">${digEsc(caption)} · ${rows.length}</div>` +
            `<table class="dig-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   }
-  function digTablesHtml(tab) {
-    let html = '';
+  // the tab's tables: [[name, caption, cols, rows] ..] (digTableHtml's arguments) - what a held
+  // table keeps (digHold.table.data)
+  function digTablesData(tab) {
+    const out = [];
     // the plugin's own table(s), every VFO running it
     const merged = {};   // table name -> {cols, rows}
     for (const id of digTabVfos(tab)) {
@@ -13751,14 +13769,15 @@ function addTouchHandlers(el, down, move, up) {
         m.rows.push({k: id + '|' + tab + '|' + r[0], age: r[1], vfo: id, cells: ['D' + id, mhz].concat(r.slice(2)), det: (t.det && t.det[r[0]]) || null});
     }
     for (const [name, m] of Object.entries(merged))
-      html += digTableHtml(name + '#v', digName(name), ['VFO', 'MHz'].concat(m.cols), m.rows);
+      out.push([name + '#v', digName(name), ['VFO', 'MHz'].concat(m.cols), m.rows]);
     // incidents found in this plugin's messages (any VFO, also removed ones)
     const inc = digIncRows(tab);
     if (inc.length && incData)
-      html += digTableHtml('incidents', 'Incidents', incData.cols || [],
-                           inc.map(r => ({k: r[3] + '|incidents|' + r[0], age: r[1], vfo: r[3], cells: r.slice(4)})));
-    return html;
+      out.push(['incidents', 'Incidents', incData.cols || [],
+                inc.map(r => ({k: r[3] + '|incidents|' + r[0], age: r[1], vfo: r[3], cells: r.slice(4)}))]);
+    return out;
   }
+  function digTablesHtml(data) { return data.map(t => digTableHtml(...t)).join(''); }
   // open row details (row keys "vfo|plugin|key"); this page only
   function digDetToggle(ev, el) {
     ev.stopPropagation();
@@ -15744,12 +15763,87 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       `</div>` + warn;
   }
 
+  // --- Held lists. The tab's tables and event log are rebuilt as data comes (the Seen ages
+  // every second, a new event on top of the log, rows re-sorted), and someone scrolled down
+  // reading them had the text move under him. A list scrolled more than DIG_HOLD_PX from its
+  // top is held: it keeps the lines it showed (the table its rows as drawn, the log its
+  // lines) while the page goes on receiving; a Latest button (digHoldPill) at its top right,
+  // or a scroll back to the top, shows the current data and follows it again. At the top a
+  // list draws as it always did. A row's details, a row click (map, talker, choice) and a
+  // resize keep the hold; a sort, the filter, Clear and another tab go back to live, from the top
+  function digHoldList(w) { return $id(w === 'table' ? 'info-dec-table' : 'info-dec-log'); }
+  // start / end the hold from where the list is scrolled; -> the hold or null
+  function digHoldCheck(w) {
+    const el = digHoldList(w), down = el.scrollTop > DIG_HOLD_PX, h = digHold[w];
+    if (h && !down) return digHoldStop(w, false);
+    if (!h && down) {
+      const d = w === 'table' ? digTblDrawn : digLogDrawn;
+      if (d && d.tab === digHoldTab)
+        digHold[w] = w === 'table' ? {tab: d.tab, data: d.data, keys: new Set(d.data.flatMap(t => t[3].map(r => r.k)))} : Object.assign({}, d);
+    }
+    return digHold[w];
+  }
+  // back to live (top: from the list's top); -> null
+  function digHoldStop(w, top) {
+    digHold[w] = null;
+    digHoldPill(w, -1);
+    if (top) digHoldList(w).scrollTop = 0;
+    return null;
+  }
+  // Latest: the current data from the top
+  function digHoldLatest(w) {
+    digHoldStop(w, true);
+    infoRenderDecoder();
+  }
+  // a scroll that starts or ends a hold draws at once (not with the next message)
+  function digHoldScroll(w) {
+    if (infoOpen('dec') && !!digHold[w] !== digHoldList(w).scrollTop > DIG_HOLD_PX) infoRenderDecoder();
+  }
+  // the Latest button of a held list (n: what came meanwhile; -1 = none). It takes no room: the
+  // table's sits over the right end of its sticky heading row (a zero-height sticky holder as the
+  // list's first child), the log's over the right end of its filter box, just above the log
+  function digHoldPill(w, n) {
+    let b = digHoldEl[w];
+    if (n < 0) {
+      if (b) (w === 'table' ? b.parentNode : b).remove();
+      return;
+    }
+    if (!b) {
+      b = digHoldEl[w] = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn sm primary dig-latest';
+      b.onclick = () => digHoldLatest(w);
+    }
+    const el = digHoldList(w);
+    if (w === 'table') {
+      let hd = b.parentNode;
+      if (!hd) { hd = document.createElement('div'); hd.className = 'dig-hold'; hd.appendChild(b); }
+      if (el.firstChild !== hd) el.prepend(hd);
+    } else {
+      const row = $id('info-dec-filter').parentNode, inp = $id('info-dec-filter');
+      if (b.parentNode !== row) row.appendChild(b);
+      b.style.right = Math.max(0, row.clientWidth - inp.offsetLeft - inp.offsetWidth + 3) + 'px';
+    }
+    const t = 'Latest' + (n > 0 ? ' · ' + n + ' new' : '');
+    if (b.textContent !== t) b.textContent = t;
+    const tip = w === 'table'
+      ? `Held while you read it: the table as it was when you scrolled down${n > 0 ? ` (${n} new row${n > 1 ? 's' : ''} since)` : ''}. Latest - or scrolling back to the top - shows the current table and follows it again`
+      : `Held while you read it${n > 0 ? `: ${n} new line${n > 1 ? 's' : ''} since` : ''}. Latest - or scrolling back to the top - shows the current log and follows it again`;
+    if (tipText(b) !== tip) b.setAttribute('title', tip);
+  }
+
   // A decoder mode's tab: a settings row per VFO running it, the incident
   // row (messages plugins), merged tables, per-VFO status + facts, and the
   // merged (filterable) event log
   function infoRenderDecoder(force) {
     if (!infoOpen('dec')) { videoUpdateSub(); return; }
     const tab = infoTab.slice(4);
+    if (!digHoldInit) {
+      digHoldInit = true;
+      for (const w of ['table', 'log']) digHoldList(w).addEventListener('scroll', () => digHoldScroll(w), {passive: true});
+    }
+    // another tab: its lists live, from their top
+    if (tab !== digHoldTab) { digHoldTab = tab; digHoldStop('table', true); digHoldStop('log', true); }
     const body = $id('info-body-dec');
     const empty = !tab;
     body.classList.toggle('empty', empty);
@@ -15805,7 +15899,10 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     $id('info-dec-status').innerHTML = '';
     // tables (plugin tables of every VFO + incidents)
     const tw = $id('info-dec-table');
-    const th = digTablesHtml(tab);
+    const tdata = digTablesData(tab);
+    // held (scrolled down): the tables as they were drawn; no tables any more: live (hidden)
+    const thold = tdata.length ? digHoldCheck('table') : digHoldStop('table', false);
+    const th = digTablesHtml(thold ? thold.data : tdata);
     tw.style.display = th ? '' : 'none';
     body.classList.toggle('has-table', !!th);
     if (th && !digTableGrown) {
@@ -15817,7 +15914,15 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
       }
     }
-    if (tw.dataset.html !== th) { tw.dataset.html = th; tw.innerHTML = th; }
+    if (tw.dataset.html !== th) {
+      // (held: redrawn only for a row's details or mark - where it was scrolled to stays)
+      const y = tw.scrollTop, x = tw.scrollLeft;
+      tw.dataset.html = th;
+      tw.innerHTML = th;
+      if (thold) { tw.scrollTop = y; tw.scrollLeft = x; }
+    }
+    if (thold) digHoldPill('table', tdata.reduce((n, t) => n + t[3].filter(r => !thold.keys.has(r.k)).length, 0));
+    else digTblDrawn = {tab, data: tdata};
     digRenderPlots(tab, ids);
     digRenderVideo(tab, ids);
     // each VFO's status + facts
@@ -15843,11 +15948,19 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const log = $id('info-dec-log');
     const q = ($id('info-dec-filter').value || '').trim().toLowerCase();
     const ev = digTabEvents(tab);
-    const key = ev.length + ':' + (ev.length ? ev[ev.length - 1].t + ev[ev.length - 1].m.length : 0) + '|' + q + '|' + tab + '|' + (digCleared[tab] || 0);
-    if (force || log.dataset.key !== key) {
+    const cleared = digCleared[tab] || 0;
+    const key = ev.length + ':' + (ev.length ? ev[ev.length - 1].t + ev[ev.length - 1].m.length : 0) + '|' + q + '|' + tab + '|' + cleared;
+    const match = e => (e.m + ' ' + (e.p || '') + ' d' + e.vfo).toLowerCase().includes(q);
+    // held (scrolled down): the lines stay as drawn; a new filter or Clear: live, from the top
+    let lhold = digHoldCheck('log');
+    if (lhold && (lhold.q !== q || lhold.cleared !== cleared)) lhold = digHoldStop('log', true);
+    if (lhold) {
+      digHoldPill('log', ev.filter(e => e.t > lhold.newest && (!q || match(e))).length);
+    } else if (force || log.dataset.key !== key) {
       log.dataset.key = key;
-      const shown = q ? ev.filter(e => (e.m + ' ' + (e.p || '') + ' d' + e.vfo).toLowerCase().includes(q)) : ev;
+      const shown = q ? ev.filter(match) : ev;
       log.innerHTML = shown.length ? digEventsHtml(shown, false) : '<div class="dig-help">No events yet.</div>';
+      digLogDrawn = {tab, q, cleared, newest: shown.length ? shown[shown.length - 1].t : 0};
     }
   }
 
