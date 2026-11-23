@@ -1,5 +1,7 @@
 #include "wb_board.hpp"
 
+#include "playback.hpp"
+#include "settings_store.hpp"
 #include "utils/log_retention.hpp"
 #include "utils/process.hpp"
 
@@ -13,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -129,12 +132,18 @@ const LogSpec HOST_LOG{"host", "Host log", "host_logs", "host_telemetry_", "host
     {"temp", "cpu", "ram", "disk"}, {1, 2, 3, 5}};
 constexpr const char* EVENTS_HEADER = "time_utc,event,detail";
 
-// the folder, relative to the working directory (created if missing)
-fs::path log_dir(const LogSpec& s) {
+// the folder, relative to the working directory. Listing and reading never
+// create it (a receiver without the Wideband board has no wb_logs/); writing
+// does (write_dir)
+fs::path log_dir(const LogSpec& s) { return fs::path(s.dir); }
+fs::path write_dir(const LogSpec& s) {
     std::error_code ec;
     fs::create_directories(s.dir, ec);
     return fs::path(s.dir);
 }
+
+// the columns of a complete row: the header's (every version wrote the same)
+size_t commas(const std::string& l) { return static_cast<size_t>(std::count(l.begin(), l.end(), ',')); }
 
 // "2026-11-11T09:13:02Z" -> epoch seconds, -1 if it is not one
 long long parse_utc(const char* s) {
@@ -171,15 +180,17 @@ bool legacy_name(const char* base, const std::string& n) {
     return l && (n == base || (n.size() == l + 2 && n.compare(0, l, base) == 0 && n[l] == '.' && n[l + 1] >= '0' && n[l + 1] <= '9'));
 }
 
-// The names in the log's folder (only plain ASCII names are ours; anything
-// the file system can't hand over as such is skipped)
+// The names in the log's folder (none if it doesn't exist). Only plain ASCII
+// names are ours: a name the narrow string can't hold (Windows) is skipped,
+// the rest are still listed
 std::vector<std::pair<fs::path, std::string>> folder_entries(const LogSpec& s) {
     std::vector<std::pair<fs::path, std::string>> v;
     std::error_code ec;
-    try {
-        for (fs::directory_iterator it(log_dir(s), ec), end; !ec && it != end; it.increment(ec))
+    for (fs::directory_iterator it(log_dir(s), ec), end; !ec && it != end; it.increment(ec)) {
+        try {
             v.emplace_back(it->path(), it->path().filename().string());
-    } catch (const std::exception&) {
+        } catch (const std::exception&) {
+        }
     }
     return v;
 }
@@ -228,8 +239,10 @@ std::vector<fs::path> log_files(const LogSpec& s, long long from, bool events) {
     return legacy;
 }
 
-// Lines of a log file, plain or gzip (zlib reads a plain file as it is), one
-// at a time without the line end; a damaged gzip ends early
+// Lines of a log file, plain or gzip (zlib reads a plain file as it is, and
+// every member of a gzip one), one at a time without the line end. Only
+// complete lines: a last line without its line end - the live file in the
+// middle of a write, a gzip cut short - is not returned
 class LineReader {
 public:
     explicit LineReader(const fs::path& p) : f_(gzopen(p.string().c_str(), "rb")) {
@@ -246,7 +259,7 @@ public:
         if (!f_) return false;
         char buf[4096];
         for (;;) {
-            if (!gzgets(f_, buf, sizeof(buf))) return !line.empty();
+            if (!gzgets(f_, buf, sizeof(buf))) return false;   // (a torn line: dropped)
             const size_t n = std::strlen(buf);
             if (n && buf[n - 1] == '\n') {
                 line.append(buf, n - 1);
@@ -279,13 +292,13 @@ void append_file(const fs::path& f, const char* header, const std::string& line)
 
 // one measurement row into today's file
 void append_row(const LogSpec& s, const std::string& row) {
-    append_file(log_dir(s) / day_file_name(s.prefix, utc_now()), s.header, row);
+    append_file(write_dir(s) / day_file_name(s.prefix, utc_now()), s.header, row);
 }
 
 void event(const LogSpec& s, const std::string& what, const std::string& detail) {
     std::cout << (&s == &HOST_LOG ? "Host: " : "WB board: ") << what << " " << detail << std::endl;
     const std::string now = utc_now();
-    const fs::path f = log_dir(s) / day_file_name(s.events, now);
+    const fs::path f = write_dir(s) / day_file_name(s.events, now);
     std::error_code ec;
     const uintmax_t size = fs::exists(f, ec) ? fs::file_size(f, ec) : 0;
     if (ec || size >= EVENTS_DAY_CAP) return;   // a day of flapping alarms: the rest of the day is not written
@@ -342,21 +355,53 @@ void pass_log(const LogSpec& s, long today, int keep, int zip) {
 }
 
 // Both logs in one pass (they share the settings), on its own thread, one at a
-// time: once the settings are replayed (wb_board_settings_restored), then on a
-// Keep / Then compressed change, at the UTC day change and every hour (sampler)
+// time (logret::Scheduler): at the first use, with the STORED settings
+// (ensure_started - no wait for heimdall), at the UTC day change and every hour
+// (the sampler), and a few seconds after the last Keep / Then compressed
+// change (a replay or a page sets the two one after the other). None while a
+// debug playback runs (its settings are a sandbox); the end replays the stored
+// ones, then the pass
 logret::Scheduler& passes() {
     static logret::Scheduler* p = new logret::Scheduler([] {   // never destroyed (a pass may run at exit)
         const long today = utc_day();
         last_pass_day = today;
         last_pass_ms = steady_ms();
         const int keep = log_keep_days.load(), zip = log_zip_days.load();
+        std::cout << "Telemetry logs: retention pass, Keep " << keep << " + Then compressed " << zip << " days" << std::endl;
         pass_log(WB_LOG, today, keep, zip);
         pass_log(HOST_LOG, today, keep, zip);
-    });
+    }, [] { return playback::active(); });
     return *p;
 }
 
 // ---- the computer itself (CPU temperature / load, memory, storage) ----
+// An alarm level (0 ok, 1 warn, 2 alarm) that does not flap: it rises at once;
+// it falls only after the measurement has stayed inside the lower level's
+// limits moved inward by a margin (`eased`) for 30 s without a break. A Pi at
+// 75 C logged a change twice a second before.
+struct HostAlarm {
+    int level = 0;
+    bool easing = false;
+    Clock::time_point eased_since{};
+    // raw: the level by the limits; eased: by the limits moved inward by the margin
+    const char* step(int raw, int eased, Clock::time_point now) {
+        if (raw > level) {
+            level = raw;
+            easing = false;
+        } else if (eased < level) {
+            if (!easing) { easing = true; eased_since = now; }
+            if (now - eased_since >= std::chrono::seconds(30)) {
+                level = eased;
+                easing = false;
+            }
+        } else {
+            easing = false;
+        }
+        return level == 2 ? "alarm" : level == 1 ? "warn" : "ok";
+    }
+};
+HostAlarm host_a_temp, host_a_ram, host_a_disk, host_a_power;   // (host_mtx)
+
 std::mutex host_mtx;
 std::map<std::string, std::string> host_state;      // event keys -> last value
 std::string host_fields;                            // the JSON fields for system_status.hw
@@ -369,13 +414,27 @@ int read_throttled() {
     std::ifstream f("/sys/devices/platform/soc/soc:firmware/get_throttled");
     std::string v;
     if (f && (f >> v) && !v.empty()) return static_cast<int>(std::strtol(v.c_str(), nullptr, 16));
-    // Pi 5: no such file, the firmware tool is the only source ("throttled=0x0")
-    static bool no_tool = false;
-    if (no_tool) return -1;
+    // Pi 5: no such file, the firmware tool is the only source ("throttled=0x0"). One that fails
+    // (missing, a timeout, odd output) keeps the last value; after 3 failures in a row: -1, and
+    // only one try every 10 min (not a Pi - no vcgencmd - costs no child process every 10 s)
+    static int last = -1, fails = 0;
+    static Clock::time_point retry_at{};
+    if (fails >= 3 && Clock::now() < retry_at) return -1;
     std::string out;
     kproc::run_capture({"vcgencmd", "get_throttled"}, 5000, &out, nullptr, 4096, true);
-    if (const size_t eq = out.find('='); eq != std::string::npos) return static_cast<int>(std::strtol(out.c_str() + eq + 1, nullptr, 16));
-    no_tool = true;  // not a Pi (or no vcgencmd): do not start it every time
+    const size_t eq = out.find("throttled=");
+    char* end = nullptr;
+    const long flags = eq == std::string::npos ? -1 : std::strtol(out.c_str() + eq + 10, &end, 16);
+    if (flags >= 0 && end != out.c_str() + eq + 10) {
+        fails = 0;
+        last = static_cast<int>(flags);
+        return last;
+    }
+    if (++fails >= 3) {
+        retry_at = Clock::now() + std::chrono::minutes(10);
+        last = -1;
+    }
+    return last;
 #endif
     return -1;
 }
@@ -411,9 +470,32 @@ void sampler() {
     }
 }
 
-void start_sampler() {
+// At the first use: the STORED logging settings (the settings store is loaded
+// before any thread that calls in here starts - main.cpp), the sampler, and
+// the passes allowed - without waiting for heimdall (the replay, when it
+// connects, applies the same values: no change). Before, the passes waited
+// for the replay, which never comes without heimdall, while the host log was
+// written regardless. The setters call it first, so a stored value never
+// overwrites a newer one
+void ensure_started() {
     static std::once_flag once;
-    std::call_once(once, [] { std::thread(sampler).detach(); });
+    std::call_once(once, [] {
+        for (const std::string& c : SettingsStore::apply_commands()) {
+            const size_t colon = c.find(':');
+            if (colon == std::string::npos || c.compare(0, 7, "WB_LOG_") != 0) continue;
+            const std::string k = c.substr(0, colon + 1);
+            char* end = nullptr;
+            const double v = std::strtod(c.c_str() + colon + 1, &end);
+            if (end == c.c_str() + colon + 1 || !(v > -1e9 && v < 1e9)) continue;
+            const int n = static_cast<int>(v);
+            if (k == "WB_LOG_ENABLE:") log_enabled = v != 0;
+            else if (k == "WB_LOG_PERIOD:") log_period_s = std::clamp(n, 1, 3600);
+            else if (k == "WB_LOG_KEEP:") log_keep_days = std::clamp(n, 1, 365);
+            else if (k == "WB_LOG_ZIP:") log_zip_days = std::clamp(n, 0, 3650);
+        }
+        std::thread(sampler).detach();
+        passes().allow();
+    });
 }
 
 void log_object(const std::string& dc) {
@@ -475,6 +557,7 @@ void handle_line(const std::string& line) {
 }  // namespace
 
 void wb_board_ingest(const char* data, size_t n) {
+    ensure_started();
     std::lock_guard<std::mutex> lock(mtx);
     // only status lines carry "downconverter"; command replies pass through harmlessly
     for (size_t i = 0; i < n; i++) {
@@ -506,30 +589,35 @@ std::string wb_board_json() {
     return latest.substr(0, latest.size() - 1) + a;
 }
 
-void wb_board_set_log_enabled(bool on) { log_enabled.store(on); }
+void wb_board_set_log_enabled(bool on) {
+    ensure_started();
+    log_enabled.store(on);
+}
 
 int wb_board_set_log_period(int seconds) {
+    ensure_started();
     seconds = std::clamp(seconds, 1, 3600);
     log_period_s.store(seconds);
     return seconds;
 }
 
+// (a change runs the pass a few seconds after the last one: Keep and Then compressed come one after
+// the other - logret::Scheduler)
 int wb_board_set_log_keep_days(int days) {
+    ensure_started();
     days = std::clamp(days, 1, 365);
-    if (log_keep_days.exchange(days) != days) passes().request();
+    if (log_keep_days.exchange(days) != days) passes().request_after_change();
     return days;
 }
 
 int wb_board_set_log_zip_days(int days) {
+    ensure_started();
     days = std::clamp(days, 0, 3650);
-    if (log_zip_days.exchange(days) != days) passes().request();
+    if (log_zip_days.exchange(days) != days) passes().request_after_change();
     return days;
 }
 
-void wb_board_settings_restored() {
-    start_sampler();
-    passes().allow();
-}
+void wb_board_settings_restored() { ensure_started(); }
 
 namespace {
 
@@ -541,8 +629,14 @@ struct Row {
     double v[4] = {NAN, NAN, NAN, NAN};
 };
 
+// a row with every column of the header (a torn line, garbage: not a row)
+bool full_row(const LogSpec& s, const std::string& line) {
+    static const size_t wb_cols = commas(WB_LOG.header), host_cols = commas(HOST_LOG.header);
+    return line.size() >= 20 && line[0] >= '0' && line[0] <= '9' && commas(line) == (&s == &WB_LOG ? wb_cols : host_cols);
+}
+
 bool parse_row(const LogSpec& s, const std::string& line, Row& r) {
-    if (line.size() < 20 || line[0] < '0' || line[0] > '9') return false;   // header, garbage, a torn last line
+    if (!full_row(s, line)) return false;   // the header, garbage, a torn line
     r.t = parse_utc(line.c_str());
     if (r.t < 0) return false;
     size_t pos = 0;
@@ -634,8 +728,8 @@ std::string history_json(const LogSpec& s, long range_s) {
         j += "]";
     }
 
-    // events of the range (the newest 200), oldest first
-    std::vector<std::string> ev;
+    // events of the range (the newest 200, kept as a ring while reading), oldest first
+    std::deque<std::string> ev;
     for (const auto& f : log_files(s, from, true)) {
         const auto in = open_lines(f);
         while (in->next(line)) {
@@ -647,10 +741,11 @@ std::string history_json(const LogSpec& s, long range_s) {
             if (detail.size() >= 2 && detail.front() == '"' && detail.back() == '"') detail = detail.substr(1, detail.size() - 2);
             std::snprintf(b, sizeof(b), "{\"t\":%lld,\"e\":\"", t);
             ev.push_back(b + json_escape(line.substr(c1 + 1, c2 - c1 - 1)) + "\",\"d\":\"" + json_escape(detail) + "\"}");
+            if (ev.size() > 200) ev.pop_front();
         }
     }
     j += ",\"events\":[";
-    for (size_t i = ev.size() > 200 ? ev.size() - 200 : 0, first = 1; i < ev.size(); i++, first = 0) j += (first ? "" : ",") + ev[i];
+    for (size_t i = 0; i < ev.size(); i++) j += (i ? "," : "") + ev[i];
     j += "]";
 
     // the whole log on disk (rows and events, plain and gzipped, an older version's files):
@@ -748,7 +843,7 @@ std::string export_csv(const LogSpec& s, long range_s, std::string* download_nam
         if (!ec && age > std::chrono::minutes(10)) fs::remove(p, ec);
     }
     const char* ext = gz ? ".csv.gz" : ".csv";
-    const fs::path out = log_dir(s) / (exports + std::to_string(now) + "_" + std::to_string(serial.fetch_add(1)) + ext);
+    const fs::path out = write_dir(s) / (exports + std::to_string(now) + "_" + std::to_string(serial.fetch_add(1)) + ext);
     ExportOut o(out, gz);
     if (!o.ok()) return {};
     o.line(s.header);
@@ -757,7 +852,7 @@ std::string export_csv(const LogSpec& s, long range_s, std::string* download_nam
         const auto in = open_lines(f);
         while (in->next(line)) {
             const long long t = parse_utc(line.c_str());
-            if (t >= from && t <= now) o.line(line);
+            if (t >= from && t <= now && full_row(s, line)) o.line(line);
         }
     }
     if (!o.finish()) return {};
@@ -777,7 +872,7 @@ std::string wb_board_export_csv(long range_s, std::string* download_name, bool h
 }
 
 void host_log_tick(double temp_c, double cpu_pct, double ram_used_mb, double ram_total_mb) {
-    start_sampler();
+    ensure_started();
     HostSample hs;
     {
         std::lock_guard<std::mutex> lock(sample_mtx);
@@ -789,13 +884,22 @@ void host_log_tick(double temp_c, double cpu_pct, double ram_used_mb, double ram
     const double disk_free_mb = hs.disk_free_mb, disk_total_mb = hs.disk_total_mb;
     const int throttled = hs.throttled;
 
-    // alarm levels (shown on the dashboard, logged when they change)
+    // alarm levels (shown on the dashboard, logged when they change), with hysteresis (HostAlarm):
+    // temperature warn 75 / alarm 82 C, back 3 C under; memory 85 / 95 % used, back 3 points
+    // under; storage free under 2 GB or 10 % / under 500 MB or 3 %, back with 10 % more MB and one
+    // point more; the Pi's throttling flags (no margin - flags, but the 30 s still)
     const double ram_pct = ram_total_mb > 0 ? 100.0 * ram_used_mb / ram_total_mb : 0;
     const double disk_pct = disk_total_mb > 0 ? 100.0 * disk_free_mb / disk_total_mb : 100;
-    const char* a_temp = temp_c < 0 ? "ok" : temp_c >= 82 ? "alarm" : temp_c >= 75 ? "warn" : "ok";
-    const char* a_ram = ram_pct >= 95 ? "alarm" : ram_pct >= 85 ? "warn" : "ok";
-    const char* a_disk = disk_free_mb < 0 ? "ok" : (disk_free_mb < 500 || disk_pct < 3) ? "alarm" : (disk_free_mb < 2048 || disk_pct < 10) ? "warn" : "ok";
-    const char* a_power = throttled < 0 ? "ok" : (throttled & 0x1) ? "alarm" : (throttled & 0xF000F) ? "warn" : "ok";
+    auto temp_l = [&](double m) { return temp_c < 0 ? 0 : temp_c >= 82 - m ? 2 : temp_c >= 75 - m ? 1 : 0; };
+    auto ram_l = [&](double m) { return ram_pct >= 95 - m ? 2 : ram_pct >= 85 - m ? 1 : 0; };
+    auto disk_l = [&](double mb, double pct) {
+        return disk_free_mb < 0 ? 0 : (disk_free_mb < 500 * mb || disk_pct < 3 + pct) ? 2 : (disk_free_mb < 2048 * mb || disk_pct < 10 + pct) ? 1 : 0;
+    };
+    const int power_l = throttled < 0 ? 0 : (throttled & 0x1) ? 2 : (throttled & 0xF000F) ? 1 : 0;
+    const char* a_temp = host_a_temp.step(temp_l(0), temp_l(3), now);
+    const char* a_ram = host_a_ram.step(ram_l(0), ram_l(3), now);
+    const char* a_disk = hs.valid ? host_a_disk.step(disk_l(1, 0), disk_l(1.1, 1), now) : "ok";
+    const char* a_power = host_a_power.step(power_l, power_l, now);
     char d[176], tc[24] = "no temperature";
     if (temp_c >= 0) std::snprintf(tc, sizeof(tc), "%.0f C", temp_c);
     std::snprintf(d, sizeof(d), "%s, CPU %.0f %%, RAM %.0f / %.0f MB, storage %.1f GB free of %.1f GB", tc, cpu_pct,

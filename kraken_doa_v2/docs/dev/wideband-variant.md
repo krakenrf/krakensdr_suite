@@ -98,20 +98,55 @@ the compression came with its follow-up, 2026-11-23):**
   of the day in the name (UTC; today 0): plain while age <= N, gzipped while
   N < age <= N + M, deleted after; today's files are never touched; a
   `.csv.gz.part` (a gzip a crash interrupted - the plain file is still
-  there) is removed and the day compressed again; a day with both the plain
-  file and its gz (a crash between the last two steps) is read once (the
-  plain one) and gzipped again.
+  there) is removed and the day compressed again.
+- **The gzip is durable and never loses rows** (`logret::gzip_file`, review
+  of 2026-11-23; the decoder log's too). The part is fsync'ed, moved over
+  the gz (`fs_replace`), the folder fsync'ed (`fs_fsync_dir`), and only then
+  the plain file removed: on ext4 with delayed allocation (the Pi's SD card)
+  a power cut after an unsynced rename left an EMPTY `.gz` and no plain
+  file. A day that already has a `.gz`: its rows ending with exactly the
+  plain file's (a crash between the move and the unlink) -> the plain one is
+  only removed; other rows (the clock was set back after a pass and the day
+  written again) -> the plain day is added as one more gzip member after
+  them (concatenated members are one valid gzip file: `zcat`, `zgrep` and
+  gzgets read them all) - before, the older gz was replaced and its rows
+  lost; a damaged gz (can't be read to its end) -> nothing is changed, the
+  plain file stays beside it (said once per run on stderr). The tail check
+  streams both files (constant memory). While both a plain day and a
+  different gz exist (until the next pass), the history and the export
+  read the PLAIN file only (one file per day, as for the crash state), so
+  the gz's older rows are missing from the charts until the pass has added
+  the day to it.
 - **The pass** (`passes()`, a `logret::Scheduler`: its own thread, one at a
-  time, both logs in one pass) runs **not before the settings replay**
-  (`wb_board_settings_restored()`, called next to the decoder log's
-  `settings_restored()` at the end of
-  `ControlHandler::apply_persisted_settings`): until then the stored Keep
-  is not known, and a pass with the defaults could compress or delete days
-  the stored settings keep (the decoder log's lesson). Then on a change of
-  Keep / Then compressed, at the UTC day change and every hour (the
-  sampler thread asks). Before, `purge_old_logs` ran from the row append -
-  on the uWS loop for the host log, at the first row after the start, with
-  the default 30 days.
+  time, both logs in one pass; a log line "Telemetry logs: retention pass,
+  Keep N + Then compressed M days" each time):
+  - **at the first use, with the STORED settings, without waiting for
+    heimdall** (`ensure_started()`, from the first `host_log_tick` /
+    `wb_board_ingest` / setter): the WB_LOG_* values are read from the
+    settings store (`SettingsStore::apply_commands()`; the store is loaded
+    in `main` before any thread that calls in here starts), then the
+    sampler starts and the passes are allowed. The first version waited for
+    the settings replay, which only comes once heimdall connects - without
+    heimdall no pass ever ran while the host log kept growing (review,
+    2026-11-23); the replay applies the same values later (no change, no
+    pass). The stored on/off and period apply from the start too (before,
+    rows were written with the defaults until the replay). The setters call
+    it first, so a stored value never overwrites a newer one;
+  - **a settings change: 5 s after the LAST one** (`request_after_change`,
+    `Scheduler::DEBOUNCE`). A replay (RESET_SETTINGS, the end of a playback)
+    sets Keep and then Then compressed, and the page's two selects are two
+    commands (with the arrow keys one per option passed): a pass between
+    them ran on half the change - stored 30 / 0 -> 7 / 365 through 7 / 0
+    deleted days 8-30 that the final rule gzips (the reviewer's race
+    harness: 16 of 24 runs). A timed request (startup, the day change, the
+    hour) while a change waits joins it;
+  - at the UTC day change and every hour (the sampler thread asks);
+  - **never while a debug playback runs** (the hold, `playback::active()`):
+    its settings are a sandbox, the files are the user's. What was asked
+    waits; when the playback ends the stored values are replayed and the
+    pass runs 5 s later, once, on them.
+  Before, `purge_old_logs` ran from the row append - on the uWS loop for the
+  host log, at the first row after the start, with the default 30 days.
 - **An older build's files** (no date in the name: the size-rotated
   `wb_telemetry.csv[.N]` of the first board log, PR #5's
   `wb_events.csv[.1-.3]` / `host_events.csv`): still read by the history,
@@ -131,9 +166,15 @@ the compression came with its follow-up, 2026-11-23):**
   flapping all day), with one `log_events` line saying so.
 - **Reading** (`history_json`, `export_csv`, on their worker threads): each
   day's file through zlib (`gzopen` / `gzgets` read plain and gzip files
-  alike), the plain one when both exist; a day the pass gzipped after the
-  listing is read from its `.gz`. Same rows, same buckets as with every file
-  plain (tested below). The history's `log` object adds `plain_bytes`,
+  alike, every member), the plain one when both exist; a day the pass
+  gzipped after the listing is read from its `.gz`. Same rows, same buckets
+  as with every file plain (tested below). **Only complete rows**: a line
+  without its line end (the live file in the middle of a write, a gz cut
+  short) and a row without every column of the header are skipped - a torn
+  "...,2" charted 0.002 GB free before. The events of the range keep the
+  newest 200 as a ring while reading (they were all held, then cut).
+  Listing and reading never create a folder: a receiver without the board
+  has no `wb_logs/` (the first write creates it). The history's `log` object adds `plain_bytes`,
   `plain_files`, `gz_bytes`, `gz_files` (`bytes` / `files` are now every
   file of the log: rows and events, plain and gz, an older build's).
   `export.csv?...&gz=1` gives the same rows gzipped (`*_last_7d.csv.gz`).
@@ -147,7 +188,18 @@ the compression came with its follow-up, 2026-11-23):**
   and every command by as long. They moved to the sampler, which measures
   every 10 s; `host_log_tick` only reads its last values (the first row and
   the storage alarm wait for its first measurement, a few ms after the
-  start). Measured with a fake vcgencmd that takes 500 ms first on PATH,
+  start); it still appends the row and an event line on the loop (small
+  writes). vcgencmd failing (missing, a timeout, odd output) keeps the last
+  value; after 3 failures in a row the flags are -1 and it is tried once
+  every 10 min (a machine without it starts no child every 10 s).
+- **The host alarms have hysteresis** (`HostAlarm`, review 2026-11-23): up at
+  once; down only after the value has stayed inside the lower level's limits
+  moved inward by a margin for 30 s without a break - temperature 3 C
+  (warn 75 / alarm 82 C), memory 3 points (85 / 95 %), storage 10 % more MB
+  and one point more (2 GB or 10 % / 500 MB or 3 %), the throttling flags
+  no margin. A Pi at 75 C wrote two events a second before (the 5 MB day
+  cap within hours). The board's alarms are heimdall's (its own hysteresis);
+  this one is written from that description, not from heimdall's code. Measured with a fake vcgencmd that takes 500 ms first on PATH,
   65 s of the status on the TEST page's WebSocket: this build 130 messages
   at 2.000 Hz, max interval 502 ms; the old build a 1003 ms gap at every
   vcgencmd call (6 in 65 s - the loop, and with it the spectrum, audio and
@@ -186,4 +238,24 @@ the compression came with its follow-up, 2026-11-23):**
   Keep 7 / 2 and Then compressed 0 by command; a second pass changing
   nothing); the cadence with a 500 ms vcgencmd; the page in headless
   Chromium.
+- **Tested after the review (2026-11-23, scratch `w_logs/r2/`, `e2e/t_r2_e2e.py`,
+  `e2e/t_page2.py`)**: `gzip_file` with an existing gz (different rows ->
+  a member added, zcat reads both; equal rows / a tail -> only the unlink;
+  damaged -> untouched; zero-length), its system calls under strace (fsync
+  of the part -> rename -> fsync of the folder -> unlink; the previous
+  version: rename -> unlink); the Scheduler (debounce, join, hold, one more
+  after a pass); the real `wb_board.cpp` with a stubbed store / playback
+  (the reviewer's race: 24 runs, KEEP..ZIP 0 us - 2 s apart, none deleted,
+  two passes each; history / export over plain, gz, truncated gz, gz +
+  garbage, zero-length gz, a torn line, a short row; the clock-back day;
+  no `wb_logs/`; vcgencmd failing / flaky; the alarms flapping at 75 C /
+  85 %: one event each, cleared 30 s after 71 C); the previous commit fails
+  each of these. End to end: no heimdall (stored 7 / 0 applied, a page's
+  change 5 s later; the reviewer's `e2e_noheimdall.sh` and `e2e_reset.sh`,
+  5 / 5); RESET_SETTINGS from stored 30 / 0 for the telemetry and the
+  decoder log (5 trials, days 8-30 gzipped, none deleted); a real debug
+  playback of a small SigMF recording (Keep 2 / 0 for both logs during it:
+  nothing touched; after the stop the stored values and one pass that
+  changes nothing); SIGTERM -> exit in < 1 s; the page's two selects
+  changed within a second: one pass on the final values.
 

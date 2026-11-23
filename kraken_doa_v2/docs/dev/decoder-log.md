@@ -98,6 +98,25 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   the old function (5.6 M cases incl. N = 0 / M = 0) and the old and the new
   build's passes on the same fabricated folder (same files left, same
   contents).
+  **Since the review of the telemetry logs (2026-11-23) the shared code
+  also changes the decoder log** - durability and timing only, the rule is
+  the same: (1) `gzip_file` is durable against a power cut (the `.gz.part`
+  fsync'ed, renamed, the folder fsync'ed, then the plain file removed - an
+  unsynced rename could leave an empty `.gz` and no plain file after a power
+  cut) and never drops an existing `.gz`'s rows: one ending with the plain
+  file's rows (a crash before the unlink) is kept as is; one with other rows
+  (the clock set back after a pass) gets the plain day as one more gzip
+  member (zcat / zgrep read every member); a damaged one is left alone with
+  the plain file beside it. (2) A Keep / Then compressed / folder change
+  runs the pass 5 s after the LAST change (`request_after_change`; the
+  replay and RESET_SETTINGS set DAYS and then ZIP_DAYS - a pass between them
+  ran on half the change), only when the value changed; startup, the day
+  change and the 10-min tick are as before (a timed request while a change
+  waits joins it). (3) No pass during a debug playback (its settings are a
+  sandbox): it waits, and runs 5 s after the playback ended, on the replayed
+  stored values. Tested: the old and new build's passes on the same folder
+  still leave the same files; RESET_SETTINGS from stored 30 / 0 gzips days
+  8-30 (5 trials); a playback with Keep 2 / 0 touches nothing.
   The **pass** (`run_pass`, a detached thread, one at a time - a request
   during a pass runs another after it, `request_pass`): deletions first,
   then the compressions one file at a time (`.gz.part` -> `fs_replace` ->

@@ -299,8 +299,10 @@ void run_pass(const std::string& dir, int keep, int zip) {
 }
 
 // a pass with the settings as they are now: at startup (once the settings are replayed), the day
-// change, a Keep / Then compressed / folder change and every 10 min. A request during a pass
-// runs another after it; none before settings_restored() (the stored Keep days)
+// change and every 10 min; a Keep / Then compressed / folder change a few seconds after the last
+// one (a replay sets Keep and Then compressed one after the other - logret::Scheduler). A request
+// during a pass runs another after it; none before settings_restored() (the stored Keep days),
+// none during a debug playback (its settings are a sandbox - the stored ones are replayed first)
 logret::Scheduler& passes() {
     static logret::Scheduler* p = new logret::Scheduler([] {   // never destroyed (a pass may run at exit)
         State& st = S();
@@ -313,7 +315,7 @@ logret::Scheduler& passes() {
             zip = st.zip_days;
         }
         run_pass(dir, keep, zip);
-    });
+    }, [] { return playback::active(); });
     return *p;
 }
 void request_pass() { passes().request(); }
@@ -523,20 +525,24 @@ bool legacy_raw() {
 
 void set_days(int days) {
     State& s = S();
+    bool changed;
     {
         std::lock_guard<std::mutex> lk(s.mu);
+        changed = s.days != std::clamp(days, 0, 3650);
         s.days = std::clamp(days, 0, 3650);
     }
-    request_pass();
+    if (changed) passes().request_after_change();
 }
 
 void set_zip_days(int days) {
     State& s = S();
+    bool changed;
     {
         std::lock_guard<std::mutex> lk(s.mu);
+        changed = s.zip_days != std::clamp(days, 0, 3650);
         s.zip_days = std::clamp(days, 0, 3650);
     }
-    request_pass();
+    if (changed) passes().request_after_change();
 }
 
 void set_pos_interval(int seconds) {
@@ -600,7 +606,7 @@ bool set_dir(const std::string& path_in, std::string* err) {
         s.error.clear();
         s.scan_ms = 0;
     }
-    request_pass();
+    passes().request_after_change();
     return true;
 }
 
