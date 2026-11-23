@@ -135,6 +135,16 @@ private:
     std::shared_ptr<const Impl> impl_;
 };
 
+// A signal whose class the caller already knows (a settled track): a detection
+// matching it is reported without features and probabilities (probs empty,
+// best -1, det.view = view) - the detector still runs, the tracker keeps the
+// track alive and its evidence as it is. lo_hz / hi_hz: absolute RF when the
+// analyze() call has a centre_hz, else offsets from the capture centre.
+struct KnownBand {
+    double lo_hz = 0.0, hi_hz = 0.0;
+    int view = 0;
+};
+
 class Analyzer {
 public:
     explicit Analyzer(const Config& cfg = {});
@@ -147,12 +157,16 @@ public:
     // the order of the result. Features are computed only with a model or a
     // features_out; without either only the detector runs.
     // centre_hz: the capture's RF centre (0 = unknown: no RF mask)
+    // known (optional, ignored with features_out): detections whose band
+    // matches one of these (overlap / union >= 0.5) are not classified
     std::vector<Scored> analyze(const uint8_t* iq, size_t n_samples, double fs_hz,
-                                const Model* model, std::vector<float>* features_out = nullptr, double centre_hz = 0.0);
+                                const Model* model, std::vector<float>* features_out = nullptr, double centre_hz = 0.0,
+                                const std::vector<KnownBand>* known = nullptr);
     // The same for complex float samples on the uint8 path's scale (full
     // scale = 1.0; the uint8 path is (u - 127.5) / 127.5)
     std::vector<Scored> analyze(const std::complex<float>* iq, size_t n_samples, double fs_hz,
-                                const Model* model, std::vector<float>* features_out = nullptr, double centre_hz = 0.0);
+                                const Model* model, std::vector<float>* features_out = nullptr, double centre_hz = 0.0,
+                                const std::vector<KnownBand>* known = nullptr);
 
     static int feature_dim() { return sigclass::feature_dim(); }
     static std::string layout_json() { return sigclass::layout_json(); }
@@ -164,6 +178,7 @@ public:
         double convert_ms = 0, frontend_ms = 0, spectrogram_ms = 0, detect_ms = 0,
                channelize_ms = 0, features_ms = 0, model_ms = 0, total_ms = 0;
         int second_view = 0, second_view_taken = 0;   // detections also classified in view 0 / that took its answer
+        int known = 0;                                // detections not classified: a known band
     };
     const Timing& last_timing() const;
     const Config& config() const;
