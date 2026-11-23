@@ -2454,3 +2454,79 @@ shown on the page (a class, p >= 0.5) for >= half of coherent mode's last
   worse view kept, band representatives chained, the old round robin, no
   settling, no first looks first, a stuck cursor, first looks without a
   debt, no payback, the debt cap ignored
+
+### Review round of the multi-tuner rules (2026-11-24)
+
+An independent review ran the unmodified service in a harness (simulated
+receiver / uWS threads) and a time-stepped model of the worker loop on the
+real rules; its findings became rules with invariants (*Tuners in turn*):
+no band starves whatever is retuned (INV-A..D), a band keeps its labels when
+its lead tuner changes (INV-E), a 180 s wall-clock ceiling (INV-F), toggling
+Signal ID buys no CPU (INV-G), the trackers of tuners beyond a lowered
+channel count are cleared. Job scratch 9321609f `sigid3/w2/` (r1/: the
+reviewer's harness, a ceiling scenario added).
+
+- Rules test (`tools/sigclass_rules_test.cpp`, default 200000 rounds, ~25 s;
+  seeds 1-16 plain, three more under ASan + UBSan): every invariant held.
+  The worker-loop model: 2-8 tuners, 1-4 of them retuned periodically
+  (periods 0.3-20 s, now and then onto another tuner's band), random one-off
+  retunes, analysis 20-400 ms, captures aborted by a retune, Signal ID
+  toggled; INV-A with R = the tuners standing for a ready band in the
+  stretch (each has its own token - with the instantaneous ready count three
+  scanned tuners taking turns ahead of a steady band broke a 4-look window
+  that had 4 contenders). Mutants caught: fb5cf77's pick (INV-A, ~1200 of
+  2000 runs), no token (INV-A), a new band first in the turn order (INV-A),
+  the token copied with the band (INV-C, a few per 5000 runs), no settling,
+  the debt reset on enable (INV-G), no first looks ahead (INV-B), fb5cf77's
+  trackers staying with their tuner (INV-E), plus the earlier ones. Found by
+  the model on the way: a tuner's band fields copied on regrouping laundered
+  its token (fixed: the token is the tuner's own); keeping a retuned band's
+  old turn let new bands queue ahead of steady ones (fixed: a new band's
+  turn counts from its start)
+- The reviewer's harness on the new service: `scan` (5 tuners, tuner 1
+  retuned every 2.8 s, 120 s): looks [19, 18, 19, 18, 18] (fb5cf77: [1, 42,
+  41, 8, 1]; control without retunes [15 x 5] at 100 s), worker CPU 3.9 %.
+  `lead` both ways (tuner 1 leaves the shared 105 MHz band / tuner 0 joins
+  it at 30 s): the band's 7 tracks in every 0.5 s state from 25 to 80 s, 0
+  snapshots without one (fb5cf77: 0 for 4-5.5 s, all back after 29-43 s;
+  a first version of the move still showed 0 for 1-1.5 s: a publish made
+  the list from the old slots before the worker's next regroup - now every
+  publish regroups first). `ceiling` (new: 5 tuners, no data from 30 s): 34
+  tracks until 200 s, 0 from 215 s - 180 s after each was last seen
+  (fb5cf77: never - a band without looks had a stopped clock). Clang TSan
+  `race 40` (setarch -R): 0 reports; ASan + UBSan `lead 0` and `scan`: 0
+  reports. `chan` (new: 5 tuners 25 s, 3 channels 20 s, 5 again): the
+  tracks of tuners 3-4 just after the return 0 for the 3 s sampled - new
+  looks needed (1e8871d, the same scenario: 17-18 back after 1 s, aged).
+  The reviewer's model on these rules (600 s, 300 ms analysis):
+  tuner 1 retuned every 2.8 s - looks 17 / 13 / 17 / 17 / 16, the longest
+  gap 41 s (61 s for the retuned one); 4 tuners retuned every 2 s - 60 / 6 /
+  5 / 5 / 4 (fb5cf77: 20 / 0 / 0 / 0 for the scanned ones), share 4.00 %
+- End to end (TEST build + fake heimdall on real IQ, independent mode,
+  tuners 499.8 / 456.8 / 416.5 / 418.0 / 142.3 MHz, 180 s): the
+  saved-frequency scan on tuner 4 (VFOs on tuners 0-3, 7 saved frequencies
+  on 7 bands, 2 s dwell - it hopped tuner 4 throughout): looks [21, 21, 21,
+  21, 20], the longest run of looks without a steady tuner 4 (INV-A's bound
+  2R = 10), the longest wall gap 10.6-14.7 s; tuner 4 stepped by TUNER_FREQ
+  every 2.8 s (64 retunes): [20, 20, 20, 20, 19], longest run 4. The steady
+  tuners kept labelling: 13-32 labels each, 3-18 of them first shown after
+  the first 30 s
+- The A/B matrix again (9346f16, the same IQ and scoring): coherent 92 /
+  92, wideband scan 73 / 80, independent 65 / 80 - rerun twice 72 / 80 and
+  68 / 80 (the static independent schedule is the round robin as before,
+  INV-D; the run-to-run spread is the intermittent signals - every miss had
+  coherent shares under 100 % or first labels after 20 s, except two P25
+  voice channels that coherent mode happened to hold all of the last 60 s);
+  the user's layout 11 / 12. Continuous signals first labelled: median 1.8 s
+  (wideband) / 3.1 s (independent), max 35 / 60 s. CPU (the thread):
+  coherent 3.69-4.01 %, wideband scan 3.95-4.07 %, independent 3.96-4.02 %
+- ui_modes.py 17 / 18 (as on 1e8871d: the miss is the 416.4 MHz hump whose
+  class flips between LoRa / Unknown pulses / DMR in coherent mode too)
+- Strict debug playback: 28 / 28 once, 27 / 28 once (wildlife-five without
+  a track at the end of its 40 s; the entry alone three more times: 3 / 3,
+  76-80 %, unsure as always - its min_p 1.01); the p2 suites on the merged
+  page: p2_pb, p2_switch, p2_sandbox (byte-identical), p2_sc, p2_ui_pane 7 /
+  7, p2_multi as before (the scene's known misses); p2_ui_sig stops at its
+  "On spectrum" check (the switch is gone with the Bands page), p2_ui_fixes
+  11 / 12 and p2_ui_touch 2 / 3 taps - page checks written before the
+  Bands page; the service path they use (a coherent playback) is unchanged
