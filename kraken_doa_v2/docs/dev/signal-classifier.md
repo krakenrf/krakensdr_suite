@@ -1583,8 +1583,15 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   - inside the Pi 5 estimate) revisited a tuner every 80 s and 3 of 8
   tuners had no labels at any time. In coherent mode (one tuner; every
   snapshot is a look) the clock also runs between snapshots (no data,
-  retunes): there it is the wall clock. Track ids sent = the tracker's id x
-  8 + the tuner. Cleared on an operating-mode change, on disable, and when
+  retunes): there it is the wall clock. Track ids sent: the service's own
+  (`rules::follow_ids`, INV-I) - each tracker carries a book (its track id
+  -> the id sent) that moves with it, and a track it has not seen before
+  gets the next number of one counter of the run (1, 2, 3, ...): unique at
+  any time, never sent for another track within the run, and kept for as
+  long as the tracker holds the track - also when the band's lead changes
+  (until 2026-11-24 the tracker's id x 8 + its slot: a lead change gave the
+  band's tracks new ids, and after a swap or a new tracker in a slot an id
+  that had named one signal named another). Cleared on an operating-mode change, on disable, and when
   parked for the noise source; kept over a retune (absolute Hz: the ones
   still in band go on). Only what the pages show is sent: a track whose
   centre lies inside the EDGE-CLIPPED part of its tuner's band now - the
@@ -1647,8 +1654,9 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
     hopping onto another's band and off again took that band's token along
     and overtook twice in the model). (2) Else the ready band whose turn is
     the oldest (`turn_seq`: its latest look; a new band's turn counts from
-    its start, behind every band looked before it); ties in cursor order;
-    with nothing retuned this is the old round robin exactly. Until
+    its start, behind every band looked before it); with nothing retuned
+    this is the old round robin exactly. Ties in either pass: the band
+    whose latest look is older, then cursor order. Until
     2026-11-24 a first look always won and moved the cursor: one tuner
     retuned every 2.8 s (the saved-frequency scanner's dwell, a user
     stepping a pane, the assistant) took every other look - 120 s, 5
@@ -1659,7 +1667,8 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
     nothing else changing, gets its first look before any other band's
     next; INV-C a band waiting for its first look is overtaken at most once
     by each band that began waiting later; INV-D without retunes the
-    cursor's round robin. Several scanned tuners share the first looks: 4
+    cursor's round robin; INV-H (below) restarts at any rate do not change
+    the order. Several scanned tuners share the first looks: 4
     tuners retuned every 2 s at 300 ms analysis, 600 s (the reviewer's
     model on these rules): looks 6 / 5 / 5 / 4 and 60 for the steady one
     (the scanned ones are settling or retuned mid-capture most of the time;
@@ -1676,6 +1685,48 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
     analysis over 0.4 s exceeds the share). So the first labels of every
     band come within a round of CAPTURES (about 0.6 s + the analysis per
     band), not a round of periods
+  - **Restarts** (Signal ID switched on, an operating-mode change;
+    `rules::restart_bands`, INV-H): every band's next look is a first look
+    again (no looks, waiting from now or from its settle's end) - and that
+    is all: the bands, their turn and latest look, the tuners' tokens and
+    the cursor go on (a tuner that moved while Signal ID was off or the
+    mode was coherent is a retune: it settles). With every band waiting
+    from the same moment the tie rule takes the band whose latest look is
+    the oldest, so with nothing retuned every pick is that band - the round
+    robin goes on across any number of restarts. INV-H (tested, R the ready
+    bands): with restarts at any rate and pattern and nothing retuned, every
+    band gets at least 1 / (2R) of the looks of any stretch of >= 4R looks
+    - the rules give more: between two looks of a band every other band has
+    one. Until 2026-11-24 a restart cleared the slots - every band tied, ties
+    went in cursor order and a first look did not move the cursor -, so
+    restarts faster than a round of first looks looked at the same
+    low-numbered tuners every time: the reviewer's model, 1200 s, 100 ms
+    analysis, Signal ID toggled every 3 s: looks [200, 200, 83, 4, 0], the
+    mode alternating every 4 s: [226, 195, 62, 3, 2] (now [98, 98, 97, 97,
+    97] and [98, 98, 98, 97, 97]). Two weaker fixes fail in the model:
+    keeping only each tuner's latest look and token (a band a tuner shares
+    after the restart took its lead's latest look, and one tuner was "the
+    oldest" after every restart: a steady band 8 looks without one - INV-A),
+    and keeping the bands with ties in cursor order (three restarts in 40 s,
+    one band below 1 / (2R) - INV-H)
+  - **A capture a retune aborted** (L3): the worker waits for the tuner to
+    settle (`SETTLE_MS`) and chooses again - the band, still the oldest, is
+    tried at once; once only (a second abort in a row goes the usual way,
+    and the wait is reset by any look). No analysis is spent waiting (INV-G
+    unchanged) and the picks are pick_band's as before. Before, the next
+    band was taken right away and the aborted one came a period later:
+    with a tuner retuned every period + capture its band's attempt fell
+    just before the next retune again and again - a lock. The model (1200
+    s, 100 ms analysis: a 2.5 s period), tuners 1 and 2 swapping their
+    bands every 2.8 s +-20 %: the swapped tuners 29 / 38 looks against 133
+    for the others, 65 % of their attempts aborted (the reviewer's model) ->
+    71 / 46 against 112 (the same model with the wait); without the jitter
+    2 / 2 against 142 -> 86 for every band (the rules test's model: 419 of
+    849 attempts aborted -> 168 of 598). Bands
+    not retuned are not affected except for the waits (<= 0.5 s each). The
+    rest of the gap is the settle itself: a band whose turn comes while it
+    settles is passed over for that pick (left as it is: waiting for a
+    settling band would change pick_band and INV-A)
   - **A band's lead changes** (INV-E): the band's tracker and its band
     fields (looks, turn) move to the tuner now standing for it
     (`rules::regroup`); before, a lower tuner joining cleared the old lead's
@@ -1764,7 +1815,13 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   else every 5 s (`SEND_REFRESH_MS`: ages, analysis numbers). A page that
   connects gets the current state in the connect sync
   (`get_connect_sync_messages`, ages computed then). Tracks: sorted by
-  frequency, at most 200 (the most recently seen); none while off. `cls`,
+  frequency, at most 200 (the most recently seen); none while off. `id` =
+  the track's (INV-I, *Trackers*): a positive integer (1, 2, 3, ... per
+  receiver run - far below 2^53), unique at any time, never sent for
+  another track within the run, kept while the track lives (also across a
+  band's lead change); opaque to the page (row keys, the label rows, a
+  press held across a state message) - so the change of 2026-11-24 from
+  the tracker's id x 8 + its slot needed no page change. `cls`,
   `name`, `family`, `plugin`, `demod` are null without one; `vbw` = the
   class's `bw_hz` (the VFO width a click sets; null = none); `min_p`
   (phase 4) = the class's own "sure" threshold from the model's metadata
@@ -2530,3 +2587,88 @@ reviewer's harness, a ceiling scenario added).
   "On spectrum" check (the switch is gone with the Bands page), p2_ui_fixes
   11 / 12 and p2_ui_touch 2 / 3 taps - page checks written before the
   Bands page; the service path they use (a coherent playback) is unchanged
+
+### The second review's low findings (2026-11-24, branch `sigid-lows`)
+
+Four low-severity findings of the review's second pass, each a rule with
+an invariant, randomized and directed tests and mutants (job scratch
+9321609f `sigid3/w4/`: the rules test's search / shrink drivers, the
+reviewer's harness and model rebuilt on these rules, the A/B and page
+runs).
+
+- **L1 - frequent restarts starved the higher-numbered bands.** A restart
+  (Signal ID switched on, a mode change) cleared the slots; every band
+  then tied, ties went in cursor order and a first look does not move the
+  cursor. Now a restart only makes every band's next look a first look
+  (`rules::restart_bands`, *Restarts* in Runtime) and ties take the older
+  latest look. INV-H (with restarts at any rate and nothing retuned, every
+  band >= 1 / (2R) of any stretch of >= 4R looks; the rules give a round
+  robin: between two looks of a band every other band has one) is checked
+  on every model run without retunes (random restart patterns: a few
+  toggles, periodic toggles 0.3-10 s, periodic mode changes, a random mix
+  of both from 0.2 s) and on directed ones; INV-A now includes restarts
+  (the old test left stretches with a restart out). Mutants caught:
+  97f8d78's restart (INV-H, toggled every 3 s / 0.7 s, the mode every 4 s /
+  2 s), a restart keeping only the tuners' latest looks and tokens (INV-A),
+  the bands kept but ties in cursor order (INV-H). The reviewer's model
+  (`sim3`, 1200 s, 100 ms analysis): toggled every 3 s [200, 200, 83, 4,
+  0] -> [98, 98, 97, 97, 97]; every 1 s [488, 0, 0, 0, 0] -> [98, 98, 98,
+  97, 97]; the mode every 4 s [226, 195, 62, 3, 2] -> [98, 98, 98, 97, 97]
+  (300 ms analysis: [161, 4, 3, 0, 0] -> [34, 34, 34, 33, 33]; share
+  unchanged). (sim3 counted a coherent look that ended after the switch
+  back as a tuner-0 look and noted it as one; fixed in the copy.) The
+  real service in the reviewer's harness, 300 s (multi-tuner looks per
+  tuner over the whole run): `pat toggle 3000` [50, 50, 49, 47, 40] ->
+  [46, 46, 45, 46, 46], `pat mode 4000` [56, 55, 55, 27, 14] -> [40, 39,
+  39, 39, 39]; CPU 4.2 % both
+- **L2 - track ids changed on a regroup and could name another signal.**
+  The id was the tracker's id x 8 + its slot. Now one counter of the run
+  numbers the tracks, each tracker carrying a book that moves with it
+  (`rules::follow_ids` / `pub_id`, *Trackers* in Runtime, the Protocol's
+  `id`). INV-I: (a) ids unique at any time, (b) never sent for two tracks
+  (a tracker instance's track) within a run, (c) a track keeps its id
+  while its tracker holds it - across any regrouping that keeps its band.
+  Tested on a model of the trackers (new trackers count from 1 again, a
+  restart clears them, `update_bands` moves them; random retunes, swaps,
+  lost frequencies, restarts, tracks coming and going) and a directed
+  sequence (a lead leaving and coming back, a swap, a tuner on a band
+  nobody was on, a restart). Mutants caught: 97f8d78's id (c), ids counted
+  per tracker (a), the book left with the slot (b). The page keys rows,
+  label rows and a held press by `id` as an opaque number (`String(+id)`,
+  `===`): no page change, an older page works. The reviewer's harness,
+  `lead` both ways: the band's ids the same before and after the lead
+  change (97f8d78: 9 / 65 / 41 / 49 -> 10 / 66 / 42 / 50), its tracks in
+  every 0.5 s state from 25 to 80 s
+- **L3 - periodic retunes kept aborting a band's captures** (older than
+  this round). A capture a retune aborted is now tried again once the
+  tuner has settled (*A capture a retune aborted* in Runtime; numbers
+  there). Model check (not an invariant: the share depends on the retune
+  pattern): with tuners 1 and 2 swapping every 2.8 s (with and without
+  +-20 % jitter, 100 / 300 ms analysis) the swapped bands get >= 40 % of
+  a steady band's looks; 97f8d78's abort (no wait) fails it (2 against
+  142). Every invariant holds with the wait (the random model runs it).
+  Not changed: a band whose turn comes while it settles is passed over for
+  that pick - the remaining gap (56 against 114 looks with jitter) -,
+  since waiting for a settling band would change `pick_band` and INV-A
+- **L4 - the rules test's verdict depended on the seed** (seeds 99 and
+  424242 missed the "token copied with the band" mutant; 2000 rounds with
+  seed 7 the "new band first" one). `tools/sigclass_rules_test.cpp` now:
+  the worker-loop model is event-driven (a scenario = the tuners'
+  frequencies + timed retunes, Signal ID off for a while, coherent mode
+  for a while), every check runs DIRECTED inputs (fixed sequences, the
+  same for every seed) and random ones; a real rule must hold on both, a
+  mutant counts as caught only when its directed inputs catch it. The rare
+  mutants' sequences are random runs that failed, shrunk (fewer events,
+  shorter) while the mutant still fails and the real rules hold - they
+  hang on the model's timing, so a change of the model or rules can need
+  them found again (the mutant then shows "directed 0" and the test
+  fails). 200000 rounds, ~22 s. Seeds 1-16, 99, 424242, 777, 31337 and
+  seed 7 at 2000 rounds: all pass, every mutant caught; the same under
+  ASan + UBSan with `-D_GLIBCXX_DEBUG` (20000 rounds: the debug containers
+  make the default ~1 h) - 0 reports. Also passes at 100 rounds (the
+  verdict is the directed inputs')
+- The reviewer's harness on this service (svc_harness, real service
+  source with stubs): `scan` (tuner 1 retuned every 2.8 s, 120 s) looks
+  [15, 15, 15, 14, 14]; clang TSan `race 120` (setarch -R; 276 actions,
+  12.3 M packets): 0 reports; ASan + UBSan `lead 0`, `scan`, `pat toggle
+  3000`, `pat mode 4000`: 0 reports
