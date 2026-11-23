@@ -11635,6 +11635,7 @@ function connect() {
   
   ws.onclose=()=>{
     netOnClose();   // (no rate without a connection)
+    swpAgcRender(); swpDrawSoon();   // (Auto gain: disabled, "not connected" - the receiver's word isn't current)
     pwOnClose();
     biasRender();   // the Bias tee button: disabled while not connected
     const connEl = $id('status-connection');
@@ -13627,6 +13628,7 @@ function swpOnOpen() {
   swp.ovPend = null;
   swp.fullSent = -1; swp.fullAsm = null; swp.zSent = -1;   // (nor the full resolution, nor deflated parts; a set in flight is gone with the old connection)
   swp.stale = true;
+  swpAgcRender();   // (Auto gain: still disabled until this connection's first sweep message)
 }
 function swpGainSync(db) {
   if (gainUserChanging) return;
@@ -13648,7 +13650,11 @@ function swpGainSync(db) {
 // The levels stay referred to the ceiling (the receiver shifts a step's levels by ceiling - its gain): a
 // signal keeps its height across steps; a reduced step on the converter's own floor shows a higher noise
 // floor - the sensitivity really lost there, which the strip right under it explains.
-function swpAgcOn() { return opMode === 'sweep' && !!(swp.st && swp.st.auto_gain && swp.st.auto_gain_known === true); }
+// the receiver's word is current: connected, and its sweep message has come on this connection (round 9b,
+// a user's report: while the WebSocket is down a click goes nowhere and the receiver may have changed
+// meanwhile - nothing about Auto gain is shown then but the switch, disabled, "not connected")
+function swpAgcLive() { return !!(ws && ws.readyState === 1 && swp.st && !swp.stale); }
+function swpAgcOn() { return opMode === 'sweep' && swpAgcLive() && !!(swp.st.auto_gain && swp.st.auto_gain_known === true); }
 // on but doing nothing: the gain is the tuners' own AGC (heimdall's rule; the receiver's auto_gain_active when
 // it says, else derived from the gain)
 function swpAgcIdle() {
@@ -13665,7 +13671,7 @@ function swpCeilDb() {
 function swpAgcSet(on) {
   const cb = $id('swp-agc'), st = swp.st;
   if (cb) cb.checked = !!(st && st.auto_gain && st.auto_gain_known === true);   // (until the receiver's broadcast says otherwise)
-  if (!st || st.auto_gain_known !== true) return;
+  if (!st || st.auto_gain_known !== true || !swpAgcLive()) return;
   send('SWEEP_AUTO_GAIN:' + (on ? 1 : 0));
 }
 // the gain map (the receiver's sweep_gain message; the only place that reads its layout): hop h is centred at
@@ -13707,6 +13713,7 @@ function swpAgcSummary() {
 function swpAgcText() {
   const st = swp.st;
   if (!st) return '-';
+  if (!swpAgcLive()) return 'not connected';
   const s = swpAgcSummary(), gt = s.ceil === -1 ? 'Auto' : Number.isFinite(s.ceil) ? s.ceil.toFixed(1) + ' dB' : '-';
   // (short, one line at the sidebar's default width - the orchestrator saw "up to 49.6 dB, 62 steps reduced,
   // lowest 8.7 dB" wrap on the KrakenSDR; the tip says it in full)
@@ -13719,10 +13726,11 @@ const SWP_AGC_TIP = (document.getElementById('swp-agc') || {getAttribute: () => 
 function swpAgcRender() {
   const st = swp.st, cb = $id('swp-agc');
   if (cb) {
-    const known = !!(st && st.auto_gain_known === true), on = !!(known && st.auto_gain);
-    if (cb.checked !== on) cb.checked = on;
-    if (cb.disabled !== !known) cb.disabled = !known;
-    const why = !st ? '' : st.auto_gain_known === false ? 'Not available: this receiver\'s heimdall has no gain per step (an older version)'
+    const known = !!(st && st.auto_gain_known === true), on = !!(known && st.auto_gain), live = swpAgcLive();
+    if (cb.checked !== on) cb.checked = on;   // (while not connected: the receiver's last word, disabled)
+    if (cb.disabled !== !(known && live)) cb.disabled = !(known && live);
+    const why = !st ? '' : !live ? 'Not connected to the receiver: the switch shows what it last said, and a click would go nowhere'
+              : st.auto_gain_known === false ? 'Not available: this receiver\'s heimdall has no gain per step (an older version)'
               : st.auto_gain_known === null ? 'Not available: this receiver does not offer it (an older version)' : '';
     const t = SWP_AGC_TIP + (why ? '. ' + why : '');
     if (cb.dataset.tipk !== t) { cb.dataset.tipk = t; cb.title = t; cb.removeAttribute('data-tip'); }

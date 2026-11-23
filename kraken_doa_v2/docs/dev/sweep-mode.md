@@ -1552,6 +1552,40 @@ used"):
     shows it on; an older heimdall (the fake's `fake_no_auto_gain`, then a
     restart): `auto_gain_known` false, the control disabled with the
     reason, nothing drawn.
+  - Only the receiver's current word (round 9b, 2026-11-23; a user's
+    report: "Auto gain doesn't seem to be working ... still getting severe
+    overload", with the receiver's saved `sweep_auto_gain` and heimdall's
+    `auto_gain` both false). While the WebSocket is down, or before the
+    new connection's first `sweep` message (`swpAgcLive`: open and not
+    `swp.stale`), the switch keeps the receiver's last word but is
+    disabled, its tip says "Not connected to the receiver ...", the line
+    reads "not connected", and the top bar's "≤", the strip, the readout's
+    gain and the caption are gone (`swpAgcOn` is false). Before this a
+    click in that gap went nowhere (`send` drops it) with the switch
+    looking live. Rendered on `ws.onclose` and `swpOnOpen`.
+  - The flows (`t_agc3.py`, 45 / 45, and `t_agc4.py`, 9 / 9, on the
+    fake heimdall with heimdall's rule; each flow ends comparing the
+    switch, `swp.st.auto_gain`, the fake's `get_status` `sweep.auto_gain`
+    and the receiver's saved `sweep_auto_gain`): a mouse click on the
+    switch and on the label text; Space on the focused switch; a touch tap
+    on the switch and on the label (phone layout); press-and-hold (no
+    toggle, nothing sent); help mode then a tap (explains, nothing sent);
+    with Auto on: the top bar's gain by keys, by the wheel, to Auto (-1:
+    on, idle) and back; range, resolution, dwell, tuners, pause / resume,
+    the display resolution list, zoom and pan; coherent / wideband /
+    independent and back (on and off); a page reload; a second tab
+    opened, switching it off and on, closed (the first tab follows, and
+    with it off shows no "≤", no strip, "every step"); a tab frozen
+    (`Page.setWebLifecycleState`) for 30 s while another switches it off,
+    then used; a click while the WebSocket is down (disabled, nothing
+    sent); kraken_doa restarted (the replay); the fake heimdall restarted
+    under the running receiver; a heimdall up 25 s after the receiver; a
+    heimdall refusing `set_operating_mode` for its first 20 s; a heimdall
+    without the command and back. No flow turned Auto gain off without a
+    click, and in none did the four disagree. A side finding for the
+    receiver: with a heimdall refusing `set_operating_mode` at start, the
+    replayed sweep mode is lost (the stack comes up in coherent mode; Auto
+    gain stays saved and comes back on choosing sweep again).
 - **Deflated parts** (round 8, 2026-11-23; the user: "Implement the sweep
   full resolution compression"). The page asks `SWEEP_FULL_Z:1` when the
   browser has `DecompressionStream("deflate")` (`SWP_Z_OK`: the
