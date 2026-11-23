@@ -136,7 +136,15 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   one applies the stored values with its deletions, as the telemetry logs
   apply theirs): otherwise every start with stored values other than the
   defaults would hold the deletions back 10 min, and a receiver that never
-  runs that long would never delete a day. **Disk lasts' ratio**
+  runs that long would never delete a day. Tested (a TEST receiver, a fake
+  heimdall, stored 30 / 0, `KRAKEN_LOGRET_GRACE_S=10`; 1980d55 -> now 6 ->
+  9 / 9): the startup deletes days 31-40 at once in both; `DECODER_LOG_DAYS:7`
+  from a page deleted days 8-30 within 7 s, now they go ~10 s after the
+  command; Keep 7 and 7 s later Then compressed 1 year deleted all 23, now
+  they end gzipped (3 s apart both join them: the debounce). The logs
+  suites rerun with no expectation changed (retention rule 35 M checks and
+  its 9 mutants, the e2e 68 / 68, the old build's files identical, review
+  round 2 28 / 28, the page 25 + 7 + 5, cadence, durability). **Disk lasts' ratio**
   (`gz_isize`) reads a gz file's ISIZE trailer, which is the LAST member's
   size only: a day the clock-back path appended a member to is measured by
   that member (usually a smaller ISIZE than the file -> not counted; else a
