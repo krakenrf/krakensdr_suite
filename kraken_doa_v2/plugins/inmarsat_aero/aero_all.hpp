@@ -1,6 +1,6 @@
 #pragma once
 
-// The "all channels in the VFO" mode: every Aero carrier of the input found,
+// The "all channels in the spectrum" mode: every Aero carrier of the input found,
 // decoded and listened to at once.
 //
 // - aero_bank.*: one FFT filter bank cuts a 24 kHz channel out of the input

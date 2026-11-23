@@ -885,6 +885,7 @@ void t_list_decoders(const Json&, Reply r) {
         if (!p.category.empty()) o << ",\"category\":" << q(p.category);
         if (p.fixed_freq_hz > 0) o << ",\"fixed_freq_hz\":" << num(p.fixed_freq_hz, 0);
         if (p.lock_vfo) o << ",\"whole_band\":true";
+        else if (!p.lock_opt_key.empty()) o << ",\"whole_band_when\":" << q(p.lock_opt_key + "=" + p.lock_opt_val);
         if (p.manual_only) o << ",\"manual_only\":true";
         if (p.talkers) o << ",\"bearing_per_transmitter\":true";
         o << "}";
@@ -894,7 +895,8 @@ void t_list_decoders(const Json&, Reply r) {
                            "than the VFO has decodes from a stream of its own at the VFO's centre - widening the VFO "
                            "to its min_vfo_bandwidth_hz gives the DoA and squelch the whole signal too). A decoder set "
                            "by id needs a VFO of at least its min_vfo_bandwidth_hz. fixed_freq_hz decoders tune the "
-                           "receiver there; whole_band ones take the tuner's whole 2.4 MHz") << "}";
+                           "receiver there; whole_band ones take the tuner's whole 2.4 MHz, whole_band_when ones too while "
+                           "that option (set_option) has that value on the VFO") << "}";
     r(o.str(), false);
 }
 
@@ -1218,6 +1220,29 @@ std::string move_vfo(int id, double hz) {
     return cmd("SET_DECIMATOR_FREQ:" + std::to_string(id) + ":" + num(off / 1e3, 3));
 }
 
+// The VFO's decoder holds it (dig::holds_vfo: a fixed frequency, its tuner's
+// centre, or - Aero's All channels - by the value of one of its options); *pi = the plugin
+bool vfo_held(const Vfo& v, dig::PluginInfo* pi = nullptr) {
+    if (static_cast<dig::Mode>(v.d.digital_mode) != dig::Mode::PLUGIN) return false;
+    return dig::decoder_holds_vfo("PLUGIN:" + v.d.digital_plugin, &v.d.digital_opts.plugin, pi);
+}
+
+// a lock taking hold, as the web UI's digApplyFixedTune does: the bandwidth
+// (the narrowest efficient width >= min_vfo_rate; the whole 2.4 MHz for the
+// option lock) and the VFO on its tuner's centre (the tuner: the caller)
+void apply_lock(int id, const Vfo& v, const dig::PluginInfo& pi) {
+    const double need = dig::lock_bandwidth_hz(pi);
+    if (v.bw < need - 1) set_bw(id, need);
+    const std::string tsuf = independent_mode_enabled.load() ? ":" + std::to_string(v.tuner) : "";
+    cmd("SET_DECIMATOR_FREQ:" + std::to_string(id) + ":0" + tsuf);
+}
+
+std::string lock_note(const dig::PluginInfo& pi) {
+    const std::string by = pi.lock_opt_key.empty() || pi.lock_vfo ? "" : " with " + pi.lock_opt_key + "=" + pi.lock_opt_val;
+    return pi.name + by + " takes the tuner's whole band: the VFO was put on the tuner's centre (move the receiver, "
+                          "not the VFO)";
+}
+
 std::string set_decoder(int id, std::string dec, std::vector<std::string>& notes) {
     dec = lower(dec);
     if (dec == "off" || dec == "none" || dec.empty()) return cmd("DIGITAL_MODE:" + std::to_string(id) + ":OFF");
@@ -1230,13 +1255,11 @@ std::string set_decoder(int id, std::string dec, std::vector<std::string>& notes
     if (!find_vfo(id, &v)) return "no VFO D" + std::to_string(id);
     std::string e = cmd("DIGITAL_MODE:" + std::to_string(id) + ":PLUGIN:" + dec);
     if (!e.empty()) return e;
-    const std::string tsuf = independent_mode_enabled.load() ? ":" + std::to_string(v.tuner) : "";
-    if (pi.fixed_freq_hz > 0 || pi.lock_vfo) {
+    // (the option lock - Aero's All channels - by the VFO's own options, which stay with it)
+    if (dig::holds_vfo(pi, &v.d.digital_opts.plugin)) {
         // as the web UI does when one is picked: the full bandwidth it
         // needs, the VFO on its tuner's centre, and (fixed) the tuner there
-        double bw = 0;
-        if (v.bw < pi.min_vfo_rate - 1) set_bw(id, pi.min_vfo_rate, &bw);
-        cmd("SET_DECIMATOR_FREQ:" + std::to_string(id) + ":0" + tsuf);
+        apply_lock(id, v, pi);
         if (pi.fixed_freq_hz > 0) {
             e = independent_mode_enabled.load() ? cmd("TUNER_FREQ:" + std::to_string(v.tuner) + ":" + mhz(pi.fixed_freq_hz))
                                                 : cmd("FREQ:" + mhz(pi.fixed_freq_hz));
@@ -1244,8 +1267,7 @@ std::string set_decoder(int id, std::string dec, std::vector<std::string>& notes
             notes.push_back(pi.name + " works on a fixed frequency: the receiver was tuned to " + mhz(pi.fixed_freq_hz) +
                             " MHz and the VFO put on its centre");
         } else {
-            notes.push_back(pi.name + " takes the tuner's whole band: the VFO was put on the tuner's centre (move the "
-                                      "receiver, not the VFO)");
+            notes.push_back(lock_note(pi));
         }
     } else if (v.bw < pi.min_vfo_rate - 1) {
         double bw = 0;
@@ -1272,10 +1294,8 @@ std::string apply_vfo_args(int id, const Json& a, bool skip_freq, std::vector<st
     if (has(a, "decoder")) {
         e = set_decoder(id, str_arg(a, "decoder"), notes);
         if (!e.empty()) return e;
-        dig::PluginInfo pi;
-        const std::string d = lower(str_arg(a, "decoder"));
-        locked = dig::PluginRegistry::instance().get(d.rfind("plugin:", 0) == 0 ? d.substr(7) : d, &pi) &&
-                 (pi.fixed_freq_hz > 0 || pi.lock_vfo);
+        Vfo v;
+        locked = find_vfo(id, &v) && vfo_held(v);
     }
     if (has(a, "bandwidth_hz") && !locked) {
         double bw = 0;
@@ -1438,8 +1458,26 @@ void t_set_option(const Json& a, Reply r) {
     }
     const std::string val = str_arg(a, "value");
     if (val.find('\n') != std::string::npos) return r("bad value", true);
+    const bool held_before = vfo_held(v);
     if (auto e = cmd("DIGITAL_OPT:" + std::to_string(id) + ":" + key + ":" + val); !e.empty()) return r("Refused: " + e, true);
-    r("Set " + key + " = " + val + " on D" + std::to_string(id), false);
+    // an option that locks the VFO (kp::Info::lock_vfo_opt - Aero's All channels) as the web UI
+    // does it: on - the whole band on the tuner's centre; off - the width a fresh pick of the
+    // decoder gives, the VFO left where it is
+    std::string note;
+    Vfo now;
+    dig::PluginInfo pi;
+    if (find_vfo(id, &now)) {
+        const bool held = vfo_held(now, &pi);
+        if (held && !held_before) {
+            apply_lock(id, now, pi);
+            note = "; " + lock_note(pi);
+        } else if (!held && held_before && dig::PluginRegistry::instance().get(now.d.digital_plugin, &pi)) {
+            double bw = 0;
+            set_bw(id, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500, &bw);
+            note = "; the VFO is free again (bandwidth " + num(bw, 0) + " Hz, still on the tuner's centre)";
+        }
+    }
+    r("Set " + key + " = " + val + " on D" + std::to_string(id) + note, false);
 }
 
 void t_remove_vfo(const Json& a, Reply r) {

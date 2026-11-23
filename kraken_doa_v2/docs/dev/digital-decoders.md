@@ -459,7 +459,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   "det":{"<key>":[[label, value]..]}}}` -
   `build_digital_message` adds it at most once a second per VFO (+ every
   history reply); the page keeps the last tables in between
-  (`digOnMessage`, same mode). UI `digTablesHtml(tab)` merges the plugin's
+  (`digOnMessage`, same mode). UI `digTablesData(tab)` merges the plugin's
   table of every VFO in the tab with leading "VFO" / "MHz" columns (row key
   `vfo|plugin|key` = its map point) + the tab's incidents -> `#info-dec-table`
   above the facts / log (`#info-body-dec.has-table`; the panel grows to
@@ -494,6 +494,97 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   label / value table in `.dig-det-box` - sticky left, `100cqw` of the
   `.dig-table-wrap` container, so a table wider than the panel doesn't
   push them out of view)
+- **Held lists** (2026-11-23; the user, on Inmarsat Aero's All channels:
+  "Make it so that the Inmarsat AERO display table doesn't keep scrolling
+  back to the top when we scroll down on it and try to view the data
+  history. So we can actually read something. scrolling back to the top,
+  or pressing a "Latest" button restores the scrolling from new data").
+  For every decoder's tab, page only.
+  - **What threw the list back** (reproduced in headless Chromium with
+    real wheel events, before the change): the browser never moved the
+    list - `scrollTop` stayed where the wheel left it, one scroll event in
+    30 s, also across a display none / shown and a panel closed and
+    opened - but the content was rebuilt under it. The log is drawn
+    newest first (`log.innerHTML` on every new event): each line that
+    came pushed what was being read down by its height, so the view
+    filled with newer lines - back towards the top of the history (Aero
+    All channels: the first visible line changed 4 times in 30 s at
+    scrollTop 100). The tables are rebuilt every second (`tw.innerHTML`,
+    the Seen ages change the HTML): rows keep their place only while the
+    sort order and the row set stay the same; sorted by Seen (ADS-B,
+    scrollTop 91) the first visible row changed 12 times in 30 s, and a
+    new row (a new aircraft) moves every row under it. The facts column
+    (same rows, values updated in place) did not move: it is not held.
+    The plugin's stderr box adds at the bottom: not held either.
+  - **Held**: a list (`#info-dec-table` - all of the tab's tables, one
+    scroller - or `#info-dec-log`) scrolled more than `DIG_HOLD_PX` (8 px)
+    from its top keeps what it showed (`digHoldCheck`, from the list's own
+    `scrollTop`, at every draw and on its scroll events): the table is
+    drawn from the tables as they were last drawn live
+    (`digTablesData` -> `digHold.table.data`, frozen Seen ages included;
+    `digTablesHtml(data)`), the log is not redrawn. The page keeps
+    receiving (`digStatus`, `digEvents` as always); only the drawing of
+    that list waits. The other list and everything else in the tab stay
+    live.
+  - **Latest** (`digHoldPill`, `.dig-latest`, `btn sm primary`, made only
+    while a list is held): "Latest", "Latest · 3 new" (log: lines since,
+    with the filter; table: rows that were not there), the rest in its
+    `title`. It takes no room and covers no data: the table's sits in a
+    zero-height sticky holder (`.dig-hold`, the list's first child while
+    held) over the right end of the sticky heading row; the log's over the
+    right end of the filter box, just above the log. A press, or the list
+    scrolled back to its top (wheel, keys, scrollbar, touch), shows the
+    current data from the top and follows it again (`digHoldStop`,
+    `digHoldLatest`, `digHoldScroll`). At the top the lists draw exactly
+    as before (the rendered tab compared before / after, below).
+  - **Decisions** (what keeps the hold, what goes back to live):
+    a row's details opened / closed - kept, the row stays where it was,
+    its details under it (drawn from the held rows); a row click (map
+    point, talker, choice) - kept, the row gets its mark; the panel
+    resized or closed and opened - kept (`scrollTop` survives; a list that
+    fits after a resize is at its top, so live); selecting and copying
+    text - kept (a held list is not rewritten, so the selection stays);
+    scrollbar drag, keys, touch - they scroll, so they hold or release by
+    where the list ends up; a sideways scroll alone does not hold. A
+    heading click (sort) - live, the new order from the top; the filter
+    box and Clear - the log live from the top (they ask for a different
+    log); another decoder tab - its lists live from the top, and so is
+    this one when it is picked again (the lists are shared by the tabs;
+    `digHoldTab`). A tab whose tables are gone (retune, mode change):
+    live, hidden as before.
+  - Test (headless Chromium over the DevTools protocol, real mouse wheel,
+    clicks, keys, touch; a TEST receiver on 29480 with the debug
+    playback; scripts in the job's scratch `c/`): `t_repro.py` - the
+    reproduction above, then the same after the change: ADS-B sorted by
+    Seen, scrollTop 91, the same first row, text and Seen for 60 s
+    (before: 12 changes in 30 s); Aero All channels' log, scrollTop 100,
+    the same first line for 60 s (before: 4 changes in 30 s).
+    `t_after.py` (UAT on three VFOs, 18 rows with details and map
+    points, 43 checks): held 10 s; the button inside the heading row,
+    scrollHeight unchanged; details open / close and a map-point row
+    click held with the row at the same y; panel 80 px taller held; a
+    selection kept 4 s and copied with Ctrl+C (table and log); Latest and
+    a wheel back to the top -> every row / event the receiver sent;
+    sideways scroll not held; the scrollbar thumb dragged down holds and
+    back up releases; PageDown holds, Home releases; a heading click, the
+    filter, Clear and a tab switch -> live from the top; panel closed and
+    opened -> still held. `t_touch.py`: finger drags hold and release
+    both lists, a tap on Latest. `t_same.py`: the page before and after
+    side by side, frozen on the same data (Aero All channels, UAT): the
+    rendered `#info-body-dec` identical (56225 / 80114 chars) and the
+    lists' boxes the same. `t_long.py`, 10 minutes held: Aero All
+    channels' log - scrollTop, visible text (hashed) and first line the
+    same in all 20 checks, the button counting up to "Latest · 78 new"
+    while the tab's log grew from 43 to 113 events (some older lines left
+    the page's log meanwhile; a 150 s rerun: 19 new events, none gone,
+    button "20 new" - one line had come just as the hold began and was
+    not drawn yet), Latest -> all 113 lines; the list stayed 129 nodes,
+    the page's heap 4.4 -> 4.3 MB after a GC. ADS-B on three VFOs (18
+    rows, default sort): the same table for 10 minutes, 499 nodes, heap
+    4.4 -> 4.8 MB. Not run: Firefox / Safari (the reproduction is
+    Chromium's; the hold reads only `scrollTop`), a phone-sized layout,
+    talker and choice rows (they redraw through the same path as the
+    map-point row that was clicked).
 - Options (`dig::Options`): verbose ("Show all messages" - "Log all"
   until 2026-11-19), log (the logging mode, 0 Off / 1 Log / 2 Log All,
   2026-11-19 - *decoder-log.md*; a new VFO / decoder starts at Off), map
