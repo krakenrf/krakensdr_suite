@@ -657,7 +657,8 @@ constexpr float AG_LIN_CAUSE_DB = -15.0f; // dBFS rms at the higher gain: a comp
 constexpr uint32_t AG_LIN_CAUSE_HZ = 3'000'000;   // ... in the hop or within this of its centre (-20 .. -10 alike on the reference)
 constexpr float AG_LIN_BURST = 4.0f;
 constexpr float AG_LIN_STEADY = 0.75f;
-constexpr int AG_LIN_NO_VERDICT = 3;      // pairs in a row without a verdict end a search    // dB: a quantity whose brackets change more (median of 8) judges nothing      // dB: more power at the lower gain than this: a burst, no pair
+constexpr int AG_LIN_NO_VERDICT = 3;
+constexpr double AG_LIN_HEAVY_CLIP = 0.01; // a baseline clipped more than this (1 %) is the clipping rule's alone      // pairs in a row without a verdict end a search    // dB: a quantity whose brackets change more (median of 8) judges nothing      // dB: more power at the lower gain than this: a burst, no pair
 // the converter's own noise (no input), as the estimators measure it (the
 // KrakenSDR at gain 0, the whole range, 2026-11-24: rms -45.0 dBFS, floor -46.5)
 constexpr float AG_CONV_P_DB = -45.0f;    // the visit's power, dB against full scale (127.5 a component)
@@ -1108,6 +1109,9 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
             e.hold = e.last_up ? std::min(e.hold * 2, AG_PROBE_HOLD_MAX) : 1;
             e.last_up = false;
             take(pg);
+            // (the same evidence must not cost a step twice: a mild clip the
+            // clipping rule noted at the old gain is spent by this move)
+            mild_clips.erase(hz);
             e.search = true;      // on down while it stays non-linear
             e.up_search = false;
             e.step = gross ? AG_FLOOR_STEP_BIG : AG_FLOOR_STEP;
@@ -1224,9 +1228,25 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
         e.pend_clipped = clipped || (a.gain > base_g && peak_dbfs > AG_RAISE_HEADROOM_DBFS);
         return;
     }
-    if (a.gain != base_g) return;   // neither (the gain changed meanwhile)
-    // a baseline visit
-    if (clipped) { e.pend_g = -999; return; }   // (a clipped one: the clipping rule's)
+    if (a.gain != base_g) {
+        // neither (the gain changed meanwhile: the clipping rule stepped) - a
+        // pending probe is cancelled, and that is a pair without a verdict
+        if (e.pend_g != -999) { e.pend_g = -999; floor_no_verdict(e); }
+        return;
+    }
+    // A baseline visit. One clipped heavily (over AG_LIN_HEAVY_CLIP) is the
+    // clipping rule's alone: a pending probe is cancelled (a pair without a
+    // verdict). A MILD clip (a few values at 0 / 255) is still a baseline:
+    // compression with a few clipped values is the case this test is for,
+    // and its verdict (down) goes the way the clipping rule would, only
+    // sooner. (Until 2026-11-24 any clip over 0.01 % dropped the baseline:
+    // 417.43 MHz, clipping 0.06 - 0.1 % now and then at 43.4 - 49.6, never
+    // closed a pair after its first move and sat 7 dB compressed at 43.4 for
+    // a whole one-tuner run - the orchestrator's acceptance set on 1aa6ecc.)
+    if (static_cast<double>(a.clipped) / a.values > AG_LIN_HEAVY_CLIP) {
+        if (e.pend_g != -999) { e.pend_g = -999; floor_no_verdict(e); }
+        return;
+    }
     if (e.base_sweep == sweep_idx - 1 && std::isfinite(e.base_fin)) {
         // (a median: one jump - a cause keyed up - doesn't move it; content
         // that moves by itself from visit to visit does)
@@ -1295,6 +1315,8 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
                     e.agree_n = 0;
                 }
             }
+        } else {
+            floor_no_verdict(e);   // (a probe whose bracket can't close)
         }
         e.pend_g = -999;
     }
