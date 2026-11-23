@@ -36,7 +36,7 @@ constexpr size_t MAX_PENDING = 256 * 1024;               // a line longer than t
 std::atomic<bool> log_enabled{true};
 std::atomic<int> log_period_s{10};
 std::atomic<int> log_keep_days{7};     // Keep: days a finished day stays plain (WB_LOG_KEEP)
-std::atomic<int> log_zip_days{365};    // Then compressed: days gzipped after those (WB_LOG_ZIP; 0 = deleted after Keep)
+std::atomic<int> log_zip_days{30};    // Then compressed: days gzipped after those (WB_LOG_ZIP; 0 = deleted after Keep)
 constexpr auto STALE_AFTER = std::chrono::seconds(30);
 // a day's event file stops at this size (an alarm flapping all day): the rest of
 // that UTC day's events are not written (the size-rotated event log before the

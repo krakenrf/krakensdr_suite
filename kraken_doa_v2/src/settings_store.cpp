@@ -216,7 +216,7 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"wb_log_enabled",           "WB_LOG_ENABLE:",            VType::BOOL,   "1"},
         {"wb_log_period_sec",        "WB_LOG_PERIOD:",            VType::NUMBER, "10"},
         {"wb_log_keep_days",         "WB_LOG_KEEP:",              VType::NUMBER, "7"},
-        {"wb_log_zip_days",          "WB_LOG_ZIP:",               VType::NUMBER, "365"},
+        {"wb_log_zip_days",          "WB_LOG_ZIP:",               VType::NUMBER, "30"},
         // Spectrum / waterfall display preferences (UI:* keys)
         {"doa_convention",           "UI:DOA_CONV:",              VType::STRING, "compass"},
         {"waterfall_fft_ymax",       "UI:FFT_Y:",                 VType::NUMBER, "60"},

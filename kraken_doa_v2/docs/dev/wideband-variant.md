@@ -88,13 +88,13 @@ the compression came with its follow-up, 2026-11-23):**
   so both logs run the same lines. **Keep** (`WB_LOG_KEEP:`, N, 1-365 - no
   "forever" here, as before) is the plain days: a stored value stays, a new
   install gets **7** (it was 30, with deletion after it). **Then
-  compressed** (`WB_LOG_ZIP:`, M, new, 0-3650, default **365**): the days a
+  compressed** (`WB_LOG_ZIP:`, M, new, 0-3650, default **30**, as the decoder log; it was 365 until 2026-11-23): the days a
   finished day is kept as `<name>.csv.gz` (one gzip per day, in place,
   `zcat` reads it) after the plain ones; **0 = the old rule** (deleted after
   Keep). Both logs share the two settings (the sheet's "Logging (both
   logs)"), persisted like the others (`wb_log_keep_days`,
   `wb_log_zip_days`; an updated receiver's settings file keeps its stored
-  Keep - 30 on most - and gets Then compressed 365 backfilled). By the age
+  Keep - 30 on most - and gets Then compressed 30 backfilled). By the age
   of the day in the name (UTC; today 0): plain while age <= N, gzipped while
   N < age <= N + M, deleted after; today's files are never touched; a
   `.csv.gz.part` (a gzip a crash interrupted - the plain file is still
@@ -255,8 +255,8 @@ the compression came with its follow-up, 2026-11-23):**
   Keep [7 days / 30 / 90 / 1 year] and **Then compressed** [none / 30 days
   / 90 / 1 year / 3 years / 10 years] (another stored value is added to its
   list), a `?` beside them that says the rule with the numbers in force
-  (`wbLogRule`: "Keep 7, Then compressed 365: the last 7 days plain, the 365
-  days before those (days 8 - 372) compressed, older days deleted", and that
+  (`wbLogRule`: "Keep 7, Then compressed 30: the last 7 days plain, the 30
+  days before those (days 8 - 37) compressed, older days deleted", and that
   a change's deletions come 10 min after the last change). Both stay usable
   while logging is off - they apply to the days on disk (an older receiver,
   no `zip_days`: disabled, as it only applied them when it wrote a row).

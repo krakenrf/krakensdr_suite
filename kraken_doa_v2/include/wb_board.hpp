@@ -20,7 +20,7 @@
 //                             restored data (at most 5 MB a day)
 // A finished day stays a plain file for the Keep days (WB_LOG_KEEP, 1-365,
 // default 7), then is gzipped in place (..._YYYYMMDD.csv.gz) for the Then
-// compressed days (WB_LOG_ZIP, 0-3650, default 365; 0 = deleted after Keep),
+// compressed days (WB_LOG_ZIP, 0-3650, default 30; 0 = deleted after Keep),
 // then deleted - the decoder log's rule and code (utils/log_retention.hpp),
 // so a long deployment cannot fill the SD card. The pass runs on its own
 // thread: at the first use, with the STORED settings (read from the settings
