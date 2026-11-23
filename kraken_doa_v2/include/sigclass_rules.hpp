@@ -25,11 +25,16 @@ bool same_signal(const T& a, const T& b) {
 }
 
 // the better of two views of one signal first: the one in its tuner's latest
-// snapshot (fresh), then the more recently seen, then the more often seen
-// (then the lower tuner, the lower frequency: a strict order)
+// snapshot (fresh), then one with a class, then the stronger (each tuner has
+// its own antenna: live, one MPT1327 control channel read 15 dB SNR on CH0
+// and 3.6 dB on CH1 - the newer CH1 view, p 0.40, hid CH0's sure label),
+// then the more recently seen, then the more often seen (then the lower
+// tuner, the lower frequency: a strict order)
 template <class T>
 bool better(const T& a, const T& b) {
     if (a.fresh != b.fresh) return a.fresh;
+    if (a.cls.empty() != b.cls.empty()) return !a.cls.empty();
+    if (a.snr != b.snr) return a.snr > b.snr;
     if (a.seen_real != b.seen_real) return a.seen_real > b.seen_real;
     if (a.hits != b.hits) return a.hits > b.hits;
     if (a.tuner != b.tuner) return a.tuner < b.tuner;

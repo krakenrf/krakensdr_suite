@@ -23,10 +23,11 @@ namespace {
 struct T {   // the fields of the service's PubTrack the rules read, + strings
     int id = 0, tuner = 0, hits = 0;
     double hz = 0, bw = 0, seen_real = 0;
+    float snr = 0;
     bool fresh = false;
     std::string cls, name;
     bool operator==(const T& o) const {
-        return id == o.id && tuner == o.tuner && hits == o.hits && hz == o.hz && bw == o.bw && seen_real == o.seen_real &&
+        return id == o.id && tuner == o.tuner && hits == o.hits && snr == o.snr && hz == o.hz && bw == o.bw && seen_real == o.seen_real &&
                fresh == o.fresh && cls == o.cls && name == o.name;
     }
 };
@@ -83,9 +84,9 @@ void m3_no_tuner(std::vector<T>& pub) {
 }
 // M4: the worse one kept
 void m4_worse(std::vector<T>& pub) {
-    for (T& k : pub) k.fresh = !k.fresh, k.seen_real = -k.seen_real, k.hits = -k.hits;
+    for (T& k : pub) k.fresh = !k.fresh, k.snr = -k.snr, k.seen_real = -k.seen_real, k.hits = -k.hits;
     sigsvc::rules::drop_overlap_duplicates(pub);
-    for (T& k : pub) k.fresh = !k.fresh, k.seen_real = -k.seen_real, k.hits = -k.hits;
+    for (T& k : pub) k.fresh = !k.fresh, k.snr = -k.snr, k.seen_real = -k.seen_real, k.hits = -k.hits;
 }
 
 // --- the checks ----------------------------------------------------------------
@@ -143,7 +144,8 @@ std::vector<T> random_tracks(std::mt19937_64& rng) {
                 x.fresh = U(rng) < 0.5;
                 x.seen_real = 1000.0 + std::floor(U(rng) * 4.0);   // (ties happen)
                 x.hits = 1 + int(rng() % 4);
-                x.cls = "c" + std::to_string(x.id % 7);
+                x.snr = float(rng() % 3 == 0 ? 10 : rng() % 40);   // (ties happen)
+                x.cls = rng() % 8 == 0 ? std::string() : "c" + std::to_string(x.id % 7);   // (sometimes a view without a class)
                 x.name = "Class name number " + std::to_string(x.id);   // (longer than the SSO buffer)
                 v.push_back(x);
             }
