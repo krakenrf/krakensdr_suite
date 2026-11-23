@@ -15,12 +15,16 @@
 # certificate), which is re-issued here whenever the names or addresses
 # change or it gets old - always for the same server.key - without anyone
 # having to install anything again. The CA itself is replaced only when it
-# can't vouch for a wanted name (a rename, an avahi conflict name, a new
-# search domain), when the scope in cert_options differs from its own, when
-# it expires within a year, or with --new-ca; the old CA certificate is kept
-# as krakensdr-ca.YYYYMMDD.retired.crt (its key deleted) so the page can
-# name what devices should remove. A certificate of the user's own (or a
-# symlinked server.crt / server.key) is never touched.
+# can't vouch for the host's own name (a rename, an avahi conflict name),
+# when the scope in cert_options differs from its own, when it expires
+# within a year, when its constraints are missing or partial, when it isn't
+# limited to TLS servers, or with --new-ca; another name outside it (a
+# search domain of another network) is left out of the server certificate
+# and reported. The old CA certificate is kept as
+# krakensdr-ca.YYYYMMDD.retired.crt (its key deleted) so the page can name
+# what devices should remove. A certificate of the user's own (also one with
+# CN=krakensdr from another CA, or a symlinked server.crt / server.key) is
+# never touched; a key that can't be used is moved aside, never overwritten.
 #
 #   <dir>      kraken_doa's working directory (kraken_doa_v2, /data/kraken_doa)
 #   --force    re-issue the server certificate (same key, same CA)
@@ -32,8 +36,10 @@
 # tests only: KRAKEN_CERT_RESOLV_CONF (read instead of /etc/resolv.conf).
 #
 # Output (stdout): "reason: <why>" for issued / ca-created / not-managed,
-# "retired: <file>" when a CA was replaced and "moved: <file>" when an
-# unreadable server.key was moved aside, then as the LAST line:
+# "retired: <file>" when a CA was replaced, "moved: <file>" for an unusable
+# key moved aside, "saved: <file>" for a migrated server.crt's copy,
+# "not-covered: <names>" for wanted names outside the CA (left out of the
+# server certificate; --new-ca takes them in), then as the LAST line:
 #   kept         nothing changed
 #   issued       the server certificate was (re-)issued, the CA is unchanged:
 #                devices that installed the CA need nothing
@@ -135,13 +141,20 @@ must() {
 nap() { sleep 0.2 2>/dev/null || sleep 1; }
 
 # --- one run at a time in <dir> -----------------------------------------------
-# mkdir is atomic everywhere; the folder holds the time it was taken (Unix
-# seconds in "since"). kraken_doa's generator takes the same lock the same
-# way (tlscert's DirLock). A folder that can't be made at all (read-only
-# <dir>): no lock - nothing can be written there anyway
+# Fine rule 14. mkdir is atomic everywhere; the folder holds the time it was
+# taken (Unix seconds in "since"). kraken_doa's generator takes the same lock
+# the same way (tlscert's DirLock). A dead run's lock - older than 120 s,
+# dated more than 60 s ahead (the clock was set back: a Pi without a clock
+# after a power cut), or without its time once the wait is over - is taken
+# over by renaming it away first: of two waiters only one rename succeeds,
+# and one that renamed a NEW lock (made meanwhile) puts it back. A folder
+# that can't be made at all (read-only <dir>): no lock - nothing can be
+# written there anyway
+lock_since() { local v; v=$(cat "$1/since" 2>/dev/null) || v=""; case "$v" in *[!0-9]*) v="" ;; esac; printf '%s' "$v"; }
 take_lock() {
-    local t0 now since
+    local t0 now since st
     t0=$(date +%s)
+    st="$D/.make-cert.stale.$$"
     while :; do
         if mkdir "$LOCK" 2>/dev/null; then
             LOCKED=1
@@ -150,15 +163,20 @@ take_lock() {
         fi
         [ -d "$LOCK" ] || return 0
         now=$(date +%s)
-        since=$(cat "$LOCK/since" 2>/dev/null) || since=""
-        case "$since" in ""|*[!0-9]*) since="" ;; esac
-        # a run that was killed: taken over (also one that died before it
-        # wrote its time, once the wait is over)
-        if { [ -n "$since" ] && [ $((now - since)) -gt 120 ]; } ||
+        since=$(lock_since "$LOCK")
+        if { [ -n "$since" ] && { [ $((now - since)) -gt 120 ] || [ $((since - now)) -gt 60 ]; }; } ||
            { [ -z "$since" ] && [ $((now - t0)) -ge 10 ]; }; then
-            rm -rf "$LOCK" 2>/dev/null
-            [ -d "$LOCK" ] || continue
-            return 0        # can't be removed (read-only <dir>): nobody can write there
+            rm -rf "$st" 2>/dev/null
+            if mv "$LOCK" "$st" 2>/dev/null </dev/null; then
+                # the one judged dead? else a live one made meanwhile: back
+                if [ "$(lock_since "$st")" = "$since" ]; then rm -rf "$st"
+                else mv "$st" "$LOCK" 2>/dev/null </dev/null || rm -rf "$st"; fi
+                continue
+            fi
+            # can't be renamed while it is still the dead one: a read-only
+            # <dir> - nobody can write there
+            if [ -d "$LOCK" ] && [ "$(lock_since "$LOCK")" = "$since" ]; then return 0; fi
+            continue
         fi
         [ $((now - t0)) -lt 10 ] ||
             fail "another make-cert.sh or kraken_doa is writing the certificate in ${D:-/} (for 10 s) - nothing was changed"
@@ -353,9 +371,11 @@ IPS="127.0.0.1 ::1"
 if [ $SCOPE = wide ]; then
     for a in $(local_ipv4s | private_v4); do IPS="$IPS $a"; done
 fi
-# the subjectAltName set wanted, one "DNS:x" / "IP:a" per line, sorted
-WANT_SAN=$( { for n in $NAMES; do echo "DNS:$n"; done; for a in $IPS; do echo "IP:$a"; done; } | LC_ALL=C sort -u)
-# the CA's permitted DNS subtrees
+# the host's OWN names (fine rule 18): one of them outside the CA is a rename
+# - a new CA; any other name outside it is left out of the server certificate
+OWN=" "
+[ $USABLE = 0 ] || OWN=" $HOST $HOST.local "
+# a new CA's permitted DNS subtrees: every wanted name
 NC_DNS=$NAMES
 [ $SCOPE = narrow ] || NC_DNS="${NAMES}local lan "
 
@@ -393,7 +413,7 @@ permitted_of() {
 }
 # dns_permitted <name> <DNS constraints, space-separated>: RFC 5280 / OpenSSL's
 # nc_dns - the name itself or anything under it (".x": only under it). No DNS
-# constraint at all = every name.
+# constraint at all = every name (such a CA is replaced: fine rule 18).
 dns_permitted() {
     local c any=0
     for c in $2; do
@@ -413,6 +433,39 @@ verifies() {
     [ "${3:-}" != notime ] || t=$V_NOTIME
     ossl verify $V_ONLY $t -CAfile "$2" -purpose sslserver "$1" >/dev/null 2>&1
 }
+# self_signed <pem> (fine rule 15): self-issued (I_SUBJ = I_ISSUER of the last
+# info) and its signature verifies with its own key. The signature is checked
+# by itself (asn1parse + dgst): openssl verify would judge its extensions and
+# key usage too (build_page.py's has no keyCertSign). RSA PKCS#1 and ECDSA
+# with SHA-1 / SHA-2, as tlscert's self_signed
+self_signed() {
+    local md
+    [ "$L_SUBJ" = "$L_ISSUER" ] || return 1
+    ossl x509 -in "$1" -outform DER -out "$WORK/ss.der" 2>/dev/null || return 1
+    # tbsCertificate (offset, length with its header), signatureAlgorithm, the signature's bytes
+    set -- $(ossl asn1parse -inform DER -in "$WORK/ss.der" 2>/dev/null | awk '
+        match($0, /^ *[0-9]+:d=[0-9]+ +hl= *[0-9]+ +l= *[0-9]+/) {
+            s = substr($0, RSTART, RLENGTH); off = s; sub(/:.*/, "", off)
+            d = s; sub(/.*:d=/, "", d); sub(/ .*/, "", d)
+            hl = s; sub(/.*hl= */, "", hl); sub(/ .*/, "", hl)
+            l = s; sub(/.* l= */, "", l)
+            if (d + 0 == 1) { n++; o[n] = off + 0; h[n] = hl + 0; len[n] = l + 0 }
+            if (d + 0 == 2 && n == 2 && alg == "" && $0 ~ /OBJECT/) { a = $0; sub(/.*:/, "", a); gsub(/[ \t]/, "", a); alg = a }
+        }
+        END { if (n == 3 && alg != "") print o[1], h[1] + len[1], o[3] + h[3] + 1, len[3] - 1, alg }')
+    [ $# = 5 ] || return 1
+    case "$5" in
+    sha1WithRSAEncryption|ecdsa-with-SHA1) md=-sha1 ;;
+    sha256WithRSAEncryption|ecdsa-with-SHA256) md=-sha256 ;;
+    sha384WithRSAEncryption|ecdsa-with-SHA384) md=-sha384 ;;
+    sha512WithRSAEncryption|ecdsa-with-SHA512) md=-sha512 ;;
+    *) return 1 ;;
+    esac
+    dd if="$WORK/ss.der" of="$WORK/ss.tbs" bs=1 skip=$1 count=$2 2>/dev/null &&
+        dd if="$WORK/ss.der" of="$WORK/ss.sig" bs=1 skip=$3 count=$4 2>/dev/null || return 1
+    printf '%s\n' "$L_PUB" > "$WORK/ss.pub"
+    ossl dgst $md -verify "$WORK/ss.pub" -signature "$WORK/ss.sig" "$WORK/ss.tbs" 2>/dev/null | grep -q 'Verified OK'
+}
 # blocks <file> <prefix>: its PEM certificates as <prefix>1.pem, 2, ... -> how many
 blocks() {
     awk -v p="$2" '/-----BEGIN CERTIFICATE-----/ { n++; f = p n ".pem" }
@@ -428,7 +481,7 @@ fix_mode() {
     case "$(ls -l "$1" 2>/dev/null)" in "-rw-------"*) ;; *) chmod 600 "$1" 2>/dev/null ;; esac
 }
 # dated_name <prefix> <suffix>: <prefix>YYYYMMDD<suffix> (UTC), then -2, -3 ...
-# before the suffix, by which names are taken in <dir> (fine rules 1, 2, 12)
+# before the suffix, by which names are taken in <dir> (fine rules 1, 2, 12, 15)
 dated_name() {
     local day n i=2
     day=$(date -u +%Y%m%d); n="$1$day$2"
@@ -445,10 +498,17 @@ not_managed() {     # <reason>: left alone - as long as the pair is there
 
 # --- managed or not -----------------------------------------------------------
 if [ -L "$CRT" ] || [ -L "$KEY" ]; then not_managed "server.crt or server.key is a symbolic link"; fi
+# fine rule 12: a file this user may not read (another user's - made by `sudo
+# ./run.sh`?) is a failure, never a reason for a new key or CA
+for f in "$CRT" "$KEY" "$CA_CRT" "$CA_KEY"; do
+    if [ -e "$f" ] && [ ! -r "$f" ]; then
+        fail "${f##*/} cannot be read by $(id -un 2>/dev/null || echo this user) - check its owner - nothing was changed"
+    fi
+done
 # the CA certificate: its first certificate counts (as tlscert's)
 CA_NB=0
 [ ! -s "$CA_CRT" ] || CA_NB=$(blocks "$CA_CRT" "$WORK/cablk")
-HAVE_CRT=0
+HAVE_CRT=0; OURS=0; LEGACY=0
 if [ -s "$CRT" ]; then
     # fine rule 11: a server.crt with no certificate in it is not replaced blindly
     nb=$(blocks "$CRT" "$WORK/blk")
@@ -460,21 +520,24 @@ if [ -s "$CRT" ]; then
     HAVE_CRT=1
     L_SUBJ=$I_SUBJ; L_ISSUER=$I_ISSUER; L_PUB=$I_PUB; L_VALID=$I_VALID
     L_SAN=$(printf '%s\n' "$I_TEXT" | san_of)
-    managed=0
-    if [ "$L_SUBJ" = "CN=krakensdr" ]; then
-        managed=1       # install.sh / Docker / Windows before PR #5
-    else
-        case ",$L_SUBJ," in *",O=KrakenSDR receiver,"*) managed=1 ;; esac    # PR #5's, and ours
-    fi
     # issued by our CA: chain and signature, no time check (fine rule 10)
-    if [ $managed = 0 ] && [ "$CA_NB" -ge 1 ] && verifies "$WORK/blk1.pem" "$WORK/cablk1.pem" notime; then managed=1; fi
-    [ $managed = 1 ] || not_managed "server.crt is not a KrakenSDR certificate ($L_SUBJ)"
+    if [ "$CA_NB" -ge 1 ] && verifies "$WORK/blk1.pem" "$WORK/cablk1.pem" notime; then
+        OURS=1
+    else
+        # fine rule 15: PR #5's (O=KrakenSDR receiver) and the older install.sh
+        # / Docker / Windows one (exactly CN=krakensdr) - only when self-signed
+        legacy=0
+        if [ "$L_SUBJ" = "CN=krakensdr" ]; then legacy=1
+        else case ",$L_SUBJ," in *",O=KrakenSDR receiver,"*) legacy=1 ;; esac; fi
+        if [ $legacy = 1 ] && self_signed "$WORK/blk1.pem"; then LEGACY=1; fi
+    fi
+    [ $OURS = 1 ] || [ $LEGACY = 1 ] ||
+        not_managed "server.crt is not a KrakenSDR certificate ($L_SUBJ, issued by $L_ISSUER)"
 fi
 
-# --- the server key: kept whatever its type -----------------------------------
-# One that can't be read (a passphrase, garbage, no permission) is never
-# deleted or overwritten (fine rule 12): it is moved aside and a new key is
-# made
+# --- the keys: kept whatever their type ---------------------------------------
+# One that can be read but not used (a passphrase, garbage) is never deleted
+# or overwritten (fine rule 12): it is moved aside and a new key is made
 KEY_NEW=0; K_PUB=""; ASIDE=""
 if [ -s "$KEY" ]; then
     K_PUB=$(key_pub "$KEY")
@@ -486,19 +549,29 @@ if [ -s "$KEY" ]; then
 else
     KEY_NEW=1
 fi
+CA_KPUB=""; CA_ASIDE=""
+if [ -s "$CA_KEY" ]; then
+    CA_KPUB=$(key_pub "$CA_KEY")
+    case "$CA_KPUB" in
+    *"BEGIN PUBLIC KEY"*) ;;
+    *)  CA_KPUB=""; CA_ASIDE=$(dated_name krakensdr-ca.key.unreadable- "") ;;
+    esac
+fi
 
 # --- the CA -------------------------------------------------------------------
 CA_OK=0; C_TEXT=""
-if [ "$CA_NB" -ge 1 ] && [ -s "$CA_KEY" ]; then
+if [ "$CA_NB" -ge 1 ] && [ -n "$CA_KPUB" ]; then
     info "$WORK/cablk1.pem" 365
     C_TEXT=$I_TEXT; C_VALID=$I_VALID
-    if [ $I_OK = 1 ] && [ "$I_PUB" = "$(key_pub "$CA_KEY")" ]; then
+    if [ $I_OK = 1 ] && [ "$I_PUB" = "$CA_KPUB" ]; then
         case "$C_TEXT" in *"CA:TRUE"*) CA_OK=1 ;; esac
     fi
 fi
-NEED_CA=0; REASON=""
+NEED_CA=0; REASON=""; NOT_COVERED=""
 if [ $new_ca = 1 ]; then
     NEED_CA=1; REASON="--new-ca"
+elif [ -n "$CA_ASIDE" ]; then
+    NEED_CA=1; REASON="krakensdr-ca.key could not be read (moved aside to $CA_ASIDE)"
 elif [ $CA_OK = 0 ]; then
     NEED_CA=1
     if [ -e "$CA_CRT" ] || [ -e "$CA_KEY" ]; then REASON="the CA key is missing or does not match"
@@ -517,16 +590,33 @@ else
         if printf '%s\n' "$perm" | grep -q -x 'IP:10\.0\.0\.0/255\.0\.0\.0'; then ca_scope=wide; else ca_scope=narrow; fi ;;
     *)  ca_scope=none ;;
     esac
+    # fine rule 16: limited to TLS servers - extendedKeyUsage exactly serverAuth
+    ca_eku=$(printf '%s\n' "$C_TEXT" | awk '/X509v3 Extended Key Usage/ { getline; gsub(/^[ \t]+|[ \t]+$/, ""); print; exit }')
     if [ $ca_scope = none ]; then
         NEED_CA=1; REASON="the CA has no name constraints"
+    elif ! printf '%s\n' "$perm" | grep -q '^DNS:' || ! printf '%s\n' "$perm" | grep -q '^IP:'; then
+        # fine rule 18: partial constraints leave DNS names (or addresses) open
+        NEED_CA=1; REASON="the CA's name constraints have no DNS or no IP subtree"
+    elif [ "$ca_eku" != "TLS Web Server Authentication" ]; then
+        NEED_CA=1; REASON="the CA is not limited to TLS servers (extendedKeyUsage)"
     elif [ "$ca_scope" != "$SCOPE" ]; then
         NEED_CA=1; REASON="scope $ca_scope -> $SCOPE"
     else
         for n in $NAMES; do
-            if ! dns_permitted "$n" "$nc"; then NEED_CA=1; REASON="new name $n"; break; fi
+            dns_permitted "$n" "$nc" && continue
+            case "$OWN" in *" $n "*) NEED_CA=1; REASON="new name $n"; break ;; esac
+            NOT_COVERED="$NOT_COVERED $n"
         done
     fi
 fi
+[ $NEED_CA = 0 ] || NOT_COVERED=""
+# the server certificate's names: the wanted ones the CA covers (fine rule 18);
+# the set wanted, one "DNS:x" / "IP:a" per line, sorted
+LEAF_NAMES=""
+for n in $NAMES; do case "$NOT_COVERED " in *" $n "*) ;; *) LEAF_NAMES="$LEAF_NAMES $n" ;; esac; done
+WANT_SAN=$( { for n in $LEAF_NAMES; do echo "DNS:$n"; done; for a in $IPS; do echo "IP:$a"; done; } | LC_ALL=C sort -u)
+[ -z "$NOT_COVERED" ] ||
+    note "outside this receiver's CA, left out of the certificate:$NOT_COVERED (--new-ca takes them in; every device then installs the new CA)"
 
 # --- the server certificate ---------------------------------------------------
 ISSUE=$NEED_CA
@@ -536,6 +626,7 @@ if [ $ISSUE = 0 ]; then
     elif [ $HAVE_CRT = 0 ]; then REASON="no server certificate"
     elif [ -n "$ASIDE" ]; then REASON="server.key could not be read (moved aside to $ASIDE) - a new server key"
     elif [ $KEY_NEW = 1 ]; then REASON="a new server key"
+    elif [ $OURS = 0 ]; then REASON="replaces the self-signed certificate"
     elif [ "$L_PUB" != "$K_PUB" ]; then REASON="server.crt does not match server.key"
     elif [ "$L_SAN" != "$WANT_SAN" ]; then
         if [ "$(printf '%s\n' "$L_SAN" | grep '^DNS:')" = "$(printf '%s\n' "$WANT_SAN" | grep '^DNS:')" ]; then
@@ -546,15 +637,13 @@ if [ $ISSUE = 0 ]; then
     elif [ $L_VALID = 0 ]; then REASON="it expires within 60 days"
     elif [ "$nb" != 2 ] || [ "$(b64 "$WORK/blk2.pem")" != "$(b64 "$WORK/cablk1.pem")" ]; then
         REASON="server.crt does not hold the CA certificate after it"
-    # issued by the current CA: chain, signature, constraints, purpose - no
-    # time check (fine rule 10: time is only the 60 / 365 days)
-    elif ! verifies "$WORK/blk1.pem" "$WORK/cablk1.pem" notime; then REASON="it is not issued by the current CA"
     else ISSUE=0
     fi
 fi
 if [ $ISSUE = 0 ]; then
     fix_mode "$KEY"
     fix_mode "$CA_KEY"
+    [ -z "$NOT_COVERED" ] || echo "not-covered:$NOT_COVERED"
     echo kept
     exit 0
 fi
@@ -609,6 +698,7 @@ serial() {
     echo "basicConstraints = critical, CA:TRUE, pathlen:0"
     echo "keyUsage = critical, keyCertSign, cRLSign"
     echo "subjectKeyIdentifier = hash"
+    echo "extendedKeyUsage = serverAuth"
     echo "nameConstraints = critical, @nc"
     echo "[nc]"
     i=0
@@ -634,7 +724,7 @@ serial() {
     echo "subjectAltName = @san"
     echo "[san]"
     i=0
-    for n in $NAMES; do echo "DNS.$i = $n"; i=$((i + 1)); done
+    for n in $LEAF_NAMES; do echo "DNS.$i = $n"; i=$((i + 1)); done
     i=0
     for a in $IPS; do echo "IP.$i = $a"; i=$((i + 1)); done
 } > "$STAGE/ca.cnf"
@@ -652,7 +742,8 @@ req_cnf() {
 
 if [ $NEED_CA = 1 ]; then
     must "make the CA key" genrsa -out ca.key 3072
-    req_cnf "KrakenSDR $CN CA $(date -u +%Y-%m-%d)" > "$STAGE/ca_req.cnf"     # UTC (fine rule 1)
+    # UTC (fine rule 1); the host part at most 40 characters: a CN is 64 at most (fine rule 17)
+    req_cnf "KrakenSDR $(printf '%.40s' "$CN") CA $(date -u +%Y-%m-%d)" > "$STAGE/ca_req.cnf"
     must "make the CA request" req -new -config ca_req.cnf -key ca.key -out ca.csr
     serial
     must "make the CA certificate" ca -batch -notext -config ca.cnf -selfsign -keyfile ca.key -in ca.csr \
@@ -681,19 +772,31 @@ info "$STAGE/leaf.crt" 0
 cat "$STAGE/leaf.crt" "$STAGE/ca.pem" > "$STAGE/server.crt" ||
     fail "cannot write in ${D:-/} - nothing was changed"
 
-# Into place. Each step is a rename in one folder; the order keeps any
+# Into place. A migrated (self-signed) server.crt is copied first (fine rule
+# 15). Then each step is a rename in one folder; the order keeps any
 # interruption repairable by the next run (a CA key without its certificate,
-# a key without its certificate: both are replaced / re-issued then):
-# old CA certificate -> retired, new CA key, new CA certificate, unreadable
-# server key -> aside, new server key, server.crt
+# a key without its certificate: both are replaced / re-issued then): old CA
+# certificate -> retired, unusable CA key -> aside, new CA key, new CA
+# certificate, unusable server key -> aside, new server key, server.crt
 mv_into() { chmod "$3" "$1" && mv -f "$1" "$2" || fail "cannot replace $2"; }
+SAVED=""
+if [ $LEGACY = 1 ]; then
+    SAVED=$(dated_name server.crt.replaced- "")
+    { cp "$CRT" "$STAGE/saved.crt" && chmod 644 "$STAGE/saved.crt" && mv "$STAGE/saved.crt" "$D/$SAVED"; } </dev/null 2>/dev/null ||
+        fail "cannot keep a copy of server.crt - nothing was changed"
+fi
 RETIRED=""
 if [ $NEED_CA = 1 ]; then
     # fine rule 2: only a readable certificate, not a symlink; its key goes
     if [ -s "$CA_CRT" ] && [ ! -L "$CA_CRT" ] && ossl x509 -in "$CA_CRT" -noout >/dev/null 2>&1; then
         RETIRED=$(dated_name krakensdr-ca. .retired.crt)
-        mv "$CA_CRT" "$D/$RETIRED" </dev/null || fail "cannot rename $CA_CRT - nothing was changed"
+        mv "$CA_CRT" "$D/$RETIRED" </dev/null || fail "cannot rename $CA_CRT"
         chmod 644 "$D/$RETIRED" 2>/dev/null
+    fi
+    if [ -n "$CA_ASIDE" ]; then
+        mv "$CA_KEY" "$D/$CA_ASIDE" </dev/null || fail "cannot move $CA_KEY aside"
+        fix_mode "$D/$CA_ASIDE"
+        note "krakensdr-ca.key could not be read - moved aside to $CA_ASIDE, a new CA is made"
     fi
     mv_into "$STAGE/ca.key" "$CA_KEY" 600       # the old CA's key is gone with this
     mv_into "$STAGE/ca.pem" "$CA_CRT" 644
@@ -710,6 +813,9 @@ fix_mode "$CA_KEY"
 
 echo "reason: $REASON"
 [ -z "$RETIRED" ] || echo "retired: $RETIRED"
+[ -z "$CA_ASIDE" ] || [ $NEED_CA = 0 ] || echo "moved: $CA_ASIDE"
 [ -z "$ASIDE" ] || echo "moved: $ASIDE"
+[ -z "$SAVED" ] || echo "saved: $SAVED"
+[ -z "$NOT_COVERED" ] || echo "not-covered:$NOT_COVERED"
 if [ $NEED_CA = 1 ]; then echo ca-created; else echo issued; fi
 exit 0

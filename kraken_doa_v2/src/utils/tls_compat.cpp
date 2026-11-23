@@ -565,11 +565,44 @@ bool verifies(X509* leaf, X509* ca, string* why = nullptr, bool check_time = tru
     return ok;
 }
 
-// PR #5's self-signed one (O=KrakenSDR receiver) or the one before it (exactly CN=krakensdr)
+// PR #5's self-signed one (O=KrakenSDR receiver) or the one before it
+// (exactly CN=krakensdr) - managed only when self_signed() too (fine rule 15)
 bool old_managed_subject(X509* x) {
     X509_NAME* n = X509_get_subject_name(x);
     if (name_entry(n, NID_organizationName) == tlscert::ORG) return true;
     return X509_NAME_entry_count(n) == 1 && name_entry(n, NID_commonName) == "krakensdr";
+}
+
+// Fine rule 15: self-issued, and its signature verifies with its own key -
+// for the signatures make-cert.sh's self_signed checks (RSA PKCS#1 and ECDSA
+// with SHA-1 / SHA-2), so both decide alike
+bool self_signed(X509* x) {
+    if (X509_NAME_cmp(X509_get_issuer_name(x), X509_get_subject_name(x)) != 0) return false;
+    switch (X509_get_signature_nid(x)) {
+        case NID_sha1WithRSAEncryption:
+        case NID_sha256WithRSAEncryption:
+        case NID_sha384WithRSAEncryption:
+        case NID_sha512WithRSAEncryption:
+        case NID_ecdsa_with_SHA1:
+        case NID_ecdsa_with_SHA256:
+        case NID_ecdsa_with_SHA384:
+        case NID_ecdsa_with_SHA512: break;
+        default: return false;
+    }
+    EVP_PKEY* k = X509_get0_pubkey(x);
+    const bool ok = k && X509_verify(x, k) == 1;
+    ERR_clear_error();
+    return ok;
+}
+
+// Fine rule 16: limited to TLS servers - extendedKeyUsage exactly serverAuth
+// (make-cert.sh: the line "TLS Web Server Authentication")
+bool server_auth_only(X509* x) {
+    auto* eku = static_cast<EXTENDED_KEY_USAGE*>(X509_get_ext_d2i(x, NID_ext_key_usage, nullptr, nullptr));
+    if (!eku) return false;
+    const bool ok = sk_ASN1_OBJECT_num(eku) == 1 && OBJ_obj2nid(sk_ASN1_OBJECT_value(eku, 0)) == NID_server_auth;
+    EXTENDED_KEY_USAGE_free(eku);
+    return ok;
 }
 
 // a CA certificate: basicConstraints with CA:TRUE (make-cert.sh: "CA:TRUE" in its text)
@@ -930,15 +963,18 @@ void tighten_key(const string& path) {
 }
 
 // <dir>/.make-cert.lock (fine rule 14): a folder holding the time it was
-// taken (Unix seconds), exactly as make-cert.sh's take_lock - so the script
-// (run.sh, install.sh, a manual run) and this generator never write at the
-// same time. Waited for up to 10 s; one older than 120 s - or without its
-// time once the wait is over - is a dead run's and taken over; removed when
-// the guard goes. A folder that can't be made at all (a read-only <dir>): no
-// lock - nothing can be written there either.
+// taken (Unix seconds in "since"), exactly as make-cert.sh's take_lock - so
+// the script (run.sh, install.sh, a manual run) and this generator never
+// write at the same time. Waited for up to 10 s. A dead run's lock - older
+// than 120 s, dated more than 60 s ahead (the clock was set back: a Pi
+// without a clock after a power cut), or without its time once the wait is
+// over - is taken over by renaming it away first: of two waiters only one
+// rename succeeds, and one that renamed a NEW lock (made meanwhile) puts it
+// back. Removed when the guard goes. A folder that can't be made at all (a
+// read-only <dir>): no lock - nothing can be written there either.
 class DirLock {
 public:
-    explicit DirLock(string path) : path_(std::move(path)) {}
+    DirLock(const string& dir, string path) : dir_(dir), path_(std::move(path)) {}
     DirLock(const DirLock&) = delete;
     DirLock& operator=(const DirLock&) = delete;
     ~DirLock() {
@@ -949,6 +985,11 @@ public:
     bool take(string* err) {
         namespace fs = std::filesystem;
         const auto t0 = std::chrono::steady_clock::now();
+        unsigned char r[4] = {};
+        RAND_bytes(r, sizeof r);
+        char tag[16];
+        std::snprintf(tag, sizeof tag, "%02x%02x%02x%02x", r[0], r[1], r[2], r[3]);
+        const string stale = join(dir_, string(".make-cert.stale.") + tag);
         for (;;) {
             std::error_code ec;
             if (fs::create_directory(path_, ec)) {
@@ -957,17 +998,27 @@ public:
                 return true;
             }
             if (!fs::is_directory(path_, ec)) return true;   // can't be made (read-only <dir>)
-            string since;
-            read_file(join(path_, "since"), &since);
-            since = trim(since);
-            const bool timed = !since.empty() && since.size() <= 18 &&
-                               std::all_of(since.begin(), since.end(), [](char c) { return c >= '0' && c <= '9'; });
+            const string since = since_of(path_);
             const long long now = static_cast<long long>(std::time(nullptr));
             const auto waited = std::chrono::steady_clock::now() - t0;
-            if ((timed && now - std::stoll(since) > 120) || (!timed && waited >= std::chrono::seconds(10))) {
-                fs::remove_all(path_, ec);   // a run that was killed
-                if (!fs::is_directory(path_, ec)) continue;
-                return true;   // can't be removed (read-only <dir>): nobody can write there
+            const bool dead = since.empty() ? waited >= std::chrono::seconds(10)
+                                            : now - std::stoll(since) > 120 || std::stoll(since) - now > 60;
+            if (dead) {
+                fs::remove_all(stale, ec);
+                fs::rename(path_, stale, ec);
+                if (!ec) {
+                    // the one judged dead? else a live one made meanwhile: back
+                    if (since_of(stale) == since) {
+                        fs::remove_all(stale, ec);
+                    } else {
+                        fs::rename(stale, path_, ec);
+                        if (ec) fs::remove_all(stale, ec);
+                    }
+                    continue;
+                }
+                // can't be renamed while it is still the dead one: a read-only <dir>
+                if (fs::is_directory(path_, ec) && since_of(path_) == since) return true;
+                continue;
             }
             if (waited >= std::chrono::seconds(10)) {
                 *err = "another make-cert.sh or kraken_doa is writing the certificate (" + path_ +
@@ -979,9 +1030,29 @@ public:
     }
 
 private:
-    string path_;
+    // a lock's time: its digits, "" when it has none (make-cert.sh's lock_since)
+    static string since_of(const string& lock) {
+        string v;
+        read_file(join(lock, "since"), &v);
+        v = trim(v);
+        if (v.size() > 18 || !std::all_of(v.begin(), v.end(), [](char c) { return c >= '0' && c <= '9'; })) v.clear();
+        return v;
+    }
+    string dir_, path_;
     bool held_ = false;
 };
+
+// fine rule 12: a file this user may not read (another user's - made by
+// `sudo ./run.sh`?) - open fails with EACCES / EPERM (make-cert.sh: test -r)
+bool permission_denied(const string& path) {
+    if (!name_taken(path)) return false;
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (f) {
+        std::fclose(f);
+        return false;
+    }
+    return errno == EACCES || errno == EPERM;
+}
 
 bool add_name(X509_NAME* n, const char* field, const string& value) {
     return X509_NAME_add_entry_by_txt(n, field, MBSTRING_UTF8, reinterpret_cast<const unsigned char*>(value.c_str()),
@@ -1003,7 +1074,9 @@ X509Ptr make_ca(EVP_PKEY* key, const string& host, const vector<string>& names, 
     X509Ptr x(X509_new());
     if (!x || !cert_basics(x.get(), start, tlscert::CA_DAYS) || X509_set_pubkey(x.get(), key) != 1) return nullptr;
     X509_NAME* n = X509_get_subject_name(x.get());
-    if (!add_name(n, "CN", "KrakenSDR " + host + " CA " + today("%Y-%m-%d")) || !add_name(n, "O", tlscert::ORG) ||
+    // the host part at most 40 characters: a CN is 64 at most (fine rule 17)
+    if (!add_name(n, "CN", "KrakenSDR " + host.substr(0, 40) + " CA " + today("%Y-%m-%d")) ||
+        !add_name(n, "O", tlscert::ORG) ||
         X509_set_issuer_name(x.get(), n) != 1)
         return nullptr;
     string nc = "critical";
@@ -1020,6 +1093,7 @@ X509Ptr make_ca(EVP_PKEY* key, const string& host, const vector<string>& names, 
     if (!add_ext(x.get(), x.get(), NID_basic_constraints, "critical,CA:TRUE,pathlen:0") ||
         !add_ext(x.get(), x.get(), NID_key_usage, "critical,keyCertSign,cRLSign") ||
         !add_ext(x.get(), x.get(), NID_subject_key_identifier, "hash") ||
+        !add_ext(x.get(), x.get(), NID_ext_key_usage, "serverAuth") ||
         !add_ext(x.get(), x.get(), NID_name_constraints, nc) || X509_sign(x.get(), key, EVP_sha256()) <= 0)
         return nullptr;
     return x;
@@ -1067,6 +1141,7 @@ tlscert::CertInfo info_of(X509* x) {
     c.sha1 = fingerprint(x, EVP_sha1());
     c.pem = cert_pem(x);
     c.scope = ca_scope(x);
+    c.permitted_dns = constraints_of(x).dns;
     return c;
 }
 
@@ -1113,6 +1188,40 @@ Host host_name() {
     return h;
 }
 
+vector<string> own_names(const Host& h) {
+    if (!h.usable) return {};
+    return {h.name, h.name + ".local"};
+}
+
+vector<string> env_names(vector<string>* notes) {
+    vector<string> v;
+    const char* e = std::getenv("KRAKEN_CERT_NAMES");
+    if (!e) return v;
+    // fine rule 4: split on commas and white space, lowercased, trailing dots
+    // off; an address (browsers never match one against a DNS name) and what
+    // is no DNS name are left out, each with a note
+    string list = e;
+    for (char& c : list)
+        if (c == ',' || std::strchr(SPACES, c)) c = ' ';
+    std::istringstream ws(list);
+    string w;
+    while (ws >> w) {
+        const string n = no_trailing_dots(lower(w));
+        if (n.empty()) continue;
+        if (is_ipv4(n) || is_ipv6(n)) {
+            if (notes)
+                notes->push_back("KRAKEN_CERT_NAMES: " + n +
+                                 " is an address - left out (browsers never match an address against a DNS name; "
+                                 "wide scope names the receiver's private addresses)");
+        } else if (!valid_dns(n)) {
+            if (notes) notes->push_back("KRAKEN_CERT_NAMES: '" + n + "' is not a DNS name - left out");
+        } else if (std::find(v.begin(), v.end(), n) == v.end()) {
+            v.push_back(n);
+        }
+    }
+    return v;
+}
+
 // make-cert.sh's list, in its order (compared as a set): an unusable host
 // name still gets localhost and KRAKEN_CERT_NAMES
 vector<string> wanted_names(const Host& h, vector<string>* notes) {
@@ -1120,9 +1229,8 @@ vector<string> wanted_names(const Host& h, vector<string>* notes) {
     auto add = [&v](const string& s) {
         if (std::find(v.begin(), v.end(), s) == v.end()) v.push_back(s);
     };
+    for (const string& n : own_names(h)) add(n);
     if (h.usable) {
-        add(h.name);
-        add(h.name + ".local");
         // resolv.conf's search / domain words: lowercased, trailing dots off;
         // "local" and what is no DNS name then (systemd-resolved's "search .") skipped
         for (const string& raw : search_domains()) {
@@ -1131,31 +1239,14 @@ vector<string> wanted_names(const Host& h, vector<string>* notes) {
         }
     }
     add("localhost");
-    if (const char* e = std::getenv("KRAKEN_CERT_NAMES")) {
-        // fine rule 4: split on commas and white space, lowercased, trailing
-        // dots off; an address (browsers never match one against a DNS name)
-        // and what is no DNS name are left out, each with a note
-        string list = e;
-        for (char& c : list)
-            if (c == ',' || std::strchr(SPACES, c)) c = ' ';
-        std::istringstream ws(list);
-        string w;
-        while (ws >> w) {
-            const string n = no_trailing_dots(lower(w));
-            if (n.empty()) continue;
-            if (is_ipv4(n) || is_ipv6(n)) {
-                if (notes)
-                    notes->push_back("KRAKEN_CERT_NAMES: " + n +
-                                     " is an address - left out (browsers never match an address against a DNS "
-                                     "name; wide scope names the receiver's private addresses)");
-            } else if (!valid_dns(n)) {
-                if (notes) notes->push_back("KRAKEN_CERT_NAMES: '" + n + "' is not a DNS name - left out");
-            } else {
-                add(n);
-            }
-        }
-    }
+    for (const string& n : env_names(notes)) add(n);
     return v;
+}
+
+bool name_permitted(const vector<string>& permitted_dns, const string& name) {
+    Constraints c;
+    c.dns = permitted_dns;
+    return dns_permitted(c, name);
 }
 
 vector<string> private_ipv4() {
@@ -1218,7 +1309,7 @@ const char* state_name(State s) {
 bool ensure(const string& dir, bool force, bool new_ca, State* state, string* err) {
     *state = State::Kept;
     // one maker at a time in <dir>: make-cert.sh or this (fine rule 14)
-    DirLock lock(join(dir, ".make-cert.lock"));
+    DirLock lock(dir, join(dir, ".make-cert.lock"));
     if (!lock.take(err)) return false;
     const string crt_p = join(dir, SERVER_CRT), key_p = join(dir, SERVER_KEY);
     const string cac_p = join(dir, CA_CRT), cak_p = join(dir, CA_KEY);
@@ -1231,6 +1322,14 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
         *err = SERVER_CRT + string(" / ") + SERVER_KEY + " is a symbolic link and the pair is incomplete";
         return false;
     }
+    // fine rule 12: a file this user may not read is a failure, never a
+    // reason for a new key or CA
+    for (const string& f : {crt_p, key_p, cac_p, cak_p}) {
+        if (permission_denied(f)) {
+            *err = f + " cannot be read by this user - check its owner - nothing was changed";
+            return false;
+        }
+    }
     const vector<X509Ptr> chain = crt_there ? load_certs(crt_p) : vector<X509Ptr>();
     X509* leaf = chain.empty() ? nullptr : chain[0].get();
     if (crt_there && !leaf) {
@@ -1241,19 +1340,24 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
     }
     const vector<X509Ptr> cas = file_nonempty(cac_p) ? load_certs(cac_p) : vector<X509Ptr>();
     X509* ca = cas.empty() ? nullptr : cas[0].get();
-    // managed or not (verified without the time: fine rule 10)
-    if (leaf && !(old_managed_subject(leaf) || verifies(leaf, ca, nullptr, false))) {
+    // managed or not: issued by our CA (chain and signature, no time check:
+    // fine rule 10), or a legacy subject that is self-signed (fine rule 15)
+    const bool ours = leaf && verifies(leaf, ca, nullptr, false);
+    const bool legacy = leaf && !ours && old_managed_subject(leaf) && self_signed(leaf);
+    if (leaf && !ours && !legacy) {
         *state = State::NotManaged;   // a certificate of the user's own: left alone
         if (key_there) return true;
         *err = string(SERVER_CRT) + " is not one of the receiver's own and " + SERVER_KEY + " is missing";
         return false;
     }
-    // the server key: kept whatever its type. One that can't be read (a
-    // passphrase, garbage, no permission) is never deleted or overwritten
-    // (fine rule 12): it is moved aside and a new key is made
+    // the keys: kept whatever their type. One that can be read but not used
+    // (a passphrase, garbage) is never deleted or overwritten (fine rule 12):
+    // it is moved aside and a new key (a new CA) is made
     PkeyPtr skey = key_there ? load_key(key_p) : nullptr;
     const bool key_aside = key_there && !skey;
-    PkeyPtr cakey = ca && file_nonempty(cak_p) ? load_key(cak_p) : nullptr;
+    const bool cakey_there = file_nonempty(cak_p);
+    PkeyPtr cakey = cakey_there ? load_key(cak_p) : nullptr;
+    const bool cakey_aside = cakey_there && !cakey;
 
     // what is wanted
     vector<string> notes;
@@ -1262,33 +1366,53 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
     if (!host.usable)
         notes.push_back("the host name '" + host.raw + "' is not usable in DNS - the certificate names only localhost");
     const vector<string> names = wanted_names(host, &notes);
+    const vector<string> own = own_names(host);
     const vector<string> ips = wanted_ips(wide);
     const string cn = host.usable ? host.name : "localhost";
-    for (const string& n : notes) std::cerr << "HTTPS certificate: " << n << std::endl;
 
     // a new CA when: none (or no key that fits it, or not a CA); less than a
     // year left; another scope (no name constraints - scope "none" - never
-    // matches: fine rule 3); a name outside its DNS constraints; asked to
-    bool make_new_ca = new_ca || !ca || !cakey || !same_key(X509_get0_pubkey(ca), cakey.get()) || !is_ca_cert(ca) ||
-                       expires_within(ca, CA_RENEW_DAYS) || ca_scope(ca) != (wide ? "wide" : "narrow");
+    // matches: fine rule 3); no DNS or no IP subtree; not limited to TLS
+    // servers (fine rule 16); one of the host's own names outside its DNS
+    // constraints - a rename (fine rule 18); asked to
+    bool make_new_ca = new_ca || cakey_aside || !ca || !cakey || !same_key(X509_get0_pubkey(ca), cakey.get()) ||
+                       !is_ca_cert(ca) || expires_within(ca, CA_RENEW_DAYS) || ca_scope(ca) != (wide ? "wide" : "narrow");
+    vector<string> not_covered;
     if (!make_new_ca) {
         const Constraints c = constraints_of(ca);
-        for (const string& n : names) make_new_ca = make_new_ca || !dns_permitted(c, n);
+        make_new_ca = c.dns.empty() || c.ip.empty() || !server_auth_only(ca);
+        for (size_t i = 0; !make_new_ca && i < names.size(); i++) {
+            if (dns_permitted(c, names[i])) continue;
+            if (std::find(own.begin(), own.end(), names[i]) != own.end()) make_new_ca = true;
+            else not_covered.push_back(names[i]);   // left out of the server certificate
+        }
     }
+    if (make_new_ca) not_covered.clear();   // a new CA takes every name in
+    vector<string> leaf_names;
+    for (const string& n : names)
+        if (std::find(not_covered.begin(), not_covered.end(), n) == not_covered.end()) leaf_names.push_back(n);
+    if (!not_covered.empty()) {
+        string l;
+        for (const string& n : not_covered) l += " " + n;
+        notes.push_back("outside this receiver's CA, left out of the certificate:" + l +
+                        " (--new-ca takes them in; every device then installs the new CA)");
+    }
+    for (const string& n : notes) std::cerr << "HTTPS certificate: " << n << std::endl;
+
     const bool make_key = !skey;
     // the server certificate is re-issued (same key) when: other names / IPs;
-    // less than 60 days left; it isn't issued by the current CA (chain and
-    // signature, no time check: fine rule 10 - a migrated one); server.crt
-    // isn't exactly it + the CA; it doesn't match server.key; asked to
-    bool issue = force || make_new_ca || make_key || !leaf;
+    // less than 60 days left; it isn't issued by the current CA (a migrated
+    // one); server.crt isn't exactly it + the CA; it doesn't match
+    // server.key; asked to
+    bool issue = force || make_new_ca || make_key || !leaf || !ours;
     if (!issue) {
         vector<string> dns, sips, wips;
         bool other = false;
         san_of(leaf, &dns, &sips, &other);
         for (const string& ip : ips) wips.push_back(ip_normal(ip));
-        issue = !same_key(X509_get0_pubkey(leaf), skey.get()) || other || !same_set(dns, names) ||
-                !same_set(sips, wips) || expires_within(leaf, SERVER_RENEW_DAYS) || !verifies(leaf, ca, nullptr, false) ||
-                chain.size() != 2 || X509_cmp(chain[1].get(), ca) != 0;
+        issue = !same_key(X509_get0_pubkey(leaf), skey.get()) || other || !same_set(dns, leaf_names) ||
+                !same_set(sips, wips) || expires_within(leaf, SERVER_RENEW_DAYS) || chain.size() != 2 ||
+                X509_cmp(chain[1].get(), ca) != 0;
     }
     if (!issue) {
         tighten_key(key_p);   // fine rule 13, also on kept
@@ -1319,7 +1443,7 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
         }
     }
     EVP_PKEY* use_skey = make_key ? new_skey.get() : skey.get();
-    new_leaf = make_server(use_skey, use_ca, use_cakey, cn, names, ips, start);
+    new_leaf = make_server(use_skey, use_ca, use_cakey, cn, leaf_names, ips, start);
     if (!new_leaf) {
         *err = openssl_error("cannot create the server certificate");
         return false;
@@ -1355,6 +1479,17 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
         for (const string& t : temps) std::remove(t.c_str());
         return false;
     }
+    // a migrated (self-signed) server.crt: a copy first (fine rule 15)
+    if (legacy) {
+        string old;
+        const string saved = free_dated_name(join(dir, string(SERVER_CRT) + ".replaced-"), today("%Y%m%d"), "");
+        if (!read_file(crt_p, &old) || !write_file(saved, old, false, err)) {
+            if (err->empty()) *err = "cannot read " + crt_p;
+            for (const string& t : temps) std::remove(t.c_str());
+            return false;
+        }
+        std::cerr << "HTTPS certificate: the old " << crt_p << " is kept as " << saved << std::endl;
+    }
     auto move = [&](const string& from, const string& to) {
         if (fs_replace(from, to) == 0) return true;
         *err = "cannot replace " + to + " (" + std::strerror(errno) + ")";
@@ -1362,8 +1497,9 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
         return false;
     };
     // into place, in make-cert.sh's order (an interruption leaves a state the
-    // next run repairs): old CA certificate -> retired, new CA key, new CA
-    // certificate, unreadable server key -> aside, new server key, server.crt
+    // next run repairs): old CA certificate -> retired, unusable CA key ->
+    // aside, new CA key, new CA certificate, unusable server key -> aside,
+    // new server key, server.crt
     if (make_new_ca) {
         // the old CA certificate is kept as .retired (the page names it:
         // devices should remove it); its key is replaced - gone. Only a
@@ -1372,6 +1508,13 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
         if (ca && !is_symlink(cac_p)) {
             const string retired = free_dated_name(join(dir, "krakensdr-ca."), today("%Y%m%d"), ".retired.crt");
             if (!move(cac_p, retired)) return false;
+        }
+        if (cakey_aside) {
+            const string aside = free_dated_name(join(dir, string(CA_KEY) + ".unreadable-"), today("%Y%m%d"), "");
+            if (!move(cak_p, aside)) return false;
+            tighten_key(aside);
+            std::cerr << "HTTPS certificate: " << cak_p << " could not be read - moved aside to " << aside
+                      << ", a new CA is made" << std::endl;
         }
         if (!move(cak_p + ".tmp", cak_p) || !move(cac_p + ".tmp", cac_p)) return false;
     }
@@ -1404,19 +1547,33 @@ Inspect inspect(const string& dir) {
         r.has_ca = true;
         r.ca = info_of(cas[0].get());
     }
-    r.managed = !is_symlink(crt_p) && !is_symlink(join(dir, SERVER_KEY)) && (r.has_ca || old_managed_subject(leaf));
-    std::error_code ec;
-    for (const auto& e : std::filesystem::directory_iterator(dir.empty() ? "." : dir, ec)) {
-        const string name = e.path().filename().string();
-        const string date = retired_date(name);
-        if (date.empty()) continue;
-        const vector<X509Ptr> rc = load_certs(join(dir, name));
-        if (rc.empty()) continue;
-        Inspect::Retired ret;
-        ret.date = date;
-        ret.cert = info_of(rc[0].get());
-        ret.cert.pem.clear();
-        r.retired.push_back(std::move(ret));
+    r.managed = !is_symlink(crt_p) && !is_symlink(join(dir, SERVER_KEY)) &&
+                (r.has_ca || (old_managed_subject(leaf) && self_signed(leaf)));
+    // the retired CAs. Nothing here may throw into certstatus::init (a
+    // crash at every start): the iterator is advanced with an error_code, and
+    // a name MinGW's path can't give as UTF-8 is skipped
+    try {
+        std::error_code ec;
+        std::filesystem::directory_iterator it(dir.empty() ? "." : dir, ec), end;
+        for (; !ec && it != end; it.increment(ec)) {
+            string name;
+            try {
+                const auto u = it->path().filename().u8string();
+                name.assign(reinterpret_cast<const char*>(u.data()), u.size());
+            } catch (...) {
+                continue;
+            }
+            const string date = retired_date(name);
+            if (date.empty()) continue;
+            const vector<X509Ptr> rc = load_certs(join(dir, name));
+            if (rc.empty()) continue;
+            Inspect::Retired ret;
+            ret.date = date;
+            ret.cert = info_of(rc[0].get());
+            ret.cert.pem.clear();
+            r.retired.push_back(std::move(ret));
+        }
+    } catch (...) {
     }
     std::sort(r.retired.begin(), r.retired.end(), [](const Inspect::Retired& a, const Inspect::Retired& b) {
         return a.date != b.date ? a.date > b.date : a.cert.not_after > b.cert.not_after;

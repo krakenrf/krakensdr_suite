@@ -29752,14 +29752,16 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
   // ---- HTTPS certificate of the web UI (docs/dev/https-certificate.md) ----
   // system_status.cert (cert_status.cpp): {managed, scope, scope_next, host,
   // host_ok, ca: {name, sha256, sha1, not_after} | null, server: {name, org,
-  // names, ips, not_after, days_left}, ips_now, retired: [{name, sha256,
-  // date}], notices, scope_error, scope_seq}. Every device installs the
+  // names, ips, not_after, days_left}, ips_now, names_not_covered (wanted
+  // names outside the CA: left out of the certificate - a new CA takes them
+  // in), retired: [{name, sha256, date}], notices, scope_error, scope_seq}.
+  // Every device installs the
   // receiver's CA once (/krakensdr-ca.crt); the scope (CERT_SCOPE:, kept in
   // cert_options) applies at the next start. The section is part of the
   // Telemetry sheet (wbSheetOpen inserts certSectionHtml()); the notices also
   // show in #cert-banner on every page. An older receiver sends no cert: its
   // section offers PR #5's download (/krakensdr.crt) only.
-  const CERT_NOTICES = ['name_changed', 'addresses_changed', 'expires_soon', 'restart_pending'];
+  const CERT_NOTICES = ['name_changed', 'addresses_changed', 'names_not_covered', 'expires_soon', 'restart_pending'];
   const CERT_BANNER_KEY = 'kraken_cert_banner_off';   // the notices last hidden (localStorage)
   let certLatest = null, certDrawn = null, certAskSeq = -1, certMsg = '', certMsgErr = false, certBannerShown = '';
   function certDate(s) {
@@ -29790,6 +29792,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     }
     if (n === 'restart_pending')
       return 'HTTPS certificate scope ' + (c.scope_next === 'wide' ? 'Wide' : 'Narrow') + ' from the next start - every device then installs the new CA';
+    if (n === 'names_not_covered') {
+      const nc = Array.isArray(c.names_not_covered) ? c.names_not_covered : [];
+      return (nc.length > 1 ? 'Names ' : 'Name ') + nc.join(', ') + ' outside this receiver\'s CA - left out of the HTTPS certificate' +
+        ' (a new CA takes ' + (nc.length > 1 ? 'them' : 'it') + ' in: scripts/make-cert.sh --new-ca, then every device installs it)';
+    }
     return '';
   }
   function certNotices(c) { return c && Array.isArray(c.notices) ? CERT_NOTICES.filter(n => c.notices.includes(n)) : []; }
@@ -29799,7 +29806,8 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     const el = $id('cert-banner');
     if (!el) return;
     const ns = certNotices(c);
-    const key = ns.map(n => n === 'expires_soon' && (c.server || {}).days_left <= 7 ? n + '7' : n).join(',') + '|' + (c ? c.host : '');
+    const key = ns.map(n => n === 'expires_soon' && (c.server || {}).days_left <= 7 ? n + '7' : n).join(',') + '|' + (c ? c.host : '') +
+      (ns.includes('names_not_covered') ? '|' + (c.names_not_covered || []).join(',') : '');
     let off = '';
     try { off = localStorage.getItem(CERT_BANNER_KEY) || ''; } catch (e) { /* private mode */ }
     if (!ns.length || off === key) { el.style.display = 'none'; return; }

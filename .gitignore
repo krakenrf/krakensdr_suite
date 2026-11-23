@@ -10,6 +10,14 @@ gr-krakensdr_v2/build/
 # recordings) and the compose .env (may hold KRAKEN_API_TOKEN)
 docker-data/
 .env
+# The web UI's private keys in ANY folder (scripts/make-cert.sh <dir>;
+# kraken_doa_v2/docs/dev/https-certificate.md fine rule 21): the receiver's CA
+# key, an unusable key moved aside, the generator's temporary key, the
+# script's work / lock folders. .githooks/pre-push blocks them too
+krakensdr-ca.key
+*.key.unreadable-*
+*.key.tmp
+.make-cert.*
 # git worktrees (Claude Code puts them in .claude/worktrees/<name>): each is a
 # whole second checkout with its own build output and settings - never add it
 .claude/worktrees/

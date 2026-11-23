@@ -72,6 +72,14 @@ Host host_name();
 // address or a word that is no DNS name is left out, with a line in *notes)
 // - the last two also with an unusable host. No duplicates.
 std::vector<std::string> wanted_names(const Host& h, std::vector<std::string>* notes = nullptr);
+// The host's OWN names - <host>, <host>.local (none for an unusable host): one
+// of them outside the CA is a rename and makes a new CA; any other wanted
+// name outside it is left out of the server certificate (fine rule 18)
+std::vector<std::string> own_names(const Host& h);
+// KRAKEN_CERT_NAMES' names alone (as wanted_names takes them)
+std::vector<std::string> env_names(std::vector<std::string>* notes = nullptr);
+// Is `name` inside these permitted DNS subtrees (a CA's; empty = every name)?
+bool name_permitted(const std::vector<std::string>& permitted_dns, const std::string& name);
 
 // The IPv4 addresses of the interfaces that are up (not the loopback
 // interface, 127/8, 169.254/16; as make-cert.sh's `ip -4 -o addr show up`)
@@ -98,8 +106,8 @@ const char* state_name(State s);   // "kept" | "issued" | "ca-created" | "not-ma
 // false + *err: nothing was changed. force: re-issue the server certificate;
 // new_ca: a new CA (as make-cert.sh --force / --new-ca). Takes make-cert.sh's
 // lock (<dir>/.make-cert.lock; waits up to 10 s for another maker) and
-// writes notes (a name left out, an unreadable server.key moved aside) to
-// stderr.
+// writes notes (a name left out, an unusable key moved aside, a migrated
+// server.crt kept) to stderr.
 bool ensure(const std::string& dir, bool force, bool new_ca, State* state, std::string* err);
 
 // ---- reading what is there (the page's certificate section) ----
@@ -109,8 +117,9 @@ struct CertInfo {
     std::vector<std::string> dns, ips;   // subjectAltName
     int64_t not_after = 0;               // Unix seconds
     std::string sha256, sha1;            // fingerprints of the DER, "AB:CD:..." (as openssl x509 -fingerprint)
-    std::string pem;                     // the certificate alone
+    std::string pem;                     // the certificate alone, re-encoded from the parsed one (never a file's bytes)
     std::string scope;                   // a CA: "wide" (permits 10.0.0.0/8), "narrow", "none" (no name constraints)
+    std::vector<std::string> permitted_dns;   // a CA: its permitted DNS subtrees
 };
 struct Inspect {
     bool present = false;          // server.crt there and readable
