@@ -1185,6 +1185,31 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .sf-dlg .err:empty {display:none}
 .sf-dlg .b {display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
 .sf-dlg .b .sp {flex:1}
+/* HTTPS certificate (docs/dev/https-certificate.md): the Telemetry sheet's
+   section (certSectionHtml / certSectionUpdate) and the notice banner over
+   the top bar (certBannerRender) */
+.cert-grid {display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 12px;align-items:baseline;margin-bottom:8px}
+.cert-grid .k {color:var(--t4);font-size:11px}
+.cert-grid .v {min-width:0;overflow-wrap:anywhere;color:var(--t0)}
+.cert-grid .v .info {margin-left:6px}
+.cert-fp {font-family:monospace;font-size:11px;color:var(--t1);word-break:break-all}
+.cert-note {color:var(--warn-t);font-size:11px}
+.cert-note .ic {vertical-align:-2px}
+#cert-body > .cert-note {margin-bottom:5px}
+#cert-body a.btn {text-decoration:none;display:inline-flex;align-items:center;gap:5px}
+.cert-msg {font-size:11px;color:var(--t3);margin-top:4px}
+.cert-msg:empty {display:none}
+.cert-msg.err {color:var(--bad-t)}
+.cert-guide {flex:1 1 320px;min-width:0}
+.cert-guide summary {cursor:pointer;color:var(--ac-t);font-size:12px}
+.cert-guide dl {margin:6px 0 0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 12px;font-size:11px;color:var(--t2)}
+.cert-guide dt {color:var(--t1);font-weight:bold}
+.cert-guide dd {margin:0}
+.cert-guide code {font-size:11px;color:var(--t1);overflow-wrap:anywhere}
+#cert-banner {display:none;align-items:center;gap:8px;padding:6px 12px;font-weight:bold;font-size:13px;border-bottom:1px solid var(--warn-m);background:var(--warn-d);color:var(--warn-t2);cursor:pointer}
+#cert-banner .tx {flex:1;min-width:0}
+#cert-banner .x {cursor:pointer;padding:0 4px;color:var(--warn-t);flex:none}
+@media (max-width:600px) {.cert-grid,.cert-guide dl {grid-template-columns:minmax(0,1fr)}}
 /* ⏻ / ↻ power: the footer row, its dialog, the notice over the whole page */
 .sb-power {display:flex;align-items:center;gap:6px;margin-top:8px}
 .sb-power .btn {flex:1 1 0;min-width:0}
@@ -3136,6 +3161,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
     <!-- KrakenSDR Wideband board: firmware too old / board alarm (hidden otherwise) -->
     <div id="wb-banner" style="display:none;padding:6px 12px;font-weight:bold;font-size:13px;
          border-bottom:1px solid #b3822c;background:#3a2a10;color:#fdd89e;cursor:pointer" onclick="wbOpenSection()"></div>
+    <!-- HTTPS certificate notices (system_status.cert.notices, certBannerRender; hidden otherwise) -->
+    <div id="cert-banner" role="status" onclick="certOpenSection(event)"></div>
     <!-- Top Bar -->
     <div class="top-bar">
       <!-- ☰: hides / shows the sidebar (the phone layout: its drawer) -->
@@ -29722,6 +29749,187 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     el.title = tip.join('\n');
   }
 
+  // ---- HTTPS certificate of the web UI (docs/dev/https-certificate.md) ----
+  // system_status.cert (cert_status.cpp): {managed, scope, scope_next, host,
+  // host_ok, ca: {name, sha256, sha1, not_after} | null, server: {name, org,
+  // names, ips, not_after, days_left}, ips_now, retired: [{name, sha256,
+  // date}], notices, scope_error, scope_seq}. Every device installs the
+  // receiver's CA once (/krakensdr-ca.crt); the scope (CERT_SCOPE:, kept in
+  // cert_options) applies at the next start. The section is part of the
+  // Telemetry sheet (wbSheetOpen inserts certSectionHtml()); the notices also
+  // show in #cert-banner on every page. An older receiver sends no cert: its
+  // section offers PR #5's download (/krakensdr.crt) only.
+  const CERT_NOTICES = ['name_changed', 'addresses_changed', 'expires_soon', 'restart_pending'];
+  const CERT_BANNER_KEY = 'kraken_cert_banner_off';   // the notices last hidden (localStorage)
+  let certLatest = null, certDrawn = null, certAskSeq = -1, certMsg = '', certMsgErr = false, certBannerShown = '';
+  function certDate(s) {
+    if (!(s > 0)) return '';
+    const d = new Date(s * 1000);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  const CERT_SCOPE_TIP =
+    '<b>Narrow</b>: the receiver\'s CA can vouch only for this receiver\'s own names and 127.0.0.1. ' +
+    'Opened by its IP address, the browser warns as before.<br><br>' +
+    '<b>Wide</b>: also every .local and .lan name and every private IP address (10.x, 172.16-31.x, 192.168.x, ' +
+    '100.64-127.x): opened by IP, the page is trusted too.<br><br>' +
+    'The risk: whoever gets this receiver\'s CA key (krakensdr-ca.key) can pose as anything the scope covers to ' +
+    'every device that installed the CA - with Wide also your router, a NAS, any .local name.<br><br>' +
+    'A change applies at the next start, with a new CA: every device then installs it (and removes the old one).';
+  function certNoticeText(c, n) {
+    const s = c.server || {};
+    if (n === 'expires_soon') {
+      const d = s.days_left;
+      const when = d < 0 ? 'has expired' : d === 0 ? 'expires today' : 'expires in ' + d + ' day' + (d === 1 ? '' : 's');
+      return 'The HTTPS certificate ' + when + (c.managed ? ' - restart the receiver to renew it' : ' - replace server.crt');
+    }
+    if (n === 'name_changed')
+      return 'The host name is now ' + c.host + ', which the HTTPS certificate doesn\'t name - restart the receiver, then install its new CA on every device';
+    if (n === 'addresses_changed') {
+      const miss = (c.ips_now || []).filter(ip => !(s.ips || []).includes(ip));
+      return (miss.length > 1 ? 'Addresses ' : 'Address ') + miss.join(', ') + ' not in the HTTPS certificate - restart the receiver to add ' + (miss.length > 1 ? 'them' : 'it');
+    }
+    if (n === 'restart_pending')
+      return 'HTTPS certificate scope ' + (c.scope_next === 'wide' ? 'Wide' : 'Narrow') + ' from the next start - every device then installs the new CA';
+    return '';
+  }
+  function certNotices(c) { return c && Array.isArray(c.notices) ? CERT_NOTICES.filter(n => c.notices.includes(n)) : []; }
+  // the banner: hidden with its x until the notices change (the last week
+  // of a certificate's life counts as a change)
+  function certBannerRender(c) {
+    const el = $id('cert-banner');
+    if (!el) return;
+    const ns = certNotices(c);
+    const key = ns.map(n => n === 'expires_soon' && (c.server || {}).days_left <= 7 ? n + '7' : n).join(',') + '|' + (c ? c.host : '');
+    let off = '';
+    try { off = localStorage.getItem(CERT_BANNER_KEY) || ''; } catch (e) { /* private mode */ }
+    if (!ns.length || off === key) { el.style.display = 'none'; return; }
+    const html = icon('lock', 't') + '<span class="tx">' + ns.map(n => wbEsc(certNoticeText(c, n))).join(' &middot; ') + '</span>' +
+      '<span class="x" title="Hide until this changes" role="button" onclick="certBannerHide(event)">' + icon('close') + '</span>';
+    if (certBannerShown !== html) { el.innerHTML = html; certBannerShown = html; }
+    el.dataset.key = key;
+    el.style.display = 'flex';
+  }
+  function certBannerHide(e) {
+    e.stopPropagation();
+    const el = $id('cert-banner');
+    try { localStorage.setItem(CERT_BANNER_KEY, el.dataset.key || ''); } catch (err) { /* private mode */ }
+    el.style.display = 'none';
+  }
+  // the banner clicked: the Telemetry sheet at the certificate section
+  function certOpenSection() {
+    wbSheetOpen();
+    const sec = $id('wb-cert-sec');
+    if (sec) sec.scrollIntoView({block: 'nearest'});
+  }
+  // the section as the Telemetry sheet inserts it (filled: no call after the insert)
+  function certSectionHtml() {
+    certDrawn = JSON.stringify([certLatest, certMsg, certMsgErr]);
+    return '<div class="sec" id="wb-cert-sec"><h4>HTTPS certificate</h4><div id="cert-body">' + certBodyHtml(certLatest, false) + '</div></div>';
+  }
+  // per-device steps to install (and remove) the CA - a collapsible block
+  function certGuideHtml(c, open) {
+    const ca = c.ca ? '<b>' + wbEsc(c.ca.name) + '</b>' : 'the certificate';
+    const host = (c.server && c.server.names || []).find(n => /\.local$/.test(n)) || 'localhost';
+    const steps = [
+      ['Windows', 'Open the downloaded file → Install Certificate → Current User → Place all certificates in the following store: ' +
+                  'Trusted Root Certification Authorities → Finish → Yes. The Thumbprint (Details) is the SHA-1 above. Chrome and Edge use it after a restart.'],
+      ['macOS', 'Open the file (Keychain Access adds it) → double-click ' + ca + ' → Trust → When using this certificate: Always Trust. Safari and Chrome use it.'],
+      ['iPhone / iPad', 'In Safari: Download CA certificate → Allow. Settings → General → VPN &amp; Device Management → the profile → Install. ' +
+                        'Then Settings → General → About → Certificate Trust Settings → turn on ' + ca + '.'],
+      ['Android', 'Settings → Security → More security settings → Encryption &amp; credentials → Install a certificate → CA certificate → ' +
+                  'Install anyway → the downloaded file (the menus differ by maker: search Settings for "CA certificate"). Chrome uses it.'],
+      ['Firefox', 'Settings → Privacy &amp; Security → Certificates → View Certificates → Authorities → Import → the file → ' +
+                  'tick Trust this CA to identify websites (also Firefox on Linux; Firefox for Android: Settings → About Firefox, tap the logo 5 times → ' +
+                  'Secret Settings → Use third party CA certificates).'],
+      ['Linux', 'Chrome / Chromium: Settings → Privacy and security → Security → Manage certificates → Authorities → Import → ' +
+                'Trust this certificate for identifying websites. Everything else (curl, ...): ' +
+                '<code>sudo cp krakensdr-ca.crt /usr/local/share/ca-certificates/ &amp;&amp; sudo update-ca-certificates</code>'],
+      ['Then', 'Open the page by a name in the certificate, e.g. https://' + wbEsc(host) + (location.port ? ':' + wbEsc(location.port) : '') + '/. ' +
+               'After a new CA, remove the replaced one where it was installed (Windows: certmgr.msc; macOS: Keychain Access; ' +
+               'iPhone: VPN &amp; Device Management; Android: Encryption &amp; credentials → User credentials; Firefox: Authorities → Delete).'],
+    ];
+    return '<details class="cert-guide"' + (open ? ' open' : '') + '><summary>Install on a device</summary><dl>' +
+      steps.map(s => '<dt>' + s[0] + '</dt><dd>' + s[1] + '</dd>').join('') + '</dl></details>';
+  }
+  function certBodyHtml(c, guideOpen) {
+    const e = wbEsc;
+    // an older receiver: its own certificate to download, as PR #5 had it
+    if (!c) return '<div class="row"><a class="btn" href="krakensdr.crt" download="krakensdr.crt">' + icon('download') + '<span>Download certificate</span></a></div>';
+    const s = c.server || {}, ca = c.ca, rows = [];
+    const row = (k, v) => rows.push('<div class="k">' + k + '</div><div class="v">' + v + '</div>');
+    // (restart_pending: by the scope buttons)
+    const notes = certNotices(c).filter(n => n !== 'restart_pending').map(n => '<div class="cert-note">' + icon('warn', 't') + ' ' + e(certNoticeText(c, n)) + '</div>');
+    if (ca) {
+      row('Authority', '<b id="cert-ca-name">' + e(ca.name) + '</b><span class="info">until ' + certDate(ca.not_after) + '</span>');
+      row('SHA-256', '<span class="cert-fp" id="cert-ca-sha256">' + e(ca.sha256) + '</span>');
+      if (ca.sha1) row('SHA-1', '<span class="cert-fp" title="Windows shows it as the Thumbprint">' + e(ca.sha1) + '</span>');
+    } else if (c.managed) {
+      row('Authority', 'none yet ' + helpTip('An older self-signed certificate: the next start through run.sh or install.sh replaces it with one signed by the receiver\'s own CA, which every device installs once.'));
+    } else {
+      row('Authority', 'not managed ' + helpTip('A certificate of your own: kraken_doa and scripts/make-cert.sh never change it - its names and expiry are yours to keep current. The download is that certificate.'));
+    }
+    const names = (s.names || []).map(e).join(', '), ips = (s.ips || []).map(e).join(', ');
+    const days = typeof s.days_left === 'number' ? ' (' + s.days_left + ' day' + (s.days_left === 1 ? '' : 's') + ')' : '';
+    row('Certificate', '<span id="cert-names">' + (names || e(s.name || '')) + (ips ? ' · ' + ips : '') + '</span>' +
+        '<span class="info">until ' + certDate(s.not_after) + days + '</span>');
+    if (!c.host_ok)
+      row('Host name', e(c.host || '') + ' ' + helpTip('Only a-z, 0-9 and - make a host name a certificate can carry: this one names localhost' +
+          ' (and, with the Wide scope, the private IP addresses). Rename the computer to have its name in the certificate.'));
+    if (c.managed && ca) {
+      const seg = '<span class="wb-seg" id="cert-scope">' + [['narrow', 'Narrow'], ['wide', 'Wide']].map(o =>
+        '<button type="button" data-v="' + o[0] + '"' + (c.scope_next === o[0] ? ' class="sel"' : '') +
+        ' onclick="certScopeSet(\'' + o[0] + '\')">' + o[1] + '</button>').join('') + '</span>';
+      row('Scope', seg + ' ' + helpTip(CERT_SCOPE_TIP, true) +
+          (c.scope_next !== c.scope ? ' <span class="cert-note" id="cert-next">Applies at the next start - every device then installs the new certificate</span>' : ''));
+    }
+    (c.retired || []).slice(0, 1).forEach(r =>
+      row('Replaced', e(r.name) + '<span class="info">' + e(r.date) + ' - remove it from devices</span>'));
+    const dl = ca ? '<a class="btn primary" id="cert-dl" href="krakensdr-ca.crt" download="krakensdr-ca.crt">' + icon('download') + '<span>Download CA certificate</span></a>'
+                  : '<a class="btn" id="cert-dl" href="krakensdr-ca.crt" download="krakensdr.crt">' + icon('download') + '<span>Download certificate</span></a>';
+    return notes.join('') + '<div class="cert-grid">' + rows.join('') + '</div>' +
+      '<div class="row" style="align-items:flex-start">' + dl + certGuideHtml(c, guideOpen) + '</div>' +
+      '<div class="cert-msg' + (certMsgErr ? ' err' : '') + '" id="cert-msg">' + e(certMsg) + '</div>';
+  }
+  // (re)draws the section when the sheet is open and something changed
+  function certSectionUpdate(force) {
+    const body = $id('cert-body');
+    if (!body) return;
+    const key = JSON.stringify([certLatest, certMsg, certMsgErr]);
+    if (!force && key === certDrawn) return;
+    const guide = body.querySelector('details.cert-guide');
+    certDrawn = key;
+    body.innerHTML = certBodyHtml(certLatest, guide ? guide.open : false);
+  }
+  // a Narrow / Wide button: asked first (every device reinstalls after the change)
+  async function certScopeSet(v) {
+    const c = certLatest;
+    if (!c || !c.ca || !c.managed || c.scope_next === v) return;
+    const back = v === c.scope;
+    const ok = await uiConfirm({
+      title: (v === 'wide' ? 'Wide' : 'Narrow') + ' certificate scope',
+      text: back ? 'Back to the scope in use - nothing changes at the next start'
+                 : 'Applies at the next start - every device then installs the new certificate',
+      ok: v === 'wide' ? 'Use Wide' : 'Use Narrow', tip: CERT_SCOPE_TIP});
+    if (!ok || !certLatest) return;
+    certAskSeq = typeof certLatest.scope_seq === 'number' ? certLatest.scope_seq : 0;
+    certMsg = ''; certMsgErr = false;
+    send('CERT_SCOPE:' + v);
+    certSectionUpdate();
+  }
+  // every system_status
+  function certOnStatus(c) {
+    c = c && typeof c === 'object' ? c : null;
+    // the outcome of this page's CERT_SCOPE: (a refusal: why)
+    if (c && certAskSeq >= 0 && typeof c.scope_seq === 'number' && c.scope_seq > certAskSeq) {
+      certAskSeq = -1;
+      certMsg = c.scope_error ? 'Not changed: ' + c.scope_error : '';
+      certMsgErr = !!c.scope_error;
+    }
+    certLatest = c;
+    certBannerRender(c);
+    certSectionUpdate();
+  }
+
   // ---- KrakenSDR Wideband board telemetry (system_status.wb_telemetry) ----
   // heimdall's "downconverter" object: fw {date, build, telemetry_ok, set_cmd, no_reply, lo_mode},
   // telemetry {revision, vin_v, iin_a, iin_saturated, temp_c, rh_pct,
@@ -29783,9 +29991,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
           '<button class="btn primary" id="wb-csv-btn" onclick="wbSheetCsv()">' + icon('download') + '<span>Download CSV (<span id="wb-csv-span">1 h</span>)</span></button></div>' +
           '<div class="info" id="wb-log-info" style="margin-top:4px"></div></div>' +
         '<div class="sec"><h4>Events in this range</h4><div class="wb-ev" id="wb-sheet-ev"></div></div>' +
-        '<div class="sec" id="wb-cert-sec"><h4>HTTPS certificate of this receiver</h4><div class="row">' +
-          '<a class="btn" href="krakensdr.crt" download="krakensdr.crt">' + icon('download') + '<span>Download certificate</span></a>' +
-          '<span class="info" style="flex:1;min-width:260px">Optional: the browser warns because the receiver signs its own certificate. Installing this file as trusted removes the warning for this receiver only (it is not a certificate authority and cannot vouch for any other site). Then open the page by the host name of the receiver (for example https://krakensdr.local:8080); an IP address is only covered while it stays the same. Windows: open the file → Install Certificate → Trusted Root Certification Authorities. macOS: add to Keychain → Always Trust. iPhone/iPad: install the profile in Settings. Firefox: accept the warning once (permanent exception).</span></div></div>' +
+        certSectionHtml() +
       '</div>';
     bg.addEventListener('mousedown', e => { if (e.target === bg) wbSheetClose(); });
     document.body.appendChild(bg);
@@ -30107,6 +30313,8 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     sbVersionRender(status.version, status.heimdall_version);
     // the antenna bias tees (BIAS TEE; absent from an older kraken_doa)
     biasOnState(status.antenna_bias);
+    // the HTTPS certificate: the Telemetry sheet's section and the notices (absent from an older kraken_doa)
+    certOnStatus(status.cert);
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
     // server never recalibrates automatically there: warn when uncalibrated
     // or when a settings change made the calibration stale.
