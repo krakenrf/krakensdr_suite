@@ -286,7 +286,7 @@ void flush_locked(State& s, const std::string& day) {
 // file by its age - plain for `days`, gzip for `zip_days` more, then deleted (retention_action).
 // Deletions first, then the compressions one by one (logret::run_pass, the rule every daily log
 // shares)
-void run_pass(const std::string& dir, int keep, int zip) {
+void run_pass(const std::string& dir, int keep, int zip, bool deletions) {
     const long today = day_number(local_date(time(nullptr)));
     std::vector<logret::File> files;
     for (const auto& f : list_files(dir)) files.push_back({f.path, day_number(f.date), f.kind});
@@ -294,17 +294,28 @@ void run_pass(const std::string& dir, int keep, int zip) {
     logret::run_pass(files, today, keep, zip, "Decoder log", [&s](int n) {
         std::lock_guard<std::mutex> lk(s.mu);
         s.compressing += n;
-    });
+    }, deletions);
     s.rescan = true;
+}
+
+// the deletion grace after a settings change: 10 min, as the telemetry logs'
+// (KRAKEN_LOGRET_GRACE_S shortens it for tests - the same variable)
+std::chrono::milliseconds delete_grace() {
+    const char* e = getenv("KRAKEN_LOGRET_GRACE_S");
+    const int v = e ? atoi(e) : 0;
+    return std::chrono::seconds(v >= 1 && v <= 3600 ? v : 600);
 }
 
 // a pass with the settings as they are now: at startup (once the settings are replayed), the day
 // change and every 10 min; a Keep / Then compressed / folder change a few seconds after the last
-// one (a replay sets Keep and Then compressed one after the other - logret::Scheduler). A request
-// during a pass runs another after it; none before settings_restored() (the stored Keep days),
-// none during a debug playback (its settings are a sandbox - the stored ones are replayed first)
+// one (a replay sets Keep and Then compressed one after the other - logret::Scheduler). After a
+// change the passes only compress; what the new rule deletes is deleted 10 min after the LAST
+// change (the grace, as the telemetry logs': a person setting Keep and then Then compressed, or
+// two separate commands, must not get the deletions of the rule in between). A request during a
+// pass runs another after it; none before settings_restored() (the stored Keep days), none
+// during a debug playback (its settings are a sandbox - the stored ones are replayed first)
 logret::Scheduler& passes() {
-    static logret::Scheduler* p = new logret::Scheduler([](bool) {   // never destroyed (a pass may run at exit); no deletion grace here
+    static logret::Scheduler* p = new logret::Scheduler([](bool deletions) {   // never destroyed (a pass may run at exit)
         State& st = S();
         std::string dir;
         int keep, zip;
@@ -314,11 +325,18 @@ logret::Scheduler& passes() {
             keep = st.days;
             zip = st.zip_days;
         }
-        run_pass(dir, keep, zip);
-    }, [] { return playback::active(); });
+        run_pass(dir, keep, zip, deletions);
+    }, [] { return playback::active(); }, logret::Scheduler::DEBOUNCE, delete_grace());
     return *p;
 }
 void request_pass() { passes().request(); }
+// a Keep / Then compressed / folder change: the debounced pass and the deletion grace - not for
+// the startup replay (before settings_restored() no pass runs, and the first one applies the
+// stored values as they are, like the telemetry logs' stored settings): a receiver that never
+// runs 10 min would otherwise never delete a day
+void setting_changed() {
+    if (passes().allowed()) passes().request_after_change();
+}
 
 void worker() {
     State& s = S();
@@ -531,7 +549,7 @@ void set_days(int days) {
         changed = s.days != std::clamp(days, 0, 3650);
         s.days = std::clamp(days, 0, 3650);
     }
-    if (changed) passes().request_after_change();
+    if (changed) setting_changed();
 }
 
 void set_zip_days(int days) {
@@ -542,7 +560,7 @@ void set_zip_days(int days) {
         changed = s.zip_days != std::clamp(days, 0, 3650);
         s.zip_days = std::clamp(days, 0, 3650);
     }
-    if (changed) passes().request_after_change();
+    if (changed) setting_changed();
 }
 
 void set_pos_interval(int seconds) {
@@ -606,7 +624,7 @@ bool set_dir(const std::string& path_in, std::string* err) {
         s.error.clear();
         s.scan_ms = 0;
     }
-    passes().request_after_change();
+    setting_changed();
     return true;
 }
 
