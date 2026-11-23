@@ -524,8 +524,9 @@ refused; out-of-range numbers are clamped:
   ceiling from heimdall; the seam steps kept (below); heimdall's status
   fields `gain_floor_hops`, `gain_probes`, `gain_floor_decisions`,
   `gain_search_hops`, `floor_scatter_db`, `gain_pairs`,
-  `gain_pairs_unbracketed`, `gain_pairs_nonlinear`, `gain_step_learned`
-  (numbers) and `gain_probe_sweep` (true / false) passed through to the
+  `gain_pairs_unbracketed`, `gain_pairs_nonlinear`, `gain_step_learned`,
+  `gain_probes_skipped`, `gain_level_guesses` (numbers, the last completed
+  sweep's) and `gain_probe_sweep` (true / false) passed through to the
   `sweep` message as heimdall sends them - each one absent when heimdall
   doesn't send it (an older heimdall; additive). The state goes again when
   `gain_floor_hops` or `gain_search_hops` changes or a field appears /
@@ -534,41 +535,46 @@ refused; out-of-range numbers are clamped:
   `"trials_left_out"`: the up-trial visits this receiver left out of the
   picture since it started (the receiver's own count).
 - Trial visits (round 10, the 8091 trial bit of the visit's channel; the
-  last packet of a visit decides): one at a gain ABOVE the hop's last drawn
-  visit's (by more than 0.05 dB) is not drawn - not in the stored row, so
-  not in the live frames, a full set, the overview or the waterfall, which
-  all read the store; the hop's floor for the reference is not taken from
-  it either - while the hop has a row on this grid: an up-probe may be past
-  the chain's linear range (ghost carriers, a carrier short). One at or
-  below it is drawn (a lower gain is the more linear; heimdall's search
-  sweeps are such), shifted by its own gain as every visit. A hop with no
-  row yet on the grid draws its trial whatever it is (something rather than
-  nothing). No trial visit changes the hop's gain map entry, so neither the
-  map, `gain_reduced_hops` / `gain_min_db` nor the page's amber strip move
-  for a probe. Without the bits (a heimdall that doesn't send them) every
-  visit is drawn as before. A hop whose visits are left out keeps the row of
-  its last drawn visit (a normal visit, or a down-trial) - as old as the
-  run of left-out visits since, one sweep each; heimdall probes a held hop
-  every few sweeps, so a few sweeps at most. Nothing waits for a drawn
-  visit: a sweep completes on heimdall's round counter, and its full set
-  and the `sweeps` count come from the store as it is then. Tested (`t_trial.py`, fake heimdall: 16 hops,
-  every hop's own gain 33.8 dB under a 42.1 ceiling, sparse probes 1 in 3
-  per sweep alternating up (36.4) and down (32.8); every up-probe carries a
-  ghost carrier 40 counts at +333 kHz, every down-probe a marker at +555
-  kHz; every bin of 123 sweeps through `SWEEP_FULL`): with the bits no
-  ghost in any sweep's row, 302 down-probe markers drawn, no gain map sent
-  (16 hops at 33.8 throughout), `trials_left_out` 0 -> 480; the same
-  without the bits: ghosts in 306 hop-rows (the check sees them when they
-  are drawn); every visit an up-probe for 8 s: 98 complete sets (12.3 a
-  second, as with the probes drawn), no ghost, every hop keeps its row,
-  2225 visits left out; a new grid where every visit is an up-probe: every
-  hop has a row. The noise reference through the search phase (`t_probe.py`,
-  the clean hops' mean level in the even against the odd sweeps, i.e. the
-  normal against the whole-plan probe sweeps): -0.038 dB, with tuner 2's
-  block reduced -0.044 dB (manual -0.019); what holds it is each visit
-  shifted by its own real gain, the ceiling from heimdall (not the sweep's
-  highest header gain, which flipped it by a step: 2.35 dB jumps before) and
-  the kept seam steps.
+  last packet of a visit decides): since the first hardware run (heimdall
+  62b62c1, 2026-11-24) EVERY trial visit is left out of the picture while
+  its hop has a current row - one stored at most `TRIAL_ROW_SWEEPS` (3)
+  completed sweeps ago: not in the stored row, so not in the live frames, a
+  full set, the overview or the waterfall, which all read the store, and
+  not in the floors the reference and the seam steps are taken from. An up
+  trial may be past the chain's linear range (ghost carriers, a carrier
+  short); a down trial was meant to be harmless, but on the hardware a
+  visit 6 - 8 dB down where the tuner's noise nears the converter's own
+  (the FM band, above 1 GHz, hops already far down; LTE hops at 16.6 tried
+  at 8.7 every other sweep) showed a floor several dB higher in that row.
+  (Before that: only trials above the hop's last drawn gain were left out.)
+  A hop with no row yet on the grid, or only a stale one, draws its trial
+  (something rather than nothing). No trial visit changes the hop's gain
+  map entry, so neither the map, `gain_reduced_hops` / `gain_min_db` nor
+  the page's amber strip move for a probe. `trials_left_out` counts every
+  trial visit left out (both directions). Without the bits (a heimdall that
+  doesn't send them) every visit is drawn as before. A hop whose visits are
+  left out keeps the row of its last drawn visit; nothing waits for a drawn
+  visit: a sweep completes on heimdall's round counter, and its full set,
+  the `sweeps` count and the progress come from the store as it is then.
+  Tested (`t_trial.py`, fake heimdall: 16 hops, every hop's own gain 33.8
+  dB under a 42.1 ceiling; up-probes (36.4) carry a ghost carrier 40 counts
+  at +333 kHz, down-probes (32.8) and search-sweep visits a marker at +555
+  kHz; every bin of every sweep through `SWEEP_FULL`): sparse probes 1 in 3
+  per sweep - no ghost and no marker in any of 122 sweeps' rows, no gain
+  map sent, `trials_left_out` 0 -> 948; without the bits ghosts in 313
+  hop-rows (the check sees them when drawn); the search phase (every hop a
+  down trial in every other sweep) - no marker in 98 sweeps, 12.2 complete
+  sets a second as without probes (nothing waits), ~half the stores left
+  out; every visit a trial for good - every hop keeps a row, the sweeps go
+  on, a row older than 3 sweeps draws the trial (1.6 times the search
+  phase's share left out); a new grid where every visit is a trial: every
+  hop has a row. `t_probe.py`: 12.2 sweeps a second in every phase; the
+  clean hops' mean level in the even against the odd sweeps (the normal
+  against the whole-plan probe sweeps) +0.006 dB in the search phase,
+  +0.003 with tuner 2's block reduced, manual +0.006 (it was -0.038 /
+  -0.044 when the down trials were drawn; without the bits -0.037 / -0.050,
+  as before); a hop probed every other sweep shows its own-gain row, at
+  most 1 sweep old.
 - Round 10 tested with the fake heimdall (`t_probe.py`: 16 hops, 5 dongles
   0 / 3 / -2 / 1 / 4 dB apart, their real gains off the published curve by
   -0.4 ... +0.4 dB per 10 dB down; every bin of every sweep through
@@ -599,8 +605,9 @@ refused; out-of-range numbers are clamped:
   for 22.2 predicted from the real gain; five malformed curves ignored (one
   point, falling gains, a string, a string value, unclosed); manual gain
   with the curve unchanged.
-- Seam steps, round 10 (2026-11-24): a tuner pair's step taken from hops at
-  the ceiling on both sides is kept (`S.seam_step`); a side without one -
+- Seam steps, round 10 (2026-11-24): a tuner pair's steps taken from hops at
+  the ceiling on both sides are kept (`S.seam_hist`, the last 4 completed
+  sweeps'); a side without one -
   heimdall's search sweep, a block reduced for good - uses the kept step
   instead of falling back to all hops (that folded the reduced hops'
   pedestal, or the units' curve error, into the next block). Only a seam
@@ -615,6 +622,31 @@ refused; out-of-range numbers are clamped:
   step and the FM block's offset between runs are untouched by this (both
   from manual, where every hop is at the ceiling: a signal or a captured
   hop beside a seam, the 6 dB cap).
+- Seam steps, the median (2026-11-24, the review's open finding - `t_agc
+  seam` on the Pi, a block off by 1 - 6.6 dB now and then): the step used
+  is the median of the ceiling steps of the last 4 completed sweeps and of
+  the evaluation's own (`SEAM_HIST`); a step past the 6 dB cap is no
+  evidence (the median of the kept ones is used), no longer 0. Found with
+  `KRAKEN_SWEEP_SEAM_DEBUG=1` (every evaluation logs, to stderr, each
+  seam's hops `h:floor@gain` with `*` at the ceiling, where the step came
+  from - C, M, A, - -, the step and the raw ceiling difference; then the
+  base and the offsets): one hop's odd floor for one visit - a short visit
+  3.5 dB low, or a hop clipped at the ceiling whose floor reads -64 dB -
+  made one evaluation's step 0 (past the cap) or bent it by its own error;
+  the whole chain of blocks after that seam, and the base, moved with it
+  for that evaluation (~80 ms at 12 sweeps a second), the rows were
+  rewritten, and a measurement that caught it saw a block 1 - 5 dB off.
+  Load makes the odd visits more frequent (the Pi, x86 pinned to 2 busy
+  cores). The mechanism is round 9's (the
+  same step code; a round-9 build with the same log, x86 pinned to 2 busy
+  cores: 10.1 isolated step spikes > 1 dB a minute; c419b4b 8.1; with the
+  median 0.8); `t_agc seam` only fails when its measurement catches one
+  (x86 under load, 10 runs each: round 9 10/10 green, c419b4b 10/10, the
+  median 10/10; the Pi: round 9 10/10, c419b4b with the log 9/10 - the
+  failure a glitched manual reference -, earlier c419b4b runs 4 failures in
+  6). The median also takes the manual clipped hop's error away (`t_agc
+  seam`, hop 5 hot in manual: tuner 1's block +4.7 dB before, within one
+  level step now).
 - Seam steps with auto gain (2026-11-23, after the orchestrator's question
   whether reduced hops fool them): `evaluate` takes a tuner pair's step only
   from hops at the ceiling (their gain = the common one) on each side of the
