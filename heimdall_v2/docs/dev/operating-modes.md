@@ -1735,6 +1735,38 @@ clipping rule stays the fast guard and is the search's ceiling.
   - The rule's probes go on from there. Up-probes with something to test
     may pass the guess; up-probes with nothing testable stay under it
     while the neighbour's level holds.
+  - The level is the in-window carrier's OWN (2026-11-24, from the
+    orchestrator's acceptance on 9dc3bbc). It is the strongest bin in the
+    window, at least 20 dB over the floor, taken together with the two
+    bins beside it, so it measures the carrier's power.
+    - The window is the part of the neighbour's band within 2.2 MHz below
+      this hop's centre.
+    - Check: 415.52's 415.64 carrier reads +10.0 dB, the same as that
+      hop's total rms.
+    - A band of flat content uses its total level. A band whose carriers
+      all sit outside the window gives no guess.
+    - Why: 417.43's band held 416.59 MHz (outside the window of 419.34)
+      and a keyed 417.86 (inside it). The guess took the position from one
+      carrier and the level from the band's total. So 418.93 / 419.34
+      were guessed far down and held there for 17 min with their own
+      content at the converter's noise.
+  - The guess and its up-probe ceiling follow that carrier. They are
+    released when it is gone (none within 300 kHz of its offset) or 3 dB
+    down in two visits of the neighbour in a row. A hop the guess held
+    then starts an up search at once.
+  - An up-probe whose leftover step to the top would be too small to test
+    (48.0 -> 49.6) goes to the top directly. Otherwise 419.34 stopped at
+    48.0 after its guess was released.
+  - Fake: a band with +20 dBFS outside the window and a keyed +5 dBFS
+    inside it. The hop above is guessed by the keyed carrier only (38.6,
+    against ~25 by the total), and is back at 49.6 11 sweeps after the
+    key-off.
+  - Hardware (one tuner, 3 cold starts):
+    - 417.43 at 33.8 (sweep 3), 32.8, and 29.7 (sweep 8); 415.52 at
+      25.4 / 22.9 / 16.6.
+    - 419.34 stayed at 49.6 in two runs. In the third, the keyed carrier
+      guessed it to 43.4, and it came back to 48.0 at sweep 18. That run
+      predates the leftover-step fix.
   - Status `gain_level_guesses`.
 - *The clipping rule's cut from the level*: a clip of at most 5 % on a
   visit whose rms is at least -6 dBFS (a carrier near full scale, crest

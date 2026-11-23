@@ -495,11 +495,16 @@ struct HopAcc {
     // the strongest bin of the kept band (its offset from the centre, Hz, and
     // its height over the floor, dB) - of the visit's packet where it stood highest
     float pk_off_hz = 0, pk_over_db = -99;
+    // the strongest bin at or above the window's lower edge (the part of this
+    // band within AG_NB_REACH_HZ below the next hop's centre): its offset,
+    // height over the floor and power (its bin and the two beside it, dBFS)
+    float win_off_hz = 0, win_over_db = -99, win_pow_db = -200;
 };
 std::mutex acc_mutex;
 HopAcc hop_acc[NUM_DEVICES];
 std::atomic<uint32_t> stats_mask{0};   // the tuners of the plan (the hop thread sets it)
-std::atomic<uint32_t> stats_half_band_hz{956250};   // the kept band's half width (the plan's step / 2)
+std::atomic<uint32_t> stats_half_band_hz{956250};
+std::atomic<float> win_lo_hz{-287500.0f};   // the guess window's lower edge in a band (the plan's step - AG_NB_REACH_HZ)   // the kept band's half width (the plan's step / 2)
 
 // Status (of the last completed sweep)
 std::atomic<uint32_t> ag_reduced_hops{0}, ag_clipped_hops{0}, ag_changes{0}, ag_writes{0}, ag_write_failures{0};
@@ -677,7 +682,8 @@ constexpr double AG_LIN_HEAVY_CLIP = 0.01;
 constexpr float AG_NB_LEVEL_DBFS = -2.0f;  // the neighbour's level at the guess, at most
 constexpr float AG_NB_RISE_DB = 3.0f;      // the neighbour's level up this much since the guess: guess again
 constexpr float AG_NB_REACH_HZ = 2.2e6f;   // the neighbour's carrier at most this far below the hop's centre
-constexpr float AG_NB_CARRIER_DB = 20.0f;  // a strongest bin this far over the floor is a carrier (its position counts)
+constexpr float AG_NB_CARRIER_DB = 20.0f;
+constexpr float AG_NB_FOLLOW_HZ = 300e3f;  // the guess's carrier: still there when a window carrier is this close  // a strongest bin this far over the floor is a carrier (its position counts)
 // The clipping rule's cut from the LEVEL: a moderate clip (at most
 // AG_LEVEL_CUT_MAX of the values) on a visit whose rms is at least
 // AG_LEVEL_CUT_MIN_RMS (a level, not a burst inside a quiet visit) takes the
@@ -738,6 +744,13 @@ struct FloorEntry {
     float nb_lvl = NAN;          // ... at this neighbour level
     int nb_cap = 1 << 30;        // ... and gave this gain: an up-probe with nothing testable stays under it
     float car_off_hz = 0, car_over_db = -99;   // the last not heavily clipped visit's strongest bin
+    // the window's carrier (>= AG_NB_CARRIER_DB over the floor) of the last two
+    // such visits: present, offset, level referred to the input
+    bool wc_ok[2] = {false, false};
+    float wc_off[2] = {0, 0}, wc_lvl[2] = {-200, -200};
+    uint32_t wc_n = 0;
+    float nb_off = 0;            // the guess's carrier offset (in the neighbour's band)
+    bool nb_flat = false;        // the guess came from flat content (the band's total), not a carrier
     uint32_t base_sweep = ~0u;
     float scatter = 0;           // the median of the last 8 |F_in - the visit before| at the hop's gain
     float dif[8] = {0, 0, 0, 0, 0, 0, 0, 0};
@@ -906,6 +919,10 @@ int floor_wanted(int t, uint32_t hz, int clip_g) {
         const int top = e.search ? std::min(ceil_q, quantize_down(L, e.up_lim - 1)) : ceil_q;
         pg = std::min(top, quantize_down(L, base_g + (e.search ? step : base_g < ceil_q ? AG_FLOOR_STEP_BIG : AG_FLOOR_STEP)));
         while (pg < top && real_gain_db(t, pg) - rb < AG_LIN_MIN_STEP) pg = std::min(top, next_up(L, pg));
+        // (straight to the top when what would be left over is a step too small
+        // to test - 48.0 -> 49.6 near a cause is refused, and 419.34 MHz stopped
+        // at 48.0 after its guess was released)
+        if (pg < top && real_gain_db(t, top) - real_gain_db(t, pg) < AG_LIN_MIN_STEP) pg = top;
         if (pg <= base_g && e.search) { e.search = false; e.up_search = false; return base_g; }   // nothing left to try
     }
     if (pg == base_g) return base_g;
@@ -1124,7 +1141,7 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
                   << " dg " << dg << " r " << r << (learned_p ? "L" : "C") << " rf " << rf << (learned_f ? "L" : "C") << " P " << p_hi << "/" << p_lo << " F " << f_hi << "/" << f_lo
                   << " vp " << vp << " vf " << vf << " mp " << mp << " mf " << mf << " sp " << steep_p << " sf " << steep_f
                   << " nl " << nonlinear << " gross " << gross << " unk " << unknown << " cause " << cause << " search " << e.search << " up " << e.up_search
-                  << " bn " << e.bracket_n << " bh " << int(e.bracket_hist) << std::endl;
+                  << " bn " << e.bracket_n << " bh " << int(e.bracket_hist) << " cap " << e.nb_cap << " hold " << e.hold << std::endl;
     auto take = [&](int g) {
         if (g > clip_g) {
             // (an up-probe past the clipping rule's gain, clean: that rule
@@ -1290,6 +1307,10 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
         e.lvl_ring[e.lvl_n++ % 4] = p_in;
         e.car_off_hz = a.pk_off_hz;
         e.car_over_db = a.pk_over_db;
+        const uint32_t k = e.wc_n++ % 2;
+        e.wc_ok[k] = a.win_over_db >= AG_NB_CARRIER_DB;
+        e.wc_off[k] = a.win_off_hz;
+        e.wc_lvl[k] = a.win_pow_db - rg;
     }
     // ONE way up: when the clipping rule raises its own gain (its probes
     // after a step down, its +3 dB after a clean hold), the hop stays where
@@ -1454,31 +1475,75 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
     // the neighbour's band may be attenuated more)
     if (plan_step_hz > 0 && a.hz > plan_step_hz) {
         auto nb = floor_map.find(a.hz - plan_step_hz);
-        // Only where the neighbour's carrier sits within AG_NB_REACH_HZ below
-        // this hop's centre: there the IF filter gave 0 dB (carriers 1.38 and
-        // 1.79 MHz below); at 2.34 - 3.7 MHz below it was falling (nothing on
-        // the reference day at a would-clip level). The carrier's position is
-        // the neighbour's strongest bin when it stands AG_NB_CARRIER_DB over
-        // its floor; flat content (LTE): the band's upper edge.
-        const bool reach = nb != floor_map.end() &&
-                           static_cast<float>(plan_step_hz) -
-                                   (nb->second.car_over_db >= AG_NB_CARRIER_DB ? nb->second.car_off_hz
-                                                                               : static_cast<float>(plan_step_hz) / 2) <=
-                               AG_NB_REACH_HZ;
-        if (nb != floor_map.end() && reach && nb->second.tuner == t && nb->second.lvl_n > 0) {
-            float lv = -1e9f;
-            for (uint32_t k = 0; k < std::min<uint32_t>(nb->second.lvl_n, 4); k++) lv = std::max(lv, nb->second.lvl_ring[k]);
-            // the neighbour's carrier has gone down: no cap from it (its level at
-            // the guess is kept: a carrier that comes and goes must not guess
-            // the hop down again each time it comes back - 418.93 MHz did so)
-            if (e.nb_done && lv <= e.nb_lvl - AG_NB_RISE_DB) e.nb_cap = 1 << 30;
-            if (!e.nb_done || lv >= e.nb_lvl + AG_NB_RISE_DB) {
+        // Only a carrier within AG_NB_REACH_HZ below this hop's centre: there
+        // the IF filter gave 0 dB (carriers 1.38 and 1.79 MHz below); at 2.34 -
+        // 3.7 MHz below it was falling (nothing on the reference day at a
+        // would-clip level). The level is that carrier's OWN (its bin and the
+        // two beside it; the strongest in the window, AG_NB_CARRIER_DB over the
+        // floor) - not the band's total, which a stronger carrier outside the
+        // window would lend it (418.93 / 419.34 MHz below a band with 416.59
+        // outside and the keyed 417.86 inside: guessed to 29.7 for 17 min).
+        // A band of flat content (no carrier): its total, at the band's
+        // upper edge. Carriers only outside the window: no guess.
+        bool have = false, carrier = false;
+        float lv = -1e9f, off = 0;
+        if (nb != floor_map.end() && nb->second.tuner == t && nb->second.lvl_n > 0) {
+            const FloorEntry& n = nb->second;
+            for (int k = 0; k < 2; k++)
+                if (n.wc_ok[k] && n.wc_lvl[k] > lv) { lv = n.wc_lvl[k]; off = n.wc_off[k]; have = true; carrier = true; }
+            if (!have && n.car_over_db < AG_NB_CARRIER_DB) {
+                for (uint32_t k = 0; k < std::min<uint32_t>(n.lvl_n, 4); k++) lv = std::max(lv, n.lvl_ring[k]);
+                off = static_cast<float>(plan_step_hz) / 2;
+                have = true;
+            }
+        }
+        if (nb != floor_map.end() && nb->second.tuner == t && (have || e.nb_cap < (1 << 30))) {
+            // the guess's carrier gone (none within AG_NB_FOLLOW_HZ of its offset)
+            // or 3 dB down, in both of the neighbour's last two visits: no cap
+            // from it (its level at the guess is kept: a carrier that comes and
+            // goes guesses again only on a new high)
+            if (e.nb_done && e.nb_cap < (1 << 30)) {
+                const FloorEntry& n = nb->second;
+                bool held = false;
+                if (!e.nb_flat) {
+                    for (int k = 0; k < 2; k++)
+                        if (n.wc_ok[k] && std::fabs(n.wc_off[k] - e.nb_off) <= AG_NB_FOLLOW_HZ &&
+                            n.wc_lvl[k] > e.nb_lvl - AG_NB_RISE_DB)
+                            held = true;
+                } else {
+                    held = have && !carrier && lv > e.nb_lvl - AG_NB_RISE_DB;
+                }
+                static const bool trace_r = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
+                if (trace_r)
+                    std::cout << "AGR " << sweep_idx << " hz " << a.hz << " held " << held << " wc " << n.wc_ok[0] << "/" << n.wc_off[0]
+                              << "/" << n.wc_lvl[0] << " " << n.wc_ok[1] << "/" << n.wc_off[1] << "/" << n.wc_lvl[1] << " nb " << e.nb_off
+                              << "/" << e.nb_lvl << std::endl;
+                if (!held) {
+                    e.nb_cap = 1 << 30;
+                    if (e.g >= 0) {
+                        // held under it by the guess: back up now (an up search
+                        // in the probe sweeps), not at the settled period
+                        e.search = true;
+                        e.up_search = true;
+                        e.step = AG_FLOOR_STEP_BIG;
+                        e.up_lim = 1 << 30;
+                        e.clip_lift = false;
+                        e.agree_n = 0;
+                        e.agree_dir = 0;
+                        e.agree_g = -999;
+                    }
+                }
+            }
+            if (have && (!e.nb_done || lv >= e.nb_lvl + AG_NB_RISE_DB)) {
                 static const bool trace_g = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
                 if (trace_g)
-                    std::cout << "AGG " << sweep_idx << " hz " << a.hz << " nb_lvl " << lv << " car_off " << nb->second.car_off_hz
-                              << " car_over " << nb->second.car_over_db << " now " << now_g << std::endl;
+                    std::cout << "AGG " << sweep_idx << " hz " << a.hz << " nb_lvl " << lv << " off " << off
+                              << (carrier ? " carrier" : " flat") << " nb_rms_in " << nb->second.lvl_in << " now " << now_g
+                              << std::endl;
                 e.nb_done = true;
                 e.nb_lvl = lv;
+                e.nb_off = off;
+                e.nb_flat = !carrier;
                 int g = now_g;
                 while (g > (L.empty() ? 0 : L.front()) && lv + real_gain_db(t, g) > AG_NB_LEVEL_DBFS) g = quantize_down(L, g - 1);
                 e.nb_cap = g < now_g ? g : (1 << 30);
@@ -1771,8 +1836,11 @@ bool sweep_auto_gain_active() { return auto_gain_on.load() && in_sweep() && curr
 // keyed or not - sit above it. ~8 FFTs of 1024 a visit.
 constexpr int FLOOR_N = 1024, FLOOR_FRAMES = 8;
 constexpr float FLOOR_PCT = 0.20f;
-static float packet_floor_db(const uint8_t* b, size_t nb, float& pk_off_hz, float& pk_over_db) {
-    pk_over_db = -99;
+struct PacketCarrier {
+    float pk_off_hz = 0, pk_over_db = -99;      // the band's strongest bin
+    float win_off_hz = 0, win_over_db = -99, win_pow_db = -200;   // the window's
+};
+static float packet_floor_db(const uint8_t* b, size_t nb, PacketCarrier& pc, float win_lo_hz) {
     static PFFFT_Setup* setup = pffft_new_setup(FLOOR_N, PFFFT_COMPLEX);
     static float* in = static_cast<float*>(pffft_aligned_malloc(2 * FLOOR_N * sizeof(float)));
     static float* out = static_cast<float*>(pffft_aligned_malloc(2 * FLOOR_N * sizeof(float)));
@@ -1811,14 +1879,26 @@ static float packet_floor_db(const uint8_t* b, size_t nb, float& pk_off_hz, floa
     const float norm = static_cast<float>(frames) * wsum * 127.5f * 127.5f;
     const float fl = *k;
     if (fl > 0) {
-        int best = 0;
-        float bv = 0;
-        for (int i = 3; i <= half; i++) {
-            if (acc[i] > bv) { bv = acc[i]; best = i; }
-            if (acc[FLOOR_N - i] > bv) { bv = acc[FLOOR_N - i]; best = -i; }
+        const float bin_hz = static_cast<float>(SAMPLE_RATE) / FLOOR_N;
+        int best = 0, wbest = 0;
+        float bv = 0, wv = 0;
+        auto at = [&](int off) { return acc[(off + FLOOR_N) % FLOOR_N]; };
+        for (int off = -half; off <= half; off++) {
+            if (off > -3 && off < 3) continue;
+            const float v = at(off);
+            if (v > bv) { bv = v; best = off; }
+            if (static_cast<float>(off) * bin_hz >= win_lo_hz && v > wv) { wv = v; wbest = off; }
         }
-        pk_off_hz = static_cast<float>(best) * static_cast<float>(SAMPLE_RATE) / FLOOR_N;
-        pk_over_db = 10.0f * std::log10(bv / fl + 1e-30f);
+        pc.pk_off_hz = static_cast<float>(best) * bin_hz;
+        pc.pk_over_db = 10.0f * std::log10(bv / fl + 1e-30f);
+        if (wv > 0) {
+            pc.win_off_hz = static_cast<float>(wbest) * bin_hz;
+            pc.win_over_db = 10.0f * std::log10(wv / fl + 1e-30f);
+            // a tone's power: the main lobe's three bins over (norm x N) - the
+            // Hann window's energy spreads over them (Parseval)
+            const float s3 = at(wbest - 1) + wv + at(wbest + 1);
+            pc.win_pow_db = 10.0f * std::log10(s3 / (norm * FLOOR_N) + 1e-30f);
+        }
     }
     return 10.0f * std::log10(fl / norm + 1e-30f);
 }
@@ -1838,14 +1918,19 @@ void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32
             ss += static_cast<uint32_t>(d * d);
             peak = ad > peak ? ad : peak;
         }
-        float pk_off = 0, pk_over = -99;
-        const float floor = packet_floor_db(b, nb, pk_off, pk_over);
+        PacketCarrier pc;
+        const float floor = packet_floor_db(b, nb, pc, win_lo_hz.load(std::memory_order_relaxed));
         std::lock_guard<std::mutex> lk(acc_mutex);
         HopAcc& a = hop_acc[t];
         if (a.hz != hz[t] || a.gain != gain[t]) a = HopAcc{hz[t], gain[t]};
         if (std::isfinite(floor)) {
             a.floor_db += floor;
-            if (pk_over > a.pk_over_db) { a.pk_over_db = pk_over; a.pk_off_hz = pk_off; }
+            if (pc.pk_over_db > a.pk_over_db) { a.pk_over_db = pc.pk_over_db; a.pk_off_hz = pc.pk_off_hz; }
+            if (pc.win_over_db > a.win_over_db) {
+                a.win_over_db = pc.win_over_db;
+                a.win_off_hz = pc.win_off_hz;
+                a.win_pow_db = pc.win_pow_db;
+            }
             a.floor_n++;
         }
         a.values += nb;
@@ -2184,6 +2269,7 @@ void sweep_thread() {
         stats_mask.store(auto_gain_on.load() ? plan_mask : 0, std::memory_order_relaxed);
         stats_half_band_hz.store(static_cast<uint32_t>(p.step_hz / 2), std::memory_order_relaxed);
         plan_step_hz = static_cast<uint32_t>(p.step_hz);
+        win_lo_hz.store(static_cast<float>(p.step_hz) - AG_NB_REACH_HZ, std::memory_order_relaxed);
         for (size_t k = 0; k < kp; k++) {
             const uint64_t b0 = static_cast<uint64_t>(k) * H / kp, b1 = static_cast<uint64_t>(k + 1) * H / kp;
             if (b1 - b0 > 1) hopping |= 1u << sel[k];
