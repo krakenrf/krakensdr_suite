@@ -24,17 +24,40 @@ bool same_signal(const T& a, const T& b) {
     return ra <= 3.0 && ra >= 1.0 / 3.0;
 }
 
-// the better of two views of one signal first: the one in its tuner's latest
-// snapshot (fresh), then one with a class, then the stronger (each tuner has
-// its own antenna: live, one MPT1327 control channel read 15 dB SNR on CH0
-// and 3.6 dB on CH1 - the newer CH1 view, p 0.40, hid CH0's sure label),
-// then the more recently seen, then the more often seen (then the lower
-// tuner, the lower frequency: a strict order)
+// the better of two views of one signal first: one with a class, then the
+// stronger (each tuner has its own antenna: live, one MPT1327 control channel
+// read 15 dB SNR on CH0 and 3.6 dB on CH1 - the newer CH1 view, p 0.40, hid
+// CH0's sure label) - the view sent last (`sent`: its id was in the previous
+// list) counting STICKY_DB stronger -, then (an exact tie at the margin) the
+// challenger, then the one in its tuner's latest snapshot (fresh), the more
+// recently seen, the more often seen, the lower tuner, the lower frequency.
+// A lexicographic key of each view's own values: a strict weak order (a
+// margin inside the comparison would not be one - a 1 dB chain a < b < c
+// with c 3 dB over a).
+// INV-K (2026-11-24): one label per signal - who looked last decides only
+// how fresh it looks. The view sent last stays the one sent for as long as
+// it is published at all (its tracker holds it, inside its tuner's band, not
+// a hidden class: the service's filters before this rule), whichever tuner
+// looked last; it hands over only when (1) it is gone, (2) it has no class
+// and another view has one, (3) another is at least STICKY_DB stronger. The
+// freshness no longer comes first: two antennas within a few dB took turns
+// as either band got its look - live, a signal at 416.090 MHz sent as CH0's
+// view (26.6 dB, "DMR") and CH1's (26.4 dB, "MPT1327") in turn (until
+// 59795de always, then (8837d87, INV-J) whenever the sent view went stale
+// while the other was fresh: 33 changes, 6 class flips in 100 s with two
+// overlapping tuners on one recording). A brand-new signal (nothing sent):
+// classed, then the SNR, then fresh - fresh before the class and the SNR
+// (the old order) cannot be kept together with a sticky margin that ignores
+// freshness: a sent stale view S, a fresh O1 1 dB under it and a stale O2
+// 3.5 dB over it would make S < O2 < O1 < S - not an order.
+constexpr double STICKY_DB = 3.0;
 template <class T>
 bool better(const T& a, const T& b) {
-    if (a.fresh != b.fresh) return a.fresh;
     if (a.cls.empty() != b.cls.empty()) return !a.cls.empty();
-    if (a.snr != b.snr) return a.snr > b.snr;
+    const double sa = double(a.snr) + (a.sent ? STICKY_DB : 0.0), sb = double(b.snr) + (b.sent ? STICKY_DB : 0.0);
+    if (sa != sb) return sa > sb;
+    if (a.sent != b.sent) return !a.sent;
+    if (a.fresh != b.fresh) return a.fresh;
     if (a.seen_real != b.seen_real) return a.seen_real > b.seen_real;
     if (a.hits != b.hits) return a.hits > b.hits;
     if (a.tuner != b.tuner) return a.tuner < b.tuner;
@@ -42,12 +65,23 @@ bool better(const T& a, const T& b) {
 }
 
 // One signal seen by two (or more) tuners is sent once: the tracks are taken
-// best first, each unless a same_signal() one was taken already. Result
-// sorted by hz. Invariants (tested): a subset of the input, every kept track
-// unchanged (a self-move once emptied the strings of every track in front of
-// the first dropped one); no two kept tracks are same_signal(); every
-// dropped one has a kept same_signal() one of another tuner that is better();
-// one tuner's tracks never drop each other; sorted by hz.
+// best first, each unless a same_signal() one was taken already. A kept one
+// then carries the FRESHNESS of its signal: fresh if it or any same_signal()
+// view is, seen_real the latest of them (the page's age the smallest - the
+// label does not fade while some tuner still sees the signal); everything
+// else is its own. Result sorted by hz. Invariants (tested): a subset of the
+// input, every kept track unchanged but for that freshness (a self-move once
+// emptied the strings of every track in front of the first dropped one); no
+// two kept tracks are same_signal(); every dropped one has a kept
+// same_signal() one of another tuner that is better(); one tuner's tracks
+// never drop each other; sorted by hz; idempotent. INV-K: with the views
+// kept marked `sent` and fed back, the same views are kept whatever the
+// freshness does, as long as no class comes or goes and no SNR moves 1.5 dB
+// or more from where it was when they were chosen (pairwise less than
+// STICKY_DB): every view dropped before is still preceded by the view that
+// dropped it (sent: + STICKY_DB), and the kept ones never meet each other.
+// A sent view that went, lost its class to a classed one, or was overtaken
+// by STICKY_DB is replaced at once.
 template <class T>
 void drop_overlap_duplicates(std::vector<T>& pub) {
     const auto by_hz = [](const T& a, const T& b) { return a.hz < b.hz; };
@@ -62,12 +96,13 @@ void drop_overlap_duplicates(std::vector<T>& pub) {
         std::sort(pub.begin(), pub.end(), by_hz);
         return;
     }
-    std::vector<size_t> order(pub.size());
-    for (size_t i = 0; i < order.size(); i++) order[i] = i;
+    const size_t n = pub.size();
+    std::vector<size_t> order(n);
+    for (size_t i = 0; i < n; i++) order[i] = i;
     std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return better(pub[a], pub[b]); });
     const double reach = 0.5 * max_bw + 500.0;   // (no partner is farther)
     std::vector<std::pair<double, size_t>> taken;  // (hz, index), sorted by hz
-    std::vector<uint8_t> keep(pub.size(), 0);
+    std::vector<uint8_t> keep(n, 0);
     for (size_t i : order) {
         const auto lo = std::lower_bound(taken.begin(), taken.end(), std::make_pair(pub[i].hz - reach, size_t(0)));
         bool dup = false;
@@ -77,9 +112,30 @@ void drop_overlap_duplicates(std::vector<T>& pub) {
         keep[i] = 1;
         taken.insert(std::upper_bound(taken.begin(), taken.end(), std::make_pair(pub[i].hz, i)), std::make_pair(pub[i].hz, i));
     }
-    size_t w = 0;
-    for (size_t i = 0; i < pub.size(); i++) {
+    // the signal's freshness on the kept views (from the input values, before any is changed)
+    std::vector<std::pair<double, size_t>> all(n);
+    for (size_t i = 0; i < n; i++) all[i] = {pub[i].hz, i};
+    std::sort(all.begin(), all.end());
+    std::vector<uint8_t> fr(n, 0);
+    std::vector<double> seen(n, 0.0);
+    for (size_t i = 0; i < n; i++) {
         if (!keep[i]) continue;
+        bool f = pub[i].fresh;
+        double sr = pub[i].seen_real;
+        for (auto it = std::lower_bound(all.begin(), all.end(), std::make_pair(pub[i].hz - reach, size_t(0)));
+             it != all.end() && it->first <= pub[i].hz + reach; ++it)
+            if (same_signal(pub[i], pub[it->second])) {
+                f = f || pub[it->second].fresh;
+                sr = std::max(sr, pub[it->second].seen_real);
+            }
+        fr[i] = f;
+        seen[i] = sr;
+    }
+    size_t w = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (!keep[i]) continue;
+        pub[i].fresh = fr[i] != 0;
+        pub[i].seen_real = seen[i];
         if (w != i) pub[w] = std::move(pub[i]);   // (never a self-move)
         w++;
     }

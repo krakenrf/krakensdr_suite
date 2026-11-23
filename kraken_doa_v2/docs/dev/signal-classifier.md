@@ -1608,12 +1608,50 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   drift in after a retune, and come back if the receiver returns before
   they expire), just not sent. Two overlapping tuners (wideband scan's
   edges, independent tuners on neighbouring frequencies) seeing one
-  signal: sent once (`rules::drop_overlap_duplicates`: best view first -
-  fresh, then one with a class, then the higher SNR - each tuner has its
-  own antenna, live one control channel read 15 dB on CH0 and 3.6 dB on
-  CH1 -, then the newest, the most hits -, each taken unless a view
-  of the same signal - centres within half the wider width + 500 Hz,
-  widths within 3x, another tuner - was taken). Classes marked
+  signal: sent once (`rules::drop_overlap_duplicates`) - ONE LABEL PER
+  SIGNAL (INV-K, 2026-11-24): the service remembers the ids of the list it
+  made last and marks those views (`sent`); the order is: a view with a
+  class first, then the higher SNR with a marked view counted 3 dB
+  (`STICKY_DB`) stronger - each tuner has its own antenna, live one control
+  channel read 15 dB on CH0 and 3.6 dB on CH1 -, then fresh, the newest,
+  the most hits; each view taken unless a view of the same signal - centres
+  within half the wider width + 500 Hz, widths within 3x, another tuner -
+  was taken. So the view sent last stays the one sent for as long as it is
+  published at all (its tracker holds it, inside its tuner's band, not a
+  hidden class), WHICHEVER TUNER LOOKED LAST; it hands over only when (1)
+  it is gone, (2) it has no class and another view has one, (3) another is
+  at least 3 dB stronger. Who looked last decides only how fresh the label
+  looks: the view sent carries its signal's freshness - fresh if any view
+  of the signal is, its age the smallest of them (the page fades by age:
+  the label stays unfaded while some tuner sees the signal); everything
+  else (id, class, name, p, the alternatives, hz, bw, lo / hi, SNR, tuner,
+  hits) is its own. The consequence, accepted: a view whose own tuner has
+  not seen the signal for a while keeps supplying the label until it
+  expires (45 s and 6 looks of its band, at most 180 s) or another view is
+  3 dB stronger. Two antennas on one signal should agree; where they do
+  not (one reads DMR, the other MPT1327 at 0.2 dB less), a label that
+  flips with every look is worse than one that keeps the first reading -
+  the user sees one label per signal, its text and its row steady, a press
+  held across a state message finds its track, and the hover shows the
+  SNR of the view that supplies it. History: until 59795de the
+  fresher view always won, so two antennas within a dB or two took turns
+  as either band got its look - live, in the user's independent layout
+  (416.760 / 416.815 MHz, overlapping bands) a signal at 416.090 MHz was
+  sent as CH0's view (26.6 dB, "DMR", 11 states) and as CH1's (26.4 dB,
+  "MPT1327", 61 states): its id changed (the row reset, a held press lost
+  its track) and its text flipped. 59795de (INV-J) made the sent view
+  sticky by 3 dB but still let a fresh view take over a stale one - so
+  whichever tuner looked last still took the label (two overlapping
+  tuners on one recording, 100 s: 33 changes, 6 class flips). The bonus
+  keeps the comparison an order (a margin in the comparison itself would
+  not be: a 1 dB chain a < b < c with c 3 dB over a); fresh no longer
+  comes first because it cannot stay first together with a margin that
+  ignores it (a sent stale S, a fresh O1 1 dB under it, a stale O2 3.5 dB
+  over it: S < O2 < O1 < S) - so a brand-new signal (nothing sent) is
+  chosen by class, then SNR, then freshness, and is shown fresh anyway
+  when any view is. The memory is the latest list's ids, which are never
+  reused (INV-I), so a mode change or restart needs nothing (cleared with
+  the trackers anyway); a view the 200-track cap left out is not marked. Classes marked
   `"hidden": true` (`none`: a false detection) are never sent, nor offered
   as an alternative
 - **Ages**: `age` is 0 while the track's band's latest snapshot had it and
@@ -1726,7 +1764,15 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
     not retuned are not affected except for the waits (<= 0.5 s each). The
     rest of the gap is the settle itself: a band whose turn comes while it
     settles is passed over for that pick (left as it is: waiting for a
-    settling band would change pick_band and INV-A)
+    settling band would change pick_band and INV-A). Known edge - the
+    wait's price for the other bands (the third review's model): a tuner
+    retuned every 0.9 s +-20 % costs the other bands ~20 % of their looks
+    (95 against 120 each) for 18 looks of the retuned band instead of 0;
+    every 1.1 s: the others 100 looks each against 119, the retuned band 71
+    against 5 (with the wait / without); the 2.8 s swap: the others 110
+    against 133, the swapped bands 58 / 64 against 31 / 39. Accepted:
+    without the wait a band retuned at such intervals gets (almost) no
+    labels at all
   - **A band's lead changes** (INV-E): the band's tracker and its band
     fields (looks, turn) move to the tuner now standing for it
     (`rules::regroup`); before, a lower tuner joining cleared the old lead's
@@ -2683,3 +2729,105 @@ runs).
   worker 1's page suites on a coherent playback: p2_ui_sig 18 / 18,
   p2_ui_fixes 12 / 12 (a held press across a state message with the new
   ids), p2_ui_touch 3 / 3 taps
+
+### The third review: the view sent for a signal two tuners see (N2), the wait's price (N1)
+
+- **N2 - the view sent alternated** (the reviewer by reading; the
+  orchestrator's live run in the user's layout: *Trackers* in Runtime).
+  Now sticky (INV-J): `better()` counts the view sent last (`sent`, from
+  the ids of the previous list) `STICKY_DB` 3 dB stronger, after fresh
+  and classed. Proof sketch (in `sigclass_rules.hpp`): with the views kept
+  fed back as `sent`, every view dropped before is still preceded by the
+  one that dropped it while no SNR moves 1.5 dB from where it was when the
+  views were chosen (pairwise < 3 dB), and kept views never meet - the
+  same views every publish. Tests (`tools/sigclass_rules_test.cpp`,
+  "sticky"): 8 publishes in a row, the output fed back, every SNR jittered
+  < 1.5 dB around the start - the same ids each time (random inputs and a
+  chain a ~ b ~ c); per signal of 2-4 views the sent one stays against
+  others within 2.9 dB, and a view 3.05 dB over it, the other when it
+  went, a fresh one when it went stale, a classed one when it lost its
+  class takes over; the live case (two views 0.2 dB apart, the SNRs
+  swapping every publish) stays put; the earlier invariants on every
+  output (random inputs now carry `sent` marks). Mutants: be18a73's rule
+  (not sticky: the live case alternates), sticky without the margin,
+  sticky over a fresh view, sticky over a classed one - each caught by
+  its directed inputs. End to end (TEST builds side by side, the fake
+  heimdall in independent mode, tuners 0 / 1 on 499.800 / 499.850 MHz:
+  the SAME recording - the fake shifts it by 50 kHz for tuner 1 (its
+  `shift_max`), so both tuners see one RF scene at about the same SNR,
+  the hardest case -, tuners 2-4 on 456.8 / 416.5 / 142.3 MHz, 120 s;
+  every list from 20 s; `n2_table.py`): the 20 signals sent from both
+  tuners at times - be18a73: 84 changes of the view sent (id and tuner),
+  81 of them with the new view less than 3 dB stronger, 8 class flips;
+  this branch: 33 changes, 31 within the margin, 6 class flips. The
+  remaining ones are rule (a): the sent view no longer fresh while the
+  other is - an intermittent signal (P25 voice channels) that one tuner's
+  latest look caught and the other's did not, or a band's latest look
+  overdue (a round longer than bands x period + 5 s while a first-look
+  debt is paid back). Left as the rule says: the newer detection wins
+- **N1 (no code)**: the L3 wait's price for the other bands, the third
+  review's numbers, added to *A capture a retune aborted* in Runtime
+- Reruns: the rules test seeds 21-25 (200000 rounds) and the same under
+  ASan + UBSan + `_GLIBCXX_DEBUG` (20000 rounds): all pass, 0 reports. The
+  A/B pair against be18a73 (499.8 / 456.8 MHz, 180 s, side by side):
+  coherent / wideband scan / independent - be18a73 37 / 37, 31 / 37,
+  34 / 37; this branch 36 / 36, 31 / 36, 34 / 36; CPU 4.00-4.06 % both.
+  ui_modes.py 18 / 18; p2_ui_sig 18 / 18, p2_ui_fixes 12 / 12,
+  p2_ui_touch 3 / 3
+
+### One label per signal (INV-K, 2026-11-24, replaces INV-J's rule (a))
+
+INV-J still let a fresh view take over a stale sent one, so in the user's
+layout (two bands overlapping almost completely, nearly every signal seen
+by both tuners) the label changed hands and text because ANOTHER TUNER
+LOOKED LATER. Now (*Trackers* in Runtime): the sent view stays while it is
+published at all; it hands over only when (1) it is gone, (2) it has no
+class and another has one, (3) another is >= 3 dB stronger; the view sent
+carries its signal's freshness (fresh if any view is, the smallest age).
+`better()` = class, then the SNR (+ 3 dB sent), the challenger on an exact
+tie, then fresh, seen, hits, tuner, hz - a lexicographic key of each view's
+own values, so still a strict weak order; the freshness is applied to the
+kept views after the choice, from the input values.
+
+- Tests (`tools/sigclass_rules_test.cpp`, "one label per signal"): 8
+  publishes in a row, the output fed back as `sent`, every SNR jittered
+  < 1.5 dB around the start and every view's freshness at random (whoever
+  looked last): the same ids every time, each kept view with its
+  signal's freshness, the earlier invariants each time (random inputs and
+  a chain a ~ b ~ c); per signal of 2-4 views: the sent view stale, every
+  other fresh and within 2.9 dB -> the sent one stays, published fresh and
+  with the latest seen time; (3) 3.05 dB over it, (1) it gone, (2) it
+  without a class -> the other; the live case (0.2 dB apart, the SNRs and
+  the freshness swapping every publish) -> one id, always fresh; a
+  brand-new signal -> the classed, then the stronger, then the fresh view.
+  The overlap rule's invariants: every kept track unchanged but for its
+  signal's freshness, which the check recomputes. Mutants, each caught by
+  its directed inputs: be18a73's rule, 8837d87's rule (fresh before the
+  sent view: "who looked last changed the id"), the kept view's own
+  freshness, sticky without the margin, sticky over a classed view. Seeds
+  31-35 at 200000 rounds and under ASan + UBSan + `_GLIBCXX_DEBUG` at
+  20000: all pass, 0 reports
+- End to end (the overlap rule's own lists, logged by a TEST-copy-only
+  patch - `w4/trace_patch.py`, never on the branch -; three TEST builds
+  side by side: be18a73, 8837d87, this one; independent mode, tuners 0 / 1
+  on 499.800 / 499.850 MHz fed the same recording (the fake shifts it 50
+  kHz for tuner 1), 120 s, every list from 20 s; `n2_trace.py`): signals
+  seen by both tuners 20 / 20 / 19 - changes of the view sent: be18a73 55
+  (54 with neither (1), (2) nor (3): freshness), 8837d87 10 (9), this
+  build 1 - a view 3 dB stronger (3); label text flips with a change 6 /
+  1 / 0. (The sent view's own tracker changing its class - not a hand-over
+  - 2 / 3 / 3.) 14 lists in which the sent view was stale on its own while
+  the other tuner's was fresh: all 14 published fresh. The page (headless,
+  the same run, 80 samples): the fade is `sigAlpha(sigAge(t))` only - 2198
+  label samples, none with age 0 drawn faded (the page and the trace run
+  on different clocks, so the 10 views published fresh while their own
+  tuner had not seen them are checked through that chain: published fresh
+  -> age 0 -> alpha 1; they were among the labels a pane drew in 381 of
+  their 662 samples)
+- Reruns: the A/B pair against be18a73 (499.8 / 456.8 MHz, 180 s, side by
+  side), labelled with the coherent class, coherent / wideband scan /
+  independent - be18a73 39 / 39, 33 / 39, 30 / 39; this build 40 / 40,
+  35 / 40, 32 / 40; CPU 4.00-4.07 % both. ui_modes.py 18 / 18; p2_ui_sig
+  18 / 18, p2_ui_fixes 12 / 12, p2_ui_touch 2 / 3 once (a tap whose label
+  moved before the press - the coherent playback, which this rule does not
+  touch: one tuner) and 3 / 3 on the rerun
