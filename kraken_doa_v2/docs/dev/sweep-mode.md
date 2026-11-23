@@ -410,6 +410,19 @@ steering-vector update on every channel-0 frequency change (it recomputed
 the steering vectors and printed two lines per hop; they follow on the way
 back to coherent).
 
+- **Debugging the levelling** (2026-11-24): `KRAKEN_SWEEP_SEAM_DEBUG=1` in
+  the receiver's environment makes every `evaluate` (each completed sweep
+  and at most once a second between) write one line to stderr: `seamdbg
+  <epoch ms> done <sweeps>`, then per seam `| a|b <src> <step> (now <raw>)`
+  with the hops taken on each side (`a ...` / `b ...`, each `h:floor@gain`,
+  `*` = at the ceiling), and `|| base <dB> off <per rank>`. `<src>`: C =
+  the median of the kept ceiling steps with now's, M = the kept ones alone
+  (now's past the 6 dB cap, or a side without a ceiling hop), A = all hops
+  (a seam not yet seen at the ceiling), - = none. Off by default (read once
+  at startup); about 12 lines a second at a fast sweep - it slows a loaded
+  Pi a little, so leave it off for timing. `t_agc`'s seam failures were found
+  with it (*Seam steps, the median* below); the test folder's
+  `count_glitches.py` counts isolated step spikes in such a log.
 - Header: `0x2000` is tested before `0x800` (mode 3); `note_server_mode`
   adopts a sweeping heimdall after the usual 3 s, then sends its own plan -
   except before the startup replay (`g_settings_replayed`): the settings are
@@ -626,7 +639,14 @@ refused; out-of-range numbers are clamped:
   seam` on the Pi, a block off by 1 - 6.6 dB now and then): the step used
   is the median of the ceiling steps of the last 4 completed sweeps and of
   the evaluation's own (`SEAM_HIST`); a step past the 6 dB cap is no
-  evidence (the median of the kept ones is used), no longer 0. Found with
+  evidence (the median of the kept ones is used), no longer 0. The base
+  (the reference's 20th percentile) likewise: the median of the last 4
+  completed sweeps' and now's (a round whose visits all came out short
+  moved it for an evaluation; a common gain change in manual now takes 2 -
+  3 sweeps to settle instead of 1; spikes of the base over 0.5 dB, x86
+  under load with the log: round 9 4.9 a minute, c419b4b 4.1, the step
+  median alone 0.8, with the base median 0 in 3 runs - and 0 step spikes).
+  Found with
   `KRAKEN_SWEEP_SEAM_DEBUG=1` (every evaluation logs, to stderr, each
   seam's hops `h:floor@gain` with `*` at the ceiling, where the step came
   from - C, M, A, - -, the step and the raw ceiling difference; then the
@@ -646,7 +666,17 @@ refused; out-of-range numbers are clamped:
   failure a glitched manual reference -, earlier c419b4b runs 4 failures in
   6). The median also takes the manual clipped hop's error away (`t_agc
   seam`, hop 5 hot in manual: tuner 1's block +4.7 dB before, within one
-  level step now).
+  level step now). Round 9b's hardware oddities, from the log's point of
+  view (not yet looked at on the hardware): a seam whose sides differ by
+  more than 6 dB - a signal on every hop within 6 of one side, as in the
+  700 MHz LTE bands - was and is shown uncorrected (the ~11 dB floor step
+  at 719 | 721 MHz fits that: the cap, not a wrong step); one whose
+  difference sits near the cap used to flip between the step and 0 from
+  one evaluation to the next, and now keeps the median of its in-cap steps.
+  The FM block's offset, bistable by about +-5 dB between runs, fits a
+  seam beside it whose difference lies over the cap in one run and under
+  it in another (the band's signals set the lowest floors): the median
+  steadies it within a run, not between runs.
 - Seam steps with auto gain (2026-11-23, after the orchestrator's question
   whether reduced hops fool them): `evaluate` takes a tuner pair's step only
   from hops at the ceiling (their gain = the common one) on each side of the

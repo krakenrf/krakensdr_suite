@@ -319,9 +319,15 @@ struct Store {
     // (a probe sweep, a block reduced for good) - the dongles' step doesn't change with a gain
     std::array<std::array<float, SEAM_HIST>, MAX_CHANNELS> seam_hist{};
     std::array<uint8_t, MAX_CHANNELS> seam_pos{};
+    // the base of the last SEAM_HIST completed sweeps (NaN = none): the reference is their
+    // median with now's - a round whose visits all came out odd moves nothing
+    std::array<float, SEAM_HIST> base_hist{};
+    uint8_t base_pos = 0;
     void seam_clear() {
         for (auto& a : seam_hist) a.fill(NAN);
         seam_pos.fill(0);
+        base_hist.fill(NAN);
+        base_pos = 0;
     }
     Store() { seam_clear(); }
     std::vector<int16_t> map;     // the gain map of the last completed sweep, 0.1 dB (INT16_MIN = none)
@@ -525,7 +531,20 @@ void evaluate(bool sweep_done = false) {
         S.scratch[n++] = S.floor[static_cast<size_t>(h)] - ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f);
     }
     if (n == 0) return;
-    S.base = quantile(S.scratch, n, REF_QUANTILE);
+    {
+        const float now_base = quantile(S.scratch, n, REF_QUANTILE);
+        float v[SEAM_HIST + 1];
+        int nv = 0;
+        for (float x : S.base_hist)
+            if (is_finite_value(x)) v[nv++] = x;
+        v[nv++] = now_base;
+        std::sort(v, v + nv);
+        S.base = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+        if (sweep_done) {
+            S.base_hist[S.base_pos] = now_base;
+            S.base_pos = static_cast<uint8_t>((S.base_pos + 1) % SEAM_HIST);
+        }
+    }
     S.off = off;
     if (dbg) {
         char b[32];
