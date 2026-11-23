@@ -29993,9 +29993,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
           '<label><input type="checkbox" id="wb-log-en" onchange="send(\'WB_LOG_ENABLE:\' + (this.checked ? 1 : 0))"> Log to the SD card / disk</label>' +
           '<label>One row every <select id="wb-log-per" onchange="send(\'WB_LOG_PERIOD:\' + this.value)">' +
             [[1, '1 s'], [5, '5 s'], [10, '10 s'], [30, '30 s'], [60, '1 min'], [300, '5 min']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
-          '<label title="Days a finished day stays a plain file (.csv)">Keep <select id="wb-log-keep" onchange="send(\'WB_LOG_KEEP:\' + this.value)">' +
+          '<label title="Days a finished day stays a plain file (.csv)">Keep <select id="wb-log-keep" onchange="wbLogSetRetention(\'keep\')">' +
             [[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, '1 year']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
-          '<label id="wb-log-zipl" title="Then kept gzipped (.csv.gz) for this many more days, then deleted; none = deleted after the Keep days">Then compressed <select id="wb-log-zip" onchange="send(\'WB_LOG_ZIP:\' + this.value)">' +
+          '<label id="wb-log-zipl" title="Then kept gzipped (.csv.gz) for this many more days, then deleted; none = deleted after the Keep days">Then compressed <select id="wb-log-zip" onchange="wbLogSetRetention(\'zip\')">' +
             [[0, 'none'], [30, '30 days'], [90, '90 days'], [365, '1 year'], [1095, '3 years'], [3650, '10 years']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
           '<span id="wb-log-tip" style="margin-left:-8px">' + helpTip(wbLogRule(7, 365), true) + '</span>' +
           '<span style="flex:1"></span>' +
@@ -30054,6 +30054,20 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const h = await r.json();
       if (want !== wbSheetRange || src !== wbSheetSrc || !$id('wb-sheet-bg')) return;   // changed / closed meanwhile
+      // the reply must be for the source asked for: a receiver without the host log answers every
+      // src with the board's history (and no "src") - its temperature is not this computer's
+      if ((h.src || 'wb') !== src) {
+        wbSheetPlots.forEach(p => p.destroy()); wbSheetPlots = [];
+        for (const c of WB_SRC[src]) {
+          const el = $id('wb-pl-' + c[0]), st = $id('wb-st-' + c[0]);
+          if (el) el.innerHTML = '<div class="empty">not supported by this receiver</div>';
+          if (st) st.textContent = '';
+        }
+        $id('wb-sheet-ev').innerHTML = '<span class="info">none</span>';
+        wbSheetLast = null;
+        note.textContent = 'This history is not supported by this receiver';
+        return;
+      }
       wbSheetLast = h;
       wbSheetDraw(h);
       note.textContent = h.rows ? h.rows.toLocaleString() + ' logged rows, one point per ' + wbDur(h.bucket_s) : 'nothing logged in this range yet';
@@ -30129,9 +30143,17 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       (m > 0 ? 'Keep ' + n + ', Then compressed ' + m + ': the last ' + n + ' days plain, the ' + m + ' days before those (days ' + (n + 1) +
                ' - ' + (n + m) + ') compressed, older days deleted.'
              : 'Keep ' + n + ', Then compressed none: the last ' + n + ' days plain, older days deleted.') +
-      '<br>The charts and the CSV download read both.';
+      '<br>A change gzips within seconds; the days it deletes go 10 minutes after the last change. ' +
+      'Both apply to the days on disk also while logging is off. The charts and the CSV download read both.';
   }
   function wbLogCfg() { return (hwLatest && hwLatest.logging) || (wbLatest && wbLatest.logging) || null; }
+  // Keep / Then compressed: both in ONE command whenever either changes (one change on the receiver);
+  // a receiver without WB_LOG_RETENTION (no retention_cmd in its status) gets the one that changed
+  function wbLogSetRetention(which) {
+    const lg = wbLogCfg(), keep = $id('wb-log-keep').value, zip = $id('wb-log-zip').value;
+    if (lg && lg.retention_cmd) send('WB_LOG_RETENTION:' + keep + ',' + zip);
+    else send(which === 'zip' ? 'WB_LOG_ZIP:' + zip : 'WB_LOG_KEEP:' + keep);
+  }
   // the log's size on the receiver's disk (the last history reply): plain + compressed
   function wbLogInfo() {
     const el = $id('wb-log-info'), lg = (wbSheetLast && wbSheetLast.log) || null, cfg = wbLogCfg();
@@ -30186,7 +30208,10 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         const rule = wbLogRule(lg.keep_days, lg.zip_days), tip = $id('wb-log-tip').querySelector('.tip');
         if (tip && tip.dataset.rule !== rule) { tip.innerHTML = rule; tip.dataset.rule = rule; }
       }
-      per.disabled = keep.disabled = zip.disabled = !lg.enabled;
+      // (Keep / Then compressed apply to the days on disk also while logging is off; an older
+      // receiver only applied them when it wrote a row)
+      per.disabled = !lg.enabled;
+      keep.disabled = zip.disabled = !lg.enabled && !hasZip;
       $id('wb-csvgz-btn').style.display = hasZip && wbSheetRange > 86400 ? '' : 'none';
     }
   }

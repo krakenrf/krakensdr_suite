@@ -304,7 +304,7 @@ void run_pass(const std::string& dir, int keep, int zip) {
 // during a pass runs another after it; none before settings_restored() (the stored Keep days),
 // none during a debug playback (its settings are a sandbox - the stored ones are replayed first)
 logret::Scheduler& passes() {
-    static logret::Scheduler* p = new logret::Scheduler([] {   // never destroyed (a pass may run at exit)
+    static logret::Scheduler* p = new logret::Scheduler([](bool) {   // never destroyed (a pass may run at exit); no deletion grace here
         State& st = S();
         std::string dir;
         int keep, zip;

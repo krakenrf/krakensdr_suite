@@ -117,6 +117,25 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   stored values. Tested: the old and new build's passes on the same folder
   still leave the same files; RESET_SETTINGS from stored 30 / 0 gzips days
   8-30 (5 trials); a playback with Keep 2 / 0 touches nothing.
+  **Round 3 (2026-11-23)**: a `.gz` counts as damaged unless it is complete
+  gzip members to its last byte (`logret::gz_intact`: zeros or garbage after
+  the last member, or a file that is not gzip, were taken for healthy by
+  zlib's reader - a member appended after them was invisible and the plain
+  file unlinked); a damaged one is remembered (size + time) and not inflated
+  again until it changes; "cannot gzip <file>" is said once per file per run.
+  **Not changed here, a known limit**: the telemetry logs got a 10-min grace
+  before the deletions of a settings change (a person setting Keep, then
+  Then compressed seconds or minutes later, got the deletions of the rule in
+  between); the decoder log keeps only the 5 s debounce - its two number
+  fields send `DECODER_LOG_DAYS` / `DECODER_LOG_ZIP_DAYS` separately, so the
+  same two-step change made more than 5 s apart can still delete days the
+  final rule would gzip. The fix is one argument (`Scheduler`'s
+  `delete_grace`, as in wb_board.cpp) if wanted. **Disk lasts' ratio**
+  (`gz_isize`) reads a gz file's ISIZE trailer, which is the LAST member's
+  size only: a day the clock-back path appended a member to is measured by
+  that member (usually a smaller ISIZE than the file -> not counted; else a
+  low ratio for that file). Cosmetic and rare (a clock set back); left as it
+  is.
   The **pass** (`run_pass`, a detached thread, one at a time - a request
   during a pass runs another after it, `request_pass`): deletions first,
   then the compressions one file at a time (`.gz.part` -> `fs_replace` ->

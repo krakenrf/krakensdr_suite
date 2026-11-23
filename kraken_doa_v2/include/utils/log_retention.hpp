@@ -65,9 +65,20 @@ inline Action retention_action(long age, Kind kind, int keep, int zip) {
 //     again): this file is added as one more gzip member after them
 //     (concatenated members are one valid gzip file; zcat, zgrep and gzgets
 //     read them all);
-//   - damaged (it can't be read to its end): nothing is changed, false.
+//   - damaged: nothing is changed, false. Damaged = not nothing but complete
+//     gzip members (gz_intact): a member cut short, bytes after the last
+//     member (zeros after a power cut on FAT, garbage), not gzip at all.
+//     zlib's reader stops quietly at such bytes (or reads a non-gzip file as
+//     it is), so a member added after them would be invisible to zcat, gzgets
+//     and the history. A file found damaged is remembered (by its size and
+//     modification time) and not read again until it changes; said once.
 // false keeps the original (and leaves no part).
 bool gzip_file(const std::string& path);
+
+// Is `path` nothing but complete gzip members, to its last byte? An empty
+// file counts as intact (no member). Inflates it all; `out` (optional) gets
+// the decompressed bytes in order and may stop the walk by returning false.
+bool gz_intact(const std::string& path, const std::function<bool(const char*, size_t)>& out = {});
 
 // One of a log's files, as its lister found it
 struct File {
@@ -86,8 +97,11 @@ struct PassStats {
 // perhaps a .gz.part, removed by the next pass - never neither). `label`
 // starts the log lines ("Decoder log: gzipped ..."); compressing(n) is told
 // how many gzips start (+n) and each that ends (-1) - for a status line.
+// deletions = false: no plain / gz day is deleted (the Scheduler's grace
+// after a settings change); .gz.part leftovers still go. A day that can't be
+// gzipped is said once per file per run (stderr).
 PassStats run_pass(const std::vector<File>& files, long today, int keep, int zip, const char* label,
-                   const std::function<void(int)>& compressing = {});
+                   const std::function<void(int)>& compressing = {}, bool deletions = true);
 
 // Runs a log's passes on its own thread, one at a time; a request during a
 // pass runs one more after it. The pass function reads the settings itself,
@@ -106,12 +120,21 @@ PassStats run_pass(const std::vector<File>& files, long today, int keep, int zip
 //     settings in force are the sandbox's, the files the user's); what is
 //     pending waits, and when the hold ends it runs `debounce` later - after
 //     the stored settings are replayed.
+//   - delete_grace (optional, 0 = none): after a settings change, passes
+//     only compress until `delete_grace` after the LAST change; then a pass
+//     with the deletions runs by itself. A person setting Keep and then Then
+//     compressed (or a script sending them as two commands) seconds or
+//     minutes apart would otherwise get the deletions of the rule in
+//     between (stored 30 / none -> Keep 7 deletes days 8 - 30 before "1 year"
+//     arrives) - the debounce only joins changes made within a few seconds.
+//     The pass function is told whether it may delete.
 // A Scheduler must outlive its thread: make it a never-destroyed static.
 class Scheduler {
 public:
     static constexpr std::chrono::milliseconds DEBOUNCE{5000};
-    explicit Scheduler(std::function<void()> pass, std::function<bool()> hold = {},
-                       std::chrono::milliseconds debounce = DEBOUNCE);
+    explicit Scheduler(std::function<void(bool deletions)> pass, std::function<bool()> hold = {},
+                       std::chrono::milliseconds debounce = DEBOUNCE,
+                       std::chrono::milliseconds delete_grace = std::chrono::milliseconds(0));
     Scheduler(const Scheduler&) = delete;
     Scheduler& operator=(const Scheduler&) = delete;
     void allow();                  // the settings are known: passes may run - and one runs now
@@ -125,9 +148,10 @@ private:
     std::condition_variable cv_;
     bool allowed_ = false, now_ = false, held_ = false;
     std::optional<std::chrono::steady_clock::time_point> due_;
-    std::function<void()> pass_;
+    std::optional<std::chrono::steady_clock::time_point> changed_, full_due_;   // the last change; its deletions' pass
+    std::function<void(bool)> pass_;
     std::function<bool()> hold_;
-    std::chrono::milliseconds debounce_;
+    std::chrono::milliseconds debounce_, grace_;
 };
 
 }  // namespace logret
