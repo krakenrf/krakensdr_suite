@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <memory>
+#include <tuple>
 #include <random>
 #include <set>
 #include <string>
@@ -151,7 +153,281 @@ std::vector<T> random_tracks(std::mt19937_64& rng) {
     return v;
 }
 
+// --- bands and the scheduler -------------------------------------------------
+using sigsvc::rules::TunerSlot;
+using Reps = std::function<std::vector<int>(const std::vector<TunerSlot>&)>;
+using Pick = std::function<int(const std::vector<TunerSlot>&, const std::vector<int>&, int&, int64_t, bool&)>;
+
+uint64_t dist(uint64_t a, uint64_t b) { return a > b ? a - b : b - a; }
+
+std::string check_reps(const std::vector<TunerSlot>& t, const Reps& f) {
+    const std::vector<int> rep = f(t);
+    if (rep.size() != t.size()) return "size";
+    for (size_t i = 0; i < t.size(); i++) {
+        if (t[i].hz == 0) {
+            if (rep[i] != -1) return "a tuner without a frequency has a band";
+            continue;
+        }
+        const int r = rep[i];
+        if (r < 0 || r > int(i)) return "rep out of range";
+        if (rep[size_t(r)] != r) return "a representative that stands for another";
+        if (dist(t[i].hz, t[size_t(r)].hz) > sigsvc::rules::SAME_BAND_HZ) return "a tuner on another band than its representative";
+        for (size_t j = 0; j < t.size(); j++)
+            if (j != i && rep[i] == int(i) && rep[j] == int(j) && t[j].hz && dist(t[i].hz, t[j].hz) <= sigsvc::rules::SAME_BAND_HZ)
+                return "two representatives on one band";
+    }
+    return "";
+}
+
+std::string check_pick(std::vector<TunerSlot> t, const Reps& rf, const Pick& pf, std::mt19937_64& rng) {
+    const int M = int(t.size());
+    const std::vector<int> rep = rf(t);
+    const int64_t now = 1000;
+    std::vector<int> ready;
+    for (int i = 0; i < M; i++)
+        if (rep[size_t(i)] == i && now >= t[size_t(i)].settle_until_ms) ready.push_back(i);
+    int rr = int(rng() % uint64_t(M));
+    bool first = false;
+    const int p = pf(t, rep, rr, now, first);
+    if (rr < 0 || rr >= M) return "cursor out of range";
+    if (ready.empty()) return p == -1 ? "" : "a pick with nothing ready";
+    if (p < 0) return "no pick with a band ready";
+    if (rep[size_t(p)] != p) return "picked a tuner that does not stand for its band";
+    if (t[size_t(p)].hz == 0) return "picked a tuner without a frequency";
+    if (now < t[size_t(p)].settle_until_ms) return "picked a settling tuner";
+    bool fresh_ready = false;
+    for (int i : ready) fresh_ready = fresh_ready || t[size_t(i)].looks == 0;
+    if (fresh_ready && !(first && t[size_t(p)].looks == 0)) return "a band without a look waits behind one with looks";
+    if (!fresh_ready && first) return "first_look without a new band";
+    // fairness: nothing changes, the looks count up - after the first looks,
+    // between two looks at a band every other ready band gets exactly one
+    t[size_t(p)].looks++;
+    const auto all_seen = [&]() {
+        for (int i : ready)
+            if (t[size_t(i)].looks == 0) return false;
+        return true;
+    };
+    for (int k = 0; !all_seen(); k++) {   // the first looks: at most one per ready band
+        if (k >= M) return "the first looks did not end within a round";
+        bool f = false;
+        const int q = pf(t, rep, rr, now, f);
+        if (q < 0) return "no pick in the sequence";
+        t[size_t(q)].looks++;
+    }
+    std::vector<int> seq;
+    for (size_t k = 0; k < 3 * ready.size(); k++) {
+        bool f = false;
+        const int q = pf(t, rep, rr, now, f);
+        if (q < 0) return "no pick in the sequence";
+        if (f) return "a first look after every band had one";
+        t[size_t(q)].looks++;
+        seq.push_back(q);
+    }
+    // every window of |ready| picks is a permutation of the ready bands
+    for (size_t a = 0; a + ready.size() <= seq.size(); a++) {
+        std::set<int> w(seq.begin() + long(a), seq.begin() + long(a + ready.size()));
+        if (w.size() != ready.size() || !std::equal(w.begin(), w.end(), std::set<int>(ready.begin(), ready.end()).begin()))
+            return "unfair: a band skipped or looked at twice in a round";
+    }
+    return "";
+}
+
+std::vector<TunerSlot> random_slots(std::mt19937_64& rng) {
+    const int M = 1 + int(rng() % 8);
+    std::vector<TunerSlot> t(static_cast<size_t>(M));
+    const uint64_t base[] = {416815000, 416815000, 416815500, 416816200, 416760000, 859440000, 98000000, 0};
+    for (auto& s : t) {
+        s.hz = base[rng() % 8] + (rng() % 4 == 0 ? rng() % 1500 : 0);
+        if (s.hz < 1000000) s.hz = 0;
+        s.settle_until_ms = rng() % 4 == 0 ? 1500 : 0;
+        s.looks = rng() % 3 == 0 ? 0 : 1 + rng() % 5;
+    }
+    return t;
+}
+
+std::vector<int> reps_chain(const std::vector<TunerSlot>& t) {   // mutant: joins any earlier tuner, not its band's representative
+    std::vector<int> rep(t.size(), -1);
+    for (size_t i = 0; i < t.size(); i++) {
+        if (!t[i].hz) continue;
+        rep[i] = int(i);
+        for (size_t j = 0; j < i; j++)
+            if (t[j].hz && dist(t[i].hz, t[j].hz) <= sigsvc::rules::SAME_BAND_HZ) {
+                rep[i] = int(j);
+                break;
+            }
+    }
+    return rep;
+}
+int pick_plain_rr(const std::vector<TunerSlot>& t, const std::vector<int>&, int& rr, int64_t now, bool& first) {   // the old round robin
+    const int M = int(t.size());
+    first = false;
+    for (int k = 0; k < M; k++) {
+        const int i = (rr + k) % M;
+        if (t[size_t(i)].hz && now >= t[size_t(i)].settle_until_ms) {
+            rr = (i + 1) % M;
+            first = t[size_t(i)].looks == 0;
+            return i;
+        }
+    }
+    return -1;
+}
+int pick_no_settle(const std::vector<TunerSlot>& t, const std::vector<int>& rep, int& rr, int64_t, bool& first) {
+    return sigsvc::rules::pick_band(t, rep, rr, INT64_MAX / 2, first);
+}
+int pick_no_first(const std::vector<TunerSlot>& t, const std::vector<int>& rep, int& rr, int64_t now, bool& first) {
+    std::vector<TunerSlot> u = t;
+    for (auto& s : u) s.looks += 1;
+    const int p = sigsvc::rules::pick_band(u, rep, rr, now, first);
+    first = p >= 0 && t[size_t(p)].looks == 0;
+    return p;
+}
+int pick_stuck(const std::vector<TunerSlot>& t, const std::vector<int>& rep, int& rr, int64_t now, bool& first) {
+    const int keep = rr;
+    const int p = sigsvc::rules::pick_band(t, rep, rr, now, first);
+    rr = keep;
+    return p;
+}
+
+// --- the budget ----------------------------------------------------------------
+struct BudgetLike {   // the interface of rules::Budget, for mutants
+    std::function<double(double)> plan;
+    std::function<bool(double, double, double)> may_skip;
+    std::function<void(double, double)> started;
+    std::function<double()> debt;
+};
+BudgetLike wrap(std::shared_ptr<sigsvc::rules::Budget> b) {
+    return {[b](double a) { return b->plan(a); }, [b](double e, double a, double c) { return b->may_skip(e, a, c); },
+            [b](double e, double a) { b->started(e, a); }, [b]() { return b->debt_s; }};
+}
+
+// a random run of looks: analysis a per look, capture 0.55 s, first looks at random
+std::string check_budget(const std::function<BudgetLike()>& make, std::mt19937_64& rng, bool with_first) {
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    BudgetLike b = make();
+    const double share = 0.04, mn = 1.0, mx = 10.0, cap_looks = 8.0;
+    double a = 0.005 + 0.6 * U(rng) * U(rng);
+    double t = 0.0, used = 0.0, excess = 0.0;
+    double start = 0.0, max_cap = 0.0;   // (the cap follows the analysis time: the debt stays under the largest one so far)
+    for (int k = 0; k < 400; k++) {
+        if (U(rng) < 0.05) a = 0.005 + 0.6 * U(rng) * U(rng);   // (the load changes)
+        // the look: capture then analysis
+        start = t;
+        used += a;
+        excess += std::max(0.0, a - mx * share);
+        const double busy = 0.55 + a;
+        const double period = b.plan(a);
+        if (period < mn - 1e-9 || period > mx + 1e-9) return "a period outside [min, max]";
+        const double cap = cap_looks * a;
+        max_cap = std::max(max_cap, cap);
+        const bool first = with_first && U(rng) < 0.3;
+        double next;
+        if (first && b.may_skip(busy, a, cap)) next = start + busy;
+        else next = start + std::max(busy, period);
+        if (!with_first && std::abs((next - start) - std::max(busy, std::clamp(a / share, mn, mx))) > 1e-9)
+            return "without first looks the period is not the old rule's";
+        b.started(next - start, a);
+        if (b.debt() < -1e-12) return "negative debt";
+        if (b.debt() > max_cap + 1e-9) return "the debt beyond its cap";
+        t = next;
+        // the analysis so far within the budget (+ the debt's cap, the max clamp's excess, the latest look)
+        if (used > share * t + cap_looks * 0.605 + excess + a + 1e-6) return "more analysis than the budget allows";
+    }
+    // the debt is paid back: normal looks only (each repays up to its own analysis)
+    const int need = int(std::ceil(b.debt() / a)) + 2;
+    for (int k = 0; k < need; k++) {
+        const double period = b.plan(a);
+        b.started(std::max(0.55 + a, period), a);
+    }
+    // (only where the 10 s clamp leaves room for it: an analysis over max_s x share / 2 = 0.2 s
+    // cannot pay back - the old rule exceeds the share there too; the debt then just blocks first looks)
+    if (a <= 0.5 * mx * share && b.debt() > 1e-9) return "the debt not paid back by normal looks";
+    return "";
+}
+
 }  // namespace
+
+int run_sched_tests(int rounds, uint64_t seed) {
+    int fails = 0;
+    const auto report = [&](const char* name, bool mutant, int bad, int n, const std::string& first) {
+        const bool ok = mutant ? bad > 0 : bad == 0;
+        if (!ok) fails++;
+        std::printf("%s %-40s %d / %d inputs violate an invariant%s%s\n", ok ? "PASS" : "FAIL", name, bad, n,
+                    first.empty() ? "" : " - first: ", first.c_str());
+    };
+    {
+        const std::vector<std::pair<const char*, Reps>> rc = {{"band_reps", sigsvc::rules::band_reps}, {"mutant: reps chained", reps_chain}};
+        for (size_t c = 0; c < rc.size(); c++) {
+            std::mt19937_64 rng(seed);
+            int bad = 0;
+            std::string first;
+            for (int r = 0; r < rounds; r++) {
+                const std::string e = check_reps(random_slots(rng), rc[c].second);
+                if (!e.empty() && !bad++) first = e;
+            }
+            report(rc[c].first, c > 0, bad, rounds, first);
+        }
+    }
+    {
+        const std::vector<std::pair<const char*, Pick>> pc = {
+            {"pick_band", sigsvc::rules::pick_band},
+            {"mutant: the old round robin", pick_plain_rr},
+            {"mutant: no settling", pick_no_settle},
+            {"mutant: no first looks first", pick_no_first},
+            {"mutant: the cursor stuck", pick_stuck},
+        };
+        for (size_t c = 0; c < pc.size(); c++) {
+            std::mt19937_64 rng(seed);
+            int bad = 0;
+            std::string first;
+            for (int r = 0; r < rounds; r++) {
+                const std::vector<TunerSlot> t = random_slots(rng);
+                const std::string e = check_pick(t, sigsvc::rules::band_reps, pc[c].second, rng);
+                if (!e.empty() && !bad++) first = e;
+            }
+            report(pc[c].first, c > 0, bad, rounds, first);
+        }
+    }
+    {
+        const auto real = []() { return wrap(std::make_shared<sigsvc::rules::Budget>()); };
+        // mutants: first looks without a debt; no payback; the cap ignored
+        const auto no_debt = []() {
+            auto b = std::make_shared<sigsvc::rules::Budget>();
+            BudgetLike w = wrap(b);
+            w.started = [b](double e, double a) { if (e >= b->planned_s - 1e-3) b->started(e, a); };
+            return w;
+        };
+        const auto no_payback = []() {
+            auto b = std::make_shared<sigsvc::rules::Budget>();
+            BudgetLike w = wrap(b);
+            w.plan = [b](double a) { b->planned_s = std::clamp(a / b->share, b->min_s, b->max_s); return b->planned_s; };
+            return w;
+        };
+        const auto no_cap = []() {
+            auto b = std::make_shared<sigsvc::rules::Budget>();
+            BudgetLike w = wrap(b);
+            w.may_skip = [](double, double, double) { return true; };
+            return w;
+        };
+        const std::vector<std::tuple<const char*, std::function<BudgetLike()>, bool, bool>> bc = {
+            {"Budget (no first looks: the old rule)", real, false, false},
+            {"Budget (first looks)", real, true, false},
+            {"mutant: first looks without a debt", no_debt, true, true},
+            {"mutant: no payback", no_payback, true, true},
+            {"mutant: the debt cap ignored", no_cap, true, true},
+        };
+        for (const auto& [name, mk, wf, mut] : bc) {
+            std::mt19937_64 rng(seed);
+            int bad = 0;
+            std::string first;
+            for (int r = 0; r < rounds / 20; r++) {
+                const std::string e = check_budget(mk, rng, wf);
+                if (!e.empty() && !bad++) first = e;
+            }
+            report(name, mut, bad, rounds / 20, first);
+        }
+    }
+    return fails;
+}
 
 int main(int argc, char** argv) {
     const int rounds = argc > 1 ? std::atoi(argv[1]) : 20000;
@@ -186,6 +462,7 @@ int main(int argc, char** argv) {
         std::printf("%s %-40s %d / %d inputs violate an invariant%s%s\n", ok ? "PASS" : "FAIL", c.name, bad, rounds,
                     first.empty() ? "" : " - first: ", first.c_str());
     }
+    fails += run_sched_tests(rounds, seed);
     std::printf("%s\n", fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;
 }

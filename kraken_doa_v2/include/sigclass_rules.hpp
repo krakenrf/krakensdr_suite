@@ -82,4 +82,94 @@ void drop_overlap_duplicates(std::vector<T>& pub) {
     std::sort(pub.begin(), pub.end(), by_hz);
 }
 
+// --- tuners in turn (wideband scan, independent mode, generic RTL-SDRs) -------
+
+// a tuner as the scheduler sees it
+struct TunerSlot {
+    uint64_t hz = 0;               // its centre (0 = none)
+    int64_t settle_until_ms = 0;   // retuned: no look before this
+    uint64_t looks = 0;            // looks at its band since the band's start (mode change, switch-on, retune)
+};
+
+// tuners within this of each other are on one band: one look serves them all
+constexpr uint64_t SAME_BAND_HZ = 1000;
+
+// per tuner the tuner that stands for its band (the lowest-numbered one on
+// it; -1: no frequency). Invariants (tested): rep[rep[i]] == rep[i];
+// rep[i] <= i; |hz[i] - hz[rep[i]]| <= SAME_BAND_HZ; two representatives
+// are never on one band.
+inline std::vector<int> band_reps(const std::vector<TunerSlot>& t) {
+    std::vector<int> rep(t.size(), -1);
+    for (size_t i = 0; i < t.size(); i++) {
+        if (t[i].hz == 0) continue;
+        rep[i] = int(i);
+        for (size_t j = 0; j < i; j++)
+            if (rep[j] == int(j) && (t[i].hz > t[j].hz ? t[i].hz - t[j].hz : t[j].hz - t[i].hz) <= SAME_BAND_HZ) {
+                rep[i] = int(j);
+                break;
+            }
+    }
+    return rep;
+}
+
+// The next band to look at, from the round-robin cursor rr (advanced past
+// it): a band nobody has looked at since its start first (first_look = true),
+// else the next one in turn. -1: none ready (no frequency, or settling after
+// a retune). Invariants (tested): the pick is a representative with a
+// frequency, not settling; when a ready band has no look yet the pick is one
+// of those; with nothing changing, between two looks at a band every other
+// ready band gets exactly one.
+inline int pick_band(const std::vector<TunerSlot>& t, const std::vector<int>& rep, int& rr, int64_t now_ms, bool& first_look) {
+    const int M = int(t.size());
+    first_look = false;
+    if (M == 0) return -1;
+    rr = ((rr % M) + M) % M;
+    int pick = -1;
+    for (int pass = 0; pass < 2 && pick < 0; pass++) {
+        for (int k = 0; k < M; k++) {
+            const int i = (rr + k) % M;
+            if (rep[size_t(i)] != i || now_ms < t[size_t(i)].settle_until_ms) continue;
+            if (pass == 0 && t[size_t(i)].looks != 0) continue;
+            pick = i;
+            first_look = pass == 0;
+            break;
+        }
+    }
+    if (pick >= 0) rr = (pick + 1) % M;
+    return pick;
+}
+
+// The CPU budget: analysis takes at most `share` of the wall time - after a
+// look the next starts `plan()` seconds after this one's start (the analysis
+// time / share, clamped to [min_s, max_s], as before). A band's FIRST look
+// may skip that rest (its labels show a round earlier); the analysis it did
+// not wait for is a debt, at most `debt_cap_s`, paid back by the following
+// periods (each at most doubled). Invariants (tested): with no first looks
+// the periods are exactly the old rule's; the debt stays within [0, the
+// largest cap so far] (the cap follows the analysis time); the analysis over
+// any stretch is within share x the time + the cap (+ the max_s clamp's
+// excess, as before); normal looks pay the debt back (where the max_s clamp
+// leaves room: analysis <= max_s x share / 2 - beyond, it only blocks first
+// looks).
+struct Budget {
+    double share = 0.04, min_s = 1.0, max_s = 10.0;
+    double debt_s = 0.0;
+    double planned_s = 0.0;   // the period planned after the latest look
+    double plan(double ana_s) {
+        const double r = std::min(debt_s, ana_s);
+        planned_s = std::clamp((ana_s + r) / share, min_s, max_s);
+        return planned_s;
+    }
+    // may the next look start already, elapsed_s after the latest one's start?
+    bool may_skip(double elapsed_s, double ana_s, double debt_cap_s) const {
+        return debt_s + std::max(0.0, ana_s - elapsed_s * share) <= debt_cap_s;
+    }
+    // the next look starts elapsed_s after the latest one's start
+    void started(double elapsed_s, double ana_s) {
+        const double covered = elapsed_s * share;
+        if (elapsed_s >= planned_s - 1e-3) debt_s = std::max(0.0, debt_s - std::max(0.0, covered - ana_s));   // waited: paid
+        else debt_s = std::max(0.0, debt_s + ana_s - covered);                                               // early: owed
+    }
+};
+
 }  // namespace sigsvc::rules
