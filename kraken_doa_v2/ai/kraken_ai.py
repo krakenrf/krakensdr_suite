@@ -97,12 +97,17 @@ DEFAULTS = {
 # (the web UI's keys, docs/dev/https-certificate.md fine rule 21: the server
 # key, the receiver's CA key - it can vouch for this receiver's names, in wide
 # scope for any .local / .lan name and private address -, an unusable key
-# moved aside, the generator's temporary key files, make-cert.sh's work and
-# lock folders. A name with * is a pattern, denied as a file and as a folder).
+# moved aside, a replaced CA's key kept because the CA was the user's own
+# (krakensdr-ca.key.retired-YYYYMMDD: usually an UNCONSTRAINED CA, fine rule
+# 32), the generator's temporary key files, make-cert.sh's work and lock
+# folders. A name with * is a pattern, denied as a file and as a folder).
 # src/ai_sandbox.cpp masks the same two lists in the sandbox of a plugin the
-# assistant changed - keep them in step
-SECRETS = ["api_token", "doa_settings.json", "server.key", "krakensdr-ca.key", "*.unreadable-*", "*.key.tmp",
-           ".make-cert.*", "ai/ai_config.json", "ai/run", "ai/state", "noise_floors.json", "rdf_session.bin"]
+# assistant changed - keep them in step (there, of ~/.config and
+# ~/.local/share only the credential stores: programs a plugin runs live in
+# them too - uv's Pythons)
+SECRETS = ["api_token", "doa_settings.json", "server.key", "krakensdr-ca.key", "*.unreadable-*", "*.retired-*",
+           "*.key.tmp", ".make-cert.*", "ai/ai_config.json", "ai/run", "ai/state", "noise_floors.json",
+           "rdf_session.bin"]
 HOME_SECRETS = [".claude", ".claude.json", ".ssh", ".gnupg", ".config", ".local/share", ".netrc", ".git-credentials",
                 ".aws", ".docker", ".pki", ".mozilla", ".bash_history", ".python_history", ".lesshst", ".viminfo"]
 if MACOS:

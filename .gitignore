@@ -12,10 +12,14 @@ docker-data/
 .env
 # The web UI's private keys in ANY folder (scripts/make-cert.sh <dir>;
 # kraken_doa_v2/docs/dev/https-certificate.md fine rule 21): the receiver's CA
-# key, an unusable key moved aside, the generator's temporary key, the
-# script's work / lock folders. .githooks/pre-push blocks them too
+# key, an unusable key (or a certificate file that held a key) moved aside, a
+# replaced CA's key kept because the CA was the user's own
+# (krakensdr-ca.key.retired-YYYYMMDD, fine rule 32), the generator's
+# temporary key, the script's work / lock folders. .githooks/pre-push blocks
+# them too
 krakensdr-ca.key
-*.key.unreadable-*
+*.unreadable-*
+*.retired-*
 *.key.tmp
 .make-cert.*
 # git worktrees (Claude Code puts them in .claude/worktrees/<name>): each is a
