@@ -242,7 +242,7 @@ struct PubTrack {
     double hz = 0, bw = 0, lo = 0, hi = 0;
     double seen_real = 0;         // when it was last seen (now_s clock)
     bool fresh = false;           // seen in its tuner's latest snapshot (age 0)
-    bool sent = false;            // its id was in the previous list (the overlap rule's sticky view, INV-J)
+    bool sent = false;            // its id was in the previous list (the overlap rule's sticky view, INV-K)
     float snr = 0, duty = 0, p = 0;
     bool burst = false, wide = false, unknown = false;
     int hits = 0;
@@ -479,7 +479,7 @@ void worker() {
     sigclass::TrackerConfig tc;
     tc.expire_s = TRACK_EXPIRE_S;
     std::vector<TunerTracks> tt(MAX_CHANNELS, TunerTracks(tc));
-    std::vector<int64_t> sent_ids;   // the ids of the latest list made (sorted): the overlap rule keeps sending those views (INV-J)
+    std::vector<int64_t> sent_ids;   // the ids of the latest list made (sorted): the overlap rule keeps sending those views (INV-K)
     const auto clear_all = [&]() {
         for (TunerTracks& x : tt) {
             x.trk.clear();
@@ -660,9 +660,10 @@ void worker() {
                 pub.push_back(std::move(q));
             }
         }
-        // overlapping tuners: one signal seen by two of them is sent once - the
-        // fresher / stronger / more recently / more often seen, and the view sent
-        // last stays unless another is clearly better (sigclass_rules.hpp, INV-J)
+        // overlapping tuners: one signal seen by two of them is sent once - one
+        // label per signal: the view sent last stays while it is published at all,
+        // unless another has a class it lacks or is 3 dB stronger; whichever is
+        // sent carries the signal's freshness (sigclass_rules.hpp, INV-K)
         for (PubTrack& q : pub) q.sent = std::binary_search(sent_ids.begin(), sent_ids.end(), q.id);
         rules::drop_overlap_duplicates(pub);
         if (pub.size() > MAX_TRACKS_SENT) {
