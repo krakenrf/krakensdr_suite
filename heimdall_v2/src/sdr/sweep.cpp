@@ -467,9 +467,11 @@ struct GainEntry {
     int64_t hold_ns = AG_HOLD_NS;
     bool last_raise = false;      // the last change was a raise (clipping after it doubles the hold)
     float peak_max_dbfs = -200;   // the highest peak over the clean visits since the last change
+    float rms_max_dbfs = -200;    // ... and the highest rms (the level a raise is sized by)
     int probes = 0;               // probe visits left after a step down
     int probe_from = -1;          // the gain before the last probe (clean there)
     int64_t no_probe_until = 0;   // a probe clipped: none until then
+    int blind_from = -1;          // a table (blind) cut came from this gain: its first clean visit corrects it
 };
 std::map<uint32_t, GainEntry> gain_map;   // the hop thread only
 // A mild clip (at most AG_MILD_SHARE of the values) costs a step down only
@@ -688,6 +690,9 @@ constexpr double AG_LEVEL_CUT_MAX = 0.05;
 // hops - bursty, crest 10 dB and more - came down one list step per clipped
 // visit: 944.87 MHz in 10 steps)
 constexpr float AG_LEVEL_CUT_MIN_RMS = -6.0f, AG_LEVEL_TARGET_DBFS = -7.0f;
+// the correction of a blind cut: a carrier-like clean visit (rms at least
+// this, crest - peak over rms - at most this)
+constexpr float AG_BLIND_MIN_RMS = -20.0f, AG_BLIND_MAX_CREST = 8.0f;
 uint32_t plan_step_hz = 0;                 // the plan's step (the hop thread) // a baseline clipped more than this (1 %) is the clipping rule's alone      // pairs in a row without a verdict end a search    // dB: a quantity whose brackets change more (median of 8) judges nothing      // dB: more power at the lower gain than this: a burst, no pair
 // the converter's own noise (no input), as the estimators measure it (the
 // KrakenSDR at gain 0, the whole range, 2026-11-24: rms -45.0 dBFS, floor -46.5)
@@ -986,7 +991,7 @@ void floor_lift_clip(uint32_t hz, int g) {
     c.gain = g;
     c.last_raise = true;
     c.clean = 0;
-    c.peak_max_dbfs = -200;
+    c.peak_max_dbfs = -200; c.rms_max_dbfs = -200;
     c.probes = 0;
     c.probe_from = -1;
     ag_cur_changes++;
@@ -1249,7 +1254,9 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
         } else {
             reset();
             e.next_up = false;
-            if (e.up_search) {
+            if (e.up_search && e.step > AG_FLOOR_STEP) {
+                e.step = std::max(AG_FLOOR_STEP, e.step / 2);   // refused: the step below (a level-sized raise's fall-back)
+            } else if (e.up_search) {
                 e.search = false;
                 e.up_search = false;
             } else {
@@ -1296,7 +1303,7 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
             e.g = e.last_clip_g;
             e.search = true;
             e.up_search = true;
-            e.step = AG_FLOOR_STEP;
+            e.step = std::max(AG_FLOOR_STEP, clip_g - e.last_clip_g);   // (one probe to the clipping rule's target)
             e.up_lim = 1 << 30;
             e.clip_lift = true;
             e.agree_n = 0;
@@ -1531,7 +1538,7 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
             e.hold_ns = std::min(e.hold_ns * 2, AG_HOLD_NS_MAX);
             e.last_raise = false;
             e.clean = 0;
-            e.peak_max_dbfs = -200;
+            e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
             ag_cur_changes++;
             return;
         }
@@ -1540,7 +1547,7 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
             if (m == mild_clips.end() || now - m->second > AG_MILD_WINDOW_NS) {
                 if (mild_clips.size() >= AG_MAP_MAX) mild_clips.clear();
                 mild_clips[a.hz] = now;   // the first: noted, no change yet
-                if (it != gain_map.end()) { it->second.clean = 0; it->second.peak_max_dbfs = -200; }
+                if (it != gain_map.end()) { it->second.clean = 0; it->second.peak_max_dbfs = -200; it->second.rms_max_dbfs = -200; }
                 return;
             }
             mild_clips.erase(m);          // the second within the window: down
@@ -1554,6 +1561,7 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
         }
         GainEntry& e = it->second;
         int down = std::max(lowest, quantize_down(L, a.gain - ag_down_step(share)));
+        bool blind = true;
         {
             const float rms = 10.0f * std::log10(static_cast<float>(static_cast<double>(a.sumsq) / a.values) /
                                                  (2.0f * 127.5f * 127.5f) + 1e-30f);
@@ -1563,10 +1571,12 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
                 int g = quantize_down(L, a.gain - 1);
                 while (g > lowest && rg - real_gain_db(t, g) < need) g = quantize_down(L, g - 1);
                 down = std::max(lowest, g);
+                blind = false;
             }
         }
         // (a visit taken before the last change must not undo it)
         e.gain = fresh ? down : std::min(e.gain, down);
+        e.blind_from = blind ? std::max(e.blind_from, a.gain) : -1;
         e.probes = now >= e.no_probe_until ? AG_PROBES : 0;
         if (e.last_raise) {   // it clipped again after a raise: wait longer next time
             e.hold_visits = std::min(e.hold_visits * 2, AG_HOLD_VISITS_MAX);
@@ -1575,14 +1585,49 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
         e.probe_from = -1;
         e.last_raise = false;
         e.clean = 0;
-        e.peak_max_dbfs = -200;
+        e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
         ag_cur_changes++;
         return;
     }
     if (it == gain_map.end()) return;   // at the ceiling and fine
     GainEntry& e = it->second;
     if (a.gain != quantize_down(L, learned_gain(a.hz, ceiling))) return;   // taken with another gain (changed meanwhile)
-    if (a.clipped > 0) { e.clean = 0; e.peak_max_dbfs = -200; return; }   // a few clipped values: hold, no raise
+    if (a.clipped > 0) { e.clean = 0; e.peak_max_dbfs = -200; e.rms_max_dbfs = -200; return; }   // a few clipped values: hold, no raise
+    // The first clean visit after a table (blind) cut measures the carrier's
+    // level: the gain whose predicted rms stays at AG_LEVEL_TARGET_DBFS is then
+    // known - one move there (at least a list step up, never above the gain
+    // before the cut), once per cut, and not on a hop whose hold has doubled
+    // (a keyed carrier keeps the slow pace). 415.52 MHz on the hardware: cut
+    // blind 49.6 -> 29.7 -> 16.6 by 28 % / 13 % clips, clean at 25.4 with rms
+    // -7.4 dBFS (carrier over floor 71.3 against 64.9 at 16.6), it sat at
+    // 16.6 for a whole run.
+    if (e.blind_from > a.gain) {
+        const int from = std::min(e.blind_from, ceiling);
+        e.blind_from = -1;
+        const float rms = 10.0f * std::log10(static_cast<float>(static_cast<double>(a.sumsq) / a.values) /
+                                             (2.0f * 127.5f * 127.5f) + 1e-30f);
+        if (e.hold_visits == AG_HOLD_VISITS && rms >= AG_BLIND_MIN_RMS && peak_dbfs - rms <= AG_BLIND_MAX_CREST) {
+            const float rg = real_gain_db(t, a.gain);
+            int g = a.gain;
+            for (int c = next_up(L, a.gain); c > g && c <= from; c = next_up(L, c)) {
+                if (rms + real_gain_db(t, c) - rg > AG_LEVEL_TARGET_DBFS) break;
+                g = c;
+            }
+            if (g > a.gain) {
+                ag_cur_changes++;
+                e.gain = g;
+                e.probes = 0;
+                e.probe_from = -1;
+                e.clean = 0;
+                e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
+                e.last_raise = true;   // (a clip at the new gain is a clip after a raise: the hold doubles)
+                // (not a raise of the clipping rule's for the linearity rule's
+                // one way up: the level is measured - no up search from the old gain)
+                if (auto fe = floor_map.find(a.hz); fe != floor_map.end()) fe->second.last_clip_g = quantize_down(L, std::min(g, ceiling));
+                return;
+            }
+        }
+    }
     if (e.probes > 0) {
         // settling after a step down: up at once by the room the peak leaves
         e.probes--;
@@ -1593,7 +1638,7 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
             e.probe_from = a.gain;
             e.gain = target;   // (kept at the ceiling too: a clip there probes back, it doesn't start over)
             e.clean = 0;
-            e.peak_max_dbfs = -200;
+            e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
             return;
         }
         e.probes = 0;   // no room: settled
@@ -1601,25 +1646,40 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
     e.probe_from = -1;   // clean at this gain: it holds
     if (e.clean++ == 0) e.clean_since_ns = now;
     e.peak_max_dbfs = std::max(e.peak_max_dbfs, peak_dbfs);
+    e.rms_max_dbfs = std::max(e.rms_max_dbfs, 10.0f * std::log10(static_cast<float>(static_cast<double>(a.sumsq) / a.values) /
+                                                                 (2.0f * 127.5f * 127.5f) + 1e-30f));
     if (e.clean < e.hold_visits || now - e.clean_since_ns < e.hold_ns) return;
     if (std::min(e.gain, ceiling) >= ceiling) { gain_map.erase(it); return; }   // at the ceiling and settled: forgotten
-    const int up = std::min(ceiling, std::max(next_up(L, a.gain), quantize_down(L, a.gain + AG_RAISE)));
-    const float rise_db = static_cast<float>(up - a.gain) / 10.0f;
-    if (up <= a.gain) return;
-    if (e.peak_max_dbfs + rise_db > AG_RAISE_HEADROOM_DBFS) {
+    // The raise's SIZE from the level (when it comes stays the hold's): the
+    // highest list gain whose predicted rms - the hold's highest, by the real
+    // gain curve - stays at AG_LEVEL_TARGET_DBFS and peak under the headroom,
+    // at most the ceiling, at least one list step. A hop whose transmitter
+    // has left returns to the ceiling in one raise (413.19 MHz on the
+    // hardware: -37.7 dBFS at 22.9 for 7 min, +3 dB a hold); a steady carrier
+    // goes straight to its level gain; one still near full scale gets no raise.
+    const float rg = real_gain_db(t, a.gain);
+    int up = a.gain;
+    for (int c = next_up(L, a.gain); c > up && c <= ceiling; c = next_up(L, c)) {
+        const float d = real_gain_db(t, c) - rg;
+        if (e.rms_max_dbfs + d > AG_LEVEL_TARGET_DBFS || e.peak_max_dbfs + d > AG_RAISE_HEADROOM_DBFS) break;
+        up = c;
+    }
+    if (up <= a.gain) {
         // not this hold: a new one, with its own peaks (the highest peak
         // never decayed - one loud clean visit, a carrier keyed while the
         // hop was clean, blocked every raise for good)
         e.clean = 0;
-        e.peak_max_dbfs = -200;
+        e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
         return;
     }
     ag_cur_changes++;
-    if (up >= ceiling) { gain_map.erase(it); return; }   // back at the ceiling
-    e.gain = up;
+    // (back at the ceiling the entry is kept: it carries the hold - erased, a
+    // keyed carrier found a fresh hold each time; it is forgotten after a
+    // clean hold up there)
+    e.gain = std::min(up, ceiling);
     e.last_raise = true;
     e.clean = 0;
-    e.peak_max_dbfs = -200;
+    e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
 }
 
 // At a sweep's end: the status of that sweep - the gains its hops were

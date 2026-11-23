@@ -1746,6 +1746,42 @@ clipping rule stays the fast guard and is the search's ceiling.
     10 dB worse than at 22.9.
   - Why not at -12 dBFS: the GSM / LTE hops then came down one list step
     per clipped visit (944.87 MHz in 10 steps).
+- *The clipping rule's raises sized by the level* (2026-11-24, the
+  orchestrator's 20 min run on 6ba2c1f):
+  - WHEN the clipping rule raises is unchanged: after a clean hold, which
+    doubles after a clip that followed a raise.
+  - The SIZE is now the highest list gain whose predicted rms (the hold's
+    highest, by the real-gain curve) stays at or under -7 dBFS and whose
+    peak stays under -6 dBFS. It is at least one list step and at most the
+    ceiling. If even one step would break that, there is no raise and a
+    new hold starts.
+  - At the ceiling the entry is kept (with its hold) until a clean hold up
+    there.
+  - The linearity rule's up search after such a raise probes straight to
+    its target. When refused, the step halves.
+  - Why: after a cause had gone, hops sat near the converter's noise for
+    minutes at +3 dB per hold. 413.19 MHz stayed at 22.9 dB at -37.7 dBFS
+    for 7 min, and 418.93 at 29.7 at -35 dBFS for 17 min.
+- *The correction of a blind cut*: a cut taken from the table, not from the
+  level, is corrected at the hop's first clean visit, when that visit
+  reads a carrier-like level (rms at least -20 dBFS, crest at most 8 dB).
+  The clipping rule's gain moves in one step to the highest list gain
+  whose predicted rms stays at or under -7 dBFS: at least one list step
+  up, never above the gain before the cut. This happens once per cut, and
+  not on a hop whose hold has doubled.
+  - Why: 415.52 MHz on one tuner was cut blind 49.6 -> 29.7 -> 16.6 by
+    28 % and 13 % clips. It reads -7.4 dBFS at 25.4, where its carrier
+    over floor is 71.3 dB against 64.9 at 16.6, yet it sat at 16.6 for a
+    whole run.
+  - Hardware (3 cold starts, one tuner): 415.52 at 22.9 / 25.4 / 25.4 by
+    sweep 3-4.
+  - Whole plan: 415.11 MHz went 49.6 -> 29.7 -> 16.6 (blind) -> 20.7 at
+    sweep 4 (-9.6 dBFS). When its carrier rose (-4.7 dBFS, 0.37 %
+    clipped) the level cut took it back to 16.6.
+  - Fake (`t_aglin.py`, a carrier at +17 dBFS at 49.6): 49.6 -> 29.7 ->
+    8.7 -> 19.7 at sweep 4, where its rms is -7.
+  - `t_agpump.py`: 3 raises and 4 of 192 keyed-on visits clipped, against
+    13 and 4 of 231 before.
 - *Hardware with the guess* (the dev machine's KrakenSDR):
   - One tuner, 5 cold starts: 417.43 reaches 33.8 / 32.8 / 29.7 at sweeps
     4, 8, 3, 6, 3.
