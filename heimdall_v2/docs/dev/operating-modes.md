@@ -1776,6 +1776,32 @@ plan 24-1765 MHz, 911 hops, 5 tuners, dwell 5 ms, a cold start with Auto,
 - Hop visits over 1 % clipped after the 4th sweep: 4, all bursts (415.11
   twice, 417.02 during its descent, the 455.27 pager).
 
+*Hardware, the whole plan again* (1aa6ecc's code, 60 sweeps):
+- 417.02 MHz: 49.6 -> 43.4 (sweep 6) -> 37.2 (7) -> 29.7 (14), then
+  stays.
+- 415.11 and 499.26 MHz: 29.7 from sweep 2 to the end. That is the
+  clipping rule's gain; 415.11's carrier reads -1.2 dBFS rms there. There
+  is no climb into clipping and no sawtooth.
+- 413.19 / 418.93 stay at 49.6.
+- 944.87 MHz: 49.6 -> 43.4 -> 37.2 -> 29.7 (sweep 5) -> 22.9 (16), by the
+  clipping rule's mild clips.
+- Over the last 20 sweeps: probes 6.9 a sweep (0.76 %), linearity
+  decisions 0.05, gain changes 0.20, 55 writes a sweep; a sweep 4.034 s
+  against 3.958 s manual (+1.9 %).
+- Over 1 % clipped after the 4th sweep: only the 455.27 pager, twice.
+
+*Hardware, one tuner* (1aa6ecc's code; tuner 0, 405-428 MHz, 12 hops, a
+cold start, 300 sweeps):
+- 417.43 MHz goes 49.6 -> 43.4 (sweep 9) -> 37.2 (17) -> 33.8 (35), then
+  stays. 33.8 is the best gain by the manual scan: carrier over floor 69.3
+  there, against 63.5 at 37.2. Its later probes at 29.7 confirm.
+- 415.52 (the 415.64 carrier in its band) is at 29.7, the clipping rule's.
+- 411.69 / 413.61 / 419.34 stay at 49.6.
+- Settled: probes 0.15 a sweep (1.25 % of the hops), no decisions, no
+  gain changes, 3.25 writes a sweep. A sweep 0.266 s against 0.265 s
+  manual.
+- Nothing over 1 % clipped after the 4th sweep.
+
 *Not tested*: Windows (3-4 ms a USB transfer: the fallback call there would
 add about a second a sweep, F's call ~0.15 s); the Pi; the neighbour rule's
 release on hardware; `--wideband` (sweep
