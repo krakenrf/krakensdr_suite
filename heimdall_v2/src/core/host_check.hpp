@@ -13,7 +13,8 @@
 //   - any name in KRAKEN_ALLOWED_HOSTS (comma-separated, e.g. for a reverse
 //     proxy or a custom DNS name)
 //   - names the program adds at startup (host_add_allowed_names: kraken_doa
-//     the DNS names of its HTTPS certificate)
+//     its HTTPS certificate's names that are the host's own, KRAKEN_CERT_*'s
+//     and <host> + a suffix above - not a DHCP search domain's)
 // A request without a Host header (HTTP/1.0 tools) is allowed - browsers
 // always send one. Kept identical in heimdall_v2/src/core/ and
 // kraken_doa_v2/include/utils/.
@@ -117,10 +118,13 @@ inline bool host_allowed(std::string_view host) {
 }
 
 // More names this device is reached by, known only at run time - kraken_doa:
-// the DNS names of the HTTPS certificate it serves (an avahi conflict name
-// like krakensdr-2.local, KRAKEN_CERT_HOST / KRAKEN_CERT_NAMES, a DNS search
-// domain; cert_status.cpp). Call it before the servers listen; heimdall
-// doesn't. Exact names only (a wildcard is left out); thread-safe.
+// of the DNS names of the HTTPS certificate it serves the host's own (an
+// avahi conflict name like krakensdr-2.local, KRAKEN_CERT_HOST),
+// KRAKEN_CERT_NAMES' and <host>.lan / .home / .localdomain / .home.arpa -
+// not one from an arbitrary DHCP search domain, which would open DNS
+// rebinding from that domain (cert_status.cpp, https-certificate.md fine
+// rule 20). Call it before the servers listen; heimdall doesn't. Exact names
+// only (a wildcard is left out); thread-safe.
 inline void host_add_allowed_names(const std::vector<std::string>& more) {
     std::lock_guard<std::mutex> lock(host_check_detail::added_mutex());
     auto& added = host_check_detail::added_names();

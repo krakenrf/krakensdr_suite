@@ -144,8 +144,12 @@ the internet and writes / changes decoder plugins):
   - Edit / Write: its conversation folder, `plugins/*/**` (any plugin -
     shipped ones too, the user's call), `ai/knowledge/`
   - denied: Read + Edit of api_token, doa_settings.json, server.key,
-    ai/ai_config.json, ai/run, ai/state, noise_floors.json,
-    rdf_session.bin; Edit of plugins/sdk, plugins/lib, plugins/Makefile /
+    krakensdr-ca.key (the receiver's CA key), `*.unreadable-*` (a key
+    moved aside), `*.key.tmp`, `.make-cert.*` (make-cert.sh's folders; a
+    pattern is denied as a file and with `/**`, and is in the sandbox's
+    denyRead as a pattern and by the names it matches when the conversation
+    starts - https-certificate.md fine rule 21), ai/ai_config.json, ai/run,
+    ai/state, noise_floors.json, rdf_session.bin; Edit of plugins/sdk, plugins/lib, plugins/Makefile /
     GNUmakefile / makefile / *.mk, SDK.md, README.md (`plugins/*/**` also
     matches top-level files, hence the explicit denies; the plugins are
     built with `make -f Makefile` so a planted GNUmakefile is never read),

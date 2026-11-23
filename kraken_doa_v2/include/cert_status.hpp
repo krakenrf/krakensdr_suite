@@ -10,22 +10,27 @@ namespace certstatus {
 
 // Once, after the certificate files are final and before the listener:
 // reads server.crt, krakensdr-ca.crt and the retired CAs - what this run
-// serves - adds the server certificate's DNS names to the host allow-list
-// (host_add_allowed_names, utils/host_check.hpp) and starts a worker thread
-// that re-checks the host name, the addresses and cert_options every 60 s
-// (it may run avahi's tools: never on the uWS loop).
+// serves - adds the server certificate's DNS names that are the host's own,
+// KRAKEN_CERT_NAMES' and <host>.lan / .home / .localdomain / .home.arpa to
+// the host allow-list (host_add_allowed_names, utils/host_check.hpp; not a
+// name from another DHCP search domain: fine rule 20) and starts a worker
+// thread that re-checks the host name, the names, the addresses and
+// cert_options every 60 s (it may run avahi's tools: never on the uWS loop).
 void init();
 
 // The "cert" object of system_status (cached text, cheap to copy); "" before
 // init(). {managed, scope, scope_next, host, host_ok, ca: {name, sha256,
 // sha1, not_after} | null, server: {name, names, ips, not_after, days_left},
-// ips_now, retired: [{name, sha256, date}], notices: [expires_soon,
-// name_changed, addresses_changed, restart_pending], scope_error, scope_seq}
+// ips_now, names_not_covered (wanted names outside the CA, left out of the
+// certificate), retired: [{name, sha256, date}], notices: [expires_soon,
+// name_changed, addresses_changed, restart_pending, names_not_covered],
+// scope_error, scope_seq}
 std::string json();
 
-// GET /krakensdr-ca.crt: the CA certificate as read at startup (PEM, the
-// file's bytes); with no CA (a certificate of the user's own) the server
-// certificate. false = nothing to offer.
+// GET /krakensdr-ca.crt: the CA certificate as read at startup, PEM
+// re-encoded from the parsed first certificate - never the file's bytes,
+// which may hold a key too (fine rule 19); with no CA (a certificate of the
+// user's own) the server certificate's first. false = nothing to offer.
 bool download(std::string* pem);
 
 // CERT_SCOPE:narrow|wide - writes cert_options (applied at the next start).

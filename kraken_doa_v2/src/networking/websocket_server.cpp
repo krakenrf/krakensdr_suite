@@ -1088,7 +1088,14 @@ void WebSocketServer::web_server_main() {
         ssl_app.preOpen([](struct us_socket_context_t*, LIBUS_SOCKET_DESCRIPTOR fd, char* ip, int ip_len) -> LIBUS_SOCKET_DESCRIPTOR {
             if (sniffers.load(std::memory_order_acquire) >= 64) return fd;
             sniffers.fetch_add(1, std::memory_order_acq_rel);
-            std::thread(sniff_first_byte, static_cast<sniff_fd>(fd), std::string(ip, ip + ip_len)).detach();
+            // uSockets' C code calls this: nothing may throw out of it (no
+            // thread to be had, no memory) - that connection goes straight to TLS
+            try {
+                std::thread(sniff_first_byte, static_cast<sniff_fd>(fd), std::string(ip, ip + ip_len)).detach();
+            } catch (...) {
+                sniffers.fetch_sub(1, std::memory_order_acq_rel);
+                return fd;
+            }
             return fd + 1;   // "not adopted here": adoptSocket() follows once it is known to be TLS
         });
         ssl_app.listen(WEB_PORT, LIBUS_LISTEN_EXCLUSIVE_PORT, [](auto* listen_socket) {

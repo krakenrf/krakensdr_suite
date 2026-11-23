@@ -50,13 +50,14 @@ inline constexpr int SERVER_RENEW_DAYS = 60;                  // re-issued with 
 inline constexpr int CA_RENEW_DAYS = 365;                     // a new CA with fewer left
 inline constexpr const char* ORG = "KrakenSDR receiver";
 
-// <host>: KRAKEN_CERT_HOST as given, else (up to the first dot) the name
-// avahi announces (Linux: busctl / gdbus / avahi-resolve, each only if
-// installed, 3 s each), macOS `scutil --get LocalHostName`, gethostname().
-// Lowercased; usable = only a-z 0-9 - in it (make-cert.sh's rules, which
-// these functions follow to the letter: the two must agree, or each would
-// re-issue what the other made).
-// May start helper programs: never call it on the uWS loop.
+// <host>: KRAKEN_CERT_HOST trimmed (not cut at a dot), else (up to the first
+// dot) the name avahi announces (Linux: busctl / gdbus / avahi-resolve, each
+// only if installed, 2 s timeouts), macOS `scutil --get LocalHostName`,
+// gethostname(). Lowercased; usable = one DNS label: 1-63 of a-z 0-9 -, not
+// starting or ending with - (the "Fine rules" of
+// docs/dev/https-certificate.md, which these functions and make-cert.sh
+// follow to the letter: the two must agree, or each would re-issue what the
+// other made). May start helper programs: never call it on the uWS loop.
 struct Host {
     std::string raw;    // as found (for the page: why it can't be used)
     std::string name;   // lowercased; "" when not usable
@@ -67,20 +68,32 @@ Host host_name();
 // The DNS names the server certificate carries (and a narrow CA permits):
 // <host>, <host>.local, <host>.<d> for each search / domain entry of
 // /etc/resolv.conf (Windows: each adapter's DNS suffix) except "local",
-// localhost, then KRAKEN_CERT_NAMES (comma- or space-separated; an address
-// is left out) - the last two also with an unusable host. No duplicates.
-std::vector<std::string> wanted_names(const Host& h);
+// localhost, then KRAKEN_CERT_NAMES (split on commas and white space; an
+// address or a word that is no DNS name is left out, with a line in *notes)
+// - the last two also with an unusable host. No duplicates.
+std::vector<std::string> wanted_names(const Host& h, std::vector<std::string>* notes = nullptr);
+// The host's OWN names - <host>, <host>.local (none for an unusable host): one
+// of them outside the CA is a rename and makes a new CA; any other wanted
+// name outside it is left out of the server certificate (fine rule 18)
+std::vector<std::string> own_names(const Host& h);
+// KRAKEN_CERT_NAMES' names alone (as wanted_names takes them)
+std::vector<std::string> env_names(std::vector<std::string>* notes = nullptr);
+// Is `name` inside these permitted DNS subtrees (a CA's; empty = every name)?
+bool name_permitted(const std::vector<std::string>& permitted_dns, const std::string& name);
 
-// The current global IPv4 addresses (as `ip -4 addr show scope global`) inside
-// the wide scope's private ranges (10/8, 172.16/12, 192.168/16, 100.64/10):
-// a name outside the CA's constraints fails the whole certificate, so a
-// public address is never put in. getifaddrs / GetAdaptersAddresses.
+// The IPv4 addresses of the interfaces that are up (not the loopback
+// interface, 127/8, 169.254/16; as make-cert.sh's `ip -4 -o addr show up`)
+// inside the wide scope's private ranges (10/8, 172.16/12, 192.168/16,
+// 100.64/10): a name outside the CA's constraints fails the whole
+// certificate, so a public address is never put in. getifaddrs /
+// GetAdaptersAddresses.
 std::vector<std::string> private_ipv4();
 
 // The server certificate's IPs: 127.0.0.1, ::1 (+ private_ipv4() when wide)
 std::vector<std::string> wanted_ips(bool wide);
 
-// cert_options in `dir` ("" = the working directory): true = wide
+// cert_options in `dir` ("" = the working directory): true = wide (the last
+// "scope = VALUE" line, any case, says "wide")
 bool read_scope_wide(const std::string& dir);
 // Writes it atomically (temp file + fs_replace), mode 0644
 bool write_scope(const std::string& dir, bool wide, std::string* err);
@@ -91,7 +104,10 @@ const char* state_name(State s);   // "kept" | "issued" | "ca-created" | "not-ma
 
 // The generator. true = a usable pair is there (*state says what happened);
 // false + *err: nothing was changed. force: re-issue the server certificate;
-// new_ca: a new CA (as make-cert.sh --force / --new-ca).
+// new_ca: a new CA (as make-cert.sh --force / --new-ca). Takes make-cert.sh's
+// lock (<dir>/.make-cert.lock; waits up to 10 s for another maker) and
+// writes notes (a name left out, an unusable key moved aside, a migrated
+// server.crt kept) to stderr.
 bool ensure(const std::string& dir, bool force, bool new_ca, State* state, std::string* err);
 
 // ---- reading what is there (the page's certificate section) ----
@@ -101,8 +117,9 @@ struct CertInfo {
     std::vector<std::string> dns, ips;   // subjectAltName
     int64_t not_after = 0;               // Unix seconds
     std::string sha256, sha1;            // fingerprints of the DER, "AB:CD:..." (as openssl x509 -fingerprint)
-    std::string pem;                     // the certificate alone
+    std::string pem;                     // the certificate alone, re-encoded from the parsed one (never a file's bytes)
     std::string scope;                   // a CA: "wide" (permits 10.0.0.0/8), "narrow", "none" (no name constraints)
+    std::vector<std::string> permitted_dns;   // a CA: its permitted DNS subtrees
 };
 struct Inspect {
     bool present = false;          // server.crt there and readable

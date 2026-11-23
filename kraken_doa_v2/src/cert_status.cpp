@@ -12,9 +12,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <ctime>
-#include <fstream>
 #include <iostream>
-#include <iterator>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -38,6 +36,7 @@ struct State {
     // re-checked every 60 s by the worker
     tlscert::Host host;
     vector<string> ips_now;     // private IPv4 addresses (what a wide certificate names)
+    vector<string> not_covered; // wanted names outside the served CA: left out (fine rule 18)
     bool scope_next_wide = false;
     uint32_t scope_gen = 0;     // CERT_SCOPE: writes (a refresh that read the file before one doesn't apply it)
     // the last CERT_SCOPE: refusal (the page that asked shows it)
@@ -83,6 +82,7 @@ void rebuild() {
         }))
         notices.push_back("addresses_changed");
     if (in.managed && in.has_ca && served != (s.scope_next_wide ? "wide" : "narrow")) notices.push_back("restart_pending");
+    if (in.managed && in.has_ca && !s.not_covered.empty()) notices.push_back("names_not_covered");
 
     std::ostringstream o;
     o << "{\"managed\":" << (in.managed ? "true" : "false");
@@ -107,6 +107,8 @@ void rebuild() {
     }
     o << ",\"ips_now\":";
     str_array(o, s.ips_now);
+    o << ",\"names_not_covered\":";
+    str_array(o, s.not_covered);
     o << ",\"retired\":[";
     for (size_t i = 0; i < in.retired.size() && i < MAX_RETIRED; i++)
         o << (i ? "," : "") << "{\"name\":\"" << json_escape(in.retired[i].cert.cn) << "\",\"sha256\":\""
@@ -128,18 +130,28 @@ void refresh() {
     tlscert::Host h = tlscert::host_name();
     vector<string> ips = tlscert::private_ipv4();
     const bool wide = tlscert::read_scope_wide("");   // also an edit by hand
+    vector<string> wanted = tlscert::wanted_names(h);
+    const vector<string> own = tlscert::own_names(h);
     std::lock_guard<std::mutex> lk(s.mu);
+    // fine rule 18: a wanted name the served CA doesn't permit (a search
+    // domain of another network, a KRAKEN_CERT_NAMES name added later) is
+    // left out of the certificate - a new CA (--new-ca) takes it in. The own
+    // names outside it make a new CA at the next start (name_changed). A CA
+    // without DNS subtrees, one of another scope than cert_options' and one
+    // an own name is outside of are replaced at the next start - with every
+    // name: then nothing is reported.
+    vector<string> nc;
+    const vector<string>& perm = s.ins.ca.permitted_dns;
+    const bool replaced = !s.ins.has_ca || perm.empty() || s.ins.ca.scope != (wide ? "wide" : "narrow") ||
+                          std::any_of(own.begin(), own.end(), [&](const string& n) { return !tlscert::name_permitted(perm, n); });
+    if (s.ins.managed && !replaced)
+        for (const string& n : wanted)
+            if (std::find(own.begin(), own.end(), n) == own.end() && !tlscert::name_permitted(perm, n)) nc.push_back(n);
+    s.not_covered = std::move(nc);
     s.host = std::move(h);
     s.ips_now = std::move(ips);
     if (gen == s.scope_gen) s.scope_next_wide = wide;
     rebuild();
-}
-
-bool read_file(const char* path, string* out) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-    out->assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    return !out->empty();
 }
 
 }  // namespace
@@ -153,18 +165,32 @@ void init() {
         if (s.ready) return;
         s.ready = true;
         s.ins = tlscert::inspect("");
-        // the CA as the file has it (what users compare and install); with
-        // none, the certificate the server sends
-        if (!(s.ins.has_ca && read_file(tlscert::CA_CRT, &s.download))) s.download = s.ins.server.pem;
+        // fine rule 19: the CA certificate re-encoded from the parsed one -
+        // never the file's bytes, which may hold a private key too (a combined
+        // PEM); with no CA, the certificate the server sends (its first)
+        s.download = s.ins.has_ca ? s.ins.ca.pem : s.ins.server.pem;
         s.ins.server.pem.clear();
         s.ins.ca.pem.clear();
-        // every name the certificate is valid for is one this device is
-        // reached by: also the avahi conflict name, KRAKEN_CERT_HOST /
-        // KRAKEN_CERT_NAMES and the search-domain names, which the host
-        // allow-list (gethostname-based) doesn't know
-        host_add_allowed_names(s.ins.server.dns);
     }
     refresh();
+    {
+        // Fine rule 20: names this device is reached by that the host
+        // allow-list (gethostname-based) doesn't know - of the served
+        // certificate's names only the host's own (<host>, <host>.local: the
+        // avahi conflict name, KRAKEN_CERT_HOST), KRAKEN_CERT_NAMES' and
+        // <host>.<d> for the suffixes the allow-list trusts anyway. Not a
+        // name from an arbitrary DHCP search domain: a network that says
+        // `search attacker.example` must not open DNS rebinding from it.
+        State& c = st();
+        std::lock_guard<std::mutex> lk(c.mu);
+        vector<string> ok = tlscert::own_names(c.host), allow;
+        for (const string& n : tlscert::env_names()) ok.push_back(n);
+        if (c.host.usable)
+            for (const char* d : {".lan", ".home", ".localdomain", ".home.arpa"}) ok.push_back(c.host.name + d);
+        for (const string& n : c.ins.server.dns)
+            if (std::find(ok.begin(), ok.end(), n) != ok.end()) allow.push_back(n);
+        host_add_allowed_names(allow);
+    }
     {
         State& c = st();
         std::lock_guard<std::mutex> lk(c.mu);

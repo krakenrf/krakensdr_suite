@@ -223,18 +223,22 @@ the next start.
 
 **When devices must install it again**: only when the receiver makes a new
 certificate authority - after a new host name (also the `krakensdr-2` that
-mDNS picks when two receivers on a network are both called `krakensdr`), a new search
-domain, a switch between narrow and wide, or after about nine years.
+mDNS picks when two receivers on a network are both called `krakensdr`), a
+switch between narrow and wide, or after about nine years.
 `run.sh` then prints a warning, and the Telemetry sheet names the old
 certificate to remove (in the same place it was installed). A new IP
-address or a renewal needs nothing.
+address, another network's search domain or a renewal needs nothing (a name
+the authority doesn't cover is left out of the certificate and named in the
+Telemetry sheet).
 
 **Your own certificate**: a `kraken_doa_v2/server.crt` (followed by its
 chain) + `server.key` the receiver didn't make, or a symlink, is never
 touched. More names: `KRAKEN_CERT_NAMES=sdr.example.org ./run.sh`
-(comma-separated; add them to `KRAKEN_ALLOWED_HOSTS` as well). A new
-certificate authority on purpose (say the old key may have been copied):
-`scripts/make-cert.sh kraken_doa_v2 --new-ca`, then restart.
+(comma- or space-separated) - set before the first start, or added later
+together with a new certificate authority (`--new-ca` below), since the
+existing one doesn't cover them. A new certificate authority on purpose (say
+the old key may have been copied): `scripts/make-cert.sh kraken_doa_v2
+--new-ca`, then restart.
 Details: `kraken_doa_v2/docs/dev/https-certificate.md`.
 
 ## Features
