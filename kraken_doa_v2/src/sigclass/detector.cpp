@@ -77,6 +77,27 @@ void runs_of(const std::vector<uint8_t>& m, int n, std::vector<Run>& out, int cl
     }
 }
 
+// the burst search's box test of one frame at one scale (box S short bins, stride
+// S / 2): does any box sum pre[k0 + S] - pre[k0] exceed its threshold bt[j]? The
+// burst search's own comparisons, branch-free with the scale a constant (vectorised)
+template <int S>
+bool any_box_over_s(const double* pre, const double* bt) {
+    constexpr int ST = S / 2 > 1 ? S / 2 : 1;
+    constexpr int NB = (SPEC_N - S) / ST + 1;
+    int any = 0;
+    for (int j = 0; j < NB; j++) any |= pre[j * ST + S] - pre[j * ST] > bt[j] ? 1 : 0;
+    return any != 0;
+}
+bool any_box_over(int si, const double* pre, const double* bt) {
+    switch (si) {
+    case 0: return any_box_over_s<1>(pre, bt);
+    case 1: return any_box_over_s<4>(pre, bt);
+    case 2: return any_box_over_s<16>(pre, bt);
+    case 3: return any_box_over_s<64>(pre, bt);
+    default: return any_box_over_s<256>(pre, bt);
+    }
+}
+
 // bins of x (mean 1 under noise; one bin ~ Gamma(kappa1) / kappa1) that are
 // significant at a box width of 1, 4, 16, 64 or 256 bins (family-wise p
 // per scale); each bin clipped like the continuous detector, masks eroded
@@ -503,6 +524,9 @@ void Detector::burst_search(const FrontEnd& fe, const Config& cfg, const std::ve
             for (int si = 0; si < NS; si++) {
                 const int s = scales[si], stride = std::max(1, s / 2);
                 const double* bt = boxthr[si].data();
+                // (the same comparisons without a branch first - a loop that vectorises;
+                // hits are rare, the loop below then finds them)
+                if (!any_box_over(si, pre, bt)) continue;
                 int j = 0;
                 for (int k0 = 0; k0 + s <= SPEC_N; k0 += stride, j++) {
                     if (pre[size_t(k0 + s)] - pre[size_t(k0)] > bt[j]) {
