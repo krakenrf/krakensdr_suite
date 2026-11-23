@@ -1,5 +1,10 @@
 #include "wb_board.hpp"
 
+#include "utils/log_retention.hpp"
+#include "utils/process.hpp"
+
+#include <zlib.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -12,21 +17,28 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
+namespace fs = std::filesystem;
+using logret::Kind;
 
 constexpr size_t MAX_PENDING = 256 * 1024;               // a line longer than this is garbage
 std::atomic<bool> log_enabled{true};
 std::atomic<int> log_period_s{10};
-std::atomic<int> log_keep_days{30};
+std::atomic<int> log_keep_days{7};     // Keep: days a finished day stays plain (WB_LOG_KEEP)
+std::atomic<int> log_zip_days{365};    // Then compressed: days gzipped after those (WB_LOG_ZIP; 0 = deleted after Keep)
 constexpr auto STALE_AFTER = std::chrono::seconds(30);
-constexpr uintmax_t ROTATE_BYTES = 5 * 1024 * 1024;
-constexpr int KEEP_OLD = 3;
+// a day's event file stops at this size (an alarm flapping all day): the rest of
+// that UTC day's events are not written (the size-rotated event log before the
+// daily files capped it at 4 x 5 MB)
+constexpr uintmax_t EVENTS_DAY_CAP = 5 * 1024 * 1024;
 
 std::mutex mtx;
 std::string pending;                 // bytes after the last newline
@@ -88,51 +100,40 @@ std::string utc_now() {
     return b;
 }
 
-// A telemetry log: one CSV file per UTC day in its own folder, an event log
-// beside it, and the columns the history charts show.
+// today's UTC date as a day number (logret::day_number): the files are per UTC day
+long utc_day() {
+    return static_cast<long>(static_cast<long long>(std::time(nullptr)) / 86400);
+}
+
+// A telemetry log: one CSV file of rows and one of events per UTC day in its
+// own folder - plain for the Keep days, then gzipped for the Then compressed
+// days, then deleted (utils/log_retention.hpp, the decoder log's rule) - and
+// the columns the history charts show.
 struct LogSpec {
-    const char* tag;        // "wb" / "host": export and download names
-    const char* dir;        // folder under the working directory
-    const char* prefix;     // daily files: <prefix>YYYYMMDD.csv
-    const char* legacy;     // the size-rotated file of an older build ("" = none)
-    const char* events;     // event log (rotates at 5 MB, 3 old files kept)
+    const char* tag;            // "wb" / "host": export and download names
+    const char* label;          // the pass's log lines
+    const char* dir;            // folder under the working directory
+    const char* prefix;         // rows: <prefix>YYYYMMDD.csv, then <prefix>YYYYMMDD.csv.gz
+    const char* events;         // events: <events>YYYYMMDD.csv, then .csv.gz
+    const char* legacy;         // the size-rotated rows of an older build ("" = none)
+    const char* legacy_events;  // the size-rotated event log of an older build (5 MB, .1 - .3)
     const char* header;
-    const char* name[4];    // the charted series ...
-    int column[4];          // ... and their CSV columns
+    const char* name[4];        // the charted series ...
+    int column[4];              // ... and their CSV columns
 };
-const LogSpec WB_LOG{"wb", "wb_logs", "wb_telemetry_", "wb_telemetry.csv", "wb_events.csv",
+const LogSpec WB_LOG{"wb", "WB board log", "wb_logs", "wb_telemetry_", "wb_events_", "wb_telemetry.csv", "wb_events.csv",
     "time_utc,revision,fw,vin_v,iin_a,iin_saturated,temp_c,rh_pct,lo_hz,lo_hz_read,side,array,errors,stale",
     {"vin", "iin", "temp", "rh"}, {3, 4, 6, 7}};
-const LogSpec HOST_LOG{"host", "host_logs", "host_telemetry_", "", "host_events.csv",
+const LogSpec HOST_LOG{"host", "Host log", "host_logs", "host_telemetry_", "host_events_", "", "host_events.csv",
     "time_utc,cpu_temp_c,cpu_pct,ram_used_mb,ram_total_mb,disk_free_mb,disk_total_mb,throttled",
     {"temp", "cpu", "ram", "disk"}, {1, 2, 3, 5}};
+constexpr const char* EVENTS_HEADER = "time_utc,event,detail";
 
-std::filesystem::path log_dir(const LogSpec& s) {
+// the folder, relative to the working directory (created if missing)
+fs::path log_dir(const LogSpec& s) {
     std::error_code ec;
-    std::filesystem::path d = std::filesystem::current_path(ec) / s.dir;
-    std::filesystem::create_directories(d, ec);
-    return d;
-}
-
-void rotate_if_big(const std::filesystem::path& f) {
-    std::error_code ec;
-    if (!std::filesystem::exists(f, ec) || std::filesystem::file_size(f, ec) < ROTATE_BYTES) return;
-    for (int i = KEEP_OLD; i >= 1; i--) {
-        std::filesystem::path from = i == 1 ? f : std::filesystem::path(f.string() + "." + std::to_string(i - 1));
-        std::filesystem::path to(f.string() + "." + std::to_string(i));
-        std::filesystem::remove(to, ec);          // Windows' rename does not overwrite
-        std::filesystem::rename(from, to, ec);
-    }
-}
-
-// days since 1970-01-01 of a civil date (proleptic Gregorian) - a portable timegm
-long long days_from_civil(int y, int m, int d) {
-    y -= m <= 2;
-    const long long era = (y >= 0 ? y : y - 399) / 400;
-    const unsigned yoe = static_cast<unsigned>(y - era * 400);
-    const unsigned doy = (153u * static_cast<unsigned>(m + (m > 2 ? -3 : 9)) + 2) / 5 + static_cast<unsigned>(d) - 1;
-    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + static_cast<long long>(doe) - 719468;
+    fs::create_directories(s.dir, ec);
+    return fs::path(s.dir);
 }
 
 // "2026-11-11T09:13:02Z" -> epoch seconds, -1 if it is not one
@@ -140,76 +141,136 @@ long long parse_utc(const char* s) {
     int y, mo, d, h, mi, se;
     if (std::sscanf(s, "%4d-%2d-%2dT%2d:%2d:%2dZ", &y, &mo, &d, &h, &mi, &se) != 6) return -1;
     if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || se > 60) return -1;
-    return days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se;
+    return static_cast<long long>(logret::day_number(y, mo, d)) * 86400 + h * 3600 + mi * 60 + se;
 }
 
-// <prefix>YYYYMMDD.csv -> the first second after that day, -1 for any other name
-long long daily_file_end(const LogSpec& s, const std::string& n) {
-    const size_t pl = std::strlen(s.prefix);
-    int y, m, d;
-    if (n.size() != pl + 12 || n.compare(0, pl, s.prefix) != 0 || n.compare(pl + 8, 4, ".csv") != 0 ||
-        std::sscanf(n.c_str() + pl, "%4d%2d%2d", &y, &m, &d) != 3) return -1;
-    return (days_from_civil(y, m, d) + 1) * 86400;
+// <prefix>YYYYMMDD.csv / .csv.gz / .csv.gz.part -> its day number (and kind); -1 for any other name
+long daily_day(const char* prefix, const std::string& n, Kind* kind) {
+    const size_t pl = std::strlen(prefix);
+    if (n.size() < pl + 12 || n.compare(0, pl, prefix) != 0) return -1;
+    for (size_t i = pl; i < pl + 8; i++)
+        if (n[i] < '0' || n[i] > '9') return -1;
+    const std::string rest = n.substr(pl + 8);
+    const Kind k = rest == ".csv" ? Kind::PLAIN : rest == ".csv.gz" ? Kind::GZ : rest == ".csv.gz.part" ? Kind::PART : Kind::NONE;
+    if (k == Kind::NONE) return -1;
+    const int y = std::atoi(n.substr(pl, 4).c_str()), m = std::atoi(n.substr(pl + 4, 2).c_str()),
+              d = std::atoi(n.substr(pl + 6, 2).c_str());
+    if (m < 1 || m > 12 || d < 1 || d > 31) return -1;
+    if (kind) *kind = k;
+    return logret::day_number(y, m, d);
 }
 
-bool legacy_file(const LogSpec& s, const std::string& n) {
-    const size_t l = std::strlen(s.legacy);
-    return l && (n == s.legacy || (n.size() == l + 2 && n.compare(0, l, s.legacy) == 0 && n[l] == '.'));
+// "2026-11-11T..." -> <prefix>20261111.csv
+std::string day_file_name(const char* prefix, const std::string& utc) {
+    return prefix + utc.substr(0, 4) + utc.substr(5, 2) + utc.substr(8, 2) + ".csv";
 }
 
-// The log files that can hold rows from `from` (epoch s) on, oldest first:
-// the older build's rotated files (.3 .. .1, then the live one), then the daily files.
-std::vector<std::filesystem::path> telemetry_files(const LogSpec& s, long long from) {
-    std::vector<std::filesystem::path> legacy, daily;
+// the older build's file `base` or one of its rotations (base.1 .. base.9)
+bool legacy_name(const char* base, const std::string& n) {
+    const size_t l = std::strlen(base);
+    return l && (n == base || (n.size() == l + 2 && n.compare(0, l, base) == 0 && n[l] == '.' && n[l + 1] >= '0' && n[l + 1] <= '9'));
+}
+
+// The names in the log's folder (only plain ASCII names are ours; anything
+// the file system can't hand over as such is skipped)
+std::vector<std::pair<fs::path, std::string>> folder_entries(const LogSpec& s) {
+    std::vector<std::pair<fs::path, std::string>> v;
     std::error_code ec;
-    for (const auto& e : std::filesystem::directory_iterator(log_dir(s), ec)) {
-        const std::string n = e.path().filename().string();
-        if (const long long end = daily_file_end(s, n); end >= 0) {
-            if (end > from) daily.push_back(e.path());
-        } else if (legacy_file(s, n)) {
-            legacy.push_back(e.path());
-        }
+    try {
+        for (fs::directory_iterator it(log_dir(s), ec), end; !ec && it != end; it.increment(ec))
+            v.emplace_back(it->path(), it->path().filename().string());
+    } catch (const std::exception&) {
     }
-    std::sort(daily.begin(), daily.end());
+    return v;
+}
+
+struct DayFile {
+    fs::path path;
+    long day = -1;
+    Kind kind = Kind::NONE;
+    bool events = false;   // the event log's file of that day (else the rows')
+};
+
+// every daily file of the log - rows and events, plain / gz / part - in no order
+std::vector<DayFile> day_files(const LogSpec& s) {
+    std::vector<DayFile> v;
+    for (const auto& [p, n] : folder_entries(s)) {
+        Kind k = Kind::NONE;
+        if (const long d = daily_day(s.prefix, n, &k); d >= 0) v.push_back({p, d, k, false});
+        else if (const long e = daily_day(s.events, n, &k); e >= 0) v.push_back({p, e, k, true});
+    }
+    return v;
+}
+
+// The files that can hold rows (events = true: events) from `from` (epoch s)
+// on, oldest first: the older build's rotated files (.3 .. .1, then the live
+// one), then one file per day - the plain one, else its .gz (both exist only
+// while a gzip is being made, or after a crash between its last two steps:
+// the same rows; read once)
+std::vector<fs::path> log_files(const LogSpec& s, long long from, bool events) {
+    std::vector<fs::path> legacy;
+    std::map<long, std::pair<fs::path, Kind>> daily;   // day -> its file
+    const char* base = events ? s.legacy_events : s.legacy;
+    for (const auto& [p, n] : folder_entries(s)) {
+        if (legacy_name(base, n)) legacy.push_back(p);
+    }
+    for (const auto& f : day_files(s)) {
+        if (f.events != events || (f.kind != Kind::PLAIN && f.kind != Kind::GZ)) continue;
+        if ((static_cast<long long>(f.day) + 1) * 86400 <= from) continue;   // the whole day is before the range
+        auto it = daily.find(f.day);
+        if (it == daily.end() || f.kind == Kind::PLAIN) daily[f.day] = {f.path, f.kind};
+    }
     std::sort(legacy.begin(), legacy.end(), [](const auto& a, const auto& b) {
         const std::string x = a.filename().string(), y = b.filename().string();
         return x.size() != y.size() ? x.size() > y.size() : x > y;
     });
-    legacy.insert(legacy.end(), daily.begin(), daily.end());
+    for (const auto& kv : daily) legacy.push_back(kv.second.first);
     return legacy;
 }
 
-// Delete what is older than the keep setting: daily files by their date, the
-// older build's rotated files and finished exports by their modification time.
-// At most once an hour per log (and at once when the setting changes).
-void purge_old_logs(const LogSpec& s) {
-    static Clock::time_point last[2]{};
-    static int last_keep[2] = {-1, -1};
-    const int k = &s == &HOST_LOG ? 1 : 0;
-    const int keep = log_keep_days.load();
-    if (last[k] != Clock::time_point{} && keep == last_keep[k] && Clock::now() - last[k] < std::chrono::hours(1)) return;
-    last[k] = Clock::now();
-    last_keep[k] = keep;
-    const long long cutoff = static_cast<long long>(std::time(nullptr)) - static_cast<long long>(keep) * 86400;
-    const std::string exports = std::string(s.tag) + "_export_";
-    std::error_code ec;
-    std::vector<std::filesystem::path> gone;
-    for (const auto& e : std::filesystem::directory_iterator(log_dir(s), ec)) {
-        const std::string n = e.path().filename().string();
-        if (const long long end = daily_file_end(s, n); end >= 0) {
-            if (end <= cutoff) gone.push_back(e.path());
-        } else if (legacy_file(s, n) || n.rfind(exports, 0) == 0) {
-            const auto age = std::filesystem::file_time_type::clock::now() - std::filesystem::last_write_time(e.path(), ec);
-            const auto limit = n.rfind(exports, 0) == 0 ? std::chrono::hours(1) : std::chrono::hours(24LL * keep);
-            if (!ec && age > limit) gone.push_back(e.path());
+// Lines of a log file, plain or gzip (zlib reads a plain file as it is), one
+// at a time without the line end; a damaged gzip ends early
+class LineReader {
+public:
+    explicit LineReader(const fs::path& p) : f_(gzopen(p.string().c_str(), "rb")) {
+        if (f_) gzbuffer(f_, 128 * 1024);
+    }
+    ~LineReader() {
+        if (f_) gzclose(f_);
+    }
+    LineReader(const LineReader&) = delete;
+    LineReader& operator=(const LineReader&) = delete;
+    bool ok() const { return f_ != nullptr; }
+    bool next(std::string& line) {
+        line.clear();
+        if (!f_) return false;
+        char buf[4096];
+        for (;;) {
+            if (!gzgets(f_, buf, sizeof(buf))) return !line.empty();
+            const size_t n = std::strlen(buf);
+            if (n && buf[n - 1] == '\n') {
+                line.append(buf, n - 1);
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                return true;
+            }
+            line.append(buf, n);
         }
     }
-    for (const auto& p : gone) std::filesystem::remove(p, ec);
+
+private:
+    gzFile f_;
+};
+
+// Open a listed file; one the pass gzipped since it was listed is read from its .gz
+std::unique_ptr<LineReader> open_lines(const fs::path& p) {
+    auto r = std::make_unique<LineReader>(p);
+    if (!r->ok() && p.extension() == ".csv") r = std::make_unique<LineReader>(fs::path(p.string() + ".gz"));
+    return r;
 }
 
-void append_file(const std::filesystem::path& f, const char* header, const std::string& line) {
+void append_file(const fs::path& f, const char* header, const std::string& line) {
     std::error_code ec;
-    const bool fresh = !std::filesystem::exists(f, ec);
+    const bool fresh = !fs::exists(f, ec);
     std::ofstream out(f, std::ios::app | std::ios::binary);
     if (!out) return;
     if (fresh) out << header << "\n";
@@ -218,16 +279,20 @@ void append_file(const std::filesystem::path& f, const char* header, const std::
 
 // one measurement row into today's file
 void append_row(const LogSpec& s, const std::string& row) {
-    purge_old_logs(s);
-    const std::string now = utc_now();   // 2026-11-11T...
-    append_file(log_dir(s) / (s.prefix + now.substr(0, 4) + now.substr(5, 2) + now.substr(8, 2) + ".csv"), s.header, row);
+    append_file(log_dir(s) / day_file_name(s.prefix, utc_now()), s.header, row);
 }
 
 void event(const LogSpec& s, const std::string& what, const std::string& detail) {
     std::cout << (&s == &HOST_LOG ? "Host: " : "WB board: ") << what << " " << detail << std::endl;
-    const std::filesystem::path f = log_dir(s) / s.events;
-    rotate_if_big(f);
-    append_file(f, "time_utc,event,detail", utc_now() + "," + what + ",\"" + detail + "\"");
+    const std::string now = utc_now();
+    const fs::path f = log_dir(s) / day_file_name(s.events, now);
+    std::error_code ec;
+    const uintmax_t size = fs::exists(f, ec) ? fs::file_size(f, ec) : 0;
+    if (ec || size >= EVENTS_DAY_CAP) return;   // a day of flapping alarms: the rest of the day is not written
+    const std::string line = now + "," + what + ",\"" + detail + "\"";
+    append_file(f, EVENTS_HEADER, line);
+    if (size + line.size() + 1 >= EVENTS_DAY_CAP)
+        append_file(f, EVENTS_HEADER, now + ",log_events,\"5 MB of events today: the rest of this UTC day is not logged\"");
 }
 void event(const std::string& what, const std::string& detail) { event(WB_LOG, what, detail); }
 
@@ -245,6 +310,110 @@ void track(const LogSpec& s, std::map<std::string, std::string>& seen, const std
 }
 void track(const std::string& key, const std::string& value, const std::string& detail) {
     track(WB_LOG, last_state, key, value, detail);
+}
+
+// ---- retention: plain for Keep days, gzip for Then compressed more, deleted ----
+std::atomic<long> last_pass_day{-1};
+std::atomic<long long> last_pass_ms{0};   // steady clock
+
+long long steady_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+}
+
+// One log's pass: its daily files by the shared rule; an older build's files
+// (no date in the name) by their modification time - kept for the Keep + Then
+// compressed days, never compressed; finished exports after an hour
+void pass_log(const LogSpec& s, long today, int keep, int zip) {
+    std::vector<logret::File> files;
+    for (const auto& f : day_files(s)) files.push_back({f.path.string(), f.day, f.kind});
+    logret::run_pass(files, today, keep, zip, s.label);
+    const std::string exports = std::string(s.tag) + "_export_";
+    const auto now = fs::file_time_type::clock::now();
+    for (const auto& [p, n] : folder_entries(s)) {
+        const bool exp = n.rfind(exports, 0) == 0;
+        if (!exp && !legacy_name(s.legacy, n) && !legacy_name(s.legacy_events, n)) continue;
+        std::error_code ec;
+        const auto age = now - fs::last_write_time(p, ec);
+        const auto limit = exp ? std::chrono::hours(1) : std::chrono::hours(24LL * (keep + zip));
+        if (!ec && age > limit && fs::remove(p, ec) && !exp)
+            std::cout << s.label << ": deleted " << p.string() << " (an older version's file, older than " << keep << " + "
+                      << zip << " days)" << std::endl;
+    }
+}
+
+// Both logs in one pass (they share the settings), on its own thread, one at a
+// time: once the settings are replayed (wb_board_settings_restored), then on a
+// Keep / Then compressed change, at the UTC day change and every hour (sampler)
+logret::Scheduler& passes() {
+    static logret::Scheduler* p = new logret::Scheduler([] {   // never destroyed (a pass may run at exit)
+        const long today = utc_day();
+        last_pass_day = today;
+        last_pass_ms = steady_ms();
+        const int keep = log_keep_days.load(), zip = log_zip_days.load();
+        pass_log(WB_LOG, today, keep, zip);
+        pass_log(HOST_LOG, today, keep, zip);
+    });
+    return *p;
+}
+
+// ---- the computer itself (CPU temperature / load, memory, storage) ----
+std::mutex host_mtx;
+std::map<std::string, std::string> host_state;      // event keys -> last value
+std::string host_fields;                            // the JSON fields for system_status.hw
+
+// Raspberry Pi firmware flags (under-voltage, frequency capping, throttling:
+// bits 0-3 now, 16-19 since boot), -1 where there is none. The sampler's
+// thread only: the Pi 5 reads them with a child process
+int read_throttled() {
+#ifndef _WIN32
+    std::ifstream f("/sys/devices/platform/soc/soc:firmware/get_throttled");
+    std::string v;
+    if (f && (f >> v) && !v.empty()) return static_cast<int>(std::strtol(v.c_str(), nullptr, 16));
+    // Pi 5: no such file, the firmware tool is the only source ("throttled=0x0")
+    static bool no_tool = false;
+    if (no_tool) return -1;
+    std::string out;
+    kproc::run_capture({"vcgencmd", "get_throttled"}, 5000, &out, nullptr, 4096, true);
+    if (const size_t eq = out.find('='); eq != std::string::npos) return static_cast<int>(std::strtol(out.c_str() + eq + 1, nullptr, 16));
+    no_tool = true;  // not a Pi (or no vcgencmd): do not start it every time
+#endif
+    return -1;
+}
+
+// What the sampler measured last: the drive the logs are on (statfs) and the
+// Pi's throttling flags - slow or blocking calls (a busy SD card, a network
+// mount, vcgencmd), so they run on the sampler's thread every 10 s, never on
+// the uWS loop that calls host_log_tick
+struct HostSample {
+    double disk_free_mb = -1, disk_total_mb = -1;
+    int throttled = -1;
+    bool valid = false;   // measured at least once
+};
+std::mutex sample_mtx;
+HostSample host_sample;
+
+void sampler() {
+    for (;;) {
+        HostSample h;
+        std::error_code ec;
+        const auto sp = fs::space(fs::current_path(ec), ec);
+        if (!ec) { h.disk_free_mb = sp.available / 1048576.0; h.disk_total_mb = sp.capacity / 1048576.0; }
+        h.throttled = read_throttled();
+        h.valid = true;
+        {
+            std::lock_guard<std::mutex> lock(sample_mtx);
+            host_sample = h;
+        }
+        // the retention pass hourly and at the UTC day change (none before the settings replay)
+        if (passes().allowed() && (last_pass_day.load() != utc_day() || steady_ms() - last_pass_ms.load() >= 3600000))
+            passes().request();
+        std::this_thread::sleep_for(std::chrono::seconds(10));
+    }
+}
+
+void start_sampler() {
+    static std::once_flag once;
+    std::call_once(once, [] { std::thread(sampler).detach(); });
 }
 
 void log_object(const std::string& dc) {
@@ -330,10 +499,10 @@ std::string wb_board_json() {
         }
         return {};
     }
-    char a[128];
-    std::snprintf(a, sizeof(a), ",\"age_s\":%.1f,\"logging\":{\"enabled\":%s,\"period_s\":%d,\"keep_days\":%d}}",
+    char a[160];
+    std::snprintf(a, sizeof(a), ",\"age_s\":%.1f,\"logging\":{\"enabled\":%s,\"period_s\":%d,\"keep_days\":%d,\"zip_days\":%d}}",
                   std::chrono::duration<double>(age).count(), log_enabled.load() ? "true" : "false",
-                  log_period_s.load(), log_keep_days.load());
+                  log_period_s.load(), log_keep_days.load(), log_zip_days.load());
     return latest.substr(0, latest.size() - 1) + a;
 }
 
@@ -347,8 +516,19 @@ int wb_board_set_log_period(int seconds) {
 
 int wb_board_set_log_keep_days(int days) {
     days = std::clamp(days, 1, 365);
-    log_keep_days.store(days);
+    if (log_keep_days.exchange(days) != days) passes().request();
     return days;
+}
+
+int wb_board_set_log_zip_days(int days) {
+    days = std::clamp(days, 0, 3650);
+    if (log_zip_days.exchange(days) != days) passes().request();
+    return days;
+}
+
+void wb_board_settings_restored() {
+    start_sampler();
+    passes().allow();
 }
 
 namespace {
@@ -408,11 +588,11 @@ std::string history_json(const LogSpec& s, long range_s) {
     std::vector<Acc> acc[4];
     for (auto& a : acc) a.resize(nb);
     long rows = 0;
-    for (const auto& f : telemetry_files(s, from)) {
-        std::ifstream in(f, std::ios::binary);
-        std::string line;
+    std::string line;
+    for (const auto& f : log_files(s, from, false)) {
+        const auto in = open_lines(f);
         Row r;
-        while (std::getline(in, line)) {
+        while (in->next(line)) {
             r = Row{};
             if (!parse_row(s, line, r) || r.t < from || r.t > now) continue;
             const size_t b = std::min(nb - 1, static_cast<size_t>((r.t - from) / bucket));
@@ -430,7 +610,7 @@ std::string history_json(const LogSpec& s, long range_s) {
 
     std::string j;
     j.reserve(nb * 110 + 4096);
-    char b[128];
+    char b[320];
     std::snprintf(b, sizeof(b), "{\"src\":\"%s\",\"range_s\":%ld,\"bucket_s\":%ld,\"now\":%lld,\"rows\":%ld,\"t\":[", s.tag, range_s, bucket, now, rows);
     j += b;
     for (size_t i = 0; i < nb; i++) {
@@ -456,11 +636,9 @@ std::string history_json(const LogSpec& s, long range_s) {
 
     // events of the range (the newest 200), oldest first
     std::vector<std::string> ev;
-    for (const char* suffix : {".3", ".2", ".1", ""}) {
-        std::ifstream in(log_dir(s) / (std::string(s.events) + suffix), std::ios::binary);
-        std::string line;
-        while (std::getline(in, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
+    for (const auto& f : log_files(s, from, true)) {
+        const auto in = open_lines(f);
+        while (in->next(line)) {
             const long long t = parse_utc(line.c_str());
             if (t < from) continue;                      // also the header (-1)
             const size_t c1 = line.find(','), c2 = c1 == std::string::npos ? c1 : line.find(',', c1 + 1);
@@ -475,105 +653,141 @@ std::string history_json(const LogSpec& s, long range_s) {
     for (size_t i = ev.size() > 200 ? ev.size() - 200 : 0, first = 1; i < ev.size(); i++, first = 0) j += (first ? "" : ",") + ev[i];
     j += "]";
 
-    // size of the whole log on disk
-    uintmax_t bytes = 0;
-    int files = 0;
-    std::string oldest;
+    // the whole log on disk (rows and events, plain and gzipped, an older version's files):
+    // bytes / files in all, and per kind; the oldest day of rows
+    uintmax_t plain_b = 0, gz_b = 0;
+    int plain_n = 0, gz_n = 0;
+    long oldest = -1;
     std::error_code ec;
-    const size_t pl = std::strlen(s.prefix);
-    for (const auto& f : telemetry_files(s, 0)) {
-        bytes += std::filesystem::file_size(f, ec);
-        files++;
-        const std::string n = f.filename().string();
-        if (oldest.empty() && daily_file_end(s, n) >= 0) oldest = n.substr(pl, 4) + "-" + n.substr(pl + 4, 2) + "-" + n.substr(pl + 6, 2);
+    for (const auto& f : day_files(s)) {
+        if (f.kind != Kind::PLAIN && f.kind != Kind::GZ) continue;
+        const uintmax_t sz = fs::file_size(f.path, ec);
+        if (ec) continue;
+        if (f.kind == Kind::GZ) { gz_b += sz; gz_n++; } else { plain_b += sz; plain_n++; }
+        if (!f.events && (oldest < 0 || f.day < oldest)) oldest = f.day;
     }
-    std::snprintf(b, sizeof(b), ",\"log\":{\"dir\":\"%s\",\"bytes\":%llu,\"files\":%d,\"oldest\":\"%s\"}}",
-                  s.dir, static_cast<unsigned long long>(bytes), files, oldest.c_str());
+    for (const auto& [p, n] : folder_entries(s)) {
+        if (!legacy_name(s.legacy, n) && !legacy_name(s.legacy_events, n)) continue;
+        const uintmax_t sz = fs::file_size(p, ec);
+        if (!ec) { plain_b += sz; plain_n++; }
+    }
+    char od[16] = "";
+    if (oldest >= 0) {
+        const std::time_t t = static_cast<std::time_t>(oldest) * 86400;
+        std::tm tm{};
+#ifdef _WIN32
+        gmtime_s(&tm, &t);
+#else
+        gmtime_r(&t, &tm);
+#endif
+        std::strftime(od, sizeof(od), "%Y-%m-%d", &tm);
+    }
+    std::snprintf(b, sizeof(b), ",\"log\":{\"dir\":\"%s\",\"bytes\":%llu,\"files\":%d,\"oldest\":\"%s\",\"plain_bytes\":%llu,"
+                  "\"plain_files\":%d,\"gz_bytes\":%llu,\"gz_files\":%d}}",
+                  s.dir, static_cast<unsigned long long>(plain_b + gz_b), plain_n + gz_n, od,
+                  static_cast<unsigned long long>(plain_b), plain_n, static_cast<unsigned long long>(gz_b), gz_n);
     j += b;
     return j;
 }
 
-std::string export_csv(const LogSpec& s, long range_s, std::string* download_name) {
+// The export's output: a plain file, or gzip (zlib level 6)
+class ExportOut {
+public:
+    ExportOut(const fs::path& p, bool gz) {
+        if (gz) gz_ = gzopen(p.string().c_str(), "wb6");
+        else plain_.open(p, std::ios::binary);
+        ok_ = gz ? gz_ != nullptr : static_cast<bool>(plain_);
+    }
+    ~ExportOut() {
+        if (gz_) gzclose(gz_);
+    }
+    ExportOut(const ExportOut&) = delete;
+    ExportOut& operator=(const ExportOut&) = delete;
+    void line(const std::string& l) {
+        buf_ += l;
+        buf_ += '\n';
+        if (buf_.size() >= (1u << 20)) flush();
+    }
+    // everything written (false: a write failed - the export is not served)
+    bool finish() {
+        flush();
+        if (gz_) {
+            ok_ = gzclose(gz_) == Z_OK && ok_;
+            gz_ = nullptr;
+        } else {
+            plain_.close();
+            ok_ = ok_ && !plain_.fail();
+        }
+        return ok_;
+    }
+    bool ok() const { return ok_; }
+
+private:
+    void flush() {
+        if (buf_.empty() || !ok_) { buf_.clear(); return; }
+        if (gz_) ok_ = gzwrite(gz_, buf_.data(), static_cast<unsigned>(buf_.size())) == static_cast<int>(buf_.size());
+        else ok_ = static_cast<bool>(plain_.write(buf_.data(), static_cast<std::streamsize>(buf_.size())));
+        buf_.clear();
+    }
+    gzFile gz_ = nullptr;
+    std::ofstream plain_;
+    std::string buf_;
+    bool ok_ = false;
+};
+
+std::string export_csv(const LogSpec& s, long range_s, std::string* download_name, bool gz) {
     range_s = clamp_range(range_s);
     const long long now = static_cast<long long>(std::time(nullptr));
     const long long from = now - range_s;
     static std::atomic<unsigned> serial{0};
     const std::string exports = std::string(s.tag) + "_export_";
     std::error_code ec;
-    for (const auto& e : std::filesystem::directory_iterator(log_dir(s), ec)) {   // exports of earlier downloads
-        if (e.path().filename().string().rfind(exports, 0) != 0) continue;
-        const auto age = std::filesystem::file_time_type::clock::now() - std::filesystem::last_write_time(e.path(), ec);
-        if (!ec && age > std::chrono::minutes(10)) std::filesystem::remove(e.path(), ec);
+    for (const auto& [p, n] : folder_entries(s)) {   // exports of earlier downloads
+        if (n.rfind(exports, 0) != 0) continue;
+        const auto age = fs::file_time_type::clock::now() - fs::last_write_time(p, ec);
+        if (!ec && age > std::chrono::minutes(10)) fs::remove(p, ec);
     }
-    const std::filesystem::path out = log_dir(s) / (exports + std::to_string(now) + "_" + std::to_string(serial.fetch_add(1)) + ".csv");
-    std::ofstream o(out, std::ios::binary);
-    if (!o) return {};
-    o << s.header << "\n";
-    for (const auto& f : telemetry_files(s, from)) {
-        std::ifstream in(f, std::ios::binary);
-        std::string line;
-        while (std::getline(in, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
+    const char* ext = gz ? ".csv.gz" : ".csv";
+    const fs::path out = log_dir(s) / (exports + std::to_string(now) + "_" + std::to_string(serial.fetch_add(1)) + ext);
+    ExportOut o(out, gz);
+    if (!o.ok()) return {};
+    o.line(s.header);
+    std::string line;
+    for (const auto& f : log_files(s, from, false)) {
+        const auto in = open_lines(f);
+        while (in->next(line)) {
             const long long t = parse_utc(line.c_str());
-            if (t >= from && t <= now) o << line << "\n";
+            if (t >= from && t <= now) o.line(line);
         }
     }
-    if (!o.good()) return {};
+    if (!o.finish()) return {};
     if (download_name) {
         const char* span = range_s <= 3600 ? "1h" : range_s <= 86400 ? "24h" : range_s <= 7 * 86400 ? "7d" : "30d";
-        *download_name = std::string(s.tag) + "_telemetry_" + utc_now().substr(0, 10) + "_last_" + span + ".csv";
+        *download_name = std::string(s.tag) + "_telemetry_" + utc_now().substr(0, 10) + "_last_" + span + ext;
     }
     return out.string();
-}
-
-// ---- the computer itself (CPU temperature / load, memory, storage) ----
-std::mutex host_mtx;
-std::map<std::string, std::string> host_state;      // event keys -> last value
-std::string host_fields;                            // the JSON fields for system_status.hw
-
-// Raspberry Pi firmware flags (under-voltage, frequency capping, throttling:
-// bits 0-3 now, 16-19 since boot), -1 where there is none
-int read_throttled() {
-#ifndef _WIN32
-    std::ifstream f("/sys/devices/platform/soc/soc:firmware/get_throttled");
-    std::string v;
-    if (f && (f >> v) && !v.empty()) return static_cast<int>(std::strtol(v.c_str(), nullptr, 16));
-    // Pi 5: no such file, the firmware tool is the only source ("throttled=0x0")
-    static bool no_tool = false;
-    if (no_tool) return -1;
-    if (FILE* p = popen("vcgencmd get_throttled 2>/dev/null", "r")) {
-        char line[64] = {0};
-        const bool got = std::fgets(line, sizeof(line), p) != nullptr;
-        pclose(p);
-        const char* eq = got ? std::strchr(line, '=') : nullptr;
-        if (eq) return static_cast<int>(std::strtol(eq + 1, nullptr, 16));
-    }
-    no_tool = true;  // not a Pi (or no vcgencmd): do not spawn a shell every time
-#endif
-    return -1;
 }
 
 }  // namespace
 
 std::string wb_board_history_json(long range_s, bool host) { return history_json(host ? HOST_LOG : WB_LOG, range_s); }
 
-std::string wb_board_export_csv(long range_s, std::string* download_name, bool host) {
-    return export_csv(host ? HOST_LOG : WB_LOG, range_s, download_name);
+std::string wb_board_export_csv(long range_s, std::string* download_name, bool host, bool gz) {
+    return export_csv(host ? HOST_LOG : WB_LOG, range_s, download_name, gz);
 }
 
 void host_log_tick(double temp_c, double cpu_pct, double ram_used_mb, double ram_total_mb) {
-    std::lock_guard<std::mutex> lock(host_mtx);
-    static Clock::time_point last_row{}, last_slow{};
-    static double disk_free_mb = -1, disk_total_mb = -1;
-    static int throttled = -1;
-    const auto now = Clock::now();
-    if (last_slow == Clock::time_point{} || now - last_slow >= std::chrono::seconds(10)) {   // statfs + sysfs: not at 2 Hz
-        last_slow = now;
-        std::error_code ec;
-        const auto sp = std::filesystem::space(std::filesystem::current_path(ec), ec);
-        if (!ec) { disk_free_mb = sp.available / 1048576.0; disk_total_mb = sp.capacity / 1048576.0; }
-        throttled = read_throttled();
+    start_sampler();
+    HostSample hs;
+    {
+        std::lock_guard<std::mutex> lock(sample_mtx);
+        hs = host_sample;   // (the sampler's, at most 10 s old - never measured here)
     }
+    std::lock_guard<std::mutex> lock(host_mtx);
+    static Clock::time_point last_row{};
+    const auto now = Clock::now();
+    const double disk_free_mb = hs.disk_free_mb, disk_total_mb = hs.disk_total_mb;
+    const int throttled = hs.throttled;
 
     // alarm levels (shown on the dashboard, logged when they change)
     const double ram_pct = ram_total_mb > 0 ? 100.0 * ram_used_mb / ram_total_mb : 0;
@@ -588,22 +802,23 @@ void host_log_tick(double temp_c, double cpu_pct, double ram_used_mb, double ram
                   ram_used_mb, ram_total_mb, disk_free_mb / 1024, disk_total_mb / 1024);
     track(HOST_LOG, host_state, "alarm_temp", a_temp, d);
     track(HOST_LOG, host_state, "alarm_ram", a_ram, d);
-    track(HOST_LOG, host_state, "alarm_storage", a_disk, d);
+    if (hs.valid) track(HOST_LOG, host_state, "alarm_storage", a_disk, d);   // (not before the first measurement)
     if (throttled >= 0) {
         char t[64];
         std::snprintf(t, sizeof(t), "get_throttled 0x%x%s", throttled, (throttled & 0x1) ? ": under-voltage NOW" : (throttled & 0x10000) ? ": under-voltage has occurred" : "");
         track(HOST_LOG, host_state, "alarm_power", a_power, t);
     }
 
-    char f[360];
+    char f[400];
     std::snprintf(f, sizeof(f), ",\"disk_free_mb\":%.0f,\"disk_total_mb\":%.0f,\"throttled\":%d,"
                   "\"alarms\":{\"temp\":\"%s\",\"ram\":\"%s\",\"disk\":\"%s\",\"power\":\"%s\"},"
-                  "\"logging\":{\"enabled\":%s,\"period_s\":%d,\"keep_days\":%d}",
+                  "\"logging\":{\"enabled\":%s,\"period_s\":%d,\"keep_days\":%d,\"zip_days\":%d}",
                   disk_free_mb, disk_total_mb, throttled, a_temp, a_ram, a_disk, a_power,
-                  log_enabled.load() ? "true" : "false", log_period_s.load(), log_keep_days.load());
+                  log_enabled.load() ? "true" : "false", log_period_s.load(), log_keep_days.load(), log_zip_days.load());
     host_fields = f;
 
-    if (log_enabled.load() && (last_row == Clock::time_point{} || now - last_row >= std::chrono::seconds(log_period_s.load()))) {
+    // (the first row waits for the first measurement: no row with unknown storage)
+    if (hs.valid && log_enabled.load() && (last_row == Clock::time_point{} || now - last_row >= std::chrono::seconds(log_period_s.load()))) {
         last_row = now;
         char row[200], temp[16] = "";                    // no temperature reading (Windows): an empty cell
         if (temp_c >= 0) std::snprintf(temp, sizeof(temp), "%.1f", temp_c);

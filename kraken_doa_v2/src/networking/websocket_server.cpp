@@ -782,18 +782,20 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         })
         .get("/wb_telemetry/export.csv", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
-            // ... and the logged rows of that range as a CSV download
+            // ... and the logged rows of that range as a CSV download (plain and
+            // gzipped days alike; &gz=1: the download itself gzipped, .csv.gz)
             if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
                 res->writeStatus("401 Unauthorized")->end("Access token required");
                 return;
             }
             const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
             const bool host = req->getQuery("src") == "host";   // the computer, not the Wideband board
+            const bool gz = req->getQuery("gz") == "1";
             auto aborted = std::make_shared<bool>(false);
             res->onAborted([aborted]() { *aborted = true; });
-            std::thread([res, aborted, range, host]() {
+            std::thread([res, aborted, range, host, gz]() {
                 std::string name;
-                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name, host);
+                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name, host, gz);
                 if (!loop) return;
                 loop->defer([res, aborted, path = std::move(path), name = std::move(name)]() {
                     if (*aborted) return;

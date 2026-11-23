@@ -2365,25 +2365,30 @@ void ControlHandler::handle_message_impl(string_view message) {
         sfscan::hold(parse_bool(message.substr(12)));
         broadcast(sfscan::status_json());
     }
-    // Wideband board telemetry log (wb_board.cpp): on/off, seconds between
-    // rows, days kept. The values in force ride system_status
-    // (wb_telemetry.logging), so every browser shows them.
+    // Wideband board / host telemetry logs (wb_board.cpp): on/off, seconds
+    // between rows, days plain (Keep), then days gzipped (Then compressed; a
+    // change of either runs the retention pass). The values in force ride
+    // system_status (wb_telemetry.logging, hw.logging), so every browser shows
+    // them; the value as clamped is what is saved and echoed (set_applied)
     else if (message.starts_with("WB_LOG_ENABLE:") || message.starts_with("WB_LOG_PERIOD:") ||
-             message.starts_with("WB_LOG_KEEP:")) {
+             message.starts_with("WB_LOG_KEEP:") || message.starts_with("WB_LOG_ZIP:")) {
         const size_t colon = message.find(':');
         const double v = parse_double(message, colon + 1);
         if (!std::isfinite(v)) throw CommandRejected("a number is required");
-        string applied;
+        const string_view prefix = message.substr(0, colon + 1);
+        double applied;
         if (message.starts_with("WB_LOG_ENABLE:")) {
             wb_board_set_log_enabled(v != 0);
-            applied = string("WB_LOG_ENABLE:") + (v != 0 ? "1" : "0");
+            applied = v != 0 ? 1 : 0;
         } else if (message.starts_with("WB_LOG_PERIOD:")) {
-            applied = "WB_LOG_PERIOD:" + to_string(wb_board_set_log_period(static_cast<int>(std::clamp(v, 1.0, 3600.0))));
+            applied = wb_board_set_log_period(static_cast<int>(std::clamp(v, 1.0, 3600.0)));
+        } else if (message.starts_with("WB_LOG_KEEP:")) {
+            applied = wb_board_set_log_keep_days(static_cast<int>(std::clamp(v, 1.0, 365.0)));
         } else {
-            applied = "WB_LOG_KEEP:" + to_string(wb_board_set_log_keep_days(static_cast<int>(std::clamp(v, 1.0, 365.0))));
+            applied = wb_board_set_log_zip_days(static_cast<int>(std::clamp(v, 0.0, 3650.0)));
         }
-        if (!g_replaying_settings.load()) SettingsStore::record(applied);
-        cout << "Wideband board log: " << applied << endl;
+        set_applied(prefix, applied, 0);
+        cout << "Wideband board / host log: " << *g_applied_cmd << endl;
     }
     else if (message.starts_with("SFSCAN_SQUELCH:") || message.starts_with("SFSCAN_DWELL:") ||
              message.starts_with("SFSCAN_HANG:") || message.starts_with("SFSCAN_MAX:") ||
@@ -2975,6 +2980,7 @@ void ControlHandler::apply_persisted_settings() {
     auto commands = SettingsStore::apply_commands();
     if (commands.empty()) {
         declog::settings_restored();
+        wb_board_settings_restored();
         return;
     }
     cout << "Restoring " << commands.size() << " persisted setting(s)" << endl;
@@ -2987,4 +2993,5 @@ void ControlHandler::apply_persisted_settings() {
     g_replaying_settings.store(false);
     // the decoder log's retention pass waited for the stored Keep / Then compressed days
     declog::settings_restored();
+    wb_board_settings_restored();   // ... and the telemetry logs' (WB_LOG_KEEP / WB_LOG_ZIP)
 }
