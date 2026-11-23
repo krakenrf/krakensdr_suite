@@ -87,6 +87,17 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     there) is removed and the plain file compressed again; today's files
     (age <= 0, also a clock set back) are never touched;
   - the old combined files follow the same ages.
+  **Shared since 2026-11-23**: the rule (`retention_action`, with `Kind` /
+  `Action` / `day_number`), `gzip_file`, the pass (`logret::run_pass`) and
+  its one-at-a-time thread (`logret::Scheduler`) moved unchanged to
+  `include/utils/log_retention.hpp` / `src/utils/log_retention.cpp`, so the
+  Wideband board and host telemetry logs (*wideband-variant.md*) follow the
+  same rule with the same code; `decoder_log_names.hpp` keeps the old names
+  as aliases, and `decoder_log.cpp` only lists its files and keeps its
+  settings. Tested unchanged: the shared rule against a verbatim copy of
+  the old function (5.6 M cases incl. N = 0 / M = 0) and the old and the new
+  build's passes on the same fabricated folder (same files left, same
+  contents).
   The **pass** (`run_pass`, a detached thread, one at a time - a request
   during a pass runs another after it, `request_pass`): deletions first,
   then the compressions one file at a time (`.gz.part` -> `fs_replace` ->

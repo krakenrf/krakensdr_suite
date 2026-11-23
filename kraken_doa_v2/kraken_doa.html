@@ -29777,10 +29777,14 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
           '<label><input type="checkbox" id="wb-log-en" onchange="send(\'WB_LOG_ENABLE:\' + (this.checked ? 1 : 0))"> Log to the SD card / disk</label>' +
           '<label>One row every <select id="wb-log-per" onchange="send(\'WB_LOG_PERIOD:\' + this.value)">' +
             [[1, '1 s'], [5, '5 s'], [10, '10 s'], [30, '30 s'], [60, '1 min'], [300, '5 min']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
-          '<label>Keep <select id="wb-log-keep" onchange="send(\'WB_LOG_KEEP:\' + this.value)">' +
+          '<label title="Days a finished day stays a plain file (.csv)">Keep <select id="wb-log-keep" onchange="send(\'WB_LOG_KEEP:\' + this.value)">' +
             [[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, '1 year']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
+          '<label id="wb-log-zipl" title="Then kept gzipped (.csv.gz) for this many more days, then deleted; none = deleted after the Keep days">Then compressed <select id="wb-log-zip" onchange="send(\'WB_LOG_ZIP:\' + this.value)">' +
+            [[0, 'none'], [30, '30 days'], [90, '90 days'], [365, '1 year'], [1095, '3 years'], [3650, '10 years']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
+          '<span id="wb-log-tip" style="margin-left:-8px">' + helpTip(wbLogRule(7, 365), true) + '</span>' +
           '<span style="flex:1"></span>' +
-          '<button class="btn primary" id="wb-csv-btn" onclick="wbSheetCsv()">' + icon('download') + '<span>Download CSV (<span id="wb-csv-span">1 h</span>)</span></button></div>' +
+          '<button class="btn primary" id="wb-csv-btn" onclick="wbSheetCsv()">' + icon('download') + '<span>Download CSV (<span id="wb-csv-span">1 h</span>)</span></button>' +
+          '<button class="btn" id="wb-csvgz-btn" style="display:none" onclick="wbSheetCsv(true)" title="The same rows gzipped (.csv.gz): several times smaller; zcat or 7-Zip opens it">' + icon('download') + '<span>.csv.gz</span></button></div>' +
           '<div class="info" id="wb-log-info" style="margin-top:4px"></div></div>' +
         '<div class="sec"><h4>Events in this range</h4><div class="wb-ev" id="wb-sheet-ev"></div></div>' +
         '<div class="sec" id="wb-cert-sec"><h4>HTTPS certificate of this receiver</h4><div class="row">' +
@@ -29822,6 +29826,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     wbSheetRange = r;
     document.querySelectorAll('#wb-sheet-seg button').forEach(b => b.classList.toggle('sel', +b.dataset.r === r));
     $id('wb-csv-span').textContent = (WB_RANGES.find(x => x[1] === r) || WB_RANGES[0])[0];
+    wbSheetLive();   // (the .csv.gz download: 7 / 30 days)
     if (wbSheetTimer) clearInterval(wbSheetTimer);
     wbSheetTimer = setInterval(wbSheetLoad, r <= 3600 ? 20000 : 120000);   // the newest bucket fills in
     wbSheetLoad();
@@ -29899,10 +29904,34 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       return '<div><span class="t">' + new Date(e.t * 1000).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'}) +
              '</span> &nbsp;' + wbEsc(e.e.replace(/^alarm_/, '').replace(/_/g, ' ')) + ': <span class="' + cls + '">' + wbEsc(e.d) + '</span></div>'; }).join('')
       : '<span class="info">none</span>';
-    const lg = h.log || {};
-    $id('wb-log-info').textContent = ((lg.bytes || 0) / 1048576).toFixed(1) + ' MB in ' + (lg.files || 0) + ' file' + (lg.files === 1 ? '' : 's') +
-      (lg.oldest ? ', from ' + lg.oldest : '');
-    $id('wb-log-info').title = 'On the receiver\'s disk, in ' + (lg.dir || 'wb_logs') + '/: one file per day; older days are deleted';
+    wbLogInfo();
+  }
+  // The rule of the two settings with their numbers (the ? tip beside them)
+  function wbLogRule(n, m) {
+    n = Math.round(+n) || 0; m = Math.round(+m) || 0;
+    return 'Each finished day (a file of rows and one of events per UTC day, in <code>host_logs/</code> and <code>wb_logs/</code>) ' +
+      'stays a plain file (<code>.csv</code>) for <b>Keep</b> days, then is gzipped in the same folder (<code>.csv.gz</code>, read with ' +
+      '<code>zcat</code>) and kept for <b>Then compressed</b> days more, then deleted.<br>' +
+      (m > 0 ? 'Keep ' + n + ', Then compressed ' + m + ': the last ' + n + ' days plain, the ' + m + ' days before those (days ' + (n + 1) +
+               ' - ' + (n + m) + ') compressed, older days deleted.'
+             : 'Keep ' + n + ', Then compressed none: the last ' + n + ' days plain, older days deleted.') +
+      '<br>The charts and the CSV download read both.';
+  }
+  function wbLogCfg() { return (hwLatest && hwLatest.logging) || (wbLatest && wbLatest.logging) || null; }
+  // the log's size on the receiver's disk (the last history reply): plain + compressed
+  function wbLogInfo() {
+    const el = $id('wb-log-info'), lg = (wbSheetLast && wbSheetLast.log) || null, cfg = wbLogCfg();
+    if (!el || !lg) return;
+    const files = (lg.files || 0) + ' file' + (lg.files === 1 ? '' : 's') + (lg.oldest ? ', from ' + lg.oldest : '');
+    if (typeof lg.gz_bytes === 'number') {   // (an older receiver: no gzip, one total)
+      el.textContent = dlBytes(lg.plain_bytes) + ' plain + ' + dlBytes(lg.gz_bytes) + ' compressed in ' + files;
+      el.title = 'On the receiver\'s disk, in ' + (lg.dir || 'wb_logs') + '/: ' + (lg.plain_files || 0) + ' plain file' + (lg.plain_files === 1 ? '' : 's') +
+        ', ' + (lg.gz_files || 0) + ' gzipped' + (cfg && typeof cfg.zip_days === 'number'
+          ? '; a day stays plain for ' + cfg.keep_days + ' days, then ' + (cfg.zip_days > 0 ? 'gzipped for ' + cfg.zip_days + ' more, then deleted' : 'is deleted') : '');
+    } else {
+      el.textContent = dlBytes(lg.bytes) + ' in ' + files;
+      el.title = 'On the receiver\'s disk, in ' + (lg.dir || 'wb_logs') + '/: one file per day; older days are deleted';
+    }
   }
   // live tiles + the log settings in force (every status message while the sheet is open)
   function wbSheetLive() {
@@ -29927,28 +29956,37 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         tile('Board temperature', n(t.temp_c) ? t.temp_c.toFixed(1) + ' °C' : '–', t.sensor || '', al.temp) +
         tile('Relative humidity', n(t.rh_pct) ? t.rh_pct.toFixed(0) + ' %' : '–', (t.revision ? 'Testunit_' + t.revision : '') + (wbLatest.fw && wbLatest.fw.date ? ' · fw' + wbLatest.fw.date + '.' + (wbLatest.fw.build || 0) : ''), al.rh);
     }
-    const lg = (hwLatest && hwLatest.logging) || (wbLatest && wbLatest.logging);
-    if (lg) {
-      const en = $id('wb-log-en'), per = $id('wb-log-per'), keep = $id('wb-log-keep');
+    const lg = wbLogCfg();
+    if (lg && $id('wb-log-en')) {
+      const en = $id('wb-log-en'), per = $id('wb-log-per'), keep = $id('wb-log-keep'), zip = $id('wb-log-zip');
       const setSel = (el, v) => { if (document.activeElement === el) return;
         if (![...el.options].some(o => +o.value === v)) el.add(new Option(v + (el === per ? ' s' : ' days'), v));
         el.value = v; };
       if (document.activeElement !== en) en.checked = !!lg.enabled;
       setSel(per, lg.period_s); setSel(keep, lg.keep_days);
-      per.disabled = keep.disabled = !lg.enabled;
+      // Then compressed: a receiver that gzips (zip_days); an older one deletes after Keep
+      const hasZip = typeof lg.zip_days === 'number';
+      $id('wb-log-zipl').style.display = $id('wb-log-tip').style.display = hasZip ? '' : 'none';
+      if (hasZip) {
+        setSel(zip, lg.zip_days);
+        const rule = wbLogRule(lg.keep_days, lg.zip_days), tip = $id('wb-log-tip').querySelector('.tip');
+        if (tip && tip.dataset.rule !== rule) { tip.innerHTML = rule; tip.dataset.rule = rule; }
+      }
+      per.disabled = keep.disabled = zip.disabled = !lg.enabled;
+      $id('wb-csvgz-btn').style.display = hasZip && wbSheetRange > 86400 ? '' : 'none';
     }
   }
-  async function wbSheetCsv() {
-    const btn = $id('wb-csv-btn'), note = $id('wb-sheet-note');
+  async function wbSheetCsv(gz) {
+    const btn = $id(gz ? 'wb-csvgz-btn' : 'wb-csv-btn'), note = $id('wb-sheet-note');
     btn.disabled = true;
     try {
       const token = storedToken();
-      const r = await fetch('wb_telemetry/export.csv?range=' + wbSheetRange + '&src=' + wbSheetSrc, {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      const r = await fetch('wb_telemetry/export.csv?range=' + wbSheetRange + '&src=' + wbSheetSrc + (gz ? '&gz=1' : ''), {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
       const url = URL.createObjectURL(await r.blob());
       const a = document.createElement('a');
-      a.href = url; a.download = m ? m[1] : wbSheetSrc + '_telemetry.csv';
+      a.href = url; a.download = m ? m[1] : wbSheetSrc + '_telemetry.csv' + (gz ? '.gz' : '');
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e) {

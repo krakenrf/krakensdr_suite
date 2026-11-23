@@ -11,6 +11,8 @@
 // rule. A finished day stays plain for `keep` days, then gzip
 // (<file>.jsonl.gz) for `zip` more, then it is deleted.
 
+#include "utils/log_retention.hpp"
+
 #include <cstdio>
 #include <string>
 
@@ -48,15 +50,9 @@ inline std::string safe_folder_name(const std::string& id) {
     return s;
 }
 
-// days since 1970-01-01 of a civil date (no time zone involved); -1 = not a date
-inline long day_number(int y, int m, int d) {
-    y -= m <= 2;
-    const long era = (y >= 0 ? y : y - 399) / 400;
-    const long yoe = y - era * 400;
-    const long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-    const long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + doe - 719468;
-}
+// days since 1970-01-01 of a civil date (no time zone involved; the shared
+// helper's); the string form: -1 = not a date
+using logret::day_number;
 inline long day_number(const std::string& ymd) {
     if (ymd.size() != 10) return -1;
     for (size_t i = 0; i < 10; i++)
@@ -66,7 +62,8 @@ inline long day_number(const std::string& ymd) {
     return day_number(y, m, d);
 }
 
-enum class Kind { NONE, PLAIN, GZ, PART };   // .jsonl, .jsonl.gz, .jsonl.gz.part (a gzip interrupted)
+// .jsonl, .jsonl.gz, .jsonl.gz.part (a gzip interrupted) - the shared helper's kinds
+using Kind = logret::Kind;
 
 // <prefix>-YYYY-MM-DD.jsonl[.gz[.part]] -> its date and kind; "" / NONE for any
 // other name. prefix = the folder's name (a decoder folder), or COMBINED in <dir>
@@ -88,26 +85,11 @@ inline std::string log_file_name(const std::string& prefix, const std::string& d
     return prefix + "-" + date + (kind == Kind::GZ ? ".jsonl.gz" : kind == Kind::PART ? ".jsonl.gz.part" : ".jsonl");
 }
 
-enum class Action { KEEP, COMPRESS, DELETE };
-
-// What the retention pass does with one of our files, `age` days old (today
-// 0, yesterday 1 - by the name's date): keep = N, zip = M.
-//   N = 0: keep forever - nothing is compressed or deleted.
-//   plain: kept while age <= N; gzipped while age <= N + M; then deleted
-//          (M = 0: deleted after N, the old rule).
-//   gz:    kept while age <= N + M (a day the old version gzipped at
-//          midnight stays gz - never decompressed); then deleted.
-//   part:  a gzip a crash interrupted (the plain file is still there and is
-//          compressed again) - removed; today's never.
-// Today's files (age <= 0, also a clock set back) are never touched.
-inline Action retention_action(long age, Kind kind, int keep, int zip) {
-    if (age <= 0 || kind == Kind::NONE) return Action::KEEP;
-    if (kind == Kind::PART) return Action::DELETE;
-    if (keep <= 0) return Action::KEEP;
-    const long last = static_cast<long>(keep) + (zip > 0 ? zip : 0);
-    if (age > last) return Action::DELETE;
-    if (kind == Kind::PLAIN && age > keep) return Action::COMPRESS;
-    return Action::KEEP;
-}
+// What the retention pass does with a day (plain for keep = N days, gzip for
+// zip = M more, then deleted; N = 0 keeps everything forever) - since
+// 2026-11-23 the rule every daily log shares, utils/log_retention.hpp (the
+// Wideband board and host telemetry logs follow it too); unchanged
+using Action = logret::Action;
+using logret::retention_action;
 
 }  // namespace declog

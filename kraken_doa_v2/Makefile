@@ -187,6 +187,7 @@ UTILS_SRCS = \
 	$(SRCDIR)/utils/status_dashboard.cpp \
 	$(SRCDIR)/utils/iq_converter.cpp \
 	$(SRCDIR)/utils/disk_util.cpp \
+	$(SRCDIR)/utils/log_retention.cpp \
 	$(SRCDIR)/utils/platform.cpp \
 	$(SRCDIR)/utils/fs_compat.cpp \
 	$(SRCDIR)/utils/tls_compat.cpp \
