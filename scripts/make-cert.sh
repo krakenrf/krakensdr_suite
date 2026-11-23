@@ -611,7 +611,7 @@ done
 # the CA certificate: its first certificate counts (as tlscert's)
 CA_NB=0
 [ ! -s "$CA_CRT" ] || CA_NB=$(blocks "$CA_CRT" "$WORK/cablk")
-HAVE_CRT=0; OURS=0; LEGACY=0; PRIOR=0
+HAVE_CRT=0; OURS=0; LEGACY=0; PRIOR=0; L_CN=""
 if [ -s "$CRT" ]; then
     # fine rule 11: a server.crt with no certificate in it is not replaced blindly
     nb=$(blocks "$CRT" "$WORK/blk")
@@ -623,6 +623,9 @@ if [ -s "$CRT" ]; then
     HAVE_CRT=1
     L_SUBJ=$I_SUBJ; L_ISSUER=$I_ISSUER; L_PUB=$I_PUB; L_VALID=$I_VALID; L_NB=$I_NB
     L_SAN=$(printf '%s\n' "$I_TEXT" | san_of)
+    # its CN (RFC 2253 prints the subject last entry first: the last CN= is
+    # the first in the certificate, as tlscert's name_entry reads it)
+    L_CN=$(printf '%s\n' "$L_SUBJ" | tr ',' '\n' | sed -n 's/^CN=//p' | tail -n 1)
     # issued by our CA: chain and signature, no time check (fine rule 10)
     if [ "$CA_NB" -ge 1 ] && verifies "$WORK/blk1.pem" "$WORK/cablk1.pem" notime; then
         OURS=1
@@ -676,7 +679,7 @@ if [ "$CA_NB" -ge 1 ] && { [ -n "$CA_KPUB" ] || [ $KEY_AWAY = 1 ]; }; then
         case "$C_TEXT" in *"CA:TRUE"*) CA_OK=1 ;; esac
     fi
 fi
-NEED_CA=0; REASON=""; NOT_COVERED=""
+NEED_CA=0; REASON=""; NOT_COVERED=""; nc=""
 if [ $new_ca = 1 ]; then
     NEED_CA=1; REASON="--new-ca"
 elif [ $NEW_CA_REQ = 1 ]; then
@@ -733,10 +736,20 @@ else
     fi
 fi
 [ $NEED_CA = 0 ] || NOT_COVERED=""
-# the server certificate's names: the wanted ones the CA covers (fine rule 18);
-# the set wanted, one "DNS:x" / "IP:a" per line, sorted
+# the server certificate's names: the wanted ones the CA covers (fine rule
+# 18) and every EXACT name the kept CA permits (fine rule 35: not the wide
+# scope's subtrees local / lan) - a search domain gone for a minute (a DHCP
+# lease renewed) doesn't take <host>.lan out; a new CA takes every name in.
+# The set wanted, one "DNS:x" / "IP:a" per line, sorted
 LEAF_NAMES=""
 for n in $NAMES; do case "$NOT_COVERED " in *" $n "*) ;; *) LEAF_NAMES="$LEAF_NAMES $n" ;; esac; done
+if [ $NEED_CA = 0 ]; then
+    for n in $nc; do
+        case "$n" in local|lan) continue ;; esac
+        valid_dns "$n" || continue
+        case "$LEAF_NAMES " in *" $n "*) ;; *) LEAF_NAMES="$LEAF_NAMES $n" ;; esac
+    done
+fi
 WANT_SAN=$( { for n in $LEAF_NAMES; do echo "DNS:$n"; done; for a in $IPS; do echo "IP:$a"; done; } | LC_ALL=C sort -u)
 [ -z "$NOT_COVERED" ] ||
     note "outside this receiver's CA, left out of the certificate:$NOT_COVERED (--new-ca takes them in; every device then installs the new CA)"
@@ -758,10 +771,28 @@ if [ $ISSUE = 0 ]; then
         else
             REASON="the names changed"
         fi
+    elif [ "$L_CN" != "$CN" ]; then
+        # the subject's CN=<host> / localhost: with the CA's names staying in
+        # (fine rule 35) a rename inside the CA or an unusable host name can
+        # leave the names as they were
+        REASON="the names changed"
     elif [ $L_VALID = 0 ]; then REASON="it expires within 60 days"
-    elif [ -n "$L_NB" ] && [ "$L_NB" -gt $((NOW + 86400)) ]; then REASON="it starts more than a day after the clock"
     elif [ "$nb" != 2 ] || [ "$(b64 "$WORK/blk2.pem")" != "$(b64 "$WORK/cablk1.pem")" ]; then
         REASON="server.crt does not hold the CA certificate after it"
+    elif [ -n "$L_NB" ] && [ "$L_NB" -gt $((NOW + 86400)) ]; then
+        # fine rule 23: dated from a clock that was ahead - re-issued only when
+        # this clock is known to be right (else the new one would be dated
+        # from a wrong time), and never a reason for a new CA (also not with
+        # the CA key away: kept)
+        if ! clock_synced; then
+            ISSUE=0
+            note "server.crt starts more than a day after this clock, which is not known to be synchronized - kept"
+        elif [ $KEY_AWAY = 1 ]; then
+            ISSUE=0
+            note "server.crt starts more than a day after the clock - kept: krakensdr-ca.key is missing (a clock is never a reason for a new CA)"
+        else
+            REASON="it starts more than a day after the clock"
+        fi
     else ISSUE=0
     fi
 fi
@@ -940,14 +971,20 @@ if [ $LEGACY = 1 ]; then
 fi
 RETIRED=""; KEY_RETIRED=""
 if [ $NEED_CA = 1 ]; then
-    # fine rule 2: only a readable certificate, not a symlink; its key goes -
-    # unless the CA isn't ours (no O=KrakenSDR receiver: a user's own CA put
-    # at our names): its key is kept as krakensdr-ca.key.retired-YYYYMMDD (rule 32)
+    # fine rule 2: only a readable certificate, not a symlink, is retired; its
+    # key goes - unless the CA isn't ours (no O=KrakenSDR receiver: a user's
+    # own CA put at our names): its key is kept as
+    # krakensdr-ca.key.retired-YYYYMMDD (rule 32) - whatever the certificate
+    # file is (a symlink too: the key is still krakensdr-ca.key)
     rsubj=""
-    if [ -s "$CA_CRT" ] && [ ! -L "$CA_CRT" ] &&
-       rsubj=$(ossl x509 -in "$CA_CRT" -noout -subject -nameopt RFC2253 2>/dev/null) && [ -n "$rsubj" ]; then
+    if [ -s "$CA_CRT" ]; then
+        rsubj=$(ossl x509 -in "$CA_CRT" -noout -subject -nameopt RFC2253 2>/dev/null) || rsubj=""
+    fi
+    if [ -n "$rsubj" ] && [ ! -L "$CA_CRT" ]; then
         RETIRED=$(dated_name krakensdr-ca. .retired.crt)
         keep "$CA_CRT" "$RETIRED"
+    fi
+    if [ -n "$rsubj" ]; then
         case ",${rsubj#subject=}," in
         *",O=KrakenSDR receiver,"*) ;;
         *)  if [ -s "$CA_KEY" ] && [ -z "$CA_ASIDE" ]; then

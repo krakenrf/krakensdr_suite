@@ -13,7 +13,9 @@ namespace certstatus {
 // serves - adds the server certificate's DNS names that are the host's own,
 // KRAKEN_CERT_NAMES' and <host>.lan / .home / .localdomain / .home.arpa to
 // the host allow-list (host_add_allowed_names, utils/host_check.hpp; not a
-// name from another DHCP search domain: fine rule 20) and starts a worker
+// name from another DHCP search domain: fine rule 20), and the name avahi
+// announces (an mDNS conflict's krakensdr-2) and its .local whether the
+// certificate has them or not (fine rule 24), and starts a worker
 // thread that re-checks the host name, the names, the addresses and
 // cert_options every 60 s (it may run avahi's tools: never on the uWS loop).
 void init();
