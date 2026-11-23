@@ -2672,3 +2672,14 @@ runs).
   [15, 15, 15, 14, 14]; clang TSan `race 120` (setarch -R; 276 actions,
   12.3 M packets): 0 reports; ASan + UBSan `lead 0`, `scan`, `pat toggle
   3000`, `pat mode 4000`: 0 reports
+- No regression (TEST builds; the A/B matrix's fake heimdall on the real
+  499.8 / 456.8 MHz recordings, 180 s, this branch and 97f8d78 side by side
+  on the same IQ at the same time): labelled with the coherent class,
+  coherent / wideband scan / independent - 97f8d78 39 / 39, 34 / 39,
+  34 / 39; this branch 41 / 41, 35 / 41, 36 / 41 (the misses on both:
+  intermittent P25 / DMR channels, coherent shares 51-87 % or first
+  labels after 40-97 s). CPU (the thread) 3.96-4.01 % against 3.95-4.03 %.
+  ui_modes.py 17 / 18 (the known miss: the 416.4 MHz hump, "LoRa" here);
+  worker 1's page suites on a coherent playback: p2_ui_sig 18 / 18,
+  p2_ui_fixes 12 / 12 (a held press across a state message with the new
+  ids), p2_ui_touch 3 / 3 taps
