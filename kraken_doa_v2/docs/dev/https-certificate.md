@@ -49,7 +49,7 @@ Docker). All gitignored; only the CA certificate is ever served.
 | CA name constraints, IP | `127.0.0.1/32`, `::1/128` only | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `127.0.0.0/8`, `fc00::/7`, `::1/128` |
 | server certificate's IPs | `127.0.0.1`, `::1` | those plus the current global IPv4 addresses |
 | opened by IP | the usual warning (click through) | trusted while the address is in a private range |
-| risk if the CA key leaks | it can vouch only for this receiver's names | it can impersonate any `.local` / `.lan` name and any private IP (router, NAS) to devices that installed it |
+| risk if the CA key leaks | it can vouch only for this receiver's names, and only as a TLS server (Fine rule 16) | it can impersonate any `.local` / `.lan` name and any private IP (router, NAS) as a TLS server to devices that installed it |
 
 An IP permitted subtree is required in narrow scope: with no iPAddress
 entry at all, RFC 5280 leaves IP names UNconstrained. Every name in the
@@ -140,17 +140,63 @@ change goes into both and this list):
     WITHOUT the time check (`-no_check_time`); time is only the rule above.
 11. **An unparseable `server.crt`** (the file exists, no certificate in it):
     failure - exit 1 / an error, every file untouched.
-12. **An unreadable / unparseable `server.key`**: never deleted or
-    overwritten. If `server.crt` is a user's own certificate: not managed,
-    nothing touched. Otherwise the key is moved aside to
-    `server.key.unreadable-YYYYMMDD` (`-2`, `-3` ...; UTC) and a new key is
-    made (`issued` / `ca-created`).
-13. **Modes**: `server.key` and `krakensdr-ca.key` set to 0600 on every run,
-    `kept` included.
+12. **An unreadable / unparseable key** (`server.key` or `krakensdr-ca.key`):
+    never deleted or overwritten.
+    - Permission denied (the file belongs to another user, e.g. after
+      `sudo ./run.sh`): failure - exit 1 / an error naming the file and
+      "check its owner", every file untouched; never a new CA because of it.
+    - Readable but not a key we can use (encrypted, garbage): if
+      `server.crt` is a user's own certificate - not managed, nothing
+      touched. Otherwise the file is moved aside to
+      `<name>.unreadable-YYYYMMDD` (`-2`, `-3` ...; UTC) and a new key is
+      made (`issued`; for the CA key `ca-created`).
+13. **Modes**: `server.key` and `krakensdr-ca.key` set to 0600 on every run
+    and every path (`kept`, `issued`, `ca-created`), never following a
+    symlink; on Windows the owner-only ACL likewise.
 14. **Lock**: `<dir>/.make-cert.lock` (a directory holding its creation time;
-    wait up to 10 s, a lock older than 120 s is taken over, removed on exit)
+    wait up to 10 s; a lock older than 120 s - or dated more than 60 s in
+    the FUTURE: a clock set back - is taken over by renaming it away
+    atomically first, so two waiters never both take it; removed on exit)
     - taken by the script AND by the in-process generator, so a manual run,
     install.sh and kraken_doa never write at the same time.
+15. **Managed - legacy subjects only when self-signed**: the `O=KrakenSDR
+    receiver` and exact `CN=krakensdr` rules of "Managed or not" apply only
+    to a certificate that is self-issued AND verifies with its own key (PR
+    #5's, the old install.sh / Docker / Windows ones). A certificate from any
+    other CA is a user's own, whatever its subject. Before a managed
+    `server.crt` is ever replaced by a migration, it is copied to
+    `server.crt.replaced-YYYYMMDD` (`-2` ...; 0644).
+16. **The CA is limited to TLS servers**: `extendedKeyUsage = serverAuth`
+    on the CA certificate too (a "technically constrained" CA: a leaked key
+    cannot sign code-signing, e-mail or client certificates); an existing CA
+    without it is replaced (a new CA).
+17. **The CA's CN** is `KrakenSDR <host> CA <YYYY-MM-DD>` with `<host>`
+    shortened to its first 40 characters (X.509 limits a CN to 64).
+18. **When a new CA, when only a narrower server certificate**: a new CA
+    only for the triggers of "The CA" where the wanted name is one of the
+    host's OWN names (`<host>`, `<host>.local`) - a rename - and for scope,
+    expiry, no / partial constraints (a CA without a DNS subtree, rule 3),
+    no serverAuth (rule 16) and `--new-ca`. Other wanted names outside the
+    CA's constraints (a new search domain on another network, a VPN's DNS
+    suffix, `KRAKEN_CERT_NAMES` added later) are LEFT OUT of the server
+    certificate and reported (status notice `names_not_covered` with the
+    names; the script prints them): moving between networks must not make
+    every device install a new CA. `--new-ca` (or the page, later) takes
+    them in.
+19. **Download**: `/krakensdr-ca.crt` serves the CA certificate RE-ENCODED
+    from the parsed certificate (PEM of the first certificate only) - never
+    the file's bytes, which may hold a private key.
+20. **Host allow-list**: kraken_doa adds to it the served certificate's
+    names that are the host's own (`<host>`, `<host>.local`, avahi's name),
+    `KRAKEN_CERT_HOST`'s and `KRAKEN_CERT_NAMES`' names, and `<host>.<d>`
+    only for the search domains the allow-list already trusts (lan, home,
+    localdomain, home.arpa) - not an arbitrary DHCP search domain (a
+    network that sets `search attacker.example` must not open DNS
+    rebinding from it).
+21. **Secrets everywhere**: `krakensdr-ca.key`, every `*.unreadable-*`,
+    `*.key.tmp`, the script's `.make-cert.*` folders are gitignored, blocked
+    by `.githooks/pre-push`, and denied to the AI assistant
+    (`kraken_doa_v2/ai/kraken_ai.py` `SECRETS`, its sandbox's denyRead).
 
 ## make-cert.sh *(contract)*
 
