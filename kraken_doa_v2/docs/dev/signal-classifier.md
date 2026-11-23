@@ -2010,7 +2010,24 @@ shown on the page (a class, p >= 0.5) for >= half of coherent mode's last
   416.7495 MHz 15 dB on CH0, not detected on CH2, 3.6 dB (p 0.40) on CH1 -
   where the overlap rule then hid CH0's sure view (fixed: the stronger view
   wins, 1e8871d). The weak signals (6-17 dB on CH0) drop below the
-  detector on another channel; that is the receiver, not the service
+  detector on another channel; that is the receiver, not the service.
+  Live run 2 (1e8871d; 456.8 MHz, gain 40.2 dB; independent: CH0 and CH1
+  on 456.8 - one band, looks [17, 1, 18, 18, 17] -, CH2 416.5, CH3 499.8,
+  CH4 98.0 MHz with their gains): coherent 9 labelled; independent 8 / 8
+  (CH0 again); wideband scan (the band on CH2) 7 / 9 - DMR 457.682 MHz
+  11.9 dB on CH0, not detected on CH2, and an intermittent channel. A third
+  run (499.8 MHz) was not made: other jobs' heimdall processes were running
+- Regressions (1e8871d, TEST build, the shipped model): the strict
+  debug-playback table twice 28 / 28 (24 + 25 sure; unsure POCSAG 75 / 68
+  %, DVB-T 70 / 75 %, wildlife 81 / 65 % - never sure by its min_p -,
+  radar 77 % once); p2_ui_sig 18 / 18, p2_ui_fixes 12 / 12 (with the
+  plugins built; 11 / 12 without - the adsb plugin check), p2_ui_touch 3
+  / 3 taps, p2_ui_pane 7 / 7, p2_switch, p2_sandbox (the settings file
+  byte-identical), p2_sc, p2_pb (the DMR entry's three units on one 6.9
+  kHz track within 0.5 kHz); p2_multi 9 / 13 - the same 4 misses as the
+  shipped state (the scene's noise-modulated NBFM classed `none`, the
+  retune check's absolute frequencies), no control command to heimdall in
+  35 s, no CPU while off
 - Rules (`tools/sigclass_rules_test.cpp`, 20000 random inputs, two seeds):
   every invariant held; the mutants caught - 9751af3's overlap code (a kept
   track changed in 19025 / 20000), the pairwise scan, no tuner test, the
