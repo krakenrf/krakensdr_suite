@@ -59,7 +59,13 @@ bits are flags every consumer masks off - `0x100` KerberosSDR manual mode,
 array, coherent mode unavailable; set on every frame together with `0x800`
 or `0x400`), `0x2000` sweep mode (always together with `0x800`, so a client
 that doesn't know sweep mode takes the stream for independent tuners; one
-that does tests `0x2000` first).
+that does tests `0x2000` first), `0x4000` trial gain (sweep mode with Auto
+gain, added 2026-11-24: some channel of this packet was taken at a trial gain -
+a linearity probe, not the hop's own gain; bits 16 + ch, `0x10000 << ch`, say
+which channels. The samples are valid and the per-channel gain is the one
+they were taken with. Read with the per-channel frequency and gain, before
+the retuning flag, so the guarantee below covers it. A client that keeps one
+level per hop can leave such a visit out, or shift it by its gain like any other).
 
 **Sweep mode** (`0x2000`, added 2026-11-20; the contract:
 `kraken_doa_v2/docs/dev/sweep-mode.md`): the chosen tuners hop through the

@@ -138,7 +138,8 @@ the uWS loop thread; from any other thread, post it with `loop->defer`.
 bits are flags (0x100 KerberosSDR manual mode, 0x200 calibration stale,
 0x400 wideband scan, 0x800 independent, 0x1000 generic RTL-SDRs - coherent
 mode unavailable, 0x2000 sweep, sent with 0x800 so an older client sees
-independent tuners). Every consumer masks the low byte.
+independent tuners, 0x4000 sweep Auto gain trial gain, with 0x10000 << ch per
+channel). Every consumer masks the low byte.
 
 ## Modes and hardware variants
 

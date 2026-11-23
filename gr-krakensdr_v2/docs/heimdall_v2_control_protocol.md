@@ -296,6 +296,16 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
   (`[[g, real], ...]`: the measured gain of each value of the tuner's gain
   list in dB against the list's top - the list itself is up to 6.7 dB off;
   only for tuners it was measured for, R820T / R828D).
+  Since 2026-11-24 (round 10, the linearity search: under the clipping
+  rule's gain, the highest gain at which the chain is linear, by probe
+  visits flagged in the 8091 header, `0x4000`) the sweep object also
+  carries `gain_floor_hops` (hops held under the clipping rule's gain by
+  that rule), `gain_probes`, `gain_floor_decisions`, `gain_search_hops`,
+  `gain_pairs`, `gain_pairs_unbracketed`, `gain_pairs_nonlinear`,
+  `gain_step_learned`, `gain_probes_skipped`, `floor_scatter_db` (each of the last completed sweep)
+  and `gain_probe_sweep`. They are sent whenever the sweep object is,
+  with zeros / false while Auto is off. The presence of `gain_floor_hops`
+  is how a client tells a heimdall with the measured rule from one without.
 - Status (2 Hz broadcast, `get_status`, the web STATE): always
   `"sweep":{"first_center_hz","step_hz","steps","tuners":[..],"dwell_ms",
   "settle_ms","run","round","rounds","sweeps","round_ms"}` - `tuners` the

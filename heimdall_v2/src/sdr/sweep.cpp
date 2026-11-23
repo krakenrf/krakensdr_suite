@@ -67,6 +67,9 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include "pffft/pffft.h"
+#include <limits>
+#include <tuple>
 #include <cmath>
 #include <condition_variable>
 #include <iostream>
@@ -464,9 +467,11 @@ struct GainEntry {
     int64_t hold_ns = AG_HOLD_NS;
     bool last_raise = false;      // the last change was a raise (clipping after it doubles the hold)
     float peak_max_dbfs = -200;   // the highest peak over the clean visits since the last change
+    float rms_max_dbfs = -200;    // ... and the highest rms (the level a raise is sized by)
     int probes = 0;               // probe visits left after a step down
     int probe_from = -1;          // the gain before the last probe (clean there)
     int64_t no_probe_until = 0;   // a probe clipped: none until then
+    int blind_from = -1;          // a table (blind) cut came from this gain: its first clean visit corrects it
 };
 std::map<uint32_t, GainEntry> gain_map;   // the hop thread only
 // A mild clip (at most AG_MILD_SHARE of the values) costs a step down only
@@ -485,10 +490,21 @@ struct HopAcc {
     uint64_t values = 0, clipped = 0, sumsq = 0;   // sumsq of (2u - 255), per value
     int peak = 0;                                   // max |2u - 255| (255 = full scale)
     uint32_t packets = 0;
+    double floor_db = 0;   // the noise floor estimates summed (dB per bin, full scale = 0), floor_n of them
+    uint32_t floor_n = 0;
+    // the strongest bin of the kept band (its offset from the centre, Hz, and
+    // its height over the floor, dB) - of the visit's packet where it stood highest
+    float pk_off_hz = 0, pk_over_db = -99;
+    // the strongest bin at or above the window's lower edge (the part of this
+    // band within AG_NB_REACH_HZ below the next hop's centre): its offset,
+    // height over the floor and power (its bin and the two beside it, dBFS)
+    float win_off_hz = 0, win_over_db = -99, win_pow_db = -200;
 };
 std::mutex acc_mutex;
 HopAcc hop_acc[NUM_DEVICES];
 std::atomic<uint32_t> stats_mask{0};   // the tuners of the plan (the hop thread sets it)
+std::atomic<uint32_t> stats_half_band_hz{956250};
+std::atomic<float> win_lo_hz{-287500.0f};   // the guess window's lower edge in a band (the plan's step - AG_NB_REACH_HZ)   // the kept band's half width (the plan's step / 2)
 
 // Status (of the last completed sweep)
 std::atomic<uint32_t> ag_reduced_hops{0}, ag_clipped_hops{0}, ag_changes{0}, ag_writes{0}, ag_write_failures{0};
@@ -543,6 +559,8 @@ int next_up(const std::vector<int>& L, int g) {
 // hop's sensitivity.
 constexpr uint32_t AG_NEIGHBOUR_HZ = 2'400'000;
 constexpr int AG_NEIGHBOUR_DEEP = 180, AG_NEIGHBOUR_CAP = 120;   // tenths of a dB
+// (round 10: the linearity search measures what the cap guessed - off)
+constexpr bool AG_NEIGHBOUR_RULE = false;
 
 // The gain learned for a hop centre (the ceiling if none): its own entry,
 // else the lowest within AG_SWATH_HZ (a plan with other centres); then the
@@ -558,7 +576,7 @@ int learned_gain(uint32_t hz, int ceiling) {
             g = std::min(g, lo->second.gain);
     }
     for (auto lo = gain_map.lower_bound(hz > AG_NEIGHBOUR_HZ ? hz - AG_NEIGHBOUR_HZ : 0);
-         lo != gain_map.end() && lo->first <= hz + AG_NEIGHBOUR_HZ; ++lo) {
+         AG_NEIGHBOUR_RULE && lo != gain_map.end() && lo->first <= hz + AG_NEIGHBOUR_HZ; ++lo) {
         if (lo->first == hz) continue;
         if (std::min(lo->second.gain, ceiling) <= ceiling - AG_NEIGHBOUR_DEEP) {
             g = std::min(g, ceiling - AG_NEIGHBOUR_CAP);
@@ -604,12 +622,964 @@ std::string real_gain_json() {
     return o.str();
 }
 
+// ---- The linearity search (round 10; docs "Auto gain", "The linearity search") ----
+//
+// Clipping is a late symptom: the tuner's front end compresses and makes
+// products well before a value reaches 0 / 255 - often driven by a carrier
+// OUTSIDE the hop's sampled band (the decimation filter takes the carrier
+// away, its damage stays). Per hop, a probe is a normal visit at a
+// neighbouring gain (sent as valid, its gain in the header, the 8091 trial
+// gain flag on), compared with the hop's visits at its own gain. The
+// clipping rule stays the fast guard and the ceiling of the search.
+//
+// (2026-11-24, from the orchestrator's manual scan at 405-428 MHz) The
+// test is LINEARITY, not the floor's value: beside 415.64 MHz (a carrier
+// 1.8 MHz below the 417.43 MHz hop's centre, outside its sampled band) the
+// hop's power stays pinned from 49.6 down to 33.8 dB and its carrier is
+// compressed by up to 12 dB, the floor referred to the input LOOKS best at
+// the top - and the carrier's SNR is 8.6 dB better at 33.8. The wanted gain
+// is the highest at which the chain is linear: between the hop's gain and a
+// probe (a real step dG of at least AG_LIN_MIN_STEP), every quantity well
+// above the converter's own noise must change by dG - the visit's power
+// (rms) and its floor (the 20th percentile), each with the converter's own
+// noise subtracted.
+//
+// dG is not the fixed curve's: the real step depends on the frequency (the
+// orchestrator's whole-range scan, 2026-11-24: 49.6 -> 48.0, -1.4 dB on the
+// curve, raises the output by ~1 dB at 86 - 98 MHz and lowers it by 2 dB at
+// 406 MHz), so the curve alone calls the FM band non-linear. The step is
+// LEARNED: per 10 MHz bucket and gain pair, each hop's measured step from
+// its valid pairs (all tuners: on the full plan a band is one tuner's; the
+// table is cleared when the plan or its tuners change) - the median of the
+// OTHER hops' (>= AG_STEP_MIN_HOPS) over the bucket and its two neighbours is
+// the reference, believed within AG_STEP_TRUST of the curve (else the
+// curve: a whole band saturated; the gross test needs no fine reference).
+constexpr float AG_LIN_DEV = 1.5f;        // dB: a deviation from the step at least this ...
+constexpr float AG_LIN_REL = 0.5f;        // ... (the power: or this share of the step) is non-linear
+// compression: short by this share of the step (with 0.5, 417.43 MHz on one
+// tuner sat at 36.4 following 1.5 of 2.9 dB - 1.4 short, inside 1.45; a
+// linear hop with the curve 1.3 dB long on that step still passes 1.3)
+constexpr float AG_LIN_REL_COMP = 0.45f;
+constexpr float AG_LIN_DEV_UP = 1.0f;     // dB: an up-probe's power compressed this much (or a quarter of the step) is non-linear
+constexpr float AG_LIN_CURVE_SLACK = 1.0f; // dB more while the reference is the curve (nothing learned yet)
+constexpr float AG_LIN_GROSS = 4.0f;      // dB: a floor this far off decides alone ...
+constexpr float AG_LIN_GROSS_STEP = 4.0f; // ... as does a step of at least this
+constexpr float AG_LIN_COMP = 0.5f;       // ... that the power follows by less than this share
+constexpr float AG_LIN_MIN_STEP = 2.5f;   // dB real: a probe's smallest step (the list has 0 dB steps)
+constexpr float AG_LIN_OVER = 10.0f;      // dB: a test counts when its quantity (converter subtracted) is this far over the converter's own
+constexpr float AG_LIN_CAUSE_DB = -15.0f; // dBFS rms at the higher gain: a compression verdict needs this ...
+constexpr uint32_t AG_LIN_CAUSE_HZ = 3'000'000;   // ... in the hop or within this of its centre (-20 .. -10 alike on the reference)
+constexpr float AG_LIN_BURST = 4.0f;
+constexpr float AG_LIN_STEADY = 0.75f;
+constexpr int AG_LIN_NO_VERDICT = 3;
+constexpr double AG_LIN_HEAVY_CLIP = 0.01;
+// The first guess from the lower neighbour's level (2026-11-24, the
+// orchestrator's two measurements): a saturated hop's linear limit is where
+// the carrier of the hop BELOW it reads about -2 dBFS in band - 415.11 MHz at
+// -1.1 dBFS rms at 29.7 dB, 417.02 (that carrier 1.38 MHz below its centre)
+// linear up to 29.7; 415.52 at -2.3 dBFS at 33.8, 417.43 (1.79 MHz below)
+// linear up to 33.8. The IF filter gives ~0 dB there.
+constexpr float AG_NB_LEVEL_DBFS = -2.0f;  // the neighbour's level at the guess, at most
+constexpr float AG_NB_RISE_DB = 3.0f;      // the neighbour's level up this much since the guess: guess again
+constexpr float AG_NB_REACH_HZ = 2.2e6f;   // the neighbour's carrier at most this far below the hop's centre
+constexpr float AG_NB_CARRIER_DB = 20.0f;
+constexpr float AG_NB_FOLLOW_HZ = 300e3f;  // the guess's carrier: still there when a window carrier is this close  // a strongest bin this far over the floor is a carrier (its position counts)
+// The clipping rule's cut from the LEVEL: a moderate clip (at most
+// AG_LEVEL_CUT_MAX of the values) on a visit whose rms is at least
+// AG_LEVEL_CUT_MIN_RMS (a level, not a burst inside a quiet visit) takes the
+// smallest step down that brings the rms to AG_LEVEL_TARGET_DBFS by the real
+// gain curve, at least one list step (415.11 MHz: -1.1 dBFS at 29.7 and 2 - 4 %
+// clipped in a strong minute - 12 dB by the table, 29.7 -> 16.6, where its
+// carrier over floor is 10 dB worse than at 22.9)
+constexpr double AG_LEVEL_CUT_MAX = 0.05;
+// (-6: a carrier near full scale, crest under ~6 dB; with -12 the GSM / LTE
+// hops - bursty, crest 10 dB and more - came down one list step per clipped
+// visit: 944.87 MHz in 10 steps)
+constexpr float AG_LEVEL_CUT_MIN_RMS = -6.0f, AG_LEVEL_TARGET_DBFS = -7.0f;
+// the correction of a blind cut: a carrier-like clean visit (rms at least
+// this, crest - peak over rms - at most this)
+constexpr float AG_BLIND_MIN_RMS = -20.0f, AG_BLIND_MAX_CREST = 8.0f;
+uint32_t plan_step_hz = 0;                 // the plan's step (the hop thread) // a baseline clipped more than this (1 %) is the clipping rule's alone      // pairs in a row without a verdict end a search    // dB: a quantity whose brackets change more (median of 8) judges nothing      // dB: more power at the lower gain than this: a burst, no pair
+// the converter's own noise (no input), as the estimators measure it (the
+// KrakenSDR at gain 0, the whole range, 2026-11-24: rms -45.0 dBFS, floor -46.5)
+constexpr float AG_CONV_P_DB = -45.0f;    // the visit's power, dB against full scale (127.5 a component)
+constexpr float AG_CONV_F_DB = -46.5f;    // the floor (the 20th percentile of the bins), same scale
+constexpr uint32_t AG_STEP_BUCKET_HZ = 10'000'000;
+constexpr int AG_STEP_HOPS = 32, AG_STEP_MIN_HOPS = 3;   // hops a bucket keeps; other hops a reference needs
+constexpr float AG_STEP_TRUST = 2.5f;
+constexpr float AG_FLOOR_BRACKET = 1.0f;  // a quantity's pair counts when the visits before and after the probe agree this well
+constexpr float AG_FLOOR_JUMP = 3.0f;     // a baseline this much over the hop's slow average twice: the search reopens, down
+constexpr float AG_FLOOR_DROP = 1.5f;     // ... this much under it (a hop held down): the search reopens, up
+constexpr float AG_FLOOR_VAR = 1.5f;      // ... on a hop whose floor is steady (median visit-to-visit change)
+constexpr int AG_FLOOR_STEP_BIG = 60, AG_FLOOR_STEP = 30;   // search steps, tenths of a dB (the list's)
+#if defined(RTLSDR_HAS_GAIN_FAST)
+constexpr uint32_t AG_PROBE_PERIOD = 50;  // settled: each hop probed once in this many sweeps (~2 %)
+#else
+constexpr uint32_t AG_PROBE_PERIOD = 200; // (~0.5 %: two ~9 ms writes a probe)
+#endif
+constexpr uint32_t AG_PROBE_HOLD_MAX = 8;
+
+// One hop's linearity search. A probe's pair is BRACKETED: the baseline
+// visit before it and the one after it must agree (AG_FLOOR_BRACKET, each
+// quantity on its own), the probe is compared with their mean - a hop whose
+// content moves by itself yields few valid pairs (so few decisions), one
+// whose cause comes and goes slowly still yields pairs in each state. A
+// decision needs two agreeing valid pairs, or one gross one.
+struct FloorEntry {
+    int g = -1;                  // the measured rule's gain (tenths of a dB); -1: none (the clipping rule's)
+    bool search = true;          // still searching (since the switch went on, or a trigger)
+    int step = AG_FLOOR_STEP_BIG;
+    // the latest baseline visit (at the hop's own gain): power and floor in
+    // the samples, dB; F_in = floor - the real gain (the triggers)
+    float base_p = NAN, base_f = NAN, base_fin = NAN;
+    float lvl_in = NAN;          // the last visit's power referred to the input (any gain, clipped too)
+    int last_clip_g = -1, last_ceil = -1;   // the clipping rule's gain and the ceiling at the last visit
+    // the level: this hop's power referred to the input over its last 4
+    // visits that were not heavily clipped (the lower neighbour's first
+    // guess reads it), the tuner it was taken on
+    float lvl_ring[4] = {NAN, NAN, NAN, NAN};
+    uint32_t lvl_n = 0;
+    int tuner = -1;
+    bool nb_done = false;        // the first guess from the lower neighbour's level was made ...
+    float nb_lvl = NAN;          // ... at this neighbour level
+    int nb_cap = 1 << 30;        // ... and gave this gain: an up-probe with nothing testable stays under it
+    float car_off_hz = 0, car_over_db = -99;   // the last not heavily clipped visit's strongest bin
+    // the window's carrier (>= AG_NB_CARRIER_DB over the floor) of the last two
+    // such visits: present, offset, level referred to the input
+    bool wc_ok[2] = {false, false};
+    float wc_off[2] = {0, 0}, wc_lvl[2] = {-200, -200};
+    uint32_t wc_n = 0;
+    float nb_off = 0;            // the guess's carrier offset (in the neighbour's band)
+    bool nb_flat = false;        // the guess came from flat content (the band's total), not a carrier
+    uint32_t base_sweep = ~0u;
+    float scatter = 0;           // the median of the last 8 |F_in - the visit before| at the hop's gain
+    float dif[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    int dif_n = 0;
+    float ref = NAN, ref_p = NAN;   // slow averages of the baselines' F_in and power referred to the input
+    int jump = 0, drop = 0;
+    bool up_search = false;      // the search goes up (after a drop; the bisection), not down
+    int up_lim = 1 << 30;        // the bisection: below this gain (the one a big step down left, non-linear)
+    bool moved_big = false;      // this down search moved by a big step (then the bisection follows)
+    bool clip_lift = false;      // this up search was started by a raise of the clipping rule (may pass its gain)
+    bool next_up = false;        // settled probes alternate down / up
+    uint32_t hold = 1;           // the settled period's multiplier: doubles when a probe confirms the gain (or a raise went
+                                 // non-linear), back to 1 on a decision or a trigger
+    int no_verdict = 0;          // pairs in a row without a verdict
+    bool last_up = false;        // the last accepted move was up
+    int probe_g = -999;          // the probe this sweep (floor_wanted), its sweep
+    uint32_t probe_sweep = ~0u;
+    // a probe waiting for its closing baseline
+    int pend_g = -999;
+    float pend_p = 0, pend_f = 0, pend_bp = 0, pend_bf = 0;
+    uint32_t pend_sweep = ~0u;
+    bool pend_clipped = false;
+    int agree_dir = 0, agree_g = -999, agree_n = 0;   // pairs that agreed so far (+1 down, -1 up)
+    float agree_dev = 0;         // ... the last one's deviation from the step
+    float br_p[8] = {}, br_f[8] = {};   // the last 8 brackets' changes (power, floor), dB
+    uint32_t br_n = 0;
+    uint8_t bracket_hist = 0;    // the last 8 brackets, 1 = no quantity bracketed (the content moved by itself)
+    int bracket_n = 0;
+};
+std::map<uint32_t, FloorEntry> floor_map;   // the hop thread only
+uint32_t sweep_idx = 0;                     // sweeps completed (the hop thread)
+uint32_t ag_cur_probes = 0, ag_cur_floor_decisions = 0, ag_cur_floor_hops = 0, ag_cur_search = 0, ag_cur_pairs = 0,
+         ag_cur_bad_pairs = 0, ag_cur_nonlinear = 0, ag_cur_learned = 0, ag_cur_untestable = 0, ag_cur_guesses = 0;
+std::vector<float> ag_cur_scatter;
+std::atomic<uint32_t> ag_probes{0}, ag_floor_decisions{0}, ag_floor_hops{0}, ag_search_hops{0}, ag_pairs{0},
+    ag_bad_pairs{0}, ag_nonlinear{0}, ag_learned{0}, ag_untestable{0}, ag_guesses{0};
+std::atomic<float> ag_floor_scatter{0.0f};
+std::atomic<bool> ag_probe_sweep{false};   // the sweep running is a whole-plan probe sweep (search phase)
+// the tuners whose gain now is a probe's (a trial gain): the 8091 header's
+// bits 14.. (read with the gains, before the flag)
+std::atomic<uint32_t> trial_mask{0};
+
+// The real gain of tuner t at table value g, dB (the R820T / R828D curve,
+// interpolated; other tuners: the table)
+float real_gain_db(int t, int g) {
+    if (t < static_cast<int>(devices.size()) && devices[t] && devices[t]->dev) {
+        const rtlsdr_tuner ty = rtlsdr_get_tuner_type(devices[t]->dev);
+        if (ty == RTLSDR_TUNER_R820T || ty == RTLSDR_TUNER_R828D) {
+            const size_t n = sizeof(R82XX_REAL) / sizeof(R82XX_REAL[0]);
+            if (g <= R82XX_REAL[0].g) return R82XX_REAL[0].db + (g - R82XX_REAL[0].g) / 10.0f;
+            for (size_t i = 1; i < n; i++)
+                if (g <= R82XX_REAL[i].g) {
+                    const RealGain& a = R82XX_REAL[i - 1];
+                    const RealGain& b = R82XX_REAL[i];
+                    return a.db + (b.db - a.db) * static_cast<float>(g - a.g) / static_cast<float>(b.g - a.g);
+                }
+            return R82XX_REAL[n - 1].db + (g - R82XX_REAL[n - 1].g) / 10.0f;
+        }
+    }
+    return g / 10.0f;
+}
+
+float over_converter(float x, float c);
+
+// The gain the measured rule wants for this visit of hop hz (<= clip_g, the
+// clipping rule's): the hop's own gain, or this sweep's probe. The same
+// answer for the same sweep (asked twice: before and under the lock).
+int floor_wanted(int t, uint32_t hz, int clip_g) {
+    const std::vector<int>& L = gains_of(t);
+    auto it = floor_map.find(hz);
+    if (it == floor_map.end()) return clip_g;   // a first visit: a baseline at the clipping rule's gain
+    FloorEntry& e = it->second;
+    const int base_g = quantize_down(L, e.g >= 0 ? std::min(e.g, clip_g) : clip_g);
+    if (e.probe_sweep == sweep_idx) return e.probe_g != -999 ? e.probe_g : base_g;
+    e.probe_sweep = sweep_idx;
+    e.probe_g = -999;
+    // a probe needs the baseline visit just before it and none pending
+    if (e.base_sweep != sweep_idx - 1 || e.pend_g != -999) {
+        static const bool trace = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
+        if (trace && e.agree_n > 0)
+            std::cout << "AGW " << sweep_idx << " hz " << hz << " base " << base_g << " agree " << e.agree_n << " base_sweep "
+                      << e.base_sweep << " pend " << e.pend_g << std::endl;
+        return base_g;
+    }
+    bool due = false, down = true;
+    int step = AG_FLOOR_STEP;
+    // Up-probes stay under the clipping rule's gain - except in the up search
+    // that a raise of the clipping rule started (its hold was clean: the
+    // fake's keyed carrier pumped the hop up and down when every up-probe
+    // could pass it): then up to the ceiling, past that gain. Such a probe
+    // tests clipping too (one that clips is refused), and one that passes
+    // lifts the clipping rule's gain with it (floor_lift_clip) - the one way
+    // up for both rules. Not while the clipping rule blocks probes (a probe
+    // of its own clipped).
+    // A hop that clipped again after a raise (its hold doubled: a keyed
+    // carrier) climbs at the clipping rule's own pace - one raise a hold.
+    int ceil_q = (e.search && e.up_search && e.clip_lift) ? quantize_down(L, current_gain.load()) : clip_g;
+    if (auto gm = gain_map.find(hz);
+        gm != gain_map.end() && (now_ns() < gm->second.no_probe_until || gm->second.hold_visits > AG_HOLD_VISITS))
+        ceil_q = clip_g;
+    if (e.search) {
+        if (e.up_search && base_g >= std::min(ceil_q, e.up_lim)) { e.search = false; e.up_search = false; return base_g; }   // back at the top
+        due = (sweep_idx & 1u) == 1u;   // the whole plan, in alternate sweeps
+        step = e.step;
+        down = !e.up_search;
+    } else {
+        // (a hop held under the clipping rule's gain is probed more often:
+        // when its cause has gone it comes back sooner)
+        const uint32_t period = (base_g < ceil_q ? std::max<uint32_t>(AG_PROBE_PERIOD / 3, 8) : AG_PROBE_PERIOD) * e.hold;
+        due = (sweep_idx + (hz / 1000u) * 2654435761u % period) % period == 0 || e.agree_n > 0;
+        down = e.agree_n > 0 ? e.agree_dir > 0 : (!e.next_up || base_g >= ceil_q);
+    }
+    if (!due) return base_g;
+    int pg;
+    const float rb = real_gain_db(t, base_g);
+    bool again = e.agree_n > 0 && e.agree_g != -999;
+    if (again) {
+        pg = std::min(e.agree_dir > 0 ? clip_g : ceil_q, e.agree_g);   // the same probe again (the second pair)
+        // ... unless the hop's gain has moved past it meanwhile (the clipping
+        // rule stepped down onto it): then the agreement is void - on the
+        // hardware it asked for a probe at the hop's own gain forever, and
+        // 417.43 MHz never had another pair
+        if ((e.agree_dir > 0 && pg >= base_g) || (e.agree_dir < 0 && pg <= base_g)) {
+            e.agree_n = 0;
+            e.agree_dir = 0;
+            e.agree_g = -999;
+            again = false;
+            down = e.search ? !e.up_search : (!e.next_up || base_g >= ceil_q);
+        }
+    }
+    if (again) {
+    } else if (down) {
+        // at least AG_LIN_MIN_STEP real dB down (the list has steps of 0 dB)
+        // (a smaller step when the big one would not be testable: the quantity
+        // stays over the validity level for a step of 2.5 dB more often)
+        auto down_to = [&](int st) {
+            int q = quantize_down(L, base_g - st);
+            while (q > (L.empty() ? 0 : L.front()) && rb - real_gain_db(t, q) < AG_LIN_MIN_STEP) q = quantize_down(L, q - 1);
+            return q;
+        };
+        auto testable = [&](int q) {
+            const float d = rb - real_gain_db(t, q);
+            return (std::isfinite(e.base_p) && over_converter(e.base_p, AG_CONV_P_DB) - d >= AG_CONV_P_DB + AG_LIN_OVER) ||
+                   (std::isfinite(e.base_f) && over_converter(e.base_f, AG_CONV_F_DB) - d >= AG_CONV_F_DB + AG_LIN_OVER);
+        };
+        pg = down_to(step);
+        if (e.agree_n == 0 && !testable(pg)) pg = down_to(std::min(step, AG_FLOOR_STEP));
+        if (e.agree_n == 0 && !testable(pg)) pg = down_to(1);
+        // A probe that can't tell anything only costs (a visit several dB
+        // lower where every dB is sensitivity): when the baseline's power and
+        // floor, taken down by the step, would both be under the validity
+        // level, there is no down-probe (the FM band, the quiet L band: 3 of
+        // 44 and 0 of 400 hops testable on the bracketed reference). A search
+        // ends there - the hop stays; settled, the next probe is an up one.
+        if (e.agree_n == 0) {
+            if (!testable(pg)) {
+                if (e.search) { e.search = false; e.up_search = false; e.moved_big = false; }
+                e.next_up = true;
+                ag_cur_untestable++;
+                return base_g;
+            }
+        }
+    } else {
+        // (a search: its step - the bisection's is small, below the gain it
+        // left; settled: a hop held down probes a big step, one at the top a small one)
+        const int top = e.search ? std::min(ceil_q, quantize_down(L, e.up_lim - 1)) : ceil_q;
+        pg = std::min(top, quantize_down(L, base_g + (e.search ? step : base_g < ceil_q ? AG_FLOOR_STEP_BIG : AG_FLOOR_STEP)));
+        while (pg < top && real_gain_db(t, pg) - rb < AG_LIN_MIN_STEP) pg = std::min(top, next_up(L, pg));
+        // (straight to the top when what would be left over is a step too small
+        // to test - 48.0 -> 49.6 near a cause is refused, and 419.34 MHz stopped
+        // at 48.0 after its guess was released)
+        if (pg < top && real_gain_db(t, top) - real_gain_db(t, pg) < AG_LIN_MIN_STEP) pg = top;
+        if (pg <= base_g && e.search) { e.search = false; e.up_search = false; return base_g; }   // nothing left to try
+    }
+    if (pg == base_g) return base_g;
+    e.probe_g = pg;
+    return pg;
+}
+
+// Whether gain g on hop hz this sweep is the hop's probe (the trial flag)
+bool floor_is_trial(uint32_t hz, int g) {
+    auto it = floor_map.find(hz);
+    return it != floor_map.end() && it->second.probe_sweep == sweep_idx && it->second.probe_g == g;
+}
+
+// The learned steps: (10 MHz bucket, the higher gain, the lower gain) -> the
+// last AG_STEP_RING measured steps of valid pairs (power and floor, the
+// converter subtracted; the hop thread only)
+struct StepHop {
+    uint32_t hz;
+    float v;   // that hop's measured step (the mean of its last two pairs)
+};
+struct StepRing {
+    std::vector<StepHop> h;   // one value per hop (at most AG_STEP_HOPS)
+};
+// (bucket, the higher gain, the lower gain, 0 = power / 1 = floor)
+std::map<std::tuple<uint32_t, int, int, int>, StepRing> step_map;   // cleared when the plan or its tuners change
+
+// The reference step of quantity q (0 power, 1 floor: each its own - a
+// strong carrier and the floor need not move alike) for a pair of hop hz
+// between gains hi > lo: the median
+// of the OTHER hops' measured steps in its bucket and the two beside it -
+// with at least AG_STEP_MIN_HOPS of them (a saturated hop must not teach its
+// own reference its wrong step: on a narrow plan the buckets hold 2 - 3
+// hops), within AG_STEP_TRUST of the curve's dg; else dg
+float step_ref(uint32_t hz, int hi, int lo, int q, float dg, bool* learned = nullptr) {
+    const uint32_t b = hz / AG_STEP_BUCKET_HZ;
+    float v[3 * AG_STEP_HOPS];
+    int n = 0;
+    for (uint32_t k = b > 0 ? b - 1 : 0; k <= b + 1; k++) {
+        auto it = step_map.find({k, hi, lo, q});
+        if (it == step_map.end()) continue;
+        for (const StepHop& s : it->second.h)
+            if (s.hz != hz) v[n++] = s.v;
+    }
+    if (learned) *learned = false;
+    if (n < AG_STEP_MIN_HOPS) return dg;
+    std::nth_element(v, v + n / 2, v + n);
+    const float med = v[n / 2];
+    if (std::fabs(med - dg) > AG_STEP_TRUST) return dg;
+    if (learned) *learned = true;
+    return med;
+}
+void step_note(uint32_t hz, int hi, int lo, int q, float m) {
+    if (step_map.size() > 4096) step_map.clear();
+    std::vector<StepHop>& h = step_map[{hz / AG_STEP_BUCKET_HZ, hi, lo, q}].h;
+    for (StepHop& s : h)
+        if (s.hz == hz) { s.v = 0.5f * (s.v + m); return; }
+    if (h.size() >= AG_STEP_HOPS) h.erase(h.begin());
+    h.push_back({hz, m});
+}
+
+// A cause for compression near hop hz: a hop within AG_LIN_CAUSE_HZ whose
+// last visit's power, referred to the input and taken to the real gain
+// rg_hi, reaches AG_LIN_CAUSE_DB (clipped visits count: they are strong)
+bool floor_cause(uint32_t hz, float rg_hi);
+
+// x dB with the converter's own noise c dB taken away (-inf: not over it)
+float over_converter(float x, float c) {
+    return x > c + 0.3f ? 10.0f * std::log10(std::pow(10.0f, x / 10.0f) - std::pow(10.0f, c / 10.0f))
+                        : -std::numeric_limits<float>::infinity();
+}
+
+// An up-probe past the clipping rule's gain passed (clean and linear): the
+// clipping rule takes that gain too - a clip after it is a clip after a
+// raise (its hold doubles)
+void floor_lift_clip(uint32_t hz, int g) {
+    auto it = gain_map.find(hz);
+    if (it == gain_map.end()) return;
+    // (kept at the ceiling too: the entry carries the hold - erased here, a
+    // keyed carrier found a fresh 20 s hold each time and pumped the hop up
+    // and down; the clipping rule forgets it after a clean hold up there)
+    GainEntry& c = it->second;
+    if (g <= c.gain) return;
+    c.gain = g;
+    c.last_raise = true;
+    c.clean = 0;
+    c.peak_max_dbfs = -200; c.rms_max_dbfs = -200;
+    c.probes = 0;
+    c.probe_from = -1;
+    ag_cur_changes++;
+}
+
+// A pair without a verdict (a quantity over the converter but unbracketed
+// or unsteady - the LTE block -, a failed bracket, the reliability gate)
+// still uses the search up: after AG_LIN_NO_VERDICT in a row the search ends
+// and the hop stays (on the first hardware run 16 - 18 such hops probed 6 -
+// 8 dB down every other sweep for good); settled, the period doubles, as
+// for a confirming probe.
+void floor_no_verdict(FloorEntry& e) {
+    if (++e.no_verdict < AG_LIN_NO_VERDICT) return;
+    e.no_verdict = 0;
+    if (e.search) { e.search = false; e.up_search = false; e.moved_big = false; }
+    else e.hold = std::min(e.hold * 2, AG_PROBE_HOLD_MAX);
+    e.agree_n = 0;
+    e.agree_dir = 0;
+    e.agree_g = -999;
+}
+
+// A bracketed pair of hop hz. hi / lo: the higher and the lower gain of the
+// pair (one of them the probe, the other the mean of the baselines around
+// it), power and floor in the samples; bp / bf: whether each quantity's
+// baselines agreed.
+void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int pg, float p_hi, float p_lo, float f_hi,
+                float f_lo, bool bp, bool bf, bool clipped) {
+    const int dir = pg < base_g ? 1 : -1;   // +1: a probe down
+    // more power at the lower gain by AG_LIN_BURST: a burst in one of the
+    // visits (a pager keyed in the probe), not physics - no pair, and it
+    // counts as a failed bracket
+    if (p_lo > p_hi + AG_LIN_BURST) {
+        ag_cur_bad_pairs++;
+        e.bracket_hist |= 1u;
+        return;
+    }
+    ag_cur_pairs++;
+    const int g_hi = std::max(base_g, pg), g_lo = std::min(base_g, pg);
+    const float dg = real_gain_db(t, g_hi) - real_gain_db(t, g_lo);
+    // the tests that count: bracketed, and the quantity (the converter's
+    // noise subtracted) well over the converter's own at the lower gain
+    const float ps_lo = over_converter(p_lo, AG_CONV_P_DB), fs_lo = over_converter(f_lo, AG_CONV_F_DB);
+    const bool lvl_p = ps_lo >= AG_CONV_P_DB + AG_LIN_OVER, lvl_f = fs_lo >= AG_CONV_F_DB + AG_LIN_OVER;
+    // Steady: a quantity whose brackets' median change (the last 8) is over
+    // AG_LIN_STEADY moves by itself (LTE load, a self-varying floor): a
+    // bracket that agreed by chance and a probe that didn't made "agreeing"
+    // non-linear pairs there on the fake - such a quantity judges nothing
+    auto med8 = [&](const float* v) {
+        const int n = static_cast<int>(std::min<uint32_t>(e.br_n, 8));
+        if (n < 3) return 0.0f;
+        float w[8];
+        std::copy(v, v + n, w);
+        std::nth_element(w, w + n / 2, w + n);
+        return w[n / 2];
+    };
+    const bool steady_p = med8(e.br_p) <= AG_LIN_STEADY, steady_f = med8(e.br_f) <= AG_LIN_STEADY;
+    const bool vp = bp && lvl_p && steady_p;
+    const bool vf = bf && lvl_f && steady_f;
+    // a quantity over the converter whose bracket failed: this pair can't
+    // call the step linear (it can still be non-linear by the other)
+    const bool unknown = (lvl_p && !vp) || (lvl_f && !vf);
+    const float mp = vp ? over_converter(p_hi, AG_CONV_P_DB) - ps_lo : 0.0f;
+    const float mf = vf ? over_converter(f_hi, AG_CONV_F_DB) - fs_lo : 0.0f;
+    // the reference: the learned step (this pair's own values among them)
+    if (vp) step_note(hz, g_hi, g_lo, 0, mp);
+    if (vf) step_note(hz, g_hi, g_lo, 1, mf);
+    bool learned_p = false, learned_f = false;
+    const float r = step_ref(hz, g_hi, g_lo, 0, dg, &learned_p);    // the power's
+    const float rf = step_ref(hz, g_hi, g_lo, 1, dg, &learned_f);   // the floor's
+    if (learned_p || learned_f) ag_cur_learned++;
+    // One-sided, when only the HIGHER gain's value is well over the
+    // converter: the lower one's raw value (converter included) bounds its
+    // own from above, so (higher - raw lower) is a lower bound on the step -
+    // a floor that falls faster than the gain (third-order products going
+    // into the converter's noise) is seen; a step that looks too small near
+    // the converter is not judged (the FM band: the tuner's noise barely
+    // over the converter's)
+    const float ps_hi = over_converter(p_hi, AG_CONV_P_DB), fs_hi = over_converter(f_hi, AG_CONV_F_DB);
+    const float steep_p = (!vp && bp && steady_p && ps_hi >= AG_CONV_P_DB + AG_LIN_OVER) ? (ps_hi - p_lo) - r : 0.0f;
+    const float steep_f = (!vf && bf && steady_f && fs_hi >= AG_CONV_F_DB + AG_LIN_OVER) ? (fs_hi - f_lo) - rf : 0.0f;
+    // Compression ("follows less than the step") needs a cause: content of
+    // at least AG_LIN_CAUSE_DB rms at the higher gain in this hop or one
+    // within the IF's reach (the orchestrator's bracketed reference,
+    // 2026-11-24: 26.87 MHz at -35.5 dBFS and 633.13 at -32.1 follow a short
+    // step with nothing strong near - the gain's own shape there, not
+    // saturation; 417.02 has -9.0 itself, 944.87 -9 .. -13 and a clipping
+    // neighbour). Products ("more than the step") need none.
+    const bool cause = p_hi >= AG_LIN_CAUSE_DB || floor_cause(hz, real_gain_db(t, g_hi));
+    // (against the curve, not a learned step, AG_LIN_CURVE_SLACK more on the
+    // fixed tolerance: the curve is off by up to 1.3 dB a step - 5.5 against
+    // 4.2 dB at 174 - 380 MHz)
+    // Products (more than the step): max(1.5 dB, half the step) for the
+    // power, 1.5 dB for the floor. Compression (less than the step, a cause
+    // near): the SMALLER of 1.5 dB and half the step - compression adds up
+    // over a step, a bigger step earns no bigger tolerance (with the larger,
+    // 37.2 -> 33.8 following 0.7 of 2.9 dB read linear on the hardware, the
+    // hop stayed 2.8 dB compressed). +AG_LIN_CURVE_SLACK on the 1.5 dB while
+    // the reference is the curve. A raise must be clearly linear: an
+    // up-probe's compression tolerance is at most AG_LIN_DEV_UP (the power:
+    // or a quarter of the step) + the slack - with half the step the fake's
+    // 417.43 MHz came up 28.0 -> 32.8, 2.1 dB compressed.
+    const float slack_p = learned_p ? 0.0f : AG_LIN_CURVE_SLACK, slack_f = learned_f ? 0.0f : AG_LIN_CURVE_SLACK;
+    const float tol_p = std::max(AG_LIN_DEV, AG_LIN_REL * r) + slack_p;
+    const float tol_f = AG_LIN_DEV + slack_f;
+    float tol_cp = std::min(AG_LIN_DEV + slack_p, AG_LIN_REL_COMP * r);
+    float tol_cf = std::min(AG_LIN_DEV + slack_f, AG_LIN_REL_COMP * rf);
+    if (dir < 0) {
+        tol_cp = std::min(tol_cp, std::max(AG_LIN_DEV_UP, 0.5f * AG_LIN_REL * r) + slack_p);
+        tol_cf = std::min(tol_cf, AG_LIN_DEV_UP + slack_f);
+    }
+    const bool nl_p = (vp && ((mp - r >= tol_p) || (cause && r - mp >= tol_cp))) || steep_p >= tol_p;
+    const bool nl_f = (vf && ((mf - rf >= tol_f) || (cause && rf - mf >= tol_cf))) || steep_f >= tol_f;
+    // gross (one pair decides): a big step the power follows by less than
+    // half (no fine reference needed), or a floor far off
+    const bool gross = (vp && cause && dg >= AG_LIN_GROSS_STEP && mp < AG_LIN_COMP * dg) ||
+                       (vf && (mf - rf >= AG_LIN_GROSS || (cause && rf - mf >= AG_LIN_GROSS))) ||
+                       steep_f >= AG_LIN_GROSS || steep_p >= AG_LIN_GROSS;
+    // A step under AG_LIN_MIN_STEP (only up to the ceiling: 48.0 -> 49.6 is
+    // 1.4 dB on the curve, -1 .. 2 dB in fact) can't show compression: with
+    // a cause near, it is not taken (the hop stays 1.4 dB low rather than
+    // compressed - the fake's 413.61 MHz came up 3.5 dB compressed that way)
+    const bool untestable = dg < AG_LIN_MIN_STEP && cause;
+    const bool nonlinear = nl_p || nl_f || gross || untestable;
+    if (nonlinear) ag_cur_nonlinear++;
+    // HEIMDALL_AG_TRACE=1: one stdout line per pair (a diagnostic; stdout is
+    // kept only on a terminal or with HEIMDALL_VERBOSE_LOG=1)
+    static const bool trace = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
+    if (trace)
+        std::cout << "AGT " << sweep_idx << " hz " << hz << " t " << t << " base " << base_g << " pg " << pg << " clip " << clip_g
+                  << " dg " << dg << " r " << r << (learned_p ? "L" : "C") << " rf " << rf << (learned_f ? "L" : "C") << " P " << p_hi << "/" << p_lo << " F " << f_hi << "/" << f_lo
+                  << " vp " << vp << " vf " << vf << " mp " << mp << " mf " << mf << " sp " << steep_p << " sf " << steep_f
+                  << " nl " << nonlinear << " gross " << gross << " unk " << unknown << " cause " << cause << " search " << e.search << " up " << e.up_search
+                  << " bn " << e.bracket_n << " bh " << int(e.bracket_hist) << " cap " << e.nb_cap << " hold " << e.hold << std::endl;
+    auto take = [&](int g) {
+        if (g > clip_g) {
+            // (an up-probe past the clipping rule's gain, clean: that rule
+            // takes the gain too - and that is not a raise of its own, which
+            // would hold the hop back and start an up search again: 499.26
+            // MHz climbed in a sawtooth that way on the hardware)
+            floor_lift_clip(hz, g);
+            e.last_clip_g = g;
+        }
+        e.g = (g >= clip_g) ? -1 : g;
+        e.agree_n = 0;
+        e.agree_dir = 0;
+        e.agree_g = -999;
+        ag_cur_floor_decisions++;
+    };
+    // two pairs agree: the same probe, and (down) values within AG_LIN_DEV -
+    // a burst can't make two by chance
+    auto agreed = [&]() {
+        const float dev = std::max(vp ? std::fabs(r - mp) : -99.0f, vf ? std::fabs(mf - rf) : -99.0f);
+        if (e.agree_dir == dir && e.agree_g == pg && (dir < 0 || std::fabs(dev - e.agree_dev) <= AG_LIN_DEV)) {
+            e.agree_dev = dev;
+            return ++e.agree_n >= 2;
+        }
+        e.agree_dir = dir;
+        e.agree_g = pg;
+        e.agree_n = 1;
+        e.agree_dev = dev;
+        return false;
+    };
+    auto reset = [&]() { e.agree_n = 0; e.agree_dir = 0; e.agree_g = -999; };
+    // An up-probe where nothing can be tested (no quantity both over the
+    // converter and bracketed and steady) and that is not non-linear: the clip
+    // test alone decides, as before this rule - a raise of the clipping rule
+    // must not be lost because the hop's content moves by itself (415.11 MHz
+    // on the hardware: cut to 8.7 dB by a heavy clip, its power alternating
+    // -20.3 / -17.4 dBFS from visit to visit, every up-probe without a
+    // verdict - it stayed at 8.7 for the whole run)
+    // ("can't be tested": each quantity under the validity level or unsteady -
+    // not merely this pair's bracket failing: 417.43 MHz, its power pinned
+    // but one bracket off, went up 33.8 -> 38.6 by the clip test alone)
+    // (and not past the lower neighbour's level guess: with nothing testable
+    // the guess is the better knowledge - a hop with weak content beside a
+    // saturating carrier went straight back up into it on the fake)
+    const bool up_untestable = dir < 0 && !nonlinear && (!lvl_p || !steady_p) && (!lvl_f || !steady_f) && pg <= e.nb_cap;
+    if (unknown && !nonlinear && !up_untestable) {
+        e.bracket_hist |= 1u;
+        floor_no_verdict(e);
+        return;
+    }
+    // Decisions only on a hop whose brackets mostly hold (at most a quarter
+    // of the last 8 failed - content that moves by itself fails most); one
+    // gross pair decides alone only when the last 4 held
+    const int nb = std::min(e.bracket_n, 8);
+    const int fails = std::popcount(static_cast<unsigned>(e.bracket_hist & ((1u << nb) - 1u)));
+    if (!(nb >= 1 && fails * 4 <= nb) && !up_untestable) { floor_no_verdict(e); return; }
+    const bool alone_ok = nb >= 4 && (e.bracket_hist & 0x0Fu) == 0;
+    e.no_verdict = 0;
+    if (dir > 0) {   // the step from the probe up to the hop's gain
+        if (nonlinear && ((gross && alone_ok) || agreed())) {
+            // (down again after a raise: the period doubles; else a decision starts it over)
+            e.hold = e.last_up ? std::min(e.hold * 2, AG_PROBE_HOLD_MAX) : 1;
+            e.last_up = false;
+            take(pg);
+            // (the same evidence must not cost a step twice: a mild clip the
+            // clipping rule noted at the old gain is spent by this move)
+            mild_clips.erase(hz);
+            e.search = true;      // on down while it stays non-linear
+            e.up_search = false;
+            e.step = gross ? AG_FLOOR_STEP_BIG : AG_FLOOR_STEP;
+            e.up_lim = base_g;    // (the gain left is non-linear: the bisection stays under it)
+            e.clip_lift = false;
+            e.moved_big = e.moved_big || base_g - pg > AG_FLOOR_STEP + 5;
+        } else if (nonlinear) {
+            // the first of two: the same probe again at its next slot
+        } else {
+            reset();
+            e.next_up = true;
+            if (!e.search) e.hold = std::min(e.hold * 2, AG_PROBE_HOLD_MAX);   // it confirmed where the hop is
+            if (e.search && !e.up_search && e.step > AG_FLOOR_STEP) {
+                // linear over a BIG step: compression that a 6 dB step hides
+                // inside its tolerance (min(1.5 dB + slack, half the step))
+                // still shows over a small one - the search goes on with a
+                // small step from here (on the hardware 417.43 MHz passed
+                // 37.2 -> 29.7 following 4.5 of 6.7 dB and then waited 26 - 50
+                // sweeps for the settled probes to find 37.2 -> 33.8 non-linear)
+                e.step = AG_FLOOR_STEP;
+            } else if (e.search && !e.up_search) {
+                // linear below: the hop's gain holds - after a big step down,
+                // back up by small steps while that stays linear (the bisection)
+                if (e.moved_big) {
+                    e.up_search = true;
+                    e.step = AG_FLOOR_STEP;
+                } else {
+                    e.search = false;
+                }
+                e.moved_big = false;
+            }
+        }
+    } else {         // the step from the hop's gain up to the probe
+        // everything near the converter's own noise (more gain can only help),
+        // or nothing testable: one clean pair is enough
+        if (pg > e.nb_cap && !vp && !vf) {
+            // past the lower neighbour's level guess with nothing to test: stays
+            reset();
+            e.next_up = false;
+            if (e.up_search) { e.search = false; e.up_search = false; }
+            else e.hold = std::min(e.hold * 2, AG_PROBE_HOLD_MAX);
+            return;
+        }
+        const bool none_valid = (!lvl_p && !lvl_f) || up_untestable;
+        if (!clipped && !nonlinear && (none_valid || agreed())) {
+            e.last_up = true;
+            e.hold = 1;
+            take(pg);   // (an up search goes on up while it stays linear)
+            if (!e.search) {
+                // a settled hop that came up: on up by big steps while that
+                // stays linear and clean (over-reduced hops come back in a
+                // few probe sweeps, not one step a probe period)
+                e.search = true;
+                e.up_search = true;
+                e.step = AG_FLOOR_STEP_BIG;
+                e.up_lim = 1 << 30;
+                e.clip_lift = false;
+            }
+        } else if (!clipped && !nonlinear) {
+            // the first of two
+        } else {
+            reset();
+            e.next_up = false;
+            if (e.up_search && e.step > AG_FLOOR_STEP) {
+                e.step = std::max(AG_FLOOR_STEP, e.step / 2);   // refused: the step below (a level-sized raise's fall-back)
+            } else if (e.up_search) {
+                e.search = false;
+                e.up_search = false;
+            } else {
+                e.hold = std::min(e.hold * 2, AG_PROBE_HOLD_MAX);
+            }
+        }
+    }
+}
+
+bool floor_cause(uint32_t hz, float rg_hi) {
+    for (auto it = floor_map.lower_bound(hz > AG_LIN_CAUSE_HZ ? hz - AG_LIN_CAUSE_HZ : 0);
+         it != floor_map.end() && it->first <= hz + AG_LIN_CAUSE_HZ; ++it)
+        if (std::isfinite(it->second.lvl_in) && it->second.lvl_in + rg_hi >= AG_LIN_CAUSE_DB) return true;
+    return false;
+}
+
+// A visit -> the hop's entry (the hop thread, after the dwell)
+void floor_learn(int t, const HopAcc& a, int clip_g) {
+    if (a.floor_n == 0 || a.gain < 0 || a.values == 0) return;
+    const std::vector<int>& L = gains_of(t);
+    const float f = static_cast<float>(a.floor_db / a.floor_n);
+    const float p = 10.0f * std::log10(static_cast<float>(static_cast<double>(a.sumsq) / a.values) / (2.0f * 127.5f * 127.5f) + 1e-30f);
+    const float rg = real_gain_db(t, a.gain);
+    const float f_in = f - rg, p_in = p - rg;
+    auto [it, fresh] = floor_map.try_emplace(a.hz);
+    FloorEntry& e = it->second;
+    if (fresh && floor_map.size() > AG_MAP_MAX) { floor_map.clear(); return; }
+    e.lvl_in = p_in;   // (every visit, clipped ones too: the cause scan)
+    e.tuner = t;
+    if (static_cast<double>(a.clipped) / a.values <= AG_LIN_HEAVY_CLIP) {
+        e.lvl_ring[e.lvl_n++ % 4] = p_in;
+        e.car_off_hz = a.pk_off_hz;
+        e.car_over_db = a.pk_over_db;
+        const uint32_t k = e.wc_n++ % 2;
+        e.wc_ok[k] = a.win_over_db >= AG_NB_CARRIER_DB;
+        e.wc_off[k] = a.win_off_hz;
+        e.wc_lvl[k] = a.win_pow_db - rg;
+    }
+    // ONE way up: when the clipping rule raises its own gain (its probes
+    // after a step down, its +3 dB after a clean hold), the hop stays where
+    // it is and the raise becomes this rule's up search - each step up a
+    // probe that must be linear where anything is testable and unclipped.
+    // (Not a raised ceiling: the common gain going up lifts every hop at once.)
+    {
+        const int ceil_q = quantize_down(L, current_gain.load());
+        if (e.last_clip_g >= 0 && clip_g > e.last_clip_g && e.last_clip_g < e.last_ceil && ceil_q == e.last_ceil &&
+            (e.g < 0 || e.g >= e.last_clip_g)) {
+            e.g = e.last_clip_g;
+            e.search = true;
+            e.up_search = true;
+            e.step = std::max(AG_FLOOR_STEP, clip_g - e.last_clip_g);   // (one probe to the clipping rule's target)
+            e.up_lim = 1 << 30;
+            e.clip_lift = true;
+            e.agree_n = 0;
+            e.agree_dir = 0;
+            e.agree_g = -999;
+        }
+        e.last_clip_g = clip_g;
+        e.last_ceil = ceil_q;
+    }
+    const int base_g = quantize_down(L, e.g >= 0 ? std::min(e.g, clip_g) : clip_g);
+    const bool clipped = static_cast<double>(a.clipped) / a.values > AG_CLIP_SHARE;
+    if (e.search) ag_cur_search++;
+    if (e.probe_sweep == sweep_idx && e.probe_g != -999 && a.gain == e.probe_g && a.gain != base_g) {
+        // a probe: waits for the baseline after it
+        ag_cur_probes++;
+        e.pend_g = a.gain;
+        e.pend_p = p;
+        e.pend_f = f;
+        e.pend_bp = e.base_p;
+        e.pend_bf = e.base_f;
+        e.pend_sweep = sweep_idx;
+        // (an up-probe must also leave the clipping rule's headroom: its peak
+        // at most AG_RAISE_HEADROOM_DBFS - 415.11 MHz passed an up-probe at
+        // 28.0 dB with an unclipped carrier at -2.6 dBFS rms, and its next
+        // visits there clipped 1 - 5 %)
+        const float peak_dbfs = a.peak > 0 ? 20.0f * std::log10(static_cast<float>(a.peak) / 255.0f) : -200.0f;
+        e.pend_clipped = clipped || (a.gain > base_g && peak_dbfs > AG_RAISE_HEADROOM_DBFS);
+        return;
+    }
+    static const bool trace_l = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
+    if (trace_l && e.agree_n > 0)
+        std::cout << "AGL " << sweep_idx << " hz " << a.hz << " gain " << a.gain << " base " << base_g << " clip " << clip_g
+                  << " share " << static_cast<double>(a.clipped) / a.values << " probe " << e.probe_g << "/" << e.probe_sweep
+                  << " pend " << e.pend_g << std::endl;
+    if (a.gain != base_g) {
+        // neither (the gain changed meanwhile: the clipping rule stepped) - a
+        // pending probe is cancelled, and that is a pair without a verdict
+        if (e.pend_g != -999) { e.pend_g = -999; floor_no_verdict(e); }
+        return;
+    }
+    // A baseline visit. One clipped heavily (over AG_LIN_HEAVY_CLIP) is the
+    // clipping rule's alone: a pending probe is cancelled (a pair without a
+    // verdict). A MILD clip (a few values at 0 / 255) is still a baseline:
+    // compression with a few clipped values is the case this test is for,
+    // and its verdict (down) goes the way the clipping rule would, only
+    // sooner. (Until 2026-11-24 any clip over 0.01 % dropped the baseline:
+    // 417.43 MHz, clipping 0.06 - 0.1 % now and then at 43.4 - 49.6, never
+    // closed a pair after its first move and sat 7 dB compressed at 43.4 for
+    // a whole one-tuner run - the orchestrator's acceptance set on 1aa6ecc.)
+    if (static_cast<double>(a.clipped) / a.values > AG_LIN_HEAVY_CLIP) {
+        if (e.pend_g != -999) { e.pend_g = -999; floor_no_verdict(e); }
+        return;
+    }
+    if (e.base_sweep == sweep_idx - 1 && std::isfinite(e.base_fin)) {
+        // (a median: one jump - a cause keyed up - doesn't move it; content
+        // that moves by itself from visit to visit does)
+        e.dif[e.dif_n % 8] = std::fabs(f_in - e.base_fin);
+        e.dif_n++;
+        float v[8];
+        const int n = std::min(e.dif_n, 8);
+        std::copy(e.dif, e.dif + n, v);
+        std::nth_element(v, v + n / 2, v + n);
+        e.scatter = v[n / 2];
+        ag_cur_scatter.push_back(e.scatter);
+    }
+    // the triggers: two baselines in a row AG_FLOOR_JUMP over the hop's slow
+    // average - its floor or its power referred to the input (a cause keyed
+    // up nearby) - reopen the search, down; two AG_FLOOR_DROP under it on a
+    // hop held down (the cause has gone): up
+    const bool steady = std::isfinite(e.ref) && std::isfinite(e.ref_p) && !e.search && e.scatter <= AG_FLOOR_VAR;
+    if (steady && (f_in > e.ref + AG_FLOOR_JUMP || p_in > e.ref_p + AG_FLOOR_JUMP)) {
+        if (++e.jump >= 2) {
+            e.jump = 0; e.search = true; e.up_search = false; e.step = AG_FLOOR_STEP_BIG;
+            e.hold = 1;
+            e.up_lim = 1 << 30;
+            e.moved_big = false;
+            e.clip_lift = false;
+            e.ref = f_in;
+            e.ref_p = p_in;
+        }
+    } else {
+        e.jump = 0;
+    }
+    if (steady && (f_in < e.ref - AG_FLOOR_DROP || p_in < e.ref_p - AG_FLOOR_DROP) && base_g < clip_g) {
+        if (++e.drop >= 2) {
+            e.drop = 0; e.search = true; e.up_search = true; e.ref = f_in; e.ref_p = p_in;
+            e.hold = 1;
+            e.step = AG_FLOOR_STEP_BIG;
+            e.up_lim = 1 << 30;
+            e.clip_lift = false;
+        }
+    } else {
+        e.drop = 0;
+    }
+    if (e.pend_g != -999) {
+        if (e.pend_sweep == sweep_idx - 1 && std::isfinite(e.pend_bp) && std::isfinite(e.pend_bf)) {
+            const bool bp = std::fabs(p - e.pend_bp) <= AG_FLOOR_BRACKET;
+            const bool bf = std::fabs(f - e.pend_bf) <= AG_FLOOR_BRACKET;
+            const bool held = bp || bf;
+            // the bracket's own change per quantity: its median over the last
+            // 8 says whether that quantity is steady enough to judge at all
+            e.br_p[e.br_n % 8] = std::fabs(p - e.pend_bp);
+            e.br_f[e.br_n % 8] = std::fabs(f - e.pend_bf);
+            e.br_n++;
+            e.bracket_hist = static_cast<uint8_t>((e.bracket_hist << 1) | (held ? 0u : 1u));
+            e.bracket_n = std::min(e.bracket_n + 1, 8);
+            if (held) {
+                const float pb = 0.5f * (p + e.pend_bp), fb = 0.5f * (f + e.pend_bf);
+                if (e.pend_g < base_g)
+                    floor_pair(e, t, a.hz, base_g, clip_g, e.pend_g, pb, e.pend_p, fb, e.pend_f, bp, bf, e.pend_clipped);
+                else
+                    floor_pair(e, t, a.hz, base_g, clip_g, e.pend_g, e.pend_p, pb, e.pend_f, fb, bp, bf, e.pend_clipped);
+            } else {
+                ag_cur_bad_pairs++;   // the content moved by itself: no pair
+                floor_no_verdict(e);
+                // four failed brackets of the last four: no search here (it would probe every other sweep for good)
+                if ((e.bracket_hist & 0x0Fu) == 0x0Fu && e.search) {
+                    e.search = false;
+                    e.agree_n = 0;
+                }
+            }
+        } else {
+            floor_no_verdict(e);   // (a probe whose bracket can't close)
+        }
+        e.pend_g = -999;
+    }
+    // (after a decision the baseline is at the new gain: base_g above was the old one)
+    const int now_g = quantize_down(L, e.g >= 0 ? std::min(e.g, clip_g) : clip_g);
+    if (now_g == base_g) {
+        e.base_p = p;
+        e.base_f = f;
+        e.base_fin = f_in;
+        e.base_sweep = sweep_idx;
+        if (!std::isfinite(e.ref)) { e.ref = f_in; e.ref_p = p_in; }
+        else if (e.jump == 0 && e.drop == 0) { e.ref = 0.9f * e.ref + 0.1f * f_in; e.ref_p = 0.9f * e.ref_p + 0.1f * p_in; }
+    } else {
+        e.ref = e.ref_p = NAN;   // (a new gain: new references)
+        e.br_n = 0;              // ... and a new steadiness history (bursts at 49.6 made 417.43 MHz's steady power at 37.2 unsteady)
+        e.base_sweep = ~0u;      // the next visit at the new gain is the first baseline
+        e.base_p = e.base_f = e.base_fin = NAN;
+    }
+    // The first guess from the lower neighbour's level (the same tuner): the
+    // highest list gain at which its carrier, referred to the input, would
+    // read at most AG_NB_LEVEL_DBFS - at the hop's first visits, and again when
+    // that level has risen by AG_NB_RISE_DB (a transmitter keyed up). Only
+    // ever down from where the hop is; the rule's probes go on from there
+    // (up-probes bring it back where the guess was too low - a carrier low in
+    // the neighbour's band may be attenuated more)
+    if (plan_step_hz > 0 && a.hz > plan_step_hz) {
+        auto nb = floor_map.find(a.hz - plan_step_hz);
+        // Only a carrier within AG_NB_REACH_HZ below this hop's centre: there
+        // the IF filter gave 0 dB (carriers 1.38 and 1.79 MHz below); at 2.34 -
+        // 3.7 MHz below it was falling (nothing on the reference day at a
+        // would-clip level). The level is that carrier's OWN (its bin and the
+        // two beside it; the strongest in the window, AG_NB_CARRIER_DB over the
+        // floor) - not the band's total, which a stronger carrier outside the
+        // window would lend it (418.93 / 419.34 MHz below a band with 416.59
+        // outside and the keyed 417.86 inside: guessed to 29.7 for 17 min).
+        // A band of flat content (no carrier): its total, at the band's
+        // upper edge. Carriers only outside the window: no guess.
+        bool have = false, carrier = false;
+        float lv = -1e9f, off = 0;
+        if (nb != floor_map.end() && nb->second.tuner == t && nb->second.lvl_n > 0) {
+            const FloorEntry& n = nb->second;
+            for (int k = 0; k < 2; k++)
+                if (n.wc_ok[k] && n.wc_lvl[k] > lv) { lv = n.wc_lvl[k]; off = n.wc_off[k]; have = true; carrier = true; }
+            if (!have && n.car_over_db < AG_NB_CARRIER_DB) {
+                for (uint32_t k = 0; k < std::min<uint32_t>(n.lvl_n, 4); k++) lv = std::max(lv, n.lvl_ring[k]);
+                off = static_cast<float>(plan_step_hz) / 2;
+                have = true;
+            }
+        }
+        if (nb != floor_map.end() && nb->second.tuner == t && (have || e.nb_cap < (1 << 30))) {
+            // the guess's carrier gone (none within AG_NB_FOLLOW_HZ of its offset)
+            // or 3 dB down, in both of the neighbour's last two visits: no cap
+            // from it (its level at the guess is kept: a carrier that comes and
+            // goes guesses again only on a new high)
+            if (e.nb_done && e.nb_cap < (1 << 30)) {
+                const FloorEntry& n = nb->second;
+                bool held = false;
+                if (!e.nb_flat) {
+                    for (int k = 0; k < 2; k++)
+                        if (n.wc_ok[k] && std::fabs(n.wc_off[k] - e.nb_off) <= AG_NB_FOLLOW_HZ &&
+                            n.wc_lvl[k] > e.nb_lvl - AG_NB_RISE_DB)
+                            held = true;
+                } else {
+                    held = have && !carrier && lv > e.nb_lvl - AG_NB_RISE_DB;
+                }
+                static const bool trace_r = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
+                if (trace_r)
+                    std::cout << "AGR " << sweep_idx << " hz " << a.hz << " held " << held << " wc " << n.wc_ok[0] << "/" << n.wc_off[0]
+                              << "/" << n.wc_lvl[0] << " " << n.wc_ok[1] << "/" << n.wc_off[1] << "/" << n.wc_lvl[1] << " nb " << e.nb_off
+                              << "/" << e.nb_lvl << std::endl;
+                if (!held) {
+                    e.nb_cap = 1 << 30;
+                    if (e.g >= 0) {
+                        // held under it by the guess: back up now (an up search
+                        // in the probe sweeps), not at the settled period
+                        e.search = true;
+                        e.up_search = true;
+                        e.step = AG_FLOOR_STEP_BIG;
+                        e.up_lim = 1 << 30;
+                        e.clip_lift = false;
+                        e.agree_n = 0;
+                        e.agree_dir = 0;
+                        e.agree_g = -999;
+                    }
+                }
+            }
+            if (have && (!e.nb_done || lv >= e.nb_lvl + AG_NB_RISE_DB)) {
+                static const bool trace_g = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
+                if (trace_g)
+                    std::cout << "AGG " << sweep_idx << " hz " << a.hz << " nb_lvl " << lv << " off " << off
+                              << (carrier ? " carrier" : " flat") << " nb_rms_in " << nb->second.lvl_in << " now " << now_g
+                              << std::endl;
+                e.nb_done = true;
+                e.nb_lvl = lv;
+                e.nb_off = off;
+                e.nb_flat = !carrier;
+                int g = now_g;
+                while (g > (L.empty() ? 0 : L.front()) && lv + real_gain_db(t, g) > AG_NB_LEVEL_DBFS) g = quantize_down(L, g - 1);
+                e.nb_cap = g < now_g ? g : (1 << 30);
+                // (not for less than the smallest probe step: 49.6 -> 48.0 could
+                // never be undone - a step that small can't be tested)
+                if (g < now_g && real_gain_db(t, now_g) - real_gain_db(t, g) >= AG_LIN_MIN_STEP) {
+                    e.g = g;
+                    e.search = true;      // the rule goes on from the guess: its first down probe ends it where linear
+                    e.up_search = false;
+                    e.step = AG_FLOOR_STEP;
+                    e.moved_big = false;
+                    e.up_lim = 1 << 30;
+                    e.agree_n = 0;
+                    e.agree_dir = 0;
+                    e.agree_g = -999;
+                    e.pend_g = -999;
+                    e.base_sweep = ~0u;
+                    e.base_p = e.base_f = e.base_fin = NAN;
+                    e.ref = e.ref_p = NAN;
+                    e.br_n = 0;
+                    ag_cur_guesses++;
+                }
+            }
+        }
+    }
+    if (e.g >= 0 && quantize_down(L, std::min(e.g, clip_g)) < clip_g) ag_cur_floor_hops++;
+}
+
 // The gain tuner t takes for hop centre hz now: the common gain unless auto
-// is active (then the learned gain, on the tuner's own list)
+// is active (then the clipping rule's gain, and the linearity search's at or
+// under it, on the tuner's own list)
 int wanted_gain(int t, uint32_t hz) {
     const int ceiling = current_gain.load();
     if (!auto_gain_on.load() || ceiling < 0) return ceiling;
-    return quantize_down(gains_of(t), learned_gain(hz, ceiling));
+    const int clip_g = quantize_down(gains_of(t), learned_gain(hz, ceiling));
+    return floor_wanted(t, hz, clip_g);
 }
 
 // A hop visit's statistics -> its entry (the hop thread, after the dwell)
@@ -633,7 +1603,7 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
             e.hold_ns = std::min(e.hold_ns * 2, AG_HOLD_NS_MAX);
             e.last_raise = false;
             e.clean = 0;
-            e.peak_max_dbfs = -200;
+            e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
             ag_cur_changes++;
             return;
         }
@@ -642,7 +1612,7 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
             if (m == mild_clips.end() || now - m->second > AG_MILD_WINDOW_NS) {
                 if (mild_clips.size() >= AG_MAP_MAX) mild_clips.clear();
                 mild_clips[a.hz] = now;   // the first: noted, no change yet
-                if (it != gain_map.end()) { it->second.clean = 0; it->second.peak_max_dbfs = -200; }
+                if (it != gain_map.end()) { it->second.clean = 0; it->second.peak_max_dbfs = -200; it->second.rms_max_dbfs = -200; }
                 return;
             }
             mild_clips.erase(m);          // the second within the window: down
@@ -655,9 +1625,23 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
             it = gain_map.emplace(a.hz, GainEntry{}).first;
         }
         GainEntry& e = it->second;
-        const int down = std::max(lowest, quantize_down(L, a.gain - ag_down_step(share)));
+        int down = std::max(lowest, quantize_down(L, a.gain - ag_down_step(share)));
+        bool blind = true;
+        {
+            const float rms = 10.0f * std::log10(static_cast<float>(static_cast<double>(a.sumsq) / a.values) /
+                                                 (2.0f * 127.5f * 127.5f) + 1e-30f);
+            if (share <= AG_LEVEL_CUT_MAX && rms >= AG_LEVEL_CUT_MIN_RMS) {
+                // from the level: the smallest step down to AG_LEVEL_TARGET_DBFS, at least one list step
+                const float need = rms - AG_LEVEL_TARGET_DBFS, rg = real_gain_db(t, a.gain);
+                int g = quantize_down(L, a.gain - 1);
+                while (g > lowest && rg - real_gain_db(t, g) < need) g = quantize_down(L, g - 1);
+                down = std::max(lowest, g);
+                blind = false;
+            }
+        }
         // (a visit taken before the last change must not undo it)
         e.gain = fresh ? down : std::min(e.gain, down);
+        e.blind_from = blind ? std::max(e.blind_from, a.gain) : -1;
         e.probes = now >= e.no_probe_until ? AG_PROBES : 0;
         if (e.last_raise) {   // it clipped again after a raise: wait longer next time
             e.hold_visits = std::min(e.hold_visits * 2, AG_HOLD_VISITS_MAX);
@@ -666,14 +1650,49 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
         e.probe_from = -1;
         e.last_raise = false;
         e.clean = 0;
-        e.peak_max_dbfs = -200;
+        e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
         ag_cur_changes++;
         return;
     }
     if (it == gain_map.end()) return;   // at the ceiling and fine
     GainEntry& e = it->second;
     if (a.gain != quantize_down(L, learned_gain(a.hz, ceiling))) return;   // taken with another gain (changed meanwhile)
-    if (a.clipped > 0) { e.clean = 0; e.peak_max_dbfs = -200; return; }   // a few clipped values: hold, no raise
+    if (a.clipped > 0) { e.clean = 0; e.peak_max_dbfs = -200; e.rms_max_dbfs = -200; return; }   // a few clipped values: hold, no raise
+    // The first clean visit after a table (blind) cut measures the carrier's
+    // level: the gain whose predicted rms stays at AG_LEVEL_TARGET_DBFS is then
+    // known - one move there (at least a list step up, never above the gain
+    // before the cut), once per cut, and not on a hop whose hold has doubled
+    // (a keyed carrier keeps the slow pace). 415.52 MHz on the hardware: cut
+    // blind 49.6 -> 29.7 -> 16.6 by 28 % / 13 % clips, clean at 25.4 with rms
+    // -7.4 dBFS (carrier over floor 71.3 against 64.9 at 16.6), it sat at
+    // 16.6 for a whole run.
+    if (e.blind_from > a.gain) {
+        const int from = std::min(e.blind_from, ceiling);
+        e.blind_from = -1;
+        const float rms = 10.0f * std::log10(static_cast<float>(static_cast<double>(a.sumsq) / a.values) /
+                                             (2.0f * 127.5f * 127.5f) + 1e-30f);
+        if (e.hold_visits == AG_HOLD_VISITS && rms >= AG_BLIND_MIN_RMS && peak_dbfs - rms <= AG_BLIND_MAX_CREST) {
+            const float rg = real_gain_db(t, a.gain);
+            int g = a.gain;
+            for (int c = next_up(L, a.gain); c > g && c <= from; c = next_up(L, c)) {
+                if (rms + real_gain_db(t, c) - rg > AG_LEVEL_TARGET_DBFS) break;
+                g = c;
+            }
+            if (g > a.gain) {
+                ag_cur_changes++;
+                e.gain = g;
+                e.probes = 0;
+                e.probe_from = -1;
+                e.clean = 0;
+                e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
+                e.last_raise = true;   // (a clip at the new gain is a clip after a raise: the hold doubles)
+                // (not a raise of the clipping rule's for the linearity rule's
+                // one way up: the level is measured - no up search from the old gain)
+                if (auto fe = floor_map.find(a.hz); fe != floor_map.end()) fe->second.last_clip_g = quantize_down(L, std::min(g, ceiling));
+                return;
+            }
+        }
+    }
     if (e.probes > 0) {
         // settling after a step down: up at once by the room the peak leaves
         e.probes--;
@@ -684,7 +1703,7 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
             e.probe_from = a.gain;
             e.gain = target;   // (kept at the ceiling too: a clip there probes back, it doesn't start over)
             e.clean = 0;
-            e.peak_max_dbfs = -200;
+            e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
             return;
         }
         e.probes = 0;   // no room: settled
@@ -692,31 +1711,67 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
     e.probe_from = -1;   // clean at this gain: it holds
     if (e.clean++ == 0) e.clean_since_ns = now;
     e.peak_max_dbfs = std::max(e.peak_max_dbfs, peak_dbfs);
+    e.rms_max_dbfs = std::max(e.rms_max_dbfs, 10.0f * std::log10(static_cast<float>(static_cast<double>(a.sumsq) / a.values) /
+                                                                 (2.0f * 127.5f * 127.5f) + 1e-30f));
     if (e.clean < e.hold_visits || now - e.clean_since_ns < e.hold_ns) return;
     if (std::min(e.gain, ceiling) >= ceiling) { gain_map.erase(it); return; }   // at the ceiling and settled: forgotten
-    const int up = std::min(ceiling, std::max(next_up(L, a.gain), quantize_down(L, a.gain + AG_RAISE)));
-    const float rise_db = static_cast<float>(up - a.gain) / 10.0f;
-    if (up <= a.gain) return;
-    if (e.peak_max_dbfs + rise_db > AG_RAISE_HEADROOM_DBFS) {
+    // The raise's SIZE from the level (when it comes stays the hold's): the
+    // highest list gain whose predicted rms - the hold's highest, by the real
+    // gain curve - stays at AG_LEVEL_TARGET_DBFS and peak under the headroom,
+    // at most the ceiling, at least one list step. A hop whose transmitter
+    // has left returns to the ceiling in one raise (413.19 MHz on the
+    // hardware: -37.7 dBFS at 22.9 for 7 min, +3 dB a hold); a steady carrier
+    // goes straight to its level gain; one still near full scale gets no raise.
+    const float rg = real_gain_db(t, a.gain);
+    int up = a.gain;
+    for (int c = next_up(L, a.gain); c > up && c <= ceiling; c = next_up(L, c)) {
+        const float d = real_gain_db(t, c) - rg;
+        if (e.rms_max_dbfs + d > AG_LEVEL_TARGET_DBFS || e.peak_max_dbfs + d > AG_RAISE_HEADROOM_DBFS) break;
+        up = c;
+    }
+    if (up <= a.gain) {
         // not this hold: a new one, with its own peaks (the highest peak
         // never decayed - one loud clean visit, a carrier keyed while the
         // hop was clean, blocked every raise for good)
         e.clean = 0;
-        e.peak_max_dbfs = -200;
+        e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
         return;
     }
     ag_cur_changes++;
-    if (up >= ceiling) { gain_map.erase(it); return; }   // back at the ceiling
-    e.gain = up;
+    // (back at the ceiling the entry is kept: it carries the hold - erased, a
+    // keyed carrier found a fresh hold each time; it is forgotten after a
+    // clean hold up there)
+    e.gain = std::min(up, ceiling);
     e.last_raise = true;
     e.clean = 0;
-    e.peak_max_dbfs = -200;
+    e.peak_max_dbfs = -200; e.rms_max_dbfs = -200;
 }
 
 // At a sweep's end: the status of that sweep - the gains its hops were
 // really taken with (as the 8091 headers said), not what the map wants
 void ag_publish() {
     const int ceiling = current_gain.load();
+    ag_probes.store(ag_cur_probes);
+    ag_floor_decisions.store(ag_cur_floor_decisions);
+    ag_floor_hops.store(ag_cur_floor_hops);
+    ag_search_hops.store(ag_cur_search);
+    ag_pairs.store(ag_cur_pairs);
+    ag_nonlinear.store(ag_cur_nonlinear);
+    ag_learned.store(ag_cur_learned);
+    ag_untestable.store(ag_cur_untestable);
+    ag_guesses.store(ag_cur_guesses);
+    ag_cur_nonlinear = ag_cur_learned = ag_cur_untestable = ag_cur_guesses = 0;
+    ag_bad_pairs.store(ag_cur_bad_pairs);
+    if (!ag_cur_scatter.empty()) {
+        auto m = ag_cur_scatter.begin() + static_cast<long>(ag_cur_scatter.size() / 2);
+        std::nth_element(ag_cur_scatter.begin(), m, ag_cur_scatter.end());
+        ag_floor_scatter.store(*m);
+    }
+    ag_cur_scatter.clear();
+    ag_cur_probes = ag_cur_floor_decisions = ag_cur_floor_hops = ag_cur_search = ag_cur_pairs = ag_cur_bad_pairs = 0;
+    sweep_idx++;
+    // the next sweep: a whole-plan probe sweep while any hop still searches
+    ag_probe_sweep.store(auto_gain_on.load() && ag_search_hops.load() > 0 && (sweep_idx & 1u) == 1u);
     ag_reduced_hops.store(ag_cur_reduced);
     ag_min_gain.store(ag_cur_reduced ? std::min(ag_cur_min, ceiling) : ceiling);
     ag_cur_reduced = 0;
@@ -770,7 +1825,83 @@ void set_sweep_auto_gain(bool enable) {
 
 bool sweep_auto_gain() { return auto_gain_on.load(); }
 
+uint32_t sweep_trial_mask() { return auto_gain_on.load() && in_sweep() ? trial_mask.load() : 0u; }
+
 bool sweep_auto_gain_active() { return auto_gain_on.load() && in_sweep() && current_gain.load() >= 0; }
+
+// A packet's noise floor (the conversion thread): a Welch estimate over
+// FLOOR_FRAMES Hann frames of FLOOR_N points (pffft) and the FLOOR_PCT
+// percentile of the bins in the kept band (|f| < the plan's step / 2, DC +-2
+// bins out), dB per bin against full scale. A low percentile: carriers -
+// keyed or not - sit above it. ~8 FFTs of 1024 a visit.
+constexpr int FLOOR_N = 1024, FLOOR_FRAMES = 8;
+constexpr float FLOOR_PCT = 0.20f;
+struct PacketCarrier {
+    float pk_off_hz = 0, pk_over_db = -99;      // the band's strongest bin
+    float win_off_hz = 0, win_over_db = -99, win_pow_db = -200;   // the window's
+};
+static float packet_floor_db(const uint8_t* b, size_t nb, PacketCarrier& pc, float win_lo_hz) {
+    static PFFFT_Setup* setup = pffft_new_setup(FLOOR_N, PFFFT_COMPLEX);
+    static float* in = static_cast<float*>(pffft_aligned_malloc(2 * FLOOR_N * sizeof(float)));
+    static float* out = static_cast<float*>(pffft_aligned_malloc(2 * FLOOR_N * sizeof(float)));
+    static float* work = static_cast<float*>(pffft_aligned_malloc(2 * FLOOR_N * sizeof(float)));
+    static float win[FLOOR_N];
+    static float wsum = [] {
+        float sum = 0;
+        for (int i = 0; i < FLOOR_N; i++) {
+            win[i] = 0.5f - 0.5f * std::cos(2.0f * static_cast<float>(M_PI) * (i + 0.5f) / FLOOR_N);
+            sum += win[i] * win[i];
+        }
+        return sum;
+    }();
+    static float acc[FLOOR_N];
+    static std::vector<float> kept;
+    if (!setup || !in || !out || !work) return NAN;
+    const int frames = std::min<int>(FLOOR_FRAMES, static_cast<int>(nb / (2 * FLOOR_N)));
+    if (frames < 1) return NAN;
+    std::fill(acc, acc + FLOOR_N, 0.0f);
+    for (int f = 0; f < frames; f++) {
+        const uint8_t* p = b + static_cast<size_t>(f) * 2 * FLOOR_N;
+        for (int i = 0; i < FLOOR_N; i++) {
+            in[2 * i] = (static_cast<float>(p[2 * i]) - 127.5f) * win[i];
+            in[2 * i + 1] = (static_cast<float>(p[2 * i + 1]) - 127.5f) * win[i];
+        }
+        pffft_transform_ordered(setup, in, out, work, PFFFT_FORWARD);
+        for (int i = 0; i < FLOOR_N; i++) acc[i] += out[2 * i] * out[2 * i] + out[2 * i + 1] * out[2 * i + 1];
+    }
+    const int half = std::min<int>(FLOOR_N / 2 - 1, static_cast<int>(static_cast<double>(stats_half_band_hz.load()) *
+                                                                     FLOOR_N / SAMPLE_RATE));
+    kept.clear();
+    for (int i = 3; i <= half; i++) { kept.push_back(acc[i]); kept.push_back(acc[FLOOR_N - i]); }
+    if (kept.size() < 16) return NAN;
+    auto k = kept.begin() + static_cast<long>(kept.size() * FLOOR_PCT);
+    std::nth_element(kept.begin(), k, kept.end());
+    const float norm = static_cast<float>(frames) * wsum * 127.5f * 127.5f;
+    const float fl = *k;
+    if (fl > 0) {
+        const float bin_hz = static_cast<float>(SAMPLE_RATE) / FLOOR_N;
+        int best = 0, wbest = 0;
+        float bv = 0, wv = 0;
+        auto at = [&](int off) { return acc[(off + FLOOR_N) % FLOOR_N]; };
+        for (int off = -half; off <= half; off++) {
+            if (off > -3 && off < 3) continue;
+            const float v = at(off);
+            if (v > bv) { bv = v; best = off; }
+            if (static_cast<float>(off) * bin_hz >= win_lo_hz && v > wv) { wv = v; wbest = off; }
+        }
+        pc.pk_off_hz = static_cast<float>(best) * bin_hz;
+        pc.pk_over_db = 10.0f * std::log10(bv / fl + 1e-30f);
+        if (wv > 0) {
+            pc.win_off_hz = static_cast<float>(wbest) * bin_hz;
+            pc.win_over_db = 10.0f * std::log10(wv / fl + 1e-30f);
+            // a tone's power: the main lobe's three bins over (norm x N) - the
+            // Hann window's energy spreads over them (Parseval)
+            const float s3 = at(wbest - 1) + wv + at(wbest + 1);
+            pc.win_pow_db = 10.0f * std::log10(s3 / (norm * FLOOR_N) + 1e-30f);
+        }
+    }
+    return 10.0f * std::log10(fl / norm + 1e-30f);
+}
 
 void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32_t* hz, const int* gain, int n) {
     const uint32_t mask = stats_mask.load(std::memory_order_relaxed);
@@ -787,9 +1918,21 @@ void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32
             ss += static_cast<uint32_t>(d * d);
             peak = ad > peak ? ad : peak;
         }
+        PacketCarrier pc;
+        const float floor = packet_floor_db(b, nb, pc, win_lo_hz.load(std::memory_order_relaxed));
         std::lock_guard<std::mutex> lk(acc_mutex);
         HopAcc& a = hop_acc[t];
         if (a.hz != hz[t] || a.gain != gain[t]) a = HopAcc{hz[t], gain[t]};
+        if (std::isfinite(floor)) {
+            a.floor_db += floor;
+            if (pc.pk_over_db > a.pk_over_db) { a.pk_over_db = pc.pk_over_db; a.pk_off_hz = pc.pk_off_hz; }
+            if (pc.win_over_db > a.win_over_db) {
+                a.win_over_db = pc.win_over_db;
+                a.win_off_hz = pc.win_off_hz;
+                a.win_pow_db = pc.win_pow_db;
+            }
+            a.floor_n++;
+        }
         a.values += nb;
         a.clipped += clipped;
         a.sumsq += ss;
@@ -800,6 +1943,7 @@ void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32
 
 void sweep_restore_common_gain() {
     const int g = current_gain.load();
+    trial_mask.store(0);
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     int idx[NUM_DEVICES];
     size_t k = 0;
@@ -969,6 +2113,17 @@ std::string sweep_status_json() {
       << ",\"gain_write_failures\":" << ag_write_failures.load()
       // the gain write in use: the fork's fast call (+1 USB transfer with the
       // retune) or the ordinary one (~8 transfers, 9 ms on the KrakenSDR)
+      // the linearity search (round 10; of the last completed sweep; zeros with
+      // Auto off - always sent in the sweep object: a client tells a heimdall
+      // with the measured rule from one without by gain_floor_hops)
+      << ",\"gain_floor_hops\":" << (auto_gain_on.load() ? ag_floor_hops.load() : 0u) << ",\"gain_probes\":" << (auto_gain_on.load() ? ag_probes.load() : 0u)
+      << ",\"gain_floor_decisions\":" << (auto_gain_on.load() ? ag_floor_decisions.load() : 0u) << ",\"gain_search_hops\":" << (auto_gain_on.load() ? ag_search_hops.load() : 0u)
+      << ",\"floor_scatter_db\":" << (auto_gain_on.load() ? ag_floor_scatter.load() : 0.0f)
+      << ",\"gain_pairs\":" << (auto_gain_on.load() ? ag_pairs.load() : 0u) << ",\"gain_pairs_unbracketed\":" << (auto_gain_on.load() ? ag_bad_pairs.load() : 0u)
+      << ",\"gain_pairs_nonlinear\":" << (auto_gain_on.load() ? ag_nonlinear.load() : 0u) << ",\"gain_step_learned\":" << (auto_gain_on.load() ? ag_learned.load() : 0u)
+      << ",\"gain_probes_skipped\":" << (auto_gain_on.load() ? ag_untestable.load() : 0u)
+      << ",\"gain_level_guesses\":" << (auto_gain_on.load() ? ag_guesses.load() : 0u)
+      << ",\"gain_probe_sweep\":" << (sweep_auto_gain_active() && ag_probe_sweep.load() ? "true" : "false")
 #if defined(RTLSDR_HAS_GAIN_FAST)
       << ",\"gain_fast\":true"
 #else
@@ -1051,6 +2206,7 @@ void sweep_thread() {
     std::vector<char> move_fast;             // ... left on the fast path's state
     std::vector<char> move_tune;             // the frequency changes (else: the gain only)
     std::vector<int> move_gain;              // the gain it takes (auto gain; -999: unchanged)
+    std::vector<char> move_trial;            // that tuner's gain on the new hop is a probe's (the 8091 trial flag)
     std::vector<char> move_gain_ok;
     std::vector<int64_t> move_gain_ns;       // its gain write, ns
     // the counter steps once per round: a round retried (a dongle stalled
@@ -1084,6 +2240,7 @@ void sweep_thread() {
         }
         if (pg != plan_gen_seen) {
             plan_gen_seen = pg;
+            step_map.clear();   // (the learned steps: another plan or other tuners)
             r = 0;
             round_open = false;
         }
@@ -1105,10 +2262,14 @@ void sweep_thread() {
         move_hz.clear();
         move_tune.clear();
         move_gain.clear();
+        move_trial.clear();
         uint32_t hopping = 0;   // tuners that move from round to round (a block of 2+ hops)
         uint32_t plan_mask = 0;
         for (int t : sel) plan_mask |= 1u << t;
         stats_mask.store(auto_gain_on.load() ? plan_mask : 0, std::memory_order_relaxed);
+        stats_half_band_hz.store(static_cast<uint32_t>(p.step_hz / 2), std::memory_order_relaxed);
+        plan_step_hz = static_cast<uint32_t>(p.step_hz);
+        win_lo_hz.store(static_cast<float>(p.step_hz) - AG_NB_REACH_HZ, std::memory_order_relaxed);
         for (size_t k = 0; k < kp; k++) {
             const uint64_t b0 = static_cast<uint64_t>(k) * H / kp, b1 = static_cast<uint64_t>(k + 1) * H / kp;
             if (b1 - b0 > 1) hopping |= 1u << sel[k];
@@ -1132,11 +2293,14 @@ void sweep_thread() {
                 } else {
                     up_skips[sel[k]] = 0;
                 }
+                // the trial gain flag: the gain this visit is taken with is a probe's
+                const bool trial = auto_gain_on.load() && floor_is_trial(hz, gain ? g : now_g);
                 if (tune || gain) {
                     move_tuner.push_back(sel[k]);
                     move_hz.push_back(hz);
                     move_tune.push_back(tune);
                     move_gain.push_back(gain ? g : -999);
+                    move_trial.push_back(trial);
                 }
             }
         }
@@ -1245,6 +2409,9 @@ void sweep_thread() {
                     }
                     if (move_tune[i] || !move_ok[i]) wideband_config.set_tuner_frequency(t, move_ok[i] ? move_hz[i] : 0);
                     if (!move_ok[i]) failed_now |= 1u << t;
+                    // (with the gain: the header reads both before the flag)
+                    if (move_trial[i] && move_ok[i]) trial_mask.fetch_or(1u << t);
+                    else trial_mask.fetch_and(~(1u << t));
                 }
                 uint32_t moved = 0;
                 for (int t : move_tuner) moved |= 1u << t;
@@ -1334,10 +2501,17 @@ void sweep_thread() {
                     a = hop_acc[t];
                     hop_acc[t] = HopAcc{};
                 }
-                if (a.hz == hz && a.packets > 0) ag_learn(t, a, t_end);
-                // the status: the gain this hop was really taken with
+                if (a.hz == hz && a.packets > 0) {
+                    // (a linearity probe's visit - the trial flag - is not the
+                    // clipping rule's: a clipped up-probe is refused there; its
+                    // share must not take the hop's own gain down)
+                    if (!(trial_mask.load() & (1u << t))) ag_learn(t, a, t_end);
+                    floor_learn(t, a, quantize_down(gains_of(t), learned_gain(hz, current_gain.load())));
+                }
+                // the status: the gain this hop was really taken with (its
+                // own: a probe's visit - the trial flag - counts in gain_probes)
                 const int used = wideband_config.get_tuner_gain(t);
-                if (used >= 0 && used < current_gain.load()) {
+                if (used >= 0 && used < current_gain.load() && !(trial_mask.load() & (1u << t))) {
                     ag_cur_reduced++;
                     ag_cur_min = std::min(ag_cur_min, used);
                 }

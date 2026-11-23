@@ -2,6 +2,7 @@
 #include "../core/config.hpp"
 #include "../core/utils.hpp"
 #include "../dsp/compensation.hpp"
+#include "../sdr/sweep.hpp"
 #include <iostream>
 #include <algorithm>
 #include <chrono>
@@ -133,6 +134,7 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     // this packet's samples were taken with
     float ch_frequency_hz[NUM_DEVICES];
     int ch_tuner_gain[NUM_DEVICES];
+    const uint32_t trial = sweep ? sweep_trial_mask() : 0u;   // (sweep auto gain: probes)
     for (uint32_t ch = 0; ch < num_channels && ch < NUM_DEVICES; ch++) {
         ch_frequency_hz[ch] = is_wideband ? static_cast<float>(wideband_config.get_tuner_frequency(ch))
                                           : static_cast<float>(current_frequency.load());
@@ -208,6 +210,11 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     if (independent || sweep) phase_state_value |= 0x800u;
     if (sweep) phase_state_value |= 0x2000u;
     if (generic_rtlsdr()) phase_state_value |= 0x1000u;
+    // bit 14 (0x4000) = sweep auto gain: some channel of this packet was taken
+    // at a TRIAL gain (a linearity probe, not the hop's own gain); bits 16 + ch
+    // (0x10000 << ch) say which. The samples are valid and the per-channel
+    // gain is the one they were taken with.
+    if (sweep && trial) phase_state_value |= 0x4000u | ((trial & 0xFFu) << 16);
     uint32_t noise_source_active = bias_tee_enabled.load() ? 1 : 0;
 
     append_big_endian(packet, phase_state_value);
