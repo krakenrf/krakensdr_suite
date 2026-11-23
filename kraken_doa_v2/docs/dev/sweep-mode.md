@@ -1693,24 +1693,38 @@ used"):
       little lower or higher on some passes (about 20 sweeps to settle,
       then a few steps a sweep); back up when the signal has gone. No
       "linear", "probe" or "bracketed".
-    - The state line: "≤ 49.6 dB · 68 lower · settling" while
-      `gain_search_hops` > 0 (the passing lowest gain leaves its room to
-      the word: one line, also at 911), today's "≤ 49.6 dB · 68 lower, min
-      8.7 dB" after. Nothing new with Auto off, idle (the tuners' AGC) or
-      not connected.
+    - The state line: "≤ 49.6 dB · 68 lower · settling" while the search
+      is a real share of the sweep (the passing lowest gain leaves its
+      room to the word: one line, also at 911), today's "≤ 49.6 dB · 68
+      lower, min 8.7 dB" after. Nothing new with Auto off, idle (the
+      tuners' AGC) or not connected.
+    - When "settling" shows (`swpSettleStep`, once a state message;
+      `swpSettling`). The first run on the real KrakenSDR (911 steps)
+      showed that heimdall's `gain_search_hops` never reaches 0: 906 ->
+      ~25 by the 10th sweep -> under 10 by the 15th - 19th, then 1 - 8
+      steps are always tried again (signals that come and go). So the
+      word does not show for any count above 0. The rule:
+      - on at the limit, max(2, ceil(1 % of the sweep's steps)) (911
+        steps: 10; 13 steps: 2), off below it;
+      - once it has gone off, back only at twice the limit, so a count
+        hovering at the limit doesn't make it blink;
+      - a fresh search after Auto off / on, a grid change or a new
+        connection: on at the limit again.
     - The state line's tip (`#swp-agc-kv`, `swpAgcKvTip`; only the
       receiver's figures, only while Auto is on and working): "Now: 68
       steps lower: 41 because the converter clipped, 27 for a strong
       signal nearby (no clipping)" (`gain_reduced_hops` -
       `gain_floor_hops` / `gain_floor_hops`); "18 trial visits in the
       last sweep" (`gain_probes`; "(it tried every step one lower)" with
-      `gain_probe_sweep`); "settling: 120 steps still searched"; "37 trial
+      `gain_probe_sweep`); "6 steps still being tried" whenever
+      `gain_search_hops` > 0 ("settling: 120 steps still being tried"
+      while the word shows); "37 trial
       visits at a higher gain not drawn (since the receiver started)"
       (`trials_left_out`).
     - The strip and the readout's gain are unchanged: they follow the map,
       from which the receiver keeps the trials out.
     - Tests (`t_agc10.py`, mock, the counts injected into its `sweep`
-      message, 33 / 33, twice):
+      message, 44 / 44):
       - the counts absent: the Auto gain rows the same pixels as the page
         before round 10 (ebac1b3, served in its place), off and on, and
         the same three tips. With Auto off, 12 pixels of the switch's
@@ -1720,6 +1734,15 @@ used"):
       - with the counts: the tips' words; "settling" there and gone;
         one line also for "≤ 49.6 dB · 911 lower · settling"; the box
         the same place and size;
+      - "settling" on the whole plan (911 steps, limit 10), fed the real
+        sequence 906, 326, 80, 25, 12, 9, 6, 8, 3, 5, 1, 6: on through
+        12, off from the 9 and through the 8 / 6. Then hovering at 9, 10,
+        11, 10, 12, 19: no word. 20, 14, 9: on, on, off. Auto off and on:
+        on at 10, off at 9. The tip says "settling: 906 steps still
+        being tried", then "6 steps still being tried", then "1 step";
+      - a 13-step sweep (limit 2): 1 step tried shows no word and the
+        tip "1 step still being tried". 13, 2, 1, 2, 3, 4: on, on, off,
+        off, off, on;
       - the tip's split, singular and plural; `trials_left_out` in the
         tip only; not connected / off / idle without counts; the counts
         gone again: today's line;

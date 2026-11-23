@@ -13644,6 +13644,7 @@ function swpOnState(raw) {
   swp.stale = false;
   if (!swpKnown) { swpKnown = true; opModeOptionsSync(); }
   if (prev && prev.grid !== s.grid) swpNewGrid(prev.start_hz !== s.start_hz || prev.stop_hz !== s.stop_hz);
+  swpSettleStep(prev, s);   // (Auto gain's "settling": once a state message)
   swp.gridOdd = null;
   // the receiver sweeps but this page shows another mode: it missed the operating_mode message (which
   // is authoritative - so not right after one, nor right after this page asked for another mode)
@@ -13678,6 +13679,7 @@ function swpOnOpen() {
   swp.fullSent = -1; swp.fullAsm = null; swp.zSent = -1;   // (nor the full resolution, nor deflated parts; a set in flight is gone with the old connection)
   swp.stale = true;
   swp.agcR10 = false;   // (round 10's words: once this connection's receiver has sent its counts)
+  swp.settle = {on: false, done: false};   // (and "settling" starts afresh)
   swpAgcRender();   // (Auto gain: still disabled until this connection's first sweep message)
 }
 function swpGainSync(db) {
@@ -13760,6 +13762,22 @@ function swpAgcSummary() {
   }
   return {n, lo, ceil};
 }
+// "settling" (round 10, after the first run on the real KrakenSDR): heimdall's search never quite reaches 0 -
+// after the first search (906 -> ~25 by the 10th sweep -> under 10 by the 15th - 19th) 1 - 8 steps of 911 keep
+// being tried again (signals that come and go). So the word shows while the search is a real share of the sweep:
+// on at limit = max(2, ceil(1 % of the steps)) (911: 10; 13 steps: 2), off below it. Once it has gone off it
+// comes back only at twice the limit (a count hovering at the limit doesn't blink it) - until Auto goes off, the
+// grid changes or the connection is new, when a search starts afresh. Stepped once a state message (swpOnState).
+function swpSettleLimit(st) { return Math.max(2, Math.ceil(0.01 * (st && st.hops > 0 ? st.hops : 0))); }
+function swpSettleStep(prev, s) {
+  const z = swp.settle || (swp.settle = {on: false, done: false});
+  const n = s.gain_search_hops, lim = swpSettleLimit(s);
+  if (!s.auto_gain || (prev && prev.grid !== s.grid) || (prev && !prev.auto_gain)) { z.on = false; z.done = false; }
+  if (!s.auto_gain || !Number.isFinite(n)) { z.on = false; return; }
+  if (z.on) { if (n < lim) { z.on = false; z.done = true; } }
+  else if (n >= (z.done ? 2 * lim : lim)) z.on = true;
+}
+function swpSettling() { return !!(swp.settle && swp.settle.on && swp.st && swp.st.gain_search_hops > 0); }
 function swpAgcText() {
   const st = swp.st;
   if (!st) return '-';
@@ -13771,7 +13789,7 @@ function swpAgcText() {
   if (swpAgcIdle()) return gt + ' · Auto idle (tuners\' AGC)';
   // (round 10: while heimdall still searches some steps' gain - about 20 sweeps after the switch goes on - the
   // line says "settling"; the lowest gain then is a passing figure, so it leaves its room to the word: one line)
-  if (st.gain_search_hops > 0) return '≤ ' + gt + (s.n > 0 ? ' · ' + s.n + ' lower' : '') + ' · settling';
+  if (swpSettling()) return '≤ ' + gt + (s.n > 0 ? ' · ' + s.n + ' lower' : '') + ' · settling';
   if (!Number.isFinite(s.n)) return '≤ ' + gt;
   return '≤ ' + gt + (s.n > 0 ? ' · ' + s.n + ' lower, min ' + s.lo.toFixed(1) + ' dB' : ' · none lower');   // (n: steps; "steps" wrapped at 911)
 }
@@ -13800,7 +13818,7 @@ function swpAgcKvTip() {
   if (Number.isFinite(n)) out.push(n <= 0 ? 'no step lower' : !Number.isFinite(fl) ? pl(n, 'step') + ' lower'
     : pl(n, 'step') + ' lower: ' + Math.max(0, n - fl) + ' because the converter clipped, ' + Math.min(n, fl) + ' for a strong signal nearby (no clipping)');
   if (Number.isFinite(st.gain_probes)) out.push(pl(st.gain_probes, 'trial visit') + ' in the last sweep' + (st.gain_probe_sweep ? ' (it tried every step one lower)' : ''));
-  if (st.gain_search_hops > 0) out.push('settling: ' + pl(st.gain_search_hops, 'step') + ' still searched');
+  if (st.gain_search_hops > 0) out.push((swpSettling() ? 'settling: ' : '') + pl(st.gain_search_hops, 'step') + ' still being tried');
   if (st.trials_left_out > 0) out.push(pl(st.trials_left_out, 'trial visit') + ' at a higher gain not drawn (since the receiver started)');
   return SWP_AGC_KV_TIP10 + (out.length ? '. Now: ' + out.join('; ') : '');
 }
