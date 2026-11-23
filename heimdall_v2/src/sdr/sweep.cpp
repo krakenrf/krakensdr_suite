@@ -775,8 +775,12 @@ int floor_wanted(int t, uint32_t hz, int clip_g) {
     // lifts the clipping rule's gain with it (floor_lift_clip) - the one way
     // up for both rules. Not while the clipping rule blocks probes (a probe
     // of its own clipped).
+    // A hop that clipped again after a raise (its hold doubled: a keyed
+    // carrier) climbs at the clipping rule's own pace - one raise a hold.
     int ceil_q = (e.search && e.up_search && e.clip_lift) ? quantize_down(L, current_gain.load()) : clip_g;
-    if (auto gm = gain_map.find(hz); gm != gain_map.end() && now_ns() < gm->second.no_probe_until) ceil_q = clip_g;
+    if (auto gm = gain_map.find(hz);
+        gm != gain_map.end() && (now_ns() < gm->second.no_probe_until || gm->second.hold_visits > AG_HOLD_VISITS))
+        ceil_q = clip_g;
     if (e.search) {
         if (e.up_search && base_g >= std::min(ceil_q, e.up_lim)) { e.search = false; e.up_search = false; return base_g; }   // back at the top
         due = (sweep_idx & 1u) == 1u;   // the whole plan, in alternate sweeps

@@ -1637,11 +1637,20 @@ clipping rule stays the fast guard and is the search's ceiling.
     linear limit 29.7, carrier over floor 2.0 dB under the best), and no
     raise followed in the next ~800 sweeps.
   - A raise through the clipping rule's gain is allowed only in the up
-    search that a raise of the clipping rule started (its hold was clean).
-    When every up-probe could pass that gain, the fake's pumped carrier
-    (`t_agpump.py`, 1-5 s on / 2-40 s off) drove the hop up and down: 103
-    raises and 21 of 161 keyed-on visits clipped. Now it is 10 raises and
-    3 of 220, against round 9's 4 and 2 of 178.
+    search that a raise of the clipping rule started (its hold was clean),
+    and only while that hold has never doubled. A hop that clipped again
+    after a raise (a keyed carrier) climbs at the clipping rule's own
+    pace, one raise per hold. The clipping rule's entry is kept when a
+    raise reaches the ceiling, so the hold survives.
+  - `t_agpump.py`: the fake's pumped carrier, 1-5 s on / 2-40 s off,
+    4 min.
+
+    | Version | Raises | Keyed-on visits clipped |
+    |---|---|---|
+    | Every up-probe could pass the clipping rule's gain | 103 | 21 of 161 |
+    | Passing only in that up search, entry erased at the ceiling | 33-39 | 7-8 of 191 |
+    | Now (two runs) | 10 and 16 | 3 of 205, 4 of 168 |
+    | Round 9 | 4 | 2 of 178 |
   - A step up of less than 2.5 dB (48.0 -> 49.6, the only one: down probes
     always take 2.5 dB) can't show compression. It is not taken with a
     cause near, so the hop stays 1.4 dB low. On the fake, 413.61 MHz came
