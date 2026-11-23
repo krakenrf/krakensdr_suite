@@ -29,6 +29,23 @@ std::string set_range(double start_mhz, double stop_mhz);
 std::string set_tuners(const std::string& list);   // "0,1,4" | "all"; unknown indices dropped
 std::string set_res(const std::string& v);         // "4096" | "auto" | "0"
 std::string set_dwell(double ms);
+// SWEEP_AUTO_GAIN:<1|0> (2026-11-23): heimdall lowers a hop that clips below the
+// common gain (the ceiling); kept and replayed like the other settings
+std::string set_auto_gain(bool on);
+bool auto_gain();
+// {"command":"set_sweep_auto_gain","enable":..} for heimdall, sent after the plan
+std::string auto_gain_command();
+// heimdall's answers: a reply line with "auto_gain" = it has the command;
+// "Unknown command" within 2 s of the command = it has not (state_json says)
+void note_auto_gain_asked();
+void ingest_control_reply(const char* data, size_t n);
+// the state message has to go again (the gain map's counts changed, heimdall
+// answered): taken by the server's tick
+bool take_state_dirty();
+// the gain map (per hop the gain of the last completed sweep's packets) as
+// {"sweep_gain":{...}}; its version moves when it changed (once a completion)
+uint64_t gain_map_version();
+std::string gain_map_json();
 void set_running(bool on);   // SWEEP_RUN (not saved)
 bool running();
 
@@ -62,7 +79,9 @@ int64_t bins();
 // Every 8091 packet while the client is in sweep mode: channel-major uint8 IQ,
 // the header's per-channel frequency, frequency_change_counter (+1 per round),
 // current_group_index (the round) and retuning_in_progress
-void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const float* freq_hz,
+// gain_db: each channel's gain in the 8091 header (the gain its samples were
+// taken with; nullptr = unknown)
+void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const float* freq_hz, const float* gain_db,
                uint32_t counter, uint32_t round, bool retuning);
 
 // --- frames (uWS loop) -----------------------------------------------------------------

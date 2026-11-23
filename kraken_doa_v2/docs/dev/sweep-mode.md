@@ -167,6 +167,15 @@ the hops into the sweep spectrum, the page shows it.
   7 ms, 65536 from 21 ms). The `sweep` message says what is used.
 - `SWEEP_DWELL:<ms>` - 5 ... 1000, default 5 (one packet a hop; 20 until
   2026-11-21).
+- `SWEEP_AUTO_GAIN:<1|0>` (2026-11-23; also true / false, else refused) -
+  heimdall's automatic gain per hop: the common gain is the ceiling, a hop
+  that clips is taken lower (heimdall's rule: `heimdall_v2/docs/dev/
+  operating-modes.md`). Default 0; persisted and replayed like the others;
+  sent on to heimdall as `{"command":"set_sweep_auto_gain","enable":..}`
+  right after `set_sweep` wherever the plan goes (mode entry, the settings
+  replay, a data-port reconnect) and at once on a change in sweep mode
+  (heimdall doesn't keep it). Not refused outside sweep mode: it takes
+  effect on entry.
 - `SWEEP_RUN:<1|0>` - run / pause. Not persisted: entering the mode runs.
 - All but `SWEEP_RUN` persisted. Each is answered by the `sweep` message
   to every page, never by an echo.
@@ -202,6 +211,25 @@ the hops into the sweep spectrum, the page shows it.
   frame whose header carries the gain, so a page shows another page's gain
   change only through this field; a receiver without it leaves each page's
   gain control as that page set it (nothing else depends on it).
+- Auto gain (2026-11-23), additive fields of the `sweep` message:
+  `"auto_gain"` (the setting), `"auto_gain_known"` (true once a heimdall
+  reply line carries `"auto_gain"` - its answer to `set_sweep_auto_gain`,
+  `{"status":"success","auto_gain":b}`, or its status; false before, and
+  when "Unknown command" answers the command within 2 s with no such line:
+  an older heimdall), `"auto_gain_active"` (on, heimdall has it, sweep mode,
+  a manual ceiling - with the tuner's AGC, gain -1, heimdall's Auto does
+  nothing), `"gain_reduced_hops"` / `"gain_min_db"` (null when none) of the
+  last completed sweep's gain map. And a JSON message, the **gain map**:
+  `{"sweep_gain":{"grid":G,"sweeps":k,"f0_hz":F0,"step_hz":1912500,
+  "hops":H,"ceiling_db":49.6,"gain_db":[g0,...]}}` - per hop in plan order
+  (centre `f0_hz + h step_hz`) the gain its packets of the last completed
+  sweep were taken with (the 8091 header's per-channel gain), 0.1 dB, `null`
+  = not measured on this grid or the tuner's AGC. Sent to every page with a
+  sweep view after a completed sweep when it differs from the last one
+  sent, to a page on its first `SWEEP_VIEW`, after a grid change; in manual
+  gain every value is the ceiling. JSON, not a binary type: an older page
+  sends unknown binary types into its old FFT parser, and ignores unknown
+  JSON keys.
 - `{"operating_mode":{"mode":"sweep",...}}` as for the other modes.
 - Binary type 10, the sweep spectrum for one page's view (little-endian,
   64-byte header), sent to every socket that sent a `SWEEP_VIEW`, at most
@@ -324,7 +352,21 @@ the hops into the sweep spectrum, the page shows it.
   exactly what it got before. Lossless: one byte a value after inflating.
 - Levels: ONE reference for the whole sweep (never one per hop: a signal
   that fills a hop must keep its height), the tuners' common in-band shape
-  removed (`nfloor::shape_db`, *Noise floor*).
+  removed (`nfloor::shape_db`, *Noise floor*). With heimdall's auto gain
+  (2026-11-23) a hop's levels are referred to the ceiling: shifted by
+  real(ceiling) - real(the gain its packets were taken with), real() =
+  heimdall's measured curve (`"gain_real_db"` in its status' sweep object:
+  per value of the tuner's gain list the real dB against the list's top;
+  linear between its points, clamped at its ends), or - no curve: an older
+  heimdall, a tuner it has not measured - the list's own difference (which
+  over-corrects: the R820T's 8.7 is -34.2 dB, not -40.9) - so a signal keeps its
+  true height across hops of different gain; the floor stays flat where the
+  tuner's noise dominates, and shows higher where the lower gain puts the
+  hop on the converter's own floor (the sensitivity actually lost - not
+  hidden by forcing it flat). Manual gain: no shift. Not corrected: the
+  curve's dependence on frequency (2 - 3 dB, the FM band's top end more),
+  the spread between units (not measured); the header and the gain map stay
+  the list's values (the gain set).
 
 ## heimdall
 
@@ -453,7 +495,64 @@ refused; out-of-range numbers are clamped:
   data port.
 - `gain_db` in the `sweep` message (the contract's optional field, asked for
   by the page worker): the common gain from heimdall's 8091 header in sweep
-  mode, or a `GAIN:` command; the message goes again when it changes. The
+  mode, or a `GAIN:` command; the message goes again when it changes. With
+  Auto on a header's gain is that hop's: the ceiling then comes from `GAIN:`
+  and from the highest gain of a completed sweep's map.
+- The gain curve (2026-11-23): `sweep::ingest_control_reply` takes
+  `"gain_real_db":[[g, real], ...]` from heimdall's status lines
+  (`parse_curve`: at least 2 points, the gains rising within 0 .. 100 dB,
+  the real gains within -100 .. 10 dB, else ignored and the last good one
+  kept); the worker copies it when its version moves (`curve_real`). The
+  `sweep` message carries `"gain_curve_points"` (0 = the list's values).
+  Tested (`t_agc.py curve`; the fake's tuner applies the KrakenSDR's
+  measured curve - 44.5: -3.2, 38.6: -7.9, 29.7: -15.6, 22.9: -21.2, 16.6:
+  -27.8, 12.5: -31.9, 8.7: -34.2, 7.7: -35.7 dB): the 52 dB carrier at its
+  hop's 8.7 dB reads +6.3 dB over its true height without the curve (the
+  list's error there: 6.7) and -0.3 with it once heimdall publishes it
+  after the first sweeps; the reduced hop's floor 21.7 dB over the others
+  for 22.2 predicted from the real gain; five malformed curves ignored (one
+  point, falling gains, a string, a string value, unclosed); manual gain
+  with the curve unchanged.
+- Auto gain (2026-11-23): `sweep::set_auto_gain` / `auto_gain_command`,
+  `ControlHandler::send_sweep_plan_now` (the plan, then the switch: every
+  place that sent the plan); heimdall's answers through
+  `sweep::ingest_control_reply` (data_receiver's drain of the control
+  socket, ~1 s). The engine: the slot carries each channel's header gain,
+  the accumulator the gain of its hop's packets; `commit` shifts the hop's
+  dB values and its floor estimate by (ceiling - gain) before the floor's
+  percentile is used (the dead-tuner check stays on the raw floor); `store`
+  keeps the hop's gain; at a completion `update_gain_map` builds the map,
+  its counts, and (Auto on) the ceiling. The server sends the map when its
+  version moves and the state when its counts change (the broadcast tick).
+  - Measured with the fake heimdall (`t_agc.py`; a scene: tuner noise 6
+    counts at the ceiling 49.6, the converter's own 1.5, clipping at 0 /
+    255; a carrier 34 dB (amp 400) and one 52 dB (amp 3 500) over the others
+    in hop 7, which hop 6's tuner also sees at its band edge; the fake's rule
+    is heimdall's (f3ca686): -18 / -9 / -4.5 dB for a clipped share > 1 % /
+    > 0.1 % / > 0.01 %, +3 dB after 8 clean visits and 20 s with 6 dB of
+    headroom, the hold doubling after a raise that clips; the tests shorten
+    the hold to 4 visits, 0 s for the way back):
+    - manual: the clipped hop's carrier 8 / 27 dB short of its height (the
+      converter clipped: 59.8 dB for 68.0 / 86.9 expected), and its floor
+      estimate off (the carrier captures the converter: the noise under it
+      is suppressed - the hop's median fell below the others in most runs);
+    - Auto: no clipped hop from sweep 2 - 4; steady at 29.7 / 8.7 dB for
+      hops 6 and 7, the rest at the ceiling (heimdall on the real antenna:
+      415.1 MHz at 8.7 dB); the map = the headers' gains (= the fake's), its
+      counts in the `sweep` message; not sent again while steady;
+    - the levels: the quiet hops as in manual (within one level step); the
+      carrier at its true height referred to the ceiling (67.8 dB for 68.0
+      expected at 29.7 dB; 86.6 for 86.9 at 8.7 dB); the reduced hop's floor
+      8.0 / 28.7 dB over the others for 8.5 / 28.9 predicted from the two
+      noises - the sensitivity lost at that gain, the converter's floor
+      dominating (a 41 dB reduction leaves ~29 dB of it);
+    - the signal gone: the gain back at the ceiling after 20 / 41 sweeps
+      (+3 dB a step, 11 steps from 8.7 dB), the hop's floor with the others
+      again, the counts 0 - nothing sticks;
+    - a heimdall without the command: `auto_gain_known` false, active
+      false, the setting kept, sweeps go on at the common gain; a restart
+      replays the setting, heimdall gets it after the plan; a data-port
+      reconnect sends both again. The
   header trails a command by a few packets: within 1.5 s of a `GAIN:` a
   different header value is not taken (the test saw 25 -> 49.6 -> 25 before).
 - `SWEEP_VIEW` (websocket_server.cpp `handle_sweep_view`, per socket like
@@ -1360,6 +1459,77 @@ used"):
   instant trace keeps the frame where the frame covers the window at least
   as finely (`swpTrace`). "Points sent" reads "1525 + 46,427 at 37.5 kHz"
   for a pooled set, "1525 + full 11,885,227" for a full one.
+- **Auto gain** (round 9, 2026-11-23; the user: "Could we auto adjust the
+  gain based on the current swath, and still have the sweep update fast,
+  and have the sweep stitch together well?"). heimdall learns a gain per
+  step; the page shows the switch and what it does:
+  - The switch: the Sweep box's "Auto gain" (`#swp-agc`, under Dwell).
+    Shared state: a click sends `SWEEP_AUTO_GAIN:<1|0>` and puts the
+    switch back to what the receiver last said (`swpAgcSet`: no
+    optimistic update); the `sweep` message's `auto_gain` sets it
+    (`swpAgcRender`, from `swpRenderCtl`). Disabled, with the reason
+    added to its tip, when `auto_gain_known` is not true: `false` = this
+    heimdall has none (older), absent (`null` in `swpNorm`) = an older
+    receiver; nothing else changes then. With the gain at the tuners' own
+    AGC (-1) it is on but idle (`auto_gain_active` false when the
+    receiver says so, else derived) and the line says so.
+  - The ceiling: in sweep mode with Auto on the top bar's gain reads
+    "≤ 49.6 dB" (`updateGainDisplay`; off again on leaving the mode). The
+    Sweep box's "Gain" line (`#swp-agc-st`, `swpAgcText`): "49.6 dB, every
+    step" / "≤ 49.6 dB · 53 lower, min 16.6 dB" / "≤ 49.6 dB ·
+    none lower" / "49.6 dB · Auto idle (tuners' AGC)" - the receiver's
+    `gain_reduced_hops` / `gain_min_db`, else counted from the map. Short
+    on purpose: the first wording ("up to 49.6 dB, 62 steps reduced,
+    lowest 8.7 dB") wrapped to two lines at the sidebar's default width on
+    the KrakenSDR (the orchestrator's run); "≤ 49.6 dB · 911 steps lower,
+    min 16.6 dB" still wrapped by a character, so the line leaves "steps"
+    to its label and tip and stays on one line, also for 911 steps.
+  - The map: `{"sweep_gain":{grid, sweeps, f0_hz, step_hz, hops,
+    ceiling_db, gain_db:[...]}}` (JSON - an older page ignores it; a
+    binary type would fall into its FFT path), hop h centred at
+    `f0_hz + h x step_hz`, +- step_hz / 2; `swpGainMapParse` is the one
+    reader. A map of another grid is dropped, a new grid drops the one
+    held (the receiver sends the new grid's); kept across mode changes
+    (the receiver sends one only on a page's first view and after a grid
+    change).
+  - On the plot: a 3 px strip on the plot's bottom edge (under the
+    lowest level, over the frequency labels, which moved down 2 px) where
+    steps are reduced, step by step in whole pixels, amber - the stronger,
+    the lower (full at 33 dB under the ceiling) - with the zoom and the
+    pan; nothing with Auto off or no step reduced. The levels stay
+    referred to the ceiling (the receiver shifts a step's levels by
+    ceiling - its gain), so a signal keeps its height; on a reduced step
+    sitting on the converter's own floor the noise floor shows higher -
+    the strip right under it says why. On the spectrum's canvas, so the
+    picture has it; its caption gets "Auto gain: ≤ 49.6 dB · ...".
+  - The pointer's readout adds the step's gain: "415.106 MHz  31.4 dB
+    gain 16.6 dB".
+  - Tests (`t_agc.py`, the mock speaking the receiver worker's contract):
+    the switch (sent, not checked until the broadcast; off; kept across a
+    mode change), the line and the "≤", the strip against the map at x1,
+    x4, x20, x80 and after a pan (every visible step's centre pixel: amber
+    exactly where the map is under the ceiling), the readout over the
+    lowest step and over one at the ceiling, the picture (its caption and
+    the strip's pixel in it), a range change (the old map dropped, the new
+    grid's drawn), idle at the tuners' AGC, an older receiver and an older
+    heimdall (disabled with the reason, nothing sent, nothing drawn), the
+    phone layout, the line on one line (also for 911 steps): 36 / 36.
+  - The pair (the receiver's 66f358f + 83760a1 on heimdall's f3ca686; the receiver
+    worker's fake heimdall with heimdall's rule and a scene whose carriers
+    at 415.1, 457.2 and 499.3 MHz overload at 49.6 dB; `t_agc2.py`, 25 / 25;
+    `t_agc.py` against it 29 / 29): two tabs - one switches, the other
+    follows the broadcast, both ways; the map of the grid with one gain a
+    hop, every value from the R820T's list; on 400 - 520 MHz 16 hops
+    reduced (lowest 19.7 dB): the three carriers' hops, their neighbours
+    (a tuner takes 2.4 MHz, wider than the 1.9 MHz step, so it sees the
+    carrier too) and the scene's strong TV-band noise - no quiet hop; the
+    line = the map = the receiver's figures; both pages' strips = the map,
+    zoomed too; the readout over the lowest hop its gain; off: heimdall
+    puts every hop back at the ceiling (the map), no strip; a restart of
+    kraken_doa with Auto on: `set_sweep_auto_gain` replayed, the page
+    shows it on; an older heimdall (the fake's `fake_no_auto_gain`, then a
+    restart): `auto_gain_known` false, the control disabled with the
+    reason, nothing drawn.
 - **Deflated parts** (round 8, 2026-11-23; the user: "Implement the sweep
   full resolution compression"). The page asks `SWEEP_FULL_Z:1` when the
   browser has `DecompressionStream("deflate")` (`SWP_Z_OK`: the
