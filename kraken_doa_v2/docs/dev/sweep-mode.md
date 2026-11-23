@@ -2380,9 +2380,27 @@ stopped ITS test receiver with `pkill -x kraken_doa_test` and took this
 job's with it in the middle of five checks (rerun under a process name of
 their own).
 
-Not tested: a Raspberry Pi (the test Pi's receiver is a KrakenSDR Wideband,
-where sweep mode is refused; the fork's call and the rule's cost there are
-expected as on x86, not measured); Windows (expected about 0.15 s a sweep
+After the merge (the four branches; the fork's patch applied in the
+checkout's `librtlsdr/`) and again after main's 52cb2da (more of the
+Inmarsat plugins, heimdall's generator mode for the Wideband board's LO),
+built from the merged tree: `agc_pi.py` 23 / 23 both times (a sweep 3.939 /
+3.939 s and 3.951 / 3.941 s manual / Auto), end to end 20 / 20, the
+compression 40 / 40, the kept rows 10 / 10, round 5's 27 / 27, the Data
+rate 19 / 19, the waterfall 14 / 14, the resolutions 15 / 15 and 15 / 15;
+the display list 14 / 15 (its too-strict step: the rows in the right order,
+4 - 9 px at Full against 41 - 102 at the step).
+
+On a Raspberry Pi 5 (a clean build of the merged tree with the patched
+fork; its receiver is a KrakenSDR Wideband run in plain mode - sweeps of
+its noise, where nothing clips, so no hop is reduced): heimdall reports
+`gain_fast` and publishes the curve, the page shows "≤ 49.6 dB · none
+lower" with a map of 911 hops; a sweep takes 4.021 s with Auto off and
+4.022 s with it on; heimdall 19.7 -> 20.7 % of a core (the per-hop
+statistics in its conversion thread, 12.8 -> 13.9), the receiver 17.1 ->
+17.4 %; the compression check 40 / 40 on that build. Not measured there: a
+gain write (none was needed), the rule on real overload.
+
+Not tested: Windows (expected about 0.15 s a sweep
 with the fork's call, about 1 s without); generic RTL-SDRs on hardware
 (other tuners take the ordinary gain write and have no measured curve);
 more than a few minutes of steady state; the neighbour cap's release; the
