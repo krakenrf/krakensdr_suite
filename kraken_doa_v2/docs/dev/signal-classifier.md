@@ -2976,3 +2976,64 @@ continuity) next to the receiver, heimdall from scratch (`--serials
   coherent mode on the fake (150 s through CH2): the clean 499.8 MHz
   recording 30 -> 32 labelled, the sigclass thread 4.19 -> 3.93 % CPU; the
   clipped 416.5 MHz recording 8 -> 66 labelled, 4.21 -> 3.99 %
+
+### The orchestrator's own checks of the round (2026-11-24)
+
+Each through a path of its own (scripts in job scratch `sigid3/orch/`; the
+harness scripts are kept in `~/.cache/kraken_sigclass/sigid3_2026-11-24/`):
+
+- **The name-loss bug** (the real page in headless Chromium on a TEST
+  receiver, the fake heimdall on a bank with two recordings the worker's
+  matrix did not use - DME 1182 MHz, DVB-T 522 MHz): the shipped service in
+  wideband scan 84 tracks, 0 with a name, 0 labels drawn - the fix 89 / 89 /
+  58; independent 54 / 0 / 0 pane labels -> 49 / 49 / 40; coherent unchanged
+  (33 tracks, 23 labels)
+- **No band starves**: one tuner hopping between two bands every 2.5 s for
+  150 s (60 retunes) - looks per tuner 20 / 19 / 19 / 17 / 19, the longest
+  run of looks without a steady tuner 4 (bound 2 x R = 10); Signal ID
+  toggled every 3 s for 140 s - 20 / 20 / 20 / 20 / 20 (the state before the
+  low-findings work: 3 / 48 / 25 / 25 / 13)
+- **Ids and labels across a lead change**: 29 of 32 ids kept, the band never
+  without its labels (before: 0 of 32 ids)
+- **One label per signal**: two tuners 40 kHz apart on the same DMR
+  recording, 110 s - a signal's published id changed 86 times before, 9
+  times with INV-K (the tuner with it 79 -> 7)
+- **The rules test**: all passed with 5 + 3 + 2 seeds of the orchestrator's
+  on the three stages of the branch
+- **The hump guard offline** (the fair real-recording evaluation, the
+  library index pinned at the 2026-11-22 tables, the tool with and without
+  the guard): public decoder-confirmed 196 -> 199 of 336 (the rows that are
+  not ISM 69 -> 72 of 96), own captures 113 -> 115 of 123 rows, own sure 104
+  -> 106 right and 0 wrong; 9 of 663 rows differ - 7 from a wide "radar" /
+  "LoRa" hump to the P25 / DMR channel under it, 2 hump rows no longer
+  detected (they were wrong), 1 airband row from "unknown PSK" to no label
+- **Live on the KrakenSDR, the final code** (416.5 MHz, gain 29.7 dB, a
+  build of the integration tree; 170 s a phase):
+
+  | | before the hump guard (the fixes above merged) | final |
+  |---|---|---|
+  | coherent through CH0: signals labelled >= 30 % of the time | 55 | 44 |
+  | wideband scan: tracks a state on tuner 2 (the coherent band) | 6.3 | 33.8 |
+  | wideband scan: signals labelled over the 9.6 MHz | 31 | 110 |
+  | ... of the coherent ones with the same class | 4 of 55 | 26 of 44 |
+  | independent (416.760 / 416.815 x 3 / 859.440 MHz): coherent signals inside the panes with the same class | 31 of 47 | 29 of 38 |
+
+  and bracketed through the wideband tuner's own antenna (coherent CH2 ->
+  wideband scan -> coherent CH2): coherent 39 and 41 signals labelled,
+  wideband scan 38 in the same band (tuner 2: 29.9 tracks a state against
+  31.3 / 34.0); of the 23 signals labelled the same in BOTH coherent phases
+  (the site's traffic changes: only 23 of 39 are) wideband scan labels 20
+  the same; the 3 misses are DMR channels without a label
+- **What the bench adds to this** (worker 5's captures): at these gains
+  channels 1-3 of the dev bench's KrakenSDR clip (416.5 MHz, 29.7 dB: 2-10 %
+  of the bytes at 0 / 255, the floor 6-10 dB up; 456.8 MHz, 40.2 dB: 8-20 %)
+  while CH0 does not - wideband scan and independent mode put bands on those
+  channels, coherent mode by default listens on CH0. A lower gain removes
+  the humps at their source; the guard keeps the labels when it is not
+  lowered
+- **Not verified**: a Raspberry Pi (periods 3-4 x longer: a round of five
+  busy bands takes most of a minute there), the Wideband downconverter
+  variant, generic RTL-SDR mode on hardware, Windows / macOS builds of the
+  new code (no MinGW / zig here; portable C++20 by reading), the 200-track
+  cap together with the sent-ids memory (by code only), the service half of
+  the speed prototype S1 on top of these rules
