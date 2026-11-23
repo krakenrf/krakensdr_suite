@@ -9,12 +9,46 @@ names refer to sections of the other files in this folder (index:
 - Hardware variant with per-tuner mixers driven by ONE shared LO: an on-board
   synthesizer speaking the Othernet moRFeus USB HID protocol (`10c4:eac9`,
   custom "WB fw" firmware; driver in `src/sdr/downconverter.cpp` - hidraw /
-  Windows HID, no extra library). SET/GET frequency are implemented and the
-  LO output is always on. heimdall programs the LO drive current (`WB_LO_CURRENT` default
+  Windows HID, no extra library). heimdall selects GENERATOR MODE on every start
+  (function 130 = 1, with 's' - no Flash write): the RFFC507x has no LO
+  output pin, its LO only leaves through the mixer, and in mixer mode (the
+  firmware's power-up default on a fresh board) with nothing on the mixer
+  input only the LO leakage comes out - measured 35-60 dB lower at the
+  synthesizer output. Order at start: the LO drive current (`WB_LO_CURRENT` default
   3; runtime `set_lo_current` control command, 0-7, surfaced as the "Cur"
-  selector in the client UI next to Mix) and the frequency; the stock-moRFeus
-  generator-mode command is not sent (unimplemented on this firmware, which
-  answers unknown functions with an ident string). A current change is
+  selector in the client UI next to Mix), generator mode, then the frequency.
+  The current goes first because it is the command that finds out whether
+  the firmware takes `'s'` (`mrf_set()` falls back to `'w'` for the whole
+  run on "Invalid param."); generator mode is sent by
+  `select_generator_mode_locked()`, which never flips that fallback -
+  "Invalid param." to function 130 can just as well mean "no function 130",
+  and must not cost a Flash save per retune. The echoed value must be 1;
+  with reads allowed (`WB_MIN_SENSOR_FW`) the mode is also read back. The
+  answer is the status field `fw.lo_mode`: `generator`, `unconfirmed` (no
+  reply or another value), `unsupported` ("Invalid param."), `error`,
+  `unknown` (not sent yet); the client shows anything but `generator` as an
+  alarm on the board's firmware line and logs it in `wb_events.csv`.
+  **After a reopen** (`query_locked()` found the device gone: USB replug,
+  board power cycle) mode, drive current and the current LO are sent again
+  before the command that noticed, since the board restarts in its power-on
+  settings (`reapply_after_reopen_locked()`). With telemetry (new firmware)
+  the poller notices within a poll; on older firmware the next command does
+  (a retune). A clean exit saves generator mode with the LO and current as
+  the power-on default (below). Tested 2026-11-23 on a Pi 5 with a Wideband
+  unit (firmware older than fw20261109, which takes function 130 with `'s'`)
+  and a fake board MCU on `/dev/uhid` for the replies that unit never gives:
+  - firmware rejecting function 130: tuning stays on `'s'`, `lo_mode`
+    `unsupported` (PR #10 as first written fell back to `'w'`: 6 Flash saves
+    in a start and four retunes);
+  - no reply: `unconfirmed`, no "selected" in the log; new firmware: read
+    back as 1, saved with LO and current at a clean exit;
+  - board started in mixer mode: generator mode at start (460 MHz: noise
+    floor -40 dBFS; mixer mode gives -21 dBFS and a -4 dBFS tone at the
+    centre);
+  - replug mid-run with the board back in mixer mode: generator mode again
+    on the next retune (-40 dBFS); without the re-send it stayed in mixer
+    mode until heimdall restarted;
+  - the client's alarm (`no generator mode`) and its `wb_events.csv` line. A current change is
   common-mode across channels (one shared LO) so it triggers no phase recal.
   Malformed HID frames wedge the parser until a power cycle - reports must be
   exactly 17 bytes with a leading 0 report-id byte.
@@ -24,7 +58,8 @@ names refer to sections of the other files in this folder (index:
   Flash (a ring of 8 x 64-byte pages, ~160k saves in the board's life).
   heimdall tunes and sets the drive current with `'s'` only (one ~6 ms round
   trip; `'w'` was ~11 ms and spent the Flash on every retune). One `'w'` of
-  the LO frequency and current is sent at a clean exit (`downconverter_close()`
+  the LO frequency and current (and generator mode, when the board took it)
+  is sent at a clean exit (`downconverter_close()`
   from `release_hardware()`, `WB_SAVE_LO_ON_EXIT`) so the board powers up at
   the last LO; the firmware skips the save when nothing changed. If a
   firmware ever rejects `'s'`, the driver falls back to `'w'` and says so

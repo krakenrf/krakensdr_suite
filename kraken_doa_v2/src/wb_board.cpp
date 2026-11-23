@@ -223,6 +223,10 @@ void log_object(const std::string& dc) {
         const std::string ver = str_of(fw, "date") + "." + str_of(fw, "build");
         track("firmware", ver, str_of(fw, "telemetry_ok") == "true" ? "" : "telemetry disabled: firmware too old");
         track("tune_command", str_of(fw, "set_cmd"), str_of(fw, "set_cmd") == "w" ? "Flash save per retune!" : "");
+        // generator mode of the LO synthesizer (heimdall's fw.lo_mode; absent from older builds)
+        const std::string mode = str_of(fw, "lo_mode");
+        if (!mode.empty() && mode != "unknown")
+            track("lo_mode", mode, mode == "generator" ? "" : "LO not confirmed at full level: reception may be far weaker");
     }
     if (str_of(tel, "enabled") == "true") {
         track("board", str_of(tel, "revision"), "sensor " + str_of(tel, "sensor") + ", R6 " + str_of(tel, "r_shunt_mohm") +
