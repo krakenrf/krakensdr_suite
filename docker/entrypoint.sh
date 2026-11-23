@@ -141,6 +141,13 @@ ensure_cert() {
         return 0
     fi
     reason=$(printf '%s\n' "$out" | sed -n 's/^reason: //p' | tail -n 1)
+    # as run.sh's cert_check: names outside this receiver's CA, left out of
+    # the certificate (fine rule 18); a key or certificate kept aside (12, 15)
+    local nc moved
+    nc=$(printf '%s\n' "$out" | sed -n 's/^not-covered: *//p' | tail -n 1)
+    [[ -z $nc ]] || log "WARNING: web UI certificate: $nc not in it (outside this receiver's CA) - $APP/scripts/make-cert.sh $DATA/kraken_doa --new-ca takes them in, then every device installs the new certificate"
+    moved=$(printf '%s\n' "$out" | sed -n -e 's/^moved: //p' -e 's/^saved: //p' | tr '\n' ' ')
+    [[ -z $moved ]] || log "WARNING: web UI certificate: kept aside in $DATA/kraken_doa: ${moved% }"
     case $state in
     issued)
         log "web UI certificate re-issued ($reason) - devices that installed this receiver's certificate need nothing new" ;;
