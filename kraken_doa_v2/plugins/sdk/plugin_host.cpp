@@ -158,6 +158,8 @@ int print_info() {
               << ",\"video\":" << (i.video ? "true" : "false")
               << ",\"array_burst_s\":" << i.array_burst_s << ",\"array_period_s\":" << i.array_period_s
               << ",\"tunes\":" << (i.tunes ? "true" : "false") << ",\"squelch_hold_s\":" << i.squelch_hold_s;
+    // (only when set: every other plugin's --info as it was)
+    if (i.lock_vfo_opt && *i.lock_vfo_opt) std::cout << ",\"lock_vfo_opt\":\"" << jesc(i.lock_vfo_opt) << "\"";
     // options twice: as JSON for people, and tab-separated for kraken_doa's
     // flat reader (key, label, default, choices, help per line; a hidden option
     // adds a sixth field "1" - a kraken_doa from before reads five and ignores
