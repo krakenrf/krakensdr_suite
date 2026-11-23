@@ -23,11 +23,14 @@
 // compressed days (WB_LOG_ZIP, 0-3650, default 365; 0 = deleted after Keep),
 // then deleted - the decoder log's rule and code (utils/log_retention.hpp),
 // so a long deployment cannot fill the SD card. The pass runs on its own
-// thread, not before the settings replay (wb_board_settings_restored), then
-// on a change of the two, at the UTC day change and every hour. An older
-// build's wb_telemetry.csv[.N] / wb_events.csv[.N] (size-rotated) are still
-// read and are deleted by their modification time after Keep + Then
-// compressed days (never compressed).
+// thread: at the first use, with the STORED settings (read from the settings
+// store - no wait for heimdall), at the UTC day change and every hour, and a
+// few seconds after the last change of the two (a replay or a page sets them
+// one after the other); never while a debug playback runs. The gzip is
+// durable against a power cut. An older build's wb_telemetry.csv[.N] /
+// wb_events.csv[.N] (size-rotated) are still read and are deleted by their
+// modification time after Keep + Then compressed days (never compressed).
+// The folders are created by the first write only.
 
 // Bytes read from heimdall's control socket (any chunking; lines are split here)
 void wb_board_ingest(const char* data, size_t n);
@@ -37,15 +40,16 @@ void wb_board_ingest(const char* data, size_t n);
 // --wideband) or nothing for 30 s.
 std::string wb_board_json();
 
-// Logging settings (remembered by SettingsStore). The setters clamp and
-// return the value in force; a Keep / Then compressed change runs the pass.
+// Logging settings (remembered by SettingsStore; the stored values are read at
+// the first use). The setters clamp and return the value in force; a Keep /
+// Then compressed change runs the pass a few seconds after the last change.
 void wb_board_set_log_enabled(bool on);
 int wb_board_set_log_period(int seconds);    // 1 .. 3600
 int wb_board_set_log_keep_days(int days);    // 1 .. 365: days plain
 int wb_board_set_log_zip_days(int days);     // 0 .. 3650: then days gzipped (0 = none)
-// The settings replay ran (ControlHandler::apply_persisted_settings): the
-// retention pass waits for it - a pass with the defaults could compress or
-// delete days the stored settings keep
+// The settings replay ran (ControlHandler::apply_persisted_settings). The
+// passes no longer wait for it (the stored values are read at the first use);
+// it only makes sure the sampler and the passes are started
 void wb_board_settings_restored();
 
 // The telemetry sheet's data: the last `range_s` seconds of the log reduced to
@@ -70,10 +74,13 @@ std::string wb_board_export_csv(long range_s, std::string* download_name, bool h
 //                             (under 10 % or 2 GB / under 3 % or 500 MB free),
 //                             under-voltage or throttling reported by the Pi
 // with the same on/off, period, Keep and Then compressed settings as the
-// board's log. Call with every hardware-stats reading (it rate-limits itself;
-// the uWS loop's 2 Hz status): the free space and the throttling flags come
-// from a sampler thread that measures them every 10 s (statfs, the Pi 5's
-// vcgencmd), so this never waits on a disk or a child process. The fields go
-// into system_status.hw (",\"disk_free_mb\":...", alarms, logging).
+// board's log. The alarm levels have hysteresis (up at once, down after 30 s
+// back inside the limit minus a margin). Call with every hardware-stats
+// reading (it rate-limits itself; the uWS loop's 2 Hz status): the free space
+// and the throttling flags come from a sampler thread that measures them every
+// 10 s (statfs, the Pi 5's vcgencmd), so this never waits for statfs or a
+// child process; it still appends the row (every WB_LOG_PERIOD) and an event
+// line (on a change) to today's files on the loop - small writes. The fields
+// go into system_status.hw (",\"disk_free_mb\":...", alarms, logging).
 void host_log_tick(double temp_c, double cpu_pct, double ram_used_mb, double ram_total_mb);
 std::string host_log_json_fields();

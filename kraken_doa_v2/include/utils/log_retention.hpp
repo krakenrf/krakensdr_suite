@@ -11,8 +11,11 @@
 // on its own; gzip_file, the pass and its scheduler are in
 // src/utils/log_retention.cpp.
 
+#include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -53,9 +56,17 @@ inline Action retention_action(long age, Kind kind, int keep, int zip) {
     return Action::KEEP;
 }
 
-// path -> path.gz (zlib level 6, written as path.gz.part, then moved over any
-// earlier path.gz with fs_replace, then the original is removed); false keeps
-// the original (and leaves no part)
+// path -> path.gz (zlib level 6), durable against a power cut: written as
+// path.gz.part, fsync'ed, moved to path.gz (fs_replace), the folder fsync'ed,
+// only then the original removed. An existing path.gz is never lost:
+//   - its rows end with exactly this file's (a crash between the move and the
+//     unlink): the original is only removed;
+//   - other rows (the clock was set back after a pass and the day written
+//     again): this file is added as one more gzip member after them
+//     (concatenated members are one valid gzip file; zcat, zgrep and gzgets
+//     read them all);
+//   - damaged (it can't be read to its end): nothing is changed, false.
+// false keeps the original (and leaves no part).
 bool gzip_file(const std::string& path);
 
 // One of a log's files, as its lister found it
@@ -78,23 +89,45 @@ struct PassStats {
 PassStats run_pass(const std::vector<File>& files, long today, int keep, int zip, const char* label,
                    const std::function<void(int)>& compressing = {});
 
-// Runs a log's pass on a detached thread, one at a time; a request during a
-// pass runs one more after it. Nothing runs before allow(): the settings
-// replay must have set the stored Keep / Then compressed days first (a pass
-// with the defaults could compress or delete days the stored settings keep).
-// The pass function reads the settings itself, when it starts. A Scheduler
-// must outlive its passes: make it a never-destroyed static.
+// Runs a log's passes on its own thread, one at a time; a request during a
+// pass runs one more after it. The pass function reads the settings itself,
+// when it starts.
+//   - Nothing runs before allow(): the stored Keep / Then compressed days must
+//     be known first (a pass with the defaults could compress or delete days
+//     the stored settings keep). Requests before it run once it comes.
+//   - request(): a pass now - the startup, the day change, a timer.
+//   - request_after_change(): a settings change - the pass runs `debounce`
+//     after the LAST such request. A replay (RESET_SETTINGS, the end of a
+//     playback) or a page sets Keep and Then compressed one after the other;
+//     a pass between the two would run on half the change (Keep 30 / 0 ->
+//     7 / 365 passing through 7 / 0 deletes days 8 - 30). A request() while a
+//     changed setting waits joins that pass.
+//   - hold (optional): while it is true no pass runs (a debug playback: the
+//     settings in force are the sandbox's, the files the user's); what is
+//     pending waits, and when the hold ends it runs `debounce` later - after
+//     the stored settings are replayed.
+// A Scheduler must outlive its thread: make it a never-destroyed static.
 class Scheduler {
 public:
-    explicit Scheduler(std::function<void()> pass) : pass_(std::move(pass)) {}
-    void allow();     // the settings are known: passes may run - and one runs now
-    void request();   // a pass now, or after the running one (ignored before allow())
+    static constexpr std::chrono::milliseconds DEBOUNCE{5000};
+    explicit Scheduler(std::function<void()> pass, std::function<bool()> hold = {},
+                       std::chrono::milliseconds debounce = DEBOUNCE);
+    Scheduler(const Scheduler&) = delete;
+    Scheduler& operator=(const Scheduler&) = delete;
+    void allow();                  // the settings are known: passes may run - and one runs now
+    void request();                // a pass now, or after the running one
+    void request_after_change();   // a pass `debounce` after the last change
     bool allowed();
 
 private:
+    void run();
     std::mutex mu_;
-    bool allowed_ = false, running_ = false, again_ = false;
+    std::condition_variable cv_;
+    bool allowed_ = false, now_ = false, held_ = false;
+    std::optional<std::chrono::steady_clock::time_point> due_;
     std::function<void()> pass_;
+    std::function<bool()> hold_;
+    std::chrono::milliseconds debounce_;
 };
 
 }  // namespace logret
