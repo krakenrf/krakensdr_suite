@@ -1538,24 +1538,47 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   used to freeze the list with the old band's tracks in it. Which tuner:
   coherent mode - the CH selector's antenna (`active_channel`) at
   `coherent_tuner_hz()`; wideband scan, independent mode and generic
-  RTL-SDRs (one channel too) - the tuners in turn (round robin, tuners at 0
-  Hz skipped) at `exact_tuner_hz(ch)`. The centre is the exact request when
+  RTL-SDRs (one channel too) - the BANDS in turn at `exact_tuner_hz(ch)`
+  (*Tuners in turn* below: tuners within 1 kHz of each other are one band,
+  a band's first look comes first, a retuned tuner settles on its own).
+  The centre is the exact request when
   the snapshot's header frequency (float32, ~64 Hz exact near 1 GHz) is
   within 2 kHz of it, else the header's. Labels are absolute Hz, so they land
   on the stitched wideband-scan spectrum and on each pane by themselves
 - **CPU budget**: `CPU_SHARE` 4 % - the cycle period (capture + analysis +
   rest) is the analysis time (exponential mean, weight 0.3) / 0.04, clamped
-  to `MIN_PERIOD_S` 1 .. `MAX_PERIOD_S` 10 s. The state carries
-  `analyze_ms`, `period_ms` and `duty`. No thread priority change: the code
+  to `MIN_PERIOD_S` 1 .. `MAX_PERIOD_S` 10 s (`rules::Budget`; the rest
+  is taken before the next look, once its band is known). With tuners in
+  turn a band's FIRST look may skip the rest (a debt, at most
+  `FIRST_LOOK_DEBT_LOOKS` 8 looks' analysis, paid back by the next periods,
+  each at most doubled) - see *Tuners in turn*. Coherent mode never takes a
+  look early; its periods are the old rule's except while a debt brought
+  from a multi-tuner mode is paid back (each at most doubled). The debt and
+  the budget's clock stay over a disable and a mode change: toggling Signal
+  ID buys no analysis beyond the share + the cap (INV-G). The state carries
+  `analyze_ms`, `period_ms` (the planned period, a debt included), `duty`
+  and `looks` (snapshots per tuner since the switch-on / mode change; the
+  page ignores it). No thread priority change: the code
   base has no portable per-thread helper (`kproc::lower_own_priority` lowers
   the whole process on Windows), so the budget is the only limit
-- **Trackers**: one per tuner (`TunerTracks`; coherent mode uses [0] only),
+- **Trackers**: one per band (`TunerTracks`; coherent mode uses [0] only;
+  tuners in turn: in the slot of the tuner standing for the band - the
+  lowest-numbered one on it -, and it MOVES with the band
+  (`rules::regroup`): when a lower tuner joins or the lead leaves, the band
+  keeps its tracks and labels; a tuner leaving for a band nobody was on keeps
+  its own tracker, the old band's tracks out of sight, unless another tuner
+  continues that band; the trackers of tuners beyond a lowered channel count
+  are cleared),
   `TRACK_EXPIRE_S` 45 s (a pager or a repeater between overs keeps its
   label). A track's age counts against the looks at ITS band: each tracker
-  has its own clock, which moves only with a snapshot of its tuner - by the
-  wall time since its previous one, at most `EXPIRE_STEP_S` (half the
-  expiry + 10 ms). So a track goes once it was missed for 45 s AND in at
-  least 2 snapshots of its tuner. Before (one tracker on the wall clock), 8
+  has its own clock, which moves only with a snapshot of its band - by the
+  wall time since its previous one, at most `EXPIRE_STEP_S` (the expiry /
+  `MIN_MISSED_LOOKS` 6, + 10 ms). So a track goes once it was missed for
+  45 s AND in at least 6 snapshots of its band (2 until 2026-11-24: an
+  intermittent signal's track went before the signal came back - see
+  *Tuners in turn*) - and in every mode at the latest `TRACK_CEILING_S`
+  180 s of wall time after it was last seen, looked at or not (see the
+  table there). Before (one tracker on the wall clock), 8
   tuners in turn at a 10 s period (analysis >= 225 ms; 5 tuners: >= 360 ms
   - inside the Pi 5 estimate) revisited a tuner every 80 s and 3 of 8
   tuners had no labels at any time. In coherent mode (one tuner; every
@@ -1576,12 +1599,18 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   retune - or a switch between playback entries - the old band's tracks
   leave the list at once. Tracks outside are kept in the tracker (they may
   drift in after a retune, and come back if the receiver returns before
-  they expire), just not sent. Two overlapping tuners (wideband scan) seeing one
-  signal: sent once (the fresher / more often seen track). Classes marked
+  they expire), just not sent. Two overlapping tuners (wideband scan's
+  edges, independent tuners on neighbouring frequencies) seeing one
+  signal: sent once (`rules::drop_overlap_duplicates`: best view first -
+  fresh, then one with a class, then the higher SNR - each tuner has its
+  own antenna, live one control channel read 15 dB on CH0 and 3.6 dB on
+  CH1 -, then the newest, the most hits -, each taken unless a view
+  of the same signal - centres within half the wider width + 500 Hz,
+  widths within 3x, another tuner - was taken). Classes marked
   `"hidden": true` (`none`: a false detection) are never sent, nor offered
   as an alternative
-- **Ages**: `age` is 0 while the track's tuner's latest snapshot had it and
-  that snapshot is not overdue (a round of the tuners + 5 s) - with tuners
+- **Ages**: `age` is 0 while the track's band's latest snapshot had it and
+  that snapshot is not overdue (a round of the bands + 5 s) - with tuners
   in turn a round can take 80 s, and the page's fade needs no knowledge of
   it; otherwise the wall time since it was seen (no data, retunes: the
   labels fade). The CPU budget is spent per snapshot (the 1 s floor applies
@@ -1589,10 +1618,100 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
 - **Parked** (no captures, the reason in `parked`): "calibrating (noise
   source on)" - `doa_is_calibrating()` or a noise packet seen by the tap
   within `NOISE_HOLD_MS` 1.5 s (tracks cleared: the noise source would be a
-  band-filling "signal"); "settling after a retune" (500 ms, tracks kept);
+  band-filling "signal"); "settling after a retune" (500 ms, tracks kept;
+  with tuners in turn only when EVERY band is settling - a retuned tuner
+  settles on its own while the others are looked at);
   "no data from the receiver". Calibration state (phase states, KerberosSDR
   stale) doesn't matter otherwise: one antenna's samples need no array
   calibration
+- **Tuners in turn** (wideband scan, independent mode, generic RTL-SDRs;
+  2026-11-24, the user's report "in wideband and independent mode the
+  classifier ... is not classifying on some signals ... those work in
+  coherent mode"). The rules are pure functions in
+  `include/sigclass_rules.hpp`, tested by `tools/sigclass_rules_test.cpp`
+  (randomized invariants, mutants it must catch):
+  - **Bands** (`band_reps`): tuners within `SAME_BAND_HZ` 1 kHz of each
+    other are one band - one look serves them all, one tracker (the
+    lowest-numbered tuner's). The user's independent layout had three
+    tuners on 416.815 MHz: three of five looks went to one band. The
+    price: the band is seen through the representative's antenna only (CH1
+    for CH1-CH3 there) - live the channels differ by several dB on one
+    signal, so a weak one another of those antennas would catch can be
+    missed
+  - **Which band** (`update_bands`, `pick_band`, `note_look`): two passes.
+    (1) A band nobody has looked at since its start (switch-on, mode change,
+    its tuner's retune) is taken AHEAD of its turn - first come first served
+    - while its tuner holds the token: a tuner that took a look ahead of the
+    turn gets the next one only after every other ready band has had a look
+    since (the token is the tuner's own, never copied with a band: a tuner
+    hopping onto another's band and off again took that band's token along
+    and overtook twice in the model). (2) Else the ready band whose turn is
+    the oldest (`turn_seq`: its latest look; a new band's turn counts from
+    its start, behind every band looked before it); ties in cursor order;
+    with nothing retuned this is the old round robin exactly. Until
+    2026-11-24 a first look always won and moved the cursor: one tuner
+    retuned every 2.8 s (the saved-frequency scanner's dwell, a user
+    stepping a pane, the assistant) took every other look - 120 s, 5
+    tuners: looks [1, 42, 41, 8, 1] (the reviewer's harness), a band's
+    longest gap 230 s at Pi periods. Invariants (tested, R = the tuners
+    standing for a ready band in the stretch): INV-A a band ready and not
+    retuned through 2R consecutive looks gets one; INV-B a single retune,
+    nothing else changing, gets its first look before any other band's
+    next; INV-C a band waiting for its first look is overtaken at most once
+    by each band that began waiting later; INV-D without retunes the
+    cursor's round robin. Several scanned tuners share the first looks: 4
+    tuners retuned every 2 s at 300 ms analysis, 600 s (the reviewer's
+    model on these rules): looks 6 / 5 / 5 / 4 and 60 for the steady one
+    (the scanned ones are settling or retuned mid-capture most of the time;
+    before: 20 / 0 / 0 / 0). A retune of tuner N (its `exact_tuner_hz`
+    changed - seen at every pick, not only by a capture of that tuner)
+    holds tuner N for `SETTLE_MS` 500 ms; the others go on. Before, a
+    retune of a tuner that was not being captured went unnoticed and its
+    next snapshot could start on samples of the old band (heimdall's
+    pipeline carries them under the new header for some 10-100 ms)
+  - **First looks** (`Budget`): a band's first look may start without the
+    budget's rest, as long as the analysis not waited for (the debt) stays
+    within 8 looks' worth; the following periods pay it back (each at most
+    doubled; a period at the 10 s clamp cannot pay - as before, an
+    analysis over 0.4 s exceeds the share). So the first labels of every
+    band come within a round of CAPTURES (about 0.6 s + the analysis per
+    band), not a round of periods
+  - **A band's lead changes** (INV-E): the band's tracker and its band
+    fields (looks, turn) move to the tuner now standing for it
+    (`rules::regroup`); before, a lower tuner joining cleared the old lead's
+    tracker and a lead leaving took the band's tracks with it - 8 labels
+    gone for 4-5.5 s, all back only after 29-43 s (the reviewer's harness)
+  - **Expiry**: a track is kept until missed for 45 s AND in 6 looks of its
+    band (`MIN_MISSED_LOOKS`), at the latest `TRACK_CEILING_S` 180 s of wall
+    time after it was last seen, in every mode, looked at or not (INV-F;
+    `Tracker::erase` in the core, the ceiling also applied at publish). How
+    long a signal that went off the air stays labelled, about max(45 s, 6
+    rounds), the ceiling above that (a round = bands x period):
+
+    | bands \ period | 1 s | 2.5 s | 4 s | 7.5 s | 10 s |
+    |---|---|---|---|---|---|
+    | 1 (coherent) | 45 s | 45 s | 45 s | 45 s | 45 s |
+    | 2 | 45 s | 45 s | 48 s | 90 s | 120 s |
+    | 3 | 45 s | 45 s | 72 s | 135 s | 180 s |
+    | 5 | 45 s | 75 s | 120 s | 180 s | 180 s |
+    | 8 | 48 s | 120 s | 180 s | 180 s | 180 s |
+
+    A band that gets no looks at all (no data, starved, a tuner moved away)
+    loses them after 180 s (the calibration pause clears them at once)
+  - **A mode switch** (every mode): the worker's rest and capture wait end
+    when `operating_mode_index()` changes (checked every 100 ms) and the
+    cleared list goes out at once (`publish(true)`) - before, the old
+    mode's tracks stayed on the new mode's spectrum for up to a period.
+    Known edge: a mode change DURING an analysis publishes that look under
+    the old mode for a few ms, until `publish(true)` replaces it
+  - **Fixed**: the overlap rule's compaction (`pub[w++] =
+    std::move(pub[i])`) also ran for w == i - a self-move-assignment, which
+    leaves a `std::string` empty: class, name, family, plugin, demod and the
+    alternatives of every track in front of the first dropped duplicate.
+    The rule ran only with more than one tuner, and the page draws only
+    tracks with a class and a name - so in wideband scan (no duplicates)
+    NO label showed at all, and in independent mode with tuners on one band
+    only the tracks above the first duplicate. The cause of the report
 - **Model**: `sigclass.model` in the working directory (cwd-relative like
   every runtime file), `$KRAKEN_SIGCLASS_MODEL` overrides it. Loaded by the
   worker on the first enable (the settings replay enables it at startup);
@@ -1635,7 +1754,7 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   echoed as sync_cmd and in `is_replayed_command` (the page ignores the
   echo - it draws from the state). Allowed during a playback (sandboxed)
 - `{"sigclass":{enabled, available, reason, parked, analyze_ms, period_ms,
-  duty, snapshots, min_confidence, tracks:[{id, hz, bw, lo, hi, tuner, snr,
+  duty, snapshots, looks, min_confidence, tracks:[{id, hz, bw, lo, hi, tuner, snr,
   duty, burst, wide, cls, name, family, p, alt:[[cls, p, name], ...], plugin,
   demod, vbw, min_p, age, hits, unknown}]}}` on the control topic (`WebSocketServer::broadcast_json_message`):
   on enable / disable at once; after each analysis and on a park change when
@@ -2199,3 +2318,215 @@ TEST builds of the final tree (two instances: 4718x and 4728x), the shipped
   2.3 % of a core (analysis 22.5 ms, period 1.0 s - the floor), DAB 2.85 %
   (28 ms), LoRa 3.5 % (36 ms); the whole process with DAB 38.9 % on, 36.8
   % off
+
+### Multi-tuner modes (2026-11-24: wideband scan / independent mode missed labels)
+
+The user's report: labels shown in coherent mode missing in wideband scan
+and independent mode. Job scratch 9321609f `sigid3/w2/`: a fake heimdall
+(`fake_hd3.py`) that streams REAL recordings in the three modes as
+heimdall_v2 does (`tcp_data_server.cpp`: per-channel float32 frequency
+and gain, 0x400 / 0x800, the noise flag only for coherent recalibrations,
+wideband scan's plan `setup_wideband_frequencies` - the middle tuner on
+the centre, 2.4 MHz x EDGE_CLIP apart; a retune changes the header at once
+and the samples a few packets later); a tuner whose frequency matches a
+recording's centre streams it, the other tuners a busy filler recording
+(load). The same IQ through (a) coherent at the recording's centre, (b)
+wideband scan with the recording on the middle tuner, (c) independent with
+five recordings on five tuners, and (d) the user's own layout (416.760 /
+416.815 x3 / 859.440 MHz, the 416.5 MHz capture shifted). 180 s a run, the
+TEST build, the shipped model, two runs in parallel on a loaded machine
+(analysis 50-200 ms: Pi-like periods of 1.4-5 s). A signal "labelled" =
+shown on the page (a class, p >= 0.5) for >= half of coherent mode's last
+60 s; scored in the other modes over the same window (`ab_table.py`).
+
+- **Cause 1 (the report)**: every multi-tuner label lost its class and name
+  - the overlap rule's self-move (*Tuners in turn*). 9751af3: 0 of 7437
+  tracks published in a wideband-scan run named; labelled with the
+  coherent class: wideband scan 0 / 78, independent 0 / 78, the user's
+  layout 8 / 10 (the tracks above the first duplicate). The page (headless,
+  ui_modes.py): no label on the stitched spectrum
+- **Cause 2**: too few looks for intermittent signals - with the names
+  ignored (p alone), 9751af3 labelled 65 / 78 (wideband scan) and 64 / 78
+  (independent); the misses and the low shares (11-59 % of the time
+  against 82-100 %) were P25 / DMR voice channels and a telemetry burst:
+  a band in turn is looked at every round (5 bands x the period), and the
+  2-missed-looks expiry dropped the track before the signal came back,
+  its new track starting at one hit (unpublished unless sure)
+- **Cause 3**: a mode switch left the old mode's labels on the new mode's
+  spectrum (coherent tracks on the stitched spectrum 0.6 s after the
+  switch) - the worker saw the change only after its rest / capture
+- **Measured, not a cause**: the centre per snapshot (the tracks of one
+  signal agree across the modes: median 18 Hz, 90 % within 220 Hz, max
+  847 Hz over 69 narrow signals (the smoothed centres) - float32 header plus
+  the exact request); captures timing out with 5 channels (looks per tuner
+  rise evenly: 13-27 per tuner in 180 s); the edge clip and the overlap
+  rule with wideband scan's spacing (2.4 MHz x EDGE_CLIP: the clipped bands
+  meet, no gap, no overlap); a retune's stale samples (tuner 0 hopping
+  499.8 / 433.92 MHz every 15 s with 136 ms of old samples under the new
+  header: 0 ghost tracks published before and after - the per-tuner settle
+  is by code)
+- **After** (fb5cf77 + 6df39a8), labelled with the coherent class -
+  wideband scan / independent, before -> after: P25 499.8 MHz 0/24 ->
+  23/25 / 23/25; DMR 456.8 MHz 0/12 -> 13/13 / 10/13; DMR + MPT1327 416.5
+  MHz 0/14 -> 16/17 / 16/17; 418.0 MHz 0/10 -> 9/9 / 9/9; P25 142.3 MHz
+  0/12 -> 11/13 / 12/13; VOR 114.5 MHz 0/3 -> 2/2 / 2/2; the user's layout
+  8/10 -> 11/13. Totals 74 / 79 and 72 / 79 (coherent 92 / 92). Every miss
+  is an intermittent signal (coherent: shown 62-85 % of the time or first
+  after 19-96 s), plus two class disagreements on unsure labels (P25 / NXDN
+  0.66; a 320 kHz "Unknown pulses" hump scored against the DMR channel
+  inside it). With the run as a whole (shown at any time, the same class)
+  75 / 79 and 73 / 79. The 433.92 / 921.8 / 98 MHz captures gave no label
+  >= 0.5 in coherent mode (nothing to compare)
+- **Time to the first label**: continuous signals coherent mode labels
+  within 10 s: median 2 s in wideband scan and independent mode (the
+  first looks at capture speed), the 90th percentile within a round or two
+  of the bands (unsure labels need a second look): max 25 s (wideband
+  scan), 67 s (independent, five busy bands at 3-4 s periods). The bound
+  held: a band's sure labels within one round of captures (~0.6 s + the
+  analysis per band), the rest within 3 rounds of periods - on a Pi 5
+  (periods 3-8 s) up to ~2 min for an unsure label with 5 busy bands; a
+  signal on air for D seconds is seen with probability about (D + 0.5) /
+  the round (coherent: / the period)
+- **CPU** (the `sigclass` thread's CPU time / the run): coherent 3.80-4.08
+  % (before 3.83-4.16 %), wideband scan 3.76-4.03 % (3.89-4.03), independent
+  3.99-4.02 % (3.98-4.03) - unchanged; the first-look debt is paid back
+  within the run. The user's layout: looks [25, 25, 0, 0, 24] (tuners 2
+  and 3 share tuner 1's band) against [14, 13, 13, 13, 13]
+- Rejected: a larger share in multi-tuner modes (8 % would halve the round
+  - not "a few percent"); looks only where unlabelled energy is (every
+  band of a busy trunked site has some; no gain in these scenes);
+  detector-only looks for settled bands (the detector is 32 of 100 ms on
+  the busy 416.5 MHz snapshot, so ~2x the looks - but a core change on a
+  branch measuring the core's speed; left as the next step)
+- Page end to end (ui_modes.py, headless Chromium, real mouse, the
+  receiver as above): coherent -> wideband scan -> independent (the user's
+  layout) -> coherent: labels at their signal's x (<= 1 px) on the main /
+  stitched spectrum and in every pane (pane 2, a tuner sharing tuner 1's
+  band, too), each pane only its span, a label press tunes the VFO to the
+  signal (on that pane's tuner), no stale label in 10 Hz samples after each
+  switch, the band's coherent labels back in wideband scan (11 / 11, the
+  first after 1.9 s), labels back in coherent after the recalibration
+  (4.8 s), no page errors: 18 / 18 (9751af3: 15 / 18 - no label in
+  wideband scan). On 1e8871d twice 17 / 18: the band's labels back in
+  wideband scan 9 / 13 (the miss: intermittent / unsure ones), then with
+  only the steady ones required (5+ looks, in the latest) 7 / 8 - the miss
+  the 320-440 kHz hump at 416.4 MHz, whose class is unstable in coherent
+  mode too (Unknown pulses / LoRa / DMR)
+- Live, the dev machine's KrakenSDR (heimdall from scratch, --serials
+  1000..1004, receive only, bias tees 0 at start and end), centre 416.5
+  MHz gain 29.7 dB, 3 min coherent -> 3 min wideband scan (tuners 412.66 ..
+  420.34, the 416.5 band on CH2) -> 3 min independent (the user's layout,
+  bands CH0 416.760 / CH1 416.815 (CH2, CH3 sharing it) / CH4 859.44;
+  looks [24, 22, 0, 0, 23]): coherent (CH0) 12 signals labelled; wideband
+  scan 4 / 12, independent 5 / 8 (4 outside its tuners). The losses are the
+  ANTENNAS: each tuner listens on its own channel, and the levels differ -
+  DMR 415.638 MHz 59.9 dB SNR on CH0, 56.4 on CH2; MPT1327 416.587 MHz
+  56.5 / 49.6 (CH2) / 56.2 (CH0 again in independent mode); MPT1327
+  416.7495 MHz 15 dB on CH0, not detected on CH2, 3.6 dB (p 0.40) on CH1 -
+  where the overlap rule then hid CH0's sure view (fixed: the stronger view
+  wins, 1e8871d). The weak signals (6-17 dB on CH0) drop below the
+  detector on another channel; that is the receiver, not the service.
+  Live run 2 (1e8871d; 456.8 MHz, gain 40.2 dB; independent: CH0 and CH1
+  on 456.8 - one band, looks [17, 1, 18, 18, 17] -, CH2 416.5, CH3 499.8,
+  CH4 98.0 MHz with their gains): coherent 9 labelled; independent 8 / 8
+  (CH0 again); wideband scan (the band on CH2) 7 / 9 - DMR 457.682 MHz
+  11.9 dB on CH0, not detected on CH2, and an intermittent channel.
+  Live run 3 (499.8 MHz, gain 33.8 dB; independent: CH0 and CH4 on 499.8 -
+  one band, looks [16, 17, 16, 16, 1] -, CH1 456.8, CH2 416.5, CH3 415.4
+  MHz): coherent 14 labelled; independent 12 / 14 (the misses intermittent:
+  67 / 75 % in coherent); wideband scan 9 / 14 - P25 499.364 / 500.726 MHz
+  and an AM carrier read 1-11 dB on CH0 and nothing on CH2. Bias tee mask 0
+  at the start and the end of every run
+- Regressions (1e8871d, TEST build, the shipped model): the strict
+  debug-playback table twice 28 / 28 (24 + 25 sure; unsure POCSAG 75 / 68
+  %, DVB-T 70 / 75 %, wildlife 81 / 65 % - never sure by its min_p -,
+  radar 77 % once); p2_ui_sig 18 / 18, p2_ui_fixes 12 / 12 (with the
+  plugins built; 11 / 12 without - the adsb plugin check), p2_ui_touch 3
+  / 3 taps, p2_ui_pane 7 / 7, p2_switch, p2_sandbox (the settings file
+  byte-identical), p2_sc, p2_pb (the DMR entry's three units on one 6.9
+  kHz track within 0.5 kHz); p2_multi 9 / 13 - the same 4 misses as the
+  shipped state (the scene's noise-modulated NBFM classed `none`, the
+  retune check's absolute frequencies), no control command to heimdall in
+  35 s, no CPU while off
+- Rules (`tools/sigclass_rules_test.cpp`, 20000 random inputs, two seeds):
+  every invariant held; the mutants caught - 9751af3's overlap code (a kept
+  track changed in 19025 / 20000), the pairwise scan, no tuner test, the
+  worse view kept, band representatives chained, the old round robin, no
+  settling, no first looks first, a stuck cursor, first looks without a
+  debt, no payback, the debt cap ignored
+
+### Review round of the multi-tuner rules (2026-11-24)
+
+An independent review ran the unmodified service in a harness (simulated
+receiver / uWS threads) and a time-stepped model of the worker loop on the
+real rules; its findings became rules with invariants (*Tuners in turn*):
+no band starves whatever is retuned (INV-A..D), a band keeps its labels when
+its lead tuner changes (INV-E), a 180 s wall-clock ceiling (INV-F), toggling
+Signal ID buys no CPU (INV-G), the trackers of tuners beyond a lowered
+channel count are cleared. Job scratch 9321609f `sigid3/w2/` (r1/: the
+reviewer's harness, a ceiling scenario added).
+
+- Rules test (`tools/sigclass_rules_test.cpp`, default 200000 rounds, ~25 s;
+  seeds 1-16 plain, three more under ASan + UBSan): every invariant held.
+  The worker-loop model: 2-8 tuners, 1-4 of them retuned periodically
+  (periods 0.3-20 s, now and then onto another tuner's band), random one-off
+  retunes, analysis 20-400 ms, captures aborted by a retune, Signal ID
+  toggled; INV-A with R = the tuners standing for a ready band in the
+  stretch (each has its own token - with the instantaneous ready count three
+  scanned tuners taking turns ahead of a steady band broke a 4-look window
+  that had 4 contenders). Mutants caught: fb5cf77's pick (INV-A, ~1200 of
+  2000 runs), no token (INV-A), a new band first in the turn order (INV-A),
+  the token copied with the band (INV-C, a few per 5000 runs), no settling,
+  the debt reset on enable (INV-G), no first looks ahead (INV-B), fb5cf77's
+  trackers staying with their tuner (INV-E), plus the earlier ones. Found by
+  the model on the way: a tuner's band fields copied on regrouping laundered
+  its token (fixed: the token is the tuner's own); keeping a retuned band's
+  old turn let new bands queue ahead of steady ones (fixed: a new band's
+  turn counts from its start)
+- The reviewer's harness on the new service: `scan` (5 tuners, tuner 1
+  retuned every 2.8 s, 120 s): looks [19, 18, 19, 18, 18] (fb5cf77: [1, 42,
+  41, 8, 1]; control without retunes [15 x 5] at 100 s), worker CPU 3.9 %.
+  `lead` both ways (tuner 1 leaves the shared 105 MHz band / tuner 0 joins
+  it at 30 s): the band's 7 tracks in every 0.5 s state from 25 to 80 s, 0
+  snapshots without one (fb5cf77: 0 for 4-5.5 s, all back after 29-43 s;
+  a first version of the move still showed 0 for 1-1.5 s: a publish made
+  the list from the old slots before the worker's next regroup - now every
+  publish regroups first). `ceiling` (new: 5 tuners, no data from 30 s): 34
+  tracks until 200 s, 0 from 215 s - 180 s after each was last seen
+  (fb5cf77: never - a band without looks had a stopped clock). Clang TSan
+  `race 40` (setarch -R): 0 reports; ASan + UBSan `lead 0` and `scan`: 0
+  reports. `chan` (new: 5 tuners 25 s, 3 channels 20 s, 5 again): the
+  tracks of tuners 3-4 just after the return 0 for the 3 s sampled - new
+  looks needed (1e8871d, the same scenario: 17-18 back after 1 s, aged).
+  The reviewer's model on these rules (600 s, 300 ms analysis):
+  tuner 1 retuned every 2.8 s - looks 17 / 13 / 17 / 17 / 16, the longest
+  gap 41 s (61 s for the retuned one); 4 tuners retuned every 2 s - 60 / 6 /
+  5 / 5 / 4 (fb5cf77: 20 / 0 / 0 / 0 for the scanned ones), share 4.00 %
+- End to end (TEST build + fake heimdall on real IQ, independent mode,
+  tuners 499.8 / 456.8 / 416.5 / 418.0 / 142.3 MHz, 180 s): the
+  saved-frequency scan on tuner 4 (VFOs on tuners 0-3, 7 saved frequencies
+  on 7 bands, 2 s dwell - it hopped tuner 4 throughout): looks [21, 21, 21,
+  21, 20], the longest run of looks without a steady tuner 4 (INV-A's bound
+  2R = 10), the longest wall gap 10.6-14.7 s; tuner 4 stepped by TUNER_FREQ
+  every 2.8 s (64 retunes): [20, 20, 20, 20, 19], longest run 4. The steady
+  tuners kept labelling: 13-32 labels each, 3-18 of them first shown after
+  the first 30 s
+- The A/B matrix again (9346f16, the same IQ and scoring): coherent 92 /
+  92, wideband scan 73 / 80, independent 65 / 80 - rerun twice 72 / 80 and
+  68 / 80 (the static independent schedule is the round robin as before,
+  INV-D; the run-to-run spread is the intermittent signals - every miss had
+  coherent shares under 100 % or first labels after 20 s, except two P25
+  voice channels that coherent mode happened to hold all of the last 60 s);
+  the user's layout 11 / 12. Continuous signals first labelled: median 1.8 s
+  (wideband) / 3.1 s (independent), max 35 / 60 s. CPU (the thread):
+  coherent 3.69-4.01 %, wideband scan 3.95-4.07 %, independent 3.96-4.02 %
+- ui_modes.py 17 / 18 (as on 1e8871d: the miss is the 416.4 MHz hump whose
+  class flips between LoRa / Unknown pulses / DMR in coherent mode too)
+- Strict debug playback: 28 / 28 once, 27 / 28 once (wildlife-five without
+  a track at the end of its 40 s; the entry alone three more times: 3 / 3,
+  76-80 %, unsure as always - its min_p 1.01); the p2 suites on the merged
+  page: p2_pb, p2_switch, p2_sandbox (byte-identical), p2_sc, p2_ui_pane 7 /
+  7, p2_multi as before (the scene's known misses); p2_ui_sig stops at its
+  "On spectrum" check (the switch is gone with the Bands page), p2_ui_fixes
+  11 / 12 and p2_ui_touch 2 / 3 taps - page checks written before the
+  Bands page; the service path they use (a coherent playback) is unchanged

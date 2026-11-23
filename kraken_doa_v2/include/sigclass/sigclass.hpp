@@ -230,6 +230,8 @@ public:
     const std::vector<Track>& expire(double t_s);
     const std::vector<Track>& tracks() const { return tracks_; }
     void clear();
+    // drop one track (by id; false: no such track) - the service's wall-clock ceiling
+    bool erase(int id);
 
 private:
     struct Evidence {
