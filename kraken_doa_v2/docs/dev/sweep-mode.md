@@ -513,9 +513,31 @@ refused; out-of-range numbers are clamped:
   for 22.2 predicted from the real gain; five malformed curves ignored (one
   point, falling gains, a string, a string value, unclosed); manual gain
   with the curve unchanged.
+- Seam steps with auto gain (2026-11-23, after the orchestrator's question
+  whether reduced hops fool them): `evaluate` takes a tuner pair's step only
+  from hops at the ceiling (their gain = the common one) on each side of the
+  seam, and falls back to all of a side's hops only when none of them is.
+  Why: the step is the difference of the LOWEST floors within 6 hops each
+  side; a reduced hop's floor is usually a pedestal (the converter's floor:
+  higher, never the lowest), but where it is the tuner's noise and the gain
+  curve states too little of the reduction, it is the lowest and moves the
+  whole next block. `t_agc.py seam` (16 hops on 5 tuners whose dongles
+  differ by 0 / 3 / -2 / 1 / 4 dB; a carrier 52 dB over the noise in hop 5,
+  the LAST of tuner 1's block, then in hop 6, the FIRST of tuner 2's): Auto
+  with the list, with the curve, with a curve 13 % short, with a converter
+  far quieter: every block within one level step of manual without the
+  signal - 83760a1 the same (the pedestals are never the lowest); a 20 dB
+  reduction (29.7 dB, a carrier 34 dB over) with a curve stating half of
+  it: 83760a1 moved tuner 1's block 4.2 dB and tuners 0 - 1 6.1 dB, this
+  rule keeps every block within 0 dB. Manual itself is fooled by a clipped
+  hop at a seam: the carrier captures the converter, the hop's floor drops
+  and is the lowest (blocks 1.9 - 4.7 dB off in the test) - Auto removes
+  that cause.
 - Auto gain (2026-11-23): `sweep::set_auto_gain` / `auto_gain_command`,
   `ControlHandler::send_sweep_plan_now` (the plan, then the switch: every
-  place that sent the plan); heimdall's answers through
+  place that sent the plan; `ask_sweep_auto_gain` reads what heimdall sent
+  before the ask first - a status line of the heimdall before would answer
+  it); heimdall's answers through
   `sweep::ingest_control_reply` (data_receiver's drain of the control
   socket, ~1 s). The engine: the slot carries each channel's header gain,
   the accumulator the gain of its hop's packets; `commit` shifts the hop's

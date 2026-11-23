@@ -406,12 +406,23 @@ void evaluate() {
         const int b1 = static_cast<int>(static_cast<int64_t>(k + 2) * p.H / p.Kp);
         float step = 0.0f;
         if (b0 - a0 >= SEAM_MIN_BLOCK && b1 - b0 >= SEAM_MIN_BLOCK) {
+            // (auto gain: only the hops taken at the ceiling are evidence of the two
+            // tuners' step - a reduced hop's floor rests on the converter's floor
+            // (a pedestal) or on a gain curve that is right to 2 - 3 dB only; a side
+            // with no hop at the ceiling falls back to all of its hops)
+            const float ceil_db = g_gain.load(std::memory_order_relaxed);
+            auto at_ceiling = [&](int h) {
+                const float g = static_cast<size_t>(h) < S.hop_gain.size() ? S.hop_gain[static_cast<size_t>(h)] : NAN;
+                return !is_finite_value(g) || g < 0.0f || !is_finite_value(ceil_db) || ceil_db < 0.0f || std::fabs(g - ceil_db) < 0.05f;
+            };
             float fa[SEAM_HOPS], fb[SEAM_HOPS];
             int na = 0, nb = 0;
-            for (int h = b0 - 1; h >= a0 && h >= b0 - SEAM_HOPS; h--)
-                if (S.tuner[static_cast<size_t>(h)] == ta) fa[na++] = S.floor[static_cast<size_t>(h)];
-            for (int h = b0; h < b1 && h < b0 + SEAM_HOPS; h++)
-                if (S.tuner[static_cast<size_t>(h)] == tb) fb[nb++] = S.floor[static_cast<size_t>(h)];
+            for (int pass = 0; pass < 2 && na == 0; pass++)
+                for (int h = b0 - 1; h >= a0 && h >= b0 - SEAM_HOPS; h--)
+                    if (S.tuner[static_cast<size_t>(h)] == ta && (pass == 1 || at_ceiling(h))) fa[na++] = S.floor[static_cast<size_t>(h)];
+            for (int pass = 0; pass < 2 && nb == 0; pass++)
+                for (int h = b0; h < b1 && h < b0 + SEAM_HOPS; h++)
+                    if (S.tuner[static_cast<size_t>(h)] == tb && (pass == 1 || at_ceiling(h))) fb[nb++] = S.floor[static_cast<size_t>(h)];
             if (na >= 1 && nb >= 1) {
                 const float d = *std::min_element(fb, fb + nb) - *std::min_element(fa, fa + na);
                 if (std::fabs(d) <= SEAM_MAX_DB) step = d;
