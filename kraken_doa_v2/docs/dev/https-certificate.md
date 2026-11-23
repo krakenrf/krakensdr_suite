@@ -178,6 +178,24 @@ refused for a certificate of the user's own.
 - Wide scope puts only addresses inside the CA's private ranges in the
   server certificate: a public address would fail the whole certificate
   (checked: 8.8.8.8 under a wide CA is refused).
+- Aligned with `make-cert.sh` rule by rule (host name and DNS-name
+  validity, `KRAKEN_CERT_NAMES` split on commas / spaces without addresses,
+  `cert_options` parsing, `ip -4 addr show scope global`'s addresses, a CA
+  without name constraints = a scope mismatch, wide = permits 10.0.0.0/8,
+  an unreadable `server.crt` = failure, an unreadable `server.key` = a new
+  one, UTC dates, key modes tightened on `kept`): 42 / 42 checks, among them
+  cross-runs where one makes or changes the files (fresh narrow / wide, the
+  avahi name, other search domains, an unusable host name, a rename, scope
+  changes, `--force`; the script with OpenSSL 3.0.2, 1.1.1w and 3.6) and
+  the other then says `kept` with every file byte-identical.
+- Host allow-list: `certstatus::init` adds the served certificate's DNS
+  names (`host_add_allowed_names`, `utils/host_check.hpp`, identical in
+  heimdall, which doesn't call it). TEST build with
+  `KRAKEN_CERT_HOST=krakensdr-2`, `KRAKEN_CERT_NAMES=sdr.example.org` and
+  the search domain `lan`: the download and the page's WebSocket work under
+  krakensdr-2.local, krakensdr-2.lan, sdr.example.org (and the bare name);
+  a name in no certificate, a foreign Host and a foreign Origin get 403 /
+  a refused socket (16 / 16).
 - TEST kraken_doa (ports 284xx, files made by its in-process generator):
   `/krakensdr-ca.crt` and `/krakensdr.crt` byte-identical to
   `krakensdr-ca.crt`, `application/x-x509-ca-cert`, Host / Origin check 403;
