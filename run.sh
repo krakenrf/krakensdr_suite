@@ -627,6 +627,13 @@ elif ! build_check="$("$AUTOBUILD" check 2>&1)"; then
     say "A build is needed first:"
     echo "$build_check" | grep -v ': up to date$' | sed 's/^/     /'
 fi
+# Web UI certificate: renewed here when it is about to expire or the host was
+# renamed (otherwise left alone - see scripts/make-cert.sh). Never fatal.
+if [[ -x "$SCRIPT_DIR/scripts/make-cert.sh" ]]; then
+    case "$("$SCRIPT_DIR/scripts/make-cert.sh" "$KRAKEN_DIR" 2>/dev/null | tail -n 1)" in
+    created|renewed) warn "Web UI certificate was renewed - browsers that trusted the old one need the new one (dashboard: Telemetry sheet -> HTTPS certificate)." ;;
+    esac
+fi
 
 # Clear out a previous stack before starting a new one: a live session is
 # stopped cleanly, then anything orphaned outside it (see stop_stale).
