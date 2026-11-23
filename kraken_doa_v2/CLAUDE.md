@@ -61,7 +61,8 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
 - `tools/`: offline benches and validators (`decim_bench.cpp`,
   `digi_test.cpp`, `replay_validate.mjs`, `pathloss_validate.mjs`,
   `range_validate.mjs`, `rdf_sim.cpp`, `fast_log_test.cpp`,
-  `theme_palette.py`: the page's colour palette and its check).
+  `theme_palette.py`: the page's colour palette and its check,
+  `band_table_check.py`: the page's worldwide band table).
 
 ## Threads and the command path
 
@@ -219,7 +220,7 @@ the job's scratch directory (not committed). The established setup:
 | Spectrum views (FFT message type 7) | `spectrum-views.md` |
 | Noise floor (the spectrum's 0 dB) | `noise-floor.md` |
 | Bearing spectrum: the spectrum coloured by the DoA of each point (FFT message type 9, `BIN_DOA:`) | `bearing-spectrum.md` |
-| Signal ID: every signal labelled with its type (the classifier core, training, the runtime service, `SIGCLASS:`, the labels and the box) | `signal-classifier.md` |
+| Signal ID: every signal labelled with its type (the classifier core, training, the runtime service, `SIGCLASS:`, the labels and the box); the Bands bar (worldwide ITU bands over the spectrum, the table and its sources) | `signal-classifier.md` |
 | VFO audio (mixer, latency control) | `vfo-audio.md` |
 | FFT (pffft); liquid-dsp | `fft-pffft.md`, `liquid-dsp.md` |
 | Digital decoders: engine, AFC, protocol receivers, decoder tabs and tables | `digital-decoders.md` |
