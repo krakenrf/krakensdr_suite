@@ -147,8 +147,10 @@ independent tuners). Every consumer masks the low byte.
   discrete scanner), independent (each tuner its own frequency, gain and
   pane; no calibration), sweep (the chosen tuners step through a frequency
   range: one wide spectrum and waterfall, not live, nothing demodulated -
-  heimdall hops (`set_sweep`), the client stitches;
-  `kraken_doa_v2/docs/dev/sweep-mode.md` holds the wire contract). The
+  heimdall hops (`set_sweep`), the client stitches; with Auto gain
+  (`set_sweep_auto_gain`) heimdall keeps a gain per hop under the common
+  gain and the client shifts each hop's levels by heimdall's measured gain
+  curve; `kraken_doa_v2/docs/dev/sweep-mode.md` holds the wire contract). The
   client follows heimdall's mode from the header flags and parks DoA /
   beamforming outside coherent mode.
 - **`--wideband` / `-w`** (KrakenSDR Wideband downconverter, both apps):
@@ -337,7 +339,10 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   fork that defines `RTLSDR_NO_STREAM_SLIP` (2026-11-21; a USB control read
   of 3, 7, 11 ... bytes made the RTL2832U drop 2 samples, so every retune
   shifted that dongle's stream) lets heimdall return to coherent phase-only
-  and sweep with the faster tune call; older forks still work
+  and sweep with the faster tune call; one that defines
+  `RTLSDR_HAS_GAIN_FAST` (patch 0003 in `docs/dev/librtlsdr-patches/`)
+  writes the sweep's per-hop gain inside the tune (else each write costs
+  ~9 ms: +6 % a sweep). Older forks still work
   (`docs/dev/librtlsdr-fork.md`).
 - **uWebSockets** is pinned (`UWS_COMMIT` fe7da4cb): newer master defines
   `uWS::time_ms()` without `inline` in `HttpCache.h`, and the link fails. The

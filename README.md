@@ -235,7 +235,17 @@ itself; elsewhere the page counts what it receives after decompression and
 shows it as an upper bound ("≤ 291 KB/s": the link carries less, often about
 half).
 The pointer shows the frequency and level under it. Gain is one setting for all
-tuners. Nothing is demodulated in this mode; the VFOs and their settings are
+tuners - or, with **Auto gain** in the Sweep box, the most any step of the
+sweep gets. A step whose signals overload the receiver (a strong transmitter
+nearby: at full gain such a step fills with false signals) is then taken
+lower over the next few sweeps, and comes back up slowly once the transmitter
+has gone; every other step keeps the gain you set, so a broadcast band stays
+at the maximum while a busy band next to a strong transmitter is turned down.
+The sweep stays as fast. An amber strip under the spectrum marks the steps
+that were taken lower, the pointer shows the gain of the step under it, and
+the Sweep box says how many there are and the lowest. A signal keeps its
+height across steps of different gain; a step that had to go far down shows a
+higher noise floor - the sensitivity it gave up. Nothing is demodulated in this mode; the VFOs and their settings are
 kept and come back with the other modes. Going back to Coherent after a sweep
 recalibrates the array's phases, which takes a second or two (about half a
 minute with an older librtlsdr, whose retunes shifted the tuners' samples

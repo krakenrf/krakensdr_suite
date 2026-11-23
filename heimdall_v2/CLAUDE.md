@@ -168,7 +168,12 @@ Hardware and replies
   `stalled_tuners`). No output per hop; its flushes are quiet and never
   count as coherence losses. Hops use the fast tune call; the tuners are
   finished (`rtlsdr_finish_tune`) whenever the sweep stops moving them,
-  before any calibration.
+  before any calibration. The guarantee covers the header's per-channel
+  GAIN too: with Auto gain (`set_sweep_auto_gain`; `docs/dev/operating-modes.md`)
+  a hop's gain is written with its retune, stored only once the tuner took
+  it, and every tuner is back at the common gain before the mode is left;
+  the lag FIR's tail is reset at a flush (it carried 3 samples of the hop
+  before into the next packet).
 - The fork's retunes no longer shift a stream (`RTLSDR_NO_STREAM_SLIP`: a
   USB control IN of 3, 7, 11 ... bytes made the RTL2832U drop 2 samples -
   `../docs/dev/librtlsdr-fork.md`). With an older library heimdall still

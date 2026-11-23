@@ -2293,6 +2293,101 @@ Windows or macOS receiver (zlib is in their link lines; not built); a Pi 4;
 the thread sanitizer (unusable on the dev machine's kernel - the receiver
 section).
 
+**Round 9, 2026-11-23: a gain per hop (Auto gain).** The user: "for
+broadcast FM we get best results with the gain maxed. But for 414 MHz
+business bands, we get extreme overload. Could we auto adjust the gain
+based on the current swath, and still have the sweep update fast, and have
+the sweep stitch together well?" The parts: heimdall's rule and its
+measurements (`heimdall_v2/docs/dev/operating-modes.md`, "Auto gain in sweep
+mode"), the receiver and page sections here (`SWEEP_AUTO_GAIN`, the
+`sweep_gain` map, the levels), the tuner library's call
+(`docs/dev/librtlsdr-fork.md`, "A fast tuner gain write").
+
+*What was measured first* (the dev machine's KrakenSDR on the user's
+antenna, 24 - 1765 MHz, 911 hops, five tuners, dwell 5 ms; heimdall's 8091
+stream read raw, per hop the share of samples at 0 / 255 and the level
+against full scale - job scratch `e2e/gain_probe.py`):
+
+| gain | hops with clipped samples | the worst |
+|---|---|---|
+| 49.6 dB (the list's top) | 53 of 911 | 457.2 MHz 26 % of its samples, 415.1 MHz 25 %, 499.3 MHz 15 %, 759 - 801 MHz 6 - 15 % |
+| 38.6 | 36 | 415.1 MHz 23 % |
+| 28.0 | 25 | 415.1 MHz 18 % |
+| 16.6 | 0 | (415.1 MHz at -10.5 dBFS; every quiet hop on the converter's own floor, -48 dBFS) |
+| the tuner's own AGC | 132 | 457.2 MHz 26 % |
+
+The FM band at 49.6: -38.7 dBFS, nothing clipped. So one gain for all hops
+is wrong everywhere, and the chip's AGC is worse than the maximum.
+
+*What turned up on the way* - each by a measurement, none foreseen:
+- The engine has ONE noise reference a sweep, not one a hop: a hop taken
+  33 dB lower would have been a 33 dB hole. So each hop's levels are
+  shifted by what its gain lacks to the ceiling.
+- The tuner's gain list is not true: 49.6 -> 8.7 dB is -34.2 dB, not -40.9
+  (and 2 - 3 dB more or less by frequency). heimdall publishes the measured
+  curve and the shift uses it.
+- A gain write cost 9.3 ms - more than the retune - and made a sweep 5 - 6 %
+  longer; the fork's write inside the tune: one more USB transfer.
+- The first rule (18 dB down at 1 % clipped) left hops 8 - 20 dB lower than
+  needed for minutes: now a probe straight back up after a step down.
+- A hop beside a saturated one is spoiled by products without clipping
+  (they fall 29 - 44 dB for 11 dB of gain): held 12 dB under the ceiling.
+- heimdall's lag filter carried 3 samples across a flush into the next
+  hop's first packet (1 run in 10 on the fake; 7 packets in 10 mode entries
+  on the KrakenSDR): fixed, in every mode.
+- The seam steps between two tuners' blocks: from hops at the ceiling only.
+
+*End to end on the dev machine's KrakenSDR* (heimdall 1544126 with the
+fork's patch 0003, receiver ae8e4fa, page 115be78; the reference is again
+heimdall's own stream read raw, beside the page: job scratch `pi/agc_lib.py`,
+`agc_h.py` 22 / 22, `agc_pi.py` 23 / 23):
+
+| | |
+|---|---|
+| manual, 49.6 dB | 53 - 56 hops clip in every sweep (455 - 457 MHz 23 - 52 % of their samples, 415.1 MHz 22 - 45 %, 499.3 MHz 15 - 26 %) |
+| Auto, through the page's switch: hops clipping, sweep after sweep | 41, 22, 8, 6, 2, 1, 1, 1, 1, 0, 0, 3, 1 (over 1 % of the samples: 24, 3, then none) |
+| the same through 8092 | 27, 16, 10, 1, 3, 1, 1, 0, 1, 3, 2, 2, 0, 0 |
+| 25 sweeps on | 0 - 3 hops clip in a sweep, 0 - 3 change gain; 65 - 70 hops reduced, the lowest at 8.7 dB; the FM band's 11 hops at 49.6 |
+| a sweep, manual / Auto | 3.948 / 3.939 s and 4.094 / 4.117 s (-0.2 % and +0.6 %), 48 - 50 gain writes; with the ordinary gain call +5.8 - 6.1 % |
+| the page's map against the stream | equal on 911 of 911 hops; "≤ 49.6 dB · 67 lower, min 8.7 dB"; the readout "415.100 MHz  41.9 dB  gain 8.7 dB" |
+| 415.1 MHz (its hop at 8.7 dB) | the strongest carrier 80 dB (clipped) -> 98.4 dB; the hop's median 42.4 dB against 35.8 beside it (with the list in place of the curve: 49.4, the carrier 105.9) |
+| 457.2 MHz (22.9 dB) | 75.8 -> 85.6 dB |
+| the FM band and 1400 MHz (no hop reduced) | their signals as high over the hop's median as in the manual sweeps before and after (25.0 / 26.8 / 26.8 dB; 5.6 / 6.1 / 6.1) |
+| Auto off; on again; the ceiling to 38.6 and back | every hop at 49.6 within a sweep, 53 - 55 clip again; none clip from the first sweep; no hop over the ceiling, what was learned kept |
+| sweep -> coherent with Auto on, and back | CONVERGED 0.6 s after the switch, the five tuners at 49.6; back: Auto on (the receiver replays it), the learned gains in use |
+
+At 414 - 418 MHz the manual picture is a forest of false peaks every 125 -
+250 kHz at 40 - 60 dB; with Auto they are gone, the real carriers stand on a
+flat floor, and the amber strip marks the two hops. Once the air itself
+changed in the middle of a run - 104 hops clipping from one sweep to the
+next (manual showed 102 - 103 for some minutes after, then 53 again): Auto
+had it at 2 or fewer in six sweeps, with 177 hops reduced.
+
+The earlier checks on that hardware, Auto off: the compression 40 / 40, the
+Data rate 19 / 19, the display list 15 / 15, the kept rows 10 / 10, round 5's
+27 / 27, the waterfall 14 / 14, the resolutions 15 / 15 and 15 / 15, end to
+end 20 / 20; the steadiness check 22 / 26 (the small rates' wobble, as in
+round 8). With Auto on: 40 / 40, 19 / 19, 15 / 15, 10 / 10, 14 / 14, 15 / 15,
+15 / 15, 20 / 20.
+
+Noted on the way, not from this round: the FM band's displayed level sits
+at one of two offsets 5 dB apart from one minute to the next, in manual and
+Auto alike (block 0 hangs on the 371 | 373 MHz seam step, and a signal or
+a clipped hop within six hops of a seam moves it - the receiver section);
+the floor steps 11 dB at the 719 | 721 MHz seam (over the 6 dB the seam
+logic corrects). And a lesson for the tests: another job on the machine
+stopped ITS test receiver with `pkill -x kraken_doa_test` and took this
+job's with it in the middle of five checks (rerun under a process name of
+their own).
+
+Not tested: a Raspberry Pi (the test Pi's receiver is a KrakenSDR Wideband,
+where sweep mode is refused; the fork's call and the rule's cost there are
+expected as on x86, not measured); Windows (expected about 0.15 s a sweep
+with the fork's call, about 1 s without); generic RTL-SDRs on hardware
+(other tuners take the ordinary gain write and have no measured curve);
+more than a few minutes of steady state; the neighbour cap's release; the
+curve on a second unit; Firefox / Safari.
+
 Open after round 6, as after round 5: Firefox, Safari and iOS have not run the picture's
 download or the full sets (headless Chromium only); a slow link was tried
 through a 2 MB/s proxy by the page worker, not over a real one; a 1 GB Pi 4

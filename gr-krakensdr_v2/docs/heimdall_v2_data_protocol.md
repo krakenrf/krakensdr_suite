@@ -64,7 +64,11 @@ that does tests `0x2000` first).
 **Sweep mode** (`0x2000`, added 2026-11-20; the contract:
 `kraken_doa_v2/docs/dev/sweep-mode.md`): the chosen tuners hop through the
 plan set with `set_sweep` (control protocol §2.18). Per-channel frequency =
-where that tuner is, per-channel gain = the common gain. The scanner fields
+where that tuner is, per-channel gain = the gain that tuner's samples in
+this packet were taken with - the common gain, or with Auto gain
+(`set_sweep_auto_gain`, 2026-11-23) the gain of that hop, a value of the
+tuner's gain list at or below the common gain. It is read with the
+frequency, before the flag, so the guarantee below covers it too. The scanner fields
 belong to the sweep: `frequency_change_counter` + 1 per round,
 `current_group_index` = the round r the tuners are on, and
 `retuning_in_progress` = 1 from before the tuners move until the settle and

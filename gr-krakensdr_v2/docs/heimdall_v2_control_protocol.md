@@ -273,6 +273,29 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
   `set_independent_tuner`, `start_scanner` and `set_num_elements`;
   `set_gain` sets every tuner (and marks the stream invalid until the next
   settle, like a hop).
+- Auto gain (added 2026-11-23; `heimdall_v2/docs/dev/operating-modes.md`,
+  "Auto gain in sweep mode"): `{"command":"set_sweep_auto_gain",
+  "enable":true|false}` -> `{"status":"success","auto_gain":true|false}`
+  (an `enable` that is missing or not a bool: an error naming it; an older
+  heimdall: its unknown-command error, which names nothing - the
+  `auto_gain` field in the reply is how a client tells the two apart).
+  Accepted in every mode, acts in sweep mode, not saved (the client sends
+  it again after its plan). With it on, the common gain (`set_gain`) is the
+  ceiling and heimdall keeps a gain per hop frequency below it: a hop whose
+  samples clip the converter is taken lower for its next visits and comes
+  back up slowly; the gain is written with the hop's retune. With the
+  tuner's own AGC as the common gain (-1) it does nothing. Leaving sweep
+  mode, or switching it off, puts every tuner back at the common gain
+  first. The gain a packet was taken with is in its 8091 header (the data
+  protocol's sweep paragraph). The status object adds `auto_gain`,
+  `auto_gain_active` (on, sweep mode, a manual ceiling), `gain_ceiling_db`,
+  `gain_reduced_hops`, `gain_min_db`, `clipped_hops` (hops with more than
+  0.01 % of their I / Q values at 0 or 255), `gain_changes`, `gain_writes`
+  (each of the last completed sweep), `gain_write_failures`, `gain_fast`
+  (the tuner library has the fast gain write) and `gain_real_db`
+  (`[[g, real], ...]`: the measured gain of each value of the tuner's gain
+  list in dB against the list's top - the list itself is up to 6.7 dB off;
+  only for tuners it was measured for, R820T / R828D).
 - Status (2 Hz broadcast, `get_status`, the web STATE): always
   `"sweep":{"first_center_hz","step_hz","steps","tuners":[..],"dwell_ms",
   "settle_ms","run","round","rounds","sweeps","round_ms"}` - `tuners` the
