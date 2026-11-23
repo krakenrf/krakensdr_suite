@@ -183,11 +183,22 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   against 4.32 on random voice bits; with the frames arranged any other
   way (bits reversed, inverted, shifted by 1 or 8 bits, the table
   shuffled) no frame comes out clean. So position, bit order, polarity
-  and deinterleave are right. NOT confirmed: that speech is heard - the
-  clean frames of both captures were silence (one call: 567 of 675 frames
-  the same frame) or weak, unvoiced sound, and the carrier faded; nothing
-  was listened to. The L-band downlink carries only the ground-to-aircraft
-  half of a call
+  and deinterleave are right. Those two captures carried no talk (one
+  call: 567 of 675 clean frames the same frame, which decodes to digital
+  silence). SPEECH CONFIRMED BY MEASUREMENT on a third call (2026-11-23,
+  found by the All channels mode itself, 174 s, 347 of 347 C channel
+  frames clean, 0.13 Golay corrections per voice frame): from the codec's
+  own parameters (the plugin author's analysis) voiced runs of median 120
+  ms / longest 640 ms, 91 % of voiced frames in runs of 100 ms or more
+  (random voice bits: 24 %), pitch steps of 2.3 % between voiced
+  neighbours within 0.58 octave (random: 75 % steps over 1.94 octaves),
+  talk spurts of 0.4-2.7 s between pauses of up to 26 s; and independently
+  from the decoded waveform alone (autocorrelation pitch per 20 ms): voiced
+  runs median 100 ms / longest 620 ms, 82 % in runs of 100 ms or more
+  (random: 24 %), pitch steps of median 0.027 octave within 0.56 octave
+  (random: 1.46 octaves), 28 % of the time active. Nobody listened to any
+  call; decoded audio existed only in memory for these figures. The L-band
+  downlink carries only the ground-to-aircraft half of a call
 - Codec availability: ⚙ Setup Settings → Decoders (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens. The page

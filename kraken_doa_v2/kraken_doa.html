@@ -31736,7 +31736,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
   }
 
   // ---- KrakenSDR Wideband board telemetry (system_status.wb_telemetry) ----
-  // heimdall's "downconverter" object: fw {date, build, telemetry_ok, set_cmd},
+  // heimdall's "downconverter" object: fw {date, build, telemetry_ok, set_cmd, no_reply, lo_mode},
   // telemetry {revision, vin_v, iin_a, iin_saturated, temp_c, rh_pct,
   // lo_hz_read, stale, alarms {iin, vin, temp, rh, sensor}, ...}, age_s.
   const wbTrend = [];            // {t, i, temp}, one point per 10 s, one hour
@@ -31953,7 +31953,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     sec.style.display = '';
     const fw = wb.fw || {}, t = wb.telemetry || {}, al = t.alarms || {};
     const fwText = fw.date > 0 ? 'fw' + fw.date + (fw.build ? '.' + fw.build : '') : (fw.date === 0 ? 'older than fw20261109' : 'no reply');
+    // fw.lo_mode (heimdall with the generator-mode check; absent before): anything but
+    // "generator" means the LO may only reach the mixers as leakage
+    const loModeText = {unsupported: 'no generator mode', unconfirmed: 'generator mode unconfirmed', error: 'LO mode not set'}[fw.lo_mode];
     $id('wb-fw').innerHTML = fwText + (fw.set_cmd === 'w' ? ' <span class="alarm">tunes with Flash save</span>' : '') +
+                             (loModeText ? ' <span class="alarm" title="The LO synthesizer may not be in generator mode: only its leakage reaches the mixers, reception far weaker. heimdall\'s log says why; a firmware update or a restart may help.">' + loModeText + '</span>' : '') +
                              (fw.no_reply ? ' <span class="stale">(' + fw.no_reply + ' unanswered)</span>' : '');
     const lo = wb.lo_hz ? (wb.lo_hz / 1e6).toFixed(3) + ' MHz' : '–';
     const loRead = t.lo_hz_read ? (t.lo_hz_read === wb.lo_hz ? ' ' + icon('ok', 't') : ' <span class="warn">board: ' + (t.lo_hz_read / 1e6).toFixed(3) + ' MHz</span>') : '';

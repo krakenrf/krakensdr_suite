@@ -59,8 +59,15 @@ constexpr uint8_t CMD_SAVE = 'w';
 constexpr uint8_t FUNC_FREQUENCY = 129;    // value = LO in Hz
 constexpr uint8_t FUNC_CURRENT   = 131;    // LO output drive current, 0..7
 constexpr uint8_t FUNC_FW        = 136;    // r: low word date code, high word build
-// Stock-moRFeus function 130 (mixer/generator mode) is deliberately NOT used:
-// the WB board's firmware doesn't implement it (its output is always on).
+// Function 130: 0 = mixer, 1 = generator. The RFFC507x has no LO output pin;
+// its LO only leaves through the mixer, and with nothing on the mixer input
+// (the WB board) a balanced mixer passes just its LO leakage, 35-60 dB below
+// 0 dBm. Generator mode offsets the mixer so the LO appears at full level.
+// The firmware powers up in whatever was last saved to Flash (0 on a fresh
+// board), so it is set on every start, with 's' (no Flash write), and again
+// whenever the device had to be reopened (select_generator_mode_locked).
+constexpr uint8_t FUNC_MODE      = 130;
+constexpr uint64_t MODE_GENERATOR = 1;
 constexpr uint8_t ADDR_INA219 = 80;        // data[0] = register (1 shunt, 2 bus)
 constexpr uint8_t ADDR_SHT4X  = 81;        // data[0] = SHT4x command (0xFD)
 constexpr uint8_t ADDR_SI70XX = 82;        // data[0] = Si70xx command (0xF5)
@@ -77,6 +84,26 @@ std::atomic<bool> set_falls_back_to_save{false};
 std::atomic<int64_t> fw_date{-1};
 std::atomic<uint32_t> fw_build{0};
 std::atomic<uint32_t> no_reply_count{0};
+
+// What the board said to generator mode (status fw.lo_mode)
+enum class LoMode : int { UNKNOWN, GENERATOR, UNCONFIRMED, UNSUPPORTED, IO_ERROR };
+std::atomic<int> lo_mode{static_cast<int>(LoMode::UNKNOWN)};
+const char* lo_mode_name(LoMode m) {
+    switch (m) {
+    case LoMode::GENERATOR:   return "generator";     // echoed (and read back where reads are safe)
+    case LoMode::UNCONFIRMED: return "unconfirmed";   // no reply, or another value came back
+    case LoMode::UNSUPPORTED: return "unsupported";   // "Invalid param.": the firmware lacks function 130
+    case LoMode::IO_ERROR:    return "error";
+    default:                  return "unknown";       // not sent yet
+    }
+}
+
+// Set once downconverter_init() has programmed the board: from then on a
+// reopened device (USB replug, board power cycle) gets mode, drive current
+// and LO again before anything else (reapply_after_reopen_locked).
+std::atomic<bool> board_configured{false};
+bool reapplying = false;   // guarded by mrf_mutex: no reapply from inside a reapply
+void reapply_after_reopen_locked();
 
 using Clock = std::chrono::steady_clock;
 
@@ -347,7 +374,9 @@ void hid_close_locked() {}
 // One command and its reply. Opens the device if needed and reopens it once
 // after an I/O error (survives a USB replug); stale replies (and the version
 // string some commands get) are skipped until the one matching cmd/addr, or
-// "Invalid param.", arrives. Caller holds mrf_mutex.
+// "Invalid param.", arrives. A reopen after startup re-sends the board's
+// settings first: the board may have restarted in its power-on ones. Caller
+// holds mrf_mutex.
 Reply query_locked(uint8_t cmd, uint8_t addr, uint64_t value, uint8_t* reply, int timeout_ms) {
     uint8_t report[17];
     build_report(report, cmd, addr, value);
@@ -355,6 +384,10 @@ Reply query_locked(uint8_t cmd, uint8_t addr, uint64_t value, uint8_t* reply, in
         if (!hid_is_open()) {
             if (!hid_open_locked()) return Reply::IOERR;
             hid_drain_locked();
+            if (board_configured.load() && !reapplying) {
+                reapply_after_reopen_locked();
+                if (!hid_is_open()) continue;   // it failed again while re-sending
+            }
         }
         std::string err;
         if (!hid_write_locked(report, err)) {
@@ -432,6 +465,80 @@ bool mrf_set(uint8_t func, uint64_t value) {
 bool sensors_allowed() {
     const int64_t d = fw_date.load();
     return d >= WB_MIN_SENSOR_FW;
+}
+
+// Generator mode (function 130 = 1, see FUNC_MODE). NOT through mrf_set():
+// there "Invalid param." means "this firmware has no 's'" and switches every
+// later command of the run to 'w' - a Flash save per retune. Here it can as
+// well mean "this firmware has no function 130", which must cost nothing.
+// Sent with whichever set command the firmware takes (the drive current goes
+// first and finds that out): 'w' only on a firmware without 's', which saves
+// on every retune anyway (and the firmware skips a save that changes
+// nothing). The echoed value must be 1; where reads are safe (fw >=
+// WB_MIN_SENSOR_FW, older firmware saves its Flash on every read) the mode is
+// read back too. Caller holds mrf_mutex.
+LoMode select_generator_mode_locked() {
+    const uint8_t cmd = set_falls_back_to_save.load() ? CMD_SAVE : CMD_SET;
+    uint8_t r[REPLY_LEN];
+    LoMode m;
+    switch (query_locked(cmd, FUNC_MODE, MODE_GENERATOR, r, WB_HID_REPLY_MS)) {
+    case Reply::OK:
+        m = be_u64(r + 2, 8) == MODE_GENERATOR ? LoMode::GENERATOR : LoMode::UNCONFIRMED;
+        // A read that is not understood ("Invalid param.") leaves the echo as
+        // the answer; a read that returns another mode overrules it.
+        if (m == LoMode::GENERATOR && sensors_allowed() &&
+            query_locked(CMD_READ, FUNC_MODE, 0, r, WB_HID_REPLY_MS) == Reply::OK && be_u64(r + 2, 8) != MODE_GENERATOR)
+            m = LoMode::UNCONFIRMED;
+        break;
+    case Reply::INVALID: m = LoMode::UNSUPPORTED; break;
+    case Reply::TIMEOUT: m = LoMode::UNCONFIRMED; break;
+    case Reply::IOERR:
+    default:             m = LoMode::IO_ERROR; break;
+    }
+    lo_mode.store(static_cast<int>(m));
+    return m;
+}
+
+void log_lo_mode(LoMode m, const char* when) {
+    switch (m) {
+    case LoMode::GENERATOR:
+        std::cout << "Downconverter: generator mode selected" << when << " (LO at full level on the mixer output)"
+                  << std::endl;
+        break;
+    case LoMode::UNSUPPORTED:
+        std::cerr << "Downconverter: WARNING - the board firmware does not know generator mode (function 130)" << when
+                  << ": the LO stays in the board's power-on mode (only its leakage reaches the mixers on a fresh"
+                     " board - far weaker reception). Tuning is not affected. Update the board firmware."
+                  << std::endl;
+        break;
+    case LoMode::UNCONFIRMED:
+        std::cerr << "Downconverter: WARNING - generator mode sent" << when
+                  << " but not confirmed by the board (no reply, or another mode came back)" << std::endl;
+        break;
+    default:
+        std::cerr << "Downconverter: WARNING - generator mode could not be sent" << when << " (HID I/O error)"
+                  << std::endl;
+        break;
+    }
+}
+
+// The device had to be reopened after startup (USB replug, board power
+// cycle): the board may have come back with its power-on settings - mixer
+// mode on a fresh board, the LO saved at the last clean exit. Send mode,
+// drive current and LO again before the command that found the device gone.
+// Caller holds mrf_mutex (called from query_locked).
+void reapply_after_reopen_locked() {
+    reapplying = true;
+    const LoMode m = select_generator_mode_locked();
+    const uint8_t cmd = set_falls_back_to_save.load() ? CMD_SAVE : CMD_SET;
+    if (hid_is_open())
+        query_locked(cmd, FUNC_CURRENT, static_cast<uint64_t>(downconverter.lo_current.load()), nullptr, WB_HID_REPLY_MS);
+    const uint64_t lo = downconverter.lo_hz.load();
+    if (lo && hid_is_open()) query_locked(cmd, FUNC_FREQUENCY, lo, nullptr, WB_HID_REPLY_MS);
+    reapplying = false;
+    std::cout << "Downconverter: device reopened - mode, drive current " << downconverter.lo_current.load() << " and LO "
+              << lo / 1e6 << " MHz sent again" << std::endl;
+    log_lo_mode(m, " again");
 }
 
 // ---- telemetry ----
@@ -694,7 +801,8 @@ std::string downconverter_status_json_fields() {
     j << ",\"fw\":{\"date\":" << d << ",\"build\":" << fw_build.load()
       << ",\"telemetry_ok\":" << (sensors_allowed() ? "true" : "false")
       << ",\"set_cmd\":\"" << (set_falls_back_to_save.load() ? "w" : "s") << "\""
-      << ",\"no_reply\":" << no_reply_count.load() << "}";
+      << ",\"no_reply\":" << no_reply_count.load()
+      << ",\"lo_mode\":\"" << lo_mode_name(static_cast<LoMode>(lo_mode.load())) << "\"}";
     if (!poller_started.load()) {
         j << ",\"telemetry\":{\"enabled\":false,\"reason\":\""
           << (d < 0 ? "no firmware version reply" : "board firmware too old: update to fw20261110.3") << "\"}";
@@ -901,28 +1009,39 @@ bool downconverter_init(uint64_t initial_rf_hz) {
     }
     probe_firmware();
 
-    // Drive current, then the frequency, both with 's' (no Flash wear). The
-    // board's LO output is always on; the stock-moRFeus generator-mode
-    // command is not sent (unimplemented there).
+    // Drive current, generator mode, then the frequency, all with 's' (no
+    // Flash wear). The current goes first: it is the command that finds out
+    // whether this firmware takes 's' at all (mrf_set's fallback); generator
+    // mode then never decides that (select_generator_mode_locked).
+    // Not fatal: a firmware that rejects generator mode keeps running as
+    // before (LO at leakage level, far weaker reception - the message says why).
     if (!downconverter_set_current(WB_LO_CURRENT)) return false;
+    {
+        std::lock_guard<std::mutex> lock(mrf_mutex);
+        log_lo_mode(select_generator_mode_locked(), "");
+    }
     // Startup has no manual choice to keep: the preferred side for the RF
     // (high below WB_SIDE_CROSSOVER_HZ, below from it up).
     if (downconverter_auto_side(initial_rf_hz) != downconverter.side.load()) {
         if (!downconverter_set_side(downconverter_auto_side(initial_rf_hz), initial_rf_hz)) return false;
     } else if (!downconverter_apply_rf(initial_rf_hz)) return false;
 
+    board_configured = true;   // a reopen from now on re-sends mode, current and LO
     if (fw_date.load() >= WB_MIN_SENSOR_FW) start_poller();
     std::cout << "Downconverter: ready - tuners parked at IF, retunes reprogram the LO ('s', no Flash save)"
               << std::endl;
     return true;
 }
 
-// Clean exit: save the last LO frequency and drive current as the board's
-// power-on default - one 'w' each (the firmware skips the Flash write when
-// nothing changed). Then release the device.
+// Clean exit: save the last LO frequency and drive current - and generator
+// mode, where the board took it - as the board's power-on default, one 'w'
+// each (the firmware skips the Flash write when nothing changed), so the
+// board comes up with a full-level LO after a power cycle too. Then release
+// the device.
 void downconverter_close() {
     poller_stop = true;
     std::lock_guard<std::mutex> lock(mrf_mutex);
+    board_configured = false;   // nothing to re-send from here on
     // Not after a fatal exit: the supervisor restarts heimdall then, possibly
     // in a loop while the receiver stays away - no Flash write per attempt.
     if (WB_SAVE_LO_ON_EXIT && !fatal_exit.load() && hid_is_open() && fw_date.load() >= WB_MIN_SENSOR_FW) {
@@ -930,8 +1049,10 @@ void downconverter_close() {
         if (lo) query_locked(CMD_SAVE, FUNC_FREQUENCY, lo, nullptr, WB_HID_REPLY_MS);
         query_locked(CMD_SAVE, FUNC_CURRENT, static_cast<uint64_t>(downconverter.lo_current.load()), nullptr,
                      WB_HID_REPLY_MS);
+        const bool mode = static_cast<LoMode>(lo_mode.load()) == LoMode::GENERATOR;
+        if (mode) query_locked(CMD_SAVE, FUNC_MODE, MODE_GENERATOR, nullptr, WB_HID_REPLY_MS);
         std::cout << "Downconverter: LO " << lo / 1e6 << " MHz / current " << downconverter.lo_current.load()
-                  << " saved as the board's power-on default" << std::endl;
+                  << (mode ? " / generator mode" : "") << " saved as the board's power-on default" << std::endl;
     }
     hid_close_locked();
 }

@@ -65,6 +65,11 @@ public:
     uint64_t bits() const { return nbits_; }
     const DemodCfg& cfg() const { return cfg_; }
     void set_tsign(float s) { tsign_ = s; }
+    // the input moved by -hz (the VFO by +hz): follow the carrier
+    void shift_carrier(double hz) {
+        f_nco_ += hz;
+        w_ = -2 * M_PI * f_nco_ / cfg_.fs;
+    }
 
 private:
     DemodCfg cfg_;

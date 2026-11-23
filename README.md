@@ -305,7 +305,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [UAT](kraken_doa_v2/plugins/uat/README.md) (978 MHz, United States) | Aircraft, rebroadcast traffic, ground stations and their weather / NOTAM text |
 | [SSR / Mode S / TCAS interrogations](kraken_doa_v2/plugins/ssr1030/README.md) (1030 MHz) | The radars, multilateration stations and aircraft that ask the questions ADS-B answers |
 | [ACARS](kraken_doa_v2/plugins/acars/README.md), [VDL Mode 2](kraken_doa_v2/plugins/vdl2/README.md) | Aircraft datalink messages: registration, flight, label, text; VDL2 ground stations on the map |
-| [Inmarsat Classic Aero](kraken_doa_v2/plugins/inmarsat_aero/README.md) (L-band satellite, 1545-1555 MHz; aircraft at 1626-1660 MHz) | The satellite datalink to aircraft (P channel, every rate, found automatically): log-ons, channel assignments, ACARS messages, ADS-C positions on the map; C channel voice (see [Digital voice codecs](#digital-voice-codecs)); the aircraft's own bursts with a bearing per aircraft |
+| [Inmarsat Classic Aero](kraken_doa_v2/plugins/inmarsat_aero/README.md) (L-band satellite, 1545-1555 MHz; aircraft at 1626-1660 MHz) | The satellite datalink to aircraft (P channel, every rate, found automatically): log-ons, channel assignments, ACARS messages, ADS-C positions on the map; C channel voice (see [Digital voice codecs](#digital-voice-codecs)); the aircraft's own bursts with a bearing per aircraft. Its **All channels in the VFO** option decodes every channel inside one wide VFO (up to the whole 2.4 MHz) at once and plays every call in it |
 | [FLARM / OGN](kraken_doa_v2/plugins/flarm/README.md) (868 / 915 MHz) | Gliders and light aircraft. OGN trackers give a position; FLARM is encrypted, so only its ID and bearing |
 | [DME / TACAN](kraken_doa_v2/plugins/dme/README.md) (962-1213 MHz) | Morse ident, channel and its VOR / ILS pairing, TACAN bearing, aircraft interrogations |
 | [ILS / VOR / markers](kraken_doa_v2/plugins/ils/README.md) | Localizer and glide slope deviation, VOR radial, marker beacons, Morse idents |
@@ -535,11 +535,13 @@ found.
 The Inmarsat decoders were checked against recordings and off air on a
 Raspberry Pi 5 with one patch antenna (Inmarsat-4 F1): Inmarsat-C's NCS
 and LES channels with real EGC messages, Classic Aero's P channels at 600,
-1200 and 10500 bit/s. Two real Aero voice channels were followed from
-their assignments: the channel decodes and the codec accepts its voice
-frames, but both were silent or faded where they were clean, so real
-speech has not been heard through it yet. A satellite sends only the
-ground-to-aircraft half of a call.
+1200 and 10500 bit/s. Aero voice was checked on real calls by measurement,
+not by listening: the channel decodes, the codec accepts its voice frames,
+and the decoded sound of a clean three-minute call has the structure of
+speech (syllable-length voiced stretches, one speaker's smoothly moving
+pitch, talk spurts between pauses), which the same path fed random bits
+does not have. A satellite sends only the ground-to-aircraft half of a
+call, so long silences are normal.
 
 **P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 

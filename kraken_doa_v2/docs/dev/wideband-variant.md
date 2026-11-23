@@ -55,4 +55,12 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 - Array chirality: see the UCA ordering note under *Configuration* - the
   Wideband boards and the standard arrays are both treated as CLOCKWISE, so
   `uca_angle_sign()` is variant-independent
+- Board firmware line (the WB section, `updateWbTelemetry` in the page): heimdall's
+  `downconverter.fw` - version, an alarm when tuning falls back to `'w'`
+  (`set_cmd`), an alarm when the LO synthesizer is not confirmed in
+  generator mode (`lo_mode` other than `generator`: `no generator mode`,
+  `generator mode unconfirmed`, `LO mode not set`; heimdall's
+  `docs/dev/wideband-variant.md`), unanswered commands (`no_reply`). Changes
+  of `set_cmd` and `lo_mode` are logged to `wb_logs/wb_events.csv`
+  (`wb_board.cpp`). An older heimdall sends no `lo_mode`: no alarm.
 
