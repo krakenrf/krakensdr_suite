@@ -81,8 +81,14 @@ int64_t bins();
 // current_group_index (the round) and retuning_in_progress
 // gain_db: each channel's gain in the 8091 header (the gain its samples were
 // taken with; nullptr = unknown)
+// trial_mask: heimdall's 8091 per-channel trial bits (round 10: 0x10000 << ch in the
+// phase-state field, 0x4000 = any) shifted down - bit ch = channel ch's samples were
+// taken at a gain other than its hop's own (a probe). A channel whose gain is above
+// its hop's last drawn visit's is left out of the picture (an up-probe can be past
+// the chain's linear range), one below is drawn; neither counts as the hop's gain
 void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const float* freq_hz, const float* gain_db,
-               uint32_t counter, uint32_t round, bool retuning);
+               uint32_t counter, uint32_t round, bool retuning, uint32_t trial_mask = 0);
+uint64_t trials_left_out();   // up-trial visits not drawn (since the start)
 
 // --- frames (uWS loop) -----------------------------------------------------------------
 struct View {
