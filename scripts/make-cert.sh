@@ -123,6 +123,9 @@ case "$VER" in
     case "$vhelp" in *-no-CAstore*) V_ONLY="$V_ONLY -no-CAstore" ;; esac
     case "$vhelp" in *-no_check_time*) V_NOTIME="-no_check_time" ;; esac ;;
 esac
+# the CA's SHA-256 (fine rule 26): x509 -fingerprint -sha256 in OpenSSL; LibreSSL's
+# x509 documents -md5 / -sha1 only - there the DER through dgst -sha256
+case "$VER" in "OpenSSL "*) FP_OPT="-fingerprint -sha256" ;; *) FP_OPT="" ;; esac
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/make-cert.XXXXXX" 2>/dev/null) || fail "cannot make a temporary folder"
 STAGE=""; LOCKED=0
@@ -133,6 +136,11 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
+# without -no-CApath (LibreSSL): an empty -CApath keeps the system's trust
+# store out of "issued by our CA"
+if [ -z "$V_ONLY" ] && mkdir "$WORK/noca" 2>/dev/null; then V_ONLY="-CApath $WORK/noca"; fi
+NOW=$(date -u +%s)
+case "$NOW" in ""|*[!0-9]*) fail "date +%s gave no time - nothing was changed" ;; esac
 
 # must <what> <openssl arguments...>: run openssl in the stage folder (`ca`
 # keeps its database there), or fail with its last error
@@ -187,6 +195,11 @@ take_lock() {
     done
 }
 take_lock
+# fine rule 34: a dead run's stage / stale-lock folders (older than an hour), under the lock
+if [ $LOCKED = 1 ]; then
+    find "${D:-/}" -maxdepth 1 -type d -name '.make-cert.*' ! -name '.make-cert.lock' -mmin +60 \
+        -exec rm -rf {} + 2>/dev/null </dev/null
+fi
 
 # --- what is wanted: scope, host name, names, addresses ----------------------
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
@@ -231,8 +244,11 @@ is_ipv4() {
 # cert_options (fine rule 5): lines "scope = VALUE", spaces around = allowed,
 # key and value in any case; the last such line wins; "wide" is wide,
 # anything else narrow - as kraken_doa reads it (tlscert::read_scope_wide)
-SCOPE=narrow
+SCOPE=narrow; NEW_CA_REQ=0
 if [ -f "$OPTS" ]; then
+    # fine rule 29: "new_ca = 1" (the page's New certificate authority)
+    v=$(sed -n 's/^[[:space:]]*[Nn][Ee][Ww]_[Cc][Aa][[:space:]]*=//p' "$OPTS" 2>/dev/null | tail -n 1)
+    if [ "$(trim "$v")" = 1 ]; then NEW_CA_REQ=1; fi
     v=$(sed -n 's/^[[:space:]]*[Ss][Cc][Oo][Pp][Ee][[:space:]]*=//p' "$OPTS" 2>/dev/null | tail -n 1)
     v=$(lower "$(trim "$v")")
     case "$v" in
@@ -316,6 +332,11 @@ avahi_host() {
     printf '%s' "$h"
 }
 
+# fine rule 24: the host name is the system's (KRAKEN_CERT_HOST, macOS'
+# LocalHostName, hostname); the name avahi announces - another after an mDNS
+# conflict, krakensdr-2 - is an EXTRA name: a conflict that comes and goes
+# never makes a new CA
+AVAHI_RAW=""
 if [ -n "${KRAKEN_CERT_HOST:-}" ]; then
     RAW=$(trim "$KRAKEN_CERT_HOST")         # as it is: a dot makes it unusable
 else
@@ -323,7 +344,8 @@ else
     if [ "$OS" = Darwin ]; then
         RAW=$(scutil --get LocalHostName 2>/dev/null </dev/null) || RAW=""
     else
-        RAW=$(avahi_host)
+        AVAHI_RAW=$(avahi_host)
+        AVAHI_RAW=$(trim "${AVAHI_RAW%%.*}")
     fi
     [ -n "$RAW" ] || RAW=$(hostname -s 2>/dev/null </dev/null) || RAW=""
     [ -n "$RAW" ] || RAW=$(hostname 2>/dev/null </dev/null) || RAW=""
@@ -331,6 +353,8 @@ else
     RAW=$(trim "${RAW%%.*}")
 fi
 HOST=$(lower "$RAW")
+AVAHI=$(lower "$AVAHI_RAW")
+if ! valid_label "$AVAHI" || [ "$AVAHI" = "$HOST" ]; then AVAHI=""; fi
 # not a DNS label: then only localhost (and in wide scope the addresses)
 if valid_label "$HOST"; then USABLE=1; CN=$HOST; else USABLE=0; CN=localhost; fi
 [ $USABLE = 1 ] || note "the host name '$RAW' is not usable in DNS - the certificate names only localhost"
@@ -340,12 +364,21 @@ add_name() { case "$NAMES" in *" $1 "*) ;; *) NAMES="$NAMES$1 " ;; esac; }
 if [ $USABLE = 1 ]; then
     add_name "$HOST"
     add_name "$HOST.local"
-    if [ -r "$RESOLV" ]; then
-        for d in $(awk '$1 == "search" || $1 == "domain" { for (i = 2; i <= NF; i++) print $i }' "$RESOLV" 2>/dev/null); do
-            d=$(nodots "$(lower "$d")")
-            if [ "$d" != local ] && valid_dns "$d" && valid_dns "$HOST.$d"; then add_name "$HOST.$d"; fi
-        done
-    fi
+fi
+if [ -n "$AVAHI" ]; then
+    add_name "$AVAHI"
+    add_name "$AVAHI.local"
+fi
+if [ $USABLE = 1 ] && [ -r "$RESOLV" ]; then
+    # fine rule 30: the LAST search line (what glibc uses) and the domain
+    # line, and of them only the suffixes the Host allow-list trusts; any
+    # other domain only through KRAKEN_CERT_NAMES
+    for d in $(awk '$1 == "search" { s = ""; for (i = 2; i <= NF; i++) s = s " " $i }
+                    $1 == "domain" { m = ""; for (i = 2; i <= NF; i++) m = m " " $i }
+                    END { print s " " m }' "$RESOLV" 2>/dev/null); do
+        d=$(nodots "$(lower "$d")")
+        case "$d" in lan|home|localdomain|home.arpa) add_name "$HOST.$d" ;; esac
+    done
 fi
 add_name localhost
 # KRAKEN_CERT_NAMES (fine rule 4): split on commas and white space,
@@ -386,15 +419,50 @@ NC_DNS=$NAMES
 # info <cert file> <days>: one openssl call -> I_OK, I_SUBJ, I_ISSUER (RFC 2253),
 # I_PUB (its public key), I_VALID (still valid in <days> days; judged by the
 # message: OpenSSL 3.0.2 exits 0 for "will expire" too), I_TEXT (x509 -text)
+# I_NB its notBefore (Unix seconds), I_FP with "fp" its SHA-256 fingerprint (OpenSSL)
 info() {
-    I_TEXT=$(ossl x509 -in "$1" -noout -nameopt RFC2253 -subject -issuer -pubkey -checkend $(($2 * 86400)) -text 2>/dev/null)
+    local fp=""
+    [ "${3:-}" != fp ] || fp=$FP_OPT
+    I_TEXT=$(ossl x509 -in "$1" -noout -nameopt RFC2253 -subject -issuer -pubkey $fp -checkend $(($2 * 86400)) -text 2>/dev/null)
+    I_NB=$(printf '%s\n' "$I_TEXT" | nb_epoch)
+    I_FP=$(printf '%s\n' "$I_TEXT" | sed -n 's/^[Ss][Hh][Aa]256 [Ff]ingerprint=//p' | head -n 1)
     I_SUBJ=$(printf '%s\n' "$I_TEXT" | sed -n 's/^subject= *//p' | head -n 1)
     I_ISSUER=$(printf '%s\n' "$I_TEXT" | sed -n 's/^issuer= *//p' | head -n 1)
     I_PUB=$(printf '%s\n' "$I_TEXT" | sed -n '/-----BEGIN PUBLIC KEY-----/,/-----END PUBLIC KEY-----/p')
     case "$I_TEXT" in *"will not expire"*) I_VALID=1 ;; *) I_VALID=0 ;; esac
     if [ -n "$I_SUBJ" ] && [ -n "$I_PUB" ]; then I_OK=1; else I_OK=0; fi
 }
-key_pub() { ossl pkey -in "$1" -passin pass: -pubout 2>/dev/null; }
+# key_pub <file>: its public key - only for a key uSockets can load: PEM,
+# unencrypted (fine rule 27; a DER or encrypted key prints nothing)
+key_pub() {
+    grep -q -e 'ENCRYPTED PRIVATE KEY' -e '4,ENCRYPTED' "$1" 2>/dev/null && return 0
+    ossl pkey -inform PEM -in "$1" -passin pass: -pubout 2>/dev/null
+}
+# nb_epoch (stdin: x509 -text): the first "Not Before: Mon DD HH:MM:SS YYYY GMT" in Unix seconds
+nb_epoch() {
+    awk '/Not Before *:/ { s = $0; sub(/.*Not Before *: */, "", s); n = split(s, f, " ")
+            m = index("JanFebMarAprMayJunJulAugSepOctNovDec", f[1]); if (m == 0 || n < 4) exit
+            m = (m + 2) / 3; split(f[3], t, ":"); y = f[4] + 0; d = f[2] + 0
+            if (m <= 2) { y--; mm = m + 9 } else mm = m - 3
+            era = int(y / 400); yoe = y - era * 400
+            doy = int((153 * mm + 2) / 5) + d - 1; doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+            printf "%.0f\n", (era * 146097 + doe - 719468) * 86400 + t[1] * 3600 + t[2] * 60 + t[3]; exit }'
+}
+# ca_fp <file>: the SHA-256 fingerprint of its first certificate, AB:CD:... (fine rule 26)
+ca_fp() {
+    if [ -n "$FP_OPT" ]; then
+        ossl x509 -in "$1" -noout $FP_OPT 2>/dev/null | sed -n 's/^[Ss][Hh][Aa]256 [Ff]ingerprint=//p'
+    else
+        "$OSSL" x509 -in "$1" -outform DER 2>/dev/null </dev/null | "$OSSL" dgst -sha256 2>/dev/null |
+            sed 's/.*= *//' | tr 'abcdef' 'ABCDEF' | sed 's/\(..\)/\1:/g; s/:$//'
+    fi
+}
+# clock_synced (fine rule 23): Linux - timedatectl says NTPSynchronized=yes
+# (the kernel's adjtimex state; without timedatectl: not known, no); others yes
+clock_synced() {
+    [ "$OS" = Linux ] || return 0
+    [ "$(run_t 3 timedatectl show -p NTPSynchronized --value 2>/dev/null </dev/null)" = yes ]
+}
 # subjectAltName of x509 -text (stdin) as sorted "DNS:x" / "IP:a" lines (::1
 # is printed in full); DNS names lowercased - compared case-insensitively, as
 # tlscert does. Any other kind of entry stays as printed: never the wanted set
@@ -553,7 +621,7 @@ if [ -s "$CRT" ]; then
     [ $I_OK = 1 ] ||
         fail "server.crt holds no certificate openssl can read - nothing was changed (move it away: a new one is made then; or replace it)"
     HAVE_CRT=1
-    L_SUBJ=$I_SUBJ; L_ISSUER=$I_ISSUER; L_PUB=$I_PUB; L_VALID=$I_VALID
+    L_SUBJ=$I_SUBJ; L_ISSUER=$I_ISSUER; L_PUB=$I_PUB; L_VALID=$I_VALID; L_NB=$I_NB
     L_SAN=$(printf '%s\n' "$I_TEXT" | san_of)
     # issued by our CA: chain and signature, no time check (fine rule 10)
     if [ "$CA_NB" -ge 1 ] && verifies "$WORK/blk1.pem" "$WORK/cablk1.pem" notime; then
@@ -596,17 +664,23 @@ if [ -s "$CA_KEY" ]; then
 fi
 
 # --- the CA -------------------------------------------------------------------
-CA_OK=0; C_TEXT=""
-if [ "$CA_NB" -ge 1 ] && [ -n "$CA_KPUB" ]; then
-    info "$WORK/cablk1.pem" 365
-    C_TEXT=$I_TEXT; C_VALID=$I_VALID
-    if [ $I_OK = 1 ] && [ "$I_PUB" = "$CA_KPUB" ]; then
+# fine rule 31: no krakensdr-ca.key beside a valid CA certificate (the key
+# taken offline) - kept while nothing needs signing
+KEY_AWAY=0
+[ -s "$CA_KEY" ] || [ -n "$CA_ASIDE" ] || KEY_AWAY=1
+CA_OK=0; C_TEXT=""; C_NB=""; CA_FP=""; CLOCK_SUSPECT=0
+if [ "$CA_NB" -ge 1 ] && { [ -n "$CA_KPUB" ] || [ $KEY_AWAY = 1 ]; }; then
+    info "$WORK/cablk1.pem" 365 fp
+    C_TEXT=$I_TEXT; C_VALID=$I_VALID; C_NB=$I_NB; CA_FP=$I_FP
+    if [ $I_OK = 1 ] && { [ $KEY_AWAY = 1 ] || [ "$I_PUB" = "$CA_KPUB" ]; }; then
         case "$C_TEXT" in *"CA:TRUE"*) CA_OK=1 ;; esac
     fi
 fi
 NEED_CA=0; REASON=""; NOT_COVERED=""
 if [ $new_ca = 1 ]; then
     NEED_CA=1; REASON="--new-ca"
+elif [ $NEW_CA_REQ = 1 ]; then
+    NEED_CA=1; REASON="asked for on the page (new_ca=1 in cert_options)"
 elif [ -n "$CA_ASIDE" ]; then
     NEED_CA=1; REASON="krakensdr-ca.key could not be read (moved aside to $CA_ASIDE)"
 elif [ $CA_OK = 0 ]; then
@@ -640,11 +714,22 @@ else
     elif [ "$ca_scope" != "$SCOPE" ]; then
         NEED_CA=1; REASON="scope $ca_scope -> $SCOPE"
     else
-        for n in $NAMES; do
-            dns_permitted "$n" "$nc" && continue
-            case "$OWN" in *" $n "*) NEED_CA=1; REASON="new name $n"; break ;; esac
-            NOT_COVERED="$NOT_COVERED $n"
-        done
+        # fine rule 23: a CA starting more than a day after the clock - a new
+        # one only when the clock is known to be right (a Pi without a clock
+        # boots with an old time: that must never make every device reinstall)
+        if [ -n "$C_NB" ] && [ "$C_NB" -gt $((NOW + 86400)) ]; then
+            if clock_synced; then NEED_CA=1; REASON="the CA starts more than a day after the (synchronized) clock"
+            else CLOCK_SUSPECT=1
+                note "the CA starts more than a day after this clock, which is not known to be synchronized - kept (clock_suspect)"
+            fi
+        fi
+        if [ $NEED_CA = 0 ]; then
+            for n in $NAMES; do
+                dns_permitted "$n" "$nc" && continue
+                case "$OWN" in *" $n "*) NEED_CA=1; REASON="new name $n"; break ;; esac
+                NOT_COVERED="$NOT_COVERED $n"
+            done
+        fi
     fi
 fi
 [ $NEED_CA = 0 ] || NOT_COVERED=""
@@ -674,14 +759,22 @@ if [ $ISSUE = 0 ]; then
             REASON="the names changed"
         fi
     elif [ $L_VALID = 0 ]; then REASON="it expires within 60 days"
+    elif [ -n "$L_NB" ] && [ "$L_NB" -gt $((NOW + 86400)) ]; then REASON="it starts more than a day after the clock"
     elif [ "$nb" != 2 ] || [ "$(b64 "$WORK/blk2.pem")" != "$(b64 "$WORK/cablk1.pem")" ]; then
         REASON="server.crt does not hold the CA certificate after it"
     else ISSUE=0
     fi
 fi
+# fine rule 31: something to sign and the CA key away - a new CA after all
+if [ $ISSUE = 1 ] && [ $NEED_CA = 0 ] && [ $KEY_AWAY = 1 ]; then
+    NEED_CA=1; REASON="$REASON, and krakensdr-ca.key is missing"
+    NOT_COVERED=""; LEAF_NAMES=$NAMES
+fi
 if [ $ISSUE = 0 ]; then
     fix_mode "$KEY"
     fix_mode "$CA_KEY"
+    [ -n "$CA_FP" ] || CA_FP=$(ca_fp "$WORK/cablk1.pem")
+    [ -z "$CA_FP" ] || echo "ca-sha256: $CA_FP"
     [ -z "$NOT_COVERED" ] || echo "not-covered:$NOT_COVERED"
     echo kept
     exit 0
@@ -690,8 +783,6 @@ fi
 # --- make everything in a folder of <dir>, then move it into place ------------
 STAGE=$(mktemp -d "$D/.make-cert.XXXXXX" 2>/dev/null) ||
     fail "cannot write in ${D:-/} (read-only?) - the certificate stays as it was"
-NOW=$(date -u +%s)
-case "$NOW" in ""|*[!0-9]*) fail "date +%s gave no time - nothing was changed" ;; esac
 START=$((NOW - 3600))       # an hour back, as kraken_doa's generator
 # asn1_time <epoch seconds>: YYMMDDHHMMSSZ (UTCTime), YYYYMMDDHHMMSSZ from 2050
 asn1_time() {
@@ -708,7 +799,7 @@ asn1_time() {
 }
 T_START=$(asn1_time $START)
 T_END_CA=$(asn1_time $((START + 3650 * 86400)))
-T_END_SRV=$(asn1_time $((START + 825 * 86400)))
+T_END_SRV=$(asn1_time $((START + 824 * 86400)))   # fine rule 33
 # a new random serial (128 bits) for the next `openssl ca`
 serial() {
     local s
@@ -803,8 +894,13 @@ serial
 must "sign the server certificate" ca -batch -notext -config ca.cnf -cert "$USE_CA_CRT" -keyfile "$USE_CA_KEY" \
     -in server.csr -extensions v3_server -startdate "$T_START" -enddate "$T_END_SRV" -out leaf.crt
 must "read the CA certificate" x509 -in "$USE_CA_CRT" -out ca.pem
-verifies "$STAGE/leaf.crt" "$STAGE/ca.pem" ||
-    fail "the new server certificate does not verify against the CA - nothing was changed"
+# the new pair: chain, signature, constraints, purpose - no time check, the
+# dates are ours (fine rule 23). Without -no_check_time (LibreSSL) a CA
+# starting after this clock can't be checked: then not checked
+if [ -n "$V_NOTIME" ] || [ $NEED_CA = 1 ] || [ -z "$C_NB" ] || [ "$C_NB" -le "$NOW" ]; then
+    verifies "$STAGE/leaf.crt" "$STAGE/ca.pem" notime ||
+        fail "the new server certificate does not verify against the CA - nothing was changed"
+fi
 info "$STAGE/leaf.crt" 0
 [ "$I_PUB" = "$(key_pub "$USE_KEY")" ] ||
     fail "the new server certificate does not match the key - nothing was changed"
@@ -818,19 +914,49 @@ cat "$STAGE/leaf.crt" "$STAGE/ca.pem" > "$STAGE/server.crt" ||
 # certificate -> retired, unusable CA key -> aside, new CA key, new CA
 # certificate, unusable server key -> aside, new server key, server.crt
 mv_into() { chmod "$3" "$1" && mv -f "$1" "$2" || fail "cannot replace $2"; }
+# cert_blocks <file> <out>: its CERTIFICATE blocks only (fine rule 25: a
+# retired / saved copy never holds a key); has_key <file>: a private key in it
+cert_blocks() { awk '/-----BEGIN CERTIFICATE-----/ { p = 1 } p { print } /-----END CERTIFICATE-----/ { p = 0 }' "$1" > "$2"; }
+has_key() { grep -q 'PRIVATE KEY-----' "$1" 2>/dev/null; }
+# keep <file> <name>: its certificate blocks as <name> (0644) - and the file
+# itself, holding a key, aside as <file>.unreadable-YYYYMMDD (0600)
+KEPT_ASIDE=""
+keep() {
+    local a
+    { cert_blocks "$1" "$STAGE/keep.crt" && chmod 644 "$STAGE/keep.crt" && mv "$STAGE/keep.crt" "$D/$2"; } </dev/null 2>/dev/null ||
+        fail "cannot keep a copy of ${1##*/} - nothing was changed"
+    if has_key "$1"; then
+        a=$(dated_name "${1##*/}.unreadable-" "")
+        mv "$1" "$D/$a" </dev/null || fail "cannot move ${1##*/} aside"
+        fix_mode "$D/$a"
+        KEPT_ASIDE="$KEPT_ASIDE $a"
+        note "${1##*/} held a private key - moved aside to $a (0600); $2 holds its certificates only"
+    fi
+}
 SAVED=""
 if [ $LEGACY = 1 ]; then
     SAVED=$(dated_name server.crt.replaced- "")
-    { cp "$CRT" "$STAGE/saved.crt" && chmod 644 "$STAGE/saved.crt" && mv "$STAGE/saved.crt" "$D/$SAVED"; } </dev/null 2>/dev/null ||
-        fail "cannot keep a copy of server.crt - nothing was changed"
+    keep "$CRT" "$SAVED"
 fi
-RETIRED=""
+RETIRED=""; KEY_RETIRED=""
 if [ $NEED_CA = 1 ]; then
-    # fine rule 2: only a readable certificate, not a symlink; its key goes
-    if [ -s "$CA_CRT" ] && [ ! -L "$CA_CRT" ] && ossl x509 -in "$CA_CRT" -noout >/dev/null 2>&1; then
+    # fine rule 2: only a readable certificate, not a symlink; its key goes -
+    # unless the CA isn't ours (no O=KrakenSDR receiver: a user's own CA put
+    # at our names): its key is kept as krakensdr-ca.key.retired-YYYYMMDD (rule 32)
+    rsubj=""
+    if [ -s "$CA_CRT" ] && [ ! -L "$CA_CRT" ] &&
+       rsubj=$(ossl x509 -in "$CA_CRT" -noout -subject -nameopt RFC2253 2>/dev/null) && [ -n "$rsubj" ]; then
         RETIRED=$(dated_name krakensdr-ca. .retired.crt)
-        mv "$CA_CRT" "$D/$RETIRED" </dev/null || fail "cannot rename $CA_CRT"
-        chmod 644 "$D/$RETIRED" 2>/dev/null
+        keep "$CA_CRT" "$RETIRED"
+        case ",${rsubj#subject=}," in
+        *",O=KrakenSDR receiver,"*) ;;
+        *)  if [ -s "$CA_KEY" ] && [ -z "$CA_ASIDE" ]; then
+                KEY_RETIRED=$(dated_name krakensdr-ca.key.retired- "")
+                mv "$CA_KEY" "$D/$KEY_RETIRED" </dev/null || fail "cannot keep $CA_KEY"
+                fix_mode "$D/$KEY_RETIRED"
+                note "the replaced CA is not one of a KrakenSDR receiver - its key kept as $KEY_RETIRED"
+            fi ;;
+        esac
     fi
     if [ -n "$CA_ASIDE" ]; then
         mv "$CA_KEY" "$D/$CA_ASIDE" </dev/null || fail "cannot move $CA_KEY aside"
@@ -849,12 +975,21 @@ fi
 mv_into "$STAGE/server.crt" "$CRT" 644
 fix_mode "$KEY"         # fine rule 13
 fix_mode "$CA_KEY"
+# fine rule 29: the request is done
+if [ $NEW_CA_REQ = 1 ]; then
+    { sed '/^[[:space:]]*[Nn][Ee][Ww]_[Cc][Aa][[:space:]]*=/d' "$OPTS" > "$STAGE/opts" && chmod 644 "$STAGE/opts" &&
+      mv -f "$STAGE/opts" "$OPTS"; } </dev/null 2>/dev/null || note "cannot take new_ca=1 out of cert_options"
+fi
 
 echo "reason: $REASON"
 [ -z "$RETIRED" ] || echo "retired: $RETIRED"
+[ -z "$KEY_RETIRED" ] || echo "retired: $KEY_RETIRED"
 [ -z "$CA_ASIDE" ] || [ $NEED_CA = 0 ] || echo "moved: $CA_ASIDE"
 [ -z "$ASIDE" ] || echo "moved: $ASIDE"
+for a in $KEPT_ASIDE; do echo "moved: $a"; done
 [ -z "$SAVED" ] || echo "saved: $SAVED"
+CA_FP=$(ca_fp "$CA_CRT")
+[ -z "$CA_FP" ] || echo "ca-sha256: $CA_FP"
 [ -z "$NOT_COVERED" ] || echo "not-covered:$NOT_COVERED"
 if [ $NEED_CA = 1 ]; then echo ca-created; else echo issued; fi
 exit 0

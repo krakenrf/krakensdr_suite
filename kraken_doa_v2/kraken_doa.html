@@ -29754,14 +29754,17 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
   // host_ok, ca: {name, sha256, sha1, not_after} | null, server: {name, org,
   // names, ips, not_after, days_left}, ips_now, names_not_covered (wanted
   // names outside the CA: left out of the certificate - a new CA takes them
-  // in), retired: [{name, sha256, date}], notices, scope_error, scope_seq}.
+  // in), host_conflict (avahi's other name after an mDNS conflict, ""),
+  // new_ca_next (a new CA asked for: CERT_NEW_CA:1, made at the next start),
+  // retired: [{name, sha256, date}], notices, scope_error, scope_seq}.
   // Every device installs the
   // receiver's CA once (/krakensdr-ca.crt); the scope (CERT_SCOPE:, kept in
   // cert_options) applies at the next start. The section is part of the
   // Telemetry sheet (wbSheetOpen inserts certSectionHtml()); the notices also
   // show in #cert-banner on every page. An older receiver sends no cert: its
   // section offers PR #5's download (/krakensdr.crt) only.
-  const CERT_NOTICES = ['name_changed', 'addresses_changed', 'names_not_covered', 'expires_soon', 'restart_pending'];
+  const CERT_NOTICES = ['name_changed', 'addresses_changed', 'names_not_covered', 'clock_suspect', 'expires_soon',
+                        'restart_pending', 'new_ca_pending'];
   const CERT_BANNER_KEY = 'kraken_cert_banner_off';   // the notices last hidden (localStorage)
   let certLatest = null, certDrawn = null, certAskSeq = -1, certMsg = '', certMsgErr = false, certBannerShown = '';
   function certDate(s) {
@@ -29777,6 +29780,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     'The risk: whoever gets this receiver\'s CA key (krakensdr-ca.key) can pose as anything the scope covers to ' +
     'every device that installed the CA - with Wide also your router, a NAS, any .local name.<br><br>' +
     'A change applies at the next start, with a new CA: every device then installs it (and removes the old one).';
+  const CERT_NEWCA_TIP =
+    'A new certificate authority at the next start - for names it doesn\'t cover yet (another network\'s, ' +
+    'KRAKEN_CERT_NAMES added later), or when its key may have been copied.<br><br>' +
+    '<b>Every device must then install the new one</b> and remove the old one (named here after the start). ' +
+    'Until the restart this can be taken back.';
   function certNoticeText(c, n) {
     const s = c.server || {};
     if (n === 'expires_soon') {
@@ -29794,9 +29802,18 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       return 'HTTPS certificate scope ' + (c.scope_next === 'wide' ? 'Wide' : 'Narrow') + ' from the next start - every device then installs the new CA';
     if (n === 'names_not_covered') {
       const nc = Array.isArray(c.names_not_covered) ? c.names_not_covered : [];
+      const hc = c.host_conflict || '';
+      // avahi's other name (an mDNS conflict): better a rename than a new CA
+      if (hc && nc.includes(hc))
+        return 'Another device on the network has the name ' + c.host + ', so this receiver is announced as ' + hc +
+          ' - give one of them another name (' + hc + ' is not in the HTTPS certificate)';
       return (nc.length > 1 ? 'Names ' : 'Name ') + nc.join(', ') + ' outside this receiver\'s CA - left out of the HTTPS certificate' +
-        ' (a new CA takes ' + (nc.length > 1 ? 'them' : 'it') + ' in: scripts/make-cert.sh --new-ca, then every device installs it)';
+        ' (New certificate authority below takes ' + (nc.length > 1 ? 'them' : 'it') + ' in; every device then installs it)';
     }
+    if (n === 'new_ca_pending')
+      return 'A new certificate authority from the next start - every device then installs it and removes the old one';
+    if (n === 'clock_suspect')
+      return 'The receiver\'s clock is behind its certificate authority\'s start - kept; set the clock (NTP) and restart';
     return '';
   }
   function certNotices(c) { return c && Array.isArray(c.notices) ? CERT_NOTICES.filter(n => c.notices.includes(n)) : []; }
@@ -29807,7 +29824,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     if (!el) return;
     const ns = certNotices(c);
     const key = ns.map(n => n === 'expires_soon' && (c.server || {}).days_left <= 7 ? n + '7' : n).join(',') + '|' + (c ? c.host : '') +
-      (ns.includes('names_not_covered') ? '|' + (c.names_not_covered || []).join(',') : '');
+      (ns.includes('names_not_covered') ? '|' + (c.names_not_covered || []).join(',') + '|' + (c.host_conflict || '') : '');
     let off = '';
     try { off = localStorage.getItem(CERT_BANNER_KEY) || ''; } catch (e) { /* private mode */ }
     if (!ns.length || off === key) { el.style.display = 'none'; return; }
@@ -29839,6 +29856,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     const ca = c.ca ? '<b>' + wbEsc(c.ca.name) + '</b>' : 'the certificate';
     const host = (c.server && c.server.names || []).find(n => /\.local$/.test(n)) || 'localhost';
     const steps = [
+      ['Check', 'Before trusting it, compare the SHA-256 your device shows for the downloaded certificate with the one the ' +
+                'receiver printed where only you see it - run.sh\'s or install.sh\'s terminal and log, the Docker log, ' +
+                'kraken_doa\'s start - not only with this page.'],
       ['Windows', 'Open the downloaded file → Install Certificate → Current User → Place all certificates in the following store: ' +
                   'Trusted Root Certification Authorities → Finish → Yes. The Thumbprint (Details) is the SHA-1 above. Chrome and Edge use it after a restart.'],
       ['macOS', 'Open the file (Keychain Access adds it) → double-click ' + ca + ' → Trust → When using this certificate: Always Trust. Safari and Chrome use it.'],
@@ -29890,6 +29910,14 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       row('Scope', seg + ' ' + helpTip(CERT_SCOPE_TIP, true) +
           (c.scope_next !== c.scope ? ' <span class="cert-note" id="cert-next">Applies at the next start - every device then installs the new certificate</span>' : ''));
     }
+    if (c.managed && ca) {
+      // fine rule 29: a new CA at the next start (cert_options' new_ca=1), or taken back
+      const on = !!c.new_ca_next;
+      row('New CA', '<button type="button" class="btn" id="cert-newca" onclick="certNewCa(' + (on ? 'false' : 'true') + ')">' +
+          (on ? icon('close') + '<span>Keep the current one</span>' : icon('refresh') + '<span>New certificate authority</span>') +
+          '</button> ' + helpTip(CERT_NEWCA_TIP, true) +
+          (on ? ' <span class="cert-note" id="cert-newca-next">At the next start - every device then installs the new one</span>' : ''));
+    }
     (c.retired || []).slice(0, 1).forEach(r =>
       row('Replaced', e(r.name) + '<span class="info">' + e(r.date) + ' - remove it from devices</span>'));
     const dl = ca ? '<a class="btn primary" id="cert-dl" href="krakensdr-ca.crt" download="krakensdr-ca.crt">' + icon('download') + '<span>Download CA certificate</span></a>'
@@ -29922,6 +29950,20 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     certAskSeq = typeof certLatest.scope_seq === 'number' ? certLatest.scope_seq : 0;
     certMsg = ''; certMsgErr = false;
     send('CERT_SCOPE:' + v);
+    certSectionUpdate();
+  }
+  // the New certificate authority button: asked first (every device reinstalls)
+  async function certNewCa(on) {
+    const c = certLatest;
+    if (!c || !c.ca || !c.managed || !!c.new_ca_next === on) return;
+    const ok = on ? await uiConfirm({title: 'New certificate authority',
+                                     text: 'At the next start - every device then installs the new certificate',
+                                     ok: 'New authority', tip: CERT_NEWCA_TIP})
+                  : true;
+    if (!ok || !certLatest) return;
+    certAskSeq = typeof certLatest.scope_seq === 'number' ? certLatest.scope_seq : 0;
+    certMsg = ''; certMsgErr = false;
+    send('CERT_NEW_CA:' + (on ? '1' : '0'));
     certSectionUpdate();
   }
   // every system_status

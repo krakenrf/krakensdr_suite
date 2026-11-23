@@ -22,9 +22,10 @@ void init();
 // init(). {managed, scope, scope_next, host, host_ok, ca: {name, sha256,
 // sha1, not_after} | null, server: {name, names, ips, not_after, days_left},
 // ips_now, names_not_covered (wanted names outside the CA, left out of the
-// certificate), retired: [{name, sha256, date}], notices: [expires_soon,
-// name_changed, addresses_changed, restart_pending, names_not_covered],
-// scope_error, scope_seq}
+// certificate), host_conflict (avahi's other name, ""), new_ca_next,
+// retired: [{name, sha256, date}], notices: [expires_soon, name_changed,
+// addresses_changed, restart_pending, names_not_covered, new_ca_pending,
+// clock_suspect], scope_error, scope_seq}
 std::string json();
 
 // GET /krakensdr-ca.crt: the CA certificate as read at startup, PEM
@@ -40,5 +41,12 @@ bool download(std::string* pem);
 // normalised command to echo), else the reason (also in the status:
 // scope_error, scope_seq).
 std::string set_scope(std::string_view value, bool allowed, std::string* applied);
+
+// CERT_NEW_CA:1|0 - asks for a new CA at the next start (cert_options'
+// new_ca=1; both makers make it and take the line out: fine rule 29) or takes
+// the request back. Same rules as CERT_SCOPE: (a page's own socket, not
+// during a playback, not for a certificate of the user's own); the outcome in
+// scope_error / scope_seq.
+std::string set_new_ca(std::string_view value, bool allowed, std::string* applied);
 
 }  // namespace certstatus

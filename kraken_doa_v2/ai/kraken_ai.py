@@ -98,7 +98,9 @@ DEFAULTS = {
 # key, the receiver's CA key - it can vouch for this receiver's names, in wide
 # scope for any .local / .lan name and private address -, an unusable key
 # moved aside, the generator's temporary key files, make-cert.sh's work and
-# lock folders. A name with * is a pattern, denied as a file and as a folder)
+# lock folders. A name with * is a pattern, denied as a file and as a folder).
+# src/ai_sandbox.cpp masks the same two lists in the sandbox of a plugin the
+# assistant changed - keep them in step
 SECRETS = ["api_token", "doa_settings.json", "server.key", "krakensdr-ca.key", "*.unreadable-*", "*.key.tmp",
            ".make-cert.*", "ai/ai_config.json", "ai/run", "ai/state", "noise_floors.json", "rdf_session.bin"]
 HOME_SECRETS = [".claude", ".claude.json", ".ssh", ".gnupg", ".config", ".local/share", ".netrc", ".git-credentials",

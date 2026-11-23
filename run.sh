@@ -233,9 +233,13 @@ cert_check() {
     # CA only on request (fine rule 18); a key or certificate kept aside
     local nc moved
     nc="$(printf '%s\n' "$out" | sed -n 's/^not-covered: *//p' | tail -n 1)"
-    [[ -z "$nc" ]] || warn "Web UI certificate: ${nc} not in it (outside this receiver's CA) - scripts/make-cert.sh kraken_doa_v2 --new-ca takes them in, then every device installs the new certificate."
+    [[ -z "$nc" ]] || warn "Web UI certificate: ${nc} not in it (outside this receiver's CA) - a new certificate authority takes them in (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate -> New certificate authority, or scripts/make-cert.sh kraken_doa_v2 --new-ca), then every device installs it."
     moved="$(printf '%s\n' "$out" | sed -n -e 's/^moved: //p' -e 's/^saved: //p' | tr '\n' ' ')"
     [[ -z "$moved" ]] || warn "Web UI certificate: kept aside in kraken_doa_v2: ${moved% }"
+    # fine rule 26: the CA's SHA-256 where only the owner sees it - devices
+    # compare it before trusting the downloaded certificate
+    local fp
+    fp="$(printf '%s\n' "$out" | sed -n 's/^ca-sha256: //p' | tail -n 1)"
     case "$state" in
     issued)
         ok "Web UI certificate re-issued (${reason}) - devices that installed this receiver's certificate need nothing new." ;;
@@ -245,10 +249,13 @@ cert_check() {
         else
             warn "Web UI: NEW certificate for this receiver (${reason}) - every device must install the new certificate and remove the old one (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate)."
         fi
+        [[ -z "$fp" ]] || warn "Web UI certificate authority SHA-256: ${fp} - compare it with what each device shows before trusting it."
+        fp=""
         [[ "${1:-}" == "restart" ]] && sleep 5 ;;
     not-managed)
         ok "Web UI certificate: kraken_doa_v2/server.crt is your own - left as it is." ;;
     esac
+    [[ -z "$fp" ]] || ok "Web UI certificate authority SHA-256: ${fp}"
     return 0
 }
 

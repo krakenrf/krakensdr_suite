@@ -145,7 +145,7 @@ ensure_cert() {
     # the certificate (fine rule 18); a key or certificate kept aside (12, 15)
     local nc moved
     nc=$(printf '%s\n' "$out" | sed -n 's/^not-covered: *//p' | tail -n 1)
-    [[ -z $nc ]] || log "WARNING: web UI certificate: $nc not in it (outside this receiver's CA) - $APP/scripts/make-cert.sh $DATA/kraken_doa --new-ca takes them in, then every device installs the new certificate"
+    [[ -z $nc ]] || log "WARNING: web UI certificate: $nc not in it (outside this receiver's CA) - a new certificate authority takes them in (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate -> New certificate authority, or docker exec <container> $APP/scripts/make-cert.sh $DATA/kraken_doa --new-ca), then every device installs it"
     moved=$(printf '%s\n' "$out" | sed -n -e 's/^moved: //p' -e 's/^saved: //p' | tr '\n' ' ')
     [[ -z $moved ]] || log "WARNING: web UI certificate: kept aside in $DATA/kraken_doa: ${moved% }"
     case $state in
@@ -160,6 +160,10 @@ ensure_cert() {
     not-managed)
         log "web UI certificate: server.crt is your own - left as it is" ;;
     esac
+    # fine rule 26: the CA's SHA-256 in the container's log - only the owner sees it
+    local fp
+    fp=$(printf '%s\n' "$out" | sed -n 's/^ca-sha256: //p' | tail -n 1)
+    [[ -z $fp ]] || log "web UI certificate authority SHA-256: $fp - compare it with what each device shows before trusting it"
 }
 
 # Like run.sh: start the client once heimdall's phases have converged, so the
