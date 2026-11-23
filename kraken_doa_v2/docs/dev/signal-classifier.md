@@ -1613,7 +1613,23 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   own antenna, live one control channel read 15 dB on CH0 and 3.6 dB on
   CH1 -, then the newest, the most hits -, each taken unless a view
   of the same signal - centres within half the wider width + 500 Hz,
-  widths within 3x, another tuner - was taken). Classes marked
+  widths within 3x, another tuner - was taken). The view sent is sticky
+  (INV-J, 2026-11-24): the service remembers the ids of the list it made
+  last and marks those views (`sent`); a marked view counts 3 dB
+  (`STICKY_DB`) stronger, so it stays the one sent unless another is fresh
+  and it is not, has a class and it has none, or is at least 3 dB
+  stronger - then that one takes over at once (and is sticky in turn).
+  Before, two antennas within a dB or two of each other took turns as
+  either band got its look: live, in the user's independent layout
+  (416.760 / 416.815 MHz, overlapping bands) a signal at 416.090 MHz was
+  sent as CH0's view (26.6 dB, "DMR", 11 states) and as CH1's (26.4 dB,
+  "MPT1327", 61 states) - the label's id changed (its row reset, a held
+  press lost its track) and its text flipped between two classes. The
+  bonus keeps the comparison an order (a margin in the comparison itself
+  would not be: a 1 dB chain a < b < c with c 3 dB over a); the memory is
+  the latest list's ids, which are never reused (INV-I), so a mode change
+  or restart needs nothing (cleared with the trackers anyway); a view the
+  200-track cap left out is simply not marked. Classes marked
   `"hidden": true` (`none`: a false detection) are never sent, nor offered
   as an alternative
 - **Ages**: `age` is 0 while the track's band's latest snapshot had it and
@@ -1726,7 +1742,15 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
     not retuned are not affected except for the waits (<= 0.5 s each). The
     rest of the gap is the settle itself: a band whose turn comes while it
     settles is passed over for that pick (left as it is: waiting for a
-    settling band would change pick_band and INV-A)
+    settling band would change pick_band and INV-A). Known edge - the
+    wait's price for the other bands (the third review's model): a tuner
+    retuned every 0.9 s +-20 % costs the other bands ~20 % of their looks
+    (95 against 120 each) for 18 looks of the retuned band instead of 0;
+    every 1.1 s: the others 100 looks each against 119, the retuned band 71
+    against 5 (with the wait / without); the 2.8 s swap: the others 110
+    against 133, the swapped bands 58 / 64 against 31 / 39. Accepted:
+    without the wait a band retuned at such intervals gets (almost) no
+    labels at all
   - **A band's lead changes** (INV-E): the band's tracker and its band
     fields (looks, turn) move to the tuner now standing for it
     (`rules::regroup`); before, a lower tuner joining cleared the old lead's
@@ -2683,3 +2707,48 @@ runs).
   worker 1's page suites on a coherent playback: p2_ui_sig 18 / 18,
   p2_ui_fixes 12 / 12 (a held press across a state message with the new
   ids), p2_ui_touch 3 / 3 taps
+
+### The third review: the view sent for a signal two tuners see (N2), the wait's price (N1)
+
+- **N2 - the view sent alternated** (the reviewer by reading; the
+  orchestrator's live run in the user's layout: *Trackers* in Runtime).
+  Now sticky (INV-J): `better()` counts the view sent last (`sent`, from
+  the ids of the previous list) `STICKY_DB` 3 dB stronger, after fresh
+  and classed. Proof sketch (in `sigclass_rules.hpp`): with the views kept
+  fed back as `sent`, every view dropped before is still preceded by the
+  one that dropped it while no SNR moves 1.5 dB from where it was when the
+  views were chosen (pairwise < 3 dB), and kept views never meet - the
+  same views every publish. Tests (`tools/sigclass_rules_test.cpp`,
+  "sticky"): 8 publishes in a row, the output fed back, every SNR jittered
+  < 1.5 dB around the start - the same ids each time (random inputs and a
+  chain a ~ b ~ c); per signal of 2-4 views the sent one stays against
+  others within 2.9 dB, and a view 3.05 dB over it, the other when it
+  went, a fresh one when it went stale, a classed one when it lost its
+  class takes over; the live case (two views 0.2 dB apart, the SNRs
+  swapping every publish) stays put; the earlier invariants on every
+  output (random inputs now carry `sent` marks). Mutants: be18a73's rule
+  (not sticky: the live case alternates), sticky without the margin,
+  sticky over a fresh view, sticky over a classed one - each caught by
+  its directed inputs. End to end (TEST builds side by side, the fake
+  heimdall in independent mode, tuners 0 / 1 on 499.800 / 499.850 MHz:
+  the SAME recording - the fake shifts it by 50 kHz for tuner 1 (its
+  `shift_max`), so both tuners see one RF scene at about the same SNR,
+  the hardest case -, tuners 2-4 on 456.8 / 416.5 / 142.3 MHz, 120 s;
+  every list from 20 s; `n2_table.py`): the 20 signals sent from both
+  tuners at times - be18a73: 84 changes of the view sent (id and tuner),
+  81 of them with the new view less than 3 dB stronger, 8 class flips;
+  this branch: 33 changes, 31 within the margin, 6 class flips. The
+  remaining ones are rule (a): the sent view no longer fresh while the
+  other is - an intermittent signal (P25 voice channels) that one tuner's
+  latest look caught and the other's did not, or a band's latest look
+  overdue (a round longer than bands x period + 5 s while a first-look
+  debt is paid back). Left as the rule says: the newer detection wins
+- **N1 (no code)**: the L3 wait's price for the other bands, the third
+  review's numbers, added to *A capture a retune aborted* in Runtime
+- Reruns: the rules test seeds 21-25 (200000 rounds) and the same under
+  ASan + UBSan + `_GLIBCXX_DEBUG` (20000 rounds): all pass, 0 reports. The
+  A/B pair against be18a73 (499.8 / 456.8 MHz, 180 s, side by side):
+  coherent / wideband scan / independent - be18a73 37 / 37, 31 / 37,
+  34 / 37; this branch 36 / 36, 31 / 36, 34 / 36; CPU 4.00-4.06 % both.
+  ui_modes.py 18 / 18; p2_ui_sig 18 / 18, p2_ui_fixes 12 / 12,
+  p2_ui_touch 3 / 3
