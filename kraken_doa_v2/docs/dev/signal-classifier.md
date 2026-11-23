@@ -1504,7 +1504,9 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   they expire), just not sent. Two overlapping tuners (wideband scan's
   edges, independent tuners on neighbouring frequencies) seeing one
   signal: sent once (`rules::drop_overlap_duplicates`: best view first -
-  fresh, then the newest, then the most hits -, each taken unless a view
+  fresh, then one with a class, then the higher SNR - each tuner has its
+  own antenna, live one control channel read 15 dB on CH0 and 3.6 dB on
+  CH1 -, then the newest, the most hits -, each taken unless a view
   of the same signal - centres within half the wider width + 500 Hz,
   widths within 3x, another tuner - was taken). Classes marked
   `"hidden": true` (`none`: a false detection) are never sent, nor offered
@@ -1533,7 +1535,11 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   - **Bands** (`band_reps`): tuners within `SAME_BAND_HZ` 1 kHz of each
     other are one band - one look serves them all, one tracker (the
     lowest-numbered tuner's). The user's independent layout had three
-    tuners on 416.815 MHz: three of five looks went to one band
+    tuners on 416.815 MHz: three of five looks went to one band. The
+    price: the band is seen through the representative's antenna only (CH1
+    for CH1-CH3 there) - live the channels differ by several dB on one
+    signal, so a weak one another of those antennas would catch can be
+    missed
   - **Which band** (`pick_band`): the bands in turn (round robin, a band
     that is settling or has no frequency skipped); a band nobody has looked
     at since its start (switch-on, mode change, its tuner's retune) comes
@@ -1986,7 +1992,25 @@ shown on the page (a class, p >= 0.5) for >= half of coherent mode's last
   switch, the band's coherent labels back in wideband scan (11 / 11, the
   first after 1.9 s), labels back in coherent after the recalibration
   (4.8 s), no page errors: 18 / 18 (9751af3: 15 / 18 - no label in
-  wideband scan)
+  wideband scan). On 1e8871d twice 17 / 18: the band's labels back in
+  wideband scan 9 / 13 (the miss: intermittent / unsure ones), then with
+  only the steady ones required (5+ looks, in the latest) 7 / 8 - the miss
+  the 320-440 kHz hump at 416.4 MHz, whose class is unstable in coherent
+  mode too (Unknown pulses / LoRa / DMR)
+- Live, the dev machine's KrakenSDR (heimdall from scratch, --serials
+  1000..1004, receive only, bias tees 0 at start and end), centre 416.5
+  MHz gain 29.7 dB, 3 min coherent -> 3 min wideband scan (tuners 412.66 ..
+  420.34, the 416.5 band on CH2) -> 3 min independent (the user's layout,
+  bands CH0 416.760 / CH1 416.815 (CH2, CH3 sharing it) / CH4 859.44;
+  looks [24, 22, 0, 0, 23]): coherent (CH0) 12 signals labelled; wideband
+  scan 4 / 12, independent 5 / 8 (4 outside its tuners). The losses are the
+  ANTENNAS: each tuner listens on its own channel, and the levels differ -
+  DMR 415.638 MHz 59.9 dB SNR on CH0, 56.4 on CH2; MPT1327 416.587 MHz
+  56.5 / 49.6 (CH2) / 56.2 (CH0 again in independent mode); MPT1327
+  416.7495 MHz 15 dB on CH0, not detected on CH2, 3.6 dB (p 0.40) on CH1 -
+  where the overlap rule then hid CH0's sure view (fixed: the stronger view
+  wins, 1e8871d). The weak signals (6-17 dB on CH0) drop below the
+  detector on another channel; that is the receiver, not the service
 - Rules (`tools/sigclass_rules_test.cpp`, 20000 random inputs, two seeds):
   every invariant held; the mutants caught - 9751af3's overlap code (a kept
   track changed in 19025 / 20000), the pairwise scan, no tuner test, the
