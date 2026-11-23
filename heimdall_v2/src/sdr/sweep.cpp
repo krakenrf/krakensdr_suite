@@ -440,10 +440,21 @@ int ag_down_step(double share) {
 constexpr float AG_PEAK_TARGET_DBFS = -12.0f;
 constexpr int AG_PROBE_MIN_ROOM = 60;   // tenths of a dB: a smaller room is left to the slow raises
 constexpr int AG_PROBES = 2;
-// A gain write costs ~2.4 ms with the fork's fast call, 9.1-9.5 ms without (~8 USB
-// control transfers, more than the fast retune itself): a tuner goes UP only when its next
-// hop wants at least this much more (down: always - it must not clip)
+// A gain write costs +1 USB transfer inside the retune with the fork's fast
+// call (RTLSDR_HAS_GAIN_FAST): every hop then takes the gain it wants. Without
+// it a write is ~8 transfers, 9.1-9.5 ms on the KrakenSDR - more than the
+// retune -, so a step UP of less than AG_UP_MIN may be skipped, but for at
+// most AG_UP_SKIP_MAX hops in a row per tuner: a deficit is carried past the
+// hop that caused it for one hop, never a block (it once sat on every
+// remaining hop of a tuner's block, 1.6 dB low, and on the next sweep's start).
+// Down: always - it must not clip.
 constexpr int AG_UP_MIN = 30;
+#if defined(RTLSDR_HAS_GAIN_FAST)
+constexpr int AG_UP_SKIP_MAX = 0;
+#else
+constexpr int AG_UP_SKIP_MAX = 1;
+#endif
+int up_skips[NUM_DEVICES] = {};   // the hop thread only
 
 struct GainEntry {
     int gain = 0;                 // tenths of a dB (the tuner takes the largest list value <= min(this, ceiling))
@@ -484,6 +495,10 @@ std::atomic<uint32_t> ag_reduced_hops{0}, ag_clipped_hops{0}, ag_changes{0}, ag_
 std::atomic<int> ag_min_gain{-999};
 // ... being counted in the sweep that runs
 uint32_t ag_cur_clipped = 0, ag_cur_changes = 0, ag_cur_writes = 0;
+// the gains the tuners really used on the sweep's hops (what the 8091
+// headers carried): hops under the ceiling, the lowest
+uint32_t ag_cur_reduced = 0;
+int ag_cur_min = 1 << 30;
 
 // Each tuner's gain list (rtlsdr_get_tuner_gains, tenths of a dB, ascending),
 // cached per handle (an element-count change reopens the devices)
@@ -681,7 +696,15 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
     if (std::min(e.gain, ceiling) >= ceiling) { gain_map.erase(it); return; }   // at the ceiling and settled: forgotten
     const int up = std::min(ceiling, std::max(next_up(L, a.gain), quantize_down(L, a.gain + AG_RAISE)));
     const float rise_db = static_cast<float>(up - a.gain) / 10.0f;
-    if (up <= a.gain || e.peak_max_dbfs + rise_db > AG_RAISE_HEADROOM_DBFS) return;
+    if (up <= a.gain) return;
+    if (e.peak_max_dbfs + rise_db > AG_RAISE_HEADROOM_DBFS) {
+        // not this hold: a new one, with its own peaks (the highest peak
+        // never decayed - one loud clean visit, a carrier keyed while the
+        // hop was clean, blocked every raise for good)
+        e.clean = 0;
+        e.peak_max_dbfs = -200;
+        return;
+    }
     ag_cur_changes++;
     if (up >= ceiling) { gain_map.erase(it); return; }   // back at the ceiling
     e.gain = up;
@@ -690,19 +713,14 @@ void ag_learn(int t, const HopAcc& a, int64_t now) {
     e.peak_max_dbfs = -200;
 }
 
-// At a sweep's end: the status of that sweep (the plan's hops)
-void ag_publish(const SweepPlan& p) {
+// At a sweep's end: the status of that sweep - the gains its hops were
+// really taken with (as the 8091 headers said), not what the map wants
+void ag_publish() {
     const int ceiling = current_gain.load();
-    uint32_t reduced = 0;
-    int lowest = ceiling;
-    if (auto_gain_on.load() && ceiling >= 0 && !gain_map.empty()) {
-        for (uint32_t h = 0; h < p.steps; h++) {
-            const int g = learned_gain(static_cast<uint32_t>(p.first_center_hz + h * p.step_hz), ceiling);
-            if (g < ceiling) { reduced++; lowest = std::min(lowest, g); }
-        }
-    }
-    ag_reduced_hops.store(reduced);
-    ag_min_gain.store(lowest);
+    ag_reduced_hops.store(ag_cur_reduced);
+    ag_min_gain.store(ag_cur_reduced ? std::min(ag_cur_min, ceiling) : ceiling);
+    ag_cur_reduced = 0;
+    ag_cur_min = 1 << 30;
     ag_clipped_hops.store(ag_cur_clipped);
     ag_changes.store(ag_cur_changes);
     ag_writes.store(ag_cur_writes);
@@ -1104,10 +1122,16 @@ void sweep_thread() {
                 const bool tune = wideband_config.get_tuner_frequency(sel[k]) != hz;
                 const int g = wanted_gain(sel[k], hz);
                 const int now_g = wideband_config.get_tuner_gain(sel[k]);
-                // (a small step up isn't worth a write: the hop is taken a
-                // little lower - and its header says so)
-                const bool gain = g >= 0 && g != now_g &&
-                                  (!auto_gain_on.load() || now_g < 0 || g < now_g || g - now_g >= AG_UP_MIN);
+                // (without the fast call a small step up may wait one hop:
+                // that hop is taken a little lower - and its header says so)
+                bool gain = g >= 0 && g != now_g;
+                if (gain && auto_gain_on.load() && now_g >= 0 && g > now_g && g - now_g < AG_UP_MIN &&
+                    up_skips[sel[k]] < AG_UP_SKIP_MAX) {
+                    gain = false;
+                    up_skips[sel[k]]++;
+                } else {
+                    up_skips[sel[k]] = 0;
+                }
                 if (tune || gain) {
                     move_tuner.push_back(sel[k]);
                     move_hz.push_back(hz);
@@ -1311,6 +1335,12 @@ void sweep_thread() {
                     hop_acc[t] = HopAcc{};
                 }
                 if (a.hz == hz && a.packets > 0) ag_learn(t, a, t_end);
+                // the status: the gain this hop was really taken with
+                const int used = wideband_config.get_tuner_gain(t);
+                if (used >= 0 && used < current_gain.load()) {
+                    ag_cur_reduced++;
+                    ag_cur_min = std::min(ag_cur_min, used);
+                }
             }
         }
         tm.dwell = ms_between(t_clear, t_end);
@@ -1323,7 +1353,7 @@ void sweep_thread() {
         round_open = false;
         if (++r >= R) {
             r = 0;
-            ag_publish(p);
+            ag_publish();
             std::lock_guard<std::mutex> plock(sweep_state.mutex);
             if (sweep_state.plan_generation.load() == pg) sweep_state.sweeps.fetch_add(1);
         }

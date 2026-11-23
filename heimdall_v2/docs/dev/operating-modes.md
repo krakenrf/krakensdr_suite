@@ -1346,7 +1346,9 @@ but every quiet hop sits on the converter's floor. So the gain is set per hop.
   there is no ceiling and Auto does nothing (`auto_gain_active` false).
 - Status, sweep object: `auto_gain`, `auto_gain_active`, `gain_ceiling_db`,
   `gain_reduced_hops`, `gain_min_db`, `clipped_hops`, `gain_changes` and
-  `gain_writes` (of the last completed sweep), `gain_write_failures`;
+  `gain_writes` (of the last completed sweep - `gain_reduced_hops` /
+  `gain_min_db` count the gains the hops were really taken with, as the
+  8091 headers carried them, not the map), `gain_write_failures`;
   `timing.gain_hops` / `timing.gain_write_ms` (gain-only writes);
   `gain_fast` (the fork's fast gain write in use, else the ordinary call);
   `gain_real_db` ([[table gain, real dB against the top value], ...] - only
@@ -1368,8 +1370,15 @@ but every quiet hop sits on the converter's floor. So the gain is set per hop.
   gain). A new plan's centres take the lowest gain learned within 1.2 MHz.
   A ceiling change keeps the map: a hop uses min(learned, ceiling).
 - A tuner's next hop writes its gain only when it differs from the tuner's
-  gain now. A step UP of less than 3 dB is skipped (the hop is taken up to
-  3 dB low and its header says so; at 6 dB, 174 hops sat 5 dB low).
+  gain now. With the fork's fast call (`gain_fast`: the gain inside the
+  retune, +1 USB transfer) every hop takes the gain the map wants. Without it
+  (~8 transfers, 9 ms) a step UP of less than 3 dB may wait ONE hop: the hop
+  after the one that caused it is taken up to 3 dB low (its header says
+  so), the next one is written. Until 2026-11-23 the skip had no bound:
+  in the user's session, one hop of tuner 4's block (1354.7 MHz) raised to
+  48.0 left every following hop of the block - and the block's start in the
+  next sweep - at 48.0, 166 hops 1.6 dB low. The page counted 237 hops under
+  the ceiling where the status (then counted from the map) said 72.
 - A hop that changes only its gain gets the same flag, settle and gate as a
   retune.
 - The rule:
@@ -1387,6 +1396,10 @@ but every quiet hop sits on the converter's floor. So the gain is set per hop.
   - Up again otherwise only after a hold without a single clipped value
     (8 visits and 20 s, doubled after each raise that clipped again, up to
     256 / 640 s), by +3 dB, with the peaks of the hold 6 dB under full scale.
+    A hold whose peaks leave too little room starts over with fresh peaks.
+    Until 2026-11-23 its highest peak never decayed: one loud clean visit
+    (a carrier that keyed while the hop was clean) blocked every raise of
+    that hop for good.
   - Neighbours: a hop whose centre lies within 2.4 MHz of a hop held 18 dB
     or more under the ceiling (a saturating signal) is held at most 12 dB
     under the ceiling while that lasts (*Front end* below). It comes back
@@ -1498,6 +1511,20 @@ tail fresh (*The guarantee*, above). Rarely seen in normal sweeping,
 because a hop's predecessor on that tuner is rarely that much louder. But
 6 such values are 0.018 % of a packet, enough for auto gain to count a
 mild clip.
+
+*The block case* (`t_agblock.py`, fake, 2026-11-23): one hop (414.34 MHz)
+learned at 43.4 dB by a mild clip, its carrier then off. It comes back via
+44.5 and 48.0 to the ceiling in about 1.5 minutes.
+- With the fast call: no other hop is ever under the ceiling, the status
+  agrees with the headers, the sweep 0.165 s as manual.
+- Without it (the fake's ordinary write: 9 ms): in the 48.0 phase the hop
+  after it (416.26 MHz) also reads 48.0 - the one carried hop - and nothing
+  beyond. 2 writes a sweep, 0.175 s against 0.165 s.
+- `t_agpump.py` (a keyed carrier, 4 min): 2 reductions, 4 raises,
+  0.009 gain changes a sweep.
+- The hardware run of this fix (headers against the map, the duration
+  against manual) was not possible: the dev machine's KrakenSDR was in use
+  by another worktree's live stack.
 
 *Not tested*: Windows (3-4 ms a USB transfer: the fallback call there would
 add about a second a sweep, F's call ~0.15 s); the Pi; the neighbour rule's
