@@ -1,6 +1,7 @@
 #include "wb_board.hpp"
 #include "app_version.hpp"
 #include "antenna_bias.hpp"
+#include "cert_status.hpp"
 #include "utils/version_info.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
@@ -595,6 +596,9 @@ string MessageBuilders::build_system_status_message() {
     // heimdall's antenna bias tees, from its control-port status (antenna_bias.hpp;
     // state "none" / "old" when it isn't there or doesn't have them)
     json << ",\"antenna_bias\":" << antbias::state_json();
+    // the web UI's certificate: names, expiry, CA, scope, notices (cert_status.hpp:
+    // cached text, rebuilt by its 60 s check and by CERT_SCOPE:)
+    if (const std::string cert = certstatus::json(); !cert.empty()) json << ",\"cert\":" << cert;
 #ifdef _WIN32
     // running from the source folder (kraken_doa_v2/Makefile in the cwd) or
     // from a package (windows/package.sh: no sources, Makefile or MSYS2) -

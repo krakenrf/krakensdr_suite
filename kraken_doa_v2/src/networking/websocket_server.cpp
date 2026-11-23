@@ -27,6 +27,8 @@
 #include "utils/platform.hpp"
 #include "utils/fs_compat.hpp"
 #include "utils/tls_compat.hpp"
+#include "cert_status.hpp"
+#include <sys/stat.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -538,6 +540,26 @@ void stream_parts(uWS::HttpResponse<SSL>* res, std::shared_ptr<rec::Download> d)
     (*pump)(0);
 }
 
+// GET /krakensdr-ca.crt (and PR #5's /krakensdr.crt): the receiver's CA
+// certificate - what a device installs once to trust every certificate it
+// signs (docs/dev/https-certificate.md). Public by nature (every handshake
+// sends it in the chain) and needed before the page can be trusted, so no
+// token; the Host / Origin check like the other routes. Without a CA (a
+// certificate of the user's own) the server certificate itself.
+template <typename Res>
+void send_ca_certificate(Res* res, uWS::HttpRequest* req) {
+    if (!request_allowed(req)) { refuse_request(res, req); return; }
+    string pem;
+    if (!certstatus::download(&pem)) {
+        res->writeStatus("404 Not Found")->end("certificate not found");
+        return;
+    }
+    res->writeHeader("Content-Type", "application/x-x509-ca-cert")
+       ->writeHeader("Content-Disposition", "attachment; filename=\"krakensdr-ca.crt\"")
+       ->writeHeader("Cache-Control", "no-store")
+       ->end(pem);
+}
+
 } // namespace
 
 string WebSocketServer::load_html_content() {
@@ -557,20 +579,35 @@ string WebSocketServer::load_html_content() {
 }
 
 void WebSocketServer::verify_ssl_certificates() {
-#if defined(_WIN32) || defined(__APPLE__)
-    // Windows / macOS have no install step (install.sh makes the pair with
-    // the openssl CLI on Linux; Windows has no openssl.exe): a missing pair
-    // is made here, in-process - the same kind, self-signed for 10 years
+    // The web UI's certificate (docs/dev/https-certificate.md): a CA per
+    // receiver signs the server certificate. scripts/make-cert.sh keeps it
+    // current before every start on Linux / macOS / Docker (run.sh, the
+    // entrypoint); Windows has no openssl.exe and no start script, so the
+    // same logic runs here, in-process, on every start - and elsewhere only
+    // when the pair is missing (no openssl CLI, kraken_doa started by hand).
     {
-        bool created = false;
-        string err;
-        if (!tls_ensure_self_signed_cert(SSL_CERT_FILE, SSL_KEY_FILE, &created, &err))
-            cerr << "ERROR: cannot create the SSL certificate: " << err << endl;
-        else if (created)
-            cout << "Created a self-signed SSL certificate for the web UI (" << SSL_CERT_FILE << " + "
-                 << SSL_KEY_FILE << ")" << endl;
-    }
+#ifdef _WIN32
+        const bool run = true;
+#else
+        struct stat cs {}, ks {};
+        const bool run = ::stat(SSL_CERT_FILE, &cs) != 0 || cs.st_size == 0 || ::stat(SSL_KEY_FILE, &ks) != 0 ||
+                         ks.st_size == 0;
 #endif
+        if (run) {
+            tlscert::State state = tlscert::State::Kept;
+            string err;
+            if (!tlscert::ensure("", false, false, &state, &err)) {
+                cerr << "ERROR: HTTPS certificate: " << err << endl;
+            } else if (state == tlscert::State::CaCreated) {
+                // every device that trusted the old CA must install this one
+                cerr << "WARNING: HTTPS certificate: a new certificate authority was created (" << tlscert::CA_CRT
+                     << ") - every device must install it and remove the old one (Telemetry sheet -> HTTPS certificate)"
+                     << endl;
+            } else {
+                cout << "HTTPS certificate: " << tlscert::state_name(state) << endl;
+            }
+        }
+    }
     ifstream cert_file(SSL_CERT_FILE);
     ifstream key_file(SSL_KEY_FILE);
 
@@ -579,15 +616,12 @@ void WebSocketServer::verify_ssl_certificates() {
         // listen-failure path below for why).
         StatusDashboard::end();
         cerr << "ERROR: Cannot read SSL certificate files" << endl;
-#if defined(_WIN32) || defined(__APPLE__)
         cerr << "kraken_doa makes " << SSL_CERT_FILE << " + " << SSL_KEY_FILE
              << " when they are missing - check that its folder is writable" << endl;
-#else
-        cerr << "Run: openssl req -x509 -newkey rsa:4096 -keyout " << SSL_KEY_FILE
-             << " -out " << SSL_CERT_FILE << " -days 365 -nodes -subj \"/CN=krakensdr\"" << endl;
-#endif
         platform::fast_exit(1);
     }
+    // what the page's certificate section shows (read once: what this run serves)
+    certstatus::init();
 }
 
 uWS::SSLApp WebSocketServer::create_ssl_app() {
@@ -617,23 +651,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                ->writeHeader("Cache-Control", "no-cache")  // Disable cache during debugging
                ->end(js_content);
         })
-        .get("/krakensdr.crt", [](auto* res, auto* /*req*/) {
-            // This server's own certificate (public by nature: every TLS
-            // handshake sends it), offered as a download so a browser or phone
-            // can be told to trust it. No token: it is needed before the page
-            // can be opened without a warning.
-            ifstream file(SSL_CERT_FILE, ios::binary);
-            if (!file.is_open()) {
-                res->writeStatus("404 Not Found")->end("certificate not found");
-                return;
-            }
-            stringstream buffer;
-            buffer << file.rdbuf();
-            res->writeHeader("Content-Type", "application/x-x509-ca-cert")
-               ->writeHeader("Content-Disposition", "attachment; filename=\"krakensdr.crt\"")
-               ->writeHeader("Cache-Control", "no-store")
-               ->end(buffer.str());
-        })
+        .get("/krakensdr-ca.crt", [](auto* res, auto* req) { send_ca_certificate(res, req); })
+        .get("/krakensdr.crt", [](auto* res, auto* req) { send_ca_certificate(res, req); })   // PR #5's page
         .get("/array_calculator.html", [](auto* res, auto* /*req*/) {
             // Antenna array calculator (opened from the MUSIC DoA panel):
             // a static page, read from disk on each request like the main UI
