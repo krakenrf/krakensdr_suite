@@ -142,3 +142,58 @@ fingerprint, which changes with every re-issue (`NATIVE_APP_API.md`).
 ## Tested
 
 (filled in by the implementation)
+
+### kraken_doa (2026-11-23, x86_64 Linux; no Windows / macOS build here)
+
+Where it is: `tlscert::` in `src/utils/tls_compat.cpp` (generator, names,
+`inspect`), `src/cert_status.cpp` (status object, notices, `CERT_SCOPE:`,
+download), `verify_ssl_certificates()` in `websocket_server.cpp` (Windows:
+the generator on every start; Linux / macOS: only when `server.crt` /
+`server.key` are missing), the page's `cert*` functions (section in the
+Telemetry sheet, `#cert-banner`). Beyond the contract's fields the status
+also carries `host`, `host_ok`, `ca.sha1` (Windows shows the SHA-1 as the
+Thumbprint), `server.name` / `org`, `ips_now`, `retired` (newest 3) and
+`scope_error` / `scope_seq` (the outcome of a page's `CERT_SCOPE:`).
+`CERT_SCOPE:` is taken from a page's own socket only (like `ANT_BIAS:`), and
+refused for a certificate of the user's own.
+
+- Generator harness (a test main linking `tls_compat.cpp`, `fs_compat.cpp`,
+  `process_posix.cpp`; built against OpenSSL 3.0.2 and 1.1.1w): 89 / 89
+  checks each - fresh (modes 0600 / 0644, CA and server extensions, 3650 /
+  825 days, RSA 3072 / 2048, chain in `server.crt`), rerun byte-identical,
+  rename -> `ca-created` + `.retired.crt` + same server key (a second CA the
+  same day: `krakensdr-ca.YYYYMMDD-2.retired.crt`), scope narrow -> wide ->
+  narrow via `cert_options`, a wide certificate missing an address ->
+  `issued` (CA byte-identical), 59 / 61 days and expired -> `issued` /
+  `kept` / `issued`, a CA with 300 days -> `ca-created`, old `CN=krakensdr`
+  pairs from 3.0.2 and 1.1.1 `req -x509` and PR #5's -> migrated with the
+  RSA 4096 / 2048 key kept, a user's pair and symlinked `server.crt` /
+  `server.key` -> `not-managed`, byte-identical, read-only folder -> exit 1,
+  files untouched. Every pair: `openssl verify -purpose sslserver` with 3.0.2,
+  1.1.1w and 3.6, `curl --cacert` for every name, 127.0.0.1, ::1 and (wide)
+  each LAN address. Negatives refused by all three (`permitted subtree
+  violation`): router.local, evil.example and a LAN IP under a narrow CA; a
+  public IP and www.example.com under a wide one (router.local under a wide
+  CA is accepted - the documented risk).
+- Wide scope puts only addresses inside the CA's private ranges in the
+  server certificate: a public address would fail the whole certificate
+  (checked: 8.8.8.8 under a wide CA is refused).
+- TEST kraken_doa (ports 284xx, files made by its in-process generator):
+  `/krakensdr-ca.crt` and `/krakensdr.crt` byte-identical to
+  `krakensdr-ca.crt`, `application/x-x509-ca-cert`, Host / Origin check 403;
+  `http://` -> 301 and then TLS verified with the CA through PR #5's socket
+  hand-over; the handshake sends leaf + CA (s_client 3.0.2 and 1.1.1w:
+  verify 0). Headless Chromium, real clicks (30 + 3 x 10 checks, no console
+  errors): section in the Telemetry sheet, CA name and SHA-256 equal to
+  `openssl x509 -subject` / `-fingerprint -sha256`, the download
+  byte-identical, Narrow -> Wide (confirm) writes `cert_options` (0644) and
+  shows restart_pending (section and banner), back to Narrow clears it,
+  `CERT_SCOPE:` during a recording's playback refused with its reason shown
+  and `cert_options` unchanged; banners for expires_soon (a 20-day server
+  certificate), name_changed (`KRAKEN_CERT_HOST` changed) and
+  addresses_changed (wide, one address missing), opening the section on a
+  click, hidden by x until the notices change (also after a reload).
+- By code only: the `_WIN32` parts (`GetAdaptersAddresses` addresses and DNS
+  suffixes, reparse-point check, owner-only key files, the generator on
+  every Windows start) and macOS (`scutil --get LocalHostName`) - no MinGW /
+  macOS here.
