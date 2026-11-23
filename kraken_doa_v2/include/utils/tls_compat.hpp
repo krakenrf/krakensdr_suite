@@ -1,11 +1,14 @@
 #pragma once
 // TLS (OpenSSL) set-up that differs between Linux and Windows: where a TLS
 // client finds the CA certificates it verifies servers against, and the
-// self-signed certificate of the 8080 web UI. On Linux each function does
-// what the code did before it existed.
+// certificate of the 8080 web UI (a CA per receiver - the in-process side of
+// docs/dev/https-certificate.md). On Linux tls_load_system_roots does what
+// the code did before it existed.
 #include <openssl/ssl.h>
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 // Trust anchors for a TLS client context that verifies its server (the
 // KrakenPro cloud web mapper, the Nominatim address search). Returns 1 on
@@ -28,12 +31,88 @@
 //           Windows' root as the only anchor. Link with -lcrypt32.
 int tls_load_system_roots(SSL_CTX* ctx);
 
-// The web UI's certificate: when cert_path or key_path is missing (or
-// empty), a new pair is made in-process and written to both - RSA-2048, a
-// self-signed SHA-256 certificate, CN=krakensdr, SAN krakensdr / localhost /
-// 127.0.0.1 / ::1, valid 10 years (what install.sh makes with the openssl
-// CLI on Linux; Windows has no install step and no openssl.exe). The key is
-// written owner-only (a protected DACL: this user, SYSTEM, Administrators).
-// An existing pair is never touched. true = the pair is there (*created: made now);
-// false + *err when it couldn't be made. Only the Windows build calls it.
-bool tls_ensure_self_signed_cert(const char* cert_path, const char* key_path, bool* created, std::string* err);
+// ---- the web UI's certificate (docs/dev/https-certificate.md) -----------------------
+// scripts/make-cert.sh does this with the openssl CLI on Linux / macOS /
+// Docker (run.sh, install.sh, the container's entrypoint); kraken_doa does it
+// in-process on Windows at every start and elsewhere when server.crt /
+// server.key are missing. Both follow the contract in that file: the same
+// files, names, scope, triggers and managed check.
+namespace tlscert {
+
+inline constexpr const char* CA_KEY = "krakensdr-ca.key";     // RSA 3072, 0600
+inline constexpr const char* CA_CRT = "krakensdr-ca.crt";     // what users install, 0644
+inline constexpr const char* SERVER_KEY = "server.key";       // RSA 2048, kept for every re-issue, 0600
+inline constexpr const char* SERVER_CRT = "server.crt";       // server certificate + the CA certificate, 0644
+inline constexpr const char* OPTIONS = "cert_options";        // "scope=narrow" | "scope=wide"; missing = narrow
+inline constexpr int SERVER_DAYS = 825;                       // the most Apple accepts (user-installed CA)
+inline constexpr int CA_DAYS = 3650;
+inline constexpr int SERVER_RENEW_DAYS = 60;                  // re-issued with fewer left
+inline constexpr int CA_RENEW_DAYS = 365;                     // a new CA with fewer left
+inline constexpr const char* ORG = "KrakenSDR receiver";
+
+// <host>: KRAKEN_CERT_HOST, else the name avahi announces (Linux: busctl /
+// gdbus / avahi-resolve, each only if installed, 3 s each), else
+// gethostname() up to the first dot; macOS `scutil --get LocalHostName`.
+// Lowercased; usable = 1-63 characters of a-z 0-9 - (not first or last).
+// May start helper programs: never call it on the uWS loop.
+struct Host {
+    std::string raw;    // as found (for the page: why it can't be used)
+    std::string name;   // lowercased; "" when not usable
+    bool usable = false;
+};
+Host host_name();
+
+// The DNS names the server certificate carries (and a narrow CA permits):
+// <host>, <host>.local, <host>.<d> for each search / domain entry of
+// /etc/resolv.conf (Windows: each adapter's DNS suffix) except "local",
+// localhost, then KRAKEN_CERT_NAMES (comma-separated). No duplicates.
+std::vector<std::string> wanted_names(const Host& h);
+
+// The current global IPv4 addresses (up, not loopback / link-local) inside
+// the wide scope's private ranges (10/8, 172.16/12, 192.168/16, 100.64/10):
+// a name outside the CA's constraints fails the whole certificate, so a
+// public address is never put in. getifaddrs / GetAdaptersAddresses.
+std::vector<std::string> private_ipv4();
+
+// The server certificate's IPs: 127.0.0.1, ::1 (+ private_ipv4() when wide)
+std::vector<std::string> wanted_ips(bool wide);
+
+// cert_options in `dir` ("" = the working directory): true = wide
+bool read_scope_wide(const std::string& dir);
+// Writes it atomically (temp file + fs_replace), mode 0644
+bool write_scope(const std::string& dir, bool wide, std::string* err);
+
+// What the generator did - make-cert.sh's last line
+enum class State { Kept, Issued, CaCreated, NotManaged };
+const char* state_name(State s);   // "kept" | "issued" | "ca-created" | "not-managed"
+
+// The generator. true = a usable pair is there (*state says what happened);
+// false + *err: nothing was changed. force: re-issue the server certificate;
+// new_ca: a new CA (as make-cert.sh --force / --new-ca).
+bool ensure(const std::string& dir, bool force, bool new_ca, State* state, std::string* err);
+
+// ---- reading what is there (the page's certificate section) ----
+struct CertInfo {
+    bool ok = false;
+    std::string cn, org;                 // subject
+    std::vector<std::string> dns, ips;   // subjectAltName
+    int64_t not_after = 0;               // Unix seconds
+    std::string sha256, sha1;            // fingerprints of the DER, "AB:CD:..." (as openssl x509 -fingerprint)
+    std::string pem;                     // the certificate alone
+    bool wide = false;                   // a CA: its name constraints permit every .local name
+};
+struct Inspect {
+    bool present = false;          // server.crt there and readable
+    bool managed = false;          // (docs/dev/https-certificate.md "Managed or not")
+    CertInfo server;               // server.crt's first certificate
+    bool has_ca = false;           // krakensdr-ca.crt there and server.crt verifies against it
+    CertInfo ca;
+    struct Retired {
+        std::string date;          // YYYY-MM-DD from the file name
+        CertInfo cert;
+    };
+    std::vector<Retired> retired;  // krakensdr-ca.*.retired.crt, newest first
+};
+Inspect inspect(const std::string& dir);
+
+}  // namespace tlscert

@@ -2,15 +2,19 @@
 #ifdef _WIN32
 // Before any OpenSSL header: wincrypt.h defines X509_NAME, OCSP_REQUEST ...
 // as macros, which OpenSSL's headers #undef - only for a wincrypt.h included
-// earlier.
+// earlier. winsock2.h before windows.h (GetAdaptersAddresses, inet_ntop).
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <wincrypt.h>
 #include <aclapi.h>
+#include <iphlpapi.h>
 #include <sddl.h>
 #endif
 
 #include "utils/tls_compat.hpp"
 #include "utils/fs_compat.hpp"
+#include "utils/process.hpp"
 
 #include <openssl/bio.h>
 #include <openssl/bn.h>
@@ -24,9 +28,19 @@
 
 #include <sys/stat.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <sstream>
+#include <vector>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -34,9 +48,12 @@
 
 #include <cwchar>
 #include <mutex>
-#include <vector>
 #else
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <unistd.h>
 #endif
 
@@ -254,24 +271,110 @@ int tls_load_system_roots(SSL_CTX* ctx) { return SSL_CTX_set_default_verify_path
 
 #endif
 
-// --- the web UI's self-signed certificate --------------------------------------------
+// --- the web UI's certificate (docs/dev/https-certificate.md) ------------------------
 
 namespace {
 
-bool file_nonempty(const char* path) {
-    struct stat st;
-    return ::stat(path, &st) == 0 && st.st_size > 0;
+using std::string;
+using std::vector;
+
+struct X509Del {
+    void operator()(X509* x) const { X509_free(x); }
+};
+struct PkeyDel {
+    void operator()(EVP_PKEY* k) const { EVP_PKEY_free(k); }
+};
+using X509Ptr = std::unique_ptr<X509, X509Del>;
+using PkeyPtr = std::unique_ptr<EVP_PKEY, PkeyDel>;
+
+string join(const string& dir, const string& name) {
+    if (dir.empty() || dir == ".") return name;
+    const char last = dir.back();
+    return last == '/' || last == '\\' ? dir + name : dir + "/" + name;
 }
 
-std::string openssl_error(const char* what) {
-    std::string s = what;
+bool file_nonempty(const string& path) {
+    struct stat st;
+    return ::stat(path.c_str(), &st) == 0 && st.st_size > 0;
+}
+
+bool is_symlink(const string& path) {
+#ifdef _WIN32
+    // a symbolic link / junction is a reparse point (the path is UTF-8:
+    // win/app.manifest sets the UTF-8 code page)
+    const DWORD a = GetFileAttributesA(path.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    struct stat st;
+    return ::lstat(path.c_str(), &st) == 0 && S_ISLNK(st.st_mode);
+#endif
+}
+
+bool read_file(const string& path, string* out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    out->assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
+string lower(string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+string trim(const string& s) {
+    const size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == string::npos) return {};
+    return s.substr(b, s.find_last_not_of(" \t\r\n") - b + 1);
+}
+
+string openssl_error(const char* what) {
+    string s = what;
     if (const unsigned long e = ERR_get_error()) {
         char b[256];
         ERR_error_string_n(e, b, sizeof b);
-        s += std::string(": ") + b;
+        s += string(": ") + b;
     }
     ERR_clear_error();
     return s;
+}
+
+// every certificate of a PEM file, in order (server.crt: the server's, then the chain)
+vector<X509Ptr> load_certs(const string& path) {
+    vector<X509Ptr> v;
+    string pem;
+    if (!read_file(path, &pem) || pem.empty()) return v;
+    BIO* b = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
+    while (b) {
+        X509* x = PEM_read_bio_X509(b, nullptr, nullptr, nullptr);
+        if (!x) break;
+        v.emplace_back(x);
+    }
+    BIO_free(b);
+    ERR_clear_error();   // the end of the file reads as an error
+    return v;
+}
+
+// never asks for a passphrase on the terminal: an encrypted key just doesn't load
+int no_passphrase(char*, int, int, void*) { return 0; }
+
+PkeyPtr load_key(const string& path) {
+    string pem;
+    if (!read_file(path, &pem) || pem.empty()) return nullptr;
+    BIO* b = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
+    EVP_PKEY* k = b ? PEM_read_bio_PrivateKey(b, nullptr, no_passphrase, nullptr) : nullptr;
+    BIO_free(b);
+    ERR_clear_error();
+    return PkeyPtr(k);
+}
+
+bool same_key(const EVP_PKEY* a, const EVP_PKEY* b) {
+    if (!a || !b) return false;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    return EVP_PKEY_eq(a, b) == 1;
+#else
+    return EVP_PKEY_cmp(a, b) == 1;
+#endif
 }
 
 EVP_PKEY* make_rsa_key(int bits) {
@@ -283,20 +386,9 @@ EVP_PKEY* make_rsa_key(int bits) {
     return key;
 }
 
-bool add_ext(X509* x, int nid, const char* value) {
-    X509V3_CTX v3{};
-    X509V3_set_ctx_nodb(&v3);
-    X509V3_set_ctx(&v3, x, x, nullptr, nullptr, 0);
-    X509_EXTENSION* ext = X509V3_EXT_conf_nid(nullptr, &v3, nid, value);
-    if (!ext) return false;
-    const bool ok = X509_add_ext(x, ext, -1) == 1;
-    X509_EXTENSION_free(ext);
-    return ok;
-}
-
 // the PEM text written by `write` into a memory BIO
 template <typename F>
-bool pem_text(F write, std::string* out) {
+bool pem_text(F write, string* out) {
     BIO* b = BIO_new(BIO_s_mem());
     if (!b) return false;
     bool ok = write(b) == 1;
@@ -307,19 +399,343 @@ bool pem_text(F write, std::string* out) {
     return ok && n > 0;
 }
 
+string cert_pem(X509* x) {
+    string s;
+    pem_text([&](BIO* b) { return PEM_write_bio_X509(b, x); }, &s);
+    return s;
+}
+
+// the first entry of that kind in a name (UTF-8), "" if none
+string name_entry(X509_NAME* n, int nid) {   // (not const: OpenSSL 1.1.1)
+    const int i = n ? X509_NAME_get_index_by_NID(n, nid, -1) : -1;
+    if (i < 0) return {};
+    unsigned char* u = nullptr;
+    const int len = ASN1_STRING_to_UTF8(&u, X509_NAME_ENTRY_get_data(X509_NAME_get_entry(n, i)));
+    if (len < 0) return {};
+    string s(reinterpret_cast<char*>(u), static_cast<size_t>(len));
+    OPENSSL_free(u);
+    return s;
+}
+
+string ip_text(const unsigned char* p, int len) {
+    char b[64] = {};
+    if (len == 4) return inet_ntop(AF_INET, p, b, sizeof b) ? string(b) : string();
+    if (len == 16) return inet_ntop(AF_INET6, p, b, sizeof b) ? string(b) : string();
+    return {};
+}
+
+// a textual IP in the form ip_text gives (::1, not 0:0:...:1); "" if none
+string ip_normal(const string& s) {
+    unsigned char b[16];
+    if (inet_pton(AF_INET, s.c_str(), b) == 1) return ip_text(b, 4);
+    if (inet_pton(AF_INET6, s.c_str(), b) == 1) return ip_text(b, 16);
+    return {};
+}
+
+void san_of(X509* x, vector<string>* dns, vector<string>* ips) {
+    auto* g = static_cast<GENERAL_NAMES*>(X509_get_ext_d2i(x, NID_subject_alt_name, nullptr, nullptr));
+    if (!g) return;
+    for (int i = 0; i < sk_GENERAL_NAME_num(g); i++) {
+        const GENERAL_NAME* n = sk_GENERAL_NAME_value(g, i);
+        if (n->type == GEN_DNS) {
+            const ASN1_STRING* s = n->d.dNSName;
+            dns->push_back(lower(string(reinterpret_cast<const char*>(ASN1_STRING_get0_data(s)),
+                                        static_cast<size_t>(ASN1_STRING_length(s)))));
+        } else if (n->type == GEN_IPADD) {
+            const ASN1_OCTET_STRING* s = n->d.iPAddress;
+            const string t = ip_text(ASN1_STRING_get0_data(s), ASN1_STRING_length(s));
+            if (!t.empty()) ips->push_back(t);
+        }
+    }
+    GENERAL_NAMES_free(g);
+}
+
+int64_t unix_time(const ASN1_TIME* t) {
+    int days = 0, secs = 0;
+    if (!t || ASN1_TIME_diff(&days, &secs, nullptr, t) != 1) return 0;
+    return static_cast<int64_t>(std::time(nullptr)) + static_cast<int64_t>(days) * 86400 + secs;
+}
+
+// whole days until the certificate expires (negative: expired)
+double days_left(X509* x) {
+    return static_cast<double>(unix_time(X509_get0_notAfter(x)) - static_cast<int64_t>(std::time(nullptr))) / 86400.0;
+}
+
+string fingerprint(X509* x, const EVP_MD* md) {
+    unsigned char d[EVP_MAX_MD_SIZE];
+    unsigned int n = 0;
+    if (X509_digest(x, md, d, &n) != 1) return {};
+    static const char* hex = "0123456789ABCDEF";
+    string s;
+    for (unsigned int i = 0; i < n; i++) {
+        if (i) s += ':';
+        s += hex[d[i] >> 4];
+        s += hex[d[i] & 15];
+    }
+    return s;
+}
+
+// A CA's name constraints (RFC 5280 4.2.1.10): a type without a permitted
+// subtree is unconstrained - why the narrow scope names 127.0.0.1/32 and ::1
+struct Constraints {
+    bool present = false;
+    vector<string> dns, dns_ex;
+    vector<string> ip, ip_ex;   // address + mask bytes (8 or 32)
+};
+
+Constraints constraints_of(X509* ca) {
+    Constraints c;
+    auto* nc = static_cast<NAME_CONSTRAINTS*>(X509_get_ext_d2i(ca, NID_name_constraints, nullptr, nullptr));
+    if (!nc) return c;
+    c.present = true;
+    auto take = [](STACK_OF(GENERAL_SUBTREE) * st, vector<string>* dns, vector<string>* ip) {
+        for (int i = 0; st && i < sk_GENERAL_SUBTREE_num(st); i++) {
+            const GENERAL_NAME* b = sk_GENERAL_SUBTREE_value(st, i)->base;
+            if (b->type == GEN_DNS)
+                dns->push_back(lower(string(reinterpret_cast<const char*>(ASN1_STRING_get0_data(b->d.dNSName)),
+                                            static_cast<size_t>(ASN1_STRING_length(b->d.dNSName)))));
+            else if (b->type == GEN_IPADD)
+                ip->push_back(string(reinterpret_cast<const char*>(ASN1_STRING_get0_data(b->d.iPAddress)),
+                                     static_cast<size_t>(ASN1_STRING_length(b->d.iPAddress))));
+        }
+    };
+    take(nc->permittedSubtrees, &c.dns, &c.ip);
+    take(nc->excludedSubtrees, &c.dns_ex, &c.ip_ex);
+    NAME_CONSTRAINTS_free(nc);
+    return c;
+}
+
+// OpenSSL's rule (nc_dns): the name itself, or any name under it
+bool dns_under(const string& name, const string& base) {
+    if (base.empty()) return true;
+    if (name.size() < base.size()) return false;
+    if (name.size() > base.size() && base[0] != '.' && name[name.size() - base.size() - 1] != '.') return false;
+    return name.compare(name.size() - base.size(), base.size(), base) == 0;
+}
+
+bool ip_under(const string& addr, const string& subtree) {
+    if (subtree.size() != addr.size() * 2) return false;
+    for (size_t i = 0; i < addr.size(); i++) {
+        const unsigned char m = static_cast<unsigned char>(subtree[addr.size() + i]);
+        if ((static_cast<unsigned char>(addr[i]) & m) != (static_cast<unsigned char>(subtree[i]) & m)) return false;
+    }
+    return true;
+}
+
+bool dns_permitted(const Constraints& c, const string& name) {
+    if (!c.present) return true;
+    for (const string& b : c.dns_ex)
+        if (dns_under(name, b)) return false;
+    if (c.dns.empty()) return true;
+    return std::any_of(c.dns.begin(), c.dns.end(), [&](const string& b) { return dns_under(name, b); });
+}
+
+bool ip_permitted(const Constraints& c, const string& ip) {
+    if (!c.present) return true;
+    unsigned char b[16];
+    string a;
+    if (inet_pton(AF_INET, ip.c_str(), b) == 1) a.assign(reinterpret_cast<char*>(b), 4);
+    else if (inet_pton(AF_INET6, ip.c_str(), b) == 1) a.assign(reinterpret_cast<char*>(b), 16);
+    else return false;
+    for (const string& s : c.ip_ex)
+        if (ip_under(a, s)) return false;
+    bool any_of_family = false;
+    for (const string& s : c.ip) {
+        if (s.size() != a.size() * 2) continue;
+        any_of_family = true;
+        if (ip_under(a, s)) return true;
+    }
+    // no permitted subtree of this family but some of the other: still
+    // constrained (OpenSSL treats every iPAddress subtree as one type)
+    return c.ip.empty() && !any_of_family;
+}
+
+// wide scope: the CA permits every name under "local"
+bool ca_is_wide(X509* ca) {
+    const Constraints c = constraints_of(ca);
+    return std::find(c.dns.begin(), c.dns.end(), "local") != c.dns.end();
+}
+
+// The managed check: issued by this CA (signature only - an expired one is ours too)
+bool signed_by(X509* leaf, X509* ca) {
+    if (!leaf || !ca || X509_check_issued(ca, leaf) != X509_V_OK) return false;
+    EVP_PKEY* k = X509_get0_pubkey(ca);
+    const bool ok = k && X509_verify(leaf, k) == 1;
+    ERR_clear_error();
+    return ok;
+}
+
+// What a browser checks: chain to this CA, validity, name constraints, purpose
+bool verifies(X509* leaf, X509* ca, string* why = nullptr) {
+    if (!leaf || !ca) return false;
+    X509_STORE* st = X509_STORE_new();
+    X509_STORE_CTX* c = X509_STORE_CTX_new();
+    bool ok = st && c && X509_STORE_add_cert(st, ca) == 1 && X509_STORE_CTX_init(c, st, leaf, nullptr) == 1 &&
+              X509_STORE_CTX_set_purpose(c, X509_PURPOSE_SSL_SERVER) == 1;
+    if (ok) {
+        ok = X509_verify_cert(c) == 1;
+        if (!ok && why) *why = X509_verify_cert_error_string(X509_STORE_CTX_get_error(c));
+    }
+    X509_STORE_CTX_free(c);
+    X509_STORE_free(st);
+    ERR_clear_error();
+    return ok;
+}
+
+// PR #5's self-signed one (O=KrakenSDR receiver) or the one before it (exactly CN=krakensdr)
+bool old_managed_subject(X509* x) {
+    X509_NAME* n = X509_get_subject_name(x);
+    if (name_entry(n, NID_organizationName) == tlscert::ORG) return true;
+    return X509_NAME_entry_count(n) == 1 && name_entry(n, NID_commonName) == "krakensdr";
+}
+
+bool valid_label(const string& s) {
+    if (s.empty() || s.size() > 63 || s.front() == '-' || s.back() == '-') return false;
+    return std::all_of(s.begin(), s.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
+}
+
+bool valid_dns(const string& s) {
+    if (s.empty() || s.size() > 253) return false;
+    size_t at = 0;
+    while (true) {
+        const size_t dot = s.find('.', at);
+        if (!valid_label(s.substr(at, dot == string::npos ? string::npos : dot - at))) return false;
+        if (dot == string::npos) return true;
+        at = dot + 1;
+    }
+}
+
+#ifndef _WIN32
+// the output of a helper program (first line, trimmed); "" when it isn't installed or fails
+string helper_line(const vector<string>& argv) {
+    if (kproc::find_in_path(argv[0]).empty()) return {};
+    string out;
+    if (!kproc::run_capture(argv, 3000, &out, nullptr, 4096, true)) return {};
+    return trim(out.substr(0, out.find('\n')));
+}
+#endif
+
+#ifdef _WIN32
+// The up adapters' IPv4 addresses (not loopback / link-local) and DNS
+// suffixes (Windows' counterpart of resolv.conf's search domains).
+// UNTESTED: no MinGW on the development machine.
+void win_adapters(vector<string>* ipv4, vector<string>* suffixes) {
+    ULONG size = 16 * 1024;
+    vector<unsigned char> buf;
+    ULONG r = ERROR_BUFFER_OVERFLOW;
+    for (int tries = 0; tries < 3 && r == ERROR_BUFFER_OVERFLOW; tries++) {
+        buf.assign(size, 0);
+        r = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                                 nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    }
+    if (r != NO_ERROR) return;
+    for (auto* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp || a->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        if (ipv4) {
+            for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
+                const sockaddr* sa = u->Address.lpSockaddr;
+                if (!sa || sa->sa_family != AF_INET) continue;
+                const auto* p = reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in*>(sa)->sin_addr);
+                if (p[0] == 127 || (p[0] == 169 && p[1] == 254)) continue;
+                const string t = ip_text(p, 4);
+                if (!t.empty()) ipv4->push_back(t);
+            }
+        }
+        if (suffixes && a->DnsSuffix && a->DnsSuffix[0]) {
+            const int n = WideCharToMultiByte(CP_UTF8, 0, a->DnsSuffix, -1, nullptr, 0, nullptr, nullptr);
+            if (n > 1) {
+                string s(static_cast<size_t>(n - 1), '\0');
+                WideCharToMultiByte(CP_UTF8, 0, a->DnsSuffix, -1, s.data(), n, nullptr, nullptr);
+                suffixes->push_back(s);
+            }
+        }
+    }
+}
+#endif
+
+// every global IPv4 address of the up interfaces
+vector<string> global_ipv4() {
+    vector<string> v;
+#ifdef _WIN32
+    win_adapters(&v, nullptr);
+#else
+    struct ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return v;
+    for (struct ifaddrs* i = list; i; i = i->ifa_next) {
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || !(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK))
+            continue;
+        const auto* p = reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr);
+        if (p[0] == 127 || (p[0] == 169 && p[1] == 254)) continue;
+        const string t = ip_text(p, 4);
+        if (!t.empty()) v.push_back(t);
+    }
+    freeifaddrs(list);
+#endif
+    return v;
+}
+
+// search / domain entries of resolv.conf (Windows: the adapters' DNS suffixes)
+vector<string> search_domains() {
+    vector<string> v;
+#ifdef _WIN32
+    win_adapters(nullptr, &v);
+#else
+    std::ifstream f("/etc/resolv.conf");
+    string line;
+    while (std::getline(f, line)) {
+        std::istringstream ls(line);
+        string key, d;
+        ls >> key;
+        if (key != "search" && key != "domain") continue;
+        while (ls >> d) v.push_back(d);
+    }
+#endif
+    return v;
+}
+
+#ifndef _WIN32
+#ifndef __APPLE__
+// the name avahi announces: after an mDNS conflict the second "krakensdr"
+// becomes "krakensdr-2", which hostname doesn't know
+string avahi_host() {
+    string s = helper_line({"busctl", "--system", "call", "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server",
+                            "GetHostName"});   // s "krakensdr-2"
+    if (s.size() > 4 && s.compare(0, 3, "s \"") == 0 && s.back() == '"') return s.substr(3, s.size() - 4);
+    s = helper_line({"gdbus", "call", "--system", "--dest", "org.freedesktop.Avahi", "--object-path", "/", "--method",
+                     "org.freedesktop.Avahi.Server.GetHostName"});   // ('krakensdr-2',)
+    if (s.size() > 5 && s.compare(0, 2, "('") == 0) {
+        const size_t e = s.find('\'', 2);
+        if (e != string::npos) return s.substr(2, e - 2);
+    }
+    // "192.168.1.5	krakensdr-2.local"
+    const vector<string> ips = global_ipv4();
+    if (!ips.empty()) {
+        s = helper_line({"avahi-resolve", "-a", ips[0]});
+        const size_t tab = s.find_first_of(" \t");
+        if (tab != string::npos) {
+            string n = trim(s.substr(tab));
+            if (n.size() > 6 && lower(n.substr(n.size() - 6)) == ".local") n.resize(n.size() - 6);
+            return n;
+        }
+    }
+    return {};
+}
+#endif
+#endif
+
 #ifdef _WIN32
 // fopen(path, "wb") for a file only this user, SYSTEM and the Administrators
 // can open - the Windows form of mode 0600: a protected DACL, nothing
 // inherited from the folder (whose ACL may let every local user read it). A
 // file that was already there gets that DACL too (CreateFile keeps an
 // existing file's). nullptr + errno on failure.
-std::FILE* fopen_owner_only(const std::string& path) {
+std::FILE* fopen_owner_only(const string& path) {
     std::wstring sddl;
     HANDLE tok = nullptr;
     if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
         DWORD n = 0;
         GetTokenInformation(tok, TokenUser, nullptr, 0, &n);
-        std::vector<unsigned char> tu(n);
+        vector<unsigned char> tu(n);
         LPWSTR sid = nullptr;
         if (n > 0 && GetTokenInformation(tok, TokenUser, tu.data(), n, &n) &&
             ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(tu.data())->User.Sid, &sid)) {
@@ -367,12 +783,14 @@ std::FILE* fopen_owner_only(const std::string& path) {
 #endif
 
 // whole file, flushed to the disk; owner_only: mode 0600 (Windows: a DACL of
-// this user, SYSTEM and the Administrators only)
-bool write_file(const std::string& path, const std::string& data, bool owner_only, std::string* err) {
+// this user, SYSTEM and the Administrators only), else 0644
+bool write_file(const string& path, const string& data, bool owner_only, string* err) {
 #ifdef _WIN32
     std::FILE* f = owner_only ? fopen_owner_only(path) : std::fopen(path.c_str(), "wb");
 #else
+    ::unlink(path.c_str());   // a leftover temp file keeps its old mode otherwise
     const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, owner_only ? 0600 : 0644);
+    if (fd >= 0) ::fchmod(fd, owner_only ? 0600 : 0644);   // whatever the umask
     std::FILE* f = fd >= 0 ? fdopen(fd, "wb") : nullptr;
     if (!f && fd >= 0) ::close(fd);
 #endif
@@ -390,69 +808,422 @@ bool write_file(const std::string& path, const std::string& data, bool owner_onl
     return ok;
 }
 
+bool add_ext(X509* x, X509* issuer, int nid, const string& value) {
+    X509V3_CTX v3{};
+    X509V3_set_ctx_nodb(&v3);
+    X509V3_set_ctx(&v3, issuer, x, nullptr, nullptr, 0);
+    X509_EXTENSION* ext = X509V3_EXT_conf_nid(nullptr, &v3, nid, value.c_str());
+    if (!ext) return false;
+    const bool ok = X509_add_ext(x, ext, -1) == 1;
+    X509_EXTENSION_free(ext);
+    return ok;
+}
+
+// version 3, a random positive 127-bit serial, valid from an hour ago (a
+// device clock a little behind) for exactly `days` days
+bool cert_basics(X509* x, int days) {
+    unsigned char sb[16];
+    if (RAND_bytes(sb, sizeof sb) != 1) return false;
+    sb[0] &= 0x7F;
+    sb[0] |= 0x01;   // never a short (leading-zero) serial
+    BIGNUM* bn = BN_bin2bn(sb, sizeof sb, nullptr);
+    const bool ok = bn && BN_to_ASN1_INTEGER(bn, X509_get_serialNumber(x)) != nullptr;
+    BN_free(bn);
+    return ok && X509_set_version(x, 2) == 1 && X509_gmtime_adj(X509_getm_notBefore(x), -3600L) != nullptr &&
+           X509_gmtime_adj(X509_getm_notAfter(x), static_cast<long>(days) * 86400L - 3600L) != nullptr;
+}
+
+bool add_name(X509_NAME* n, const char* field, const string& value) {
+    return X509_NAME_add_entry_by_txt(n, field, MBSTRING_UTF8, reinterpret_cast<const unsigned char*>(value.c_str()),
+                                      -1, -1, 0) == 1;
+}
+
+string today(const char* fmt) {
+    const std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    localtime_r(&t, &tm);   // Windows: MinGW's (win/posix_compat.h)
+    char b[16];
+    std::strftime(b, sizeof b, fmt, &tm);
+    return b;
+}
+
+// The CA: CN=KrakenSDR <host> CA <date>, constraints per scope
+X509Ptr make_ca(EVP_PKEY* key, const string& host, const vector<string>& names, bool wide) {
+    X509Ptr x(X509_new());
+    if (!x || !cert_basics(x.get(), tlscert::CA_DAYS) || X509_set_pubkey(x.get(), key) != 1) return nullptr;
+    X509_NAME* n = X509_get_subject_name(x.get());
+    if (!add_name(n, "CN", "KrakenSDR " + host + " CA " + today("%Y-%m-%d")) || !add_name(n, "O", tlscert::ORG) ||
+        X509_set_issuer_name(x.get(), n) != 1)
+        return nullptr;
+    string nc = "critical";
+    for (const string& d : names) nc += ",permitted;DNS:" + d;
+    if (wide) {
+        nc += ",permitted;DNS:local,permitted;DNS:lan";
+        for (const char* ip : {"10.0.0.0/255.0.0.0", "172.16.0.0/255.240.0.0", "192.168.0.0/255.255.0.0",
+                               "100.64.0.0/255.192.0.0", "127.0.0.0/255.0.0.0", "fc00::/fe00::"})
+            nc += string(",permitted;IP:") + ip;
+    } else {
+        nc += ",permitted;IP:127.0.0.1/255.255.255.255";
+    }
+    nc += ",permitted;IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff";
+    if (!add_ext(x.get(), x.get(), NID_basic_constraints, "critical,CA:TRUE,pathlen:0") ||
+        !add_ext(x.get(), x.get(), NID_key_usage, "critical,keyCertSign,cRLSign") ||
+        !add_ext(x.get(), x.get(), NID_subject_key_identifier, "hash") ||
+        !add_ext(x.get(), x.get(), NID_name_constraints, nc) || X509_sign(x.get(), key, EVP_sha256()) <= 0)
+        return nullptr;
+    return x;
+}
+
+// The server certificate: CN=<host>, the names + IPs, signed by the CA
+X509Ptr make_server(EVP_PKEY* key, X509* ca, EVP_PKEY* ca_key, const string& host, const vector<string>& names,
+                    const vector<string>& ips) {
+    X509Ptr x(X509_new());
+    if (!x || !cert_basics(x.get(), tlscert::SERVER_DAYS) || X509_set_pubkey(x.get(), key) != 1) return nullptr;
+    X509_NAME* n = X509_get_subject_name(x.get());
+    if (!add_name(n, "CN", host) || !add_name(n, "O", tlscert::ORG) ||
+        X509_set_issuer_name(x.get(), X509_get_subject_name(ca)) != 1)
+        return nullptr;
+    string san;
+    for (const string& d : names) san += (san.empty() ? "DNS:" : ",DNS:") + d;
+    for (const string& ip : ips) san += (san.empty() ? "IP:" : ",IP:") + ip;
+    if (!add_ext(x.get(), ca, NID_basic_constraints, "critical,CA:FALSE") ||
+        !add_ext(x.get(), ca, NID_key_usage, "critical,digitalSignature,keyEncipherment") ||
+        !add_ext(x.get(), ca, NID_ext_key_usage, "serverAuth") ||
+        !add_ext(x.get(), ca, NID_subject_key_identifier, "hash") ||
+        !add_ext(x.get(), ca, NID_authority_key_identifier, "keyid:always") ||
+        !add_ext(x.get(), ca, NID_subject_alt_name, san) || X509_sign(x.get(), ca_key, EVP_sha256()) <= 0)
+        return nullptr;
+    return x;
+}
+
+bool same_set(vector<string> a, vector<string> b) {
+    std::sort(a.begin(), a.end());
+    std::sort(b.begin(), b.end());
+    a.erase(std::unique(a.begin(), a.end()), a.end());
+    b.erase(std::unique(b.begin(), b.end()), b.end());
+    return a == b;
+}
+
+tlscert::CertInfo info_of(X509* x) {
+    tlscert::CertInfo c;
+    if (!x) return c;
+    c.ok = true;
+    c.cn = name_entry(X509_get_subject_name(x), NID_commonName);
+    c.org = name_entry(X509_get_subject_name(x), NID_organizationName);
+    san_of(x, &c.dns, &c.ips);
+    c.not_after = unix_time(X509_get0_notAfter(x));
+    c.sha256 = fingerprint(x, EVP_sha256());
+    c.sha1 = fingerprint(x, EVP_sha1());
+    c.pem = cert_pem(x);
+    c.wide = ca_is_wide(x);
+    return c;
+}
+
+// krakensdr-ca.YYYYMMDD.retired.crt (-2, -3 ... after the first of a day):
+// the date, "" for other names
+string retired_date(const string& name) {
+    static const string pre = "krakensdr-ca.", post = ".retired.crt";
+    if (name.size() < pre.size() + 8 + post.size() || name.compare(0, pre.size(), pre) != 0 ||
+        name.compare(name.size() - post.size(), post.size(), post) != 0)
+        return {};
+    const string mid = name.substr(pre.size(), name.size() - pre.size() - post.size());
+    if (mid.size() < 8 || !std::all_of(mid.begin(), mid.begin() + 8, [](char c) { return c >= '0' && c <= '9'; }))
+        return {};
+    if (mid.size() > 8 && (mid[8] != '-' || mid.size() == 9 ||
+                           !std::all_of(mid.begin() + 9, mid.end(), [](char c) { return c >= '0' && c <= '9'; })))
+        return {};
+    return mid.substr(0, 4) + "-" + mid.substr(4, 2) + "-" + mid.substr(6, 2);
+}
+
 }  // namespace
 
-bool tls_ensure_self_signed_cert(const char* cert_path, const char* key_path, bool* created, std::string* err) {
-    if (created) *created = false;
-    if (file_nonempty(cert_path) && file_nonempty(key_path)) return true;   // never replace a pair
+namespace tlscert {
 
-    EVP_PKEY* key = make_rsa_key(2048);
-    X509* x = X509_new();
-    std::string key_pem, cert_pem;
-    bool ok = key && x;
-    if (!ok) *err = openssl_error("cannot create an RSA key");
-    if (ok) {
-        // random positive 127-bit serial, valid from an hour ago (a clock a
-        // little behind) for 10 years
-        unsigned char sb[16];
-        BIGNUM* bn = nullptr;
-        ok = RAND_bytes(sb, sizeof sb) == 1;
-        if (ok) {
-            sb[0] &= 0x7F;
-            bn = BN_bin2bn(sb, sizeof sb, nullptr);
+Host host_name() {
+    Host h;
+    if (const char* e = std::getenv("KRAKEN_CERT_HOST"); e && *e) {
+        h.raw = trim(e);
+    } else {
+#if defined(__APPLE__)
+        h.raw = helper_line({"scutil", "--get", "LocalHostName"});
+#elif !defined(_WIN32)
+        h.raw = avahi_host();
+#endif
+        if (h.raw.empty()) {
+            char b[256] = {};
+            if (gethostname(b, sizeof b - 1) == 0) h.raw = b;
+            h.raw = h.raw.substr(0, h.raw.find('.'));   // hostname -s
         }
-        ok = ok && bn && BN_to_ASN1_INTEGER(bn, X509_get_serialNumber(x)) != nullptr;
-        BN_free(bn);
-        ok = ok && X509_set_version(x, 2) == 1 &&   // v3
-             X509_gmtime_adj(X509_getm_notBefore(x), -3600L) != nullptr &&
-             X509_gmtime_adj(X509_getm_notAfter(x), 3650L * 24 * 3600) != nullptr && X509_set_pubkey(x, key) == 1;
-        X509_NAME* name = X509_get_subject_name(x);
-        ok = ok && X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                              reinterpret_cast<const unsigned char*>("krakensdr"), -1, -1, 0) == 1 &&
-             X509_set_issuer_name(x, name) == 1;
-        // a server (end-entity) certificate: browsers want the names in the
-        // SAN; Firefox refuses a CA certificate as a server's one
-        ok = ok && add_ext(x, NID_basic_constraints, "critical,CA:FALSE") &&
-             add_ext(x, NID_key_usage, "critical,digitalSignature,keyEncipherment") &&
-             add_ext(x, NID_ext_key_usage, "serverAuth") && add_ext(x, NID_subject_key_identifier, "hash") &&
-             add_ext(x, NID_subject_alt_name, "DNS:krakensdr,DNS:localhost,IP:127.0.0.1,IP:::1");
-        ok = ok && X509_sign(x, key, EVP_sha256()) > 0;
-        ok = ok && pem_text([&](BIO* b) { return PEM_write_bio_PrivateKey(b, key, nullptr, nullptr, 0, nullptr, nullptr); },
-                            &key_pem) &&
-             pem_text([&](BIO* b) { return PEM_write_bio_X509(b, x); }, &cert_pem);
-        if (!ok) *err = openssl_error("cannot create the certificate");
     }
-    X509_free(x);
-    EVP_PKEY_free(key);
-    if (!ok) return false;
+    const string n = lower(h.raw);
+    h.usable = valid_label(n);
+    if (h.usable) h.name = n;
+    return h;
+}
 
-    // The certificate's presence marks a complete pair: the old one (left
-    // without its key) goes first and the new one comes last, so an
-    // interrupted run leaves no certificate - and the next start makes a
-    // pair again - rather than a certificate that doesn't match its key.
-    const std::string kt = std::string(key_path) + ".tmp", ct = std::string(cert_path) + ".tmp";
-    if (!write_file(kt, key_pem, true, err)) return false;
-    if (!write_file(ct, cert_pem, false, err)) {
-        std::remove(kt.c_str());
+vector<string> wanted_names(const Host& h) {
+    vector<string> v;
+    auto add = [&v](string s) {
+        s = lower(trim(s));
+        while (!s.empty() && s.back() == '.') s.pop_back();
+        if (valid_dns(s) && std::find(v.begin(), v.end(), s) == v.end()) v.push_back(s);
+    };
+    if (h.usable) {
+        add(h.name);
+        add(h.name + ".local");
+        for (string d : search_domains()) {
+            d = lower(trim(d));
+            while (!d.empty() && d.back() == '.') d.pop_back();
+            if (d != "local" && valid_dns(d)) add(h.name + "." + d);
+        }
+    }
+    add("localhost");
+    if (const char* e = std::getenv("KRAKEN_CERT_NAMES")) {
+        const string list = e;
+        size_t at = 0;
+        while (at <= list.size()) {
+            const size_t c = list.find(',', at);
+            add(list.substr(at, c == string::npos ? string::npos : c - at));
+            if (c == string::npos) break;
+            at = c + 1;
+        }
+    }
+    return v;
+}
+
+vector<string> private_ipv4() {
+    vector<string> v;
+    for (const string& ip : global_ipv4()) {
+        unsigned char b[4];
+        if (inet_pton(AF_INET, ip.c_str(), b) != 1) continue;
+        const bool priv = b[0] == 10 || (b[0] == 172 && (b[1] & 0xF0) == 16) || (b[0] == 192 && b[1] == 168) ||
+                          (b[0] == 100 && (b[1] & 0xC0) == 64);
+        if (priv && std::find(v.begin(), v.end(), ip) == v.end()) v.push_back(ip);
+    }
+    return v;
+}
+
+vector<string> wanted_ips(bool wide) {
+    vector<string> v{"127.0.0.1", "::1"};
+    if (wide)
+        for (const string& ip : private_ipv4()) v.push_back(ip);
+    return v;
+}
+
+bool read_scope_wide(const string& dir) {
+    std::ifstream f(join(dir, OPTIONS));
+    string line;
+    bool wide = false;
+    while (std::getline(f, line)) {
+        line = trim(line);
+        if (line.compare(0, 6, "scope=") == 0) wide = trim(line.substr(6)) == "wide";
+    }
+    return wide;
+}
+
+bool write_scope(const string& dir, bool wide, string* err) {
+    const string path = join(dir, OPTIONS), tmp = path + ".tmp";
+    if (!write_file(tmp, wide ? "scope=wide\n" : "scope=narrow\n", false, err)) return false;
+    if (fs_replace(tmp, path) != 0) {
+        *err = "cannot replace " + path + " (" + std::strerror(errno) + ")";
+        std::remove(tmp.c_str());
         return false;
     }
-    std::remove(cert_path);
-    if (fs_replace(kt, key_path) != 0 || fs_replace(ct, cert_path) != 0) {
-        *err = std::string("cannot replace ") + cert_path + " / " + key_path + " (" + std::strerror(errno) + ")";
-        std::remove(kt.c_str());
-        std::remove(ct.c_str());
-        return false;
-    }
-    if (created) *created = true;
+    fs_fsync_dir(dir.empty() ? "." : dir);
     return true;
 }
+
+const char* state_name(State s) {
+    switch (s) {
+        case State::Kept: return "kept";
+        case State::Issued: return "issued";
+        case State::CaCreated: return "ca-created";
+        case State::NotManaged: return "not-managed";
+    }
+    return "kept";
+}
+
+bool ensure(const string& dir, bool force, bool new_ca, State* state, string* err) {
+    *state = State::Kept;
+    const string crt_p = join(dir, SERVER_CRT), key_p = join(dir, SERVER_KEY);
+    const string cac_p = join(dir, CA_CRT), cak_p = join(dir, CA_KEY);
+    const bool crt_there = file_nonempty(crt_p), key_there = file_nonempty(key_p);
+
+    // a symlink is the user's: never touched
+    if (is_symlink(crt_p) || is_symlink(key_p)) {
+        *state = State::NotManaged;
+        if (crt_there && key_there) return true;
+        *err = SERVER_CRT + string(" / ") + SERVER_KEY + " is a symbolic link and the pair is incomplete";
+        return false;
+    }
+    const vector<X509Ptr> chain = crt_there ? load_certs(crt_p) : vector<X509Ptr>();
+    X509* leaf = chain.empty() ? nullptr : chain[0].get();
+    const vector<X509Ptr> cas = file_nonempty(cac_p) ? load_certs(cac_p) : vector<X509Ptr>();
+    X509* ca = cas.empty() ? nullptr : cas[0].get();
+    // managed or not
+    if (crt_there && (!leaf || !(signed_by(leaf, ca) || old_managed_subject(leaf)))) {
+        *state = State::NotManaged;   // a certificate of the user's own (or a file that isn't one): left alone
+        if (key_there) return true;
+        *err = string(SERVER_CRT) + " is not one of the receiver's own and " + SERVER_KEY + " is missing";
+        return false;
+    }
+    PkeyPtr skey = key_there ? load_key(key_p) : nullptr;
+    if (key_there && !skey && !leaf) {
+        // a key without a certificate that can't be read (encrypted?): not ours to replace
+        *err = string(SERVER_KEY) + " can't be read (a passphrase?) and there is no " + SERVER_CRT;
+        return false;
+    }
+    PkeyPtr cakey = ca && file_nonempty(cak_p) ? load_key(cak_p) : nullptr;
+
+    // what is wanted
+    const bool wide = read_scope_wide(dir);
+    const Host host = host_name();
+    const vector<string> names = wanted_names(host);
+    const vector<string> ips = wanted_ips(wide);
+    const string cn = host.usable ? host.name : "localhost";
+
+    // a new CA when: none (or no key that fits it); a name outside its
+    // constraints; another scope; less than a year left; asked to
+    bool make_new_ca = new_ca || !ca || !cakey || !same_key(X509_get0_pubkey(ca), cakey.get()) || X509_check_ca(ca) < 1 ||
+                       ca_is_wide(ca) != wide || days_left(ca) < CA_RENEW_DAYS;
+    if (!make_new_ca) {
+        const Constraints c = constraints_of(ca);
+        for (const string& n : names) make_new_ca = make_new_ca || !dns_permitted(c, n);
+        for (const string& ip : ips) make_new_ca = make_new_ca || !ip_permitted(c, ip);
+    }
+    const bool make_key = !skey;
+    // the server certificate is re-issued (same key) when: other names / IPs;
+    // less than 60 days left; it doesn't verify against the current CA (a
+    // migrated one); server.crt isn't exactly it + the CA; asked to
+    bool issue = force || make_new_ca || make_key || !leaf;
+    if (!issue) {
+        vector<string> dns, sips, wips;
+        san_of(leaf, &dns, &sips);
+        for (const string& ip : ips) wips.push_back(ip_normal(ip));
+        issue = !same_key(X509_get0_pubkey(leaf), skey.get()) || !same_set(dns, names) || !same_set(sips, wips) ||
+                days_left(leaf) < SERVER_RENEW_DAYS || !verifies(leaf, ca) || chain.size() != 2 ||
+                X509_cmp(chain[1].get(), ca) != 0;
+    }
+    if (!issue) {
+        *state = State::Kept;
+        return true;
+    }
+
+    // make everything in memory first
+    PkeyPtr new_cakey, new_skey;
+    X509Ptr new_ca_crt, new_leaf;
+    if (make_new_ca) {
+        new_cakey.reset(make_rsa_key(3072));
+        if (new_cakey) new_ca_crt = make_ca(new_cakey.get(), cn, names, wide);
+        if (!new_ca_crt) {
+            *err = openssl_error("cannot create the CA");
+            return false;
+        }
+    }
+    X509* use_ca = make_new_ca ? new_ca_crt.get() : ca;
+    EVP_PKEY* use_cakey = make_new_ca ? new_cakey.get() : cakey.get();
+    if (make_key) {
+        new_skey.reset(make_rsa_key(2048));
+        if (!new_skey) {
+            *err = openssl_error("cannot create the server key");
+            return false;
+        }
+    }
+    EVP_PKEY* use_skey = make_key ? new_skey.get() : skey.get();
+    new_leaf = make_server(use_skey, use_ca, use_cakey, cn, names, ips);
+    if (!new_leaf) {
+        *err = openssl_error("cannot create the server certificate");
+        return false;
+    }
+    string why;
+    if (!verifies(new_leaf.get(), use_ca, &why)) {   // what every browser will check
+        *err = "the new server certificate does not verify against its CA (" + why + ")";
+        return false;
+    }
+    string cak_pem, cac_pem = cert_pem(use_ca), sk_pem, crt_pem = cert_pem(new_leaf.get()) + cac_pem;
+    if (make_new_ca &&
+        !pem_text([&](BIO* b) { return PEM_write_bio_PrivateKey(b, use_cakey, nullptr, nullptr, 0, nullptr, nullptr); },
+                  &cak_pem)) {
+        *err = openssl_error("cannot write the CA key");
+        return false;
+    }
+    if (make_key &&
+        !pem_text([&](BIO* b) { return PEM_write_bio_PrivateKey(b, use_skey, nullptr, nullptr, 0, nullptr, nullptr); },
+                  &sk_pem)) {
+        *err = openssl_error("cannot write the server key");
+        return false;
+    }
+
+    // temp files next to the real ones: a failure here leaves every file as it was
+    vector<string> temps;
+    auto put = [&](const string& path, const string& data, bool owner_only) {
+        if (!write_file(path + ".tmp", data, owner_only, err)) return false;
+        temps.push_back(path + ".tmp");
+        return true;
+    };
+    if ((make_new_ca && (!put(cak_p, cak_pem, true) || !put(cac_p, cac_pem, false))) ||
+        (make_key && !put(key_p, sk_pem, true)) || !put(crt_p, crt_pem, false)) {
+        for (const string& t : temps) std::remove(t.c_str());
+        return false;
+    }
+    auto move = [&](const string& from, const string& to) {
+        if (fs_replace(from, to) == 0) return true;
+        *err = "cannot replace " + to + " (" + std::strerror(errno) + ")";
+        for (const string& t : temps) std::remove(t.c_str());
+        return false;
+    };
+    if (make_new_ca) {
+        // the old CA certificate is kept as .retired (the page names it:
+        // devices should remove it); its key is replaced - gone
+        if (file_nonempty(cac_p)) {
+            const string stem = join(dir, "krakensdr-ca." + today("%Y%m%d"));
+            string retired = stem + ".retired.crt";
+            for (int i = 2; file_nonempty(retired) && i < 100; i++) retired = stem + "-" + std::to_string(i) + ".retired.crt";
+            if (!move(cac_p, retired)) return false;
+        }
+        if (!move(cak_p + ".tmp", cak_p) || !move(cac_p + ".tmp", cac_p)) return false;
+    }
+    if (make_key && !move(key_p + ".tmp", key_p)) return false;
+    if (!move(crt_p + ".tmp", crt_p)) return false;
+#ifndef _WIN32
+    if (!make_key) ::chmod(key_p.c_str(), 0600);
+#endif
+    fs_fsync_dir(dir.empty() ? "." : dir);
+    *state = make_new_ca ? State::CaCreated : State::Issued;
+    return true;
+}
+
+Inspect inspect(const string& dir) {
+    Inspect r;
+    const string crt_p = join(dir, SERVER_CRT);
+    const vector<X509Ptr> chain = load_certs(crt_p);
+    if (chain.empty()) return r;
+    r.present = true;
+    X509* leaf = chain[0].get();
+    r.server = info_of(leaf);
+    const vector<X509Ptr> cas = load_certs(join(dir, CA_CRT));
+    if (!cas.empty() && signed_by(leaf, cas[0].get())) {
+        r.has_ca = true;
+        r.ca = info_of(cas[0].get());
+    }
+    r.managed = !is_symlink(crt_p) && !is_symlink(join(dir, SERVER_KEY)) && (r.has_ca || old_managed_subject(leaf));
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir.empty() ? "." : dir, ec)) {
+        const string name = e.path().filename().string();
+        const string date = retired_date(name);
+        if (date.empty()) continue;
+        const vector<X509Ptr> rc = load_certs(join(dir, name));
+        if (rc.empty()) continue;
+        Inspect::Retired ret;
+        ret.date = date;
+        ret.cert = info_of(rc[0].get());
+        ret.cert.pem.clear();
+        r.retired.push_back(std::move(ret));
+    }
+    std::sort(r.retired.begin(), r.retired.end(), [](const Inspect::Retired& a, const Inspect::Retired& b) {
+        return a.date != b.date ? a.date > b.date : a.cert.not_after > b.cert.not_after;
+    });
+    return r;
+}
+
+}  // namespace tlscert

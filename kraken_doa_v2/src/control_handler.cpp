@@ -38,6 +38,7 @@
 #include "utils/parse_num.hpp"
 #include "power.hpp"
 #include "antenna_bias.hpp"
+#include "cert_status.hpp"
 #include <string>
 #include <utility>
 #include <sstream>
@@ -2890,6 +2891,17 @@ string ControlHandler::apply_command(string_view message) {
         // refused during a playback there
         if (antbias::is_command(message))
             return antbias::handle_command(message, from_page && !g_replaying_settings.load());
+        // HTTPS certificate scope (cert_status.cpp, docs/dev/https-certificate.md):
+        // a page's own socket only - the scope decides what the CA can vouch
+        // for on every device that installed it. Not in the settings
+        // (cert_options is its store, read at the next start), refused during
+        // a playback; the applied value is echoed (the pages draw the status)
+        if (message.starts_with("CERT_SCOPE:")) {
+            string applied;
+            const string why = certstatus::set_scope(message.substr(11), from_page && !g_replaying_settings.load(), &applied);
+            if (why.empty()) broadcast(make_sync_cmd_json(applied));
+            return why;
+        }
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
         if (playback::handle_command(message)) return "";
