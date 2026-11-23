@@ -45,6 +45,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <map>
 #include <numeric>
 
@@ -997,8 +998,24 @@ void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vect
     };
     static const int DS[] = {100, 50, 25, 20, 10, 5, 4, 2};
     int tests = 0;
-    std::vector<float> pa, pb;
+    // a detection's sample-level band power for a (decimation, blocks) choice, computed
+    // once per round (continuous channels tested against several partners share both)
+    struct BandPower {
+        size_t k;
+        int D;
+        std::vector<int> blks;
+        std::vector<float> p;
+    };
+    std::deque<BandPower> bp_cache;   // (a deque: the references handed out stay valid)
     for (int guard = 0; guard < 16; guard++) {
+        bp_cache.clear();
+        auto power_of = [&](size_t k, double lo, double hi, int D, const std::vector<int>& blks) -> const std::vector<float>& {
+            for (const BandPower& e : bp_cache)
+                if (e.k == k && e.D == D && e.blks == blks) return e.p;
+            bp_cache.push_back({k, D, blks, {}});
+            band_power(fe, lo, hi, D, blks, bp_cache.back().p);
+            return bp_cache.back().p;
+        };
         std::vector<size_t> ord(out.size());
         std::iota(ord.begin(), ord.end(), size_t(0));
         std::sort(ord.begin(), ord.end(), [&](size_t a, size_t b) { return out[a].det.peak_db > out[b].det.peak_db; });
@@ -1065,21 +1082,26 @@ void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vect
                     if (fs / d >= 1.25 * wmax) { D = d; break; }
                 std::vector<std::pair<int, int>> bc;
                 SC_PROF("det.tone.sample_level");
-                for (int b = 0; b < fe.nblocks; b++) {
-                    int n = 0;
+                {
+                    // packet frames per long block (a frame's centre t x hop + SPEC_N / 2 lies
+                    // in block b's kept samples [b x LONG_HOP, (b + 1) x LONG_HOP))
+                    std::vector<int> nper(size_t(std::max(fe.nblocks, 0)), 0);
                     for (int t = 0; t < T; t++) {
-                        const double s = double(t) * fe.hop + 0.5 * SPEC_N;
-                        n += U[size_t(t)] && s >= double(b) * LONG_HOP && s < double(b + 1) * LONG_HOP;
+                        if (!U[size_t(t)]) continue;
+                        const int64_t s = int64_t(t) * fe.hop + SPEC_N / 2;
+                        const int64_t b = s / LONG_HOP;
+                        if (b < fe.nblocks) nper[size_t(b)]++;
                     }
-                    if (n) bc.push_back({-n, b});
+                    for (int b = 0; b < fe.nblocks; b++)
+                        if (nper[size_t(b)]) bc.push_back({-nper[size_t(b)], b});
                 }
                 std::sort(bc.begin(), bc.end());
                 std::vector<int> blks;
                 for (size_t q = 0; q < bc.size() && q < 4; q++) blks.push_back(bc[q].second);
                 std::sort(blks.begin(), blks.end());
                 tests++;
-                band_power(fe, alo, ahi, D, blks, pa);
-                band_power(fe, blo, bhi, D, blks, pb);
+                const std::vector<float>& pa = power_of(ia, alo, ahi, D, blks);
+                const std::vector<float>& pb = power_of(ib, blo, bhi, D, blks);
                 // smoothed over the tones' resolution, gated to the packets
                 const int L = std::max(1, int(std::lround(fs / D / wmax)));
                 double n = 0, xa = 0, xb = 0, qa = 0, qb = 0, cab = 0;
