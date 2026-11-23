@@ -362,21 +362,41 @@ install it once on every device; otherwise: every device must install the
 new certificate and remove the old one - KrakenSDR DOA page, Telemetry
 sheet -> HTTPS certificate); on exit 1 a warning with the reason, and the
 start goes on (kraken_doa then tries itself).
-- `run.sh`: `cert_check`, on every start, after the build check and before
-  the old stack is stopped (the running kraken_doa keeps the certificate it
-  loaded).
+- `run.sh`: `cert_check` (defined above the supervisor), on every start,
+  after the build check and before the old stack is stopped (the running
+  kraken_doa keeps the certificate it loaded), AND before every start of
+  kraken_doa: `supervise --before cert_check` in the client pane (the page's
+  Restart, a crash restart) and headless mode before each client start.
+  kraken_doa itself only makes a pair when there is none, so a scope chosen
+  on the page ("applies at the next start"), a rename or a near expiry must
+  be applied there. `kept` prints nothing (six openssl calls, ~50 ms on the
+  dev box); before a supervised start a new CA's warning stays 5 s on
+  screen. The client pane and the build window get `KRAKEN_CERT_HOST` /
+  `KRAKEN_CERT_NAMES` from run.sh through `env` (removed with `-u` when
+  unset): a pane has the tmux server's environment, and a different value
+  there would make the pane's check and kraken_doa's notices disagree with
+  run.sh's.
 - `install.sh`: `install_kraken_certs` (step 4), after the builds.
 - `docker/entrypoint.sh`: `ensure_cert`, in `/data/kraken_doa`.
+- Two runs at once (install.sh and run.sh, the supervisor and a manual run)
+  take turns: the script's lock `<dir>/.make-cert.lock`, waited for up to
+  10 s.
 - Not callers: `scripts/build_page.py` makes a `CN=krakensdr` pair itself
   only when there is none (run.sh's `cert_check` runs first, so only when
-  the script failed) - the next run migrates it; `windows/build.sh` makes
-  one with MSYS2's openssl, which kraken_doa's generator migrates.
+  the script failed) - the next run migrates it. `windows/build.sh` makes
+  none since the follow-up (kraken_doa's generator makes it at every
+  start); it only restricts `server.key` / `krakensdr-ca.key` already there
+  with icacls.
 
 Testing the blocks: never by running run.sh / install.sh (run.sh stops the
 live stack). Cut the function out (`awk '/^cert_check\(\) \{/,/^\}/'
 run.sh`) and run it with stub `ok` / `warn` / `log`, a stub or the real
-script, under the file's own shell options (install.sh: `set -Eeuo pipefail`
-+ its ERR trap; the entrypoint: `set -euo pipefail`).
+script, under the file's own shell options (run.sh: `set -uo pipefail`;
+install.sh: `set -Eeuo pipefail` + its ERR trap; the entrypoint: `set -euo
+pipefail`). The supervisor: a copy of run.sh in a scratch folder (its own
+`scripts/make-cert.sh`, `kraken_doa_v2/`), run only as `run.sh __supervise
+--before cert_check <name> <fake app>` - that entrypoint stops and sweeps
+nothing.
 
 ## Logging
 
