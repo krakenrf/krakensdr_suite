@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -40,6 +41,7 @@
 #include <iterator>
 #include <memory>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -479,8 +481,8 @@ string fingerprint(X509* x, const EVP_MD* md) {
 // subtree is unconstrained - why the narrow scope names 127.0.0.1/32 and ::1
 struct Constraints {
     bool present = false;
-    vector<string> dns, dns_ex;
-    vector<string> ip, ip_ex;   // address + mask bytes (8 or 32)
+    vector<string> dns;   // permitted DNS subtrees
+    vector<string> ip;    // permitted iPAddress subtrees: address + mask bytes (8 or 32)
 };
 
 Constraints constraints_of(X509* ca) {
@@ -488,24 +490,22 @@ Constraints constraints_of(X509* ca) {
     auto* nc = static_cast<NAME_CONSTRAINTS*>(X509_get_ext_d2i(ca, NID_name_constraints, nullptr, nullptr));
     if (!nc) return c;
     c.present = true;
-    auto take = [](STACK_OF(GENERAL_SUBTREE) * st, vector<string>* dns, vector<string>* ip) {
-        for (int i = 0; st && i < sk_GENERAL_SUBTREE_num(st); i++) {
-            const GENERAL_NAME* b = sk_GENERAL_SUBTREE_value(st, i)->base;
-            if (b->type == GEN_DNS)
-                dns->push_back(lower(string(reinterpret_cast<const char*>(ASN1_STRING_get0_data(b->d.dNSName)),
-                                            static_cast<size_t>(ASN1_STRING_length(b->d.dNSName)))));
-            else if (b->type == GEN_IPADD)
-                ip->push_back(string(reinterpret_cast<const char*>(ASN1_STRING_get0_data(b->d.iPAddress)),
-                                     static_cast<size_t>(ASN1_STRING_length(b->d.iPAddress))));
-        }
-    };
-    take(nc->permittedSubtrees, &c.dns, &c.ip);
-    take(nc->excludedSubtrees, &c.dns_ex, &c.ip_ex);
+    STACK_OF(GENERAL_SUBTREE)* st = nc->permittedSubtrees;
+    for (int i = 0; st && i < sk_GENERAL_SUBTREE_num(st); i++) {
+        const GENERAL_NAME* b = sk_GENERAL_SUBTREE_value(st, i)->base;
+        if (b->type == GEN_DNS)
+            c.dns.push_back(lower(string(reinterpret_cast<const char*>(ASN1_STRING_get0_data(b->d.dNSName)),
+                                         static_cast<size_t>(ASN1_STRING_length(b->d.dNSName)))));
+        else if (b->type == GEN_IPADD)
+            c.ip.push_back(string(reinterpret_cast<const char*>(ASN1_STRING_get0_data(b->d.iPAddress)),
+                                  static_cast<size_t>(ASN1_STRING_length(b->d.iPAddress))));
+    }
     NAME_CONSTRAINTS_free(nc);
     return c;
 }
 
-// OpenSSL's rule (nc_dns): the name itself, or any name under it
+// OpenSSL's rule (nc_dns), make-cert.sh's dns_permitted: the name itself,
+// or any name under it (".x": only under it)
 bool dns_under(const string& name, const string& base) {
     if (base.empty()) return true;
     if (name.size() < base.size()) return false;
@@ -513,66 +513,36 @@ bool dns_under(const string& name, const string& base) {
     return name.compare(name.size() - base.size(), base.size(), base) == 0;
 }
 
-bool ip_under(const string& addr, const string& subtree) {
-    if (subtree.size() != addr.size() * 2) return false;
-    for (size_t i = 0; i < addr.size(); i++) {
-        const unsigned char m = static_cast<unsigned char>(subtree[addr.size() + i]);
-        if ((static_cast<unsigned char>(addr[i]) & m) != (static_cast<unsigned char>(subtree[i]) & m)) return false;
-    }
-    return true;
-}
-
+// Would a new CA be needed for this name? As make-cert.sh decides it: the
+// permitted DNS subtrees only (no DNS subtree at all = every name). The IP
+// subtrees follow from the scope, which is compared on its own.
 bool dns_permitted(const Constraints& c, const string& name) {
-    if (!c.present) return true;
-    for (const string& b : c.dns_ex)
-        if (dns_under(name, b)) return false;
     if (c.dns.empty()) return true;
     return std::any_of(c.dns.begin(), c.dns.end(), [&](const string& b) { return dns_under(name, b); });
 }
 
-bool ip_permitted(const Constraints& c, const string& ip) {
-    if (!c.present) return true;
-    unsigned char b[16];
-    string a;
-    if (inet_pton(AF_INET, ip.c_str(), b) == 1) a.assign(reinterpret_cast<char*>(b), 4);
-    else if (inet_pton(AF_INET6, ip.c_str(), b) == 1) a.assign(reinterpret_cast<char*>(b), 16);
-    else return false;
-    for (const string& s : c.ip_ex)
-        if (ip_under(a, s)) return false;
-    bool any_of_family = false;
-    for (const string& s : c.ip) {
-        if (s.size() != a.size() * 2) continue;
-        any_of_family = true;
-        if (ip_under(a, s)) return true;
-    }
-    // no permitted subtree of this family but some of the other: still
-    // constrained (OpenSSL treats every iPAddress subtree as one type)
-    return c.ip.empty() && !any_of_family;
-}
-
-// wide scope: the CA permits every name under "local"
-bool ca_is_wide(X509* ca) {
+// The CA's scope: "wide" when it permits 10.0.0.0/8, "narrow" otherwise,
+// "none" without a Name Constraints extension (never one of ours: it gets a
+// new CA, like any other scope mismatch) - make-cert.sh's rule
+string ca_scope(X509* ca) {
     const Constraints c = constraints_of(ca);
-    return std::find(c.dns.begin(), c.dns.end(), "local") != c.dns.end();
+    if (!c.present) return "none";
+    static const string ten("\x0a\x00\x00\x00\xff\x00\x00\x00", 8);
+    return std::find(c.ip.begin(), c.ip.end(), ten) != c.ip.end() ? "wide" : "narrow";
 }
 
-// The managed check: issued by this CA (signature only - an expired one is ours too)
-bool signed_by(X509* leaf, X509* ca) {
-    if (!leaf || !ca || X509_check_issued(ca, leaf) != X509_V_OK) return false;
-    EVP_PKEY* k = X509_get0_pubkey(ca);
-    const bool ok = k && X509_verify(leaf, k) == 1;
-    ERR_clear_error();
-    return ok;
-}
-
-// What a browser checks: chain to this CA, validity, name constraints, purpose
-bool verifies(X509* leaf, X509* ca, string* why = nullptr) {
-    if (!leaf || !ca) return false;
+// What a browser checks: issued by this CA (its name), the chain, name
+// constraints, purpose - and with check_time the validity too. Without it
+// (the managed check, as make-cert.sh's verify -no_check_time) a clock
+// behind or an expired certificate doesn't make ours look foreign.
+bool verifies(X509* leaf, X509* ca, string* why = nullptr, bool check_time = true) {
+    if (!leaf || !ca || X509_NAME_cmp(X509_get_issuer_name(leaf), X509_get_subject_name(ca)) != 0) return false;
     X509_STORE* st = X509_STORE_new();
     X509_STORE_CTX* c = X509_STORE_CTX_new();
     bool ok = st && c && X509_STORE_add_cert(st, ca) == 1 && X509_STORE_CTX_init(c, st, leaf, nullptr) == 1 &&
               X509_STORE_CTX_set_purpose(c, X509_PURPOSE_SSL_SERVER) == 1;
     if (ok) {
+        if (!check_time) X509_STORE_CTX_set_flags(c, X509_V_FLAG_NO_CHECK_TIME);
         ok = X509_verify_cert(c) == 1;
         if (!ok && why) *why = X509_verify_cert_error_string(X509_STORE_CTX_get_error(c));
     }
@@ -589,20 +559,23 @@ bool old_managed_subject(X509* x) {
     return X509_NAME_entry_count(n) == 1 && name_entry(n, NID_commonName) == "krakensdr";
 }
 
-bool valid_label(const string& s) {
-    if (s.empty() || s.size() > 63 || s.front() == '-' || s.back() == '-') return false;
-    return std::all_of(s.begin(), s.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
+// a CA certificate: basicConstraints with CA:TRUE (make-cert.sh: "CA:TRUE" in its text)
+bool is_ca_cert(X509* x) {
+    const uint32_t f = X509_get_extension_flags(x);
+    return (f & EXFLAG_BCONS) && (f & EXFLAG_CA);
+}
+
+// make-cert.sh's rules: a host name is usable with only a-z 0-9 - in it; a
+// DNS name has a-z 0-9 . - , no leading / trailing dot and no empty label
+bool usable_host(const string& s) {
+    return !s.empty() &&
+           std::all_of(s.begin(), s.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
 }
 
 bool valid_dns(const string& s) {
-    if (s.empty() || s.size() > 253) return false;
-    size_t at = 0;
-    while (true) {
-        const size_t dot = s.find('.', at);
-        if (!valid_label(s.substr(at, dot == string::npos ? string::npos : dot - at))) return false;
-        if (dot == string::npos) return true;
-        at = dot + 1;
-    }
+    if (s.empty() || s.front() == '.' || s.back() == '.' || s.find("..") != string::npos) return false;
+    return std::all_of(s.begin(), s.end(),
+                       [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.'; });
 }
 
 #ifndef _WIN32
@@ -653,7 +626,10 @@ void win_adapters(vector<string>* ipv4, vector<string>* suffixes) {
 }
 #endif
 
-// every global IPv4 address of the up interfaces
+// every global IPv4 address: what make-cert.sh reads from `ip -4 addr show
+// scope global` (an interface's state doesn't matter there either; loopback
+// and link-local by their value - outside the private ranges anyway).
+// Windows: the up adapters' (no script to match)
 vector<string> global_ipv4() {
     vector<string> v;
 #ifdef _WIN32
@@ -662,8 +638,7 @@ vector<string> global_ipv4() {
     struct ifaddrs* list = nullptr;
     if (getifaddrs(&list) != 0) return v;
     for (struct ifaddrs* i = list; i; i = i->ifa_next) {
-        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || !(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK))
-            continue;
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
         const auto* p = reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr);
         if (p[0] == 127 || (p[0] == 169 && p[1] == 254)) continue;
         const string t = ip_text(p, 4);
@@ -680,7 +655,9 @@ vector<string> search_domains() {
 #ifdef _WIN32
     win_adapters(nullptr, &v);
 #else
-    std::ifstream f("/etc/resolv.conf");
+    // KRAKEN_CERT_RESOLV_CONF: tests only, as in make-cert.sh
+    const char* alt = std::getenv("KRAKEN_CERT_RESOLV_CONF");
+    std::ifstream f(alt && *alt ? alt : "/etc/resolv.conf");
     string line;
     while (std::getline(f, line)) {
         std::istringstream ls(line);
@@ -697,25 +674,33 @@ vector<string> search_domains() {
 #ifndef __APPLE__
 // the name avahi announces: after an mDNS conflict the second "krakensdr"
 // becomes "krakensdr-2", which hostname doesn't know
+// (as make-cert.sh asks: busctl, gdbus, avahi-resolve - each only if installed)
 string avahi_host() {
-    string s = helper_line({"busctl", "--system", "call", "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server",
-                            "GetHostName"});   // s "krakensdr-2"
-    if (s.size() > 4 && s.compare(0, 3, "s \"") == 0 && s.back() == '"') return s.substr(3, s.size() - 4);
-    s = helper_line({"gdbus", "call", "--system", "--dest", "org.freedesktop.Avahi", "--object-path", "/", "--method",
-                     "org.freedesktop.Avahi.Server.GetHostName"});   // ('krakensdr-2',)
-    if (s.size() > 5 && s.compare(0, 2, "('") == 0) {
-        const size_t e = s.find('\'', 2);
-        if (e != string::npos) return s.substr(2, e - 2);
+    string s;
+    if (!kproc::find_in_path("busctl").empty()) {
+        // still registering (1) or resolving a conflict (3): let it settle (2 = running)
+        for (int i = 0; i < 6; i++) {
+            s = helper_line({"busctl", "--timeout=2", "call", "org.freedesktop.Avahi", "/",
+                             "org.freedesktop.Avahi.Server", "GetState"});
+            if (s != "i 1" && s != "i 3") break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+        s = helper_line({"busctl", "--timeout=2", "call", "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server",
+                         "GetHostName"});   // s "krakensdr-2"
+        if (s.size() > 4 && s.compare(0, 3, "s \"") == 0 && s.back() == '"') return s.substr(3, s.size() - 4);
     }
-    // "192.168.1.5	krakensdr-2.local"
-    const vector<string> ips = global_ipv4();
+    s = helper_line({"gdbus", "call", "--system", "--timeout", "2", "--dest", "org.freedesktop.Avahi", "--object-path", "/",
+                     "--method", "org.freedesktop.Avahi.Server.GetHostName"});   // ('krakensdr-2',)
+    if (s.size() > 5 && s.compare(0, 2, "('") == 0 && s.compare(s.size() - 3, 3, "',)") == 0)
+        return s.substr(2, s.size() - 5);
+    // "192.168.1.5	krakensdr-2.local" - an mDNS answer only
+    const vector<string> ips = tlscert::private_ipv4();
     if (!ips.empty()) {
-        s = helper_line({"avahi-resolve", "-a", ips[0]});
-        const size_t tab = s.find_first_of(" \t");
-        if (tab != string::npos) {
-            string n = trim(s.substr(tab));
-            if (n.size() > 6 && lower(n.substr(n.size() - 6)) == ".local") n.resize(n.size() - 6);
-            return n;
+        std::istringstream ws(helper_line({"avahi-resolve", "-a", ips[0]}));
+        string a, n;
+        if (ws >> a >> n) {
+            if (!n.empty() && n.back() == '.') n.pop_back();
+            if (n.size() > 6 && n.compare(n.size() - 6, 6, ".local") == 0) return n.substr(0, n.size() - 6);
         }
     }
     return {};
@@ -838,10 +823,11 @@ bool add_name(X509_NAME* n, const char* field, const string& value) {
                                       -1, -1, 0) == 1;
 }
 
+// the date in UTC (make-cert.sh: date -u), for the CA's name and the retired files
 string today(const char* fmt) {
     const std::time_t t = std::time(nullptr);
     std::tm tm{};
-    localtime_r(&t, &tm);   // Windows: MinGW's (win/posix_compat.h)
+    gmtime_r(&t, &tm);   // Windows: MinGW's (win/posix_compat.h)
     char b[16];
     std::strftime(b, sizeof b, fmt, &tm);
     return b;
@@ -915,7 +901,7 @@ tlscert::CertInfo info_of(X509* x) {
     c.sha256 = fingerprint(x, EVP_sha256());
     c.sha1 = fingerprint(x, EVP_sha1());
     c.pem = cert_pem(x);
-    c.wide = ca_is_wide(x);
+    c.scope = ca_scope(x);
     return c;
 }
 
@@ -942,7 +928,7 @@ namespace tlscert {
 Host host_name() {
     Host h;
     if (const char* e = std::getenv("KRAKEN_CERT_HOST"); e && *e) {
-        h.raw = trim(e);
+        h.raw = e;   // as given (make-cert.sh: not cut at a dot - a dot makes it unusable)
     } else {
 #if defined(__APPLE__)
         h.raw = helper_line({"scutil", "--get", "LocalHostName"});
@@ -952,40 +938,46 @@ Host host_name() {
         if (h.raw.empty()) {
             char b[256] = {};
             if (gethostname(b, sizeof b - 1) == 0) h.raw = b;
-            h.raw = h.raw.substr(0, h.raw.find('.'));   // hostname -s
         }
+        h.raw = h.raw.substr(0, h.raw.find('.'));   // hostname -s
     }
     const string n = lower(h.raw);
-    h.usable = valid_label(n);
+    h.usable = usable_host(n);
     if (h.usable) h.name = n;
     return h;
 }
 
+// make-cert.sh's list, in its order (compared as a set): an unusable host
+// name still gets localhost and KRAKEN_CERT_NAMES
 vector<string> wanted_names(const Host& h) {
     vector<string> v;
-    auto add = [&v](string s) {
-        s = lower(trim(s));
-        while (!s.empty() && s.back() == '.') s.pop_back();
-        if (valid_dns(s) && std::find(v.begin(), v.end(), s) == v.end()) v.push_back(s);
+    auto add = [&v](const string& s) {
+        if (std::find(v.begin(), v.end(), s) == v.end()) v.push_back(s);
+    };
+    auto one_dot_off = [](string s) {   // ${d%.}
+        if (!s.empty() && s.back() == '.') s.pop_back();
+        return s;
     };
     if (h.usable) {
         add(h.name);
         add(h.name + ".local");
-        for (string d : search_domains()) {
-            d = lower(trim(d));
-            while (!d.empty() && d.back() == '.') d.pop_back();
+        for (const string& raw : search_domains()) {
+            const string d = one_dot_off(lower(raw));
             if (d != "local" && valid_dns(d)) add(h.name + "." + d);
         }
     }
     add("localhost");
     if (const char* e = std::getenv("KRAKEN_CERT_NAMES")) {
-        const string list = e;
-        size_t at = 0;
-        while (at <= list.size()) {
-            const size_t c = list.find(',', at);
-            add(list.substr(at, c == string::npos ? string::npos : c - at));
-            if (c == string::npos) break;
-            at = c + 1;
+        // split on commas and white space (make-cert.sh: tr ',' ' ', then words)
+        string list = e, w;
+        std::replace(list.begin(), list.end(), ',', ' ');
+        std::istringstream ws(list);
+        while (ws >> w) {
+            const string n = one_dot_off(lower(w));
+            if (!valid_dns(n)) continue;   // not a DNS name
+            if (std::all_of(n.begin(), n.end(), [](char c) { return (c >= '0' && c <= '9') || c == '.'; }))
+                continue;                    // an address, not a name
+            add(n);
         }
     }
     return v;
@@ -1010,15 +1002,21 @@ vector<string> wanted_ips(bool wide) {
     return v;
 }
 
+// make-cert.sh's reading: the last line "scope = <letters>" (spaces
+// allowed, any case) counts; anything but wide is narrow
 bool read_scope_wide(const string& dir) {
     std::ifstream f(join(dir, OPTIONS));
-    string line;
-    bool wide = false;
+    string line, value;
     while (std::getline(f, line)) {
         line = trim(line);
-        if (line.compare(0, 6, "scope=") == 0) wide = trim(line.substr(6)) == "wide";
+        if (line.compare(0, 5, "scope") != 0) continue;
+        string rest = trim(line.substr(5));
+        if (rest.empty() || rest[0] != '=') continue;
+        rest = trim(rest.substr(1));
+        if (std::all_of(rest.begin(), rest.end(), [](char c) { return std::isalpha(static_cast<unsigned char>(c)) != 0; }))
+            value = lower(rest);
     }
-    return wide;
+    return value == "wide";
 }
 
 bool write_scope(const string& dir, bool wide, string* err) {
@@ -1058,21 +1056,22 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
     }
     const vector<X509Ptr> chain = crt_there ? load_certs(crt_p) : vector<X509Ptr>();
     X509* leaf = chain.empty() ? nullptr : chain[0].get();
+    if (crt_there && !leaf) {
+        // not something to replace blindly (make-cert.sh fails the same way)
+        *err = crt_p + " holds no certificate that can be read - move it away (a new one is made then) or replace it";
+        return false;
+    }
     const vector<X509Ptr> cas = file_nonempty(cac_p) ? load_certs(cac_p) : vector<X509Ptr>();
     X509* ca = cas.empty() ? nullptr : cas[0].get();
     // managed or not
-    if (crt_there && (!leaf || !(signed_by(leaf, ca) || old_managed_subject(leaf)))) {
-        *state = State::NotManaged;   // a certificate of the user's own (or a file that isn't one): left alone
+    if (leaf && !(old_managed_subject(leaf) || verifies(leaf, ca, nullptr, false))) {
+        *state = State::NotManaged;   // a certificate of the user's own: left alone
         if (key_there) return true;
         *err = string(SERVER_CRT) + " is not one of the receiver's own and " + SERVER_KEY + " is missing";
         return false;
     }
+    // the server key: kept whatever its type; one that can't be read is replaced
     PkeyPtr skey = key_there ? load_key(key_p) : nullptr;
-    if (key_there && !skey && !leaf) {
-        // a key without a certificate that can't be read (encrypted?): not ours to replace
-        *err = string(SERVER_KEY) + " can't be read (a passphrase?) and there is no " + SERVER_CRT;
-        return false;
-    }
     PkeyPtr cakey = ca && file_nonempty(cak_p) ? load_key(cak_p) : nullptr;
 
     // what is wanted
@@ -1082,14 +1081,14 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
     const vector<string> ips = wanted_ips(wide);
     const string cn = host.usable ? host.name : "localhost";
 
-    // a new CA when: none (or no key that fits it); a name outside its
-    // constraints; another scope; less than a year left; asked to
-    bool make_new_ca = new_ca || !ca || !cakey || !same_key(X509_get0_pubkey(ca), cakey.get()) || X509_check_ca(ca) < 1 ||
-                       ca_is_wide(ca) != wide || days_left(ca) < CA_RENEW_DAYS;
+    // a new CA when: none (or no key that fits it, or not a CA); less than a
+    // year left; another scope (no name constraints = a mismatch too); a
+    // name outside its DNS constraints; asked to
+    bool make_new_ca = new_ca || !ca || !cakey || !same_key(X509_get0_pubkey(ca), cakey.get()) || !is_ca_cert(ca) ||
+                       days_left(ca) < CA_RENEW_DAYS || ca_scope(ca) != (wide ? "wide" : "narrow");
     if (!make_new_ca) {
         const Constraints c = constraints_of(ca);
         for (const string& n : names) make_new_ca = make_new_ca || !dns_permitted(c, n);
-        for (const string& ip : ips) make_new_ca = make_new_ca || !ip_permitted(c, ip);
     }
     const bool make_key = !skey;
     // the server certificate is re-issued (same key) when: other names / IPs;
@@ -1101,10 +1100,17 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
         san_of(leaf, &dns, &sips);
         for (const string& ip : ips) wips.push_back(ip_normal(ip));
         issue = !same_key(X509_get0_pubkey(leaf), skey.get()) || !same_set(dns, names) || !same_set(sips, wips) ||
-                days_left(leaf) < SERVER_RENEW_DAYS || !verifies(leaf, ca) || chain.size() != 2 ||
+                days_left(leaf) < SERVER_RENEW_DAYS || !verifies(leaf, ca, nullptr, false) || chain.size() != 2 ||
                 X509_cmp(chain[1].get(), ca) != 0;
     }
     if (!issue) {
+#ifndef _WIN32
+        // keys left readable by others are tightened (make-cert.sh's fix_mode)
+        for (const string& k : {key_p, cak_p}) {
+            struct stat st;
+            if (::lstat(k.c_str(), &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & 0777) != 0600) ::chmod(k.c_str(), 0600);
+        }
+#endif
         *state = State::Kept;
         return true;
     }
@@ -1175,10 +1181,14 @@ bool ensure(const string& dir, bool force, bool new_ca, State* state, string* er
     if (make_new_ca) {
         // the old CA certificate is kept as .retired (the page names it:
         // devices should remove it); its key is replaced - gone
-        if (file_nonempty(cac_p)) {
+        // (only a readable certificate, not a symlink - make-cert.sh's rule;
+        // the date in UTC, -2, -3 ... for more the same day)
+        if (ca && !is_symlink(cac_p)) {
             const string stem = join(dir, "krakensdr-ca." + today("%Y%m%d"));
             string retired = stem + ".retired.crt";
-            for (int i = 2; file_nonempty(retired) && i < 100; i++) retired = stem + "-" + std::to_string(i) + ".retired.crt";
+            struct stat st;
+            for (int i = 2; ::stat(retired.c_str(), &st) == 0 && i < 1000; i++)
+                retired = stem + "-" + std::to_string(i) + ".retired.crt";
             if (!move(cac_p, retired)) return false;
         }
         if (!move(cak_p + ".tmp", cak_p) || !move(cac_p + ".tmp", cac_p)) return false;
@@ -1202,7 +1212,7 @@ Inspect inspect(const string& dir) {
     X509* leaf = chain[0].get();
     r.server = info_of(leaf);
     const vector<X509Ptr> cas = load_certs(join(dir, CA_CRT));
-    if (!cas.empty() && signed_by(leaf, cas[0].get())) {
+    if (!cas.empty() && verifies(leaf, cas[0].get(), nullptr, false)) {
         r.has_ca = true;
         r.ca = info_of(cas[0].get());
     }

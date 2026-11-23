@@ -10,9 +10,10 @@ namespace certstatus {
 
 // Once, after the certificate files are final and before the listener:
 // reads server.crt, krakensdr-ca.crt and the retired CAs - what this run
-// serves - and starts a worker thread that re-checks the host name, the
-// addresses and cert_options every 60 s (it may run avahi's tools: never on
-// the uWS loop).
+// serves - adds the server certificate's DNS names to the host allow-list
+// (host_add_allowed_names, utils/host_check.hpp) and starts a worker thread
+// that re-checks the host name, the addresses and cert_options every 60 s
+// (it may run avahi's tools: never on the uWS loop).
 void init();
 
 // The "cert" object of system_status (cached text, cheap to copy); "" before

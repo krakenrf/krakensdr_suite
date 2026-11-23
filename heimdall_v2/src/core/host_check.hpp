@@ -12,6 +12,8 @@
 //     (.local .lan .home .localdomain .home.arpa)
 //   - any name in KRAKEN_ALLOWED_HOSTS (comma-separated, e.g. for a reverse
 //     proxy or a custom DNS name)
+//   - names the program adds at startup (host_add_allowed_names: kraken_doa
+//     the DNS names of its HTTPS certificate)
 // A request without a Host header (HTTP/1.0 tools) is allowed - browsers
 // always send one. Kept identical in heimdall_v2/src/core/ and
 // kraken_doa_v2/include/utils/.
@@ -25,11 +27,22 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace host_check_detail {
+// Names the program itself adds at startup (host_add_allowed_names);
+// guarded: a server thread may already be checking requests
+inline std::mutex& added_mutex() {
+    static std::mutex m;
+    return m;
+}
+inline std::vector<std::string>& added_names() {
+    static std::vector<std::string> v;
+    return v;
+}
 inline std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     while (!s.empty() && s.back() == '.') s.pop_back();  // FQDN trailing dot
@@ -97,5 +110,23 @@ inline bool host_allowed(std::string_view host) {
     in_addr a4;
     if (inet_pton(AF_INET, h.c_str(), &a4) == 1) return true;
     const auto& names = host_check_detail::allowed_names();
-    return std::find(names.begin(), names.end(), h) != names.end();
+    if (std::find(names.begin(), names.end(), h) != names.end()) return true;
+    std::lock_guard<std::mutex> lock(host_check_detail::added_mutex());
+    const auto& added = host_check_detail::added_names();
+    return std::find(added.begin(), added.end(), h) != added.end();
+}
+
+// More names this device is reached by, known only at run time - kraken_doa:
+// the DNS names of the HTTPS certificate it serves (an avahi conflict name
+// like krakensdr-2.local, KRAKEN_CERT_HOST / KRAKEN_CERT_NAMES, a DNS search
+// domain; cert_status.cpp). Call it before the servers listen; heimdall
+// doesn't. Exact names only (a wildcard is left out); thread-safe.
+inline void host_add_allowed_names(const std::vector<std::string>& more) {
+    std::lock_guard<std::mutex> lock(host_check_detail::added_mutex());
+    auto& added = host_check_detail::added_names();
+    for (const std::string& n : more) {
+        const std::string h = host_check_detail::lower(n);
+        if (h.empty() || h.find('*') != std::string::npos) continue;
+        if (std::find(added.begin(), added.end(), h) == added.end()) added.push_back(h);
+    }
 }

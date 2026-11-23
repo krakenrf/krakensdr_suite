@@ -3,6 +3,7 @@
 #include "cert_status.hpp"
 
 #include "playback.hpp"
+#include "utils/host_check.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/tls_compat.hpp"
 
@@ -64,7 +65,10 @@ void rebuild() {
     const int64_t secs_left = in.server.not_after - now;
     // floor, also below zero (an expired certificate: -1 and less)
     const int64_t days_left = secs_left >= 0 ? secs_left / 86400 : -((-secs_left + 86399) / 86400);
-    const bool served_wide = in.has_ca && in.ca.wide;
+    // the served CA's scope: "narrow" / "wide" / "none" (no name constraints:
+    // the next start makes a new CA, as for any other mismatch)
+    const string served = in.has_ca ? in.ca.scope : "";
+    const bool served_wide = served == "wide";
 
     vector<string> notices;
     if (in.present && secs_left < static_cast<int64_t>(EXPIRES_SOON_DAYS) * 86400) notices.push_back("expires_soon");
@@ -78,11 +82,11 @@ void rebuild() {
             return std::find(in.server.ips.begin(), in.server.ips.end(), ip) == in.server.ips.end();
         }))
         notices.push_back("addresses_changed");
-    if (in.managed && in.has_ca && s.scope_next_wide != served_wide) notices.push_back("restart_pending");
+    if (in.managed && in.has_ca && served != (s.scope_next_wide ? "wide" : "narrow")) notices.push_back("restart_pending");
 
     std::ostringstream o;
     o << "{\"managed\":" << (in.managed ? "true" : "false");
-    o << ",\"scope\":" << (in.has_ca ? (served_wide ? "\"wide\"" : "\"narrow\"") : "null");
+    o << ",\"scope\":" << (in.has_ca ? "\"" + served + "\"" : string("null"));
     o << ",\"scope_next\":" << (s.scope_next_wide ? "\"wide\"" : "\"narrow\"");
     o << ",\"host\":\"" << json_escape(s.host.raw) << "\",\"host_ok\":" << (s.host.usable ? "true" : "false");
     if (in.has_ca) {
@@ -154,6 +158,11 @@ void init() {
         if (!(s.ins.has_ca && read_file(tlscert::CA_CRT, &s.download))) s.download = s.ins.server.pem;
         s.ins.server.pem.clear();
         s.ins.ca.pem.clear();
+        // every name the certificate is valid for is one this device is
+        // reached by: also the avahi conflict name, KRAKEN_CERT_HOST /
+        // KRAKEN_CERT_NAMES and the search-domain names, which the host
+        // allow-list (gethostname-based) doesn't know
+        host_add_allowed_names(s.ins.server.dns);
     }
     refresh();
     {
@@ -162,7 +171,7 @@ void init() {
         const tlscert::Inspect& in = c.ins;
         if (in.present)
             std::cout << "HTTPS certificate: " << (in.managed ? "" : "not managed, ") << "CN=" << in.server.cn
-                      << (in.has_ca ? ", CA \"" + in.ca.cn + "\" (" + (in.ca.wide ? "wide" : "narrow") + " scope)" : "")
+                      << (in.has_ca ? ", CA \"" + in.ca.cn + "\" (" + in.ca.scope + " scope)" : "")
                       << std::endl;
     }
     std::thread([] {
