@@ -1710,6 +1710,54 @@ clipping rule stays the fast guard and is the search's ceiling.
       started a new up search. 499.26 MHz climbed in a sawtooth on the
       hardware: 29.7 -> 33.8 -> 32.8 -> 36.4 -> 33.8 -> 37.2 -> 36.4 ->
       40.2 -> 37.2, and then a burst at 37.2 sent it back to 29.7.
+- *The first guess from the lower neighbour's level*:
+  - The idea: a saturated hop's linear limit is where the carrier of the
+    hop BELOW it reads about -2 dBFS in band. On the orchestrator's
+    measurements:
+    - 415.11 MHz reads -1.1 dBFS rms at 29.7 dB, and 417.02 (that carrier
+      1.38 MHz below its centre) is linear up to 29.7.
+    - 415.52 reads -2.3 dBFS at 33.8, and 417.43 (1.79 MHz below) is
+      linear up to 33.8.
+    - The IF filter gives ~0 dB there. At 2.34-3.7 MHz below it was
+      falling: nothing on the reference day at a would-clip level.
+  - The guess: the highest list gain at which the neighbour's level
+    (referred to the input) would read at most -2 dBFS. The neighbour is
+    the same tuner's lower hop, and its level is the highest of its last
+    4 visits that were not heavily clipped.
+  - When it applies:
+    - Only where the neighbour's carrier sits within 2.2 MHz below this
+      hop's centre. The carrier is the neighbour's strongest bin when it
+      stands 20 dB over its floor; flat content counts at the band's
+      upper edge.
+    - At the hop's first visits, and again when the neighbour's level
+      rises 3 dB over the level the last guess was made at.
+    - Only ever down, and never by less than 2.5 dB.
+  - The rule's probes go on from there. Up-probes with something to test
+    may pass the guess; up-probes with nothing testable stay under it
+    while the neighbour's level holds.
+  - Status `gain_level_guesses`.
+- *The clipping rule's cut from the level*: a clip of at most 5 % on a
+  visit whose rms is at least -6 dBFS (a carrier near full scale, crest
+  under ~6 dB) cuts by the smallest step that brings the rms to -7 dBFS
+  on the real curve, at least one list step. Heavier clips, and bursty
+  content, keep the table's steps.
+  - Why: 415.11 at -1.1 dBFS and 2-4 % clipped in a strong minute lost
+    12 dB by the table (29.7 -> 16.6), where its carrier over floor is
+    10 dB worse than at 22.9.
+  - Why not at -12 dBFS: the GSM / LTE hops then came down one list step
+    per clipped visit (944.87 MHz in 10 steps).
+- *Hardware with the guess* (the dev machine's KrakenSDR):
+  - One tuner, 5 cold starts: 417.43 reaches 33.8 / 32.8 / 29.7 at sweeps
+    4, 8, 3, 6, 3.
+  - In 417.43's band the strongest bin stood at +431 kHz, 57 dB over its
+    floor (a carrier at 417.86 MHz). So 419.34 was guessed in 2 of 5 runs
+    and measured non-linear (gross) as well.
+  - On the whole plan the RF was busier that day than on the reference
+    day: 417.02's 416.59 carrier was at -3.2 dBFS rms and 6 % clipped at
+    49.6. 417.02 went to the clipping rule's 22.9 at sweep 3, and 413.19
+    stayed at the ceiling.
+  - Sweep time against Auto off in the same minute: +0.1 %, with 74 gain
+    writes a sweep.
 - *What stays from the floor search*:
   - the brackets and the reliability gate (at most a quarter of the last 8
     brackets failed; a search ends after 4 failed in a row);
