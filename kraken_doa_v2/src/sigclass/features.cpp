@@ -190,6 +190,27 @@ void hann(int n, std::vector<float>& w) {
     for (int i = 0; i < n; i++) w[size_t(i)] = float(0.5 - 0.5 * std::cos(2.0 * PI * (i + 0.5) / n));
 }
 
+// the 3-term discriminator: f[i] = k x arg(d[i] + d[i-1] + d[i-2]) (the terms that
+// exist), d[i] = y[i] conj(y[i-1]), for i = 1 .. len-1 (f[0] untouched). The products
+// first, then the sums in the same order as one sample at a time: both loops vectorise
+void discriminator(const cf* y, int len, float k, float* f, avec<cf>& d) {
+    if (len < 2) return;
+    d.resize(size_t(len));
+    for (int i = 1; i < len; i++) d[size_t(i)] = y[i] * std::conj(y[i - 1]);
+    f[1] = fast_atan2(d[1].imag(), d[1].real()) * k;
+    if (len > 2) {
+        cf z = d[2];
+        z += d[1];
+        f[2] = fast_atan2(z.imag(), z.real()) * k;
+    }
+    for (int i = 3; i < len; i++) {
+        cf z = d[size_t(i)];
+        z += d[size_t(i) - 1];
+        z += d[size_t(i) - 2];
+        f[i] = fast_atan2(z.imag(), z.real()) * k;
+    }
+}
+
 // median (of at most 8192 evenly strided values of a long vector); w: scratch
 float median_of(const std::vector<float>& v, std::vector<float>& w) {
     if (v.empty()) return 0.0f;
@@ -249,7 +270,7 @@ struct Features::Impl {
     std::vector<cf> Rcc;
     std::vector<float> spec, eB, fB;
     std::vector<float> S, S2, tmpv, scratch, mscratch, seqv, seqp, ffil, efil;
-    avec<cf> yfil;
+    avec<cf> yfil, dprod;
     std::vector<std::pair<int, int>> segs;
 
     Fft& plan(int n, bool real) {
@@ -544,19 +565,14 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
             const int s0 = c < 0 ? 0 : c * CHUNK, len = c < 0 ? n : CHUNK;
             spans.push_back({int(o), len});
             std::memcpy(yc.data() + o, y + s0, size_t(len) * sizeof(cf));
+            // (separate loops: each one vectorises)
+            for (int i = 0; i < len; i++) ec[o + size_t(i)] = std::norm(y[s0 + i]);
             for (int i = 0; i < len; i++) {
-                ec[o + size_t(i)] = std::norm(y[s0 + i]);
                 const int j = (s0 + i) / ON_BOX;
                 oc[o + size_t(i)] = j < nb8 ? on8[size_t(j)] : 0;
             }
             // IF: energy-weighted mean phase step over 3 steps
-            const float k = float(fs_v / (2.0 * PI));
-            for (int i = 1; i < len; i++) {
-                cf z = yc[o + size_t(i)] * std::conj(yc[o + size_t(i) - 1]);
-                if (i >= 2) z += yc[o + size_t(i) - 1] * std::conj(yc[o + size_t(i) - 2]);
-                if (i >= 3) z += yc[o + size_t(i) - 2] * std::conj(yc[o + size_t(i) - 3]);
-                fc[o + size_t(i)] = fast_atan2(z.imag(), z.real()) * k;
-            }
+            discriminator(yc.data() + o, len, float(fs_v / (2.0 * PI)), fc.data() + o, dprod);
             o += size_t(len);
         }
     }
@@ -1104,12 +1120,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
                     y[i] = cf(re, im);
                     efil[size_t(s.start + i)] = re * re + im * im;
                 }
-                for (int i = 1; i < s.len; i++) {
-                    cf z = y[i] * std::conj(y[i - 1]);
-                    if (i >= 2) z += y[i - 1] * std::conj(y[i - 2]);
-                    if (i >= 3) z += y[i - 2] * std::conj(y[i - 3]);
-                    ffil[size_t(s.start + i)] = fast_atan2(z.imag(), z.real()) * k2;
-                }
+                discriminator(y, s.len, k2, ffil.data() + s.start, dprod);
             }
             tmpv.clear();
             for (int i = 0; i < N; i += std::max(1, N / 8192))
