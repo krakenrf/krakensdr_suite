@@ -237,7 +237,7 @@ void track_band(const T& k, double& lo, double& hi) {
 
 // --- the published state (the uWS thread reads it) -------------------------
 struct PubTrack {
-    int id = 0;                   // tracker id x MAX_CHANNELS + its tracker (unique over tuners)
+    int64_t id = 0;               // the run's own (rules::follow_ids, INV-I: never reused, kept over a regroup)
     int tuner = 0;                // its tracker (coherent: 0)
     double hz = 0, bw = 0, lo = 0, hi = 0;
     double seen_real = 0;         // when it was last seen (now_s clock)
@@ -459,6 +459,7 @@ struct TunerTracks {
     double clock = 0;            // the tracker's clock (s)
     double last_look = -1;       // now_s() of its latest snapshot; < 0 none yet
     std::vector<std::pair<int, double>> seen;   // track id -> now_s() last seen
+    std::vector<rules::TrackPubId> book;        // track id -> the id the pages get (moves with the tracker)
     explicit TunerTracks(const sigclass::TrackerConfig& c) : trk(c) {}
     double seen_at(int id) const {
         for (const auto& p : seen)
@@ -483,6 +484,7 @@ void worker() {
             x.clock = 0;
             x.last_look = -1;
             x.seen.clear();
+            x.book.clear();
         }
     };
     const auto any_tracks = [&]() {
@@ -496,6 +498,7 @@ void worker() {
         return coherent ? x.clock + (now_s() - x.last_look) : x.clock;
     };
     int last_mode = -1, rr = 0, rr_next = 0;
+    int retried = -1;                                // tuners in turn: the tuner whose aborted capture is tried again (L3)
     double ewma_ms = 0, period_now = MIN_PERIOD_S;   // (the cycle period, s)
     double sure_conf = NAN;                          // the model's min_confidence (the one-hit rule)
     int64_t settle_until = 0;                        // coherent mode: after a retune
@@ -511,17 +514,17 @@ void worker() {
     std::vector<int> reps;
     std::vector<uint64_t> band_hz;      // per tracker: the band it serves (0: none) - rules::regroup
     int64_t look_seq = 0;               // the looks numbered (rules::note_look)
+    int64_t next_pub = 0;               // the published track ids handed out (rules::follow_ids)
     const auto fresh_tracks = [&](TunerTracks& x) {
         x.trk.clear();
         x.clock = 0;
         x.last_look = -1;
         x.seen.clear();
+        x.book.clear();
     };
-    const auto restart_bands = [&]() {   // (switch-on, mode change: every band new)
-        slots.clear();
-        reps.clear();
-        band_hz.clear();
-    };
+    // (switch-on, mode change: every band's next look a first look again; the bands, their
+    // turn, the tokens and the cursor go on - INV-H, rules::restart_bands)
+    const auto restart_bands = [&]() { rules::restart_bands(slots, now_ms()); };
     const auto update_slots = [&](int M) {
         std::vector<uint64_t> hz(static_cast<size_t>(M));
         for (int i = 0; i < M; i++) hz[size_t(i)] = exact_tuner_hz(i);
@@ -592,8 +595,10 @@ void worker() {
             if (!(band_c > 0)) continue;
             for (const sigclass::Track& k : x.trk.tracks()) {
                 if (std::abs(k.centre_hz - band_c) > half) continue;
+                const int64_t pid = rules::pub_id(x.book, k.id);
+                if (pid < 0) continue;   // (not seen by an update yet - none such: the book follows every update)
                 PubTrack q;
-                q.id = k.id * MAX_CHANNELS + ti;
+                q.id = pid;
                 q.tuner = ti;
                 q.hz = k.centre_hz;
                 q.bw = k.bw_hz;
@@ -847,6 +852,17 @@ void worker() {
             if (mode == 0) settle_until = now_ms() + SETTLE_MS;
             else slots[size_t(ch)].settle_until_ms = now_ms() + SETTLE_MS;   // (its own; the others go on)
             age_out(true);
+            // tuners in turn: wait for it to settle and choose again - its band, still the oldest, is tried
+            // at once (once: a second abort in a row goes the usual way). Before, the next band was taken
+            // right away and the aborted one came a whole period later - with a tuner retuned every period
+            // + capture, again just before the next retune: a swap every 2.8 s gave the swapped bands 2
+            // looks in 1200 s against 142 (the rules test's model; docs/dev/signal-classifier.md, L3)
+            if (mode != 0 && retried != ch) {
+                retried = ch;
+                rest(SETTLE_MS);
+            } else {
+                retried = -1;
+            }
             continue;
         }
         if (r != CAP_OK) {              // the channel count changed: choose again
@@ -867,6 +883,7 @@ void worker() {
         if (!(centre > 0)) continue;
 
         set_parked("");
+        retried = -1;
         // the budget's clock: looks that were analysed (a capture that ended
         // early cost nothing - the next one may follow at once, as before)
         if (last_start_ms >= 0) budget.started(static_cast<double>(cycle0 - last_start_ms) / 1000.0, ewma_ms / 1000.0);
@@ -890,12 +907,16 @@ void worker() {
         ceiling();
         const std::vector<sigclass::Track>& tracks = x.trk.update(res, centre, x.clock);
         std::vector<std::pair<int, double>> seen;
+        std::vector<int> ids;
         seen.reserve(tracks.size());
+        ids.reserve(tracks.size());
         for (const sigclass::Track& k : tracks) {
             const double sa = x.seen_at(k.id);
             seen.push_back({k.id, k.updated || sa < 0 ? t : sa});
+            ids.push_back(k.id);
         }
         x.seen = std::move(seen);
+        rules::follow_ids(x.book, ids, next_pub);   // (the ids the pages get: INV-I)
         // (a retune during the capture: the band trackers follow the tuners first - INV-E)
         if (mode != 0) update_slots(M);
         std::vector<PubTrack> pub = make_pub(mode, centre, true);
