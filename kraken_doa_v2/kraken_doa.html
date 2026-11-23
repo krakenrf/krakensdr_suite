@@ -1159,6 +1159,13 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .sig-row .pc {font-size:10px;color:var(--t3);min-width:28px;text-align:right}
 .sig-row.sub .nm {color:var(--t5)}
 .sig-row.old {opacity:.6}
+/* Bands (see BANDS): a thin bar of the worldwide bands in view along the top of each spectrum
+   (the main display, every independent-mode pane) - only while the Signal ID box's Bands is on */
+.band-strip {display:none;position:relative;height:16px;flex-shrink:0;box-sizing:border-box;background:var(--s2);border-bottom:1px solid var(--l1);overflow:hidden;cursor:default;user-select:none;-webkit-user-select:none}
+body.bands-on .band-strip {display:block}
+body.mode-independent #band-strip-main {display:none}
+.bs-seg {position:absolute;top:1px;height:13px;box-sizing:border-box;background:var(--s4);border:1px solid var(--l2);border-radius:2px;color:var(--t3);font:10px/11px sans-serif;text-align:center;white-space:nowrap;overflow:hidden}
+.bs-seg:hover {background:var(--s5);color:var(--t1)}
 .sf-cat-row {display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:12px}
 .sf-cat-row:last-child {margin-bottom:0}
 .sf-cat-row input[type=text] {flex:1;min-width:0;background:var(--s3);border:1px solid var(--l1);color:var(--t0);padding:3px 5px;border-radius:3px;font-size:12px}
@@ -2993,7 +3000,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
     <!-- Signal ID: every signal in the band labelled with its type (see SIGNAL ID) -->
     <div class="sb-section" data-sb="signal-id" id="sig-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-tag"/></svg><span>Signal ID</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Labels every signal the receiver finds in the band with its type - DMR, POCSAG, NFM voice, LoRa, ADS-B, DAB and some 50 more - on the spectrum and in the list here. <b>Click a label</b> (or a row) to tune the selected VFO to that signal with its decoder, demod and bandwidth. A label with a <b>?</b> is a less certain guess; a grey one is a signal of an unknown kind or one not seen for a while (bursts keep their label between transmissions). Hover a label for the next likely types, the bandwidth and the SNR.<br><br>The receiver looks at half a second of one tuner's samples at a time (coherent mode: the selected antenna; independent and wideband scan modes: each tuner in turn), every one to ten seconds - a few percent of one core. It never retunes anything. Paused while heimdall calibrates. <b>On spectrum</b> and <b>Confidence</b> (the least certainty shown) are for this browser only. Needs the model file sigclass.model on the receiver.</span></span></h3>
+        <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-tag"/></svg><span>Signal ID</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Labels every signal the receiver finds in the band with its type - DMR, POCSAG, NFM voice, LoRa, ADS-B, DAB and some 50 more - on the spectrum and in the list here. <b>Click a label</b> (or a row) to tune the selected VFO to that signal with its decoder, demod and bandwidth. A label with a <b>?</b> is a less certain guess; a grey one is a signal of an unknown kind or one not seen for a while (bursts keep their label between transmissions). Hover a label for the next likely types, the bandwidth and the SNR.<br><br>The receiver looks at half a second of one tuner's samples at a time (coherent mode: the selected antenna; independent and wideband scan modes: each tuner in turn), every one to ten seconds - a few percent of one core. It never retunes anything. Paused while heimdall calibrates. Needs the model file sigclass.model on the receiver.<br><br><b>Bands</b> draws a thin bar over every spectrum naming the radio bands in view - only bands the ITU Radio Regulations agree for the whole world (all three Regions): broadcasting, aeronautical, maritime, amateur, satellite, navigation and radar, ISM, science. Regional and national plans (433 / 868 / 915 MHz devices, PMR446, cellular bands) are left out: a gap in the bar means no worldwide band there. Hover a band for its full name and range. It works with Signal ID off. <b>Confidence</b> (the least certainty shown) and <b>Bands</b> are for this browser only.</span></span></h3>
         <span class="sf-count" id="sig-count"></span>
         <span class="sb-toggle"></span>
       </div>
@@ -3005,15 +3012,15 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <div class="sb-note" id="sig-note"></div>
         <div class="ctrl-row">
-          <label for="sig-spec">On spectrum</label>
-          <input type="checkbox" class="sw" id="sig-spec" onchange="sigSetSpec(this.checked)" title="Labels over the spectrum (this browser)">
-        </div>
-        <div class="ctrl-row">
           <label for="sig-min">Confidence</label>
           <select id="sig-min" onchange="sigSetMin(this.value)" title="The least certainty a label needs to be shown (this browser); Auto = the model's own level">
             <option value="auto">Auto</option><option value="0">All</option><option value="0.25">25 %</option><option value="0.4">40 %</option>
             <option value="0.5">50 %</option><option value="0.6">60 %</option><option value="0.75">75 %</option><option value="0.9">90 %</option>
           </select>
+        </div>
+        <div class="ctrl-row">
+          <label for="sig-bands">Bands</label>
+          <input type="checkbox" class="sw" id="sig-bands" onchange="bandSet(this.checked)" title="A bar over every spectrum naming the radio bands in view - worldwide (ITU) bands only (this browser)">
         </div>
         <div class="sig-list" id="sig-list"></div>
       </div>
@@ -3344,6 +3351,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           </div>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
         </div>
+        <!-- the worldwide bands in view (Signal ID box: Bands; BANDS in the script) - empty and hidden while off -->
+        <div class="band-strip" id="band-strip-main"></div>
         <div class="spectrum-content">
           <div id="pb-overlay"><span id="pb-overlay-k">DEBUG PLAYBACK - not live</span></div>
           <div id="fp"></div>
@@ -4188,23 +4197,104 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
 let binDoaOn = false, binDoaFrame = null, binDoaState = null;
 // Signal ID (see SIGNAL ID below): the receiver's {"sigclass"} state (null =
 // none yet) and when it came, whether one came on this connection; per
-// browser (localStorage kraken_sigclass): labels on the spectrum, the least
-// confidence shown; the main spectrum's label targets, a click they took.
+// browser (localStorage kraken_sigclass): the least confidence shown, the
+// Bands bar; the main spectrum's label targets, a click they took.
 // Up here: drawBox and the panes read them
 let sigSt = null, sigStAt = 0, sigHelloOk = false, sigHelloTimer = null, sigRects = [], sigConsumed = false;
 let sigNoRx = false;             // no state 8 s after the socket opened: an older receiver
 const sigDy = new Map();         // track id -> the row its label took last (sigLayout)
 const SIG_FADE_S = [5, 40];      // not seen for: from the first, fading to SIG_FADE_MIN at the second
 const SIG_FADE_MIN = 0.45;
+// (the labels are always on the spectrum: a 'spec' key an older page stored
+// is ignored, and dropped at the next save)
 const sigUi = (() => {
-  const d = {spec: true, min: 0.5};   // min: 0..1, or 'auto' (the model's min_confidence)
+  const d = {min: 0.5, bands: false};   // min: 0..1, or 'auto' (the model's min_confidence)
   try {
     const s = JSON.parse(localStorage.getItem('kraken_sigclass') || '{}');
-    if (typeof s.spec === 'boolean') d.spec = s.spec;
     if ((typeof s.min === 'number' && s.min >= 0 && s.min <= 1) || s.min === 'auto') d.min = s.min;
+    if (typeof s.bands === 'boolean') d.bands = s.bands;
   } catch (e) {}
   return d;
 })();
+// Bands (see BANDS below): the radio bands agreed for the whole world, for
+// the bar over the spectra. One row per band: [lo Hz, hi Hz, short label,
+// full name with the service(s), category (BAND_CATS), the ITU Radio
+// Regulations provision that makes it worldwide]. A band is in the table
+// when the ITU Radio Regulations' Table of Frequency Allocations (Article 5)
+// allocates that service in all three Regions over the range, or a
+// footnote / appendix designates it for the whole world (ISM 5.150, maritime
+// VHF 5.226 + Appendix 18, RLAN 5.446A); only the common part of a band.
+// Plain fixed / mobile allocations, regional and national plans are not in
+// it. Sorted, no overlaps and no nesting (a sub-band, e.g. 121.5 MHz in the
+// airband, is named in its band's full name). The rows, their sources and the
+// rule for adding one: docs/dev/signal-classifier.md, "Bands"; checked by
+// tools/band_table_check.py, which reads the lines between the markers (one
+// JSON array per row). Hz as plain numbers: up to 6.7 GHz, no 32-bit maths.
+// BAND TABLE BEGIN
+const BAND_TABLE = [
+  [24890000, 24990000, "12 m amateur", "Amateur, amateur-satellite: the 12 m band", "amateur", "Art. 5"],
+  [24990000, 25010000, "Time 25 MHz", "Standard frequency and time signal (25 MHz)", "science", "Art. 5"],
+  [25550000, 25670000, "Radio astr.", "Radio astronomy", "science", "Art. 5, 5.149"],
+  [25670000, 26100000, "11 m broadcast", "Broadcasting: the 11 m shortwave band", "broadcast", "Art. 5"],
+  [26957000, 27283000, "ISM 27 MHz", "Industrial, scientific and medical (ISM) applications, centre 27.12 MHz; radio services in the band accept their interference", "ism", "5.150"],
+  [27500000, 28000000, "Met aids", "Meteorological aids, with fixed and mobile", "science", "Art. 5"],
+  [28000000, 29700000, "10 m amateur", "Amateur, amateur-satellite: the 10 m band", "amateur", "Art. 5"],
+  [40660000, 40700000, "ISM 40 MHz", "Industrial, scientific and medical (ISM) applications, centre 40.68 MHz", "ism", "5.150"],
+  [50000000, 52000000, "6 m amateur", "Amateur: the 6 m band - secondary in Region 1 (since WRC-19), primary in Regions 2 and 3 (there 50-54 MHz)", "amateur", "Art. 5, 5.169B"],
+  [54000000, 68000000, "Band I TV", "Broadcasting: VHF band I (Region 1 from 47 MHz, Region 2 to 72 MHz)", "broadcast", "Art. 5"],
+  [74800000, 75200000, "Marker beacons", "Aeronautical radionavigation: ILS marker beacons on 75 MHz", "aero", "Art. 5, 5.180"],
+  [88000000, 108000000, "FM broadcast", "Broadcasting: FM sound (Region 1 from 87.5 MHz, Region 3 from 87 MHz)", "broadcast", "Art. 5"],
+  [108000000, 117975000, "VOR / ILS", "Aeronautical radionavigation: VOR, ILS localizer (108-112 MHz), GBAS", "aero", "Art. 5"],
+  [117975000, 137000000, "Airband", "Aeronautical mobile (R): air traffic voice (AM), ACARS, VDL; 121.5 MHz is the aeronautical emergency frequency", "aero", "Art. 5, 5.200"],
+  [137000000, 138000000, "Weather sats 137", "Space-to-Earth: meteorological-satellite (APT, LRPT images), mobile-satellite, space operation, space research", "satellite", "Art. 5"],
+  [144000000, 146000000, "2 m amateur", "Amateur, amateur-satellite: the 2 m band (Regions 2 and 3 to 148 MHz)", "amateur", "Art. 5"],
+  [156000000, 162050000, "Marine VHF", "Maritime mobile VHF, the Appendix 18 channels: 156.8 MHz (ch 16) distress and calling, 156.525 MHz (ch 70) DSC, AIS 161.975 / 162.025 MHz", "marine", "5.226, App. 18"],
+  [174000000, 216000000, "Band III bcast", "Broadcasting: VHF band III - TV, DAB (Regions 1 and 3 to 223 MHz)", "broadcast", "Art. 5"],
+  [322000000, 328600000, "Radio astr.", "Radio astronomy, with fixed and mobile", "science", "Art. 5, 5.149"],
+  [328600000, 335400000, "ILS glide path", "Aeronautical radionavigation: ILS glide path", "aero", "Art. 5, 5.258"],
+  [400150000, 406000000, "Radiosondes", "Meteorological aids (radiosondes); meteorological-satellite 400.15-403 MHz", "science", "Art. 5"],
+  [406000000, 406100000, "406 beacons", "Mobile-satellite (Earth-to-space): distress beacons only (EPIRB, ELT, PLB - Cospas-Sarsat)", "satellite", "Art. 5, 5.266"],
+  [406100000, 410000000, "Radio astr.", "Radio astronomy, with fixed and mobile", "science", "Art. 5, 5.149"],
+  [430000000, 440000000, "70 cm amateur", "Amateur (primary in Region 1, secondary in Regions 2 and 3) with radiolocation; amateur-satellite 435-438 MHz", "amateur", "Art. 5, 5.282"],
+  [470000000, 608000000, "UHF TV", "Broadcasting: UHF bands IV / V (TV)", "broadcast", "Art. 5"],
+  [614000000, 698000000, "UHF TV", "Broadcasting: UHF band V (TV)", "broadcast", "Art. 5"],
+  [698000000, 862000000, "UHF TV / mobile", "Broadcasting and mobile (IMT 700 / 800 MHz), both primary in all three Regions", "broadcast", "Art. 5"],
+  [960000000, 1164000000, "DME / SSR", "Aeronautical radionavigation: DME / TACAN, SSR and Mode S (1030 / 1090 MHz), ADS-B 1090, UAT 978; aeronautical mobile (R)", "aero", "Art. 5, 5.328"],
+  [1164000000, 1215000000, "GNSS L5", "Radionavigation-satellite (GPS L5, Galileo E5, BeiDou B2, GLONASS L3) with aeronautical radionavigation (DME)", "nav", "Art. 5, 5.328A"],
+  [1215000000, 1240000000, "GNSS L2", "Radionavigation-satellite (GPS L2), radiolocation, Earth exploration-satellite (active)", "nav", "Art. 5"],
+  [1240000000, 1300000000, "GNSS E6 / 23 cm", "Radionavigation-satellite (GLONASS L2, Galileo E6, BeiDou B3), radiolocation; amateur, secondary (the 23 cm band)", "nav", "Art. 5, 5.282"],
+  [1300000000, 1400000000, "L-band radar", "Radiolocation; aeronautical radionavigation 1300-1350 MHz (ground-based radars)", "nav", "Art. 5, 5.337"],
+  [1400000000, 1427000000, "Radio astr. 1420", "Radio astronomy (hydrogen line 1420.4 MHz), passive Earth exploration and space research - all emissions prohibited", "science", "Art. 5, 5.340"],
+  [1452000000, 1492000000, "L-band bcast", "Broadcasting, broadcasting-satellite (digital radio), with fixed and mobile", "broadcast", "Art. 5"],
+  [1518000000, 1559000000, "L-band satcom", "Mobile-satellite (space-to-Earth): Inmarsat and other L-band systems, maritime and aeronautical safety", "satellite", "Art. 5"],
+  [1559000000, 1610000000, "GNSS L1", "Radionavigation-satellite (GPS L1, Galileo E1, GLONASS L1, BeiDou B1) with aeronautical radionavigation", "nav", "Art. 5"],
+  [1610000000, 1626500000, "Sat phones", "Mobile-satellite (Earth-to-space: Iridium, Globalstar), aeronautical radionavigation; radio astronomy 1610.6-1613.8 MHz; mobile-satellite (space-to-Earth) 1613.8-1626.5 MHz", "satellite", "Art. 5"],
+  [1626500000, 1660000000, "L-band sat up", "Mobile-satellite (Earth-to-space): Inmarsat and other L-band uplinks", "satellite", "Art. 5"],
+  [1660000000, 1668400000, "Radio astr. 1665", "Radio astronomy (OH lines 1665 / 1667 MHz), space research (passive)", "science", "Art. 5, 5.149"],
+  [1668400000, 1710000000, "Met sats/sondes", "Meteorological aids (radiosondes) to 1700 MHz; meteorological-satellite (space-to-Earth) 1670-1710 MHz", "science", "Art. 5"],
+  [2025000000, 2110000000, "S-band sat up", "Space operation, Earth exploration-satellite, space research (Earth-to-space)", "satellite", "Art. 5"],
+  [2200000000, 2290000000, "S-band sat down", "Space operation, Earth exploration-satellite, space research (space-to-Earth)", "satellite", "Art. 5"],
+  [2300000000, 2400000000, "13 cm amateur", "Amateur, secondary, with fixed, mobile and radiolocation: the 13 cm band (2300-2450 MHz)", "amateur", "Art. 5"],
+  [2400000000, 2500000000, "ISM 2.4 GHz", "Industrial, scientific and medical (ISM) applications, centre 2450 MHz (Wi-Fi, Bluetooth); amateur 2400-2450 MHz (secondary); mobile-satellite (space-to-Earth) 2483.5-2500 MHz", "ism", "5.150"],
+  [2690000000, 2700000000, "Radio astr. 2.7G", "Radio astronomy, passive Earth exploration and space research - all emissions prohibited", "science", "Art. 5, 5.340"],
+  [2700000000, 2900000000, "ATC radar", "Aeronautical radionavigation: ground-based radars (airport surveillance, weather); radiolocation", "nav", "Art. 5, 5.337"],
+  [2900000000, 3100000000, "Radar 3 GHz", "Radionavigation (ship radars, ground-based aeronautical radars) and radiolocation", "nav", "Art. 5, 5.426"],
+  [3100000000, 3400000000, "Radar 3.1-3.4", "Radiolocation", "nav", "Art. 5"],
+  [3400000000, 4200000000, "C-band sat", "Fixed-satellite (space-to-Earth), with fixed and mobile (IMT in parts)", "satellite", "Art. 5"],
+  [4200000000, 4400000000, "Radio altimeters", "Aeronautical radionavigation: aircraft radio altimeters only; aeronautical mobile (R) (wireless avionics)", "aero", "Art. 5, 5.438"],
+  [4990000000, 5000000000, "Radio astr. 5G", "Radio astronomy, space research (passive), with fixed and mobile", "science", "Art. 5, 5.149"],
+  [5000000000, 5150000000, "Aero 5 GHz", "Aeronautical radionavigation (microwave landing system 5030-5150 MHz), aeronautical mobile (R) and mobile-satellite (R); radionavigation-satellite 5000-5030 MHz", "aero", "Art. 5, 5.444"],
+  [5150000000, 5350000000, "Wi-Fi 5 GHz", "Mobile except aeronautical: wireless access systems / RLANs (Wi-Fi) under Resolution 229; aeronautical radionavigation and fixed-satellite (Earth-to-space) 5150-5250 MHz; radiolocation, Earth exploration-satellite (active) 5250-5350 MHz", "mobile", "Art. 5, 5.446A"],
+  [5350000000, 5470000000, "Radar 5.4 GHz", "Radiolocation, aeronautical radionavigation (airborne radars), Earth exploration-satellite (active)", "nav", "Art. 5, 5.449"],
+  [5470000000, 5725000000, "Wi-Fi 5.6 GHz", "Mobile except aeronautical: RLANs (Wi-Fi) under Resolution 229; radiolocation (weather radars), maritime radionavigation 5470-5650 MHz; amateur, secondary, 5650-5725 MHz", "mobile", "Art. 5, 5.446A"],
+  [5725000000, 5875000000, "ISM 5.8 GHz", "Industrial, scientific and medical (ISM) applications, centre 5800 MHz; radiolocation and amateur (secondary) to 5850 MHz, amateur-satellite (space-to-Earth) 5830-5850 MHz", "ism", "5.150"],
+  [5925000000, 6700000000, "C-band sat up", "Fixed-satellite (Earth-to-space), with fixed and mobile", "satellite", "Art. 5"],
+];
+// BAND TABLE END
+const BAND_CATS = {broadcast: 'Broadcasting', aero: 'Aeronautical', marine: 'Maritime', amateur: 'Amateur', satellite: 'Satellite',
+                   nav: 'Navigation and radar', ism: 'ISM', science: 'Science (meteorology, radio astronomy, time)', mobile: 'Mobile (RLAN)'};
+const BAND_GAP_TIP = 'No worldwide band here: only regional or national allocations, or none (Signal ID box: Bands)';
+const bandTextW = new Map();     // label -> its width in the strip's font (bandLabelW)
 
 // Plugin plots beside the video display (see digRenderVideo): canvas id ->
 // {vfo, tab, pl, geometry} as last drawn, the pointer over one ({id, px,
@@ -7326,6 +7416,8 @@ function drawBox() {
   if(c.height!==h)c.height=h;
   c.style.width=w+'px';
   c.style.height=h+'px';
+
+  bandStripMain();   // the Bands bar over the plot (BANDS: only when the axis changed)
 
   const ctx=c.getContext('2d');
   ctx.clearRect(0,0,w,h);
@@ -11741,6 +11833,7 @@ function panesBuild(n) {
         <button type="button" class="view-btn icon" id="tpane-vb-${ch}" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-pop"
                 title="View: scale, zoom, waterfall - tuner ${ch}" aria-label="View, tuner ${ch}">${VIEW_ICON}</button>
       </div>
+      <div class="band-strip" id="tpane-b-${ch}"></div>
       <div class="tpane-body">
         <canvas class="tpane-spec" id="tpane-s-${ch}"></canvas>
         <div class="tpane-wf" id="tpane-w-${ch}"><canvas id="tpane-wc-${ch}"></canvas><canvas id="tpane-wo-${ch}"></canvas></div>
@@ -12067,6 +12160,7 @@ function paneDrawSpec(p) {
   }
   const span = paneSpan(p);
   if (!span) return;
+  bandStripPane(p, span);   // the Bands bar over this pane (BANDS)
   const [f0, f1] = span;
   // frequency grid: about one label per 90 px
   const steps = [0.005, 0.01, 0.02, 0.025, 0.05, 0.1, 0.2, 0.25, 0.5, 1];
@@ -13307,7 +13401,6 @@ function sigSet(on) {
   const cb = $id('sig-cb');
   if (cb) cb.checked = !!(sigSt && sigSt.enabled);
 }
-function sigSetSpec(on) { sigUi.spec = !!on; sigSave(); sigRedraw(); }
 function sigSetMin(v) {
   const n = +v;
   sigUi.min = v === 'auto' ? 'auto' : n >= 0 && n <= 1 ? n : 0.5;
@@ -13472,7 +13565,7 @@ function sigDrawLabel(ctx, g) {
 // independent mode (the panes have their own)
 function sigDrawSpectrum(ctx, w, h) {
   sigRects = [];
-  if (!sigUi.spec || !sigSt || !sigSt.enabled || opMode === 'independent' || !fftPlot || !currentFrequencies.length) return;
+  if (!sigSt || !sigSt.enabled || opMode === 'independent' || !fftPlot || !currentFrequencies.length) return;
   const items = sigShown(currentFrequencies[0], currentFrequencies[currentFrequencies.length - 1]);
   if (!items.length) return;
   // below the VFO labels and AI badges (y < 20) and the saved-frequency tags
@@ -13492,7 +13585,7 @@ function sigDrawSpectrum(ctx, w, h) {
 // an independent-mode pane (paneDrawOverlay): the tracks inside its span, in
 // its spectrum part, under its AI badges and saved-frequency tags
 function sigPaneTags(ctx, p, span) {
-  if (!sigUi.spec || !sigSt || !sigSt.enabled || !span || !p.sh) return [];
+  if (!sigSt || !sigSt.enabled || !span || !p.sh) return [];
   const items = sigShown(span[0], span[1]);
   if (!items.length) return [];
   let ytop = 17;
@@ -13588,8 +13681,8 @@ function sigRender() {
   const cb = $id('sig-cb'), st = $id('sig-state'), note = $id('sig-note'), list = $id('sig-list'), cnt = $id('sig-count');
   if (!cb) return;
   const s = sigSt;
-  const spec = $id('sig-spec'), mn = $id('sig-min');
-  if (spec && spec.checked !== sigUi.spec) spec.checked = sigUi.spec;
+  const bands = $id('sig-bands'), mn = $id('sig-min');
+  if (bands && bands.checked !== sigUi.bands) bands.checked = sigUi.bands;
   if (mn && document.activeElement !== mn && mn.value !== String(sigUi.min)) mn.value = String(sigUi.min);
   const auto = mn && mn.querySelector('option[value="auto"]');
   const autoTxt = 'Auto' + (s && +s.min_confidence > 0 ? ` (${Math.round(sigSure() * 100)} %)` : '');
@@ -13650,6 +13743,109 @@ function sigRender() {
   for (const el of have.values()) el.remove();
 }
 sigRender();
+
+// ============================================================================
+// BANDS (docs/dev/signal-classifier.md, "Bands")
+// ----------------------------------------------------------------------------
+// The Signal ID box's "Bands" switch (this browser: sigUi.bands, saved with
+// Confidence in kraken_sigclass; default off) shows a thin bar along the top
+// of every spectrum - the main display (coherent, zoomed, the wideband-scan
+// stitch, a playback: whatever its frequency axis shows, also the Wideband
+// variant's RF up to 6.7 GHz) and each independent-mode pane - naming the
+// worldwide bands in view (BAND_TABLE in the globals block): one segment per
+// band over its visible part, the short label centred when it fits, the full
+// name, range and service in its tooltip, nothing where no worldwide band
+// applies. Independent of the classifier: drawn from the page's own
+// frequency axis, no receiver command (an older receiver works the same).
+// The bar is a row of DOM elements in its own strip above the plot (the
+// plot keeps its size, the waterfall gives up the 16 px), so it covers
+// nothing on the plot (VFO bars, labels, tags, the readout) and takes no
+// spectrum input: a press there does nothing but show its tooltip (touch:
+// help mode, or press and hold). It is rebuilt only when the frequency axis
+// or the plot's width changed (bandStripDraw's key) - a spectrum frame
+// otherwise costs one comparison.
+// ============================================================================
+// (BAND_TABLE, BAND_CATS, BAND_GAP_TIP and bandTextW are in the globals block)
+function bandSet(on) {
+  sigUi.bands = !!on;
+  sigSave();
+  bandApply();
+}
+// show / hide the strips (body.bands-on), then lay out and draw again
+function bandApply() {
+  document.body.classList.toggle('bands-on', !!sigUi.bands);
+  document.querySelectorAll('.band-strip').forEach(el => { el._bk = null; });
+  window.dispatchEvent(new Event('resize'));     // (the main display's waterfall is 16 px shorter / taller)
+  if (opMode === 'independent' && typeof panesResizeNow === 'function') panesResizeNow();
+  sigRender();
+  if (fftPlot) drawBox();
+}
+// a label's width in the strip's font (measured once per label: bandTextW)
+function bandLabelW(s) {
+  let w = bandTextW.get(s);
+  if (w === undefined) {
+    const c = bandLabelW.ctx || (bandLabelW.ctx = document.createElement('canvas').getContext('2d'));
+    c.font = '10px sans-serif';
+    w = Math.ceil(c.measureText(s).width);
+    bandTextW.set(s, w);
+  }
+  return w;
+}
+function bandFmtMhz(hz) { return String(+(hz / 1e6).toFixed(4)); }
+function bandTip(r) {
+  return `${r[3]}\n${bandFmtMhz(r[0])} - ${bandFmtMhz(r[1])} MHz · ${BAND_CATS[r[4]] || r[4]}\nWorldwide: ITU Radio Regulations ${r[5]}`;
+}
+// The strip el over a spectrum whose frequency axis runs from f0 MHz at x0 to
+// f1 MHz at x1 (px from the strip's left edge): one segment per band in view,
+// clipped to it. Only when that changed (el._bk); the segments are reused
+function bandStripDraw(el, f0, f1, x0, x1) {
+  if (!el) return;
+  const k = el._bk;
+  if (k && k[0] === f0 && k[1] === f1 && k[2] === x0 && k[3] === x1) return;
+  el._bk = [f0, f1, x0, x1];
+  if (!el.hasAttribute('data-tip') && !el.hasAttribute('title')) el.title = BAND_GAP_TIP;
+  let n = 0;
+  if (f1 > f0 && x1 > x0 && Number.isFinite(f0) && Number.isFinite(f1)) {
+    const lo = f0 * 1e6, hi = f1 * 1e6, s = (x1 - x0) / (hi - lo);
+    let a = 0, b = BAND_TABLE.length;             // the first band ending above lo
+    while (a < b) { const m = (a + b) >> 1; if (BAND_TABLE[m][1] <= lo) a = m + 1; else b = m; }
+    for (let i = a; i < BAND_TABLE.length && BAND_TABLE[i][0] < hi; i++) {
+      const r = BAND_TABLE[i];
+      const xa = Math.round(x0 + (Math.max(r[0], lo) - lo) * s), xb = Math.round(x0 + (Math.min(r[1], hi) - lo) * s);
+      if (xb - xa < 1) continue;
+      let seg = el.children[n];
+      if (!seg) { seg = document.createElement('div'); seg.className = 'bs-seg'; el.appendChild(seg); }
+      n++;
+      if (seg._i !== i) { seg._i = i; seg.title = bandTip(r); seg.dataset.band = String(i); }
+      const st = seg.style, left = xa + 'px', width = (xb - xa) + 'px';
+      if (st.left !== left) st.left = left;
+      if (st.width !== width) st.width = width;
+      if (st.display) st.display = '';
+      const txt = xb - xa >= bandLabelW(r[2]) + 8 ? r[2] : '';
+      if (seg.textContent !== txt) seg.textContent = txt;
+    }
+  }
+  for (let j = el.children.length - 1; j >= n; j--) el.children[j].remove();
+}
+// the main display (drawBox, every frame): its plot area's frequency axis
+function bandStripMain() {
+  if (!sigUi.bands || opMode === 'independent' || !fftPlot || !fftPlot.over) return;
+  const el = $id('band-strip-main'), sx = fftPlot.scales && fftPlot.scales.x;
+  if (!el || !sx || !(sx.max > sx.min)) return;
+  const w = fftPlot.over.clientWidth, bl = fftPlot.bbox ? fftPlot.bbox.left : 0;
+  const k = el._mk;
+  if (k && el._bk && k[0] === sx.min && k[1] === sx.max && k[2] === w && k[3] === bl) return;
+  el._mk = [sx.min, sx.max, w, bl];
+  // the plot area's left edge in the strip (the y axis' width; both share the panel's left)
+  const x0 = fftPlot.over.getBoundingClientRect().left - el.getBoundingClientRect().left;
+  bandStripDraw(el, sx.min, sx.max, x0 + fftPlot.valToPos(sx.min, 'x'), x0 + fftPlot.valToPos(sx.max, 'x'));
+}
+// an independent-mode pane (paneDrawSpec, every frame): its span from p.L to the plot's right edge
+function bandStripPane(p, span) {
+  if (!sigUi.bands || !span) return;
+  bandStripDraw($id('tpane-b-' + p.ch), span[0], span[1], p.L, p.L + Math.max(10, p.sw - p.L - 4));
+}
+document.body.classList.toggle('bands-on', !!sigUi.bands);
 
 // --- Touch support: map touch events onto the existing mouse drag handlers ---
 function addTouchHandlers(el, down, move, up) {
