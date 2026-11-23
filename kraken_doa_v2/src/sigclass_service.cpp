@@ -509,38 +509,57 @@ void worker() {
     // reps: the tuner that stands for each one's band (rules::band_reps)
     std::vector<rules::TunerSlot> slots;
     std::vector<int> reps;
+    std::vector<uint64_t> band_hz;      // per tracker: the band it serves (0: none) - rules::regroup
+    int64_t look_seq = 0;               // the looks numbered (rules::note_look)
+    const auto fresh_tracks = [&](TunerTracks& x) {
+        x.trk.clear();
+        x.clock = 0;
+        x.last_look = -1;
+        x.seen.clear();
+    };
     const auto restart_bands = [&]() {   // (switch-on, mode change: every band new)
         slots.clear();
         reps.clear();
+        band_hz.clear();
     };
     const auto update_slots = [&](int M) {
-        const int64_t now = now_ms();
-        if (int(slots.size()) != M) slots.resize(size_t(M));
+        std::vector<uint64_t> hz(static_cast<size_t>(M));
+        for (int i = 0; i < M; i++) hz[size_t(i)] = exact_tuner_hz(i);
+        // the bands now, and which tracker / band state each one continues
+        // (rules::update_bands / regroup: a band that stays occupied keeps
+        // both, whichever tuner now stands for it - no gap in its labels; a
+        // tuner on a band nobody was on keeps its own tracker, the old band's
+        // tracks out of sight, and its band is new: a first look ahead of its
+        // turn while it holds the token)
+        bool moved = false;
+        const rules::Regroup g = rules::update_bands(slots, band_hz, reps, hz, now_ms(), SETTLE_MS, look_seq, moved);
+        if (!moved) return;
+        std::vector<TunerTracks> old;
+        old.reserve(size_t(M));
+        for (int i = 0; i < M; i++) old.push_back(std::move(tt[size_t(i)]));
         for (int i = 0; i < M; i++) {
-            rules::TunerSlot& s = slots[size_t(i)];
-            const uint64_t hz = exact_tuner_hz(i);
-            if (hz == s.hz) continue;
-            // a retune (not the first sight): its samples settle first; the
-            // band is new (its first look comes first); the tracker keeps
-            // its tracks (absolute Hz: back if the tuner returns in time)
-            if (s.hz != 0 && hz != 0) s.settle_until_ms = now + SETTLE_MS;
-            s.hz = hz;
-            s.looks = 0;
-        }
-        const std::vector<int> nr = rules::band_reps(slots);
-        // a tuner that no longer stands for its band (another on it already
-        // does): its tracker gets no more looks - its tracks go
-        for (int i = 0; i < M; i++)
-            if (nr[size_t(i)] != i && !tt[size_t(i)].trk.tracks().empty()) {
-                tt[size_t(i)].trk.clear();
-                tt[size_t(i)].clock = 0;
-                tt[size_t(i)].last_look = -1;
-                tt[size_t(i)].seen.clear();
+            const int src = g.src[size_t(i)];
+            if (src >= 0) {
+                tt[size_t(i)] = std::move(old[size_t(src)]);
+            } else {
+                tt[size_t(i)] = TunerTracks(tc);
+                fresh_tracks(tt[size_t(i)]);
             }
-        // a tuner that now stands for a band it shared: the band is new to it
-        for (int i = 0; i < M; i++)
-            if (nr[size_t(i)] == i && (size_t(i) >= reps.size() || reps[size_t(i)] != i)) slots[size_t(i)].looks = 0;
-        reps = nr;
+        }
+    };
+    // a track nobody has seen for TRACK_CEILING_S of wall time goes, whether
+    // or not its band was looked at (no looks: starved, no data, a tuner that
+    // moved away) - the 45 s / 6 missed looks rule stays below it
+    const auto ceiling = [&]() {
+        const double t = now_s();
+        for (TunerTracks& x : tt) {
+            std::vector<int> gone;
+            for (const sigclass::Track& k : x.trk.tracks()) {
+                const double sa = x.seen_at(k.id);
+                if (sa >= 0 && t - sa > rules::TRACK_CEILING_S) gone.push_back(k.id);
+            }
+            for (int id : gone) x.trk.erase(id);
+        }
     };
 
     // what the pages get: per tracker the tracks inside its tuner's band now
@@ -586,6 +605,7 @@ void worker() {
                 q.hi = std::clamp(q.hi, band_c - half, band_c + half);
                 const double sa = x.seen_at(k.id);
                 q.seen_real = sa >= 0 ? sa : t;
+                if (t - q.seen_real > rules::TRACK_CEILING_S) continue;   // (the wall-clock ceiling, between ceiling() runs)
                 // fresh: seen in its band's latest snapshot, and that one is
                 // not overdue (a round of the bands + 5 s; no snapshots while
                 // retunes keep coming or no data: the ages count)
@@ -650,6 +670,11 @@ void worker() {
     const auto age_out = [&](bool live) {
         const int mode = operating_mode_index();
         for (TunerTracks& x : tt) x.trk.expire(clock_now(x, mode == 0));
+        ceiling();
+        // the bands follow the tuners before the list is made: a band whose lead
+        // changed keeps its tracks in the list (INV-E: a retune seen by an aborted
+        // capture or a settle used to publish the band from the old slot - empty)
+        if (mode != 0 && mode == last_mode) update_slots(std::clamp(active_num_elements.load(), 1, MAX_CHANNELS));
         std::vector<PubTrack> pub = make_pub(mode, static_cast<double>(coherent_tuner_hz()), live);
         {
             std::lock_guard<std::mutex> lk(g_st_mu);
@@ -675,9 +700,10 @@ void worker() {
         }
         if (!was_on) {
             was_on = true;
+            // (the budget's debt and its clock stay over a disable: toggling
+            // Signal ID buys no analysis beyond the share - every band's
+            // first look is ahead of its turn again, within the same debt)
             restart_bands();
-            budget.debt_s = 0.0;
-            last_start_ms = -1;
             // the model: tried on the first enable, and again on an enable
             // after it was refused (the user may have put the file there)
             int st;
@@ -759,6 +785,10 @@ void worker() {
         // looked at once; a band nobody has looked at yet first; a retuned
         // tuner settles SETTLE_MS first, the others go on meanwhile)
         const int M = std::clamp(active_num_elements.load(), 1, MAX_CHANNELS);
+        // heimdall lowered the channel count: the trackers of the tuners gone
+        // go too (they kept their tracks on a frozen clock and came back aged)
+        for (int i = M; i < MAX_CHANNELS; i++)
+            if (!tt[size_t(i)].trk.tracks().empty()) fresh_tracks(tt[size_t(i)]);
         int ch = 0;
         bool first_look = false;
         if (mode == 0) {
@@ -856,7 +886,8 @@ void worker() {
         TunerTracks& x = tt[size_t(mode == 0 ? 0 : ch)];
         if (x.last_look >= 0) x.clock += mode == 0 ? t - x.last_look : std::min(t - x.last_look, EXPIRE_STEP_S);
         x.last_look = t;
-        if (mode != 0) slots[size_t(ch)].looks++;
+        if (mode != 0) rules::note_look(slots, reps, ch, first_look, look_seq++);
+        ceiling();
         const std::vector<sigclass::Track>& tracks = x.trk.update(res, centre, x.clock);
         std::vector<std::pair<int, double>> seen;
         seen.reserve(tracks.size());
@@ -865,6 +896,8 @@ void worker() {
             seen.push_back({k.id, k.updated || sa < 0 ? t : sa});
         }
         x.seen = std::move(seen);
+        // (a retune during the capture: the band trackers follow the tuners first - INV-E)
+        if (mode != 0) update_slots(M);
         std::vector<PubTrack> pub = make_pub(mode, centre, true);
         {
             std::lock_guard<std::mutex> lk(g_st_mu);

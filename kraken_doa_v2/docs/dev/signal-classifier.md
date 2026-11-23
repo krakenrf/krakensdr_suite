@@ -1551,17 +1551,24 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   is taken before the next look, once its band is known). With tuners in
   turn a band's FIRST look may skip the rest (a debt, at most
   `FIRST_LOOK_DEBT_LOOKS` 8 looks' analysis, paid back by the next periods,
-  each at most doubled) - see *Tuners in turn*. Coherent mode never skips:
-  its periods are the old rule's exactly. The state carries
+  each at most doubled) - see *Tuners in turn*. Coherent mode never takes a
+  look early; its periods are the old rule's except while a debt brought
+  from a multi-tuner mode is paid back (each at most doubled). The debt and
+  the budget's clock stay over a disable and a mode change: toggling Signal
+  ID buys no analysis beyond the share + the cap (INV-G). The state carries
   `analyze_ms`, `period_ms` (the planned period, a debt included), `duty`
   and `looks` (snapshots per tuner since the switch-on / mode change; the
   page ignores it). No thread priority change: the code
   base has no portable per-thread helper (`kproc::lower_own_priority` lowers
   the whole process on Windows), so the budget is the only limit
 - **Trackers**: one per band (`TunerTracks`; coherent mode uses [0] only;
-  tuners in turn: one per tuner, tuners on one band use their
-  representative's - the lowest-numbered one; a tuner that stops standing
-  for its band has its tracker cleared, it gets no looks any more),
+  tuners in turn: in the slot of the tuner standing for the band - the
+  lowest-numbered one on it -, and it MOVES with the band
+  (`rules::regroup`): when a lower tuner joins or the lead leaves, the band
+  keeps its tracks and labels; a tuner leaving for a band nobody was on keeps
+  its own tracker, the old band's tracks out of sight, unless another tuner
+  continues that band; the trackers of tuners beyond a lowered channel count
+  are cleared),
   `TRACK_EXPIRE_S` 45 s (a pager or a repeater between overs keeps its
   label). A track's age counts against the looks at ITS band: each tracker
   has its own clock, which moves only with a snapshot of its band - by the
@@ -1569,7 +1576,9 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   `MIN_MISSED_LOOKS` 6, + 10 ms). So a track goes once it was missed for
   45 s AND in at least 6 snapshots of its band (2 until 2026-11-24: an
   intermittent signal's track went before the signal came back - see
-  *Tuners in turn*). Before (one tracker on the wall clock), 8
+  *Tuners in turn*) - and in every mode at the latest `TRACK_CEILING_S`
+  180 s of wall time after it was last seen, looked at or not (see the
+  table there). Before (one tracker on the wall clock), 8
   tuners in turn at a 10 s period (analysis >= 225 ms; 5 tuners: >= 360 ms
   - inside the Pi 5 estimate) revisited a tuner every 80 s and 3 of 8
   tuners had no labels at any time. In coherent mode (one tuner; every
@@ -1629,10 +1638,32 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
     for CH1-CH3 there) - live the channels differ by several dB on one
     signal, so a weak one another of those antennas would catch can be
     missed
-  - **Which band** (`pick_band`): the bands in turn (round robin, a band
-    that is settling or has no frequency skipped); a band nobody has looked
-    at since its start (switch-on, mode change, its tuner's retune) comes
-    before any band's next look. A retune of tuner N (its `exact_tuner_hz`
+  - **Which band** (`update_bands`, `pick_band`, `note_look`): two passes.
+    (1) A band nobody has looked at since its start (switch-on, mode change,
+    its tuner's retune) is taken AHEAD of its turn - first come first served
+    - while its tuner holds the token: a tuner that took a look ahead of the
+    turn gets the next one only after every other ready band has had a look
+    since (the token is the tuner's own, never copied with a band: a tuner
+    hopping onto another's band and off again took that band's token along
+    and overtook twice in the model). (2) Else the ready band whose turn is
+    the oldest (`turn_seq`: its latest look; a new band's turn counts from
+    its start, behind every band looked before it); ties in cursor order;
+    with nothing retuned this is the old round robin exactly. Until
+    2026-11-24 a first look always won and moved the cursor: one tuner
+    retuned every 2.8 s (the saved-frequency scanner's dwell, a user
+    stepping a pane, the assistant) took every other look - 120 s, 5
+    tuners: looks [1, 42, 41, 8, 1] (the reviewer's harness), a band's
+    longest gap 230 s at Pi periods. Invariants (tested, R = the tuners
+    standing for a ready band in the stretch): INV-A a band ready and not
+    retuned through 2R consecutive looks gets one; INV-B a single retune,
+    nothing else changing, gets its first look before any other band's
+    next; INV-C a band waiting for its first look is overtaken at most once
+    by each band that began waiting later; INV-D without retunes the
+    cursor's round robin. Several scanned tuners share the first looks: 4
+    tuners retuned every 2 s at 300 ms analysis, 600 s (the reviewer's
+    model on these rules): looks 6 / 5 / 5 / 4 and 60 for the steady one
+    (the scanned ones are settling or retuned mid-capture most of the time;
+    before: 20 / 0 / 0 / 0). A retune of tuner N (its `exact_tuner_hz`
     changed - seen at every pick, not only by a capture of that tuner)
     holds tuner N for `SETTLE_MS` 500 ms; the others go on. Before, a
     retune of a tuner that was not being captured went unnoticed and its
@@ -1645,12 +1676,34 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
     analysis over 0.4 s exceeds the share). So the first labels of every
     band come within a round of CAPTURES (about 0.6 s + the analysis per
     band), not a round of periods
+  - **A band's lead changes** (INV-E): the band's tracker and its band
+    fields (looks, turn) move to the tuner now standing for it
+    (`rules::regroup`); before, a lower tuner joining cleared the old lead's
+    tracker and a lead leaving took the band's tracks with it - 8 labels
+    gone for 4-5.5 s, all back only after 29-43 s (the reviewer's harness)
   - **Expiry**: a track is kept until missed for 45 s AND in 6 looks of its
-    band (`MIN_MISSED_LOOKS`)
+    band (`MIN_MISSED_LOOKS`), at the latest `TRACK_CEILING_S` 180 s of wall
+    time after it was last seen, in every mode, looked at or not (INV-F;
+    `Tracker::erase` in the core, the ceiling also applied at publish). How
+    long a signal that went off the air stays labelled, about max(45 s, 6
+    rounds), the ceiling above that (a round = bands x period):
+
+    | bands \ period | 1 s | 2.5 s | 4 s | 7.5 s | 10 s |
+    |---|---|---|---|---|---|
+    | 1 (coherent) | 45 s | 45 s | 45 s | 45 s | 45 s |
+    | 2 | 45 s | 45 s | 48 s | 90 s | 120 s |
+    | 3 | 45 s | 45 s | 72 s | 135 s | 180 s |
+    | 5 | 45 s | 75 s | 120 s | 180 s | 180 s |
+    | 8 | 48 s | 120 s | 180 s | 180 s | 180 s |
+
+    A band that gets no looks at all (no data, starved, a tuner moved away)
+    loses them after 180 s (the calibration pause clears them at once)
   - **A mode switch** (every mode): the worker's rest and capture wait end
     when `operating_mode_index()` changes (checked every 100 ms) and the
     cleared list goes out at once (`publish(true)`) - before, the old
-    mode's tracks stayed on the new mode's spectrum for up to a period
+    mode's tracks stayed on the new mode's spectrum for up to a period.
+    Known edge: a mode change DURING an analysis publishes that look under
+    the old mode for a few ms, until `publish(true)` replaces it
   - **Fixed**: the overlap rule's compaction (`pub[w++] =
     std::move(pub[i])`) also ran for w == i - a self-move-assignment, which
     leaves a `std::string` empty: class, name, family, plugin, demod and the

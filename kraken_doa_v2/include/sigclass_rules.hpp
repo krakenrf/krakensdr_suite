@@ -89,15 +89,25 @@ void drop_overlap_duplicates(std::vector<T>& pub) {
 
 // --- tuners in turn (wideband scan, independent mode, generic RTL-SDRs) -------
 
-// a tuner as the scheduler sees it
+// a tuner as the scheduler sees it. The band fields belong to the BAND the
+// tuner stands for (tuners on one band carry the same values; regroup()
+// says where they go when tuners move)
 struct TunerSlot {
     uint64_t hz = 0;               // its centre (0 = none)
     int64_t settle_until_ms = 0;   // retuned: no look before this
     uint64_t looks = 0;            // looks at its band since the band's start (mode change, switch-on, retune)
+    int64_t last_seq = -1;         // the look number of the band's latest look (-1: none; a new band: its tuner's own) - the tokens
+    int64_t turn_seq = -1;         // the band's place in the turn: its latest look, a new band's start (the oldest goes first)
+    int64_t prio_seq = INT64_MIN;  // the TUNER's own: the look number of its latest look ahead of the turn (as its
+                                   // band's lead) - never copied between tuners: a tuner hopping onto another
+                                   // tuner's band and off again got that band's token and overtook twice
+    int64_t ready_ms = 0;          // when the band began waiting for its first look (first come, first served)
 };
 
 // tuners within this of each other are on one band: one look serves them all
 constexpr uint64_t SAME_BAND_HZ = 1000;
+
+inline uint64_t hz_dist(uint64_t a, uint64_t b) { return a > b ? a - b : b - a; }
 
 // per tuner the tuner that stands for its band (the lowest-numbered one on
 // it; -1: no frequency). Invariants (tested): rep[rep[i]] == rep[i];
@@ -109,7 +119,7 @@ inline std::vector<int> band_reps(const std::vector<TunerSlot>& t) {
         if (t[i].hz == 0) continue;
         rep[i] = int(i);
         for (size_t j = 0; j < i; j++)
-            if (rep[j] == int(j) && (t[i].hz > t[j].hz ? t[i].hz - t[j].hz : t[j].hz - t[i].hz) <= SAME_BAND_HZ) {
+            if (rep[j] == int(j) && hz_dist(t[i].hz, t[j].hz) <= SAME_BAND_HZ) {
                 rep[i] = int(j);
                 break;
             }
@@ -117,32 +127,165 @@ inline std::vector<int> band_reps(const std::vector<TunerSlot>& t) {
     return rep;
 }
 
-// The next band to look at, from the round-robin cursor rr (advanced past
-// it): a band nobody has looked at since its start first (first_look = true),
-// else the next one in turn. -1: none ready (no frequency, or settling after
-// a retune). Invariants (tested): the pick is a representative with a
-// frequency, not settling; when a ready band has no look yet the pick is one
-// of those; with nothing changing, between two looks at a band every other
-// ready band gets exactly one.
+// After tuners moved: which old slot's tracker each representative takes
+// (src; -1 a new, empty one) and whether it continues that slot's BAND (same
+// - then also its band fields; else the band is new). old_band_hz[s]: the
+// band slot s's tracker served (0: none - not a representative). A band that
+// stays occupied keeps its tracker whichever tuner now stands for it (it holds
+// absolute Hz: no gap in its labels when a lower tuner joins or the lead
+// leaves); a tuner that moved to a band nobody was on keeps its own tracker -
+// the old band's tracks stay out of sight and come back if it returns - unless
+// another tuner continues that old band, then it starts empty. Invariants
+// (tested, INV-E): a representative on a band some old slot served continues
+// exactly that slot; no tracker goes to two; a representative not continuing
+// a band gets a tracker of no band now occupied.
+struct Regroup {
+    std::vector<int> src;
+    std::vector<uint8_t> same;
+};
+inline Regroup regroup(const std::vector<uint64_t>& old_band_hz, const std::vector<TunerSlot>& t, const std::vector<int>& rep) {
+    const size_t M = t.size();
+    Regroup g{std::vector<int>(M, -1), std::vector<uint8_t>(M, 0)};
+    std::vector<uint8_t> taken(old_band_hz.size(), 0);
+    for (size_t r = 0; r < M; r++) {
+        if (rep[r] != int(r)) continue;
+        for (size_t s = 0; s < old_band_hz.size(); s++)
+            if (!taken[s] && old_band_hz[s] != 0 && hz_dist(old_band_hz[s], t[r].hz) <= SAME_BAND_HZ) {
+                g.src[r] = int(s);
+                g.same[r] = 1;
+                taken[s] = 1;
+                break;
+            }
+    }
+    for (size_t r = 0; r < M; r++)
+        if (rep[r] == int(r) && g.src[r] < 0 && r < old_band_hz.size() && !taken[r]) {
+            g.src[r] = int(r);   // (its own: the old band's tracks out of sight)
+            taken[r] = 1;
+        }
+    return g;
+}
+
+// The tuners' frequencies now (hz; 0 = none): a retuned tuner (not a first
+// sight) settles settle_ms; the bands (reps), and - when anything changed
+// (moved) - which tracker each band continues (the result's src, to apply to
+// the trackers) and its band fields: a band that goes on keeps its looks, its
+// last look; a new band starts at 0 looks (a first look ahead of its turn,
+// waiting from its settle's end) with its turn counted from now (seq_now:
+// behind every band looked before it); a tuner's token is its own (prio_seq
+// is never copied); the tuners sharing a band carry its other fields.
+inline Regroup update_bands(std::vector<TunerSlot>& slots, std::vector<uint64_t>& band_hz, std::vector<int>& reps,
+                            const std::vector<uint64_t>& hz, int64_t now_ms, int64_t settle_ms, int64_t seq_now, bool& moved) {
+    const size_t M = hz.size();
+    moved = slots.size() != M || reps.size() != M;
+    slots.resize(M);
+    band_hz.resize(M, 0);
+    const std::vector<TunerSlot> before = slots;
+    for (size_t i = 0; i < M; i++) {
+        TunerSlot& s = slots[i];
+        if (hz[i] == s.hz) continue;
+        if (s.hz != 0 && hz[i] != 0) s.settle_until_ms = now_ms + settle_ms;
+        s.hz = hz[i];
+        moved = true;
+    }
+    if (!moved) return Regroup{};
+    const std::vector<int> nr = band_reps(slots);
+    Regroup g = regroup(band_hz, slots, nr);
+    for (size_t i = 0; i < M; i++) {
+        if (nr[i] != int(i)) continue;
+        TunerSlot& s = slots[i];
+        if (g.same[i]) {
+            const TunerSlot& o = before[size_t(g.src[i])];
+            s.looks = o.looks;
+            s.last_seq = o.last_seq;
+            s.turn_seq = o.turn_seq;
+            s.ready_ms = o.ready_ms;
+        } else {
+            s.looks = 0;
+            s.ready_ms = std::max(now_ms, s.settle_until_ms);
+            s.turn_seq = seq_now;   // (its turn counts from now: behind the bands looked before - INV-A; its
+                                    // last look stays the tuner's own - the tokens: a never-looked band would block them)
+        }
+        band_hz[i] = s.hz;
+    }
+    for (size_t i = 0; i < M; i++) {
+        const int r = nr[i];
+        if (r == int(i)) continue;
+        band_hz[i] = 0;
+        if (r < 0) continue;
+        slots[i].looks = slots[size_t(r)].looks;
+        slots[i].last_seq = slots[size_t(r)].last_seq;
+        slots[i].turn_seq = slots[size_t(r)].turn_seq;
+        slots[i].ready_ms = slots[size_t(r)].ready_ms;
+    }
+    reps = nr;
+    return g;
+}
+
+// The next band to look at. -1: none ready (no frequency, or settling after
+// a retune). Two passes:
+//  - a band that has had no look since its start (switch-on, mode change,
+//    retune) is taken AHEAD of its turn (first_look = true; the cursor stays)
+//    - first come first served (ready_ms) - but only while it holds its
+//    token: a band that took a look ahead of its turn gets the next one only
+//    after every other ready band has had a look since (prio_seq < their
+//    last_seq). A tuner retuned again and again (a scanner, a user stepping a
+//    pane) once took every other look: 120 s with one tuner retuned every
+//    2.8 s gave looks [1, 42, 41, 8, 1]
+//  - else the ready band whose latest look is the oldest (turn_seq; a
+//    new band's counts from its start, ties in cursor order from rr; rr moves
+//    past it). With nothing retuned this is the old round robin exactly.
+// Invariants (tested, R = ready bands): INV-A every band ready and not
+// retuned through 2R consecutive looks gets one in them; INV-B a single
+// retune, nothing else changing, gets its first look before any other band's
+// next one; INV-C a band waiting for its first look is overtaken at most once
+// by each band that began waiting later; INV-D without retunes the order is
+// the cursor's round robin; the pick is a representative with a frequency,
+// not settling.
 inline int pick_band(const std::vector<TunerSlot>& t, const std::vector<int>& rep, int& rr, int64_t now_ms, bool& first_look) {
     const int M = int(t.size());
     first_look = false;
     if (M == 0) return -1;
     rr = ((rr % M) + M) % M;
+    const auto ready = [&](int i) { return rep[size_t(i)] == i && t[size_t(i)].hz != 0 && now_ms >= t[size_t(i)].settle_until_ms; };
+    const auto token = [&](int i) {
+        for (int j = 0; j < M; j++)
+            if (j != i && ready(j) && !(t[size_t(j)].last_seq > t[size_t(i)].prio_seq)) return false;
+        return true;
+    };
     int pick = -1;
-    for (int pass = 0; pass < 2 && pick < 0; pass++) {
-        for (int k = 0; k < M; k++) {
-            const int i = (rr + k) % M;
-            if (rep[size_t(i)] != i || now_ms < t[size_t(i)].settle_until_ms) continue;
-            if (pass == 0 && t[size_t(i)].looks != 0) continue;
-            pick = i;
-            first_look = pass == 0;
-            break;
-        }
+    for (int k = 0; k < M; k++) {   // ahead of the turn
+        const int i = (rr + k) % M;
+        if (!ready(i) || t[size_t(i)].looks != 0 || !token(i)) continue;
+        if (pick < 0 || t[size_t(i)].ready_ms < t[size_t(pick)].ready_ms) pick = i;
+    }
+    if (pick >= 0) {
+        first_look = true;
+        return pick;
+    }
+    for (int k = 0; k < M; k++) {   // the oldest look
+        const int i = (rr + k) % M;
+        if (!ready(i)) continue;
+        if (pick < 0 || t[size_t(i)].turn_seq < t[size_t(pick)].turn_seq) pick = i;
     }
     if (pick >= 0) rr = (pick + 1) % M;
     return pick;
 }
+
+// a look at band `ch` (number seq) happened: its band fields on every tuner on it
+inline void note_look(std::vector<TunerSlot>& t, const std::vector<int>& rep, int ch, bool first_look, int64_t seq) {
+    for (size_t i = 0; i < t.size(); i++) {
+        if (rep[i] != ch) continue;
+        t[i].looks++;
+        t[i].last_seq = seq;
+        t[i].turn_seq = seq;
+        if (first_look && int(i) == ch) t[i].prio_seq = seq;   // (the lead's own)
+    }
+}
+
+// the longest a track nobody sees keeps its label (INV-F): wall time since it
+// was last seen, whatever its band's looks
+constexpr double TRACK_CEILING_S = 180.0;
+
 
 // The CPU budget: analysis takes at most `share` of the wall time - after a
 // look the next starts `plan()` seconds after this one's start (the analysis

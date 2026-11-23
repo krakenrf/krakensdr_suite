@@ -43,6 +43,16 @@ void Tracker::clear() {
     ev_.clear();
 }
 
+bool Tracker::erase(int id) {
+    for (size_t i = 0; i < tracks_.size(); i++)
+        if (tracks_[i].id == id) {
+            tracks_.erase(tracks_.begin() + long(i));
+            ev_.erase(ev_.begin() + long(i));
+            return true;
+        }
+    return false;
+}
+
 const std::vector<Track>& Tracker::expire(double t_s) {
     for (size_t i = 0; i < tracks_.size();) {
         if (t_s - tracks_[i].last_s > cfg_.expire_s) {
