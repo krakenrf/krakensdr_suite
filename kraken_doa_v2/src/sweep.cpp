@@ -45,10 +45,15 @@ constexpr float REF_QUANTILE = 0.20f;
 constexpr int SEAM_HOPS = 6;
 constexpr int SEAM_MIN_BLOCK = 1;   // also K' = H: one hop per tuner
 constexpr float SEAM_MAX_DB = 6.0f;
+// a seam's step: the median of the steps taken from ceiling hops at the last SEAM_HIST completed
+// sweeps and now (one hop's odd floor for a sweep - a short visit, a clipped hop - moves no block)
+constexpr int SEAM_HIST = 4;
 constexpr float REWRITE_DB = 0.25f;
 constexpr int64_t EVAL_FIRST_MS = 250;    // until the first sweep on a grid is complete
 constexpr int64_t EVAL_MS = 1000;
 constexpr int SLOTS = 8;
+constexpr int GAIN_RING = 8;
+constexpr int TRIAL_ROW_SWEEPS = 3;   // a row stored this many completed sweeps ago is current (a trial visit is not drawn over it)   // auto gain: the visits a hop's map gain is taken from (update_gain_map)
 // a hop's 10th percentile below this (dB, the FFT's units) is a tuner that delivers constant samples
 constexpr float DEAD_DB = -100.0f;
 // a hop that never ends (another control client paused heimdall, this
@@ -304,6 +309,51 @@ std::mutex g_mu;
 struct Store {
     Plan plan;
     std::vector<float> hop_gain;  // per hop: the gain its last stored packets were taken with (header; NaN = none)
+    std::vector<int32_t> row_done; // per hop: `done` when its row was last stored (-1 = no row on this grid)
+    // per hop the gains of its last GAIN_RING visits that were not trials (0.1 dB, INT16_MIN =
+    // none): the map's source (update_gain_map) - a probe is not the hop's gain
+    std::vector<int16_t> gain_ring;
+    std::vector<uint8_t> ring_pos;
+    // per tuner pair (rank k | k + 1) the steps taken from hops at the ceiling on both sides
+    // at the last SEAM_HIST completed sweeps (NaN = none): kept while a side has no such hop
+    // (a probe sweep, a block reduced for good) - the dongles' step doesn't change with a gain
+    std::array<std::array<float, SEAM_HIST>, MAX_CHANNELS> seam_hist{};
+    std::array<uint8_t, MAX_CHANNELS> seam_pos{};
+    // the base of the last SEAM_HIST completed sweeps (NaN = none): the reference is their
+    // median with now's - a round whose visits all came out odd moves nothing
+    std::array<float, SEAM_HIST> base_hist{};
+    uint8_t base_pos = 0;
+    float base_gain = NAN;        // the common gain (Auto: the ceiling) and Auto the history was taken at
+    bool base_ag = false;
+    // per seam the median of its kept steps when the common gain last changed (NaN = none):
+    // used only while the seam has no step of its own at the new gain
+    std::array<float, MAX_CHANNELS> seam_fallback{};
+    void seam_clear() {
+        for (auto& a : seam_hist) a.fill(NAN);
+        seam_pos.fill(0);
+        seam_fallback.fill(NAN);
+        base_hist.fill(NAN);
+        base_pos = 0;
+    }
+    // a new common gain or Auto switched: every hop moves at once, and the steps with it
+    // (the converter's share of a floor changes with the gain) - the histories start again
+    void gain_changed() {
+        for (size_t k = 0; k < seam_hist.size(); k++) {
+            float v[SEAM_HIST];
+            int nv = 0;
+            for (float x : seam_hist[k])
+                if (is_finite_value(x)) v[nv++] = x;
+            if (nv > 0) {
+                std::sort(v, v + nv);
+                seam_fallback[k] = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+            }
+            seam_hist[k].fill(NAN);
+        }
+        seam_pos.fill(0);
+        base_hist.fill(NAN);
+        base_pos = 0;
+    }
+    Store() { seam_clear(); }
     std::vector<int16_t> map;     // the gain map of the last completed sweep, 0.1 dB (INT16_MIN = none)
     uint64_t map_ver = 0;
     int map_reduced = 0;          // hops in it under the ceiling
@@ -329,6 +379,7 @@ std::atomic<float> g_progress{0.0f};
 std::atomic<uint64_t> g_drops{0};
 std::atomic<bool> g_heim_dirty{false};
 std::atomic<float> g_gain{NAN};       // the common gain (note_gain), NaN = not known yet
+std::atomic<bool> g_ag_on{false};          // g_set.auto_gain for the other threads
 
 int16_t q16(float db) {
     const float v = std::round(db * 100.0f);
@@ -393,11 +444,37 @@ void shift_hop(int h, float d) {
 // or several, keeps its height; the dongles' different floors (up to ~4 dB)
 // don't show as steps. Hops whose reference moved by more than REWRITE_DB are
 // rewritten.
-void evaluate() {
+// KRAKEN_SWEEP_SEAM_DEBUG=1: every evaluation logs (stderr) per seam the hops taken on each side
+// (h:floor@gain, * = at the ceiling), where the step came from (C the ceiling steps' median with
+// now's, M their median alone - now's past the cap or no ceiling hop on a side -, A all hops, -
+// none), the step and now's raw ceiling difference; then the base and the tuners' offsets
+bool seam_debug() {
+    static const bool on = [] { const char* e = std::getenv("KRAKEN_SWEEP_SEAM_DEBUG"); return e && *e == '1'; }();
+    return on;
+}
+
+// sweep_done: called at a completed sweep (the steps taken now go into the seams' history)
+void evaluate(bool sweep_done = false) {
     const Plan& p = S.plan;
     S.eval_ms = now_ms();
     if (S.tuner.size() != static_cast<size_t>(p.H) || S.lv.empty()) return;
     std::array<float, MAX_CHANNELS> off{};
+    // a new common gain (the Gain slider; with Auto the ceiling) or Auto switched: the
+    // histories start again, so the first sweep at the new gain sets the base and the
+    // steps as before the medians (one sweep, not 2 - 3)
+    {
+        const float gk = g_gain.load(std::memory_order_relaxed);
+        const bool ak = g_ag_on.load(std::memory_order_relaxed);
+        if (!(gk == S.base_gain || (!is_finite_value(gk) && !is_finite_value(S.base_gain))) || ak != S.base_ag) {
+            S.gain_changed();
+            S.base_gain = gk;
+            S.base_ag = ak;
+        }
+    }
+    const bool dbg = seam_debug();
+    std::ostringstream dl;
+    if (dbg) dl << "seamdbg " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+                << " done " << S.done;
     for (int k = 0; k + 1 < p.Kp; k++) {
         const int ta = tuner_of_rank(p.tuners, k), tb = tuner_of_rank(p.tuners, k + 1);
         if (ta < 0 || tb < 0) break;
@@ -417,15 +494,76 @@ void evaluate() {
             };
             float fa[SEAM_HOPS], fb[SEAM_HOPS];
             int na = 0, nb = 0;
-            for (int pass = 0; pass < 2 && na == 0; pass++)
+            // (round 10: a side without a hop at the ceiling - heimdall's search sweep
+            // takes the whole plan a step down, a block may stay below for good - keeps
+            // the step last taken at the ceiling: the dongles' step doesn't move with a
+            // gain, and a step from reduced hops would fold their sensitivity loss, or
+            // the curve's error, into the whole block. Only a seam never seen at the
+            // ceiling takes all of its hops)
+            // (the difference of the two sides' lowest floors; NaN = a side without hops)
+            auto take = [&](bool ceiling_only) {
+                na = nb = 0;
                 for (int h = b0 - 1; h >= a0 && h >= b0 - SEAM_HOPS; h--)
-                    if (S.tuner[static_cast<size_t>(h)] == ta && (pass == 1 || at_ceiling(h))) fa[na++] = S.floor[static_cast<size_t>(h)];
-            for (int pass = 0; pass < 2 && nb == 0; pass++)
+                    if (S.tuner[static_cast<size_t>(h)] == ta && (!ceiling_only || at_ceiling(h))) fa[na++] = S.floor[static_cast<size_t>(h)];
                 for (int h = b0; h < b1 && h < b0 + SEAM_HOPS; h++)
-                    if (S.tuner[static_cast<size_t>(h)] == tb && (pass == 1 || at_ceiling(h))) fb[nb++] = S.floor[static_cast<size_t>(h)];
-            if (na >= 1 && nb >= 1) {
-                const float d = *std::min_element(fb, fb + nb) - *std::min_element(fa, fa + na);
-                if (std::fabs(d) <= SEAM_MAX_DB) step = d;
+                    if (S.tuner[static_cast<size_t>(h)] == tb && (!ceiling_only || at_ceiling(h))) fb[nb++] = S.floor[static_cast<size_t>(h)];
+                if (na < 1 || nb < 1) return NAN;
+                return *std::min_element(fb, fb + nb) - *std::min_element(fa, fa + na);
+            };
+            // the step: the median of the ceiling steps of the last SEAM_HIST completed sweeps
+            // and of now (a step past SEAM_MAX_DB is no evidence: a clipped hop's floor, a
+            // wide signal). One odd floor - a hop's short visit, a hop clipped at the
+            // ceiling - used to make a step past the cap 0 or bend it by its own error for
+            // that evaluation: the whole chain of blocks after the seam moved with it
+            // (2026-11-24, the t_agc seam failures on the Pi)
+            auto& hist = S.seam_hist[static_cast<size_t>(k)];
+            const float dc = take(true);
+            const float cur = is_finite_value(dc) && std::fabs(dc) <= SEAM_MAX_DB ? dc : NAN;
+            float v[SEAM_HIST + 1];
+            int nv = 0;
+            for (float x : hist)
+                if (is_finite_value(x)) v[nv++] = x;
+            char src = is_finite_value(cur) ? 'C' : 'M';
+            const float fbk = S.seam_fallback[static_cast<size_t>(k)];
+            if (nv >= 2) {
+                if (is_finite_value(cur)) v[nv++] = cur;
+                std::sort(v, v + nv);
+                step = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+            } else if (is_finite_value(cur)) {
+                // (fewer than 2 kept - a new grid, a new gain: the sweep the change fell in
+                // holds hops from before it - now's alone)
+                step = cur;
+            } else if (nv == 1) {
+                step = v[0];
+            } else if (is_finite_value(fbk)) {
+                step = fbk;   // (no step at the new gain yet: the one from before it)
+            } else {
+                // a seam not yet seen at the ceiling: all of its hops
+                const float da = take(false);
+                src = is_finite_value(da) ? 'A' : '-';
+                step = is_finite_value(da) && std::fabs(da) <= SEAM_MAX_DB ? da : 0.0f;
+            }
+            if (sweep_done && is_finite_value(cur)) {
+                uint8_t& pos = S.seam_pos[static_cast<size_t>(k)];
+                hist[pos] = cur;
+                pos = static_cast<uint8_t>((pos + 1) % SEAM_HIST);
+            }
+            if (dbg) {
+                char b[48];
+                dl << " | " << ta << "|" << tb << " " << src;
+                snprintf(b, sizeof b, " %+.2f (now %+.2f) a", step, dc);
+                dl << b;
+                for (int h = b0 - 1; h >= a0 && h >= b0 - SEAM_HOPS; h--)
+                    if (S.tuner[static_cast<size_t>(h)] == ta) {
+                        snprintf(b, sizeof b, " %d:%.2f@%.1f%s", h, S.floor[static_cast<size_t>(h)], S.hop_gain[static_cast<size_t>(h)], at_ceiling(h) ? "*" : "");
+                        dl << b;
+                    }
+                dl << " b";
+                for (int h = b0; h < b1 && h < b0 + SEAM_HOPS; h++)
+                    if (S.tuner[static_cast<size_t>(h)] == tb) {
+                        snprintf(b, sizeof b, " %d:%.2f@%.1f%s", h, S.floor[static_cast<size_t>(h)], S.hop_gain[static_cast<size_t>(h)], at_ceiling(h) ? "*" : "");
+                        dl << b;
+                    }
             }
         }
         off[static_cast<size_t>(tb)] = off[static_cast<size_t>(ta)] + step;
@@ -439,8 +577,39 @@ void evaluate() {
         S.scratch[n++] = S.floor[static_cast<size_t>(h)] - ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f);
     }
     if (n == 0) return;
-    S.base = quantile(S.scratch, n, REF_QUANTILE);
+    {
+        const float now_base = quantile(S.scratch, n, REF_QUANTILE);
+        float v[SEAM_HIST + 1];
+        int nv = 0;
+        for (float x : S.base_hist)
+            if (is_finite_value(x)) v[nv++] = x;
+        // (fewer than 2 kept: now's alone - the sweep the change fell in holds hops from
+        // before it, and a median of it with now's would stand halfway for a sweep)
+        if (nv < 2) {
+            S.base = now_base;
+        } else {
+            v[nv++] = now_base;
+            std::sort(v, v + nv);
+            S.base = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+        }
+        if (sweep_done) {
+            S.base_hist[S.base_pos] = now_base;
+            S.base_pos = static_cast<uint8_t>((S.base_pos + 1) % SEAM_HIST);
+        }
+    }
     S.off = off;
+    if (dbg) {
+        char b[32];
+        snprintf(b, sizeof b, " || base %.2f off", S.base);
+        dl << b;
+        for (int k = 0; k < p.Kp; k++) {
+            const int t = tuner_of_rank(p.tuners, k);
+            if (t < 0) break;
+            snprintf(b, sizeof b, " %+.2f", off[static_cast<size_t>(t)]);
+            dl << b;
+        }
+        std::cerr << dl.str() << std::endl;
+    }
     bool moved = false;
     for (int h = 0; h < p.H; h++) {
         const int8_t t = S.tuner[static_cast<size_t>(h)];
@@ -462,6 +631,9 @@ struct Arrays {
     std::vector<float> floor, applied, delta;
     std::vector<int8_t> tuner;
     std::vector<float> hop_gain;
+    std::vector<int32_t> row_done;
+    std::vector<int16_t> gain_ring;
+    std::vector<uint8_t> ring_pos;
     void swap_with_store() {
         lv.swap(S.lv);
         floor.swap(S.floor);
@@ -469,6 +641,9 @@ struct Arrays {
         delta.swap(S.delta);
         tuner.swap(S.tuner);
         hop_gain.swap(S.hop_gain);
+        row_done.swap(S.row_done);
+        gain_ring.swap(S.gain_ring);
+        ring_pos.swap(S.ring_pos);
     }
 };
 
@@ -502,12 +677,16 @@ bool apply_plan(bool bump) {
             const bool any = grid || heim || np.res != op.res || np.overlap != op.overlap;
             np.gen = op.gen + ((any || bump) ? 1 : 0);
             np.grid_gen = op.grid_gen + (grid ? 1 : 0);
+            // the seams' remembered steps belong to the tuner pairs on the ranks: other
+            // tuners, or other hops for them, put other pairs there (a dwell change doesn't)
+            if (op.ok && (np.tuners != op.tuners || np.f0 != op.f0 || np.H != op.H)) S.seam_clear();
             if (grid || !active) {
                 // a new grid, or out of the mode: no data (a receiver that doesn't
                 // sweep holds none - up to 64 MB at the bin cap). A new grid also
                 // starts its sweep count again
                 old.swap_with_store();
                 S.base = NAN;
+                S.seam_clear();
                 S.off = {};
                 S.any = false;
                 if (grid) {
@@ -540,6 +719,9 @@ bool apply_plan(bool bump) {
             fresh.delta.assign(static_cast<size_t>(np.H), 0.0f);
             fresh.tuner.assign(static_cast<size_t>(np.H), -1);
             fresh.hop_gain.assign(static_cast<size_t>(np.H), NAN);
+            fresh.row_done.assign(static_cast<size_t>(np.H), -1);
+            fresh.gain_ring.assign(static_cast<size_t>(np.H) * GAIN_RING, std::numeric_limits<int16_t>::min());
+            fresh.ring_pos.assign(static_cast<size_t>(np.H), 0);
             made = true;
         } catch (const std::bad_alloc&) {
             std::cerr << "Sweep: out of memory for " << np.bins << " bins" << std::endl;
@@ -561,10 +743,22 @@ bool apply_plan(bool bump) {
 }
 
 // --- auto gain: the map, heimdall's answers ---------------------------------------------
+std::atomic<float> g_hdm_ceiling{NAN};         // heimdall's gain_ceiling_db (its status), NaN = not sent
+std::atomic<uint64_t> g_trials_out{0};          // trial visits left out of the picture
+std::atomic<bool> g_trial_seen{false};          // heimdall has sent a trial bit (since the start)
+// heimdall's round-10 status counts, passed through to the sweep message as they are
+// (additive; absent when heimdall doesn't send them)
+const char* const HDM_COUNTS[] = {"gain_floor_hops", "gain_probes", "gain_floor_decisions", "gain_search_hops",
+                                  "floor_scatter_db", "gain_pairs", "gain_pairs_unbracketed", "gain_pairs_nonlinear",
+                                  "gain_step_learned", "gain_probe_sweep", "gain_probes_skipped", "gain_level_guesses"};
+constexpr int HDM_BOOL = 9;   // gain_probe_sweep: true / false
+constexpr int N_HDM_COUNTS = sizeof HDM_COUNTS / sizeof HDM_COUNTS[0];
+std::mutex g_hdm_mu;
+std::array<double, N_HDM_COUNTS> g_hdm_val{};
+std::array<bool, N_HDM_COUNTS> g_hdm_has{};
 std::atomic<bool> g_state_dirty{false};
 std::atomic<int> g_ag_known{0};            // 0 not answered yet, 1 heimdall has it, -1 it has not
 std::atomic<int64_t> g_ag_asked_ms{0};
-std::atomic<bool> g_ag_on{false};          // g_set.auto_gain for the other threads
 
 // The tuner's real gain against its gain list (heimdall's "gain_real_db" in its
 // status: [[list gain, real dB relative to the list's top], ...], measured - the
@@ -585,6 +779,20 @@ float curve_real(const std::vector<std::pair<float, float>>& c, float g) {
             return c[i - 1].second + t * (c[i].second - c[i - 1].second);
         }
     return c.back().second;
+}
+
+// "name":<number> out of a status line (false: absent, or not a number)
+bool num_field(const std::string& line, const char* name, double& v) {
+    const std::string key = std::string("\"") + name + "\":";
+    const size_t k = line.find(key);
+    if (k == std::string::npos) return false;
+    const char* s = line.c_str() + k + key.size();
+    while (*s == ' ') s++;
+    char* e = nullptr;
+    const double d = std::strtod(s, &e);
+    if (e == s || !std::isfinite(d)) return false;
+    v = d;
+    return true;
 }
 
 // "gain_real_db":[[g,r],...] out of a status line; false = absent or malformed
@@ -648,16 +856,46 @@ void update_gain_map() {
     const size_t H = S.hop_gain.size();
     std::vector<int16_t> m(H, std::numeric_limits<int16_t>::min());
     float hi = NAN, lo = NAN;
-    for (size_t h = 0; h < H; h++) {
-        const float g = S.hop_gain[h];
-        if (!is_finite_value(g) || g < 0.0f) continue;   // (none, or the tuner's AGC)
-        m[h] = static_cast<int16_t>(std::lround(g * 10.0f));
+    for (size_t h = 0; h < H && S.gain_ring.size() >= H * GAIN_RING; h++) {
+        // the hop's gain. Once heimdall has sent trial bits (it marks its probes and
+        // search sweeps): the last visit that was not a trial - trials never enter the
+        // ring. Before (a heimdall without them): the most frequent gain of the last
+        // visits (a tie: the higher), so a probe a step off isn't taken for the hop's
+        // gain and the map doesn't flicker; a new gain then shows once it holds half
+        // of them
+        const int16_t* r = &S.gain_ring[h * GAIN_RING];
+        int16_t best = std::numeric_limits<int16_t>::min();
+        int best_n = 0;
+        if (g_trial_seen.load(std::memory_order_relaxed)) {
+            best = r[(S.ring_pos[h] + GAIN_RING - 1) % GAIN_RING];
+            best_n = best != std::numeric_limits<int16_t>::min() ? 1 : 0;
+        } else {
+            for (int i = 0; i < GAIN_RING; i++) {
+                if (r[i] == std::numeric_limits<int16_t>::min()) continue;
+                int n = 0;
+                for (int j = 0; j < GAIN_RING; j++) n += r[j] == r[i];
+                if (n > best_n || (n == best_n && r[i] > best)) {
+                    best = r[i];
+                    best_n = n;
+                }
+            }
+        }
+        if (best_n == 0) continue;   // (none, or the tuner's AGC)
+        m[h] = best;
+        const float g = best / 10.0f;
         hi = is_finite_value(hi) ? std::max(hi, g) : g;
         lo = is_finite_value(lo) ? std::min(lo, g) : g;
     }
-    if (g_ag_on.load(std::memory_order_relaxed) && is_finite_value(hi)) {
-        const float old = g_gain.exchange(std::round(hi * 10.0f) / 10.0f);
-        if (!(old == std::round(hi * 10.0f) / 10.0f)) g_state_dirty.store(true);
+    // with Auto on a header's gain is that hop's: the ceiling is heimdall's
+    // gain_ceiling_db (its status), else the highest gain of the map (not of the
+    // sweep: in a search sweep every hop is a step below)
+    if (g_ag_on.load(std::memory_order_relaxed)) {
+        const float hc = g_hdm_ceiling.load(std::memory_order_relaxed);
+        const float c = is_finite_value(hc) ? hc : hi;
+        if (is_finite_value(c)) {
+            const float old = g_gain.exchange(std::round(c * 10.0f) / 10.0f);
+            if (!(old == std::round(c * 10.0f) / 10.0f)) g_state_dirty.store(true);
+        }
     }
     const float ceil_db = g_gain.load(std::memory_order_relaxed);
     int reduced = 0;
@@ -684,6 +922,7 @@ struct Slot {
     int8_t ch[MAX_CHANNELS] = {};
     float freq[MAX_CHANNELS] = {};
     float gain[MAX_CHANNELS] = {};      // the header's per-channel gain (NaN = unknown)
+    bool trial[MAX_CHANNELS] = {};      // heimdall's per-channel trial bit: a visit at a gain other than its hop's own
     std::vector<uint8_t> data;          // n x samples x 2 bytes (grows, never shrinks)
 };
 std::array<Slot, SLOTS> g_ring;
@@ -701,6 +940,7 @@ struct Acc {
     int pend_n = 0;
     int64_t samples = 0;                // since the hop began (HOP_MAX_SAMPLES)
     float gain = NAN;                   // the header's gain of the hop's packets (the last one's)
+    bool trial = false;                 // the visit's packets carried heimdall's trial flag
 };
 
 struct Worker {
@@ -884,7 +1124,7 @@ struct Worker {
             // leaves nothing, ~-200 dB) is no measurement - it would drag the reference
             // down for every hop; uint8 noise of even 1 count stands ~60 dB over it
             if (is_finite_value(phi) && p10 > DEAD_DB) {
-                store(h, t, phi, dlt, hg);
+                store(h, t, phi, dlt, hg, a.trial);
             } else if (p10 <= DEAD_DB) {
                 // and what it measured before goes out of the reference too: the hop
                 // measured as the dongle died held part live, part constant samples
@@ -897,11 +1137,33 @@ struct Worker {
         std::fill(a.pw.begin(), a.pw.end(), 0.0f);
     }
 
-    void store(int h, int t, float phi, float dlt, float hg) {
+    void store(int h, int t, float phi, float dlt, float hg, bool trial) {
         std::lock_guard<std::mutex> lk(g_mu);
         const Plan& sp = S.plan;
         if (!sp.ok || sp.grid_gen != p.grid_gen || S.lv.empty()) return;   // the grid changed meanwhile
-        if (static_cast<size_t>(h) < S.hop_gain.size()) S.hop_gain[static_cast<size_t>(h)] = hg;
+        // heimdall's trial visit (round 10): not drawn while the hop has a current row (one
+        // stored at most TRIAL_ROW_SWEEPS completed sweeps ago) - one up may be past the
+        // chain's linear range (ghost carriers, carriers short), one down shows a floor
+        // several dB higher where the tuner's noise nears the converter's (the hardware
+        // run of 2026-11-24: the FM band, above 1 GHz, hops already far down). A hop with
+        // no row, or a stale one, draws it. Never the hop's gain (the map's ring)
+        if (trial && static_cast<size_t>(h) < S.row_done.size()) {
+            const int32_t rd = S.row_done[static_cast<size_t>(h)];
+            if (rd >= 0 && static_cast<int64_t>(S.done) - rd <= TRIAL_ROW_SWEEPS) {
+                g_trials_out.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+        }
+        if (static_cast<size_t>(h) < S.hop_gain.size()) {
+            S.hop_gain[static_cast<size_t>(h)] = hg;
+            S.row_done[static_cast<size_t>(h)] = static_cast<int32_t>(S.done);
+        }
+        if (static_cast<size_t>(h) < S.hop_gain.size() && !trial) {
+            uint8_t& pos = S.ring_pos[static_cast<size_t>(h)];
+            S.gain_ring[static_cast<size_t>(h) * GAIN_RING + pos] =
+                (is_finite_value(hg) && hg >= 0.0f) ? static_cast<int16_t>(std::lround(hg * 10.0f)) : std::numeric_limits<int16_t>::min();
+            pos = static_cast<uint8_t>((pos + 1) % GAIN_RING);
+        }
         if (!is_finite_value(S.base)) S.base = phi;   // the first hop of a grid
         S.floor[static_cast<size_t>(h)] = phi;
         S.delta[static_cast<size_t>(h)] = dlt;
@@ -935,7 +1197,7 @@ struct Worker {
                 if (S.plan.ok && S.plan.grid_gen == p.grid_gen) {
                     S.done++;
                     S.last_s = static_cast<float>(now - pass_ms) / 1000.0f;
-                    evaluate();
+                    evaluate(true);
                     update_gain_map();
                     g_completions.fetch_add(1, std::memory_order_release);
                     g_version.fetch_add(1, std::memory_order_release);
@@ -996,6 +1258,7 @@ struct Worker {
             }
             feed(a, s.data.data() + static_cast<size_t>(i) * s.samples * 2, s.samples);
             a.gain = s.gain[i];
+            a.trial = s.trial[i];
             a.samples += s.samples;
             if (a.samples >= HOP_MAX_SAMPLES) commit(t);   // (keeps the hop; measured again)
         }
@@ -1165,6 +1428,38 @@ void ingest_control_reply(const char* data, size_t n) {
                 g_state_dirty.store(true);
             }
         }
+        // heimdall's ceiling (gain_ceiling_db) and its round-10 counts, from its status
+        if (line.find("\"gain_ceiling_db\"") != std::string::npos) {
+            double c;
+            if (num_field(line, "gain_ceiling_db", c)) g_hdm_ceiling.store(static_cast<float>(c));
+        }
+        if (line.find("\"sweep\"") != std::string::npos && line.find("\"auto_gain\"") != std::string::npos) {
+            std::lock_guard<std::mutex> lk2(g_hdm_mu);
+            for (int i = 0; i < N_HDM_COUNTS; i++) {
+                double v = 0;
+                bool has;
+                if (i == HDM_BOOL) {
+                    const std::string key = std::string("\"") + HDM_COUNTS[i] + "\":";
+                    const size_t k2 = line.find(key);
+                    has = false;
+                    if (k2 != std::string::npos) {
+                        size_t q = k2 + key.size();
+                        while (q < line.size() && line[q] == ' ') q++;
+                        if (line.compare(q, 4, "true") == 0) { v = 1; has = true; }
+                        else if (line.compare(q, 5, "false") == 0) { v = 0; has = true; }
+                    }
+                } else {
+                    has = num_field(line, HDM_COUNTS[i], v);
+                }
+                // (the state goes again when a count that says what Auto does changes -
+                // not for the per-sweep ones: those ride along with the next message)
+                const bool settled = i == 0 || i == 3;
+                if (has != g_hdm_has[static_cast<size_t>(i)] || (has && settled && v != g_hdm_val[static_cast<size_t>(i)]))
+                    g_state_dirty.store(true);
+                g_hdm_has[static_cast<size_t>(i)] = has;
+                if (has) g_hdm_val[static_cast<size_t>(i)] = v;
+            }
+        }
         int known = 0;
         if (line.find("\"auto_gain\"") != std::string::npos) {
             known = 1;
@@ -1178,6 +1473,7 @@ void ingest_control_reply(const char* data, size_t n) {
 }
 
 bool take_state_dirty() { return g_state_dirty.exchange(false); }
+uint64_t trials_left_out() { return g_trials_out.load(); }
 
 uint64_t gain_map_version() {
     std::lock_guard<std::mutex> lk(g_mu);
@@ -1327,7 +1623,21 @@ std::string state_json() {
                 std::lock_guard<std::mutex> lk(g_curve_mu);
                 o << ",\"gain_curve_points\":" << g_curve.size();   // (heimdall's real gain curve: 0 = the list's values)
             }
-            o
+            {
+                // heimdall's round-10 counts as it sends them (absent: an older heimdall)
+                std::lock_guard<std::mutex> lk(g_hdm_mu);
+                for (int i = 0; i < N_HDM_COUNTS; i++)
+                    if (g_hdm_has[static_cast<size_t>(i)]) {
+                        char b[64];
+                        if (i == HDM_BOOL)
+                            snprintf(b, sizeof b, ",\"%s\":%s", HDM_COUNTS[i], g_hdm_val[static_cast<size_t>(i)] != 0 ? "true" : "false");
+                        else
+                            snprintf(b, sizeof b, ",\"%s\":%.10g", HDM_COUNTS[i], g_hdm_val[static_cast<size_t>(i)]);
+                        o << b;
+                    }
+            }
+            // (heimdall's trial visits this receiver left out of the picture, since the start)
+            o << ",\"trials_left_out\":" << g_trials_out.load(std::memory_order_relaxed)
               << ",\"gain_reduced_hops\":" << reduced << ",\"gain_min_db\":";
             if (is_finite_value(mn)) {
                 char gb[24];
@@ -1393,7 +1703,7 @@ int64_t bins() {
 
 // --- the data receiver ----------------------------------------------------------------------
 void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const float* freq_hz, const float* gain_db, uint32_t counter,
-               uint32_t round, bool retuning) {
+               uint32_t round, bool retuning, uint32_t trial_mask) {
     if (!g_active.load(std::memory_order_acquire) || !g_run.load(std::memory_order_relaxed)) return;
     // a retuning packet is wanted once (the hops end there), not for every
     // packet of the settle time
@@ -1436,6 +1746,8 @@ void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const flo
             s.ch[s.n] = static_cast<int8_t>(c);
             s.freq[s.n] = freq_hz[c];
             s.gain[s.n] = gain_db ? gain_db[c] : NAN;
+            s.trial[s.n] = ((trial_mask >> c) & 1u) != 0;
+            if (s.trial[s.n] && !g_trial_seen.load(std::memory_order_relaxed)) g_trial_seen.store(true);
             s.n++;
         }
     }

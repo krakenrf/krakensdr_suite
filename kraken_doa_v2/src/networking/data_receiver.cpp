@@ -313,6 +313,8 @@ void DataReceiver::data_receiver_thread() {
                 uint32_t channels = EndianUtils::read_be32(buffer.data(), offset + 4);
                 uint32_t samples = EndianUtils::read_be32(buffer.data(), offset + 8);
                 uint32_t phase_comp_state = EndianUtils::read_be32(buffer.data(), offset + 12);
+                // (the field before its low byte is taken: sweep mode's per-channel trial bits)
+                const uint32_t phase_flags_raw = phase_comp_state;
                 uint32_t noise_source = EndianUtils::read_be32(buffer.data(), offset + 16);
 
                 // KerberosSDR support flags piggyback on the phase-state
@@ -572,7 +574,8 @@ void DataReceiver::data_receiver_thread() {
                     for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++)
                         ch_gain[ch] = EndianUtils::read_le_float(buffer.data(), offset + 32 + ch * 8 + 4);
                     sweep::on_packet(buffer.data() + offset + header_size, channels, samples, ch_freq_hz.data(), ch_gain.data(),
-                                     frequency_change_counter, current_group_index, is_retuning);
+                                     frequency_change_counter, current_group_index, is_retuning,
+                                     phase_flags_raw >> 16);   // heimdall's per-channel trial bits (round 10)
                     num_channels = channels;
                     data_ready = true;
                     offset += packet_size;
