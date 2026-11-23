@@ -2440,6 +2440,66 @@ with the fork's call, about 1 s without); generic RTL-SDRs on hardware
 more than a few minutes of steady state; the neighbour cap's release; the
 curve on a second unit; Firefox / Safari.
 
+**Round 9b, 2026-11-23 evening: "Auto gain doesn't seem to be working".**
+The user, on their own stack (the round-9 build; 60.9 - 1641 MHz, 827 hops,
+the gain at 49.6, a browser on another machine): "I've set the max gain to
+49.6dB, and turned auto gain on. But i'm still getting severe overload in
+some bands". What it was - three different things, found by reading that
+stack's status (8092 `get_status`) and viewing its page with a second,
+view-only browser at the user's word, never by sending it a command:
+
+- *Auto gain worked.* When the report came the switch was off in the
+  receiver and in heimdall (the user had switched it off again); switched on
+  later, heimdall had 70 hops reduced at once - its map from earlier that
+  evening - and 0 - 4 hops clipping a sweep, the lowest gain 14.4 dB. At
+  410 - 420 MHz and over the 758 - 803 MHz mobile band the page showed the
+  real carriers and blocks, no false peaks. Nothing in the page or the
+  receiver could show the switch on while it was off (the page worker ran
+  54 flows with real mouse, key and touch events: label, keyboard, touch,
+  gain / range / mode changes with it on, reloads, a second tab, restarts
+  of either program - the switch, the receiver, heimdall and the saved
+  setting agreed after each); the one hole - a click while the WebSocket
+  was down went nowhere - is closed (the page section).
+- *What still looked overloaded is not overload.* Between about 135 and
+  520 MHz the floor stands 20 - 30 dB over the floor above 1.1 GHz, and at
+  160 MHz it is a comb: a tooth every 250 kHz (160.07, 160.32, 160.57 ...),
+  each about 60 kHz wide and 15 - 20 dB over the gaps; by 435 MHz the teeth
+  have run together. In the morning's full-resolution set the spacing was
+  251.1 - 251.4 kHz (in the evening about 250.1: it drifts), the teeth 20
+  kHz wide at 140 - 170 MHz and 35 - 60 kHz at 250 - 350, none at 1.2 GHz -
+  the harmonics of a free-running switching converter. Its level follows
+  the gain one for one (four gains, the morning's probe: 1 - 2.7 dB off over
+  17 dB), no hop of it clips, and it does not follow what is on the air at
+  2, 3, 4 or 5 times the frequency (correlations 0.12, 0.08, -0.23, -0.31 -
+  not the mixer answering at LO harmonics). The other KrakenSDR in the same
+  house showed the same hump. So it reaches the tuners' inputs - through
+  the antennas or along the supply; no gain setting changes its ratio to a
+  wanted signal, and Auto gain rightly leaves it alone. (Job scratch
+  `e2e/lin_probe.py`, `img_study2.py`, `comb_study.py`, `pi/live_look*.py`.)
+- *A real defect, seen in that session's gain map:* every hop of one
+  tuner's block (1326 - 1641 MHz, 166 hops) at 48.0 dB. One hop of it had
+  been reduced and raised again to 48.0; after it every hop wanted 49.6, a
+  step of 1.6 dB, and steps up of less than 3 dB were skipped (round 9,
+  when a gain write cost 9 ms) - for the rest of the block and the next
+  sweeps. The page said "237 lower" and drew its strip under a quarter of
+  the range; heimdall's own count said 72. Fixed in heimdall (its section
+  "Auto gain in sweep mode"): no skip with the fast gain write, at most one
+  hop without it; its counts are of the gains used. Its test found a second
+  one: a hop could stay low for good after one loud visit, because the
+  hold's highest peak never decayed.
+
+The two fixes on the dev machine's KrakenSDR (heimdall 3513728, page
+3104767; `agc_h.py` 23 / 23, `agc_pi.py` 23 / 24): no hop just under the
+ceiling in any of the last six sweeps (the run of 166 gone), heimdall's
+count the stream's (70 / 70), a sweep 3.998 -> 4.004 s and 3.939 -> 3.941 s
+manual -> Auto, hops clipping after the switch 21, 6, 11, 4, 6, 1, 1, 2, 3,
+0, 2, 0, 0, 1, then 0 - 4 a sweep (0.7 on average) with 0 - 3 hops changing
+gain; coherent again 0.6 s after the switch. The miss: in the page run the
+12th sweep had 5 hops clipping where the check allows 3 (46, 17, 15, 3, 8,
+2, 2, 4, 0, 2, 3, 5, 0 - late-evening traffic bursts; one of them over
+1 %). End to end 20 / 20 with Auto off and on, the display list 15 / 15,
+the compression 40 / 40, the kept rows 10 / 10.
+
 Open after round 6, as after round 5: Firefox, Safari and iOS have not run the picture's
 download or the full sets (headless Chromium only); a slow link was tried
 through a 2 MB/s proxy by the page worker, not over a real one; a 1 GB Pi 4
