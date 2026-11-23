@@ -114,36 +114,32 @@ say "Building krakensdr.exe (starts both apps - the run.sh of Windows)"
 make -C "$ROOT/windows" >/dev/null
 ok "krakensdr.exe built"
 
-# --- 4. TLS certificate for the DoA client's web UI ----------------------------
-# kraken_doa serves HTTPS/WSS on 8080 from server.crt / server.key in its
-# folder. It creates a self-signed pair itself when there is none; making it
-# here too gives the same files as install.sh on Linux.
-if [[ ! -s "$KRAKEN_DIR/server.crt" || ! -s "$KRAKEN_DIR/server.key" ]] && command -v openssl >/dev/null 2>&1; then
-    say "Generating a self-signed SSL certificate for the DoA client web UI"
-    MSYS2_ARG_CONV_EXCL='/CN=' openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-        -keyout "$KRAKEN_DIR/server.key" -out "$KRAKEN_DIR/server.crt" -subj "/CN=krakensdr" 2>/dev/null &&
-        ok "Created kraken_doa_v2/server.crt + server.key (self-signed, 10 years)" ||
-        warn "openssl failed - kraken_doa will create the certificate at its first start"
-fi
-# The private key readable by this account (+ SYSTEM, Administrators) only,
-# as the 0600 it gets on Linux: Windows ignores the mode openssl asks for, so
-# the key took the folder's permissions - outside the user profile every
-# local account could read and replace it. Also a key from an earlier build
-# or from kraken_doa's own first start. The account's SID, not %USERNAME%
-# (which can be ambiguous or empty); MSYS2_ARG_CONV_EXCL: MSYS2 would turn
-# the /options into paths
-if [[ -f "$KRAKEN_DIR/server.key" ]]; then
-    SYSDIR="$(cygpath -S)"
-    SID="$(MSYS2_ARG_CONV_EXCL='*' "$SYSDIR/whoami.exe" /user /fo csv /nh 2>/dev/null | tr -d '\r' |
-           awk -F'","' '{ gsub(/"/, "", $2); print $2 }')" || SID=""
+# --- 4. The DoA client's HTTPS certificate -------------------------------------
+# kraken_doa makes it itself, at every start (its in-process generator,
+# kraken_doa_v2/docs/dev/https-certificate.md: this receiver's CA
+# krakensdr-ca.crt + the server certificate it signs) - nothing to make here.
+# The private keys already there (from an earlier start) readable by this
+# account (+ SYSTEM, Administrators) only, as the 0600 they get on Linux: a
+# key written before the generator set its own ACL took the folder's
+# permissions - outside the user profile every local account could read and
+# replace it. The account's SID, not %USERNAME% (which can be ambiguous or
+# empty); MSYS2_ARG_CONV_EXCL: MSYS2 would turn the /options into paths
+SID=""
+for keyf in server.key krakensdr-ca.key; do
+    [[ -f "$KRAKEN_DIR/$keyf" ]] || continue
+    if [[ -z "$SID" ]]; then
+        SYSDIR="$(cygpath -S)"
+        SID="$(MSYS2_ARG_CONV_EXCL='*' "$SYSDIR/whoami.exe" /user /fo csv /nh 2>/dev/null | tr -d '\r' |
+               awk -F'","' '{ gsub(/"/, "", $2); print $2 }')" || SID=""
+    fi
     if [[ "$SID" != S-1-* ]]; then
-        warn "could not read this account's SID - server.key keeps its folder's permissions"
-    elif ! MSYS2_ARG_CONV_EXCL='*' "$SYSDIR/icacls.exe" "$(cygpath -w "$KRAKEN_DIR/server.key")" /inheritance:r \
+        warn "could not read this account's SID - $keyf keeps its folder's permissions"
+    elif ! MSYS2_ARG_CONV_EXCL='*' "$SYSDIR/icacls.exe" "$(cygpath -w "$KRAKEN_DIR/$keyf")" /inheritance:r \
             /remove:g '*S-1-1-0' '*S-1-5-11' '*S-1-5-32-545' \
             /grant:r "*$SID:F" '*S-1-5-18:F' '*S-1-5-32-544:F' >/dev/null; then
-        warn "icacls failed - server.key keeps its folder's permissions"
+        warn "icacls failed - $keyf keeps its folder's permissions"
     fi
-fi
+done
 
 # --- 5. git secret guards (as install.sh) ------------------------------------
 if [[ -d "$ROOT/.git" || -f "$ROOT/.git" ]]; then
