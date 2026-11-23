@@ -1170,6 +1170,90 @@ to win.
   averaged and stacked models) and `ds_2026-11-22/genB/` (the generation-B
   rows)
 
+### Investigation (2026-11-24): can a look be made faster? Yes - prototypes on branch `sigid-speed`, nothing adopted
+
+The question (Carl): "Is there any way to further optimize the
+classification speed?", with the MLP kept as it is. Two meanings: the CPU
+of one look (0.5 s of one tuner: detector -> views -> features -> model ->
+tracker), and the time until a signal has its label - the service looks
+every `clamp(look / 0.04, 1 s, 10 s)`, so a cheaper look is an earlier next
+look once a look costs more than 40 ms (a busy band here; every band on a
+Pi 5). All numbers: i7-11800H, one pinned core, thread CPU time, the
+minimum over alternating rounds on a shared machine (no `perf` here, so no
+cycle counts). The Pi 5 was NOT measured.
+
+**Where a look's time goes** (the shipped core, ms):
+
+| stage | 0 signals | 1 narrow | 1 band-filling | 8 (ISM) | 16 narrow | 25 mixed | 32 narrow (P25) |
+|---|---|---|---|---|---|---|---|
+| whole look | 21.9 | 23.9 | 33.8 | 62.8 | 51.9 | 102.3 | 92.8 |
+| convert, long FFTs, short spectrogram | 13.7 | 13.3 | 13.4 | 13.7 | 14.1 | 13.7 | 12.4 |
+| detector: noise floor, burst search, band-fill | 9.8 | 9.5 | 9.7 | 9.9 | 9.9 | 9.5 | 8.6 |
+| detector: FSK tone-pair test | 0 | 0 | 0 | 9.3 | 2.2 | 9.4 | 6.1 |
+| detector: per-detection measurements | 0 | 0.1 | 5.3 | 2.1 | 1.5 | 2.5 | 3.2 |
+| channelizer | 0 | 0.06 | 1.4 | 5.3 | 0.9 | 6.0 | 2.2 |
+| features | 0 | 1.6 | 5.3 | 23.7 | 24.7 | 66.7 | 69.2 |
+| model | 0 | 0.06 | 0.06 | 0.7 | 0.8 | 1.8 | 2.0 |
+| tracker | <0.01 | <0.01 | <0.01 | <0.01 | 0.01 | 0.02 | 0.04 |
+
+A fixed ~22 ms (transforms and the detector's searches) plus 1.5-2.5 ms of
+features per detection (a full-rate view-3 signal ~8 ms). The model is 2 %
+of a busy look. The model reads 1,056-1,081 of the 3,134 values; the unread
+ones (`symseq`, constants) cost < 0.01 ms to compute - not worth removing.
+
+**The candidates** (commits on `sigid-speed`, base 9751af3; each its own
+commit):
+
+| | change | saving | the answers |
+|---|---|---|---|
+| P1, P5 | burst search: four frames' prefix sums side by side; a branch-free "any box over threshold" test per scale first (2230845, cc58392) | ~5 ms of every look (7.7 -> 2.5 ms) | bit-identical |
+| P2 | tone-pair test: band powers cached per round, packet frames counted in one pass (0280c64) | 1.3-2.2 ms of a busy look | bit-identical |
+| P4 | the symbol group's short Hann window from the window cache (187e076) | ~0.05 ms a detection | bit-identical |
+| P3 | a branch-free `fast_atan2` and two-loop discriminators that vectorise (a204743) | 0.1-0.2 ms a detection | NOT identical: `-ffast-math` reorders the sums, the last bits of the IF move and the symbol group's rate / timing choice can flip |
+| P1-P5 | together | 4.0 / 4.2 / 9.3 / 7.5 / 12-14 ms at 0 / 1 / 8 / 16 / ~30 signals = 13-18 % | as P3 |
+| S1 | a track that is settled (>= 3 hits) and sure is not classified again in every look - its detection is only tracked; it is still classified in one look of four (core: an opt-in list of known bands for `analyze()`, 5926b61; service: d98a3c9) | on top of P1-P5, steady state: busy bands a further 24-36 % (27-51 % of the detections skipped) | changed, slightly: playback emulation 28 of 28, every published label the same; six own captures replayed 150 s each: 99.3 % of the published labels the same, 0.5 % different, 0.2 % missing |
+| S1b | the same for every track with >= 3 hits, sure or not | a further 10-20 % | rejected: 5 % of the published labels differ, the playback loses a sure label |
+
+Not prototyped (estimates): three quantiles from one copy in the
+per-detection statistics, no reorder pass in the spectrogram's FFT, the
+uint8 conversion fused into the first transform - about 2 ms together, same
+answers; a spectrogram hop of 1024 instead of 512 - 3-4 ms, changes the
+burst statistics. Not worth it: skipping unread features, a faster model,
+the display's spectrum for the detector (wrong resolution, and the views
+need the long FFTs anyway), shorter snapshots / fewer views / a lower cap on
+detections (they change the model's inputs).
+
+**Checked by the orchestrator** (an own set: 154 captures of the synthetic
+regression set and the 21 own 2.4 MS/s captures, 164,047 detections;
+`classify --track` and `features` compared byte for byte; scripts in
+`~/.cache/kraken_sigclass/speed_2026-11-24/`): the core at P1 + P2 is
+BYTE-IDENTICAL to the shipped one (features and output) and ~4 % faster on
+that set; the core at P1-P5 is ~14 % faster (the minimum of five alternating
+rounds) and differs in 64 of 164,047 detection labels (0.04 %; every one a
+guess below p 0.6), 74 of 245,216 track rows, 134 detections cross 0.82 in
+either direction, max |dp| 0.24 - that is P3; P4 and P5 alone were
+bit-identical on the worker's set (1,280 snapshots) and are not separated
+in the orchestrator's. The regression set scores the same with P1-P5
+(0.648, 127 false labels). S1 was not re-measured; its service half was
+never run in a receiver (syntax-checked only), and it touches the look loop
+the multi-tuner rules of the same day changed.
+
+**What it would mean on a Pi 5** (an ESTIMATE from the documented 3.5 x
+factor, not a measurement): a look on an empty band 77 -> 63 ms; on a busy
+band ~360 -> ~310 ms (P1-P5) -> ~205 ms (with S1), so the period there 8.9
+-> 7.7 -> 5.1 s; with five tuners on busy bands a round 44 -> 26 s.
+A one-command benchmark for a Pi (builds the shipped core and the branch's,
+runs both alternately on 11 snapshots, prints the stage tables) is in
+`~/.cache/kraken_sigclass/speed_2026-11-24/pkg/` (`./run_pi.sh`; eight of
+its snapshots are cut from own captures: local use only).
+
+**Open decision.** Recommended by the worker and the orchestrator: adopt
+P1, P2, P4, P5 (same answers); P3 with them if 0.04 % of low-confidence
+guesses moving is accepted (a different compiler moves more: the shipped
+core built with clang 14 instead of GCC 11 changes 1 of 1,150 labels); S1
+only on Carl's word, after a run in a receiver and on top of the
+multi-tuner rules.
+
 ### Results (2026-11-20, phase 5, the weights still shipped)
 
 The phase 4 weights (no retraining), now model format 3 with the RF table,
