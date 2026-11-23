@@ -260,6 +260,7 @@ std::string g_parked;             // why no captures now ("" = running)
 double g_analyze_ms = 0, g_period_ms = 0;
 double g_min_conf = NAN;          // the model's "min_confidence" (NaN: none)
 uint64_t g_snapshots = 0;
+std::vector<uint64_t> g_looks;    // snapshots per tuner since the mode / the switch-on (coherent: [0])
 std::vector<PubTrack> g_tracks;
 std::string g_last_sig;           // the last broadcast's signature (no ages)
 int64_t g_last_sent_ms = 0;
@@ -274,7 +275,9 @@ std::string build_json_locked(std::string* sig) {
       << "\",\"parked\":\"" << json_escape(on ? g_parked : "") << "\",\"analyze_ms\":" << num(g_analyze_ms, 1)
       << ",\"period_ms\":" << num(g_period_ms, 0)
       << ",\"duty\":" << num(g_period_ms > 0 ? g_analyze_ms / g_period_ms : 0.0, 4) << ",\"snapshots\":" << g_snapshots
-      << ",\"min_confidence\":" << num(g_min_conf, 3) << ",\"tracks\":[";
+      << ",\"looks\":[";
+    for (size_t i = 0; i < g_looks.size(); i++) o << (i ? "," : "") << g_looks[i];
+    o << "],\"min_confidence\":" << num(g_min_conf, 3) << ",\"tracks\":[";
     s << on << '|' << g_model_state << '|' << g_reason << '|' << (on ? g_parked : "") << '|';
     bool first = true;
     static const std::vector<PubTrack> none;   // (off: no tracks)
@@ -346,6 +349,7 @@ void set_parked(const std::string& why) {
 void clear_tracks_pub() {
     std::lock_guard<std::mutex> lk(g_st_mu);
     g_tracks.clear();
+    g_looks.clear();
 }
 
 // --- the worker ---------------------------------------------------------------
@@ -774,6 +778,9 @@ void worker() {
             g_analyze_ms = ewma_ms;
             g_period_ms = period_s * 1000.0;
             g_snapshots++;
+            const size_t li = size_t(mode == 0 ? 0 : ch);
+            if (g_looks.size() <= li) g_looks.resize(li + 1, 0);
+            g_looks[li]++;
         }
         publish(false);
         rest(static_cast<int64_t>(period_s * 1000.0) - (now_ms() - cycle0));
