@@ -1381,6 +1381,7 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
         else if (e.jump == 0 && e.drop == 0) { e.ref = 0.9f * e.ref + 0.1f * f_in; e.ref_p = 0.9f * e.ref_p + 0.1f * p_in; }
     } else {
         e.ref = e.ref_p = NAN;   // (a new gain: new references)
+        e.br_n = 0;              // ... and a new steadiness history (bursts at 49.6 made 417.43 MHz's steady power at 37.2 unsteady)
         e.base_sweep = ~0u;      // the next visit at the new gain is the first baseline
         e.base_p = e.base_f = e.base_fin = NAN;
     }
