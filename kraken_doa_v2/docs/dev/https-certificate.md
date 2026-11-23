@@ -139,6 +139,111 @@ Pin the server key (SHA-256 of its SubjectPublicKeyInfo: it stays the same
 across re-issues) or the CA certificate - never the server certificate's
 fingerprint, which changes with every re-issue (`NATIVE_APP_API.md`).
 
+## make-cert.sh: how it applies the contract
+
+Details the contract leaves open. The script and kraken_doa's generator
+(`tlscert::ensure`) settle them alike - each finds the other's files
+`kept` (cross-tested, see *Tested*); change both together.
+
+- Host name lookup on Linux: avahi over D-Bus first (`busctl call
+  org.freedesktop.Avahi / org.freedesktop.Avahi.Server GetHostName`, after
+  waiting up to 3 s while `GetState` says registering / collision), then
+  `gdbus` (the same call), then `avahi-resolve -a <first non-loopback IPv4>`
+  - only an answer ending in `.local` counts (on the dev box it answered
+  with the router's `<host>.lan` name); then `hostname -s`, `hostname`,
+  `uname -n` (cut at the first dot). macOS: `scutil --get LocalHostName`.
+  `KRAKEN_CERT_HOST` is trimmed and lowercased, not cut: a dot in it makes
+  it unusable. Usable = a DNS label: 1-63 of `a-z 0-9 -`, not starting or
+  ending with `-`. With no usable host name the names are `localhost` plus
+  `KRAKEN_CERT_NAMES`, the CN `localhost`.
+- A DNS name = such labels joined by dots, 253 characters at most.
+  resolv.conf: every word after `search` / `domain`, lowercased, trailing
+  dots removed; `local`, and what is no DNS name then (`.`, which
+  systemd-resolved writes as `search .`), are skipped. `KRAKEN_CERT_NAMES`:
+  split at commas only, each trimmed, lowercased, trailing dots removed; one
+  that is no DNS name is left out with a note on stderr; one that looks like
+  an IPv4 address is named as a DNS name, as the generator does, with a note
+  (browsers don't match an address against it).
+- Wide scope's IPv4 addresses (getifaddrs' view): `ip -4 -o addr show up`
+  without the `lo` interface (macOS: `ifconfig -u` without loopback
+  interfaces; else `hostname -I`), 127/8 and link-local 169.254/16 left out,
+  and of the rest only those inside the wide constraints - 10/8, 172.16/12,
+  192.168/16, 100.64/10 - so a public address never makes the whole
+  certificate fail (8.8.8.8 under a wide CA: refused). `127.0.0.1` and `::1`
+  are always named. `addresses_changed` uses the same filter.
+- `cert_options`: the last line starting `scope=` (the line and the value
+  trimmed); exactly `wide` = wide, anything else narrow (a note).
+- "Names / IPs differ": the SAN set compared sorted, order-free (`::1` is
+  printed as `0:0:0:0:0:0:0:1`). The CA's scope: wide when its permitted DNS
+  subtrees include `local`, else narrow - also for a CA with no Name
+  Constraints, which permits every name (kept in narrow scope, replaced in
+  wide). A wanted DNS name is inside a permitted `DNS:c` when it is `c` or
+  ends in `.c`.
+- Managed: the subject rules, or the leaf verifies against
+  `krakensdr-ca.crt` ignoring the time (`-no_check_time`: an expired
+  certificate of ours is still ours). Not managed needs the pair: a
+  `server.crt` that isn't ours (also one openssl can't read, or a symlink)
+  with a `server.key` = `not-managed`; without the key = exit 1. An
+  unreadable `server.key` with no `server.crt` (a passphrase?) = exit 1; with
+  our certificate = a new key.
+- Re-issue: also when it doesn't verify against the CA NOW (`openssl verify
+  -purpose sslserver -no-CApath -no-CAstore -CAfile <ca>`: chain, validity,
+  constraints, purpose - the generator's `verifies`; a clock behind the
+  certificate's start re-issues it, the CA stays), when `server.crt` isn't
+  exactly [leaf, current CA] (a leaf-only file), when it doesn't match
+  `server.key` (the key is kept), and when `server.key` is missing or
+  unreadable. Expiry by `-checkend`, read from its MESSAGE: OpenSSL 3.0.2
+  (Ubuntu 22.04's) exits 0 for "Certificate will expire" too - PR #5's
+  renewal check never fired there.
+- Validity: notBefore = now - 1 hour (a device clock a little behind still
+  accepts a certificate made just now), notAfter = notBefore + 825 / 3650
+  days - as the generator. Signed with `openssl ca -startdate -enddate`
+  (`-selfsign` for the CA, a throw-away database in the stage folder): the
+  one way 1.1.1, 3.x and LibreSSL can all set the start. Serial numbers: 128
+  random bits.
+- Retiring: the old CA certificate is renamed
+  `krakensdr-ca.YYYYMMDD.retired.crt` (`...-2.retired.crt`, `-3`, ... for
+  a second one the same day), only if it is a readable certificate; the new
+  CA key replaces the old one by rename. Both that date and the CA's CN date
+  are local time, as the generator's.
+- One run at a time: `<dir>/.make-cert.lock` (mkdir; it holds the time it
+  was taken), waited for up to 10 s, then exit 1 ("another make-cert.sh is
+  working"); one older than 120 s (or without its time after the wait) is a
+  dead run's and taken over; removed on exit, also after TERM / INT. A
+  read-only `<dir>` gets no lock (nothing can be written there).
+- `kept` costs six openssl calls (one `x509` per certificate with every
+  value at once, the two keys, one `verify`, `version`) and makes no key:
+  53 ms on the x86_64 dev box (was 154 ms with 19 calls).
+- Output before the last line: `reason: <text>` (issued / ca-created /
+  not-managed) and `retired: <file>`; a fresh install says exactly `reason:
+  first certificate` (callers word their message by it). Notes (bad
+  `cert_options`, a skipped name, an unusable host name) go to stderr.
+- Commit order (each a rename in `<dir>`): old CA certificate -> retired,
+  new CA key, new CA certificate, new server key, `server.crt`. An
+  interruption leaves a state the next run repairs (a CA key without its
+  certificate -> new CA; a key without its certificate -> re-issue).
+- On macOS the script prefers Homebrew's `openssl@3`
+  (`/opt/homebrew/opt/openssl@3/bin/openssl`, `/usr/local/opt/...`; install.sh
+  installs it) over the system's LibreSSL; `OPENSSL` overrides.
+- Callers (same messages in all three): run.sh's `cert_check` at every start
+  (before the old stack is stopped) AND before every start of kraken_doa -
+  the supervisor's (`supervise --before cert_check`: the page's Restart, a
+  crash) and headless mode's: kraken_doa only makes a pair when there is
+  none, so a scope chosen on the page, a rename or a near expiry would
+  otherwise wait for the next run.sh; the tmux client pane gets
+  `KRAKEN_CERT_HOST` / `KRAKEN_CERT_NAMES` from run.sh (`env`, removed when
+  unset - the pane has the tmux server's environment). install.sh's
+  `install_kraken_certs`; the Docker entrypoint's `ensure_cert` (the script
+  is copied to `/opt/krakensdr/scripts/`; `iproute2` is in the image for
+  `ip`). Nothing for `kept`; an info line for `issued` / `not-managed`; a
+  warning for `ca-created` (fresh: install it once on every device; else:
+  every device must install the new certificate and remove the old one -
+  Telemetry sheet, HTTPS certificate; before a supervised start it stays 5 s
+  on screen before kraken_doa's dashboard takes the pane); a warning with
+  the reason on failure, and the start goes on. `windows/build.sh` makes no
+  certificate any more (kraken_doa's generator does, at every start); it
+  only locks down `server.key` / `krakensdr-ca.key` already there (icacls).
+
 ## Tested
 
 (filled in by the implementation)
@@ -215,3 +320,97 @@ refused for a certificate of the user's own.
   suffixes, reparse-point check, owner-only key files, the generator on
   every Windows start) and macOS (`scutil --get LocalHostName`) - no MinGW /
   macOS here.
+
+### make-cert.sh (2026-11-23, x86_64 dev box, no hardware)
+
+Scripts in the job's scratch folder (not in the repo). `harness.sh
+<openssl> [port]`, run with OpenSSL 1.1.1w, 3.0.2 and 3.6.0 as the script's
+openssl: **83 / 83 pass with each**. PATH shims stand in for `hostname`,
+`ip`, `busctl`, `gdbus`, `avahi-resolve`, `uname`, `scutil`. Every pair
+produced is checked with all three OpenSSLs (`verify -purpose sslserver`,
+`-verify_hostname` per DNS name, `-verify_ip` per address), Python's
+`ssl.load_cert_chain` (server.crt holds leaf + CA), the structure (one Basic
+Constraints each, critical flags, key usages, SKI / AKI, CA RSA 3072,
+notAfter - notBefore exactly 825 / 3650 days, notBefore an hour back,
+subjects, modes 0600 / 0644), and on the fresh narrow and wide pairs with
+curl `--cacert krakensdr-ca.crt` against a local Python TLS server
+(127.0.0.1, every name by `--resolve`, the addresses by `--connect-to`) and
+NSS `certutil -V -u V` (CA trusted `CT,,`).
+
+| # | Case | Result |
+|---|---|---|
+| 1 | fresh | ca-created (`reason: first certificate`); NSS valid; curl 5 / 5 |
+| 2 | rerun | kept, files byte-identical |
+| 3 | old `CN=krakensdr` pair from that OpenSSL's default `req -x509`, and from 1.1.1's; build_page.py's | ca-created, server key reused |
+| 3c | such an old pair put back beside our CA | issued, CA and key kept |
+| 4 | PR #5's self-signed (its own script; with 1.1.1 it has 2 Basic Constraints) | ca-created, key reused |
+| 5 | own certificate (`CN=sdr.example.org, O=Example`), also with `--force`; symlinked server.crt / server.key (+ `--new-ca`) | not-managed, every file byte-identical, links intact |
+| 6 | IP change: narrow; wide (+ a public IP, 172.20/12, 100.64/10, link-local); a 10.x on `lo` | kept; issued, CA byte-identical, only private IPs named; left out |
+| 7 | rename | ca-created, old CA `krakensdr-ca.YYYYMMDD.retired.crt`, its key gone, new names, same key |
+| 8 | avahi conflict name `krakensdr-2` via busctl / gdbus / avahi-resolve; avahi-resolve's `.lan` answer | ca-created with its names; ignored |
+| 9 | scope narrow -> wide -> narrow; cert_options removed; `scope=bogus`, `scope = wide`, `scope=Wide` (narrow), `  scope=wide ` (wide) | ca-created each (second retired file `-2`); kept; as kraken_doa reads it |
+| 10 | leaf 61 days left; 30 days; expired; CA 400 days left; 300 days | kept; issued; issued; kept; ca-created |
+| 11 | `--force`; `--new-ca` | issued (new serial, CA / key same); ca-created |
+| 12 | read-only dir + `--force` / `--new-ca` / fresh; nothing to do in a read-only dir; no openssl on PATH; unknown option; garbage server.crt alone / with a key; own certificate without its key; dangling symlink; unreadable key alone / beside our certificate | exit 1, files untouched; kept; exit 1 x2; exit 1 / not-managed; exit 1 x2; exit 1 / issued with a new key |
+| E | `KRAKEN_CERT_HOST` beats avahi, is trimmed; `Kraken_Roof`, `-kraken`, `kraken-`, a 64-character label, `kraken.local` (localhost only); resolv.conf `search Lan home.arpa . local` + `domain example.org.`, `search lan..`; `KRAKEN_CERT_NAMES` (names, an IP, a bad one, commas only, trailing dots; in wide under .lan / .local = issued); an EC P-256 server key; macOS via `scutil`; CA key deleted; leaf-only server.crt; server.key deleted / replaced / mode 644; a CA without name constraints (narrow kept, wide ca-created) | as above |
+
+Negative (a leaf signed by the receiver's own CA key): a name outside the
+constraints (narrow `evil.example.com`, wide `router.example.com`), a LAN IP
+in narrow scope, a public IP in wide scope - rejected by OpenSSL 3.0.2 and
+3.6 (`permitted subtree violation`), by NSS ("Peer's Certificate issuer is
+not recognized": NSS drops the issuer whose constraints fail; a control
+leaf inside the constraints, made the same way, is valid) and by curl.
+**OpenSSL 1.1.1w rejects them too** (`permitted subtree violation`).
+
+Cross-test with kraken_doa's generator (`cross.sh`; certdoa's
+`tlscert::ensure` at fa2c75b built as a small driver with make-cert.sh's
+interface, against OpenSSL 3.0.2 and 1.1.1w; the script with each - four
+pairings; both on the real machine: `KRAKEN_CERT_HOST` set, the real
+resolv.conf and interfaces): **232 / 232**. For narrow and wide: fresh by
+either -> the other `kept`, then both `kept`; `--force` / `--new-ca` by
+either -> the other `kept` (one retired file each); `KRAKEN_CERT_NAMES`
+with spaces, a trailing dot, an IP and a bad name -> the other `kept`, and
+dropped again -> `issued` -> `kept`; renames (`rooftop`, `krakensdr-2`, an
+unusable `Kraken_Roof`, `" krakensdr "`) by either -> the other `kept`;
+the wide IPs found the same (`ip` vs getifaddrs); a scope switch in
+`cert_options` by either; an old `CN=krakensdr` pair migrated by either ->
+the other `kept`; notBefore an hour back from both.
+
+Callers (`callers.sh`: run.sh's `cert_check`, install.sh's
+`install_kraken_certs`, the entrypoint's `ensure_cert`, cut out of the
+files and run under each file's shell options - run.sh's `set -uo
+pipefail`, install.sh's `set -Eeuo pipefail` + ERR trap, the entrypoint's
+`set -euo pipefail`): the right message for kept / issued / ca-created
+(fresh and replaced) / not-managed / failure with a stub script, and with
+the real one (fresh, rerun); the start goes on after a failure. 24 / 24.
+Supervisor (`supervise_test.sh`: a copy of run.sh in a scratch suite, only
+its `__supervise` entrypoint, a fake app): cert_check before each of 3
+starts - fresh (warning before the 1st), the page's Restart after a scope
+change (NEW-CA warning, the 2nd start sees the wide CA), a crash restart
+(nothing printed); `launch_tmux_stack` cut out with tmux stubbed: the
+pane's command sets the names as run.sh had them and removes them when
+unset (a stale value in the tmux server's environment). 8 / 8. Lock
+(`lock.sh`): 2 / 3 runs at once on a fresh dir -> one `ca-created`, the
+rest `kept`, files consistent, nothing left behind; 2 x `--new-ca` / 4 x
+`--force` at once -> consistent; a stale (200 s) lock taken over at once; a
+live one -> exit 1 after 10 s, files and the other's lock untouched; one
+released after 3 s -> goes on; one without its time -> taken over after
+10 s; a run killed by TERM while making the CA key -> exit 1, folder
+empty again; a read-only folder -> kept. 20 / 20. `.githooks/pre-push`
+(`test_prepush.sh`, a scratch repo): a pushed `krakensdr-ca.key` /
+`server.key` (any folder) is blocked, `krakensdr-ca.crt` and
+`docs/myserver.key` are not. `.gitignore` ignores every certificate file,
+the script's temporary folder and its lock (`git check-ignore`).
+
+Shells: the whole matrix also passes with the script run by `dash` (it
+uses POSIX sh plus `local` only - no arrays, `[[`, `${x,,}`, `$'...'`) and
+by `bash --posix` with `BASH_COMPAT=3.2` (83 / 83 each).
+
+Not tested: bash 3.2 itself (macOS; not available here - the dash run is
+the stand-in), macOS's `scutil` / `ifconfig -u` and LibreSSL (only through
+a shim / not at all), the Docker image (no Docker here: the entrypoint
+block was run alone), a real avahi conflict (shims), headless mode's
+cert_check and the build window's env (by code: the same function / the same
+`env` pattern), `windows/build.sh` (no MinGW / MSYS2 here), browsers' trust
+of the CA (Chrome for Testing here ignores a user NSS store; NSS and curl
+stand in).

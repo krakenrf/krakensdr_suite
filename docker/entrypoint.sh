@@ -12,7 +12,8 @@
 # own directory under /data with the read-only web files symlinked in:
 #   (VERSION, the image's version - docs/dev/version.md - is linked in too)
 #   /data/heimdall    heimdall_settings.conf, s2p_calibration/
-#   /data/kraken_doa  doa_settings.json, api_token, server.crt/.key,
+#   /data/kraken_doa  doa_settings.json, api_token, the HTTPS certificate
+#                     (krakensdr-ca.crt/.key, server.crt/.key, cert_options),
 #                     fft_wisdom.dat, doa_recordings/
 #
 # Environment:
@@ -26,6 +27,10 @@
 #   USB_WAIT        seconds to wait for them (default 45, then start anyway)
 #   WAIT_TIMEOUT    seconds kraken_doa waits for convergence before starting
 #                   anyway (default 300; 0 = forever)
+#   KRAKEN_CERT_HOST   the host name the web UI's certificate names (default:
+#                   the container's hostname = the host's; set it when avahi
+#                   announces another one, e.g. krakensdr-2)
+#   KRAKEN_CERT_NAMES  more names for it, comma-separated
 #   /data/codecs    optional self-built digital voice codecs: libmbe.so.1
 #                   (DMR / D-STAR), cdecoder + sdecoder (TETRA), libfdk-aac.so.2
 #                   (DAB+ audio) - see README
@@ -119,16 +124,35 @@ run_heimdall() {
     exec "$APP/heimdall_v2/heimdall" "${VARIANT[@]}" "$@"
 }
 
+# The web UI's HTTPS certificate in the volume (scripts/make-cert.sh,
+# kraken_doa_v2/docs/dev/https-certificate.md): this receiver's CA
+# (krakensdr-ca.crt, what devices install once) and the server certificate it
+# signs, re-issued at every start that finds the names / addresses changed or
+# it old. The container can't ask the host's avahi for the name it announces:
+# KRAKEN_CERT_HOST gives it (after an mDNS name conflict, e.g. krakensdr-2),
+# KRAKEN_CERT_NAMES adds names. The messages are run.sh's (cert_check).
+# Never fatal: kraken_doa then tries itself.
 ensure_cert() {
-    if [[ -s server.crt && -s server.key ]] &&
-       [[ "$(openssl x509 -noout -pubkey -in server.crt 2>/dev/null)" == \
-          "$(openssl pkey -in server.key -pubout 2>/dev/null)" ]]; then
-        return
+    local out state reason rc=0
+    out=$("$APP/scripts/make-cert.sh" "$DATA/kraken_doa" 2>&1) || rc=$?
+    state=${out##*$'\n'}
+    if (( rc != 0 )); then
+        log "WARNING: web UI certificate not updated: $state"
+        return 0
     fi
-    log "generating a self-signed TLS certificate for the web UI (/data/kraken_doa/server.crt)"
-    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-        -keyout server.key -out server.crt -subj "/CN=krakensdr" 2>/dev/null
-    chmod 600 server.key
+    reason=$(printf '%s\n' "$out" | sed -n 's/^reason: //p' | tail -n 1)
+    case $state in
+    issued)
+        log "web UI certificate re-issued ($reason) - devices that installed this receiver's certificate need nothing new" ;;
+    ca-created)
+        if [[ $reason == "first certificate" ]]; then
+            log "WARNING: web UI: install this receiver's certificate once on every device that opens the page (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate)"
+        else
+            log "WARNING: NEW web UI certificate for this receiver ($reason) - every device must install the new certificate and remove the old one (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate)"
+        fi ;;
+    not-managed)
+        log "web UI certificate: server.crt is your own - left as it is" ;;
+    esac
 }
 
 # Like run.sh: start the client once heimdall's phases have converged, so the

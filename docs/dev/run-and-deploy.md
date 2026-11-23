@@ -5,8 +5,8 @@ what every session needs). Not loaded automatically - read it when working in
 this area. Where this and the component `CLAUDE.md` files disagree, the code and
 the component files win.
 
-Contents: run.sh / install.sh, Docker, logging, network access checks,
-git secret guards.
+Contents: run.sh / install.sh, Docker, the HTTPS certificate, logging,
+network access checks, git secret guards.
 
 ## Running the Stack (install.sh / run.sh)
 
@@ -326,7 +326,7 @@ browser.
   new STATIC file the apps serve must be added to the Dockerfile COPY, the
   entrypoint's `link_files` and the `.dockerignore` allow-list
 - `.dockerignore` is an allow-list: secrets (`doa_settings.json`, `api_token`,
-  `server.key`) can't reach the image. `docker-data/` and `.env` are gitignored
+  `server.key`, `krakensdr-ca.key`) can't reach the image. `docker-data/` and `.env` are gitignored
 - heimdall's entrypoint waits for `KRAKEN_TUNERS` dongles (boot enumeration);
   kraken_doa's waits for CONVERGED from the 8091 header (not in KerberosSDR
   manual mode, nor in wideband / independent mode - header bits 0x400 /
@@ -337,7 +337,66 @@ browser.
   ends both apps with 75 and `restart: unless-stopped` starts them again
   (tini passes the status on). kraken_doa sees `/.dockerenv` and offers no
   reboot / shut down (a container can't power the host off)
+- The kraken_doa entrypoint runs `scripts/make-cert.sh` (copied to
+  `/opt/krakensdr/scripts/`, `iproute2` in the image for its `ip`) on
+  `/data/kraken_doa` before the convergence wait; compose passes
+  `KRAKEN_CERT_HOST` / `KRAKEN_CERT_NAMES` (the container can't ask the
+  host's avahi for an mDNS conflict name). See the next section.
 
+## HTTPS certificate (scripts/make-cert.sh)
+
+The contract (files, names, narrow / wide scope, the CA, when what is
+re-made, the managed check, the output states) is
+`kraken_doa_v2/docs/dev/https-certificate.md`, shared by
+`scripts/make-cert.sh` (Linux, macOS, Docker), kraken_doa's in-process
+generator (Windows, no openssl CLI) and the page; how the script settles
+the details the contract leaves open, and its tests, are in that file too.
+Since the PR #5 follow-up (2026-11-23): a CA per receiver
+(`krakensdr-ca.crt`, installed once per device) signs `server.crt`, which
+is re-issued with the same `server.key` without anyone noticing.
+
+Callers - the same messages in all three, by the script's last output line:
+nothing for `kept`; an info line for `issued` (with the reason) and
+`not-managed`; a warning for `ca-created` (`reason: first certificate`:
+install it once on every device; otherwise: every device must install the
+new certificate and remove the old one - KrakenSDR DOA page, Telemetry
+sheet -> HTTPS certificate); on exit 1 a warning with the reason, and the
+start goes on (kraken_doa then tries itself).
+- `run.sh`: `cert_check` (defined above the supervisor), on every start,
+  after the build check and before the old stack is stopped (the running
+  kraken_doa keeps the certificate it loaded), AND before every start of
+  kraken_doa: `supervise --before cert_check` in the client pane (the page's
+  Restart, a crash restart) and headless mode before each client start.
+  kraken_doa itself only makes a pair when there is none, so a scope chosen
+  on the page ("applies at the next start"), a rename or a near expiry must
+  be applied there. `kept` prints nothing (six openssl calls, ~50 ms on the
+  dev box); before a supervised start a new CA's warning stays 5 s on
+  screen. The client pane and the build window get `KRAKEN_CERT_HOST` /
+  `KRAKEN_CERT_NAMES` from run.sh through `env` (removed with `-u` when
+  unset): a pane has the tmux server's environment, and a different value
+  there would make the pane's check and kraken_doa's notices disagree with
+  run.sh's.
+- `install.sh`: `install_kraken_certs` (step 4), after the builds.
+- `docker/entrypoint.sh`: `ensure_cert`, in `/data/kraken_doa`.
+- Two runs at once (install.sh and run.sh, the supervisor and a manual run)
+  take turns: the script's lock `<dir>/.make-cert.lock`, waited for up to
+  10 s.
+- Not callers: `scripts/build_page.py` makes a `CN=krakensdr` pair itself
+  only when there is none (run.sh's `cert_check` runs first, so only when
+  the script failed) - the next run migrates it. `windows/build.sh` makes
+  none since the follow-up (kraken_doa's generator makes it at every
+  start); it only restricts `server.key` / `krakensdr-ca.key` already there
+  with icacls.
+
+Testing the blocks: never by running run.sh / install.sh (run.sh stops the
+live stack). Cut the function out (`awk '/^cert_check\(\) \{/,/^\}/'
+run.sh`) and run it with stub `ok` / `warn` / `log`, a stub or the real
+script, under the file's own shell options (run.sh: `set -uo pipefail`;
+install.sh: `set -Eeuo pipefail` + its ERR trap; the entrypoint: `set -euo
+pipefail`). The supervisor: a copy of run.sh in a scratch folder (its own
+`scripts/make-cert.sh`, `kraken_doa_v2/`), run only as `run.sh __supervise
+--before cert_check <name> <fake app>` - that entrypoint stops and sweeps
+nothing.
 
 ## Logging
 
@@ -422,7 +481,9 @@ automatically:
   `static_location` zeroed. The WORKING file keeps its real values.
 - **Pre-push hook** (`.githooks/pre-push`): backstop that scans outgoing
   commits and blocks the push if a key / real coordinates / a tracked
-  `doa_settings.json` or `api_token` slipped through (bypass:
+  `doa_settings.json` or `api_token`, or a private key of the web UI's
+  certificate (`server.key`, the receiver's CA key `krakensdr-ca.key`, in
+  any folder) slipped through (bypass:
   `git push --no-verify`). Root commits and merge commits (including a
   secret added while resolving a merge) are scanned too.
 - **Map provider API keys** (the web UI's ⚙ Setup Settings: Google, Mapbox,

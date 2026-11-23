@@ -17,6 +17,19 @@ doa_settings.json.tmp
 *.pem
 *.key
 *.crt
+# the HTTPS certificate (docs/dev/https-certificate.md; *.key / *.crt above
+# catch them too - named here so a narrower rule can't let the CA key out):
+# this receiver's CA (the key is a secret: it can vouch for this receiver's
+# names - in wide scope for every .local / .lan name and private address),
+# the server pair, replaced CAs, the scope, ../scripts/make-cert.sh's
+# temporary folder
+krakensdr-ca.key
+krakensdr-ca.crt
+krakensdr-ca.*.retired.crt
+server.key
+server.crt
+cert_options
+.make-cert.*/
 
 # DoA recordings (fixed output folder + common log extensions)
 doa_recordings/
