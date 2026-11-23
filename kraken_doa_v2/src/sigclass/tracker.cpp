@@ -91,7 +91,7 @@ double energy_of(const Detection& d) {
 // rules). A continuous signal is no piece of something that is on only part of the time:
 // the hump is an overloaded front end's clipping splatter (a strong burst clips the 8-bit
 // ADC: the whole band's floor rises for the burst - live 2026-11-24, 416.5 MHz, gain
-// 29.7 dB, 2-5 % of the bytes at 0 / 255 on three of five channels) or a key-up click.
+// 29.7 dB, 2-10 % of the bytes at 0 / 255 on three of five channels) or a key-up click.
 // Before, such a hump seen twice took every channel weaker than it + 6 dB whose track had
 // at most twice its hits - with tuners in turn (one look per band a round, tracks with 1-3
 // hits for a minute) the band's labels collapsed to its strongest few until the hump went,

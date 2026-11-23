@@ -344,6 +344,24 @@ no other dependency; the same code runs in kraken_doa and in
     - **a burst seen once** (1 hit) does not take a continuous narrow track
       with >= 2 hits: it waits until it repeats; the transient rule (a burst
       with less than half the channel's hits goes) then drops it
+    - **a burst hump** (2026-11-24, `TrackerConfig::hump_guard`, default on;
+      `sigclass_tool classify --hump-guard 0|1`): a bursty track >= 20x as
+      wide as a continuous one and >= 200 kHz (not band-filling) neither
+      absorbs it nor counts its detections as pieces, whatever the hits. The
+      hump is an overloaded front end's clipping splatter or a key-up click;
+      before, one seen twice took every channel weaker than it + 6 dB whose
+      track had at most twice its hits and then lived on, the channels'
+      detections its pieces - on the real KrakenSDR it emptied a band for
+      minutes, in coherent mode through an overloaded channel and above all
+      with tuners in turn (*Live wideband scan on the KrakenSDR* under Tests).
+      The synthetic regression set below: top-1 4053 -> 4108 of 6255 (drawn
+      0.627 -> 0.635), false labels 127 -> 129 per 2000 captures, no class
+      lost more than 2 signals (carrier: 2 lost, 8 gained). Measured, not
+      adopted: the same for BURSTY channels >= 2 kHz under a hump (a DMR
+      channel with one timeslot busy is bursty and still becomes the hump's
+      piece): top-1 4108 -> 4157, but false labels 129 -> 133 and ADS-B -2 of
+      37 (a pulsed signal's narrow pieces then stand alone); the clipped own
+      416.5 MHz recording, 8 snapshots 15 s apart: 26 -> 40 labelled
     - **a faint pedestal**: a continuous wide track under `pedestal_db` 3 dB
       of mean SNR does not take a track >= `pedestal_contrast_db` 10 dB
       stronger (its strongest look, hits and pieces, forgotten at 1 dB a
@@ -2426,6 +2444,11 @@ shown on the page (a class, p >= 0.5) for >= half of coherent mode's last
   where the overlap rule then hid CH0's sure view (fixed: the stronger view
   wins, 1e8871d). The weak signals (6-17 dB on CH0) drop below the
   detector on another channel; that is the receiver, not the service.
+  (Corrected the same day, *Live wideband scan on the KrakenSDR* below: the
+  channels differ - CH0 is the clean one, CH1-CH3 clip at these gains - but
+  most of the wideband-scan losses were the tracker: clipping splatter
+  humps emptied tuner 2's band, and coherent mode through CH2 lost the same
+  labels.)
   Live run 2 (1e8871d; 456.8 MHz, gain 40.2 dB; independent: CH0 and CH1
   on 456.8 - one band, looks [17, 1, 18, 18, 17] -, CH2 416.5, CH3 499.8,
   CH4 98.0 MHz with their gains): coherent 9 labelled; independent 8 / 8
@@ -2530,3 +2553,120 @@ reviewer's harness, a ceiling scenario added).
   "On spectrum" check (the switch is gone with the Bands page), p2_ui_fixes
   11 / 12 and p2_ui_touch 2 / 3 taps - page checks written before the
   Bands page; the service path they use (a coherent playback) is unchanged
+
+### Live wideband scan on the KrakenSDR (2026-11-24): an overloaded channel and the burst-hump trap
+
+After the fixes above the orchestrator's live run (416.5 MHz, gain 29.7 dB)
+still had wideband scan label 4 of the 55 signals coherent mode labelled,
+tuner 2 holding 6.3 tracks a state against 43.5, the few it held reading
+10-30 dB more SNR than in coherent mode. Job scratch 9321609f `sigid3/w5/`:
+an 8091 capture client (`scripts/cap8091.py`, every byte heimdall sends with
+the arrival times; `parse_cap.py` reads headers, levels, clipping, floor,
+continuity) next to the receiver, heimdall from scratch (`--serials
+1000..1004`, receive only), at 416.5 / 456.8 / 499.8 MHz (gains 29.7 /
+40.2 / 33.8 dB): 4 s coherent (all five channels), wideband scan twice
+(tuner 2 on the same frequency), coherent again.
+
+- **The stream is the same in both modes** - nothing to change in heimdall.
+  Tuner 2 in wideband scan IS coherent CH2: same level, clipping and floor
+  within the band's own change over a minute (416.5 MHz: CH2 rms 0.82 / 0.63
+  coherent, 0.71 / 0.83 wideband; bytes at 0 / 255 5.8 / 2.0 % against 3.6
+  / 9.6 %), the same gain (header 29.7 dB per channel; heimdall changes no
+  gain or IF VGA step when it leaves coherent mode). Continuous: 16384
+  samples a packet, 2.4004 MS/s by the arrival clock over 40 s, packets
+  6.8 ms apart (max 8.7), no repeated block, no step at a packet join
+  (mean |z[k]-z[k-1]| at joins = inside), headers as expected (0x401: parked
+  + wideband, noise 0, retuning 0, counter 0, the plan's frequencies), and
+  heimdall reported no slow-client drop. The offline classifier on
+  wideband tuner 2's IQ labels as much as on coherent CH2's (16-20 against
+  12-19 bins in 4 s)
+- **The channels differ**: at 416.5 MHz CH1-CH3 clip (2-10 % of the bytes at
+  0 / 255, floor 3-7 dB), CH0 hardly (0.06-0.2 %, floor -2..-3 dB); at 456.8
+  MHz (40.2 dB) CH1-CH4 clip 8-20 %, CH0 none; at 499.8 MHz nothing clips.
+  Coherent mode classifies the CH selector's channel (CH0 by default), wideband
+  scan each tuner's own - the orchestrator compared CH0 with CH2. The page's
+  spectrum shows each tuner's own channel too, so in wideband scan the 416.5
+  MHz band carries CH2's raised floor: a lower gain is the receiver's remedy
+  (not changed: the user's setting)
+- **The cause - the tracker** (`tracker.cpp`): the captured wideband stream
+  replayed through a TEST receiver (`fake/replay_hd.py`: the packets
+  verbatim, looped) gave tuner 2 26.6 tracks a state, the live service 4.5.
+  The live service's snapshots dumped (a debug patch, not committed): every
+  look at tuner 2 returned the full 32 detections, yet 3-6 tracks were
+  published; `classify --track` on those four snapshots: 13 -> 11 -> 4 -> 5
+  tracks as a bursty 2.2 MHz "Carrier" detection came in. While a strong
+  burst clips (every 4096-sample block of those snapshots had clipped bytes,
+  CH2's floor 1-6 dB against CH0's -6..-11 dB) the band's floor rises: the
+  detector reports a bursty hump 0.5-2.3 MHz wide at 25-40 dB. Seen twice,
+  it took every channel weaker than it + 6 dB whose track had at most twice
+  its hits (the transient rule protects only channels with more than twice
+  the hump's hits), and lived on with the channels' detections as its
+  pieces. Coherent mode suffers the same through CH2 - two live runs
+  coherent through CH2 (`CHANNEL:2`): 8.6 and 6.2 tracks a state while a
+  2.2 MHz hump with 7-24 hits stood, 16.3 and 10.1 in two more - but there
+  tracks gain hits every 2-3 s and soon outlast a hump; with tuners in turn
+  a band gets one look a round (12-24 s live), its tracks keep 1-3 hits for
+  a minute, and one hump empties it. The strong survivors (the "strong
+  continuous" exemption, > hump + 6 dB) are why the tracks left read high
+  SNRs. Fix: the burst-hump rule (Core, Tracker)
+- **The fake heimdall**: the A/B bank's own recordings had 0.00 % of their
+  bytes clipped, so no hump ever formed - wideband scan 16 / 17 there. Two
+  reproductions now: `fake/replay_hd.py` (any `cap8091.py` capture,
+  verbatim) and the 416.5 MHz own recording of 17:30 (1.5 % clipped:
+  `mixed/own__heimdall_ch0_416.500MHz_g29.7_20261119T173034Z.cu8`) on
+  `fake_hd3.py`. Before -> after: the live 40 s wideband capture replayed,
+  tuner 2 7.0 -> 31.5 tracks a state, labelled 6 -> 31; the 17:30 recording
+  coherent through CH2 9.9 -> 44.4 tracks, 9 -> 56 labelled (its wideband
+  run 51 -> 45: no hump in that one's looks - humps come and go). Offline
+  (`classify --track`, the library's own recordings, 16 consecutive
+  snapshots / 8 snapshots 15 s apart): only the two clipped 416.5 MHz ones
+  move - 17:30 26 -> 32 and 10 -> 26 labelled, 12:02 19 -> 19 and 13 -> 16;
+  418.0 / 456.8 / 499.8 / 142.3 / 98 / 114.5 / 433.92 / 921.8 MHz unchanged
+- **Live, before -> after** (the receiver with the real 8091 / 8092 only
+  while our heimdall ran; coherent through CH2 140 s, then wideband scan 155
+  s; three runs per frequency after the fix, the last one bracketed by
+  coherent mode again, CH2 once more; at 416.5 MHz runs 1-2 ended in the
+  user's independent layout). Tuner 2's tracks per state (the trap's mark):
+  416.5 MHz before 4.5 / 5.4 / 7.9 / 11.9 / 4.6 (five runs), after 32.9 /
+  27.3 / 36.2 - coherent through CH2 in the same runs 33.8 / 31.4 / 23.7;
+  456.8 MHz before 24.9 (no hump in that run's wideband phase; its coherent
+  phase was the trapped one: 10.1), after 31.1 / 25.7 / 31.8; 499.8 MHz
+  (nothing clips) before 26.5, after 22.0 / 27.0 / 26.6. Signals labelled in
+  wideband scan (tuner 2's band): 416.5 MHz before 9 / 17 / 3, after 43 / 31
+  / 44 (coherent through CH2: 36 / 41 / 28). Coherent-through-CH2 labels
+  with the same class in wideband scan (>= 30 % of each phase's states, the
+  orchestrator's reading): 416.5 MHz before 3 / 16, 4 / 6, 2 / 4 (coherent
+  itself trapped in two of them), after 24 / 36, 16 / 41, 15 / 28; 456.8 MHz
+  before 9 / 10, after 24 / 31, 13 / 30, 20 / 38; 499.8 MHz before 16 / 22,
+  after 17 / 21, 24 / 31, 20 / 30. Steady signals (coherent share >= 80 %):
+  10 / 10, 5 / 8, 5 / 6; 6 / 6, 5 / 9, 9 / 14; 15 / 17, 23 / 26, 15 / 17.
+  The bracketed runs (labelled with one class in BOTH coherent phases): 13
+  / 17 (416.5), 10 / 21 (456.8), 17 / 18 (499.8)
+- **The misses after the fix**, read per signal (`scripts/acc_an.py`):
+  (1) traffic - these are trunked DMR / MPT1327 / P25 sites whose channels
+  are assigned for minutes: of the first coherent phase's labels only 17 /
+  28, 21 / 38, 18 / 30 were labelled again in the coherent phase after the
+  wideband one; 500.005 MHz was absent in one run's coherent phase and
+  present in 41 of its 49 wideband states, 499.025 / 499.5 MHz on in every
+  coherent state of the next run and in none of its wideband ones; (2) the class on unsure channels with 5x fewer looks - DMR
+  against MPT1327 / Noise-like / Unknown OFDM / NFM voice at 416.5 and 456.8
+  MHz, NXDN against P25 Phase 1 at 499.8 MHz (those flip in coherent mode
+  too); (3) the per-look cut: the analyzer keeps the 32 strongest
+  detections by peak (`Config::max_candidates`), and at 416.5 MHz 29 of the
+  51 dumped looks of a run hit it (every look at tuner 2) - a weak channel near the cut is in some looks only,
+  which coherent mode makes up with 4-5x more looks; with a round of 11-13
+  looks per band in 155 s a channel on for half the time reaches the 2 hits
+  a label needs late or not at all. A 456.8 MHz run ran with 192 ms analysis
+  (the machine loaded): 23 states, 13 / 30. (1) and (2) are the band, (3) is
+  the price of tuners in turn and the CPU share (see *Tuners in turn*: not
+  changed)
+- **Independent mode** (the user's layout after runs 1-2 at 416.5 MHz:
+  tuners 0 / 1 on 416.760 / 416.815, CH0 / CH1): before 15.0 tracks a
+  state, 20 labelled; after 46.2 / 56.0, 52 / 74
+- **Regressions** (TEST build): the strict debug-playback table twice 28 /
+  28 (26 and 24 sure; unsure POCSAG, DVB-T, wildlife as before, radiosonde
+  50 % once - the entry alone three times 95-100 % sure, as on the build
+  before); the rules test all passed; `sigclass_tool selftest` passed;
+  coherent mode on the fake (150 s through CH2): the clean 499.8 MHz
+  recording 30 -> 32 labelled, the sigclass thread 4.19 -> 3.93 % CPU; the
+  clipped 416.5 MHz recording 8 -> 66 labelled, 4.21 -> 3.99 %
