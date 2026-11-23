@@ -455,26 +455,64 @@ void Detector::burst_search(const FrontEnd& fe, const Config& cfg, const std::ve
             boxthr[si].push_back(u == 0 ? 1e300 : double(thr[si][size_t(u)]) * s);
         }
     }
-    std::vector<double> pre(SPEC_N + 1);   // double: a strong bin must not swamp its neighbours' sums
-    std::vector<float> rrow(SPEC_N);
+    // per frame the prefix sums of its ratios (double: a strong bin must not swamp its
+    // neighbours' sums), then every box against its threshold. A prefix sum is one long
+    // chain of dependent additions: FR frames run side by side (independent chains the
+    // CPU overlaps; each frame's sums are added in the same order as one at a time)
+    constexpr int FR = 4;
+    std::vector<double> preg(size_t(FR) * (SPEC_N + 1));
+    std::vector<float> rrowg(size_t(FR) * SPEC_N);
     std::vector<uint8_t> hitbin(SPEC_N, 0);
-    for (int t = 0; t < T && hits.size() < 400000; t++) {
-        const float* row = fe.spec.data() + size_t(t) * SPEC_N;
-        for (int k = 0; k < SPEC_N; k++) rrow[size_t(k)] = masked[size_t(k)] ? 1.0f : row[k] * inv_floor[size_t(k)];
-        pre[0] = 0.0;
-        for (int k = 0; k < SPEC_N; k++) pre[size_t(k) + 1] = pre[size_t(k)] + rrow[size_t(k)];
-        for (int si = 0; si < NS; si++) {
-            const int s = scales[si], stride = std::max(1, s / 2);
-            const double* bt = boxthr[si].data();
-            int j = 0;
-            for (int k0 = 0; k0 + s <= SPEC_N; k0 += stride, j++) {
-                if (pre[size_t(k0 + s)] - pre[size_t(k0)] > bt[j]) {
-                    hits.push_back({t, k0, k0 + s - 1});
-                    for (int k = k0; k < k0 + s; k++)
-                        if (!masked[size_t(k)]) hitbin[size_t(k)] = 1;
+    {
+    SC_PROF("det.burst.frames");
+    for (int t0 = 0; t0 < T && hits.size() < 400000; t0 += FR) {
+        const int g = std::min(FR, T - t0);
+        for (int q = 0; q < g; q++) {
+            const float* row = fe.spec.data() + size_t(t0 + q) * SPEC_N;
+            float* rrow = rrowg.data() + size_t(q) * SPEC_N;
+            for (int k = 0; k < SPEC_N; k++) rrow[k] = masked[size_t(k)] ? 1.0f : row[k] * inv_floor[size_t(k)];
+        }
+        if (g == FR) {
+            static_assert(FR == 4, "the interleaved prefix below is written for 4 frames");
+            const float *r0 = rrowg.data(), *r1 = r0 + SPEC_N, *r2 = r1 + SPEC_N, *r3 = r2 + SPEC_N;
+            double *p0 = preg.data(), *p1 = p0 + (SPEC_N + 1), *p2 = p1 + (SPEC_N + 1), *p3 = p2 + (SPEC_N + 1);
+            double a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0;
+            p0[0] = p1[0] = p2[0] = p3[0] = 0.0;
+            for (int k = 0; k < SPEC_N; k++) {
+                a0 = a0 + r0[k];
+                p0[k + 1] = a0;
+                a1 = a1 + r1[k];
+                p1[k + 1] = a1;
+                a2 = a2 + r2[k];
+                p2[k + 1] = a2;
+                a3 = a3 + r3[k];
+                p3[k + 1] = a3;
+            }
+        } else {
+            for (int q = 0; q < g; q++) {
+                const float* rrow = rrowg.data() + size_t(q) * SPEC_N;
+                double* pre = preg.data() + size_t(q) * (SPEC_N + 1);
+                pre[0] = 0.0;
+                for (int k = 0; k < SPEC_N; k++) pre[k + 1] = pre[k] + rrow[k];
+            }
+        }
+        for (int q = 0; q < g && hits.size() < 400000; q++) {
+            const int t = t0 + q;
+            const double* pre = preg.data() + size_t(q) * (SPEC_N + 1);
+            for (int si = 0; si < NS; si++) {
+                const int s = scales[si], stride = std::max(1, s / 2);
+                const double* bt = boxthr[si].data();
+                int j = 0;
+                for (int k0 = 0; k0 + s <= SPEC_N; k0 += stride, j++) {
+                    if (pre[size_t(k0 + s)] - pre[size_t(k0)] > bt[j]) {
+                        hits.push_back({t, k0, k0 + s - 1});
+                        for (int k = k0; k < k0 + s; k++)
+                            if (!masked[size_t(k)]) hitbin[size_t(k)] = 1;
+                    }
                 }
             }
         }
+    }
     }
     if (hits.empty()) return;
     // masked bins (a detection inside a burst hump: ADS-B's carrier line) don't split a run
@@ -890,6 +928,7 @@ void Detector::segment(const FrontEnd& fe, const Config& cfg, const float* rr, i
 // band's bins with 10 % raised-cosine edges, one inverse FFT of LONG_N / D points per
 // block, the overlap-save reach dropped); the kept samples of the blocks in blks, in order
 void Detector::band_power(const FrontEnd& fe, double lo_hz, double hi_hz, int D, const std::vector<int>& blks, std::vector<float>& p) {
+    SC_PROF("det.tone.band_power");
     const double df = fe.fs / LONG_N;
     const int M = LONG_N / D, skip = LONG_OV2 / D, keep = LONG_HOP / D;
     tone_fft_.init(M, false);
@@ -987,6 +1026,7 @@ void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vect
                 if (std::min(ahi, bhi) - std::max(alo, blo) > 0.0) continue;   // overlapping: not two tones
                 if (tests >= 48) break;
                 // burst level
+                SC_PROF("det.tone.pair");
                 const std::vector<uint8_t>& onA = mask_of(ia);
                 const std::vector<uint8_t>& onB = mask_of(ib);
                 U.assign(size_t(T), 0);
@@ -1024,6 +1064,7 @@ void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vect
                 for (int d : DS)
                     if (fs / d >= 1.25 * wmax) { D = d; break; }
                 std::vector<std::pair<int, int>> bc;
+                SC_PROF("det.tone.sample_level");
                 for (int b = 0; b < fe.nblocks; b++) {
                     int n = 0;
                     for (int t = 0; t < T; t++) {
