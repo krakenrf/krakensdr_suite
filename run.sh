@@ -627,13 +627,36 @@ elif ! build_check="$("$AUTOBUILD" check 2>&1)"; then
     say "A build is needed first:"
     echo "$build_check" | grep -v ': up to date$' | sed 's/^/     /'
 fi
-# Web UI certificate: renewed here when it is about to expire or the host was
-# renamed (otherwise left alone - see scripts/make-cert.sh). Never fatal.
-if [[ -x "$SCRIPT_DIR/scripts/make-cert.sh" ]]; then
-    case "$("$SCRIPT_DIR/scripts/make-cert.sh" "$KRAKEN_DIR" 2>/dev/null | tail -n 1)" in
-    created|renewed) warn "Web UI certificate was renewed - browsers that trusted the old one need the new one (dashboard: Telemetry sheet -> HTTPS certificate)." ;;
+# Web UI certificate (scripts/make-cert.sh, kraken_doa_v2/docs/dev/https-certificate.md):
+# this receiver's CA and the server certificate it signs, re-issued here when
+# the names / addresses changed or it gets old - devices that installed the
+# CA need nothing then. Only a NEW CA (a rename, the scope changed) needs
+# every device again: a warning. Never fatal (kraken_doa then tries itself).
+# The same block is in install.sh (install_kraken_certs) and
+# docker/entrypoint.sh (ensure_cert).
+cert_check() {
+    local mc="$SCRIPT_DIR/scripts/make-cert.sh" out state reason
+    [[ -x "$mc" ]] || return 0
+    if ! out="$("$mc" "$KRAKEN_DIR" 2>&1)"; then
+        warn "Web UI certificate not updated: ${out##*$'\n'}"
+        return 0
+    fi
+    state="${out##*$'\n'}"
+    reason="$(printf '%s\n' "$out" | sed -n 's/^reason: //p' | tail -n 1)"
+    case "$state" in
+    issued)
+        ok "Web UI certificate re-issued (${reason}) - devices that installed this receiver's certificate need nothing new." ;;
+    ca-created)
+        if [[ "$reason" == "first certificate" ]]; then
+            warn "Web UI: install this receiver's certificate once on every device that opens the page (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate)."
+        else
+            warn "Web UI: NEW certificate for this receiver (${reason}) - every device must install the new certificate and remove the old one (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate)."
+        fi ;;
+    not-managed)
+        ok "Web UI certificate: kraken_doa_v2/server.crt is your own - left as it is." ;;
     esac
-fi
+}
+cert_check
 
 # Clear out a previous stack before starting a new one: a live session is
 # stopped cleanly, then anything orphaned outside it (see stop_stale).
