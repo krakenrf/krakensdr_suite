@@ -201,6 +201,10 @@ struct TrackerConfig {
     // signal at least pedestal_contrast_db stronger inside it
     float pedestal_db = 3.0f;
     float pedestal_contrast_db = 10.0f;
+    // a burst hump (bursty, >= 20x as wide and >= 200 kHz: an overloaded front end's
+    // clipping splatter, a key-up click) neither takes a continuous channel inside it
+    // nor counts it as its piece, whatever the hits (false: the rules before 2026-11-24)
+    bool hump_guard = true;
 };
 
 struct Track {
