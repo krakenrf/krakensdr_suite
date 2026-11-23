@@ -298,7 +298,10 @@ dB scale, zoom, and the waterfall's speed, colours and contrast (Auto, or Min
 / Max: the levels shown as the darkest and the brightest colour). In
 Independent mode every tuner pane has its own View button, and its
 settings are that tuner's own (kept in the browser); the header's View
-button then sets all tuners at once. Levels
+button then sets all tuners at once. The header's **T0**, **T1**, ...
+buttons choose which tuners' panes are shown (Shift-click: only that one;
+**All**: every one), and the shown panes get the room. A hidden tuner keeps
+running, and the browser remembers the choice. Levels
 are drawn in dB above the receiver's noise floor. The receiver remembers
 that floor, so a signal that fills the whole band (DVB-T, LTE) still shows
 at its real height.

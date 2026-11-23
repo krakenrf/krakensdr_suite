@@ -694,6 +694,8 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
   flex:1;min-height:0;overflow-y:auto;scrollbar-gutter:stable both-edges;gap:6px;padding:6px}
 .tpane {display:flex;flex-direction:column;background:var(--s2);border:1px solid var(--l1);border-radius:3px;min-width:0;min-height:0;overflow:hidden;
   flex:0 0 auto;width:var(--pane-w,100%);height:var(--pane-h,230px);box-sizing:border-box}
+/* a pane switched off with the spectrum header's tuner buttons (PANES SHOWN) */
+.tpane[hidden] {display:none}
 /* pane frequency selector: click the top / bottom half of a digit or use the
    mouse wheel (like the top-bar selector; own class - the top bar's code
    queries .freq-digit page-wide) */
@@ -1918,13 +1920,20 @@ body.drive.drive-day .ui-dlg .btn.danger {background:var(--bad);border-color:var
 .bias-err {display:flex;align-items:flex-start;margin-top:6px;color:var(--bad-t);font-size:11.5px;line-height:1.35}
 .bias-err .ic {flex:none;font-size:14px;margin-top:1px}
 .bias-err[hidden] {display:none}
-/* the spectrum's header: the title, the antenna shown (coherent mode), then at the right the
-   View button (its display settings are in the popover, .view-pop) and ? - one line */
+/* the spectrum's header: the title, the antenna shown (coherent mode) or the tuners shown
+   (independent mode, .pane-pick), then at the right the View button (its display settings are
+   in the popover, .view-pop) and ? - one line */
 .spectrum-header {justify-content:flex-start;flex-wrap:wrap;gap:5px 14px;padding:5px 10px}
 .spectrum-header .view-btn {margin-left:auto}
 .spectrum-header .view-btn + .view-pop + .help,.spectrum-header .view-btn + .help {margin-left:-6px}
 .spectrum-header .spec-ch {background:var(--s1);border:1px solid var(--l2);color:var(--t0);border-radius:5px;height:24px;padding:0 4px;font-size:12px}
 .spectrum-header .spec-ch:focus {border-color:var(--ac-l);outline:none;box-shadow:0 0 0 2px rgba(72,160,244,.22)}
+/* independent mode: which tuners' panes are shown - T0..Tn lit while shown, All (PANES SHOWN) */
+.pane-pick {display:inline-flex;align-items:center;flex-wrap:wrap;gap:3px;user-select:none}
+.pane-pick[hidden] {display:none}
+.spectrum-header .pane-pick .view-btn {margin-left:0;min-width:32px;padding:0 7px;justify-content:center;font-weight:600}
+.spectrum-header .pane-pick .pp-all {margin-left:4px;font-weight:normal}
+.pane-pick .view-btn:disabled {opacity:.45;cursor:default;background:var(--l2);border-color:var(--l4);color:var(--t1)}
 /* the rail */
 .rail {flex:0 0 34px;width:34px;display:flex;flex-direction:column;gap:3px;padding:6px 3px;background:var(--s2);border-left:1px solid var(--l1);user-select:none}
 .rail-panels {display:flex;flex-direction:column;gap:3px}
@@ -3310,6 +3319,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
             <option value="3">Antenna 3</option>
             <option value="4">Antenna 4</option>
           </select>
+          <!-- independent mode: which tuners' panes are shown (this browser's choice; buttons built by panePickBuild - PANES SHOWN in the script) -->
+          <span id="pane-pick" class="pane-pick indep-only" role="group" aria-label="Tuners shown" hidden></span>
           <!-- the display settings of the spectrum and the waterfall (Scale, Zoom, Speed, Colors, the
                waterfall contrast - Auto, Min, Max): a popover under this button (VIEW POPOVER in the
                script). Each tuner pane of independent mode has the same button; the popover is one element, moved next to the
@@ -4233,6 +4244,14 @@ let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 =
 let selTuner = 0;            // pane the top-bar frequency digits + gain edit
 const panes = [];            // one per tuner, see panesBuild
 let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO bar
+// Tuners whose panes this browser hides (the spectrum header's tuner buttons, PANES SHOWN):
+// localStorage PANE_HIDE_KEY = [3, 4]. A tuner not listed is shown, so a new one appears
+const PANE_HIDE_KEY = 'kraken_pane_hidden';
+const paneHidden = new Set();
+try {
+  const a = JSON.parse(localStorage.getItem(PANE_HIDE_KEY) || '[]');
+  if (Array.isArray(a)) a.forEach(c => { if (Number.isInteger(c) && c >= 0 && c < 8) paneHidden.add(c); });
+} catch (e) {}
 // View settings (the "View" popover, see VIEW POPOVER). viewCommon: the single spectrum's - and
 // every tuner pane's that has none of its own; the receiver stores them (UI:FFT_Y, UI:WF_SPEED,
 // ...) and replays them to every browser. viewStore: this browser's per-tuner values in
@@ -11776,6 +11795,8 @@ function panesBuild(n) {
     ov.addEventListener('pointerleave', () => { vfoLvlHide(); if (p.hover) { p.hover = null; paneDrawOverlay(p); } });
     panes.push(p);
   }
+  panePickBuild(n);
+  panesApplyShown();   // the panes this browser hides (before the layout: it counts the shown ones)
   panesResize();
   panesSyncHeads();
   zoomSyncSlider();
@@ -11788,6 +11809,7 @@ function panesTeardown() {
   paneDrag = null;
   const g = $id('indep-grid');
   if (g) g.innerHTML = '';
+  panePickBuild(0);
 }
 
 // Resizes are debounced and only run when the grid's size really changed:
@@ -11799,7 +11821,7 @@ function panesResizeSoon() {
   panesResizeTimer = setTimeout(() => {
     const g = $id('indep-grid');
     const key = g ? g.clientWidth + 'x' + g.clientHeight : '';
-    if (key === panesLastGrid && panes.every(p => p.sw > 0)) return;
+    if (key === panesLastGrid && panes.every(p => p.hidden || p.sw > 0)) return;
     panesLastGrid = key;
     panesResize();
   }, 120);
@@ -11810,10 +11832,11 @@ try {
 
 // Pane size: rows of up to 3 (4 tuners = 2 x 2, 5 = 3 + 2, 7-8 = 4 per row),
 // fewer columns when a pane would get narrower than 360 px; the rows share
-// the height (at least 230 px each - the grid scrolls past that)
+// the height (at least 230 px each - the grid scrolls past that). Only the
+// shown panes count: hiding some gives the others the room
 function panesLayout() {
   const g = $id('indep-grid');
-  const n = panes.length;
+  const n = panes.filter(p => !p.hidden).length;
   if (!g || !n) return;
   const cs = getComputedStyle(g), gap = 6;
   // clientWidth excludes the (stable) scrollbar gutter; 1 px spare so rounding
@@ -11877,6 +11900,7 @@ function paneFreqSelectorInit(p) {
 function panesResize() {
   panesLayout();
   for (const p of panes) {
+    if (p.hidden) continue;   // (no size while display:none - it keeps its last one until shown)
     const spec = $id('tpane-s-' + p.ch), wfw = $id('tpane-w-' + p.ch), ov = $id('tpane-ov-' + p.ch);
     if (!spec || !wfw || !ov) continue;
     p.dpr = window.devicePixelRatio || 1;
@@ -11930,6 +11954,7 @@ function indepOnFrame(v, buf) {
     }
     [p.freqs, p.mags] = zoomSlice(p.zoom, freqs, mags, p.freqMhz);
     specViewWant(ch + 1, p.freqs[0] - p.freqMhz, p.freqs[p.freqs.length - 1] - p.freqMhz, specBinsPane(p));
+    if (p.hidden) continue;   // (switched off: no waterfall line, nothing drawn)
     p.wf.addLine(p.freqs, p.mags, noiseLive);
     paneDrawSpec(p);
     paneDrawOverlay(p);
@@ -11993,6 +12018,85 @@ function paneSelect(ch) {
   if (p) { const gi = gainIndexOf(p.gainDb), gs = $id('gn-slider'); if (gs) { gs.value = gi; updateGainDisplay(gi); } }
 }
 
+// ---- PANES SHOWN: which tuners' panes this browser shows ---------------------
+// The user's request (2026-11-24): pick the receivers shown on the screen with
+// buttons above the panes. The spectrum header's group (#pane-pick): T0..Tn,
+// lit while shown - a click shows / hides that pane, Shift- or Ctrl-click
+// shows it alone - and All. Per browser (paneHidden, localStorage
+// PANE_HIDE_KEY; like the per-tuner View settings, it is about the screen in
+// front of the user): nothing is sent, the tuners, their VFOs, audio and
+// decoders run on. A hidden pane is display:none - panesLayout gives the shown
+// ones its room -, draws nothing, adds no waterfall lines (its history goes on
+// when shown) and asks the receiver for 16 points (specBinsPane: the usual
+// FFT_VIEW). At least one stays shown; selTuner is always a shown one.
+function panePickBuild(n) {
+  const g = $id('pane-pick');
+  if (!g) return;
+  g.hidden = n < 2;
+  g.innerHTML = n < 2 ? '' : Array.from({length: n}, (_, ch) =>
+    `<button type="button" class="view-btn pp-t" data-ch="${ch}" aria-pressed="true" title="Show / hide tuner ${ch}'s pane (Shift-click: only this one)">T${ch}</button>`).join('') +
+    `<button type="button" class="view-btn pp-all" title="Show every tuner's pane">All</button>`;
+}
+function panePickSync() {
+  const g = $id('pane-pick');
+  if (!g) return;
+  let off = 0;
+  g.querySelectorAll('.pp-t').forEach(b => {
+    const p = panes[+b.dataset.ch], on = !!p && !p.hidden;
+    if (!on) off++;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const a = g.querySelector('.pp-all');
+  if (a) a.disabled = !off;
+}
+// p.hidden from paneHidden. Every tuner there listed (a list made with more
+// tuners than now) = all shown
+function panesApplyShown() {
+  if (panes.length && panes.every(p => paneHidden.has(p.ch))) panes.forEach(p => paneHidden.delete(p.ch));
+  for (const p of panes) {
+    const h = paneHidden.has(p.ch);
+    if (!!p.hidden === h) continue;
+    p.hidden = h;
+    p.el.hidden = h;
+    // shown again: an empty plot until a frame at its width arrives (the ones
+    // in flight still carry the hidden pane's 16 points - specPaneFrame)
+    if (!h) { p.freqs = []; p.mags = []; p.coarse = true; }
+  }
+  const sp = panes[selTuner];
+  if (sp && sp.hidden) { const q = panes.find(x => !x.hidden); if (q) paneSelect(q.ch); }
+  if (typeof viewTarget === 'number' && panes[viewTarget] && panes[viewTarget].hidden) viewPopClose(false);
+  if (paneDrag && paneDrag.p && paneDrag.p.hidden) paneDrag = null;
+  panePickSync();
+}
+function paneShowToggle(ch, only) {
+  const p = panes[ch];
+  if (!p) return;
+  if (only) panes.forEach(q => { if (q.ch === ch) paneHidden.delete(q.ch); else paneHidden.add(q.ch); });
+  else if (p.hidden) paneHidden.delete(ch);
+  else if (panes.some(q => q !== p && !q.hidden)) paneHidden.add(ch);
+  else return;   // the last one shown stays
+  panesShownChanged();
+}
+function paneShowAll() {
+  panes.forEach(p => paneHidden.delete(p.ch));
+  panesShownChanged();
+}
+function panesShownChanged() {
+  try {
+    if (paneHidden.size) localStorage.setItem(PANE_HIDE_KEY, JSON.stringify([...paneHidden].sort((a, b) => a - b)));
+    else localStorage.removeItem(PANE_HIDE_KEY);
+  } catch (e) {}
+  panesApplyShown();
+  panesResizeNow();
+}
+$id('pane-pick').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b || b.disabled) return;
+  if (b.classList.contains('pp-all')) paneShowAll();
+  else paneShowToggle(+b.dataset.ch, e.shiftKey || e.ctrlKey || e.metaKey);
+});
+
 // shift: move the drawn spectrum at once (the next frames confirm it). Not
 // while panning - the frames still at the old frequency would make it jump
 // back and forth; like the main display it then follows the data.
@@ -12045,7 +12149,7 @@ function paneFreqAt(p, x) {
 
 function paneDrawSpec(p) {
   const c = $id('tpane-s-' + p.ch);
-  if (!c || !p.sw || !p.sh) return;
+  if (!c || !p.sw || !p.sh || p.hidden) return;
   const ctx = c.getContext('2d');
   ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
   const w = p.sw, h = p.sh, L = p.L, R = w - 4, top = 4, bot = h - 14;
@@ -12103,7 +12207,7 @@ function paneDrawAllOverlays() { panes.forEach(paneDrawOverlay); }
 // AI assistant: badges of the signals it identified, in view
 function paneDrawOverlay(p) {
   const c = $id('tpane-ov-' + p.ch);
-  if (!c || !p.sw) return;
+  if (!c || !p.sw || p.hidden) return;
   const ctx = c.getContext('2d');
   ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
   const H = p.oh || (c.height / p.dpr);
@@ -12435,7 +12539,7 @@ setInterval(() => {
   if (opMode !== 'independent') return;
   if (noiseLive || Date.now() - noiseOffAt < 1000) return;
   for (const p of panes) {
-    if (!viewEff(p.ch, 'auto')) continue;
+    if (p.hidden || !viewEff(p.ch, 'auto')) continue;
     const r = computeAutoRange(p.mags);
     if (r) p.wf.setRange(r[0], r[1]);
   }
@@ -12557,7 +12661,7 @@ function specOnFrame(v, buf) {
   if (n < 2 || n > 65536 || buf.byteLength < 64 + n || !(step > 0) || !(bandHi > bandLo)) return;
   const u8 = new Uint8Array(buf, 64, n), mags = new Float32Array(n);
   for (let i = 0; i < n; i++) mags[i] = u8[i] * (120 / 255);
-  const fr = {center, bandLo, bandHi, start, step, mags, wb: marker === 0xFE};
+  const fr = {center, bandLo, bandHi, start, step, mags, wb: marker === 0xFE, seq: v.getUint32(8, true)};
   if (disp > 0) { specPaneFrame(disp - 1, nch, fr, gd, aa); return; }
   specHeaderSync(center, gd, aa, fr.wb, marker & 0x7F);
   specMain = fr;
@@ -12730,10 +12834,18 @@ function specPaneFrame(ch, nch, fr, gd, aa) {
   const [w0, w1] = zoomWindow(p.zoom, lo1, hi1, p.freqMhz);
   [p.freqs, p.mags] = specWindow(fr, w0, w1);
   specViewWant(ch + 1, w0 - p.freqMhz, w1 - p.freqMhz, specBinsPane(p));
+  p.resText = specResText(fr);
+  if (p.hidden) return;   // switched off: no waterfall line, nothing drawn (it asks for the fewest points)
+  if (p.coarse) {
+    // shown again (PANES SHOWN): frames answering an older request still have
+    // the hidden pane's 16 points - an empty plot until one at its width
+    const st = specViewSent[ch + 1];
+    if (st && (st.want || fr.seq < st.seq)) { p.freqs = []; p.mags = []; return; }
+    p.coarse = false;
+  }
   p.wf.addLine(p.freqs, p.mags, noiseLive);
   paneDrawSpec(p);
   paneDrawOverlay(p);
-  p.resText = specResText(fr);
   if (ch === (typeof viewTarget === 'number' ? viewTarget : selTuner)) viewShowRes();
   if (ch === selTuner) {
     specShowRes(fr);
@@ -12770,6 +12882,7 @@ function specBinsMain() {
   return specSlow ? w / 2 : w;
 }
 function specBinsPane(p) {
+  if (p.hidden) return 16;   // a pane switched off (PANES SHOWN): the fewest the server sends
   const w = Math.max(64, ((p.sw || 400) - 4 - (p.L || 34)) * (p.dpr || window.devicePixelRatio || 1));
   return specSlow ? w / 2 : w;
 }
@@ -12792,6 +12905,7 @@ function specViewFlush(disp) {
   const w = st.want;
   ws.send('FFT_VIEW:' + disp + ':' + (++specViewSeq) + ':' + w.lo + ':' + w.hi + ':' + w.bins);
   st.lo = w.lo; st.hi = w.hi; st.bins = w.bins; st.at = Date.now(); st.want = null;
+  st.seq = specViewSeq;   // a frame answering this one carries it (fr.seq)
 }
 // the Display box's "Points sent": the frame's points (the main display's, or the selected pane's)
 function specShowRes(fr) {
@@ -14905,6 +15019,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       if (opMode === 'independent') {
         const p = panes[selTuner];
         v.selected_tuner = selTuner;
+        if (panes.some(q => q.hidden)) v.tuners_shown = panes.filter(q => !q.hidden).map(q => q.ch);   // the rest switched off on this page
         if (p && p.freqs && p.freqs.length) {
           v.zoom = {level: +(p.zoom.level || 1).toFixed(2), window_mhz: [+p.freqs[0].toFixed(6), +p.freqs[p.freqs.length - 1].toFixed(6)]};
         }
