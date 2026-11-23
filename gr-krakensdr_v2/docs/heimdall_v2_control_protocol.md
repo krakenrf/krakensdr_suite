@@ -302,7 +302,7 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
   carries `gain_floor_hops` (hops held under the clipping rule's gain by
   that rule), `gain_probes`, `gain_floor_decisions`, `gain_search_hops`,
   `gain_pairs`, `gain_pairs_unbracketed`, `gain_pairs_nonlinear`,
-  `gain_step_learned`, `floor_scatter_db` (each of the last completed sweep)
+  `gain_step_learned`, `gain_probes_skipped`, `floor_scatter_db` (each of the last completed sweep)
   and `gain_probe_sweep`. They are sent whenever the sweep object is,
   with zeros / false while Auto is off. The presence of `gain_floor_hops`
   is how a client tells a heimdall with the measured rule from one without.

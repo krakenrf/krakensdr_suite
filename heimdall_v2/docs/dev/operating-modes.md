@@ -1577,8 +1577,14 @@ clipping rule stays the fast guard and is the search's ceiling.
   - Why the hop's own values are excluded: a saturated hop must not teach
     its own reference.
 - *Non-linear*:
-  - power: off the reference by max(1.5 dB, half the step);
-  - floor: off by 1.5 dB.
+  - Products (more than the step): the power off the reference by
+    max(1.5 dB, half the step), the floor by 1.5 dB.
+  - Compression (less than the step): short by the SMALLER of 1.5 dB and
+    half the step, for the power and the floor alike. Compression adds up
+    over a step, so a bigger step earns no bigger tolerance.
+    - The orchestrator's 405-428 MHz run on 62b62c1 had max(): 37.2 -> 33.8
+      following 0.7 of 2.9 dB read linear, and the hop stayed 2.8 dB
+      compressed (carrier over floor 63.5 against 69.3 at 33.8).
   - "Follows less than the step" (compression) needs a cause: content of at
     least -15 dBFS rms at the higher gain, in the hop or within 3 MHz of it.
     Without it, 26.87 MHz (-35.5 dBFS) and 633.13 MHz (-32.1) would be
@@ -1601,12 +1607,18 @@ clipping rule stays the fast guard and is the search's ceiling.
     the probe unclipped. When no quantity is over the converter (FM: the
     tuner's noise barely over it), one such pair is enough: more gain is
     sensitivity there.
-  - A pair whose over-converter quantity is unbracketed gives no verdict.
+  - A pair whose over-converter quantity is unbracketed (or unsteady)
+    gives no verdict. A pair without a verdict still uses the search up: it
+    counts as a failed bracket, and after 3 in a row the search ends and
+    the hop stays. Settled, the probe period doubles.
+    - Why: on the first hardware run 16-18 hops of the LTE block
+      (763-800 MHz), 952 / 954 and 157 / 159 MHz probed 6-8 dB down every
+      other sweep for good.
   - Against the curve (nothing learned yet for that bucket and gain pair)
-    the tolerances are 1 dB wider (`AG_LIN_CURVE_SLACK`).
+    the 1.5 dB tolerances are 1 dB wider (`AG_LIN_CURVE_SLACK`).
   - A raise must be clearly linear. Against compression an up-probe's
-    tolerance is 1 dB (the power: or a quarter of the step), not the
-    down-probe's 1.5 dB / half the step. With half the step, the fake's
+    tolerance is at most 1 dB (the power: or a quarter of the step), plus
+    the slack. With half the step, the fake's
     417.43 MHz came up 28.0 -> 32.8 with 2.1 dB of compression. The
     difference is a hysteresis: a hop doesn't go down for what it wouldn't
     have come up for.
@@ -1663,8 +1675,20 @@ clipping rule stays the fast guard and is the search's ceiling.
   - the whole-plan probe sweeps in alternate sweeps while any hop searches
     (`gain_probe_sweep`);
   - settled probes once in 50 sweeps (200 without the fast gain write;
-    hops held down: a third of that), doubling after a raise that went
-    non-linear;
+    hops held down: a third of that). The period doubles, up to x8, when a
+    probe confirms where the hop is: a down-probe that stays linear, an
+    up-probe refused, 3 pairs without a verdict. It also doubles after a
+    raise that went non-linear. It is back to x1 on a decision or a
+    trigger.
+  - *No down-probe that can't tell anything*: when the last baseline's
+    power and floor, taken down by the probe's step, would both be under
+    the validity level, a smaller step is tried, down to the smallest
+    (2.5 dB). If that fails too there is no down-probe: a search ends there
+    and the hop stays, and settled, the next probe is an up one.
+    - This applies to the FM band and the quiet L band: 3 of 44 and 0 of
+      400 hops are testable on the bracketed reference. A down-probe there
+      only costs: a visit several dB lower where every dB is sensitivity.
+    - Counted in `gain_probes_skipped`.
   - the triggers: a baseline whose floor or power referred to the input
     jumps 3 dB over the hop's slow average twice reopens the search down,
     and 1.5 dB under it on a held hop reopens it up.
@@ -1680,6 +1704,7 @@ clipping rule stays the fast guard and is the search's ceiling.
   - `gain_pairs`, `gain_pairs_unbracketed` (bracket failed, or a burst),
     `gain_pairs_nonlinear`;
   - `gain_step_learned`: pairs whose reference came from the learned table;
+  - `gain_probes_skipped`: down-probes left out as untestable;
   - `floor_scatter_db`, `gain_probe_sweep`.
   - All of them are sent whenever the sweep object is, with zeros / false
     while Auto is off. The presence of `gain_floor_hops` is how a client
