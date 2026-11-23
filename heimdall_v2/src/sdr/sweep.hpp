@@ -79,6 +79,9 @@ void sweep_quiesce_flushes();
 // at the common gain at once (under the 8091 flag).
 void set_sweep_auto_gain(bool enable);
 bool sweep_auto_gain();          // the switch
+// The tuners whose gain now is a linearity probe's (bit t: tuner t; the 8091
+// header's trial gain flags, read with the gains before the retuning flag)
+uint32_t sweep_trial_mask();
 // The switch on, sweep mode, and a manual common gain (with the tuner's own
 // AGC, -1, there is no ceiling: auto does nothing)
 bool sweep_auto_gain_active();
