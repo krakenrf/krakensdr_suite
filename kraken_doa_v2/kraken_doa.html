@@ -2461,7 +2461,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <label for="swp-agc" title="Each step of the sweep gets its own gain: the Gain in the top bar is the ceiling, and a step that overloads the receiver (a strong transmitter nearby) is taken 3 - 18 dB lower at its next visit, sweep after sweep, until it no longer does; it comes back up 3 dB at a time after a while without overload. What was learned is kept by frequency when the range, dwell or resolution changes. The sweep stays as fast, and levels stay comparable: a signal keeps its height; on a reduced step the noise floor can show higher - the sensitivity lost there. With the Gain at Auto (the tuners' own AGC) it does nothing. For every browser on this receiver">Auto gain</label>
           <input type="checkbox" class="sw" id="swp-agc" onchange="swpAgcSet(this.checked)" title="Each step of the sweep gets its own gain: the Gain in the top bar is the ceiling, and a step that overloads the receiver (a strong transmitter nearby) is taken 3 - 18 dB lower at its next visit, sweep after sweep, until it no longer does; it comes back up 3 dB at a time after a while without overload. What was learned is kept by frequency when the range, dwell or resolution changes. The sweep stays as fast, and levels stay comparable: a signal keeps its height; on a reduced step the noise floor can show higher - the sensitivity lost there. With the Gain at Auto (the tuners' own AGC) it does nothing. For every browser on this receiver">
         </div>
-        <div class="kv" title="The gain the sweep uses: the top bar's Gain on every step, or - with Auto gain - at most that ("≤ 49.6 dB · 53 lower, min 16.6 dB": 53 steps of the sweep had to be taken lower, the lowest to 16.6 dB). Where on the spectrum: the amber strip on the plot's bottom edge (the stronger, the lower - a noise floor raised just above it is the sensitivity lost there), and the step's gain under the pointer"><span>Gain</span><span id="swp-agc-st">-</span></div>
+        <div class="kv" id="swp-agc-kv" title="The gain the sweep uses: the top bar's Gain on every step, or - with Auto gain - at most that ("≤ 49.6 dB · 53 lower, min 16.6 dB": 53 steps of the sweep had to be taken lower, the lowest to 16.6 dB). Where on the spectrum: the amber strip on the plot's bottom edge (the stronger, the lower - a noise floor raised just above it is the sensitivity lost there), and the step's gain under the pointer"><span>Gain</span><span id="swp-agc-st">-</span></div>
         <div class="ctrl-row">
           <button type="button" class="btn primary" id="swp-run" style="flex:1" onclick="swpRunToggle()"><svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause</span></button>
         </div>
@@ -13625,7 +13625,13 @@ function swpNorm(r) {
     // receiver; the reduced steps and the lowest gain of the last sweep)
     auto_gain: r.auto_gain === true, auto_gain_known: r.auto_gain_known === true ? true : r.auto_gain_known === false ? false : null,
     gain_reduced_hops: num(r.gain_reduced_hops, NaN), gain_min_db: num(r.gain_min_db, NaN),
-    auto_gain_active: r.auto_gain_active === true ? true : r.auto_gain_active === false ? false : null};   // (null: not sent - derived)
+    auto_gain_active: r.auto_gain_active === true ? true : r.auto_gain_active === false ? false : null,   // (null: not sent - derived)
+    // (round 10: steps also taken lower where a strong signal saturates the tuner without clipping - the steps held
+    // lower for that, the steps still searching, the trial visits of the last sweep, a whole sweep tried one step
+    // lower; NaN / null = not sent: an older receiver or heimdall, today's look)
+    gain_floor_hops: num(r.gain_floor_hops, NaN), gain_search_hops: num(r.gain_search_hops, NaN),
+    gain_probes: num(r.gain_probes, NaN), gain_probe_sweep: r.gain_probe_sweep === true ? true : r.gain_probe_sweep === false ? false : null,
+    trials_left_out: num(r.trials_left_out, NaN)};   // (the receiver's: trial visits at a higher gain not drawn, since it started)
   if (s.full_sets && !s.full_sets.some(o => o.n === 1)) s.full_sets = null;   // (malformed: as if absent)
   return s.stop_hz > s.start_hz ? s : null;
 }
@@ -13638,6 +13644,7 @@ function swpOnState(raw) {
   swp.stale = false;
   if (!swpKnown) { swpKnown = true; opModeOptionsSync(); }
   if (prev && prev.grid !== s.grid) swpNewGrid(prev.start_hz !== s.start_hz || prev.stop_hz !== s.stop_hz);
+  swpSettleStep(prev, s);   // (Auto gain's "settling": once a state message)
   swp.gridOdd = null;
   // the receiver sweeps but this page shows another mode: it missed the operating_mode message (which
   // is authoritative - so not right after one, nor right after this page asked for another mode)
@@ -13671,6 +13678,8 @@ function swpOnOpen() {
   swp.ovPend = null;
   swp.fullSent = -1; swp.fullAsm = null; swp.zSent = -1;   // (nor the full resolution, nor deflated parts; a set in flight is gone with the old connection)
   swp.stale = true;
+  swp.agcR10 = false;   // (round 10's words: once this connection's receiver has sent its counts)
+  swp.settle = {on: false, done: false};   // (and "settling" starts afresh)
   swpAgcRender();   // (Auto gain: still disabled until this connection's first sweep message)
 }
 function swpGainSync(db) {
@@ -13753,6 +13762,22 @@ function swpAgcSummary() {
   }
   return {n, lo, ceil};
 }
+// "settling" (round 10, after the first run on the real KrakenSDR): heimdall's search never quite reaches 0 -
+// after the first search (906 -> ~25 by the 10th sweep -> under 10 by the 15th - 19th) 1 - 8 steps of 911 keep
+// being tried again (signals that come and go). So the word shows while the search is a real share of the sweep:
+// on at limit = max(2, ceil(1 % of the steps)) (911: 10; 13 steps: 2), off below it. Once it has gone off it
+// comes back only at twice the limit (a count hovering at the limit doesn't blink it) - until Auto goes off, the
+// grid changes or the connection is new, when a search starts afresh. Stepped once a state message (swpOnState).
+function swpSettleLimit(st) { return Math.max(2, Math.ceil(0.01 * (st && st.hops > 0 ? st.hops : 0))); }
+function swpSettleStep(prev, s) {
+  const z = swp.settle || (swp.settle = {on: false, done: false});
+  const n = s.gain_search_hops, lim = swpSettleLimit(s);
+  if (!s.auto_gain || (prev && prev.grid !== s.grid) || (prev && !prev.auto_gain)) { z.on = false; z.done = false; }
+  if (!s.auto_gain || !Number.isFinite(n)) { z.on = false; return; }
+  if (z.on) { if (n < lim) { z.on = false; z.done = true; } }
+  else if (n >= (z.done ? 2 * lim : lim)) z.on = true;
+}
+function swpSettling() { return !!(swp.settle && swp.settle.on && swp.st && swp.st.gain_search_hops > 0); }
 function swpAgcText() {
   const st = swp.st;
   if (!st) return '-';
@@ -13762,12 +13787,46 @@ function swpAgcText() {
   // lowest 8.7 dB" wrap on the KrakenSDR; the tip says it in full)
   if (!swpAgcOn()) return gt + (st.auto_gain_known === true ? ', every step' : '');
   if (swpAgcIdle()) return gt + ' · Auto idle (tuners\' AGC)';
+  // (round 10: while heimdall still searches some steps' gain - about 20 sweeps after the switch goes on - the
+  // line says "settling"; the lowest gain then is a passing figure, so it leaves its room to the word: one line)
+  if (swpSettling()) return '≤ ' + gt + (s.n > 0 ? ' · ' + s.n + ' lower' : '') + ' · settling';
   if (!Number.isFinite(s.n)) return '≤ ' + gt;
   return '≤ ' + gt + (s.n > 0 ? ' · ' + s.n + ' lower, min ' + s.lo.toFixed(1) + ' dB' : ' · none lower');   // (n: steps; "steps" wrapped at 911)
 }
+// the tips: the page's own (round 9's rule) until this connection's receiver sends round 10's counts
+// (gain_floor_hops) - an older receiver or heimdall keeps today's words
 const SWP_AGC_TIP = (document.getElementById('swp-agc') || {getAttribute: () => ''}).getAttribute('title') || '';
+const SWP_AGC_KV_TIP = (document.getElementById('swp-agc-kv') || {getAttribute: () => ''}).getAttribute('title') || '';
+const SWP_AGC_TIP10 = 'Each step of the sweep gets its own gain: the Gain in the top bar is the upper limit, and each step gets the highest gain at which it is still received cleanly. '
+  + 'A step is taken lower where a strong signal overloads the tuner - also when that signal is just outside the step and nothing clips, which squashes weaker signals and makes false carriers. '
+  + 'The sweep finds this by trying steps a little lower or higher on some passes: after it is switched on it takes about 20 sweeps to settle, then a few steps are tried each sweep. '
+  + 'A step goes back up when the strong signal has gone. What was learned is kept by frequency when the range, dwell or resolution changes. '
+  + 'The sweep stays as fast, and levels stay comparable: a signal keeps its height; on a lowered step the noise floor can show higher - the sensitivity given up there. '
+  + 'With the Gain at Auto (the tuners\' own AGC) it does nothing. For every browser on this receiver';
+const SWP_AGC_KV_TIP10 = 'The gain the sweep uses: the top bar\'s Gain on every step, or - with Auto gain - at most that ("≤ 49.6 dB · 53 lower, min 16.6 dB": 53 steps of the sweep are taken lower, the lowest to 16.6 dB; '
+  + '"settling": Auto gain is still trying steps lower and higher, for about 20 sweeps after it is switched on). '
+  + 'Where on the spectrum: the amber strip on the plot\'s bottom edge (the stronger, the lower - a noise floor raised just above it is the sensitivity lost there), and the step\'s gain under the pointer';
+function swpTipSet(el, t) { if (el && el.dataset.tipk !== t) { el.dataset.tipk = t; el.title = t; el.removeAttribute('data-tip'); } }
+// the state line's tip with round 10's counts: the steps lower because the converter clipped and those lower for a
+// strong signal nearby that does not clip, the trial visits of the last sweep, the search (only the receiver's figures)
+function swpAgcKvTip() {
+  const st = swp.st;
+  if (!swp.agcR10) return SWP_AGC_KV_TIP;
+  if (!swpAgcOn() || swpAgcIdle()) return SWP_AGC_KV_TIP10;
+  const n = swpAgcSummary().n, fl = st.gain_floor_hops, pl = (k, w) => k + ' ' + w + (k === 1 ? '' : 's');
+  const out = [];
+  if (Number.isFinite(n)) out.push(n <= 0 ? 'no step lower' : !Number.isFinite(fl) ? pl(n, 'step') + ' lower'
+    : pl(n, 'step') + ' lower: ' + Math.max(0, n - fl) + ' because the converter clipped, ' + Math.min(n, fl) + ' for a strong signal nearby (no clipping)');
+  if (Number.isFinite(st.gain_probes)) out.push(pl(st.gain_probes, 'trial visit') + ' in the last sweep' + (st.gain_probe_sweep ? ' (it tried every step one lower)' : ''));
+  if (st.gain_search_hops > 0) out.push((swpSettling() ? 'settling: ' : '') + pl(st.gain_search_hops, 'step') + ' still being tried');
+  if (st.trials_left_out > 0) out.push(pl(st.trials_left_out, 'trial visit') + ' at a higher gain not drawn (since the receiver started)');
+  return SWP_AGC_KV_TIP10 + (out.length ? '. Now: ' + out.join('; ') : '');
+}
 function swpAgcRender() {
   const st = swp.st, cb = $id('swp-agc');
+  if (st && !swp.stale && Number.isFinite(st.gain_floor_hops)) swp.agcR10 = true;
+  swpTipSet($id('swp-agc-kv'), swpAgcKvTip());
+  swpTipSet(document.querySelector('label[for=swp-agc]'), swp.agcR10 ? SWP_AGC_TIP10 : SWP_AGC_TIP);
   if (cb) {
     const known = !!(st && st.auto_gain_known === true), on = !!(known && st.auto_gain), live = swpAgcLive();
     if (cb.checked !== on) cb.checked = on;   // (while not connected: the receiver's last word, disabled)
@@ -13775,8 +13834,7 @@ function swpAgcRender() {
     const why = !st ? '' : !live ? 'Not connected to the receiver: the switch shows what it last said, and a click would go nowhere'
               : st.auto_gain_known === false ? 'Not available: this receiver\'s heimdall has no gain per step (an older version)'
               : st.auto_gain_known === null ? 'Not available: this receiver does not offer it (an older version)' : '';
-    const t = SWP_AGC_TIP + (why ? '. ' + why : '');
-    if (cb.dataset.tipk !== t) { cb.dataset.tipk = t; cb.title = t; cb.removeAttribute('data-tip'); }
+    swpTipSet(cb, (swp.agcR10 ? SWP_AGC_TIP10 : SWP_AGC_TIP) + (why ? '. ' + why : ''));
   }
   swpTxt('swp-agc-st', swpAgcText());
   const gs = $id('gn-slider');

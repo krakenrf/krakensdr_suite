@@ -1769,6 +1769,100 @@ used"):
     receiver: with a heimdall refusing `set_operating_mode` at start, the
     replayed sweep mode is lost (the stack comes up in coherent mode; Auto
     gain stays saved and comes back on choosing sweep again).
+  - Round 10's words (2026-11-24; the user: "the SNR of the narrowband
+    signals at 416 MHz get alot better if I turn the gain down. Maybe the
+    overload flag isn't good enough"). heimdall now also takes a step
+    lower where a strong signal saturates the tuner without clipping (the
+    rule: per step the highest gain at which it is still received
+    cleanly, found by trial visits a step lower or higher; the receiver's
+    section has the fields). The page reads, from the `sweep` message
+    (`swpNorm`; NaN / null when absent): `gain_floor_hops`,
+    `gain_search_hops`, `gain_probes`, `gain_probe_sweep` and the
+    receiver's `trials_left_out`. The other counts (`gain_pairs*`,
+    `gain_floor_decisions`, `gain_step_learned`, `floor_scatter_db`) are
+    not shown.
+    - Which words: round 10's once this connection's receiver has sent
+      `gain_floor_hops` (`swp.agcR10`, reset in `swpOnOpen`), so an older
+      receiver or heimdall keeps today's tips and today's look, pixel for
+      pixel.
+    - The switch's and the label's tip (`SWP_AGC_TIP10`): the top bar's
+      Gain is the upper limit; each step gets the highest gain at which it
+      is still received cleanly; lower where a strong signal overloads the
+      tuner, also when it is just outside the step and nothing clips
+      (weaker signals squashed, false carriers); found by trying steps a
+      little lower or higher on some passes (about 20 sweeps to settle,
+      then a few steps a sweep); back up when the signal has gone. No
+      "linear", "probe" or "bracketed".
+    - The state line: "≤ 49.6 dB · 68 lower · settling" while the search
+      is a real share of the sweep (the passing lowest gain leaves its
+      room to the word: one line, also at 911), today's "≤ 49.6 dB · 68
+      lower, min 8.7 dB" after. Nothing new with Auto off, idle (the
+      tuners' AGC) or not connected.
+    - When "settling" shows (`swpSettleStep`, once a state message;
+      `swpSettling`). The first run on the real KrakenSDR (911 steps)
+      showed that heimdall's `gain_search_hops` never reaches 0: 906 ->
+      ~25 by the 10th sweep -> under 10 by the 15th - 19th, then 1 - 8
+      steps are always tried again (signals that come and go). So the
+      word does not show for any count above 0. The rule:
+      - on at the limit, max(2, ceil(1 % of the sweep's steps)) (911
+        steps: 10; 13 steps: 2), off below it;
+      - once it has gone off, back only at twice the limit, so a count
+        hovering at the limit doesn't make it blink;
+      - a fresh search after Auto off / on, a grid change or a new
+        connection: on at the limit again.
+    - The state line's tip (`#swp-agc-kv`, `swpAgcKvTip`; only the
+      receiver's figures, only while Auto is on and working): "Now: 68
+      steps lower: 41 because the converter clipped, 27 for a strong
+      signal nearby (no clipping)" (`gain_reduced_hops` -
+      `gain_floor_hops` / `gain_floor_hops`); "18 trial visits in the
+      last sweep" (`gain_probes`; "(it tried every step one lower)" with
+      `gain_probe_sweep`); "6 steps still being tried" whenever
+      `gain_search_hops` > 0 ("settling: 120 steps still being tried"
+      while the word shows); "37 trial
+      visits at a higher gain not drawn (since the receiver started)"
+      (`trials_left_out`).
+    - The strip and the readout's gain are unchanged: they follow the map,
+      from which the receiver keeps the trials out.
+    - Tests (`t_agc10.py`, mock, the counts injected into its `sweep`
+      message, 44 / 44):
+      - the counts absent: the Auto gain rows the same pixels as the page
+        before round 10 (ebac1b3, served in its place), off and on, and
+        the same three tips. With Auto off, 12 pixels of the switch's
+        knob differ by one level, and they differ the same way between
+        two loads of the old page itself (raster jitter), so the check
+        allows 1 level;
+      - with the counts: the tips' words; "settling" there and gone;
+        one line also for "≤ 49.6 dB · 911 lower · settling"; the box
+        the same place and size;
+      - "settling" on the whole plan (911 steps, limit 10), fed the real
+        sequence 906, 326, 80, 25, 12, 9, 6, 8, 3, 5, 1, 6: on through
+        12, off from the 9 and through the 8 / 6. Then hovering at 9, 10,
+        11, 10, 12, 19: no word. 20, 14, 9: on, on, off. Auto off and on:
+        on at 10, off at 9. The tip says "settling: 906 steps still
+        being tried", then "6 steps still being tried", then "1 step";
+      - a 13-step sweep (limit 2): 1 step tried shows no word and the
+        tip "1 step still being tried". 13, 2, 1, 2, 3, 4: on, on, off,
+        off, off, on;
+      - the tip's split, singular and plural; `trials_left_out` in the
+        tip only; not connected / off / idle without counts; the counts
+        gone again: today's line;
+      - the strip: the same map again changes no pixel, and a map with 3
+        hops changed changes only those hops' pixels.
+    - End to end (`t_agc10r.py`, 18 / 18): the receiver at ca7d6da on the
+      receiver worker's fake with round 10's counts (`fake_r10_status`)
+      plus a hook that sets them (`fake_r10_over`), scene_agc. Checked:
+      - the counts absent: round 9's tips, today's line;
+      - the counts there: round 10's tips; "16 steps lower: 13 because
+        the converter clipped, 3 for a strong signal nearby";
+      - a search: "≤ 49.6 dB · 16 lower · settling", gone when it ends;
+      - up-trials with the trial bits (`fake_probe` sparse, up): "246
+        trial visits at a higher gain not drawn" in the tip, nothing in
+        the line;
+      - the strip over 81 samples under trials: 4 map changes, no strip
+        change without one;
+      - a second tab switching Auto off: the first shows "every step",
+        no counts, no "settling"; on again: "settling" back;
+      - the counts gone: today's line; a reload: round 9's tip.
 - **Deflated parts** (round 8, 2026-11-23; the user: "Implement the sweep
   full resolution compression"). The page asks `SWEEP_FULL_Z:1` when the
   browser has `DecompressionStream("deflate")` (`SWP_Z_OK`: the
