@@ -676,7 +676,16 @@ refused; out-of-range numbers are clamped:
   failure a glitched manual reference -, earlier c419b4b runs 4 failures in
   6). The median also takes the manual clipped hop's error away (`t_agc
   seam`, hop 5 hot in manual: tuner 1's block +4.7 dB before, within one
-  level step now). Round 9b's hardware oddities, from the log's point of
+  level step now). Final build (9b64106, with the restart on a gain
+  change), `t_agc seam`: the Pi 10/10 and 3/3 with the log; x86 under load
+  with the log 17/20 - the three misses each one block 1 - 2 dB low while
+  the reference stood still: the row of one odd visit itself (hop 7's
+  floor 3.6 dB under its others for one visit, in the block's measurement;
+  a row is its hop's last visit - as in round 9, whose logs show such
+  visits at the same rate). The spikes left (x86 1.8 / 1.4 a minute, the
+  Pi 3.0 / 1.8 for steps / base) all fall where the test switches the
+  scene and Auto: the histories restart there and the first 2 sweeps use
+  now's value alone, as round 9 always did. Round 9b's hardware oddities, from the log's point of
   view (not yet looked at on the hardware): a seam whose sides differ by
   more than 6 dB - a signal on every hop within 6 of one side, as in the
   700 MHz LTE bands - was and is shown uncorrected (the ~11 dB floor step
