@@ -2015,8 +2015,13 @@ shown on the page (a class, p >= 0.5) for >= half of coherent mode's last
   on 456.8 - one band, looks [17, 1, 18, 18, 17] -, CH2 416.5, CH3 499.8,
   CH4 98.0 MHz with their gains): coherent 9 labelled; independent 8 / 8
   (CH0 again); wideband scan (the band on CH2) 7 / 9 - DMR 457.682 MHz
-  11.9 dB on CH0, not detected on CH2, and an intermittent channel. A third
-  run (499.8 MHz) was not made: other jobs' heimdall processes were running
+  11.9 dB on CH0, not detected on CH2, and an intermittent channel.
+  Live run 3 (499.8 MHz, gain 33.8 dB; independent: CH0 and CH4 on 499.8 -
+  one band, looks [16, 17, 16, 16, 1] -, CH1 456.8, CH2 416.5, CH3 415.4
+  MHz): coherent 14 labelled; independent 12 / 14 (the misses intermittent:
+  67 / 75 % in coherent); wideband scan 9 / 14 - P25 499.364 / 500.726 MHz
+  and an AM carrier read 1-11 dB on CH0 and nothing on CH2. Bias tee mask 0
+  at the start and the end of every run
 - Regressions (1e8871d, TEST build, the shipped model): the strict
   debug-playback table twice 28 / 28 (24 + 25 sure; unsure POCSAG 75 / 68
   %, DVB-T 70 / 75 %, wildlife 81 / 65 % - never sure by its min_p -,
