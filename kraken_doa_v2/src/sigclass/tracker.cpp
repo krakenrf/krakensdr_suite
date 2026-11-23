@@ -30,6 +30,7 @@
 // seen for the first time gives it its looks.
 
 #include "sigclass/sigclass.hpp"
+#include "sc_prof.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -77,6 +78,7 @@ double energy_of(const Detection& d) {
 }  // namespace
 
 const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, double centre_hz, double t_s) {
+    SC_PROF("trk.update");
     expire(t_s);
     for (Track& t : tracks_) t.updated = false;
     for (Evidence& e : ev_) e.look_snr -= 1.0f;   // (its strongest look, forgotten at 1 dB a snapshot)

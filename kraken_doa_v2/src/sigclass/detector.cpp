@@ -107,6 +107,7 @@ void mask_multiscale(const double* x, int n, double kappa1, double p, std::vecto
 // ------------------------------------------------------------------ floor
 
 void Detector::estimate_floor(const FrontEnd& fe, const Config& cfg) {
+    SC_PROF("det.floor");
     (void)cfg;
     const double fs = fe.fs;
     std::vector<float> m(NCELL, 0.0f), Fc(NCELL, 0.0f), nf(NCELL, 0.0f);
@@ -209,6 +210,7 @@ void Detector::estimate_floor(const FrontEnd& fe, const Config& cfg) {
 
 // band power series of short bins k0..k1: e_t = power / floor - 1
 void Detector::band_series(const FrontEnd& fe, int k0, int k1, std::vector<float>& e, double* sigma) const {
+    SC_PROF("det.band_series");
     k0 = std::clamp(k0, 0, SPEC_N - 1);
     k1 = std::clamp(k1, k0, SPEC_N - 1);
     double fl = 0.0;
@@ -236,6 +238,7 @@ void Detector::band_series(const FrontEnd& fe, int k0, int k1, std::vector<float
 // --------------------------------------------------------------- measure
 
 bool Detector::measure(const FrontEnd& fe, const Region& rg, Cand& c, const Config& cfg) {
+    SC_PROF("det.measure");
     (void)cfg;
     const double df = fe.fs / LONG_N;
     const int i0 = std::max(0, (rg.a - 1) * BASE_BINS), i1 = std::min(LONG_N - 1, (rg.b + 2) * BASE_BINS - 1);
@@ -278,6 +281,7 @@ bool Detector::measure(const FrontEnd& fe, const Region& rg, Cand& c, const Conf
 }
 
 bool Detector::spectro_stats(const FrontEnd& fe, Cand& c, bool continuous) {
+    SC_PROF("det.spectro_stats");
     if (fe.nframes < 4) return false;
     const double dfs = fe.fs / SPEC_N;
     const double flo = c.det.offset_hz - 0.5 * c.det.bw_hz, fhi = c.det.offset_hz + 0.5 * c.det.bw_hz;
@@ -378,6 +382,7 @@ bool Detector::spectro_stats(const FrontEnd& fe, Cand& c, bool continuous) {
 
 void Detector::burst_search(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& cont,
                             std::vector<Cand>& out) {
+    SC_PROF("det.burst_search");
     const int T = fe.nframes;
     if (T < 8) return;
     const double fs = fe.fs, dfs = fs / SPEC_N;
@@ -562,6 +567,7 @@ void Detector::burst_search(const FrontEnd& fe, const Config& cfg, const std::ve
 // ------------------------------------------------------------ band filling
 
 bool Detector::band_fill(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& found, Cand& c, int force) {
+    SC_PROF("det.band_fill");
     const double fs = fe.fs, df = fs / LONG_N;
     for (const Cand& f : found)
         if (f.det.bw_hz >= 0.6 * fs) return false;
@@ -931,6 +937,7 @@ void Detector::band_power(const FrontEnd& fe, double lo_hz, double hi_hz, int D,
 // The pair becomes one detection over the union band; pieces inside its band no
 // stronger than its tones (+3 dB) and on only while it is (or continuous like it) go.
 void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& out) {
+    SC_PROF("det.tone_pairs");
     (void)cfg;
     const int T = fe.nframes;
     if (T < 16 || out.size() < 2) return;
@@ -1158,7 +1165,10 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
 
     // continuous detection: the whole band against the floor ...
     std::vector<Region> regs;
-    segment(fe, cfg, r_.data(), 0, NBASE - 1, 1.0f, regs);
+    {
+        SC_PROF("det.segment_band");
+        segment(fe, cfg, r_.data(), 0, NBASE - 1, 1.0f, regs);
+    }
     // ... and inside each wide region against floor x the region's own
     // plateau: a narrow signal on a wide one (a carrier on a DAB block, NFM
     // next to a broadband hump) is a signal of its own when it is narrow,
@@ -1166,6 +1176,7 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
     // carrier) and has no mirror image about it (not FSK tones)
     std::vector<Region> extra, subs;
     for (Region& g : regs) {
+        SC_PROF("det.sub_regions");
         const int W = g.b - g.a + 1;
         if (W < 64 || g.comb) continue;   // (a comb's lines are the signal itself)
         const int sub = std::max(8, W / 8);

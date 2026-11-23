@@ -10,6 +10,25 @@
 
 namespace sigclass {
 
+#ifdef SIGCLASS_PROF
+namespace prof {
+std::vector<Slot>& slots() {
+    static std::vector<Slot> v;
+    return v;
+}
+int reg(const char* name) {
+    std::vector<Slot>& v = slots();
+    for (size_t i = 0; i < v.size(); i++)
+        if (std::string(v[i].name) == name) return int(i);
+    v.push_back({name});
+    return int(v.size()) - 1;
+}
+void reset() {
+    for (Slot& s : slots()) s.ms = 0.0, s.n = 0;
+}
+}  // namespace prof
+#endif
+
 using namespace detail;
 
 namespace {
@@ -101,6 +120,10 @@ std::vector<Scored> Analyzer::analyze(const std::complex<float>* iq, size_t n, d
 
 void Analyzer::Impl::features_of(const Cand& c, float* out) {
     const int v = std::clamp(c.det.view, 0, NUM_VIEWS - 1);
+#ifdef SIGCLASS_PROF
+    static const int pid[NUM_VIEWS] = {prof::reg("look.v0"), prof::reg("look.v1"), prof::reg("look.v2"), prof::reg("look.v3")};
+    SC_PROF_ID(pid[v]);
+#endif
     double t = now_ms();
     ch.extract(fe, c.centre_bin, v, view);
     ViewInfo vi;
@@ -132,6 +155,7 @@ std::vector<Scored> Analyzer::Impl::run(const Model* model, std::vector<float>* 
     for (size_t i = 0; i < cands.size();) {
         bool image = false;
         if (cands[i].maybe_image) {
+            SC_PROF("det.image_test");
             const int v = std::clamp(cands[i].det.view, 0, NUM_VIEWS - 1);
             const int bs = std::clamp(-cands[i].centre_bin, -LONG_N / 2 + 1, LONG_N / 2 - 1);   // its mirror
             ch.extract(fe, bs, v, view);

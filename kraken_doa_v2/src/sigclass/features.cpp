@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <sstream>
 
 namespace sigclass {
@@ -201,6 +202,30 @@ float median_of(const std::vector<float>& v, std::vector<float>& w) {
 }
 
 }  // namespace
+
+// profiling of the feature groups (SIGCLASS_PROF builds; otherwise empty)
+enum { P_BOX, P_SET, P_PSD, P_ENV, P_ENVSPEC, P_LO, P_IF, P_SQ, P_ACF, P_SYMFIL, P_SYMRATE, P_SYMTIME, P_LAG, P_TF, P_N };
+#ifdef SIGCLASS_PROF
+struct prof_scope {
+    prof::Scope s;
+    explicit prof_scope(int g) : s(ids()[g]) {}
+    static const int* ids() {
+        static const int v[P_N] = {prof::reg("feat.boxsums"), prof::reg("feat.analysed_set"), prof::reg("feat.psd"),
+                                   prof::reg("feat.env"), prof::reg("feat.env_spec"), prof::reg("feat.lo_spectra"),
+                                   prof::reg("feat.if"), prof::reg("feat.sq_quad"), prof::reg("feat.acf_frame"),
+                                   prof::reg("feat.sym_filter"), prof::reg("feat.sym_rate"), prof::reg("feat.sym_timing_seq"),
+                                   prof::reg("feat.lagprod"), prof::reg("feat.tf")};
+        return v;
+    }
+};
+#define FEAT_PHASE_START(g) std::optional<prof_scope> ps_(std::in_place, g)
+#define FEAT_PHASE(g) (ps_.reset(), ps_.emplace(g))
+#define FEAT_PHASE_END() ps_.reset()
+#else
+#define FEAT_PHASE_START(g) static_assert(true, "")
+#define FEAT_PHASE(g) ((void)0)
+#define FEAT_PHASE_END() ((void)0)
+#endif
 
 struct Features::Impl {
     std::map<std::pair<int, bool>, Fft> plans;
@@ -396,6 +421,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
 
     // ---- pass over the whole view: box sums of ON_BOX samples
     const int nb8 = n / ON_BOX;
+    FEAT_PHASE_START(P_BOX);
     eb8.assign(size_t(nb8), 0.0f);
     zb8.assign(size_t(nb8), cf(0.0f, 0.0f));
     yb8.assign(size_t(nb8), cf(0.0f, 0.0f));
@@ -479,6 +505,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- the analysed set
+    FEAT_PHASE(P_SET);
     spans.clear();
     std::vector<int> chosen;
     if (n <= FEAT_MAX) {
@@ -554,6 +581,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- psd + spectral scalars
+    FEAT_PHASE(P_PSD);
     {
         const int seg = seg_for(PSD_SEG, N, 128);
         welch_c(yc.data(), seg, PSD_K, S);
@@ -613,6 +641,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- envelope
+    FEAT_PHASE(P_ENV);
     double m2 = 0, m4 = 0;
     {
         ScalarStats amp, env;
@@ -655,6 +684,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
             em[11] = clampf(float(amp.skew()), -3.0f, 3.0f);
         }
     }
+    FEAT_PHASE(P_ENVSPEC);
     {
         // envelope spectrum (all samples), re a Gaussian-noise envelope
         double em_all = 0.0;
@@ -675,6 +705,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- low-frequency envelope / IF spectra from box sums of the whole view
+    FEAT_PHASE(P_LO);
     {
         const int dlo = std::max(1, int(std::lround(fs_v / LO_RATE / ON_BOX)));
         const int nlo = nb8 / dlo;
@@ -742,6 +773,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- instantaneous frequency
+    FEAT_PHASE(P_IF);
     {
         float* h = out + group_offset("if_hist");
         float* im = out + group_offset("if_mom");
@@ -805,6 +837,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- carrier lines: spectra of x^2 and x^4
+    FEAT_PHASE(P_SQ);
     {
         for (int pass = 0; pass < 2; pass++) {
             // p = x^2 or x^4 (scaled by the on power so values stay moderate)
@@ -855,6 +888,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- periodicity: autocorrelations on a log lag grid
+    FEAT_PHASE(P_ACF);
     {
         // level A: segments of up to sa samples (zero-padded to 2 sa), lags <= la_max
         const int sa = vi.view >= NUM_VIEWS - 1 ? ACF_SA_FULL : ACF_SA;
@@ -1024,6 +1058,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- symbol-synchronous statistics
+    FEAT_PHASE(P_SYMFIL);
     {
         float* g = out + group_offset("sym");
         // 0. the channel filter: the detection's band only (a neighbour channel in the
@@ -1086,6 +1121,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
             FC = ffil.data();
             EC = efil.data();
         }
+        FEAT_PHASE(P_SYMRATE);
         // 1. the symbol rate: the strongest cyclic line of |dIF| (FSK: the IF steps at
         // every symbol boundary) or of the envelope (linear modulation), each line
         // against the mean of its neighbourhood (not the coloured spectrum's level)
@@ -1191,6 +1227,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
             const int k2 = int(std::lround(2.0 * (kb + dk))), kh = int(std::lround(0.5 * (kb + dk)));
             g[7] = k2 < L / 2 - 3 ? clampf(db10(line_ratio(Sb, k2)) / 20.0f, -1.0f, 3.0f) : 0.0f;
             g[8] = kh >= 3 ? clampf(db10(line_ratio(Sb, kh)) / 20.0f, -1.0f, 3.0f) : 0.0f;
+            FEAT_PHASE(P_SYMTIME);
             // 2. per block of <= SYM_BLOCK symbols the timing phase (of SYM_PHASES) whose
             // IF samples cluster most (FSK: the levels; PSK: the IF is still at the symbol
             // centres); at most SYM_MAXSYM symbols (blocks evenly picked); then at that
@@ -1307,6 +1344,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- lag products (chirps)
+    FEAT_PHASE(P_LAG);
     {
         float* g = out + group_offset("lagprod");
         static const int lags[3] = {4, 16, 64};
@@ -1341,6 +1379,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
     }
 
     // ---- time-frequency summary
+    FEAT_PHASE(P_TF);
     {
         float* g = out + group_offset("tf");
         Fft& f = plan(TF_N, false);
@@ -1441,6 +1480,7 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
         }
     }
 
+    FEAT_PHASE_END();
     for (int i = 0; i < DIM; i++) out[i] = clampf(out[i], -16.0f, 16.0f);
 }
 
