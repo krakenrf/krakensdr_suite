@@ -530,6 +530,9 @@ bool apply_plan(bool bump) {
             const bool any = grid || heim || np.res != op.res || np.overlap != op.overlap;
             np.gen = op.gen + ((any || bump) ? 1 : 0);
             np.grid_gen = op.grid_gen + (grid ? 1 : 0);
+            // the seams' remembered steps belong to the tuner pairs on the ranks: other
+            // tuners, or other hops for them, put other pairs there (a dwell change doesn't)
+            if (op.ok && (np.tuners != op.tuners || np.f0 != op.f0 || np.H != op.H)) S.seam_step.fill(NAN);
             if (grid || !active) {
                 // a new grid, or out of the mode: no data (a receiver that doesn't
                 // sweep holds none - up to 64 MB at the bin cap). A new grid also
