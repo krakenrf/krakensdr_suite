@@ -143,7 +143,17 @@ the hops into the sweep spectrum, the page shows it.
   client that does not know sweep mode treats the stream as independent
   tuners (no DoA on it). A client that knows it tests `0x2000` first.
 - Per-channel frequency = where that tuner is (as in independent mode);
-  per-channel gain = the common gain.
+  per-channel gain = the common gain (with Auto gain: that tuner's gain for
+  its hop).
+- Trial bits (round 10, 2026-11-24; with Auto gain): `0x4000` = some
+  channel of this packet was taken at a TRIAL gain (heimdall's probe a step
+  off the hop's own gain, or its search sweep, the whole plan a step down);
+  `0x10000 << ch` (channel 0 = `0x10000` ... channel 7 = `0x800000`) say
+  which. In sweep mode each tuner is on its own hop, so the client reads
+  the per-channel bit with that channel's frequency and gain, not `0x4000`
+  alone. The client's use is under *Auto gain, round 10* below; a client
+  that masks the low byte and tests the known flags one by one (every
+  consumer in the suite) is unaffected by the new bits.
 - `frequency_change_counter` + 1 per round, `current_group_index` = the
   round r the tuners are on, `retuning_in_progress` as above.
 - The guarantee the client builds on: a packet with `retuning_in_progress`
@@ -222,9 +232,14 @@ the hops into the sweep spectrum, the page shows it.
   last completed sweep's gain map. And a JSON message, the **gain map**:
   `{"sweep_gain":{"grid":G,"sweeps":k,"f0_hz":F0,"step_hz":1912500,
   "hops":H,"ceiling_db":49.6,"gain_db":[g0,...]}}` - per hop in plan order
-  (centre `f0_hz + h step_hz`) the gain its packets of the last completed
-  sweep were taken with (the 8091 header's per-channel gain), 0.1 dB, `null`
-  = not measured on this grid or the tuner's AGC. Sent to every page with a
+  (centre `f0_hz + h step_hz`) the hop's gain (the 8091 header's
+  per-channel gain of its visits; a trial visit - round 10 - never counts):
+  once heimdall has sent a trial bit, its last visit that was not a trial;
+  before that (a heimdall without the bits) the most frequent gain of its
+  last 8 visits (a tie: the higher), so a probe a step off would not be
+  taken for the hop's gain nor make the map flicker - a new gain then shows
+  once it holds half of them (4 visits); 0.1 dB,
+  `null` = not measured on this grid or the tuner's AGC. Sent to every page with a
   sweep view after a completed sweep when it differs from the last one
   sent, to a page on its first `SWEEP_VIEW`, after a grid change; in manual
   gain every value is the ceiling. JSON, not a binary type: an older page
@@ -497,7 +512,65 @@ refused; out-of-range numbers are clamped:
   by the page worker): the common gain from heimdall's 8091 header in sweep
   mode, or a `GAIN:` command; the message goes again when it changes. With
   Auto on a header's gain is that hop's: the ceiling then comes from `GAIN:`
-  and from the highest gain of a completed sweep's map.
+  and heimdall's `gain_ceiling_db` (its status; 2026-11-24 - the highest
+  gain of the map when heimdall doesn't send it: in a search sweep every
+  hop is a step below the ceiling, and taking the sweep's highest gain made
+  the ceiling, and so every hop's shift, flip every other sweep).
+- Round 10 (2026-11-24): heimdall's Auto gain seeks each hop's lowest
+  input-referred floor - probes (a visit a step off), a search phase (the
+  whole plan a step down in every other sweep), blocks below the ceiling for
+  good. The receiver: each visit is shifted by the real gain of its own
+  packets (as before); the gain map from the hops' own (non-trial) visits; the
+  ceiling from heimdall; the seam steps kept (below); heimdall's status
+  fields `gain_floor_hops`, `gain_probes`, `gain_floor_decisions`,
+  `gain_search_hops`, `floor_scatter_db`, `gain_pairs`,
+  `gain_pairs_unbracketed`, `gain_pairs_nonlinear`, `gain_step_learned`
+  (numbers) and `gain_probe_sweep` (true / false) passed through to the
+  `sweep` message as heimdall sends them - each one absent when heimdall
+  doesn't send it (an older heimdall; additive). The state goes again when
+  `gain_floor_hops` or `gain_search_hops` changes or a field appears /
+  goes; the per-sweep ones (`gain_probe_sweep`, `gain_probes`, ...) ride
+  along with the next state (any `SWEEP_` command answers with it). Also
+  `"trials_left_out"`: the up-trial visits this receiver left out of the
+  picture since it started (the receiver's own count).
+- Trial visits (round 10, the 8091 trial bit of the visit's channel; the
+  last packet of a visit decides): one at a gain ABOVE the hop's last drawn
+  visit's (by more than 0.05 dB) is not drawn - not in the stored row, so
+  not in the live frames, a full set, the overview or the waterfall, which
+  all read the store; the hop's floor for the reference is not taken from
+  it either - while the hop has a row on this grid: an up-probe may be past
+  the chain's linear range (ghost carriers, a carrier short). One at or
+  below it is drawn (a lower gain is the more linear; heimdall's search
+  sweeps are such), shifted by its own gain as every visit. A hop with no
+  row yet on the grid draws its trial whatever it is (something rather than
+  nothing). No trial visit changes the hop's gain map entry, so neither the
+  map, `gain_reduced_hops` / `gain_min_db` nor the page's amber strip move
+  for a probe. Without the bits (a heimdall that doesn't send them) every
+  visit is drawn as before. Tested (`t_trial.py`, fake heimdall: 16 hops,
+  every hop's own gain 33.8 dB under a 42.1 ceiling, sparse probes 1 in 3
+  per sweep alternating up (36.4) and down (32.8); every up-probe carries a
+  ghost carrier 40 counts at +333 kHz, every down-probe a marker at +555
+  kHz; every bin of 123 sweeps through `SWEEP_FULL`): with the bits no
+  ghost in any sweep's row, 302 down-probe markers drawn, no gain map sent
+  (16 hops at 33.8 throughout), `trials_left_out` 0 -> 480; the same
+  without the bits: ghosts in 306 hop-rows (the check sees them when they
+  are drawn); a new grid where every visit is an up-probe: every hop has a
+  row.
+- Round 10 tested with the fake heimdall (`t_probe.py`: 16 hops, 5 dongles
+  0 / 3 / -2 / 1 / 4 dB apart, their real gains off the published curve by
+  -0.4 ... +0.4 dB per 10 dB down; every bin of every sweep through
+  `SWEEP_FULL`): the search phase, sparse probes (1 visit in 6), tuner 2's
+  block at 29.7 dB for good with probes and with the search phase on top -
+  every quiet hop at the ceiling within one level step (0.47 dB) sweep to
+  sweep in 95 % of the sweeps, as manual; every block within 0.5 dB of
+  manual; the reduced block 6.2 - 6.6 dB up for 6.05 predicted (the
+  converter's floor +6.85, its unit's curve error -0.8), its probe visits'
+  floor 1.4 dB apart (a step lower on the converter's floor: real); the map
+  steady (no map at all while it doesn't change; the reduced block's one
+  change-over, then steady). Before (67a7060): the search phase flipped the
+  ceiling - quiet hops jumped 2.35 dB, the map flickered (119 maps of 2
+  kinds in 8 s) -, and the reduced block was folded into tuner 2's seam step
+  (shown at 2.75 dB, its sensitivity loss hidden).
 - The gain curve (2026-11-23): `sweep::ingest_control_reply` takes
   `"gain_real_db":[[g, real], ...]` from heimdall's status lines
   (`parse_curve`: at least 2 points, the gains rising within 0 .. 100 dB,
@@ -513,6 +586,16 @@ refused; out-of-range numbers are clamped:
   for 22.2 predicted from the real gain; five malformed curves ignored (one
   point, falling gains, a string, a string value, unclosed); manual gain
   with the curve unchanged.
+- Seam steps, round 10 (2026-11-24): a tuner pair's step taken from hops at
+  the ceiling on both sides is kept (`S.seam_step`); a side without one -
+  heimdall's search sweep, a block reduced for good - uses the kept step
+  instead of falling back to all hops (that folded the reduced hops'
+  pedestal, or the units' curve error, into the next block). Only a seam
+  never seen at the ceiling on its grid takes all of its hops. The step is
+  the dongles' and doesn't move with a gain. The pre-existing 719 | 721 MHz
+  step and the FM block's offset between runs are untouched by this (both
+  from manual, where every hop is at the ceiling: a signal or a captured
+  hop beside a seam, the 6 dB cap).
 - Seam steps with auto gain (2026-11-23, after the orchestrator's question
   whether reduced hops fool them): `evaluate` takes a tuner pair's step only
   from hops at the ceiling (their gain = the common one) on each side of the
