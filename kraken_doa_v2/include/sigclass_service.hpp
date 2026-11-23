@@ -8,9 +8,11 @@
 // A worker thread (started from main, idle while the feature is off) loops:
 // pick a tuner and its exact centre (coherent: the CH selector's antenna at
 // coherent_tuner_hz; wideband scan / independent / generic RTL-SDRs: the
-// tuners in turn, exact_tuner_hz), arm a capture, wait for it, analyze,
-// update the tracker (absolute Hz), publish {"sigclass":{...}} to the pages,
-// then sleep to keep analysis within CPU_SHARE of the wall time.
+// bands in turn - tuners on one frequency share a look, a band's first look
+// comes first -, exact_tuner_hz; sigclass_rules.hpp), arm a capture, wait
+// for it, analyze, update the band's tracker (absolute Hz), publish
+// {"sigclass":{...}} to the pages; before the next look it rests to keep
+// analysis within CPU_SHARE of the wall time.
 //
 // The tap: the data receiver thread hands every packet to on_packet() while
 // a capture is armed (armed(): one atomic load per packet otherwise). It

@@ -358,15 +358,19 @@ void clear_tracks_pub() {
 // pending broadcast meanwhile
 bool rest(int64_t ms) {
     const int64_t end = now_ms() + std::max<int64_t>(0, ms);
+    const int mode0 = operating_mode_index();
     while (!g_stop.load()) {
         const int64_t left = end - now_ms();
         if (left <= 0) return false;
         std::unique_lock<std::mutex> lk(g_mu);
-        if (g_cv.wait_for(lk, std::chrono::milliseconds(std::min<int64_t>(left, 250)), [] { return g_wake; })) {
+        if (g_cv.wait_for(lk, std::chrono::milliseconds(std::min<int64_t>(left, 100)), [] { return g_wake; })) {
             g_wake = false;
             return true;
         }
         lk.unlock();
+        // an operating-mode change: the old mode's tracks must leave the
+        // pages now, not after this rest (up to a period, 10 s)
+        if (operating_mode_index() != mode0) return true;
         flush_pending();
     }
     return true;
@@ -401,14 +405,17 @@ Result capture(int ch) {
         g_armed.store(true, std::memory_order_release);
     }
     const int64_t end = now_ms() + CAPTURE_TIMEOUT_MS;
+    const int mode0 = operating_mode_index();
     for (;;) {
         std::unique_lock<std::mutex> lk(g_mu);
-        const bool got = g_cv.wait_for(lk, std::chrono::milliseconds(250), [] { return g_done || g_wake || g_stop.load(); });
+        const bool got = g_cv.wait_for(lk, std::chrono::milliseconds(100), [] { return g_done || g_wake || g_stop.load(); });
         const bool done = g_done;
         if (!done && got) g_wake = false;   // (consumed: the caller sees g_enabled)
         lk.unlock();
         if (done) break;
-        if (got || now_ms() > end || !g_enabled.load()) {   // woken (disable / stop) or timed out
+        // woken (disable / stop), timed out, or the operating mode changed (the
+        // worker clears the old mode's tracks at once)
+        if (got || now_ms() > end || !g_enabled.load() || operating_mode_index() != mode0) {
             cancel_capture();
             std::lock_guard<std::mutex> lk2(g_cap_mu);
             return g_cap.result == CAP_CANCEL || g_cap.result == CAP_NONE ? CAP_CANCEL : g_cap.result;
@@ -724,7 +731,7 @@ void worker() {
             if (last_mode >= 0) {
                 clear_all();
                 clear_tracks_pub();
-                publish(false);
+                publish(true);   // (at once: the pages show the new mode already)
             }
             last_mode = mode;
             restart_bands();
