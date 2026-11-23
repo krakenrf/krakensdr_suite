@@ -1,6 +1,7 @@
 #include "wb_board.hpp"
 #include "app_version.hpp"
 #include "antenna_bias.hpp"
+#include "cert_status.hpp"
 #include "utils/version_info.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
@@ -596,6 +597,9 @@ string MessageBuilders::build_system_status_message() {
     // heimdall's antenna bias tees, from its control-port status (antenna_bias.hpp;
     // state "none" / "old" when it isn't there or doesn't have them)
     json << ",\"antenna_bias\":" << antbias::state_json();
+    // the web UI's certificate: names, expiry, CA, scope, notices (cert_status.hpp:
+    // cached text, rebuilt by its 60 s check and by CERT_SCOPE:)
+    if (const std::string cert = certstatus::json(); !cert.empty()) json << ",\"cert\":" << cert;
 #ifdef _WIN32
     // running from the source folder (kraken_doa_v2/Makefile in the cwd) or
     // from a package (windows/package.sh: no sources, Makefile or MSYS2) -
@@ -672,6 +676,9 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"ram_used\":" << fixed << setprecision(0) << hw.ram_used_mb;
     json << ",\"ram_total\":" << fixed << setprecision(0) << hw.ram_total_mb;
     if (!hw.model.empty()) json << ",\"model\":\"" << hw.model << "\"";   // e.g. "Raspberry Pi 5 Model B Rev 1.1"
+    // storage, alarm levels and the log settings; also writes the host log (wb_board.hpp)
+    host_log_tick(hw.cpu_temp_c, hw.cpu_usage_pct, hw.ram_used_mb, hw.ram_total_mb);
+    json << host_log_json_fields();
     json << "}";
 
     // Include GPS status (from gpsd). Field names lat/lon/heading/speed/timestamp

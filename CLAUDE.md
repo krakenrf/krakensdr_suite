@@ -312,11 +312,12 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   check out or run pull request code.
 
 ### Secrets and git
-- `doa_settings.json`, `api_token` and `server.key` stay untracked. A clean
-  filter (`scripts/git-secrets-clean`) blanks API keys and station
-  coordinates in committed settings JSON, and `.githooks/pre-push` blocks
-  secrets, recognisable map provider API keys added to any file, voice
-  codecs and any `*.exe` / `*.dll`. install.sh registers both per clone.
+- `doa_settings.json`, `api_token`, `server.key` and `krakensdr-ca.key` stay
+  untracked. A clean filter (`scripts/git-secrets-clean`) blanks API keys
+  and station coordinates in committed settings JSON, and
+  `.githooks/pre-push` blocks secrets, recognisable map provider API keys
+  added to any file, voice codecs and any `*.exe` / `*.dll`. install.sh
+  registers both per clone.
 - Voice codecs (ETSI TETRA, AMBE / mbelib, libfdk-aac for DAB+) are never
   committed or packaged (licensing); users install them themselves.
 

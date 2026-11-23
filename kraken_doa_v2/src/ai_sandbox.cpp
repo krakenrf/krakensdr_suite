@@ -14,6 +14,9 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifndef _WIN32
+#include <glob.h>
+#endif
 
 #include "digital/dig_plugin.hpp"
 #include "geo_address.hpp"   // geo::json_parse
@@ -25,6 +28,47 @@ namespace {
 
 constexpr const char* LIST = "ai/state/sandboxed_plugins.json";
 constexpr const char* TURN = "ai/state/turn";   // the running turn's start (ms)
+
+// What a sandboxed plugin must not read - its output reaches the assistant
+// (MCP): the same lists as ai/kraken_ai.py's SECRETS (relative to
+// kraken_doa's folder, the working directory; a * is a pattern) and
+// HOME_SECRETS (relative to $HOME). Keep them in step with kraken_ai.py -
+// with one difference: kraken_ai.py masks the whole of ~/.config and
+// ~/.local/share from the agent's shell; here only the credential stores in
+// them are, because programs live there too (uv's and pipx's Pythons:
+// ~/.local/share/uv/python/..., the python3 a test-signal generator runs) and
+// would not start with the folder masked.
+const char* const SECRETS[] = {"api_token", "doa_settings.json", "server.key", "krakensdr-ca.key", "*.unreadable-*",
+                               "*.retired-*", "*.key.tmp", ".make-cert.*", "ai/ai_config.json", "ai/run", "ai/state",
+                               "noise_floors.json", "rdf_session.bin"};
+const char* const HOME_SECRETS[] = {
+    ".claude", ".claude.json", ".ssh", ".gnupg", ".netrc", ".git-credentials", ".aws", ".docker", ".pki", ".mozilla",
+    ".bash_history", ".python_history", ".lesshst", ".viminfo",
+    // ~/.config: tokens of command-line tools, browsers' and apps' logins
+    ".config/claude", ".config/gh", ".config/git/credentials", ".config/hub", ".config/glab-cli", ".config/gcloud",
+    ".config/rclone", ".config/op", ".config/Bitwarden CLI", ".config/github-copilot", ".config/ngrok",
+    ".config/doctl", ".config/hcloud", ".config/sops", ".config/borg", ".config/pip", ".config/pypoetry",
+    ".config/keybase", ".config/Code", ".config/chromium", ".config/google-chrome", ".config/BraveSoftware",
+    ".config/microsoft-edge", ".config/vivaldi", ".config/opera", ".config/Signal", ".config/discord",
+    ".config/Slack", ".config/evolution", ".config/filezilla", ".config/remmina", ".config/Nextcloud",
+    ".config/pulse",
+    // ~/.local/share: keyrings, wallets, app sessions, shell histories, uv's credentials
+    ".local/share/keyrings", ".local/share/kwalletd", ".local/share/TelegramDesktop", ".local/share/evolution",
+    ".local/share/remmina", ".local/share/fish", ".local/share/recently-used.xbel", ".local/share/Trash",
+    ".local/share/uv/credentials"
+#ifdef __APPLE__
+    ,
+    "Library/Keychains", "Library/Cookies", "Library/Application Support", "Library/Safari", "Library/Mail",
+    "Library/Messages", "Library/Containers", "Library/Group Containers", "Library/Accounts", ".zsh_history",
+    ".zsh_sessions"
+#endif
+};
+#ifndef _WIN32
+// ... nor have in its environment (fine rule 21): the web API token (Docker's
+// .env, a service's environment), the MCP server's fixed token (tests), the
+// assistant bridge's token (kraken_doa started from a bridge's shell)
+const char* const SECRET_ENV[] = {"KRAKEN_API_TOKEN", "KRAKEN_AI_MCP_TOKEN", "KRAKEN_MCP_TOKEN"};
+#endif
 
 std::mutex g_mu;
 std::set<std::string> g_marked;
@@ -219,6 +263,54 @@ std::string real(const std::string& p) {
 #endif
 }
 
+#ifndef _WIN32
+// The secrets that exist right now, as real paths (a symlink's target: the
+// mount / rule then covers every way to it); is_dir per path. A pattern's
+// matches at spawn time (a key moved aside later isn't covered until the
+// plugin's next start)
+struct Secret {
+    std::string path;
+    bool dir;
+};
+std::vector<Secret> secrets_now() {
+    std::vector<Secret> v;
+    std::set<std::string> seen;
+    auto add = [&](const std::string& p) {
+        const std::string r = real(p);
+        struct stat st {};
+        if (r.empty() || r == "/" || stat(r.c_str(), &st) != 0 || !seen.insert(r).second) return;
+        v.push_back({r, S_ISDIR(st.st_mode)});
+    };
+    auto add_glob = [&](const std::string& pattern) {
+        glob_t g{};
+        if (glob(pattern.c_str(), 0, nullptr, &g) == 0)
+            for (size_t i = 0; i < g.gl_pathc; i++) add(g.gl_pathv[i]);
+        globfree(&g);
+    };
+    const std::string here = real(".");
+    if (!here.empty())
+        for (const char* s : SECRETS) {
+            const std::string p = here + "/" + s;
+            if (std::strchr(s, '*')) add_glob(p);
+            else add(p);
+        }
+    if (const char* home = std::getenv("HOME"); home && *home && std::strcmp(home, "/") != 0)
+        for (const char* s : HOME_SECRETS) add(std::string(home) + "/" + s);
+    return v;
+}
+#endif
+
+#ifdef __APPLE__
+// + no reading the secrets (a later rule wins over (allow default)): each
+// existing one by its real path, a folder with all in it
+std::string sbpl_deny_secrets() {
+    std::string p;
+    for (const Secret& sec : secrets_now())
+        p += std::string("(deny file-read* (") + (sec.dir ? "subpath " : "literal ") + sbpl_str(sec.path) + "))\n";
+    return p;
+}
+#endif
+
 }  // namespace
 
 bool available() {
@@ -240,7 +332,8 @@ bool available() {
         if (b.empty()) return false;
         std::string out;
         kproc::ExitStatus st;   // ok() = exited with 0 (the wait status 0); none if it couldn't start
-        dig::run_and_capture({b, "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-net", "--die-with-parent", "/bin/true"},
+        dig::run_and_capture({b, "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid", "--proc", "/proc",
+                              "--unshare-net", "--die-with-parent", "/bin/true"},
                              5000, &out, &st);
         if (!st.ok()) std::cerr << "AI assistant: bwrap does not work here - plugins it changed won't run" << std::endl;
         return st.ok();
@@ -358,17 +451,30 @@ std::vector<std::string> wrap(const std::vector<std::string>& argv, const std::v
         const std::string r = real(d);
         if (!r.empty()) dirs.push_back(r);
     }
-    std::vector<std::string> w = {SANDBOX_EXEC, "-p", sbpl_profile(dirs), "/usr/bin/env", "TMPDIR=" + private_tmp() + "/"};
+    // without the receiver's tokens in the environment (fine rule 21)
+    std::vector<std::string> w = {SANDBOX_EXEC, "-p", sbpl_profile(dirs) + sbpl_deny_secrets(), "/usr/bin/env"};
+    for (const char* v : SECRET_ENV) w.insert(w.end(), {"-u", v});
+    w.push_back("TMPDIR=" + private_tmp() + "/");
     w.insert(w.end(), argv.begin(), argv.end());
     return w;
 #else
     if (!available() || argv.empty()) return {};
-    std::vector<std::string> w = {bwrap_path(), "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-                                  "--tmpfs", "/tmp"};
+    // its own PID namespace: the /proc it sees holds its own processes only -
+    // not kraken_doa's (/proc/<pid>/cwd, /root, environ lead round the masks)
+    std::vector<std::string> w = {bwrap_path(), "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid", "--proc",
+                                  "/proc", "--tmpfs", "/tmp"};
+    // without the receiver's tokens in the environment (fine rule 21)
+    for (const char* v : SECRET_ENV) w.insert(w.end(), {"--unsetenv", v});
     for (const auto& d : rw) {
         const std::string r = real(d);
         if (r.empty()) continue;
         w.insert(w.end(), {"--bind", r, r});
+    }
+    // the secrets masked (after the binds: a later mount wins): a file by
+    // /dev/null, a folder by an empty tmpfs
+    for (const Secret& sec : secrets_now()) {
+        if (sec.dir) w.insert(w.end(), {"--tmpfs", sec.path});
+        else w.insert(w.end(), {"--ro-bind", "/dev/null", sec.path});
     }
     w.insert(w.end(), {"--unshare-net", "--unshare-ipc", "--die-with-parent", "--new-session", "--"});
     w.insert(w.end(), argv.begin(), argv.end());

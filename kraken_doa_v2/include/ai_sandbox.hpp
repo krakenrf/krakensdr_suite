@@ -13,8 +13,13 @@
 // process can set back, unlike the mtime) is newer than the turn's start goes
 // on it; during a turn, a changed folder counts at once (a decoder rebuilt
 // mid-turn restarts before the turn ends). Such plugins run under bwrap:
-// read-only filesystem, no network, a private /tmp. `python3 ai/kraken_ai.py
-// trust <id>` (on the Pi) takes one off the list.
+// read-only filesystem, no network, a private /tmp, their own PID namespace
+// (/proc shows their own processes only), the receiver's secrets masked
+// (kraken_ai.py's SECRETS; its HOME_SECRETS, but in ~/.config and
+// ~/.local/share only the credential stores - programs live there too) and
+// its tokens out of the environment (KRAKEN_API_TOKEN, KRAKEN_AI_MCP_TOKEN,
+// KRAKEN_MCP_TOKEN). `python3 ai/kraken_ai.py trust <id>` (on the Pi) takes
+// one off the list.
 //
 // macOS: sandbox-exec (the kernel's Seatbelt sandbox) with a profile of the
 // same rules - read-only filesystem but the folders given, no network, a

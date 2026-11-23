@@ -595,7 +595,7 @@ body.help-mode .help-banner{display:flex}
   border:1px solid var(--l4);border-radius:6px;background:rgba(11,15,20,.55);line-height:1.3}
 .top-bar .tele-chip .tele-lbl {font-family:Arial,sans-serif;font-size:10px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;
   color:var(--t0);background:var(--l2);padding:4px 7px;margin:-3px 0;border-radius:5px 0 0 5px}
-.top-bar #hw-stats {min-width:25ch;text-align:left}
+.top-bar #hw-stats {min-width:33ch;text-align:left}
 .top-bar #wb-chip-val {min-width:18ch;text-align:left}
 .top-bar .status-badges {display:flex;gap:6px}
 .top-bar .status-badge {font-size:14px;padding:5px 12px;border-radius:4px;background:var(--l3);color:#fff;font-weight:500;text-align:center;white-space:nowrap}
@@ -1234,6 +1234,31 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .sf-dlg .err:empty {display:none}
 .sf-dlg .b {display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
 .sf-dlg .b .sp {flex:1}
+/* HTTPS certificate (docs/dev/https-certificate.md): the Telemetry sheet's
+   section (certSectionHtml / certSectionUpdate) and the notice banner over
+   the top bar (certBannerRender) */
+.cert-grid {display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 12px;align-items:baseline;margin-bottom:8px}
+.cert-grid .k {color:var(--t4);font-size:11px}
+.cert-grid .v {min-width:0;overflow-wrap:anywhere;color:var(--t0)}
+.cert-grid .v .info {margin-left:6px}
+.cert-fp {font-family:monospace;font-size:11px;color:var(--t1);word-break:break-all}
+.cert-note {color:var(--warn-t);font-size:11px}
+.cert-note .ic {vertical-align:-2px}
+#cert-body > .cert-note {margin-bottom:5px}
+#cert-body a.btn {text-decoration:none;display:inline-flex;align-items:center;gap:5px}
+.cert-msg {font-size:11px;color:var(--t3);margin-top:4px}
+.cert-msg:empty {display:none}
+.cert-msg.err {color:var(--bad-t)}
+.cert-guide {flex:1 1 320px;min-width:0}
+.cert-guide summary {cursor:pointer;color:var(--ac-t);font-size:12px}
+.cert-guide dl {margin:6px 0 0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 12px;font-size:11px;color:var(--t2)}
+.cert-guide dt {color:var(--t1);font-weight:bold}
+.cert-guide dd {margin:0}
+.cert-guide code {font-size:11px;color:var(--t1);overflow-wrap:anywhere}
+#cert-banner {display:none;align-items:center;gap:8px;padding:6px 12px;font-weight:bold;font-size:13px;border-bottom:1px solid var(--warn-m);background:var(--warn-d);color:var(--warn-t2);cursor:pointer}
+#cert-banner .tx {flex:1;min-width:0}
+#cert-banner .x {cursor:pointer;padding:0 4px;color:var(--warn-t);flex:none}
+@media (max-width:600px) {.cert-grid,.cert-guide dl {grid-template-columns:minmax(0,1fr)}}
 /* ⏻ / ↻ power: the footer row, its dialog, the notice over the whole page */
 .sb-power {display:flex;align-items:center;gap:6px;margin-top:8px}
 .sb-power .btn {flex:1 1 0;min-width:0}
@@ -2777,7 +2802,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         </div>
         <canvas id="wb-trend" width="280" height="76" style="width:100%;height:76px;margin-top:6px;background:#11151b;border-radius:4px"></canvas>
         <div style="font-size:10px;color:#707883;display:flex;justify-content:space-between"><span><span style="color:#7ab8f7">■</span> current (A)</span><span>last hour</span><span><span style="color:#f4c170">■</span> temperature (°C)</span></div>
-        <button class="btn" style="width:100%;margin-top:6px" onclick="wbSheetOpen()"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg><span>Telemetry history, log &amp; CSV</span></button>
+        <button class="btn" style="width:100%;margin-top:6px" onclick="wbSheetOpen('wb')"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg><span>Telemetry history, log &amp; CSV</span></button>
       </div>
     </div>
 
@@ -3246,6 +3271,8 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
     <!-- KrakenSDR Wideband board: firmware too old / board alarm (hidden otherwise) -->
     <div id="wb-banner" style="display:none;padding:6px 12px;font-weight:bold;font-size:13px;
          border-bottom:1px solid #b3822c;background:#3a2a10;color:#fdd89e;cursor:pointer" onclick="wbOpenSection()"></div>
+    <!-- HTTPS certificate notices (system_status.cert.notices, certBannerRender; hidden otherwise) -->
+    <div id="cert-banner" role="status" onclick="certOpenSection(event)"></div>
     <!-- Top Bar -->
     <div class="top-bar">
       <!-- ☰: hides / shows the sidebar (the phone layout: its drawer) -->
@@ -3380,10 +3407,10 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       </div>
       <!-- Hardware Stats -->
       <span class="tele-group">
-        <span class="hw-stats tele-chip" id="hw-chip" style="display:none" title="The computer running this software: CPU temperature, CPU load, memory">
+        <span class="hw-stats tele-chip" id="hw-chip" style="display:none;cursor:pointer" onclick="wbSheetOpen('host')" title="The computer running this software: CPU temperature, CPU load, memory, free storage (click for the history charts, the log settings and the CSV download)">
           <span class="tele-lbl" id="hw-lbl">Host</span><span id="hw-stats"></span></span>
         <!-- Wideband board telemetry (heimdall --wideband only) -->
-        <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for the history charts, the log settings and the CSV download)" onclick="wbSheetOpen()">
+        <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for the history charts, the log settings and the CSV download)" onclick="wbSheetOpen('wb')">
           <span class="tele-lbl">WB board</span><span id="wb-chip-val"></span></span>
       </span>
       <!-- ? help mode (helpModeToggle): the next tap / click on a control shows its tooltip instead of working it -->
@@ -3830,7 +3857,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       </div>
       <div class="dl-keep">
         <div>
-          <div class="lbl" title="Finished days kept as plain files (.jsonl); 0 = everything is kept, plain, forever">Keep<span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Each finished day of each decoder stays a plain file (<code>.jsonl</code>) for <b>Keep</b> days, then is gzipped in the same folder (<code>.jsonl.gz</code>, read with <code>zcat</code> / <code>zgrep</code>) and kept for <b>Then compressed</b> days more, then deleted.<br>Keep 7, Then compressed 30: the last 7 days plain, the 30 days before those (days 8 - 37) compressed, older days deleted.<br>Then compressed 0: deleted after the Keep days. Keep 0: nothing is compressed or deleted, ever.<br>The transcripts' audio clips are kept for the Keep days only.</span></span></div>
+          <div class="lbl" title="Finished days kept as plain files (.jsonl); 0 = everything is kept, plain, forever">Keep<span class="help wide" tabindex="0" role="button" aria-label="Help">?<span class="tip">Each finished day of each decoder stays a plain file (<code>.jsonl</code>) for <b>Keep</b> days, then is gzipped in the same folder (<code>.jsonl.gz</code>, read with <code>zcat</code> / <code>zgrep</code>) and kept for <b>Then compressed</b> days more, then deleted.<br>Keep 7, Then compressed 30: the last 7 days plain, the 30 days before those (days 8 - 37) compressed, older days deleted.<br>Then compressed 0: deleted after the Keep days. Keep 0: nothing is compressed or deleted, ever.<br>A change gzips within seconds; the days it deletes go 10 minutes after the last change.<br>The transcripts' audio clips are kept for the Keep days only.</span></span></div>
           <div class="row">
             <input type="number" id="dl-days" class="dl-days" min="0" max="3650" value="7" title="Days a finished day stays a plain file: 0 - 3650; 0 = keep everything forever (nothing compressed or deleted)" onchange="dlSetDays()">
             <span class="u">days</span>
@@ -31743,6 +31770,237 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     el.title = tip.join('\n');
   }
 
+  // ---- HTTPS certificate of the web UI (docs/dev/https-certificate.md) ----
+  // system_status.cert (cert_status.cpp): {managed, scope, scope_next, host,
+  // host_ok, ca: {name, sha256, sha1, not_after} | null, server: {name, org,
+  // names, ips, not_after, days_left}, ips_now, names_not_covered (wanted
+  // names outside the CA: left out of the certificate - a new CA takes them
+  // in), host_conflict (avahi's other name after an mDNS conflict, ""),
+  // new_ca_next (a new CA asked for: CERT_NEW_CA:1, made at the next start),
+  // retired: [{name, sha256, date}], notices, scope_error, scope_seq}.
+  // Every device installs the
+  // receiver's CA once (/krakensdr-ca.crt); the scope (CERT_SCOPE:, kept in
+  // cert_options) applies at the next start. The section is part of the
+  // Telemetry sheet (wbSheetOpen inserts certSectionHtml()); the notices also
+  // show in #cert-banner on every page. An older receiver sends no cert: its
+  // section offers PR #5's download (/krakensdr.crt) only.
+  const CERT_NOTICES = ['name_changed', 'addresses_changed', 'names_not_covered', 'clock_suspect', 'expires_soon',
+                        'restart_pending', 'new_ca_pending'];
+  const CERT_BANNER_KEY = 'kraken_cert_banner_off';   // the notices last hidden (localStorage)
+  let certLatest = null, certDrawn = null, certAskSeq = -1, certMsg = '', certMsgErr = false, certBannerShown = '';
+  function certDate(s) {
+    if (!(s > 0)) return '';
+    const d = new Date(s * 1000);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  const CERT_SCOPE_TIP =
+    '<b>Narrow</b>: the receiver\'s CA can vouch only for this receiver\'s own names and 127.0.0.1. ' +
+    'Opened by its IP address, the browser warns as before.<br><br>' +
+    '<b>Wide</b>: also every .local and .lan name and every private IP address (10.x, 172.16-31.x, 192.168.x, ' +
+    '100.64-127.x): opened by IP, the page is trusted too.<br><br>' +
+    'The risk: whoever gets this receiver\'s CA key (krakensdr-ca.key) can pose as anything the scope covers to ' +
+    'every device that installed the CA - with Wide also your router, a NAS, any .local name.<br><br>' +
+    'A change applies at the next start, with a new CA: every device then installs it (and removes the old one).';
+  const CERT_NEWCA_TIP =
+    'A new certificate authority at the next start - for names it doesn\'t cover yet (another network\'s, ' +
+    'KRAKEN_CERT_NAMES added later), or when its key may have been copied.<br><br>' +
+    '<b>Every device must then install the new one</b> and remove the old one (named here after the start). ' +
+    'Until the restart this can be taken back.';
+  function certNoticeText(c, n) {
+    const s = c.server || {};
+    if (n === 'expires_soon') {
+      const d = s.days_left;
+      const when = d < 0 ? 'has expired' : d === 0 ? 'expires today' : 'expires in ' + d + ' day' + (d === 1 ? '' : 's');
+      return 'The HTTPS certificate ' + when + (c.managed ? ' - restart the receiver to renew it' : ' - replace server.crt');
+    }
+    if (n === 'name_changed')
+      return 'The host name is now ' + c.host + ', which the HTTPS certificate doesn\'t name - restart the receiver, then install its new CA on every device';
+    if (n === 'addresses_changed') {
+      const miss = (c.ips_now || []).filter(ip => !(s.ips || []).includes(ip));
+      return (miss.length > 1 ? 'Addresses ' : 'Address ') + miss.join(', ') + ' not in the HTTPS certificate - restart the receiver to add ' + (miss.length > 1 ? 'them' : 'it');
+    }
+    if (n === 'restart_pending')
+      return 'HTTPS certificate scope ' + (c.scope_next === 'wide' ? 'Wide' : 'Narrow') + ' from the next start - every device then installs the new CA';
+    if (n === 'names_not_covered') {
+      const nc = Array.isArray(c.names_not_covered) ? c.names_not_covered : [];
+      const hc = c.host_conflict || '';
+      // avahi's other name (an mDNS conflict): better a rename than a new CA
+      if (hc && nc.includes(hc))
+        return 'Another device on the network has the name ' + c.host + ', so this receiver is announced as ' + hc +
+          ' - give one of them another name (' + hc + ' is not in the HTTPS certificate)';
+      return (nc.length > 1 ? 'Names ' : 'Name ') + nc.join(', ') + ' outside this receiver\'s CA - left out of the HTTPS certificate' +
+        ' (New certificate authority below takes ' + (nc.length > 1 ? 'them' : 'it') + ' in; every device then installs it)';
+    }
+    if (n === 'new_ca_pending')
+      return 'A new certificate authority from the next start - every device then installs it and removes the old one';
+    if (n === 'clock_suspect')
+      return 'The receiver\'s clock is behind its certificate authority\'s start - kept; set the clock (NTP) and restart';
+    return '';
+  }
+  function certNotices(c) { return c && Array.isArray(c.notices) ? CERT_NOTICES.filter(n => c.notices.includes(n)) : []; }
+  // the banner: hidden with its x until the notices change (the last week
+  // of a certificate's life counts as a change)
+  function certBannerRender(c) {
+    const el = $id('cert-banner');
+    if (!el) return;
+    const ns = certNotices(c);
+    const key = ns.map(n => n === 'expires_soon' && (c.server || {}).days_left <= 7 ? n + '7' : n).join(',') + '|' + (c ? c.host : '') +
+      (ns.includes('names_not_covered') ? '|' + (c.names_not_covered || []).join(',') + '|' + (c.host_conflict || '') : '');
+    let off = '';
+    try { off = localStorage.getItem(CERT_BANNER_KEY) || ''; } catch (e) { /* private mode */ }
+    if (!ns.length || off === key) { el.style.display = 'none'; return; }
+    const html = icon('lock', 't') + '<span class="tx">' + ns.map(n => wbEsc(certNoticeText(c, n))).join(' &middot; ') + '</span>' +
+      '<span class="x" title="Hide until this changes" role="button" onclick="certBannerHide(event)">' + icon('close') + '</span>';
+    if (certBannerShown !== html) { el.innerHTML = html; certBannerShown = html; }
+    el.dataset.key = key;
+    el.style.display = 'flex';
+  }
+  function certBannerHide(e) {
+    e.stopPropagation();
+    const el = $id('cert-banner');
+    try { localStorage.setItem(CERT_BANNER_KEY, el.dataset.key || ''); } catch (err) { /* private mode */ }
+    el.style.display = 'none';
+  }
+  // the banner clicked: the Telemetry sheet at the certificate section
+  function certOpenSection() {
+    wbSheetOpen();
+    const sec = $id('wb-cert-sec');
+    if (sec) sec.scrollIntoView({block: 'nearest'});
+  }
+  // the section as the Telemetry sheet inserts it (filled: no call after the insert)
+  function certSectionHtml() {
+    certDrawn = JSON.stringify([certLatest, certMsg, certMsgErr]);
+    return '<div class="sec" id="wb-cert-sec"><h4>HTTPS certificate</h4><div id="cert-body">' + certBodyHtml(certLatest, false) + '</div></div>';
+  }
+  // per-device steps to install (and remove) the CA - a collapsible block
+  function certGuideHtml(c, open) {
+    const ca = c.ca ? '<b>' + wbEsc(c.ca.name) + '</b>' : 'the certificate';
+    const host = (c.server && c.server.names || []).find(n => /\.local$/.test(n)) || 'localhost';
+    const steps = [
+      ['Check', 'Before trusting it, compare the SHA-256 your device shows for the downloaded certificate with the one the ' +
+                'receiver printed where only you see it - run.sh\'s or install.sh\'s terminal and log, the Docker log, ' +
+                'kraken_doa\'s start - not only with this page.'],
+      ['Windows', 'Open the downloaded file → Install Certificate → Current User → Place all certificates in the following store: ' +
+                  'Trusted Root Certification Authorities → Finish → Yes. The Thumbprint (Details) is the SHA-1 above. Chrome and Edge use it after a restart.'],
+      ['macOS', 'Open the file (Keychain Access adds it) → double-click ' + ca + ' → Trust → When using this certificate: Always Trust. Safari and Chrome use it.'],
+      ['iPhone / iPad', 'In Safari: Download CA certificate → Allow. Settings → General → VPN &amp; Device Management → the profile → Install. ' +
+                        'Then Settings → General → About → Certificate Trust Settings → turn on ' + ca + '.'],
+      ['Android', 'Settings → Security → More security settings → Encryption &amp; credentials → Install a certificate → CA certificate → ' +
+                  'Install anyway → the downloaded file (the menus differ by maker: search Settings for "CA certificate"). Chrome uses it.'],
+      ['Firefox', 'Settings → Privacy &amp; Security → Certificates → View Certificates → Authorities → Import → the file → ' +
+                  'tick Trust this CA to identify websites (also Firefox on Linux; Firefox for Android: Settings → About Firefox, tap the logo 5 times → ' +
+                  'Secret Settings → Use third party CA certificates).'],
+      ['Linux', 'Chrome / Chromium: Settings → Privacy and security → Security → Manage certificates → Authorities → Import → ' +
+                'Trust this certificate for identifying websites. Everything else (curl, ...): ' +
+                '<code>sudo cp krakensdr-ca.crt /usr/local/share/ca-certificates/ &amp;&amp; sudo update-ca-certificates</code>'],
+      ['Then', 'Open the page by a name in the certificate, e.g. https://' + wbEsc(host) + (location.port ? ':' + wbEsc(location.port) : '') + '/. ' +
+               'After a new CA, remove the replaced one where it was installed (Windows: certmgr.msc; macOS: Keychain Access; ' +
+               'iPhone: VPN &amp; Device Management; Android: Encryption &amp; credentials → User credentials; Firefox: Authorities → Delete).'],
+    ];
+    return '<details class="cert-guide"' + (open ? ' open' : '') + '><summary>Install on a device</summary><dl>' +
+      steps.map(s => '<dt>' + s[0] + '</dt><dd>' + s[1] + '</dd>').join('') + '</dl></details>';
+  }
+  function certBodyHtml(c, guideOpen) {
+    const e = wbEsc;
+    // an older receiver: its own certificate to download, as PR #5 had it
+    if (!c) return '<div class="row"><a class="btn" href="krakensdr.crt" download="krakensdr.crt">' + icon('download') + '<span>Download certificate</span></a></div>';
+    const s = c.server || {}, ca = c.ca, rows = [];
+    const row = (k, v) => rows.push('<div class="k">' + k + '</div><div class="v">' + v + '</div>');
+    // (restart_pending: by the scope buttons)
+    const notes = certNotices(c).filter(n => n !== 'restart_pending').map(n => '<div class="cert-note">' + icon('warn', 't') + ' ' + e(certNoticeText(c, n)) + '</div>');
+    if (ca) {
+      row('Authority', '<b id="cert-ca-name">' + e(ca.name) + '</b><span class="info">until ' + certDate(ca.not_after) + '</span>');
+      row('SHA-256', '<span class="cert-fp" id="cert-ca-sha256">' + e(ca.sha256) + '</span>');
+      if (ca.sha1) row('SHA-1', '<span class="cert-fp" title="Windows shows it as the Thumbprint">' + e(ca.sha1) + '</span>');
+    } else if (c.managed) {
+      row('Authority', 'none yet ' + helpTip('An older self-signed certificate: the next start through run.sh or install.sh replaces it with one signed by the receiver\'s own CA, which every device installs once.'));
+    } else {
+      row('Authority', 'not managed ' + helpTip('A certificate of your own: kraken_doa and scripts/make-cert.sh never change it - its names and expiry are yours to keep current. The download is that certificate.'));
+    }
+    const names = (s.names || []).map(e).join(', '), ips = (s.ips || []).map(e).join(', ');
+    const days = typeof s.days_left === 'number' ? ' (' + s.days_left + ' day' + (s.days_left === 1 ? '' : 's') + ')' : '';
+    row('Certificate', '<span id="cert-names">' + (names || e(s.name || '')) + (ips ? ' · ' + ips : '') + '</span>' +
+        '<span class="info">until ' + certDate(s.not_after) + days + '</span>');
+    if (!c.host_ok)
+      row('Host name', e(c.host || '') + ' ' + helpTip('Only a-z, 0-9 and - make a host name a certificate can carry: this one names localhost' +
+          ' (and, with the Wide scope, the private IP addresses). Rename the computer to have its name in the certificate.'));
+    if (c.managed && ca) {
+      const seg = '<span class="wb-seg" id="cert-scope">' + [['narrow', 'Narrow'], ['wide', 'Wide']].map(o =>
+        '<button type="button" data-v="' + o[0] + '"' + (c.scope_next === o[0] ? ' class="sel"' : '') +
+        ' onclick="certScopeSet(\'' + o[0] + '\')">' + o[1] + '</button>').join('') + '</span>';
+      row('Scope', seg + ' ' + helpTip(CERT_SCOPE_TIP, true) +
+          (c.scope_next !== c.scope ? ' <span class="cert-note" id="cert-next">Applies at the next start - every device then installs the new certificate</span>' : ''));
+    }
+    if (c.managed && ca) {
+      // fine rule 29: a new CA at the next start (cert_options' new_ca=1), or taken back
+      const on = !!c.new_ca_next;
+      row('New CA', '<button type="button" class="btn" id="cert-newca" onclick="certNewCa(' + (on ? 'false' : 'true') + ')">' +
+          (on ? icon('close') + '<span>Keep the current one</span>' : icon('refresh') + '<span>New certificate authority</span>') +
+          '</button> ' + helpTip(CERT_NEWCA_TIP, true) +
+          (on ? ' <span class="cert-note" id="cert-newca-next">At the next start - every device then installs the new one</span>' : ''));
+    }
+    (c.retired || []).slice(0, 1).forEach(r =>
+      row('Replaced', e(r.name) + '<span class="info">' + e(r.date) + ' - remove it from devices</span>'));
+    const dl = ca ? '<a class="btn primary" id="cert-dl" href="krakensdr-ca.crt" download="krakensdr-ca.crt">' + icon('download') + '<span>Download CA certificate</span></a>'
+                  : '<a class="btn" id="cert-dl" href="krakensdr-ca.crt" download="krakensdr.crt">' + icon('download') + '<span>Download certificate</span></a>';
+    return notes.join('') + '<div class="cert-grid">' + rows.join('') + '</div>' +
+      '<div class="row" style="align-items:flex-start">' + dl + certGuideHtml(c, guideOpen) + '</div>' +
+      '<div class="cert-msg' + (certMsgErr ? ' err' : '') + '" id="cert-msg">' + e(certMsg) + '</div>';
+  }
+  // (re)draws the section when the sheet is open and something changed
+  function certSectionUpdate(force) {
+    const body = $id('cert-body');
+    if (!body) return;
+    const key = JSON.stringify([certLatest, certMsg, certMsgErr]);
+    if (!force && key === certDrawn) return;
+    const guide = body.querySelector('details.cert-guide');
+    certDrawn = key;
+    body.innerHTML = certBodyHtml(certLatest, guide ? guide.open : false);
+  }
+  // a Narrow / Wide button: asked first (every device reinstalls after the change)
+  async function certScopeSet(v) {
+    const c = certLatest;
+    if (!c || !c.ca || !c.managed || c.scope_next === v) return;
+    const back = v === c.scope;
+    const ok = await uiConfirm({
+      title: (v === 'wide' ? 'Wide' : 'Narrow') + ' certificate scope',
+      text: back ? 'Back to the scope in use - nothing changes at the next start'
+                 : 'Applies at the next start - every device then installs the new certificate',
+      ok: v === 'wide' ? 'Use Wide' : 'Use Narrow', tip: CERT_SCOPE_TIP});
+    if (!ok || !certLatest) return;
+    certAskSeq = typeof certLatest.scope_seq === 'number' ? certLatest.scope_seq : 0;
+    certMsg = ''; certMsgErr = false;
+    send('CERT_SCOPE:' + v);
+    certSectionUpdate();
+  }
+  // the New certificate authority button: asked first (every device reinstalls)
+  async function certNewCa(on) {
+    const c = certLatest;
+    if (!c || !c.ca || !c.managed || !!c.new_ca_next === on) return;
+    const ok = on ? await uiConfirm({title: 'New certificate authority',
+                                     text: 'At the next start - every device then installs the new certificate',
+                                     ok: 'New authority', tip: CERT_NEWCA_TIP})
+                  : true;
+    if (!ok || !certLatest) return;
+    certAskSeq = typeof certLatest.scope_seq === 'number' ? certLatest.scope_seq : 0;
+    certMsg = ''; certMsgErr = false;
+    send('CERT_NEW_CA:' + (on ? '1' : '0'));
+    certSectionUpdate();
+  }
+  // every system_status
+  function certOnStatus(c) {
+    c = c && typeof c === 'object' ? c : null;
+    // the outcome of this page's CERT_SCOPE: (a refusal: why)
+    if (c && certAskSeq >= 0 && typeof c.scope_seq === 'number' && c.scope_seq > certAskSeq) {
+      certAskSeq = -1;
+      certMsg = c.scope_error ? 'Not changed: ' + c.scope_error : '';
+      certMsgErr = !!c.scope_error;
+    }
+    certLatest = c;
+    certBannerRender(c);
+    certSectionUpdate();
+  }
+
   // ---- KrakenSDR Wideband board telemetry (system_status.wb_telemetry) ----
   // heimdall's "downconverter" object: fw {date, build, telemetry_ok, set_cmd, no_reply, lo_mode},
   // telemetry {revision, vin_v, iin_a, iin_saturated, temp_c, rh_pct,
@@ -31766,42 +32024,57 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     return s < 90 ? Math.round(s) + ' s ago' : Math.round(s / 60) + ' min ago';
   }
   // ---- Telemetry sheet: history charts (1 h / 24 h / 7 d / 30 d), log settings, CSV download ----
-  // Data: GET wb_telemetry/history?range=<s> (wb_board_history_json: <= ~600
-  // buckets of min / mean / max). The live tiles follow system_status.
+  // Two sources: the computer itself (system_status.hw, host_logs/) and the
+  // Wideband board (system_status.wb_telemetry, wb_logs/). Data: GET
+  // wb_telemetry/history?range=<s>&src=host|wb (<= ~600 buckets of min / mean /
+  // max). The live tiles follow system_status.
   const WB_RANGES = [['1 h', 3600], ['24 h', 86400], ['7 days', 604800], ['30 days', 2592000]];
-  const WB_CHARTS = [['iin', 'Input current', 'A', '#7ab8f7', 2], ['vin', 'Input voltage', 'V', '#7ccd93', 2],
-                     ['temp', 'Board temperature', '°C', '#f4c170', 1], ['rh', 'Relative humidity', '%RH', '#9a76d4', 1]];
-  let wbSheetRange = 3600, wbSheetTimer = null, wbSheetPlots = [], wbSheetLast = null, wbLatest = null;
-  function wbSheetOpen() {
-    if ($id('wb-sheet-bg')) return;
+  // series key, title, unit, colour, decimals, scale applied to the logged value, smallest y padding
+  const WB_SRC = {
+    host: [['temp', 'CPU temperature', '°C', '#f4c170', 1, 1, 0.5], ['cpu', 'CPU load', '%', '#7ab8f7', 0, 1, 2],
+           ['ram', 'Memory used', 'GB', '#9a76d4', 2, 1 / 1024, 0.02], ['disk', 'Storage free', 'GB', '#7ccd93', 2, 1 / 1024, 0.02]],
+    wb:   [['iin', 'Input current', 'A', '#7ab8f7', 2, 1, 0.05], ['vin', 'Input voltage', 'V', '#7ccd93', 2, 1, 0.02],
+           ['temp', 'Board temperature', '°C', '#f4c170', 1, 1, 0.5], ['rh', 'Relative humidity', '%RH', '#9a76d4', 1, 1, 0.5]],
+  };
+  let wbSheetRange = 3600, wbSheetSrc = 'wb', wbSheetTimer = null, wbSheetPlots = [], wbSheetLast = null, wbLatest = null, hwLatest = null;
+  function wbHostName() { const l = $id('hw-lbl'); return l && l.textContent !== 'Host' ? l.textContent : 'This computer'; }
+  function wbSheetOpen(src) {
+    if (src) wbSheetSrc = src;
+    if (wbSheetSrc === 'wb' && !wbLatest) wbSheetSrc = 'host';
+    if ($id('wb-sheet-bg')) { wbSheetSetSrc(wbSheetSrc); return; }
     const bg = document.createElement('div');
     bg.className = 'sf-dlg-bg'; bg.id = 'wb-sheet-bg';
     bg.innerHTML =
-      '<div class="wb-sheet" role="dialog" aria-label="Wideband board telemetry">' +
-        '<div class="wb-sheet-h"><span class="ttl">' + icon('plug') + '<span>Wideband board telemetry</span></span>' +
+      '<div class="wb-sheet" role="dialog" aria-label="Telemetry">' +
+        '<div class="wb-sheet-h"><span class="ttl">' + icon('chart') + '<span>Telemetry</span></span>' +
+          '<span class="wb-seg" id="wb-sheet-srcseg"><button data-s="host">' + wbEsc(wbHostName()) + '</button><button data-s="wb">WB board</button></span>' +
           '<span class="wb-seg" id="wb-sheet-seg">' + WB_RANGES.map(r => '<button data-r="' + r[1] + '">' + r[0] + '</button>').join('') + '</span>' +
           '<span class="info" id="wb-sheet-note"></span><span class="x" title="Close" onclick="wbSheetClose()">' + icon('close') + '</span></div>' +
         '<div class="wb-now" id="wb-sheet-now"></div>' +
-        '<div class="wb-charts" id="wb-sheet-charts">' + WB_CHARTS.map(c =>
-          '<div class="wb-chart"><div class="ct"><span>' + c[1] + ' (' + c[2] + ')</span><span id="wb-st-' + c[0] + '"></span></div><div id="wb-pl-' + c[0] + '"></div></div>').join('') + '</div>' +
-        '<div class="sec"><h4>Logging</h4><div class="row">' +
-          '<label><input type="checkbox" id="wb-log-en" onchange="send(\'WB_LOG_ENABLE:\' + (this.checked ? 1 : 0))"> Log to the SD card</label>' +
+        '<div class="wb-charts" id="wb-sheet-charts"></div>' +
+        '<div class="sec"><h4>Logging (both logs)</h4><div class="row">' +
+          '<label><input type="checkbox" id="wb-log-en" onchange="send(\'WB_LOG_ENABLE:\' + (this.checked ? 1 : 0))"> Log to the SD card / disk</label>' +
           '<label>One row every <select id="wb-log-per" onchange="send(\'WB_LOG_PERIOD:\' + this.value)">' +
             [[1, '1 s'], [5, '5 s'], [10, '10 s'], [30, '30 s'], [60, '1 min'], [300, '5 min']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
-          '<label>Keep <select id="wb-log-keep" onchange="send(\'WB_LOG_KEEP:\' + this.value)">' +
+          '<label title="Days a finished day stays a plain file (.csv)">Keep <select id="wb-log-keep" onchange="wbLogSetRetention(\'keep\')">' +
             [[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, '1 year']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
+          '<label id="wb-log-zipl" title="Then kept gzipped (.csv.gz) for this many more days, then deleted; none = deleted after the Keep days">Then compressed <select id="wb-log-zip" onchange="wbLogSetRetention(\'zip\')">' +
+            [[0, 'none'], [30, '30 days'], [90, '90 days'], [365, '1 year'], [1095, '3 years'], [3650, '10 years']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
+          '<span id="wb-log-tip" style="margin-left:-8px">' + helpTip(wbLogRule(7, 30), true) + '</span>' +
           '<span style="flex:1"></span>' +
-          '<button class="btn primary" id="wb-csv-btn" onclick="wbSheetCsv()">' + icon('download') + '<span>Download CSV (<span id="wb-csv-span">1 h</span>)</span></button></div>' +
+          '<button class="btn primary" id="wb-csv-btn" onclick="wbSheetCsv()">' + icon('download') + '<span>Download CSV (<span id="wb-csv-span">1 h</span>)</span></button>' +
+          '<button class="btn" id="wb-csvgz-btn" style="display:none" onclick="wbSheetCsv(true)" title="The same rows gzipped (.csv.gz): several times smaller; zcat or 7-Zip opens it">' + icon('download') + '<span>.csv.gz</span></button></div>' +
           '<div class="info" id="wb-log-info" style="margin-top:4px"></div></div>' +
         '<div class="sec"><h4>Events in this range</h4><div class="wb-ev" id="wb-sheet-ev"></div></div>' +
+        certSectionHtml() +
       '</div>';
     bg.addEventListener('mousedown', e => { if (e.target === bg) wbSheetClose(); });
     document.body.appendChild(bg);
     $id('wb-sheet-seg').addEventListener('click', e => { const r = e.target && e.target.dataset && e.target.dataset.r; if (r) wbSheetSetRange(+r); });
+    $id('wb-sheet-srcseg').addEventListener('click', e => { const v = e.target && e.target.dataset && e.target.dataset.s; if (v) wbSheetSetSrc(v); });
     document.addEventListener('keydown', wbSheetKey);
     window.addEventListener('resize', wbSheetResize);
-    wbSheetLive();
-    wbSheetSetRange(wbSheetRange);
+    wbSheetSetSrc(wbSheetSrc);
   }
   function wbSheetKey(e) { if (e.key === 'Escape') wbSheetClose(); }
   function wbSheetClose() {
@@ -31813,23 +32086,51 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     window.removeEventListener('resize', wbSheetResize);
     bg.remove();
   }
+  function wbSheetSetSrc(src) {
+    wbSheetSrc = src;
+    document.querySelectorAll('#wb-sheet-srcseg button').forEach(b => {
+      b.classList.toggle('sel', b.dataset.s === src);
+      if (b.dataset.s === 'wb') b.style.display = wbLatest ? '' : 'none';
+    });
+    wbSheetPlots.forEach(p => p.destroy()); wbSheetPlots = [];
+    $id('wb-sheet-charts').innerHTML = WB_SRC[src].map(c =>
+      '<div class="wb-chart"><div class="ct"><span>' + c[1] + ' (' + c[2] + ')</span><span id="wb-st-' + c[0] + '"></span></div><div id="wb-pl-' + c[0] + '"></div></div>').join('');
+    $id('wb-sheet-ev').innerHTML = '';
+    wbSheetLive();
+    wbSheetSetRange(wbSheetRange);
+  }
   function wbSheetSetRange(r) {
     wbSheetRange = r;
     document.querySelectorAll('#wb-sheet-seg button').forEach(b => b.classList.toggle('sel', +b.dataset.r === r));
     $id('wb-csv-span').textContent = (WB_RANGES.find(x => x[1] === r) || WB_RANGES[0])[0];
+    wbSheetLive();   // (the .csv.gz download: 7 / 30 days)
     if (wbSheetTimer) clearInterval(wbSheetTimer);
     wbSheetTimer = setInterval(wbSheetLoad, r <= 3600 ? 20000 : 120000);   // the newest bucket fills in
     wbSheetLoad();
   }
   async function wbSheetLoad() {
-    const want = wbSheetRange, note = $id('wb-sheet-note');
+    const want = wbSheetRange, src = wbSheetSrc, note = $id('wb-sheet-note');
     if (!note) return;
     try {
       const token = storedToken();
-      const r = await fetch('wb_telemetry/history?range=' + want, {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      const r = await fetch('wb_telemetry/history?range=' + want + '&src=' + src, {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const h = await r.json();
-      if (want !== wbSheetRange || !$id('wb-sheet-bg')) return;   // the range changed / the sheet closed meanwhile
+      if (want !== wbSheetRange || src !== wbSheetSrc || !$id('wb-sheet-bg')) return;   // changed / closed meanwhile
+      // the reply must be for the source asked for: a receiver without the host log answers every
+      // src with the board's history (and no "src") - its temperature is not this computer's
+      if ((h.src || 'wb') !== src) {
+        wbSheetPlots.forEach(p => p.destroy()); wbSheetPlots = [];
+        for (const c of WB_SRC[src]) {
+          const el = $id('wb-pl-' + c[0]), st = $id('wb-st-' + c[0]);
+          if (el) el.innerHTML = '<div class="empty">not supported by this receiver</div>';
+          if (st) st.textContent = '';
+        }
+        $id('wb-sheet-ev').innerHTML = '<span class="info">none</span>';
+        wbSheetLast = null;
+        note.textContent = 'This history is not supported by this receiver';
+        return;
+      }
       wbSheetLast = h;
       wbSheetDraw(h);
       note.textContent = h.rows ? h.rows.toLocaleString() + ' logged rows, one point per ' + wbDur(h.bucket_s) : 'nothing logged in this range yet';
@@ -31844,16 +32145,18 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
   function wbSheetDraw(h) {
     wbSheetPlots.forEach(p => p.destroy()); wbSheetPlots = [];
     const day = h.range_s > 86400;
-    for (const [key, , unit, color, dec] of WB_CHARTS) {
+    for (const [key, , unit, color, dec, scale, minPad] of WB_SRC[wbSheetSrc]) {
       const host = $id('wb-pl-' + key), st = $id('wb-st-' + key);
+      if (!host || !h[key]) continue;
       host.innerHTML = '';
-      const [mn, av, mx] = h[key];
+      const [mn, av, mx] = h[key].map(a => a.map(v => v === null ? null : v * scale));
       const vals = av.filter(v => v !== null);
       if (!vals.length) { host.innerHTML = '<div class="empty">no data</div>'; st.textContent = ''; continue; }
       const lo = Math.min(...mn.filter(v => v !== null)), hi = Math.max(...mx.filter(v => v !== null));
       const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
       st.innerHTML = 'min <b>' + lo.toFixed(dec) + '</b> · avg <b>' + mean.toFixed(dec) + '</b> · max <b>' + hi.toFixed(dec) + '</b> ' + unit;
-      const pad = Math.max((hi - lo) * 0.15, key === 'vin' ? 0.02 : key === 'iin' ? 0.05 : 0.5);
+      const pad = Math.max((hi - lo) * 0.15, minPad);
+      const floor0 = key === 'iin' || unit === '%' || unit === 'GB';   // quantities that cannot go below zero
       const fmtT = ts => { const d = new Date(ts * 1000); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
                            return day ? (d.getMonth() + 1) + '/' + d.getDate() + (h.range_s <= 604800 ? ' ' + hm : '') : hm; };
       const axis = {stroke: '#9aa6b4', font: '11px Arial', grid: {stroke: '#272e37', width: 1}, ticks: {stroke: '#272e37', width: 1}};
@@ -31862,7 +32165,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       const plot = new uPlot({
         width: wbSheetWidth('wb-pl-' + key), height: 190, legend: {show: false},
         cursor: {y: false, points: {size: 7, fill: color}},
-        scales: {x: {time: true}, y: {range: [lo - pad, hi + pad]}},
+        scales: {x: {time: true}, y: {range: [floor0 ? Math.max(0, lo - pad) : lo - pad, hi + pad]}},
         axes: [Object.assign({values: (u, sp) => sp.map(fmtT), space: 70}, axis),
                Object.assign({size: 52, values: (u, sp) => sp.map(v => v.toFixed(dec))}, axis)],
         series: [{}, {stroke: 'transparent', points: {show: false}},
@@ -31892,44 +32195,100 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       return '<div><span class="t">' + new Date(e.t * 1000).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'}) +
              '</span> &nbsp;' + wbEsc(e.e.replace(/^alarm_/, '').replace(/_/g, ' ')) + ': <span class="' + cls + '">' + wbEsc(e.d) + '</span></div>'; }).join('')
       : '<span class="info">none</span>';
-    const lg = h.log || {};
-    $id('wb-log-info').textContent = ((lg.bytes || 0) / 1048576).toFixed(1) + ' MB in ' + (lg.files || 0) + ' file' + (lg.files === 1 ? '' : 's') +
-      (lg.oldest ? ', from ' + lg.oldest : '');
-    $id('wb-log-info').title = 'On the receiver\'s disk, in wb_logs/: one file per day; older days are deleted';
+    wbLogInfo();
+  }
+  // The rule of the two settings with their numbers (the ? tip beside them)
+  function wbLogRule(n, m) {
+    n = Math.round(+n) || 0; m = Math.round(+m) || 0;
+    return 'Each finished day (a file of rows and one of events per UTC day, in <code>host_logs/</code> and <code>wb_logs/</code>) ' +
+      'stays a plain file (<code>.csv</code>) for <b>Keep</b> days, then is gzipped in the same folder (<code>.csv.gz</code>, read with ' +
+      '<code>zcat</code>) and kept for <b>Then compressed</b> days more, then deleted.<br>' +
+      (m > 0 ? 'Keep ' + n + ', Then compressed ' + m + ': the last ' + n + ' days plain, the ' + m + ' days before those (days ' + (n + 1) +
+               ' - ' + (n + m) + ') compressed, older days deleted.'
+             : 'Keep ' + n + ', Then compressed none: the last ' + n + ' days plain, older days deleted.') +
+      '<br>A change gzips within seconds; the days it deletes go 10 minutes after the last change. ' +
+      'Both apply to the days on disk also while logging is off. The charts and the CSV download read both.';
+  }
+  function wbLogCfg() { return (hwLatest && hwLatest.logging) || (wbLatest && wbLatest.logging) || null; }
+  // Keep / Then compressed: both in ONE command whenever either changes (one change on the receiver);
+  // a receiver without WB_LOG_RETENTION (no retention_cmd in its status) gets the one that changed
+  function wbLogSetRetention(which) {
+    const lg = wbLogCfg(), keep = $id('wb-log-keep').value, zip = $id('wb-log-zip').value;
+    if (lg && lg.retention_cmd) send('WB_LOG_RETENTION:' + keep + ',' + zip);
+    else send(which === 'zip' ? 'WB_LOG_ZIP:' + zip : 'WB_LOG_KEEP:' + keep);
+  }
+  // the log's size on the receiver's disk (the last history reply): plain + compressed
+  function wbLogInfo() {
+    const el = $id('wb-log-info'), lg = (wbSheetLast && wbSheetLast.log) || null, cfg = wbLogCfg();
+    if (!el || !lg) return;
+    const files = (lg.files || 0) + ' file' + (lg.files === 1 ? '' : 's') + (lg.oldest ? ', from ' + lg.oldest : '');
+    if (typeof lg.gz_bytes === 'number') {   // (an older receiver: no gzip, one total)
+      el.textContent = dlBytes(lg.plain_bytes) + ' plain + ' + dlBytes(lg.gz_bytes) + ' compressed in ' + files;
+      el.title = 'On the receiver\'s disk, in ' + (lg.dir || 'wb_logs') + '/: ' + (lg.plain_files || 0) + ' plain file' + (lg.plain_files === 1 ? '' : 's') +
+        ', ' + (lg.gz_files || 0) + ' gzipped' + (cfg && typeof cfg.zip_days === 'number'
+          ? '; a day stays plain for ' + cfg.keep_days + ' days, then ' + (cfg.zip_days > 0 ? 'gzipped for ' + cfg.zip_days + ' more, then deleted' : 'is deleted') : '');
+    } else {
+      el.textContent = dlBytes(lg.bytes) + ' in ' + files;
+      el.title = 'On the receiver\'s disk, in ' + (lg.dir || 'wb_logs') + '/: one file per day; older days are deleted';
+    }
   }
   // live tiles + the log settings in force (every status message while the sheet is open)
   function wbSheetLive() {
     const box = $id('wb-sheet-now');
-    if (!box || !wbLatest) return;
-    const t = wbLatest.telemetry || {}, al = t.alarms || {}, n = v => typeof v === 'number';
+    if (!box) return;
+    const n = v => typeof v === 'number';
     const tile = (k, v, sub, lvl) => '<div class="wb-tile ' + (lvl === 'alarm' || lvl === 'warn' ? lvl : '') + '"><div class="k">' + k + '</div><div class="n">' + v + '</div><div class="r">' + sub + '</div></div>';
-    box.innerHTML =
-      tile('Input current', n(t.iin_a) ? (t.iin_saturated ? '&gt; 3.2' : t.iin_a.toFixed(2)) + ' A' : '–', n(t.iin_a) && n(t.vin_v) ? (t.iin_a * t.vin_v).toFixed(1) + ' W' : '', al.iin) +
-      tile('Input voltage', n(t.vin_v) ? t.vin_v.toFixed(2) + ' V' : '–', 'before the eFuse', al.vin) +
-      tile('Board temperature', n(t.temp_c) ? t.temp_c.toFixed(1) + ' °C' : '–', t.sensor || '', al.temp) +
-      tile('Relative humidity', n(t.rh_pct) ? t.rh_pct.toFixed(0) + ' %' : '–', (t.revision ? 'Testunit_' + t.revision : '') + (wbLatest.fw && wbLatest.fw.date ? ' · fw' + wbLatest.fw.date + '.' + (wbLatest.fw.build || 0) : ''), al.rh);
-    const lg = wbLatest.logging;
-    if (lg) {
-      const en = $id('wb-log-en'), per = $id('wb-log-per'), keep = $id('wb-log-keep');
+    if (wbSheetSrc === 'host' && hwLatest) {
+      const h = hwLatest, al = h.alarms || {};
+      const thr = n(h.throttled) && h.throttled >= 0 ? ((h.throttled & 1) ? 'UNDER-VOLTAGE now' : (h.throttled & 0x10000) ? 'under-voltage has occurred since boot' : 'supply voltage ok') : '';
+      box.innerHTML =
+        tile('CPU temperature', h.cpu_temp >= 0 ? h.cpu_temp.toFixed(1) + ' °C' : '–', wbEsc(h.model || ''), al.temp) +
+        tile('CPU load', h.cpu_pct.toFixed(0) + ' %', thr, al.power) +
+        tile('Memory used', (h.ram_used / 1024).toFixed(2) + ' GB', 'of ' + (h.ram_total / 1024).toFixed(1) + ' GB (' + (100 * h.ram_used / h.ram_total).toFixed(0) + ' %)', al.ram) +
+        tile('Storage free', n(h.disk_free_mb) && h.disk_free_mb >= 0 ? (h.disk_free_mb / 1024).toFixed(1) + ' GB' : '–',
+             n(h.disk_total_mb) && h.disk_total_mb > 0 ? 'of ' + (h.disk_total_mb / 1024).toFixed(1) + ' GB (' + (100 * h.disk_free_mb / h.disk_total_mb).toFixed(0) + ' % free)' : '', al.disk);
+    } else if (wbSheetSrc === 'wb' && wbLatest) {
+      const t = wbLatest.telemetry || {}, al = t.alarms || {};
+      box.innerHTML =
+        tile('Input current', n(t.iin_a) ? (t.iin_saturated ? '&gt; 3.2' : t.iin_a.toFixed(2)) + ' A' : '–', n(t.iin_a) && n(t.vin_v) ? (t.iin_a * t.vin_v).toFixed(1) + ' W' : '', al.iin) +
+        tile('Input voltage', n(t.vin_v) ? t.vin_v.toFixed(2) + ' V' : '–', 'before the eFuse', al.vin) +
+        tile('Board temperature', n(t.temp_c) ? t.temp_c.toFixed(1) + ' °C' : '–', t.sensor || '', al.temp) +
+        tile('Relative humidity', n(t.rh_pct) ? t.rh_pct.toFixed(0) + ' %' : '–', (t.revision ? 'Testunit_' + t.revision : '') + (wbLatest.fw && wbLatest.fw.date ? ' · fw' + wbLatest.fw.date + '.' + (wbLatest.fw.build || 0) : ''), al.rh);
+    }
+    const lg = wbLogCfg();
+    if (lg && $id('wb-log-en')) {
+      const en = $id('wb-log-en'), per = $id('wb-log-per'), keep = $id('wb-log-keep'), zip = $id('wb-log-zip');
       const setSel = (el, v) => { if (document.activeElement === el) return;
         if (![...el.options].some(o => +o.value === v)) el.add(new Option(v + (el === per ? ' s' : ' days'), v));
         el.value = v; };
       if (document.activeElement !== en) en.checked = !!lg.enabled;
       setSel(per, lg.period_s); setSel(keep, lg.keep_days);
-      per.disabled = keep.disabled = !lg.enabled;
+      // Then compressed: a receiver that gzips (zip_days); an older one deletes after Keep
+      const hasZip = typeof lg.zip_days === 'number';
+      $id('wb-log-zipl').style.display = $id('wb-log-tip').style.display = hasZip ? '' : 'none';
+      if (hasZip) {
+        setSel(zip, lg.zip_days);
+        const rule = wbLogRule(lg.keep_days, lg.zip_days), tip = $id('wb-log-tip').querySelector('.tip');
+        if (tip && tip.dataset.rule !== rule) { tip.innerHTML = rule; tip.dataset.rule = rule; }
+      }
+      // (Keep / Then compressed apply to the days on disk also while logging is off; an older
+      // receiver only applied them when it wrote a row)
+      per.disabled = !lg.enabled;
+      keep.disabled = zip.disabled = !lg.enabled && !hasZip;
+      $id('wb-csvgz-btn').style.display = hasZip && wbSheetRange > 86400 ? '' : 'none';
     }
   }
-  async function wbSheetCsv() {
-    const btn = $id('wb-csv-btn'), note = $id('wb-sheet-note');
+  async function wbSheetCsv(gz) {
+    const btn = $id(gz ? 'wb-csvgz-btn' : 'wb-csv-btn'), note = $id('wb-sheet-note');
     btn.disabled = true;
     try {
       const token = storedToken();
-      const r = await fetch('wb_telemetry/export.csv?range=' + wbSheetRange, {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      const r = await fetch('wb_telemetry/export.csv?range=' + wbSheetRange + '&src=' + wbSheetSrc + (gz ? '&gz=1' : ''), {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
       const url = URL.createObjectURL(await r.blob());
       const a = document.createElement('a');
-      a.href = url; a.download = m ? m[1] : 'wb_telemetry.csv';
+      a.href = url; a.download = m ? m[1] : wbSheetSrc + '_telemetry.csv' + (gz ? '.gz' : '');
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e) {
@@ -31938,18 +32297,20 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     btn.disabled = false;
   }
 
+  // https://<receiver>:8080/#wb-telemetry or #host-telemetry opens the sheet
+  // directly (a bookmark); "=86400" after it picks the range in seconds
   let wbHashOpened = false;
+  function wbHashOpen() {
+    const m = /^#(wb|host)-telemetry(?:=(\d+))?$/.exec(location.hash);
+    if (wbHashOpened || !m || (m[1] === 'wb' && !wbLatest) || (m[1] === 'host' && !hwLatest)) return;
+    wbHashOpened = true;
+    if (m[2] && WB_RANGES.some(r => r[1] === +m[2])) wbSheetRange = +m[2];
+    wbSheetOpen(m[1]);
+  }
   function updateWbTelemetry(wb) {
     wbLatest = wb || null;
     wbSheetLive();
-    // https://<receiver>:8080/#wb-telemetry opens the sheet directly (a bookmark)
-    // (#wb-telemetry=86400 with that range in seconds)
-    const wbHash = /^#wb-telemetry(?:=(\d+))?$/.exec(location.hash);
-    if (wb && !wbHashOpened && wbHash) {
-      wbHashOpened = true;
-      if (wbHash[1] && WB_RANGES.some(r => r[1] === +wbHash[1])) wbSheetRange = +wbHash[1];
-      wbSheetOpen();
-    }
+    wbHashOpen();
     const sec = $id('wb-section'), chip = $id('wb-chip'), banner = $id('wb-banner');
     if (!sec) return;
     if (!wb) {
@@ -32086,6 +32447,8 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     sbVersionRender(status.version, status.heimdall_version);
     // the antenna bias tees (BIAS TEE; absent from an older kraken_doa)
     biasOnState(status.antenna_bias);
+    // the HTTPS certificate: the Telemetry sheet's section and the notices (absent from an older kraken_doa)
+    certOnStatus(status.cert);
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
     // server never recalibrates automatically there: warn when uncalibrated
     // or when a settings change made the calibration stale.
@@ -32137,12 +32500,21 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         }
         parts.push('CPU ' + h.cpu_pct.toFixed(0) + '%');
         parts.push('RAM ' + (h.ram_used/1024).toFixed(1) + '/' + (h.ram_total/1024).toFixed(1) + 'G');
+        if (typeof h.disk_free_mb === 'number' && h.disk_free_mb >= 0) parts.push((/Raspberry/.test(h.model || '') ? 'SD ' : 'Disk ') + (h.disk_free_mb / 1024).toFixed(h.disk_free_mb < 10240 ? 1 : 0) + 'G');
         el.innerHTML = parts.join(' \u2502 ');
         // name the computer: "RPi 5" on a Raspberry Pi, "Host" elsewhere
         const m = /Raspberry Pi (?:Compute Module )?(\d+)/.exec(h.model || '');
         $id('hw-lbl').textContent = m ? 'RPi ' + m[1] : 'Host';
-        $id('hw-chip').title = (h.model ? h.model + ' - ' : '') + 'the computer running this software: CPU temperature, CPU load, memory';
+        $id('hw-chip').title = (h.model ? h.model + ' - ' : '') + 'CPU temperature, CPU load, memory, free storage (click for the history charts, the log settings and the CSV download)';
+        // worst alarm (temperature / memory / storage / supply voltage) colours the field
+        const hal = Object.values(h.alarms || {});
+        const hworst = hal.includes('alarm') ? 'alarm' : hal.includes('warn') ? 'warn' : 'ok';
+        $id('hw-chip').style.borderColor = hworst === 'alarm' ? '#d8625c' : hworst === 'warn' ? '#e3a842' : '';
+        el.style.color = hworst === 'alarm' ? '#d8625c' : hworst === 'warn' ? '#e3a842' : '';
         $id('hw-chip').style.display = '';
+        hwLatest = h;
+        wbSheetLive();
+        wbHashOpen();
       }
     }
 

@@ -24,8 +24,9 @@ agent, not only Claude. Read them before changing code:
   it (a plugin folder with its own `LICENSE` is the one exception - see
   `../CLAUDE.md`).
 - Never commit `doa_settings.json`, `api_token`, `server.key` /
-  `server.crt`, voice codecs, or binaries. The git pre-push hook checks for
-  them once `../install.sh` has registered it.
+  `server.crt`, `krakensdr-ca.key` (the receiver's CA key), voice codecs, or
+  binaries. The git pre-push hook checks for them once `../install.sh` has
+  registered it.
 - Treat `uWebSockets/`, `liquid-dsp/` and `external/pffft/` as read-only:
   they are pinned or vendored.
 

@@ -1,10 +1,13 @@
 # Allow-list: only what the image build needs. Everything else stays out of
 # the build context - in particular the station secrets (doa_settings.json
 # holds the KrakenPro API key and the station location, api_token,
-# server.key) and the 1.4 GB local uWebSockets clones (the Dockerfile fetches
-# a pinned copy). librtlsdr is cloned at a pinned commit by the Dockerfile too.
+# server.key, krakensdr-ca.key) and the 1.4 GB local uWebSockets clones (the
+# Dockerfile fetches a pinned copy). librtlsdr is cloned at a pinned commit
+# by the Dockerfile too.
 *
 !docker/
+# the web UI's HTTPS certificate, made at every start (docker/entrypoint.sh)
+!scripts/make-cert.sh
 # licences + notices (scripts/collect-licenses.sh -> /usr/share/doc/krakensdr)
 !LICENSE
 !scripts/collect-licenses.sh

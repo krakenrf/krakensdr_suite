@@ -44,7 +44,7 @@ ifeq ($(WINDOWS),1)
     # winpthread / OpenSSL / opus / zlib / sqlite / libuv + the system libs
     LDFLAGS = -static
     LIBS = -lopus -lssl -lcrypto -lz -lsqlite3 $(shell pkg-config --static --libs libuv) \
-           -lws2_32 -lcrypt32 -lbcrypt -lgdi32 -luser32 -ladvapi32 -lwinmm
+           -lws2_32 -lcrypt32 -lbcrypt -lgdi32 -luser32 -ladvapi32 -lwinmm -liphlpapi
 endif
 
 # macOS (Apple clang + Homebrew: eigen, openssl@3, opus, cmake, pkg-config -
@@ -188,6 +188,7 @@ UTILS_SRCS = \
 	$(SRCDIR)/utils/status_dashboard.cpp \
 	$(SRCDIR)/utils/iq_converter.cpp \
 	$(SRCDIR)/utils/disk_util.cpp \
+	$(SRCDIR)/utils/log_retention.cpp \
 	$(SRCDIR)/utils/platform.cpp \
 	$(SRCDIR)/utils/fs_compat.cpp \
 	$(SRCDIR)/utils/tls_compat.cpp \
@@ -236,7 +237,8 @@ APP_SRCS = \
 	$(SRCDIR)/recorder_audio.cpp \
 	$(SRCDIR)/power.cpp \
 	$(SRCDIR)/antenna_bias.cpp \
-	$(SRCDIR)/sweep.cpp
+	$(SRCDIR)/sweep.cpp \
+	$(SRCDIR)/cert_status.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 

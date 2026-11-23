@@ -16,20 +16,49 @@ do by speaking this protocol.
 
 ---
 
-## 1. TLS / certificate (TOFU)
+## 1. TLS / certificate (pin the key or the receiver's CA)
 
-Port 8080 uses a **self-signed** certificate (`server.crt`, `CN=krakensdr`).
+Port 8080's certificate is signed by the receiver's own small certificate
+authority (`docs/dev/https-certificate.md`): `krakensdr-ca.crt` (CN
+`KrakenSDR <host> CA <date>`, `O=KrakenSDR receiver`, name-constrained to
+the receiver's names) signs `server.crt` (`CN=<host>`, `O=KrakenSDR
+receiver`; the file holds the server certificate followed by the CA).
 
-- The certificate is generated per install (`server.key` is not shipped), so
-  its fingerprint **differs between devices** — you cannot ship a fixed
-  certificate pin in the app.
-- Use **trust-on-first-use (TOFU)**: accept the certificate on first connect,
-  remember its fingerprint, and pin it thereafter (the SSH model).
+- Both are made per receiver (no key is shipped), so there is no fixed pin
+  to put in the app: use **trust-on-first-use (TOFU)** - accept on the first
+  connect, remember, compare from then on (the SSH model).
+- **Remember the server key or the CA, never the server certificate.** The
+  server certificate is re-issued whenever the receiver's names / addresses
+  change or it gets old (825 days, renewed 60 days before), always for the
+  SAME key (`server.key` is kept). Its fingerprint therefore changes; these
+  don't:
+  - the **SPKI pin**: SHA-256 of the server certificate's
+    SubjectPublicKeyInfo - the same across every re-issue:
+    `openssl x509 -in server.crt -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | base64`
+    (the HPKP / OkHttp `CertificatePinner` "sha256/..." form);
+  - or the **CA certificate**: `GET https://<host>:8080/krakensdr-ca.crt`
+    (no token, `application/x-x509-ca-cert`), trusted as the only anchor
+    for this receiver. It changes only when the receiver makes a new CA (a
+    new host name, the narrow / wide scope switched, about every nine
+    years, or by hand) - the user then installs the new one on every device
+    as well, so treat a new CA like a first connect (ask the user).
+  A changed SPKI with the same CA means the receiver's key was replaced
+  (rare: deleted by hand); a changed SPKI and CA = treat as a different
+  receiver.
   - **iOS:** add an ATS exception for the host and implement
-    `URLSessionDelegate urlSession(_:didReceive:completionHandler:)` to evaluate
-    the server trust yourself (store/compare the leaf cert on first use).
-  - **Android:** supply a `network-security-config` / custom `X509TrustManager`
-    that trusts the remembered certificate.
+    `URLSessionDelegate urlSession(_:didReceive:completionHandler:)`: compare
+    the SPKI hash of the leaf (`SecTrustCopyCertificateChain`,
+    `SecCertificateCopyKey`, `SecKeyCopyExternalRepresentation` + the SPKI
+    header for the key type), or set the stored CA as the only anchor
+    (`SecTrustSetAnchorCertificates` + `SecTrustSetAnchorCertificatesOnly`)
+    and evaluate.
+  - **Android:** OkHttp `CertificatePinner` with the `sha256/` SPKI pin, or a
+    `network-security-config` / custom `X509TrustManager` whose trust anchor
+    is the stored CA.
+- Host name checks: the certificate names `<host>`, `<host>.local`,
+  `<host>.<search domain>`, `localhost` and, in the receiver's wide scope
+  only, its private LAN addresses; connecting by IP in narrow scope fails a
+  normal host name check (with a pin, skip the host name check, not the pin).
 
 ---
 
@@ -391,4 +420,5 @@ printf 'AUTH:%s\nSUBSCRIBE:FFT,DOA\nDOA:1\n' "$TOKEN" \
   | websocat --insecure wss://<host>:8080/ws
 ```
 
-(`--insecure` accepts the self-signed cert for testing — a real app uses TOFU.)
+(`--insecure` skips the certificate check for testing — a real app pins the
+server key or the receiver's CA, section 1.)
