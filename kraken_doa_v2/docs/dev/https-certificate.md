@@ -69,10 +69,11 @@ the whole certificate, including its other names.
   scope in `cert_options` differs from the CA's; it expires within 365
   days; `--new-ca`. Every device must then install the new one.
 - Optional: the same CA on several receivers - copy `krakensdr-ca.key` /
-  `.crt` from one to the others before their first start (or replace and
-  `--force`); one install then covers them all, as long as each receiver's
+  `.crt` from one to the others (before their first start, or later: the
+  next start re-issues the server certificate from the copied CA - Fine
+  rule 22); one install then covers them all, as long as each receiver's
   names are inside its constraints (wide scope, or `KRAKEN_CERT_NAMES` on
-  the first).
+  the first, made with `--new-ca`).
 
 ## The server certificate *(contract)*
 
@@ -197,6 +198,14 @@ change goes into both and this list):
     `*.key.tmp`, the script's `.make-cert.*` folders are gitignored, blocked
     by `.githooks/pre-push`, and denied to the AI assistant
     (`kraken_doa_v2/ai/kraken_ai.py` `SECRETS`, its sandbox's denyRead).
+22. **Managed also after the CA was replaced or deleted**: besides rule 15
+    and "verifies against `krakensdr-ca.crt`", a `server.crt` is ours when it
+    verifies (no time check) against one of the folder's
+    `krakensdr-ca.*.retired.crt`, or when BOTH its subject and its issuer
+    have `O=KrakenSDR receiver` and its issuer's CN starts `KrakenSDR ` and
+    contains ` CA ` (a CA of ours that was deleted, or replaced by a copied
+    one - sharing a CA, "The CA"). Such a pair is re-issued from the current
+    CA (`issued`, or `ca-created` when there is none), keeping `server.key`.
 
 ## make-cert.sh *(contract)*
 
