@@ -84,9 +84,9 @@ the whole certificate, including its other names.
   usable host name); `basicConstraints = critical, CA:FALSE`,
   `keyUsage = critical, digitalSignature, keyEncipherment`,
   `extendedKeyUsage = serverAuth`, authority / subject key identifiers,
-  `subjectAltName` = the names + IPs per scope. Validity 825 days (the most
-  Apple accepts for a server certificate trusted through a user-installed
-  CA).
+  `subjectAltName` = the names + IPs per scope. Validity 824 days (one under
+  the 825 Apple accepts for a server certificate trusted through a
+  user-installed CA; Fine rule 33).
 - Re-issued with the SAME key when: its names / IPs differ from the wanted
   ones; fewer than 60 days left (or expired); it does not verify against the
   current CA; `--force`.
@@ -137,8 +137,8 @@ change goes into both and this list):
    without `lo`, 127/8 and 169.254/16, and only those inside the CA's
    private ranges (10/8, 172.16/12, 192.168/16, 100.64/10); plus 127.0.0.1
    and ::1. Compared with the server certificate as a set.
-9. **Validity**: notBefore = now - 1 h; notAfter = notBefore + 825 days
-   (server) / 3650 days (CA). Re-issue below 60 days left (or expired); a
+9. **Validity**: notBefore = now - 1 h; notAfter = notBefore + 824 days
+   (server; rule 33) / 3650 days (CA). Re-issue below 60 days left (or expired); a
    new CA below 365 days left.
 10. **Verification** for "issued by our CA" / "managed": chain and signature
     WITHOUT the time check (`-no_check_time`); time is only the rule above.
@@ -209,6 +209,66 @@ change goes into both and this list):
     contains ` CA ` (a CA of ours that was deleted, or replaced by a copied
     one - sharing a CA, "The CA"). Such a pair is re-issued from the current
     CA (`issued`, or `ca-created` when there is none), keeping `server.key`.
+23. **Clock**: a NEW pair is checked without the time check (the makers set
+    the dates). A server certificate whose notBefore is more than one day
+    ahead of the clock is re-issued (harmless either way: the same CA). A CA
+    whose notBefore is more than one day ahead is replaced ONLY when the
+    clock is known to be synchronized (Linux: `timedatectl show -p
+    NTPSynchronized` = yes, or the kernel's adjtimex says synchronized;
+    Windows / macOS: assume yes); otherwise it is kept and the status carries
+    the notice `clock_suspect` (a Pi without a real-time clock boots with an
+    old time - that must never make every device install a new CA). A CA
+    whose notBefore is ahead never makes a run fail.
+24. **avahi's conflict name** (`<hostname>-N` while another device has the
+    name): the OWN names (rule 18) are the system host name's (`<hostname>`,
+    `<hostname>.local`); the avahi name is an extra name - in the server
+    certificate when the CA covers it, else reported by `names_not_covered`
+    with a notice that suggests renaming the receiver. A conflict name that
+    comes and goes never makes a new CA.
+25. **Retired and saved copies hold certificates only**: when a CA
+    certificate is retired, or a `server.crt` saved (`.replaced-`), only its
+    CERTIFICATE blocks are written (0644); a private key found in such a file
+    is moved aside like rule 12 (`<name>.unreadable-...`, 0600).
+26. **The CA's SHA-256 out of band**: whenever a CA is created - and at every
+    start - its SHA-256 fingerprint is printed where only the owner sees it:
+    run.sh's / install.sh's terminal and log, the Docker log, kraken_doa's
+    startup line; the page and README tell users to compare it with the one
+    their device shows before trusting it.
+27. **Keys uSockets can load**: a key is usable only as PEM (`-inform PEM`),
+    unencrypted; any `ENCRYPTED PRIVATE KEY` / `Proc-Type: 4,ENCRYPTED` key,
+    or a DER key, is "unparseable" in rule 12's sense (moved aside when
+    `server.crt` is ours; a user's own pair: not managed).
+28. **The generator on every start**: kraken_doa runs the in-process
+    generator's full logic at EVERY start on every platform (normally after
+    the script: then it says `kept`), so a receiver started without run.sh /
+    the entrypoint, or without the openssl CLI, still renews and applies the
+    scope / a new-CA request.
+29. **A new CA on request**: `cert_options` may carry a line `new_ca=1`
+    (written by kraken_doa's `CERT_NEW_CA:` - a page socket only, refused
+    during a playback, like `CERT_SCOPE:`); the next run of either maker
+    makes a new CA (taking in `names_not_covered`) and removes the line. The
+    page offers it ("New certificate authority", with the reinstall warning
+    in its `?` tip); notices point there, not at the script.
+30. **Search domains**: `<host>.<d>` is a wanted name only for a search
+    domain the Host allow-list trusts (lan, home, localdomain, home.arpa) -
+    the same set as rule 20 - read from the LAST `search` line (what glibc
+    uses) and the `domain` line. Any other (e.g. `fritz.box`) is named only
+    through `KRAKEN_CERT_NAMES` (which rule 20 also allow-lists). A hostile
+    `search com` thus never puts `krakensdr.com` in a CA.
+31. **The CA key away**: a missing `krakensdr-ca.key` beside a present,
+    valid CA certificate and a server certificate that needs nothing is
+    `kept` (a key taken offline); only when a re-issue is due does the
+    missing key make a new CA (`ca-created`, with that reason).
+32. **A CA key not ours is never destroyed**: retiring a CA whose subject
+    lacks `O=KrakenSDR receiver` (a user's own CA put at our file names)
+    keeps its key as `krakensdr-ca.key.retired-YYYYMMDD` (0600) instead of
+    deleting it.
+33. **Validity 824 days** for the server certificate (one day under Apple's
+    825 limit), notBefore = now - 1 h.
+34. **Housekeeping**: a run sweeps the script's / generator's stage folders
+    (`.make-cert.*`) older than one hour, under the lock;
+    `names_not_covered` is not reported when the next start makes a new CA
+    anyway.
 
 ## make-cert.sh *(contract)*
 
