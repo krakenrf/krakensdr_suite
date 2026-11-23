@@ -646,6 +646,10 @@ std::string real_gain_json() {
 // curve: a whole band saturated; the gross test needs no fine reference).
 constexpr float AG_LIN_DEV = 1.5f;        // dB: a deviation from the step at least this ...
 constexpr float AG_LIN_REL = 0.5f;        // ... (the power: or this share of the step) is non-linear
+// compression: short by this share of the step (with 0.5, 417.43 MHz on one
+// tuner sat at 36.4 following 1.5 of 2.9 dB - 1.4 short, inside 1.45; a
+// linear hop with the curve 1.3 dB long on that step still passes 1.3)
+constexpr float AG_LIN_REL_COMP = 0.45f;
 constexpr float AG_LIN_DEV_UP = 1.0f;     // dB: an up-probe's power compressed this much (or a quarter of the step) is non-linear
 constexpr float AG_LIN_CURVE_SLACK = 1.0f; // dB more while the reference is the curve (nothing learned yet)
 constexpr float AG_LIN_GROSS = 4.0f;      // dB: a floor this far off decides alone ...
@@ -770,7 +774,13 @@ int floor_wanted(int t, uint32_t hz, int clip_g) {
     e.probe_sweep = sweep_idx;
     e.probe_g = -999;
     // a probe needs the baseline visit just before it and none pending
-    if (e.base_sweep != sweep_idx - 1 || e.pend_g != -999) return base_g;
+    if (e.base_sweep != sweep_idx - 1 || e.pend_g != -999) {
+        static const bool trace = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
+        if (trace && e.agree_n > 0)
+            std::cout << "AGW " << sweep_idx << " hz " << hz << " base " << base_g << " agree " << e.agree_n << " base_sweep "
+                      << e.base_sweep << " pend " << e.pend_g << std::endl;
+        return base_g;
+    }
     bool due = false, down = true;
     int step = AG_FLOOR_STEP;
     // Up-probes stay under the clipping rule's gain - except in the up search
@@ -802,8 +812,22 @@ int floor_wanted(int t, uint32_t hz, int clip_g) {
     if (!due) return base_g;
     int pg;
     const float rb = real_gain_db(t, base_g);
-    if (e.agree_n > 0 && e.agree_g != -999) {
+    bool again = e.agree_n > 0 && e.agree_g != -999;
+    if (again) {
         pg = std::min(e.agree_dir > 0 ? clip_g : ceil_q, e.agree_g);   // the same probe again (the second pair)
+        // ... unless the hop's gain has moved past it meanwhile (the clipping
+        // rule stepped down onto it): then the agreement is void - on the
+        // hardware it asked for a probe at the hop's own gain forever, and
+        // 417.43 MHz never had another pair
+        if ((e.agree_dir > 0 && pg >= base_g) || (e.agree_dir < 0 && pg <= base_g)) {
+            e.agree_n = 0;
+            e.agree_dir = 0;
+            e.agree_g = -999;
+            again = false;
+            down = e.search ? !e.up_search : (!e.next_up || base_g >= ceil_q);
+        }
+    }
+    if (again) {
     } else if (down) {
         // at least AG_LIN_MIN_STEP real dB down (the list has steps of 0 dB)
         // (a smaller step when the big one would not be testable: the quantity
@@ -1031,8 +1055,8 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
     const float slack_p = learned_p ? 0.0f : AG_LIN_CURVE_SLACK, slack_f = learned_f ? 0.0f : AG_LIN_CURVE_SLACK;
     const float tol_p = std::max(AG_LIN_DEV, AG_LIN_REL * r) + slack_p;
     const float tol_f = AG_LIN_DEV + slack_f;
-    float tol_cp = std::min(AG_LIN_DEV + slack_p, AG_LIN_REL * r);
-    float tol_cf = std::min(AG_LIN_DEV + slack_f, AG_LIN_REL * rf);
+    float tol_cp = std::min(AG_LIN_DEV + slack_p, AG_LIN_REL_COMP * r);
+    float tol_cf = std::min(AG_LIN_DEV + slack_f, AG_LIN_REL_COMP * rf);
     if (dir < 0) {
         tol_cp = std::min(tol_cp, std::max(AG_LIN_DEV_UP, 0.5f * AG_LIN_REL * r) + slack_p);
         tol_cf = std::min(tol_cf, AG_LIN_DEV_UP + slack_f);
@@ -1090,7 +1114,18 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
         return false;
     };
     auto reset = [&]() { e.agree_n = 0; e.agree_dir = 0; e.agree_g = -999; };
-    if (unknown && !nonlinear) {
+    // An up-probe where nothing can be tested (no quantity both over the
+    // converter and bracketed and steady) and that is not non-linear: the clip
+    // test alone decides, as before this rule - a raise of the clipping rule
+    // must not be lost because the hop's content moves by itself (415.11 MHz
+    // on the hardware: cut to 8.7 dB by a heavy clip, its power alternating
+    // -20.3 / -17.4 dBFS from visit to visit, every up-probe without a
+    // verdict - it stayed at 8.7 for the whole run)
+    // ("can't be tested": each quantity under the validity level or unsteady -
+    // not merely this pair's bracket failing: 417.43 MHz, its power pinned
+    // but one bracket off, went up 33.8 -> 38.6 by the clip test alone)
+    const bool up_untestable = dir < 0 && !nonlinear && (!lvl_p || !steady_p) && (!lvl_f || !steady_f);
+    if (unknown && !nonlinear && !up_untestable) {
         e.bracket_hist |= 1u;
         floor_no_verdict(e);
         return;
@@ -1100,7 +1135,7 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
     // gross pair decides alone only when the last 4 held
     const int nb = std::min(e.bracket_n, 8);
     const int fails = std::popcount(static_cast<unsigned>(e.bracket_hist & ((1u << nb) - 1u)));
-    if (!(nb >= 1 && fails * 4 <= nb)) { floor_no_verdict(e); return; }
+    if (!(nb >= 1 && fails * 4 <= nb) && !up_untestable) { floor_no_verdict(e); return; }
     const bool alone_ok = nb >= 4 && (e.bracket_hist & 0x0Fu) == 0;
     e.no_verdict = 0;
     if (dir > 0) {   // the step from the probe up to the hop's gain
@@ -1124,7 +1159,15 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
             reset();
             e.next_up = true;
             if (!e.search) e.hold = std::min(e.hold * 2, AG_PROBE_HOLD_MAX);   // it confirmed where the hop is
-            if (e.search && !e.up_search) {
+            if (e.search && !e.up_search && e.step > AG_FLOOR_STEP) {
+                // linear over a BIG step: compression that a 6 dB step hides
+                // inside its tolerance (min(1.5 dB + slack, half the step))
+                // still shows over a small one - the search goes on with a
+                // small step from here (on the hardware 417.43 MHz passed
+                // 37.2 -> 29.7 following 4.5 of 6.7 dB and then waited 26 - 50
+                // sweeps for the settled probes to find 37.2 -> 33.8 non-linear)
+                e.step = AG_FLOOR_STEP;
+            } else if (e.search && !e.up_search) {
                 // linear below: the hop's gain holds - after a big step down,
                 // back up by small steps while that stays linear (the bisection)
                 if (e.moved_big) {
@@ -1137,7 +1180,9 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
             }
         }
     } else {         // the step from the hop's gain up to the probe
-        const bool none_valid = !lvl_p && !lvl_f;   // everything near the converter's own noise: more gain can only help
+        // everything near the converter's own noise (more gain can only help),
+        // or nothing testable: one clean pair is enough
+        const bool none_valid = (!lvl_p && !lvl_f) || up_untestable;
         if (!clipped && !nonlinear && (none_valid || agreed())) {
             e.last_up = true;
             e.hold = 1;
@@ -1228,6 +1273,11 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
         e.pend_clipped = clipped || (a.gain > base_g && peak_dbfs > AG_RAISE_HEADROOM_DBFS);
         return;
     }
+    static const bool trace_l = std::getenv("HEIMDALL_AG_TRACE") != nullptr;
+    if (trace_l && e.agree_n > 0)
+        std::cout << "AGL " << sweep_idx << " hz " << a.hz << " gain " << a.gain << " base " << base_g << " clip " << clip_g
+                  << " share " << static_cast<double>(a.clipped) / a.values << " probe " << e.probe_g << "/" << e.probe_sweep
+                  << " pend " << e.pend_g << std::endl;
     if (a.gain != base_g) {
         // neither (the gain changed meanwhile: the clipping rule stepped) - a
         // pending probe is cancelled, and that is a pair without a verdict

@@ -1580,8 +1580,12 @@ clipping rule stays the fast guard and is the search's ceiling.
   - Products (more than the step): the power off the reference by
     max(1.5 dB, half the step), the floor by 1.5 dB.
   - Compression (less than the step): short by the SMALLER of 1.5 dB and
-    half the step, for the power and the floor alike. Compression adds up
+    0.45 of the step, for the power and the floor alike. Compression adds up
     over a step, so a bigger step earns no bigger tolerance.
+    - 0.45, not half: with half, 417.43 MHz on one tuner (1aa6ecc + the
+      fixes, hardware) sat at 36.4 dB following 1.5 of 2.9 dB, 1.4 short and
+      inside 1.45. A linear hop with the curve 1.3 dB long on that step
+      still passes.
     - The orchestrator's 405-428 MHz run on 62b62c1 had max(): 37.2 -> 33.8
       following 0.7 of 2.9 dB read linear, and the hop stayed 2.8 dB
       compressed (carrier over floor 63.5 against 69.3 at 33.8).
@@ -1600,6 +1604,31 @@ clipping rule stays the fast guard and is the search's ceiling.
   - DOWN: two agreeing non-linear pairs (the same probe, deviations within
     1.5 dB), or one gross pair. The search then goes on down by 6 dB steps
     while gross, else 3 dB steps.
+  - A down search whose 6 dB probe is linear does not end there. It goes
+    on from the same gain with the 3 dB step: compression that the big
+    step hides inside its tolerance still shows over the small one.
+    - Why: 417.43 MHz on one tuner passed 37.2 -> 29.7 following 4.5 of
+      6.7 dB, then waited 26-50 sweeps for the settled probes to find
+      37.2 -> 33.8 non-linear.
+  - A pending agreement whose probe the hop's own gain has passed is void.
+    - Why: the clipping rule stepped down onto the probe's gain, and the
+      agreement asked for a probe at the hop's own gain forever: no pair,
+      no end.
+  - An up-probe on a hop where nothing can be tested, and that nothing
+    finds non-linear, is decided by the clip test alone on one pair, as
+    the clipping rule's raise was before this rule. "Nothing can be
+    tested" means each quantity is under the validity level or unsteady.
+    A single failed bracket on a steady quantity is no verdict.
+    - Why: 415.11 MHz, cut to 8.7 dB by a heavy clip with its power
+      alternating -20.3 / -17.4 dBFS, otherwise never came back.
+    - Why not looser: a probe 33.8 -> 38.6 with one failed bracket on a
+      pinned power went up that way.
+  - A baseline clipped up to 1 % is still a baseline. Only a heavier clip
+    is the clipping rule's alone. A probe cancelled for any reason counts
+    as a pair without a verdict.
+    - Why: 417.43, clipping 0.06-0.1 % now and then at 43.4-49.6, never
+      closed a pair after its first move. A linearity move down spends
+      the clipping rule's noted mild clip.
   - After a 6 dB move, the bisection: back up by small steps while the step
     up is linear, staying under the gain it left. Without it, 417.02
     overshoots to 25.4.
