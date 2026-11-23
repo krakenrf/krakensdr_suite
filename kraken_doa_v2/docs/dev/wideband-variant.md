@@ -110,9 +110,20 @@ the compression came with its follow-up, 2026-11-23):**
   written again) -> the plain day is added as one more gzip member after
   them (concatenated members are one valid gzip file: `zcat`, `zgrep` and
   gzgets read them all) - before, the older gz was replaced and its rows
-  lost; a damaged gz (can't be read to its end) -> nothing is changed, the
-  plain file stays beside it (said once per run on stderr). The tail check
-  streams both files (constant memory). While both a plain day and a
+  lost; a damaged gz -> nothing is changed, the plain file stays beside it.
+  **Damaged** (`logret::gz_intact`, review round 3): anything but complete
+  gzip members to the file's last byte - a member cut short, bytes after
+  the last member (zeros after a power cut on FAT / exFAT, garbage), a file
+  that is not gzip at all. zlib's own reader stops quietly at trailing
+  bytes and reads a non-gzip file as it is (gzdirect), so the first version
+  took such files for healthy: the appended member landed after the
+  garbage, invisible to zcat, gzgets and the history, and the plain file
+  was unlinked. The walk inflates member after member with zlib's
+  `inflate` and requires each to end exactly where the next begins. A file
+  found damaged is remembered (its size and modification time) and not
+  inflated again by later passes until it changes; it is said once per run
+  on stderr, and "cannot gzip <file>" once per file per run (both repeated
+  every pass before). The tail check streams both files (constant memory). While both a plain day and a
   different gz exist (until the next pass), the history and the export
   read the PLAIN file only (one file per day, as for the crash state), so
   the gz's older rows are missing from the charts until the pass has added
@@ -140,7 +151,31 @@ the compression came with its follow-up, 2026-11-23):**
     deleted days 8-30 that the final rule gzips (the reviewer's race
     harness: 16 of 24 runs). A timed request (startup, the day change, the
     hour) while a change waits joins it;
-  - at the UTC day change and every hour (the sampler thread asks);
+  - **the deletions of a change wait 10 min after the LAST change** (the
+    grace, `Scheduler` `delete_grace`, review round 3): until then every
+    pass only gzips (the log line says "gzip only"); 10 min after the last
+    change a pass with the deletions runs by itself. The debounce only joins
+    changes made within seconds - a person setting Keep 7 and, 6 s later
+    (reading the tip), Then compressed 1 year got the deletions of 7 / none
+    in between: days 8-30 gone (the reviewer's twosteps). Gzipping on an
+    intermediate rule loses nothing. A change that should delete is seen on
+    disk 10 min later (the `?` tip says so). `KRAKEN_LOGRET_GRACE_S`
+    (1-3600, read at startup) shortens it for tests - not a user setting;
+  - **the page's two selects are one command**: `WB_LOG_RETENTION:<keep>,<zip>`
+    (control_handler; clamped like the two, saved as `wb_log_keep_days` /
+    `wb_log_zip_days` - the replay uses those -, the clamped pair echoed);
+    the page sends it whenever either select changes, when the receiver
+    says it takes it (`retention_cmd: true` in `logging`), else the old
+    command of the select that changed. `WB_LOG_KEEP` / `WB_LOG_ZIP` stay
+    (older pages, the replay, scripts). **Remaining limit**: two separate
+    commands more than 10 min apart (an older page, a script) do apply the
+    rule in between - it was in force for 10 min. The assistant has no tool
+    for these settings. The decoder log's identical pattern (its two number
+    fields, `DECODER_LOG_DAYS` / `DECODER_LOG_ZIP_DAYS`, the 5 s debounce,
+    no grace) predates this work and is unchanged (*decoder-log.md*);
+  - at the UTC day change and every hour: `retention_timer()`, its own
+    thread (the sampler asked before - a hung statfs stopped retention);
+    `KRAKEN_TELEMETRY_PASS_S` shortens the hour for tests;
   - **never while a debug playback runs** (the hold, `playback::active()`):
     its settings are a sandbox, the files are the user's. What was asked
     waits; when the playback ends the stored values are replayed and the
@@ -171,13 +206,21 @@ the compression came with its follow-up, 2026-11-23):**
   as with every file plain (tested below). **Only complete rows**: a line
   without its line end (the live file in the middle of a write, a gz cut
   short) and a row without every column of the header are skipped - a torn
-  "...,2" charted 0.002 GB free before. The events of the range keep the
+  "...,2" charted 0.002 GB free before. Lines are read by length (gzread,
+  not gzgets + strlen): a power cut leaves zeros (NUL bytes) in a plain
+  file where a write was - the row written after them (same day, after the
+  restart) starts after the last NUL and is kept; the torn row and the zeros
+  are dropped (198 of 200 rows read before - the zeros swallowed the next
+  row). The events of the range keep the
   newest 200 as a ring while reading (they were all held, then cut).
   Listing and reading never create a folder: a receiver without the board
   has no `wb_logs/` (the first write creates it). The history's `log` object adds `plain_bytes`,
   `plain_files`, `gz_bytes`, `gz_files` (`bytes` / `files` are now every
   file of the log: rows and events, plain and gz, an older build's).
   `export.csv?...&gz=1` gives the same rows gzipped (`*_last_7d.csv.gz`).
+  **The export is at most 31 days** (the page offers 30; it is written as
+  one temporary file before it is sent - 366 host days were 166 MB, board
+  days ~320 MB); the history still takes up to 366 days.
 - **The sampler thread (`sampler()`, started at the first `host_log_tick`
   or at the settings replay).** `host_log_tick` runs on the uWS loop with
   every status (2 Hz); its statfs (`std::filesystem::space` of the working
@@ -191,7 +234,14 @@ the compression came with its follow-up, 2026-11-23):**
   start); it still appends the row and an event line on the loop (small
   writes). vcgencmd failing (missing, a timeout, odd output) keeps the last
   value; after 3 failures in a row the flags are -1 and it is tried once
-  every 10 min (a machine without it starts no child every 10 s).
+  every 10 min (a machine without it starts no child every 10 s). Measured with a fake vcgencmd that takes 500 ms first on PATH,
+  65 s of the status on the TEST page's WebSocket: this build 130 messages
+  at 2.000 Hz, max interval 502 ms; the old build a 1003 ms gap at every
+  vcgencmd call (6 in 65 s - the loop, and with it the spectrum, audio and
+  every command, stood still for 500 ms each time).
+  The sampler no longer asks for the hourly / day-change passes: a statfs
+  that hangs (a dead network mount) would have stopped retention with it -
+  `retention_timer()`, a thread of its own, asks (review round 3).
 - **The host alarms have hysteresis** (`HostAlarm`, review 2026-11-23): up at
   once; down only after the value has stayed inside the lower level's limits
   moved inward by a margin for 30 s without a break - temperature 3 C
@@ -199,18 +249,21 @@ the compression came with its follow-up, 2026-11-23):**
   and one point more (2 GB or 10 % / 500 MB or 3 %), the throttling flags
   no margin. A Pi at 75 C wrote two events a second before (the 5 MB day
   cap within hours). The board's alarms are heimdall's (its own hysteresis);
-  this one is written from that description, not from heimdall's code. Measured with a fake vcgencmd that takes 500 ms first on PATH,
-  65 s of the status on the TEST page's WebSocket: this build 130 messages
-  at 2.000 Hz, max interval 502 ms; the old build a 1003 ms gap at every
-  vcgencmd call (6 in 65 s - the loop, and with it the spectrum, audio and
-  every command, stood still for 500 ms each time).
+  this one is written from that description, not from heimdall's code.
 - **The page** (the telemetry sheet, `wbSheetOpen`; "Logging (both logs)"):
   Keep [7 days / 30 / 90 / 1 year] and **Then compressed** [none / 30 days
   / 90 / 1 year / 3 years / 10 years] (another stored value is added to its
   list), a `?` beside them that says the rule with the numbers in force
   (`wbLogRule`: "Keep 7, Then compressed 365: the last 7 days plain, the 365
-  days before those (days 8 - 372) compressed, older days deleted"), both
-  disabled while logging is off. The size line (`wbLogInfo`): "4.1 MB plain
+  days before those (days 8 - 372) compressed, older days deleted", and that
+  a change's deletions come 10 min after the last change). Both stay usable
+  while logging is off - they apply to the days on disk (an older receiver,
+  no `zip_days`: disabled, as it only applied them when it wrote a row).
+  Either select sends `WB_LOG_RETENTION:<keep>,<zip>` (`wbLogSetRetention`).
+  The history must answer for the source asked for: an older receiver
+  answers `src=host` with the board's history (no `src` in it); the sheet
+  says "not supported by this receiver" instead of charting the board's
+  temperature as the CPU's (`wbSheetLoad`, review round 3). The size line (`wbLogInfo`): "4.1 MB plain
   + 12.3 MB compressed in 742 files, from 2025-10-20", the plain / gz file
   counts and the rule in its tooltip. A `.csv.gz` download beside Download
   CSV for the 7 / 30 day ranges. The values ride `system_status`
@@ -218,7 +271,8 @@ the compression came with its follow-up, 2026-11-23):**
 - **Compatibility.** An older page with this receiver: Keep only (`zip_days`
   ignored); the receiver keeps gzipping with the stored Then compressed.
   This page with an older receiver (no `zip_days`): no Then compressed, no
-  tip, no `.csv.gz` button, the old size line. The WB_LOG_* commands now
+  tip, no `.csv.gz` button, the old size line; without `retention_cmd` (the
+  first follow-up version) the select that changed sends its own command. The WB_LOG_* commands now
   save and echo the clamped value (`set_applied`; a WB_LOG_KEEP:900 was
   saved as 900 by the generic path after the handler saved 365).
 - **Tested (2026-11-23, scratch `w_logs/`)**: the rule (a C++ harness:
@@ -258,4 +312,23 @@ the compression came with its follow-up, 2026-11-23):**
   nothing touched; after the stop the stored values and one pass that
   changes nothing); SIGTERM -> exit in < 1 s; the page's two selects
   changed within a second: one pass on the final values.
+- **Tested after the second review (round 3, scratch `w_logs/r3/`, `e2e/t_page3.py`,
+  `t_r2_e2e.py` S5)** - each check fails on the round-2 commit (5d7b530):
+  the reviewer's `t_gz` (a gz with trailing zeros / garbage + other rows:
+  refused, the plain day kept - before: appended after the garbage and
+  unlinked) and `t_wb2` (NUL run: 200 of 200 rows in history and export -
+  before 198; twosteps through the setters 6 s apart: days 8-30 gzipped, none
+  deleted - before all 23 deleted; perf: a 366-day export request writes 31
+  days, 14 MB - before 166 MB); gz_intact on every damaged kind and
+  gzip_file refusing each; a damaged gz opened once in three passes with one
+  warning (strace) - before every pass, and the plain day lost; the grace
+  (gzip-only passes, the deletions after the last change + grace, a timed
+  pass joining); statvfs hanging (LD_PRELOAD): the periodic passes still
+  ran and deleted - before none; WB_LOG_RETENTION end to end (one pass,
+  saved as the two settings, echoed, clamped 900,-5 -> 365,0, malformed
+  refused); the page against both builds: Keep 7 then 1 year 6 s later ->
+  days 8-30 gzipped, none deleted (before: 46 of 46 deleted), Keep / Then
+  compressed usable while logging is off (before: disabled), an older
+  receiver's src=host reply not charted (before: the board's temperature
+  shown as the CPU's).
 

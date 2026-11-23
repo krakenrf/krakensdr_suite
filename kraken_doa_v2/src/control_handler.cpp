@@ -2391,6 +2391,24 @@ void ControlHandler::handle_message_impl(string_view message) {
         set_applied(prefix, applied, 0);
         cout << "Wideband board / host log: " << *g_applied_cmd << endl;
     }
+    // WB_LOG_RETENTION:<keep>,<then compressed> - the page's two selects as ONE change (one pass on
+    // the final pair; a page that has it sends both whenever either changes). Saved as the two
+    // settings above (the replay uses those), clamped like them; the clamped pair is echoed.
+    // WB_LOG_KEEP / WB_LOG_ZIP stay for older pages, the replay and scripts
+    else if (message.starts_with("WB_LOG_RETENTION:")) {
+        const string_view v = message.substr(17);
+        const size_t comma = v.find(',');
+        if (comma == string_view::npos) throw CommandRejected("format: WB_LOG_RETENTION:<keep days>,<then compressed days>");
+        const double k = parse_double(v.substr(0, comma), 0), z = parse_double(v, comma + 1);
+        int keep = 0, zip = 0;
+        wb_board_set_log_retention(static_cast<int>(std::clamp(k, 1.0, 365.0)), static_cast<int>(std::clamp(z, 0.0, 3650.0)), &keep, &zip);
+        if (!g_replaying_settings.load() && !sfscan::dispatching()) {
+            SettingsStore::record("WB_LOG_KEEP:" + to_string(keep));
+            SettingsStore::record("WB_LOG_ZIP:" + to_string(zip));
+        }
+        g_applied_cmd = "WB_LOG_RETENTION:" + to_string(keep) + "," + to_string(zip);
+        cout << "Wideband board / host log: " << *g_applied_cmd << endl;
+    }
     else if (message.starts_with("SFSCAN_SQUELCH:") || message.starts_with("SFSCAN_DWELL:") ||
              message.starts_with("SFSCAN_HANG:") || message.starts_with("SFSCAN_MAX:") ||
              message.starts_with("SFSCAN_MULTI:")) {

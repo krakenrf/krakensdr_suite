@@ -240,9 +240,12 @@ std::vector<fs::path> log_files(const LogSpec& s, long long from, bool events) {
 }
 
 // Lines of a log file, plain or gzip (zlib reads a plain file as it is, and
-// every member of a gzip one), one at a time without the line end. Only
-// complete lines: a last line without its line end - the live file in the
-// middle of a write, a gzip cut short - is not returned
+// every member of a gzip one), one at a time without the line end, read by
+// length (gzread, not gzgets + strlen). Only complete lines: a last line
+// without its line end - the live file in the middle of a write, a gzip cut
+// short - is not returned. A power cut leaves zeros (NUL bytes) where a write
+// was: a row written after them starts after the last NUL - the torn row and
+// the zeros before it are dropped, that row is kept
 class LineReader {
 public:
     explicit LineReader(const fs::path& p) : f_(gzopen(p.string().c_str(), "rb")) {
@@ -255,23 +258,32 @@ public:
     LineReader& operator=(const LineReader&) = delete;
     bool ok() const { return f_ != nullptr; }
     bool next(std::string& line) {
-        line.clear();
         if (!f_) return false;
-        char buf[4096];
         for (;;) {
-            if (!gzgets(f_, buf, sizeof(buf))) return false;   // (a torn line: dropped)
-            const size_t n = std::strlen(buf);
-            if (n && buf[n - 1] == '\n') {
-                line.append(buf, n - 1);
+            if (const void* nl = std::memchr(buf_.data() + pos_, '\n', buf_.size() - pos_)) {
+                const size_t len = static_cast<size_t>(static_cast<const char*>(nl) - (buf_.data() + pos_));
+                line.assign(buf_, pos_, len);
+                pos_ += len + 1;
+                if (const size_t z = line.rfind('\0'); z != std::string::npos) line.erase(0, z + 1);
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 return true;
             }
-            line.append(buf, n);
+            buf_.erase(0, pos_);
+            pos_ = 0;
+            if (eof_) return false;   // (no line end after it: a torn line, dropped)
+            if (buf_.size() > (1u << 20)) buf_.clear();   // no line end in 1 MB: garbage
+            char tmp[65536];
+            const int n = gzread(f_, tmp, sizeof(tmp));
+            if (n <= 0) eof_ = true;
+            else buf_.append(tmp, static_cast<size_t>(n));
         }
     }
 
 private:
     gzFile f_;
+    std::string buf_;
+    size_t pos_ = 0;
+    bool eof_ = false;
 };
 
 // Open a listed file; one the pass gzipped since it was listed is read from its .gz
@@ -336,15 +348,15 @@ long long steady_ms() {
 // One log's pass: its daily files by the shared rule; an older build's files
 // (no date in the name) by their modification time - kept for the Keep + Then
 // compressed days, never compressed; finished exports after an hour
-void pass_log(const LogSpec& s, long today, int keep, int zip) {
+void pass_log(const LogSpec& s, long today, int keep, int zip, bool deletions) {
     std::vector<logret::File> files;
     for (const auto& f : day_files(s)) files.push_back({f.path.string(), f.day, f.kind});
-    logret::run_pass(files, today, keep, zip, s.label);
+    logret::run_pass(files, today, keep, zip, s.label, {}, deletions);
     const std::string exports = std::string(s.tag) + "_export_";
     const auto now = fs::file_time_type::clock::now();
     for (const auto& [p, n] : folder_entries(s)) {
         const bool exp = n.rfind(exports, 0) == 0;
-        if (!exp && !legacy_name(s.legacy, n) && !legacy_name(s.legacy_events, n)) continue;
+        if (!exp && (!deletions || (!legacy_name(s.legacy, n) && !legacy_name(s.legacy_events, n)))) continue;
         std::error_code ec;
         const auto age = now - fs::last_write_time(p, ec);
         const auto limit = exp ? std::chrono::hours(1) : std::chrono::hours(24LL * (keep + zip));
@@ -354,23 +366,35 @@ void pass_log(const LogSpec& s, long today, int keep, int zip) {
     }
 }
 
+// a test's override (seconds, 1 - 3600; not a user setting), else `def`
+int env_seconds(const char* name, int def) {
+    const char* e = std::getenv(name);
+    const int v = e ? std::atoi(e) : 0;
+    return v >= 1 && v <= 3600 ? v : def;
+}
+
 // Both logs in one pass (they share the settings), on its own thread, one at a
 // time (logret::Scheduler): at the first use, with the STORED settings
 // (ensure_started - no wait for heimdall), at the UTC day change and every hour
-// (the sampler), and a few seconds after the last Keep / Then compressed
-// change (a replay or a page sets the two one after the other). None while a
-// debug playback runs (its settings are a sandbox); the end replays the stored
-// ones, then the pass
+// (retention_timer), and a few seconds after the last Keep / Then compressed
+// change. After a change the passes only compress; what the new rule deletes
+// is deleted 10 min after the LAST change (the grace: a person setting Keep and
+// then Then compressed, or two separate commands, must not get the deletions
+// of the rule in between). None while a debug playback runs (its settings are a
+// sandbox); the end replays the stored ones, then the pass.
+// KRAKEN_LOGRET_GRACE_S shortens the grace for tests
 logret::Scheduler& passes() {
-    static logret::Scheduler* p = new logret::Scheduler([] {   // never destroyed (a pass may run at exit)
+    static logret::Scheduler* p = new logret::Scheduler([](bool deletions) {   // never destroyed (a pass may run at exit)
         const long today = utc_day();
         last_pass_day = today;
         last_pass_ms = steady_ms();
         const int keep = log_keep_days.load(), zip = log_zip_days.load();
-        std::cout << "Telemetry logs: retention pass, Keep " << keep << " + Then compressed " << zip << " days" << std::endl;
-        pass_log(WB_LOG, today, keep, zip);
-        pass_log(HOST_LOG, today, keep, zip);
-    }, [] { return playback::active(); });
+        std::cout << "Telemetry logs: retention pass, Keep " << keep << " + Then compressed " << zip << " days"
+                  << (deletions ? "" : " (gzip only: the deletions wait for the grace after the last change)") << std::endl;
+        pass_log(WB_LOG, today, keep, zip, deletions);
+        pass_log(HOST_LOG, today, keep, zip, deletions);
+    }, [] { return playback::active(); }, logret::Scheduler::DEBOUNCE,
+       std::chrono::seconds(env_seconds("KRAKEN_LOGRET_GRACE_S", 600)));
     return *p;
 }
 
@@ -463,10 +487,19 @@ void sampler() {
             std::lock_guard<std::mutex> lock(sample_mtx);
             host_sample = h;
         }
-        // the retention pass hourly and at the UTC day change (none before the settings replay)
-        if (passes().allowed() && (last_pass_day.load() != utc_day() || steady_ms() - last_pass_ms.load() >= 3600000))
-            passes().request();
         std::this_thread::sleep_for(std::chrono::seconds(10));
+    }
+}
+
+// The retention pass hourly and at the UTC day change - a thread of its own, so a
+// statfs that hangs (a dead network mount) in the sampler can't stop retention.
+// KRAKEN_TELEMETRY_PASS_S shortens the hour for tests
+void retention_timer() {
+    const long long period_ms = 1000LL * env_seconds("KRAKEN_TELEMETRY_PASS_S", 3600);
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::seconds(period_ms < 10000 ? 1 : 10));
+        if (passes().allowed() && (last_pass_day.load() != utc_day() || steady_ms() - last_pass_ms.load() >= period_ms))
+            passes().request();
     }
 }
 
@@ -494,6 +527,7 @@ void ensure_started() {
             else if (k == "WB_LOG_ZIP:") log_zip_days = std::clamp(n, 0, 3650);
         }
         std::thread(sampler).detach();
+        std::thread(retention_timer).detach();
         passes().allow();
     });
 }
@@ -582,8 +616,8 @@ std::string wb_board_json() {
         }
         return {};
     }
-    char a[160];
-    std::snprintf(a, sizeof(a), ",\"age_s\":%.1f,\"logging\":{\"enabled\":%s,\"period_s\":%d,\"keep_days\":%d,\"zip_days\":%d}}",
+    char a[200];
+    std::snprintf(a, sizeof(a), ",\"age_s\":%.1f,\"logging\":{\"enabled\":%s,\"period_s\":%d,\"keep_days\":%d,\"zip_days\":%d,\"retention_cmd\":true}}",
                   std::chrono::duration<double>(age).count(), log_enabled.load() ? "true" : "false",
                   log_period_s.load(), log_keep_days.load(), log_zip_days.load());
     return latest.substr(0, latest.size() - 1) + a;
@@ -615,6 +649,18 @@ int wb_board_set_log_zip_days(int days) {
     days = std::clamp(days, 0, 3650);
     if (log_zip_days.exchange(days) != days) passes().request_after_change();
     return days;
+}
+
+// WB_LOG_RETENTION:<keep>,<zip> - the page's Keep and Then compressed together: one change
+void wb_board_set_log_retention(int keep, int zip, int* keep_out, int* zip_out) {
+    ensure_started();
+    keep = std::clamp(keep, 1, 365);
+    zip = std::clamp(zip, 0, 3650);
+    const bool a = log_keep_days.exchange(keep) != keep;
+    const bool b = log_zip_days.exchange(zip) != zip;
+    if (a || b) passes().request_after_change();
+    if (keep_out) *keep_out = keep;
+    if (zip_out) *zip_out = zip;
 }
 
 void wb_board_settings_restored() { ensure_started(); }
@@ -831,7 +877,9 @@ private:
 };
 
 std::string export_csv(const LogSpec& s, long range_s, std::string* download_name, bool gz) {
-    range_s = clamp_range(range_s);
+    // at most 31 days: the page offers 30, and a year of board rows (~320 MB) would be written to the
+    // card as one temporary file before it is sent
+    range_s = std::clamp(range_s, 60L, 31L * 86400L);
     const long long now = static_cast<long long>(std::time(nullptr));
     const long long from = now - range_s;
     static std::atomic<unsigned> serial{0};
@@ -913,10 +961,10 @@ void host_log_tick(double temp_c, double cpu_pct, double ram_used_mb, double ram
         track(HOST_LOG, host_state, "alarm_power", a_power, t);
     }
 
-    char f[400];
+    char f[440];
     std::snprintf(f, sizeof(f), ",\"disk_free_mb\":%.0f,\"disk_total_mb\":%.0f,\"throttled\":%d,"
                   "\"alarms\":{\"temp\":\"%s\",\"ram\":\"%s\",\"disk\":\"%s\",\"power\":\"%s\"},"
-                  "\"logging\":{\"enabled\":%s,\"period_s\":%d,\"keep_days\":%d,\"zip_days\":%d}",
+                  "\"logging\":{\"enabled\":%s,\"period_s\":%d,\"keep_days\":%d,\"zip_days\":%d,\"retention_cmd\":true}",
                   disk_free_mb, disk_total_mb, throttled, a_temp, a_ram, a_disk, a_power,
                   log_enabled.load() ? "true" : "false", log_period_s.load(), log_keep_days.load(), log_zip_days.load());
     host_fields = f;

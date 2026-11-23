@@ -24,9 +24,10 @@
 // then deleted - the decoder log's rule and code (utils/log_retention.hpp),
 // so a long deployment cannot fill the SD card. The pass runs on its own
 // thread: at the first use, with the STORED settings (read from the settings
-// store - no wait for heimdall), at the UTC day change and every hour, and a
-// few seconds after the last change of the two (a replay or a page sets them
-// one after the other); never while a debug playback runs. The gzip is
+// store - no wait for heimdall), at the UTC day change and every hour (a
+// timer of its own, not behind the sampler's statfs), and a few seconds after
+// the last change of the two (gzip only; the deletions 10 min after it);
+// never while a debug playback runs. The gzip is
 // durable against a power cut. An older build's wb_telemetry.csv[.N] /
 // wb_events.csv[.N] (size-rotated) are still read and are deleted by their
 // modification time after Keep + Then compressed days (never compressed).
@@ -42,11 +43,16 @@ std::string wb_board_json();
 
 // Logging settings (remembered by SettingsStore; the stored values are read at
 // the first use). The setters clamp and return the value in force; a Keep /
-// Then compressed change runs the pass a few seconds after the last change.
+// Then compressed change runs a gzip-only pass a few seconds after the last
+// change, and the deletions 10 min after it (the grace: two changes made one
+// after the other never delete by the rule in between).
 void wb_board_set_log_enabled(bool on);
 int wb_board_set_log_period(int seconds);    // 1 .. 3600
 int wb_board_set_log_keep_days(int days);    // 1 .. 365: days plain
 int wb_board_set_log_zip_days(int days);     // 0 .. 3650: then days gzipped (0 = none)
+// WB_LOG_RETENTION: both at once (the page) - one change, one pass; the values
+// in force (clamped) in *keep_out / *zip_out
+void wb_board_set_log_retention(int keep, int zip, int* keep_out, int* zip_out);
 // The settings replay ran (ControlHandler::apply_persisted_settings). The
 // passes no longer wait for it (the stored values are read at the first use);
 // it only makes sure the sampler and the passes are started
@@ -59,7 +65,7 @@ void wb_board_settings_restored();
 // and .gz): call it off the uWS loop.
 std::string wb_board_history_json(long range_s, bool host = false);
 
-// The logged rows of the last `range_s` seconds as one CSV file in wb_logs/
+// The logged rows of the last `range_s` seconds (at most 31 days) as one CSV file in wb_logs/
 // (a temporary export file, removed by a later export; gz: gzipped, .csv.gz).
 // Returns its path, "" if nothing could be written; *download_name gets a
 // name for the browser.
