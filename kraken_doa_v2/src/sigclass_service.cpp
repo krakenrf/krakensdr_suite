@@ -50,6 +50,11 @@ constexpr double MIN_PERIOD_S = 1.0, MAX_PERIOD_S = 10.0;
 // bursts, and that independent mode's round over 8 tuners at the longest
 // period still revisits each before its tracks go
 constexpr double TRACK_EXPIRE_S = 45.0;
+// a settled track (>= KNOWN_HITS hits, its label sure) is not classified again in
+// every look - the detector still finds it, the tracker keeps it - only in one of
+// KNOWN_REFRESH looks (its evidence still moves); a look then costs little more
+// than the detector, the period shrinks and new signals are looked at sooner
+constexpr int KNOWN_HITS = 3, KNOWN_REFRESH = 4;
 // clean packets after the last one used before a snapshot counts: heimdall's
 // noise flag trails the samples by up to 2 packets (bearing-spectrum.md)
 constexpr int TRAIL_PACKETS = 3;
@@ -432,6 +437,7 @@ struct TunerTracks {
     sigclass::Tracker trk;
     double clock = 0;            // the tracker's clock (s)
     double last_look = -1;       // now_s() of its latest snapshot; < 0 none yet
+    int looks = 0;               // its snapshots so far (the known tracks' refresh turn)
     std::vector<std::pair<int, double>> seen;   // track id -> now_s() last seen
     explicit TunerTracks(const sigclass::TrackerConfig& c) : trk(c) {}
     double seen_at(int id) const {
@@ -745,18 +751,29 @@ void worker() {
         if (!(centre > 0)) continue;
 
         set_parked("");
+        TunerTracks& x = tt[size_t(mode == 0 ? 0 : ch)];
+        // the settled tracks of this tuner: their detections are not classified again
+        // (each one still is in one of KNOWN_REFRESH looks, in turn by its id)
+        std::vector<sigclass::KnownBand> known;
+        for (const sigclass::Track& k : x.trk.tracks()) {
+            if (k.hits < KNOWN_HITS || k.best < 0 || k.best >= static_cast<int>(k.probs.size())) continue;
+            if ((x.looks + k.id) % KNOWN_REFRESH == 0) continue;
+            const ClassMeta* m = table ? table->find(model.class_info(k.view, k.best).id) : nullptr;
+            const double sure = m && is_finite_value(m->min_p) ? m->min_p : (is_finite_value(sure_conf) ? sure_conf : 0.7);
+            if (k.best_p >= sure) known.push_back({k.lo_hz, k.hi_hz, k.view});
+        }
+        x.looks++;
         const auto t0 = std::chrono::steady_clock::now();
         // (the buffer is the worker's while not armed)
         const std::vector<sigclass::Scored> res =
             analyzer.analyze(g_cap.buf.data(), sigclass::NOMINAL_SNAPSHOT_SAMPLES, static_cast<double>(SAMPLE_RATE_HZ), &model,
-                             nullptr, centre);   // (centre: the RF mask of the model)
+                             nullptr, centre, &known);   // (centre: the RF mask of the model)
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         ewma_ms = ewma_ms > 0 ? ewma_ms + 0.3 * (ms - ewma_ms) : ms;
         const double period_s = std::clamp(ewma_ms / 1000.0 / CPU_SHARE, MIN_PERIOD_S, MAX_PERIOD_S);
         period_now = period_s;
         const double t = now_s();
         // this tuner's look: its tracker's clock moves on (see TunerTracks)
-        TunerTracks& x = tt[size_t(mode == 0 ? 0 : ch)];
         if (x.last_look >= 0) x.clock += mode == 0 ? t - x.last_look : std::min(t - x.last_look, EXPIRE_STEP_S);
         x.last_look = t;
         const std::vector<sigclass::Track>& tracks = x.trk.update(res, centre, x.clock);
