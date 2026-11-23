@@ -1027,6 +1027,13 @@ static void sweep_plan_after_replay() {
 // it - it goes wherever the plan goes); its answer says whether heimdall has it
 void ControlHandler::send_sweep_plan_now() {
     send_control_command(sweep::plan_command());
+    ask_sweep_auto_gain();
+}
+
+// (what heimdall sent before the ask - its status lines, which carry "auto_gain"
+// when it has the command - is read first: only the lines after it answer it)
+void ControlHandler::ask_sweep_auto_gain() {
+    DataReceiver::drain_control_socket();
     sweep::note_auto_gain_asked();
     send_control_command(sweep::auto_gain_command());
 }
@@ -2650,10 +2657,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                 if (val != "1" && val != "0" && val != "true" && val != "false")
                     throw std::invalid_argument("SWEEP_AUTO_GAIN takes 1 or 0");
                 applied = sweep::set_auto_gain(parse_bool(val));
-                if (sweep_mode_enabled.load() && !g_replaying_settings.load()) {
-                    sweep::note_auto_gain_asked();
-                    send_control_command(sweep::auto_gain_command());
-                }
+                if (sweep_mode_enabled.load() && !g_replaying_settings.load()) ask_sweep_auto_gain();
             } else {
                 if (val != "1" && val != "0" && val != "true" && val != "false")
                     throw std::invalid_argument("SWEEP_RUN takes 1 or 0");
