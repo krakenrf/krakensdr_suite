@@ -177,7 +177,12 @@ telemetry at the top right (the Telemetry sheet) → **HTTPS certificate** →
 Download, or open `https://krakensdr.local:8080/krakensdr-ca.crt` (your
 receiver's name; click through the warning this once). On the receiver it
 is `kraken_doa_v2/krakensdr-ca.crt` (`docker-data/kraken_doa/` in Docker).
-Then:
+**Before trusting it, compare its SHA-256 fingerprint** (the device shows it
+while installing, or in the certificate's details) with the one the
+receiver prints where only you see it: `run.sh`'s and `install.sh`'s
+terminal and log, `docker compose logs kraken_doa`, kraken_doa's start
+("HTTPS certificate: ... SHA-256 ..."). A page reached through someone
+else's network could hand you another one. Then:
 
 - **Windows** (Edge, Chrome): open the file → Install Certificate → Current
   User → *Place all certificates in the following store* → Browse →
@@ -208,8 +213,9 @@ Then:
   `sudo cp krakensdr-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`.
 
 Open the page by the receiver's name: the certificate names its host name,
-`<name>.local`, `<name>.<your network's DNS search domain>` (e.g.
-`krakensdr.lan`) and `localhost`.
+`<name>.local`, `<name>.lan` / `.home` / `.localdomain` / `.home.arpa` when
+your network uses that search domain, and `localhost`; any other domain
+only through `KRAKEN_CERT_NAMES` (below).
 
 **Narrow or wide.** By default (narrow) the receiver's certificate
 authority can vouch only for this receiver's own names: even if its key
@@ -222,23 +228,27 @@ could then impersonate any `.local` / `.lan` name and any private address
 the next start.
 
 **When devices must install it again**: only when the receiver makes a new
-certificate authority - after a new host name (also the `krakensdr-2` that
-mDNS picks when two receivers on a network are both called `krakensdr`), a
-switch between narrow and wide, or after about nine years.
-`run.sh` then prints a warning, and the Telemetry sheet names the old
-certificate to remove (in the same place it was installed). A new IP
-address, another network's search domain or a renewal needs nothing (a name
-the authority doesn't cover is left out of the certificate and named in the
-Telemetry sheet).
+certificate authority - after a new host name, a switch between narrow and
+wide, after about nine years, or when you ask for one (Telemetry sheet →
+HTTPS certificate → **New certificate authority**, or `scripts/make-cert.sh
+kraken_doa_v2 --new-ca`). `run.sh` then prints a warning, and the
+Telemetry sheet names the old certificate to remove (in the same place it
+was installed). A new IP address, another network or a renewal needs
+nothing: a name the authority doesn't cover is left out of the certificate
+and named in the Telemetry sheet. That is also what happens when two
+receivers on a network are both called `krakensdr` and mDNS announces the
+second as `krakensdr-2`: rename one of them. A receiver whose clock is far
+behind (a Pi without a clock and no network yet) keeps its certificate
+authority and says so in the Telemetry sheet.
 
 **Your own certificate**: a `kraken_doa_v2/server.crt` (followed by its
 chain) + `server.key` the receiver didn't make, or a symlink, is never
 touched. More names: `KRAKEN_CERT_NAMES=sdr.example.org ./run.sh`
 (comma- or space-separated) - set before the first start, or added later
-together with a new certificate authority (`--new-ca` below), since the
+together with a new certificate authority (the button above), since the
 existing one doesn't cover them. A new certificate authority on purpose (say
-the old key may have been copied): `scripts/make-cert.sh kraken_doa_v2
---new-ca`, then restart.
+the old key may have been copied): the same button, or `scripts/make-cert.sh
+kraken_doa_v2 --new-ca`, then restart.
 Details: `kraken_doa_v2/docs/dev/https-certificate.md`.
 
 ## Features

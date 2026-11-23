@@ -183,8 +183,14 @@ the internet and writes / changes decoder plugins):
   `--info` scan, its decoder process (`PluginProcess::start`) and a debug
   playback generator (and, for `dab`, the codec check `lib/build/codecs`,
   which compiles in its AAC loader - `codec_status_message`) are wrapped in `bwrap --ro-bind / / --dev /dev --proc
-  /proc --tmpfs /tmp [--bind <rw>] --unshare-net --unshare-ipc
-  --die-with-parent --new-session` (read-only filesystem, no network).
+  /proc --tmpfs /tmp [--bind <rw>] [masks] --unshare-net --unshare-ipc
+  --die-with-parent --new-session` (read-only filesystem, no network). The
+  masks hide the secrets - the same list as kraken_ai.py's SECRETS (the key
+  patterns too) and HOME_SECRETS, those that exist when the plugin starts:
+  `--ro-bind /dev/null <file>` / `--tmpfs <folder>` on the real paths
+  (macOS: `(deny file-read* ...)`), so a changed plugin can't read a key
+  and pass it on in its output (tested: 17 secret files readable without,
+  none with).
   Without bwrap such a plugin doesn't run ("install bubblewrap"). A crash
   mid-turn is caught at the next start (`ai/state/turn` left behind ->
   `recover()` marks what changed). `python3 ai/kraken_ai.py trust <id>`

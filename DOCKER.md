@@ -179,20 +179,28 @@ KRAKEN_API_TOKEN=      # client web UI API token (instead of the api_token file)
 KRAKEN_GPSD_HOST=      # gpsd somewhere other than localhost:2947
 KRAKEN_GPSD_PORT=
 KRAKEN_CERT_HOST=      # the host name the HTTPS certificate names (see below)
-KRAKEN_CERT_NAMES=     # more names for it, comma-separated (put them in KRAKEN_ALLOWED_HOSTS too)
+KRAKEN_CERT_NAMES=     # more names for it, separated by commas or spaces
 ```
 
 **HTTPS certificate.** As natively (README, "HTTPS certificate"): the
 receiver makes its own certificate authority,
 `docker-data/kraken_doa/krakensdr-ca.crt`, which you install once on each
 device, and renews the page's certificate with it at every start that needs
-it (`docker compose logs kraken_doa` says so). The container sees the host's
+it (`docker compose logs kraken_doa` says so). The log also prints the
+authority's SHA-256 fingerprint at every start: compare it with what a
+device shows before trusting the certificate. The container sees the host's
 host name but can't ask the host's mDNS service (avahi) for the name it
-announces: if two receivers on the network are both called `krakensdr`, the
-second is reached as `krakensdr-2.local` - then put
-`KRAKEN_CERT_HOST=krakensdr-2` in `.env`. A changed name makes a new
-certificate authority, which every device must install again (the log
-warns).
+announces: if two receivers on the network are both called `krakensdr`,
+rename one of them (or put `KRAKEN_CERT_HOST=krakensdr-2` in `.env`). A
+changed name makes a new certificate authority, which every device must
+install again (the log warns). A new certificate authority on purpose: the
+page's Telemetry sheet → HTTPS certificate → **New certificate authority**,
+or
+
+```bash
+docker compose exec kraken_doa /opt/krakensdr/scripts/make-cert.sh /data/kraken_doa --new-ca
+docker compose restart kraken_doa
+```
 
 ## 6. Your data
 
