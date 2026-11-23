@@ -28,7 +28,8 @@
 //       --image-share X (Config::image_share; 0 = every image candidate dropped)
 //       --tone-merge 0|1 (Config::tone_merge), --lobe-widths X (Config::sidelobe_widths; 0 = off)
 //       --min-channel HZ, --core-ratio X (classify --track: TrackerConfig::min_channel_hz /
-//       core_energy_ratio; a huge --min-channel turns the core rule off)
+//       core_energy_ratio; a huge --min-channel turns the core rule off), --hump-guard 0|1
+//       (TrackerConfig::hump_guard)
 // Input scale: cu8 = (u - 127.5) / 127.5 (the runtime path); cs16 = v / 32768;
 // cf32 as is (full scale 1.0). --requant turns cs16 / cf32 into cu8 bytes
 // (round(x * 127.5 + 127.5), clipped) and takes the cu8 path.
@@ -61,6 +62,7 @@ struct Opts {
     int view = 0, reps = 20, spec_hop = 0;
     // (rule parameters for experiments; < 0 = the core's default)
     double second_view_max = -1.0, image_share = -1.0, min_channel = -1.0, core_ratio = -1.0, lobe_widths = -1.0;
+    int hump_guard = -1;
     int tone_merge = -1;
     bool track = false, requant = false;
     std::vector<std::string> files;
@@ -328,6 +330,7 @@ int mode_classify(const Opts& o) {
     sigclass::TrackerConfig tcfg;
     if (o.min_channel >= 0.0) tcfg.min_channel_hz = o.min_channel;
     if (o.core_ratio >= 0.0) tcfg.core_energy_ratio = o.core_ratio;
+    if (o.hump_guard >= 0) tcfg.hump_guard = o.hump_guard != 0;
     sigclass::Tracker tr(tcfg);
     std::string cur;
     auto top3 = [&](int view, const std::vector<float>& p) {
@@ -745,6 +748,7 @@ int main(int argc, char** argv) {
         else if (a == "--lobe-widths") o.lobe_widths = std::atof(val().c_str());
         else if (a == "--min-channel") o.min_channel = std::atof(val().c_str());
         else if (a == "--core-ratio") o.core_ratio = std::atof(val().c_str());
+        else if (a == "--hump-guard") o.hump_guard = std::atoi(val().c_str());
         else if (a == "--track") o.track = true;
         else if (a == "--requant") o.requant = true;
         else if (a.size() > 1 && a[0] == '-' && a[1] == '-') { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }

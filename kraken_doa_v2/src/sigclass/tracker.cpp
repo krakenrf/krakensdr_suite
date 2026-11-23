@@ -27,7 +27,9 @@
 // lasts (the transient rule drops it once the channel has twice its looks); a
 // faint continuous pedestal (< pedestal_db) does not take a signal >=
 // pedestal_contrast_db stronger; a lasting narrow track absorbed into a wide one
-// seen for the first time gives it its looks.
+// seen for the first time gives it its looks. A burst hump (bursty, >= 20x as wide and
+// >= 200 kHz: clipping splatter, a key-up click) neither takes a continuous channel
+// inside it nor counts its detections as pieces, whatever the hits (is_hump).
 
 #include "sigclass/sigclass.hpp"
 
@@ -84,6 +86,20 @@ double energy_of(const Detection& d) {
     return std::pow(10.0, 0.1 * snr) * std::max(d.bw_hz, 1.0) * (d.bursty ? std::clamp(double(d.duty), 0.0, 1.0) : 1.0);
 }
 
+// A burst hump over a continuous channel: the wide one bursty (on part of the time), at
+// least 20x as wide as the channel and >= 200 kHz, not band-filling (that one has its own
+// rules). A continuous signal is no piece of something that is on only part of the time:
+// the hump is an overloaded front end's clipping splatter (a strong burst clips the 8-bit
+// ADC: the whole band's floor rises for the burst - live 2026-11-24, 416.5 MHz, gain
+// 29.7 dB, 2-5 % of the bytes at 0 / 255 on three of five channels) or a key-up click.
+// Before, such a hump seen twice took every channel weaker than it + 6 dB whose track had
+// at most twice its hits - with tuners in turn (one look per band a round, tracks with 1-3
+// hits for a minute) the band's labels collapsed to its strongest few until the hump went,
+// and it lived on: every channel's detection inside it counted as its piece
+bool is_hump(const Track& wide, double wide_bw, bool narrow_bursty, double narrow_bw) {
+    return wide.bursty && !wide.fills_band && !narrow_bursty && wide_bw >= 20.0 * narrow_bw && wide_bw >= 200e3;
+}
+
 }  // namespace
 
 const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, double centre_hz, double t_s) {
@@ -116,6 +132,8 @@ const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, do
             else if (df <= cfg_.freq_tol_hz && ratio <= 4.0) score = 1.0 - df / (cfg_.freq_tol_hz + 1.0);
             else if (cfg_.merge_overlap > 0.0 && w < std::max(tw, e.hi - e.lo) && inter_env >= cfg_.merge_overlap * w &&
                      !(tr.fills_band && !det.bursty) &&
+                     // (a continuous channel is no piece of a burst hump over it)
+                     !(cfg_.hump_guard && is_hump(tr, std::max(tw, e.hi - e.lo), det.bursty, w)) &&
                      // (a channel holding most of the wider track's energy is that track's
                      // core, not its piece: it is matched on its own)
                      !(!tr.fills_band && !(det.bursty && tr.bursty) && w >= cfg_.min_channel_hz && 2.0 * w <= std::max(tw, e.hi - e.lo) &&
@@ -245,6 +263,8 @@ const std::vector<Track>& Tracker::update(const std::vector<Scored>& results, do
                             drop = j;
                             keep_i = i;
                         } else {
+                            // a burst hump does not take a continuous channel inside it (is_hump)
+                            if (cfg_.hump_guard && is_hump(B, wb, A.bursty, wa)) continue;
                             // a channel holding most of the wide one's energy is its core: the
                             // wide one is the channel's skirt, its receiver's plateau or a key-up
                             // transient around it, not the signal - the channel stays its own
