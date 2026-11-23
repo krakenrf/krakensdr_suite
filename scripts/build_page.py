@@ -17,11 +17,14 @@
 #   --https    HTTPS port (run.sh: 8080, kraken_doa's web UI)
 #   --cert / --key
 #              the TLS pair for --https; default kraken_doa_v2/server.crt +
-#              server.key, kraken_doa's own pair, so a browser's certificate
-#              exception carries over to the real UI. A missing pair is
-#              made like kraken_doa makes it (tls_ensure_self_signed_cert in
-#              kraken_doa_v2/src/utils/tls_compat.cpp) with the openssl CLI;
-#              kraken_doa then finds and keeps it. No pair -> no HTTPS.
+#              server.key, kraken_doa's own pair, so a device that installed
+#              the receiver's CA trusts this page too. A missing pair is made
+#              with the openssl CLI as a self-signed CN=krakensdr one (the
+#              old installers' subject): scripts/make-cert.sh / kraken_doa's
+#              generator take it for theirs (self-signed: fine rule 15 of
+#              kraken_doa_v2/docs/dev/https-certificate.md) and replace it at
+#              the next start with one signed by the receiver's CA, keeping
+#              the key. No pair -> no HTTPS.
 #   --pidfile  written once the ports are bound, removed on exit
 #
 # Routes: GET /__build/status -> the status JSON; any other GET / HEAD path
@@ -341,10 +344,10 @@ def bind_port(port):
 
 # --- TLS -------------------------------------------------------------------------
 
-# kraken_doa's own certificate (tls_ensure_self_signed_cert): RSA 2048,
-# SHA-256, v3, subject = issuer = CN=krakensdr, 10 years, an end-entity
-# certificate with the names in the SAN (browsers want them there; Firefox
-# refuses a CA certificate as a server's)
+# A stand-in until make-cert.sh / kraken_doa make the receiver's own pair
+# (docs/dev/https-certificate.md): RSA 2048, SHA-256, v3, subject = issuer =
+# CN=krakensdr, 10 years, an end-entity certificate with the names in the SAN
+# (browsers want them there; Firefox refuses a CA certificate as a server's)
 OPENSSL_CONF = """\
 [req]
 distinguished_name = dn
@@ -369,7 +372,7 @@ def nonempty(path):
 
 
 def make_cert(cert, key):
-    """Make the pair the way kraken_doa does when it is missing: key 0600,
+    """Make a self-signed stand-in pair when it is missing: key 0600,
     certificate 0644; the key goes into place first and the certificate last,
     so an interrupted run leaves no certificate rather than one that doesn't
     match its key. An existing pair is never replaced. True when a usable

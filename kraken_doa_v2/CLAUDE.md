@@ -243,6 +243,7 @@ the job's scratch directory (not committed). The established setup:
 | Voice to Text | `voice-to-text.md` |
 | AI assistant (MCP server, bridge, lockdown, sandbox, map layers, IQ capture) | `ai-assistant.md` |
 | Web mapper output | `web-mapper.md` |
+| HTTPS certificate of the web UI (a CA per receiver, narrow / wide scope, `scripts/make-cert.sh`, the in-process generator, the page's certificate section) | `https-certificate.md` |
 | Restart / Shut down from the page (power commands, platforms, privileges, safety) | `power.md` |
 | Antenna bias tees from the top bar (ANT_BIAS -> heimdall's set_antenna_bias_tees, refusals, compatibility, why two presses) | `bias-tees.md` |
 | Hot paths, DC correction, FFT dB, AM loops, MUSIC gates, dev tasks, key files, common issues | `reference.md` |

@@ -14,8 +14,9 @@
 # linked statically against it) for other software that wants it.
 #
 # Also installs gpsd (the DoA client reads it via JSON on port 2947) and
-# generates a self-signed SSL certificate for the DoA client's HTTPS web UI
-# (kraken_doa_v2/server.crt + server.key) if one is not already present.
+# makes the DoA client's HTTPS certificate (scripts/make-cert.sh: this
+# receiver's CA, kraken_doa_v2/krakensdr-ca.crt, and the server certificate it
+# signs, server.crt + server.key), or keeps the one already there.
 #
 # Usage:
 #   ./install.sh                # install deps + librtlsdr fork + build both apps
@@ -113,15 +114,15 @@ PACKAGES=(
     libsqlite3-dev                           # settings store (kraken)
     tmux                                     # split-screen dashboards (run.sh)
     gpsd gpsd-tools                          # GPS daemon (kraken talks JSON to port 2947; tools = cgps/gpsmon for debugging)
-    openssl                                  # self-signed cert generation for the kraken web UI
+    openssl                                  # the web UI's HTTPS certificate (scripts/make-cert.sh)
     bubblewrap socat                         # AI assistant: sandboxes (its shell commands, plugins it changed)
     python3 python3-numpy python3-scipy      # Debug Playback: generating the test transmissions
 )
 
 # macOS (Homebrew): the same, by Homebrew's names. Not included: gpsd (not
-# needed unless a GPS is attached - `brew install gpsd`), openssl's CLI
-# (macOS has one; kraken_doa makes its certificate itself anyway) and the AI
-# assistant's sandboxes (macOS has its own: sandbox-exec)
+# needed unless a GPS is attached - `brew install gpsd`) and the AI
+# assistant's sandboxes (macOS has its own: sandbox-exec). openssl@3 also
+# gives scripts/make-cert.sh an OpenSSL CLI (macOS's own openssl is LibreSSL)
 BREW_PACKAGES=(cmake pkg-config libusb eigen openssl@3 opus jpeg-turbo tmux)
 
 if [[ "${SKIP_DEPS:-0}" == "1" ]]; then
@@ -304,25 +305,44 @@ if [[ "${WHISPER:-0}" == "1" ]]; then
     ok "Voice to Text ready -> kraken_doa_v2/transcribe/"
 fi
 
-# --- 4. SSL certificate for the DoA client web UI ----------------------------
+# --- 4. HTTPS certificate for the DoA client web UI --------------------------
 # kraken_doa serves HTTPS/WSS on port 8080 and loads server.crt/server.key from
 # its working directory (SSL_CERT_FILE/SSL_KEY_FILE in include/config.hpp).
+# scripts/make-cert.sh (kraken_doa_v2/docs/dev/https-certificate.md) keeps
+# this receiver's CA (krakensdr-ca.crt: what devices install, once) and
+# re-issues the server certificate it signs when the names / addresses
+# changed or it gets old. Same messages as run.sh's cert_check.
 install_kraken_certs() {
-    local crt="$KRAKEN_DIR/server.crt" key="$KRAKEN_DIR/server.key"
-    if [[ -s "$crt" && -s "$key" ]]; then
-        # The files existing is not enough: the cert must actually belong to
-        # the key, or the web server's SSL context (and its listen) fails.
-        if [[ "$(openssl x509 -noout -pubkey -in "$crt" 2>/dev/null)" == \
-              "$(openssl pkey -in "$key" -pubout 2>/dev/null)" ]]; then
-            ok "SSL certificate already present: kraken_doa_v2/server.crt"
-            return
-        fi
-        warn "server.crt does not match server.key - regenerating the pair"
+    local mc="$SCRIPT_DIR/scripts/make-cert.sh" out state reason
+    if ! out="$("$mc" "$KRAKEN_DIR" 2>&1)"; then
+        warn "could not make the web UI certificate (${out##*$'\n'}) - kraken_doa tries itself when it starts"
+        return 0
     fi
-    say "Generating self-signed SSL certificate for the DoA client web UI"
-    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-        -keyout "$key" -out "$crt" -subj "/CN=krakensdr" 2>/dev/null
-    ok "Created kraken_doa_v2/server.crt + server.key (self-signed, 10 years)"
+    state="${out##*$'\n'}"
+    reason="$(printf '%s\n' "$out" | sed -n 's/^reason: //p' | tail -n 1)"
+    # as run.sh's cert_check: names outside this receiver's CA, left out of
+    # the certificate (fine rule 18); a key or certificate kept aside (12, 15)
+    local nc moved
+    nc="$(printf '%s\n' "$out" | sed -n 's/^not-covered: *//p' | tail -n 1)"
+    [[ -z "$nc" ]] || warn "Web UI certificate: ${nc} not in it (outside this receiver's CA) - a new certificate authority takes them in (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate -> New certificate authority, or scripts/make-cert.sh kraken_doa_v2 --new-ca), then every device installs it."
+    moved="$(printf '%s\n' "$out" | sed -n -e 's/^moved: //p' -e 's/^saved: //p' | tr '\n' ' ')"
+    [[ -z "$moved" ]] || warn "Web UI certificate: kept aside in kraken_doa_v2: ${moved% }"
+    case "$state" in
+    issued)
+        ok "Web UI certificate re-issued (${reason}) - devices that installed this receiver's certificate need nothing new." ;;
+    ca-created)
+        if [[ "$reason" == "first certificate" ]]; then
+            warn "Web UI: install this receiver's certificate once on every device that opens the page (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate)."
+        else
+            warn "Web UI: NEW certificate for this receiver (${reason}) - every device must install the new certificate and remove the old one (KrakenSDR DOA page: Telemetry sheet -> HTTPS certificate)."
+        fi ;;
+    not-managed)
+        ok "Web UI certificate: kraken_doa_v2/server.crt is your own - left as it is." ;;
+    esac
+    # fine rule 26: the CA's SHA-256 where only the owner sees it
+    local fp
+    fp="$(printf '%s\n' "$out" | sed -n 's/^ca-sha256: //p' | tail -n 1)"
+    [[ -z "$fp" ]] || ok "Web UI certificate authority SHA-256: ${fp} - compare it with what each device shows before trusting it."
 }
 install_kraken_certs
 

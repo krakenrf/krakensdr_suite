@@ -24,7 +24,7 @@ It runs on the Raspberry Pi 4 / 5 (the main target), x86_64 Linux, Windows
 ## Contents
 
 - [Install](#install)
-- [Run](#run)
+- [Run](#run), and the [HTTPS certificate](#https-certificate) (once per device)
 - [Features](#features)
 - [Optional setup](#optional-setup): voice codecs, Voice to Text, the AI assistant, plugins
 - [More documentation](#more-documentation)
@@ -106,7 +106,8 @@ Connect and power the KrakenSDR, then in any terminal:
 
 Then open the web pages from any computer on the network:
 
-- **KrakenSDR DOA:** `https://krakensdr.local:8080` or `https://PI_IP_ADDR:8080` (note the `s` in https)
+- **KrakenSDR DOA:** `https://krakensdr.local:8080` or `https://PI_IP_ADDR:8080` (note the `s` in https;
+  install the receiver's [HTTPS certificate](#https-certificate) once per device, or the browser warns)
 - **Heimdall:** `http://krakensdr.local:8070` or `http://PI_IP_ADDR:8070`
 
 Options:
@@ -161,6 +162,94 @@ switches). Not with generic RTL-SDRs or the KrakenSDR Wideband. After
 updating, rebuild and restart **both** programs (`./run.sh stop`, then
 `./run.sh`): a heimdall that is still running has the old control port, and
 the button then says "heimdall is too old for this".
+
+### HTTPS certificate
+
+The DOA page is HTTPS only: browsers allow audio and the microphone only on
+a secure page. Each receiver makes its own small certificate authority the
+first time it starts and signs the page's certificate with it. Until a
+device trusts that authority, its browser warns about the page. **Install
+the receiver's certificate once on each device** and the warning is gone,
+also after the receiver renews its certificate or gets a new address.
+
+Get the file on the device itself: on the DOA page, click the **Host**
+telemetry at the top right (the Telemetry sheet) → **HTTPS certificate** →
+Download, or open `https://krakensdr.local:8080/krakensdr-ca.crt` (your
+receiver's name; click through the warning this once). On the receiver it
+is `kraken_doa_v2/krakensdr-ca.crt` (`docker-data/kraken_doa/` in Docker).
+**Before trusting it, compare its SHA-256 fingerprint** (the device shows it
+while installing, or in the certificate's details) with the one the
+receiver prints where only you see it: `run.sh`'s and `install.sh`'s
+terminal and log, `docker compose logs kraken_doa`, kraken_doa's start
+("HTTPS certificate: ... SHA-256 ..."). A page reached through someone
+else's network could hand you another one. Then:
+
+- **Windows** (Edge, Chrome): open the file → Install Certificate → Current
+  User → *Place all certificates in the following store* → Browse →
+  **Trusted Root Certification Authorities** → Finish → Yes. Restart the
+  browser.
+- **macOS** (Safari, Chrome): double-click the file (Keychain Access adds it
+  to the login keychain), double-click **KrakenSDR … CA …** in it → Trust →
+  *When using this certificate*: **Always Trust**; close and enter your
+  password.
+- **iPhone / iPad**: open the link in **Safari** → Allow. Settings →
+  *Profile Downloaded* (or General → VPN & Device Management) → Install.
+  Then Settings → General → About → **Certificate Trust Settings** → switch
+  on **KrakenSDR … CA …**. Without this last step iOS installs the
+  certificate but doesn't trust it for websites.
+- **Android**: Settings → Security → More security settings → Encryption &
+  credentials → Install a certificate → **CA certificate** → Install anyway
+  → pick the file (the menus differ between makers; search Settings for
+  "CA certificate"). Chrome trusts it then. Firefox for Android only after
+  Settings → About Firefox → tap the Firefox logo five times → back in
+  Settings → Secret Settings → **Use third party CA certificates**.
+- **Firefox** (Windows, macOS, Linux) keeps its own list: Settings → Privacy
+  & Security → Certificates → View Certificates → Authorities → Import →
+  tick **Trust this CA to identify websites**.
+- **Linux** (Chrome, Chromium): Settings → Privacy and security → Security →
+  Manage certificates → import it as a trusted authority, or
+  `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "KrakenSDR CA" -i krakensdr-ca.crt`
+  (package `libnss3-tools`). For curl and other programs:
+  `sudo cp krakensdr-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`.
+
+Open the page by the receiver's name: the certificate names its host name,
+`<name>.local`, `<name>.lan` / `.home` / `.localdomain` / `.home.arpa` when
+your network uses that search domain, and `localhost`; any other domain
+only through `KRAKEN_CERT_NAMES` (below).
+
+**Narrow or wide.** By default (narrow) the receiver's certificate
+authority can vouch only for this receiver's own names: even if its key
+leaked, it couldn't impersonate any other site to your devices. Opened by
+IP address, the page then still warns (click through). **Wide** (Telemetry
+sheet → HTTPS certificate) also covers the receiver's private LAN addresses,
+so `https://192.168.1.50:8080` is trusted too - at a price: a leaked key
+could then impersonate any `.local` / `.lan` name and any private address
+(your router, a NAS) to the devices that installed it. The choice applies at
+the next start.
+
+**When devices must install it again**: only when the receiver makes a new
+certificate authority - after a new host name, a switch between narrow and
+wide, after about nine years, or when you ask for one (Telemetry sheet →
+HTTPS certificate → **New certificate authority**, or `scripts/make-cert.sh
+kraken_doa_v2 --new-ca`). `run.sh` then prints a warning, and the
+Telemetry sheet names the old certificate to remove (in the same place it
+was installed). A new IP address, another network or a renewal needs
+nothing: a name the authority doesn't cover is left out of the certificate
+and named in the Telemetry sheet. That is also what happens when two
+receivers on a network are both called `krakensdr` and mDNS announces the
+second as `krakensdr-2`: rename one of them. A receiver whose clock is far
+behind (a Pi without a clock and no network yet) keeps its certificate
+authority and says so in the Telemetry sheet.
+
+**Your own certificate**: a `kraken_doa_v2/server.crt` (followed by its
+chain) + `server.key` the receiver didn't make, or a symlink, is never
+touched. More names: `KRAKEN_CERT_NAMES=sdr.example.org ./run.sh`
+(comma- or space-separated) - set before the first start, or added later
+together with a new certificate authority (the button above), since the
+existing one doesn't cover them. A new certificate authority on purpose (say
+the old key may have been copied): the same button, or `scripts/make-cert.sh
+kraken_doa_v2 --new-ca`, then restart.
+Details: `kraken_doa_v2/docs/dev/https-certificate.md`.
 
 ## Features
 
