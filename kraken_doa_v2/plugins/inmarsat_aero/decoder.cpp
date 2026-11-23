@@ -16,6 +16,7 @@
 #include <liquid/liquid.h>
 
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <string>
@@ -26,7 +27,8 @@ namespace {
 // The plugin takes the VFO's own rate (sample_rate 0). The single-channel
 // modes resample it to 24 kHz exactly as kraken_doa did for them before
 // (liquid msresamp, 60 dB; nothing at 24 kHz): the same samples, the same
-// counts. "All channels in the VFO" channelizes the whole input (aero_all).
+// counts. "All channels in the spectrum" channelizes the whole input
+// (aero_all); it locks the VFO on the tuner's whole 2.4 MHz (lock_vfo_opt).
 class AeroPlugin : public kp::Decoder {
 public:
     explicit AeroPlugin(kp::Host& h) : Decoder(h) {
@@ -76,8 +78,14 @@ public:
                 single();
             }
             if (want_all && rate_ < MIN_ALL_RATE) {
-                // a narrow VFO holds one channel: Auto on it
-                host.fact("Channels", "the VFO is too narrow for more than one channel (Auto)");
+                // a narrow VFO holds one channel: Auto on it. Only a host or a page
+                // without the option lock gets here (the lock gives the VFO 2.4 MHz)
+                char b[160];
+                snprintf(b, sizeof b,
+                         "one channel only, decoded as Auto: the VFO is %.0f kHz wide - set its bandwidth to 2.4 MHz "
+                         "for every channel in the spectrum",
+                         rate_ / 1e3);
+                host.fact("Channels", b);
                 chan_->option(k, "auto");
                 return;
             }
@@ -120,8 +128,8 @@ KRAKEN_PLUGIN(AeroPlugin, {.id = "inmarsat_aero",
                            .description = "Inmarsat Classic Aero, L band: P channel (0.6 / 1.2 kbit/s A-BPSK, 10.5 kbit/s A-QPSK; "
                                           "rate and carrier found automatically) - signal units, log-ons, C channel assignments, "
                                           "ACARS, ADS-C positions; C channel voice (AMBE, README \"Digital voice codecs\"); "
-                                          "aircraft R / T bursts (1.6 GHz) with a DoA per aircraft. Bandwidth 15 kHz - or a wide VFO (up to "
-                                          "2.4 MHz) with Channel \"All channels in the VFO\": every P and C channel in it at once.",
+                                          "aircraft R / T bursts (1.6 GHz) with a DoA per aircraft. Bandwidth 15 kHz - or Channel \"All channels "
+                                          "in the spectrum\": every P and C channel of the tuner's 2.4 MHz at once.",
                            .version = "1.0",
                            .sample_rate = 0,
                            .min_vfo_rate = 15000,
@@ -129,10 +137,11 @@ KRAKEN_PLUGIN(AeroPlugin, {.id = "inmarsat_aero",
                            .options = {{"mode", "Channel", "auto",
                                         "auto=Auto (P / C channel)|p600=P 600 bit/s|p1200=P 1200 bit/s|p2400=P 2400 bit/s|"
                                         "p4800=P 4800 bit/s|p10500=P 10500 bit/s|c8400=C channel 8400 bit/s (voice)|"
-                                        "burst=R / T bursts from aircraft (1.6 GHz)|all=All channels in the VFO",
+                                        "burst=R / T bursts from aircraft (1.6 GHz)|all=All channels in the spectrum",
                                         "Auto finds a continuous channel's rate and carrier; the P / C choices search only that "
                                         "rate; R / T bursts listens for aircraft transmissions at every burst rate; All channels finds, decodes and "
-                                        "listens to every P and C channel in the VFO at once (a wide VFO, up to 2.4 MHz)"},
+                                        "listens to every P and C channel in the spectrum at once: the VFO takes the tuner's "
+                                        "whole 2.4 MHz on its centre (tune the receiver to move it)"},
                                        {"listen", "Calls (all channels)", "mix",
                                         "mix=Every call, mixed|newest=One call: the newest",
                                         "With All channels: several calls at once are mixed (through a limiter), or only "
@@ -140,4 +149,6 @@ KRAKEN_PLUGIN(AeroPlugin, {.id = "inmarsat_aero",
                            .map = true,
                            .voice = true,
                            .messages = false,
-                           .talkers = true})
+                           .talkers = true,
+                           // All channels: the VFO locked on the tuner's whole 2.4 MHz
+                           .lock_vfo_opt = "mode=all"})

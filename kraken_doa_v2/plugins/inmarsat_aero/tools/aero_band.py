@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A 2.4 MHz Inmarsat Aero band for the "All channels in the VFO" mode: several
+"""A 2.4 MHz Inmarsat Aero band for the "All channels in the spectrum" mode: several
 P channels (aero_gen.py) side by side, a C channel opened by an assignment
 on one of them, and carriers of other systems between them - every antenna
 of a 5-element UCA (r 0.06 m: L band, README), the satellite at one bearing, noise per

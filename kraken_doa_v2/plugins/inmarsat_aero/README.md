@@ -73,8 +73,8 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
   the input cost frames (measured, under Test results). Moving the VFO
   by up to 2 kHz while a channel is synced keeps it (the demodulator
   follows the move - nothing lost); a larger move, or a retune, starts the
-  search over. Or the whole band at once: a wide VFO in **All channels
-  in the VFO** (below).
+  search over. Or the whole band at once: **All channels in the
+  spectrum** (below).
 - Where to look (off air, Inmarsat-4 F1 at 143.5 E, a patch antenna,
   2026-11-22): sixteen 600 bit/s P channels on a 5 kHz raster from
   1545.010 to 1545.210 MHz, a 1200 bit/s one at 1545.070, two 10.5 kbit/s
@@ -101,8 +101,8 @@ transmit channels 1611.5 MHz + N x 2.5 kHz.
 - **Channel**: Auto (default: the acquisition finds a P or C channel and
   its rate), P 600 / 1200 / 2400 / 4800 / 10500 bit/s or C channel 8400
   (search that rate only), R / T bursts from aircraft (every burst rate),
-  **All channels in the VFO** (every P and C channel in a wide VFO at
-  once; a VFO under 96 kHz holds one channel and runs Auto).
+  **All channels in the spectrum** (every P and C channel of the tuner's
+  2.4 MHz at once; the VFO is locked on the whole band, below).
 - **Calls (all channels)**: with All channels, several calls at once are
   **mixed** (default: every call, summed through a limiter so that two at
   once don't clip), or only **the newest** is heard - the call that began
@@ -113,11 +113,23 @@ kHz itself for the single-channel modes, with the receiver's own
 resampler (liquid `msresamp`, 60 dB; nothing at 24 kHz): those modes get
 exactly the samples they got before.
 
-## All channels in the VFO
+## All channels in the spectrum
 
-A VFO as wide as the band (up to 2.4 MHz, the tuner's whole span) with
-Channel "All channels in the VFO": every Aero carrier in it is found,
-decoded and listened to at once, in one plugin process.
+Channel "All channels in the spectrum" (until 2026-11-23 "All channels
+in the VFO"; the value is still `all`): every Aero carrier in the tuner's
+2.4 MHz is found, decoded and listened to at once, in one plugin process.
+
+- The VFO is locked as for ADS-B or ism (`lock_vfo_opt = "mode=all"`,
+  `plugins/SDK.md` *Locked VFO by an option*): choosing the option (or
+  picking the decoder on a VFO that has it) puts the VFO on its tuner's
+  centre with the whole 2.4 MHz, drawn as one line labelled "D<n>
+  Inmarsat Aero (Classic)", its frequency, bandwidth and tuner fields
+  disabled; tune the receiver to move the band. Any other Channel frees
+  the VFO again at 15 kHz, on the centre for you to move.
+- A receiver or page from before the lock leaves the VFO as it is: under
+  96 kHz it holds one channel, decoded as Auto, and the "Channels" fact
+  says so and asks for the 2.4 MHz bandwidth; a wider VFO is channelized
+  as it is.
 
 - How: one FFT filter bank (6400 points every 3200 samples at 2.4 MHz -
   375 Hz bins) cuts a 24 kHz channel out for each carrier (flat to +-8.6

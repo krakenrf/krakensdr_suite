@@ -321,8 +321,8 @@
  },
  {
   "id": "aero-band-all-channels",
-  "title": "Inmarsat Aero: a 2.4 MHz band, every channel at once (All channels in the VFO)",
-  "description": "A synthetic 2.4 MHz band around 1545.1 MHz (tools/aero_band.py, 12 s looped), the satellite at 120 deg: P channels at 600 (two, 5 kHz apart), 1200, 2400, 4800 and 10500 bit/s, an unmodulated carrier and a carrier of another system (a strong unmodulated part, 1200 Bd BPSK on it) between them, and a C channel at 1545.5 MHz that starts at 6.5 s after the 10500 bit/s channel assigned it (from 5 s). VFO 2.4 MHz, mode All channels in the VFO. Expect the channel list to show the six P channels and the C channel (opened by the assignment) and nothing at the two other carriers; events tagged with their channel: the log-on, the ACARS uplink to EI-ABC, the C channel assignment, the C channel call progress.",
+  "title": "Inmarsat Aero: a 2.4 MHz band, every channel at once (All channels in the spectrum)",
+  "description": "A synthetic 2.4 MHz band around 1545.1 MHz (tools/aero_band.py, 12 s looped), the satellite at 120 deg: P channels at 600 (two, 5 kHz apart), 1200, 2400, 4800 and 10500 bit/s, an unmodulated carrier and a carrier of another system (a strong unmodulated part, 1200 Bd BPSK on it) between them, and a C channel at 1545.5 MHz that starts at 6.5 s after the 10500 bit/s channel assigned it (from 5 s). VFO 2.4 MHz, mode All channels in the spectrum (the VFO locked on the band). Expect the channel list to show the six P channels and the C channel (opened by the assignment) and nothing at the two other carriers; events tagged with their channel: the log-on, the ACARS uplink to EI-ABC, the C channel assignment, the C channel call progress.",
   "rf_hz": 1545100000.0,
   "tuner_offset_hz": 0,
   "seconds": 12,

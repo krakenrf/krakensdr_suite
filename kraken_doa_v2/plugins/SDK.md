@@ -83,9 +83,10 @@ plugins/
 │                         de-interleaver, streaming soft Viterbi, signal units by type, ACARS + ADS-C
 │                         (map); C channel voice through the user's Aero AMBE (lib/aero_ambe); R / T
 │                         bursts from aircraft: a packet talker per aircraft (ICAO address). At the
-│                         VFO's own rate (sample_rate 0): "All channels in the VFO" runs an overlap-save
-│                         FFT bank, surveys its bins for carriers and decodes every P / C channel of a
-│                         VFO up to 2.4 MHz side by side in the one process, every call's voice mixed
+│                         VFO's own rate (sample_rate 0): "All channels in the spectrum" (lock_vfo_opt
+│                         mode=all: the VFO locked on the tuner's whole 2.4 MHz) runs an overlap-save
+│                         FFT bank, surveys its bins for carriers and decodes every P / C channel of
+│                         the band side by side in the one process, every call's voice mixed
 ├── lora/                 LoRa CSS in the full 2.4 MHz (lock_vfo): per-channel dechirp receiver
 │                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
 │                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet
@@ -181,6 +182,7 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .messages = false,              // true: sends text messages (host.message)
                           .talkers = false,               // true: reports who transmits (host.talker)
                           .lock_vfo = false,              // true: the VFO stays on its tuner's centre (below)
+                          .lock_vfo_opt = "",             // "key=value": that lock while an option has that value
                           .multichannel = false,          // true: takes every antenna (process_multi, below)
                           .video = false,                 // true: rebuilds a picture (host.video_frame, below)
                           .squelch_hold_s = 0})           // > 0: the Digital squelch's hold (below)
@@ -284,6 +286,23 @@ instead: picking it does the same - narrowest bandwidth >= `min_vfo_rate`,
 VFO on its tuner's centre, a single line, fields locked - but leaves the
 tuner where it is; the user tunes the receiver to the band (a 📍 map
 marker's frequency button retunes the tuner then, rather than refusing).
+
+**Locked VFO by an option.** A decoder that works on one channel in most of
+its modes but on the whole band in one of them (inmarsat_aero: Channel "All
+channels in the spectrum") sets `.lock_vfo_opt = "key=value"` - one of its
+own options and the value that locks, e.g. `"mode=all"` - and leaves
+`lock_vfo` false. While that option has that value on the VFO (its default
+counts when the VFO has none set) the VFO is locked exactly as a `lock_vfo`
+one, with the tuner's whole 2.4 MHz whatever `min_vfo_rate` says; with any
+other value it is an ordinary VFO. Setting the option to the value applies
+the lock (the whole band, the VFO on its tuner's centre, the tuner left
+alone), as does picking the decoder on a VFO whose option already has it;
+setting it to another value gives the VFO back the narrowest efficient width
+>= `min_vfo_rate`, on the centre for the user to move. Use it with
+`.sample_rate = 0` so the locked mode gets the whole band. A key that is not
+one of the plugin's options is ignored. Wire: `--info` `"lock_vfo_opt"`,
+only when set; a kraken_doa from before ignores it (the option then never
+locks, so keep a narrow-input fallback that says what is wrong).
 
 **Every antenna.** A plugin that sets `.multichannel = true` gets every
 antenna of the array through `process_multi(x, m, n)` (`x[k][i]` = antenna
@@ -830,7 +849,8 @@ least recently played go).
  "rf_hz": 144.575e6,                     the band's centre = where the VFO goes
  "tuner_offset_hz": 300000,              the band's place in the tuner's 2.4 MHz
                                          (keeps it off DC); 0 for fixed-frequency
-                                         and lock_vfo decoders
+                                         and lock_vfo decoders (and lock_vfo_opt
+                                         ones with that option in "opts")
  "seconds": 16,                          loop length (keep it short)
  "vfo": {"bw_khz": 20, "demod": "NBFM", "opts": {"key": "value"}},
                                          the VFO the playback sets up (decoder =

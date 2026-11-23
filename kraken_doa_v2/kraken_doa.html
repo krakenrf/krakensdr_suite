@@ -7250,7 +7250,8 @@ function toggleSection(header) {
 sbBoxInit();
 
 // A locked VFO (its decoder has a fixed frequency - ADS-B - or takes its
-// tuner's whole band - Cell / Digital TV; see vfoLocked):
+// tuner's whole band - Cell / Digital TV, Aero's All channels by its option;
+// see vfoLockPlugin):
 // one solid line at its centre with a label, nothing to grab. Used by the
 // spectrum, the waterfall and the independent-mode panes.
 function drawLockedVfoLine(ctx, x, h, d, label = true) {
@@ -7266,7 +7267,7 @@ function drawLockedVfoLine(ctx, x, h, d, label = true) {
   ctx.lineWidth = d.id === activeDecimatorId ? 2.5 : 1.5;
   ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, h); ctx.stroke();
   if (label) {
-    const p = digFixedPlugin(d.digital_mode);
+    const p = vfoLockPlugin(d);
     ctx.fillStyle = col;
     ctx.font = '12px monospace';
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
@@ -13821,19 +13822,53 @@ function addTouchHandlers(el, down, move, up) {
   // then "locked" - drawn as a single line at its centre, not draggable, its
   // frequency / bandwidth / tuner fields disabled. kp::Info::lock_vfo
   // (ism, cells, dtv - the whole 2.4 MHz): the same lock on the tuner's
-  // centre, the tuner left where it is (the VFO moves with the receiver)
+  // centre, the tuner left where it is (the VFO moves with the receiver).
+  // kp::Info::lock_vfo_opt ("lock_vfo_opt": "key=value" in the plugin list -
+  // Aero's "mode=all", All channels in the spectrum): the lock_vfo lock with
+  // the whole 2.4 MHz, only while that option of the VFO's decoder has that
+  // value - read from the VFO's options the receiver sends (every page and a
+  // reload agree). One answer for every user of the lock: vfoLockPlugin(d)
   function digFixedPlugin(mode) {
     const p = digPlugin(digModePlugin(mode));
     return p && (p.fixed_freq_hz > 0 || p.lock_vfo) ? p : null;
   }
-  function vfoLocked(d) { return !!(d && d.digital_mode && digFixedPlugin(d.digital_mode)); }
+  // the plugin's option lock as [option key ("<plugin>.<key>"), value], or null
+  function digOptLockOf(p) {
+    const s = p && typeof p.lock_vfo_opt === 'string' ? p.lock_vfo_opt : '', eq = s.indexOf('=');
+    return eq > 0 ? [p.id + '.' + s.slice(0, eq), s.slice(eq + 1)] : null;
+  }
+  // the value an option of plugin p has on VFO d (its default when the VFO has none)
+  function digOptValue(p, d, key) {
+    const vals = (d && d.digital_opts && d.digital_opts.plugin) || {};
+    if (vals[key] !== undefined) return String(vals[key]);
+    const op = (p.options || []).find(o => p.id + '.' + o.key === key);
+    return op ? String(op.default ?? '') : '';
+  }
+  // the plugin that locks VFO d with decoder mode `mode` (the VFO's own by default), else null
+  function vfoLockPlugin(d, mode) {
+    mode = mode || (d && d.digital_mode);
+    if (!d || !mode) return null;
+    const fp = digFixedPlugin(mode);
+    if (fp) return fp;
+    const p = digPlugin(digModePlugin(mode)), ol = digOptLockOf(p);
+    return ol && digOptValue(p, d, ol[0]) === ol[1] ? p : null;
+  }
+  function vfoLocked(d) { return !!vfoLockPlugin(d); }
+  // the bandwidth a lock gives: the narrowest efficient size the decoder can use (ADS-B, cells:
+  // 2.4 MHz - the whole band unfiltered, not a 2 MHz filter at the full rate); the option lock
+  // the whole band
+  function digLockBwHz(p) {
+    return bwAtLeastEfficient(p.fixed_freq_hz > 0 || p.lock_vfo ? (p.min_vfo_rate || 0) : BW_MAX_HZ);
+  }
   function digApplyFixedTune(id, mode) {
-    const p = digFixedPlugin(mode), d = digDec(id);
-    if (!p || !d) return;
-    const mhz = p.fixed_freq_hz / 1e6;
-    // the narrowest efficient size the decoder can use (ADS-B, cells: 2.4 MHz -
-    // the whole band unfiltered, not a 2 MHz filter at the full rate)
-    const hz = bwAtLeastEfficient(p.min_vfo_rate || 0);
+    const d = digDec(id), p = vfoLockPlugin(d, mode);
+    if (p && d) digApplyLock(d, p);
+  }
+  // plugin p's lock taking hold on VFO d: its bandwidth, the VFO on its tuner's centre, the
+  // tuner on a fixed frequency
+  function digApplyLock(d, p) {
+    const id = d.id, mhz = p.fixed_freq_hz / 1e6;
+    const hz = digLockBwHz(p);
     if (decBwHz(d) !== hz) setDecimatorBandwidthHzFromUI(id, hz);
     // the VFO on its tuner's centre (a queued drag must not land after this)...
     pendingFreqUpdates.delete(id);
@@ -14281,7 +14316,27 @@ function addTouchHandlers(el, down, move, up) {
     digRenderAll();
   }
 
-  function digSetOptFor(id, key, val) { send('DIGITAL_OPT:' + id + ':' + key + ':' + val); }
+  function digSetOptFor(id, key, val) {
+    send('DIGITAL_OPT:' + id + ':' + key + ':' + val);
+    digOptLockChange(id, key, String(val));
+  }
+  // An option of the VFO's decoder that locks it (vfoLockPlugin, kp::Info::lock_vfo_opt) set by
+  // the user: to the locking value - the lock applied as when a lock_vfo decoder is picked (the
+  // whole band, the VFO on its tuner's centre); away from it - the width a fresh pick of the
+  // decoder gives, the VFO left on the centre for the user to move. (The lock itself follows
+  // the VFO's options from the receiver's broadcast - not from this.)
+  function digOptLockChange(id, key, val) {
+    const d = digDec(id), p = d && digPlugin(digModePlugin(d.digital_mode)), ol = digOptLockOf(p);
+    if (!ol || ol[0] !== key || digFixedPlugin(d.digital_mode)) return;
+    const op = (p.options || []).find(o => p.id + '.' + o.key === key);
+    const now = (val === '' && op ? String(op.default ?? '') : val) === ol[1], was = digOptValue(p, d, key) === ol[1];
+    if (now === was) return;
+    if (now) digApplyLock(d, p);
+    else {
+      const hz = bwAtLeastEfficient(p.min_vfo_rate || 0);
+      if (decBwHz(d) !== hz) setDecimatorBandwidthHzFromUI(id, hz);
+    }
+  }
 
   // range-slider options (choices "range:MIN:MAX[:STEP]"): update the live
   // value readout on every drag and send the option debounced (~150 ms) so a
@@ -14454,9 +14509,13 @@ function addTouchHandlers(el, down, move, up) {
       if (open) open.style.display = on ? '' : 'none';
       // a fixed-frequency decoder (ADS-B) / one of the whole band (ism)
       // holds the VFO's tuning
-      const lock = vfoLocked(d), lp = lock ? digFixedPlugin(d.digital_mode) : null;
-      const why = !lock ? '' : lp.fixed_freq_hz > 0 ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth'
-        : digModeLabel(d.digital_mode) + ' keeps this VFO on its tuner\'s centre with the full bandwidth - tune the receiver instead';
+      // (the option lock - Aero's All channels: the option's choice named)
+      const lp = vfoLockPlugin(d), lock = !!lp, ol = lock && !digFixedPlugin(d.digital_mode) && digOptLockOf(lp);
+      const och = ol && ((lp.options || []).find(o => lp.id + '.' + o.key === ol[0]) || {}).choices;
+      const oc = ol && Array.isArray(och) && och.find(c => c[0] === ol[1]);
+      const who = digModeLabel(d.digital_mode) + (oc ? ' (' + oc[1] + ')' : '');
+      const why = !lock ? '' : lp.fixed_freq_hz > 0 ? who + ' sets this VFO\'s frequency and bandwidth'
+        : who + ' keeps this VFO on its tuner\'s centre with the full bandwidth - tune the receiver instead';
       for (const k of ['dec-actual-freq-', 'dec-tuner-']) {
         const el = $id(k + d.id);
         if (el && el.disabled !== lock) { el.disabled = lock; el.title = why; }
@@ -21348,7 +21407,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
   // the VFO's decoder holds it on a fixed frequency (ADS-B, AIS) - unlike a
   // lock_vfo decoder (ism), which only keeps it on its tuner's centre
   function sfFixedLock(d) {
-    const p = vfoLocked(d) && digFixedPlugin(d.digital_mode);
+    const p = vfoLockPlugin(d);
     return !!(p && p.fixed_freq_hz > 0);
   }
   // The selected VFO to hz: inside the band shown it just moves there, else

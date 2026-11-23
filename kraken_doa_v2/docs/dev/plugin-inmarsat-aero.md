@@ -20,7 +20,8 @@ this folder (index: `README.md` here, or the table in
   before (the acceptance set, the off-air cuts and both calls identical,
   line by line); `min_vfo_rate` 15000, category Aviation,
   `map`, `voice`, `talkers`; option `mode` (auto / p600 .. p10500 / c8400
-  / burst / all), `listen` (mix / newest; All channels only). The page
+  / burst / all), `listen` (mix / newest; All channels only),
+  `lock_vfo_opt` "mode=all" (the VFO locked on the band). The page
   picks a decoder's VFO width from `min_vfo_rate` only, so its default
   for this plugin didn't move. One plugin for every channel: the slow modes decimate inside
   (by 5 to 4.8 kHz for 0.6 / 1.2, by 2 for 2.4 kbit/s); CPU stays 1 - 1.5
@@ -241,10 +242,22 @@ this folder (index: `README.md` here, or the table in
     MS/s capture (decimation to 2.4 MHz / D, flat to 0.4 W, -6 dB at 0.5
     W) passes 2906 - 2926 of 3042 SUs from 15 to 48 kHz: `min_vfo_rate`
     stays 15 kHz.
-- **All channels in the VFO** (2026-11-23; `aero_bank.*`, `aero_all.*`,
-  `aero_channel.hpp`; README *All channels in the VFO* for what the user
-  sees, and the measurements):
-  - A plugin mode, one process, no kraken_doa / page / SDK change: the
+- **All channels in the spectrum** (2026-11-23, "All channels in the
+  VFO" until the lock below; `aero_bank.*`, `aero_all.*`,
+  `aero_channel.hpp`; README *All channels in the spectrum* for what the
+  user sees, and the measurements):
+  - The lock (2026-11-23, the user: "make it like ADS-B, disable the VFO
+    controls, just a centre line" - he had picked `all` on a default 15
+    kHz VFO and seen one channel): `kp::Info::lock_vfo_opt = "mode=all"`
+    (`plugins/SDK.md` *Locked VFO by an option*,
+    *fixed-frequency-decoders*). While `mode` is `all` on the VFO it is
+    locked as a `lock_vfo` one with the whole 2.4 MHz; the single-channel
+    modes stay ordinary VFOs. The value stayed `all`, so saved settings
+    and the playback entry keep working. The narrow-input fallback below
+    96 kHz stays for a host or page without the lock; its "Channels" fact
+    now names the VFO's width and asks for 2.4 MHz.
+  - A plugin mode, one process, no kraken_doa / page / SDK change (but
+    the lock above): the
     plugin declares `sample_rate` 0 and channelizes the VFO itself. The
     single-channel decoder moved from decoder.cpp into `aero::AeroChannel`
     unchanged; each channel of the mode is one, behind a `ChanHost`
