@@ -1060,7 +1060,14 @@ void floor_pair(FloorEntry& e, int t, uint32_t hz, int base_g, int clip_g, int p
                   << " nl " << nonlinear << " gross " << gross << " unk " << unknown << " cause " << cause << " search " << e.search << " up " << e.up_search
                   << " bn " << e.bracket_n << " bh " << int(e.bracket_hist) << std::endl;
     auto take = [&](int g) {
-        if (g > clip_g) floor_lift_clip(hz, g);   // (an up-probe past the clipping rule's gain, clean)
+        if (g > clip_g) {
+            // (an up-probe past the clipping rule's gain, clean: that rule
+            // takes the gain too - and that is not a raise of its own, which
+            // would hold the hop back and start an up search again: 499.26
+            // MHz climbed in a sawtooth that way on the hardware)
+            floor_lift_clip(hz, g);
+            e.last_clip_g = g;
+        }
         e.g = (g >= clip_g) ? -1 : g;
         e.agree_n = 0;
         e.agree_dir = 0;
@@ -1209,7 +1216,12 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
         e.pend_bp = e.base_p;
         e.pend_bf = e.base_f;
         e.pend_sweep = sweep_idx;
-        e.pend_clipped = clipped;
+        // (an up-probe must also leave the clipping rule's headroom: its peak
+        // at most AG_RAISE_HEADROOM_DBFS - 415.11 MHz passed an up-probe at
+        // 28.0 dB with an unclipped carrier at -2.6 dBFS rms, and its next
+        // visits there clipped 1 - 5 %)
+        const float peak_dbfs = a.peak > 0 ? 20.0f * std::log10(static_cast<float>(a.peak) / 255.0f) : -200.0f;
+        e.pend_clipped = clipped || (a.gain > base_g && peak_dbfs > AG_RAISE_HEADROOM_DBFS);
         return;
     }
     if (a.gain != base_g) return;   // neither (the gain changed meanwhile)

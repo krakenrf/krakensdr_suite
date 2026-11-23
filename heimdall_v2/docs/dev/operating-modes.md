@@ -1669,6 +1669,18 @@ clipping rule stays the fast guard and is the search's ceiling.
     up to 49.6 that way, 3.5 dB compressed.
   - A raised ceiling (`set_gain`) is not a raise of the clipping rule: the
     hops at it follow at once.
+  - An up-probe is also refused when its peak is over the clipping rule's
+    raise headroom (-6 dBFS): the same criterion its own +3 dB raise has.
+    - Why: on the hardware (cf70c9b, the whole plan) 415.11 MHz passed an
+      up-probe 19.7 -> 28.0 dB with an unclipped carrier at -2.6 dBFS rms
+      (a constant envelope at 0.74 of full scale). Its next visits at 28.0
+      clipped 1-5 %, and the clipping rule cut it to 15.7.
+  - The lift of the clipping rule's gain also updates the hop's record of
+    that gain, so the lift is not read as a raise of the clipping rule.
+    - Why: without it, each lift held the hop back at the old gain and
+      started a new up search. 499.26 MHz climbed in a sawtooth on the
+      hardware: 29.7 -> 33.8 -> 32.8 -> 36.4 -> 33.8 -> 37.2 -> 36.4 ->
+      40.2 -> 37.2, and then a burst at 37.2 sent it back to 29.7.
 - *What stays from the floor search*:
   - the brackets and the reliability gate (at most a quarter of the last 8
     brackets failed; a search ends after 4 failed in a row);
@@ -1739,6 +1751,30 @@ an erratic floor, two ghost tones, no 0 / 255; the converter at -45 dBFS,
   below it the lower gain's floor is within 10 dB of the converter, so the
   last 3 dB of products can't be seen.
 - Probes 0.2-0.3 a sweep (13-37 hops); decisions 0 a sweep settled.
+- A narrow plan where nothing is learned (2 hops, one tuner, the curve's
+  references, the clipping rule quiet): 417.43 goes 49.6 -> 43.4 -> 37.2 ->
+  29.7 by sweep 16, its linear limit, by the linearity rule alone.
+
+*Hardware* (cf70c9b, 2026-11-24, the dev machine's KrakenSDR, the whole
+plan 24-1765 MHz, 911 hops, 5 tuners, dwell 5 ms, a cold start with Auto,
+60 sweeps; `t_aghw.py`, the AGT trace):
+- 417.02 MHz: 49.6 -> 43.4 (sweep 6) -> 37.2 (14) -> 29.7 (16), then
+  stays. 411.28 / 413.19 / 418.93 / 361.56 stay at 49.6.
+- Nothing in 24-380 MHz or above 1 GHz leaves the ceiling.
+- Hops searching: 906 -> 326 -> 80 -> 25 (sweep 10) -> 1-8. The rest are
+  bursty hops ending on pairs without a verdict.
+- Over the last 20 sweeps:
+  - probes 7.85 a sweep (0.86 % of the hops), at most 13;
+  - linearity decisions 0, gain changes 0.15 a sweep;
+  - 55 gain writes a sweep;
+  - a sweep 4.015 s against 3.945 s manual (+1.8 %).
+- The orchestrator's earlier run on 62b62c1 had 31-39 probes a sweep and
+  16-18 searches that never ended.
+- 63 hops are under the ceiling, nearly all the clipping rule's: the
+  DVB-T multiplexes, the LTE block at 16.6 / 22.9, 941-958 MHz.
+  `gain_floor_hops` is 1-4.
+- Hop visits over 1 % clipped after the 4th sweep: 4, all bursts (415.11
+  twice, 417.02 during its descent, the 455.27 pager).
 
 *Not tested*: Windows (3-4 ms a USB transfer: the fallback call there would
 add about a second a sweep, F's call ~0.15 s); the Pi; the neighbour rule's
