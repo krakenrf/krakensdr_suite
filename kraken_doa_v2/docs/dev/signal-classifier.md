@@ -2627,21 +2627,26 @@ continuity) next to the receiver, heimdall from scratch (`--serials
   s; three runs per frequency after the fix, the last one bracketed by
   coherent mode again, CH2 once more; at 416.5 MHz runs 1-2 ended in the
   user's independent layout). Tuner 2's tracks per state (the trap's mark):
-  416.5 MHz before 4.5 / 5.4 / 7.9 / 11.9 / 4.6 (five runs), after 32.9 /
-  27.3 / 36.2 - coherent through CH2 in the same runs 33.8 / 31.4 / 23.7;
-  456.8 MHz before 24.9 (no hump in that run's wideband phase; its coherent
-  phase was the trapped one: 10.1), after 31.1 / 25.7 / 31.8; 499.8 MHz
-  (nothing clips) before 26.5, after 22.0 / 27.0 / 26.6. Signals labelled in
-  wideband scan (tuner 2's band): 416.5 MHz before 9 / 17 / 3, after 43 / 31
-  / 44 (coherent through CH2: 36 / 41 / 28). Coherent-through-CH2 labels
-  with the same class in wideband scan (>= 30 % of each phase's states, the
-  orchestrator's reading): 416.5 MHz before 3 / 16, 4 / 6, 2 / 4 (coherent
-  itself trapped in two of them), after 24 / 36, 16 / 41, 15 / 28; 456.8 MHz
-  before 9 / 10, after 24 / 31, 13 / 30, 20 / 38; 499.8 MHz before 16 / 22,
-  after 17 / 21, 24 / 31, 20 / 30. Steady signals (coherent share >= 80 %):
+  416.5 MHz before 4.5 / 5.4 / 7.9 / 11.9 / 4.6 / 13.2 (six runs), after
+  32.9 / 27.3 / 36.2 - coherent through CH2 in the same runs 33.8 / 31.4 /
+  23.7; 456.8 MHz before 24.9 / 24.2 (no hump in those wideband phases; the
+  coherent phases were trapped: 10.1, 20.0 / 12.3), after 31.1 / 25.7 /
+  31.8; 499.8 MHz (nothing clips) before 26.5, after 22.0 / 27.0 / 26.6.
+  Signals labelled in wideband scan (tuner 2's band): 416.5 MHz before 9 /
+  17 / 3 / 18, after 43 / 31 / 44 (coherent through CH2: 36 / 41 / 28).
+  Coherent-through-CH2 labels with the same class in wideband scan (>= 30 %
+  of each phase's states, the orchestrator's reading): 416.5 MHz before 3 /
+  16, 4 / 6, 2 / 4, 3 / 10 (coherent itself trapped in three of them),
+  after 24 / 36, 16 / 41, 15 / 28; 456.8 MHz before 9 / 10, 13 / 21, after
+  24 / 31, 13 / 30, 20 / 38; 499.8 MHz before 16 / 22, after 17 / 21, 24 /
+  31, 20 / 30. Steady signals (coherent share >= 80 %), after:
   10 / 10, 5 / 8, 5 / 6; 6 / 6, 5 / 9, 9 / 14; 15 / 17, 23 / 26, 15 / 17.
-  The bracketed runs (labelled with one class in BOTH coherent phases): 13
-  / 17 (416.5), 10 / 21 (456.8), 17 / 18 (499.8)
+  The bracketed runs (labelled with one class in BOTH coherent phases, how
+  many of them wideband scan labels so): after 13 / 17 (416.5), 10 / 21
+  (456.8), 17 / 18 (499.8); before (the build without the rule, one run
+  each) 2 / 3 and 8 / 9 - there coherent mode through CH2 was trapped itself
+  (416.5 MHz: 7.5 and 5.9 tracks a state in its two coherent phases, 10 and 5
+  labels; 456.8 MHz: 20.0 / 12.3, 21 / 16), so few signals qualified
 - **The misses after the fix**, read per signal (`scripts/acc_an.py`):
   (1) traffic - these are trunked DMR / MPT1327 / P25 sites whose channels
   are assigned for minutes: of the first coherent phase's labels only 17 /
