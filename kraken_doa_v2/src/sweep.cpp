@@ -323,8 +323,32 @@ struct Store {
     // median with now's - a round whose visits all came out odd moves nothing
     std::array<float, SEAM_HIST> base_hist{};
     uint8_t base_pos = 0;
+    float base_gain = NAN;        // the common gain (Auto: the ceiling) and Auto the history was taken at
+    bool base_ag = false;
+    // per seam the median of its kept steps when the common gain last changed (NaN = none):
+    // used only while the seam has no step of its own at the new gain
+    std::array<float, MAX_CHANNELS> seam_fallback{};
     void seam_clear() {
         for (auto& a : seam_hist) a.fill(NAN);
+        seam_pos.fill(0);
+        seam_fallback.fill(NAN);
+        base_hist.fill(NAN);
+        base_pos = 0;
+    }
+    // a new common gain or Auto switched: every hop moves at once, and the steps with it
+    // (the converter's share of a floor changes with the gain) - the histories start again
+    void gain_changed() {
+        for (size_t k = 0; k < seam_hist.size(); k++) {
+            float v[SEAM_HIST];
+            int nv = 0;
+            for (float x : seam_hist[k])
+                if (is_finite_value(x)) v[nv++] = x;
+            if (nv > 0) {
+                std::sort(v, v + nv);
+                seam_fallback[k] = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+            }
+            seam_hist[k].fill(NAN);
+        }
         seam_pos.fill(0);
         base_hist.fill(NAN);
         base_pos = 0;
@@ -355,6 +379,7 @@ std::atomic<float> g_progress{0.0f};
 std::atomic<uint64_t> g_drops{0};
 std::atomic<bool> g_heim_dirty{false};
 std::atomic<float> g_gain{NAN};       // the common gain (note_gain), NaN = not known yet
+std::atomic<bool> g_ag_on{false};          // g_set.auto_gain for the other threads
 
 int16_t q16(float db) {
     const float v = std::round(db * 100.0f);
@@ -434,6 +459,18 @@ void evaluate(bool sweep_done = false) {
     S.eval_ms = now_ms();
     if (S.tuner.size() != static_cast<size_t>(p.H) || S.lv.empty()) return;
     std::array<float, MAX_CHANNELS> off{};
+    // a new common gain (the Gain slider; with Auto the ceiling) or Auto switched: the
+    // histories start again, so the first sweep at the new gain sets the base and the
+    // steps as before the medians (one sweep, not 2 - 3)
+    {
+        const float gk = g_gain.load(std::memory_order_relaxed);
+        const bool ak = g_ag_on.load(std::memory_order_relaxed);
+        if (!(gk == S.base_gain || (!is_finite_value(gk) && !is_finite_value(S.base_gain))) || ak != S.base_ag) {
+            S.gain_changed();
+            S.base_gain = gk;
+            S.base_ag = ak;
+        }
+    }
     const bool dbg = seam_debug();
     std::ostringstream dl;
     if (dbg) dl << "seamdbg " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
@@ -486,11 +523,20 @@ void evaluate(bool sweep_done = false) {
             int nv = 0;
             for (float x : hist)
                 if (is_finite_value(x)) v[nv++] = x;
-            if (is_finite_value(cur)) v[nv++] = cur;
             char src = is_finite_value(cur) ? 'C' : 'M';
-            if (nv > 0) {
+            const float fbk = S.seam_fallback[static_cast<size_t>(k)];
+            if (nv >= 2) {
+                if (is_finite_value(cur)) v[nv++] = cur;
                 std::sort(v, v + nv);
                 step = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+            } else if (is_finite_value(cur)) {
+                // (fewer than 2 kept - a new grid, a new gain: the sweep the change fell in
+                // holds hops from before it - now's alone)
+                step = cur;
+            } else if (nv == 1) {
+                step = v[0];
+            } else if (is_finite_value(fbk)) {
+                step = fbk;   // (no step at the new gain yet: the one from before it)
             } else {
                 // a seam not yet seen at the ceiling: all of its hops
                 const float da = take(false);
@@ -537,9 +583,15 @@ void evaluate(bool sweep_done = false) {
         int nv = 0;
         for (float x : S.base_hist)
             if (is_finite_value(x)) v[nv++] = x;
-        v[nv++] = now_base;
-        std::sort(v, v + nv);
-        S.base = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+        // (fewer than 2 kept: now's alone - the sweep the change fell in holds hops from
+        // before it, and a median of it with now's would stand halfway for a sweep)
+        if (nv < 2) {
+            S.base = now_base;
+        } else {
+            v[nv++] = now_base;
+            std::sort(v, v + nv);
+            S.base = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+        }
         if (sweep_done) {
             S.base_hist[S.base_pos] = now_base;
             S.base_pos = static_cast<uint8_t>((S.base_pos + 1) % SEAM_HIST);
@@ -707,7 +759,6 @@ std::array<bool, N_HDM_COUNTS> g_hdm_has{};
 std::atomic<bool> g_state_dirty{false};
 std::atomic<int> g_ag_known{0};            // 0 not answered yet, 1 heimdall has it, -1 it has not
 std::atomic<int64_t> g_ag_asked_ms{0};
-std::atomic<bool> g_ag_on{false};          // g_set.auto_gain for the other threads
 
 // The tuner's real gain against its gain list (heimdall's "gain_real_db" in its
 // status: [[list gain, real dB relative to the list's top], ...], measured - the

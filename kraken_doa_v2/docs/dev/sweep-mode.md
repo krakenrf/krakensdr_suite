@@ -642,8 +642,18 @@ refused; out-of-range numbers are clamped:
   evidence (the median of the kept ones is used), no longer 0. The base
   (the reference's 20th percentile) likewise: the median of the last 4
   completed sweeps' and now's (a round whose visits all came out short
-  moved it for an evaluation; a common gain change in manual now takes 2 -
-  3 sweeps to settle instead of 1; spikes of the base over 0.5 dB, x86
+  moved it for an evaluation). A change of the common gain (the Gain
+  slider; with Auto heimdall's ceiling) or Auto switched on or off moves
+  every hop at once, and the steps with it (the converter's share of a
+  floor changes with the gain): both histories start again then
+  (`Store::gain_changed`), and with fewer than 2 kept sweeps now's value is
+  used alone - the sweep the change fell in holds hops from before it - so
+  the picture settles in the first sweep at the new gain as on round 9's
+  build (`t_gainstep.py`, manual 49.6 -> 37.2 -> 49.6, the clean hops'
+  level from the change: 66b8298 off by up to 8 dB for 3 sweeps, now and
+  round 9 only in the sweep the change fell in). A seam with no step of its
+  own at the new gain yet (a side without a ceiling hop) keeps the median
+  from before the change. Spikes of the base over 0.5 dB, x86
   under load with the log: round 9 4.9 a minute, c419b4b 4.1, the step
   median alone 0.8, with the base median 0 in 3 runs - and 0 step spikes).
   Found with
