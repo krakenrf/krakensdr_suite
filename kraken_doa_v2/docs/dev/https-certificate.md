@@ -200,7 +200,12 @@ change goes into both and this list):
 21. **Secrets everywhere**: `krakensdr-ca.key`, every `*.unreadable-*`,
     `*.key.tmp`, the script's `.make-cert.*` folders are gitignored, blocked
     by `.githooks/pre-push`, and denied to the AI assistant
-    (`kraken_doa_v2/ai/kraken_ai.py` `SECRETS`, its sandbox's denyRead).
+    (`kraken_doa_v2/ai/kraken_ai.py` `SECRETS`, its sandbox's denyRead),
+    and masked in the plugin sandbox (`ai_sandbox.cpp`) - including rule
+    32's `krakensdr-ca.key.retired-*` (usually an UNCONSTRAINED key) and any
+    other `*.retired-*` key file. Wrapped children (plugins, playback
+    generators) also lose the secrets in their ENVIRONMENT
+    (`KRAKEN_API_TOKEN`, `KRAKEN_AI_MCP_TOKEN`).
 22. **Managed also after the CA was replaced or deleted**: besides rule 15
     and "verifies against `krakensdr-ca.crt`", a `server.crt` is ours when it
     verifies (no time check) against one of the folder's
@@ -211,7 +216,10 @@ change goes into both and this list):
     CA (`issued`, or `ca-created` when there is none), keeping `server.key`.
 23. **Clock**: a NEW pair is checked without the time check (the makers set
     the dates). A server certificate whose notBefore is more than one day
-    ahead of the clock is re-issued (harmless either way: the same CA). A CA
+    ahead of the clock is re-issued ONLY when the clock is known to be
+    synchronized (see below) - never on a suspect clock (it would be dated
+    from the wrong time), and a notBefore ahead is never a reason for a new
+    CA, also not with the CA key away (rule 31). A CA
     whose notBefore is more than one day ahead is replaced ONLY when the
     clock is known to be synchronized (Linux: `timedatectl show -p
     NTPSynchronized` = yes, or the kernel's adjtimex says synchronized;
@@ -224,7 +232,10 @@ change goes into both and this list):
     `<hostname>.local`); the avahi name is an extra name - in the server
     certificate when the CA covers it, else reported by `names_not_covered`
     with a notice that suggests renaming the receiver. A conflict name that
-    comes and goes never makes a new CA.
+    comes and goes never makes a new CA. kraken_doa allow-lists the avahi
+    name (and its `.local`) directly - it is this device's own mDNS name,
+    not a DNS-rebinding source - so the page still answers there (with a
+    certificate warning when the CA does not cover it).
 25. **Retired and saved copies hold certificates only**: when a CA
     certificate is retired, or a `server.crt` saved (`.replaced-`), only its
     CERTIFICATE blocks are written (0644); a private key found in such a file
@@ -265,6 +276,14 @@ change goes into both and this list):
     deleting it.
 33. **Validity 824 days** for the server certificate (one day under Apple's
     825 limit), notBefore = now - 1 h.
+35. **Names in the CA stay**: every EXACT DNS name the CA permits (its own
+    names, the search-domain and `KRAKEN_CERT_NAMES` names it was made with)
+    stays in the server certificate even when it is no longer wanted right
+    now - a DHCP lease lost for a minute (no `search lan`) must not take
+    `<host>.lan` out until the next start. The server certificate's DNS
+    names = (wanted names the CA permits) + (the CA's exact permitted
+    names). Seen on the test Pi 2026-11-23: an Ethernet lease renewal
+    re-issued the certificate without `krakensdr.lan`.
 34. **Housekeeping**: a run sweeps the script's / generator's stage folders
     (`.make-cert.*`) older than one hour, under the lock;
     `names_not_covered` is not reported when the next start makes a new CA
