@@ -1161,11 +1161,10 @@ void Features::Impl::compute(const cf* y, size_t n_in, const ViewInfo& vi, float
                         mu += v;
                     }
                     mu /= len;
-                    // a short piece: its own Hann window (zero-padded)
-                    for (int i = 0; i < len; i++) {
-                        const float w = len == L ? wh[size_t(i)] : float(0.5 - 0.5 * std::cos(2.0 * PI * (i + 0.5) / len));
-                        ra[size_t(i)] = float((ra[size_t(i)] - mu) * w);
-                    }
+                    // a short piece: its own Hann window (zero-padded; win() keeps it - the
+                    // same values as computing them here, without a cosine per sample)
+                    const std::vector<float>& wl = len == L ? wh : win(len);
+                    for (int i = 0; i < len; i++) ra[size_t(i)] = float((ra[size_t(i)] - mu) * wl[size_t(i)]);
                     std::fill(ra.begin() + len, ra.end(), 0.0f);
                     fr_.fwd_real(ra.data(), rb.data());
                     std::vector<float>& S = which == 0 ? Sd : Se;
