@@ -582,30 +582,22 @@ void WebSocketServer::verify_ssl_certificates() {
     // The web UI's certificate (docs/dev/https-certificate.md): a CA per
     // receiver signs the server certificate. scripts/make-cert.sh keeps it
     // current before every start on Linux / macOS / Docker (run.sh, the
-    // entrypoint); Windows has no openssl.exe and no start script, so the
-    // same logic runs here, in-process, on every start - and elsewhere only
-    // when the pair is missing (no openssl CLI, kraken_doa started by hand).
+    // entrypoint); the same logic runs here, in-process, at EVERY start on
+    // every platform (fine rule 28) - after the script it says "kept"; started
+    // by hand, without the openssl CLI, or on Windows (no openssl.exe, no
+    // start script) it renews and applies the scope / a new-CA request itself
     {
-#ifdef _WIN32
-        const bool run = true;
-#else
-        struct stat cs {}, ks {};
-        const bool run = ::stat(SSL_CERT_FILE, &cs) != 0 || cs.st_size == 0 || ::stat(SSL_KEY_FILE, &ks) != 0 ||
-                         ks.st_size == 0;
-#endif
-        if (run) {
-            tlscert::State state = tlscert::State::Kept;
-            string err;
-            if (!tlscert::ensure("", false, false, &state, &err)) {
-                cerr << "ERROR: HTTPS certificate: " << err << endl;
-            } else if (state == tlscert::State::CaCreated) {
-                // every device that trusted the old CA must install this one
-                cerr << "WARNING: HTTPS certificate: a new certificate authority was created (" << tlscert::CA_CRT
-                     << ") - every device must install it and remove the old one (Telemetry sheet -> HTTPS certificate)"
-                     << endl;
-            } else {
-                cout << "HTTPS certificate: " << tlscert::state_name(state) << endl;
-            }
+        tlscert::State state = tlscert::State::Kept;
+        string err;
+        if (!tlscert::ensure("", false, false, &state, &err)) {
+            cerr << "ERROR: HTTPS certificate: " << err << endl;
+        } else if (state == tlscert::State::CaCreated) {
+            // every device that trusted the old CA must install this one
+            cerr << "WARNING: HTTPS certificate: a new certificate authority was created (" << tlscert::CA_CRT
+                 << ") - every device must install it and remove the old one (Telemetry sheet -> HTTPS certificate)"
+                 << endl;
+        } else {
+            cout << "HTTPS certificate: " << tlscert::state_name(state) << endl;
         }
     }
     ifstream cert_file(SSL_CERT_FILE);
@@ -1050,7 +1042,15 @@ void redirect_to_https(sniff_fd fd) {
         resp = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: " + std::to_string(body.size()) +
                "\r\nConnection: close\r\n\r\n" + body;
     }
+    // a client that reset mid-request: EPIPE, never SIGPIPE (which would end
+    // kraken_doa unless something happened to ignore it). macOS has no
+    // MSG_NOSIGNAL - uSockets set SO_NOSIGPIPE on the accepted socket there;
+    // Windows has no SIGPIPE
+#ifdef MSG_NOSIGNAL
+    send(fd, resp.data(), static_cast<int>(resp.size()), MSG_NOSIGNAL);
+#else
     send(fd, resp.data(), static_cast<int>(resp.size()), 0);
+#endif
     sniff_close(fd);
 }
 

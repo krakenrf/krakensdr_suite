@@ -2925,6 +2925,14 @@ string ControlHandler::apply_command(string_view message) {
             if (why.empty()) broadcast(make_sync_cmd_json(applied));
             return why;
         }
+        // a new certificate authority at the next start (fine rule 29): the
+        // same rules - every device must then install the new one
+        if (message.starts_with("CERT_NEW_CA:")) {
+            string applied;
+            const string why = certstatus::set_new_ca(message.substr(12), from_page && !g_replaying_settings.load(), &applied);
+            if (why.empty()) broadcast(make_sync_cmd_json(applied));
+            return why;
+        }
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
         if (playback::handle_command(message)) return "";

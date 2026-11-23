@@ -44,7 +44,7 @@ inline constexpr const char* CA_CRT = "krakensdr-ca.crt";     // what users inst
 inline constexpr const char* SERVER_KEY = "server.key";       // RSA 2048, kept for every re-issue, 0600
 inline constexpr const char* SERVER_CRT = "server.crt";       // server certificate + the CA certificate, 0644
 inline constexpr const char* OPTIONS = "cert_options";        // "scope=narrow" | "scope=wide"; missing = narrow
-inline constexpr int SERVER_DAYS = 825;                       // the most Apple accepts (user-installed CA)
+inline constexpr int SERVER_DAYS = 824;                       // one under the 825 Apple accepts (fine rule 33)
 inline constexpr int CA_DAYS = 3650;
 inline constexpr int SERVER_RENEW_DAYS = 60;                  // re-issued with fewer left
 inline constexpr int CA_RENEW_DAYS = 365;                     // a new CA with fewer left
@@ -62,6 +62,9 @@ struct Host {
     std::string raw;    // as found (for the page: why it can't be used)
     std::string name;   // lowercased; "" when not usable
     bool usable = false;
+    // the name avahi announces when it is another (an mDNS conflict:
+    // krakensdr-2), else "": an EXTRA name, never one of the own names (fine rule 24)
+    std::string avahi;
 };
 Host host_name();
 
@@ -95,6 +98,10 @@ std::vector<std::string> wanted_ips(bool wide);
 // cert_options in `dir` ("" = the working directory): true = wide (the last
 // "scope = VALUE" line, any case, says "wide")
 bool read_scope_wide(const std::string& dir);
+// ... a new CA asked for (the last "new_ca = VALUE" line says 1; fine rule 29)
+bool read_new_ca(const std::string& dir);
+// Writes "scope=narrow|wide" (+ "new_ca=1") atomically, mode 0644
+bool write_options(const std::string& dir, bool wide, bool new_ca, std::string* err);
 // Writes it atomically (temp file + fs_replace), mode 0644
 bool write_scope(const std::string& dir, bool wide, std::string* err);
 
@@ -120,6 +127,9 @@ struct CertInfo {
     std::string pem;                     // the certificate alone, re-encoded from the parsed one (never a file's bytes)
     std::string scope;                   // a CA: "wide" (permits 10.0.0.0/8), "narrow", "none" (no name constraints)
     std::vector<std::string> permitted_dns;   // a CA: its permitted DNS subtrees
+    bool has_ip_subtree = false;              // a CA: a permitted IP subtree
+    bool server_auth_only = false;            // extendedKeyUsage exactly serverAuth
+    int64_t not_before = 0;                   // Unix seconds
 };
 struct Inspect {
     bool present = false;          // server.crt there and readable
