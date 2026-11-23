@@ -72,8 +72,11 @@ the whole certificate, including its other names.
   `.crt` from one to the others (before their first start, or later: the
   next start re-issues the server certificate from the copied CA - Fine
   rule 22); one install then covers them all, as long as each receiver's
-  names are inside its constraints (wide scope, or `KRAKEN_CERT_NAMES` on
-  the first, made with `--new-ca`).
+  OWN names (`<host>`, `<host>.local`) are inside its constraints: make the
+  CA on the first receiver with the others' host names in
+  `KRAKEN_CERT_NAMES` and `--new-ca`. Wide scope alone is not enough - it
+  permits `<host>.local` but not the bare `<host>`, so the receiver it is
+  copied into makes a new CA of its own (Fine rule 18).
 
 ## The server certificate *(contract)*
 
