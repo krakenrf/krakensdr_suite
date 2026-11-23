@@ -27,6 +27,7 @@
 #include "globals.hpp"
 #include "networking/websocket_server.hpp"
 #include "sigclass/sigclass.hpp"
+#include "sigclass_rules.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
@@ -560,25 +561,9 @@ void worker() {
                 pub.push_back(std::move(q));
             }
         }
-        // overlapping tuners: one signal seen by two of them - the fresher /
-        // more often seen one stays
-        if (M > 1 && pub.size() > 1) {
-            std::sort(pub.begin(), pub.end(), [](const PubTrack& a, const PubTrack& b) { return a.hz < b.hz; });
-            std::vector<uint8_t> drop(pub.size(), 0);
-            for (size_t i = 0; i < pub.size(); i++)
-                for (size_t j = i + 1; j < pub.size() && pub[j].hz - pub[i].hz < 0.5 * std::max(pub[i].bw, pub[j].bw) + 500.0; j++) {
-                    const PubTrack &a = pub[i], &b = pub[j];
-                    if (a.tuner == b.tuner || drop[i] || drop[j]) continue;
-                    const double ra = std::max(a.bw, 1.0) / std::max(b.bw, 1.0);
-                    if (ra > 3.0 || ra < 1.0 / 3.0) continue;
-                    const bool keep_a = a.fresh != b.fresh ? a.fresh : a.seen_real != b.seen_real ? a.seen_real > b.seen_real : a.hits >= b.hits;
-                    drop[keep_a ? j : i] = 1;
-                }
-            size_t w = 0;
-            for (size_t i = 0; i < pub.size(); i++)
-                if (!drop[i]) pub[w++] = std::move(pub[i]);
-            pub.resize(w);
-        }
+        // overlapping tuners: one signal seen by two of them is sent once - the
+        // fresher / more recently / more often seen (sigclass_rules.hpp)
+        rules::drop_overlap_duplicates(pub);
         if (pub.size() > MAX_TRACKS_SENT) {
             std::partial_sort(pub.begin(), pub.begin() + MAX_TRACKS_SENT, pub.end(),
                               [](const PubTrack& a, const PubTrack& b) { return a.seen_real > b.seen_real; });
