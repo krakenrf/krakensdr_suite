@@ -367,9 +367,11 @@ start goes on (kraken_doa then tries itself).
   kraken_doa keeps the certificate it loaded), AND before every start of
   kraken_doa: `supervise --before cert_check` in the client pane (the page's
   Restart, a crash restart) and headless mode before each client start.
-  kraken_doa itself only makes a pair when there is none, so a scope chosen
-  on the page ("applies at the next start"), a rename or a near expiry must
-  be applied there. `kept` prints nothing (six openssl calls, ~50 ms on the
+  kraken_doa's generator applies the same rules at its every start too
+  (https-certificate.md fine rule 28: it then says `kept`); the script's run
+  before it is what puts the messages (a new CA's warning, names left out,
+  the CA's SHA-256) on run.sh's terminal and in its log, where the owner
+  sees them. `kept` prints nothing (six openssl calls, ~50 ms on the
   dev box); before a supervised start a new CA's warning stays 5 s on
   screen. The client pane and the build window get `KRAKEN_CERT_HOST` /
   `KRAKEN_CERT_NAMES` from run.sh through `env` (removed with `-u` when

@@ -68,12 +68,15 @@ struct Host {
 };
 Host host_name();
 
-// The DNS names the server certificate carries (and a narrow CA permits):
-// <host>, <host>.local, <host>.<d> for each search / domain entry of
-// /etc/resolv.conf (Windows: each adapter's DNS suffix) except "local",
-// localhost, then KRAKEN_CERT_NAMES (split on commas and white space; an
-// address or a word that is no DNS name is left out, with a line in *notes)
-// - the last two also with an unusable host. No duplicates.
+// The wanted DNS names (a new CA permits them; a narrow one exactly these):
+// <host>, <host>.local, avahi's other name and its .local, <host>.<d> for a
+// trusted search domain d (lan, home, localdomain, home.arpa) of the last
+// search / the domain line of /etc/resolv.conf (Windows: the adapters' DNS
+// suffixes; fine rule 30), localhost, then KRAKEN_CERT_NAMES (split on
+// commas and white space; an address or a word that is no DNS name is left
+// out, with a line in *notes) - the last two also with an unusable host. No
+// duplicates. The server certificate carries those the CA permits (rule 18)
+// and the CA's own exact names (rule 35).
 std::vector<std::string> wanted_names(const Host& h, std::vector<std::string>* notes = nullptr);
 // The host's OWN names - <host>, <host>.local (none for an unusable host): one
 // of them outside the CA is a rename and makes a new CA; any other wanted

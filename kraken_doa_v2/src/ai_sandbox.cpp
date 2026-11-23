@@ -57,10 +57,10 @@ const char* const HOME_SECRETS[] = {
     ".local/share/remmina", ".local/share/fish", ".local/share/recently-used.xbel", ".local/share/Trash",
     ".local/share/uv/credentials"
 #ifdef __APPLE__
-                                    ,
-                                    "Library/Keychains", "Library/Cookies", "Library/Application Support",
-                                    "Library/Safari", "Library/Mail", "Library/Messages", "Library/Containers",
-                                    "Library/Group Containers", "Library/Accounts", ".zsh_history", ".zsh_sessions"
+    ,
+    "Library/Keychains", "Library/Cookies", "Library/Application Support", "Library/Safari", "Library/Mail",
+    "Library/Messages", "Library/Containers", "Library/Group Containers", "Library/Accounts", ".zsh_history",
+    ".zsh_sessions"
 #endif
 };
 #ifndef _WIN32

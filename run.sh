@@ -211,10 +211,12 @@ PY
 # need nothing then. Only a NEW CA (a rename, the scope changed) needs every
 # device again: a warning. Never fatal (kraken_doa then tries itself). Run at
 # every start of run.sh AND before every start of kraken_doa (the supervisor's
-# restarts - the page's Restart, a crash - and headless mode's), because
-# kraken_doa itself only makes a pair when there is none: a scope chosen on
-# the page ("applies at the next start"), a rename or a near expiry must take
-# effect there too. `kept` (nothing to do) prints nothing and costs six
+# restarts - the page's Restart, a crash - and headless mode's). kraken_doa's
+# in-process generator applies the same rules at its every start too (fine
+# rule 28: it then says `kept`), but only this run puts the messages - a new
+# CA's warning, names left out, files kept aside, the CA's SHA-256 - on this
+# terminal and in the log, where the owner sees them (kraken_doa's own
+# output is discarded when it isn't a terminal). `kept` (nothing to do) prints nothing and costs six
 # openssl calls. `cert_check restart`: a new CA's warning stays on screen 5 s
 # before kraken_doa's dashboard takes the pane over. The same messages are in
 # install.sh (install_kraken_certs) and docker/entrypoint.sh (ensure_cert).

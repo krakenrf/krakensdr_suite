@@ -26,28 +26,39 @@ Docker). All gitignored; only the CA certificate is ever served.
 | `krakensdr-ca.crt` | the CA certificate - what users install | 0644 |
 | `server.key` | the server key (RSA 2048): created once, KEPT for every re-issue (the planned receiver mesh pins it; native apps may pin it) | 0600 |
 | `server.crt` | the server certificate followed by the CA certificate (uSockets loads it with `SSL_CTX_use_certificate_chain_file`) | 0644 |
-| `cert_options` | one line `scope=narrow` or `scope=wide`; written by kraken_doa (`CERT_SCOPE:`), read at the next start; missing = narrow | 0644 |
-| `krakensdr-ca.YYYYMMDD.retired.crt` | a replaced CA's certificate (its key deleted) - lets the page name the CA devices should remove | 0644 |
+| `cert_options` | a line `scope=narrow` or `scope=wide` (Fine rule 5) and, while a new CA is asked for, a line `new_ca=1` (rule 29); written by kraken_doa (`CERT_SCOPE:`, `CERT_NEW_CA:`), read at the next start - `new_ca=1` is taken out once the new CA is made; missing = narrow | 0644 |
+| `krakensdr-ca.YYYYMMDD.retired.crt` | a replaced CA's certificate (`-2`, `-3` ... the same day; rule 2; certificates only, rule 25) - lets the page name the CA devices should remove. Its key is deleted - unless the CA was not a receiver's (next row) | 0644 |
+| `krakensdr-ca.key.retired-YYYYMMDD` | the key of a replaced CA without `O=KrakenSDR receiver` (a user's own CA put at our file names): kept, never deleted (rule 32) - a secret (rule 21), usually of an unconstrained CA | 0600 |
+| `server.crt.replaced-YYYYMMDD` | a migrated (legacy) `server.crt`'s copy (rules 15, 25) | 0644 |
+| `<file>.unreadable-YYYYMMDD` | a key that can't be used, or a certificate file that held a private key, moved aside (rules 12, 25, 27) - a secret | 0600 |
 
 ## Names *(contract)*
 
-- `<host>`: the name avahi announces (it differs from `hostname` after an
-  mDNS name conflict: the second `krakensdr` becomes `krakensdr-2`), else
-  `hostname -s`; on macOS `scutil --get LocalHostName`; Windows
-  `gethostname()`. `KRAKEN_CERT_HOST` overrides (Docker). Lowercased; a
-  character outside `a-z 0-9 -` makes the name unusable for DNS - then only
-  `localhost` and (wide scope) IPs are named, and the page says why.
-- The DNS names: `<host>`, `<host>.local`, `<host>.<d>` for each `search` /
-  `domain` entry of `/etc/resolv.conf` (not `local`), `localhost`, and each
-  name in `KRAKEN_CERT_NAMES` (comma-separated, added).
+- `<host>`: the SYSTEM host name (Fine rules 6, 24): `KRAKEN_CERT_HOST`
+  (Docker; trimmed and lowercased, not cut at a dot), else `hostname -s`; on
+  macOS `scutil --get LocalHostName`; Windows `gethostname()` - each cut at
+  the first dot and lowercased. Usable = one DNS label (1-63 of `a-z 0-9 -`,
+  not starting or ending with `-`); else only `localhost` and (wide scope)
+  IPs are named, the CN is `localhost`, and the page says why. The name avahi
+  announces when it differs (an mDNS name conflict: the second `krakensdr`
+  becomes `krakensdr-2`) is an EXTRA name, never `<host>` (rule 24).
+- The wanted DNS names: `<host>`, `<host>.local`, avahi's other name and its
+  `.local`, `<host>.<d>` only for a search domain `<d>` the Host allow-list
+  trusts (`lan`, `home`, `localdomain`, `home.arpa`) on the LAST `search`
+  line or the `domain` line of `/etc/resolv.conf` (Windows: the adapters' DNS
+  suffixes; rule 30), `localhost`, and each name in `KRAKEN_CERT_NAMES`
+  (comma- or space-separated, added; rule 4).
+- The server certificate's DNS names: the wanted names the CA permits (one
+  it doesn't is left out and reported, `names_not_covered`: rule 18) plus
+  every exact name the CA permits (rule 35).
 
 ## Scope *(contract)*
 
 | | narrow (default) | wide (opt-in on the page) |
 |---|---|---|
-| CA name constraints, DNS | exactly the names above | the names above, plus every name under `local` and `lan` |
+| CA name constraints, DNS | exactly the wanted names (as they were when the CA was made) | those, plus every name under `local` and `lan` |
 | CA name constraints, IP | `127.0.0.1/32`, `::1/128` only | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `127.0.0.0/8`, `fc00::/7`, `::1/128` |
-| server certificate's IPs | `127.0.0.1`, `::1` | those plus the current global IPv4 addresses |
+| server certificate's IPs | `127.0.0.1`, `::1` | those plus the current private IPv4 addresses (Fine rule 8) |
 | opened by IP | the usual warning (click through) | trusted while the address is in a private range |
 | risk if the CA key leaks | it can vouch only for this receiver's names, and only as a TLS server (Fine rule 16) | it can impersonate any `.local` / `.lan` name and any private IP (router, NAS) as a TLS server to devices that installed it |
 
@@ -59,15 +70,28 @@ the whole certificate, including its other names.
 ## The CA *(contract)*
 
 - Subject `CN=KrakenSDR <host> CA <YYYY-MM-DD>, O=KrakenSDR receiver`
-  (the date tells two CAs apart on a device).
+  (`<host>`'s first 40 characters, the date in UTC: Fine rules 1, 17; the
+  date tells two CAs apart on a device).
 - `basicConstraints = critical, CA:TRUE, pathlen:0`,
   `keyUsage = critical, keyCertSign, cRLSign`, subject key identifier,
-  `nameConstraints = critical, ...` per scope. Validity 3650 days.
-- A NEW CA (new key; the old certificate renamed `.retired`, its key
-  deleted) when: there is none; a wanted DNS name is outside its
-  constraints (a rename, an avahi conflict name, a new search domain); the
-  scope in `cert_options` differs from the CA's; it expires within 365
-  days; `--new-ca`. Every device must then install the new one.
+  `extendedKeyUsage = serverAuth` (rule 16), `nameConstraints = critical,
+  ...` per scope. Validity 3650 days.
+- A NEW CA (new key; the old certificate kept as `.retired` - not a
+  symlinked one -, its key deleted - unless the CA was not a receiver's: then
+  the key is kept as `krakensdr-ca.key.retired-YYYYMMDD`, rule 32) when: there is
+  none (or its key doesn't fit it, or it is no CA); `krakensdr-ca.key` can't
+  be used (moved aside, rule 12); one of the host's OWN names (`<host>`,
+  `<host>.local`) is outside its DNS constraints - a rename (rule 18; any
+  other wanted name outside them - avahi's conflict name, another network's
+  search domain, a `KRAKEN_CERT_NAMES` name added later - is left out of the
+  server certificate instead); the scope in `cert_options` differs from the
+  CA's, or it has no name constraints, no DNS or no IP subtree (rules 3,
+  18); it isn't limited to serverAuth (rule 16); it expires within 365 days;
+  it starts more than a day after a clock known to be synchronized (rule
+  23); a re-issue is due while its key is missing (rule 31 - a date alone
+  never is: rule 23); `--new-ca` or `new_ca=1` in `cert_options` (the
+  page's New certificate authority, rule 29). Every device must then install
+  the new one.
 - Optional: the same CA on several receivers - copy `krakensdr-ca.key` /
   `.crt` from one to the others (before their first start, or later: the
   next start re-issues the server certificate from the copied CA - Fine
@@ -76,7 +100,10 @@ the whole certificate, including its other names.
   CA on the first receiver with the others' host names in
   `KRAKEN_CERT_NAMES` and `--new-ca`. Wide scope alone is not enough - it
   permits `<host>.local` but not the bare `<host>`, so the receiver it is
-  copied into makes a new CA of its own (Fine rule 18).
+  copied into makes a new CA of its own (Fine rule 18). Each receiver's
+  server certificate then names the others too (every exact name the CA
+  permits stays in it: rule 35) - nothing new: the shared key can sign them
+  for any of them anyway.
 
 ## The server certificate *(contract)*
 
@@ -84,20 +111,27 @@ the whole certificate, including its other names.
   usable host name); `basicConstraints = critical, CA:FALSE`,
   `keyUsage = critical, digitalSignature, keyEncipherment`,
   `extendedKeyUsage = serverAuth`, authority / subject key identifiers,
-  `subjectAltName` = the names + IPs per scope. Validity 824 days (one under
-  the 825 Apple accepts for a server certificate trusted through a
-  user-installed CA; Fine rule 33).
-- Re-issued with the SAME key when: its names / IPs differ from the wanted
-  ones; fewer than 60 days left (or expired); it does not verify against the
-  current CA; `--force`.
+  `subjectAltName` = the server certificate's DNS names (Names) + IPs per
+  scope. Validity 824 days (one under the 825 Apple accepts for a server
+  certificate trusted through a user-installed CA; Fine rule 33).
+- Re-issued with the SAME key when: its DNS names, IPs or CN differ from the
+  wanted ones; fewer than 60 days left (or expired); it does not verify
+  against the current CA, or `server.crt` isn't exactly it followed by the
+  CA certificate; it doesn't match `server.key`; `--force`; and - only when
+  nothing else is due - it starts more than a day after a clock known to be
+  synchronized (rule 23: never on a suspect clock, and never a reason for a
+  new CA).
 
 ## Managed or not *(contract)*
 
-- Managed: `server.crt` verifies against `krakensdr-ca.crt`; or its subject
-  has `O=KrakenSDR receiver` (PR #5's self-signed one); or its subject is
-  exactly `CN=krakensdr` (install.sh / Docker / Windows before PR #5). An old
-  one is migrated: a CA is created and the server certificate issued with
-  the EXISTING `server.key`.
+- Managed: `server.crt` verifies (no time check: Fine rule 10) against
+  `krakensdr-ca.crt`; or it is self-signed with a legacy subject (rule 15):
+  `O=KrakenSDR receiver` (PR #5's) or exactly `CN=krakensdr` (install.sh /
+  Docker / Windows before PR #5); or it was issued by an earlier CA of ours
+  (rule 22: one of the folder's retired CAs, or by its names a deleted or
+  replaced one). A legacy one is migrated (its copy kept as
+  `server.crt.replaced-YYYYMMDD`): a CA is created and the server
+  certificate issued with the EXISTING `server.key`.
 - Anything else - a user's own certificate - and any `server.crt` /
   `server.key` that is a symlink: never touched ("not managed").
 
@@ -122,8 +156,9 @@ change goes into both and this list):
    invalid DNS name - each with a note (stderr / the log).
 5. **`cert_options`**: lines `scope=VALUE`, spaces around `=` allowed, key
    and value case-insensitive, the last such line wins; `wide` means wide,
-   anything else narrow. kraken_doa writes exactly `scope=wide` /
-   `scope=narrow` and a newline.
+   anything else narrow. kraken_doa writes exactly a line `scope=wide` /
+   `scope=narrow`, then - while a new CA is asked for (rule 29) - a line
+   `new_ca=1`, each with a newline.
 6. **Host name**: `KRAKEN_CERT_HOST` trimmed of whitespace and lowercased,
    NOT cut at a dot (a dot makes it unusable); every other source cut at the
    first dot and lowercased. Usable = one DNS label, 1-63 of `a-z 0-9 -`,
@@ -276,6 +311,10 @@ change goes into both and this list):
     deleting it.
 33. **Validity 824 days** for the server certificate (one day under Apple's
     825 limit), notBefore = now - 1 h.
+34. **Housekeeping**: a run sweeps the script's / generator's stage folders
+    (`.make-cert.*`) older than one hour, under the lock;
+    `names_not_covered` is not reported when the next start makes a new CA
+    anyway.
 35. **Names in the CA stay**: every EXACT DNS name the CA permits (its own
     names, the search-domain and `KRAKEN_CERT_NAMES` names it was made with)
     stays in the server certificate even when it is no longer wanted right
@@ -284,10 +323,6 @@ change goes into both and this list):
     names = (wanted names the CA permits) + (the CA's exact permitted
     names). Seen on the test Pi 2026-11-23: an Ethernet lease renewal
     re-issued the certificate without `krakensdr.lan`.
-34. **Housekeeping**: a run sweeps the script's / generator's stage folders
-    (`.make-cert.*`) older than one hour, under the lock;
-    `names_not_covered` is not reported when the next start makes a new CA
-    anyway.
 
 ## make-cert.sh *(contract)*
 
@@ -311,19 +346,28 @@ back with `x509 -text`, not `x509 -ext`.
 - `GET /krakensdr-ca.crt` (and `/krakensdr.crt`, same response): the CA
   certificate, `application/x-x509-ca-cert`, no token (needed before the page
   can be trusted); without a CA (not managed) the server certificate's first
-  certificate.
+  certificate - re-encoded from the parsed certificate, never the file's
+  bytes (Fine rule 19).
 - `system_status.cert` (in the 2 Hz status, only fields that changed cost
   nothing extra - or on change): `{managed, scope, scope_next, ca: {name,
   sha256, not_after}, server: {names: [...], ips: [...], not_after,
-  days_left}, notices: [...]}` with notices `expires_soon` (< 30 days),
-  `name_changed` (the host name is not in the served certificate),
-  `addresses_changed` (wide scope: a current IPv4 address is not in it),
-  `restart_pending` (scope changed, applied at the next start).
-- `CERT_SCOPE:narrow|wide` writes `cert_options`; refused during a playback;
+  days_left}, names_not_covered: [...], host_conflict, new_ca_next,
+  notices: [...]}` with notices `expires_soon` (< 30 days), `name_changed`
+  (the host name is not in the served certificate), `addresses_changed`
+  (wide scope: a current IPv4 address is not in it), `restart_pending`
+  (scope changed, applied at the next start), `names_not_covered` (rule 18),
+  `new_ca_pending` (rule 29) and `clock_suspect` (rule 23).
+- `CERT_SCOPE:narrow|wide` writes `cert_options`; `CERT_NEW_CA:1|0` writes /
+  takes back its `new_ca=1` line (rule 29). Both from a page's own socket
+  only, refused during a playback and for a certificate of the user's own;
   the page shows the choice, the risk (help tip) and "applies at the next
   start; every device then installs the new certificate".
+- The Host allow-list gets the served certificate's names that are the
+  host's own, `KRAKEN_CERT_NAMES`' and `<host>` + a trusted suffix (rule 20),
+  and avahi's other name and its `.local` directly (rule 24).
 - The in-process generator follows every rule above (same files, names,
-  scope, triggers, managed check).
+  scope, triggers, managed check) and runs at every start on every platform
+  (rule 28).
 
 ## Native apps
 
@@ -390,11 +434,24 @@ and its Fine rules leave open. Each finds the other's files `kept`
   <names>` (and a note on stderr; the callers show a warning pointing at the
   page's New certificate authority), the generator a note on stderr, the
   status `names_not_covered` (below). A new CA (any trigger) takes every
-  name in. Moving between two networks re-issues the server certificate at
-  most (`issued`), never the CA.
+  name in. Then (rule 35) every EXACT name the kept CA permits is added: its
+  permitted DNS subtrees that are DNS names, but not the wide scope's `local`
+  and `lan` (subtrees for any name under them, never a server name) - the
+  names the CA was made with: `<host>.lan` from a `search lan` that is gone
+  for a minute, a `KRAKEN_CERT_NAMES` name dropped later, a shared CA's other
+  receivers' names (they are in its constraints: "The CA"). A new CA (rule
+  31's too) adds nothing (its names are the wanted ones). Moving between two
+  networks thus re-issues the server certificate at most (`issued`; with
+  rule 35 `kept` when the other network only lacks a trusted search
+  domain), never the CA.
 - **"Names / IPs differ"**: the SAN set compared sorted, order-free, DNS
   names case-insensitively (`::1` is printed as `0:0:0:0:0:0:0:1`); an entry
-  of another kind (e-mail, URI, an IP of another length) never matches.
+  of another kind (e-mail, URI, an IP of another length) never matches. The
+  subject's CN too (the script: the last `CN=` of its RFC 2253 subject, the
+  generator the first CN entry - the same one): with the CA's names staying
+  in, a rename inside the CA (a shared CA that lists the new name) or a host
+  name that became unusable can leave the SAN as it was, and the CN must
+  still follow the host name ("The server certificate").
 - **The CA** - a new one (`ca-created`) when (in this order for the reason
   printed): `--new-ca`; `new_ca = 1` in `cert_options` (rule 29: key and
   value as `scope`'s, the last such line; taken out of the file - the other
@@ -402,8 +459,9 @@ and its Fine rules leave open. Each finds the other's files `kept`
   (moved aside, rule 12); no CA certificate, a key that doesn't match it,
   or no `CA:TRUE` - but NO key at all beside a valid CA certificate is
   "taken offline" (rule 31): `kept` while nothing needs signing, and only a
-  due re-issue (any reason below, `--force`) then makes a new CA (reason
-  "<the re-issue's>, and krakensdr-ca.key is missing"); fewer than 365 days
+  due re-issue (any reason below, `--force` - not a leaf dated ahead, rule
+  23) then makes a new CA (reason "<the re-issue's>, and krakensdr-ca.key is
+  missing"); fewer than 365 days
   left (`-checkend` / `X509_cmp_time`, the same test); scope `none`
   - no Name Constraints (rule 3); partial constraints - no permitted DNS
   subtree, or no permitted IP subtree (each half leaves those names
@@ -479,10 +537,15 @@ and its Fine rules leave open. Each finds the other's files `kept`
   too - PR #5's renewal check never fired there); the generator with
   `X509_cmp_time(notAfter, now + 60 d) < 0`, exactly `-checkend`'s test. A
   certificate not valid yet is kept up to a day ahead of the clock (no time
-  check) and re-issued beyond (rule 23: the script reads `Not Before` from
-  the `x509 -text` it has anyway, the generator `X509_cmp_time` on
-  notBefore). The new pair is checked without the time (the dates are
-  ours), so a CA starting after a clock that is behind never fails a run.
+  check); beyond, it is re-issued only when nothing else is due (the last
+  reason checked) and the clock is known to be synchronized (the same test
+  as for the CA, below) - on a suspect clock it is kept with a note (the new
+  one would be dated from that clock), and with the CA key away it is kept
+  too (a note: a date never makes a new CA, rule 23 as amended at 1980d55).
+  The script reads `Not Before` from the `x509 -text` it has anyway, the
+  generator `X509_cmp_time` on notBefore. The new pair is checked without
+  the time (the dates are ours), so a CA starting after a clock that is
+  behind never fails a run.
 - **Validity** (rules 9, 33): notBefore = now - 1 hour, notAfter = notBefore +
   824 / 3650 days exactly. The script signs with `openssl ca -startdate
   -enddate` (`-selfsign` for the CA, a throw-away database in the stage
@@ -500,9 +563,12 @@ and its Fine rules leave open. Each finds the other's files `kept`
   are taken - a dangling symlink takes one too (`-e || -L` / `lstat`); the
   date `date -u` / `gmtime`. Only a readable, non-symlink CA certificate is
   retired; the new CA key replaces the old one by rename (its key is gone) -
-  unless the retired CA's subject has no `O=KrakenSDR receiver` entry (a
+  unless the replaced CA's subject has no `O=KrakenSDR receiver` entry (a
   user's own CA put at our names): then its key is kept as
-  `krakensdr-ca.key.retired-YYYYMMDD` (0600, rule 32). A retired / saved
+  `krakensdr-ca.key.retired-YYYYMMDD` (0600, rule 32), whatever
+  `krakensdr-ca.crt` is - a symlink's CA too (its subject read through the
+  link; the link itself is replaced by the new CA's file, its target left
+  alone; no `.retired.crt` for it). A retired / saved
   copy is written from the file's CERTIFICATE blocks only (the same lines in
   both makers, 0644); a file with a private key in it (`PRIVATE KEY-----`)
   is then moved aside as `<file>.unreadable-YYYYMMDD` (0600, rule 25).
@@ -553,9 +619,12 @@ and its Fine rules leave open. Each finds the other's files `kept`
   that are not own and outside the served CA's DNS subtrees - empty when the
   next start replaces the CA anyway (an own name outside, another scope, no
   DNS subtree). The host allow-list (rule 20) takes from the served
-  certificate's names only `<host>`, `<host>.local`, avahi's name and its
-  `.local`, `KRAKEN_CERT_NAMES`' and `<host>.lan` / `.home` /
-  `.localdomain` / `.home.arpa`. `tlscert::inspect` lists the retired CAs
+  certificate's names only `<host>`, `<host>.local`, `KRAKEN_CERT_NAMES`'
+  and `<host>.lan` / `.home` / `.localdomain` / `.home.arpa` - and avahi's
+  other name and its `.local` directly, whether the certificate has them or
+  not (rule 24 as amended at 1980d55: after an mDNS conflict in narrow scope
+  the page answered 403 at its own `.local` name). `tlscert::inspect` lists
+  the retired CAs
   without exceptions (`increment(error_code)`, `u8string()`, a catch around
   it: a name MinGW can't convert must not crash `certstatus::init` at every
   start). Since rule 28 `verify_ssl_certificates` runs the generator at
@@ -573,12 +642,26 @@ and its Fine rules leave open. Each finds the other's files `kept`
   new one; confirmed in a page dialog), the names_not_covered notice points
   there. The startup line prints the CA's SHA-256 (rule 26), and the
   install guide's first step is to compare it out of band.
-- **The AI assistant's plugin sandbox** (ai_sandbox.cpp) masks the same
-  secrets as `kraken_ai.py` (its SECRETS - the key patterns included - and
-  HOME_SECRETS), those that exist when the plugin starts: bwrap `--ro-bind
-  /dev/null <file>` / `--tmpfs <folder>` on the real paths (a symlink's
-  target), macOS `(deny file-read* (literal|subpath ...))`. A plugin the
-  assistant changed thus can't read a key and hand it out through its output.
+- **The AI assistant's plugin sandbox** (ai_sandbox.cpp; also every debug
+  playback generator while bwrap is there) masks the same secrets as
+  `kraken_ai.py` (its SECRETS - the key patterns included, `*.retired-*`
+  too - and HOME_SECRETS), those that exist when the plugin starts: bwrap
+  `--ro-bind /dev/null <file>` / `--tmpfs <folder>` on the real paths (a
+  symlink's target), macOS `(deny file-read* (literal|subpath ...))`. One
+  difference: of `~/.config` and `~/.local/share` only the credential stores
+  in them (gh, git's credentials, gcloud, rclone, the browsers' profiles,
+  keyrings, wallets, ... - the list in ai_sandbox.cpp), not the whole
+  folders - programs live there too (uv's and pipx's Pythons): with the
+  folders masked a python3 from `~/.local/share/uv` didn't start and every
+  test signal failed; the agent's own sandbox (kraken_ai.py) still masks the
+  whole folders. The children also run without `KRAKEN_API_TOKEN`,
+  `KRAKEN_AI_MCP_TOKEN` and `KRAKEN_MCP_TOKEN` in their environment (bwrap
+  `--unsetenv`, macOS `env -u`; rule 21) and in their own PID namespace
+  (`--unshare-pid`: their `/proc` holds their own processes only - before,
+  every host process with its `cwd` / `root` / `environ` links; a cancelled
+  generator's whole process tree ends with the namespace). A plugin the
+  assistant changed thus can't read a key or token and hand it out through
+  its output.
 - **Odds and ends**: the http -> https redirect sends with `MSG_NOSIGNAL`
   (a client resetting mid-request ended kraken_doa with SIGPIPE when nothing
   else had ignored it; macOS: uSockets' SO_NOSIGPIPE). Windows'
@@ -605,11 +688,15 @@ and its Fine rules leave open. Each finds the other's files `kept`
 - Callers (same messages in all three): run.sh's `cert_check` at every start
   (before the old stack is stopped) AND before every start of kraken_doa -
   the supervisor's (`supervise --before cert_check`: the page's Restart, a
-  crash) and headless mode's: kraken_doa only makes a pair when there is
-  none, so a scope chosen on the page, a rename or a near expiry would
-  otherwise wait for the next run.sh; the tmux client pane gets
-  `KRAKEN_CERT_HOST` / `KRAKEN_CERT_NAMES` from run.sh (`env`, removed when
-  unset - the pane has the tmux server's environment). install.sh's
+  crash) and headless mode's. kraken_doa's generator applies the same rules
+  at its every start too (rule 28) and then says `kept`; the script's run
+  before it is what puts the messages - a new CA's warning, names left out,
+  files kept aside, the CA's SHA-256 - on run.sh's terminal and in its log,
+  where the owner sees them (kraken_doa's stdout is discarded when it isn't
+  a terminal), and it is the maker wherever the openssl CLI is there; the
+  tmux client pane gets `KRAKEN_CERT_HOST` / `KRAKEN_CERT_NAMES` from
+  run.sh (`env`, removed when unset - the pane has the tmux server's
+  environment). install.sh's
   `install_kraken_certs`; the Docker entrypoint's `ensure_cert` (the script
   is copied to `/opt/krakensdr/scripts/`; `iproute2` is in the image for
   `ip`). Nothing for `kept`; an info line for `issued` / `not-managed`; a
@@ -627,6 +714,103 @@ and its Fine rules leave open. Each finds the other's files `kept`
   `krakensdr-ca.key` already there (icacls).
 
 ## Tested
+
+### The final review's items (2026-11-23, polish; x86_64 dev box, no hardware)
+
+Rules 21, 23, 24 and 32 as amended at 1980d55 and the new 35, both makers
+changed together; each item's test fails on 1980d55 and passes now (the
+counts: 1980d55 -> now):
+- 24, the allow-list (`t_allow.sh`, the review's driver with the real
+  `cert_status.cpp`; the review's `t_conflict.sh`): after an mDNS conflict
+  `<host>-2.local`, `<host>-2` and `<HOST>-2.LOCAL.` allowed in narrow scope
+  (the certificate leaves them out) and the bare name in wide; `-3.local`,
+  `<host>-2.example.org`, `evil.example` refused, the name refused again
+  once avahi says the system's, none with `KRAKEN_CERT_HOST` - 16 -> 20 / 20.
+- 21 / 32, the guards (`t_guards.sh`: both `.gitignore` files through `git
+  check-ignore --no-index`, `.githooks/pre-push` in a scratch repo):
+  `krakensdr-ca.key.retired-*` (and `-2`, any `*.retired-*`) ignored in
+  `kraken_doa_v2/`, `docker-data/`, the top and any folder and blocked by
+  the hook; `krakensdr-ca.crt.unreadable-*` ignored in any folder (the top
+  `.gitignore` had only `*.key.unreadable-*`); a retired CA CERTIFICATE
+  (`krakensdr-ca.YYYYMMDD.retired.crt`) neither - 6 -> 20 / 20.
+  `kraken_ai.py` (the review's `ai_retired_key.py`): Read denied and in the
+  sandbox's denyRead (was: nothing).
+- The plugin sandbox (`sbx/sbx_polish.sh`: the real `ai_sandbox.cpp`'s
+  `wrap()` under bwrap 0.6.1) - 7 -> 13 / 13: the `*.retired-*` keys masked
+  (3 read before), `KRAKEN_API_TOKEN` / `KRAKEN_AI_MCP_TOKEN` /
+  `KRAKEN_MCP_TOKEN` gone from the environment (HOME and PATH kept), a
+  python3 copied into a fake `~/.local/share/uv/python/...` (reached
+  through `~/.local/bin`) starts (before: "execvp python3: No such file or
+  directory"), and `make_testsignal.py rds-two-stations` with that python
+  alone writes its signal into the cache; an app's settings under
+  `~/.config` / `~/.local/share` readable, `gh` / git credentials /
+  keyrings / uv's credentials masked; `/proc` holds fewer than 10 processes
+  (was every host process, 431, and this shell's pid); a real `rds
+  decoder --info` and the generator as `playback.cpp` runs it (cache
+  writable, kraken_doa's folder read-only) run. The previous suite
+  (`sandbox/sbx_test.sh`) 7 / 7 - its `~/.config/x/y` "secret" is now
+  `~/.config/gh/hosts.yml` (a generic `~/.config` file is readable by
+  design).
+- 23 (`t_clock.sh`, both makers, each case then handed to the other, which
+  keeps every file; the review's `t_clock_away.sh`) - 18 -> 32 / 32: a pair
+  made 2 days ahead, the clock right and not synchronized: kept with the CA
+  key away (before: a new CA) and with it (before: the leaf re-issued from
+  the suspect clock); a leaf alone 2 days ahead: re-issued when synchronized
+  (an hour back from now), kept when not, kept with the CA key away even
+  when synchronized (before: a new CA); a pair 2 days ahead on a
+  synchronized clock: a new CA (unchanged); 12 hours ahead: kept.
+- 32 (`t_rule32.sh`; the review's `t_cross.sh` S4) - 12 -> 14 / 14: a Home
+  CA whose certificate is a symlink into another folder: replaced, its key
+  kept as `krakensdr-ca.key.retired-YYYYMMDD` (0600; before: deleted), no
+  `.retired.crt` for the link, the link replaced by the new CA's file and
+  its target untouched; as regular files unchanged; our own CA behind a
+  symlink + `--new-ca`: its key goes.
+- 35 (`t_rule35.sh`) - 28 -> 46 / 46: made with `search lan`, then no
+  search line: `kept`, `<host>.lan` still in (narrow and wide); a
+  `KRAKEN_CERT_NAMES` name dropped: kept, still in; wide: `cam.lan` (under
+  the `lan` subtree) added later - issued - and dropped again - issued, out
+  (not one of the CA's exact names); never a bare `local` / `lan`; an
+  unusable host name: CN=localhost, the CA's names stay; `--new-ca`: only
+  today's names; a rename inside the CA (made with the next name in
+  `KRAKEN_CERT_NAMES`): issued for the CN, no new CA, and back; every name
+  in the leaves verifies (`openssl verify -verify_hostname`); each step
+  handed to the other maker: kept, files byte-identical.
+- The script harness (`script/harness.sh`): **166 / 166** x5 (1.1.1w,
+  3.0.2, 3.6, dash, `bash --posix`), with 8 new rows (rule 35 narrow and
+  wide, the rename inside the CA, rule 23's leaf + key away, rule 32's
+  symlink) and 6 rows' expectations changed by the amended rules: E3b, E4b
+  (a dropped name stays: kept), E24b (a leaf 2 days ahead: issued only when
+  synchronized - new E24c / E24d: kept when not / no answer), R23a (kept,
+  the leaf too), R24 (4 avahi flips after a CA made with the conflict name:
+  kept x4), R30b (rule 30 on a fresh pair - on the old pair rule 35 keeps
+  `.lan`). The 1980d55 script fails exactly those 12 rows (154 / 166).
+- The cross-test (`script/cross.sh`, four pairings): **1528 / 1528** (1272
+  before: 240 new rows, 16 from the split rule-23 case), with a `polish`
+  block per scope and first maker (rule 35 after `search lan` and a
+  dropped name, the rename inside the CA and an unusable host - the CN -,
+  rule 23's leaf + key away and the key back, rule 32's symlinked
+  Home CA) and the expectations changed by the amended rules: a dropped
+  `KRAKEN_CERT_NAMES` name, another network's search domain and back, the
+  conflict over and back (rule 35: kept, were issued), a pair 2 days ahead
+  on an unsynchronized clock (kept, was issued), a leaf 2 days ahead (kept
+  by both when not synchronized, issued when synchronized).
+- Rerun unchanged: generator 92 / 92 x2 (3.0.2, 1.1.1w), alignment 42 / 42,
+  NSS (every pair valid, the negatives refused), lock 60 / 60, status 28 /
+  28, callers 33 / 33, supervisor 8 / 8, page 17 / 17 (both inline scripts
+  parse in Chromium), the AI assistant's settings 17 / 17, pre-push 13 / 13,
+  `.gitignore` 30 / 30 names; full builds of kraken_doa and heimdall without
+  new warnings.
+- A difference left as it was: with no answer from `timedatectl` (a
+  container without it) the script takes the clock as not synchronized and
+  the generator asks the kernel's adjtimex - for a leaf dated ahead now as
+  for the CA: the script keeps it, kraken_doa's generator re-issues it at
+  its start; then both keep (no back and forth).
+- By code only: macOS (`env -u` for the tokens; the narrowed home list
+  under sandbox-exec), Windows (unchanged: no sandbox there), a real mDNS
+  conflict (shims), a bwrap older than this machine's 0.6.1 with
+  `--unsetenv` / `--unshare-pid` (the availability probe now uses
+  `--unshare-pid`: a bwrap that can't is "not available", as if there
+  were none).
 
 ### Both makers, Fine rules 1-34 (2026-11-23, x86_64 dev box, no hardware)
 
@@ -843,8 +1027,9 @@ make-cert.sh's interface (`doa/certgen.cpp` + `tls_compat.cpp`,
 Where it is: `tlscert::` in `src/utils/tls_compat.cpp` (generator, names,
 `inspect`), `src/cert_status.cpp` (status object, notices, `CERT_SCOPE:`,
 download, the allow-list), `verify_ssl_certificates()` in
-`websocket_server.cpp` (Windows: the generator on every start; Linux /
-macOS: only when `server.crt` / `server.key` are missing), the page's
+`websocket_server.cpp` (then Windows: the generator on every start; Linux /
+macOS: only when `server.crt` / `server.key` were missing - since rule 28
+on every start, every platform), the page's
 `cert*` functions (section in the Telemetry sheet, `#cert-banner`). Beyond
 the contract's fields the status also carries `host`, `host_ok`, `ca.sha1`
 (Windows shows the SHA-1 as the Thumbprint), `server.name` / `org`,

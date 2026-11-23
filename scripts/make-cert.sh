@@ -15,13 +15,16 @@
 # certificate), which is re-issued here whenever the names or addresses
 # change or it gets old - always for the same server.key - without anyone
 # having to install anything again. The CA itself is replaced only when it
-# can't vouch for the host's own name (a rename, an avahi conflict name),
-# when the scope in cert_options differs from its own, when it expires
-# within a year, when its constraints are missing or partial, when it isn't
-# limited to TLS servers, or with --new-ca; another name outside it (a
+# can't vouch for the host's own name (a rename), when the scope in
+# cert_options differs from its own, when it expires within a year, when its
+# constraints are missing or partial, when it isn't limited to TLS servers,
+# when it starts more than a day after a synchronized clock, or with
+# --new-ca / new_ca=1; another name outside it (avahi's conflict name, a
 # search domain of another network) is left out of the server certificate
-# and reported. The old CA certificate is kept as
-# krakensdr-ca.YYYYMMDD.retired.crt (its key deleted) so the page can name
+# and reported, and every exact name the CA was made with stays in it. The
+# old CA certificate is kept as krakensdr-ca.YYYYMMDD.retired.crt (its key
+# deleted - unless the CA wasn't a receiver's: then the key is kept as
+# krakensdr-ca.key.retired-YYYYMMDD) so the page can name
 # what devices should remove. A server certificate of an earlier CA of ours
 # (one retired, deleted, or replaced by another receiver's CA copied in -
 # sharing a CA) is re-issued from the current one. A certificate of the
