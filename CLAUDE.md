@@ -179,7 +179,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 
 - Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7),
   `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9),
-  `signal-classifier.md` (Signal ID: every signal labelled with its type)
+  `signal-classifier.md` (Signal ID: every signal labelled with its type;
+  the Bands bar of worldwide bands over the spectrum)
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),
   `vfo-audio.md`, `operating-modes.md` (also VFO cards, the tuning step,
   zoom), `sidebar.md` (the boxes: move, collapse, the remembered layout;

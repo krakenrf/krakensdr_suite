@@ -1597,7 +1597,17 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   `sigStAt`, `sigHelloOk`, `sigRects` (the main spectrum's label targets),
   `sigConsumed`, `sigDy` (each track's label row), `sigNoRx`,
   `SIG_FADE_S` [5, 40], `SIG_FADE_MIN` 0.45, `sigUi` (localStorage
-  `kraken_sigclass` {spec, min: 0..1 or 'auto'}: per browser)
+  `kraken_sigclass` {min: 0..1 or 'auto', bands: the Bands bar}: per
+  browser), the Bands bar's `BAND_TABLE`, `BAND_CATS`, `BAND_GAP_TIP`,
+  `bandTextW` (*Bands*, below)
+- **Always on the spectrum** (the user's decision, 2026-11-24: "Remove the
+  "on spectrum" button. We will always display on the spectrum"): with
+  Signal ID on, the labels are drawn on every spectrum - the main display
+  (zoomed views and the wideband-scan stitch included) and each
+  independent pane. The box's "On spectrum" switch (`sig-spec`,
+  `sigSetSpec`, `sigUi.spec`) is gone; a `spec` key an older page stored in
+  `kraken_sigclass` is ignored (the rest of the object - Confidence - still
+  read) and dropped at the next save
 - **Labels** (`sigDrawSpectrum` from `drawBoxTags`, after the saved-frequency
   tags and before the AI badges, so on every path through drawBox; panes:
   `sigPaneTags` from `paneDrawOverlay`, after `sfPaneTags`): a track with a
@@ -1654,14 +1664,277 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   optimistic update; disabled with no state), the state ("Running" with
   analysis time / period / duty / snapshots in its title, "Off", "Paused",
   "Starting", "Unavailable", "Not on this receiver") and the reason as an
-  `.sb-note`, "On spectrum" and "Confidence" (Auto (the model's level,
-  shown), All, 25 .. 90 %, default 50 %; both per browser), the list
+  `.sb-note`, "Confidence" (Auto (the model's level, shown), All, 25 .. 90
+  %, default 50 %) and "Bands" (the bar of worldwide bands, default off;
+  both per browser), the list
   (`#sig-list`: name, MHz to the kHz, p - sorted by frequency, the same
   filter as the labels, subdued / old rows greyed; a click tunes like a
   label; rows are patched in place keyed by track id - rebuilding them with
   `innerHTML` on every state lost a click whose press and release
   straddled a message), the count in the header, a `?` tip
 - New icon `tag` (*icons.md*)
+
+### Bands: a bar naming the worldwide bands in view (2026-11-24)
+
+The user asked: "In signal ID settings, also add an option to display known
+bands. This would display a bar on top of the spectrum that says what band
+we are tuned to (using globally agreed upon bands only) (e.g. ISM band,
+BCFM band, satellite etc)".
+
+- **The option**: "Bands" in the Signal ID box (`#sig-bands`, `bandSet`),
+  per browser (`sigUi.bands` in localStorage `kraken_sigclass`, beside
+  Confidence), default off. Independent of the classifier: it works with
+  Signal ID off, without a model and against a receiver that has no Signal
+  ID (the page draws it from its own frequency axis - no command, no
+  protocol change). `body.bands-on` shows the strips.
+- **The bar** (the script's "BANDS" section): a 16 px strip directly above
+  the plot of every spectrum - `#band-strip-main` between the main
+  display's header and its plot (hidden in independent mode), and
+  `#tpane-b-N` between each independent pane's header and its body. Being
+  outside the plot it covers nothing that is there (VFO bars and their
+  labels, Signal ID labels and brackets, saved-frequency tags, AI badges,
+  the hover readout, scanner marks, the bearing colours, the noise floor)
+  and takes no spectrum input: click-to-tune, VFO drags, wheel zoom and
+  touch work as before. The plot keeps its height; the main display's
+  waterfall (and a pane's body) gives up the 16 px. One segment per band
+  over the part of it in view (DOM elements, `.bs-seg`, palette tokens:
+  `--s2` strip, `--s4` / `--l2` segment, 11 px `--t2` text, `--s5` / `--t0`
+  hovered - one step up from the first version's 10 px `--t3`, which was
+  the faintest text on the page; the label answers "what band am I on"),
+  aligned with the plot's frequency axis (main: the uPlot plot
+  area's left edge + `valToPos`; panes: `paneX`), the short label centred
+  when it fits (else none), gaps where no worldwide band applies. Every
+  segment's `title` (the page tooltip: hover, help mode, press and hold)
+  holds the full name with the service(s), the range, the category and the
+  RR provision ("Worldwide: ITU Radio Regulations ..."; a regional row
+  "Region 1 only: ..."); the empty strip's says "No worldwide band here".
+  Segments are DOM elements re-used for whatever band a retune puts there:
+  each gets its band's `title` when its band changes (a title set by code
+  wins over the `data-tip` the page's tooltip moved it to). A press on
+  the strip does nothing else (decided: nothing to act on; the tooltip is
+  the content). It follows retunes, zoom and pan at once: the main
+  display's `drawBox` and each pane's `paneDrawSpec` call it every frame;
+  it is rebuilt only when the axis (min, max), the plot width or its left
+  edge changed (`el._mk` / `el._bk`), otherwise a frame costs a comparison.
+  Hz are plain JS numbers (the Wideband variant's RF to 6668 MHz: no 32-bit
+  operations). Drive mode hides the spectrum and with it the strip
+- **The table** (`BAND_TABLE`, one data block in the page's globals,
+  between `// BAND TABLE BEGIN` / `END`, one JSON array per row: lo Hz, hi
+  Hz, short label (<= 16 characters), full name with the service(s),
+  category - `broadcast`, `aero`, `marine`, `amateur`, `satellite`, `nav`
+  (navigation and radar), `ism`, `science` (meteorology, radio astronomy,
+  time), `mobile` (RLAN) -, the RR provision, and for a regional row only
+  a 7th field, its Region). 60 rows. Coverage: 24 MHz (the receiver's
+  floor) to 6.7 GHz (the Wideband variant reaches 6668 MHz).
+  **The rule for a row** - and for adding one: the same service is
+  allocated in all three Regions' columns of the ITU Radio Regulations'
+  Table of Frequency Allocations (Article 5) over the range, primary or
+  secondary (the row says which where it differs), or a footnote /
+  appendix designates the band for the whole world (ISM No. 5.150, maritime
+  VHF No. 5.226 with Appendix 18, RLAN No. 5.446A with Resolution 229);
+  only the common part of a band (FM broadcasting from 88 MHz, because
+  Region 2 starts there). **The one exception** (the orchestrator's review,
+  2026-11-24: "ISM band" was the user's own first example, and 433 / 915
+  MHz are where ISM devices are): the ISM bands the Radio Regulations
+  themselves designate for a single Region - 433.05-434.79 MHz in Region 1
+  (No. 5.138; No. 5.280 for the countries that treat it as under No.
+  5.150) and 902-928 MHz in Region 2 (No. 5.150) - are in, marked with
+  their Region: the 7th field, "(R1)" / "(R2)" in the label, "Region N
+  only" in the full name and the tooltip's last line. The 70 cm row is
+  split around 433.05-434.79 (430-433.05 and 434.79-440 MHz stay "70 cm
+  amateur"; the ISM row's full name says that worldwide this is the 70 cm
+  band). Nothing else regional: CEPT's 868 MHz SRD band, PMR446 and the
+  cellular bands are not RR designations. **Co-primary services**: where
+  another service is co-primary in a Region (or by footnote in parts of
+  one) and often defines what is on air there, the full name says so - the
+  short label stays: Band I / III and FM (fixed, mobile in Region 3), UHF
+  TV 470-608 / 614-698 (Region 3 fixed and mobile - land-mobile networks
+  there, e.g. a trunked network at 499 MHz in New Zealand; Region 2 by
+  footnote, Nos. 5.292, 5.293, 5.296A, 5.308A), 698-862 (fixed too), marine
+  VHF (land mobile outside the maritime channels), the radio astronomy
+  rows at 322 / 406 MHz (fixed, mobile), L-band broadcasting (fixed,
+  mobile, IMT: Nos. 5.346, 5.346A), 1518-1525 (fixed, mobile), the S-band
+  space rows (fixed, mobile), 13 cm (fixed, mobile primary, amateur
+  secondary), ISM 2.4 GHz (fixed, mobile), C-band (mobile / IMT: Nos.
+  5.430A, 5.431B, 5.433A), the C-band uplink (fixed links, IMT 6425-7125 in
+  Region 1: No. 5.457E). Not in the table: plain FIXED / MOBILE
+  allocations (they are most of the spectrum and name no use; the IMT
+  identifications of Nos. 5.384A / 5.388 are for administrations "wishing
+  to implement IMT" and the cellular bands differ by region), national or
+  regional plans that are not RR designations (868 MHz devices, PMR446,
+  CB, land-mobile and public-safety bands, cellular band numbers, TV
+  channel rasters, military plans), and small worldwide allocations nobody would call a
+  band (149.9-150.05 MHz mobile-satellite, 400.05-400.15 MHz time-signal
+  satellite, 4500-4800 MHz FSS of the Appendix 30B plan, ...). Add a row
+  only when both sources below agree; cross-check it, run the checker, add
+  it to the table here. **Nesting: none** - rows never overlap; a worldwide
+  sub-band inside a band (121.5 MHz in the airband, 1610.6-1613.8 MHz radio
+  astronomy in the satellite-phone band, AIS in marine VHF, 2483.5-2500 MHz
+  mobile-satellite in ISM 2.4 GHz) is named in its band's full name. Two
+  adjacent bands are two segments
+- **The checker** `tools/band_table_check.py [page] [-v]` (python3, no
+  dependencies): extracts the block and checks every row (integer Hz,
+  lo < hi, inside 24 MHz - 6.7 GHz, the label length, a full name, a known
+  category, a provision, no emoji), the order, no overlap, coverage (a band
+  below 30 MHz, one ending at >= 6 GHz), the regional rows (exactly the two
+  of `REGIONAL`, each `ism` with "(R<n>)" in its label and "Region <n>
+  only" in its full name - a 7th field anywhere else fails), and the
+  classifier's `tools/sigclass/classes.json`: every exclusive band there
+  must be covered by rows of the expected category that do not cross its
+  edges; `-v` lists each class's `rf_hz` against the rows it meets. 60
+  rows: OK; five faulty copies (a regional 868 MHz row, the 915 row without
+  its Region, the 433 label without "(R1)", an overlap, a 20-character
+  label) each fail
+- **Consistency with classes.json** (the two serve different purposes and
+  stay separate data: `rf_hz` is where a class can exist anywhere in the
+  world, conservatively; this table is what the whole world shares). No
+  contradiction; the differences, all of them `rf_hz` wider than the
+  worldwide band: `wfm` 64-108.5 MHz vs FM broadcast 88-108 (OIRT and
+  Japan's bands are regional); `dab` 174-240 vs Band III 174-216 (Regions 1
+  and 3 to 223 MHz, DAB to 240 nationally); the DTV classes 44-88 / 170-230
+  / 470-890 vs Band I 54-68, Band III 174-216, UHF 470-608 / 614-698 /
+  698-862 (608-614 MHz is radio astronomy in Region 2; 862-890 MHz
+  broadcasting in Region 1 is limited to the African Broadcasting Area,
+  No. 5.322); `ais` 156-162.6 vs marine VHF 156-162.05 (No. 5.226's
+  maritime bands end at 162.05 MHz); `radiosonde` 1668-1700 vs
+  meteorological aids from 1668.4 MHz; `dme` 960-1215 = DME / SSR 960-1164
+  + GNSS L5 1164-1215 (aeronautical radionavigation in both). The
+  exclusive bands (88-108, 108-117.975, 117.975-137, 406-406.1,
+  960-1215 MHz) coincide with rows of the matching category
+
+**Sources.** (1) *ITU Radio Regulations, edition of 2024*, Volume 1,
+Article 5 (Table of Frequency Allocations and its footnotes), and Volume 2,
+Appendix 18 - the free PDF from itu.int (R-REG-RR-2024). (2) The FCC Online
+Table of Frequency Allocations (47 CFR 2.106, revised 2022-07-01): its
+International Table, columns 1-3, reproduces Article 5 of the 2016
+edition, and its paragraph of international footnotes (5.150, 5.226, ...)
+the footnote text. A row is in the table only when both agree, except
+where a later World Radiocommunication Conference changed it (marked).
+Every row was read against both (the "Art. 5" ranges below are the RR
+entries whose allocation spans all three Region columns):
+
+| MHz | Label | Category | What makes it worldwide (RR 2024) | FCC table (RR 2016) |
+|---|---|---|---|---|
+| 24.89-24.99 | 12 m amateur | amateur | Art. 5: AMATEUR, AMATEUR-SATELLITE, all Regions | same |
+| 24.99-25.01 | Time 25 MHz | science | Art. 5: STANDARD FREQUENCY AND TIME SIGNAL (25 000 kHz) 24.99-25.005, 25.005-25.01 | same |
+| 25.55-25.67 | Radio astr. | science | Art. 5: RADIO ASTRONOMY; No. 5.149 | same |
+| 25.67-26.1 | 11 m broadcast | broadcast | Art. 5: BROADCASTING | same |
+| 26.957-27.283 | ISM 27 MHz | ism | No. 5.150 (centre 27.12 MHz), in all three columns | same footnote |
+| 27.5-28 | Met aids | science | Art. 5: METEOROLOGICAL AIDS, FIXED, MOBILE | same |
+| 28-29.7 | 10 m amateur | amateur | Art. 5: AMATEUR, AMATEUR-SATELLITE | same |
+| 40.66-40.70 | ISM 40 MHz | ism | No. 5.150 (centre 40.68 MHz) | same footnote |
+| 50-52 | 6 m amateur | amateur | Region 1 50-52 Amateur (secondary, WRC-19; No. 5.169B), Regions 2 / 3 50-54 AMATEUR | Regions 2 / 3 only (Region 1's allocation came with WRC-19, after the 2016 edition) - single-source for Region 1 |
+| 54-68 | Band I TV | broadcast | Region 1 47-68, Region 2 54-68 (to 72), Region 3 54-68 (with FIXED, MOBILE): BROADCASTING | same |
+| 74.8-75.2 | Marker beacons | aero | Art. 5: AERONAUTICAL RADIONAVIGATION; No. 5.180 (75 MHz marker beacons) | same |
+| 88-108 | FM broadcast | broadcast | Region 1 87.5-100, Region 2 88-100, Region 3 87-100, all 100-108: BROADCASTING | same |
+| 108-117.975 | VOR / ILS | aero | Art. 5: AERONAUTICAL RADIONAVIGATION | same |
+| 117.975-137 | Airband | aero | Art. 5: AERONAUTICAL MOBILE (R); No. 5.200 (121.5 MHz emergency) | same |
+| 137-138 | Weather sats 137 | satellite | Art. 5: SPACE OPERATION, METEOROLOGICAL-SATELLITE, MOBILE-SATELLITE (to 137.825), SPACE RESEARCH (space-to-Earth) | same |
+| 144-146 | 2 m amateur | amateur | Art. 5: AMATEUR, AMATEUR-SATELLITE (146-148 Regions 2 / 3 only) | same |
+| 156-162.05 | Marine VHF | marine | No. 5.226 (maritime priority 156-162.05 MHz, 156.525 / 156.8 MHz distress and calling) and Appendix 18 (channels 156.025 - 162.025 MHz, AIS 1 / 2); Art. 5 MARITIME MOBILE 156.4875-156.5625, 156.7625-156.8375 | 5.226 same text |
+| 174-216 | Band III bcast | broadcast | Region 1 174-223, Region 2 174-216, Region 3 174-223 (with FIXED, MOBILE): BROADCASTING | same |
+| 322-328.6 | Radio astr. | science | Art. 5: FIXED, MOBILE, RADIO ASTRONOMY; No. 5.149 | same |
+| 328.6-335.4 | ILS glide path | aero | Art. 5: AERONAUTICAL RADIONAVIGATION; No. 5.258 | same |
+| 400.15-406 | Radiosondes | science | Art. 5: METEOROLOGICAL AIDS 400.15-401, 401-402, 402-403, 403-406 (METEOROLOGICAL-SATELLITE to 403) | same |
+| 406-406.1 | 406 beacons | satellite | Art. 5: MOBILE-SATELLITE (Earth-to-space); Nos. 5.266, 5.267 | same |
+| 406.1-410 | Radio astr. | science | Art. 5: FIXED, MOBILE, RADIO ASTRONOMY; No. 5.149 | same |
+| 430-433.05 | 70 cm amateur | amateur | Region 1 AMATEUR, Regions 2 / 3 Amateur (secondary), RADIOLOCATION in all (430-432, 432-438) | same |
+| 433.05-434.79 | ISM 433 (R1) | ism, **Region 1 only** | No. 5.138: ISM, centre 433.92 MHz, "in Region 1 except in the countries mentioned in No. 5.280" (special authorization); No. 5.280 (Germany, Austria, ... Switzerland) designates it as under 5.150. Worldwide: the 70 cm amateur band | same two footnotes |
+| 434.79-440 | 70 cm amateur | amateur | as 430-433.05; No. 5.282 (amateur-satellite 435-438) | same |
+| 470-608 | UHF TV | broadcast | Region 1 470-694, Region 2 470-512 / 512-608, Region 3 470-585 / 585-610: BROADCASTING | same |
+| 614-698 | UHF TV | broadcast | Region 1 470-694 / 694-790, Region 2 614-698, Region 3 610-890: BROADCASTING (608-614 Region 2 is radio astronomy) | same |
+| 698-862 | UHF TV / mobile | broadcast | Region 1 694-790 / 790-862, Region 2 698-806 / 806-890, Region 3 610-890: BROADCASTING and MOBILE, both primary | same |
+| 902-928 | ISM 915 (R2) | ism, **Region 2 only** | No. 5.150: "902-928 MHz in Region 2 (centre frequency 915 MHz)"; Region 2 column 902-928: FIXED, Amateur, Mobile except aeronautical, Radiolocation, 5.150. Regions 1 / 3: 890-942 fixed / mobile | same (5.150 text, Region 2 column) |
+| 960-1164 | DME / SSR | aero | Art. 5: AERONAUTICAL MOBILE (R), AERONAUTICAL RADIONAVIGATION; No. 5.328 | same |
+| 1164-1215 | GNSS L5 | nav | Art. 5: AERONAUTICAL RADIONAVIGATION, RADIONAVIGATION-SATELLITE (space-to-Earth); No. 5.328A | same |
+| 1215-1240 | GNSS L2 | nav | Art. 5: EESS (active), RADIOLOCATION, RNSS (space-to-Earth), SPACE RESEARCH (active) | same |
+| 1240-1300 | GNSS E6 / 23 cm | nav | Art. 5: as 1215-1240 plus Amateur (secondary); No. 5.282 | same |
+| 1300-1400 | L-band radar | nav | Art. 5: RADIOLOCATION (1300-1350 with AERONAUTICAL RADIONAVIGATION, No. 5.337); 1350-1400 RADIOLOCATION in every column | same |
+| 1400-1427 | Radio astr. 1420 | science | Art. 5: EESS (passive), RADIO ASTRONOMY, SPACE RESEARCH (passive); No. 5.340 | same |
+| 1452-1492 | L-band bcast | broadcast | Regions 1 and 2 / 3 columns: BROADCASTING, BROADCASTING-SATELLITE (with FIXED, MOBILE) | same |
+| 1518-1559 | L-band satcom | satellite | MOBILE-SATELLITE (space-to-Earth) in every column 1518-1525, 1525-1530, 1530-1535; Art. 5 1535-1559 | same |
+| 1559-1610 | GNSS L1 | nav | Art. 5: AERONAUTICAL RADIONAVIGATION, RNSS (space-to-Earth) | same |
+| 1610-1626.5 | Sat phones | satellite | Every column: MOBILE-SATELLITE (Earth-to-space), AERONAUTICAL RADIONAVIGATION; RADIO ASTRONOMY 1610.6-1613.8; Mobile-satellite (space-to-Earth) 1613.8-1626.5 | same (MMSS 1621.35-1626.5 is WRC-19, named only in the full name) |
+| 1626.5-1660 | L-band sat up | satellite | Art. 5: MOBILE-SATELLITE (Earth-to-space) | same |
+| 1660-1668.4 | Radio astr. 1665 | science | Art. 5: RADIO ASTRONOMY 1660-1660.5, 1660.5-1668, 1668-1668.4 (SPACE RESEARCH (passive) from 1660.5) | same |
+| 1668.4-1710 | Met sats/sondes | science | Art. 5: METEOROLOGICAL AIDS 1668.4-1690; every column 1690-1700 MET AIDS + MET-SAT, 1700-1710 MET-SAT (space-to-Earth) | same |
+| 2025-2110 | S-band sat up | satellite | Art. 5: SPACE OPERATION, EESS, SPACE RESEARCH (Earth-to-space) | same |
+| 2200-2290 | S-band sat down | satellite | Art. 5: SPACE OPERATION, EESS, SPACE RESEARCH (space-to-Earth) | same |
+| 2300-2400 | 13 cm amateur | amateur | Region 1 and Regions 2 / 3 columns 2300-2450: Amateur (secondary) | same |
+| 2400-2500 | ISM 2.4 GHz | ism | No. 5.150 (centre 2450 MHz) | same footnote |
+| 2690-2700 | Radio astr. 2.7G | science | Art. 5: EESS (passive), RADIO ASTRONOMY, SPACE RESEARCH (passive); No. 5.340 | same |
+| 2700-2900 | ATC radar | nav | Art. 5: AERONAUTICAL RADIONAVIGATION (No. 5.337), Radiolocation | same |
+| 2900-3100 | Radar 3 GHz | nav | Art. 5: RADIOLOCATION, RADIONAVIGATION (No. 5.426) | same |
+| 3100-3400 | Radar 3.1-3.4 | nav | Art. 5 3100-3300 RADIOLOCATION; 3300-3400 RADIOLOCATION in every column | same |
+| 3400-4200 | C-band sat | satellite | FIXED-SATELLITE (space-to-Earth) in every column (3400-3600 / 3400-3500, 3500-3600, 3600-3800 / 3600-3700, 3700-4200 / 3800-4200) | same |
+| 4200-4400 | Radio altimeters | aero | Art. 5: AERONAUTICAL MOBILE (R), AERONAUTICAL RADIONAVIGATION; No. 5.438 | same |
+| 4990-5000 | Radio astr. 5G | science | Art. 5: FIXED, MOBILE, RADIO ASTRONOMY, Space research (passive) | same |
+| 5000-5150 | Aero 5 GHz | aero | Art. 5: AERONAUTICAL RADIONAVIGATION in 5000-5010, 5010-5030, 5030-5091, 5091-5150; No. 5.444 (MLS) | same |
+| 5150-5350 | Wi-Fi 5 GHz | mobile | Art. 5: MOBILE except aeronautical mobile with No. 5.446A (RLAN, Resolution 229) | same |
+| 5350-5470 | Radar 5.4 GHz | nav | Art. 5: EESS (active), RADIOLOCATION, AERONAUTICAL RADIONAVIGATION (No. 5.449) / RADIONAVIGATION | same |
+| 5470-5725 | Wi-Fi 5.6 GHz | mobile | Art. 5: MOBILE except aeronautical mobile, No. 5.446A; RADIOLOCATION; MARITIME RADIONAVIGATION 5470-5650 | same |
+| 5725-5875 | ISM 5.8 GHz | ism | No. 5.150 (centre 5800 MHz) | same footnote |
+| 5925-6700 | C-band sat up | satellite | Art. 5: FIXED, FIXED-SATELLITE (Earth-to-space), MOBILE | same |
+
+**Tests** (2026-11-24, job scratch 9321609f sigid3/w1/: a TEST build of
+this tree on ports 47380 / 47381 / 47379 with a fake heimdall on 47391 /
+47392, exe `kdsigA_t473`, the shipped model; headless Chromium over the
+DevTools pipe, real mouse / wheel / touch events):
+
+- `ui_bands.py` 40 / 40: the On spectrum switch gone; Bands off in a fresh
+  browser; labels with Signal ID on and no switch; a stored `{spec:false,
+  min:0}` shows labels and keeps Confidence (All), the `spec` key dropped
+  at the next save; a real click on Bands shows the strip with Signal ID
+  off, stored beside Confidence, kept over a reload. Geometry (each
+  segment's edges against the axis): 98 MHz one segment "FM broadcast"
+  edge to edge (0.00 px); 108 MHz FM broadcast | VOR / ILS (0.39 px);
+  137.5 MHz Airband | Weather sats 137 and a gap from 138 MHz (0.16 px);
+  450 MHz empty with its gap tooltip; zoomed by 5 wheel notches (0.00 px);
+  after a pan drag (0.00 px); the axis driven to 4380-4420, 5790-5830,
+  5860-5940, 6650-6690 and 2399-2401 MHz (the Wideband variant's range;
+  <= 0.50 px); the wideband-scan stitch 103-113 MHz (0.02 px); five
+  independent panes at 98, 145.5, 162, 450, 406 MHz (<= 0.35 px; 406 MHz:
+  Radiosondes | 406 beacons | Radio astr.) and a zoomed pane (0.35 px).
+  The tooltip on hover (full name, range, service, provision) and in help
+  mode with a touch tap; a click on the strip changes nothing;
+  click-to-tune, a VFO drag and wheel zoom on the plot with the strip on;
+  drive mode in and out (the strip hidden with the spectrum, right again
+  after); no page errors
+- `ui_bands_pb.py` 7 / 7: a debug playback (`pocsag-three-rates`, the
+  recording at 157.65 MHz): one segment "Marine VHF", 0.00 px; the phone
+  layout (412 px, touch): 0.35 px, no horizontal scroll; no page errors
+- `ui_bands_old.py` 4 / 4: this page against a receiver built from main
+  before Signal ID: "Not on this receiver", the strip at 98 and 137.5 MHz
+  as against the new receiver, no page errors
+- The Signal ID UI suites of 2026-11-20, rerun with the Bands bar on (the
+  On spectrum check replaced by "no switch, labels drawn"): ui_sig 18 / 18,
+  ui_fixes 12 / 12, ui_touch 3 / 3 taps, ui_pane 7 / 7
+- Drawing cost (`drawBox`, 400 calls, the median of 20-call batch means at
+  108 MHz, four runs): off 0.030-0.085 ms, on with the strip cached
+  0.030-0.080 ms - no difference above the run-to-run noise (on - off:
+  -0.010, -0.005, +0.005, 0.000 ms); rebuilt on every call (a pan / zoom
+  frame) 0.035-0.080 ms; the strip alone rebuilt 0.005-0.010 ms
+- `band_table_check.py`: 57 rows OK; `theme_palette.py --check` OK
+
+After the orchestrator's review (the same day: the two Region-only ISM
+rows, co-primary services in the full names, the label one step brighter
+and larger, a test for segment re-use), rerun on the same setup:
+
+- `ui_bands.py` 60 / 60 - the 40 checks above plus segment re-use: after
+  retunes 100 -> 406.05 -> 162 -> 433.9 -> 98 -> 902.5 MHz (the same DOM
+  element re-used throughout, its title already moved to `data-tip` from
+  the second retune on), a real mouse hover on each segment wider than 8
+  px shows THAT band's tooltip, its last line "Worldwide ..." or "Region 1
+  / 2 only ..." as the row says (10 / 10), and a touch tap in help mode
+  shows it too (10 / 10). Drawing cost on - off: 0.000 ms
+- `ui_bands_pb.py` 7 / 7, `ui_bands_old.py` 4 / 4 (now waiting until the
+  fake heimdall's frames carry the new frequency - it rebuilds its scene
+  for seconds; once it swapped the two frequencies' results), ui_sig 18 /
+  18, ui_fixes 12 / 12, ui_touch 3 / 3 taps, ui_pane 7 / 7
+- `band_table_check.py` 60 rows OK, the five faulty copies fail
+  (neg_check.py 6 / 6); `theme_palette.py --check` OK
+- Legibility: 11 px `--t2` instead of 10 px `--t3` (screenshots at 1500 x
+  1000 in the scratch's shots_legib/: before_* / after_*)
 
 ## Tests (2026-11-20, job scratch 9321609f integ/)
 
