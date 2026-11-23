@@ -1158,6 +1158,11 @@ to win.
   dropout; the LGB grid was small (5 configurations on view 1, 2 full
   candidates); the LGB and stack validation numbers are optimistic (early
   stopping and the stack weight used val); timings under load
+- **Decision (Carl, 2026-11-24): the fast per-view MLP stays; no tree model
+  or stack is built.** The gain was almost all ISM devices, and those are
+  not critical - the band a signal is in already says "ISM" (the page's
+  Bands bar names it). Do not reopen this without a new reason; the shipped
+  weights stay as they are
 - Kept in `~/.cache/kraken_sigclass/arch_2026-11-22/` (`bin/` the harness and
   the methods - paths point at the job scratch -, `src/` the dump / replay
   tool, `sets/` the cached dumps with the pinned library index, `tables/`
