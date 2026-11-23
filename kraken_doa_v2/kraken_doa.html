@@ -13631,7 +13631,7 @@ function swpNorm(r) {
     // lower; NaN / null = not sent: an older receiver or heimdall, today's look)
     gain_floor_hops: num(r.gain_floor_hops, NaN), gain_search_hops: num(r.gain_search_hops, NaN),
     gain_probes: num(r.gain_probes, NaN), gain_probe_sweep: r.gain_probe_sweep === true ? true : r.gain_probe_sweep === false ? false : null,
-    trials_left_out: num(r.trials_left_out, NaN)};   // (the receiver's: trial visits at a higher gain not drawn, since it started)
+    trials_left_out: num(r.trials_left_out, NaN)};   // (the receiver's: trial visits not drawn - lower or higher gain -, since it started)
   if (s.full_sets && !s.full_sets.some(o => o.n === 1)) s.full_sets = null;   // (malformed: as if absent)
   return s.stop_hz > s.start_hz ? s : null;
 }
@@ -13819,7 +13819,7 @@ function swpAgcKvTip() {
     : pl(n, 'step') + ' lower: ' + Math.max(0, n - fl) + ' because the converter clipped, ' + Math.min(n, fl) + ' for a strong signal nearby (no clipping)');
   if (Number.isFinite(st.gain_probes)) out.push(pl(st.gain_probes, 'trial visit') + ' in the last sweep' + (st.gain_probe_sweep ? ' (it tried every step one lower)' : ''));
   if (st.gain_search_hops > 0) out.push((swpSettling() ? 'settling: ' : '') + pl(st.gain_search_hops, 'step') + ' still being tried');
-  if (st.trials_left_out > 0) out.push(pl(st.trials_left_out, 'trial visit') + ' at a higher gain not drawn (since the receiver started)');
+  if (st.trials_left_out > 0) out.push(pl(st.trials_left_out, 'trial visit') + ' not drawn (since the receiver started)');
   return SWP_AGC_KV_TIP10 + (out.length ? '. Now: ' + out.join('; ') : '');
 }
 function swpAgcRender() {

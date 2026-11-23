@@ -529,9 +529,12 @@ refused; out-of-range numbers are clamped:
   gain of the map when heimdall doesn't send it: in a search sweep every
   hop is a step below the ceiling, and taking the sweep's highest gain made
   the ceiling, and so every hop's shift, flip every other sweep).
-- Round 10 (2026-11-24): heimdall's Auto gain seeks each hop's lowest
-  input-referred floor - probes (a visit a step off), a search phase (the
-  whole plan a step down in every other sweep), blocks below the ceiling for
+- Round 10 (2026-11-24): heimdall's Auto gain seeks each hop's highest
+  gain at which the chain is still linear (the first design - the lowest
+  floor referred to the input - was dropped after the first hardware scan:
+  compression fools it; heimdall's `operating-modes.md`, "The linearity
+  search") - probes (a visit a step off), a search phase (the testable
+  hops a step down in every other sweep), blocks below the ceiling for
   good. The receiver: each visit is shifted by the real gain of its own
   packets (as before); the gain map from the hops' own (non-trial) visits; the
   ceiling from heimdall; the seam steps kept (below); heimdall's status
@@ -545,8 +548,9 @@ refused; out-of-range numbers are clamped:
   `gain_floor_hops` or `gain_search_hops` changes or a field appears /
   goes; the per-sweep ones (`gain_probe_sweep`, `gain_probes`, ...) ride
   along with the next state (any `SWEEP_` command answers with it). Also
-  `"trials_left_out"`: the up-trial visits this receiver left out of the
-  picture since it started (the receiver's own count).
+  `"trials_left_out"`: the trial visits this receiver left out of the
+  picture since it started (the receiver's own count; at first only the
+  up-trials, see the next point).
 - Trial visits (round 10, the 8091 trial bit of the visit's channel; the
   last packet of a visit decides): since the first hardware run (heimdall
   62b62c1, 2026-11-24) EVERY trial visit is left out of the picture while
@@ -1819,8 +1823,10 @@ used"):
       `gain_probe_sweep`); "6 steps still being tried" whenever
       `gain_search_hops` > 0 ("settling: 120 steps still being tried"
       while the word shows); "37 trial
-      visits at a higher gain not drawn (since the receiver started)"
-      (`trials_left_out`).
+      visits not drawn (since the receiver started)"
+      (`trials_left_out`; the receiver leaves out every trial visit of a
+      step that has a current row, lower or higher - the tip first said
+      "at a higher gain", from the receiver's first rule).
     - The strip and the readout's gain are unchanged: they follow the map,
       from which the receiver keeps the trials out.
     - Tests (`t_agc10.py`, mock, the counts injected into its `sweep`
@@ -1856,8 +1862,8 @@ used"):
         the converter clipped, 3 for a strong signal nearby";
       - a search: "≤ 49.6 dB · 16 lower · settling", gone when it ends;
       - up-trials with the trial bits (`fake_probe` sparse, up): "246
-        trial visits at a higher gain not drawn" in the tip, nothing in
-        the line;
+        trial visits at a higher gain not drawn" in the tip (the wording
+        then), nothing in the line;
       - the strip over 81 samples under trials: 4 map changes, no strip
         change without one;
       - a second tab switching Auto off: the first shows "every step",
@@ -2791,6 +2797,141 @@ clipped samples (under 1 % of the hop's) - by the rule: a first mild clip
 is only noted, and since the hold starts over a hop climbs back sooner.
 Whether that is the late evening's traffic or the price of the hold's fix
 was not separated (the midday runs before it had at most 4).
+
+**Round 10, 2026-11-24: "the overload flag isn't good enough".** The
+user, with round 9b's Auto gain on: "I'm still seeing overload. For example
+the SNR of the narrowband signals at 416 MHz get alot better if I turn the
+gain down. Maybe the overload flag isn't good enough. It may not activate
+when there is still intermodulation causing reduced SNR." They were right
+about the flag, and the first answer proposed (per hop the gain with the
+lowest noise floor referred to the input) was wrong as well. What the
+hardware said, and what was built (heimdall: its `operating-modes.md`, "The
+linearity search"; the receiver and the page: their sections above):
+
+- *The measurements* (the dev machine's KrakenSDR, round 9b's builds, 01:13 -
+  01:48; job scratch `pi/imd_probe.py`, `imd_full.py`, `imd_pairs.py` and
+  their `*_study.py` / `imd_comp.py` / `imd_full_lin.py`: every gain of the
+  list in turn, per hop the averaged spectrum of heimdall's own 8091 samples
+  - floor, total power, strongest carrier, clipped share; and the whole plan
+  with the common gain alternating sweep by sweep, so that every hop has
+  before / trial / after triples).
+  - The cause at 416 MHz is saturation by a carrier OUTSIDE the hop's
+    sampled band. The 415.64 MHz carrier clips the converter where it is in
+    band (20 - 29 % of the samples above 33 dB gain, none at 29.7). In the
+    hop above it - 417.02 MHz in the whole plan, 417.43 with one tuner: the
+    carrier 1.4 - 1.8 MHz below the centre, outside the 2.4 MS/s band,
+    inside the tuner's IF filter - the output stands pinned at -8 ... -9
+    dBFS from 49.6 down to 30 - 34 dB gain, the 416.59 MHz control channel
+    is compressed by 12 - 16 dB at 49.6, ghost carriers stand 35 - 42 dB
+    over the floor, and 0.00 - 0.07 % of the samples clip: the decimation
+    filter removes the carrier after the damage. Carrier over floor there:
+    52.9 dB at 49.6, 56.5 at 37.2, 59.9 at 29.7 (whole plan); 60.7 / 63.5 /
+    69.3 at 49.6 / 37.2 / 33.8 (one tuner).
+  - The floor referred to the input looks BEST at the saturated top gain
+    (compression lowers the small-signal gain): a rule on it stays at the
+    ceiling.
+  - The hop below the carrier and the second hop above are linear at every
+    gain: round 9's cap (12 dB under the ceiling within 2.4 MHz of a hop
+    held far down) was too high for the one and pointless for the others.
+  - The gain list's steps are not the curve's everywhere: 49.6 -> 48.0
+    changes the output by +1 dB at 86 - 98 MHz, +0.7 dB at 633 - 681 MHz,
+    -1.1 dB at 411 MHz; 49.6 -> 43.4 is 5.5 dB at 174 - 380 MHz (curve 4.2).
+    At 86 - 98 MHz the output at 49.6 is only 6 - 17 dB over the converter's
+    own noise (-45.0 dBFS rms): every dB of gain is sensitivity there.
+  - Round 9b's Auto in the same hour: 417.02 at 37.2 (the cap) for 36
+    sweeps and then 29.7 by two mild clips; 413.19 and 418.93 capped to
+    37.2 for nothing; 415.11 at 19.7 where 29.7 was clean.
+- *The rule now*: per hop the highest gain at which the chain is linear.
+  heimdall takes trial visits a step lower or higher (valid packets, their
+  own gain in the header, the 8091 trial bits) and compares the hop's total
+  power and floor with the visits before and after; a first guess comes
+  from the level of the carrier in the hop below when that carrier lies
+  within 2.2 MHz of the hop's centre; the clipping rule's cuts and raises
+  follow the measured level. The receiver leaves every trial visit out of
+  the picture; the page says "settling" while more than 1 % of the steps
+  are being searched.
+- *What the first hardware runs of each candidate found* (heimdall worker's
+  batches and the orchestrator's sets, the trace `HEIMDALL_AG_TRACE=1`): a
+  search that never ended on hops whose trials gave no verdict (the LTE
+  block probed 8 dB down every other sweep); trials on hops where nothing
+  can be measured (the FM band, above 1 GHz); 31 - 39 trials a sweep when
+  settled; a tolerance of "1.5 dB or half the step, the larger" that let
+  2.2 dB of compression pass (the orchestrator's specification - the
+  smaller is right); a mildly clipped baseline that cancelled every trial
+  of the hop; an up-trial that passed on a constant carrier 0.7 of full
+  scale and clipped afterwards; the page's "settling" that never ended (a
+  few bursty steps are always being tried again); down-trials drawn into
+  the picture (a floor several dB up for one row where the tuner's noise
+  is near the converter's). All fixed, each with its numbers in the
+  section it belongs to.
+- *The last pass* (heimdall 62da1b1, receiver 64e2e63, page 374f432 - the
+  merged tree's sources, byte for byte; 10:42 - 12:48, a busier band than at
+  night: the 415.64 and 416.59 MHz carriers about 6 dB stronger, a
+  transmitter at 413 MHz keying every minute or so, so each run is judged
+  against a manual scan of the same hour):
+  - Whole plan, cold start, 60 sweeps: 417.02 MHz at 29.7 dB by the 6th
+    sweep, then 25.4 and 22.9 as its carrier grew; carrier over floor 59.7
+    dB against 60.1 at the scan's best gain. 415.11 at 16.6 = the scan's
+    best gain (61.7 dB). 418.93 follows the keyed 417.86 MHz carrier (32.8
+    ... 44.5; the scan's best 38.6). 411.28 and 420.84 at the ceiling.
+    Nothing below 108 MHz, in 174 - 380 MHz, 620 - 690 MHz or above 1 GHz
+    lower when settled (one hop, 321.39 MHz at 44.5 in some runs: the
+    clipping rule's - wideband content at -9.4 dBFS rms). Trials 6 - 13 a
+    sweep (at most 1.4 % of 911), the search down to 1 % of the hops by
+    the 17th sweep, no gain decision in the settled sweeps, a hop over 1 %
+    clipped at its own gain after the 4th sweep in 2 of 30 windows (the
+    transmitter at 413 MHz, a burst at 415.11).
+  - One tuner, 405 - 428 MHz: 415.52 at 25.4 (the scan's best: 68.6 dB),
+    417.43 at 29.7 (the scan: clean from 33.8 down; 66.6 dB there, 69.0 at
+    its best), 419.34 at the ceiling, 413.61 at 29.7 (its transmitter:
+    4.7 % clipped at 49.6 when it keys). The heimdall worker's five cold
+    starts of this plan: 417.43 within one list step of 33.8 by the 8th
+    sweep in all five.
+  - Round 9's whole chain (`agc_pi.py`) 23 / 24: a sweep 3.946 s manual,
+    3.942 s with Auto; the gain map equal to the stream's own gains on all
+    911 hops; coherent again 3.7 s after the switch with Auto on, what was
+    learned used on the way back. The miss: hops over 1 % clipped after the
+    switch 29, 23, 6, 2, 1, 0 ... - the check allows 1 from the 4th sweep
+    (round 9b: 0 from the 4th; the trial sweeps and the level-sized cuts
+    cost about two sweeps on the heaviest hops).
+  - The page against the real heimdall (`page_r10.py`): with Auto off the
+    counts are there and the new words show; after the click "settling"
+    from the 2nd to the 14th sweep, then "≤ 49.6 dB · 62 lower, min 16.6
+    dB"; the tip "65 steps lower: 61 because the converter clipped, 4 for
+    a strong signal nearby (no clipping); 11 trial visits in the last
+    sweep; 4 steps still being tried; 930 trial visits ... not drawn";
+    the gain map still while trials run; no page error.
+  - Rounds 3 - 8's sets with Auto off and with Auto on (20 sets, 425
+    steps): 422 pass - the Data rate 19 / 19 and 18 / 19, the rate over
+    whole sweeps 26 / 26 and 25 / 26, the display list 14 / 15 and 15 / 15,
+    the kept rows 10 / 10 twice, round 5's 27 / 27 twice, the waterfall
+    14 / 14 twice, the resolutions 15 / 15 four times, end to end 20 / 20
+    twice, the compression 40 / 40 twice. The misses: the display list's
+    row-detail step (the one that asks too much, round 9b); a rate that
+    wobbled 6.6 % where the step allows 5; and with Auto on the readout
+    141 KB/s against 117 on the wire at that moment - in the search's
+    trial sweeps about 30 % of the hops are not redrawn, so less is sent,
+    and the readout is an average over 15 s.
+  - 20 minutes (300 sweeps): the quiet bands never move, 2 - 3 trials a
+    sweep, 3 - 9 hops being tried again, the search over at the 16th sweep.
+- *Limits, measured and left*: (1) a hop whose own carrier stands within a
+  few dB of full scale and varies (415.11 MHz: -1.1 dBFS rms at 29.7 dB on
+  a quiet night, 5 dB more at midday) is cut at each burst and comes back
+  by the clipping rule's hold, which doubles: at the end of the 20 minutes
+  it stood at 8.7 dB where the scan's best was 16.6 - about 5 dB of
+  sensitivity on that one hop. (2) After a strong transmission the hop
+  keeps the gain it needed (413 MHz: 29.7 dB) until the hold is over -
+  seconds after one event, minutes when it keeps keying; the price of not
+  clipping a row at every key-up. (3) The strong-carrier hops settle one
+  or two list steps under their best gain (the headroom: -7 dBFS rms for a
+  hop's own carrier, -2 dBFS for the neighbour's), 0.4 - 2.4 dB of carrier
+  over floor in these runs. (4) heimdall's two fake scenes that end about
+  2 dB short of their best (products just over the converter's noise; a
+  keyed carrier). (5) Levels: the client still shifts a hop by ONE curve,
+  and the real steps differ by band (above) - a hop far down can stand 1 -
+  2 dB off its neighbours. Not run: the Pi with a KrakenSDR (the test Pi
+  carries the Wideband unit: build and the fake only), Windows and macOS,
+  Firefox / Safari, a fork without the fast gain write on hardware.
 
 Open after round 6, as after round 5: Firefox, Safari and iOS have not run the picture's
 download or the full sets (headless Chromium only); a slow link was tried

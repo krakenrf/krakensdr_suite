@@ -150,8 +150,11 @@ channel). Every consumer masks the low byte.
   range: one wide spectrum and waterfall, not live, nothing demodulated -
   heimdall hops (`set_sweep`), the client stitches; with Auto gain
   (`set_sweep_auto_gain`) heimdall keeps a gain per hop under the common
-  gain and the client shifts each hop's levels by heimdall's measured gain
-  curve; `kraken_doa_v2/docs/dev/sweep-mode.md` holds the wire contract). The
+  gain - the highest at which the hop neither clips nor is saturated by a
+  carrier beside it, found from measured levels and trial visits that the
+  client leaves out of the picture - and the client shifts each hop's
+  levels by heimdall's measured gain curve;
+  `kraken_doa_v2/docs/dev/sweep-mode.md` holds the wire contract). The
   client follows heimdall's mode from the header flags and parks DoA /
   beamforming outside coherent mode.
 - **`--wideband` / `-w`** (KrakenSDR Wideband downconverter, both apps):
