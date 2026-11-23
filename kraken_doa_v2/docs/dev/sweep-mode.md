@@ -2500,6 +2500,21 @@ gain; coherent again 0.6 s after the switch. The miss: in the page run the
 1 %). End to end 20 / 20 with Auto off and on, the display list 15 / 15,
 the compression 40 / 40, the kept rows 10 / 10.
 
+Again from the merged tree after main's 30cabcc (the receiver's HTTPS
+certificate authority, the telemetry logs; one conflict, the receiver's
+Makefile source list - both entries kept): `agc_pi.py` 23 / 24 with the same
+miss (43, 16, 14, 4, 4, 2, 6, 1, 0, 0, 3, 6, 0 hops clipping; none over 1 %
+after the 4th sweep), a sweep 3.953 -> 3.977 s, no hop just under the
+ceiling; end to end 20 / 20, the compression 40 / 40, the kept rows 10 / 10,
+round 5's 27 / 27, the Data rate 19 / 19, the waterfall 14 / 14, the
+resolutions 15 / 15 and 15 / 15; the display list 14 / 15 and, with Auto on,
+end to end 19 / 20 (the two steps that ask too much, rounds 8 and 9). So in
+the settled state a sweep now and then has up to 6 of 911 hops with a few
+clipped samples (under 1 % of the hop's) - by the rule: a first mild clip
+is only noted, and since the hold starts over a hop climbs back sooner.
+Whether that is the late evening's traffic or the price of the hold's fix
+was not separated (the midday runs before it had at most 4).
+
 Open after round 6, as after round 5: Firefox, Safari and iOS have not run the picture's
 download or the full sets (headless Chromium only); a slow link was tried
 through a 2 MB/s proxy by the page worker, not over a real one; a 1 GB Pi 4
