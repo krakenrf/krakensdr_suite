@@ -792,6 +792,11 @@ bool num_list(const std::string& line, const char* key, std::vector<double>& out
 
 std::atomic<int64_t> g_reg_asked_ms{0};   // set_sweep_gains sent (now_ms; 0 = never)
 std::atomic<bool> g_reg_answered{false};  // its answer came since
+// set_sweep_gains sent and not answered yet: heimdall answers its commands in order, one line
+// each, so only the answer that leaves none open is the latest table's - an answer to an
+// earlier command (drained just before the next one goes) must not put its table back.
+// A count left open for 3 s (a command lost with the connection) starts over
+std::atomic<int> g_reg_open{0};
 std::atomic<bool> g_reg_save{false};      // heimdall's answer changed the table: the loop saves it
 
 // The tuner's real gain against its gain list (heimdall's "gain_real_db" in its
@@ -1390,7 +1395,14 @@ std::string gains_command() {
     return o.str();
 }
 
+std::atomic<int64_t> g_reg_open_ms{0};
 void note_gains_asked() {
+    const int64_t t = now_ms();
+    if (t - g_reg_open_ms.load() > 3000) g_reg_open.store(0);
+    g_reg_open.fetch_add(1);
+    g_reg_open_ms.store(t);
+}
+void note_gains_sent() {
     g_reg_answered.store(false);
     g_reg_asked_ms.store(now_ms());
 }
@@ -1436,7 +1448,9 @@ void ingest_control_reply(const char* data, size_t n) {
         if (line.find("\"gain_points_hz\"") != std::string::npos) known = 1;
         if (line.find("\"status\":\"success\"") != std::string::npos && line.find("\"points_hz\"") != std::string::npos) {
             std::vector<double> pts, gns;
-            if (num_list(line, "points_hz", pts) && num_list(line, "gains_db", gns) &&
+            const int open = std::max(0, g_reg_open.fetch_sub(1) - 1);
+            if (open == 0) g_reg_open.store(0);
+            if (open == 0 && num_list(line, "points_hz", pts) && num_list(line, "gains_db", gns) &&
                 (gns.size() == pts.size() + 1 || (pts.empty() && gns.empty()))) {
                 Regions r;
                 for (double d : pts) r.points.push_back(std::llround(d));
@@ -1452,11 +1466,14 @@ void ingest_control_reply(const char* data, size_t n) {
                     g_state_dirty.store(true);
                 }
                 g_reg_answered.store(true);
-                known = 1;
             }
+            known = 1;
         } else if (line.find("\"Unknown command\"") != std::string::npos) {
             const int64_t asked = g_reg_asked_ms.load();
-            if (asked != 0 && now_ms() - asked < 2000 && !g_reg_answered.load()) known = -1;
+            if (asked != 0 && now_ms() - asked < 2000 && !g_reg_answered.load()) {
+                known = -1;
+                g_reg_open.store(0);
+            }
         }
         if (known != 0 && g_reg_known.exchange(known) != known) g_state_dirty.store(true);
         if (known != 0) update_ref();

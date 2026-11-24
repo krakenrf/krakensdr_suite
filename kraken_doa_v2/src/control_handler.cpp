@@ -1031,10 +1031,12 @@ void ControlHandler::send_sweep_plan_now() {
     send_sweep_gains_now();
 }
 
-// (what heimdall sent before the ask is read first: only the lines after it answer it)
+// (counted as asked BEFORE what heimdall sent so far is read: an answer to an earlier
+// table drained here then leaves this one open and is not taken over it)
 void ControlHandler::send_sweep_gains_now() {
-    DataReceiver::drain_control_socket();
     sweep::note_gains_asked();
+    DataReceiver::drain_control_socket();
+    sweep::note_gains_sent();
     send_control_command(sweep::gains_command());
 }
 

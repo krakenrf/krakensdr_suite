@@ -35,10 +35,13 @@ std::string set_dwell(double ms);
 // the plan does, one per receiver, saved and replayed
 std::string set_gains(const std::string& v);
 // {"command":"set_sweep_gains",...} for heimdall: sent after every set_sweep and on
-// a change in sweep mode; note_gains_asked() just before (its answer, or an older
-// heimdall's "Unknown command", tells whether heimdall has it)
+// a change in sweep mode. note_gains_asked() before the control socket is drained
+// (an answer to an earlier table then doesn't count as this one's), note_gains_sent()
+// after it, right before the send (an older heimdall's "Unknown command" from then on
+// says it has no table)
 std::string gains_command();
 void note_gains_asked();
+void note_gains_sent();
 // heimdall's answer changed the table (it applied other values): the command to
 // save, once ("" = nothing)
 std::string take_gains_save();
