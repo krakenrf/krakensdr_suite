@@ -739,6 +739,16 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 body.mode-sweep #swp-spec-box {display:block;position:relative;width:100%;height:280px;flex-shrink:0;background:var(--s3);touch-action:pan-y;cursor:crosshair}
 body.mode-sweep #swp-wf-box {display:block;position:relative;width:100%;flex:1 1 auto;min-height:100px;background:#000;border-top:1px solid var(--l1);overflow:hidden;touch-action:pan-y;cursor:crosshair}
 #swp-spec-box canvas, #swp-wf-box canvas {position:absolute;left:0;top:0;display:block}
+/* gain by region: the lane under the sweep's spectrum (swpLane*), shown while the receiver's heimdall has the
+   table; finger-sized where the pointer is coarse. The top bar's Gain bar outlined while it sets a region */
+#swp-lane-box {display:none}
+body.mode-sweep.swp-regions #swp-lane-box {display:block;position:relative;width:100%;height:30px;flex-shrink:0;background:var(--s2);border-top:1px solid var(--l1);touch-action:pan-y;cursor:pointer;outline:none;user-select:none;-webkit-user-select:none}
+body.mode-sweep.swp-regions #swp-lane-box.on-point {cursor:ew-resize}
+body.mode-sweep.swp-regions.swp-panning #swp-lane-box {cursor:grabbing}
+#swp-lane-box:focus-visible {box-shadow:inset 0 0 0 1px var(--ac-l)}
+#swp-lane-box canvas {position:absolute;left:0;top:0;display:block}
+@media (pointer:coarse) { body.mode-sweep.swp-regions #swp-lane-box {height:40px} }
+.vbar.gn-region {box-shadow:0 0 0 1px var(--ac-l)}
 body.mode-sweep.swp-zoomed #swp-spec-box, body.mode-sweep.swp-zoomed #swp-wf-box {cursor:grab}
 body.mode-sweep.swp-panning #swp-spec-box, body.mode-sweep.swp-panning #swp-wf-box {cursor:grabbing}
 /* the sweep under way and how long one takes, in the spectrum's header: fixed widths (20 a second) */
@@ -2456,7 +2466,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <input type="number" id="swp-dwell" min="5" max="1000" step="5" value="5" onchange="swpSetDwell(this.value)" title="How long each step of the sweep is listened to, 5 - 1000 ms">
           <span class="u">ms</span>
         </div>
-        <div class="kv" id="swp-gain-kv" title="The gain the sweep uses: the top bar's Gain on every step"><span>Gain</span><span id="swp-gain-st">-</span></div>
+        <div class="kv" id="swp-gain-kv" title="The gain the sweep uses: the top bar's Gain on every step, or a gain per region of the range. The regions are set on the line under the spectrum: double-click it (on a touch screen: double-tap) to cut the range there - both parts keep the gain; drag a border left or right to move it (borders sit between the sweep's steps); right-click a border (press and hold) to remove it. Click a region (tap) to pick it: the top bar's Gain then sets that region only. Removing the last border makes the remaining gain the Gain of every step again. A region turned down shows a higher noise floor - the sensitivity given up there; signals keep their height. For every browser on this receiver"><span>Gain</span><span id="swp-gain-st">-</span></div>
         <div class="ctrl-row">
           <button type="button" class="btn primary" id="swp-run" style="flex:1" onclick="swpRunToggle()"><svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause</span></button>
         </div>
@@ -3481,13 +3491,15 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <button type="button" class="view-btn icon snap-btn" id="snap-btn-main" aria-label="Save a picture"
                   title="Save a picture (PNG) of the spectrum and the waterfall" onclick="snapSave('main')"><svg class="ic" aria-hidden="true"><use href="#i-camera"/></svg></button>
           <span class="help not-sweep" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
-          <span class="help sweep-only" tabindex="0" role="button" aria-label="Help">?<span class="tip">The sweep: the tuners step through the top bar's range and the receiver puts their spectra together - not live, nothing is demodulated. The trace fills in as the sweep goes on; the waterfall gets one line per complete sweep. Mouse wheel: zoom (down to one FFT bin per point); drag: pan. Nothing is retuned.</span></span>
+          <span class="help sweep-only" tabindex="0" role="button" aria-label="Help">?<span class="tip">The sweep: the tuners step through the top bar's range and the receiver puts their spectra together - not live, nothing is demodulated. The trace fills in as the sweep goes on; the waterfall gets one line per complete sweep. Mouse wheel: zoom (down to one FFT bin per point); drag: pan. Nothing is retuned.<br><br>The line under the spectrum is the gain by region: double-click it (double-tap) to cut the range there, drag a border to move it, right-click it (press and hold) to remove it; click a region to pick it - the top bar's Gain then sets that region only.</span></span>
         </div>
         <div class="spectrum-content">
           <div id="pb-overlay"><span id="pb-overlay-k">DEBUG PLAYBACK - not live</span></div>
           <div id="fp"></div>
           <!-- Sweep mode: the sweep's spectrum (as tall as #fp: the split below drags both) -->
           <div id="swp-spec-box"><canvas id="swp-spec"></canvas><canvas id="swp-spec-ov"></canvas></div>
+          <!-- Sweep mode: the gain by region lane (swpLane*: the spectrum's frequency axis) -->
+          <div id="swp-lane-box" tabindex="0" role="group" aria-label="Gain by region"><canvas id="swp-lane"></canvas></div>
           <div id="fp-split" class="hsplit" title="Drag to change the spectrum / waterfall split (double-click: default)"></div>
           <div id="wf-container">
             <canvas id="wf-canvas"></canvas>
@@ -4381,6 +4393,10 @@ const swp = {st: null, fr: null, tr: null, zoom: {level: 1, off: 0}, wf: null, s
              ui: {a: 0, b: 0, holdR: 0, tun: null, holdRes: 0, holdDw: 0}, view: null, viewSeq: 0, seqMin: 0,
              hover: null, drag: null, wfAt: 0, wfPend: null, wfTimer: null, gridOdd: null, readout: '', resText: '', lines: 0,
              stale: false,    // stale: a new connection, the receiver's state not told anew yet
+             // gain by region (swpReg*): selF = a frequency in the selected region (NaN: the middle of the view),
+             // drag = a point being dragged, press = a press on the lane, pend = the table this page sent last
+             // (what the next change is built on until the receiver's answer is there); lw / lh = the lane's size
+             reg: {selF: NaN, drag: null, press: null, pend: null, hoverI: -1, tapAt: 0, tapX: 0, lastType: '', flash: 0}, lw: 0, lh: 0,
              rows: [],        // the waterfall's rows, newest first ({w, o, h}: swpWfAdd)
              ovPend: null,    // the overview (flag 16) waiting for its sweep's flag-2 frame
              ovSent: -1,      // the points this connection asked overviews for (SWEEP_OVERVIEW; -1 = not yet)
@@ -6187,13 +6203,13 @@ function snapWhat(target) {
     const s = swpSpan(), win = swpWindow(), st = swp.st;
     if (!s || !win) return null;
     const n = st && st.tuners ? st.tuners.length : 0;
-    return {region: ['swp-spec-box', 'swp-wf-box'],
-            layers: ['swp-spec-box', 'fp-split', 'swp-wf-box', 'swp-spec', 'swp-spec-ov', 'swp-wc', 'swp-wo'],
+    return {region: ['swp-spec-box', 'swp-lane-box', 'swp-wf-box'],
+            layers: ['swp-spec-box', 'swp-lane-box', 'fp-split', 'swp-wf-box', 'swp-spec', 'swp-spec-ov', 'swp-lane', 'swp-wc', 'swp-wo'],
             cap: ['Sweep' + (n ? ' · ' + n + (n === 1 ? ' tuner' : ' tuners') : ''),
                   'Range ' + snapMhz(s[0] / 1e6) + ' - ' + snapMhz(s[1] / 1e6) + ' MHz',
                   swp.zoom.level > 1.0001 ? 'Shown ' + snapRange(win[0] / 1e6, win[1] / 1e6) : '',
                   st && st.fft_size ? 'FFT ' + st.fft_size + (st.bin_hz > 0 ? ' (' + swpFmtHz(st.bin_hz) + ' bins)' : '') : '',
-                  swp.resText ? swp.resText + ' a point' : '', zoom(swp.zoom.level), gain(txt('gn-value'))],
+                  swp.resText ? swp.resText + ' a point' : '', zoom(swp.zoom.level), gain(swpRegActive() ? swpGainText() : txt('gn-value'))],
             name: 'sweep_' + snapMhzFile(win[0] / 1e6) + '-' + snapMhzFile(win[1] / 1e6) + 'MHz'};
   }
   if (!fftPlot || !fftPlot.ctx || currentFrequencies.length < 2) return null;
@@ -9166,6 +9182,11 @@ function sgn() {
   if (opMode === 'independent') {
     // the top-bar gain sets the selected tuner pane
     paneSendGain(selTuner, gainDb);
+    return;
+  }
+  if (opMode === 'sweep' && swpRegActive()) {
+    // sweep mode with regions: the selected region's gain (the whole table with that one changed)
+    swpRegSetGain(gainDb);
     return;
   }
   send('GAIN:' + gainDb);
@@ -13611,7 +13632,15 @@ function swpNorm(r) {
     // what each gives; the last is full (n 1). null: round 5's receiver - fit / full only - or an older one)
     full_sets: Array.isArray(r.full_sets) ? r.full_sets.filter(o => o && Number.isInteger(o.n) && o.n >= 1 && num(o.values, 0) >= 1 && num(o.step_hz, 0) > 0)
       .map(o => ({n: o.n, pool: num(o.pool, 1), values: o.values, step_hz: o.step_hz})) : null,
-    full_z: r.full_z === true};   // (round 8: this receiver sends deflated parts when asked)
+    full_z: r.full_z === true,   // (round 8: this receiver sends deflated parts when asked)
+    // (round 11, gain by region: the table - points Hz, one gain more, dB - and whether the receiver's heimdall
+    // has it; absent / false: no lane)
+    gain_points_hz: Array.isArray(r.gain_points_hz) ? r.gain_points_hz.filter(x => typeof x === 'number' && Number.isFinite(x)) : [],
+    gain_regions_db: Array.isArray(r.gain_regions_db) ? r.gain_regions_db.filter(x => typeof x === 'number' && Number.isFinite(x)) : [],
+    gain_regions_known: r.gain_regions_known === true};
+  if (s.gain_regions_db.length !== s.gain_points_hz.length + 1 || s.gain_points_hz.some((x, i) => i && !(x > s.gain_points_hz[i - 1]))) {
+    s.gain_points_hz = []; s.gain_regions_db = [];   // (malformed: no table)
+  }
   if (s.full_sets && !s.full_sets.some(o => o.n === 1)) s.full_sets = null;   // (malformed: as if absent)
   return s.stop_hz > s.start_hz ? s : null;
 }
@@ -13629,7 +13658,11 @@ function swpOnState(raw) {
   // is authoritative - so not right after one, nor right after this page asked for another mode)
   const now = Date.now();
   if (s.active && opMode !== 'sweep' && now - opMsgAt > 1500 && now - swpOpSentAt > 1500) applyOpModeUI('sweep');
-  if (opMode === 'sweep' && Number.isFinite(s.gain_db)) swpGainSync(s.gain_db);
+  // (the table this page sent is the receiver's now: changes are built on that again)
+  const q = swp.reg.pend;
+  if (q && q.p.length === s.gain_points_hz.length && q.p.every((x, i) => x === s.gain_points_hz[i]) &&
+      q.g.every((x, i) => Math.abs(x - s.gain_regions_db[i]) < 0.05)) swp.reg.pend = null;
+  if (opMode === 'sweep' && Number.isFinite(s.gain_db) && !swpRegActive()) swpGainSync(s.gain_db);
   swpRenderCtl();
   // (the display resolutions offered follow the grid; what is asked only changes if the field came or went -
   // the first ask of a connection goes with its first view, swpViewFlush)
@@ -13675,14 +13708,405 @@ function swpCommonDb() {
   return gs ? GAIN_VALUES[parseInt(gs.value)] : NaN;
 }
 function swpTipSet(el, t) { if (el && el.dataset.tipk !== t) { el.dataset.tipk = t; el.title = t; el.removeAttribute('data-tip'); } }
-// the Sweep box's Gain line: the gain the sweep uses
+// the Sweep box's Gain line: the gain the sweep uses - one gain, or "3 regions, 16.6 - 49.6 dB" (the regions
+// that lie in the range)
 function swpGainText() {
   if (!swp.st) return '-';
   if (!swpLive()) return 'not connected';
+  if (swpRegActive()) {
+    const t = swpRegRx(), gs = [];
+    for (let i = 0; i <= t.p.length; i++) { const sp = swpSegSpan(t.p, i); if (sp[1] > sp[0]) gs.push(t.g[i]); }
+    if (gs.length > 1) {
+      const lo = Math.min(...gs), hi = Math.max(...gs);
+      return gs.length + ' regions, ' + (hi - lo < 0.05 ? hi.toFixed(1) : lo.toFixed(1) + ' - ' + hi.toFixed(1)) + ' dB';
+    }
+    if (gs.length === 1) return gs[0].toFixed(1) + ' dB';
+  }
   const g = swpCommonDb();
   return g === -1 ? 'Auto' : Number.isFinite(g) ? g.toFixed(1) + ' dB' : '-';
 }
-function swpGainRender() { swpTxt('swp-gain-st', swpGainText()); }
+function swpGainRender() { swpRegRender(); }
+
+// ---- gain by region (2026-11-24; the user: "a line under the FFT spectrum that we can add keyframe like
+// points to. Clicking on one segment of the line will change the gain control for only that currently
+// selected segment. Keyframe points can be removed by right clicking on them. The keyframe points should be
+// able to be moved left or right by clicking and dragging") ----
+// The receiver's table (the sweep message: gain_points_hz - Hz, rising -, gain_regions_db - one more, dB;
+// gain_regions_known: its heimdall has it - else no lane): the points cut the sweep's frequency axis into
+// segments (regions), each with its own gain; a hop takes its segment's by its centre. No points = the
+// common gain (GAIN:) everywhere, as in the other modes. The lane (#swp-lane-box, under the spectrum, its
+// frequency axis with its zoom and pan) draws what the receiver last said - plus a drag in progress - and
+// sends the whole table (SWEEP_GAINS:<f1,..>|<g0,..>) on every change: double-click (double-tap) adds a
+// point on the nearest hop edge (both halves keep the gain), a drag moves one (on hop edges, not past its
+// neighbours or out of the range, a hop at least between two), a right-click (press and hold) removes one
+// (the merged region keeps the selected one's gain, else the left one's; the last point's removal sends the
+// remaining gain as GAIN: and clears the table), a click (tap) selects a region - the top bar's Gain then
+// sets that region only (sgn: the table with that one gain changed; Auto can't be chosen). Keys on the
+// lane: Left / Right select, Shift + Left / Right move the selected region's right border a hop, Delete
+// removes it, Insert / + adds one in the middle of the selected region.
+const SWP_STEP_HZ = 1912500, SWP_REG_MAX = 64, SWP_LANE_HOLD_MS = 600, SWP_LANE_TAP_MS = 350;
+// the lane is offered: sweep mode and a heimdall that has the table (the receiver says)
+function swpRegOn() { return opMode === 'sweep' && !!(swp.st && swp.st.gain_regions_known === true); }
+// the table the receiver last said ({p, g}: copies)
+function swpRegRx() {
+  const st = swp.st;
+  if (!st || st.gain_regions_known !== true) return {p: [], g: []};
+  return {p: st.gain_points_hz.slice(), g: st.gain_regions_db.slice()};
+}
+// what a change is built on: the table this page sent last while the receiver's answer is on its way (a
+// gain set right after a move must not undo the move), else the receiver's
+function swpRegBase() {
+  const q = swp.reg.pend;
+  if (q && Date.now() - q.at < SWP_PEND_MS) return {p: q.p.slice(), g: q.g.slice()};
+  swp.reg.pend = null;
+  return swpRegRx();
+}
+// regions in force: the Gain control acts on the selected one
+function swpRegActive() { return swpRegOn() && swp.st.gain_points_hz.length > 0; }
+// the segment that holds f
+function swpSegOf(p, f) { let i = 0; while (i < p.length && p[i] <= f) i++; return i; }
+// the hop edge nearest f, within the range's inner edges (start + k x step, k = 1 ... hops - 1); NaN = none
+function swpEdgeSnap(f) {
+  const st = swp.st;
+  if (!st || !(st.hops > 1) || !Number.isFinite(f)) return NaN;
+  const k = Math.max(1, Math.min(st.hops - 1, Math.round((f - st.start_hz) / SWP_STEP_HZ)));
+  return st.start_hz + k * SWP_STEP_HZ;
+}
+// a segment's span [a, b) inside the range
+function swpSegSpan(p, i) {
+  const s = swpSpan() || [0, 0];
+  return [Math.max(s[0], i > 0 ? p[i - 1] : -Infinity), Math.min(s[1], i < p.length ? p[i] : Infinity)];
+}
+// the selected region: the one that holds swp.reg.selF - after loading, a range change or a region that
+// left the range: the one under the middle of the view
+function swpRegSelF() {
+  const s = swpSpan(), win = swpWindow();
+  if (s && !(swp.reg.selF >= s[0] && swp.reg.selF < s[1]) && win) swp.reg.selF = (win[0] + win[1]) / 2;
+  return swp.reg.selF;
+}
+function swpRegSel() {
+  const t = swpRegRx();
+  if (!t.p.length || !swpSpan()) return -1;
+  return swpSegOf(t.p, swpRegSelF());
+}
+function swpRegFmt(f) { return (f / 1e6).toFixed(3); }
+// the gain of the step (hop) that holds f: its centre's region; NaN = no regions
+function swpRegGainAt(f) {
+  if (!swpRegActive()) return NaN;
+  const st = swp.st, t = swpRegRx();
+  const c = st.start_hz + (Math.floor((f - st.start_hz) / SWP_STEP_HZ) + 0.5) * SWP_STEP_HZ;
+  return t.g[swpSegOf(t.p, c)];
+}
+function swpRegSend(p, g) {
+  if (p.length > SWP_REG_MAX) return false;
+  swp.reg.pend = {p: p.slice(), g: g.slice(), at: Date.now()};
+  send('SWEEP_GAINS:' + p.map(x => Math.round(x)).join(',') + '|' + g.map(x => x.toFixed(1)).join(','));
+  return true;
+}
+// a pending gain send of the top bar's (its throttle's trailing send, the wheel's rest) goes now - to the
+// region it was meant for - before the selection moves
+function swpRegFlushGain() {
+  if (gainTrailingSendTimeout) { clearTimeout(gainTrailingSendTimeout); gainTrailingSendTimeout = null; lastGainSendTime = 0; sgn(); }
+  if (gainWheelTimer) { clearTimeout(gainWheelTimer); gainWheelTimer = null; lastGainSendTime = 0; sgn(); }
+}
+function swpRegSelect(f) {
+  swpRegFlushGain();
+  swp.reg.selF = f;
+  gainUserChanging = false;   // (the bar shows the new region's gain at once)
+  clearTimeout(gainUserChangeTimeout);
+  swpRegRender();
+}
+// the top bar's Gain on the selected region (sgn): the table with that one gain changed
+function swpRegSetGain(db) {
+  const t = swpRegBase(), i = t.p.length ? swpSegOf(t.p, swpRegSelF()) : -1;
+  if (i < 0 || i >= t.g.length || !(db >= 0)) { swpRegRender(); return; }   // (Auto: not for a region)
+  if (Math.abs(t.g[i] - db) < 0.05) return;
+  t.g[i] = db;
+  swpRegSend(t.p, t.g);
+}
+function swpRegAdd(f) {
+  const st = swp.st, t = swpRegBase(), e = swpEdgeSnap(f);
+  if (!(st && st.hops > 1) || !Number.isFinite(e) || t.p.length >= SWP_REG_MAX) return false;
+  if (t.p.some(x => Math.abs(x - e) < SWP_STEP_HZ)) return false;   // (a hop at least between two points)
+  let g0;
+  if (!t.p.length) {
+    g0 = swpCommonDb();
+    if (!(g0 >= 0)) { swpLaneFlash(); return false; }   // (the tuners' AGC: no gain for the halves - set one first)
+    t.g = [g0];
+  }
+  const i = swpSegOf(t.p, e);
+  t.p.splice(i, 0, e);
+  t.g.splice(i, 0, t.g[i]);
+  return swpRegSend(t.p, t.g);
+}
+// the point at f (one the lane drew) removed
+function swpRegRemove(f) {
+  const t = swpRegBase(), i = t.p.indexOf(f);
+  if (i < 0) return false;
+  const sel = swpSegOf(t.p, swpRegSelF()), g = (sel === i || sel === i + 1) ? t.g[sel] : t.g[i];
+  t.p.splice(i, 1);
+  t.g.splice(i, 2, g);
+  if (!t.p.length) {
+    // the last point: what remains is the common gain (what you see stays what you get)
+    swp.reg.pend = null;
+    send('GAIN:' + g);
+    send('SWEEP_GAINS:|');
+    return true;
+  }
+  return swpRegSend(t.p, t.g);
+}
+// the point at f0 moved to e (a drag's end, a key)
+function swpRegMove(f0, e) {
+  const t = swpRegBase(), i = t.p.indexOf(f0);
+  if (i < 0 || !Number.isFinite(e) || t.p[i] === e) return false;
+  t.p[i] = e;
+  for (let k = 1; k < t.p.length; k++) if (!(t.p[k] - t.p[k - 1] >= SWP_STEP_HZ)) return false;
+  return swpRegSend(t.p, t.g);
+}
+// where point i may go: hop edges inside the range, a hop at least from its neighbours (those in the range)
+function swpRegLimits(p, i) {
+  const st = swp.st;
+  let lo = st.start_hz + SWP_STEP_HZ, hi = st.start_hz + (st.hops - 1) * SWP_STEP_HZ;
+  if (i > 0 && p[i - 1] >= st.start_hz) lo = Math.max(lo, p[i - 1] + SWP_STEP_HZ);
+  if (i + 1 < p.length && p[i + 1] <= st.stop_hz) hi = Math.min(hi, p[i + 1] - SWP_STEP_HZ);
+  return [lo, hi];
+}
+// (no gain to give the halves: the lane blinks once)
+function swpLaneFlash() {
+  swp.reg.flash = Date.now();
+  swpLaneDraw();
+  setTimeout(swpLaneDraw, 260);
+}
+
+// The Sweep box's Gain line, the lane shown, the top bar's Gain bar (its range, its tip, its region)
+const SWP_GN_TIP = (document.getElementById('gn-slider') || {getAttribute: () => ''}).getAttribute('title') || '';
+function swpRegRender() {
+  const on = swpRegOn(), act = swpRegActive();
+  document.body.classList.toggle('swp-regions', on);
+  const gs = $id('gn-slider');
+  if (gs) {
+    const mn = act ? '1' : '0';   // (Auto - the tuners' AGC - is no region's gain)
+    if (gs.min !== mn) gs.min = mn;
+    gs.parentElement.classList.toggle('gn-region', act);
+    let tip = SWP_GN_TIP;
+    if (act) {
+      const i = swpRegSel(), t = swpRegRx(), sp = swpSegSpan(t.p, i);
+      tip = 'Gain of the selected region of the sweep, ' + swpRegFmt(sp[0]) + ' - ' + swpRegFmt(sp[1]) + ' MHz (the line under the spectrum: click a region to pick another); drag, or use the mouse wheel';
+      if (!gainUserChanging && i >= 0) swpGainSync(t.g[i]);
+    }
+    swpTipSet(gs, tip);
+    if (!act && opMode === 'sweep' && swp.st && Number.isFinite(swp.st.gain_db)) swpGainSync(swp.st.gain_db);
+    updateGainDisplay(gs.value);
+  }
+  swpTxt('swp-gain-st', swpGainText());
+  swpLaneDraw();
+}
+
+// ---- the lane ----
+function swpLaneResize() {
+  const b = $id('swp-lane-box'), c = $id('swp-lane');
+  if (!b || !c) return;
+  const dpr = window.devicePixelRatio || 1, w = b.clientWidth, h = b.clientHeight;
+  swp.lw = w; swp.lh = h;
+  if (w < 60 || h < 8) return;
+  const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
+  if (c.width !== cw) c.width = cw;
+  if (c.height !== ch) c.height = ch;
+  c.style.width = w + 'px'; c.style.height = h + 'px';
+  swpLaneDraw();
+}
+// the table drawn: the receiver's, with a drag in progress
+function swpLaneTable() {
+  const t = swpRegRx(), d = swp.reg.drag;
+  if (d && d.moving && d.i < t.p.length) t.p[d.i] = d.f;
+  return t;
+}
+function swpLaneX(f, win) { return SWP_L + (f - win[0]) / (win[1] - win[0]) * (swp.lw - SWP_L - SWP_R); }
+function swpLaneDraw() {
+  const c = $id('swp-lane');
+  if (!c || !swpRegOn() || !(swp.lw >= 60) || !(swp.lh >= 8)) return;
+  const dpr = window.devicePixelRatio || 1, ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const w = swp.lw, h = swp.lh, L = SWP_L, R = w - SWP_R;
+  const flash = swp.reg.flash && Date.now() - swp.reg.flash < 250;
+  ctx.fillStyle = flash ? '#473108' : '#11151b';   // (--warn-d: no gain to give; --s2)
+  ctx.fillRect(0, 0, w, h);
+  const win = swpWindow();
+  if (!win) return;
+  const t = swpLaneTable(), n = t.p.length, common = swpCommonDb();
+  const gains = n ? t.g : [common];
+  const top = 5, bot = h - 5, yOf = g => g < 0 ? top : bot - Math.max(0, Math.min(50, g)) / 50 * (bot - top);
+  const sel = n ? swpRegSel() : -1;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(L, 0, R - L, h); ctx.clip();
+  ctx.font = '10px sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+  let px = NaN, py = NaN;
+  for (let i = 0; i <= n; i++) {
+    const sp = n ? swpSegSpan(t.p, i) : (swpSpan() || win);
+    const a = Math.max(sp[0], win[0]), b = Math.min(sp[1], win[1]);
+    if (!(b > a)) continue;
+    const g = gains[n ? i : 0];
+    if (!Number.isFinite(g)) continue;   // (the common gain not known yet)
+    const x0 = swpLaneX(a, win), x1 = swpLaneX(b, win), y = Math.round(yOf(g)) + 0.5;
+    if (i === sel) { ctx.fillStyle = '#0d2f4f'; ctx.fillRect(x0, 0, x1 - x0, h); }   // --ac-d2
+    ctx.strokeStyle = i === sel ? '#a3cffd' : '#7ab8f7';   // --ac-t2 / --ac-t
+    ctx.lineWidth = i === sel ? 2 : 1.5;
+    ctx.setLineDash(g < 0 ? [4, 3] : []);
+    ctx.beginPath();
+    if (Number.isFinite(px) && Math.abs(px - x0) < 1.5) { ctx.moveTo(x0, py); ctx.lineTo(x0, y); } else ctx.moveTo(x0, y);
+    ctx.lineTo(x1, y);
+    ctx.stroke();
+    px = x1; py = y;
+    // the gain where there is room (the selected region's range with it where that fits too)
+    const gt = g < 0 ? 'Auto' : g.toFixed(1) + ' dB', rt = i === sel ? gt + ' · ' + swpRegFmt(sp[0]) + ' - ' + swpRegFmt(sp[1]) + ' MHz' : '';
+    const room = x1 - x0 - 8, label = rt && ctx.measureText(rt).width <= room ? rt : ctx.measureText(gt).width <= room ? gt : '';
+    if (label) {
+      const tw = ctx.measureText(label).width + 8, cx = (Math.max(x0, L) + Math.min(x1, R)) / 2, cy = h / 2;
+      const lx = Math.max(x0 + 2, Math.min(x1 - 2 - tw, cx - tw / 2));
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(11,15,20,0.78)';   // (--s1)
+      ctx.fillRect(lx, cy - 7, tw, 14);
+      ctx.fillStyle = i === sel ? '#dde4ec' : '#b5bfcb';   // --t0 / --t2
+      ctx.fillText(label, lx + tw / 2, cy + 0.5);
+    }
+  }
+  ctx.setLineDash([]);
+  // the points: a handle each (the one dragged, or under the pointer, brighter)
+  const d = swp.reg.drag, hv = swp.reg.hoverI;
+  for (let i = 0; i < n; i++) {
+    if (!(t.p[i] >= win[0] && t.p[i] <= win[1])) continue;
+    const x = Math.round(swpLaneX(t.p[i], win)) + 0.5, on = (d && d.i === i) || hv === i;
+    ctx.strokeStyle = on ? '#48a0f4' : '#8d98a6';   // --ac-l / --t4
+    ctx.lineWidth = on ? 3 : 2;
+    ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, h - 2); ctx.stroke();
+    ctx.fillStyle = on ? '#48a0f4' : '#cdd5df';   // --ac-l / --t1
+    ctx.beginPath(); ctx.moveTo(x - 4, 1); ctx.lineTo(x + 4, 1); ctx.lineTo(x, 6); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x - 4, h - 1); ctx.lineTo(x + 4, h - 1); ctx.lineTo(x, h - 6); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+// the point near x (CSS px in the lane), -1 = none
+function swpLaneHit(x, touch) {
+  const win = swpWindow(), t = swpRegRx();
+  if (!win) return -1;
+  let best = -1, bd = touch ? 16 : 6;
+  for (let i = 0; i < t.p.length; i++) {
+    if (!(t.p[i] >= win[0] && t.p[i] <= win[1])) continue;
+    const dx = Math.abs(swpLaneX(t.p[i], win) - x);
+    if (dx <= bd) { bd = dx; best = i; }
+  }
+  return best;
+}
+function swpLaneInit() {
+  const el = $id('swp-lane-box');
+  if (!el) return;
+  const xOf = e => e.clientX - el.getBoundingClientRect().left;
+  const R = swp.reg;
+  el.addEventListener('wheel', e => {   // (zoom, as on the plot)
+    if (opMode !== 'sweep') return;
+    e.preventDefault();
+    if (!e.deltaY) return;
+    const f = swpFreqAt(xOf(e));
+    if (Number.isFinite(f) && swpZoomWheel(e.deltaY < 0, f)) swpZoomed();
+  }, {passive: false});
+  el.addEventListener('contextmenu', e => {
+    e.preventDefault();   // (a right-click on a point removes it; the browser's menu never shows here)
+    if (!swpRegOn() || R.lastType === 'touch') return;
+    const i = swpLaneHit(xOf(e), false);
+    if (i >= 0) swpRegRemove(swpRegRx().p[i]);
+  });
+  el.addEventListener('pointerdown', e => {
+    if (!swpRegOn() || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    R.lastType = e.pointerType;
+    const x = xOf(e), touch = e.pointerType !== 'mouse', i = swpLaneHit(x, touch);
+    try { el.setPointerCapture(e.pointerId); } catch (err) {}
+    if (i >= 0) {
+      const t = swpRegRx();
+      R.drag = {i, f: t.p[i], f0: t.p[i], x0: e.clientX, id: e.pointerId, moving: false, touch,
+                hold: touch ? setTimeout(() => {   // (press and hold on a point: removed)
+                  const d = R.drag;
+                  if (d && d.id === e.pointerId && !d.moving) { R.drag = null; swpRegRemove(d.f0); swpLaneDraw(); }
+                }, SWP_LANE_HOLD_MS) : 0};
+      swpLaneDraw();
+      return;
+    }
+    // not on a point: a click / tap selects, a drag pans (zoomed in)
+    const win = swpWindow();
+    R.press = {x0: e.clientX, id: e.pointerId, x, off0: swp.zoom.off, span: win ? win[1] - win[0] : 0, pan: false, touch};
+  });
+  el.addEventListener('pointermove', e => {
+    if (opMode !== 'sweep') return;
+    const x = xOf(e), d = R.drag, q = R.press;
+    if (d && d.id === e.pointerId) {
+      if (!d.moving && Math.abs(e.clientX - d.x0) < (d.touch ? 8 : 3)) return;
+      if (!d.moving) { d.moving = true; clearTimeout(d.hold); }
+      const t = swpRegRx(), lim = swpRegLimits(t.p, d.i), f = swpEdgeSnap(swpFreqAt(x));
+      if (Number.isFinite(f)) d.f = Math.max(lim[0], Math.min(lim[1], f));
+      swpLaneDraw();
+      return;
+    }
+    if (q && q.id === e.pointerId) {
+      if (!q.pan && Math.abs(e.clientX - q.x0) >= (q.touch ? 8 : 4) && swp.zoom.level > 1) { q.pan = true; document.body.classList.add('swp-panning'); }
+      if (q.pan) {
+        const W = Math.max(1, swp.sw - SWP_L - SWP_R);
+        swp.zoom.off = q.off0 - (e.clientX - q.x0) / W * q.span;
+        swpZoomed();
+      }
+      return;
+    }
+    const hi = e.pointerType === 'mouse' ? swpLaneHit(x, false) : -1;
+    if (hi !== R.hoverI) { R.hoverI = hi; el.classList.toggle('on-point', hi >= 0); swpLaneDraw(); }
+  });
+  const end = (e, cancel) => {
+    const d = R.drag, q = R.press;
+    if (d && d.id === e.pointerId) {
+      clearTimeout(d.hold);
+      R.drag = null;
+      if (!cancel && d.moving && d.f !== d.f0) swpRegMove(d.f0, d.f);   // (sent on release; the lane then draws the receiver's answer)
+      swpLaneDraw();
+      return;
+    }
+    if (q && q.id === e.pointerId) {
+      R.press = null;
+      if (q.pan) { document.body.classList.remove('swp-panning'); return; }
+      if (cancel) return;
+      const f = swpFreqAt(xOf(e)), now = Date.now();
+      // a double tap (touch): adds a point; a tap / click: selects the region
+      if (q.touch && now - R.tapAt < SWP_LANE_TAP_MS && Math.abs(e.clientX - R.tapX) < 24) { R.tapAt = 0; swpRegAdd(f); return; }
+      R.tapAt = q.touch ? now : 0; R.tapX = e.clientX;
+      if (swpRegActive() && Number.isFinite(f)) swpRegSelect(f);
+    }
+  };
+  el.addEventListener('pointerup', e => end(e, false));
+  el.addEventListener('pointercancel', e => end(e, true));
+  el.addEventListener('pointerleave', () => { if (R.hoverI !== -1) { R.hoverI = -1; el.classList.remove('on-point'); swpLaneDraw(); } });
+  el.addEventListener('dblclick', e => {
+    if (!swpRegOn() || R.lastType !== 'mouse') return;
+    if (swpLaneHit(xOf(e), false) >= 0) return;
+    swpRegAdd(swpFreqAt(xOf(e)));
+  });
+  el.addEventListener('keydown', e => {
+    if (!swpRegOn()) return;
+    const t = swpRegRx(), n = t.p.length, i = swpRegSel(), st = swp.st;
+    const mid = k => { const sp = swpSegSpan(t.p, k); return (sp[0] + sp[1]) / 2; };
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.shiftKey) {
+      if (n && i >= 0) { const k = Math.max(0, Math.min(n, i + (e.key === 'ArrowLeft' ? -1 : 1))); swpRegSelect(mid(k)); }
+    } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.shiftKey) {
+      const k = i < n ? i : n - 1;   // (the selected region's right border; the last region's: its left one)
+      if (k >= 0) {
+        const lim = swpRegLimits(t.p, k), f = t.p[k] + (e.key === 'ArrowLeft' ? -1 : 1) * SWP_STEP_HZ;
+        if (f >= lim[0] && f <= lim[1]) swpRegMove(t.p[k], swpEdgeSnap(f));
+      }
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (n) swpRegRemove(t.p[i < n ? i : n - 1]);
+    } else if (e.key === 'Insert' || e.key === '+') {
+      const sp = n ? swpSegSpan(t.p, i) : (swpWindow() || [0, 0]);
+      swpRegAdd((sp[0] + sp[1]) / 2);
+    } else return;
+    e.preventDefault();
+  });
+}
+
 
 // ---- the controls (top bar: range, tuners; the Sweep box) ----
 function swpRenderCtl() {
@@ -13924,6 +14348,8 @@ function swpLeave() {
   swp.view = null;
   clearTimeout(swp.wfTimer); swp.wfPend = null;
   swp.hover = null; swp.drag = null; swp.readout = '';
+  swp.reg.drag = null; swp.reg.press = null;
+  swpRegRender();   // (the Gain bar back to the common gain's range and tip)
   swpFullDrop();   // (the full sets' memory given back; the rows keep their window / overview levels)
   netMarksReset();   // (the Data rate: the 5 s window again)
   document.body.classList.remove('swp-zoomed', 'swp-panning');
@@ -13946,6 +14372,7 @@ function swpResize() {
     for (const c of [swp.wf.canvas, swp.wf.overlay]) { c.style.width = ww + 'px'; c.style.height = wh + 'px'; }
     swpWfRepaint();   // (the rows painted again at the new size, not stretched)
   }
+  swpLaneResize();
   swpTrace();
   swpDraw();
   zoomSyncSlider();   // (the zoom's limit follows the plot's width)
@@ -13957,7 +14384,7 @@ try {
     if (opMode !== 'sweep' || swpRoRaf) return;
     swpRoRaf = requestAnimationFrame(() => { swpRoRaf = 0; swpResize(); });
   });
-  ['swp-spec-box', 'swp-wf-box'].forEach(id => { const e = $id(id); if (e) ro.observe(e); });
+  ['swp-spec-box', 'swp-wf-box', 'swp-lane-box'].forEach(id => { const e = $id(id); if (e) ro.observe(e); });
 } catch (e) {}
 
 // ---- zoom (to one bin per point) and pan; the view the receiver sends ----
@@ -14670,6 +15097,7 @@ function swpDraw() {
     else { ctx.textAlign = 'right'; ctx.fillStyle = '#f4c170'; ctx.fillText(msg, R - 6, top + 4); }
   }
   swpDrawOverlay();
+  swpLaneDraw();   // (the lane follows the zoom and the pan)
 }
 // the pointer's line across the spectrum and the waterfall, and its frequency and level
 function swpDrawOverlay() {
@@ -14697,7 +15125,9 @@ function swpDrawOverlay() {
   }
   const res = Math.max(tr && tr.freqs.length > 1 ? tr.freqs[1] - tr.freqs[0] : 0, (win[1] - win[0]) / W);
   const dec = res < 100 ? 5 : res < 1000 ? 4 : 3;
-  const t = (f / 1e6).toFixed(dec) + ' MHz' + (Number.isFinite(db) ? '  ' + db.toFixed(1) + ' dB' : '');
+  // (gain by region: the gain of the step under the pointer)
+  const gk = swpRegGainAt(f);
+  const t = (f / 1e6).toFixed(dec) + ' MHz' + (Number.isFinite(db) ? '  ' + db.toFixed(1) + ' dB' : '') + (Number.isFinite(gk) ? '  gain ' + gk.toFixed(1) + ' dB' : '');
   swp.readout = t;
   ctx.font = '12px sans-serif';
   const tw = Math.ceil(ctx.measureText(t).width) + 12, th = 20;
@@ -14715,6 +15145,7 @@ function swpDrawOverlay() {
 swpRangeInit();
 swpResRender();
 swpPtrInit();
+swpLaneInit();
 swpStatus();
 
 // ============================================================================
