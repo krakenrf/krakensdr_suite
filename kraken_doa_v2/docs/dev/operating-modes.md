@@ -246,6 +246,43 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     values, unused; broken storage = no own values.
   - In coherent and wideband-scan modes there is one spectrum and one popover with the
     common values. Test: job scratch `test_view.py` (96 checks, *sidebar.md*)
+- Tuners shown (2026-11-24; the user asked for buttons above the FFT windows to pick which
+  receivers are on the screen in independent mode): the spectrum header's `#pane-pick`
+  (`.indep-only`, after the title; hidden with one tuner) - `T0`..`Tn`, lit (`.on`,
+  `aria-pressed`) while that pane is shown: a click shows / hides it, Shift- or Ctrl-click (Cmd
+  too) shows it alone - and `All` (disabled while every pane is shown). Script block "PANES
+  SHOWN" (`panePickBuild`, `panePickSync`, `panesApplyShown`, `paneShowToggle`, `paneShowAll`).
+  - Per browser, like the per-tuner View settings - which panes fit is about the screen in
+    front of the user: `localStorage['kraken_pane_hidden']` = the hidden tuners (`[3,4]`;
+    `paneHidden` in the globals block). A tuner not listed is shown, so one added later
+    appears; a list that hides every tuner there is (made with more tuners) shows them all.
+    Nothing is sent and there is no new command: the tuners, their VFOs, audio, squelch,
+    decoders and scanners run on.
+  - A hidden pane (`p.hidden`, `p.el.hidden`, `.tpane[hidden]`): `panesLayout` counts only
+    the shown panes (4 of 5 = 2 x 2, one = the whole grid), `panesResize` skips it (it keeps
+    its last size), `paneDrawSpec` / `paneDrawOverlay` return, no waterfall lines (its
+    history resumes when shown), no auto-range, and `specBinsPane` asks for 16 points (the
+    server's minimum, `FFT_VIEW:<1+ch>:...:16`): ~17 points a frame instead of ~570. Its
+    frequency, gain and VFO badges keep following the data.
+  - Shown again: an empty plot (`p.freqs = []`, `p.coarse`) until a frame answers its new
+    FFT_VIEW - the frames in flight still carry 16 points and would draw a blocky spectrum
+    and waterfall line. `specOnFrame` now reads the type 7 header's view seq (`fr.seq`),
+    `specViewFlush` keeps the last one sent per display (`specViewSent[d].seq`), and
+    `specPaneFrame` drops frames with an older seq or while a request is pending. An older
+    server's type 6 frames are full anyway.
+  - At least one pane stays shown (its button then does nothing); `selTuner` is always a
+    shown pane (hiding the selected one selects the first shown); a pane's View popover
+    closes when its pane goes. A VFO card can still put a VFO on a hidden tuner - the pane
+    stays hidden (the user's choice of panes wins). The assistant's view context lists
+    `tuners_shown` while some are hidden.
+  - Test: job scratch t_panes.py (headless Chromium, real clicks incl. Shift / Ctrl, a TEST
+    receiver + the fake heimdall's 5 tuners): 46 / 46 - group, labels, state; hide T3 (2 x 2,
+    panes 399 -> 602 px wide, stored, a 16-point FFT_VIEW, its frames 17 points while the
+    others keep 570, no waterfall lines for it); shown again (no coarse waterfall line, the
+    full spectrum); the selection moves off a hidden pane; the last one stays; Shift / Ctrl =
+    only; the View popover closes; All; kept over a reload (the hidden ones ask for 16 at
+    once; with T0 hidden T1 comes up selected); stored lists from more / fewer tuners; one tuner = no group; coherent = no group;
+    phone width (wraps, 32 px buttons, no page scroll); no page errors
 - `applyClip(newFrame)`: ONLY a frame from the receiver (`applyClip(true)`)
   adds a waterfall line; zoom / zoom slider / edge-clip slider redraw the
   last frame without one (the waterfall just takes the new range for its
