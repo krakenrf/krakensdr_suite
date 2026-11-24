@@ -3159,7 +3159,62 @@ the orchestrator runs the hardware):
 - Found and fixed on the way: the answer to the previous
   `set_sweep_gains`, drained just before the next one went, put its table
   back (542a38e: only the answer that leaves none open is taken).
-- Not tested: the KrakenSDR and the Pi (the orchestrator's), Windows (a
-  gain write's ~8 transfers at 3-4 ms without the fast call) and macOS,
-  MinGW and zig (the portability syntax checks: not on this machine),
-  Firefox / Safari, a real strong-signal region on the air.
+- On the KrakenSDR (the orchestrator; the dev machine's unit, 5 tuners,
+  24 - 1765 MHz, 911 hops, dwell 5, the common gain 49.6 dB; job scratch
+  `pi/regions_pi.py`, `pi/regions_lane.py`): 32 / 32 with the worker's
+  tip, and again with the builds from the merged tree (774c394).
+  - heimdall's own 8091 stream, the header gain of every valid packet
+    over 3 sweeps (2733 hop visits a case): no table - every hop at 49.6;
+    a table (points 412 / 419 / 750 / 810 MHz, gains 49.6 / 25.4 / 49.6 /
+    16.6 / 49.6) - 0 wrong, no hop with two gains; two borders moved -
+    followed within two sweeps; cleared - all back. 4 gain writes a
+    sweep, none failed, the fork's fast write in use; a sweep 3.944 s
+    without the table, 3.939 s with it.
+  - Levels. The regions left at 49.6 dB keep their floors (1400 MHz 8.0
+    -> 8.0, the FM band 17.4 -> 17.4, 650 MHz 17.9 -> 17.9 dB). The
+    416.59 MHz carrier, whose hop the 415.64 MHz carrier saturates at
+    49.6 dB (round 10): with 49.6 dB everywhere it reads 74.3 dB, 54.1 dB
+    over a floor the compression has pulled ~16 dB under its neighbours'
+    (those two hops are dark in the waterfall); with its region at 25.4
+    dB it reads 90.3 - 92.2 dB, 59.3 - 59.8 dB over the floor (the whole
+    sweep at 25.4 dB: 60.2), and stands 18.3 - 20.2 dB above the
+    whole-sweep-at-25.4 picture for the 19.8 dB of heimdall's curve - its
+    true height on the 49.6 dB picture's scale. Hops clipping a sweep: 54
+    - 55 without the table, 31 - 33 with it.
+  - Across a change (the region's hop that is not saturated, 413.3 -
+    414.1 MHz): the floor 36.7 dB before, 36.2 / 35.8 / 35.3 / 34.8 /
+    35.3 dB in the next five sweeps (levels not shifted would read 20 dB
+    low).
+  - A reload keeps the table; sweep -> coherent with a table set:
+    CONVERGED in 3.7 s; back in sweep mode the table is in force again.
+  - The lane, real mouse events at 1920 x 1080, the view 409 - 440 MHz:
+    30 px between the spectrum and the waterfall; two double-clicks put
+    points on the hop edges 412.2375 and 419.8875 MHz, three regions at
+    49.6; a click on the middle one and the Gain bar: 25.4 dB there only
+    (the common gain stays 49.6, no Auto on the bar), and in heimdall's
+    stream the hops 413.2 - 418.9 MHz at 25.4, their neighbours at 49.6;
+    a drag moves the point exactly two steps (423.7125 MHz), the stream
+    follows; a drag off the points pans the view and changes no point; a
+    right-click removes a point, the merged region keeps the selected
+    one's gain; the last point removed: no table, the common gain 25.4
+    dB, Auto on the bar again, every hop at 25.4. No page error.
+  - With no table, rounds 3 - 8's sets on this build: net 19 / 0, swing
+    24 / 2 (its two steadiness checks at 6.4 / 6.8 % for 5 %, as before
+    this round), dres 15, keep 10, r5 27, wf 14, res 15, reslist 15, e2e
+    19 / 1 ("pause stops the sweep": the known race), zip 40.
+  - Two faults of the first run's checks, not of the code: absolute
+    heights compared across two references (a table's reference is its
+    highest gain, a common gain's is itself), and a pan drag started
+    outside the view.
+- On the test Pi 5 (a Wideband unit run in plain mode: noise only; built
+  there from the merged tree; `pi/regions_cpu_pi.py`): 13 / 13. The fast
+  gain write is in its library; 8 regions (7 borders, 11 writes a sweep,
+  none failed): a sweep 4.025 -> 4.069 s (+1.1 %), heimdall 19.6 -> 17.3
+  % of a core, kraken_doa 16.8 -> 14.9 % (no cost). A region turned down
+  shows the converter's noise as a higher floor (at 29.7 dB: 18.8 ->
+  26.4 dB; 25.4: 16.5 -> 29.6; 16.6: 14.6 -> 37.2; 37.2: 12.7 -> 18.8).
+- Not tested: a Pi with a KrakenSDR on the air (the test Pi has the
+  Wideband unit: noise only) and a Pi 4, Windows (a gain write's ~8
+  transfers at 3-4 ms without the fast call) and macOS, MinGW and zig
+  (the portability syntax checks: not on this machine), Firefox / Safari,
+  a real phone (touch was run in Chromium's emulation only).
