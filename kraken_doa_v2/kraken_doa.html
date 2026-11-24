@@ -1325,7 +1325,7 @@ body.mode-independent #band-strip-main {display:none}
 .pw-box .btn {margin-top:14px;min-width:90px}
 .sf-toast {position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;max-width:90vw;box-sizing:border-box;background:rgba(17,21,27,.97);border:1px solid var(--ac-t);color:#fff;border-radius:4px;padding:7px 14px;font-size:12px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.6);transition:opacity .3s;opacity:0}
 /* ⚙ Setup Settings (the top bar's ⚙: map provider, decoders, decoder log, Voice to Text,
-   assistant, system). A fixed size, so the sections stay put; each pane scrolls by itself.
+   assistant, browser, system). A fixed size, so the sections stay put; each pane scrolls by itself.
    The sections are a list down the left side (2026-11-19: six did not fit a strip across,
    and more will come); below 640 px of window they are the strip across the top again,
    wrapping onto a second line where they don't fit */
@@ -3834,7 +3834,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
 <!-- ⚙ Setup Settings (see ⚙ SETUP SETTINGS): everything about setting the
      software up, one section each, listed down the left - the map provider, the
      digital decoders (voice codecs, plugins), Decoder Logging, Voice to Text, the
-     AI assistant and System -->
+     AI assistant, browser preferences and System -->
 <div class="sf-dlg-bg" id="set-dlg-bg" style="display:none" onpointerdown="if(event.target===this)setDlgClose()">
   <div class="sf-dlg set-dlg" id="set-dlg" role="dialog" aria-modal="true" aria-labelledby="set-dlg-title">
     <div class="sf-dlg-h"><span id="set-dlg-title"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg><span>Setup Settings</span></span><button type="button" class="hm-btn" onclick="helpModeToggle()" aria-pressed="false" aria-label="Help mode" title="Help mode: then tap or click a control to see what it does"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button><span class="x" onclick="setDlgClose()" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></span></div>
@@ -3844,6 +3844,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
       <button type="button" role="tab" data-t="declog" onclick="setDlgTab('declog')"><svg class="ic" aria-hidden="true"><use href="#i-log"/></svg><span>Decoder Logging</span><span class="n" id="set-tab-declog-n"></span></button>
       <button type="button" role="tab" data-t="v2t" onclick="setDlgTab('v2t')"><svg class="ic" aria-hidden="true"><use href="#i-speech"/></svg><span>Voice to Text</span><span class="n" id="set-tab-v2t-n"></span></button>
       <button type="button" role="tab" data-t="ai" onclick="setDlgTab('ai')"><svg class="ic" aria-hidden="true"><use href="#i-bot"/></svg><span>Assistant</span></button>
+      <button type="button" role="tab" data-t="browser" onclick="setDlgTab('browser')"><svg class="ic" aria-hidden="true"><use href="#i-eye"/></svg><span>Browser</span></button>
       <button type="button" role="tab" data-t="sys" onclick="setDlgTab('sys')"><svg class="ic" aria-hidden="true"><use href="#i-power"/></svg><span>System</span></button>
     </div>
     <div class="set-pane" data-t="map" role="tabpanel">
@@ -4011,6 +4012,17 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
     <!-- 🤖 Assistant: is it set up on the receiver, and how to (setDlgAi) -->
     <div class="set-pane" data-t="ai" role="tabpanel">
       <div id="set-ai"></div>
+    </div>
+    <!-- Browser: local interface preferences, no receiver settings -->
+    <div class="set-pane" data-t="browser" role="tabpanel">
+      <div class="sec">Explanatory help</div>
+      <label class="ck"><input type="checkbox" id="set-tip-hover" onchange="tipPrefsChanged()"> Automatic hover help</label>
+      <div class="lbl"><label for="set-tip-delay">Control tooltip delay</label></div>
+      <select id="set-tip-delay" onchange="tipPrefsChanged()">
+        <option value="400">400 ms (default)</option><option value="750">750 ms</option>
+        <option value="1000">1 second</option><option value="2000">2 seconds</option>
+      </select>
+      <div class="info">Automatic explanations stay out of VFO adjustments. Help mode, clicking the question marks, keyboard focus and touch help still work. These choices apply immediately, in this browser only.</div>
     </div>
     <!-- System: Restart / Shut down from the page - what the receiver offers, and
          for what it doesn't, why and the command (setDlgSys, the ⏻ POWER section) -->
@@ -21657,6 +21669,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       e.classList.toggle('on', on);
       if (e.tagName === 'BUTTON') { e.setAttribute('aria-selected', on ? 'true' : 'false'); e.tabIndex = on ? 0 : -1; }
     }
+    if (t === 'browser') tipPrefsRender();
     if (t === 'ai') setDlgAi();
     if (t === 'sys') setDlgSys();
   }
@@ -34424,24 +34437,25 @@ function tipPlace(tip, r) {
   tip.style.left = (left / z) + 'px'; tip.style.top = (top / z) + 'px';
 }
 function initHelpTips(){
-  let shown=null, pinned=null;
+  let shown=null, pinned=null, shownHow='';
   const tipOf=(h)=>h.querySelector('.tip');
   function place(h){ const tip=tipOf(h); if(tip) tipPlace(tip, h.getBoundingClientRect()); }
-  function show(h){ if(shown&&shown!==h) hide(shown); h.classList.add('tip-open'); place(h); shown=h; }
-  function hide(h){ if(!h) return; h.classList.remove('tip-open'); if(shown===h) shown=null; }
+  function show(h,how){ if(shown&&shown!==h) hide(shown); h.classList.add('tip-open'); place(h); shown=h; shownHow=how; }
+  function hide(h){ if(!h) return; h.classList.remove('tip-open'); if(shown===h) { shown=null; shownHow=''; } }
   function closePinned(){ if(pinned){ hide(pinned); pinned=null; } }
 
+  tipCancelQuestionHover = () => { if(shownHow==='hover' && shown!==pinned) hide(shown); };
   // Hover (mouse only - touch uses tap below)
-  document.addEventListener('pointerover',(e)=>{ const h=e.target.closest('.help'); if(h && e.pointerType==='mouse') show(h); });
+  document.addEventListener('pointerover',(e)=>{ const h=e.target.closest('.help'); if(h && e.pointerType==='mouse' && tipHoverAllowed() && pinned!==h) show(h,'hover'); });
   document.addEventListener('pointerout',(e)=>{ const h=e.target.closest('.help'); if(h && e.pointerType==='mouse' && pinned!==h) hide(h); });
   // Keyboard focus
-  document.addEventListener('focusin',(e)=>{ const h=e.target.closest('.help'); if(h) show(h); });
+  document.addEventListener('focusin',(e)=>{ const h=e.target.closest('.help'); if(h && h.matches(':focus-visible')) show(h,'focus'); });
   document.addEventListener('focusout',(e)=>{ const h=e.target.closest('.help'); if(h && pinned!==h) hide(h); });
   // Tap to toggle; tap elsewhere dismisses. Capture phase so the "?" click
   // doesn't also collapse the section header it may sit in.
   document.addEventListener('click',(e)=>{
     const h=e.target.closest('.help');
-    if(h){ e.stopPropagation(); e.preventDefault(); if(pinned===h){ pinned=null; hide(h); } else { pinned=h; show(h); } }
+    if(h){ e.stopPropagation(); e.preventDefault(); if(pinned===h){ pinned=null; hide(h); } else { pinned=h; show(h,'pin'); } }
     else { closePinned(); }
   }, true);
   // A scroll moves the anchor out from under a fixed tip - just close it.
@@ -34451,6 +34465,61 @@ function initHelpTips(){
 
 // --- The page's tooltip: title / data-tip text in #page-tip ---
 const TIP_HOVER_MS = 400, TIP_HOLD_MS = 550, TIP_SLOP = 8;
+const TIP_PREF_KEY = 'kraken_help_hover', TIP_DELAYS = [400, 750, 1000, 2000];
+function tipPrefsLoad() {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem(TIP_PREF_KEY) || '{}') || {}; } catch (_) {}
+  return {on: p.on !== false, delay: TIP_DELAYS.includes(p.delay) ? p.delay : TIP_HOVER_MS};
+}
+let tipPrefs = tipPrefsLoad();
+let tipCancelQuestionHover = () => {};
+let tipVfoPress = null;  // help-only admission; never owns tuning or pointer capture
+let tipHoverRefresh = false;  // reconsider the owner on the next mouse move after suppression
+let tipMouseTarget = null, tipWatchTarget = null, tipTitleWatch = null;
+function tipHoverAllowed() { return tipPrefs.on && tipVfoPress === null; }
+function tipCancelAuto() {
+  if (tipHow === 'hover' || tipTimer) tipHide();
+  tipCancelQuestionHover();
+}
+function tipPrefsRender() {
+  const on = $id('set-tip-hover'), delay = $id('set-tip-delay');
+  on.checked = tipPrefs.on;
+  delay.value = String(tipPrefs.delay);
+  delay.disabled = !tipPrefs.on;
+}
+function tipPrefsChanged() {
+  const delay = Number($id('set-tip-delay').value);
+  tipPrefs = {on: $id('set-tip-hover').checked, delay: TIP_DELAYS.includes(delay) ? delay : TIP_HOVER_MS};
+  try { localStorage.setItem(TIP_PREF_KEY, JSON.stringify(tipPrefs)); } catch (_) {}
+  tipCancelAuto();
+  tipMuted = null; tipHoverRefresh = true;
+  tipWatchMouse(tipMouseTarget);
+  tipPrefsRender();
+}
+// While automatic help is suppressed, even titles changed by code under a stationary
+// mouse must not fall back to the native browser tooltip. Watch only its ancestor chain,
+// only title attributes, only while suppressed. Never observe the whole page.
+function tipWatchMouse(t) {
+  tipMouseTarget = t;
+  const want = !tipHoverAllowed() && t && t.nodeType === 1 ? t : null;
+  if (want === tipWatchTarget) return;
+  if (tipTitleWatch) tipTitleWatch.disconnect();
+  tipWatchTarget = want;
+  if (!want) return;
+  tipAdoptUp(want);
+  if (!tipTitleWatch) tipTitleWatch = new MutationObserver(() => {
+    if (tipWatchTarget) tipAdoptUp(tipWatchTarget);
+  });
+  for (let n = want; n && n.nodeType === 1; n = n.parentElement)
+    tipTitleWatch.observe(n, {attributes: true, attributeFilter: ['title']});
+}
+function tipVfoEnd(e) {
+  if (tipVfoPress === null || (e && e.pointerId !== tipVfoPress)) return;
+  tipVfoPress = null;
+  tipCancelAuto();
+  tipMuted = null; tipHoverRefresh = true;
+  tipWatchMouse(tipMouseTarget);
+}
 // where a long press already means something, it does not show help (help mode does):
 // canvases (the map's menu, the spectrum, waterfall and panes), the overlays over them,
 // text and number boxes (selecting text), sliders (a held thumb drags), the resizers
@@ -34520,6 +34589,7 @@ function tipBubble() {
 }
 // how: 'hover' | 'focus' | 'pin' (help mode, press and hold: stays until the next press)
 function tipShow(owner, how) {
+  if (how === 'hover' && !tipHoverAllowed()) return false;
   clearTimeout(tipTimer); tipTimer = 0; tipPend = null;
   const text = tipText(owner).trim();
   if (!text || !owner.isConnected) return false;
@@ -34583,23 +34653,34 @@ function pageTipInit() {
 
   // --- mouse: hover (after a pause), the title moved out of the browser's way at once ---
   const hoverAt = t => {
+    if (!tipHoverAllowed()) { tipCancelAuto(); return; }
     if (tipHow === 'pin') return;
     const own = tipOwner(t);
     if (own && own === tipFor) { if (tipHow === 'hover') tipShow(own, 'hover'); return; }   // (its text may have changed)
     if (own && own === tipPend) return;
     if (own !== tipMuted) tipMuted = null;
     if (tipFor || tipTimer) tipHide();
-    if (own && !tipMuted) { tipPend = own; tipTimer = setTimeout(() => { tipTimer = 0; tipPend = null; tipShow(own, 'hover'); }, TIP_HOVER_MS); }
+    if (own && !tipMuted) { tipPend = own; tipTimer = setTimeout(() => { tipTimer = 0; tipPend = null; tipShow(own, 'hover'); }, tipPrefs.delay); }
   };
   document.addEventListener('pointerover', e => {
     if (e.pointerType !== 'mouse') return;
     tipAdoptUp(e.target);
+    tipWatchMouse(e.target);
+    tipHoverRefresh = false;
     hoverAt(e.target);
   });
   // code that sets a title while the pointer rests there (a canvas naming what is under the
   // pointer): moved again, and the tip follows it
   document.addEventListener('pointermove', e => {
     if (e.pointerType !== 'mouse') return;
+    if (tipVfoPress === e.pointerId && e.buttons === 0) tipVfoEnd(e);
+    tipWatchMouse(e.target);
+    if (tipHoverRefresh && tipHoverAllowed()) {
+      tipHoverRefresh = false;
+      tipAdoptUp(e.target);
+      hoverAt(e.target);
+      return;
+    }
     for (let n = e.target; n && n.nodeType === 1; n = n.parentElement) {
       if (!n.hasAttribute('title')) continue;
       tipAdoptUp(e.target);
@@ -34608,7 +34689,10 @@ function pageTipInit() {
     }
   }, {passive: true});
   document.addEventListener('pointerout', e => {
-    if (e.pointerType === 'mouse' && !e.relatedTarget && tipHow !== 'pin') { tipMuted = null; tipHide(); }
+    if (e.pointerType === 'mouse' && !e.relatedTarget) {
+      tipWatchMouse(null);
+      if (tipHow !== 'pin') { tipMuted = null; tipHide(); }
+    }
   });
   // --- keyboard focus ---
   document.addEventListener('focusin', e => {
@@ -34647,6 +34731,11 @@ function pageTipInit() {
     // a press closes the tip (a hovered one stays away until the pointer moves to something else)
     if (tipFor || tipPend) { if (tipHow !== 'pin') tipMuted = tipFor || tipPend; tipHide(); }
     tipHoldEnd();
+    if (e.isPrimary && e.button === 0 && e.target.closest && e.target.closest('#fo, #wf-overlay, .tpane-ov')) {
+      tipVfoPress = e.pointerId;
+      tipCancelAuto();
+      tipWatchMouse(tipMouseTarget);
+    }
     if (e.pointerType !== 'touch' || !e.isPrimary || tipHoldSkip(e.target)) return;
     tipAdoptUp(e.target);
     const own = tipOwner(e.target);
@@ -34657,6 +34746,7 @@ function pageTipInit() {
     if (tipHold && e.pointerId === tipHold.id && !tipHold.fired && far(e, tipHold)) tipHoldEnd();   // a swipe
   }, {capture: true, passive: true});
   W.addEventListener('pointerup', e => {
+    tipVfoEnd(e);
     if (helpMode) {
       if (helpFree(e.target) && !helpPress) return;
       eat(e);
@@ -34671,12 +34761,15 @@ function pageTipInit() {
     }
   }, capNP);
   W.addEventListener('pointercancel', e => {
+    tipVfoEnd(e);
     if (helpPress && e.pointerId === helpPress.id) helpPress = null;      // the finger scrolled
     if (tipHold && e.pointerId === tipHold.id) {
       if (tipHold.fired) tipEatClick = performance.now() + 800;
       tipHoldEnd();
     }
   }, cap);
+  W.addEventListener('lostpointercapture', tipVfoEnd, cap);
+  W.addEventListener('blur', () => { tipVfoEnd(); tipCancelAuto(); tipWatchMouse(null); });
   // the rest of the press: in help mode nothing reaches the page (no click, no focus, no slider
   // or select acting); after a hold the click is eaten
   for (const type of ['mousedown', 'mouseup', 'click', 'dblclick', 'auxclick']) {

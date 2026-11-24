@@ -255,6 +255,18 @@ whole page (`#page-tip`, the `?` tips' look), reached three ways:
   when there is no room below), inside the window. It goes when the pointer
   leaves, on Esc, on a press (and stays away until the pointer moves to
   something else), on a scroll of what holds the element, on a resize.
+- **Browser preference** (Setup Settings → Browser): Automatic hover help
+  defaults to On; the control tooltip delay defaults to 400 ms (also 750,
+  1000 or 2000 ms). Off also stops automatic mouse hover on the question
+  marks (which otherwise open immediately). Click, keyboard focus, Help
+  mode and touch help stay available. Stored in
+  `localStorage['kraken_help_hover']` as `{on, delay}`; invalid values use
+  the defaults. This is not a receiver setting.
+- **VFO gestures**: a primary press on the main spectrum, waterfall or a
+  tuner pane cancels automatic help and blocks it until release, cancel,
+  lost capture or window blur. The help listener neither consumes the
+  gesture nor changes tuning state. Frequency, bandwidth and signal level
+  readouts are separate and unchanged.
 - **Help mode** (touch, discoverable): the `?` button at the end of the top
   bar's right block (`#help-btn`, `helpModeToggle()`; on the desktop small,
   on the telemetry line beside ⚙ - the chips' line has no room, its width
@@ -289,14 +301,16 @@ counts for the control; an empty one, or one that only repeats the
 element's visible text, means none. The `?` tips are left to their own code.
 
 How it works (the "HELP TOOLTIPS" section, `pageTipInit()`): one set of
-listeners on `window` / `document`, nothing per element and no
-MutationObserver, so markup built later (VFO cards, decoder tabs, map
-popups) is covered without setup. At the first hover, focus or press the
+listeners on `window` / `document`, nothing per element, so markup built
+later (VFO cards, decoder tabs, map popups) is covered without setup. At the first hover, focus or press the
 `title` moves to `data-tip` and stays there (`tipAdopt`; every title up the
 tree, or the browser would fall back to an ancestor's), so the native
 tooltip never shows next to the page's. The accessible text is kept: a
 control with no name of its own (an icon-only button) gets it as
 `aria-label`, anything else as `aria-description` (on a `<label>`'s control).
+While automatic hover is suppressed, a title-only MutationObserver watches
+only the current mouse target and its ancestors, to adopt newly assigned
+titles even with a stationary pointer; it disconnects when no longer needed.
 A title that code sets later still works - present, it wins over `data-tip`,
 and it is moved again while the pointer rests there (a canvas naming what
 is under the pointer) - but **code that reads help text uses
