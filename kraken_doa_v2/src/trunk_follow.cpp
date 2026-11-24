@@ -407,6 +407,10 @@ bool g_dispatching = false;
 bool g_srch_skip_restore = false;   // the user's retune ended a search: its pause's end puts nothing back
 bool g_paused = false;
 std::string g_pause_why, g_pause_why_last;
+int64_t g_sweep_left_ms = 0;                // following resumed after sweep mode (steady ms)
+constexpr int64_t SWEEP_SETTLE_MS = 5000;   // ... the stream back from the hops within this
+// (the page shows it: the words are fixed)
+constexpr const char* SWEEP_REFUSED = "not in sweep mode - switch to coherent or independent first";
 int g_mode = -1;                            // operating mode last seen
 bool g_pb = false;                          // playback last seen
 std::map<std::string, System> g_pb_saved;   // the systems before the playback
@@ -2574,7 +2578,7 @@ std::string build_status(bool ages) {
       << ",\"retune_max_s\":" << static_cast<long long>(std::llround(g_set.retune_max_s)) << "," << exc_status_json(now)
       << "," << vt_status_json() << "," << srch_status_json(now)
       << ",\"paused\":" << jb(g_paused) << ",\"paused_why\":" << js(g_pause_why) << ",\"playback\":" << jb(playback::active())
-      << ",\"mode\":\"" << (mode == 1 ? "wideband" : mode == 2 ? "independent" : "coherent") << "\",\"hold\":";
+      << ",\"mode\":\"" << (mode == 1 ? "wideband" : mode == 2 ? "independent" : mode == 3 ? "sweep" : "coherent") << "\",\"hold\":";
     if (g_hold_sys.empty()) o << "null";
     else o << "{\"sys\":" << js(g_hold_sys) << ",\"tg\":" << js(g_hold_tg) << "}";
     // control VFOs put back (or not) after a scanner, the last 60 s
@@ -2806,6 +2810,15 @@ std::string vfo_mode(const Inst& inst) {
     return dd ? dig::mode_string(dd->mode(), dd->plugin_id()) : "OFF";
 }
 
+// the VFO's decoder holds it (dig::holds_vfo: a fixed frequency, lock_vfo, Aero's All channels by its option) -
+// the user put such a decoder on a VFO the manager remembers: its frequency is the decoder's, not ours to move
+bool vfo_held(const Inst& inst) {
+    auto dd = inst.getDigital();
+    if (!dd) return false;
+    const dig::Options o = dd->options();
+    return dig::decoder_holds_vfo(vfo_mode(inst), &o.plugin);
+}
+
 void note_restore(int vfo, const Home& m, bool ok, const std::string& note) {
     Restore r{vfo, m.sys, note, m.rf, ok, now_ms()};
     std::cout << "Trunk following: control VFO D" << vfo << " " << note << std::endl;
@@ -2872,8 +2885,9 @@ void tick_restore() {
         }
         std::vector<std::string> cmds;
         const std::string sid = std::to_string(vfo);
-        if (inst->bandwidth_hz.load() != m.bw) cmds.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(m.bw));
+        // (the decoder first, then the width and the place - main's order for a VFO whose decoder may hold it)
         if (mode != m.mode) cmds.push_back("DIGITAL_MODE:" + sid + ":" + m.mode);
+        if (inst->bandwidth_hz.load() != m.bw) cmds.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(m.bw));
         char f[96];
         if (operating_mode_index() == 2) snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", vfo, p.off_hz / 1000.0, p.tuner);
         else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", vfo, p.off_hz / 1000.0);
@@ -3104,6 +3118,8 @@ void exc_retune(double c, bool home, bool cal, bool hold) {
         if (!inst) continue;
         char m[80];
         if (home) {
+            // (a decoder that holds its VFO, put on it by the user while away: its place is the decoder's)
+            if (vfo_held(*inst)) continue;
             snprintf(m, sizeof m, "SET_DECIMATOR_FREQ:%d:%.3f", e.vfo, e.off / 1000.0);
             cmds.push_back(m);
             continue;
@@ -3166,12 +3182,16 @@ void exc_return(const std::string& why, bool retune) {
             if (!inst) continue;
             char m[80];
             snprintf(m, sizeof m, "SET_DECIMATOR_FREQ:%d:%.3f", e.vfo, e.off / 1000.0);
-            if (!playback::active()) cmds.push_back(m);
+            if (!playback::active() && !vfo_held(*inst)) cmds.push_back(m);
             inst->enabled = true;
             e.parked = false;
         }
         exc_expect_resets(10000);
         dispatch(cmds);
+        // sweep mode reported by heimdall (no command: FREQ: is refused there now): the centre ASKED for goes
+        // home all the same - it is what leaving sweep mode sends heimdall back to (an away centre isn't the user's)
+        if (operating_mode_index() == 3 && !playback::active() && g_exc.home > 0)
+            requested_freq_hz.store(static_cast<uint64_t>(std::llround(g_exc.home)), std::memory_order_relaxed);
         if (g_exc.holding && !g_exc.kerberos && !playback::active()) heimdall_hold(0);
         g_exc.holding = false;
         g_exc.st = 0;
@@ -3823,7 +3843,10 @@ bool g_cc_plugins_checked = false;
 void tick_cc() {
     const int64_t now = now_ms();
     static int64_t t_follow = 0;
-    if (now - t_follow >= 2000) {
+    // (not in sweep mode, nor just after it: a VFO's RF there is measured against a hop - the clicked VFOs would
+    // be taken for moved off their entries)
+    const bool sweep_near = operating_mode_index() == 3 || (g_sweep_left_ms && now - g_sweep_left_ms < SWEEP_SETTLE_MS);
+    if (now - t_follow >= 2000 && !sweep_near) {
         t_follow = now;
         cc_follow_tick();
     }
@@ -3980,6 +4003,12 @@ void srch_end(const std::string& why, bool home) {
         else snprintf(f, sizeof f, "FREQ:%.6f", g_srch.home / 1e6);
         cmds.push_back(f);
     }
+    // sweep mode reported by heimdall (no command: FREQ: / TUNER_FREQ: are refused there now): the state ASKED
+    // for goes home all the same - leaving sweep mode sends heimdall back to it, not to a step
+    if (home && !playback::active() && operating_mode_index() == 3 && g_srch.home > 0) {
+        if (g_srch.mode == 2) indep_tuner_freq_hz[g_srch.tuner] = g_srch.home;
+        else requested_freq_hz.store(static_cast<uint64_t>(std::llround(g_srch.home)), std::memory_order_relaxed);
+    }
     for (auto& e : g_srch.ctl)
         if (auto inst = exc_inst(e)) inst->enabled = true;
     for (auto& e : g_srch.ctl) g_tracks[e.vfo].expect_reset_until = now + 10000;
@@ -4005,6 +4034,7 @@ std::string srch_start(const geo::Json& j) {
     if (scanning()) return "a scanner runs - stop it first";
     const int mode = operating_mode_index();
     if (mode == 1) return "not in wideband scan mode (its tuners are spread) - switch to coherent or independent first";
+    if (mode == 3) return SWEEP_REFUSED;
     if (!heimdall_up()) return "heimdall sends nothing";
     const geo::Json* r = j.get("ranges");
     if (!r || r->type != geo::Json::ARR || r->a.empty() || r->a.size() > 16) return "ranges: [[lo_hz, hi_hz], ...] (1-16)";
@@ -4598,6 +4628,9 @@ void cc_heard(int vfo, const std::string& plugin, const PluginEvent& ev) {
         g_cc_list_now = list0;   // (as before this refresh)
         g_cc_dirty = dirty0;
         g_cc_stats_dirty = true;
+        // (the first such refresh after the start too: CC_STATS_MS from it, not at once - t20 case 18 found the
+        // list going out with the first heard refresh after a restart)
+        if (!g_cc_stats_t) g_cc_stats_t = now;
     }
     if (e && made) std::cout << "Trunk following: control channel " << e->hz / 1e6 << " MHz (" << plugin << ") remembered" << std::endl;
 }
@@ -4609,6 +4642,7 @@ std::string cc_follow(uint64_t id, bool add) {
     auto it = g_cc.find(id);
     if (it == g_cc.end()) return "no such control channel";
     if (playback::active()) return "not during a playback";
+    if (operating_mode_index() == 3) return SWEEP_REFUSED;
     if (scanning()) return "a scanner runs - stop it first";
     CcEntry& e = it->second;
     dig::PluginInfo pi;
@@ -4745,14 +4779,17 @@ std::string cc_follow(uint64_t id, bool add) {
     }
     const std::string sid = std::to_string(vfo);
     std::vector<std::string> c2;
+    // the decoder first (its options with it), then the width and the place: D0's decoder may be one that holds
+    // its VFO (ADS-B's fixed frequency, lock_vfo, Aero's All channels by an option) - the order main's own writers
+    // use (the page's sfTune, the assistant's set_vfo), so nothing reads D0 as locked while it is moved
+    std::string refused;
+    for (const auto& kv : e.opts) c2.push_back("DIGITAL_OPT:" + sid + ":" + e.plugin + "." + kv.first + ":" + kv.second);
+    c2.push_back("DIGITAL_MODE:" + sid + ":PLUGIN:" + e.plugin);
     c2.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(efficient_bandwidth_at_least(static_cast<int>(bw))));
     char f[96];
     if (mode == 2) snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f:%d", vfo, (e.hz - c) / 1000.0, tuner);
     else snprintf(f, sizeof f, "SET_DECIMATOR_FREQ:%d:%.3f", vfo, (e.hz - c) / 1000.0);
     c2.push_back(f);
-    std::string refused;
-    for (const auto& kv : e.opts) c2.push_back("DIGITAL_OPT:" + sid + ":" + e.plugin + "." + kv.first + ":" + kv.second);
-    c2.push_back("DIGITAL_MODE:" + sid + ":PLUGIN:" + e.plugin);
     // what is heard: the decoder's voice only (Digital demod) - a control channel through an analogue demod
     // is a continuous data buzz on D0, which is usually the VFO heard; the speaker stays as the user set it
     c2.push_back("SET_DECIMATOR_DEMOD:" + sid + ":DIGITAL");
@@ -4877,6 +4914,12 @@ void tick_exc() {
         return;
     }
     const double at = static_cast<double>(coherent_tuner_hz());
+    if (g_exc.st == 2 && operating_mode_index() == 3) {
+        // (sweep mode from heimdall's side while returning: no control channel to wait for)
+        g_exc.st = 0;
+        g_status_now = true;
+        return;
+    }
     if (g_exc.st == 2) {
         if (!g_exc.t_back_arr && std::fabs(at - g_exc.home) < 1000) {
             g_exc.t_back_arr = now;
@@ -4950,7 +4993,10 @@ void tick_exc() {
 
 void pause_check() {
     std::string why;
-    if (sfscan::running()) why = "saved-frequency scan";
+    // sweep mode: nothing but the sweep engine gets samples - following stands
+    // down as for a scanner (the mode's own commands refuse the scanners there)
+    if (operating_mode_index() == 3) why = "sweep mode";
+    else if (sfscan::running()) why = "saved-frequency scan";
     else if (scanner_manager.isRunning()) why = "discrete scanner";
     else if (continuous_scanner.isRunning()) why = "continuous scanner";
     else if (searching()) why = "control-channel search";
@@ -4964,13 +5010,19 @@ void pause_check() {
     g_pause_why = why;
     g_status_now = true;
     if (p) {
-        std::cout << "Trunk following: paused (" << why << " running)" << std::endl;
+        std::cout << "Trunk following: paused (" << why << (why == "sweep mode" ? "" : " running") << ")" << std::endl;
         for (auto& kv : g_calls)
             if (kv.second.vfo >= 0) unfollow(kv.second, "paused");
         remove_all_voices();
     } else {
         std::cout << "Trunk following: resumed" << std::endl;
-        if (resumed && !playback::active() && g_set.follow && !g_srch_skip_restore) restore_homes();
+        // (after sweep mode: it moved no VFO, and the stream may still show a hop for a moment - a
+        // "put back" measured against it would move the control VFOs off their channels)
+        if (resumed && g_pause_why_last == "sweep mode") {
+            g_home.clear();
+            g_sweep_left_ms = now_ms();
+        }
+        else if (resumed && !playback::active() && g_set.follow && !g_srch_skip_restore) restore_homes();
         if (resumed && g_srch_skip_restore) {
             g_srch_skip_restore = false;
             g_home.clear();
