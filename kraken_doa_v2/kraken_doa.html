@@ -5101,6 +5101,9 @@ let sfScanUncat = false, sfsSt = null, sfsSqDrag = null;
 // Here because the VFO cards and drawBox read them (tkVoiceDec)
 let tkSt = null;
 const tkLists = {};
+// the voice VFOs' call labels drawn on the main spectrum this frame (tkDrawBar, from drawBox): Signal ID's
+// labels keep clear of them (they sit in a second row, under the VFO labels Signal ID already avoids)
+let tkSpecTags = [];
 let mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
 const sfUi = (() => {
   const d = {spec: true, col: {}, hide: {}};
@@ -8472,6 +8475,7 @@ function drawLockedVfoLine(ctx, x, h, d, label = true) {
 }
 
 function drawBox() {
+  tkSpecTags = [];   // 📡 (refilled by this frame's voice VFO bars)
   if(!fftPlot||!currentFrequencies.length)return;
   const u=fftPlot,over=u.over,c=$id('fo');
   if(!c||!over)return;
@@ -8678,7 +8682,7 @@ function drawBox() {
       if (tkHideBar(dec)) return;
       const sc = center + dec.freq_offset_hz / 1e6, hb = decBwMhz(dec) / 2;
       const x0 = u.valToPos(sc - hb, 'x'), x1 = u.valToPos(sc + hb, 'x');
-      if (x1 >= 0 && x0 <= w) tkDrawBar(ctx, Math.max(0, x0), Math.min(w, x1), h, dec);
+      if (x1 >= 0 && x0 <= w) tkSpecTags.push(tkDrawBar(ctx, Math.max(0, x0), Math.min(w, x1), h, dec));
       return;
     }
     const color = getDecimatorColor(dec.id);
@@ -13558,7 +13562,7 @@ function paneDrawOverlay(p) {
   ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
   const H = p.oh || (c.height / p.dpr);
   ctx.clearRect(0, 0, c.width / p.dpr, H);
-  p.bars = []; p.ai = []; p.sf = []; p.sig = [];
+  p.bars = []; p.ai = []; p.sf = []; p.sig = []; p.tk = [];
   const span = paneSpan(p);
   if (!span) return;
   // Tuning bars in the main display's style (drawBox / WaterfallDisplay.
@@ -13578,7 +13582,7 @@ function paneDrawOverlay(p) {
     if (tkVoiceDec(d)) {   // 📡 a trunk voice VFO: drawn, not grabbable; parked: not drawn
       if (tkHideBar(d)) continue;
       const hb = decBwMhz(d) / 2, a0 = paneX(p, cm - hb), a1 = paneX(p, cm + hb);
-      if (a1 >= p.L && a0 <= p.sw - 4) tkDrawBar(ctx, Math.max(p.L, a0), Math.min(p.sw - 4, a1), H, d);
+      if (a1 >= p.L && a0 <= p.sw - 4) p.tk.push(tkDrawBar(ctx, Math.max(p.L, a0), Math.min(p.sw - 4, a1), H, d));
       continue;
     }
     const bw = decBwMhz(d);
@@ -16461,11 +16465,13 @@ function sigPeak(freqs, mags, lo, hi) {
 // moves up a row, at most 3 (down only when it is at ytop already: a peak at
 // the top) - the row it had last time first (sigDy) - else it is left out.
 // Returns [{t, label, x0, x1, y0, y1, xc, xl, xr, yb, sub}]
-function sigLayout(ctx, items, xOf, yPeak, xmin, xmax, ytop, ybot, th) {
+function sigLayout(ctx, items, xOf, yPeak, xmin, xmax, ytop, ybot, th, avoid) {
   const q = t => Math.floor((+t.p || 0) * 10);
   const order = items.slice().sort((a, b) => (q(b) - q(a)) || (a.id - b.id));
   const placed = [];
-  const free = (x0, x1, y0, y1) => !placed.some(g => x0 < g.x1 + 2 && x1 > g.x0 - 2 && y0 < g.y1 + 2 && y1 > g.y0 - 2);
+  // (avoid: other labels already on the plot - trunk following's call labels under the VFO labels)
+  const hit = (g, x0, x1, y0, y1) => x0 < g.x1 + 2 && x1 > g.x0 - 2 && y0 < g.y1 + 2 && y1 > g.y0 - 2;
+  const free = (x0, x1, y0, y1) => !placed.some(g => hit(g, x0, x1, y0, y1)) && !(avoid || []).some(g => g && hit(g, x0, x1, y0, y1));
   for (const t of order) {
     const xc = xOf(t.hz / 1e6);
     if (xc == null || !Number.isFinite(xc) || xc < xmin - 2 || xc > xmax + 2) continue;
@@ -16482,6 +16488,8 @@ function sigLayout(ctx, items, xOf, yPeak, xmin, xmax, ytop, ybot, th) {
     const want = Math.max(ytop, yb - 3 - th);
     let y = null;
     const rows = want > ytop ? [0, -1, -2, -3] : [0, 1, 2, 3], last = sigDy.get(t.id);
+    // (a trunk call label in the way above: under it rather than left out - it marks the VFO on this very signal)
+    if (want > ytop && avoid && avoid.some(g => g && xc >= g.x0 - tw && xc <= g.x1 + tw)) rows.push(1, 2, 3);
     if (last !== undefined && rows.includes(last)) rows.unshift(last);
     for (const k of rows) {
       const yy = want + k * (th + 2);
@@ -16540,7 +16548,7 @@ function sigDrawSpectrum(ctx, w, h) {
   const placed = sigLayout(ctx, items, f => fftPlot.valToPos(f, 'x'), t => {
     const [lo, hi] = sigBand(t), pk = sigPeak(xs, mags, lo, hi);
     return pk == null ? null : fftPlot.valToPos(pk, 'y');
-  }, 0, w, ytop, h - 4, 13);
+  }, 0, w, ytop, h - 4, 13, tkSpecTags);
   for (const g of placed) sigDrawLabel(ctx, g);
   ctx.restore();
   sigRects = placed;
@@ -16559,7 +16567,7 @@ function sigPaneTags(ctx, p, span) {
   const placed = sigLayout(ctx, items, f => paneX(p, f), t => {
     const [lo, hi] = sigBand(t), pk = sigPeak(p.freqs, p.mags, lo, hi);
     return pk == null ? null : bot - Math.max(0, Math.min(1, pk / ymax)) * (bot - top);
-  }, p.L, p.sw - 4, ytop, bot, 11);
+  }, p.L, p.sw - 4, ytop, bot, 11, p.tk);
   for (const g of placed) sigDrawLabel(ctx, g);
   ctx.restore();
   return placed;
@@ -25448,8 +25456,11 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     ctx.font = font || '12px monospace';
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     const lbl = 'D' + d.id + ' ' + (c ? tkLabel(c) : d.trunk && d.trunk.label ? d.trunk.label : 'trunk');
-    ctx.fillText(lbl.length > 28 ? lbl.slice(0, 27) + '…' : lbl, x0 + 4, 28);   // (under the other VFOs' labels)
+    const t = lbl.length > 28 ? lbl.slice(0, 27) + '…' : lbl;
+    ctx.fillText(t, x0 + 4, 28);   // (under the other VFOs' labels)
+    const tw = ctx.measureText(t).width;
     ctx.restore();
+    return {x0: x0 + 2, x1: x0 + 6 + tw, y0: 17, y1: 31};   // the label's room (Signal ID keeps clear of it)
   }
 
   // --- the status --------------------------------------------------------------
