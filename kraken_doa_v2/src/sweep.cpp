@@ -40,8 +40,11 @@ constexpr double FS = 2400000.0;
 // or a tuner the sweep doesn't move) and its packets are not used
 constexpr double HOP_TOL_HZ = 1500.0;
 // The reference (see evaluate): its quantile over the hops' floors, the seam
-// steps' width and limit, and the change that rewrites a stored hop
-constexpr float REF_QUANTILE = 0.20f;
+// steps' width and limit, and the change that rewrites a stored hop. The quantile is the
+// 5th percentile (round 12; 0.20 until then): the lowest floors a gain has - the receiver's
+// own noise, the plateau the band noise rides on - are often far fewer than a fifth of the
+// hops (evaluate)
+constexpr float REF_QUANTILE = 0.05f;
 constexpr int SEAM_HOPS = 6;
 constexpr int SEAM_MIN_BLOCK = 1;   // also K' = H: one hop per tuner
 constexpr float SEAM_MAX_DB = 6.0f;
@@ -471,7 +474,7 @@ void shift_hop(int h, float d) {
 // rewritten.
 // The base, by gain group (2026-11-25, round 12): the hops are grouped by the gain their
 // stored floor was measured at (`gkey`: S.hop_gain to 0.1 dB; an unknown gain and the
-// tuner's AGC are groups of their own), each group's REF_QUANTILE (20th percentile) of its
+// tuner's AGC are groups of their own), each group's REF_QUANTILE (5th percentile) of its
 // floors (less the tuners' offsets) is taken, and now's base is the LOWEST of them; the base
 // shown is the median of now's with the last SEAM_HIST completed sweeps' (base_hist). Why:
 // a hop at a gain below the reference has its floor raised by its level shift (real(ref) -
@@ -479,12 +482,22 @@ void shift_hop(int h, float d) {
 // floor), so with most of the range turned down one quantile over every hop landed inside
 // the highest-gain hops' own spread, or on a raised floor, and that region's quieter hops
 // were drawn under the 0 dB line (the user's 87.5 - 1008 MHz with 65 % at 16.6 dB: 11 % of
-// the 49.6 dB region's points at 0). Invariants (tested, docs/dev/sweep-mode.md round 12):
+// the 49.6 dB region's points at 0). Why the 5th percentile: the anchor has to find the
+// plateau - the receiver's own noise at that gain, the lowest floors the group has; band
+// noise rides 10 - 20 dB over it. On the KrakenSDR the user's 49.6 dB group (87.5 - 412.6
+// MHz) has only ~12 % of its hops on the plateau (the FM band, the airband): its 20th
+// percentile stood on the hump 10.3 dB over the no-table base, its 5th 1.1 dB under it.
+// Invariants (tested, docs/dev/sweep-mode.md round 12):
 // - I1 one gain everywhere (no table, or a table of equal gains): one group, its quantile
-//   is the old one over every hop - the same number;
-// - I2 with a table no group's 20th-percentile floor is under now's base: the lowest
-//   group's quiet fifth at NOISE_SHOWN_DB, as a sweep of its hops alone would put it, the
-//   others above it by what they are higher (a turned-down region: its lost sensitivity);
+//   is the quantile over every hop - the 5th percentile; against the 20th of rounds 3 - 11
+//   the whole picture stands higher by (p20 - p05) of the hop floors (1.4 - 1.9 dB on the
+//   KrakenSDR at 87.5 - 1008 MHz): the plateau's noise at ~NOISE_SHOWN_DB, not half of it
+//   under the line. The same estimator with and without a table keeps the picture still
+//   when a table is set;
+// - I2 with a table no group's 5th-percentile floor is under now's base: the lowest
+//   group's quiet twentieth at NOISE_SHOWN_DB, as a sweep of its hops alone would put it,
+//   the others above it by what they are higher (a turned-down region: its lost
+//   sensitivity);
 // - I3 grouping is by gain, not by region: a point added with the same gain on both sides
 //   changes nothing;
 // - I4 a region's new gain that is not the lowest group's moves the base by nothing but
@@ -492,19 +505,20 @@ void shift_hop(int h, float d) {
 //   restart only when the reference gain changes (gain_changed, above), the base's also
 //   when the table's set of gains changes (evaluate: a new lowest group, several dB away,
 //   is followed within the sweep the change falls in instead of two sweeps later);
-// - I5 a group of one or two hops is its own floor (its 20th percentile is its lowest
-//   hop): a narrow region at the highest gain in a quiet band isn't drawn under the line
-//   either. The cost: one odd visit of such a hop (a short visit, a clipped hop) is now's
-//   base for that evaluation - base_hist's median takes it out unless it repeats in most
-//   of the last sweeps, as it does for an odd seam step;
+// - I5 a group of fewer than 20 hops is its lowest hop (k = 0): a narrow region at the
+//   highest gain in a quiet band isn't drawn under the line either. The cost: one odd
+//   visit of such a hop (a short visit, a clipped hop) is now's base for that evaluation -
+//   base_hist's median takes it out unless it repeats in most of the last sweeps, as it
+//   does for an odd seam step;
 // - I6 the seams' steps, the tuners' offsets, the per-hop delta, the rewrite of stored
 //   hops and the dead-dongle rule are not touched by it.
 // KRAKEN_SWEEP_SEAM_DEBUG=1: every evaluation logs (stderr) per seam the hops taken on each side
 // (h:floor@gain, * = at the reference gain), where the step came from (C the reference steps'
 // median with now's, M their median alone - now's past the cap or no reference hop on a side -, S
 // the hops at a gain both sides have, 0 none), the step and now's raw difference at the reference;
-// then the base, now's base, the old rule's (the quantile over every hop), the kept sweeps, each
-// gain group (gain=20th percentile/hops; AGC -1, unknown nan) and the tuners' offsets
+// then the base, now's base, the quantile over every hop (the rule without groups) and the
+// 20th percentile over every hop (rounds 3 - 11's base), the kept sweeps, the reference gain,
+// each gain group (gain=quantile/hops; AGC -1, unknown nan) and the tuners' offsets
 bool seam_debug() {
     static const bool on = [] { const char* e = std::getenv("KRAKEN_SWEEP_SEAM_DEBUG"); return e && *e == '1'; }();
     return on;
@@ -714,12 +728,13 @@ void evaluate(bool sweep_done = false) {
             S.base_pos = static_cast<uint8_t>((S.base_pos + 1) % SEAM_HIST);
         }
         if (dbg) {
-            // (the old rule's value beside it: the quantile over every hop)
+            // (beside it: the quantile over every hop, and rounds 3 - 11's 20th percentile)
             S.scratch.resize(n);
             for (size_t i = 0; i < n; i++) S.scratch[i] = grp[i].second;
-            char b[96];
-            snprintf(b, sizeof b, " || base %.2f now %.2f all %.2f kept %d ref %.2f grp", S.base, now_base,
-                     quantile(S.scratch, n, REF_QUANTILE), nv < 2 ? nv : nv - 1, ref_db);
+            const float all_q = quantile(S.scratch, n, REF_QUANTILE), all_20 = quantile(S.scratch, n, 0.20f);
+            char b[128];
+            snprintf(b, sizeof b, " || base %.2f now %.2f all %.2f all20 %.2f kept %d ref %.2f grp", S.base, now_base,
+                     all_q, all_20, nv < 2 ? nv : nv - 1, ref_db);
             dl << b << gl.str();
         }
     }

@@ -423,11 +423,12 @@ back to coherent).
   and at most once a second between) write one line to stderr: `seamdbg
   <epoch ms> done <sweeps>`, then per seam `| a|b <src> <step> (now <raw>)`
   with the hops taken on each side (`a ...` / `b ...`, each `h:floor@gain`,
-  `*` = at the reference gain), and `|| base <dB> now <dB> all <dB> kept
-  <n> ref <dB> grp <gain>=<dB>/<hops> ... off <per rank>` (since round 12:
-  now's base, the old rule's value - the 20th percentile over every hop -,
-  the base history's kept sweeps, the reference gain and each gain group's
-  20th percentile and size; AGC `-1`, unknown `nan`). `<src>`:
+  `*` = at the reference gain), and `|| base <dB> now <dB> all <dB> all20
+  <dB> kept <n> ref <dB> grp <gain>=<dB>/<hops> ... off <per rank>` (since
+  round 12: now's base, the 5th percentile over every hop - the rule
+  without groups -, the 20th percentile over every hop - rounds 3 - 11's
+  base -, the base history's kept sweeps, the reference gain and each gain
+  group's 5th percentile and size; AGC `-1`, unknown `nan`). `<src>`:
   C = the median of the kept reference steps with now's, M = the kept ones
   alone (now's past the 6 dB cap, or a side without a hop at the
   reference), S = the hops at a gain both sides have (a seam not yet seen
@@ -575,22 +576,33 @@ refused; out-of-range numbers are clamped:
 - **The base by gain group** (round 12, 2026-11-25; `evaluate`): the hops
   are grouped by the gain their stored floor was measured at
   (`S.hop_gain`, 0.1 dB - the seams' `gkey`; an unknown gain and the
-  tuner's AGC are groups of their own); each group's 20th percentile of
-  its floors (less the tuners' offsets) is taken, and now's base is the
-  LOWEST of them (then the median with the last 4 completed sweeps', as
-  before). A turned-down hop's floor is raised by its level shift
-  (real(`g_ref`) - real(its gain): its signals keep their height, the
-  sensitivity given up shows as a higher floor), so one 20th percentile
-  over every hop stood inside the highest-gain hops' own spread, or on a
-  raised floor, once most of the range was turned down (round 12 below).
-  What holds: one gain everywhere (no table, or a table of equal gains) is
-  one group - the same number as the quantile over every hop; with a
-  table no group's quiet fifth is under the base - the lowest group's at
-  +2 dB, as a sweep of its hops alone would put it, the others above by
-  what they are higher; a point added with the same gain on both sides
-  changes nothing (grouping is by gain, not by region); a group of one or
-  two hops is its own floor (a narrow region at the highest gain in a quiet
-  band isn't drawn under the line either). The seams' steps, the tuners'
+  tuner's AGC are groups of their own); each group's 5th percentile
+  (`REF_QUANTILE`) of its floors (less the tuners' offsets) is taken, and
+  now's base is the LOWEST of them (then the median with the last 4
+  completed sweeps', as before). A turned-down hop's floor is raised by its
+  level shift (real(`g_ref`) - real(its gain): its signals keep their
+  height, the sensitivity given up shows as a higher floor), so one
+  quantile over every hop stood inside the highest-gain hops' own spread,
+  or on a raised floor, once most of the range was turned down (round 12
+  below). The 5th percentile, not the 20th: the anchor has to find the
+  plateau - the receiver's own noise at that gain, the lowest floors the
+  group has, with band noise 10 - 20 dB over it - and on the KrakenSDR the
+  user's 49.6 dB group (87.5 - 412.6 MHz) has only ~12 % of its hops there
+  (the FM band, the airband): its 20th percentile stood on the hump, 10.3
+  dB over the no-table base, its 5th 1.1 dB under it. What holds: one gain
+  everywhere (no table, or a table of equal gains) is one group - the 5th
+  percentile over every hop, which puts the whole picture higher than
+  rounds 3 - 11's 20th by (p20 - p05) of the hop floors (1.4 - 1.9 dB on
+  the KrakenSDR at 87.5 - 1008 MHz, less where the plateau is wide): the
+  plateau's noise stands at ~+2 dB (`NOISE_SHOWN_DB`) instead of ~0.5 dB
+  with half of it under the line, and the same estimator with and without
+  a table keeps the picture still when a table is set; with a table no
+  group's 5th-percentile floor is under the base - the lowest group's
+  quiet twentieth at +2 dB, as a sweep of its hops alone would put it, the
+  others above by what they are higher; a point added with the same gain
+  on both sides changes nothing (grouping is by gain, not by region); a
+  group of fewer than 20 hops is its lowest hop (a narrow region at the
+  highest gain in a quiet band isn't drawn under the line either). The seams' steps, the tuners'
   offsets, the per-hop `delta`, the rewrite of stored hops and the
   dead-dongle rule are untouched. A hop's stored floor keeps the gain it
   was measured at until its next visit, so during the sweep a table change
@@ -727,7 +739,7 @@ refused; out-of-range numbers are clamped:
   is the median of the ceiling steps of the last 4 completed sweeps and of
   the evaluation's own (`SEAM_HIST`); a step past the 6 dB cap is no
   evidence (the median of the kept ones is used), no longer 0. The base
-  (the reference's 20th percentile) likewise: the median of the last 4
+  (the reference's low quantile) likewise: the median of the last 4
   completed sweeps' and now's (a round whose visits all came out short
   moved it for an evaluation). A change of the common gain (the Gain
   slider; with Auto heimdall's ceiling) or Auto switched on or off moves
@@ -1072,9 +1084,9 @@ refused; out-of-range numbers are clamped:
   A cap at the 10th percentile was tried and dropped (it put hops of m = 1
   and 2 ~3 dB apart). One packet (16384 samples = the largest N) always makes
   at least one frame.
-- Levels: ONE reference for the sweep - `base` = the 20th percentile of the
-  hops' floors (with a gain table: the lowest of the gain groups' 20th
-  percentiles, *The base by gain group* below) - plus each tuner's gain step: where tuner k's block meets
+- Levels: ONE reference for the sweep - `base` = the 5th percentile of the
+  hops' floors (with a gain table: the lowest of the gain groups' 5th
+  percentiles, *The base by gain group* below; the 20th until round 12) - plus each tuner's gain step: where tuner k's block meets
   tuner k+1's, the lowest floor of the 6 hops on each side (neighbours in
   frequency, so they differ by the two dongles' gains only; a signal only
   raises a floor, so the lowest is noise as long as one hop of the six is;
@@ -3390,15 +3402,15 @@ running with lower gain."
   than 2 dB under it was drawn under the line. Round 11's tests only ever
   turned a small share down. Not the bug: a lower-gain region showing a
   higher floor - that is the contract.
-- The rule (*The base by gain group* above): the hops grouped by the gain
-  their stored floor was measured at, each group's 20th percentile, the
-  lowest of them; the base's history restarts when the table's set of gains
+- The rule, first pass (091335b; *The base by gain group* above has the
+  rule as it stands): the hops grouped by the gain their stored floor was
+  measured at, each group's 20th percentile, the lowest of them; the base's history restarts when the table's set of gains
   changes. Found on the way: the reference gain was compared bit for bit,
   and the common gain (note_gain's `/ 10.0f`, which -ffast-math makes a
   `x 0.1f`: 49.6 = `0x1.8ccccep+5`) and the same gain from a table
   (`0x1.8cccccp+5`) differ in the last bit - every table set or cleared at
   the common gain restarted the seams' histories too. Now compared at 0.1 dB.
-- Tests (fakes only; job scratch 52196024 `floor/`: a TEST receiver on
+- Tests of the first pass (fakes only; job scratch 52196024 `floor/`: a TEST receiver on
   2878x / 2879x, exe `kdfl12`, the unchanged build `kdfl12_base`; the python
   fake with a band per hop for an uneven floor - the noise pool no longer
   rebuilt on a scene change -, 5 dongles 0 / 1.5 / -1 / 2 / -0.5 dB apart,
@@ -3470,3 +3482,130 @@ running with lower gain."
   clipped hop's far-low floor in a small lowest group (inferred from the
   median: an odd visit is filtered, an odd floor that stays moves the
   picture).
+- Second pass: the 5th percentile. The first pass on the KrakenSDR (the
+  orchestrator; the user's sweep, 482 hops; the share of the 49.6 dB
+  region's frame points at 0):
+
+  | case (points; gains) | main | 20 % per group (091335b) |
+  |---|---|---|
+  | no table | 0 | 0 (frame p05 / p20 / median 3.3 / 8.5 / 18.8 dB: I1 held) |
+  | user: 412.625 MHz; 49.6, 16.6 | 11.7 % | 7.1 % |
+  | 180 MHz; 49.6, 16.6 (90 % down) | 64.7 % | 0 |
+  | 300, 600 MHz; 49.6, 29.7, 16.6 | 15.1 % | 0 |
+  | 412.625 MHz; 16.6, 49.6 | 0.1 % | 0 |
+
+  The user's own case only improved: zoomed in (2.3 kHz a point) the FM
+  band and the airband still wholly under the axis (97 - 100 % of the
+  points at 0), 294.6 MHz at 2.4 dB for 12.2 with no table. Why (every
+  hop's floor less its tuner's offset, dumped at a completed sweep): with
+  no table the floors' low end is a plateau - the receiver's own noise at
+  49.6 dB, 88 - 130 and 800 - 1008 MHz within ~1.5 dB (min 26.48, p05
+  27.63, p20 29.42 = the base, p50 39.88); everything else rides 10 - 20 dB
+  over it on band noise. The plateau held ~18 % of the hops, so the 20th
+  percentile sat on its upper edge. With the user's table the 170 hops left
+  at 49.6 (87.5 - 412.6 MHz) have only ~12 % on it (the FM band, the
+  airband): p05 28.38, p20 39.72 - the group's 20th percentile on the hump,
+  10.3 dB over the no-table base (the same hops' floors moved by a median
+  +0.09 dB: nothing else changed). With 90 % turned down (48 hops, 87.5 -
+  180 MHz) the plateau is 20 % of the group, which is why that case came
+  out right. A hop's floor two sweeps apart: median 0.19 dB, p90 0.6 dB;
+  keyed signals move a few by 10 - 19 dB, upward only. The anchor has to
+  find the plateau, so `REF_QUANTILE` became 0.05 (the orchestrator's
+  decision), per group, the lowest group's wins. The price: with one gain
+  everywhere the base is the 5th percentile over every hop, so the no-table
+  picture stands higher than rounds 3 - 11's by (p20 - p05) of its hop
+  floors; the plateau's noise is then at ~+2 dB instead of ~0.5 dB with
+  half of it under the axis. A group of fewer than 20 hops anchors on its
+  lowest hop.
+- The orchestrator's hardware run of exactly this (091335b with 0.05;
+  `pi/floor_pi_c1.out`): the user's case 0 % of the 49.6 dB region's frame
+  points at 0; zoomed, 89.0 / 125.9 / 294.6 MHz read a median of 2.8 / 2.4
+  / 13.6 dB against 2.4 / 2.4 / 14.1 dB with no table (5 % of the points at
+  0 in both) - the region is drawn as without the table; the 16.6 dB
+  region flat at 27.3 - 28.7 dB. The 90 %, three-gain, reversed and
+  "highest gain in the noisiest band" cases: no point at 0 in any region,
+  the zoomed places within 0.4 dB of no table. No table against main: the
+  frame's p05 / p20 / median 3.3 / 8.5 / 19.3 -> 4.7 / 10.4 / 20.7 dB (+1.4
+  .. +1.9 dB, the designed move), the plateau's zoomed median 0 - 0.5 ->
+  2.4 dB, its points at 0 44 - 52 % -> 5 %.
+- Tests of the second pass (fakes only, job scratch `floor/`; the builds:
+  main's, 091335b's and this one, on the same fake):
+  - The fake in the hardware's shape (`rx/t_real.py`): each hop's floor
+    from the orchestrator's no-table dump, floor - 27.4 dB as its rise over
+    the plateau (0 - 24 dB; tuner noise 2 counts, the converter's 0.5 - the
+    rise needs headroom under the uint8 clip), the user's range and grid
+    hop for hop, no dongle offsets (the dump has the tuners' offsets taken
+    off). Phases in a row: none, user, cleared, 90 % (hops 0 - 47 at 49.6),
+    three gains (300 / 600 MHz), reversed, 99 % (hop 0 alone at 49.6),
+    cleared. The 49.6 dB hops with their noise median at 0 (every bin,
+    `SWEEP_FULL`, mean over 5 sweeps) / the FM and airband hops' median /
+    294.6 MHz / the base against no table:
+
+    | case | main | 091335b | 0.05 |
+    |---|---|---|---|
+    | none | 2.9 % / 1.04, 2.31 / 11.29 | 3.7 % / 1.04, 2.07 / 11.39 | 0 / 2.82, 3.76 / 13.08 |
+    | user | 43.4 % / 0, 0 / 0 / +15.23 | 18.2 % / 0, 0 / 1.51 / +9.79 | 0.2 % / 2.35, 3.29 / 12.71 / +0.40 |
+    | 90 % | 100 % / 0, 0 / - / +17.61 | 0 / 1.88, 3.29 / - / -1.01 | 0 / 2.82, 3.48 / - / +0.00 |
+    | three | 30.1 % / 0, 0 / 0 / +11.39 | 18.9 % / 0, 0 / 8.28 / +3.10 | 0 / 2.64, 3.76 / 12.80 / +0.09 |
+    | reversed | 23.8 % / - / - / +1.62 | 0 / - / - / -0.83 | 0 / - / - / -0.07 |
+    | 99 % | 100 % (1 hop) / +17.65 | 0 / -1.51 | 0 / +0.17 |
+
+    The hops left at 49.6 against the same hops with no table (median, p05
+    .. p95): 0.05 - user -0.42 (-0.56 .. -0.19), 90 % +0.00, three -0.09,
+    reversed +0.09, 99 % -0.28, cleared +0.09 / +0.00; 091335b - user -9.84,
+    three -3.01, 90 % / reversed +0.94; main - user -15.25, three -11.34.
+    No group of the 0.05 build has points at 0 beyond 0.2 % in any case.
+    The base after the user's table, per completed sweep: 35.76, 36.07,
+    35.99, 36.03, 35.99 (the change's own sweep, then steady).
+  - No table, A/B against main on that fake: every hop up by +1.61 dB (sd
+    0.17, p05 .. p95 +1.41 .. +1.88), cleared +1.79 / +1.66; the log's 20th
+    - 5th percentile over every hop 1.66 dB - the same move everywhere,
+    nothing else changed (091335b against main: -0.06 / +0.03 / -0.01, sd
+    0.10 - 0.14). On the first pass's random-floor fake (each hop 0 - 6 dB
+    at random, 400 - 700 MHz): +0.47 dB (sd 0.09) with no table, +0.50 with
+    a table of equal gains, for a 20th - 5th of 0.45 dB; the log's `now`
+    equals `all` (the 5th percentile over every hop) in all 31 evaluations.
+  - With the dongles 0 / 1.5 / -1 / 2 / -0.5 dB apart on top of the dump
+    (a first run), the 0.05 build's user case drew the 49.6 hops 2.9 dB
+    lower than with no table: the seam at 454 MHz, where the dump's band
+    hump ends, differs by 12.6 dB at the reference - past the 6 dB cap, so
+    with no table it took 0 and blocks 2 - 4 stood ~3.9 dB off, while with
+    the table both sides are at 16.6 and the step came from there (-4.0).
+    A seam effect (untouched), present in all three builds; on the hardware
+    the dump already holds that receiver's seams.
+  - The first pass's cases on this build (`rx/t_cases.py`, checks on the
+    groups' 5th percentile): 39 / 40 - shares 10 - 99 % from either end,
+    three and four gains, the top gain in the noisy part: every group's 5th
+    percentile at or over 1.88 dB, the lowest's at 1.88 - 2.12, the base
+    within 0.5 dB of no table where the lowest group keeps the quiet hops
+    (+3.1 .. +6.4 dB where only noisy hops stay at the top gain, as
+    designed), the carriers within 0.38 dB of no table; the one failure the
+    same as before and on main (the three-gain case's offsets 0.31 dB for
+    0.3: the seams). I3 47.67 +- 0.04 -> 47.65 +- 0.04 dB, no restart; I4
+    47.54 .. 47.75 for 47.67; I5 one hop 1.88 dB, two 1.88 / 2.82; one odd
+    sweep of a one-hop group: now's base 5.9 dB down for one evaluation,
+    the base 53.38 .. 53.51 (unmoved), lower for good: followed after two
+    evaluations - the plain quantile kept (a group under 20 hops is its
+    lowest hop; the median does the filtering). Settling: the base right in
+    the first completed sweep after a table set, changed, cleared, set
+    again (the check's counts of 7 for "changed" / "cleared" are the
+    region's 5th percentile flipping one level step in one sweep, the base
+    still); a border moved 10 hops onto quiet hops moved the base 3.5 dB
+    (the lowest group gained quiet hops) and took 2 sweeps (the median; no
+    restart for a border).
+  - Rounds 3 - 11's suites on this build: `t_rx` 32 / 32, `t_sweep` 207 /
+    207, `t_full` 30 / 31 (the same set of the grid before as in the first
+    pass; `big` rerun twice 7 / 7), `t_overview` 23 / 23, `t_res` 175 / 181
+    (6 of the known 7; the scalloping height passed this time). No
+    expectation moved: their absolute check (`t_sweep`'s "noise median at
+    +2 dB", 1.0 - 3.0) runs on flat floors, where the 20th and the 5th
+    percentile differ by a level step at most (1.88 - 2.35 dB on both
+    builds); the others are relative (heights over the noise, steps,
+    frames, counts).
+- Not tested in the second pass: the KrakenSDR with this commit itself
+  (the orchestrator ran a scratch build of 091335b with 0.05 - the same
+  code but for comments and the debug line's `all20`), a Pi, MinGW / zig,
+  Windows / macOS; the dump's floor inside a hop (the fake's is flat); a
+  border moved onto quiet hops on hardware (the 3.5 dB move over 2 sweeps
+  above - whether its new hops show under the axis meanwhile was not
+  measured).
