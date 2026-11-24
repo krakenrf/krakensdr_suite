@@ -124,6 +124,10 @@ bool rf_frequency_valid(uint64_t rf_hz);
 // on every open tuner, RTL2832 AGC loop off. Diagnostic/tuning aid (control
 // port set_if_vga); the next gain change re-applies the configured step.
 bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// One tuner's gain as update_sdr_settings writes it (tenths of a dB, -1 = the
+// tuner's AGC): the gain mode, the fixed IF VGA step that goes with it
+// (R820T_IF_VGA_*), the gain. Caller holds device_io_mutex. True = all written.
+bool apply_tuner_gain(rtlsdr_dev_t* dev, int g);
 // What update_sdr_settings did with a request, for a caller that answers
 // someone (the control port): its return value only says whether the hardware
 // was written. Filled on every return; frequency / gain are the settings in

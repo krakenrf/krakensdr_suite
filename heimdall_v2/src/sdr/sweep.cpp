@@ -70,6 +70,7 @@
 #include <limits>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <thread>
 #include <iostream>
 #include <mutex>
@@ -447,8 +448,59 @@ std::string real_gain_json() {
     return o.str();
 }
 
-// The gain tuner t takes for hop centre hz now: the common gain
-int wanted_gain(int /*t*/, uint32_t /*hz*/) { return current_gain.load(); }
+// ---- Gain by region (8092 set_sweep_gains; docs/dev/operating-modes.md,
+// "Gain by region") ----
+//
+// The sweep's frequency axis cut by points (absolute Hz, strictly rising)
+// into segments, each with its own gain (tenths of a dB, a value of the
+// tuners' list): points[i - 1] <= f < points[i] is segment i. A hop takes the
+// gain of the segment its CENTRE lies in. No table (no points, no gains): the
+// common gain everywhere, as in the other modes. With a table the common gain
+// is left alone - it is what the other modes use and what every tuner returns
+// to when the mode is left - and the table wins over the tuner's AGC too: a
+// tuner on the AGC (gain -1) is put on manual gain (mode, fixed IF VGA step,
+// gain: apply_tuner_gain) at its first hop with a table, and back on the AGC
+// when the table goes or the mode is left. Kept by frequency whatever the plan
+// does; not saved (the client sends it after every set_sweep).
+struct GainTable {
+    std::vector<uint64_t> points;
+    std::vector<int> gains;   // points.size() + 1, or empty = no table
+};
+std::mutex table_mutex;
+GainTable table;                           // table_mutex
+std::atomic<uint32_t> table_gen{0};        // + 1 per change (under table_mutex)
+// the hop thread's copy (taken when table_gen moved)
+GainTable tab_hop;
+uint32_t tab_hop_gen = ~0u;
+void table_refresh() {
+    if (table_gen.load() == tab_hop_gen) return;
+    std::lock_guard<std::mutex> lk(table_mutex);
+    tab_hop = table;
+    tab_hop_gen = table_gen.load();
+}
+
+// The gain a tuner takes for hop centre hz now (the hop thread): its
+// segment's, else the common gain (-1 = the tuner's AGC)
+int wanted_gain(int /*t*/, uint32_t hz) {
+    if (tab_hop.gains.empty()) return current_gain.load();
+    const size_t i = static_cast<size_t>(std::upper_bound(tab_hop.points.begin(), tab_hop.points.end(),
+                                                          static_cast<uint64_t>(hz)) - tab_hop.points.begin());
+    return tab_hop.gains[std::min(i, tab_hop.gains.size() - 1)];
+}
+
+std::string gain_table_json(const GainTable& t, const char* pk, const char* gk) {
+    std::ostringstream o;
+    o << "\"" << pk << "\":[";
+    for (size_t i = 0; i < t.points.size(); i++) o << (i ? "," : "") << t.points[i];
+    o << "],\"" << gk << "\":[";
+    for (size_t i = 0; i < t.gains.size(); i++) {
+        char b[16];
+        snprintf(b, sizeof b, "%.1f", t.gains[i] / 10.0);
+        o << (i ? "," : "") << b;
+    }
+    o << "]";
+    return o.str();
+}
 
 // One gain write (under device_io_mutex, on the tuner's own thread): once
 // more on failure. The tuner is in manual gain mode (the common gain is).
@@ -484,18 +536,76 @@ bool sweep_tune_gain(rtlsdr_dev_t* dev, uint32_t hz, int g, bool& fast, char& ga
 
 }  // namespace
 
+std::string apply_sweep_gains(const std::vector<double>& points_hz, const std::vector<double>& gains_db, std::string& applied) {
+    if (points_hz.size() > SWEEP_GAIN_POINTS_MAX)
+        return "points_hz: at most " + std::to_string(SWEEP_GAIN_POINTS_MAX) + " points";
+    if (!(points_hz.empty() && gains_db.empty()) && gains_db.size() != points_hz.size() + 1)
+        return "gains_db needs one gain more than points_hz has points (" + std::to_string(points_hz.size() + 1) + ")";
+    GainTable t;
+    for (double p : points_hz) {
+        if (!std::isfinite(p) || p != std::floor(p) || p < 1 || p > 4294967295.0)
+            return "points_hz: whole numbers of Hz, 1-4294967295";
+        if (!t.points.empty() && static_cast<uint64_t>(p) <= t.points.back()) return "points_hz must rise strictly";
+        t.points.push_back(static_cast<uint64_t>(p));
+    }
+    for (double g : gains_db) {
+        if (!std::isfinite(g)) return "gains_db: numbers of dB";
+        if (g < 0) return "gains_db: the tuner's AGC (-1) can't be a region's gain";
+        const long v = std::lround(g * 10.0);   // (as set_gain: 49.6 * 10 is 495.99..)
+        if (v > 500) return "gains_db: 0-50 dB";
+        t.gains.push_back(static_cast<int>(v));
+    }
+    {
+        // each gain on the tuners' list, the nearest value (a tie: the lower) -
+        // the value a tuner takes is the one the header then carries. The list
+        // is read under settings_mutex: an element-count change reopens the
+        // handles under it (rtlsdr_get_tuner_gains does no USB transfer)
+        std::lock_guard<std::mutex> slock(settings_mutex);
+        std::vector<int> L;
+        for (const auto& d : devices) {
+            if (!d || !d->dev) continue;
+            const int n = rtlsdr_get_tuner_gains(d->dev, nullptr);
+            if (n <= 0) continue;
+            L.resize(static_cast<size_t>(n));
+            if (rtlsdr_get_tuner_gains(d->dev, L.data()) != n) { L.clear(); continue; }
+            std::sort(L.begin(), L.end());
+            break;
+        }
+        for (int& g : t.gains) {
+            if (L.empty()) break;
+            int best = L.front();
+            for (int v : L)
+                if (std::abs(v - g) < std::abs(best - g)) best = v;
+            g = best;
+        }
+        std::lock_guard<std::mutex> lk(table_mutex);
+        table = t;
+        table_gen.fetch_add(1);
+    }
+    applied = gain_table_json(t, "points_hz", "gains_db");
+    return "";
+}
+
 void sweep_restore_common_gain() {
     const int g = current_gain.load();
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     int idx[NUM_DEVICES];
+    char full[NUM_DEVICES] = {};
     size_t k = 0;
+    // (the AGC on either side - the common gain's or a tuner's - is a mode change:
+    // gain mode and IF VGA step with the gain, as update_sdr_settings writes them)
     for (int t = 0; t < NUM_DEVICES && t < static_cast<int>(devices.size()); t++)
-        if (devices[t] && devices[t]->dev && wideband_config.get_tuner_gain(t) != g && g >= 0) idx[k++] = t;
+        if (devices[t] && devices[t]->dev && wideband_config.get_tuner_gain(t) != g) {
+            full[k] = g < 0 || wideband_config.get_tuner_gain(t) < 0;
+            idx[k++] = t;
+        }
     if (k == 0) return;
     const bool in_mode = in_sweep();
     if (in_mode) sweep_note_tuner_change();
     char ok[NUM_DEVICES] = {};
-    for_each_tuner(k, [&](size_t i) { ok[i] = write_gain(devices[idx[i]]->dev, g); });
+    for_each_tuner(k, [&](size_t i) {
+        ok[i] = full[i] ? apply_tuner_gain(devices[idx[i]]->dev, g) : write_gain(devices[idx[i]]->dev, g);
+    });
     for (size_t i = 0; i < k; i++) {
         wideband_config.tuner_gains[idx[i]] = g;
         if (!ok[i]) std::cerr << "Sweep: tuner " << idx[i] << " failed to return to the common gain" << std::endl;
@@ -648,6 +758,12 @@ std::string sweep_status_json() {
       // from the tuner's: written with its retune), the writes that failed
       // since the start
       << ",\"gain_writes\":" << gw_last.load() << ",\"gain_write_failures\":" << gw_failures.load()
+      // gain by region (set_sweep_gains): the table as applied, empty = none
+      // (always sent: their presence tells a client this heimdall has it)
+      << "," << [] {
+             std::lock_guard<std::mutex> lk(table_mutex);
+             return gain_table_json(table, "gain_points_hz", "gain_db");
+         }()
       // the gain write in use: the fork's fast call (+1 USB transfer with the
       // retune) or the ordinary one (~8 transfers, 9 ms on the KrakenSDR)
 #if defined(RTLSDR_HAS_GAIN_FAST)
@@ -731,7 +847,8 @@ void sweep_thread() {
     std::vector<int64_t> move_ns;            // each tuner's tune call, ns
     std::vector<char> move_fast;             // ... left on the fast path's state
     std::vector<char> move_tune;             // the frequency changes (else: the gain only)
-    std::vector<int> move_gain;              // the gain it takes (-999: unchanged)
+    std::vector<int> move_gain;              // the gain it takes (-999: unchanged; -1 the tuner's AGC)
+    std::vector<char> move_full;             // ... a gain-mode change (the AGC on either side): apply_tuner_gain
     std::vector<char> move_gain_ok;
     std::vector<int64_t> move_gain_ns;       // its gain write, ns
     // the counter steps once per round: a round retried (a dongle stalled
@@ -786,6 +903,8 @@ void sweep_thread() {
         move_hz.clear();
         move_tune.clear();
         move_gain.clear();
+        move_full.clear();
+        table_refresh();   // (a table change takes effect from this hop on)
         uint32_t hopping = 0;   // tuners that move from round to round (a block of 2+ hops)
         for (size_t k = 0; k < kp; k++) {
             const uint64_t b0 = static_cast<uint64_t>(k) * H / kp, b1 = static_cast<uint64_t>(k + 1) * H / kp;
@@ -798,13 +917,14 @@ void sweep_thread() {
             // flag, settle and gate, if only the gain differs
             if (b0 + r < b1) {
                 const bool tune = wideband_config.get_tuner_frequency(sel[k]) != hz;
-                const int g = wanted_gain(sel[k], hz);
-                const bool gain = g >= 0 && g != wideband_config.get_tuner_gain(sel[k]);
+                const int g = wanted_gain(sel[k], hz), now_g = wideband_config.get_tuner_gain(sel[k]);
+                const bool gain = g != now_g;
                 if (tune || gain) {
                     move_tuner.push_back(sel[k]);
                     move_hz.push_back(hz);
                     move_tune.push_back(tune);
                     move_gain.push_back(gain ? g : -999);
+                    move_full.push_back(g < 0 || now_g < 0);
                 }
             }
         }
@@ -851,14 +971,17 @@ void sweep_thread() {
                 const int64_t t_locked = now_ns();
                 tm.locked = ms_between(t0, t_locked);
                 // The gains again, now under the lock: a set_gain that ran
-                // while this hop waited for it has written
-                // every tuner already - a write decided before it would be
-                // a stale, redundant one
+                // while this hop waited for it has written every tuner
+                // already - a write decided before it would be a stale,
+                // redundant one - and a table that came meanwhile is this
+                // hop's (set_sweep_gains takes no lock the hop holds)
+                table_refresh();
                 for (size_t i = 0; i < move_tuner.size(); i++) {
                     if (move_gain[i] == -999) continue;
                     const int g = wanted_gain(move_tuner[i], move_hz[i]);
                     const int now_g = wideband_config.get_tuner_gain(move_tuner[i]);
-                    move_gain[i] = (g >= 0 && g != now_g) ? g : -999;
+                    move_gain[i] = g != now_g ? g : -999;
+                    move_full[i] = g < 0 || now_g < 0;
                 }
                 for_each_tuner(move_tuner.size(), [&](size_t i) {
                     const int t = move_tuner[i];
@@ -866,7 +989,7 @@ void sweep_thread() {
                     const int64_t a = now_ns();
                     bool fast = false, both = false;
 #if defined(RTLSDR_HAS_GAIN_FAST) && defined(RTLSDR_TUNE_NO_DUMMY_READ)
-                    if (move_tune[i] && move_gain[i] != -999) {   // one call for both
+                    if (move_tune[i] && move_gain[i] != -999 && !move_full[i]) {   // one call for both
                         move_ok[i] = sweep_tune_gain(devices[t]->dev, move_hz[i], move_gain[i], fast, move_gain_ok[i]);
                         both = true;
                     }
@@ -877,7 +1000,8 @@ void sweep_thread() {
                         // retune failed gets it on its next try)
                         if (move_ok[i] && move_gain[i] != -999) {
                             const int64_t g0 = now_ns();
-                            move_gain_ok[i] = write_gain(devices[t]->dev, move_gain[i]);
+                            move_gain_ok[i] = move_full[i] ? apply_tuner_gain(devices[t]->dev, move_gain[i])
+                                                           : write_gain(devices[t]->dev, move_gain[i]);
                             move_gain_ns[i] = now_ns() - g0;
                         }
                     }

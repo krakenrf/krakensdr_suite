@@ -1334,7 +1334,7 @@ static void park_calibration_locked(const std::vector<std::unique_ptr<SDRDevice>
 }
 
 // One tuner's gain (tenths of dB, -1 = AGC), as update_sdr_settings applies it
-static bool apply_tuner_gain(rtlsdr_dev_t* dev, int g) {
+bool apply_tuner_gain(rtlsdr_dev_t* dev, int g) {
     bool ok = (g == -1) ? rtlsdr_set_tuner_gain_mode(dev, 0) >= 0
                         : rtlsdr_set_tuner_gain_mode(dev, 1) >= 0 && rtlsdr_set_tuner_gain(dev, g) >= 0;
     if (set_fixed_if_vga(dev, g == -1) < 0) ok = false;

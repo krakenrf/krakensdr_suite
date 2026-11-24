@@ -72,6 +72,14 @@ void sweep_note_valid_set();
 // re-pairing flush on the way back to coherent is then the last one)
 void sweep_quiesce_flushes();
 
+// 8092 set_sweep_gains (gain by region; docs/dev/operating-modes.md): n <= 64
+// points (whole Hz, strictly rising) and n + 1 gains (dB as set_gain takes
+// them, 0-50; not the AGC), or both empty = no table (the common gain). Checks
+// everything, then takes the table at once ("" = done; applied = the
+// "points_hz":[..],"gains_db":[..] as applied - each gain the nearest value of
+// the tuners' list) or nothing (the reason). Accepted in every mode, used in
+// sweep mode from the next hop on (no restart); not saved.
+std::string apply_sweep_gains(const std::vector<double>& points_hz, const std::vector<double>& gains_db, std::string& applied);
 // Leaving sweep mode (set_operating_mode, settings_mutex held, the mode still
 // SWEEP): every tuner whose gain differs back at the common gain, under the flag
 void sweep_restore_common_gain();

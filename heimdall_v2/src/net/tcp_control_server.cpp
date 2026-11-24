@@ -247,6 +247,63 @@ std::string rf_range_error(const std::string& given) {
            std::to_string(rf_min / 1000000) + "-" + std::to_string(rf_max / 1000000) + " MHz)\"}";
 }
 
+// The JSON number grammar exactly (stod alone takes "12abc", "0x10", "+5",
+// "1e2x"): -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?
+bool json_number_text(const std::string& v) {
+    size_t i = 0;
+    auto digits = [&]() { const size_t b = i; while (i < v.size() && v[i] >= '0' && v[i] <= '9') i++; return i > b; };
+    if (i < v.size() && v[i] == '-') i++;
+    if (i < v.size() && v[i] == '0') i++;
+    else if (!digits()) return false;
+    if (i < v.size() && v[i] == '.') { i++; if (!digits()) return false; }
+    if (i < v.size() && (v[i] == 'e' || v[i] == 'E')) {
+        i++;
+        if (i < v.size() && (v[i] == '+' || v[i] == '-')) i++;
+        if (!digits()) return false;
+    }
+    return i == v.size();
+}
+
+// "key":[n, n, ...] out of a command: true = present and a list of JSON
+// numbers (out = them; [] = empty); false = absent or malformed (err says
+// which, "" = absent)
+bool json_number_list(const std::string& json, const char* key, std::vector<double>& out, std::string& err) {
+    out.clear();
+    err.clear();
+    const std::string k = std::string("\"") + key + "\"";
+    size_t p = json.find(k);
+    if (p == std::string::npos) return false;
+    p += k.size();
+    auto ws = [&] { while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p]))) p++; };
+    ws();
+    if (p >= json.size() || json[p] != ':') { err = std::string(key) + " must be a list of numbers"; return false; }
+    p++;
+    ws();
+    const size_t close = json.find(']', p);
+    if (p >= json.size() || json[p] != '[' || close == std::string::npos) {
+        err = std::string(key) + " must be a list of numbers";
+        return false;
+    }
+    std::stringstream ss(json.substr(p + 1, close - p - 1));
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        tok.erase(std::remove_if(tok.begin(), tok.end(), [](unsigned char c) { return std::isspace(c); }), tok.end());
+        if (tok.empty()) {
+            if (ss.eof() && out.empty()) break;   // "[]"
+            err = std::string(key) + " must be a list of numbers";
+            return false;
+        }
+        double d = NAN;
+        if (json_number_text(tok)) {
+            try { d = std::stod(tok); } catch (...) { d = NAN; }
+        }
+        if (!std::isfinite(d)) { err = std::string(key) + " must be a list of numbers"; return false; }
+        out.push_back(d);
+        if (out.size() > 4096) { err = std::string(key) + ": too many values"; return false; }
+    }
+    return true;
+}
+
 // Calibration commands in generic RTL-SDR mode (no array, no noise source)
 const char* const GENERIC_NO_CALIBRATION_REPLY =
     "{\"status\":\"error\",\"message\":\"no calibration with generic RTL-SDRs - they run as independent "
@@ -712,6 +769,26 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         return o.str();
     }
 
+    // Sweep mode's gain by region (docs/dev/operating-modes.md, "Gain by region"):
+    // {"command":"set_sweep_gains","points_hz":[f1,..,fn],"gains_db":[g0,..,gn]} -
+    // n <= 64 points (whole Hz, strictly rising), n + 1 gains (dB, 0-50; not
+    // the AGC); both [] = no table (the sweep takes the common gain again).
+    // All or nothing; the reply carries the table as applied (each gain the
+    // nearest of the tuners' list). Accepted in every mode, used in sweep mode
+    // from the next hop on; not saved (the client sends it after every set_sweep)
+    if (json_str.find("\"set_sweep_gains\"") != std::string::npos) {
+        auto error = [](const std::string& m) { return "{\"status\":\"error\",\"message\":\"" + m + "\"}"; };
+        std::vector<double> pts, gns;
+        std::string err;
+        if (!json_number_list(json_str, "points_hz", pts, err))
+            return error(err.empty() ? "set_sweep_gains needs points_hz (a list, [] = no points)" : err);
+        if (!json_number_list(json_str, "gains_db", gns, err))
+            return error(err.empty() ? "set_sweep_gains needs gains_db (a list, [] with no points = no table)" : err);
+        std::string applied;
+        if (std::string e = apply_sweep_gains(pts, gns, applied); !e.empty()) return error(e);
+        return "{\"status\":\"success\"," + applied + "}";
+    }
+
     // Sweep mode's plan (kraken_doa_v2/docs/dev/sweep-mode.md, "The contract"):
     // {"command":"set_sweep"[,"first_center_hz":F0,"step_hz":S,"steps":H]
     //  [,"tuners":[i,j,..]][,"dwell_ms":D][,"settle_ms":T][,"run":true|false]}
@@ -731,22 +808,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             while (p < json_str.size() && std::isspace(static_cast<unsigned char>(json_str[p]))) p++;
             return p;
         };
-        // The JSON number grammar exactly (stod alone took "12abc", "0x10",
-        // "+5", "1e2x"): -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?
-        auto json_number = [](const std::string& v) {
-            size_t i = 0;
-            auto digits = [&]() { const size_t b = i; while (i < v.size() && v[i] >= '0' && v[i] <= '9') i++; return i > b; };
-            if (i < v.size() && v[i] == '-') i++;
-            if (i < v.size() && v[i] == '0') i++;
-            else if (!digits()) return false;
-            if (i < v.size() && v[i] == '.') { i++; if (!digits()) return false; }
-            if (i < v.size() && (v[i] == 'e' || v[i] == 'E')) {
-                i++;
-                if (i < v.size() && (v[i] == '+' || v[i] == '-')) i++;
-                if (!digits()) return false;
-            }
-            return i == v.size();
-        };
+        auto json_number = [](const std::string& v) { return json_number_text(v); };
         // A whole, non-negative JSON number no larger than `max`
         auto whole = [&](const char* key, uint64_t max, uint64_t& out, std::string& err) {
             const size_t p = value_at(key);
