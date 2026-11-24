@@ -545,7 +545,13 @@ same call). A `hang` call goes back to `active` with new activity.
   control VFO is "put back" then (the sweep moved none, and the stream may
   still show a hop for a moment), and click to follow's bookkeeping
   (`cc_followed`) is not re-checked in the mode and for 5 s after it (a VFO's
-  RF measured against a hop). What was in flight goes home - by the
+  RF measured against a hop). Grants are dropped from leaving it until 1 s
+  after heimdall's first packet after it: a decoder's input block begun
+  before the mode is completed by the first samples after it, and a grant
+  in it is seconds old (found with the scratch plugin's 100 ms blocks: 1 of
+  2 kit runs revived an ended call and retuned a voice tuner for it; real
+  decoders' frames across the gap mostly fail their CRC, but nothing tells
+  the manager which). What was in flight goes home - by the
   `OPERATING_MODE:sweep` command `before_command` returns it while the old
   mode still applies (an excursion: `FREQ:` home, the hold released, before
   heimdall gets `set_operating_mode`; a search: home, end `mode`; voice
