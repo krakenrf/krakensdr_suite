@@ -169,13 +169,11 @@ Hardware and replies
   count as coherence losses. Hops use the fast tune call; the tuners are
   finished (`rtlsdr_finish_tune`) whenever the sweep stops moving them,
   before any calibration. The guarantee covers the header's per-channel
-  GAIN too: with Auto gain (`set_sweep_auto_gain`; `docs/dev/operating-modes.md`)
-  a hop's gain is written with its retune, stored only once the tuner took
-  it, and every tuner is back at the common gain before the mode is left;
-  a visit at a trial gain (the linearity search's probes) is flagged per
-  channel in the same header (`0x4000`, `0x10000 << ch`);
-  the lag FIR's tail is reset at a flush (it carried 3 samples of the hop
-  before into the next packet).
+  GAIN too: with a gain table (`set_sweep_gains`, gain by region;
+  `docs/dev/operating-modes.md`) a hop's gain is written with its retune,
+  stored only once the tuner took it, and every tuner is back at the
+  common gain before the mode is left; the lag FIR's tail is reset at a
+  flush (it carried 3 samples of the hop before into the next packet).
 - The fork's retunes no longer shift a stream (`RTLSDR_NO_STREAM_SLIP`: a
   USB control IN of 3, 7, 11 ... bytes made the RTL2832U drop 2 samples -
   `../docs/dev/librtlsdr-fork.md`). With an older library heimdall still

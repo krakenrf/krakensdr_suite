@@ -137,23 +137,38 @@ the hops into the sweep spectrum, the page shows it.
   boundaries), added in the Pi round (round 3 under *Tests*); diagnostics,
   in every mode.
 
+- Added 2026-11-24 (round 11, gain by region; nothing above changed):
+  `{"command":"set_sweep_gains","points_hz":[f1,...,fn],"gains_db":[g0,
+  ...,gn]}` - n <= 64 points (whole Hz, strictly rising) cut the sweep's
+  axis into n + 1 regions, `gi` for `points[i-1] <= f < points[i]`; gains in
+  dB as `set_gain` takes them (0 - 50; the AGC refused in a table), each put
+  on the nearest value of the tuners' gain list. `[]` / `[]` = no table: the
+  common gain everywhere. Reply `{"status":"success","points_hz":[..],
+  "gains_db":[..]}` (as applied) or an error (nothing changes). A hop takes
+  the gain of the region its centre lies in, from the next hop on, without
+  a restart of the plan; with a table the common gain is left alone (the
+  other modes use it, every tuner returns to it when the mode is left), and
+  it wins over the common gain's AGC in sweep mode. Accepted in every mode,
+  not saved by heimdall. Status (the sweep object, always):
+  `"gain_points_hz":[..],"gain_db":[..]` (empty = no table) - their presence
+  is how a client knows heimdall has it; also `"gain_writes"` (of the last
+  completed sweep), `"gain_write_failures"`, `"gain_fast"`, and
+  `"gain_real_db"` (heimdall's measured gain curve: per value of the tuner's
+  gain list the real dB against the list's top; R820T / R828D only).
+  Rounds 9 - 10's `set_sweep_auto_gain` was removed the same day (an older
+  client gets "Unknown command").
+
 ### heimdall, 8091 (sweep mode)
 
 - Phase-state flags `0x2000` (sweep) together with `0x800` (independent): a
   client that does not know sweep mode treats the stream as independent
   tuners (no DoA on it). A client that knows it tests `0x2000` first.
 - Per-channel frequency = where that tuner is (as in independent mode);
-  per-channel gain = the common gain (with Auto gain: that tuner's gain for
-  its hop).
-- Trial bits (round 10, 2026-11-24; with Auto gain): `0x4000` = some
-  channel of this packet was taken at a TRIAL gain (heimdall's probe a step
-  off the hop's own gain, or its search sweep, the whole plan a step down);
-  `0x10000 << ch` (channel 0 = `0x10000` ... channel 7 = `0x800000`) say
-  which. In sweep mode each tuner is on its own hop, so the client reads
-  the per-channel bit with that channel's frequency and gain, not `0x4000`
-  alone. The client's use is under *Auto gain, round 10* below; a client
-  that masks the low byte and tests the known flags one by one (every
-  consumer in the suite) is unaffected by the new bits.
+  per-channel gain = the gain that tuner's samples in this packet were taken
+  with: the common gain, or with a gain table the gain of the region its hop
+  lies in (-1 = the tuner's AGC). Read with the frequency, before the flag.
+  (Round 10's trial bits, `0x4000` / `0x10000 << ch`, were never released
+  and are gone with Auto gain.)
 - `frequency_change_counter` + 1 per round, `current_group_index` = the
   round r the tuners are on, `retuning_in_progress` as above.
 - The guarantee the client builds on: a packet with `retuning_in_progress`
@@ -177,15 +192,21 @@ the hops into the sweep spectrum, the page shows it.
   7 ms, 65536 from 21 ms). The `sweep` message says what is used.
 - `SWEEP_DWELL:<ms>` - 5 ... 1000, default 5 (one packet a hop; 20 until
   2026-11-21).
-- `SWEEP_AUTO_GAIN:<1|0>` (2026-11-23; also true / false, else refused) -
-  heimdall's automatic gain per hop: the common gain is the ceiling, a hop
-  that clips is taken lower (heimdall's rule: `heimdall_v2/docs/dev/
-  operating-modes.md`). Default 0; persisted and replayed like the others;
-  sent on to heimdall as `{"command":"set_sweep_auto_gain","enable":..}`
-  right after `set_sweep` wherever the plan goes (mode entry, the settings
-  replay, a data-port reconnect) and at once on a change in sweep mode
-  (heimdall doesn't keep it). Not refused outside sweep mode: it takes
-  effect on entry.
+- `SWEEP_GAINS:<f1,f2,...>|<g0,g1,...>` (2026-11-24, gain by region; Hz |
+  dB) - the whole table: n <= 64 points strictly rising, n + 1 gains 0 - 50
+  dB (not Auto); `SWEEP_GAINS:|` clears it. A malformed table is refused
+  (CommandRejected: not saved, nothing sent). Saved (`sweep_gains`, replayed
+  after `SWEEP_DWELL` and before `OPERATING_MODE`), sent on to heimdall as
+  `set_sweep_gains` right after every `set_sweep` (mode entry, the settings
+  replay, a data-port reconnect, a plan change) and at once on a change in
+  sweep mode; what heimdall answers (its gains on the tuners' list) is what
+  is kept, saved and broadcast. Kept by frequency whatever the range,
+  tuners, dwell or resolution do; one table per receiver. Not refused
+  outside sweep mode: it takes effect on entry.
+- `SWEEP_AUTO_GAIN:` (rounds 9 - 10, removed 2026-11-24): accepted and
+  ignored for an older page (no reply, not saved, nothing to heimdall); an
+  old saved `sweep_auto_gain` is dropped from `doa_settings.json` at the
+  next save.
 - `SWEEP_RUN:<1|0>` - run / pause. Not persisted: entering the mode runs.
 - All but `SWEEP_RUN` persisted. Each is answered by the `sweep` message
   to every page, never by an echo.
@@ -221,30 +242,16 @@ the hops into the sweep spectrum, the page shows it.
   frame whose header carries the gain, so a page shows another page's gain
   change only through this field; a receiver without it leaves each page's
   gain control as that page set it (nothing else depends on it).
-- Auto gain (2026-11-23), additive fields of the `sweep` message:
-  `"auto_gain"` (the setting), `"auto_gain_known"` (true once a heimdall
-  reply line carries `"auto_gain"` - its answer to `set_sweep_auto_gain`,
-  `{"status":"success","auto_gain":b}`, or its status; false before, and
-  when "Unknown command" answers the command within 2 s with no such line:
-  an older heimdall), `"auto_gain_active"` (on, heimdall has it, sweep mode,
-  a manual ceiling - with the tuner's AGC, gain -1, heimdall's Auto does
-  nothing), `"gain_reduced_hops"` / `"gain_min_db"` (null when none) of the
-  last completed sweep's gain map. And a JSON message, the **gain map**:
-  `{"sweep_gain":{"grid":G,"sweeps":k,"f0_hz":F0,"step_hz":1912500,
-  "hops":H,"ceiling_db":49.6,"gain_db":[g0,...]}}` - per hop in plan order
-  (centre `f0_hz + h step_hz`) the hop's gain (the 8091 header's
-  per-channel gain of its visits; a trial visit - round 10 - never counts):
-  once heimdall has sent a trial bit, its last visit that was not a trial;
-  before that (a heimdall without the bits) the most frequent gain of its
-  last 8 visits (a tie: the higher), so a probe a step off would not be
-  taken for the hop's gain nor make the map flicker - a new gain then shows
-  once it holds half of them (4 visits); 0.1 dB,
-  `null` = not measured on this grid or the tuner's AGC. Sent to every page with a
-  sweep view after a completed sweep when it differs from the last one
-  sent, to a page on its first `SWEEP_VIEW`, after a grid change; in manual
-  gain every value is the ceiling. JSON, not a binary type: an older page
-  sends unknown binary types into its old FFT parser, and ignores unknown
-  JSON keys.
+- Gain by region (2026-11-24), additive fields of the `sweep` message,
+  always sent: `"gain_points_hz":[..]` (Hz), `"gain_regions_db":[..]` (dB,
+  one more; both empty = no table - the common gain stays in `"gain_db"`),
+  `"gain_regions_known"` (true once heimdall has shown it has the table - a
+  status line with `"gain_points_hz"` or its answer to `set_sweep_gains`;
+  false before, and when "Unknown command" answers the command within 2 s:
+  an older heimdall - the page then offers no lane). Rounds 9 - 10's
+  `auto_gain*` fields and their `{"sweep_gain":{..}}` map message are gone
+  (an older page ignores their absence: its Auto gain switch stays
+  disabled); the table serves the page's readout of a step's gain.
 - `{"operating_mode":{"mode":"sweep",...}}` as for the other modes.
 - Binary type 10, the sweep spectrum for one page's view (little-endian,
   64-byte header), sent to every socket that sent a `SWEEP_VIEW`, at most
@@ -367,9 +374,10 @@ the hops into the sweep spectrum, the page shows it.
   exactly what it got before. Lossless: one byte a value after inflating.
 - Levels: ONE reference for the whole sweep (never one per hop: a signal
   that fills a hop must keep its height), the tuners' common in-band shape
-  removed (`nfloor::shape_db`, *Noise floor*). With heimdall's auto gain
-  (2026-11-23) a hop's levels are referred to the ceiling: shifted by
-  real(ceiling) - real(the gain its packets were taken with), real() =
+  removed (`nfloor::shape_db`, *Noise floor*). A hop's levels are referred
+  to the reference gain - the gain table's highest, else the common gain
+  (round 11; the common gain, "the ceiling", in rounds 9 - 10): shifted by
+  real(reference) - real(the gain its packets were taken with), real() =
   heimdall's measured curve (`"gain_real_db"` in its status' sweep object:
   per value of the tuner's gain list the real dB against the list's top;
   linear between its points, clamped at its ends), or - no curve: an older
@@ -378,10 +386,10 @@ the hops into the sweep spectrum, the page shows it.
   true height across hops of different gain; the floor stays flat where the
   tuner's noise dominates, and shows higher where the lower gain puts the
   hop on the converter's own floor (the sensitivity actually lost - not
-  hidden by forcing it flat). Manual gain: no shift. Not corrected: the
-  curve's dependence on frequency (2 - 3 dB, the FM band's top end more),
-  the spread between units (not measured); the header and the gain map stay
-  the list's values (the gain set).
+  hidden by forcing it flat). One gain everywhere: no shift. Not corrected:
+  the curve's dependence on frequency (2 - 3 dB, the FM band's top end
+  more), the spread between units (not measured); the header and the table
+  stay the list's values (the gain set).
 
 ## heimdall
 
@@ -415,10 +423,11 @@ back to coherent).
   and at most once a second between) write one line to stderr: `seamdbg
   <epoch ms> done <sweeps>`, then per seam `| a|b <src> <step> (now <raw>)`
   with the hops taken on each side (`a ...` / `b ...`, each `h:floor@gain`,
-  `*` = at the ceiling), and `|| base <dB> off <per rank>`. `<src>`: C =
-  the median of the kept ceiling steps with now's, M = the kept ones alone
-  (now's past the 6 dB cap, or a side without a ceiling hop), A = all hops
-  (a seam not yet seen at the ceiling), - = none. Off by default (read once
+  `*` = at the reference gain), and `|| base <dB> off <per rank>`. `<src>`:
+  C = the median of the kept reference steps with now's, M = the kept ones
+  alone (now's past the 6 dB cap, or a side without a hop at the
+  reference), S = the hops at a gain both sides have (a seam not yet seen
+  at the reference), 0 = none (round 11; until then A = all hops, - = none). Off by default (read once
   at startup); about 12 lines a second at a fast sweep - it slows a loaded
   Pi a little, so leave it off for timing. `t_agc`'s seam failures were found
   with it (*Seam steps, the median* below); the test folder's
@@ -515,8 +524,8 @@ refused; out-of-range numbers are clamped:
   refused (junk paused the sweep: review finding 6); not saved; `set_sweep
   {"run":..}` alone.
 - Settings schema (replay order): `SWEEP_RANGE` `SWEEP_TUNERS` `SWEEP_RES`
-  `SWEEP_DWELL` right before `OPERATING_MODE:` (defaults 87.5-108 MHz, all,
-  auto, 20 ms). During the replay the setters send nothing; the replayed
+  `SWEEP_DWELL` (and since round 11 `SWEEP_GAINS`, default `|`) right
+  before `OPERATING_MODE:` (defaults 87.5-108 MHz, all, auto, 20 ms). During the replay the setters send nothing; the replayed
   `OPERATING_MODE:sweep` sends the plan. `set_sweep` goes to heimdall only
   when what it holds changed (`take_plan_changed`: centres, tuners, dwell -
   an FFT size change alone sends nothing), and again after a reconnect of the
@@ -524,12 +533,40 @@ refused; out-of-range numbers are clamped:
 - `gain_db` in the `sweep` message (the contract's optional field, asked for
   by the page worker): the common gain from heimdall's 8091 header in sweep
   mode, or a `GAIN:` command; the message goes again when it changes. With
+  a gain table a header's gain is that hop's region's and is not taken
+  (round 11). (History, rounds 9 - 10: with
   Auto on a header's gain is that hop's: the ceiling then comes from `GAIN:`
   and heimdall's `gain_ceiling_db` (its status; 2026-11-24 - the highest
   gain of the map when heimdall doesn't send it: in a search sweep every
   hop is a step below the ceiling, and taking the sweep's highest gain made
   the ceiling, and so every hop's shift, flip every other sweep).
-- Round 10 (2026-11-24): heimdall's Auto gain seeks each hop's highest
+- **Gain by region** (round 11, 2026-11-24; `sweep::set_gains`,
+  `gains_command`, `take_gains_save`, `regions_active`): the table (`g_reg`,
+  under `g_reg_mu`; points Hz, gains 0.1 dB) is the receiver's own: the
+  command sets it as asked, heimdall's answer (`ingest_control_reply`: a
+  success line with `"points_hz"` and `"gains_db"`) replaces it with what
+  heimdall applied, and the broadcast tick saves that (`take_gains_save`)
+  and sends the state. `ControlHandler::send_sweep_plan_now` sends the
+  table after every plan (`send_sweep_gains_now`: the control socket
+  drained first, the ask noted - "Unknown command" within 2 s without an
+  answer = an older heimdall). The levels: `g_ref` (`update_ref`, on every
+  change of the table, of heimdall's knowledge or of the common gain) = the
+  table's highest gain while one is in force (and heimdall doesn't say it
+  has none), else the common gain; `commit` shifts by real(`g_ref`) -
+  real(the packets' gain) as before. The seams (`evaluate`) take a tuner
+  pair's step from hops at `g_ref` on both sides - round 10's "at the
+  ceiling" with the ceiling made the reference: a region turned down over a
+  seam keeps the step last taken at the reference (the dongles' step
+  doesn't move with a gain; taken at a lower gain the floors' difference
+  shrinks as the converter's equal noise takes over, which would move the
+  block's signals); a seam never seen at the reference takes the hops at
+  the gain both sides have most (`S`), else 0 - no longer all of its hops
+  (that folded a lower region's lost sensitivity into the next block, and
+  its signals' heights with it). The histories (`Store::gain_changed`)
+  restart when `g_ref` changes, not when a region below it does. The data
+  receiver no longer takes the header's channel 0 gain for the common gain
+  while a table is in force (`regions_active`).
+- Round 10 (2026-11-24; history - Auto gain was removed in round 11): heimdall's Auto gain seeks each hop's highest
   gain at which the chain is still linear (the first design - the lowest
   floor referred to the input - was dropped after the first hardware scan:
   compression fools it; heimdall's `operating-modes.md`, "The linearity
@@ -551,7 +588,7 @@ refused; out-of-range numbers are clamped:
   `"trials_left_out"`: the trial visits this receiver left out of the
   picture since it started (the receiver's own count; at first only the
   up-trials, see the next point).
-- Trial visits (round 10, the 8091 trial bit of the visit's channel; the
+- Trial visits (history: round 10, the 8091 trial bit of the visit's channel; the
   last packet of a visit decides): since the first hardware run (heimdall
   62b62c1, 2026-11-24) EVERY trial visit is left out of the picture while
   its hop has a current row - one stored at most `TRIAL_ROW_SWEEPS` (3)
@@ -592,7 +629,7 @@ refused; out-of-range numbers are clamped:
   -0.044 when the down trials were drawn; without the bits -0.037 / -0.050,
   as before); a hop probed every other sweep shows its own-gain row, at
   most 1 sweep old.
-- Round 10 tested with the fake heimdall (`t_probe.py`: 16 hops, 5 dongles
+- Round 10 tested (history) with the fake heimdall (`t_probe.py`: 16 hops, 5 dongles
   0 / 3 / -2 / 1 / 4 dB apart, their real gains off the published curve by
   -0.4 ... +0.4 dB per 10 dB down; every bin of every sweep through
   `SWEEP_FULL`): the search phase, sparse probes (1 visit in 6), tuner 2's
@@ -700,7 +737,7 @@ refused; out-of-range numbers are clamped:
   seam beside it whose difference lies over the cap in one run and under
   it in another (the band's signals set the lowest floors): the median
   steadies it within a run, not between runs.
-- Seam steps with auto gain (2026-11-23, after the orchestrator's question
+- Seam steps with auto gain (history: 2026-11-23, after the orchestrator's question
   whether reduced hops fool them): `evaluate` takes a tuner pair's step only
   from hops at the ceiling (their gain = the common one) on each side of the
   seam, and falls back to all of a side's hops only when none of them is.
@@ -720,7 +757,7 @@ refused; out-of-range numbers are clamped:
   hop at a seam: the carrier captures the converter, the hop's floor drops
   and is the lowest (blocks 1.9 - 4.7 dB off in the test) - Auto removes
   that cause.
-- Auto gain (2026-11-23): `sweep::set_auto_gain` / `auto_gain_command`,
+- Auto gain (history: 2026-11-23 - removed 2026-11-24): `sweep::set_auto_gain` / `auto_gain_command`,
   `ControlHandler::send_sweep_plan_now` (the plan, then the switch: every
   place that sent the plan; `ask_sweep_auto_gain` reads what heimdall sent
   before the ask first - a status line of the heimdall before would answer
@@ -1668,7 +1705,71 @@ used"):
   instant trace keeps the frame where the frame covers the window at least
   as finely (`swpTrace`). "Points sent" reads "1525 + 46,427 at 37.5 kHz"
   for a pooled set, "1525 + full 11,885,227" for a full one.
-- **Auto gain** (round 9, 2026-11-23; the user: "Could we auto adjust the
+- **Gain by region** (round 11, 2026-11-24; the user: "Auto gain doesn't
+  work well. Remove it. Instead we'll add a feature where we can manually
+  set the gain for different regions of the spectrum. We'll have a line
+  under the FFT spectrum that we can add keyframe like points to. Clicking
+  on one segment of the line will change the gain control for only that
+  currently selected segment. Keyframe points can be removed by right
+  clicking on them. The keyframe points should be able to be moved left or
+  right by clicking and dragging."; SWEEP MODE's "gain by region", `swpReg*`
+  / `swpLane*`):
+  - The lane: `#swp-lane-box` (a canvas, `#swp-lane`) between the sweep's
+    spectrum and the split, 30 px (40 where the pointer is coarse), shown
+    (body class `swp-regions`) only while the `sweep` message's
+    `gain_regions_known` is true - an older receiver or heimdall: no lane,
+    the Gain is the common gain as before. It follows the spectrum's
+    frequency axis exactly (`swpLaneX`: the plot's margins `SWP_L` /
+    `SWP_R`, `swpWindow()` - zoom and pan included; redrawn with every
+    `swpDraw`). It draws the receiver's table (`swpRegRx`) plus a drag in
+    progress (`swpLaneTable`) - never a change it has only sent: each
+    region a step of a line whose height is its gain (0 - 50 dB over the
+    lane's height; no points: one line at the common gain, dashed at Auto),
+    its gain written in it where there is room, the selected region shaded
+    (`--ac-d2`) with its range ("29.7 dB · 417.213 - 438.250 MHz") where
+    that fits; the points as handles (a bar with two grips, brighter under
+    the pointer or dragged). Colours: the palette's hex values.
+  - Gestures (pointer events on the lane: mouse, touch and pen alike;
+    `touch-action: pan-y`): double-click / double-tap (two taps within 350
+    ms, 24 px) adds a point at the hop edge nearest (`swpEdgeSnap`: start
+    + k x 1 912 500 Hz, k = 1 ... hops - 1), refused within a hop of
+    another point; both halves keep the region's gain - with no points the
+    common gain, and none while that is Auto (the lane blinks amber: set a
+    gain first). A press on a point (6 px; 16 px by touch) and a drag move
+    it, snapped to hop edges, held at least a hop from its neighbours in
+    the range and inside the range's inner edges (`swpRegLimits`); the
+    table goes on release. A right-click on a point (`contextmenu`, the
+    browser's menu never shows on the lane) or a press and hold (600 ms,
+    touch, without moving) removes it: the merged region keeps the
+    selected one's gain if either was selected, else the left one's; the
+    last point's removal sends `GAIN:<that gain>` then `SWEEP_GAINS:|`. A
+    click / tap off the points selects the region under it (`swp.reg.selF`:
+    a frequency in it - after loading, a range change or a region that left
+    the range: the middle of the view). A drag off the points pans the view
+    when zoomed in, as on the plot; the wheel zooms. A drag that starts on
+    a point never pans. Keys (the lane takes focus): Left / Right select,
+    Shift + Left / Right move the selected region's right border a hop,
+    Delete / Backspace remove it, Insert / + add one in the middle of the
+    selected region.
+  - The Gain control (`sgn` -> `swpRegSetGain`): while there are points it
+    sets the selected region only - the whole table with that one gain
+    changed, never `GAIN:` -; its range starts at 0 dB (`min` 1: Auto can't
+    be a region's gain), the bar is outlined (`gn-region`) and its tip names
+    the region's range; it shows the selected region's gain (synced from
+    every state message, and at once on a new selection - a pending send of
+    the bar for the old region goes first, `swpRegFlushGain`). No points,
+    and every other mode: the common gain, as before. Changes are built on
+    the table this page sent last until the receiver's answer is there
+    (`swp.reg.pend`, at most `SWP_PEND_MS`): a gain set right after a move
+    doesn't undo the move.
+  - The Sweep box's Gain line (`#swp-gain-st`, `swpGainText`): "49.6 dB" /
+    "Auto", or "3 regions, 16.6 - 49.6 dB" (the regions in the range); its
+    tip says how to use the lane, as does the spectrum header's help. The
+    pointer's readout adds the gain of the step under it while there are
+    regions (`swpRegGainAt`: the hop's centre's region). The picture (PNG)
+    has the lane between the spectrum and the waterfall; its caption's gain
+    is the Gain line's.
+- **Auto gain** (history: round 9, 2026-11-23 - removed in round 11, 2026-11-24; the user: "Could we auto adjust the
   gain based on the current swath, and still have the sweep update fast,
   and have the sweep stitch together well?"). heimdall learns a gain per
   step; the page shows the switch and what it does:
@@ -2975,3 +3076,90 @@ from above (seen on downward and random tunes, not on the sweep's upward
 steps; the old library does it too; cause unknown; the Pi's KrakenSDR
 showed it on another dongle, at 1698.4 MHz, three times in a plan of random
 jumps and never in a sweep).
+
+**Round 11 (2026-11-24): Auto gain out, gain by region in.** The user,
+after rounds 9, 9b and 10: "Auto gain doesn't work well. Remove it.
+Instead we'll add a feature where we can manually set the gain for
+different regions of the spectrum. We'll have a line under the FFT
+spectrum that we can add keyframe like points to. Clicking on one segment
+of the line will change the gain control for only that currently selected
+segment. Keyframe points can be removed by right clicking on them. The
+keyframe points should be able to be moved left or right by clicking and
+dragging. Remove the auto gain button and feature, and implement this
+instead". Removed: heimdall's `set_sweep_auto_gain` with its clipping rule,
+linearity search, spectrum estimator thread, `HEIMDALL_AG_TRACE`, the 8091
+trial bits (never released) and its status counts; the receiver's
+`SWEEP_AUTO_GAIN` (an old page's is ignored, an old saved
+`sweep_auto_gain` dropped at the next save), the trial-bit handling, the
+pass-through counts and the `sweep_gain` map message; the page's switch,
+"settling", the amber strip. Kept as the base of the new feature: the gain
+per hop written with its retune and carried in the header, every tuner
+back at the common gain before the mode is left, heimdall's gain curve and
+the receiver's shift by it, the seams' and the base's medians. Built: a
+gain table by region - heimdall `set_sweep_gains`, the receiver
+`SWEEP_GAINS:`, the page's lane (the contract, *The receiver* "Gain by
+region", *The page* "Gain by region"). Tests with the fakes only (job
+scratch 52196024 `regions/`; the KrakenSDR was in use by the live stack;
+the orchestrator runs the hardware):
+- heimdall, its fake build (`h/t_regions.py`, `h/t_regcost.py`; the
+  numbers in heimdall's `operating-modes.md`, "Gain by region"): every
+  valid packet's header gain on the plan's tuners is its hop's region's,
+  border hops included, for 5 / 4 / 2 / 1 sweep tuners; a table, a change
+  of a region's gain and border, and the clearing in force 0.00 - 0.01 s
+  after heimdall's answer, the plan running on; a strong carrier's level
+  minus the header gain the same at 49.6 / 38.6 / 29.7 dB (12.91 / 12.97 /
+  12.84); 15 malformed tables refused; the AGC as the common gain (the
+  table wins), back to the AGC when cleared; leaving for coherent: every
+  packet at the common gain, CONVERGED. 8 regions on 314 hops: +0.0 % a
+  sweep with the fork's fast gain write, +5.0 % without (11 writes a sweep
+  for 7 borders inside the tuners' blocks).
+- The receiver with the fake heimdall (`rx/t_rx.py`; 32 / 32 again after
+  542a38e): cmd 18 / 18 - the
+  table validated (10 malformed ones rejected, nothing sent), sent at once
+  and after every `set_sweep`, saved as heimdall answered it (30 -> 29.7),
+  in a second page's first message and every change, sent again 2.6 s
+  after heimdall restarted, kept when an older heimdall (no regions)
+  answers "Unknown command" (`gain_regions_known` false) and sent again
+  when a newer one is back, replayed after the receiver's restart (after
+  its `set_sweep`), cleared; an old page's `SWEEP_AUTO_GAIN:1` - nothing
+  sent, saved or rejected. Levels 14 / 14 (5 dongles 0 / 1.5 / -1 / 2 /
+  -0.5 dB apart, tuner noise 6 counts, the converter's 1.5, heimdall's
+  curve published; every bin through `SWEEP_FULL`): a region taken 20 dB
+  down (49.6 -> 29.7 over hops 24 - 36): its carrier's height +0.00 dB
+  (one level step is 0.47), a carrier in the other tuner's block of the
+  region -0.31, the one outside +0.00; the region's floor +4.86 dB for
+  +4.91 predicted from the two noises; outside it +0.00; the tuners'
+  offsets [0.0, 1.39, -0.97, 1.88, -0.51] -> [0.0, 1.34, -0.95, 1.88,
+  -0.44] dB; the border moved 3 hops and onto a block start: the same
+  within 0.2 dB; cleared: all back within 0.00. Rounds 3 - 8's suites on
+  this build with no table (the earlier workers' tests, my fake): `t_sweep`
+  207 / 207 (rerun after 542a38e: 206 / 207 - its sweep-duration check, the
+  python fake's own pace 0.137 s against the 0.176 s it expects), `t_full` 31 / 31, `t_overview` 23 / 23, `t_res` 175 / 181 - the same 6 failures as fe8eb74's build (checks written for round 4's limits: the grid at 8192 / 16384 on a 1.3 GHz range, sizes past 16384 at a short dwell); its first run here 174, one carrier's height 2.9 dB low at one frame a hop, not in the rerun.
+- The page (headless Chromium, real mouse / touch / key events, heimdall's
+  fake build + the receiver; `p/t_lane.py`, `p/t_lane_old.py`): desktop 40
+  / 40 - the lane under the spectrum and over the split; no points: the
+  Gain bar sends `GAIN:`; a double-click adds a point on the nearest hop
+  edge (one command, the whole table), the Gain line "2 regions"; a click
+  selects; the Gain bar then sends only the table (49.6 -> 43.4 on that
+  region), stops at 0 dB (never Auto), shows the other region's gain on
+  selecting it; a double-click within a hop of a point adds nothing; drags
+  snap to hop edges (5 hops), stop a hop before a neighbour on either side
+  and at the range's last inner edge; zoomed in the lane follows the
+  window, a drag that starts on a point moves it and not the view, a drag
+  off the points pans, the plot still pans; the readout names the step's
+  gain; keys select and move a border; a second browser shows the same
+  table and its added point shows in the first; right-click removal with
+  the merge rule (selected / left); reload keeps the table and selects the
+  middle region; the picture has the lane; the last point's removal sends
+  `GAIN:` then `SWEEP_GAINS:|`; no page errors. Phone (400 x 860, touch) 9
+  / 9: the lane 40 px; double-tap adds, a tap selects, a finger drags a
+  point 4 hops, press and hold removes. An older heimdall (the python fake
+  without regions) and the receiver of fe8eb74 serving this page: no lane,
+  the Gain bar sends `GAIN:` from Auto, no errors (10 / 10).
+- Found and fixed on the way: the answer to the previous
+  `set_sweep_gains`, drained just before the next one went, put its table
+  back (542a38e: only the answer that leaves none open is taken).
+- Not tested: the KrakenSDR and the Pi (the orchestrator's), Windows (a
+  gain write's ~8 transfers at 3-4 ms without the fast call) and macOS,
+  MinGW and zig (the portability syntax checks: not on this machine),
+  Firefox / Safari, a real strong-signal region on the air.

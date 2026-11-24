@@ -138,8 +138,7 @@ the uWS loop thread; from any other thread, post it with `loop->defer`.
 bits are flags (0x100 KerberosSDR manual mode, 0x200 calibration stale,
 0x400 wideband scan, 0x800 independent, 0x1000 generic RTL-SDRs - coherent
 mode unavailable, 0x2000 sweep, sent with 0x800 so an older client sees
-independent tuners, 0x4000 sweep Auto gain trial gain, with 0x10000 << ch per
-channel). Every consumer masks the low byte.
+independent tuners). Every consumer masks the low byte.
 
 ## Modes and hardware variants
 
@@ -148,12 +147,11 @@ channel). Every consumer masks the low byte.
   discrete scanner), independent (each tuner its own frequency, gain and
   pane; no calibration), sweep (the chosen tuners step through a frequency
   range: one wide spectrum and waterfall, not live, nothing demodulated -
-  heimdall hops (`set_sweep`), the client stitches; with Auto gain
-  (`set_sweep_auto_gain`) heimdall keeps a gain per hop under the common
-  gain - the highest at which the hop neither clips nor is saturated by a
-  carrier beside it, found from measured levels and trial visits that the
-  client leaves out of the picture - and the client shifts each hop's
-  levels by heimdall's measured gain curve;
+  heimdall hops (`set_sweep`), the client stitches; the gain can be set by
+  region (`set_sweep_gains`: points cut the range into regions, each with
+  its own gain; the page's lane under the spectrum) - heimdall writes each
+  hop's gain with its retune, and the client shifts each hop's levels by
+  heimdall's measured gain curve (Auto gain was removed 2026-11-24);
   `kraken_doa_v2/docs/dev/sweep-mode.md` holds the wire contract). The
   client follows heimdall's mode from the header flags and parks DoA /
   beamforming outside coherent mode.
@@ -192,7 +190,7 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 - Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7; the Data
   rate readout, `NET_STATS:`),
   `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9),
-  `sweep-mode.md` (sweep mode: `SWEEP_*`, `SWEEP_VIEW:`, type 10)
+  `sweep-mode.md` (sweep mode: `SWEEP_*`, `SWEEP_VIEW:`, type 10; `SWEEP_GAINS:`, the gain by region lane)
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),
   `vfo-audio.md`, `operating-modes.md` (also VFO cards, the tuning step,
   zoom), `sidebar.md` (the boxes: move, collapse, the remembered layout;
