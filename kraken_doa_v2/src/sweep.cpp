@@ -317,6 +317,7 @@ struct Store {
     std::array<float, SEAM_HIST> base_hist{};
     uint8_t base_pos = 0;
     float base_gain = NAN;        // the reference gain (g_ref) the histories were taken at
+    uint64_t base_set = 0;        // the table's set of gains (g_gain_set) base_hist was taken with
     // per seam the median of its kept steps when the common gain last changed (NaN = none):
     // used only while the seam has no step of its own at the new gain
     std::array<float, MAX_CHANNELS> seam_fallback{};
@@ -358,6 +359,7 @@ struct Store {
     uint32_t done = 0;            // sweeps completed on this grid
     float last_s = 0;             // the last complete sweep's duration
     std::vector<float> scratch;   // evaluate
+    std::vector<std::pair<int, float>> grp;   // evaluate: per hop (its gain key, its floor less its tuner's offset)
 } S;
 std::atomic<uint32_t> g_plan_gen{0};
 std::atomic<uint32_t> g_mask{0};          // the plan's tuners, for the data receiver
@@ -383,12 +385,25 @@ std::atomic<int> g_reg_known{0};          // 1 heimdall has set_sweep_gains, -1 
 // The level shift's reference: the highest gain of the table (heimdall has it), else the common
 // gain (NaN = not known, -1 = the tuner's AGC: no shift)
 std::atomic<float> g_ref{NAN};
+// The set of gains the table in force holds (0.1 dB; 0 = no table): a change restarts the
+// base's history (evaluate)
+std::atomic<uint64_t> g_gain_set{0};
 void update_ref() {
     float r = g_gain.load();
+    uint64_t set = 0;
     {
         std::lock_guard<std::mutex> lk(g_reg_mu);
-        if (!g_reg.gains.empty() && g_reg_known.load() != -1) r = *std::max_element(g_reg.gains.begin(), g_reg.gains.end());
+        if (!g_reg.gains.empty() && g_reg_known.load() != -1) {
+            r = *std::max_element(g_reg.gains.begin(), g_reg.gains.end());
+            std::vector<long> k;
+            for (float g : g_reg.gains) k.push_back(std::lround(g * 10.0f));
+            std::sort(k.begin(), k.end());
+            k.erase(std::unique(k.begin(), k.end()), k.end());
+            set = 1469598103934665603ull;   // (FNV-1a over the distinct gains)
+            for (long x : k) set = (set ^ static_cast<uint64_t>(x)) * 1099511628211ull;
+        }
     }
+    g_gain_set.store(set);
     g_ref.store(r);
 }
 
@@ -445,8 +460,7 @@ void shift_hop(int h, float d) {
     pyr_update(static_cast<size_t>(a), static_cast<size_t>(b - 1));
 }
 
-// (g_mu) The reference: ONE for the whole sweep - base = the 20th percentile
-// of the hops' floors (each hop's 10th percentile) - plus each tuner's gain
+// (g_mu) The reference: ONE for the whole sweep - base (below) - plus each tuner's gain
 // step, measured where its block meets the next one's: the lowest floor of
 // the SEAM_HOPS hops on each side (neighbours in frequency, so they differ
 // only by the two dongles' gains; a signal only raises a hop's floor, so the
@@ -455,11 +469,42 @@ void shift_hop(int h, float d) {
 // or several, keeps its height; the dongles' different floors (up to ~4 dB)
 // don't show as steps. Hops whose reference moved by more than REWRITE_DB are
 // rewritten.
+// The base, by gain group (2026-11-25, round 12): the hops are grouped by the gain their
+// stored floor was measured at (`gkey`: S.hop_gain to 0.1 dB; an unknown gain and the
+// tuner's AGC are groups of their own), each group's REF_QUANTILE (20th percentile) of its
+// floors (less the tuners' offsets) is taken, and now's base is the LOWEST of them; the base
+// shown is the median of now's with the last SEAM_HIST completed sweeps' (base_hist). Why:
+// a hop at a gain below the reference has its floor raised by its level shift (real(ref) -
+// real(its gain): a signal keeps its height, the sensitivity given up shows as a higher
+// floor), so with most of the range turned down one quantile over every hop landed inside
+// the highest-gain hops' own spread, or on a raised floor, and that region's quieter hops
+// were drawn under the 0 dB line (the user's 87.5 - 1008 MHz with 65 % at 16.6 dB: 11 % of
+// the 49.6 dB region's points at 0). Invariants (tested, docs/dev/sweep-mode.md round 12):
+// - I1 one gain everywhere (no table, or a table of equal gains): one group, its quantile
+//   is the old one over every hop - the same number;
+// - I2 with a table no group's 20th-percentile floor is under now's base: the lowest
+//   group's quiet fifth at NOISE_SHOWN_DB, as a sweep of its hops alone would put it, the
+//   others above it by what they are higher (a turned-down region: its lost sensitivity);
+// - I3 grouping is by gain, not by region: a point added with the same gain on both sides
+//   changes nothing;
+// - I4 a region's new gain that is not the lowest group's moves the base by nothing but
+//   the lowest group's own quantile (its members don't change); the seams' histories
+//   restart only when the reference gain changes (gain_changed, above), the base's also
+//   when the table's set of gains changes (evaluate: a new lowest group, several dB away,
+//   is followed within the sweep the change falls in instead of two sweeps later);
+// - I5 a group of one or two hops is its own floor (its 20th percentile is its lowest
+//   hop): a narrow region at the highest gain in a quiet band isn't drawn under the line
+//   either. The cost: one odd visit of such a hop (a short visit, a clipped hop) is now's
+//   base for that evaluation - base_hist's median takes it out unless it repeats in most
+//   of the last sweeps, as it does for an odd seam step;
+// - I6 the seams' steps, the tuners' offsets, the per-hop delta, the rewrite of stored
+//   hops and the dead-dongle rule are not touched by it.
 // KRAKEN_SWEEP_SEAM_DEBUG=1: every evaluation logs (stderr) per seam the hops taken on each side
 // (h:floor@gain, * = at the reference gain), where the step came from (C the reference steps'
 // median with now's, M their median alone - now's past the cap or no reference hop on a side -, S
 // the hops at a gain both sides have, 0 none), the step and now's raw difference at the reference;
-// then the base and the tuners' offsets
+// then the base, now's base, the old rule's (the quantile over every hop), the kept sweeps, each
+// gain group (gain=20th percentile/hops; AGC -1, unknown nan) and the tuners' offsets
 bool seam_debug() {
     static const bool on = [] { const char* e = std::getenv("KRAKEN_SWEEP_SEAM_DEBUG"); return e && *e == '1'; }();
     return on;
@@ -475,13 +520,33 @@ void evaluate(bool sweep_done = false) {
     // every hop at it moves at once and the steps with it - the histories start again, so
     // the first sweep at the new gain sets the base and the steps as before the medians
     // (one sweep, not 2 - 3). A region below the reference changing doesn't: the seams'
-    // steps are taken at the reference (below), and the base is a low quantile over
-    // every hop
+    // steps are taken at the reference (below). The gains are compared at their 0.1 dB: the
+    // common gain and the same gain from a table differed in their last bit (-ffast-math
+    // makes note_gain's / 10 a x 0.1f), so a table set or cleared at the common gain
+    // restarted the seams' histories too (round 12)
     const float ref_db = g_ref.load(std::memory_order_relaxed);
-    if (!(ref_db == S.base_gain || (!is_finite_value(ref_db) && !is_finite_value(S.base_gain)))) {
+    auto gk = [](float g) { return is_finite_value(g) ? std::lround(g * 10.0f) : std::numeric_limits<long>::min(); };
+    if (gk(ref_db) != gk(S.base_gain)) {
         S.gain_changed();
         S.base_gain = ref_db;
     }
+    // the base's history alone restarts when the table's set of gains changes (a table set
+    // or cleared, a region given a gain no other has, a gain gone): the lowest gain group
+    // can be another set of hops then, and its base several dB away - the median with the
+    // sweeps from before would hold the old base for two more sweeps (with most of the range
+    // turned down: the bug's picture for those sweeps). A border moved or a point added
+    // keeps the set (and the base within a little)
+    if (const uint64_t gs = g_gain_set.load(std::memory_order_relaxed); gs != S.base_set) {
+        S.base_hist.fill(NAN);
+        S.base_pos = 0;
+        S.base_set = gs;
+    }
+    // a hop's gain group: the gain its stored floor was measured at, 0.1 dB (unknown and the
+    // tuner's AGC each a group of their own)
+    auto gkey = [&](int h) {
+        const float g = static_cast<size_t>(h) < S.hop_gain.size() ? S.hop_gain[static_cast<size_t>(h)] : NAN;
+        return !is_finite_value(g) ? -9999 : g < 0.0f ? -10 : static_cast<int>(std::lround(g * 10.0f));
+    };
     const bool dbg = seam_debug();
     std::ostringstream dl;
     if (dbg) dl << "seamdbg " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
@@ -505,10 +570,6 @@ void evaluate(bool sweep_done = false) {
             auto at_ref = [&](int h) {
                 const float g = static_cast<size_t>(h) < S.hop_gain.size() ? S.hop_gain[static_cast<size_t>(h)] : NAN;
                 return !is_finite_value(g) || g < 0.0f || !is_finite_value(ref_db) || ref_db < 0.0f || std::fabs(g - ref_db) < 0.05f;
-            };
-            auto gkey = [&](int h) {
-                const float g = static_cast<size_t>(h) < S.hop_gain.size() ? S.hop_gain[static_cast<size_t>(h)] : NAN;
-                return !is_finite_value(g) ? -9999 : g < 0.0f ? -10 : static_cast<int>(std::lround(g * 10.0f));
             };
             int seam_g = INT32_MIN;
             {
@@ -601,16 +662,40 @@ void evaluate(bool sweep_done = false) {
         off[static_cast<size_t>(tb)] = off[static_cast<size_t>(ta)] + step;
     }
     // tuners outside the plan (hops measured before a change) keep offset 0
-    size_t n = 0;
-    S.scratch.resize(static_cast<size_t>(p.H));
+    auto& grp = S.grp;
+    grp.clear();
     for (int h = 0; h < p.H; h++) {
         const int8_t t = S.tuner[static_cast<size_t>(h)];
         if (t < 0) continue;
-        S.scratch[n++] = S.floor[static_cast<size_t>(h)] - ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f);
+        grp.emplace_back(gkey(h), S.floor[static_cast<size_t>(h)] - ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f));
     }
+    const size_t n = grp.size();
     if (n == 0) return;
     {
-        const float now_base = quantile(S.scratch, n, REF_QUANTILE);
+        // now's base: the lowest of the gain groups' REF_QUANTILE (each the k-th lowest floor
+        // of its m hops, k as quantile() takes it - one group gives quantile()'s value over
+        // every hop: I1)
+        std::sort(grp.begin(), grp.end());
+        float now_base = INFINITY;
+        std::ostringstream gl;
+        for (size_t a = 0; a < n;) {
+            size_t b = a + 1;
+            while (b < n && grp[b].first == grp[a].first) b++;
+            const size_t m = b - a;
+            const size_t k = std::min(m - 1, static_cast<size_t>(REF_QUANTILE * static_cast<float>(m)));
+            const float q = grp[a + k].second;
+            now_base = std::min(now_base, q);
+            if (dbg) {
+                char g[48];
+                const int key = grp[a].first;
+                const unsigned mu = static_cast<unsigned>(m);
+                if (key == -9999) snprintf(g, sizeof g, " nan=%.2f/%u", q, mu);
+                else if (key == -10) snprintf(g, sizeof g, " -1=%.2f/%u", q, mu);
+                else snprintf(g, sizeof g, " %.1f=%.2f/%u", key / 10.0, q, mu);
+                gl << g;
+            }
+            a = b;
+        }
         float v[SEAM_HIST + 1];
         int nv = 0;
         for (float x : S.base_hist)
@@ -628,12 +713,20 @@ void evaluate(bool sweep_done = false) {
             S.base_hist[S.base_pos] = now_base;
             S.base_pos = static_cast<uint8_t>((S.base_pos + 1) % SEAM_HIST);
         }
+        if (dbg) {
+            // (the old rule's value beside it: the quantile over every hop)
+            S.scratch.resize(n);
+            for (size_t i = 0; i < n; i++) S.scratch[i] = grp[i].second;
+            char b[96];
+            snprintf(b, sizeof b, " || base %.2f now %.2f all %.2f kept %d ref %.2f grp", S.base, now_base,
+                     quantile(S.scratch, n, REF_QUANTILE), nv < 2 ? nv : nv - 1, ref_db);
+            dl << b << gl.str();
+        }
     }
     S.off = off;
     if (dbg) {
         char b[32];
-        snprintf(b, sizeof b, " || base %.2f off", S.base);
-        dl << b;
+        dl << " off";
         for (int k = 0; k < p.Kp; k++) {
             const int t = tuner_of_rank(p.tuners, k);
             if (t < 0) break;

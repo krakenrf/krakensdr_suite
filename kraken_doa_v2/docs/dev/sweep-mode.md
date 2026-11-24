@@ -423,7 +423,11 @@ back to coherent).
   and at most once a second between) write one line to stderr: `seamdbg
   <epoch ms> done <sweeps>`, then per seam `| a|b <src> <step> (now <raw>)`
   with the hops taken on each side (`a ...` / `b ...`, each `h:floor@gain`,
-  `*` = at the reference gain), and `|| base <dB> off <per rank>`. `<src>`:
+  `*` = at the reference gain), and `|| base <dB> now <dB> all <dB> kept
+  <n> ref <dB> grp <gain>=<dB>/<hops> ... off <per rank>` (since round 12:
+  now's base, the old rule's value - the 20th percentile over every hop -,
+  the base history's kept sweeps, the reference gain and each gain group's
+  20th percentile and size; AGC `-1`, unknown `nan`). `<src>`:
   C = the median of the kept reference steps with now's, M = the kept ones
   alone (now's past the 6 dB cap, or a side without a hop at the
   reference), S = the hops at a gain both sides have (a seam not yet seen
@@ -563,9 +567,51 @@ refused; out-of-range numbers are clamped:
   the gain both sides have most (`S`), else 0 - no longer all of its hops
   (that folded a lower region's lost sensitivity into the next block, and
   its signals' heights with it). The histories (`Store::gain_changed`)
-  restart when `g_ref` changes, not when a region below it does. The data
+  restart when `g_ref` changes (compared at 0.1 dB since round 12), not
+  when a region below it does; the base's own history also restarts when
+  the table's set of gains changes (*The base by gain group*, next). The data
   receiver no longer takes the header's channel 0 gain for the common gain
   while a table is in force (`regions_active`).
+- **The base by gain group** (round 12, 2026-11-25; `evaluate`): the hops
+  are grouped by the gain their stored floor was measured at
+  (`S.hop_gain`, 0.1 dB - the seams' `gkey`; an unknown gain and the
+  tuner's AGC are groups of their own); each group's 20th percentile of
+  its floors (less the tuners' offsets) is taken, and now's base is the
+  LOWEST of them (then the median with the last 4 completed sweeps', as
+  before). A turned-down hop's floor is raised by its level shift
+  (real(`g_ref`) - real(its gain): its signals keep their height, the
+  sensitivity given up shows as a higher floor), so one 20th percentile
+  over every hop stood inside the highest-gain hops' own spread, or on a
+  raised floor, once most of the range was turned down (round 12 below).
+  What holds: one gain everywhere (no table, or a table of equal gains) is
+  one group - the same number as the quantile over every hop; with a
+  table no group's quiet fifth is under the base - the lowest group's at
+  +2 dB, as a sweep of its hops alone would put it, the others above by
+  what they are higher; a point added with the same gain on both sides
+  changes nothing (grouping is by gain, not by region); a group of one or
+  two hops is its own floor (a narrow region at the highest gain in a quiet
+  band isn't drawn under the line either). The seams' steps, the tuners'
+  offsets, the per-hop `delta`, the rewrite of stored hops and the
+  dead-dongle rule are untouched. A hop's stored floor keeps the gain it
+  was measured at until its next visit, so during the sweep a table change
+  falls in it counts in its old gain's group - its floor and its key
+  match. Restarts: the base's history (`base_hist`) restarts when the
+  table's set of distinct gains changes (`g_gain_set`, made by
+  `update_ref`: a table set or cleared, a region given a gain no other
+  has, a gain gone); a border moved or a point added keeps the set. Without
+  that the median held the old base for two more sweeps after a table set
+  or cleared, and after a clear the regions that were turned down stood
+  under the line for those sweeps. With it the base follows now's value
+  through the sweep the change falls in (the groups' members move hop by
+  hop, so it moves gradually) and the median is back after two completed
+  sweeps; the cost is that an odd visit is not filtered in those two
+  sweeps. The seams' histories still restart only on a new `g_ref`.
+  The cost of a small group: one odd visit of its hop (a short visit, a
+  clipped hop whose floor reads far low) is now's base for that
+  evaluation; the median takes it out unless it repeats in most of the
+  last 5 values, and an odd floor that stays moves the whole picture by
+  its error after 2 - 3 sweeps. The debug log (`KRAKEN_SWEEP_SEAM_DEBUG`)
+  shows each group.
 - Round 10 (2026-11-24; history - Auto gain was removed in round 11): heimdall's Auto gain seeks each hop's highest
   gain at which the chain is still linear (the first design - the lowest
   floor referred to the input - was dropped after the first hardware scan:
@@ -1027,7 +1073,8 @@ refused; out-of-range numbers are clamped:
   and 2 ~3 dB apart). One packet (16384 samples = the largest N) always makes
   at least one frame.
 - Levels: ONE reference for the sweep - `base` = the 20th percentile of the
-  hops' floors - plus each tuner's gain step: where tuner k's block meets
+  hops' floors (with a gain table: the lowest of the gain groups' 20th
+  percentiles, *The base by gain group* below) - plus each tuner's gain step: where tuner k's block meets
   tuner k+1's, the lowest floor of the 6 hops on each side (neighbours in
   frequency, so they differ by the two dongles' gains only; a signal only
   raises a floor, so the lowest is noise as long as one hop of the six is;
@@ -3321,3 +3368,105 @@ empty).
   syntax checks: not on this machine), Windows / macOS, Firefox / Safari, a
   real phone; main's own job-scratch suites (`ui_bands.py`, `ui_sig.py`,
   the strict playback) - not this job's, not rerun.
+
+**Round 12 (2026-11-25): the 0 dB reference with most of the range turned
+down.** The user, on the merged main (36d976b): "With the new multigain
+controls, some parts of the spectrum can end up below the 0 dB hard noise
+floor on the FFT graph. Strangely it seems to be parts of the spectrum that
+use HIGHER gain that sit much lower on the spectrum, compared to those
+running with lower gain."
+- The live instance (the orchestrator, read only): 87.5 - 1008 MHz, 482
+  steps, 5 tuners, Resolution Auto (FFT 1024), dwell 5; one point at
+  412.625 MHz, gains 49.6 | 16.6 (170 steps at 49.6, the 312 above - 65 % -
+  at 16.6). The page's frame: the 16.6 dB region flat at p20 10.8 / median
+  11.3 dB; the 49.6 dB region p20 3.3 / median 8.5 dB with 11 % of its points
+  at 0 - under the axis.
+- The cause: ONE base, the 20th percentile of every hop's floor. A
+  turned-down hop's floor is raised by its level shift (by design: its
+  signals keep their height, the lost sensitivity shows as a higher floor),
+  so with a large share turned down the 20th percentile of all floors stood
+  inside the highest-gain hops' own spread (the live case: their 57th
+  percentile), past 80 % on a raised floor, and every highest-gain hop more
+  than 2 dB under it was drawn under the line. Round 11's tests only ever
+  turned a small share down. Not the bug: a lower-gain region showing a
+  higher floor - that is the contract.
+- The rule (*The base by gain group* above): the hops grouped by the gain
+  their stored floor was measured at, each group's 20th percentile, the
+  lowest of them; the base's history restarts when the table's set of gains
+  changes. Found on the way: the reference gain was compared bit for bit,
+  and the common gain (note_gain's `/ 10.0f`, which -ffast-math makes a
+  `x 0.1f`: 49.6 = `0x1.8ccccep+5`) and the same gain from a table
+  (`0x1.8cccccp+5`) differ in the last bit - every table set or cleared at
+  the common gain restarted the seams' histories too. Now compared at 0.1 dB.
+- Tests (fakes only; job scratch 52196024 `floor/`: a TEST receiver on
+  2878x / 2879x, exe `kdfl12`, the unchanged build `kdfl12_base`; the python
+  fake with a band per hop for an uneven floor - the noise pool no longer
+  rebuilt on a scene change -, 5 dongles 0 / 1.5 / -1 / 2 / -0.5 dB apart,
+  tuner noise 6 counts, the converter's flat 1.5, heimdall's curve
+  published; every bin through `SWEEP_FULL`; `rx/t_bug.py`,
+  `rx/t_cases.py`):
+  - The user's settings (482 hops, a sweep 2.0 s on the fake), each hop's
+    floor 0 - 6 dB over the tuner noise at random. Unchanged build: the base
+    +2.01 dB from no table, the 55th percentile of the 49.6 dB region's own
+    floors; 23.3 % of that region's hop noise medians drawn at 0 (a sweep's
+    share, mean of 5 sweeps), its p20 0.00, median 1.69 dB; the 16.6 region
+    p20 12.71. Fixed: the base +0.03 dB, the 21st percentile; 0.1 % at 0 (no
+    table: 3 - 4 of 482 hops - noise), p20 1.88 (a level step is 0.47),
+    median 3.62; the 16.6 region p20 14.59; the carriers in both regions
+    +0.04 / -0.02 dB in the receiver's units, the offsets within 0.15 dB.
+  - I1 (400 - 700 MHz, 157 hops; quiet hops 0 - 78 at 0 - 2 dB, noisy 79 -
+    156 at 4 - 10 dB): in every evaluation (31) now's base equals the old
+    rule's value (the debug log's `now` / `all`, max difference 0.000 dB),
+    one group; against the unchanged build on the same fake and seed, no
+    table and a table of three equal gains: the hop levels' mean difference
+    -0.02 / +0.02 dB, largest 0.29 / 0.35 (the A/A noise of a 4-sweep mean
+    0.59), the base 48.30 / 48.29 and 48.27 / 48.25 dB.
+  - Shares turned down to 16.6 (the same scene; the base against no table):
+    from the top (the noisy part first) 10 / 50 / 65 / 90 / 99 % (the last:
+    one hop left at 49.6) and from the bottom (the quiet part first); three
+    gains both ways; four gains 49.6 / 38.6 / 25.4 / 12.5; 49.6 in the noisy
+    half and 43.4 in the quiet half (anchoring on the hops at the reference
+    would put the quiet half under the line); cleared. Fixed: 20 / 20 cases
+    with the lowest group's quiet fifth at 1.88 - 2.12 dB and no group's
+    under it, the carriers within 0.29 dB of no table, the offsets within
+    0.25 dB except the three gains 49.6 | 29.7 | 16.6 at 0.31 (the
+    unchanged build: 0.31 in the same case - the seams, untouched).
+    Unchanged build: 8 cases with the highest-gain region under the line -
+    90 / 99 % from the top: all 16 / the 1 hop at 0 (base +12.6 / +13.3 dB);
+    from the bottom 50 / 65 / 90 / 99 %: p20 1.29 / 0.47 / 0 / 0; three
+    gains 16.6 | 29.7 | 49.6: 0.94; four gains: 0.94.
+  - I3: points added inside both regions of [49.6 | 16.6] with the same
+    gains: now's base 47.93 +- 0.02 -> 47.94 +- 0.03 dB, the same groups (79
+    / 78 hops), no restart. I4: the 16.6 region to 25.4, then 8.7: now's
+    base 47.84 - 47.99 for 47.93 before, the 49.6 region's picture -0.003 /
+    -0.011 dB; the reference stays 49.6, the base's history restarts (a new
+    set of gains), the seams' doesn't; the top gain 49.6 -> 43.4: both
+    restart, as before. I5: one hop at 49.6 (the quietest), the rest at
+    16.6: its median 2.00 dB; two hops: 1.88 / 2.82. One odd visit (that
+    hop's floor 6 dB lower for about a sweep): now's base 5.8 dB down for
+    one evaluation, the base 53.38 - 53.46 (unmoved); lower for good: the
+    base follows after two evaluations (two completed sweeps).
+  - Settling (a noisy 35 % at 49.6, the rest turned down - the base moves
+    ~3.8 dB): set, the region's gain changed, cleared, set again, the border
+    moved 10 hops; the sweeps after the change through which the
+    highest-gain region's p20 is off its final by more than 0.5 dB: 1 / 0 /
+    0 / 1 / 2 (the border: a 0.7 dB move, the median). Without the restart
+    on a new set (measured: a variant of this build): 3 / 0 / 2 / 3, and
+    after the clear the regions that had been turned down stood at p20 0.00
+    for 2 sweeps. The unchanged build settled on the wrong picture (18 of 53
+    hops under the line).
+  - A second page gets the same full set of the same sweep, byte for byte.
+  - Rounds 3 - 11's suites on this build: `t_rx` 32 / 32, `t_sweep` 206 /
+    207 (the DC-hole check at 16384, the median of 33 one-frame bins near
+    the hop centres -1.88 dB for a 1.5 limit; its section rerun twice 122 /
+    122, and 122 / 122 on the unchanged build), `t_full` 30 / 31 (a set of
+    the grid before arrived in the 16384 window - 1 part; the section rerun
+    twice 7 / 7), `t_overview` 23 / 23, `t_res` 174 / 181 (the same 7 as
+    before). The build: the same 3 `-Wsign-compare` warnings as before;
+    `sweep.cpp` also through clang++ `-fsyntax-only` without a new warning.
+- Not tested: the KrakenSDR (the orchestrator's), a Pi, MinGW and zig (not
+  on this machine), Windows / macOS; a real band's floor over hundreds of
+  hops (the fake's is a random 0 - 6 dB per hop, flat inside a hop); a
+  clipped hop's far-low floor in a small lowest group (inferred from the
+  median: an odd visit is filtered, an odd floor that stays moves the
+  picture).
