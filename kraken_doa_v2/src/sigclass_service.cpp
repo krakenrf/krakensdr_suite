@@ -57,8 +57,14 @@ constexpr double TRACK_EXPIRE_S = 45.0;
 // costs little more than the detector, the period shrinks and new signals are
 // looked at sooner. SETTLED_SKIP is the default; KRAKEN_SIGCLASS_SETTLED=0 / 1
 // overrides it (read once, at the worker's start: A/B tests). See known_bands
-// in worker() and docs/dev/signal-classifier.md (Runtime, S1)
-constexpr bool SETTLED_SKIP = true;
+// in worker() and docs/dev/signal-classifier.md (Runtime, S1). OFF since the
+// speed merge (2026-11-24): its acceptance failed - a refresh look moves the
+// frozen evidence like one ordinary look, so a sure label that the next
+// looks would revise stays ~4x as many looks (an MPT1327 control channel
+// held as a SURE "DMR" for 25 looks where every-look classification had
+// it unsure, then MPT1327), and one strict playback run of three lost a label
+// (UAT, 27 of 28). The numbers are in the doc
+constexpr bool SETTLED_SKIP = false;
 constexpr int KNOWN_HITS = 3, KNOWN_REFRESH = 4;
 // ... and only a track that surely survives the look (its tracker's expiry and
 // the ceiling, with this much to spare for the capture and the analysis)
