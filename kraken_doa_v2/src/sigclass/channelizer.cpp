@@ -68,7 +68,11 @@ void FrontEnd::run(size_t n_samples, double fs_hz, int spec_hop) {
         std::fill(tmp.begin(), tmp.end(), cf(0.0f, 0.0f));
         if (hi > lo) std::memcpy(tmp.data() + (lo - s0), x.data() + lo, size_t(hi - lo) * sizeof(cf));
         cf* X = blocks.data() + size_t(b) * LONG_N;
-        long_fft.fwd(tmp.data(), X);
+        {
+            SC_PROF("fe.long_fft");
+            long_fft.fwd(tmp.data(), X);
+        }
+        SC_PROF("fe.psd_acc");
         // the periodic Hann window's energy over the samples that exist
         if (hi > lo) wnorm += w2cum[size_t(hi - s0)] - w2cum[size_t(lo - s0)];
         // Hann in the frequency domain: Xw[k] = X[k]/2 - (X[k-1] + X[k+1])/4
@@ -94,6 +98,7 @@ void FrontEnd::run(size_t n_samples, double fs_hz, int spec_hop) {
     for (int i = 0; i < LONG_N; i++) psd[size_t(i)] = float(double(acc[size_t(i)]) * inv);
 
     // short spectrogram: SPEC_N-point Hann frames every hop samples
+    SC_PROF("fe.spectrogram");
     const auto ts0 = std::chrono::steady_clock::now();
     if (spec_win.size() != size_t(SPEC_N)) {
         spec_win.resize(SPEC_N);
@@ -169,6 +174,7 @@ Channelizer::Channelizer() {
 }
 
 void Channelizer::extract(const FrontEnd& fe, int centre_bin, int view, avec<cf>& out) {
+    SC_PROF("chan.extract");
     const size_t n = fe.n;
     if (view < 0 || view >= NUM_VIEWS) view = NUM_VIEWS - 1;
     const int D = VIEW_DECIM[view];

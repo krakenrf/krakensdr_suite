@@ -10,6 +10,25 @@
 
 namespace sigclass {
 
+#ifdef SIGCLASS_PROF
+namespace prof {
+std::vector<Slot>& slots() {
+    static std::vector<Slot> v;
+    return v;
+}
+int reg(const char* name) {
+    std::vector<Slot>& v = slots();
+    for (size_t i = 0; i < v.size(); i++)
+        if (std::string(v[i].name) == name) return int(i);
+    v.push_back({name});
+    return int(v.size()) - 1;
+}
+void reset() {
+    for (Slot& s : slots()) s.ms = 0.0, s.n = 0;
+}
+}  // namespace prof
+#endif
+
 using namespace detail;
 
 namespace {
@@ -32,7 +51,7 @@ struct Analyzer::Impl {
     std::vector<float> fv;
     bool have = false;
 
-    std::vector<Scored> run(const Model* model, std::vector<float>* fo, double centre_hz);
+    std::vector<Scored> run(const Model* model, std::vector<float>* fo, double centre_hz, const std::vector<KnownBand>* known);
     void features_of(const Cand& c, float* out);
 };
 
@@ -51,7 +70,7 @@ int Analyzer::view_for_bandwidth(double bw_hz, double fs_hz, float occupancy) {
 }
 
 std::vector<Scored> Analyzer::analyze(const uint8_t* iq, size_t n, double fs_hz, const Model* model,
-                                      std::vector<float>* fo, double centre_hz) {
+                                      std::vector<float>* fo, double centre_hz, const std::vector<KnownBand>* known) {
     Impl& m = *impl_;
     m.have = false;
     if (fo) fo->clear();
@@ -71,11 +90,11 @@ std::vector<Scored> Analyzer::analyze(const uint8_t* iq, size_t n, double fs_hz,
     m.fe.fs = fs_hz;
     m.tm = Timing{};
     m.tm.convert_ms = now_ms() - t0;
-    return m.run(model, fo, centre_hz);
+    return m.run(model, fo, centre_hz, known);
 }
 
 std::vector<Scored> Analyzer::analyze(const std::complex<float>* iq, size_t n, double fs_hz, const Model* model,
-                                      std::vector<float>* fo, double centre_hz) {
+                                      std::vector<float>* fo, double centre_hz, const std::vector<KnownBand>* known) {
     Impl& m = *impl_;
     m.have = false;
     if (fo) fo->clear();
@@ -96,11 +115,15 @@ std::vector<Scored> Analyzer::analyze(const std::complex<float>* iq, size_t n, d
     m.fe.fs = fs_hz;
     m.tm = Timing{};
     m.tm.convert_ms = now_ms() - t0;
-    return m.run(model, fo, centre_hz);
+    return m.run(model, fo, centre_hz, known);
 }
 
 void Analyzer::Impl::features_of(const Cand& c, float* out) {
     const int v = std::clamp(c.det.view, 0, NUM_VIEWS - 1);
+#ifdef SIGCLASS_PROF
+    static const int pid[NUM_VIEWS] = {prof::reg("look.v0"), prof::reg("look.v1"), prof::reg("look.v2"), prof::reg("look.v3")};
+    SC_PROF_ID(pid[v]);
+#endif
     double t = now_ms();
     ch.extract(fe, c.centre_bin, v, view);
     ViewInfo vi;
@@ -114,7 +137,7 @@ void Analyzer::Impl::features_of(const Cand& c, float* out) {
     tm.features_ms += now_ms() - t1;
 }
 
-std::vector<Scored> Analyzer::Impl::run(const Model* model, std::vector<float>* fo, double centre_hz) {
+std::vector<Scored> Analyzer::Impl::run(const Model* model, std::vector<float>* fo, double centre_hz, const std::vector<KnownBand>* known) {
     const double t0 = now_ms();
     fe.run(fe.x.size(), fe.fs, cfg.spectrogram_hop);
     const double t1 = now_ms();
@@ -132,6 +155,7 @@ std::vector<Scored> Analyzer::Impl::run(const Model* model, std::vector<float>* 
     for (size_t i = 0; i < cands.size();) {
         bool image = false;
         if (cands[i].maybe_image) {
+            SC_PROF("det.image_test");
             const int v = std::clamp(cands[i].det.view, 0, NUM_VIEWS - 1);
             const int bs = std::clamp(-cands[i].centre_bin, -LONG_N / 2 + 1, LONG_N / 2 - 1);   // its mirror
             ch.extract(fe, bs, v, view);
@@ -198,6 +222,23 @@ std::vector<Scored> Analyzer::Impl::run(const Model* model, std::vector<float>* 
     for (size_t i = 0; i < cands.size(); i++) {
         res[i].det = cands[i].det;
         if (!want) continue;
+        // a known signal (the caller's settled track): reported in its track's view, unclassified
+        if (known && !fo) {
+            const Detection& d = cands[i].det;
+            const double base = centre_hz > 0.0 && finite_d(centre_hz) ? centre_hz : 0.0;
+            const double lo = base + d.offset_hz - 0.5 * d.bw_hz, hi = base + d.offset_hz + 0.5 * d.bw_hz;
+            const KnownBand* hit = nullptr;
+            for (const KnownBand& k : *known) {
+                const double inter = std::min(hi, k.hi_hz) - std::max(lo, k.lo_hz);
+                const double uni = std::max(hi, k.hi_hz) - std::min(lo, k.lo_hz);
+                if (inter > 0.0 && uni > 0.0 && inter >= 0.5 * uni) { hit = &k; break; }
+            }
+            if (hit) {
+                res[i].det.view = std::clamp(hit->view, 0, NUM_VIEWS - 1);
+                tm.known++;
+                continue;
+            }
+        }
         float* out = fo ? fo->data() + i * size_t(D) : fv.data();
         features_of(cands[i], out);
         if (model && model->has_view(cands[i].det.view)) {
