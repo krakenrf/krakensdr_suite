@@ -545,7 +545,13 @@ same call). A `hang` call goes back to `active` with new activity.
   control VFO is "put back" then (the sweep moved none, and the stream may
   still show a hop for a moment), and click to follow's bookkeeping
   (`cc_followed`) is not re-checked in the mode and for 5 s after it (a VFO's
-  RF measured against a hop). What was in flight goes home - by the
+  RF measured against a hop). Grants are dropped from leaving it until 1 s
+  after heimdall's first packet after it: a decoder's input block begun
+  before the mode is completed by the first samples after it, and a grant
+  in it is seconds old (found with the scratch plugin's 100 ms blocks: 1 of
+  2 kit runs revived an ended call and retuned a voice tuner for it; real
+  decoders' frames across the gap mostly fail their CRC, but nothing tells
+  the manager which). What was in flight goes home - by the
   `OPERATING_MODE:sweep` command `before_command` returns it while the old
   mode still applies (an excursion: `FREQ:` home, the hold released, before
   heimdall gets `set_operating_mode`; a search: home, end `mode`; voice
@@ -1707,15 +1713,17 @@ the broadcasts:
   The whole kit on the merged tree before any change: every suite passed
   but t34's two known checks and t20 case 18 (a control-channel list
   message in the "idle minute": the first heard refresh after a start sent
-  it at once - since then it waits `CC_STATS_MS` too). `t40_sweep` 53 (20
-  failed on the merged tree before the changes): a followed call, then
+  it at once - since then it waits `CC_STATS_MS` too). `t40_sweep` 54 (20
+  of its first 53 failed on the merged tree before the changes; 54 / 54 in
+  three runs on the final build): a followed call, then
   `OPERATING_MODE:sweep` - status `mode` "sweep", paused "sweep mode", the
   call ended `mode`, the voice VFOs gone, D0 untouched, the settings file's
   trunk keys / VFOs / centre unchanged; in the mode a grant, `TRUNK_SEARCH`
   and both click forms - the three refusals word for word, nothing started,
   nothing of the manager's to heimdall (no `set_frequency`, hold, tuner,
   mode) and no VFO message for 6 s; leaving resumes (heimdall back to 851,
-  the control VFO decodes, the next call followed, no "put back"). An
+  the control VFO decodes, the call of before not revived, the next call
+  followed, no "put back"). An
   excursion away + the command: `set_frequency` home before
   `set_operating_mode` sweep; + heimdall's own switch: the excursion over,
   D0 on its home offset, leaving sends heimdall home (before: the away
@@ -1737,7 +1745,11 @@ the broadcasts:
   meanwhile: D0 left on its centre (before: put on the old control offset).
   `t42_sigclass` 10: Signal ID on beside a control VFO, a followed call and
   a search (done, its 3 channels found; Signal ID kept taking snapshots),
-  both standing down in sweep mode and running again after it.
+  both standing down in sweep mode and running again after it. The whole
+  kit on the final build: every suite as before (t34 19 / 21 as designed;
+  t20 15-16 / 18 - its file section's restart flake: the receiver of one
+  case is never signalled, so the next case's checks read it; case 18
+  passes now).
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
   / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a

@@ -409,6 +409,8 @@ bool g_paused = false;
 std::string g_pause_why, g_pause_why_last;
 int64_t g_sweep_left_ms = 0;                // following resumed after sweep mode (steady ms)
 constexpr int64_t SWEEP_SETTLE_MS = 5000;   // ... the stream back from the hops within this
+int64_t g_sweep_pkt0 = 0;                   // ... the first packet from heimdall after it (steady ms; 0 = none yet)
+bool sweep_fenced(int64_t now);             // grants dropped: until 1 s after that packet
 // (the page shows it: the words are fixed)
 constexpr const char* SWEEP_REFUSED = "not in sweep mode - switch to coherent or independent first";
 int g_mode = -1;                            // operating mode last seen
@@ -2383,6 +2385,9 @@ void drain() {
     const int64_t now = now_ms();
     for (auto& e : q) {
         if (now < g_fence_until) continue;
+        // (after sweep mode: a decoder's input block begun before it is completed by the first samples after it -
+        // a grant in it is seconds old; the scratch plugin's 100 ms blocks revived a call that had ended)
+        if (e.ev.kind == PluginEvent::GRANT && sweep_fenced(now)) continue;
         try {
             apply_event(e);
         } catch (const std::exception& ex) {
@@ -2929,6 +2934,16 @@ int64_t g_exc_block_until = 0;   // ... no excursion before then (growing)
 std::atomic<int64_t> g_packet_ms{0};   // the latest packet from heimdall (steady ms; the data thread)
 
 bool heimdall_up() { return now_ms() - g_packet_ms.load(std::memory_order_relaxed) < 2000; }
+
+bool sweep_fenced(int64_t now) {
+    if (!g_sweep_left_ms || operating_mode_index() == 3) return false;
+    if (!g_sweep_pkt0) {
+        const int64_t p = g_packet_ms.load(std::memory_order_relaxed);
+        if (p > g_sweep_left_ms) g_sweep_pkt0 = p;
+        else return now - g_sweep_left_ms < 10000;   // (no stream yet: at most 10 s)
+    }
+    return now - g_sweep_pkt0 < 1000;
+}
 
 // a scanner runs (tested directly: g_paused follows them only once a tick)
 bool scanning() { return sfscan::running() || scanner_manager.isRunning() || continuous_scanner.isRunning(); }
@@ -5021,6 +5036,7 @@ void pause_check() {
         if (resumed && g_pause_why_last == "sweep mode") {
             g_home.clear();
             g_sweep_left_ms = now_ms();
+            g_sweep_pkt0 = 0;
         }
         else if (resumed && !playback::active() && g_set.follow && !g_srch_skip_restore) restore_homes();
         if (resumed && g_srch_skip_restore) {
