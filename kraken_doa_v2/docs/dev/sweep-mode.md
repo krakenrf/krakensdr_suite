@@ -3652,3 +3652,48 @@ running with lower gain."
     a Pi, MinGW / zig, Windows / macOS; a drag on the page itself (the
     edits came as `SWEEP_GAINS:` commands; the lane sends the table once,
     on release, so a drag is one edit).
+- On the KrakenSDR (the orchestrator; the dev machine's unit, the user's
+  sweep: 87.5 - 1008 MHz, Resolution Auto, dwell 5, 5 tuners, 482 hops;
+  job scratch `pi/floor_pi.py`; "at 0" = the share of a region's points
+  of the page's frame - 1523 points, each the largest of ~258 bins - that
+  are at 0; "zoomed" = a 3.6 MHz window, 2.3 kHz a point, on the quietest
+  places of the 49.6 dB part):
+  - The cases, the highest-gain region's share at 0 on main's build
+    (36d976b) -> 091335b (20 % per group) -> this build (961d415): the
+    user's (412.625 MHz; 49.6 | 16.6) 11.7 % -> 7.1 % -> 0; 90 % turned
+    down (180 MHz; 49.6 | 16.6) 64.7 % -> 0 -> 0; three gains (300, 600
+    MHz; 49.6 | 29.7 | 16.6) 15.1 % -> 0 -> 0; reversed (16.6 | 49.6)
+    0.1 % -> 0 -> 0; the highest gain only in the noisiest band (120 MHz;
+    49.6 | 43.9) 0 -> 0 -> 0. No region has a point at 0 on this build.
+  - The user's case zoomed, the median (the share at 0): main's build 0
+    dB (99 - 100 %) at 102.3, 124.7 and 295.8 MHz; 091335b 0 dB (97 -
+    100 %) in the FM band and the airband, 2.4 dB at 294.6 MHz - the
+    region ~10 dB lower than with no table; this build 1.9 / 2.4 / 14.6
+    dB (10 / 5 / 0 %) at 102.9 / 126.5 / 295.8 MHz against 2.4 / 2.8 /
+    14.6 dB (7 / 2 / 0 %) with no table: the 49.6 dB region is drawn as
+    without the table. The 16.6 dB region: flat, 27.3 (5th percentile) to
+    28.7 dB (median) - the sensitivity given up there.
+  - Every hop's floor as the receiver has it (a scratch build's dump at a
+    completed sweep): the distribution quoted in the second pass above;
+    with the user's table the group rule's base stood at 39.72 dB with 20
+    %, against 29.46 dB with no table.
+  - No table against main's build: the frame's 5th / 20th percentile /
+    median 3.3 / 8.5 / 19.3 -> 4.7 / 9.9 / 20.7 dB, the zoomed median at
+    295.8 MHz 12.7 -> 14.6 dB: +1.4 .. +1.9 dB, the designed move (the
+    plateau's noise at ~+2.4 dB with 2 - 7 % of its points at 0, where it
+    stood at 0 - 0.5 dB with 38 - 52 %).
+  - A border moved onto quiet steps (points 150 and 412.625 MHz, 16.6 |
+    49.6 | 16.6; then the first point to 100 MHz), the 49.6 dB region per
+    completed sweep after the move: 22ccf55 8.5 % and 8.7 % at 0 (its 5th
+    percentile 0 dB) for two sweeps, then 0 % and 9.9 dB; this build 0 %
+    and 9.9 / 9.9 / 9.4 dB from the first completed sweep on.
+  - Round 11's gain-by-region run again (`pi/regions_pi.py`, 24 - 1765
+    MHz, 911 hops) on this build: 32 / 32 - every hop's gain as the table
+    says, a sweep 3.939 s without and 3.941 s with the table, the regions
+    left at 49.6 dB as before a table was set (1400 MHz 8.0 -> 8.5, the FM
+    band 19.3 -> 19.3, 650 MHz 18.8 -> 19.3 dB; with no table round 11 had
+    8.0 / 17.4 / 17.9 dB there: 0 .. +1.9 dB, this range's move), the
+    416.59 MHz carrier 60.2 - 62.1 dB over its floor in its 25.4 dB region,
+    the lane's gestures (each an edit that restarts the base's history),
+    sweep -> coherent CONVERGED in 4.6 s.
+  - Not tested: a Pi, Windows / macOS, MinGW and zig, Firefox / Safari.
