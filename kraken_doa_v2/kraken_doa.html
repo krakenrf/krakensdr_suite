@@ -1275,6 +1275,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 #tk-exc-banner .t {font-weight:normal;max-width:360px;overflow:hidden;text-overflow:ellipsis;unicode-bidi:isolate}
 #tk-exc-banner button {display:inline-flex;align-items:center;gap:4px;background:var(--warn-t2);color:var(--warn-d);border:none;border-radius:3px;font-weight:bold;cursor:pointer;padding:2px 8px}
 body.tk-away #tk-exc-banner {display:flex}
+/* sweep mode: trunk following stands down there (its box is .not-sweep), and the range replaces the frequency */
+body.mode-sweep #tk-exc-banner {display:none}
 body.tk-away #tb-freq .freq-selector {box-shadow:0 0 0 2px var(--warn-m);border-radius:4px}
 .tk-exc {background:var(--warn-d);border:1px solid var(--warn-m);border-radius:3px;padding:5px 6px;margin:0 0 4px;font-size:11.5px;color:var(--warn-t2)}
 .tk-exc:empty {display:none}
@@ -3433,7 +3435,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
 
     <!-- 📡 Trunk following (trunk_follow.cpp; see 📡 TRUNK FOLLOWING) - all modes. Hidden until the
          receiver answers GET_TRUNK with its status: an older receiver has none -->
-    <div class="sb-section" data-sb="trunk" id="tk-section" style="display:none">
+    <div class="sb-section not-sweep" data-sb="trunk" id="tk-section" style="display:none">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3><span class="sb-title"><svg class="ic" aria-hidden="true"><use href="#i-trunk"/></svg><span>Trunk Following</span></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Follows the calls of a <b>trunked radio system</b> (P25, DMR Tier III, NXDN, TETRA, MPT1327): its control channel hands out a traffic channel for each call, and the receiver puts a <b>voice VFO</b> with the right decoder on it for as long as the call lasts - inside the band shown, without retuning.<br><br><b>To start:</b> tune a VFO to the system's <b>control channel</b> and pick its decoder (the decoders marked "Trunk following" in Setup Settings → Decoders). The system appears here; switch <b>Follow calls</b> on. Several control VFOs (two systems, or two sites of one) work at once.<br><br>DMR Tier III, NXDN and MPT1327 systems usually send only channel <b>numbers</b>: enter the frequencies (one rule like "channel n = base + (n - 1) x 12.5 kHz" is often enough) with the system's <b>Edit</b> - the box says when it is needed. P25 and TETRA announce their frequencies.<br><br>Voice VFOs are the receiver's own: they are marked on their cards and on the spectrum, set up for each call, and never saved. Following pauses while a scanner runs.</span></span></h3>
         <span class="tk-badge" id="tk-badge"></span>
@@ -5099,6 +5101,9 @@ let sfScanUncat = false, sfsSt = null, sfsSqDrag = null;
 // Here because the VFO cards and drawBox read them (tkVoiceDec)
 let tkSt = null;
 const tkLists = {};
+// the voice VFOs' call labels drawn on the main spectrum this frame (tkDrawBar, from drawBox): Signal ID's
+// labels keep clear of them (they sit in a second row, under the VFO labels Signal ID already avoids)
+let tkSpecTags = [];
 let mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
 const sfUi = (() => {
   const d = {spec: true, col: {}, hide: {}};
@@ -8470,6 +8475,7 @@ function drawLockedVfoLine(ctx, x, h, d, label = true) {
 }
 
 function drawBox() {
+  tkSpecTags = [];   // 📡 (refilled by this frame's voice VFO bars)
   if(!fftPlot||!currentFrequencies.length)return;
   const u=fftPlot,over=u.over,c=$id('fo');
   if(!c||!over)return;
@@ -8676,7 +8682,7 @@ function drawBox() {
       if (tkHideBar(dec)) return;
       const sc = center + dec.freq_offset_hz / 1e6, hb = decBwMhz(dec) / 2;
       const x0 = u.valToPos(sc - hb, 'x'), x1 = u.valToPos(sc + hb, 'x');
-      if (x1 >= 0 && x0 <= w) tkDrawBar(ctx, Math.max(0, x0), Math.min(w, x1), h, dec);
+      if (x1 >= 0 && x0 <= w) tkSpecTags.push(tkDrawBar(ctx, Math.max(0, x0), Math.min(w, x1), h, dec));
       return;
     }
     const color = getDecimatorColor(dec.id);
@@ -13556,7 +13562,7 @@ function paneDrawOverlay(p) {
   ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
   const H = p.oh || (c.height / p.dpr);
   ctx.clearRect(0, 0, c.width / p.dpr, H);
-  p.bars = []; p.ai = []; p.sf = []; p.sig = [];
+  p.bars = []; p.ai = []; p.sf = []; p.sig = []; p.tk = [];
   const span = paneSpan(p);
   if (!span) return;
   // Tuning bars in the main display's style (drawBox / WaterfallDisplay.
@@ -13576,7 +13582,7 @@ function paneDrawOverlay(p) {
     if (tkVoiceDec(d)) {   // 📡 a trunk voice VFO: drawn, not grabbable; parked: not drawn
       if (tkHideBar(d)) continue;
       const hb = decBwMhz(d) / 2, a0 = paneX(p, cm - hb), a1 = paneX(p, cm + hb);
-      if (a1 >= p.L && a0 <= p.sw - 4) tkDrawBar(ctx, Math.max(p.L, a0), Math.min(p.sw - 4, a1), H, d);
+      if (a1 >= p.L && a0 <= p.sw - 4) p.tk.push(tkDrawBar(ctx, Math.max(p.L, a0), Math.min(p.sw - 4, a1), H, d));
       continue;
     }
     const bw = decBwMhz(d);
@@ -16459,11 +16465,13 @@ function sigPeak(freqs, mags, lo, hi) {
 // moves up a row, at most 3 (down only when it is at ytop already: a peak at
 // the top) - the row it had last time first (sigDy) - else it is left out.
 // Returns [{t, label, x0, x1, y0, y1, xc, xl, xr, yb, sub}]
-function sigLayout(ctx, items, xOf, yPeak, xmin, xmax, ytop, ybot, th) {
+function sigLayout(ctx, items, xOf, yPeak, xmin, xmax, ytop, ybot, th, avoid) {
   const q = t => Math.floor((+t.p || 0) * 10);
   const order = items.slice().sort((a, b) => (q(b) - q(a)) || (a.id - b.id));
   const placed = [];
-  const free = (x0, x1, y0, y1) => !placed.some(g => x0 < g.x1 + 2 && x1 > g.x0 - 2 && y0 < g.y1 + 2 && y1 > g.y0 - 2);
+  // (avoid: other labels already on the plot - trunk following's call labels under the VFO labels)
+  const hit = (g, x0, x1, y0, y1) => x0 < g.x1 + 2 && x1 > g.x0 - 2 && y0 < g.y1 + 2 && y1 > g.y0 - 2;
+  const free = (x0, x1, y0, y1) => !placed.some(g => hit(g, x0, x1, y0, y1)) && !(avoid || []).some(g => g && hit(g, x0, x1, y0, y1));
   for (const t of order) {
     const xc = xOf(t.hz / 1e6);
     if (xc == null || !Number.isFinite(xc) || xc < xmin - 2 || xc > xmax + 2) continue;
@@ -16480,6 +16488,8 @@ function sigLayout(ctx, items, xOf, yPeak, xmin, xmax, ytop, ybot, th) {
     const want = Math.max(ytop, yb - 3 - th);
     let y = null;
     const rows = want > ytop ? [0, -1, -2, -3] : [0, 1, 2, 3], last = sigDy.get(t.id);
+    // (a trunk call label in the way above: under it rather than left out - it marks the VFO on this very signal)
+    if (want > ytop && avoid && avoid.some(g => g && xc >= g.x0 - tw && xc <= g.x1 + tw)) rows.push(1, 2, 3);
     if (last !== undefined && rows.includes(last)) rows.unshift(last);
     for (const k of rows) {
       const yy = want + k * (th + 2);
@@ -16538,7 +16548,7 @@ function sigDrawSpectrum(ctx, w, h) {
   const placed = sigLayout(ctx, items, f => fftPlot.valToPos(f, 'x'), t => {
     const [lo, hi] = sigBand(t), pk = sigPeak(xs, mags, lo, hi);
     return pk == null ? null : fftPlot.valToPos(pk, 'y');
-  }, 0, w, ytop, h - 4, 13);
+  }, 0, w, ytop, h - 4, 13, tkSpecTags);
   for (const g of placed) sigDrawLabel(ctx, g);
   ctx.restore();
   sigRects = placed;
@@ -16557,7 +16567,7 @@ function sigPaneTags(ctx, p, span) {
   const placed = sigLayout(ctx, items, f => paneX(p, f), t => {
     const [lo, hi] = sigBand(t), pk = sigPeak(p.freqs, p.mags, lo, hi);
     return pk == null ? null : bot - Math.max(0, Math.min(1, pk / ymax)) * (bot - top);
-  }, p.L, p.sw - 4, ytop, bot, 11);
+  }, p.L, p.sw - 4, ytop, bot, 11, p.tk);
   for (const g of placed) sigDrawLabel(ctx, g);
   ctx.restore();
   return placed;
@@ -25404,6 +25414,9 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     return '<bdi>' + digEsc(t) + '</bdi>';
   }
   function tkWhy(code) { return TK_WHY[code] || [code ? code.replace(/_/g, ' ') : '', '']; }
+  // paused by sweep mode (the receiver's pause reason, or its status' mode): the box is hidden there
+  // (.not-sweep) - this is for the moments it still shows (a page that has not had the mode message yet)
+  function tkSweepPause(m) { return !!m && (m.paused_why === 'sweep mode' || m.mode === 'sweep'); }
   // a talkgroup's mode from the system's lists (null = not known yet)
   function tkTgMode(sys, tg) {
     const L = tkLists[sys];
@@ -25443,8 +25456,11 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     ctx.font = font || '12px monospace';
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     const lbl = 'D' + d.id + ' ' + (c ? tkLabel(c) : d.trunk && d.trunk.label ? d.trunk.label : 'trunk');
-    ctx.fillText(lbl.length > 28 ? lbl.slice(0, 27) + '…' : lbl, x0 + 4, 28);   // (under the other VFOs' labels)
+    const t = lbl.length > 28 ? lbl.slice(0, 27) + '…' : lbl;
+    ctx.fillText(t, x0 + 4, 28);   // (under the other VFOs' labels)
+    const tw = ctx.measureText(t).width;
     ctx.restore();
+    return {x0: x0 + 2, x1: x0 + 6 + tw, y0: 17, y1: 31};   // the label's room (Signal ID keeps clear of it)
   }
 
   // --- the status --------------------------------------------------------------
@@ -25524,7 +25540,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     let txt = '', cls = '', tip = '', b = '', bw = false;
     if (m.playback) { txt = 'Playback'; tip = 'A playback runs: what is found now is not kept'; }
     if (m.search) { txt = 'Searching'; cls = 'w'; tip = 'A control-channel search runs: following waits until it ends'; b = 'Searching'; bw = true; }
-    else if (m.paused) { txt = 'Paused'; cls = 'w'; tip = 'Paused while the ' + (m.paused_why || 'scanner') + ' runs'; b = 'Paused'; bw = true; }
+    else if (m.paused) { txt = 'Paused'; cls = 'w'; tip = tkSweepPause(m) ? 'Paused in sweep mode: no VFO runs there - switch to coherent or independent mode (top bar) to follow calls' : 'Paused while the ' + (m.paused_why || 'scanner') + ' runs'; b = 'Paused'; bw = true; }
     else if (m.follow) {
       txt = calls.length ? calls.length + ' followed' : (txt || 'Following');
       cls = 'on';
@@ -25581,7 +25597,8 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (m.sys_refused > 0)
       note('sysfull', false, 'w', 'warn', `${m.sys_refused} system${m.sys_refused === 1 ? '' : 's'} heard but not added: 32 systems of yours are kept`,
         'A new system heard on the air is not added while all 32 places hold systems you edited (or ones on the air now). Forget one you no longer need: its Edit, then Forget this system');
-    if (m.paused) note('paused', false, 'w', 'pause', 'Paused: the ' + tkBdi(m.paused_why || 'scanner', 40) + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
+    if (m.paused && tkSweepPause(m)) note('paused', false, 'w', 'pause', 'Paused in sweep mode: switch to coherent or independent mode to follow calls', 'In sweep mode the tuners hop across the range and no VFO, audio or decoder runs: trunk following has no voice VFO and its control channels are not heard. It starts again when the mode is left (the top bar\'s Mode)');
+    else if (m.paused) note('paused', false, 'w', 'pause', 'Paused: the ' + tkBdi(m.paused_why || 'scanner', 40) + ' runs', 'Trunk following removes its voice VFOs while a scanner runs and starts again when it stops');
     // control VFOs a scanner moved, put back (or not) when it stopped - the receiver lists them for 60 s
     for (const r of m.scan_restore || [])
       note('restore:' + r.vfo, false, r.restored ? 'i' : 'w', r.restored ? 'ok' : 'warn', `D${r.vfo}: ${tkBdi(r.note || (r.restored ? 'put back' : 'not put back'), 120)}`,
@@ -26216,6 +26233,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     if (digPlugins.length && !digPlugin(e.plugin)) return `Its decoder (${e.plugin}) is not on this receiver: build it, or install the plugin`;
     if (m.playback) return 'Not during a playback: stop it first';
     if (opMode === 'wideband') return 'Not in wideband scan mode: switch to coherent or independent mode (top bar)';
+    if (opMode === 'sweep' || tkSweepPause(m)) return 'Not in sweep mode: switch to coherent or independent mode (top bar)';
     if (m.paused && m.paused_why && !/search/.test(m.paused_why)) return `The ${m.paused_why} runs: stop it first`;
     return '';
   }
@@ -26609,6 +26627,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         'The receiver could not write trunk_control_channels.json (a full disk, a read-only folder, permissions). The entries are not lost while it runs; a restart before a save succeeds loses the changes. Export (the … button) keeps a copy.' + (f.note ? ' (' + f.note + ')' : ''));
     if (m.playback) note('pb', 'p', 'tape', 'Playback: following a control channel waits until it ends', 'A click to follow (and a search) is refused while a debug playback or a recording plays');
     else if (opMode === 'wideband') note('wb', 'w', 'warn', 'Wideband scan mode: switch to coherent or independent mode to follow a control channel', 'Clicks to follow are refused in wideband scan mode');
+    else if (opMode === 'sweep' || tkSweepPause(m)) note('swp', 'w', 'warn', 'Sweep mode: switch to coherent or independent mode to follow a control channel', 'Clicks to follow and a search are refused in sweep mode: no VFO runs there');
     if (tkCcImp) note('imp', 'i', 'hourglass', `Importing: ${tkCcImp.sent} of ${tkCcImp.todo.length} sent`, '', `<button type="button" class="btn sm" onclick="tkCcImportStop()">Stop</button>`);
     if (tkCcSaid && Date.now() - tkCcSaid.t < (tkCcSaid.keep || (tkCcSaid.cls === 'i' ? 30000 : Infinity)))
       note('said:' + tkCcSaid.t, tkCcSaid.cls, tkCcSaid.ic, tkCcSaid.html, tkCcSaid.tip || '', (tkCcSaid.btn || '') +
@@ -26745,7 +26764,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
     const c = mine.c, err = String(x.error || 'refused');
     if (c.startsWith('TRUNK_SEARCH:')) {
       const el = $id('tk-srch-err');
-      const hint = /coherent mode only|switch to coherent/.test(err) ? ' - switch the mode in the top bar' : /scanner runs/.test(err) ? ' (the scanner\'s Stop)' : /playback/.test(err) ? ' - stop the playback first'
+      const hint = /sweep mode/.test(err) ? ' (the top bar\'s Mode)' : /coherent mode only|switch to coherent/.test(err) ? ' - switch the mode in the top bar' : /scanner runs/.test(err) ? ' (the scanner\'s Stop)' : /playback/.test(err) ? ' - stop the playback first'
         : /no free VFO/.test(err) ? ' - remove a VFO (the receiver has 16 at most), then search again' : /declares trunking/.test(err) ? ' - build a decoder that follows trunked systems' : '';
       if (el && tkSrchSetOpen) { tkSrchRx = 'Not started: ' + err + hint; tkText(el, tkSrchRx); }
       else tkCcSay({cls: 'b', ic: 'no', html: 'Search not started: ' + digEsc(err + hint)});
@@ -26769,6 +26788,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       if (/doesn't fit the span/.test(err)) said = 'it doesn\'t fit the receiver\'s band together with the control channels followed now - follow it on D0 instead';
       if (/doesn't fit the span/.test(err)) btn = `<button type="button" class="btn sm" onclick="tkCcFollowIf(${tkCcGen}, ${id}, false)" title="A plain click: on D0 in place of the control channel there (the receiver retunes if it has to, and the VFOs Follow it too made go)">On D0 instead</button>`;
       else if (/16 VFOs/.test(err)) what = ': remove a VFO first (a plain click on D0 needs none)';
+      else if (/sweep mode/.test(err)) what = ' (the top bar\'s Mode)';
       else if (/scanner runs/.test(err)) what = ' (the scanner\'s Stop)';
       else if (/not built/.test(err)) what = ' - build it (make -C kraken_doa_v2/plugins PLUGIN=' + digEsc(e ? e.plugin : '') + ')';
       else if (/does not declare trunking/.test(err)) what = ' - this decoder can\'t follow a trunked system: tune a VFO to the channel and pick its decoder yourself';
