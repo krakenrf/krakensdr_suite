@@ -517,7 +517,10 @@ std::atomic<float> win_lo_hz{-287500.0f};   // the guess window's lower edge in 
 // thread; its result (floor, strongest bins) is attached to the visit by its
 // number, and the hop thread learns from the visit when it is there (it is
 // used at the hop's NEXT visit, a sweep away). One that does not come in
-// time is a visit without a verdict.
+// time is a visit without a verdict. The thread is detached and waits on a
+// static condition variable: heimdall ends through platform::fast_exit
+// (_Exit), so no static destructor runs under its waiter at exit (as the
+// downconverter's poller).
 struct EstJob {
     int t = 0;
     uint32_t seq = 0;
@@ -534,7 +537,14 @@ std::condition_variable est_cv;
 std::deque<EstJob> est_queue;
 std::vector<std::vector<uint8_t>> est_pool;     // spare buffers
 EstResult est_result[NUM_DEVICES][4];            // by seq % 4
-uint32_t visit_seq = 0;                           // (under acc_mutex)
+// The visit numbers count per tuner (under acc_mutex): a tuner has at most one
+// visit a round, so its last four visits always have four slots and a result
+// can wait AG_EST_MAX_AGE rounds whatever the tuner count. (One counter for all
+// tuners stepped by the tuner count: with 4 or 8 every visit of a tuner took
+// the same slot, and since a 5 ms dwell ends at the very set that is queued, a
+// result is never collected in its own round - the next visit overwrote every
+// one of them.)
+uint32_t visit_seq[NUM_DEVICES] = {};
 
 // Status (of the last completed sweep)
 std::atomic<uint32_t> ag_reduced_hops{0}, ag_clipped_hops{0}, ag_changes{0}, ag_writes{0}, ag_write_failures{0};
@@ -2037,7 +2047,7 @@ void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32
             HopAcc& a = hop_acc[t];
             if (a.hz != hz[t] || a.gain != gain[t]) {
                 a = HopAcc{hz[t], gain[t]};
-                a.seq = ++visit_seq;
+                a.seq = ++visit_seq[t];
             }
             if (!a.est_queued) { a.est_queued = true; queue_it = true; seq = a.seq; }
             a.values += nb;

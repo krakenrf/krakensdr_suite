@@ -1844,6 +1844,19 @@ clipping rule stays the fast guard and is the search's ceiling.
     sweep away.
   - A result not there after 4 rounds makes the visit one without a
     verdict. Status `gain_est_late` counts them.
+  - The visit numbers count per tuner, so each tuner's last four visits
+    have four result slots whatever the tuner count. With one counter for
+    all tuners (633202b), a tuner's numbers stepped by the tuner count.
+    With 4 tuners, every visit of a tuner took the same slot, and with 2
+    tuners every other one did.
+    - A visit's result is never picked up in its own round: a 5 ms dwell
+      ends at the visit's first valid set, the one that is queued.
+    - So with 2 or 4 tuners the next visit overwrote it: on the fake, every
+      visit was late, even with no delay.
+    - With the counter per tuner, on the fake (results delayed 30 ms, 1.5
+      rounds): 0 late with 2, 4 and 5 tuners. Before, with 2 and 4
+      tuners, every visit was late (99 late in 8 sweeps of 12 visits). A result 50 ms late is still
+      in time; at 70 ms (3.5 rounds) it is past the 4-round limit.
   - Measured on the Pi 5: worker S's `pi_sweepcost.py`, heimdall alone
     (no kraken_doa), the whole plan, nothing to adjust.
 
