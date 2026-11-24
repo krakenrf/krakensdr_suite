@@ -50,7 +50,7 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
   `scanner_manager`, `recorder*` / `sigmf` / `playback`, `voice2text`,
   `decoder_log`, `incidents` / `geo_*`, `rdf_engine` / `rdf_mapper`,
   `talker_doa`, `vfo_level`, `array_cal`, `station_info`, `ai_*`,
-  `sigclass_service` (Signal ID's runtime; the classifier core is
+  `sweep` (sweep mode's engine), `sigclass_service` (Signal ID's runtime; the classifier core is
   `src/sigclass/` + `include/sigclass/sigclass.hpp`).
 - `plugins/<id>/` decoders, `plugins/lib/` (libkrakendig), `plugins/sdk/`
   (plugin API `kraken_plugin.hpp` + `plugin_host.cpp`); the plugin guide is

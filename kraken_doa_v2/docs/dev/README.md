@@ -64,9 +64,10 @@ every session needs and points here.
 | `reference.md` | Hot paths, development tasks, key files, common issues, testing, dependencies |
 | `saved-frequencies.md` | Saved frequencies and map markers |
 | `saved-frequency-scan.md` | Saved-frequency scan |
-| `signal-classifier.md` | Signal ID: the signal classifier (core, training, runtime, labels on the spectrum) |
+| `signal-classifier.md` | Signal ID: the signal classifier (core, training, runtime, labels on the spectrum); the Bands bar |
 | `spectrum-views.md` | Spectrum views (FFT message type 7) |
 | `station-on-map.md` | Station on the map |
+| `sweep-mode.md` | Sweep mode: the tuners step through a range, one wide spectrum + waterfall (FFT types 10 / 11, the gain by region) |
 | `tempest-deep-plan.md` | TEMPEST deep-reconstruction plan |
 | `vfo-audio.md` | VFO audio |
 | `vfo-bandwidth.md` | Arbitrary VFO bandwidth and the VFO decimator |

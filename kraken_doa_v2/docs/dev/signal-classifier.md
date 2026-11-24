@@ -1931,6 +1931,21 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   "no data from the receiver". Calibration state (phase states, KerberosSDR
   stale) doesn't matter otherwise: one antenna's samples need no array
   calibration
+- **Sweep mode** (`operating_mode_index()` 3, *sweep-mode.md*; merged
+  2026-11-24): parked - "sweep mode (the tuners hop)": no capture, no look,
+  no tracks, nothing sent anywhere, until the mode is left. The tuners hop
+  every few ms and only the sweep engine reads the samples (the data
+  receiver's sweep branch comes after the tap, which stays first and costs
+  its one atomic load), so no 0.5 s snapshot could hold one band, and
+  nothing is demodulated for a label to tune. Entering it is a mode change
+  like any (the tracks cleared and the empty list sent at once); leaving it
+  ends the park's rest at once (`rest()` watches the mode), clears the
+  parked text (else "Paused" through the first period) and makes every
+  band's next look a first look. heimdall sends 0x2000 together with 0x800,
+  but the mode index is the receiver's own (3, never independent's 2), so
+  the tuners-in-turn branch never sees a sweep. The page's box says
+  "Paused" / "Sweep mode (the tuners hop)"; no label is drawn (the main
+  display is hidden there and the list is empty)
 - **Tuners in turn** (wideband scan, independent mode, generic RTL-SDRs;
   2026-11-24, the user's report "in wideband and independent mode the
   classifier ... is not classifying on some signals ... those work in
@@ -2266,7 +2281,9 @@ BCFM band, satellite etc)".
   protocol change). `body.bands-on` shows the strips.
 - **The bar** (the script's "BANDS" section): a 16 px strip directly above
   the plot of every spectrum - `#band-strip-main` between the main
-  display's header and its plot (hidden in independent mode), and
+  display's header and its plot (hidden in independent mode; in sweep
+  mode over the sweep's own plot, `bandStripSweep` from `swpDraw` with the
+  sweep's window - the lane of gains by region stays under that plot), and
   `#tpane-b-N` between each independent pane's header and its body. Being
   outside the plot it covers nothing that is there (VFO bars and their
   labels, Signal ID labels and brackets, saved-frequency tags, AI badges,

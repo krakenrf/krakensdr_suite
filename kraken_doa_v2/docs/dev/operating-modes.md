@@ -257,7 +257,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     common values. Test: job scratch `test_view.py` (96 checks, *sidebar.md*)
 - Tuners shown (2026-11-24; the user asked for buttons above the FFT windows to pick which
   receivers are on the screen in independent mode): the spectrum header's `#pane-pick`
-  (`.indep-only`, after the title; hidden with one tuner) - `T0`..`Tn`, lit (`.on`,
+  (`.indep-only`, after the title; hidden with one tuner and outside independent mode - in
+  sweep mode too, whose tuners are `SWEEP_TUNERS`, and there are no panes there) - `T0`..`Tn`, lit (`.on`,
   `aria-pressed`) while that pane is shown: a click shows / hides it, Shift- or Ctrl-click (Cmd
   too) shows it alone - and `All` (disabled while every pane is shown). Script block "PANES
   SHOWN" (`panePickBuild`, `panePickSync`, `panesApplyShown`, `paneShowToggle`, `paneShowAll`).

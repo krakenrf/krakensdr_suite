@@ -1420,6 +1420,8 @@ see the client CLAUDE.md
   `SWEEP_RES` / `SWEEP_DWELL` / `SWEEP_RUN`, per-page `SWEEP_VIEW`, FFT
   message type 10). Not live: no VFO processing, audio, decoders or DoA. The
   top bar shows the range and the tuner selector in place of the frequency.
+  Signal ID is parked there (no snapshot can hold one band); the Bands bar
+  follows the sweep's axis.
   `kraken_doa_v2/docs/dev/sweep-mode.md` (the wire contract and all three
   parts), `heimdall_v2/docs/dev/operating-modes.md` *Sweep mode*
 - Only coherent exists on the downconverter variant. See heimdall_v2/CLAUDE.md

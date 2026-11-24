@@ -3218,3 +3218,79 @@ the orchestrator runs the hardware):
   transfers at 3-4 ms without the fast call) and macOS, MinGW and zig
   (the portability syntax checks: not on this machine), Firefox / Safari,
   a real phone (touch was run in Chromium's emulation only).
+
+**Merged with main (Signal ID, Bands, tuner buttons), 2026-11-24.** Local
+`main` (8f8bbb4: Signal ID - the signal classifier, its runtime service and
+labels -, the Bands bar of worldwide ITU bands over every spectrum,
+independent mode's tuner buttons T0..Tn / All) merged into this branch
+(5b56cfe); nothing in `heimdall_v2/` or `gr-krakensdr_v2/` came from main
+(`git diff worktree-sweep-mode HEAD -- heimdall_v2/src heimdall_v2/config.h`
+empty).
+- Conflicts (8 hunks, 6 files), all kept from both sides: the data
+  receiver (Signal ID's tap first - every packet, one atomic load while no
+  capture is armed -, then this mode's branch), `main.cpp` (`sweep::start()`
+  then `sigsvc::start()`), the Makefile's `APP_SRCS` (sweep.cpp,
+  cert_status.cpp, sigclass_service.cpp), the page (the spectrum header
+  holds `#swp-hdr` and `#pane-pick`; the globals block `swp` and
+  `paneHidden`; `specOnFrame` builds main's frame with its view `seq`, then
+  drops it in sweep mode as before), `CLAUDE.md` and `README.md` (both
+  sides' sentences).
+- Decided: **Signal ID is parked in sweep mode** (`sigclass_service.cpp`,
+  mode index 3 - never independent's 2, although heimdall sends 0x2000 with
+  0x800): no capture, no look, no tracks, "Paused" / "Sweep mode (the tuners
+  hop)" in its box; the mode change clears the labels at once (main's rule)
+  and leaving the mode brings it back by itself (*signal-classifier.md*,
+  Runtime, Sweep mode). **The Bands bar** is drawn over the sweep's plot
+  (`bandStripSweep` from `swpDraw`, main's `bandStripDraw` with the sweep's
+  window; `bandStripMain` skips sweep mode) - the strip sits above the plot,
+  the lane stays between the plot and the waterfall. **The tuner buttons**
+  need nothing: `.indep-only`, and in sweep mode there are no panes
+  (`panesTeardown`), no pane views are asked; the hidden set
+  (`kraken_pane_hidden`) is the same when independent mode comes back.
+- Tests (fakes only; job scratch 52196024 `mergemain/`: a TEST receiver of
+  the merged tree on 2877x, exe `kdmrg11`; heimdall's fake build `hmrg11` /
+  the python fake on 2876x): the full `make -C kraken_doa_v2`
+  (kraken_doa, liquid-dsp, 35 of 35 plugins) and heimdall's fake build
+  without errors, the same 3 `-Wsign-compare` warnings as main's and this
+  branch's builds (fft_processor.cpp, message_builders.cpp). Signal ID's
+  own checks on the merged tree: `sigclass_rules_test` all passed (seeds
+  12345 and 4711, 38 checks each), `sigclass_tool selftest` passed,
+  `band_table_check.py` 60 rows OK, `theme_palette.py --check` OK. This
+  mode's suites: `t_rx` 32 / 32, `t_sweep` 207 / 207, `t_full` 31 / 31,
+  `t_overview` 23 / 23, `t_res` 174 / 181 (the same 7 as round 11's run of
+  it: the grid / fft_size limits and one scalloping height - test
+  expectations, not the merge), the lane 49 / 49 (40 desktop + 9 phone) and
+  again 49 / 49 with Bands on, the page against an older heimdall and the
+  receiver of fe8eb74 10 / 10 (also with Bands on). The seams (`p/t_seam.py`,
+  the python fake in all four modes, a scene of carriers and noise bands at
+  432 - 436 MHz): desktop 34 / 34 - coherent: Signal ID labels a carrier on
+  the spectrum, the bar on the axis (0.08 px); -> sweep: the tracks gone
+  0.10 s after the mode command, "Paused" / "Sweep mode (the tuners hop)",
+  nothing drawn, no snapshot in 12 s; the bar over the sweep's plot on its
+  axis at 400 - 470 MHz (0.71 px), through 8 wheel notches (<= 0.47 px), a
+  pan, Bands off / on; the strip above the plot, the lane between the plot
+  and the waterfall; no tuner buttons, no panes; -> coherent: labels again
+  1.1 s after the command; independent: T1 hides its pane, its view asks
+  16 points, labels in the panes; -> sweep: no pane views asked, no
+  buttons; -> independent: the same pane hidden as before, All shows all;
+  wideband scan: labels on the stitch, the bar on its axis; no page error.
+  In sweep mode with Signal ID on and off (two of each, 30 s): the
+  `sigclass` thread 0.00 / 0.01 s of CPU with it on, the process 4.2 % of a
+  core both ways, 365.8 against 365.8 sweeps a minute, the carrier and the
+  median level identical. The settings replay with both sides' keys
+  (`sigclass`, `sweep_gains`, the mode): a restart in sweep, independent,
+  wideband scan, coherent and sweep mode - each mode back, Signal ID on
+  (parked in sweep mode, the gain table in force), 0 commands refused.
+  24 - 1765 MHz: the bar on the axis at 1x (0.47 px; its 8 segments under
+  2.5 px are drawn 2 px wide by main's CSS borders, within 1.5 px) and
+  through 40 wheel notches to the zoom's end, 5.18 MHz (<= 0.47 px). Phone
+  (412 x 860, touch) 7 / 7: every mode, no horizontal scroll, the strip and
+  the lane in place in sweep mode. Main's build (8f8bbb4) against the merged
+  one on the same fake and scene: the same signals and classes in coherent
+  (4), wideband scan (6) and independent mode (6; centres within 1 kHz),
+  labels drawn 4 / 4, 6 / 6, 18 / 18, no page errors.
+- Not tested: the KrakenSDR and the Pi (the orchestrator's), real signals
+  on the air with Signal ID around a sweep, MinGW and zig (the portability
+  syntax checks: not on this machine), Windows / macOS, Firefox / Safari, a
+  real phone; main's own job-scratch suites (`ui_bands.py`, `ui_sig.py`,
+  the strict playback) - not this job's, not rerun.

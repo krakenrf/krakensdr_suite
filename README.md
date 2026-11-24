@@ -546,7 +546,8 @@ ADS-B, DAB and more - right above the signal on the spectrum, and lists them
 in the box. Click a label to tune the selected VFO to that signal with the
 right decoder, demod and bandwidth. It looks at half a second of one tuner
 every few seconds, a few percent of one core, and needs the model file
-`kraken_doa_v2/sigclass.model`.
+`kraken_doa_v2/sigclass.model`. It pauses in Sweep mode, where the tuners
+hop too fast to look at one band.
 
 ### Recording and logging
 
