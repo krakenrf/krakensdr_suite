@@ -2175,7 +2175,11 @@ change at the next grant, so on the card they are disabled (the frequency
 digits locked like a fixed-frequency decoder's) and on the spectrum,
 waterfall and independent panes its bar is drawn without grab handles, not
 hit-tested, dashed while not active, with "Dn label" under the other VFOs'
-labels; a parked one is not drawn. A click on the spectrum, the VFO's
+labels; a parked one is not drawn. Main's Signal ID labels keep clear of
+that label (2026-11-25: `tkDrawBar` returns its room - `tkSpecTags` for the
+main spectrum, `p.tk` for a pane - and `sigLayout` takes them as obstacles;
+a Signal ID label blocked above goes under it rather than being left out:
+before, "Carrier" sat over "D1 TG 4321"). A click on the spectrum, the VFO's
 digits, a pane, or a saved frequency does not retune a selected voice VFO
 (`vfoNoTune`; a saved frequency says "Dn is a voice VFO of trunk following
 - select another VFO"). The speaker, Save and × (stops following its call,
