@@ -3334,3 +3334,50 @@ What else was tested, and how (scripts in job scratch `sigid3/w6/`):
   `kraken_doa_v2` as a checkout; not run); the live runs are one per plan
   and S1 setting, at a quiet hour - a statement that every mode runs and
   labels on the hardware, not a measurement of the merge's effect on labels
+
+### The merges of 2026-11-24 (the speed work, main): the orchestrator's checks
+
+Carl: "merge sigid-speed, and then merge this all into main". Two workers in
+parallel (the speed merge above; `main` - 161 commits - into the feature:
+one textual conflict, the Makefile's `APP_SRCS` where main added
+`cert_status.cpp` and the branch `sigclass_service.cpp`; every other file
+both sides changed merged cleanly), then combined.
+
+- **The main merge is exact**: the merged tree differs from main in exactly
+  the feature's 48 files and from the feature in exactly main's 143; no
+  conflict markers. The worker's tests on it: the strict playback 28 / 28,
+  the band suite 60 / 60, the Signal ID page suites 18 / 18, 12 / 12, 3 / 3,
+  7 / 7, both sides' behaviour together 11 / 11, the settings replay of
+  main's, the branch's and the merged build's files (0 commands rejected),
+  the merged page on main's receiver and main's page on the merged receiver
+  (7 / 7 each)
+- **The combined state** (feature + main + speed): the full build in the
+  integration worktree (heimdall, kraken_doa, 35 of 35 plugins, the tool)
+  without errors, `selftest` passes, the model file unchanged; the rules test
+  passes (the orchestrator's seed 4711, the worker's 7 and 12345: 38 / 38);
+  the real page on a TEST build in the three modes - wideband scan 55 labels
+  drawn, independent 46 pane labels, coherent 24, the Bands strip right in
+  each, no console error; the worker's rerun on it: strict playback 28 / 28
+  (25 sure), band suite 60 / 60, page suite 18 / 18, both-sides check 11 / 11
+- **The classifier core before / after the speed merge**, both built with
+  the same line (a Makefile build against a one-line build moves the last
+  bits by itself - the first comparison did that and showed 3.8 % of the
+  detections with another offset): on 154 synthetic and 21 own captures
+  (164,047 detections) 0 + 1 detections with another geometry, 3 + 61 with
+  another top-1 label (0.04 %, the P3 kind), 1 + 64 of 269,893 track rows,
+  3 + 131 crossing 0.82, max |dp| 0.24; the same work 11.43 -> 9.47 s
+  (-17 %, the minimum of five alternating rounds)
+- **Live** (the combined receiver with main's heimdall, the user's plan at
+  416.5 MHz, an evening with little traffic): every mode runs and labels -
+  coherent 19 signals labelled, wideband scan 44 (tuner 2: 23.2 tracks a
+  state), independent 25 plus 7 in the 859.44 MHz pane; the steady signals
+  inside the panes carry the coherent label; the counts are not comparable
+  with the midday runs above
+- **S1 stays off** (`SETTLED_SKIP = false`; `KRAKEN_SIGCLASS_SETTLED=1` turns
+  it on for a test): its acceptance failed on the playback (27 / 28 once) and
+  on a sure wrong label held for 25 looks; the fix to try first is in the
+  speed merge's section
+- **Found in main, not fixed**: a receiver run from a folder under
+  `~/.claude` cannot generate debug-playback signals - main's sandbox
+  (`ai_sandbox.cpp`, `HOME_SECRETS`) hides that folder from the generator;
+  job harnesses start their test receivers with a scratch `HOME`
