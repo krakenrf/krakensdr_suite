@@ -21,6 +21,29 @@ doa_settings.json.tmp
 *.pem
 *.key
 *.crt
+# the HTTPS certificate (docs/dev/https-certificate.md; *.key / *.crt above
+# catch them too - named here so a narrower rule can't let the CA key out):
+# this receiver's CA (the key is a secret: it can vouch for this receiver's
+# names - in wide scope for every .local / .lan name and private address),
+# the server pair, replaced CAs, the scope, an unusable key moved aside
+# (*.unreadable-YYYYMMDD: a private key), a replaced CA's key kept because
+# the CA was the user's own (krakensdr-ca.key.retired-YYYYMMDD: usually an
+# unconstrained CA, fine rule 32), a migrated server.crt's copy, the
+# generator's temporary files, ../scripts/make-cert.sh's work, lock and
+# stale-lock folders (fine rule 21)
+krakensdr-ca.key
+krakensdr-ca.crt
+krakensdr-ca.*.retired.crt
+server.key
+server.crt
+cert_options
+*.unreadable-*
+*.retired-*
+*.replaced-*
+*.key.tmp
+*.crt.tmp
+cert_options.tmp
+.make-cert.*
 
 # DoA recordings (fixed output folder + common log extensions)
 doa_recordings/
@@ -82,6 +105,9 @@ array_cal.json
 array_cal.json.tmp
 # decoder data log (sidebar 🗂 Decoder Logging), default folder
 decoder_logs/
+# telemetry logs: the Wideband board's and the computer's (wb_board.hpp)
+wb_logs/
+host_logs/
 # mobile DF heat map session (rdf_mapper.cpp)
 rdf_session.bin
 rdf_session.bin.tmp

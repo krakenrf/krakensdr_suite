@@ -21,7 +21,8 @@ if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/whisper.cpp/CMakeLists.txt)
 endif()
 add_subdirectory(whisper.cpp EXCLUDE_FROM_ALL)
 
-add_executable(kraken_whisper kraken_whisper.cpp)
+# quantize.cpp: --quantize (the derived q8_0 models), in the same binary
+add_executable(kraken_whisper kraken_whisper.cpp quantize.cpp)
 target_include_directories(kraken_whisper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 target_link_libraries(kraken_whisper PRIVATE whisper)
 target_compile_options(kraken_whisper PRIVATE -Wall -Wextra)

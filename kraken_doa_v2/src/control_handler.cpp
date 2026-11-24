@@ -39,6 +39,7 @@
 #include "utils/parse_num.hpp"
 #include "power.hpp"
 #include "antenna_bias.hpp"
+#include "cert_status.hpp"
 #include <string>
 #include <utility>
 #include <sstream>
@@ -1005,6 +1006,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             broadcast(build_operating_mode_json());
         }
 
+        const uint64_t prev_freq_hz = requested_freq_hz.load(std::memory_order_relaxed);  // 0 before the first retune
         requested_freq_hz.store(freq_hz, std::memory_order_relaxed);
         ChannelManager::set_frequency(static_cast<float>(freq_hz), active_channel.load(std::memory_order_relaxed));
 
@@ -1022,8 +1024,8 @@ void ControlHandler::handle_message_impl(string_view message) {
             bool changed = false;
 
             int side = wb_variant_mixer_side.load(std::memory_order_relaxed);
-            if (!wb_side_valid(side, freq_hz)) {
-                side = wb_auto_side(freq_hz);
+            if (const int want = wb_side_for_retune(side, prev_freq_hz, freq_hz); want != side) {
+                side = want;
                 wb_variant_mixer_side = side;
                 string side_cmd = string("MIXER_SIDE:") + wb_mixer_side_name(side);
                 SettingsStore::record(side_cmd);
@@ -2233,6 +2235,13 @@ void ControlHandler::handle_message_impl(string_view message) {
         v2t::set_keep_audio(parse_int(message, 22) != 0);
         broadcast(v2t::status_message());
     }
+    else if (message.starts_with("VOICE2TEXT_LIVE:")) {
+        // Live text: partial transcripts while a transmission lasts (CPU: see voice2text.hpp)
+        const string v(message.substr(16));
+        if (v != "0" && v != "1") throw CommandRejected("format: VOICE2TEXT_LIVE:0|1");
+        v2t::set_live(v == "1");
+        broadcast(v2t::status_message());
+    }
     else if (message.starts_with("VOICE2TEXT_DOWNLOAD:")) {
         // a model of the catalogue (fixed Hugging Face URLs) into the models folder
         string err;
@@ -2256,9 +2265,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(v2t::lobe_message(strtoull(id.c_str(), nullptr, 10)));
     }
     else if (message == "GET_VOICE2TEXT") {
-        // a page connecting: the settings / state and the latest transcripts
+        // a page connecting: the settings / state, the latest transcripts and
+        // the live rows (Live text)
         broadcast(v2t::status_message());
         broadcast(v2t::history_message(300));
+        broadcast(v2t::live_message());
     }
     else if (message.starts_with("RDF:")) {
         // Mobile DF heat map: collect bearings while driving (rdf_mapper.cpp)
@@ -2359,25 +2370,48 @@ void ControlHandler::handle_message_impl(string_view message) {
         sfscan::hold(parse_bool(message.substr(12)));
         broadcast(sfscan::status_json());
     }
-    // Wideband board telemetry log (wb_board.cpp): on/off, seconds between
-    // rows, days kept. The values in force ride system_status
-    // (wb_telemetry.logging), so every browser shows them.
+    // Wideband board / host telemetry logs (wb_board.cpp): on/off, seconds
+    // between rows, days plain (Keep), then days gzipped (Then compressed; a
+    // change of either runs the retention pass). The values in force ride
+    // system_status (wb_telemetry.logging, hw.logging), so every browser shows
+    // them; the value as clamped is what is saved and echoed (set_applied)
     else if (message.starts_with("WB_LOG_ENABLE:") || message.starts_with("WB_LOG_PERIOD:") ||
-             message.starts_with("WB_LOG_KEEP:")) {
+             message.starts_with("WB_LOG_KEEP:") || message.starts_with("WB_LOG_ZIP:")) {
         const size_t colon = message.find(':');
         const double v = parse_double(message, colon + 1);
         if (!std::isfinite(v)) throw CommandRejected("a number is required");
-        string applied;
+        const string_view prefix = message.substr(0, colon + 1);
+        double applied;
         if (message.starts_with("WB_LOG_ENABLE:")) {
             wb_board_set_log_enabled(v != 0);
-            applied = string("WB_LOG_ENABLE:") + (v != 0 ? "1" : "0");
+            applied = v != 0 ? 1 : 0;
         } else if (message.starts_with("WB_LOG_PERIOD:")) {
-            applied = "WB_LOG_PERIOD:" + to_string(wb_board_set_log_period(static_cast<int>(std::clamp(v, 1.0, 3600.0))));
+            applied = wb_board_set_log_period(static_cast<int>(std::clamp(v, 1.0, 3600.0)));
+        } else if (message.starts_with("WB_LOG_KEEP:")) {
+            applied = wb_board_set_log_keep_days(static_cast<int>(std::clamp(v, 1.0, 365.0)));
         } else {
-            applied = "WB_LOG_KEEP:" + to_string(wb_board_set_log_keep_days(static_cast<int>(std::clamp(v, 1.0, 365.0))));
+            applied = wb_board_set_log_zip_days(static_cast<int>(std::clamp(v, 0.0, 3650.0)));
         }
-        if (!g_replaying_settings.load()) SettingsStore::record(applied);
-        cout << "Wideband board log: " << applied << endl;
+        set_applied(prefix, applied, 0);
+        cout << "Wideband board / host log: " << *g_applied_cmd << endl;
+    }
+    // WB_LOG_RETENTION:<keep>,<then compressed> - the page's two selects as ONE change (one pass on
+    // the final pair; a page that has it sends both whenever either changes). Saved as the two
+    // settings above (the replay uses those), clamped like them; the clamped pair is echoed.
+    // WB_LOG_KEEP / WB_LOG_ZIP stay for older pages, the replay and scripts
+    else if (message.starts_with("WB_LOG_RETENTION:")) {
+        const string_view v = message.substr(17);
+        const size_t comma = v.find(',');
+        if (comma == string_view::npos) throw CommandRejected("format: WB_LOG_RETENTION:<keep days>,<then compressed days>");
+        const double k = parse_double(v.substr(0, comma), 0), z = parse_double(v, comma + 1);
+        int keep = 0, zip = 0;
+        wb_board_set_log_retention(static_cast<int>(std::clamp(k, 1.0, 365.0)), static_cast<int>(std::clamp(z, 0.0, 3650.0)), &keep, &zip);
+        if (!g_replaying_settings.load() && !sfscan::dispatching()) {
+            SettingsStore::record("WB_LOG_KEEP:" + to_string(keep));
+            SettingsStore::record("WB_LOG_ZIP:" + to_string(zip));
+        }
+        g_applied_cmd = "WB_LOG_RETENTION:" + to_string(keep) + "," + to_string(zip);
+        cout << "Wideband board / host log: " << *g_applied_cmd << endl;
     }
     else if (message.starts_with("SFSCAN_SQUELCH:") || message.starts_with("SFSCAN_DWELL:") ||
              message.starts_with("SFSCAN_HANG:") || message.starts_with("SFSCAN_MAX:") ||
@@ -2892,6 +2926,25 @@ string ControlHandler::apply_command(string_view message) {
         // refused during a playback there
         if (antbias::is_command(message))
             return antbias::handle_command(message, from_page && !g_replaying_settings.load());
+        // HTTPS certificate scope (cert_status.cpp, docs/dev/https-certificate.md):
+        // a page's own socket only - the scope decides what the CA can vouch
+        // for on every device that installed it. Not in the settings
+        // (cert_options is its store, read at the next start), refused during
+        // a playback; the applied value is echoed (the pages draw the status)
+        if (message.starts_with("CERT_SCOPE:")) {
+            string applied;
+            const string why = certstatus::set_scope(message.substr(11), from_page && !g_replaying_settings.load(), &applied);
+            if (why.empty()) broadcast(make_sync_cmd_json(applied));
+            return why;
+        }
+        // a new certificate authority at the next start (fine rule 29): the
+        // same rules - every device must then install the new one
+        if (message.starts_with("CERT_NEW_CA:")) {
+            string applied;
+            const string why = certstatus::set_new_ca(message.substr(12), from_page && !g_replaying_settings.load(), &applied);
+            if (why.empty()) broadcast(make_sync_cmd_json(applied));
+            return why;
+        }
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
         if (playback::handle_command(message)) return "";
@@ -2977,6 +3030,7 @@ void ControlHandler::apply_persisted_settings() {
     auto commands = SettingsStore::apply_commands();
     if (commands.empty()) {
         declog::settings_restored();
+        wb_board_settings_restored();
         return;
     }
     cout << "Restoring " << commands.size() << " persisted setting(s)" << endl;
@@ -2989,4 +3043,5 @@ void ControlHandler::apply_persisted_settings() {
     g_replaying_settings.store(false);
     // the decoder log's retention pass waited for the stored Keep / Then compressed days
     declog::settings_restored();
+    wb_board_settings_restored();   // ... and the telemetry logs' (WB_LOG_KEEP / WB_LOG_ZIP)
 }

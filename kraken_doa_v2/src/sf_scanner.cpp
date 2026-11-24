@@ -146,14 +146,22 @@ void set_heard(int vfo, bool on) {
 }
 
 // A decoder that can't be scanned: one that holds its VFO on a fixed
-// frequency (ADS-B, AIS) or on its tuner's centre (ism, cells, ...)
-std::string decoder_why_not(const std::string& dec) {
-    if (dec.rfind("PLUGIN:", 0) != 0) return "";
-    dig::PluginInfo pi;
-    if (!dig::PluginRegistry::instance().get(dec.substr(7), &pi)) return "";   // (refused when it locks)
-    if (pi.fixed_freq_hz > 0 || pi.lock_vfo)
-        return "its decoder (" + (pi.name.empty() ? pi.id : pi.name) + ") needs a VFO of its own";
-    return "";
+// frequency (ADS-B, AIS) or on its tuner's centre (ism, cells, ...; Aero's
+// All channels: by the option, with the scan VFO's options - opts)
+std::string decoder_why_not(const std::string& dec, const std::map<std::string, std::string>* opts) {
+    dig::PluginInfo pi;   // (an unknown plugin: refused when it is set)
+    if (!dig::decoder_holds_vfo(dec, opts, &pi)) return "";
+    return "its decoder (" + (pi.name.empty() ? pi.id : pi.name) + ") needs a VFO of its own";
+}
+
+// a VFO's decoder options ("<plugin>.<key>" -> value); false if it is gone
+bool vfo_plugin_opts(int vfo, std::map<std::string, std::string>* out) {
+    for (const auto& d : decimator_manager.getDecimatorInfoList())
+        if (d.id == vfo) {
+            *out = d.digital_opts.plugin;
+            return true;
+        }
+    return false;
 }
 
 // what a Digital VFO's decoder needs (Hz): the page's digMinRateK
@@ -162,7 +170,11 @@ double decoder_need_hz(const std::string& dec) {
         dig::PluginInfo pi;
         if (dig::PluginRegistry::instance().get(dec.substr(7), &pi)) return pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500;
     }
-    return 24000;   // Auto detect / off (TETRA's 24 kHz)
+    // Auto detect / off: none - Auto detect runs every plugin at any VFO
+    // width (the ones that need more on internal streams; until 2026-11 it
+    // was TETRA's 24 kHz, and Auto detect left out what needed more than
+    // twice the VFO's rate)
+    return 0;
 }
 
 void tunable_range(uint64_t* lo, uint64_t* hi) {
@@ -196,7 +208,10 @@ Layout layout_for(bool wideband) {
 Plan make_plan(int vfo, const Layout& lay) {
     uint64_t lo, hi;
     tunable_range(&lo, &hi);
-    return build_plan(savedfreq::scan_entries(), lay, lo, hi, vfo_bandwidth_hz(vfo), decoder_why_not);
+    std::map<std::string, std::string> opts;
+    vfo_plugin_opts(vfo, &opts);
+    return build_plan(savedfreq::scan_entries(), lay, lo, hi, vfo_bandwidth_hz(vfo),
+                      [&opts](const std::string& dec) { return decoder_why_not(dec, &opts); });
 }
 
 bool is_extra(const DecimatorInstance* p);
@@ -222,7 +237,7 @@ std::string vfo_held_by(int vfo) {
     for (const auto& d : decimator_manager.getDecimatorInfoList()) {
         if (d.id != vfo) continue;
         if (static_cast<dig::Mode>(d.digital_mode) != dig::Mode::PLUGIN) return "";
-        return decoder_why_not("PLUGIN:" + d.digital_plugin).empty() ? "" : d.digital_plugin;
+        return dig::decoder_holds_vfo("PLUGIN:" + d.digital_plugin, &d.digital_opts.plugin) ? d.digital_plugin : "";
     }
     return "";
 }

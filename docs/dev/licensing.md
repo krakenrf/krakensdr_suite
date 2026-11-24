@@ -149,4 +149,115 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   `[GPL-fact ...]`, the two unconfirmed GopherTrunk rules `[SINGLE ...]`
   where they are used. NO similarity audit against SDRTrunk / OP25 /
   GopherTrunk code was run
+- INMARSAT (2026-11-22, `plugins/inmarsat_c` 1.0 and `plugins/inmarsat_aero`
+  1.0, both source-available, written new; no GPL decoder - SatDump,
+  Scytale-C, cropinghigh/inmarsatc, gr-* - was opened, none was run).
+  `inmarsat_aero`: from ICAO Annex 10 Vol III Part I chapter 4 (the full
+  AMSS chapter, consolidated to amendment 77). Permissive projects read for
+  FACTS, no code taken: libacars (MIT) as the description of ARINC 622 / 745
+  (ADS-C layouts, scaling, CRC parameters), JAERO (MIT) to confirm the C
+  channel's field offsets. Code taken: libaeroambe's (MIT) 96-entry voice
+  frame deinterleave table in `plugins/lib/aero_ambe.cpp`, notice kept
+  (THIRD_PARTY_NOTICES text M) - a bit order like DSD's tables in
+  `mbe_tables.hpp`; the Aero AMBE codec itself stays the user's library
+  (libaeroambe's mbelib, dlopened; section 3 of the notices).
+  `inmarsat_c`: the frame facts (unique word, interleaver, scrambler, code,
+  packet lengths, sum check) were first read in an UNOFFICIAL online copy of
+  the Inmarsat-C System Definition Manual (CD004, Volumes 1-3; Inmarsat does
+  not publish the manual; Volume 4, the packet layouts, was not available
+  and is why most packet types are only counted), then each one settled
+  independently by measurement on a public recording (the table in
+  `kraken_doa_v2/docs/dev/plugin-inmarsat-c.md`); the EGC codes from IMO
+  MSC.1/Circ.1364 (SafetyNET manual) and IEC 61097-4. Whether that copy is
+  cited / relied on is the user's call (raised 2026-11-22, open).
+  CHECKED afterwards from the two authors' sessions (every fetch they made)
+  and their scratch folders, not from their reports: no source file of a
+  GPL project was fetched. inmarsat_c's author fetched documents only (the
+  SDM copy, a Nera manual, WAVECOM's manual page, IEC 61097-4, the SafetyNET
+  manual) and one decoder repository's front page, asked only for its
+  licence and sample files. inmarsat_aero's author fetched source from
+  JAERO (aerol.cpp / .h, oqpskdemodulator.cpp, jconvolutionalcodec.cpp),
+  libacars (adsc, arinc, crc) and libaeroambe - all MIT, JAERO's LICENSE
+  re-read independently; a mechanical comparison of the plugin with those
+  nine files found no identical code line (30+ characters, whitespace
+  removed) and only ordinary words as shared identifiers. ONE THING TO KNOW:
+  while looking for a C channel voice sample - after all protocol code was
+  committed (c01243d; those files did not change later) - documentation of
+  three GPL-3.0 Aero decoders was downloaded and keyword-searched for
+  download links (DecAero README.md + docs/DESIGN.md, OnAir docs/CODECS.md,
+  InmarScope README + TESTING.md; at most 80 matching lines were shown, none
+  of their source). NO similarity audit against the GPL decoders' own code
+  (SatDump, Scytale-C, DecAero ...) was run
 
+## Contributions (CONTRIBUTING.md, .github/)
+
+Set up 2026-11-22 (the user's request: every pull request must give KrakenRF
+the right to use the code in paid commercial software).
+
+- THE TERMS were already there and stay where they are: root `LICENSE`
+  *Contributions* (a contribution to ANY part) -> section 5 of
+  `kraken_doa_v2/LICENSE`: a perpetual, irrevocable, royalty-free licence to
+  KrakenRF to use, copy, modify, distribute and sublicense under any terms,
+  commercial licences included, a patent licence, and the contributor's
+  word that the work is theirs and third-party material is named. In
+  LICENSE since e9e6c73 (2026-10-21). Section 5 (licence version 1.0) was
+  NOT changed; the root paragraph was reworded the same day to close two
+  gaps in how it pointed there: section 5 speaks of "the Software"
+  (kraken_doa only), so the paragraph now says to read it as the part
+  contributed to (GPL programs, MIT parts, own-licence plugins), and it
+  spells out the commercial use ("the commercial licences and products
+  KrakenRF sells, without payment to you"; the contributor keeps the
+  copyright). Open points for a lawyer, deliberately left alone: section 5
+  names "successors" but not assigns, lists no "communicate to the public"
+  right next to "distribute", and states no consideration for the
+  irrevocable grant.
+- WHAT WAS MISSING was the contributor's agreement on record: nothing
+  showed a pull request's author the terms, and GitHub's own rule
+  (a contribution is under the repository's licence) gives KrakenRF only
+  what everybody gets - for kraken_doa that is personal / hobbyist use, not
+  commercial licensing. Section 5 as a clause of a licence file nobody
+  accepted is the weak point; an agreement the author makes in the pull
+  request is what closes it.
+- THE AGREEMENT is one sentence ("I agree to the KrakenSDR contribution
+  terms (CONTRIBUTING.md): ..."), IDENTICAL in three files - change them
+  together: `.github/PULL_REQUEST_TEMPLATE.md` (an unticked box; the
+  contributor ticks it - never ship it ticked, the tick is the act of
+  agreeing), `CONTRIBUTING.md` (*How you agree*) and `STATEMENT` in
+  `.github/workflows/contribution-terms.yml`. It repeats section 5's verbs
+  and says "commercial products and licences it sells, without payment to
+  me" in so many words.
+- THE CHECK (`contribution-terms.yml`, check name "Contribution terms
+  agreed"): fails unless the description holds the ticked sentence,
+  unchanged (compared as one lower-case line with single spaces, so
+  wrapping, CRLF and case don't matter; an edited sentence fails). For a
+  commit GitHub attributes to another account than the pull request's
+  author it wants a comment by that account with the sentence. Not asked
+  for: commits whose e-mail belongs to no account (taken as the author's),
+  merge commits ("Update branch"), bots, `Co-authored-by` trailers (AI
+  tools write them), the repository owner. A comment doesn't start the
+  check: edit the description, push, or re-run it. It reads the pull
+  request through the API at run time (the event's copy is stale on a
+  re-run) and fails when the API does.
+- SECURITY of the check: `pull_request_target` (the base branch's workflow
+  file, so a pull request can't change its own check; runs for forks
+  without approval). That trigger is only safe as long as the job never
+  checks out or runs the pull request's code, takes no `${{ github.event
+  ... }}` text into the script and keeps a read-only token - it uses no
+  action at all, only python3 and the REST API.
+- A GITHUB SETTING, not in the repo: the check blocks a merge only while
+  branch protection on `main` lists "Contribution terms agreed" as a
+  required status check; without that it is a red mark a maintainer can
+  merge past. The workflow runs from the default branch's copy, so it works
+  once it is on `main` on GitHub; a pull request that was already open is
+  checked at its next edit or push.
+- CONTENT RULES for contributors are the ones of this file, restated for
+  people in `CONTRIBUTING.md` (*What a contribution may contain*): keep the
+  two alike.
+- Tested 2026-11-22 (job scratch): the step's script extracted from the
+  YAML and run as GitHub runs it against a fake REST API - 54 cases
+  (ticked / unticked / missing / reworded, CRLF, wrapped, the template and
+  CONTRIBUTING.md's line as input, other authors with and without a
+  comment, paging, API errors, a bad token, a `next` link to another host);
+  and read-only against the real API for pull requests #3, #4, #9, #11
+  (each fails for the missing sentence, authors resolved, no false "other
+  author"). NOT tested: a run on GitHub itself.

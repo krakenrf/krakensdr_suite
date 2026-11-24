@@ -237,6 +237,17 @@ SharedDecimator::Plan SharedDecimator::planStages(int bandwidth_hz) {
     return plan;
 }
 
+double SharedDecimator::groupDelaySeconds(int bandwidth_hz) {
+    const Plan plan = planStages(bandwidth_hz);
+    double d = 0.0;   // input (2.4 MHz) samples
+    double m = 1.0;   // the factor in front of the stage
+    for (const auto& s : plan.stages) {
+        if (!s.taps.empty()) d += 0.5 * static_cast<double>(s.taps.size() - 1) * m;
+        m *= s.factor;
+    }
+    return d / SAMPLE_RATE_HZ;
+}
+
 std::string SharedDecimator::Plan::describe() const {
     std::string s;
     for (size_t i = 0; i < stages.size(); i++) {

@@ -1,8 +1,12 @@
 #!/bin/bash
 #
 # pre-push: block pushes whose OUTGOING commits contain station secrets
-# (KrakenPro key, real lat/lon) or a settings file that should never be
-# tracked. Backstop behind the clean filter (scripts/git-secrets-clean),
+# (KrakenPro key, real lat/lon), a settings file that should never be
+# tracked, or a private key of the web UI's HTTPS certificate (server.key,
+# the receiver's CA key krakensdr-ca.key, an unusable key moved aside
+# *.unreadable-*, a replaced CA's key kept *.retired-*, a temporary
+# *.key.tmp, make-cert.sh's .make-cert.* folders
+# - .gitignore keeps them out, this catches a `git add -f`). Backstop behind the clean filter (scripts/git-secrets-clean),
 # which sanitizes these automatically at commit time - this hook only fires
 # if the filter was not configured (fresh clone before install.sh) or a
 # secret landed some other way. Also blocks binaries and user-built voice
@@ -110,6 +114,21 @@ scan_range() {
                     fail=1
                     continue
                     ;;
+                # the web UI's private keys (kraken_doa_v2/docs/dev/https-certificate.md,
+                # fine rule 21): whoever has the receiver's CA key can
+                # impersonate it - in wide scope any .local / .lan name and
+                # private address - to every device that installed its
+                # certificate. Also a key moved aside, a replaced CA's key
+                # kept (fine rule 32: krakensdr-ca.key.retired-YYYYMMDD,
+                # usually an unconstrained CA), a temporary one, and anything
+                # in make-cert.sh's work folders
+                krakensdr-ca.key|*/krakensdr-ca.key|server.key|*/server.key|\
+                *.unreadable-*|*.retired-*|*.key.tmp|.make-cert.*|*/.make-cert.*)
+                    echo "BLOCKED: $f is committed in ${c:0:9} - a private key of the web UI's" >&2
+                    echo "         HTTPS certificate; it must stay untracked." >&2
+                    fail=1
+                    continue
+                    ;;
             esac
             blob=$(git show "$c:$f" 2>/dev/null) || continue
             if echo "$blob" | grep -Eq '"(krakenpro_key|web_mapper_key)"[[:space:]]*:[[:space:]]*"[^"]{6,}"'; then
@@ -126,7 +145,8 @@ scan_range() {
             fi
         done < <(git diff-tree --root -m --no-commit-id --name-only -r -z "$c" -- \
                      '*config.json' '*doa_settings.json' '*settings*.json' \
-                     '*api_token' | sort -zu)
+                     '*api_token' '*krakensdr-ca.key' '*server.key' \
+                     '*.unreadable-*' '*.retired-*' '*.key.tmp' '*.make-cert.*' | sort -zu)
         # Voice codecs are never distributed (the ETSI TETRA codec may not be
         # redistributed, AMBE is DVSI's): a user-built codec program or
         # library, the ETSI zip or its sources (osmo-tetra's codec/ folder),
@@ -230,7 +250,7 @@ if [ "$mapkey_fail" -ne 0 ]; then
 fi
 if [ "$fail" -ne 0 ]; then
     echo >&2
-    echo "Push aborted: station secrets detected in the outgoing commits." >&2
+    echo "Push aborted: station secrets / private keys detected in the outgoing commits." >&2
     echo "Fix: run ./install.sh once (registers the auto-sanitize clean filter)," >&2
     echo "then re-commit the offending file - or amend/rebase the commit out." >&2
     echo "Bypass (know what you are doing): git push --no-verify" >&2

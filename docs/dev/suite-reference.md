@@ -695,7 +695,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, ysf, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, acars, vdl2, dab, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, beacon121 (121.5 / 243 MHz swept-tone beacons), inmarsat_c (Inmarsat-C TDM / EGC), inmarsat_aero (Inmarsat Classic Aero), lora, wildlife, rds, acars, vdl2, dab, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -898,7 +898,23 @@ leaves it out) with the models in `docker-data/whisper_models/`
   wire `include/voice2text_wire.hpp`) runs VAD (noise / tones / carriers ->
   "no speech", no transcript), whisper, hallucination filters; a vocabulary
   prompt is sent as "Glossary: ... ." (a bare word list made whisper stop
-  after one word)
+  after one word). CPU (2026-11-20): whisper's encoder runs only over the
+  clip + 1 s, rounded up to 256 frames (5.1 / 10.2 ... s windows - flash
+  attention reads its cache in 256-frame blocks), not always 30 s: ~3x less
+  CPU per transcript at the same accuracy; a decode that hits a token cap
+  (a loop) is done again the old way. 8-bit models base.en-q8_0 /
+  small.en-q8_0 are made on the receiver (`kraken_whisper --quantize`; ~15-25 %
+  less CPU on a PC, half on a Pi 4 / Pi 5 - base.en-q8_0 is the Pi's choice,
+  small.en-q8_0 the accurate one on a Pi 5), and 4-bit -q4_0 ones (least
+  memory; more CPU than 8-bit on both Pis). On Arm CPUs with the dot-product
+  instructions (a Pi 5) the helper is built with Arm's KleidiAI kernels
+  (setup.sh): on a Pi 5 15-21 % less CPU for the q8_0 models
+- Live text (option, off by default; `VOICE2TEXT_LIVE:`): while someone
+  talks the worker sends the transmission so far as a PARTIAL job about once
+  a second (finals first), words two partials agree on are confirmed, and
+  the panel shows a live row that the final transcript replaces; ~1 s from
+  speech to text on a PC, ~4-6x the CPU of transcribing at the end. Audio
+  clips, history and log hold finals only
 - Cutting: a two-way transmission is one transcript up to 25 s (longer:
   parts, cut at its latest pause after 11 s); WBFM, or anything open longer
   than 30 s, in pieces from 8 s on at a pause (at the latest 15 s, then at
@@ -925,6 +941,10 @@ leaves it out) with the models in `docker-data/whisper_models/`
   🗺 map - pale colours of its own, dashed, never a VFO's live-lobe colour -
   with a tag whose ✕ removes it
 - Pi 5: base.en ~280 MB RAM, ~2-3x faster than real time on 2-3 cores
+  (the old 30 s window); since 2026-11-20 base.en-q8_0 + KleidiAI 0.92
+  CPU-s per 7.5 s transcript (~15x faster than real time on 2 cores),
+  Live text with it ~0.5-0.75 of a core. Pi 4: base.en-q8_0 6.2 CPU-s
+  (2.3x faster than real time), Live text too heavy (3 of 4 cores)
 
 **📏 Range from signal strength (🗺 Map, coherent mode; the user's request
 2026-10-20)** (details: `kraken_doa_v2/docs/dev/range.md`): "Range" in the 📡 DF panel's header -> a panel (top left) + a
@@ -1409,8 +1429,10 @@ with `--wideband` (`-w`) on BOTH apps, or `./run.sh --wideband` for the stack.
   `LO = IF - RF` (RF 24-1183 MHz, upright) or below `LO = RF - IF` (LO under
   the RF, RF 1353-6668 MHz, upright - the only side past 4.1 GHz). Every
   retune runs `wideband_retune_rf()` (heimdall sdr_init.cpp): keeps the
-  current side if it can reach the RF, else auto-selects (high up to its
-  ceiling, below above it). Manual override where several sides reach the
+  current side if it can reach the RF and the retune stays on one side of
+  `WB_SIDE_CROSSOVER_HZ` (2200 MHz), else auto-selects (high below the
+  crossover, below from it up - the high side loses conversion gain as its
+  LO climbs). Manual override where several sides reach the
   RF (image dodging): client `MIXER_SIDE:high|low|below` -> heimdall
   `set_mixer_side`, which REJECTS a side that can't reach the current RF
   (the UI greys those buttons out). Side changes trigger the normal retune

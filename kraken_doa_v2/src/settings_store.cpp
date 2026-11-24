@@ -152,6 +152,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"voice2text_vad",           "VOICE2TEXT_VAD:",           VType::BOOL,   "1"},
         {"voice2text_translate",     "VOICE2TEXT_TRANSLATE:",     VType::BOOL,   "0"},
         {"voice2text_keep_audio",    "VOICE2TEXT_KEEP_AUDIO:",    VType::BOOL,   "1"},
+        // Live text (partial transcripts while someone talks): off - its CPU
+        {"voice2text_live",          "VOICE2TEXT_LIVE:",          VType::BOOL,   "0"},
         // Mobile DF heat map on the 🗺 Map: collect bearings while driving,
         // half-width of the grid (km)
         {"rdf_enabled",              "RDF:",                      VType::BOOL,   "1"},
@@ -210,11 +212,13 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // the target filename is transient and not persisted)
         {"log_interval_sec",         "LOG_INTERVAL:",             VType::NUMBER, "1"},
         {"log_format",               "LOG_FORMAT:",               VType::STRING, "sqlite"},
-        // Wideband board telemetry log (wb_board.hpp): on/off, seconds between
-        // rows, days kept
+        // Wideband board / host telemetry logs (wb_board.hpp): on/off, seconds
+        // between rows, days plain (a stored value stays; 7 for a new install -
+        // 30 before the gzip days), then days gzipped (0 = deleted after Keep)
         {"wb_log_enabled",           "WB_LOG_ENABLE:",            VType::BOOL,   "1"},
         {"wb_log_period_sec",        "WB_LOG_PERIOD:",            VType::NUMBER, "10"},
-        {"wb_log_keep_days",         "WB_LOG_KEEP:",              VType::NUMBER, "30"},
+        {"wb_log_keep_days",         "WB_LOG_KEEP:",              VType::NUMBER, "7"},
+        {"wb_log_zip_days",          "WB_LOG_ZIP:",               VType::NUMBER, "30"},
         // Spectrum / waterfall display preferences (UI:* keys)
         {"doa_convention",           "UI:DOA_CONV:",              VType::STRING, "compass"},
         {"waterfall_fft_ymax",       "UI:FFT_Y:",                 VType::NUMBER, "60"},

@@ -87,6 +87,69 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     there) is removed and the plain file compressed again; today's files
     (age <= 0, also a clock set back) are never touched;
   - the old combined files follow the same ages.
+  **Shared since 2026-11-23**: the rule (`retention_action`, with `Kind` /
+  `Action` / `day_number`), `gzip_file`, the pass (`logret::run_pass`) and
+  its one-at-a-time thread (`logret::Scheduler`) moved unchanged to
+  `include/utils/log_retention.hpp` / `src/utils/log_retention.cpp`, so the
+  Wideband board and host telemetry logs (*wideband-variant.md*) follow the
+  same rule with the same code; `decoder_log_names.hpp` keeps the old names
+  as aliases, and `decoder_log.cpp` only lists its files and keeps its
+  settings. Tested unchanged: the shared rule against a verbatim copy of
+  the old function (5.6 M cases incl. N = 0 / M = 0) and the old and the new
+  build's passes on the same fabricated folder (same files left, same
+  contents).
+  **Since the review of the telemetry logs (2026-11-23) the shared code
+  also changes the decoder log** - durability and timing only, the rule is
+  the same: (1) `gzip_file` is durable against a power cut (the `.gz.part`
+  fsync'ed, renamed, the folder fsync'ed, then the plain file removed - an
+  unsynced rename could leave an empty `.gz` and no plain file after a power
+  cut) and never drops an existing `.gz`'s rows: one ending with the plain
+  file's rows (a crash before the unlink) is kept as is; one with other rows
+  (the clock set back after a pass) gets the plain day as one more gzip
+  member (zcat / zgrep read every member); a damaged one is left alone with
+  the plain file beside it. (2) A Keep / Then compressed / folder change
+  runs the pass 5 s after the LAST change (`request_after_change`; the
+  replay and RESET_SETTINGS set DAYS and then ZIP_DAYS - a pass between them
+  ran on half the change), only when the value changed; startup, the day
+  change and the 10-min tick are as before (a timed request while a change
+  waits joins it). (3) No pass during a debug playback (its settings are a
+  sandbox): it waits, and runs 5 s after the playback ended, on the replayed
+  stored values. Tested: the old and new build's passes on the same folder
+  still leave the same files; RESET_SETTINGS from stored 30 / 0 gzips days
+  8-30 (5 trials); a playback with Keep 2 / 0 touches nothing.
+  **Round 3 (2026-11-23)**: a `.gz` counts as damaged unless it is complete
+  gzip members to its last byte (`logret::gz_intact`: zeros or garbage after
+  the last member, or a file that is not gzip, were taken for healthy by
+  zlib's reader - a member appended after them was invisible and the plain
+  file unlinked); a damaged one is remembered (size + time) and not inflated
+  again until it changes; "cannot gzip <file>" is said once per file per run.
+  **The deletion grace (2026-11-23, the final review)**: like the telemetry
+  logs, after a Keep / Then compressed / folder change the passes only
+  compress; what the new rule deletes is deleted 10 min after the LAST
+  change (`Scheduler`'s `delete_grace`; `KRAKEN_LOGRET_GRACE_S` shortens it
+  for tests - the same variable as the telemetry logs'). The page's two
+  number fields send `DECODER_LOG_DAYS` / `DECODER_LOG_ZIP_DAYS` separately:
+  a person setting Keep 7 and a minute later Then compressed 1 year (stored
+  30 / 0) got days 8-30 deleted in between, which the final rule gzips. The
+  startup replay is no change (`setting_changed()`: only once the passes
+  are allowed - before `settings_restored()` no pass runs, and the first
+  one applies the stored values with its deletions, as the telemetry logs
+  apply theirs): otherwise every start with stored values other than the
+  defaults would hold the deletions back 10 min, and a receiver that never
+  runs that long would never delete a day. Tested (a TEST receiver, a fake
+  heimdall, stored 30 / 0, `KRAKEN_LOGRET_GRACE_S=10`; 1980d55 -> now 6 ->
+  9 / 9): the startup deletes days 31-40 at once in both; `DECODER_LOG_DAYS:7`
+  from a page deleted days 8-30 within 7 s, now they go ~10 s after the
+  command; Keep 7 and 7 s later Then compressed 1 year deleted all 23, now
+  they end gzipped (3 s apart both join them: the debounce). The logs
+  suites rerun with no expectation changed (retention rule 35 M checks and
+  its 9 mutants, the e2e 68 / 68, the old build's files identical, review
+  round 2 28 / 28, the page 25 + 7 + 5, cadence, durability). **Disk lasts' ratio**
+  (`gz_isize`) reads a gz file's ISIZE trailer, which is the LAST member's
+  size only: a day the clock-back path appended a member to is measured by
+  that member (usually a smaller ISIZE than the file -> not counted; else a
+  low ratio for that file). Cosmetic and rare (a clock set back); left as it
+  is.
   The **pass** (`run_pass`, a detached thread, one at a time - a request
   during a pass runs another after it, `request_pass`): deletions first,
   then the compressions one file at a time (`.gz.part` -> `fs_replace` ->

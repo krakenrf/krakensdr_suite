@@ -227,7 +227,7 @@ the job's scratch directory (not committed). The established setup:
 | Decoder plugins (process model, registry); digital voice (codecs, incl. DAB+'s AAC library) | `decoder-plugins.md`, `digital-voice.md` |
 | Digital squelch; fixed-frequency decoders | `digital-squelch.md`, `fixed-frequency-decoders.md` |
 | DoA per talker (ID separation, packets, covariances) | `doa-per-talker.md` |
-| Plugins: ACARS, VDL Mode 2, ADS-B, AIS, ISM, LoRa, Pagers, RDS, DAB / DAB+, Radiosonde, FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME, ILS / VOR, Analog FM IDs, 406 MHz, Wildlife | `plugin-acars.md`, `plugin-vdl2.md`, `plugin-adsb.md`, `plugin-ais.md`, `plugin-ism.md`, `plugin-lora.md`, `plugin-pagers.md`, `plugin-rds.md`, `plugin-dab.md`, `plugin-radiosonde.md`, `plugin-flarm.md`, `plugin-dtv.md`, `plugin-cells.md`, `plugin-radar.md`, `plugin-ssr1030.md`, `plugin-uat.md`, `plugin-dme.md`, `plugin-ils.md`, `plugin-analog-id.md`, `plugin-beacon406.md`, `plugin-wildlife.md` |
+| Plugins: ACARS, VDL Mode 2, ADS-B, AIS, ISM, LoRa, Pagers, RDS, DAB / DAB+, Radiosonde, FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME, ILS / VOR, Analog FM IDs, 406 MHz, 121.5 MHz beacons, Wildlife, Inmarsat-C, Inmarsat Classic Aero | `plugin-acars.md`, `plugin-vdl2.md`, `plugin-adsb.md`, `plugin-ais.md`, `plugin-ism.md`, `plugin-lora.md`, `plugin-pagers.md`, `plugin-rds.md`, `plugin-dab.md`, `plugin-radiosonde.md`, `plugin-flarm.md`, `plugin-dtv.md`, `plugin-cells.md`, `plugin-radar.md`, `plugin-ssr1030.md`, `plugin-uat.md`, `plugin-dme.md`, `plugin-ils.md`, `plugin-analog-id.md`, `plugin-beacon406.md`, `plugin-beacon121.md`, `plugin-wildlife.md`, `plugin-inmarsat-c.md`, `plugin-inmarsat-aero.md` |
 | Analog TV (PAL/NTSC luma + display); TEMPEST screen reconstruction (auto/manual video-mode detection, display, source DoA); deep-reconstruction plan | `plugin-analogtv.md`, `plugin-tempest.md`, `tempest-deep-plan.md` |
 | Plugin video display channel (`host.video_frame`, the per-VFO canvas) | `plugins/SDK.md` *Video frames* |
 | Map pane and decoder map points | `map.md` |
@@ -247,6 +247,7 @@ the job's scratch directory (not committed). The established setup:
 | Voice to Text | `voice-to-text.md` |
 | AI assistant (MCP server, bridge, lockdown, sandbox, map layers, IQ capture) | `ai-assistant.md` |
 | Web mapper output | `web-mapper.md` |
+| HTTPS certificate of the web UI (a CA per receiver, narrow / wide scope, `scripts/make-cert.sh`, the in-process generator, the page's certificate section) | `https-certificate.md` |
 | Restart / Shut down from the page (power commands, platforms, privileges, safety) | `power.md` |
 | Antenna bias tees from the top bar (ANT_BIAS -> heimdall's set_antenna_bias_tees, refusals, compatibility, why two presses) | `bias-tees.md` |
 | Hot paths, DC correction, FFT dB, AM loops, MUSIC gates, dev tasks, key files, common issues | `reference.md` |

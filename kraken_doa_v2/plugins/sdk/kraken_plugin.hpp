@@ -265,9 +265,16 @@ struct Info {
     // complex input rate process() gets (Hz). 0 = the VFO's own rate, whatever
     // the user set (no resampling - a decoder of carriers / pulses anywhere in
     // a narrow or a 2.4 MHz VFO: wildlife): Host::sample_rate() says which; a
-    // change of the VFO's bandwidth restarts the plugin at the new rate
+    // change of the VFO's bandwidth restarts the plugin at the new rate (in
+    // Auto detect on a narrower VFO: the rate of the stream it runs on, below)
     double sample_rate = 48000;
-    double min_vfo_rate = 12500;    // VFO bandwidth the signal needs (Hz) - the UI warns below it
+    // VFO bandwidth the signal needs (Hz). A plugin set on a VFO by hand: the
+    // panel warns below it and offers to widen the VFO. In Auto detect on a
+    // narrower VFO the host decodes the VFO's centre at the narrowest
+    // efficient width >= this for the plugin (an internal stream - what it
+    // would get from a VFO that wide); an older host left it out of Auto
+    // detect below half of it
+    double min_vfo_rate = 12500;
     const char* author = "";
     // Deprecated and ignored: which decoders run in the Digital Decoder's
     // "Auto detect" is the user's choice (the Auto detect ticks in the
@@ -290,6 +297,13 @@ struct Info {
     // can't be dragged or resized; you move it by tuning the receiver (a
     // decoder of the whole band: ism, cells, dtv)
     bool lock_vfo = false;
+    // "key=value" of one of your own options (e.g. "mode=all"): the same lock
+    // as lock_vfo, but only while that option has that value on the VFO -
+    // the tuner's whole 2.4 MHz on its centre (whatever min_vfo_rate says),
+    // drawn as a line, the tuner left alone; with any other value the VFO is
+    // an ordinary one (inmarsat_aero: "All channels in the spectrum"). "" =
+    // none. A host from before it ignores it (the VFO is never locked)
+    const char* lock_vfo_opt = "";
     // true: takes every antenna of a coherent array (Decoder::process_multi)
     // when kraken_doa has them - coherent mode with DoA on; otherwise (an
     // independent / wideband tuner, DoA off, an offline test of one channel)

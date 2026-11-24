@@ -62,9 +62,10 @@ need the radio to change are translated here, e.g.:
 If a send fails the socket is dropped and reopened on the next command.
 
 ### Browser socket — port `8080` (HTTPS / WSS)
-`web_server_main()` (uWebSockets) serves `kraken_doa.html` over **HTTPS with a
-self-signed cert** (`server.crt`/`server.key`) — HTTPS is required because the Web
-Audio API needs a secure context. Open `https://<host>:8080` and accept the cert.
+`web_server_main()` (uWebSockets) serves `kraken_doa.html` over **HTTPS**
+(`server.crt`/`server.key`, signed by the receiver's own CA `krakensdr-ca.crt`:
+install it once per device - [HTTPS certificate](../README.md#https-certificate)) — HTTPS is required because the Web
+Audio API needs a secure context. Open `https://<host>:8080`.
 A plain-HTTP companion endpoint runs on `8081` (`DOA_value.html`, for the Android app).
 
 The browser receives **binary** frames tagged by a leading `uint32` type:
@@ -275,3 +276,6 @@ not yet relying on it in their work). Deploying it, and any other commercial
 use, requires a licence from KrakenRF Inc. (standard terms:
 `COMMERCIAL_TERMS.md`); contact thekraken@krakenrf.com for details.
 Third-party components keep their own licences: `THIRD_PARTY_NOTICES.md`.
+Contributions are made under section 5 of the licence (KrakenRF may use and
+license them under any terms, including commercially); a pull request
+confirms that in its description: `../CONTRIBUTING.md`.

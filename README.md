@@ -24,7 +24,7 @@ It runs on the Raspberry Pi 4 / 5 (the main target), x86_64 Linux, Windows
 ## Contents
 
 - [Install](#install)
-- [Run](#run)
+- [Run](#run), and the [HTTPS certificate](#https-certificate) (once per device)
 - [Features](#features)
 - [Optional setup](#optional-setup): voice codecs, Voice to Text, the AI assistant, plugins
 - [More documentation](#more-documentation)
@@ -106,7 +106,8 @@ Connect and power the KrakenSDR, then in any terminal:
 
 Then open the web pages from any computer on the network:
 
-- **KrakenSDR DOA:** `https://krakensdr.local:8080` or `https://PI_IP_ADDR:8080` (note the `s` in https)
+- **KrakenSDR DOA:** `https://krakensdr.local:8080` or `https://PI_IP_ADDR:8080` (note the `s` in https;
+  install the receiver's [HTTPS certificate](#https-certificate) once per device, or the browser warns)
 - **Heimdall:** `http://krakensdr.local:8070` or `http://PI_IP_ADDR:8070`
 
 Options:
@@ -161,6 +162,94 @@ switches). Not with generic RTL-SDRs or the KrakenSDR Wideband. After
 updating, rebuild and restart **both** programs (`./run.sh stop`, then
 `./run.sh`): a heimdall that is still running has the old control port, and
 the button then says "heimdall is too old for this".
+
+### HTTPS certificate
+
+The DOA page is HTTPS only: browsers allow audio and the microphone only on
+a secure page. Each receiver makes its own small certificate authority the
+first time it starts and signs the page's certificate with it. Until a
+device trusts that authority, its browser warns about the page. **Install
+the receiver's certificate once on each device** and the warning is gone,
+also after the receiver renews its certificate or gets a new address.
+
+Get the file on the device itself: on the DOA page, click the **Host**
+telemetry at the top right (the Telemetry sheet) → **HTTPS certificate** →
+Download, or open `https://krakensdr.local:8080/krakensdr-ca.crt` (your
+receiver's name; click through the warning this once). On the receiver it
+is `kraken_doa_v2/krakensdr-ca.crt` (`docker-data/kraken_doa/` in Docker).
+**Before trusting it, compare its SHA-256 fingerprint** (the device shows it
+while installing, or in the certificate's details) with the one the
+receiver prints where only you see it: `run.sh`'s and `install.sh`'s
+terminal and log, `docker compose logs kraken_doa`, kraken_doa's start
+("HTTPS certificate: ... SHA-256 ..."). A page reached through someone
+else's network could hand you another one. Then:
+
+- **Windows** (Edge, Chrome): open the file → Install Certificate → Current
+  User → *Place all certificates in the following store* → Browse →
+  **Trusted Root Certification Authorities** → Finish → Yes. Restart the
+  browser.
+- **macOS** (Safari, Chrome): double-click the file (Keychain Access adds it
+  to the login keychain), double-click **KrakenSDR … CA …** in it → Trust →
+  *When using this certificate*: **Always Trust**; close and enter your
+  password.
+- **iPhone / iPad**: open the link in **Safari** → Allow. Settings →
+  *Profile Downloaded* (or General → VPN & Device Management) → Install.
+  Then Settings → General → About → **Certificate Trust Settings** → switch
+  on **KrakenSDR … CA …**. Without this last step iOS installs the
+  certificate but doesn't trust it for websites.
+- **Android**: Settings → Security → More security settings → Encryption &
+  credentials → Install a certificate → **CA certificate** → Install anyway
+  → pick the file (the menus differ between makers; search Settings for
+  "CA certificate"). Chrome trusts it then. Firefox for Android only after
+  Settings → About Firefox → tap the Firefox logo five times → back in
+  Settings → Secret Settings → **Use third party CA certificates**.
+- **Firefox** (Windows, macOS, Linux) keeps its own list: Settings → Privacy
+  & Security → Certificates → View Certificates → Authorities → Import →
+  tick **Trust this CA to identify websites**.
+- **Linux** (Chrome, Chromium): Settings → Privacy and security → Security →
+  Manage certificates → import it as a trusted authority, or
+  `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "KrakenSDR CA" -i krakensdr-ca.crt`
+  (package `libnss3-tools`). For curl and other programs:
+  `sudo cp krakensdr-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`.
+
+Open the page by the receiver's name: the certificate names its host name,
+`<name>.local`, `<name>.lan` / `.home` / `.localdomain` / `.home.arpa` when
+your network uses that search domain, and `localhost`; any other domain
+only through `KRAKEN_CERT_NAMES` (below).
+
+**Narrow or wide.** By default (narrow) the receiver's certificate
+authority can vouch only for this receiver's own names: even if its key
+leaked, it couldn't impersonate any other site to your devices. Opened by
+IP address, the page then still warns (click through). **Wide** (Telemetry
+sheet → HTTPS certificate) also covers the receiver's private LAN addresses,
+so `https://192.168.1.50:8080` is trusted too - at a price: a leaked key
+could then impersonate any `.local` / `.lan` name and any private address
+(your router, a NAS) to the devices that installed it. The choice applies at
+the next start.
+
+**When devices must install it again**: only when the receiver makes a new
+certificate authority - after a new host name, a switch between narrow and
+wide, after about nine years, or when you ask for one (Telemetry sheet →
+HTTPS certificate → **New certificate authority**, or `scripts/make-cert.sh
+kraken_doa_v2 --new-ca`). `run.sh` then prints a warning, and the
+Telemetry sheet names the old certificate to remove (in the same place it
+was installed). A new IP address, another network or a renewal needs
+nothing: a name the authority doesn't cover is left out of the certificate
+and named in the Telemetry sheet. That is also what happens when two
+receivers on a network are both called `krakensdr` and mDNS announces the
+second as `krakensdr-2`: rename one of them. A receiver whose clock is far
+behind (a Pi without a clock and no network yet) keeps its certificate
+authority and says so in the Telemetry sheet.
+
+**Your own certificate**: a `kraken_doa_v2/server.crt` (followed by its
+chain) + `server.key` the receiver didn't make, or a symlink, is never
+touched. More names: `KRAKEN_CERT_NAMES=sdr.example.org ./run.sh`
+(comma- or space-separated) - set before the first start, or added later
+together with a new certificate authority (the button above), since the
+existing one doesn't cover them. A new certificate authority on purpose (say
+the old key may have been copied): the same button, or `scripts/make-cert.sh
+kraken_doa_v2 --new-ca`, then restart.
+Details: `kraken_doa_v2/docs/dev/https-certificate.md`.
 
 ## Features
 
@@ -243,12 +332,15 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [UAT](kraken_doa_v2/plugins/uat/README.md) (978 MHz, United States) | Aircraft, rebroadcast traffic, ground stations and their weather / NOTAM text |
 | [SSR / Mode S / TCAS interrogations](kraken_doa_v2/plugins/ssr1030/README.md) (1030 MHz) | The radars, multilateration stations and aircraft that ask the questions ADS-B answers |
 | [ACARS](kraken_doa_v2/plugins/acars/README.md), [VDL Mode 2](kraken_doa_v2/plugins/vdl2/README.md) | Aircraft datalink messages: registration, flight, label, text; VDL2 ground stations on the map |
+| [Inmarsat Classic Aero](kraken_doa_v2/plugins/inmarsat_aero/README.md) (L-band satellite, 1545-1555 MHz; aircraft at 1626-1660 MHz) | The satellite datalink to aircraft (P channel, every rate, found automatically): log-ons, channel assignments, ACARS messages, ADS-C positions on the map; C channel voice (see [Digital voice codecs](#digital-voice-codecs)); the aircraft's own bursts with a bearing per aircraft. Its **All channels in the spectrum** option decodes every channel of the tuner's whole 2.4 MHz at once and plays every call in it (the VFO is then locked on the band, as for ADS-B) |
 | [FLARM / OGN](kraken_doa_v2/plugins/flarm/README.md) (868 / 915 MHz) | Gliders and light aircraft. OGN trackers give a position; FLARM is encrypted, so only its ID and bearing |
 | [DME / TACAN](kraken_doa_v2/plugins/dme/README.md) (962-1213 MHz) | Morse ident, channel and its VOR / ILS pairing, TACAN bearing, aircraft interrogations |
 | [ILS / VOR / markers](kraken_doa_v2/plugins/ils/README.md) | Localizer and glide slope deviation, VOR radial, marker beacons, Morse idents |
 | [Pulse radar](kraken_doa_v2/plugins/radar/README.md) (1215-1400 MHz and others) | Pulse width, chirp, PRF and PRI pattern, antenna rotation, beam width |
 | [AIS](kraken_doa_v2/plugins/ais/README.md) (162 MHz) | Ships, base stations, aids to navigation |
 | [406 MHz distress beacons](kraken_doa_v2/plugins/beacon406/README.md) | EPIRB / ELT / PLB: beacon ID, country, type, position. Self-tests are shown as tests |
+| [121.5 / 243 MHz distress beacons](kraken_doa_v2/plugins/beacon121/README.md) | ELT / EPIRB / PLB swept-tone homing, also 406 MHz beacons' homers: carrier, sweep, rate, pauses, Morse letter, a bearing per beacon. AM voice and plain carriers are not beacons |
+| [Inmarsat-C / STD-C](kraken_doa_v2/plugins/inmarsat_c/README.md) (L-band satellite, 1530-1545 MHz) | The NCS common channel and the LES TDM channels: network and station identity, EGC SafetyNET / FleetNET messages (navigational and weather warnings, search and rescue, group calls) put together from their packets, repeats shown once |
 | [Radiosondes](kraken_doa_v2/plugins/radiosonde/README.md) (400-406 MHz) | Weather balloons (RS41, DFM, M10 / M20, iMet, LMS6, MRZ): position, weather data, flight track, a sounding |
 | [ISM devices](kraken_doa_v2/plugins/ism/README.md) (315 / 345 / 433 / 868 / 915 MHz) | About 140 device models: weather stations, tyre pressure sensors, key fobs, alarm sensors, energy meters |
 | [LoRa / Meshtastic / LoRaWAN](kraken_doa_v2/plugins/lora/README.md) | Meshtastic's public default channel (text, node names, positions); the clear headers of everything else |
@@ -262,7 +354,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 Things to know:
 
 - **Decoders that tune for you.** ADS-B, UAT, the 1030 MHz decoder, AIS and
-  the 406 MHz beacon decoder put the VFO on their own frequency when picked.
+  the 406 MHz and 121.5 MHz beacon decoders put the VFO on their own frequency when picked.
 - **Whole-band decoders.** ISM, FLARM, LoRa, pulse radar, Digital TV, DAB
   and LTE / NR cells use the tuner's full 2.4 MHz: tune the receiver to the
   band (DAB: to the block, e.g. 12C = 227.360 MHz). Auto detect leaves out ADS-B and any decoder that needs a wider VFO
@@ -272,7 +364,8 @@ Things to know:
   LoRaWAN payloads and FLARM packets stay unread, and of LTE / NR only the
   broadcast system information is read, never anything addressed to a phone.
 - **Distress beacons.** If you hear a real 406 MHz beacon, report it to
-  your rescue coordination centre with its ID, time, frequency and bearing.
+  your rescue coordination centre with its ID, time, frequency and bearing
+  (a 121.5 MHz beacon: its time, frequency and bearing - it sends no ID).
   The receiver reports nothing by itself.
 - **Digital squelch.** On a VFO with a decoder, set the squelch to
   **Digital**: it opens only while valid frames arrive, and the bearing is
@@ -451,6 +544,7 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 | NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
 | Yaesu System Fusion (C4FM) | DN and V/D mode 1: AMBE+2; VW: IMBE | DN / V/D mode 1: mbelib, installed by you; VW: nothing - built in |
 | TETRA | ACELP | the ETSI reference codec, built by you |
+| Inmarsat Classic Aero (C channel) | AMBE 4.8 kbit/s | libaeroambe's mbelib, built by you |
 | MPT1327 | analogue FM | nothing - listen to the traffic channel with NBFM |
 | DAB | MPEG Layer II | nothing - built in |
 | DAB+ | HE-AAC v2 | libfdk-aac, installed by you |
@@ -475,6 +569,17 @@ control channels); what the radios themselves send on Phase 2 has only been
 tested with the decoder's own test signals, as no recording of it could be
 found.
 
+The Inmarsat decoders were checked against recordings and off air on a
+Raspberry Pi 5 with one patch antenna (Inmarsat-4 F1): Inmarsat-C's NCS
+and LES channels with real EGC messages, Classic Aero's P channels at 600,
+1200 and 10500 bit/s. Aero voice was checked on real calls by measurement,
+not by listening: the channel decodes, the codec accepts its voice frames,
+and the decoded sound of a clean three-minute call has the structure of
+speech (syllable-length voiced stretches, one speaker's smoothly moving
+pitch, talk spurts between pauses), which the same path fed random bits
+does not have. A satellite sends only the ground-to-aircraft half of a
+call, so long silences are normal.
+
 **P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 
 ```
@@ -491,6 +596,28 @@ kraken_doa finds `libmbe.so.1` in the system library path. Set
 `KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere. Fusion's DN
 voice needs mbelib's `mbe_processAmbe2450Dataf`; a library without it plays
 no DN voice (the decoder's voice status says so).
+
+**Inmarsat Classic Aero (C channel voice): libaeroambe's mbelib**
+
+The Aero codec is not in the standard mbelib. libaeroambe carries an mbelib
+1.3 with it added (`mbe_processAmbe4800x3600Framef`); only that folder is
+needed, without Qt:
+
+```
+sudo apt-get install -y git cmake build-essential
+git clone https://github.com/jontio/libaeroambe.git
+cmake -S libaeroambe/mbelib-master -B build-aeroambe -DCMAKE_BUILD_TYPE=Release
+cmake --build build-aeroambe -j3
+export KRAKEN_AERO_AMBE=$PWD/build-aeroambe/libmbe.so.1
+```
+
+Set `KRAKEN_AERO_AMBE` where kraken_doa is started (`none` turns the voice
+off). Without it the decoder also tries `KRAKEN_MBELIB` and the system's
+`libmbe.so.1`, and uses the first one that has the Aero function - so
+installing this build in place of the standard mbelib
+(`sudo cmake --install build-aeroambe && sudo ldconfig`) serves every
+decoder; in Docker, put it in `docker-data/codecs/` as `libmbe.so.1`. The
+decoder's "Voice codec" line says which library it found.
 
 **TETRA: the ETSI codec, with osmo-tetra's patches**
 
@@ -562,20 +689,32 @@ does the same during the install.
 |---|---|---|---|
 | tiny.en | 75 MB | ~5x faster than real time | least accurate |
 | base.en | 142 MB | ~2-3x faster than real time | the default |
+| base.en-q8_0 | 78 MB, made on the receiver from base.en | not measured yet | about 15 % less CPU than base.en, about as accurate |
 | base.en-q5_1 | 57 MB | about the same | less memory |
 | small.en / small.en-q5_1 | 466 / 181 MB | ~2x slower than real time | most accurate on a Pi; for quiet channels |
+| small.en-q8_0 | 252 MB, made on the receiver from small.en | not measured yet | about 25 % less CPU than small.en, as accurate |
 | tiny, base, small (+ -q5_1) | as above | as above | any language, or translated to English |
 
 Get other models in **Setup Settings → Voice to Text** (the cog at the
 right of the top bar; **Get**), or with
 `transcribe/setup.sh --models-only small.en` (`transcribe/setup.sh --list`
-shows them all). That tab also shows whether Voice to Text is set up (and
-what to run while it is not), and sets the CPU cores the model may use and
-the "Words to expect": callsigns and names spelled as you want them.
+shows them all). The two q8_0 models are not downloaded as such: **Get**
+downloads base.en / small.en (unless you have it) and converts it on the
+receiver, then deletes the download again. That tab also shows whether
+Voice to Text is set up (and what to run while it is not), and sets the CPU
+cores the model may use (1 or 2 use the least CPU in total; more finish each
+transcript sooner but use more CPU altogether) and the "Words to expect":
+callsigns and names spelled as you want them.
 
 - Transcripts appear in the **Transcription** panel (its button is on the
   rail at the right edge of the page) a few seconds after each
   transmission ends. Long transmissions and broadcasts come in parts.
+- **Live text** (in the same tab, off by default) shows the words while
+  someone is still talking, updated every second; the final transcript
+  replaces them when the transmission ends. It costs CPU: the model runs
+  all the time while someone talks, 4 to 6 times the CPU of transcribing at
+  the end. On a Pi 5 use base.en-q8_0 and expect about 1.5 to 2 of its 4 cores
+  while someone talks, the words 1.5 to 2 s behind (estimated).
 - In Coherent mode with DoA on, each transcript keeps its bearing. Click it
   to draw that transmission's lobe on the map.
 - While the model is busy, transmissions wait in a queue. If they pile up,
@@ -747,3 +886,10 @@ Third-party components keep their own licences:
 [kraken_doa_v2/THIRD_PARTY_NOTICES.md](kraken_doa_v2/THIRD_PARTY_NOTICES.md),
 [heimdall_v2/THIRD_PARTY_NOTICES.md](heimdall_v2/THIRD_PARTY_NOTICES.md).
 The Windows package and the Docker image carry every licence text.
+
+**Contributing**: pull requests are welcome under the contribution terms in
+[CONTRIBUTING.md](CONTRIBUTING.md). You license your contribution under the
+licence of the part it changes and also grant KrakenRF Inc. the right to use
+and license it under any terms, including commercially (section 5 of the
+KrakenSDR Source Available Licence). A pull request confirms this with a
+tick box in its description.
