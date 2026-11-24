@@ -316,10 +316,16 @@ inline void restart_bands(std::vector<TunerSlot>& slots, int64_t now_ms) {
 //    new band's counts from its start; rr moves past it). With nothing
 //    retuned this is the old round robin exactly.
 // Ties in either pass: the band whose latest look (last_seq) is older, then
-// cursor order from rr. After a restart (restart_bands: every band new, the
-// same ready_ms and turn) this makes every pick, while nothing is retuned,
-// the band whose latest look is the oldest - restarts do not change the
-// order (INV-H).
+// cursor order from rr - except two bands both waiting for their first look
+// in the second pass (their tokens spent, both new since the same look): the
+// one that began waiting first goes first (ready_ms; until 2026-11-24 the
+// older latest look - a band whose lead had just taken over another tuner's
+// new band then overtook a band waiting since before it a second time:
+// INV-C, found by the rules test's S1 model, seed 99; the same scenario
+// without S1 at a 45 ms analysis). After a restart (restart_bands: every band
+// new, the same ready_ms and turn) this makes every pick, while nothing is
+// retuned, the band whose latest look is the oldest - restarts do not change
+// the order (INV-H).
 // Invariants (tested, R = ready bands): INV-A every band ready and not
 // retuned through 2R consecutive looks gets one in them (restarts
 // included); INV-B a single retune, nothing else changing, gets its first
@@ -355,11 +361,17 @@ inline int pick_band(const std::vector<TunerSlot>& t, const std::vector<int>& re
         first_look = true;
         return pick;
     }
+    // (two first looks tied in the turn: first come first served, as ahead of the turn - INV-C)
+    const auto before = [&](int i, int p) {
+        const TunerSlot &a = t[size_t(i)], &b = t[size_t(p)];
+        if (a.looks == 0 && b.looks == 0 && a.ready_ms != b.ready_ms) return a.ready_ms < b.ready_ms;
+        return older(i, p);
+    };
     for (int k = 0; k < M; k++) {   // the oldest look
         const int i = (rr + k) % M;
         if (!ready(i)) continue;
         if (pick < 0 || t[size_t(i)].turn_seq < t[size_t(pick)].turn_seq ||
-            (t[size_t(i)].turn_seq == t[size_t(pick)].turn_seq && older(i, pick)))
+            (t[size_t(i)].turn_seq == t[size_t(pick)].turn_seq && before(i, pick)))
             pick = i;
     }
     if (pick >= 0) rr = (pick + 1) % M;

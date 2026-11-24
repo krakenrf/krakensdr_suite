@@ -695,6 +695,10 @@ struct SimOpt {
     bool restart_clears = false;         // mutant: 97f8d78's restart (the slots cleared: tokens, latest looks)
     bool restart_tuner_only = false;     // mutant: a restart that keeps only each tuner's latest look and token (every band new)
     bool retry = true;                   // L3: a capture a retune aborted is tried again once its tuner settled
+    // S1 (settled tracks not classified in every look): a band's look costs S1_COST x the analysis except in
+    // one of 4 of its looks (its settled tracks' refresh) - the analysis then varies from look to look and
+    // band to band; the schedule's rules must hold all the same (they read only the analysis time)
+    bool s1 = false;
 };
 struct SimOut {
     std::string err;
@@ -703,6 +707,7 @@ struct SimOut {
 };
 
 constexpr int64_t CAPTURE_MS = 560, SETTLE_MS = 500;
+constexpr double S1_COST = 0.35;
 
 SimOut sim(const Scen& sc, const SimOpt& o) {
     SimOut out;
@@ -783,17 +788,19 @@ SimOut sim(const Scen& sc, const SimOpt& o) {
             for (int i = 0; i < M; i++)
                 if (reps[size_t(i)] >= 0 && reps[size_t(i)] != i) slots[size_t(i)].prio_seq = slots[size_t(reps[size_t(i)])].prio_seq;
     };
-    const auto look_done = [&](int64_t cycle0) {   // the budget's side of a look
+    std::vector<int64_t> band_looks(size_t(M) + 1, 0);   // (S1: the looks per band's tracker; [M] coherent)
+    const auto look_done = [&](int64_t cycle0, int band) {   // the budget's side of a look
         if (last_start >= 0) budget.started(double(cycle0 - last_start) / 1000.0, ewma);
         last_start = cycle0;
-        now += int64_t(sc.ana_s * 1000);
-        used += sc.ana_s;
-        excess += std::max(0.0, sc.ana_s - 10.0 * 0.04);
-        ewma = ewma > 0 ? ewma + 0.3 * (sc.ana_s - ewma) : sc.ana_s;
+        const double a = o.s1 && band_looks[size_t(band)]++ % 4 != 0 ? S1_COST * sc.ana_s : sc.ana_s;
+        now += int64_t(a * 1000);
+        used += a;
+        excess += std::max(0.0, a - 10.0 * 0.04);
+        ewma = ewma > 0 ? ewma + 0.3 * (a - ewma) : a;
         max_cap = std::max(max_cap, 8.0 * ewma);
         budget.plan(ewma);
         // INV-G: the analysis within the share, the debt's cap, the clamp's excess and the latest look
-        if (used > 0.04 * (double(now) / 1000.0) + max_cap + excess + sc.ana_s + 1e-6) out.err = "more analysis than the budget allows (INV-G)";
+        if (used > 0.04 * (double(now) / 1000.0) + max_cap + excess + a + 1e-6) out.err = "more analysis than the budget allows (INV-G)";
     };
     while (now < dur && out.err.empty()) {
         world(now);
@@ -829,7 +836,7 @@ SimOut sim(const Scen& sc, const SimOpt& o) {
                 continue;
             }
             now += CAPTURE_MS;
-            look_done(cycle0);
+            look_done(cycle0, M);
             continue;
         }
         update();
@@ -907,7 +914,7 @@ SimOut sim(const Scen& sc, const SimOpt& o) {
         L.push_back(rec);
         out.looks[size_t(ch)]++;
         now += CAPTURE_MS;
-        look_done(cycle0);
+        look_done(cycle0, ch);
         if (g_trace) {
             std::fprintf(g_trace, "look %lld t %lld pick %d first %d restarts %d ready", (long long)seq, (long long)cycle0, ch, int(first), restarts);
             for (const auto& q : rec.ready) std::fprintf(g_trace, " %d", q.first);
@@ -1255,6 +1262,21 @@ std::string check_l3(const Scen& s, const SimOut& r) {
     return "";
 }
 
+// ... with S1 the steady bands' periods shrink (their looks cost less) while a swapped band's looks are bound by its
+// retunes, so the ratio above is no measure there: a swapped band keeps at least 80 % of the looks it gets in the same
+// scenario without S1 (the model: 0.3 s +-20 %: 28 / 24 with S1 against 28 / 26 without - the steady ones 85 against
+// 35; 0.1 s: 194 / 116 against 86 / 86). Known edge, not in the directed set: a strictly periodic swap (no jitter)
+// can lock in with one analysis time or another, with or without S1 (0.3 s without S1: 1 look; 0.051 s with S1: 6)
+std::string check_l3_s1(const Scen& s, const SimOut& r) {
+    if (s.name.rfind("swap", 0) != 0) return "";
+    const SimOut r0 = sim(s, SimOpt{});
+    for (int i : {1, 2})
+        if (double(r.looks[size_t(i)]) < 0.8 * double(r0.looks[size_t(i)]))
+            return "with S1 a band retuned every 2.8 s got " + std::to_string(r.looks[size_t(i)]) + " looks, without " +
+                   std::to_string(r0.looks[size_t(i)]) + " (L3, " + s.name + ")";
+    return "";
+}
+
 void run_sched(int rounds, uint64_t seed) {
     const std::vector<Scen> dir = directed_scens();
     const int ns = std::max(20, rounds / 200);   // random runs of 300-900 s each
@@ -1263,7 +1285,7 @@ void run_sched(int rounds, uint64_t seed) {
         std::string first;
         for (const Scen& s : dir) {
             const SimOut r = sim(s, o);
-            const std::string e = !r.err.empty() ? r.err + " [" + s.name + "]" : l3 ? check_l3(s, r) : "";
+            const std::string e = !r.err.empty() ? r.err + " [" + s.name + "]" : !l3 ? "" : o.s1 ? check_l3_s1(s, r) : check_l3(s, r);
             if (!e.empty() && !db++) first = e;
         }
         std::mt19937_64 rng(seed);
@@ -1277,6 +1299,8 @@ void run_sched(int rounds, uint64_t seed) {
     };
     SimOpt real;
     run("schedule (retunes, restarts; INV-A, C, G, H)", false, real, true);
+    real.s1 = true;
+    run("schedule with S1's varying analysis (INV-A, C, G, H)", false, real, true);
     SimOpt m;
     m.pick = pick_fb5;
     run("mutant: fb5cf77's pick (first looks always)", true, m, false);

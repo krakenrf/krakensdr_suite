@@ -30,11 +30,15 @@
 //       --min-channel HZ, --core-ratio X (classify --track: TrackerConfig::min_channel_hz /
 //       core_energy_ratio; a huge --min-channel turns the core rule off), --hump-guard 0|1
 //       (TrackerConfig::hump_guard)
+//       --settled 0|1 (classify --track: the service's S1 emulated - a settled track's detections,
+//       >= 3 hits and p >= its class's sure level, are not classified except in one look of 4:
+//       analyze()'s known bands; each snapshot's line then carries "known", the count)
 // Input scale: cu8 = (u - 127.5) / 127.5 (the runtime path); cs16 = v / 32768;
 // cf32 as is (full scale 1.0). --requant turns cs16 / cf32 into cu8 bytes
 // (round(x * 127.5 + 127.5), clipped) and takes the cu8 path.
 
 #include "sigclass/sigclass.hpp"
+#include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
 #include <algorithm>
@@ -63,6 +67,7 @@ struct Opts {
     // (rule parameters for experiments; < 0 = the core's default)
     double second_view_max = -1.0, image_share = -1.0, min_channel = -1.0, core_ratio = -1.0, lobe_widths = -1.0;
     int hump_guard = -1;
+    int settled = 0;
     int tone_merge = -1;
     bool track = false, requant = false;
     std::vector<std::string> files;
@@ -150,9 +155,56 @@ bool read_snap(std::ifstream& f, const std::string& fmt, int64_t start, int64_t 
 }
 
 std::vector<sigclass::Scored> run(sigclass::Analyzer& an, const Snap& s, double rate, const sigclass::Model* m,
-                                  std::vector<float>* fo, double rf = 0.0) {
-    if (s.is_u8) return an.analyze(s.u8.data(), s.u8.size() / 2, rate, m, fo, rf);
-    return an.analyze(s.c.data(), s.c.size(), rate, m, fo, rf);
+                                  std::vector<float>* fo, double rf = 0.0, const std::vector<sigclass::KnownBand>* known = nullptr) {
+    if (s.is_u8) return an.analyze(s.u8.data(), s.u8.size() / 2, rate, m, fo, rf, known);
+    return an.analyze(s.c.data(), s.c.size(), rate, m, fo, rf, known);
+}
+
+// the classes' sure levels from the model's metadata (its "classes": min_p; else "min_confidence", else 0.7) -
+// what the service's S1 reads (sigclass_service.cpp parse_table)
+struct SureLevels {
+    std::vector<std::pair<std::string, double>> min_p;
+    double min_conf = 0.7;
+    double of(const std::string& id) const {
+        for (const auto& x : min_p)
+            if (x.first == id) return x.second;
+        return min_conf;
+    }
+};
+SureLevels sure_levels(const std::string& meta) {
+    SureLevels r;
+    std::string v;
+    if (json_find(meta, "min_confidence", v)) {
+        const double d = std::atof(v.c_str());
+        if (d > 0.0 && d <= 1.0) r.min_conf = d;
+    }
+    const size_t k = meta.find("\"classes\"");
+    size_t p = k == std::string::npos ? std::string::npos : meta.find('[', k);
+    if (p == std::string::npos) return r;
+    int depth = 0;
+    size_t obj = 0;
+    for (p = p + 1; p < meta.size(); p++) {
+        const char c = meta[p];
+        if (c == '"') {
+            std::string tmp;
+            p = json_read_string(meta, p, tmp) - 1;
+            continue;
+        }
+        if (c == '{' || c == '[') {
+            if (depth++ == 0) obj = p;
+        } else if (c == '}' || c == ']') {
+            if (depth == 0) break;   // (the end of "classes")
+            if (--depth == 0 && c == '}') {
+                const std::string o = meta.substr(obj, p + 1 - obj);
+                std::string id, mp;
+                if (json_find(o, "id", id) && json_find(o, "min_p", mp) && mp != "null") {
+                    const double d = std::atof(mp.c_str());
+                    if (d >= 0.0 && d <= 1.01) r.min_p.push_back({id, d});
+                }
+            }
+        }
+    }
+    return r;
 }
 
 // iterate the snapshots of every input file
@@ -333,6 +385,10 @@ int mode_classify(const Opts& o) {
     if (o.hump_guard >= 0) tcfg.hump_guard = o.hump_guard != 0;
     sigclass::Tracker tr(tcfg);
     std::string cur;
+    // S1 emulated (--settled 1): the service's known_bands() on this tracker (its looks: the snapshots of the file)
+    const SureLevels sure = sure_levels(m.meta_json());
+    int looks = 0;
+    std::vector<sigclass::KnownBand> known;
     auto top3 = [&](int view, const std::vector<float>& p) {
         std::vector<int> idx(p.size());
         for (size_t i = 0; i < p.size(); i++) idx[i] = int(i);
@@ -346,8 +402,20 @@ int mode_classify(const Opts& o) {
         return s + "]";
     };
     const int bad = for_each_snapshot(o, [&](const std::string& path, int idx, double t0, const Snap& s) {
-        if (path != cur) { tr.clear(); cur = path; }
-        const auto res = run(an, s, o.rate, &m, nullptr, o.rf);
+        if (path != cur) { tr.clear(); cur = path; looks = 0; }
+        known.clear();
+        if (o.settled && o.track) {
+            // (tracker frame: --centre + offset; the analyzer's: --rf + offset, or the offset)
+            const double shift = (o.rf > 0.0 ? o.rf : 0.0) - o.centre;
+            for (const auto& k : tr.tracks()) {
+                if (k.hits < 3 || k.best < 0 || k.best >= int(k.probs.size())) continue;
+                if ((looks + k.id) % 4 == 0) continue;
+                if (!(t0 - k.last_s < tcfg.expire_s - 1.0)) continue;   // (it survives this update's expiry)
+                if (k.best_p >= sure.of(m.class_info(k.view, k.best).id)) known.push_back({k.lo_hz + shift, k.hi_hz + shift, k.view});
+            }
+            looks++;
+        }
+        const auto res = run(an, s, o.rate, &m, nullptr, o.rf, o.settled && o.track ? &known : nullptr);
         std::string line = "{\"file\":" + jstr(path) + ",\"snap\":" + std::to_string(idx) + ",\"t0_s\":" + num(t0, 9) +
                            ",\"detections\":[";
         for (size_t i = 0; i < res.size(); i++)
@@ -357,6 +425,7 @@ int mode_classify(const Opts& o) {
         // (the detections also classified in view 0 / those that took its answer)
         line += ",\"second_view\":[" + std::to_string(an.last_timing().second_view) + "," +
                 std::to_string(an.last_timing().second_view_taken) + "]";
+        if (o.settled) line += ",\"known\":" + std::to_string(an.last_timing().known);
         if (o.track) {
             const auto& ts = tr.update(res, o.centre, t0);   // (offsets relative to the capture unless --centre)
             line += ",\"tracks\":[";
@@ -749,6 +818,7 @@ int main(int argc, char** argv) {
         else if (a == "--min-channel") o.min_channel = std::atof(val().c_str());
         else if (a == "--core-ratio") o.core_ratio = std::atof(val().c_str());
         else if (a == "--hump-guard") o.hump_guard = std::atoi(val().c_str());
+        else if (a == "--settled") o.settled = std::atoi(val().c_str());
         else if (a == "--track") o.track = true;
         else if (a == "--requant") o.requant = true;
         else if (a.size() > 1 && a[0] == '-' && a[1] == '-') { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
