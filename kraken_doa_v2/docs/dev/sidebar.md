@@ -83,7 +83,12 @@ the dialogs. Each feature's own controls are in that feature's topic file.
     (`html.sb-drag-on`). No text on the controls.
 - **Remembered**: the order and which boxes are collapsed, in
   `localStorage['kraken_sb']` = `{v:1, order:[keys], closed:{key:0|1}}`,
-  written on every move and collapse. It is per browser, like the sidebar
+  written on every move and collapse. A box the page opens by itself (the
+  Wideband Board box, from the banner's `wbOpenSection`) is open for now
+  only: its stored state stays what it was (`sbBoxTransient`, saved in its
+  place, also by a later move or another box's toggle) until the operator
+  clicks its header or uses the footer buttons (pull request #8,
+  2026-11-24). It is per browser, like the sidebar
   width (`kraken_sidebar_w`): a layout is a per-screen choice, and it
   survives restarts of the receiver and of the browser. It is not a receiver
   setting, so "Reset Settings to Default" does not touch it and other
@@ -1194,3 +1199,14 @@ no JS errors. The 53 sidebar and 37 page checks pass unchanged. Not tested:
 a real phone (Android's long-press handling, iOS Safari, which has no
 `moveBefore`), the hover-only grip (headless Chromium reports `hover:none`, so
 the grip shows faintly there as on a touch screen).
+
+2026-11-24, the automatic reveal (pull request #8; 11 checks, the page from
+file:// in headless Chromium over the DevTools pipe, no receiver; the
+reveal through a click on `#wb-banner`): a collapse by header click is
+saved; the reveal opens the box and leaves the stored 1; another box's
+toggle keeps it; after a reload the box is collapsed again; after a reveal
+a header click collapses (1) and the next opens (0), both saved, and the box
+stays open over a reload; Open all after a reveal saves it open; Reset
+clears the store; no JS errors from the sidebar code. Main before the change
+failed exactly the three reveal checks (the reveal saved 0, the box came
+back open after a reload).
