@@ -72,6 +72,8 @@
 #include <tuple>
 #include <cmath>
 #include <condition_variable>
+#include <deque>
+#include <thread>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -499,12 +501,40 @@ struct HopAcc {
     // band within AG_NB_REACH_HZ below the next hop's centre): its offset,
     // height over the floor and power (its bin and the two beside it, dBFS)
     float win_off_hz = 0, win_over_db = -99, win_pow_db = -200;
+    uint32_t seq = 0;      // the visit (its spectrum estimate arrives later, by this number)
+    bool est_queued = false;
 };
 std::mutex acc_mutex;
 HopAcc hop_acc[NUM_DEVICES];
 std::atomic<uint32_t> stats_mask{0};   // the tuners of the plan (the hop thread sets it)
-std::atomic<uint32_t> stats_half_band_hz{956250};
-std::atomic<float> win_lo_hz{-287500.0f};   // the guess window's lower edge in a band (the plan's step - AG_NB_REACH_HZ)   // the kept band's half width (the plan's step / 2)
+std::atomic<uint32_t> stats_half_band_hz{956250};   // the kept band's half width (the plan's step / 2)
+std::atomic<float> win_lo_hz{-287500.0f};   // the guess window's lower edge in a band (the plan's step - AG_NB_REACH_HZ)
+
+// The spectrum estimate OFF the hop's path (2026-11-24, the Pi 5: computed
+// before the set was counted, five tuners' Welch estimates cost ~0.66 ms a
+// round - +3.0 % a sweep with Auto on and nothing to do). The conversion
+// worker counts the set at once and hands the visit's first packet to this
+// thread; its result (floor, strongest bins) is attached to the visit by its
+// number, and the hop thread learns from the visit when it is there (it is
+// used at the hop's NEXT visit, a sweep away). One that does not come in
+// time is a visit without a verdict.
+struct EstJob {
+    int t = 0;
+    uint32_t seq = 0;
+    std::vector<uint8_t> bytes;
+};
+struct EstResult {
+    uint32_t seq = 0;
+    bool done = false;
+    float floor = NAN;
+    float pk_off_hz = 0, pk_over_db = -99, win_off_hz = 0, win_over_db = -99, win_pow_db = -200;
+};
+std::mutex est_mutex;
+std::condition_variable est_cv;
+std::deque<EstJob> est_queue;
+std::vector<std::vector<uint8_t>> est_pool;     // spare buffers
+EstResult est_result[NUM_DEVICES][4];            // by seq % 4
+uint32_t visit_seq = 0;                           // (under acc_mutex)
 
 // Status (of the last completed sweep)
 std::atomic<uint32_t> ag_reduced_hops{0}, ag_clipped_hops{0}, ag_changes{0}, ag_writes{0}, ag_write_failures{0};
@@ -1572,6 +1602,54 @@ void floor_learn(int t, const HopAcc& a, int clip_g) {
     if (e.g >= 0 && quantize_down(L, std::min(e.g, clip_g)) < clip_g) ag_cur_floor_hops++;
 }
 
+// The visits waiting for their spectrum estimate (the hop thread only)
+struct FloorPending {
+    int t = 0;
+    HopAcc a;
+    int clip_g = 0;
+    uint32_t sweep = 0;
+    int age = 0;
+};
+std::vector<FloorPending> floor_pending;
+uint32_t ag_cur_late = 0;
+std::atomic<uint32_t> ag_late{0};
+// Learn from the visits whose estimate has come (in their order; with the
+// sweep they were taken in), at each round's end; one not there after
+// AG_EST_MAX_AGE rounds is a visit without a verdict
+constexpr int AG_EST_MAX_AGE = 4;
+void floor_pending_run() {
+    size_t w = 0;
+    for (size_t i = 0; i < floor_pending.size(); i++) {
+        FloorPending& fp = floor_pending[i];
+        EstResult r;
+        {
+            std::lock_guard<std::mutex> lk(est_mutex);
+            r = est_result[fp.t][fp.a.seq % 4];
+        }
+        if (r.seq == fp.a.seq && r.done) {
+            if (std::isfinite(r.floor)) {
+                fp.a.floor_db = r.floor;
+                fp.a.floor_n = 1;
+                fp.a.pk_off_hz = r.pk_off_hz;
+                fp.a.pk_over_db = r.pk_over_db;
+                fp.a.win_off_hz = r.win_off_hz;
+                fp.a.win_over_db = r.win_over_db;
+                fp.a.win_pow_db = r.win_pow_db;
+            }
+            const uint32_t now_sweep = sweep_idx;
+            sweep_idx = fp.sweep;   // (it is learned as of the sweep it was taken in)
+            floor_learn(fp.t, fp.a, fp.clip_g);
+            sweep_idx = now_sweep;
+        } else if (r.seq != fp.a.seq || ++fp.age > AG_EST_MAX_AGE) {
+            ag_cur_late++;
+        } else {
+            if (w != i) floor_pending[w] = std::move(fp);
+            w++;
+        }
+    }
+    floor_pending.resize(w);
+}
+
 // The gain tuner t takes for hop centre hz now: the common gain unless auto
 // is active (then the clipping rule's gain, and the linearity search's at or
 // under it, on the tuner's own list)
@@ -1760,6 +1838,8 @@ void ag_publish() {
     ag_learned.store(ag_cur_learned);
     ag_untestable.store(ag_cur_untestable);
     ag_guesses.store(ag_cur_guesses);
+    ag_late.store(ag_cur_late);
+    ag_cur_late = 0;
     ag_cur_nonlinear = ag_cur_learned = ag_cur_untestable = ag_cur_guesses = 0;
     ag_bad_pairs.store(ag_cur_bad_pairs);
     if (!ag_cur_scatter.empty()) {
@@ -1903,7 +1983,39 @@ static float packet_floor_db(const uint8_t* b, size_t nb, PacketCarrier& pc, flo
     return 10.0f * std::log10(fl / norm + 1e-30f);
 }
 
+// The estimator thread: one visit's spectrum at a time, normal priority
+static void est_thread_main() {
+    for (;;) {
+        EstJob j;
+        {
+            std::unique_lock<std::mutex> lk(est_mutex);
+            est_cv.wait(lk, [] { return !est_queue.empty(); });
+            j = std::move(est_queue.front());
+            est_queue.pop_front();
+        }
+        PacketCarrier pc;
+        const float fl = packet_floor_db(j.bytes.data(), j.bytes.size(), pc, win_lo_hz.load(std::memory_order_relaxed));
+        std::lock_guard<std::mutex> lk(est_mutex);
+        EstResult& r = est_result[j.t][j.seq % 4];
+        if (r.seq == j.seq) {
+            r.floor = fl;
+            r.pk_off_hz = pc.pk_off_hz;
+            r.pk_over_db = pc.pk_over_db;
+            r.win_off_hz = pc.win_off_hz;
+            r.win_over_db = pc.win_over_db;
+            r.win_pow_db = pc.win_pow_db;
+            r.done = true;
+        }
+        if (est_pool.size() < 16) est_pool.push_back(std::move(j.bytes));
+    }
+}
+void est_start() {
+    static std::once_flag once;
+    std::call_once(once, [] { std::thread(est_thread_main).detach(); });
+}
+
 void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32_t* hz, const int* gain, int n) {
+    est_start();
     const uint32_t mask = stats_mask.load(std::memory_order_relaxed);
     for (int t = 0; t < n && t < NUM_DEVICES && t < static_cast<int>(raw_set.size()); t++) {
         if (!(mask & (1u << t)) || hz[t] == 0 || gain[t] < 0) continue;
@@ -1918,26 +2030,39 @@ void sweep_note_hop_stats(const std::vector<SampleBuffer>& raw_set, const uint32
             ss += static_cast<uint32_t>(d * d);
             peak = ad > peak ? ad : peak;
         }
-        PacketCarrier pc;
-        const float floor = packet_floor_db(b, nb, pc, win_lo_hz.load(std::memory_order_relaxed));
-        std::lock_guard<std::mutex> lk(acc_mutex);
-        HopAcc& a = hop_acc[t];
-        if (a.hz != hz[t] || a.gain != gain[t]) a = HopAcc{hz[t], gain[t]};
-        if (std::isfinite(floor)) {
-            a.floor_db += floor;
-            if (pc.pk_over_db > a.pk_over_db) { a.pk_over_db = pc.pk_over_db; a.pk_off_hz = pc.pk_off_hz; }
-            if (pc.win_over_db > a.win_over_db) {
-                a.win_over_db = pc.win_over_db;
-                a.win_off_hz = pc.win_off_hz;
-                a.win_pow_db = pc.win_pow_db;
+        bool queue_it = false;
+        uint32_t seq = 0;
+        {
+            std::lock_guard<std::mutex> lk(acc_mutex);
+            HopAcc& a = hop_acc[t];
+            if (a.hz != hz[t] || a.gain != gain[t]) {
+                a = HopAcc{hz[t], gain[t]};
+                a.seq = ++visit_seq;
             }
-            a.floor_n++;
+            if (!a.est_queued) { a.est_queued = true; queue_it = true; seq = a.seq; }
+            a.values += nb;
+            a.clipped += clipped;
+            a.sumsq += ss;
+            a.peak = std::max(a.peak, peak);
+            a.packets++;
         }
-        a.values += nb;
-        a.clipped += clipped;
-        a.sumsq += ss;
-        a.peak = std::max(a.peak, peak);
-        a.packets++;
+        if (queue_it) {
+            // the visit's first packet goes to the estimator (what it reads of it)
+            const size_t take = std::min<size_t>(nb, 2 * FLOOR_N * FLOOR_FRAMES);
+            std::lock_guard<std::mutex> lk(est_mutex);
+            EstJob j;
+            j.t = t;
+            j.seq = seq;
+            if (!est_pool.empty()) { j.bytes = std::move(est_pool.back()); est_pool.pop_back(); }
+            j.bytes.assign(b, b + take);
+            {
+                EstResult& r = est_result[t][seq % 4];
+                r = EstResult{};
+                r.seq = seq;
+            }
+            if (est_queue.size() < 64) est_queue.push_back(std::move(j));
+            est_cv.notify_one();
+        }
     }
 }
 
@@ -2123,6 +2248,7 @@ std::string sweep_status_json() {
       << ",\"gain_pairs_nonlinear\":" << (auto_gain_on.load() ? ag_nonlinear.load() : 0u) << ",\"gain_step_learned\":" << (auto_gain_on.load() ? ag_learned.load() : 0u)
       << ",\"gain_probes_skipped\":" << (auto_gain_on.load() ? ag_untestable.load() : 0u)
       << ",\"gain_level_guesses\":" << (auto_gain_on.load() ? ag_guesses.load() : 0u)
+      << ",\"gain_est_late\":" << (auto_gain_on.load() ? ag_late.load() : 0u)
       << ",\"gain_probe_sweep\":" << (sweep_auto_gain_active() && ag_probe_sweep.load() ? "true" : "false")
 #if defined(RTLSDR_HAS_GAIN_FAST)
       << ",\"gain_fast\":true"
@@ -2506,7 +2632,10 @@ void sweep_thread() {
                     // clipping rule's: a clipped up-probe is refused there; its
                     // share must not take the hop's own gain down)
                     if (!(trial_mask.load() & (1u << t))) ag_learn(t, a, t_end);
-                    floor_learn(t, a, quantize_down(gains_of(t), learned_gain(hz, current_gain.load())));
+                    // the linearity rule learns from it when its spectrum is
+                    // there (floor_pending_run, below and at the next rounds)
+                    floor_pending.push_back({t, a, quantize_down(gains_of(t), learned_gain(hz, current_gain.load())), sweep_idx,
+                                             0});
                 }
                 // the status: the gain this hop was really taken with (its
                 // own: a probe's visit - the trial flag - counts in gain_probes)
@@ -2517,6 +2646,7 @@ void sweep_thread() {
                 }
             }
         }
+        floor_pending_run();
         tm.dwell = ms_between(t_clear, t_end);
         tm.round = ms_between(t0, t_end);
         tm.valid = sweep_state.valid_sets.load() - valid_from;
