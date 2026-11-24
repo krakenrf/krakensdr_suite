@@ -29,7 +29,24 @@ std::string set_range(double start_mhz, double stop_mhz);
 std::string set_tuners(const std::string& list);   // "0,1,4" | "all"; unknown indices dropped
 std::string set_res(const std::string& v);         // "4096" | "auto" | "0"
 std::string set_dwell(double ms);
-// heimdall's control lines (its replies and its status): its measured gain curve
+// SWEEP_GAINS:<f1,...,fn>|<g0,...,gn> (2026-11-24, gain by region): n <= 64 points
+// (Hz, strictly rising) cutting the axis into segments, n + 1 gains (dB, 0 - 50; not
+// the AGC); "|" = no table (the common gain everywhere). Kept by frequency whatever
+// the plan does, one per receiver, saved and replayed
+std::string set_gains(const std::string& v);
+// {"command":"set_sweep_gains",...} for heimdall: sent after every set_sweep and on
+// a change in sweep mode; note_gains_asked() just before (its answer, or an older
+// heimdall's "Unknown command", tells whether heimdall has it)
+std::string gains_command();
+void note_gains_asked();
+// heimdall's answer changed the table (it applied other values): the command to
+// save, once ("" = nothing)
+std::string take_gains_save();
+// a table is in force (or asked of a heimdall that hasn't answered yet): the 8091
+// header's channel 0 gain is then a hop's, not the common gain
+bool regions_active();
+// heimdall's control lines (its replies and its status): its measured gain curve,
+// its answer to set_sweep_gains
 void ingest_control_reply(const char* data, size_t n);
 // the state message has to go again (heimdall's answer changed it): taken by the
 // server's tick

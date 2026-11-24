@@ -316,7 +316,7 @@ struct Store {
     // median with now's - a round whose visits all came out odd moves nothing
     std::array<float, SEAM_HIST> base_hist{};
     uint8_t base_pos = 0;
-    float base_gain = NAN;        // the gain reference the history was taken at
+    float base_gain = NAN;        // the reference gain (g_ref) the histories were taken at
     // per seam the median of its kept steps when the common gain last changed (NaN = none):
     // used only while the seam has no step of its own at the new gain
     std::array<float, MAX_CHANNELS> seam_fallback{};
@@ -367,6 +367,30 @@ std::atomic<float> g_progress{0.0f};
 std::atomic<uint64_t> g_drops{0};
 std::atomic<bool> g_heim_dirty{false};
 std::atomic<float> g_gain{NAN};       // the common gain (note_gain), NaN = not known yet
+
+// Gain by region (SWEEP_GAINS; docs/dev/sweep-mode.md, "Gain by region"): points (Hz, strictly
+// rising) cut the frequency axis into segments, each with its own gain (dB, 0.1); no points and
+// no gains = no table (the common gain everywhere). One table per receiver: heimdall's answer when
+// it gave one (what it applied), else as asked
+struct Regions {
+    std::vector<int64_t> points;
+    std::vector<float> gains;   // points.size() + 1, or empty
+    bool operator==(const Regions& o) const { return points == o.points && gains == o.gains; }
+};
+std::mutex g_reg_mu;
+Regions g_reg;                            // g_reg_mu
+std::atomic<int> g_reg_known{0};          // 1 heimdall has set_sweep_gains, -1 it hasn't, 0 not told yet
+// The level shift's reference: the highest gain of the table (heimdall has it), else the common
+// gain (NaN = not known, -1 = the tuner's AGC: no shift)
+std::atomic<float> g_ref{NAN};
+void update_ref() {
+    float r = g_gain.load();
+    {
+        std::lock_guard<std::mutex> lk(g_reg_mu);
+        if (!g_reg.gains.empty() && g_reg_known.load() != -1) r = *std::max_element(g_reg.gains.begin(), g_reg.gains.end());
+    }
+    g_ref.store(r);
+}
 
 int16_t q16(float db) {
     const float v = std::round(db * 100.0f);
@@ -432,9 +456,10 @@ void shift_hop(int h, float d) {
 // don't show as steps. Hops whose reference moved by more than REWRITE_DB are
 // rewritten.
 // KRAKEN_SWEEP_SEAM_DEBUG=1: every evaluation logs (stderr) per seam the hops taken on each side
-// (h:floor@gain, * = at the ceiling), where the step came from (C the ceiling steps' median with
-// now's, M their median alone - now's past the cap or no ceiling hop on a side -, A all hops, -
-// none), the step and now's raw ceiling difference; then the base and the tuners' offsets
+// (h:floor@gain, * = at the reference gain), where the step came from (C the reference steps'
+// median with now's, M their median alone - now's past the cap or no reference hop on a side -, S
+// the hops at a gain both sides have, 0 none), the step and now's raw difference at the reference;
+// then the base and the tuners' offsets
 bool seam_debug() {
     static const bool on = [] { const char* e = std::getenv("KRAKEN_SWEEP_SEAM_DEBUG"); return e && *e == '1'; }();
     return on;
@@ -446,15 +471,16 @@ void evaluate(bool sweep_done = false) {
     S.eval_ms = now_ms();
     if (S.tuner.size() != static_cast<size_t>(p.H) || S.lv.empty()) return;
     std::array<float, MAX_CHANNELS> off{};
-    // a new common gain (the Gain slider): the histories start again, so the first
-    // sweep at the new gain sets the base and the steps as before the medians (one
-    // sweep, not 2 - 3)
-    {
-        const float gk = g_gain.load(std::memory_order_relaxed);
-        if (!(gk == S.base_gain || (!is_finite_value(gk) && !is_finite_value(S.base_gain)))) {
-            S.gain_changed();
-            S.base_gain = gk;
-        }
+    // a new reference gain (the common gain - the Gain slider -, or the table's highest):
+    // every hop at it moves at once and the steps with it - the histories start again, so
+    // the first sweep at the new gain sets the base and the steps as before the medians
+    // (one sweep, not 2 - 3). A region below the reference changing doesn't: the seams'
+    // steps are taken at the reference (below), and the base is a low quantile over
+    // every hop
+    const float ref_db = g_ref.load(std::memory_order_relaxed);
+    if (!(ref_db == S.base_gain || (!is_finite_value(ref_db) && !is_finite_value(S.base_gain)))) {
+        S.gain_changed();
+        S.base_gain = ref_db;
     }
     const bool dbg = seam_debug();
     std::ostringstream dl;
@@ -468,41 +494,58 @@ void evaluate(bool sweep_done = false) {
         const int b1 = static_cast<int>(static_cast<int64_t>(k + 2) * p.H / p.Kp);
         float step = 0.0f;
         if (b0 - a0 >= SEAM_MIN_BLOCK && b1 - b0 >= SEAM_MIN_BLOCK) {
-            // (auto gain: only the hops taken at the ceiling are evidence of the two
-            // tuners' step - a reduced hop's floor rests on the converter's floor
-            // (a pedestal) or on a gain curve that is right to 2 - 3 dB only; a side
-            // with no hop at the ceiling falls back to all of its hops)
-            const float ceil_db = g_gain.load(std::memory_order_relaxed);
-            auto at_ceiling = [&](int h) {
+            // (gain by region: the hops taken at the reference gain - the table's highest, else
+            // the common gain - are the evidence of the two tuners' step: a lower gain's floor
+            // rests partly on the converter's own floor (the sensitivity given up there, which
+            // must keep showing) and on a gain curve that is right to 2 - 3 dB only. A seam
+            // with no hop at the reference on a side - a region turned down over it - keeps
+            // the step last taken at the reference: the dongles' step doesn't move with a
+            // gain. Only a seam never seen at the reference takes the step from the hops at
+            // a gain both sides have (the seam's gain), else 0)
+            auto at_ref = [&](int h) {
                 const float g = static_cast<size_t>(h) < S.hop_gain.size() ? S.hop_gain[static_cast<size_t>(h)] : NAN;
-                return !is_finite_value(g) || g < 0.0f || !is_finite_value(ceil_db) || ceil_db < 0.0f || std::fabs(g - ceil_db) < 0.05f;
+                return !is_finite_value(g) || g < 0.0f || !is_finite_value(ref_db) || ref_db < 0.0f || std::fabs(g - ref_db) < 0.05f;
             };
+            auto gkey = [&](int h) {
+                const float g = static_cast<size_t>(h) < S.hop_gain.size() ? S.hop_gain[static_cast<size_t>(h)] : NAN;
+                return !is_finite_value(g) ? -9999 : g < 0.0f ? -10 : static_cast<int>(std::lround(g * 10.0f));
+            };
+            int seam_g = INT32_MIN;
+            {
+                int ka[SEAM_HOPS], kb[SEAM_HOPS], nka = 0, nkb = 0;
+                for (int h = b0 - 1; h >= a0 && h >= b0 - SEAM_HOPS; h--)
+                    if (S.tuner[static_cast<size_t>(h)] == ta) ka[nka++] = gkey(h);
+                for (int h = b0; h < b1 && h < b0 + SEAM_HOPS; h++)
+                    if (S.tuner[static_cast<size_t>(h)] == tb) kb[nkb++] = gkey(h);
+                int best = 0;
+                for (int i = 0; i < nka; i++) {
+                    const int ca = static_cast<int>(std::count(ka, ka + nka, ka[i])), cb = static_cast<int>(std::count(kb, kb + nkb, ka[i]));
+                    const int m = std::min(ca, cb);
+                    if (m > best || (m == best && m > 0 && ka[i] > seam_g)) { best = m; seam_g = ka[i]; }
+                }
+                if (best == 0) seam_g = INT32_MIN;
+            }
             float fa[SEAM_HOPS], fb[SEAM_HOPS];
             int na = 0, nb = 0;
-            // (round 10: a side without a hop at the ceiling - heimdall's search sweep
-            // takes the whole plan a step down, a block may stay below for good - keeps
-            // the step last taken at the ceiling: the dongles' step doesn't move with a
-            // gain, and a step from reduced hops would fold their sensitivity loss, or
-            // the curve's error, into the whole block. Only a seam never seen at the
-            // ceiling takes all of its hops)
-            // (the difference of the two sides' lowest floors; NaN = a side without hops)
-            auto take = [&](bool ceiling_only) {
+            // (the difference of the two sides' lowest floors among the hops `use` takes; NaN = a
+            // side without such hops)
+            auto take = [&](auto use) {
                 na = nb = 0;
                 for (int h = b0 - 1; h >= a0 && h >= b0 - SEAM_HOPS; h--)
-                    if (S.tuner[static_cast<size_t>(h)] == ta && (!ceiling_only || at_ceiling(h))) fa[na++] = S.floor[static_cast<size_t>(h)];
+                    if (S.tuner[static_cast<size_t>(h)] == ta && use(h)) fa[na++] = S.floor[static_cast<size_t>(h)];
                 for (int h = b0; h < b1 && h < b0 + SEAM_HOPS; h++)
-                    if (S.tuner[static_cast<size_t>(h)] == tb && (!ceiling_only || at_ceiling(h))) fb[nb++] = S.floor[static_cast<size_t>(h)];
+                    if (S.tuner[static_cast<size_t>(h)] == tb && use(h)) fb[nb++] = S.floor[static_cast<size_t>(h)];
                 if (na < 1 || nb < 1) return NAN;
                 return *std::min_element(fb, fb + nb) - *std::min_element(fa, fa + na);
             };
-            // the step: the median of the ceiling steps of the last SEAM_HIST completed sweeps
+            // the step: the median of the reference steps of the last SEAM_HIST completed sweeps
             // and of now (a step past SEAM_MAX_DB is no evidence: a clipped hop's floor, a
             // wide signal). One odd floor - a hop's short visit, a hop clipped at the
             // ceiling - used to make a step past the cap 0 or bend it by its own error for
             // that evaluation: the whole chain of blocks after the seam moved with it
             // (2026-11-24, the t_agc seam failures on the Pi)
             auto& hist = S.seam_hist[static_cast<size_t>(k)];
-            const float dc = take(true);
+            const float dc = take(at_ref);
             const float cur = is_finite_value(dc) && std::fabs(dc) <= SEAM_MAX_DB ? dc : NAN;
             float v[SEAM_HIST + 1];
             int nv = 0;
@@ -523,10 +566,14 @@ void evaluate(bool sweep_done = false) {
             } else if (is_finite_value(fbk)) {
                 step = fbk;   // (no step at the new gain yet: the one from before it)
             } else {
-                // a seam not yet seen at the ceiling: all of its hops
-                const float da = take(false);
-                src = is_finite_value(da) ? 'A' : '-';
-                step = is_finite_value(da) && std::fabs(da) <= SEAM_MAX_DB ? da : 0.0f;
+                // a seam never seen at the reference (a region below it over the seam since
+                // the grid began): the hops at the gain both sides have; none in common - a
+                // region's border on the seam -: 0, not the floors' difference (that would
+                // fold the lower region's lost sensitivity into the block, and its signals'
+                // heights with it)
+                const float ds = seam_g == INT32_MIN ? NAN : take([&](int h) { return gkey(h) == seam_g; });
+                src = is_finite_value(ds) && std::fabs(ds) <= SEAM_MAX_DB ? 'S' : '0';
+                step = src == 'S' ? ds : 0.0f;
             }
             if (sweep_done && is_finite_value(cur)) {
                 uint8_t& pos = S.seam_pos[static_cast<size_t>(k)];
@@ -540,13 +587,13 @@ void evaluate(bool sweep_done = false) {
                 dl << b;
                 for (int h = b0 - 1; h >= a0 && h >= b0 - SEAM_HOPS; h--)
                     if (S.tuner[static_cast<size_t>(h)] == ta) {
-                        snprintf(b, sizeof b, " %d:%.2f@%.1f%s", h, S.floor[static_cast<size_t>(h)], S.hop_gain[static_cast<size_t>(h)], at_ceiling(h) ? "*" : "");
+                        snprintf(b, sizeof b, " %d:%.2f@%.1f%s", h, S.floor[static_cast<size_t>(h)], S.hop_gain[static_cast<size_t>(h)], at_ref(h) ? "*" : "");
                         dl << b;
                     }
                 dl << " b";
                 for (int h = b0; h < b1 && h < b0 + SEAM_HOPS; h++)
                     if (S.tuner[static_cast<size_t>(h)] == tb) {
-                        snprintf(b, sizeof b, " %d:%.2f@%.1f%s", h, S.floor[static_cast<size_t>(h)], S.hop_gain[static_cast<size_t>(h)], at_ceiling(h) ? "*" : "");
+                        snprintf(b, sizeof b, " %d:%.2f@%.1f%s", h, S.floor[static_cast<size_t>(h)], S.hop_gain[static_cast<size_t>(h)], at_ref(h) ? "*" : "");
                         dl << b;
                     }
             }
@@ -716,6 +763,36 @@ bool apply_plan(bool bump) {
 
 // --- heimdall's answers ------------------------------------------------------------------
 std::atomic<bool> g_state_dirty{false};
+
+// "key":[n, ...] out of a reply line (false: absent or malformed)
+bool num_list(const std::string& line, const char* key, std::vector<double>& out) {
+    const std::string k = std::string("\"") + key + "\":";
+    size_t p = line.find(k);
+    if (p == std::string::npos) return false;
+    p += k.size();
+    const char* s = line.c_str();
+    while (s[p] == ' ') p++;
+    if (s[p] != '[') return false;
+    p++;
+    out.clear();
+    for (;;) {
+        while (s[p] == ' ') p++;
+        if (s[p] == ']') return true;
+        char* e = nullptr;
+        const double d = std::strtod(s + p, &e);
+        if (e == s + p || !std::isfinite(d) || out.size() > 4096) return false;
+        out.push_back(d);
+        p = static_cast<size_t>(e - s);
+        while (s[p] == ' ') p++;
+        if (s[p] == ',') { p++; continue; }
+        if (s[p] == ']') return true;
+        return false;
+    }
+}
+
+std::atomic<int64_t> g_reg_asked_ms{0};   // set_sweep_gains sent (now_ms; 0 = never)
+std::atomic<bool> g_reg_answered{false};  // its answer came since
+std::atomic<bool> g_reg_save{false};      // heimdall's answer changed the table: the loop saves it
 
 // The tuner's real gain against its gain list (heimdall's "gain_real_db" in its
 // status: [[list gain, real dB relative to the list's top], ...], measured - the
@@ -974,14 +1051,15 @@ struct Worker {
             // offset from the mean at this many frames): the same for hops of 1 or
             // 2 packets; the hop is stored against base + step + delta, so its
             // noise median shows at NOISE_SHOWN_DB whatever its frames
-            // The hop's levels referred to the reference gain (the common gain) - a
+            // The hop's levels referred to the reference gain (the table's highest, else the
+            // common gain: update_ref) - a
             // signal keeps its height whatever the gain it was taken with; the noise
             // too where the tuner's noise dominates (where a lower gain puts the hop on
             // the converter's floor, that floor shows higher: the sensitivity lost).
             // The tuner's AGC (-1) or an unknown gain: no correction
             // (with heimdall's measured curve: real(reference) - real(gain); without,
             // the list's difference - which over-corrects a far reduced hop by several dB)
-            const float hg = a.gain, ceil_db = g_gain.load(std::memory_order_relaxed);
+            const float hg = a.gain, ceil_db = g_ref.load(std::memory_order_relaxed);
             float corr = 0.0f;
             if (is_finite_value(hg) && hg >= 0.0f && is_finite_value(ceil_db) && ceil_db >= 0.0f) {
                 if (const uint32_t cv = g_curve_ver.load(std::memory_order_acquire); cv != curve_ver) {
@@ -1238,6 +1316,96 @@ std::string set_dwell(double ms) {
     return "SWEEP_DWELL:" + std::to_string(g_set.dwell);
 }
 
+namespace {
+std::string regions_cmd(const Regions& r) {
+    std::string o = "SWEEP_GAINS:";
+    for (size_t i = 0; i < r.points.size(); i++) o += (i ? "," : "") + std::to_string(r.points[i]);
+    o += "|";
+    for (size_t i = 0; i < r.gains.size(); i++) {
+        char b[16];
+        snprintf(b, sizeof b, "%.1f", r.gains[i]);
+        o += (i ? "," : "") + std::string(b);
+    }
+    return o;
+}
+// (g_reg_mu) the table taken (the caller then moves the reference: update_ref)
+void regions_set_locked(Regions r) {
+    if (r == g_reg) return;
+    g_reg = std::move(r);
+}
+}  // namespace
+
+std::string set_gains(const std::string& v) {
+    const size_t bar = v.find('|');
+    if (bar == std::string::npos) throw std::invalid_argument("format: SWEEP_GAINS:<f1,f2,...>|<g0,g1,...> (Hz | dB)");
+    auto split = [](const std::string& t) {
+        std::vector<std::string> out;
+        std::string x = t;
+        x.erase(std::remove_if(x.begin(), x.end(), [](unsigned char c) { return std::isspace(c); }), x.end());
+        if (x.empty()) return out;
+        std::stringstream ss(x);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) out.push_back(tok);
+        if (!x.empty() && x.back() == ',') out.push_back("");
+        return out;
+    };
+    const std::vector<std::string> pt = split(v.substr(0, bar)), gt = split(v.substr(bar + 1));
+    Regions r;
+    if (pt.size() > SWEEP_GAIN_POINTS_MAX) throw std::invalid_argument("at most " + std::to_string(SWEEP_GAIN_POINTS_MAX) + " points");
+    for (const std::string& t : pt) {
+        const double d = number(t);   // (throws on junk and an empty entry)
+        const int64_t hz = std::llround(d);
+        if (hz < 1 || hz > 4294967295LL) throw std::invalid_argument("a point is a frequency in Hz, 1 - 4294967295");
+        if (!r.points.empty() && hz <= r.points.back()) throw std::invalid_argument("the points must rise");
+        r.points.push_back(hz);
+    }
+    for (const std::string& t : gt) {
+        const double g = number(t);
+        if (g < 0 || g > 50) throw std::invalid_argument("a region's gain is 0 - 50 dB (not Auto)");
+        r.gains.push_back(static_cast<float>(std::round(g * 10.0) / 10.0));
+    }
+    if (!(r.points.empty() && r.gains.empty()) && r.gains.size() != r.points.size() + 1)
+        throw std::invalid_argument("one gain more than points: " + std::to_string(r.points.size() + 1) + " gains");
+    std::string out = regions_cmd(r);
+    {
+        std::lock_guard<std::mutex> lk(g_reg_mu);
+        regions_set_locked(std::move(r));
+    }
+    update_ref();
+    return out;
+}
+
+std::string gains_command() {
+    std::lock_guard<std::mutex> lk(g_reg_mu);
+    std::ostringstream o;
+    o << "{\"command\":\"set_sweep_gains\",\"points_hz\":[";
+    for (size_t i = 0; i < g_reg.points.size(); i++) o << (i ? "," : "") << g_reg.points[i];
+    o << "],\"gains_db\":[";
+    for (size_t i = 0; i < g_reg.gains.size(); i++) {
+        char b[16];
+        snprintf(b, sizeof b, "%.1f", g_reg.gains[i]);
+        o << (i ? "," : "") << b;
+    }
+    o << "]}";
+    return o.str();
+}
+
+void note_gains_asked() {
+    g_reg_answered.store(false);
+    g_reg_asked_ms.store(now_ms());
+}
+
+std::string take_gains_save() {
+    if (!g_reg_save.exchange(false)) return "";
+    std::lock_guard<std::mutex> lk(g_reg_mu);
+    return regions_cmd(g_reg);
+}
+
+bool regions_active() {
+    std::lock_guard<std::mutex> lk(g_reg_mu);
+    return !g_reg.gains.empty() && g_reg_known.load() != -1;
+}
+
 void ingest_control_reply(const char* data, size_t n) {
     // heimdall answers every command with one line; whole lines only (a reply
     // may be split over reads)
@@ -1259,6 +1427,39 @@ void ingest_control_reply(const char* data, size_t n) {
                 g_state_dirty.store(true);
             }
         }
+        // Gain by region: a status line with "gain_points_hz" (in its sweep object) =
+        // heimdall has set_sweep_gains; its answer to it ("points_hz", "gains_db": the
+        // table as applied - each gain on the tuners' list) is the table from now on
+        // (saved and broadcast); "Unknown command" within 2 s of asking with no answer =
+        // it has not (an older heimdall: the page offers no regions)
+        int known = 0;
+        if (line.find("\"gain_points_hz\"") != std::string::npos) known = 1;
+        if (line.find("\"status\":\"success\"") != std::string::npos && line.find("\"points_hz\"") != std::string::npos) {
+            std::vector<double> pts, gns;
+            if (num_list(line, "points_hz", pts) && num_list(line, "gains_db", gns) &&
+                (gns.size() == pts.size() + 1 || (pts.empty() && gns.empty()))) {
+                Regions r;
+                for (double d : pts) r.points.push_back(std::llround(d));
+                for (double d : gns) r.gains.push_back(static_cast<float>(std::round(d * 10.0) / 10.0));
+                bool changed;
+                {
+                    std::lock_guard<std::mutex> lk2(g_reg_mu);
+                    changed = !(r == g_reg);
+                    regions_set_locked(std::move(r));
+                }
+                if (changed) {
+                    g_reg_save.store(true);
+                    g_state_dirty.store(true);
+                }
+                g_reg_answered.store(true);
+                known = 1;
+            }
+        } else if (line.find("\"Unknown command\"") != std::string::npos) {
+            const int64_t asked = g_reg_asked_ms.load();
+            if (asked != 0 && now_ms() - asked < 2000 && !g_reg_answered.load()) known = -1;
+        }
+        if (known != 0 && g_reg_known.exchange(known) != known) g_state_dirty.store(true);
+        if (known != 0) update_ref();
     }
 }
 
@@ -1289,6 +1490,7 @@ bool note_gain(float db, bool from_header) {
         return false;   // the header still shows the gain from before the command
     }
     const float old = g_gain.exchange(db);
+    update_ref();
     return !(old == db);
 }
 
@@ -1395,6 +1597,20 @@ std::string state_json() {
         char gb[24];
         snprintf(gb, sizeof gb, "%.1f", g);
         o << ",\"gain_db\":" << gb;
+    }
+    // gain by region (2026-11-24): the table (heimdall's answer when it gave one) and
+    // whether heimdall has it (false: not told yet, or an older heimdall - no regions)
+    {
+        std::lock_guard<std::mutex> lk(g_reg_mu);
+        o << ",\"gain_points_hz\":[";
+        for (size_t i = 0; i < g_reg.points.size(); i++) o << (i ? "," : "") << g_reg.points[i];
+        o << "],\"gain_regions_db\":[";
+        for (size_t i = 0; i < g_reg.gains.size(); i++) {
+            char gb[16];
+            snprintf(gb, sizeof gb, "%.1f", g_reg.gains[i]);
+            o << (i ? "," : "") << gb;
+        }
+        o << "],\"gain_regions_known\":" << (g_reg_known.load() == 1 ? "true" : "false");
     }
     o << "}}";
     return o.str();

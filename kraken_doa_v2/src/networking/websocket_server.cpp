@@ -30,6 +30,7 @@
 #include "utils/fs_compat.hpp"
 #include "utils/tls_compat.hpp"
 #include "cert_status.hpp"
+#include "settings_store.hpp"
 #include <sys/stat.h>
 #include <iostream>
 #include <fstream>
@@ -1448,7 +1449,9 @@ void WebSocketServer::web_server_main() {
                 us_timer_set(broadcast_timer, [](struct us_timer_t* /*timer*/) {
                     net_stats_tick();   // NET_STATS (every mode)
                     // the sweep state again when heimdall's answer changed it (every
-                    // page: the state is shared)
+                    // page: the state is shared); the gain table heimdall applied is
+                    // the one saved
+                    if (const std::string g = sweep::take_gains_save(); !g.empty()) SettingsStore::record(g);
                     if (global_ssl_app && sweep::take_state_dirty()) WebSocketServer::broadcast_json_message(sweep::state_json());
                     // Sweep mode: the sweep frames only - no regular spectrum
                     // (nothing is FFT'd but the sweep's hops)

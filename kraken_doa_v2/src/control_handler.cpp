@@ -1024,8 +1024,18 @@ static void sweep_plan_after_replay() {
     ControlHandler::send_sweep_plan_now();
 }
 
+// the plan, then the gain table (heimdall doesn't keep it: it goes wherever the
+// plan goes)
 void ControlHandler::send_sweep_plan_now() {
     send_control_command(sweep::plan_command());
+    send_sweep_gains_now();
+}
+
+// (what heimdall sent before the ask is read first: only the lines after it answer it)
+void ControlHandler::send_sweep_gains_now() {
+    DataReceiver::drain_control_socket();
+    sweep::note_gains_asked();
+    send_control_command(sweep::gains_command());
 }
 
 void ControlHandler::send_sweep_plan() {
@@ -3002,6 +3012,25 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(json.str());
 
         cout << "FFT size changed: " << old_size << " -> " << FFTProcessor::get_current_size() << endl;
+    }
+    else if (message.starts_with("SWEEP_GAINS:")) {
+        // Sweep mode's gain by region (sweep.hpp, docs/dev/sweep-mode.md): the
+        // whole table, validated; saved (heimdall's answer replaces it when it
+        // applied other values - sweep::take_gains_save); every page gets the
+        // sweep message (no echo); heimdall gets it at once in sweep mode, else
+        // with the plan at the mode's entry (the replay leaves it to that too)
+        string applied;
+        try {
+            applied = sweep::set_gains(string(message.substr(12)));
+        } catch (const std::invalid_argument& e) {
+            throw CommandRejected(e.what());
+        } catch (const std::out_of_range&) {
+            throw CommandRejected("number out of range");
+        }
+        g_applied_cmd = applied;
+        if (!g_replaying_settings.load() && !sfscan::dispatching()) SettingsStore::record(applied);
+        if (sweep_mode_enabled.load() && !g_replaying_settings.load()) send_sweep_gains_now();
+        broadcast(sweep::state_json());
     }
     else if (message.starts_with("SWEEP_AUTO_GAIN:")) {
         // Sweep mode's Auto gain was removed (2026-11-24; docs/dev/sweep-mode.md):

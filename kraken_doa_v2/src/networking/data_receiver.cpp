@@ -564,7 +564,8 @@ void DataReceiver::data_receiver_thread() {
                     note_calibration_state(phase_comp_state, noise_source);
                     // the common gain as heimdall runs it: the pages learn a change
                     // (another page's, the assistant's) from the sweep message
-                    if (sweep::note_gain(EndianUtils::read_le_float(buffer.data(), offset + 32 + 4), true) && loop)
+                    // (with a gain table a header's gain is that hop's region's, not the common one)
+                    if (!sweep::regions_active() && sweep::note_gain(EndianUtils::read_le_float(buffer.data(), offset + 32 + 4), true) && loop)
                         loop->defer([] { WebSocketServer::broadcast_json_message(sweep::state_json()); });
                     std::array<float, MAX_CHANNELS> ch_gain{};
                     for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++)
