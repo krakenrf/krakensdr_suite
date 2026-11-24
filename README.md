@@ -361,7 +361,10 @@ dB scale, zoom, and the waterfall's speed, colours and contrast (Auto, or Min
 / Max: the levels shown as the darkest and the brightest colour). In
 Independent mode every tuner pane has its own View button, and its
 settings are that tuner's own (kept in the browser); the header's View
-button then sets all tuners at once. A change of the colours or the
+button then sets all tuners at once. The header's **T0**, **T1**, ...
+buttons choose which tuners' panes are shown (Shift-click: only that one;
+**All**: every one), and the shown panes get the room. A hidden tuner keeps
+running, and the browser remembers the choice. A change of the colours or the
 contrast recolours the whole waterfall, the lines already there too. The
 camera button next to View saves a picture (PNG) of the spectrum and the
 waterfall as shown, with a caption line (mode, frequencies, FFT size, gain,
@@ -534,6 +537,16 @@ it ends. Every ticked frequency inside the band is watched at once; the
 receiver retunes only for other bands. The receiver does the scanning, so it
 carries on with no browser open. Options include a VFO of its own for each
 active frequency, so that all are heard, decoded and transcribed at once.
+
+### Signal ID
+
+With **Signal ID** on (its box in the sidebar), the receiver labels every
+signal it finds in the band with its type - DMR, POCSAG, NFM voice, LoRa,
+ADS-B, DAB and more - right above the signal on the spectrum, and lists them
+in the box. Click a label to tune the selected VFO to that signal with the
+right decoder, demod and bandwidth. It looks at half a second of one tuner
+every few seconds, a few percent of one core, and needs the model file
+`kraken_doa_v2/sigclass.model`.
 
 ### Recording and logging
 

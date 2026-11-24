@@ -23,7 +23,10 @@ Two kinds of transmitter:
               burst every 60 ms, ramped), the TS1 / TS2 direct-mode syncs
 
   dmr_gen.py OUT.cf32 [--rate 48000] [--mode bs|dmo] [--cc 1] [--voice ambe|random]
-             --at T --slot 1|2 --dur S --src ID --dst TG [--at ... (next call)]
+             [--seed N] --at T --slot 1|2 --dur S --src ID --dst TG [--at ... (next call)]
+
+--seed N: the random generator's seed (voice bits, CACH, idle bursts);
+without it 31 + the colour code, so the same options give the same file.
 
 One transmitter as complex baseband (cf32) + OUT.json. Put several at their
 own bearings with plugins/sdk/tools/uca_scene.py. The FEC encoders follow the
@@ -335,7 +338,7 @@ def main():
         print(__doc__)
         sys.exit(2)
     out = a[0]
-    rate, mode, cc, voice = RATE, 'bs', 1, 'ambe'
+    rate, mode, cc, voice, seed = RATE, 'bs', 1, 'ambe', None
     calls, cur = [], None
     i = 1
     while i < len(a):
@@ -348,6 +351,8 @@ def main():
             cc = int(v)
         elif k == 'voice':
             voice = v
+        elif k == 'seed':
+            seed = int(v)
         elif k == 'at':
             cur = {'at': float(v), 'dur': 2.0, 'slot': 1, 'src': 1001, 'dst': 1}
             calls.append(cur)
@@ -356,7 +361,7 @@ def main():
         else:
             cur[k] = int(v)
         i += 2
-    rng = np.random.default_rng(31 + cc)
+    rng = np.random.default_rng(31 + cc if seed is None else seed)
     slot_syms = 144                                  # a timeslot = 30 ms
     t_end = max(c['at'] + c['dur'] + 0.8 for c in calls) + 0.5
     nslots = int(t_end * 4800 / slot_syms) + 2

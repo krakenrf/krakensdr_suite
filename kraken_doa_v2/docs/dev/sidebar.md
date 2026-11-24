@@ -941,6 +941,10 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   spectrum's header reading "Antenna N" (`updateChannelSelector`), next to
   the title, which is now "Spectrum · <demods heard>" (`updatePlotTitle`).
   Coherent mode only. The phone layout no longer moves it into the drawer.
+- **The tuners shown** (`#pane-pick`, 2026-11-24): independent mode's
+  buttons in the same place - `T0`..`Tn` lit while that tuner's pane is
+  shown, then `All` - `.view-btn`s without the header's `margin-left:auto`;
+  they wrap under the title on a phone. *operating-modes.md*.
 - **The display controls** (Scale, Zoom, Speed, Colors, Min, Max, Auto)
   were moved from a bar under the waterfall into the spectrum's header on
   2026-11-17 (the user's wish; the waterfall now reaches the panel's

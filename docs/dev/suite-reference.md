@@ -1390,7 +1390,10 @@ see the client CLAUDE.md
 - **Coherent**: the array (DoA, beamforming, calibration). **Wideband**: the
   tuner-spread scan (one stitched spectrum, discrete scanner). **Independent**:
   every tuner its own receiver - own frequency + gain, one spectrum +
-  waterfall pane per tuner, VFOs on any tuner, no calibration
+  waterfall pane per tuner, VFOs on any tuner, no calibration. The
+  spectrum header's T0..Tn buttons pick the panes shown (per browser,
+  localStorage `kraken_pane_hidden`; a hidden pane asks for 16 points -
+  kraken_doa_v2/docs/dev/operating-modes.md, "Tuners shown")
 - Client: `OPERATING_MODE:coherent|wideband|independent` (persisted; the old
   `WIDEBAND_MODE:` maps to it), `TUNER_FREQ:ch:mhz` / `TUNER_GAIN:ch:db` (+
   composite `TUNERS:` persisted), `SET_DECIMATOR_FREQ:id:khz:tuner` (VFO onto a

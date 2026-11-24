@@ -156,6 +156,8 @@ file(GLOB_RECURSE SIGNAL_PROCESSING_SOURCES "src/signal_processing/*.cpp")
 file(GLOB_RECURSE NETWORKING_SOURCES "src/networking/*.cpp")
 file(GLOB_RECURSE UTILS_SOURCES "src/utils/*.cpp")
 file(GLOB_RECURSE DIGITAL_SOURCES "src/digital/*.cpp")
+# signal classifier core (std + pffft only)
+file(GLOB_RECURSE SIGCLASS_SOURCES "src/sigclass/*.cpp")
 file(GLOB APP_SOURCES "src/*.cpp")
 
 # All source files
@@ -163,6 +165,7 @@ set(ALL_SOURCES
     ${SIGNAL_PROCESSING_SOURCES}
     ${NETWORKING_SOURCES}
     ${DIGITAL_SOURCES}
+    ${SIGCLASS_SOURCES}
     ${UTILS_SOURCES}
     ${APP_SOURCES}
 )

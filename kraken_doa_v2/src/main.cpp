@@ -36,6 +36,7 @@
 #include "recorder.hpp"
 #include "sweep.hpp"
 #include "power.hpp"
+#include "sigclass_service.hpp"
 #include "digital/dig_plugin.hpp"
 #include <iostream>
 #include <thread>
@@ -374,6 +375,9 @@ int main(int argc, char* argv[]) {
     // Sweep mode's engine (sweep.hpp): idle until the mode is entered
     sweep::start();
 
+    // Signal ID: the classifier's worker (idle until SIGCLASS:1; parked in sweep mode)
+    sigsvc::start();
+
     // Start worker threads
     thread data_worker(DataReceiver::data_receiver_thread);
     thread decimation_worker(DataReceiver::decimation_processor_thread);
@@ -508,6 +512,7 @@ int main(int argc, char* argv[]) {
     rdfmap::stop();
     vlvl::stop();
     array_cal::stop();
+    sigsvc::stop();
 
     // Signal all condition variables for shutdown
     {

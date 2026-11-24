@@ -6,8 +6,11 @@ the SACCH superframe (4 fragments, SR 3..0), a TX_REL frame - each frame
 with frame sync, LICH, SACCH (CRC-6) / FACCH1 (CRC-12), the punctured
 rate-1/2 K=5 code, interleaving and the frame scrambler.
 
-  nxdn_gen.py OUT.cf32 [--rate 48000] --at T --dur S --src UNIT --dst TG [--unit 1]
+  nxdn_gen.py OUT.cf32 [--rate 48000] [--seed N] --at T --dur S --src UNIT --dst TG [--unit 1]
               [--ran 1] [--outbound 1] [--at ... (next call)]
+
+--seed N: the random generator's seed (the AMBE+2 bits); without it 11, so
+the same options give the same file.
 
 One radio's calls as complex baseband (cf32) + OUT.json. Put several radios
 at their own bearings with plugins/sdk/tools/uca_scene.py.
@@ -142,20 +145,22 @@ def main():
         print(__doc__)
         sys.exit(2)
     out = a[0]
-    rate = 48000.0
+    rate, seed = 48000.0, None
     txs, cur = [], None
     i = 1
     while i < len(a):
         k, v = a[i].lstrip('-'), a[i + 1]
         if k == 'rate':
             rate = float(v)
+        elif k == 'seed':
+            seed = int(v)
         elif k == 'at':
             cur = {'at': float(v), 'dur': 3.0, 'src': 1001, 'dst': 100, 'ran': 1, 'outbound': 0}
             txs.append(cur)
         else:
             cur[k] = float(v) if k == 'dur' else int(v)
         i += 2
-    rng = np.random.default_rng(11)
+    rng = np.random.default_rng(11 if seed is None else seed)
     parts = []
     for tx in txs:
         y = modulate(call(tx['src'], tx['dst'], tx['ran'], tx['dur'], tx['outbound'], rng), rate)
