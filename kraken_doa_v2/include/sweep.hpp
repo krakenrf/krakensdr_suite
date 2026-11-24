@@ -29,23 +29,11 @@ std::string set_range(double start_mhz, double stop_mhz);
 std::string set_tuners(const std::string& list);   // "0,1,4" | "all"; unknown indices dropped
 std::string set_res(const std::string& v);         // "4096" | "auto" | "0"
 std::string set_dwell(double ms);
-// SWEEP_AUTO_GAIN:<1|0> (2026-11-23): heimdall lowers a hop that clips below the
-// common gain (the ceiling); kept and replayed like the other settings
-std::string set_auto_gain(bool on);
-bool auto_gain();
-// {"command":"set_sweep_auto_gain","enable":..} for heimdall, sent after the plan
-std::string auto_gain_command();
-// heimdall's answers: a reply line with "auto_gain" = it has the command;
-// "Unknown command" within 2 s of the command = it has not (state_json says)
-void note_auto_gain_asked();
+// heimdall's control lines (its replies and its status): its measured gain curve
 void ingest_control_reply(const char* data, size_t n);
-// the state message has to go again (the gain map's counts changed, heimdall
-// answered): taken by the server's tick
+// the state message has to go again (heimdall's answer changed it): taken by the
+// server's tick
 bool take_state_dirty();
-// the gain map (per hop the gain of the last completed sweep's packets) as
-// {"sweep_gain":{...}}; its version moves when it changed (once a completion)
-uint64_t gain_map_version();
-std::string gain_map_json();
 void set_running(bool on);   // SWEEP_RUN (not saved)
 bool running();
 
@@ -81,14 +69,8 @@ int64_t bins();
 // current_group_index (the round) and retuning_in_progress
 // gain_db: each channel's gain in the 8091 header (the gain its samples were
 // taken with; nullptr = unknown)
-// trial_mask: heimdall's 8091 per-channel trial bits (round 10: 0x10000 << ch in the
-// phase-state field, 0x4000 = any) shifted down - bit ch = channel ch's samples were
-// taken at a gain other than its hop's own (a probe). Such a visit is left out of the
-// picture while its hop has a current row (stored at most 3 completed sweeps ago);
-// it never counts as the hop's gain
 void on_packet(const uint8_t* iq, uint32_t channels, uint32_t samples, const float* freq_hz, const float* gain_db,
-               uint32_t counter, uint32_t round, bool retuning, uint32_t trial_mask = 0);
-uint64_t trials_left_out();   // trial visits not drawn (since the start)
+               uint32_t counter, uint32_t round, bool retuning);
 
 // --- frames (uWS loop) -----------------------------------------------------------------
 struct View {

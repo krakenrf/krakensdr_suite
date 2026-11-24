@@ -186,7 +186,6 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"sweep_tuners",             "SWEEP_TUNERS:",             VType::STRING, "all"},
         {"sweep_res",                "SWEEP_RES:",                VType::STRING, "auto"},
         {"sweep_dwell_ms",           "SWEEP_DWELL:",              VType::NUMBER, "5"},   // SWEEP_DWELL_DEFAULT_MS
-        {"sweep_auto_gain",          "SWEEP_AUTO_GAIN:",          VType::BOOL,   "0"},
         {"operating_mode",           "OPERATING_MODE:",           VType::STRING, "coherent"},
         // Station
         {"station_id",               "STATION_ID:",               VType::STRING, "KrakenSDR"},
