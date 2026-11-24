@@ -34,8 +34,16 @@ apps the way `run.sh` does on Linux.
    windows. The client starts once Heimdall's phase calibration has converged,
    and the browser opens the client UI.
    - Heimdall: <http://localhost:8070>
-   - DoA client: <https://localhost:8080> (self-signed certificate: accept the
-     browser warning once), DoA value page for the Android app <http://localhost:8081>
+   - DoA client: <https://localhost:8080>, DoA value page for the Android app <http://localhost:8081>.
+     The browser warns about the page until the device trusts this
+     receiver's own certificate authority: install it once per device, as
+     the README's [HTTPS certificate](README.md#https-certificate) section
+     shows (on this PC: open `kraken_doa_v2\krakensdr-ca.crt` → Install
+     Certificate → Current User → **Trusted Root Certification
+     Authorities**; other PCs and phones download it from the page's
+     Telemetry sheet → HTTPS certificate). kraken_doa makes and renews it
+     itself; a new computer name makes a new one, which every device then
+     installs again.
 4. **Windows Firewall** asks once per program whether `heimdall.exe` and
    `kraken_doa.exe` may accept connections - allow them on private networks
    to reach the web UIs from other PCs / phones (localhost always works).

@@ -1,4 +1,5 @@
 #include "control_handler.hpp"
+#include "sweep.hpp"
 #include "wb_board.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
@@ -11,6 +12,7 @@
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "signal_processing/bin_doa.hpp"
+#include "sigclass_service.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
 #include "continuous_scanner.hpp"
@@ -39,6 +41,7 @@
 #include "utils/parse_num.hpp"
 #include "power.hpp"
 #include "antenna_bias.hpp"
+#include "cert_status.hpp"
 #include <string>
 #include <utility>
 #include <sstream>
@@ -136,6 +139,9 @@ static void broadcast(const string& json) {
 
 // True while the saved settings are replayed (see the note further down)
 static std::atomic<bool> g_replaying_settings{false};
+// the startup replay ran (the sweep's saved plan is the client's): until then
+// a sweep mode adopted from heimdall's header leaves the plan to the replay
+static std::atomic<bool> g_settings_replayed{false};
 
 // --- AI assistant + decoder plugins ---
 //   AI_STATE                       -> {"ai_state":{...,"log":[...]}} + plugins, conversations, marks
@@ -343,6 +349,8 @@ static bool is_query_command(string_view msg) {
            // operating mode / independent tuners: {"operating_mode":...} broadcasts
            msg.starts_with("OPERATING_MODE:") || msg.starts_with("WIDEBAND_MODE:") ||
            msg.starts_with("TUNER_") || msg.starts_with("TUNERS:") ||
+           // sweep mode: {"sweep":...} broadcasts (the handlers save their settings)
+           msg.starts_with("SWEEP_") ||
            msg.starts_with("FFT_DECIMATION:");    // removed setting, ignored
 }
 
@@ -361,6 +369,7 @@ static bool is_replayed_command(string_view msg) {
         "BEAMFORMING_MODE:", "MANUAL_STEERING:", "STEERING_ANGLE:",
         "MVDR_DIAGONAL_LOADING:",
         "BIN_DOA:",   // 🎨 bearing spectrum
+        "SIGCLASS:",  // Signal ID (the pages draw the {"sigclass"} state)
         "STATION_ID:", "LOCATION_SOURCE:", "STATIC_LOCATION:",
         "LOG_INTERVAL:", "LOG_FORMAT:",
         "WEB_MAPPER:", "WEB_MAPPER_MODE:", "WEB_MAPPER_KEY:",
@@ -601,10 +610,14 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     out.push_back(build_wb_variant_json());
     // Operating mode + independent mode's per-tuner tuning
     out.push_back(build_operating_mode_json());
+    // sweep mode's settings (a page takes it as "the receiver knows sweep mode")
+    out.push_back(sweep::state_json());
     // ⏻ / ↻ the power actions this installation offers (and one in progress)
     out.push_back(power::state_message());
     // the antenna bias tees as heimdall reports them (also in every system_status)
     out.push_back(antbias::state_message());
+    // Signal ID: its state and the signals identified so far
+    out.push_back(sigsvc::state_json());
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     for (const auto& [key, cmd] : sync_replay_store) {
         out.push_back(make_sync_cmd_json(cmd));
@@ -630,6 +643,7 @@ std::string ControlHandler::request_plugin_tune(int vfo, double rf_hz) {
     if (!is_finite_value(rf_hz) || rf_hz <= 0) return "not a frequency";
     if (playback::active()) return "debug playback: the receiver frequency is fixed";
     if (wideband_mode_enabled.load(std::memory_order_relaxed)) return "the receiver is in wideband scan mode";
+    if (sweep_mode_enabled.load(std::memory_order_relaxed)) return "the receiver is in sweep mode";
     // the VFO sits at (or near) its tuner's centre: the RF itself must be tunable
     const uint64_t hz = static_cast<uint64_t>(llround(rf_hz));
     if (wb_variant_enabled.load(std::memory_order_relaxed)) {
@@ -716,7 +730,12 @@ bool ControlHandler::follow_wideband_ring(uint64_t rf_hz, bool from_stream) {
 // the DOA: handler's wideband branch; the scanner's worker thread calls the former)
 static std::mutex wideband_state_mutex;
 
-static const char* mode_name(int m) { return m == 1 ? "wideband" : m == 2 ? "independent" : "coherent"; }
+static const char* mode_name(int m) {
+    return m == 1 ? "wideband" : m == 2 ? "independent" : m == 3 ? "sweep" : "coherent";
+}
+
+// Why a tuning command can't run in sweep mode (the tuners follow the sweep)
+static const char* SWEEP_REFUSAL = "not in sweep mode - the tuners follow the sweep (Mode: Coherent / Wideband / Independent to tune)";
 
 // When the client last changed the mode itself (steady ms): heimdall's packets
 // keep reporting the old mode for a moment, which must not be "adopted" back
@@ -770,6 +789,10 @@ void ControlHandler::clamp_vfo_tuners() {
              << ") - on tuner 0 now" << endl;
     }
     if (moved) broadcast(MessageBuilders::build_decimator_info_message());
+    // the sweep's tuners: indices that are gone drop out (none left = all)
+    sweep::on_elements();
+    if (sweep_mode_enabled.load() && sweep::take_plan_changed()) send_sweep_plan_now();
+    broadcast(sweep::state_json());
 }
 
 bool ControlHandler::apply_operating_mode_state(int mode) {
@@ -805,6 +828,12 @@ bool ControlHandler::apply_operating_mode_state(int mode) {
             }
             wideband_mode_enabled = (mode == 1);
             independent_mode_enabled = (mode == 2);
+            sweep_mode_enabled = (mode == 3);
+            // the sweep engine takes the packets only in sweep mode (sweep.hpp);
+            // back from it every averaged spectrum restarts (they hold the
+            // bands from before the sweep)
+            if (cur == 3 || mode == 3) sweep::on_mode(mode == 3);
+            if (cur == 3) fft_reset_generation.fetch_add(1, std::memory_order_release);
             if (mode == 0 && doa_enabled_before_wideband.exchange(false)) {
                 if (!doa_enabled.load(std::memory_order_relaxed)) {
                     doa_enabled = true;
@@ -816,6 +845,7 @@ bool ControlHandler::apply_operating_mode_state(int mode) {
         }
     }
     if (changed) broadcast(build_operating_mode_json());
+    if (changed) broadcast(sweep::state_json());   // "active"
     return changed;
 }
 
@@ -878,9 +908,20 @@ static void persist_after_sf_scan() {
     record_decimator_snapshot();
 }
 
+// Sweep mode asked of heimdall (steady ms; 0 = not waiting), when its header
+// last showed the sweep flag, and the reason an older heimdall gave
+static std::atomic<long long> g_sweep_asked_ms{0};
+static std::atomic<bool> g_sweep_refused{false};
+static std::mutex g_sweep_reason_mu;
+static string g_sweep_reason;
+// heimdall shows the flag within ~1 s of the switch; an older one never does
+static constexpr long long SWEEP_FALLBACK_MS = 4000;
+
 void ControlHandler::note_server_mode(int mode) {
     static std::atomic<bool> pending{false};
     if (mode == operating_mode_index()) return;
+    // the client in sweep mode that heimdall hasn't shown yet: note_sweep_header decides
+    if (sweep_mode_enabled.load(std::memory_order_relaxed) && g_sweep_asked_ms.load(std::memory_order_relaxed) != 0) return;
     // The client in coherent mode against generic RTL-SDRs (the startup
     // default, a coherent request heimdall refused): it can't be - follow at
     // once, and don't save it (a KrakenSDR's saved mode stays the user's)
@@ -903,10 +944,125 @@ void ControlHandler::note_server_mode(int mode) {
                 indep_tuner_freq_hz[i] = static_cast<double>(tuner_frequencies[i].load());
         }
         if (mode != 1 && scanner_manager.isRunning()) scanner_manager.stop();
+        if (mode != 0 && continuous_scanner.isRunning()) continuous_scanner.stop();
         if (sfscan::running()) sfscan::stop(string("heimdall switched to ") + mode_name(mode) + " mode");
+        // heimdall sweeps: with the client's plan (the same, normally - both
+        // persist it); before the startup replay the replay sends it (the
+        // settings here are still the defaults)
+        if (mode == 3) {
+            // a recording (IQ: a fixed band; audio: nothing is demodulated) ends here
+            if (rec::writing()) handle_websocket_message("RECORDER_STOP");
+            sweep::set_running(true);
+            if (g_settings_replayed.load()) send_sweep_plan_now();
+        }
         apply_operating_mode_state(mode);
         if (!force) SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
     });
+}
+
+void ControlHandler::note_sweep_header(int hmode) {
+    const long long now = steady_ms_now();
+    if (hmode == 3) {
+        g_sweep_asked_ms.store(0, std::memory_order_relaxed);   // heimdall sweeps
+        return;
+    }
+    const long long asked = g_sweep_asked_ms.load(std::memory_order_relaxed);
+    if (asked == 0 || !sweep_mode_enabled.load(std::memory_order_relaxed)) return;
+    if (!g_sweep_refused.load(std::memory_order_relaxed) && now - asked < SWEEP_FALLBACK_MS) return;
+    if (!loop || g_sweep_asked_ms.exchange(0) == 0) return;   // once
+    loop->defer([hmode] {
+        if (!sweep_mode_enabled.load()) return;
+        string why;
+        {
+            std::lock_guard<std::mutex> lk(g_sweep_reason_mu);
+            why = g_sweep_reason;
+        }
+        why = why.empty() ? "heimdall did not switch to sweep mode (an older heimdall? update it)"
+                          : "heimdall refused sweep mode: " + why;
+        const int back = hmode == 3 ? 0 : hmode;
+        cerr << "Sweep mode: " << why << " - back to " << mode_name(back) << " mode" << endl;
+        apply_operating_mode_state(back);
+        SettingsStore::record(string("OPERATING_MODE:") + mode_name(back));
+        broadcast(build_operating_mode_json(why));
+    });
+}
+
+void ControlHandler::ingest_sweep_reply(const char* data, size_t n) {
+    // heimdall answers every command with ONE line, "status" first; the 2 Hz
+    // status broadcast has no "status". Whole lines only (a reply can be split
+    // over two reads), and only the replies that answer a sweep request:
+    // set_operating_mode's ({"status":"success","operating_mode":..} or one of
+    // its errors) and an older heimdall's "Unknown command" for set_sweep (a
+    // hint for the reason only - other unknown commands exist). Unrelated
+    // errors that merely contain "mode" / "sweep" are not a refusal
+    static std::mutex mu;
+    static string buf;
+    std::lock_guard<std::mutex> lk(mu);
+    const long long asked = g_sweep_asked_ms.load(std::memory_order_relaxed);
+    if (asked == 0 || steady_ms_now() - asked > SWEEP_FALLBACK_MS) {
+        buf.clear();
+        return;
+    }
+    buf.append(data, n);
+    if (buf.size() > (64u << 10)) buf.erase(0, buf.size() - (64u << 10));
+    size_t nl;
+    while ((nl = buf.find('\n')) != string::npos) {
+        const string line = buf.substr(0, nl);
+        buf.erase(0, nl + 1);
+        if (line.find("\"status\":\"error\"") == string::npos) continue;
+        const size_t m = line.find("\"message\":\"");
+        if (m == string::npos) continue;
+        const size_t a = m + 11, b = line.find('"', a);
+        const string msg = b == string::npos ? string() : line.substr(a, std::min<size_t>(b - a, 160));
+        const bool refusal = msg == "mode must be coherent, wideband or independent" ||   // an older heimdall
+                             msg == "sweep mode refused (not available on this hardware)" ||
+                             msg == "stop the scanner first";
+        if (msg == "Unknown command") {
+            std::lock_guard<std::mutex> lk2(g_sweep_reason_mu);
+            if (g_sweep_reason.empty()) g_sweep_reason = "it doesn't know set_sweep (an older heimdall - update it)";
+            continue;
+        }
+        if (!refusal) continue;
+        {
+            std::lock_guard<std::mutex> lk2(g_sweep_reason_mu);
+            g_sweep_reason = msg == "mode must be coherent, wideband or independent"
+                                 ? "it doesn't know sweep mode (an older heimdall - update it)" : msg;
+        }
+        g_sweep_refused.store(true, std::memory_order_relaxed);
+    }
+}
+
+// After a settings replay (startup, Reset settings): still in sweep mode - the
+// replayed mode was sweep, or another mode was refused (generic RTL-SDRs:
+// coherent), or heimdall's sweep was adopted before the replay - heimdall gets
+// the replayed plan: the SWEEP_* setters send nothing during a replay, and
+// heimdall may hold another plan (its own persisted one). Sent even when the
+// replayed OPERATING_MODE:sweep sent it already (heimdall restarts only on a
+// changed plan)
+static void sweep_plan_after_replay() {
+    if (!sweep_mode_enabled.load()) return;
+    sweep::take_plan_changed();
+    ControlHandler::send_sweep_plan_now();
+}
+
+// the plan, then the gain table (heimdall doesn't keep it: it goes wherever the
+// plan goes)
+void ControlHandler::send_sweep_plan_now() {
+    send_control_command(sweep::plan_command());
+    send_sweep_gains_now();
+}
+
+// (counted as asked BEFORE what heimdall sent so far is read: an answer to an earlier
+// table drained here then leaves this one open and is not taken over it)
+void ControlHandler::send_sweep_gains_now() {
+    sweep::note_gains_asked();
+    DataReceiver::drain_control_socket();
+    sweep::note_gains_sent();
+    send_control_command(sweep::gains_command());
+}
+
+void ControlHandler::send_sweep_plan() {
+    if (sweep_mode_enabled.load()) send_sweep_plan_now();
 }
 
 // Handle legacy FREQ_OFFSET[_n] for a decimator by POSITION. Decimator IDs
@@ -992,6 +1148,15 @@ void ControlHandler::handle_message_impl(string_view message) {
             // Standard hardware: heimdall only tunes the R820T range
             throw CommandRejected("outside the tuner range (24-1766 MHz)");
         }
+        if (sweep_mode_enabled.load(std::memory_order_relaxed)) {
+            if (!g_replaying_settings.load()) throw CommandRejected(SWEEP_REFUSAL);
+            // the replay (a start with heimdall sweeping, Reset settings): the
+            // frequency is the user's - kept for coherent / wideband scan mode,
+            // sent to heimdall when the mode leaves sweep (OPERATING_MODE:)
+            requested_freq_hz.store(freq_hz, std::memory_order_relaxed);
+            forEachMusicProcessor([&](auto* mp) { mp->setFrequency(static_cast<float>(freq_hz)); });
+            return;
+        }
 
         // If wideband mode is active, disable it first to turn off bias-tee/noise source
         // A manual retune ends a discrete scan: heimdall would keep hopping
@@ -1018,6 +1183,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             broadcast(build_operating_mode_json());
         }
 
+        const uint64_t prev_freq_hz = requested_freq_hz.load(std::memory_order_relaxed);  // 0 before the first retune
         requested_freq_hz.store(freq_hz, std::memory_order_relaxed);
         ChannelManager::set_frequency(static_cast<float>(freq_hz), active_channel.load(std::memory_order_relaxed));
 
@@ -1035,8 +1201,8 @@ void ControlHandler::handle_message_impl(string_view message) {
             bool changed = false;
 
             int side = wb_variant_mixer_side.load(std::memory_order_relaxed);
-            if (!wb_side_valid(side, freq_hz)) {
-                side = wb_auto_side(freq_hz);
+            if (const int want = wb_side_for_retune(side, prev_freq_hz, freq_hz); want != side) {
+                side = want;
                 wb_variant_mixer_side = side;
                 string side_cmd = string("MIXER_SIDE:") + wb_mixer_side_name(side);
                 if (!trunk::dispatching()) SettingsStore::record(side_cmd);   // (an excursion's: not the user's)
@@ -1143,6 +1309,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             throw CommandRejected("outside the tuner range (24-1766 MHz)");
         }
         const uint64_t freq_hz = static_cast<uint64_t>(llround(freq_mhz * 1e6));
+        if (sweep_mode_enabled.load(std::memory_order_relaxed)) throw CommandRejected(SWEEP_REFUSAL);
         // a retune by hand ends a saved-frequency scan (its own come through dispatching)
         if (sfscan::running() && !sfscan::dispatching() && !g_replaying_settings.load())
             sfscan::stop("the receiver was retuned by hand");
@@ -1184,6 +1351,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         stringstream json;
         json << "{\"set_gain\":{\"gain\":" << gain_db << ",\"channel\":" << ch << "}}";
         send_control_command(json.str());
+        // sweep mode: no type 7 header tells the other pages - the sweep message does
+        if (sweep::note_gain(gain_db, false) && sweep_mode_enabled.load()) broadcast(sweep::state_json());
     }
     else if (message.starts_with("CHANNEL:")) {
         int new_channel = parse_int(message, 8);
@@ -2382,25 +2551,48 @@ void ControlHandler::handle_message_impl(string_view message) {
         sfscan::hold(parse_bool(message.substr(12)));
         broadcast(sfscan::status_json());
     }
-    // Wideband board telemetry log (wb_board.cpp): on/off, seconds between
-    // rows, days kept. The values in force ride system_status
-    // (wb_telemetry.logging), so every browser shows them.
+    // Wideband board / host telemetry logs (wb_board.cpp): on/off, seconds
+    // between rows, days plain (Keep), then days gzipped (Then compressed; a
+    // change of either runs the retention pass). The values in force ride
+    // system_status (wb_telemetry.logging, hw.logging), so every browser shows
+    // them; the value as clamped is what is saved and echoed (set_applied)
     else if (message.starts_with("WB_LOG_ENABLE:") || message.starts_with("WB_LOG_PERIOD:") ||
-             message.starts_with("WB_LOG_KEEP:")) {
+             message.starts_with("WB_LOG_KEEP:") || message.starts_with("WB_LOG_ZIP:")) {
         const size_t colon = message.find(':');
         const double v = parse_double(message, colon + 1);
         if (!std::isfinite(v)) throw CommandRejected("a number is required");
-        string applied;
+        const string_view prefix = message.substr(0, colon + 1);
+        double applied;
         if (message.starts_with("WB_LOG_ENABLE:")) {
             wb_board_set_log_enabled(v != 0);
-            applied = string("WB_LOG_ENABLE:") + (v != 0 ? "1" : "0");
+            applied = v != 0 ? 1 : 0;
         } else if (message.starts_with("WB_LOG_PERIOD:")) {
-            applied = "WB_LOG_PERIOD:" + to_string(wb_board_set_log_period(static_cast<int>(std::clamp(v, 1.0, 3600.0))));
+            applied = wb_board_set_log_period(static_cast<int>(std::clamp(v, 1.0, 3600.0)));
+        } else if (message.starts_with("WB_LOG_KEEP:")) {
+            applied = wb_board_set_log_keep_days(static_cast<int>(std::clamp(v, 1.0, 365.0)));
         } else {
-            applied = "WB_LOG_KEEP:" + to_string(wb_board_set_log_keep_days(static_cast<int>(std::clamp(v, 1.0, 365.0))));
+            applied = wb_board_set_log_zip_days(static_cast<int>(std::clamp(v, 0.0, 3650.0)));
         }
-        if (!g_replaying_settings.load()) SettingsStore::record(applied);
-        cout << "Wideband board log: " << applied << endl;
+        set_applied(prefix, applied, 0);
+        cout << "Wideband board / host log: " << *g_applied_cmd << endl;
+    }
+    // WB_LOG_RETENTION:<keep>,<then compressed> - the page's two selects as ONE change (one pass on
+    // the final pair; a page that has it sends both whenever either changes). Saved as the two
+    // settings above (the replay uses those), clamped like them; the clamped pair is echoed.
+    // WB_LOG_KEEP / WB_LOG_ZIP stay for older pages, the replay and scripts
+    else if (message.starts_with("WB_LOG_RETENTION:")) {
+        const string_view v = message.substr(17);
+        const size_t comma = v.find(',');
+        if (comma == string_view::npos) throw CommandRejected("format: WB_LOG_RETENTION:<keep days>,<then compressed days>");
+        const double k = parse_double(v.substr(0, comma), 0), z = parse_double(v, comma + 1);
+        int keep = 0, zip = 0;
+        wb_board_set_log_retention(static_cast<int>(std::clamp(k, 1.0, 365.0)), static_cast<int>(std::clamp(z, 0.0, 3650.0)), &keep, &zip);
+        if (!g_replaying_settings.load() && !sfscan::dispatching()) {
+            SettingsStore::record("WB_LOG_KEEP:" + to_string(keep));
+            SettingsStore::record("WB_LOG_ZIP:" + to_string(zip));
+        }
+        g_applied_cmd = "WB_LOG_RETENTION:" + to_string(keep) + "," + to_string(zip);
+        cout << "Wideband board / host log: " << *g_applied_cmd << endl;
     }
     else if (message.starts_with("SFSCAN_SQUELCH:") || message.starts_with("SFSCAN_DWELL:") ||
              message.starts_with("SFSCAN_HANG:") || message.starts_with("SFSCAN_MAX:") ||
@@ -2464,6 +2656,14 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (v != "0" && v != "1") throw CommandRejected("format: BIN_DOA:0|1");
         bin_doa::set_enabled(v == "1");
     }
+    else if (message.starts_with("SIGCLASS:")) {
+        // Signal ID on / off (sigclass_service.hpp; persisted, replayed);
+        // its state goes out as {"sigclass":...}. Read-only: nothing reaches
+        // heimdall, so it is allowed during a playback (sandboxed setting)
+        const string_view v = message.substr(9);
+        if (v != "0" && v != "1") throw CommandRejected("format: SIGCLASS:0|1");
+        sigsvc::set_enabled(v == "1");
+    }
     else if (message.starts_with("DIGITAL_CLEAR:")) {
         int id = parse_int(message, 14);
         auto inst = decimator_manager.getDecimator(id);
@@ -2489,6 +2689,52 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
         handle_message_impl("GET_DECIMATOR_INFO");  // push restored state to browsers
     }
+    else if (message.starts_with("SWEEP_RANGE:") || message.starts_with("SWEEP_TUNERS:") ||
+             message.starts_with("SWEEP_RES:") || message.starts_with("SWEEP_DWELL:") || message.starts_with("SWEEP_RUN:")) {
+        // Sweep mode's settings (sweep.hpp, docs/dev/sweep-mode.md): each is
+        // answered by the sweep message to every page (no echo); all but
+        // SWEEP_RUN saved; heimdall gets the plan when it changed in sweep
+        // mode (the settings replay leaves that to OPERATING_MODE:sweep)
+        const size_t c = message.find(':');
+        const string key(message.substr(0, c + 1)), val(message.substr(c + 1));
+        string applied;
+        try {
+            if (key == "SWEEP_RANGE:") {
+                const size_t c2 = val.find(':');
+                if (c2 == string::npos) throw std::invalid_argument("format: SWEEP_RANGE:<start MHz>:<stop MHz>");
+                size_t u1 = 0, u2 = 0;
+                const string a = val.substr(0, c2), b = val.substr(c2 + 1);
+                const double lo = stod(a, &u1), hi = stod(b, &u2);
+                require_whole(a, u1);
+                require_whole(b, u2);
+                applied = sweep::set_range(lo, hi);
+            } else if (key == "SWEEP_TUNERS:") {
+                applied = sweep::set_tuners(val);
+            } else if (key == "SWEEP_RES:") {
+                applied = sweep::set_res(val);
+            } else if (key == "SWEEP_DWELL:") {
+                applied = sweep::set_dwell(parse_double(message, key.size()));
+            } else {
+                if (val != "1" && val != "0" && val != "true" && val != "false")
+                    throw std::invalid_argument("SWEEP_RUN takes 1 or 0");
+                const bool on = parse_bool(val);
+                sweep::set_running(on);
+                if (sweep_mode_enabled.load())
+                    send_control_command(string("{\"command\":\"set_sweep\",\"run\":") + (on ? "true" : "false") + "}");
+            }
+        } catch (const std::invalid_argument& e) {
+            throw CommandRejected(e.what());
+        } catch (const std::out_of_range&) {
+            throw CommandRejected("number out of range");
+        }
+        if (!applied.empty()) {
+            g_applied_cmd = applied;
+            if (!g_replaying_settings.load() && !sfscan::dispatching()) SettingsStore::record(applied);
+            if (sweep_mode_enabled.load() && !g_replaying_settings.load() && sweep::take_plan_changed())
+                send_sweep_plan_now();
+        }
+        broadcast(sweep::state_json());
+    }
     else if (message.starts_with("WIDEBAND_MODE:")) {
         // Old form of OPERATING_MODE (older pages / scripts): off only leaves
         // the wideband scan
@@ -2502,8 +2748,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         // Top-bar Mode selector: coherent | wideband | independent
         string m(message.substr(15));
         for (auto& c : m) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-        const int mode = m == "coherent" ? 0 : m == "wideband" ? 1 : m == "independent" ? 2 : -1;
-        if (mode < 0) throw CommandRejected("mode must be coherent, wideband or independent");
+        const int mode = m == "coherent" ? 0 : m == "wideband" ? 1 : m == "independent" ? 2 : m == "sweep" ? 3 : -1;
+        if (mode < 0) throw CommandRejected("mode must be coherent, wideband, independent or sweep");
         // The Wideband (downconverter) variant parks every tuner at the IF:
         // heimdall refuses both non-coherent modes
         if (mode != 0 && wb_variant_enabled.load(std::memory_order_relaxed)) {
@@ -2530,8 +2776,35 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
         if (mode != operating_mode_index() && sfscan::running()) sfscan::stop(string("the mode changed to ") + mode_name(mode));
         const bool was_coherent = operating_mode_index() == 0;
+        const bool was_sweep = operating_mode_index() == 3;
+        if (mode == 3) {
+            // a recording ends: IQ takes a fixed band, audio has nothing to demodulate
+            // (the assistant's capture ends at the first hop by itself)
+            if (rec::writing()) handle_websocket_message("RECORDER_STOP");
+            // entering runs; the plan goes first (heimdall starts hopping with it)
+            sweep::set_running(true);
+            send_sweep_plan_now();
+            {
+                std::lock_guard<std::mutex> lk(g_sweep_reason_mu);
+                g_sweep_reason.clear();
+            }
+            g_sweep_refused.store(false);
+            g_sweep_asked_ms.store(playback::active() ? 0 : steady_ms_now(), std::memory_order_relaxed);
+        } else {
+            g_sweep_asked_ms.store(0, std::memory_order_relaxed);
+        }
         ControlHandler::apply_operating_mode_state(mode);   // parks / restores DoA, tells browsers
         send_control_command(string("{\"set_operating_mode\":{\"mode\":\"") + mode_name(mode) + "\"}}");
+        if (mode == 3) sweep::take_plan_changed();   // (sent just above)
+        // Out of sweep mode into coherent / wideband scan: heimdall goes back to
+        // ITS frequency - the client's (a FREQ replayed meanwhile) goes after it
+        if (was_sweep && (mode == 0 || mode == 1)) {
+            if (const uint64_t hz = requested_freq_hz.load()) {
+                ChannelManager::set_frequency(static_cast<float>(hz), active_channel.load(std::memory_order_relaxed));
+                send_control_command("{\"set_frequency\":{\"frequency\":" + to_string(hz) + ",\"channel\":" +
+                                     to_string(active_channel.load()) + "}}");
+            }
+        }
         // Saved here: OPERATING_MODE is not echoed to browsers (is_query_command,
         // they get the operating_mode message), and that path is also what saves
         // a command - the mode was never remembered, so every cold start put
@@ -2539,10 +2812,13 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (!g_replaying_settings.load()) SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
         // Entering independent from coherent: tuners without a saved tuning
         // start where the array was (so the saved set is complete)
-        if (mode == 2 && was_coherent) {
-            // (the centre asked for: the stream's header may still be a search step / an excursion's centre)
-            const double f0 = requested_freq_hz.load() ? static_cast<double>(requested_freq_hz.load())
-                                                       : static_cast<double>(tuner_frequencies[0].load());
+        if (mode == 2 && (was_coherent || was_sweep)) {
+            // (the centre asked for: from coherent the stream's header may
+            // still be a control-channel search step / an excursion's centre;
+            // from sweep mode it is where the array was before it - the
+            // sweep's hops aren't anyone's tuning)
+            const uint64_t req = requested_freq_hz.load();
+            const double f0 = req ? static_cast<double>(req) : static_cast<double>(tuner_frequencies[0].load());
             for (int ch = 0; ch < MAX_CHANNELS; ch++)
                 if (indep_tuner_freq_hz[ch].load() <= 0 && f0 > 0) indep_tuner_freq_hz[ch] = f0;
             if (!g_replaying_settings.load()) SettingsStore::record("TUNERS:" + tuners_string());
@@ -2561,6 +2837,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (c == string::npos) throw CommandRejected("format: TUNER_FREQ:ch:mhz / TUNER_GAIN:ch:db");
         const int ch = parse_int(p.substr(0, c), 0);
         const double v = parse_double(p.substr(c + 1), 0);
+        if (sweep_mode_enabled.load()) throw CommandRejected(SWEEP_REFUSAL);
         if (!independent_mode_enabled.load()) throw CommandRejected("only in independent mode");
         if (ch < 0 || ch >= min(active_num_elements.load(), MAX_CHANNELS)) throw CommandRejected("no such tuner");
         if (is_freq) {
@@ -2610,6 +2887,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             throw CommandRejected("outside the tuner range (24-1766 MHz)");
         }
         const uint64_t base_freq_hz = static_cast<uint64_t>(llround(freq_mhz * 1e6));
+        if (sweep_mode_enabled.load(std::memory_order_relaxed)) throw CommandRejected(SWEEP_REFUSAL);
 
         // Send command to Heimdall server
         stringstream json;
@@ -2642,6 +2920,10 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (continuous_scanner.isRunning() || sfscan::running()) {
             broadcast("{\"scanner_stopped\":true}");  // resets the browser's Start button
             throw CommandRejected(sfscan::running() ? "stop the saved-frequency scan first" : "stop the continuous scanner first");
+        }
+        if (sweep_mode_enabled.load()) {
+            broadcast("{\"scanner_stopped\":true}");
+            throw CommandRejected("not in sweep mode - the discrete scanner runs in wideband scan mode");
         }
         // it locks onto a signal by switching to coherent mode (DoA)
         if (const string why = generic_mode_refusal(0); !why.empty()) {
@@ -2774,6 +3056,30 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(json.str());
 
         cout << "FFT size changed: " << old_size << " -> " << FFTProcessor::get_current_size() << endl;
+    }
+    else if (message.starts_with("SWEEP_GAINS:")) {
+        // Sweep mode's gain by region (sweep.hpp, docs/dev/sweep-mode.md): the
+        // whole table, validated; saved (heimdall's answer replaces it when it
+        // applied other values - sweep::take_gains_save); every page gets the
+        // sweep message (no echo); heimdall gets it at once in sweep mode, else
+        // with the plan at the mode's entry (the replay leaves it to that too)
+        string applied;
+        try {
+            applied = sweep::set_gains(string(message.substr(12)));
+        } catch (const std::invalid_argument& e) {
+            throw CommandRejected(e.what());
+        } catch (const std::out_of_range&) {
+            throw CommandRejected("number out of range");
+        }
+        g_applied_cmd = applied;
+        if (!g_replaying_settings.load() && !sfscan::dispatching()) SettingsStore::record(applied);
+        if (sweep_mode_enabled.load() && !g_replaying_settings.load()) send_sweep_gains_now();
+        broadcast(sweep::state_json());
+    }
+    else if (message.starts_with("SWEEP_AUTO_GAIN:")) {
+        // Sweep mode's Auto gain was removed (2026-11-24; docs/dev/sweep-mode.md):
+        // accepted and ignored for an older page in an open tab (SWEEP_ is in
+        // is_query_command: not echoed, not saved)
     }
     else if (message.starts_with("FFT_DECIMATION:")) {
         // The "Downsampling" setting is gone: each page gets its plot's width
@@ -2919,6 +3225,25 @@ string ControlHandler::apply_command(string_view message) {
         // refused during a playback there
         if (antbias::is_command(message))
             return antbias::handle_command(message, from_page && !g_replaying_settings.load());
+        // HTTPS certificate scope (cert_status.cpp, docs/dev/https-certificate.md):
+        // a page's own socket only - the scope decides what the CA can vouch
+        // for on every device that installed it. Not in the settings
+        // (cert_options is its store, read at the next start), refused during
+        // a playback; the applied value is echoed (the pages draw the status)
+        if (message.starts_with("CERT_SCOPE:")) {
+            string applied;
+            const string why = certstatus::set_scope(message.substr(11), from_page && !g_replaying_settings.load(), &applied);
+            if (why.empty()) broadcast(make_sync_cmd_json(applied));
+            return why;
+        }
+        // a new certificate authority at the next start (fine rule 29): the
+        // same rules - every device must then install the new one
+        if (message.starts_with("CERT_NEW_CA:")) {
+            string applied;
+            const string why = certstatus::set_new_ca(message.substr(12), from_page && !g_replaying_settings.load(), &applied);
+            if (why.empty()) broadcast(make_sync_cmd_json(applied));
+            return why;
+        }
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
         // (an excursion outside the span ends first; a control-channel search refuses the other scanners / a playback)
@@ -2950,6 +3275,7 @@ string ControlHandler::apply_command(string_view message) {
             g_replaying_settings.store(true);
             for (const auto& cmd : defaults) handle_websocket_message(cmd);
             g_replaying_settings.store(false);
+            sweep_plan_after_replay();
             return "";
         }
 
@@ -3008,7 +3334,9 @@ void ControlHandler::send_control_command(const string& cmd) {
 void ControlHandler::apply_persisted_settings() {
     auto commands = SettingsStore::apply_commands();
     if (commands.empty()) {
+        g_settings_replayed = true;
         declog::settings_restored();
+        wb_board_settings_restored();
         return;
     }
     cout << "Restoring " << commands.size() << " persisted setting(s)" << endl;
@@ -3019,6 +3347,9 @@ void ControlHandler::apply_persisted_settings() {
         handle_websocket_message(cmd);
     }
     g_replaying_settings.store(false);
+    g_settings_replayed = true;
+    sweep_plan_after_replay();
     // the decoder log's retention pass waited for the stored Keep / Then compressed days
     declog::settings_restored();
+    wb_board_settings_restored();   // ... and the telemetry logs' (WB_LOG_KEEP / WB_LOG_ZIP)
 }

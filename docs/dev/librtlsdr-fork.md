@@ -224,6 +224,578 @@ on every platform. The two notes below were bullets of the Windows section.
   set after ALL tuners, for every channel), retuning the displayed channel
   first, an interruptible sweep, an averaging reset on a retune
 
+## A 3-register tuner read drops 2 samples (measured 2026-11-21)
+
+Every retune moves that dongle's sample stream by exactly 2 samples against
+the others (found with sweep mode: `heimdall_v2/docs/dev/operating-modes.md`,
+*Review fixes* 8). The cause is not the PLL: it is the I2C READ OF EXACTLY 3
+REGISTERS, the PLL lock check `r82xx_read(priv, 0x00, data, 3)` in
+`r82xx_set_pll` (tuner_r82xx.c; osmocom's driver reads the same 3, and so
+does `r82xx_set_pll_yc`). Each such read makes the RTL2832U drop 4 bytes
+(2 I/Q samples) from its bulk stream.
+
+Measured on the KrakenSDR without heimdall (job scratch `lagprobe.py`:
+ctypes on the fork's librtlsdr.so, dongles 1000 / 1001 / 1002 streaming
+continuously with the noise source on, the lag of 1001 and 1002 against
+1000 from a 262144-point cross-correlation before and after ONE operation
+repeated 100 times on 1001; 1002 the control - it never moved, and 2 s of
+nothing moved nothing):
+
+| Operation on one dongle, x 100 | Lag change, samples |
+|---|---|
+| `rtlsdr_set_center_freq`: + 100 kHz and back, to the SAME frequency, 433 MHz and back | -200.00 each (-2.000 a call) |
+| `rtlsdr_set_center_freq_fast` (KEEP_AUTOTUNE) + `rtlsdr_finish_tune` | -202.00 |
+| a gain write; `rtlsdr_is_tuner_PLL_locked` (reads 5) | 0.00 |
+| one register rewritten unchanged: 0x05, 0x10, 0x12, 0x14, 0x15, 0x16, 0x17, 0x1a; the autotune clock 128 kHz then 8 kHz | 0.00 each |
+| the same, written while the autotune clock is at 128 kHz | 0.00 each |
+| read 1, 2, 4 or 5 registers (`rtlsdr_get_tuner_i2c_register`), autotune at 8 or 128 kHz | 0.00 each |
+| read 3 registers, autotune at 8 kHz / at 128 kHz / toggled around it | -200.00 each (-2.000 a read) |
+| a retune's I/O by hand (128 kHz, read 5, write 0x15, read 3, 8 kHz); the same without the write | -200.00 each |
+
+At 1.2 MS/s the 3-register read costs the same -2.000 samples, so it is a
+count of bytes (4) taken out of the stream, not time lost - something in the
+RTL2832U's USB / FIFO handling of that control read; why a length of 3 and
+not 1, 2, 4 or 5 is not known (longer reads could not be tried through the
+public API). The sign: the same instant comes 2 samples EARLIER in that
+dongle's stream. The 202 of the fast path is one read more than its 100
+calls - consistent with one tune whose lock check ran twice (the loop reads
+again after raising the VCO current).
+
+What follows:
+- A retune of every tuner together (coherent mode, the wideband scan) takes
+  the same 2 samples out of every stream: no lag between channels. Only
+  unequal counts show - sweep mode's blocks, independent tuners, a single
+  tuner's retry or second lock read. heimdall counts retunes per tuner
+  outside coherent mode and re-acquires every lag on the way back
+  (`note_tuner_retuned`, `force_recalibration`); in coherent mode a 2-sample
+  slip is caught by the lag check of the phase recalibration (> 1 sample).
+- A lock check that reads another number of registers does not move the
+  stream at all. Measured with scratch builds of the library whose lock
+  check in `r82xx_set_pll` reads 5, and 4, registers (same probe, 200 calls
+  each): full retunes to the same frequency, + 100 kHz and back, 433 MHz and
+  back, a 24.5 / 1700 / 100 MHz round, 109.4 / 109.6 MHz across a divider
+  boundary: 0.00 samples each (0.000 a call), no failed tune in 1000+; the
+  fast path -2.0 for 200 calls + finish - `r82xx_finish_tune` reads 3
+  (`uint8_t data[3]`), once per drag; a 3-register read as control -400.00.
+  So the three reads of exactly 3 registers are the whole effect:
+  `r82xx_set_pll`'s lock check, `r82xx_set_pll_yc`'s, `r82xx_finish_tune`'s.
+  (Since FIXED on the branch `lock-read-no-slip`: *The rule, and the fix*,
+  below - the rest of this bullet is what was known before.)
+  NOT changed in the fork: the lock read was cut to registers 0..2 because
+  reading 3 / 4 while the PLL settled was followed by the 0x0b / 0x0c
+  corruption (`R82XX_PLL_SETTLE_US`; that wait is in place now, which may
+  make 5 safe - the probe did not check the IF VGA registers), so the
+  KrakenSDR sweep test behind that note has to be repeated, on the Pi and on
+  Windows, before the length changes.
+- What the accumulated slip does to heimdall (it wraps into one USB buffer
+  at every re-pairing flush, and where it does not): `heimdall_v2/docs/dev/
+  operating-modes.md`, *Accumulated slip*.
+
+## The rule, and the fix: no control IN of 3 mod 4 bytes (2026-11-21)
+
+FIXED on the fork branch `lock-read-no-slip` (local, not pushed; patches in
+job scratch 52196024 `fork/patches/`). Measured on the KrakenSDR attached to
+the dev PC (x86_64 Ubuntu, kernel 6.8, the KrakenSDR's hub on the PC's xHCI),
+every number from job scratch 52196024 `fork/` (`README.txt` there lists the
+scripts and outputs).
+
+**What drops samples.** Not the I2C read, not the tuner: ANY USB control IN
+whose data stage is 3, 7, 11 ... bytes long (length % 4 == 3). Lag probe
+(`xprobe.py`, after `e2e/lagprobe.py`: dongles streaming at 2.4 MS/s with the
+noise source on, the operated dongle's lag against a reference by a
+262144-point cross-correlation before and after 100 transfers; an
+instrumented scratch build of the library adds a raw control call and
+counters, `instrument.py`):
+
+| 100 control INs on one streaming dongle | lag change |
+|---|---|
+| tuner I2C read of 3, 7, 11, 15 bytes | -200.00 (-2.000 each) |
+| tuner I2C read of 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 16 bytes | 0.00 |
+| USB block read (0x2000..) of 3, 7, 11, 15, 19, 23, 27, 31, 35, 63 bytes | -200.00 each |
+| USB block read of 1, 2, 6, 14, 64 bytes | 0.00 |
+| SYS block (GPO) / demod (page 0x0a) / EEPROM (I2C 0xa0) read of 3 bytes; demod read of 7 | -200.00 each |
+| the same blocks, 1 byte; demod 2 bytes | 0.00 |
+| standard GET_DESCRIPTOR (device / config / string 0) with wLength 3 or 7 | -200.00 each |
+| GET_DESCRIPTOR with wLength 18 or 255 (returns 18 / 4 / 10 bytes), GET_STATUS (2) | 0.00 |
+| an I2C read of 3 bytes from an absent address (fails: no data stage) | 0.00 |
+| every write tried (tuner registers 0x05 ... 0x1a, GPO, the autotune clock) | 0.00 |
+
+So it is the RTL2832U's USB device controller (a standard request does the
+same as a vendor one), it counts bytes, not time (1.2 MS/s earlier: the same
+2.000), and the samples the transfer takes are always 4 bytes, the same instant
+then coming 2 samples earlier in that dongle's stream. The tuner's I2C reads
+are limited to 16 bytes (17 ... 32 fail with PIPE); a 16-byte read returns
+the chip's real registers 0x00 ... 0x0f (0x05 ... 0x0f equal the driver's
+cache), which the corruption test below uses.
+
+**Where the library made such reads**: the R820T lock check in
+`r82xx_set_pll` (once, twice when the first read shows no lock),
+`r82xx_set_pll_yc` and `r82xx_finish_tune` (3 bytes each - the whole slip of
+every retune); `rtlsdr_get_tuner_i2c_register()` with len 3 (it reads
+min(len, 5)); the FC0012 driver's register dump (any length up to 16);
+`rtlsdr_ir_query()` (the IR code's byte count). Every other read is 1, 2, 4
+or 5 bytes (the demod / USB / SYS / GPIO register reads, the dummy read,
+EEPROM bytes, the E4000 / FC0013 / FC2580 drivers' 1-byte reads, the
+register-4 read of a tune, `rtlsdr_is_tuner_PLL_locked`, the R820T gain
+path's 4), or a libusb string-descriptor read (even lengths).
+
+**The fix** (two parts, every platform):
+- `rtlsdr_ctrl_transfer_retry` (librtlsdr.c, the one path of every control
+  transfer of the library): a control IN of length % 4 == 3 (<= 255) is made
+  one byte longer into a bounce buffer and the caller gets its own bytes -
+  the one more register / byte read has no effect on any read the library
+  makes (status registers, the IR code RAM the query resets afterwards, the
+  R820T's read-only registers 0..4). Covers the lock reads, the public
+  register read, the other drivers and any future read.
+- The R820T lock check reads 4 registers explicitly (`R82XX_LOCK_READ_LEN`,
+  tuner_r82xx.c) - 4 and not 5 for the corruption result below.
+- `RTLSDR_NO_STREAM_SLIP` in rtl-sdr.h: applications (heimdall) can tell at
+  compile time.
+
+**The lock read length and the register corruption.** The lock read had been
+cut to 3 registers because longer reads were followed by 0x0b / 0x0c = 0xff
+on some dongles (Pi, 2026-10, with lock retries - *above*). How that showed:
+a dongle 13-15 dB louder for the rest of the session (0x0c is the IF VGA;
+the driver's cache still held the right value, so nothing rewrote it). The
+test that would catch it (`tsoak2.py`): all five dongles streaming (noise
+source on, gain 0, 2.4 MS/s), tuned in parallel threads (a barrier per step,
+as for_each_tuner), each through the `bounds` plan from its own offset -
+both sides of every VCO divider boundary (26.6 / 54 / 109.5 / 220.25 /
+441.5 / 884 MHz) and band boundary of the driver, 0.4 MHz each way, and the
+range ends 24 / 1766 MHz (108 tunes a pass, ~31 % of them at a settle
+point); after every tune and 12 ms: the stream's power (one 16384-sample
+buffer) against the median of that dongle at that frequency, then the
+chip's registers 0x05 ... 0x0f read back (16 bytes) against the cache, a
+mismatch rewritten from the cache; a level more than 6 dB off is diagnosed
+(GPO read, registers 0x10 ... 0x1f rewritten one at a time from the cache
+until the level is back). The scratch library sets the lock read length
+and the settle wait at run time. The level repeats to 0.02-0.03 dB (median
+|deviation|, p99.9 0.1-0.3 dB), so either kind of corruption stands out.
+
+Provoked (settle wait shortened; x86_64 here makes ~2 ms per control
+transfer, like the Pi), 5 min a run, ~5900 tunes per dongle, 29500 in all:
+
+| settle | lock read | lock retries (all at a settle point) | 0x0b(/0x0c) = 0xff (tunes) | level -27 ... -32 dB, fixed by rewriting 0x1b / 0x1c |
+|---|---|---|---|---|
+| 0 | 3 | 2510 | 0 | 5 (2 / 3) |
+| 0 | 4 | 2440 | 15 (0x0b only; each with a lock retry) | 10 (0x1c) |
+| 0 | 5 (4 min) | 1957 | 19 (0x0b + 0x0c, +12.3 ... +14.4 dB; each with a retry) | 12 |
+| 1500 | 4 | 1578 | 6 (5 with a retry, 1 without) | 4 |
+| 2500 | 4 | 1 (on an ordinary step) | 0 | 0 |
+| 3000 | 4 | 2 | 0 | 0 |
+| 5000 (the default) | 4 (10 min, 55920 tunes, 17070 settle points) | 0 | 0 | 0 |
+| 5000 | 5 (27935 tunes) | 0 | 0 | 0 |
+
+(8-pass runs, 4320 tunes each, before: settle 0 - read 3 / 4 / 5: 354 /
+350 / 347 retries, 0 / 0 / 4 corrupted tunes; 1500: 193 / 194 / 205
+retries, 0 / 1 level drop / 2; 5000: 0 retries, nothing.) So:
+- the hazard is a lock read that comes before the PLL has settled after a
+  divider or band change - every lock retry was at a settle point but one
+  (2500 us: one ordinary step); the old 0x0b / 0x0c finding reproduces
+  exactly (+13 dB); a tune whose lock bit was off again at rest (12+ ms
+  after a tune that had reported the lock; level normal, the next tune
+  fine) came about once in 30000 tunes at 2500 / 3000 / 5000 us (read 5)
+  and settle 0 (read 4), never in the 56000 of 5000 us / read 4 - not tied
+  to the length, and nothing a driver could see at the tune;
+- 3 registers were not safe either: 0x1b (tracking filter) / 0x1c (mixer /
+  power detector top) corrupted by early reads of any length, the stream
+  ~30 dB weaker until the next band change rewrites them (0x1b) or forever
+  (0x1c: written only at init) - never noticed before because no test
+  looked at the level after each tune; reading 4 adds 0x0b, 5 also 0x0c;
+- what protects is the settle wait (`R82XX_PLL_SETTLE_US`, 5000 us): on this
+  host early reads stop between 1500 us (~1600 retries in 5 min) and 2500 /
+  3000 us (1-2 in 30000 tunes), none at 5000 - a margin of less than 2x over
+  the last value with a retry, so a host whose transfers are much faster
+  than ~2 ms (the 0.25 ms of an ordinary high-speed device) is not covered
+  by this measurement; with the wait no read came early and nothing was
+  corrupted at either length. 4 is the shortest length that doesn't drop
+  samples and the one that, should a read still come early, corrupts least.
+
+**Big jumps read the lock early too - FIXED (default path).** The same test
+with random frequencies 24-1766 MHz (`--plan random`, 500 a pass, 3 min, 5
+dongles), settle 5000 us, lock read 4: full path 548 lock retries in 16490
+tunes (3.3 %), KEEP + NO_DUMMY_READ 635 in 17950 - none at a settle point;
+1 / 4 tunes left 0x0b = 0xff, and the full-path run had levels down to -31
+dB (0x1b / 0x1c). Every retry was a jump inside one divider and one band:
+in the top divider (RF 885-1766 MHz, VCO 1777-3540 MHz) the driver's
+frequency ranges are all one band, so a jump from 900 to 1700 MHz never
+waited. By jump size (same divider): < 400 MHz RF 0 retries in 4597 tunes
+(790 of 300-400 MHz in the top divider), 400-450 MHz 5 / 215, 450-500 27 /
+503, 500-550 205 / 393, > 550 MHz 66-81 % of the tunes. Fix
+(`R82XX_PLL_SETTLE_VCO_JUMP_KHZ`, tuner_r82xx.c): the settle wait also
+after a tune that moves the VCO by more than 400 MHz (half the smallest jump
+seen to need it; a sweep's 2.4 MHz hops move it by at most 154 MHz, at 24
+MHz). Measured with it: random plan, full path 0 retries in 16505 tunes, 0
+register mismatches (2912 of 3301 tunes per dongle now settle points). This
+was in 578b43d / the 3-register build too (the 0x1b / 0x1c corruption
+happens at any read length): a typed jump in coherent mode or a wideband
+spread across the top divider could leave a dongle ~30 dB deaf.
+
+**Retune speed: what the library can give a sweep** (2026-11-21, same host).
+Where the time goes (`tim.py`, the instrumented library times every control
+transfer; 5 dongles streaming, 5 operated in parallel threads as
+for_each_tuner; load ~2):
+
+| | ms | control transfers |
+|---|---|---|
+| GET_STATUS / USB / SYS register read (1 byte) | 1.8 | 1 |
+| demod register read (the dummy read) | 2.4 | 1 |
+| tuner read 1 / 5 / 16 bytes (dummy + I2C IN) | 4.5 / 5.0 / 6.3 | 2 |
+| tuner register write through the public API (dummy + I2C OUT) | 4.7 | 2 |
+| full tune, same band (dummy, 0x1a 128 kHz, read 5, N / SDM, lock read, 0x1a 8 kHz) | 14.4 | 6 |
+| SPAN_AUTOTUNE (128 kHz inside the N / SDM write) | 12.6 | 5 |
+| KEEP_AUTOTUNE (no 0x1a writes) | 9.8 | 4 |
+| KEEP_AUTOTUNE + NO_DUMMY_READ (new) | 7.5 | 3 |
+| full / KEEP / KEEP + NO_DUMMY_READ: sweep 24-1766 MHz by 2.4 MHz | 14.0 / 9.8 / 7.5 | 6.0 / 4.0 / 3.1 |
+| full / KEEP: band change 100 <-> 433 MHz (incl. the 5 ms settle) | 24.2 / 19.7 | 8 / 6 |
+| a KEEP tune + rtlsdr_finish_tune (dummy, lock read, 0x1a 8 kHz) | 19.2 | 8 |
+
+With no dongle streaming and one dongle operated, every row is within 0.5
+ms of these (GET_STATUS 1.73 ms): a control transfer costs ~1.7 ms here
+whatever it carries and however many dongles stream or tune at once (the
+five parallel threads cost no more than one) - the host / hub / RTL2832U
+side, not something the library can shorten; the I2C bytes add ~0.11 ms
+each (~80 kHz bus, SYS_I2CCR 0x3040 = 23). So the library's lever is the
+number of transfers:
+- the 0x1a autotune-clock writes: KEEP_AUTOTUNE leaves the clock at 128
+  kHz between hops (the drag fast path, `rtlsdr_finish_tune` at the end);
+- the dummy demod read at the start of every tuner access (Linux; it keeps
+  a control OUT from coming first after a quiet spell - measured on the Pi,
+  *above*): new `RTLSDR_TUNE_NO_DUMMY_READ` makes it only when the access's
+  first transfer is a write - a same-band KEEP hop starts with the
+  register-4 read, an IN, so the read is not needed in front of it (the
+  rule the dummy read implements - an IN before the first OUT - still
+  holds). Behind a flag, not the default, because the dummy read has a
+  measured reason on the Pi and this was measured only here;
+- kept: the register-4 read (wrong dividers without it, *above*), the lock
+  read (the only way a failed tune is seen), the settle wait (above).
+
+Is data on the KEEP path (autotune clock at 128 kHz while the data is taken)
+as clean as on the full path? `spec.py atune`: 8 frequencies (FM band, the
+Tait DMR / MPT1327 band at 415.5 MHz with 64 dB carriers, P25 at 499.3 and
+142.3 MHz, quiet 700 / 1200 / 1700 MHz, 27 MHz), all 5 dongles, noise
+source off (antennas), A = full tune / B = KEEP tune from 400 kHz away,
+alternated 4 times, 0.41 s each, 4096-point PSDs: noise floor B - A within
++-0.2 dB at every frequency but 415.5 MHz (-0.1 ... -1.2 dB there, a band
+whose bursts vary 50 dB between the A halves themselves); the largest
+per-bin |B - A| (0.6-0.9 dB in quiet bands, 1-6 dB in busy ones) below the
+spread between the two halves of A alone (1.0-1.4 / 3.6-55 dB) everywhere:
+no spur, no floor change, the carriers' shape the same.
+
+Frequency truth (`spec.py truth`): five known carriers (415.6375, 416.5875,
+456.50625, 499.1875, 142.35 MHz control channels), per dongle a baseline PSD
+(65536 points, 36.6 Hz bins), then 15 rounds of every dongle to a random
+frequency 24-1766 MHz and back; the carrier's shift against the baseline
+(cross-correlation of the PSDs, sub-bin): full path max 1.6-5.6 Hz for the
+strong carriers, 11-26 Hz for the weak VHF one (SNR 20-28 dB); KEEP +
+NO_DUMMY_READ max 1.6-14 Hz / 7-13 Hz: on the same bin on every dongle, 0
+failed tunes.
+
+The sweep path itself, final library (KEEP_AUTOTUNE + NO_DUMMY_READ, a
+finish every 20th step): full range 24-1766 MHz by 2.4 MHz, 8 min, 5
+dongles in parallel: 40700 tunes, 0 lock retries / failures / I2C errors /
+PIPE retries / register mismatches, 3.0 transfers a hop, 8.3 ms per
+5-tuner step (incl. the 16-byte readback the test adds); the bounds plan
+with an idle spell of 600 ms before every 7th step (the stall the dummy read
+guards against comes after >= 300 ms of quiet), 5 min: 1600 tunes after a
+pause, 0 PIPE retries, 0 I2C errors - but whether this host stalls at all
+without the dummy read is not known (no positive control: the Pi showed
+it, this PC was not tried without the read); random jumps 17990 tunes: 0
+retries, 0 corruption; the FM band 5 min, 31540 tunes: all zeros, level
+max |deviation| 0.14 dB. Lag probe on that path (300 tunes a pattern, the
+others streaming): 0.000 samples per tune for 88-108 MHz steps, the full
+range, divider / band boundaries, random jumps, KEEP|SPAN, NO_DUMMY_READ on
+the full path; a raw 3-byte IN -2.000.
+
+**The I2C clock** (SYS_I2CCR, 0x3040, read 23 at power-up; the library never
+writes it): it is the bus clock divider - one dongle, idle, 60 reads each,
+16-byte tuner read 6.06 ms at 23 (~80 kHz), 4.82 at 11, 4.31 at 5, 8.29 at
+46; every read OK. At 5 a KEEP + NO_DUMMY_READ hop would lose ~1.3 of its
+7.5 ms (its ~15 I2C bytes). A soak at 5 (bounds plan, KEEP +
+NO_DUMMY_READ, 5 min, 34305 tunes, restored to 23 afterwards): 0 I2C
+errors, 0 register mismatches, 0 level outliers - but 1 lock retry on an
+ordinary step (0 in every run at 23 with the default settle): a faster bus
+brings the lock read closer to the N / SDM write, i.e. towards the early
+read that corrupts registers. Not adopted; it would need its own settle
+margin measured, and the R820T's / board's I2C margins are not known.
+
+**Lag probe proof with the final library** (`proof.sh`, `xprobe.py`; all
+five streaming, each dongle in turn the operated one; 1000 tunes a pattern
+on 1001, 300 on the others): full path to the same frequency, 25 kHz steps,
++100 kHz and back, 433 MHz and back, both sides of every divider boundary,
+of every band boundary, the range ends 24 / 1766 MHz, random frequencies;
+KEEP steps + finish, KEEP across a boundary, a finish after every step; the
+library's 3-byte tuner read: 0.000 samples per call for every pattern on
+every dongle (largest |lag change| over a whole pattern 0.01-0.02 samples),
+the other four never moved; the raw 3-byte IN in the same run -2.000 (-2000
+for 1000). 0 failed calls, 0 lock retries (random jumps included).
+heimdall's other calls while streaming (200 each on 1001): gain, gain mode,
+IF mode, heimdall's gain change (mode + gain + IF VGA), AGC on / off,
+GPIO0 / bias tee / GPIO1 rewrites, the sample-clock register rewritten (0.0)
+and toggled 1e-7 / 0 (-0.10 in all: the clock moves on purpose),
+`rtlsdr_is_tuner_PLL_locked`, `rtlsdr_get_tuner_i2c_register` (5),
+finish with nothing pending: 0.000. The rule set again on the fixed library
+(the library's own path): every length and block 0.000.
+
+**Long runs with the final library** (default settle, `tsoak2.py`, 5
+dongles in parallel): the bounds plan 9 min, 50245 tunes (15350 settle
+points): 0 lock retries / failures / I2C errors / PIPE retries, 0 register
+mismatches, 0 level outliers (max |deviation| 0.28 dB); 3 times dongle 1000's
+lock bit was off at rest at 53.6 MHz (just below the 54 MHz divider point,
+the same tune as in the 3000 us run; level normal). The full range 24-1766
+MHz by 2.4 MHz, 9 min, 56395 tunes: 0 retries / failures / errors /
+mismatches; the level outliers (845) are all dongle 1001 at 1560-1726 MHz -
+the two-state level below, the library without the fix shows it too (314 in
+3 min, 1565-1726 MHz). The FM band (88.2-108 MHz, 12 hops, band changes at
+90 / 100 MHz), 9 min, 49990 tunes: all zeros, level max |deviation| 0.16
+dB. 27 min of tuning in all, 156630 tunes, no failed tune.
+
+**A two-state level at the top of the range (found, not fixed).** Dongle
+1001 at 1.56-1.75 GHz reads ~13-15 dB louder when tuned there from above
+(from 1766 MHz, or on a downward sweep) than from below - the same divider
+and VCO fine-tune bits, the chip's registers 0x00 ... 0x0f read back and
+the driver's whole cache 0x05 ... 0x1f byte for byte identical in both
+states (only status register 1 varies, in both), and rewriting 0x10 ...
+0x1f from the cache doesn't change it (`hyst.py`, `tsoak2.py` diagnosis):
+the tuner's internal state differs, not the driver's settings. In the
+random plan dongles 1000 / 1002 / 1003 showed it too (+-12-16 dB, 1.60-1.74
+GHz). Present with the fork's master (3-byte lock read) as well; on the full
+path and the fast path alike. A sweep that steps upward sees the "from
+below" level except where its blocks start (a wrap from a higher block).
+Cause unknown (the VCO at the top of its range: LO 1.6-1.77 GHz = VCO
+3.2-3.54 GHz, vco_max 3.54 GHz).
+
+**Review round (second commit on `lock-read-no-slip`, 2026-11-21).** An
+independent review found no hard defect; three risks and three nits were
+closed:
+1. *A lock retry left corrupted registers unrepaired* (the cache keeps the
+   right values, so nothing rewrote them). Now `r82xx_repair_early_read()`
+   (tuner_r82xx.c): after a lock retry and when `rtlsdr_finish_tune` finds
+   no lock, it waits `R82XX_PLL_SETTLE_US` and writes 0x0b-0x0f and
+   0x1b-0x1f back from the cache (counted: `early_read_repairs`). How it
+   got there, all provoked at settle 0 (bounds plan, 5 min, 5 dongles,
+   about 24000-29500 tunes and 2000-2400 retried tunes a run; job scratch
+   `fork/out/q7.out` - `q11.out`):
+
+   | repair | tunes left with a register off the cache (16-byte readback) | level drops > 6 dB | lock off at rest |
+   |---|---|---|---|
+   | none | 17 (0x0b, each with a retry) | 6 (0x1b / 0x1c) | 0 |
+   | at a retry and at every settle point, written at once | 6 (0x0d-0x0f, no retry: the repair's own writes) | 6 (fixed by 0x19) | 6 |
+   | after a retry only, 5 ms wait first, 0x0b-0x0f + 0x17-0x1f | 0 | 4 (0x1c, no retry) | 0 |
+   | at a retry and at every settle point, wait, 0x0b-0x0f + 0x17-0x1f | 0 | 12 (put right only by PLL registers) | 0 |
+   | at a retry and at every settle point, wait, 0x0b-0x0f + 0x1b-0x1f | 0 | 6 | 6 |
+   | after a retry only, wait, 0x0b-0x0f + 0x1b-0x1f (THE FIX) | 0 in 2261 retried tunes | 5 (0x1c, no retry) | 0 |
+
+   So the repair makes a retried tune whole; what it can't reach is an
+   early read that already saw the lock (no retry) and hit 0x1b / 0x1c -
+   repairing after every settle point instead traded those for PLL-unlock
+   drops and costs ~12 ms per settle point, so it isn't done. At the
+   default settle wait neither case was ever seen (above).
+   The committed library once more (settle 0, 5 min): 27850 tunes, 2278
+   retried and repaired, 0 tunes off the cache, 0 lock off at rest, 1
+   level drop (0x1c, no retry). Re-run on the committed library (3adc8e6,
+   load ~2.1-2.3): lag probe with the settle at 0 (300 tunes a pattern on
+   1001, all five streaming) - 119 retried and repaired tunes, 0.000
+   samples per tune on every pattern, the raw 3-byte IN -2.000: the
+   repair's writes don't move the stream; default path, bounds plan 5 min,
+   27900 tunes: 0 retries / failures / I2C errors / mismatches, level max
+   |deviation| 0.16 dB, 0 repairs needed; sweep path (KEEP_AUTOTUNE |
+   NO_DUMMY_READ) full range 5 min, 36400 tunes: the same zeros, 3.0
+   transfers a hop, 8.3 ms per 5-tuner step (outliers only 1001's
+   1.56-1.73 GHz two-state level, below); lag probe on the sweep path (on
+   1002): 0.000 for every pattern, raw control -2.000. 0 lazy-read retries
+   in every run.
+2. *NO_DUMMY_READ*: when the access's first transfer - the real register
+   read - fails under the flag, the dummy read is made and the read tried
+   once more (`i2c_in_lazy_retries`); the header says plainly that the
+   stall was a Pi finding with no positive control here. Not provoked (no
+   read failed in any run: 0 lazy retries).
+3. `RTLSDR_NO_STREAM_SLIP`'s header now says exactly what holds (every
+   tune, gain / IF / AGC / GPIO / lock call and every other control
+   transfer the library makes) and what is outside (`rtlsdr_reset_buffer`,
+   `rtlsdr_set_sample_rate` - a demod soft reset -, direct sampling and
+   offset tuning; the sample-clock calls move the stream on purpose), and
+   the rule as measured: the length of the data stage actually
+   transferred (the RTL2832U's vendor reads return wLength; libusb's own
+   string-descriptor reads ask for 255 and get the descriptor's even
+   length - measured 0.00).
+4. The VCO-jump settle was measured only in the top divider; elsewhere it
+   is margin. The tunes it makes wait (same divider and band, LO jump >
+   400 MHz / mix_div): mix_div 64 (LO 27.7-55 MHz) > 6.25 MHz within LO
+   27.7-50; 32 none (bands <= 10 MHz); 16 > 25 MHz inside 140-180 /
+   180-220; 8 > 50 MHz inside 310-442; 4 > 100 MHz inside 450-588 /
+   650-885; 2 > 200 MHz. Sweep hops and drag steps never cross these.
+5. `r82xx_set_pll_yc` (vco_algo 2) has no settle wait and now reads 4
+   registers - dead code: the `vcoalgo=` option writes `vco_curr_max`, so
+   vco_algo is always 0. Left inactive, noted at the function.
+6. Wording: the threshold is 400 MHz of VCO (the retries were jumps of >
+   400 MHz of RF = 800 MHz of VCO). The padded IR read reads one more byte
+   of `IR_RX_BUF` - code RAM at 0xFC00 that `rtlsdr_ir_query` resets right
+   after: harmless, said at the padding.
+
+**On a Raspberry Pi 5 (2026-11-21).** The test Pi (a
+Pi 5 Model B Rev 1.1, 8 GB, kernel 6.18.34, the KrakenSDR behind its hub on
+the Pi's xHCI bus 1, 480M; idle apart from the other workers' turns), the
+fork built there from clean clones (88993d3 = the two commits above, and
+3ad1746 without them), the same tools (job scratch `fork/pi/`, outputs
+`fork/pi/out/`). 46-53 °C, `get_throttled` 0x0, load 0.0-3.3 in every run.
+Everything the PC showed, the Pi shows too:
+- the rule: raw control INs of 1-16 bytes, USB block and tuner I2C reads
+  alike: 3, 7, 11, 15 bytes -2.000 samples each, every other length 0.000;
+- the slip (lag probe, 300 tunes a pattern on 1001, all five streaming):
+  without the fix -2.000 per tune on every lock-read path (fast KEEP +
+  finish -2.013, a finish after every step -4.000, random jumps -2.127 with
+  18 lock retries - no VCO-jump settle there), 0.000 for gain / IF / AGC /
+  GPIO / lock-API calls; with it 0.000 on every pattern (largest change over
+  a pattern 0.02), the sweep path included, 0 retries on random jumps;
+- the time: a control transfer 1.87 ms (PC 1.73-1.83), the demod read 2.37;
+  full tune 14.4 ms / 6 transfers, KEEP 9.9 / 4, KEEP + NO_DUMMY_READ 7.5 /
+  3, the finish 19.2 incl. its KEEP tune, a band change 24.2 / 19.6, sweep
+  hops of 1.9125 MHz at 89-108 / 600-619 / 1200-1219 MHz full 14.5 / 14.5 /
+  14.5, KEEP + NO_DUMMY_READ 7.6 / 7.5 / 7.5, a 900 <-> 1500 MHz VCO jump
+  (the new settle) 19.5 / 12.6 - five parallel threads cost what one does,
+  idle or streaming, as on the PC;
+- NO_DUMMY_READ: the sweep path over the full range 8 min, 59720 tunes, and
+  the same without the flag (KEEP only) 56555 tunes: 0 lock retries /
+  failures / I2C errors / register mismatches / lazy-read retries, no
+  control error during tuning (only the tuner probe's 2 IN + 8 OUT PIPE
+  stalls at `rtlsdr_open`, on every dongle, as since 578b43d); 3.0 against
+  4.0 transfers a hop, 7.95 against 10.34 ms per 5-tuner step - the flag
+  is safe here as far as that goes, but the stall it relates to was not
+  produced on the Pi either (no positive control);
+- heimdall's sweep exit on the bare library (`exitsim.py`, 50 repetitions,
+  ~49000 KEEP + NO_DUMMY_READ hops of all five in parallel, a finish, a
+  full tune of all five, noise on, the lags measured +-131072 samples): 0
+  lag changes >= 1 sample (largest 0.05), the delivered buffers equal on
+  all five each time, 46582 bulk transfers per dongle all COMPLETED (0
+  error / stall / overflow / short);
+- frequency truth on both paths: the strong carriers within 1.0-12.3 Hz
+  (bins 36.6 Hz), the weak ones here (SNR 8-17 dB - another antenna /
+  site) up to 243 Hz of estimation noise, 0 failed tunes.
+- every dongle as the operated one (100 tunes a pattern): 0.000 on every
+  pattern, the raw 3-byte IN -2.000;
+- random jumps 24-1766 MHz (the VCO-jump settle), 27500 tunes: 0 lock
+  retries, 0 failures, 0 mismatches (the PC before that settle: 548 retries
+  in 16490);
+- the sweep path with a 600 ms idle spell before every 7th step, 11235
+  tunes (1605 after a pause): 0 PIPE, 0 I2C errors, 0 lazy-read retries;
+- the default path, 20000 scanner-like full-path tunes on one dongle at a
+  time (FM steps of 1.9125 MHz, every 13th a band change to 433.92 MHz,
+  every 29th a random frequency; 17.6 ms each), the others streaming:
+  each of the five dongles in turn, 100000 tunes in all: lag change over
+  the 20000 -0.02 ... +0.03 samples (0.000 a tune), 0 lock retries, 0
+  failures, 0 control errors; a raw 3-byte IN x 100 after each -200.00;
+- The two-state level at the top of the range: here only dongle 1002 at
+  1698.4 MHz in the random plan (-14.7 dB, 3 times), not in the full-range
+  sweeps (the PC: 1001 at 1.56-1.73 GHz).
+- the settle margin (bounds plan, 5 dongles, the committed library with the
+  early-read repair):
+
+  | settle | tunes | lock retries (repaired) | tunes off the cache | level drops (0x1c, no retry) | lock off at rest | PC (same library) |
+  |---|---|---|---|---|---|---|
+  | 5000 (8 min) | 44615 | 0 | 0 | 0 | 0 | 0 retries in 27900 |
+  | 3000 | 29665 | 0 | 0 | 0 | 2 | 2 retries in ~30000 (read 4, no repair) |
+  | 2500 | 29665 | 0 | 0 | 0 | 0 | 1 |
+  | 1500 | 28125 | 1609 | 0 | 11 | 0 | 1578 (no repair) |
+  | 0 | 27605 | 2214 | 0 | 6 | 2 | 2278, 0, 1 |
+
+  So the Pi's PLL needs what the PC's does: early reads start between
+  2500 and 1500 us, 5000 us is a 2x margin over the last value without a
+  retry on both - no change needed.
+
+The library's async path, read for a whole-buffer loss (asked after a
+sweep exit in heimdall left one channel without a correlation peak on the
+Pi): on Linux a bulk transfer that ends ERROR, STALL or OVERFLOW (TIMED_OUT
+can't: `BULK_TIMEOUT` 0) is neither delivered nor resubmitted and nothing
+is logged until `xfer_errors` (ERROR only) reaches the buffer count - that
+dongle's stream silently loses up to one transfer (16384 samples) and runs
+on with one transfer fewer in flight; a failed resubmit (its result ignored)
+shrinks the queue without losing data. None of those statuses occurred in
+any run here.
+
+**Not tested** (say so plainly): a Raspberry Pi 4, and the Pi 5 with the
+noise source off for the margin runs (all with it on); Windows (3-4 ms per transfer, one dongle at a
+time: the transfer counts above should carry over, the times not; the
+padding and the VCO-jump settle are plain C, every platform), macOS; other
+tuners than the R820T (the padding covers their reads; their tune paths
+make no 3-byte read); a dongle without a KrakenSDR's noise source; a
+positive control for NO_DUMMY_READ (the stall the dummy read guards was
+produced neither on the PC nor on the Pi 5 above - the flag was clean on
+both, 60k + 11k tunes on the Pi); the I2C clock change under load. No MinGW / zig on this machine: the Windows and
+glibc syntax checks of the suite rule were not run (the changes are plain C99
+/ C++ without new platform calls).
+
+## A fast tuner gain write (2026-11-23, third commit on `lock-read-no-slip`)
+
+Sweep mode's automatic gain writes a tuner's gain with its retune whenever
+the next hop wants another (30-44 writes in a 4 s sweep of 911 hops). The
+ordinary `rtlsdr_set_tuner_gain` costs 4 control transfers on Linux - the
+dummy demod read, `r82xx_set_gain`'s read of tuner registers 0..3 (its
+result is not used), the LNA write (0x05), the mixer write (0x07) - and
+heimdall's gain change (gain mode + gain + IF mode) 10.
+
+The patch (`docs/dev/librtlsdr-patches/0003-*`, on 88993d3; macro
+`RTLSDR_HAS_GAIN_FAST`):
+- `r82xx_set_gain_fast()`: the manual gain the ordinary call sets - the same
+  table and rounding (`r82xx_get_rf_gain_index`), the same cache and
+  `last_*` values, the IF VGA left as it is - without the 0..3 read, and
+  with LNA and mixer in ONE I2C write of 0x05..0x07 when both change (0x06
+  goes out with its cached value); one changed: that register; neither: no
+  transfer. In AGC or extended mode: the ordinary path (which switches to
+  manual, as `rtlsdr_set_tuner_gain` does).
+- `rtlsdr_set_tuner_gain_fast(dev, gain, flags)`: that write alone (the
+  dummy read stays - a write comes first).
+- `rtlsdr_set_center_freq_gain_fast(dev, freq, gain, flags)`: the fast tune
+  (`flags` as for `rtlsdr_set_center_freq_fast`), then the gain in the same
+  hold of the I2C repeater - the tune's transfers come first, so the gain
+  needs no dummy read: +1 transfer when it changes, +0 when not. The gain is
+  written even when the tune fails; the tune's error is returned first.
+- Other tuners than the R820T / R828D, direct sampling: the ordinary calls.
+  Neither call reads 3 mod 4 bytes: no sample is dropped.
+
+Measured on the dev machine's KrakenSDR (2026-11-23, x86_64, all five
+streaming, five in parallel threads, 200 calls each, load 4-9 - other jobs;
+`gaintest.py`, job scratch `fork/out/g9_x11.out`):
+
+| | ms (median) | transfers |
+|---|---|---|
+| `rtlsdr_set_tuner_gain`, 20.7 <-> 29.7 dB | 9.13 | 4.0 |
+| heimdall's gain change (mode 1 + gain + IF mode) | 22.82 | 10.0 |
+| `rtlsdr_set_tuner_gain_fast`, the same gains | 4.79 | 2.0 |
+| `rtlsdr_set_tuner_gain_fast`, unchanged / LNA only | 0.00 / 4.54 | 0 / 2.0 |
+| fast tune (KEEP_AUTOTUNE \| NO_DUMMY_READ) alone, FM hops | 7.44 | 3.38 |
+| that fast tune + the ordinary gain (today's sweep) | 16.58 | 7.36 |
+| `rtlsdr_set_center_freq_gain_fast`, gain changing every hop | 9.86 | 4.36 |
+| the same, gain unchanged | 7.40 | 3.36 |
+| the same on the full path (flags 0) | 16.63 | 7.18 |
+
+So a hop that changes the gain costs 2.4 ms more than one that doesn't,
+instead of 9.1 ms. The gain itself: every value of the table (29) and 30
+odd ones from -10 to 509, set from a far gain by the ordinary call, by
+`rtlsdr_set_tuner_gain_fast` and by `rtlsdr_set_center_freq_gain_fast` on
+all five: the same LNA / mixer registers in the cache and on the chip (the
+16-register readback, 0x05..0x0f = the cache every time), the same
+`rtlsdr_get_tuner_gain`, the same stream level (noise source, 100 MHz)
+within 0.07 dB (median 0.03); 0 of 59 differ. The cache after fast calls:
+20 rounds of 30 tune + gain calls per dongle followed by heimdall's ordinary
+calls (gain mode, gain, IF mode, a full tune) - 0 of 100 readbacks with the
+chip off the cache; the fast call in AGC mode switched to manual exactly as
+the ordinary one (chip = cache). The stream: 200 fast gain writes, and 200
+tune + gain calls, on 1001 with all five streaming - lag change 0.00 / -0.01
+samples (0.0000 a call), the others 0.00. The earlier lag-probe sets (every
+tune path, the sweep path) on this library (`fork/out/g9_probe.out`, 100
+tunes a pattern on 1001): 0.000 samples a tune on every pattern, the same
+times as before (full 13.8 ms / 6 transfers, KEEP 9.7 / 4, the sweep path
+KEEP + NO_DUMMY_READ 9.5 / 3.45 over the full range), 0 retries; the raw
+3-byte IN -2.000.
+
+Not tested: Windows (expected, from the code: Windows makes no dummy read,
+so the gain is 1 transfer inside the tune and 1 alone, against 3 for the
+ordinary call - read 0..3, LNA, mixer - at 3-4 ms each: a gain-changing hop
+~+3.5 ms instead of ~+10.5), the Raspberry Pi
+(its transfers measured like the PC's: the same counts and times expected),
+other tuners (they take the ordinary call), heimdall's use of it (worker S).
+
 ## Zero-copy USB buffers (investigated 2026-11-12/14)
 
 **State since 2026-11-14** (librtlsdr 701a832 + 3ad1746, on the local

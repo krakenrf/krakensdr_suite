@@ -116,6 +116,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"fft_size",                 "FFT_SIZE:",                 VType::NUMBER, "16384"},
         // 🎨 Bearing spectrum: the spectrum coloured by direction (bin_doa.hpp)
         {"bin_doa",                  "BIN_DOA:",                  VType::BOOL,   "0"},
+        // Signal ID: every signal labelled with its type (sigclass_service.hpp)
+        {"sigclass",                 "SIGCLASS:",                 VType::BOOL,   "0"},
         // Decimator (VFO) setup - one composite value because the set is
         // dynamic: "<heard>|<vfo>;<vfo>;..." with each <vfo> =
         // "offset_hz,bw_index,demod,squelch_en,squelch_db,squelch_method (0 FFT /
@@ -179,6 +181,15 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // GAIN and the VFOs (their tuners); TUNERS before the mode, which
         // re-sends it to heimdall when independent mode is entered
         {"independent_tuners",       "TUNERS:",                   VType::STRING, ""},
+        // Sweep mode (sweep.hpp): range MHz, tuners, FFT size, dwell - before
+        // the mode, which sends heimdall the plan (SWEEP_RUN isn't saved:
+        // entering the mode runs)
+        {"sweep_range",              "SWEEP_RANGE:",              VType::STRING, "87.500000:108.000000"},
+        {"sweep_tuners",             "SWEEP_TUNERS:",             VType::STRING, "all"},
+        {"sweep_res",                "SWEEP_RES:",                VType::STRING, "auto"},
+        {"sweep_dwell_ms",           "SWEEP_DWELL:",              VType::NUMBER, "5"},   // SWEEP_DWELL_DEFAULT_MS
+        // gain by region: "<f1,f2,..>|<g0,g1,..>" (Hz | dB), "|" = no table
+        {"sweep_gains",              "SWEEP_GAINS:",              VType::STRING, "|"},
         {"operating_mode",           "OPERATING_MODE:",           VType::STRING, "coherent"},
         // Trunk following (trunk_follow.hpp): on / off, voice VFOs at most,
         // follow encrypted / unit-to-unit calls, hear followed calls, hang
@@ -224,11 +235,13 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // the target filename is transient and not persisted)
         {"log_interval_sec",         "LOG_INTERVAL:",             VType::NUMBER, "1"},
         {"log_format",               "LOG_FORMAT:",               VType::STRING, "sqlite"},
-        // Wideband board telemetry log (wb_board.hpp): on/off, seconds between
-        // rows, days kept
+        // Wideband board / host telemetry logs (wb_board.hpp): on/off, seconds
+        // between rows, days plain (a stored value stays; 7 for a new install -
+        // 30 before the gzip days), then days gzipped (0 = deleted after Keep)
         {"wb_log_enabled",           "WB_LOG_ENABLE:",            VType::BOOL,   "1"},
         {"wb_log_period_sec",        "WB_LOG_PERIOD:",            VType::NUMBER, "10"},
-        {"wb_log_keep_days",         "WB_LOG_KEEP:",              VType::NUMBER, "30"},
+        {"wb_log_keep_days",         "WB_LOG_KEEP:",              VType::NUMBER, "7"},
+        {"wb_log_zip_days",          "WB_LOG_ZIP:",               VType::NUMBER, "30"},
         // Spectrum / waterfall display preferences (UI:* keys)
         {"doa_convention",           "UI:DOA_CONV:",              VType::STRING, "compass"},
         {"waterfall_fft_ymax",       "UI:FFT_Y:",                 VType::NUMBER, "60"},

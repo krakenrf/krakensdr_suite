@@ -10,7 +10,7 @@ row-in column-out interleaving) and the PN scrambler x^9 + x^4 + 1.
 
 One radio's calls (conventional RDCH, or a trunked traffic channel with
 --trunk 1):
-  nxdn_gen.py OUT.cf32 [--rate 48000] [--bps 9600|4800]
+  nxdn_gen.py OUT.cf32 [--rate 48000] [--bps 9600|4800] [--seed N]
               --at T --dur S --src UNIT --dst TG [--unit 1] [--ran 1] [--outbound 1]
               [--trunk 1] [--cipher 0-3] [--key K] [--emergency 1]
               [--hold S] [--disc 1|2] [--dup CH] [--at ... (next call)]
@@ -44,6 +44,9 @@ Output: complex baseband (cf32) at --rate + OUT.json. Put several radios at
 their own bearings with plugins/sdk/tools/uca_scene.py, a trunked system's
 control and traffic channels across the 2.4 MHz with sdk/tools/wide_scene.py.
 Only made-up IDs.
+
+--seed N: the random generator's seed (the AMBE+2 bits); without it 11, so
+the same options give the same file.
 """
 import json
 import sys
@@ -372,7 +375,7 @@ def main():
         print(__doc__)
         sys.exit(2)
     out = a[0]
-    rate, bps = 48000.0, 9600
+    rate, bps, seed = 48000.0, 9600, None
     txs, cur = [], None
     ctl = None
     i = 1
@@ -389,6 +392,8 @@ def main():
             rate = float(v)
         elif k == 'bps':
             bps = int(v)
+        elif k == 'seed':
+            seed = int(v)
         elif ctl is not None:
             if k == 'seconds':
                 ctl[k] = float(v)
@@ -414,7 +419,7 @@ def main():
             cur[k] = float(v) if k in ('dur', 'hold') else int(v)
     if bps not in (4800, 9600):
         sys.exit('--bps: 4800 or 9600')
-    rng = np.random.default_rng(11)
+    rng = np.random.default_rng(11 if seed is None else seed)
     parts = []
     if ctl is not None:
         y = modulate(control_channel(dict(ctl, bps=bps)), rate, bps)

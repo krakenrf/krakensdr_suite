@@ -4,6 +4,7 @@
 #include "../sdr/sdr_init.hpp"
 #include "../sdr/pipeline_control.hpp"
 #include "../sdr/downconverter.hpp"
+#include "../sdr/sweep.hpp"
 #include "../dsp/correlation.hpp"  // For build_correlation_message
 #include "../dsp/compensation.hpp" // get_phase_compensation_state (kerberos stale check)
 #include "../core/config.hpp"
@@ -143,6 +144,8 @@ static std::string build_state_message() {
         + ",\"external_noise\":"
         + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false")
         + ",\"operating_mode\":\"" + operating_mode_name(operating_mode.load(std::memory_order_relaxed)) + "\""
+        // sweep mode's plan and progress (8092 status: same object)
+        + ",\"sweep\":" + sweep_status_json()
         // generic RTL-SDRs (no KrakenSDR): no coherent mode, no calibration (8092 status: same field)
         + ",\"generic_rtlsdr\":" + (generic_rtlsdr() ? "true" : "false")
         // channels whose lag calibration finds no correlation peak (8092 status: same field)

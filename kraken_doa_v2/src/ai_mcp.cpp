@@ -1,3 +1,4 @@
+#include "sweep.hpp"
 #include "ai_mcp.hpp"
 
 #include <algorithm>
@@ -230,7 +231,16 @@ void page_tell(const std::string& op, const std::string& args_json) {
 // The receiver, as the tools see it (uWS loop thread)
 // ---------------------------------------------------------------------------
 const char* mode_name() {
-    return independent_mode_enabled.load() ? "independent" : wideband_mode_enabled.load() ? "wideband" : "coherent";
+    return sweep_mode_enabled.load() ? "sweep" : independent_mode_enabled.load() ? "independent"
+         : wideband_mode_enabled.load() ? "wideband" : "coherent";
+}
+
+// Sweep mode: the tuners step through a range and the receiver draws one wide
+// spectrum - nothing is tuned, demodulated, decoded or captured
+std::string sweep_refusal(const char* what) {
+    if (!sweep_mode_enabled.load()) return "";
+    return std::string("The receiver is in sweep mode (") + sweep::summary() + ") - " + what +
+           " isn't possible there; the user switches the Mode (Coherent / Wideband / Independent) to tune and listen";
 }
 
 double tuner_center_hz(int tuner) {
@@ -427,7 +437,10 @@ std::string screen_json(const std::string& view_json) {
     if (server_generic_rtlsdr.load())
         o << ",\"generic_rtlsdr\":true,\"coherent_available\":false";
     const bool multi = multi_tuner_mode();
-    if (!multi) {
+    if (sweep_mode_enabled.load()) {
+        o << ",\"sweep\":" << q(sweep::summary()) << ",\"sweep_note\":"
+          << q("a frequency sweep: get_spectrum returns the swept range; no VFO audio, decoders, DoA or IQ capture");
+    } else if (!multi) {
         double lo = 0, hi = 0;
         o << ",\"center_hz\":" << num(tuner_center_hz(0), 0) << ",\"gain_db\":"
           << num(ChannelManager::get_gain(active_channel.load()), 1);
@@ -461,10 +474,10 @@ std::string screen_json(const std::string& view_json) {
           << num(v.bw, 0) << ",\"demod\":" << q(DecimatorManager::demodModeToString(d.demod_mode));
         if (multi) o << ",\"tuner\":" << v.tuner;
         o << ",\"heard\":" << (d.audio_out ? "true" : "false") << ",\"level_db\":"
-          << num(band_peak_db(v.hz - v.bw / 2, v.hz + v.bw / 2), 1);
+          << (sweep_mode_enabled.load() ? std::string("null") : num(band_peak_db(v.hz - v.bw / 2, v.hz + v.bw / 2), 1));   // (sweep mode: no live spectrum)
         o << ",\"squelch\":{\"on\":" << (d.squelch_enabled ? "true" : "false") << ",\"method\":"
           << q(squelch_method_name(d.squelch_method)) << ",\"level_db\":" << num(d.squelch_level, 1)
-          << ",\"open\":" << (d.squelch_open ? "true" : "false") << "}";
+          << ",\"open\":" << (d.squelch_open && !sweep_mode_enabled.load() ? "true" : "false") << "}";
         Json st;
         if (d.digital_mode != 0 && decoder_status(d.id, 0, false, &st)) {
             o << ",\"decoder\":{\"mode\":" << q(st.str("mode")) << ",\"detected\":" << q(st.str("detected"))
@@ -579,6 +592,22 @@ std::string spectrum_json(const std::vector<float>& db, double f0, double step, 
 }
 
 void t_get_spectrum(const Json& a, Reply r) {
+    if (sweep_mode_enabled.load()) {
+        // the sweep's spectrum (its latest measurement of every hop), pooled
+        const double lo = num_arg(a, "start_hz", 0), hi = num_arg(a, "stop_hz", 0);
+        const int points = static_cast<int>(std::clamp(num_arg(a, "points", 256), 8.0, 1024.0));
+        std::vector<float> db;
+        double first = 0, step = 0, bin = 0;
+        if (!sweep::pooled_db(lo, hi, points, db, &first, &step, &bin) || db.empty())
+            return r("No sweep measured yet (" + sweep::summary() + ")", true);
+        for (float& v : db)
+            if (!is_finite_value(v)) v = 0.0f;   // never measured
+        std::string j = spectrum_json(db, first, step, first + step * (static_cast<double>(db.size()) - 1) / 2, 0,
+                                      static_cast<long>(db.size()) - 1, static_cast<long>(db.size()), num_arg(a, "min_db", 6), -1, 0, 0);
+        j.insert(1, "\"sweep\":" + q(sweep::summary() + " - levels max-pooled from the sweep's " +
+                                       num(bin, 1) + " Hz bins") + ",");
+        return r(j, false);
+    }
     const SpectrumSnapshot& s = MessageBuilders::spectrum_snapshot();
     int di = 0, tuner = -1;
     if (s.independent) {
@@ -856,6 +885,7 @@ void t_list_decoders(const Json&, Reply r) {
         if (!p.category.empty()) o << ",\"category\":" << q(p.category);
         if (p.fixed_freq_hz > 0) o << ",\"fixed_freq_hz\":" << num(p.fixed_freq_hz, 0);
         if (p.lock_vfo) o << ",\"whole_band\":true";
+        else if (!p.lock_opt_key.empty()) o << ",\"whole_band_when\":" << q(p.lock_opt_key + "=" + p.lock_opt_val);
         if (p.manual_only) o << ",\"manual_only\":true";
         if (p.talkers) o << ",\"bearing_per_transmitter\":true";
         o << "}";
@@ -865,7 +895,8 @@ void t_list_decoders(const Json&, Reply r) {
                            "than the VFO has decodes from a stream of its own at the VFO's centre - widening the VFO "
                            "to its min_vfo_bandwidth_hz gives the DoA and squelch the whole signal too). A decoder set "
                            "by id needs a VFO of at least its min_vfo_bandwidth_hz. fixed_freq_hz decoders tune the "
-                           "receiver there; whole_band ones take the tuner's whole 2.4 MHz") << "}";
+                           "receiver there; whole_band ones take the tuner's whole 2.4 MHz, whole_band_when ones too while "
+                           "that option (set_option) has that value on the VFO") << "}";
     r(o.str(), false);
 }
 
@@ -938,6 +969,7 @@ void t_search_log(const Json& a, Reply r) {
 }
 
 void t_capture(const Json& a, Reply r) {
+    if (auto e = sweep_refusal("an IQ capture"); !e.empty()) return r(e, true);
     double hz = num_arg(a, "freq_hz", 0), rate = num_arg(a, "rate_hz", 0);
     const double secs = std::clamp(num_arg(a, "seconds", 10), 1.0, 60.0);
     int tuner = 0;
@@ -1171,6 +1203,7 @@ std::string set_bw(int id, double hz, double* applied = nullptr, bool at_least =
 std::string move_vfo(int id, double hz) {
     Vfo v;
     if (!find_vfo(id, &v)) return "no VFO D" + std::to_string(id);
+    if (auto e = sweep_refusal("moving a VFO"); !e.empty()) return e;
     if (wideband_mode_enabled.load())
         return "the receiver is in wideband scan mode - VFOs are placed by the scanner there (switch to coherent mode)";
     if (independent_mode_enabled.load()) {
@@ -1187,6 +1220,29 @@ std::string move_vfo(int id, double hz) {
     return cmd("SET_DECIMATOR_FREQ:" + std::to_string(id) + ":" + num(off / 1e3, 3));
 }
 
+// The VFO's decoder holds it (dig::holds_vfo: a fixed frequency, its tuner's
+// centre, or - Aero's All channels - by the value of one of its options); *pi = the plugin
+bool vfo_held(const Vfo& v, dig::PluginInfo* pi = nullptr) {
+    if (static_cast<dig::Mode>(v.d.digital_mode) != dig::Mode::PLUGIN) return false;
+    return dig::decoder_holds_vfo("PLUGIN:" + v.d.digital_plugin, &v.d.digital_opts.plugin, pi);
+}
+
+// a lock taking hold, as the web UI's digApplyFixedTune does: the bandwidth
+// (the narrowest efficient width >= min_vfo_rate; the whole 2.4 MHz for the
+// option lock) and the VFO on its tuner's centre (the tuner: the caller)
+void apply_lock(int id, const Vfo& v, const dig::PluginInfo& pi) {
+    const double need = dig::lock_bandwidth_hz(pi);
+    if (v.bw < need - 1) set_bw(id, need);
+    const std::string tsuf = independent_mode_enabled.load() ? ":" + std::to_string(v.tuner) : "";
+    cmd("SET_DECIMATOR_FREQ:" + std::to_string(id) + ":0" + tsuf);
+}
+
+std::string lock_note(const dig::PluginInfo& pi) {
+    const std::string by = pi.lock_opt_key.empty() || pi.lock_vfo ? "" : " with " + pi.lock_opt_key + "=" + pi.lock_opt_val;
+    return pi.name + by + " takes the tuner's whole band: the VFO was put on the tuner's centre (move the receiver, "
+                          "not the VFO)";
+}
+
 std::string set_decoder(int id, std::string dec, std::vector<std::string>& notes) {
     dec = lower(dec);
     if (dec == "off" || dec == "none" || dec.empty()) return cmd("DIGITAL_MODE:" + std::to_string(id) + ":OFF");
@@ -1199,13 +1255,11 @@ std::string set_decoder(int id, std::string dec, std::vector<std::string>& notes
     if (!find_vfo(id, &v)) return "no VFO D" + std::to_string(id);
     std::string e = cmd("DIGITAL_MODE:" + std::to_string(id) + ":PLUGIN:" + dec);
     if (!e.empty()) return e;
-    const std::string tsuf = independent_mode_enabled.load() ? ":" + std::to_string(v.tuner) : "";
-    if (pi.fixed_freq_hz > 0 || pi.lock_vfo) {
+    // (the option lock - Aero's All channels - by the VFO's own options, which stay with it)
+    if (dig::holds_vfo(pi, &v.d.digital_opts.plugin)) {
         // as the web UI does when one is picked: the full bandwidth it
         // needs, the VFO on its tuner's centre, and (fixed) the tuner there
-        double bw = 0;
-        if (v.bw < pi.min_vfo_rate - 1) set_bw(id, pi.min_vfo_rate, &bw);
-        cmd("SET_DECIMATOR_FREQ:" + std::to_string(id) + ":0" + tsuf);
+        apply_lock(id, v, pi);
         if (pi.fixed_freq_hz > 0) {
             e = independent_mode_enabled.load() ? cmd("TUNER_FREQ:" + std::to_string(v.tuner) + ":" + mhz(pi.fixed_freq_hz))
                                                 : cmd("FREQ:" + mhz(pi.fixed_freq_hz));
@@ -1213,8 +1267,7 @@ std::string set_decoder(int id, std::string dec, std::vector<std::string>& notes
             notes.push_back(pi.name + " works on a fixed frequency: the receiver was tuned to " + mhz(pi.fixed_freq_hz) +
                             " MHz and the VFO put on its centre");
         } else {
-            notes.push_back(pi.name + " takes the tuner's whole band: the VFO was put on the tuner's centre (move the "
-                                      "receiver, not the VFO)");
+            notes.push_back(lock_note(pi));
         }
     } else if (v.bw < pi.min_vfo_rate - 1) {
         double bw = 0;
@@ -1241,10 +1294,8 @@ std::string apply_vfo_args(int id, const Json& a, bool skip_freq, std::vector<st
     if (has(a, "decoder")) {
         e = set_decoder(id, str_arg(a, "decoder"), notes);
         if (!e.empty()) return e;
-        dig::PluginInfo pi;
-        const std::string d = lower(str_arg(a, "decoder"));
-        locked = dig::PluginRegistry::instance().get(d.rfind("plugin:", 0) == 0 ? d.substr(7) : d, &pi) &&
-                 (pi.fixed_freq_hz > 0 || pi.lock_vfo);
+        Vfo v;
+        locked = find_vfo(id, &v) && vfo_held(v);
     }
     if (has(a, "bandwidth_hz") && !locked) {
         double bw = 0;
@@ -1297,6 +1348,7 @@ void t_tune(const Json& a, Reply r) {
     if (auto e = readonly_refusal(); !e.empty()) return r(e, true);
     const double hz = num_arg(a, "freq_hz", 0);
     if (!(hz > 0)) return r("freq_hz needed", true);
+    if (auto e = sweep_refusal("tuning"); !e.empty()) return r(e, true);
     if (wideband_mode_enabled.load()) return r("The receiver is in wideband scan mode (tuners spread by the scan) - not tuned", true);
     std::string e;
     const bool indep = independent_mode_enabled.load();
@@ -1344,13 +1396,14 @@ void t_set_gain(const Json& a, Reply r) {
     }
     if (!e.empty()) return r("Refused: " + e, true);
     r("Gain set to " + (g < 0 ? std::string("auto (AGC)") : num(g, 1) + " dB") +
-      (independent_mode_enabled.load() ? "" : " - the array recalibrates after a gain change (a few seconds)"), false);
+      (multi_tuner_mode() ? "" : " - the array recalibrates after a gain change (a few seconds)"), false);
 }
 
 void t_add_vfo(const Json& a, Reply r) {
     if (auto e = readonly_refusal(); !e.empty()) return r(e, true);
     const double hz = num_arg(a, "freq_hz", 0);
     if (!(hz > 0)) return r("freq_hz needed", true);
+    if (auto e = sweep_refusal("a VFO"); !e.empty()) return r(e, true);
     if (wideband_mode_enabled.load()) return r("The receiver is in wideband scan mode - switch to coherent first", true);
     if (display_for(hz) < 0) return r(mhz(hz) + " MHz is outside the band the receiver shows - tune there first", true);
     int before = -1;
@@ -1405,8 +1458,26 @@ void t_set_option(const Json& a, Reply r) {
     }
     const std::string val = str_arg(a, "value");
     if (val.find('\n') != std::string::npos) return r("bad value", true);
+    const bool held_before = vfo_held(v);
     if (auto e = cmd("DIGITAL_OPT:" + std::to_string(id) + ":" + key + ":" + val); !e.empty()) return r("Refused: " + e, true);
-    r("Set " + key + " = " + val + " on D" + std::to_string(id), false);
+    // an option that locks the VFO (kp::Info::lock_vfo_opt - Aero's All channels) as the web UI
+    // does it: on - the whole band on the tuner's centre; off - the width a fresh pick of the
+    // decoder gives, the VFO left where it is
+    std::string note;
+    Vfo now;
+    dig::PluginInfo pi;
+    if (find_vfo(id, &now)) {
+        const bool held = vfo_held(now, &pi);
+        if (held && !held_before) {
+            apply_lock(id, now, pi);
+            note = "; " + lock_note(pi);
+        } else if (!held && held_before && dig::PluginRegistry::instance().get(now.d.digital_plugin, &pi)) {
+            double bw = 0;
+            set_bw(id, pi.min_vfo_rate > 0 ? pi.min_vfo_rate : 12500, &bw);
+            note = "; the VFO is free again (bandwidth " + num(bw, 0) + " Hz, still on the tuner's centre)";
+        }
+    }
+    r("Set " + key + " = " + val + " on D" + std::to_string(id) + note, false);
 }
 
 void t_remove_vfo(const Json& a, Reply r) {

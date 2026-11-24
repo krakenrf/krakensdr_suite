@@ -91,6 +91,12 @@ services:
       KRAKEN_GPSD_PORT: ${KRAKEN_GPSD_PORT:-}
       KRAKEN_WEB_MAPPER_INSECURE: ${KRAKEN_WEB_MAPPER_INSECURE:-}
       KRAKEN_DOA_VERBOSE_LOG: ${KRAKEN_DOA_VERBOSE_LOG:-}
+      # HTTPS certificate of the web UI (DOCKER.md "HTTPS certificate"): the
+      # host name it names - default the host's hostname; set it when avahi
+      # announces another one (an mDNS name conflict: krakensdr-2) - and more
+      # names, comma-separated (also add them to KRAKEN_ALLOWED_HOSTS)
+      KRAKEN_CERT_HOST: ${KRAKEN_CERT_HOST:-}
+      KRAKEN_CERT_NAMES: ${KRAKEN_CERT_NAMES:-}
       KRAKEN_RESTART_EXIT: "75"   # ↻ Restart software (see heimdall above)
       # no power buttons at all: KRAKEN_NO_POWER=1 (a container can't shut the host down anyway)
       KRAKEN_NO_POWER: ${KRAKEN_NO_POWER:-}

@@ -56,6 +56,160 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   2048. The Display box's **Slow link** switch (per browser, localStorage
   `kraken_spec_slow`) halves the points the page asks for (`specBinsMain` /
   `specBinsPane`); "Points sent" shows the selected display's frame size
+- **Data rate** (the Display box, under "Points sent", every operating mode;
+  2026-11-22, the user: "Have it show the network bandwidth used in MB/s or
+  KB/s where it shows "Points sent". Show it for all modes"): how fast this
+  browser's connection to kraken_doa brings data (`#net-rate`, in
+  `#net-rate-row`). Two sources, one number:
+  - **The receiver's counters** (*Network rate* below; Linux receivers from
+    2026-11-22): the page sends `NET_STATS:1` with its first commands
+    (after `AUTH`), again at 3 s and 10 s while none came (`netAsk`; an
+    older receiver ignores it silently). Each `{"net":...}` message
+    (`netOnStats`, the JSON branch's first test) goes into a window of the
+    last 6; the rate = `tx_bytes` difference over `t_ms` difference (the
+    receiver's clock - a late message doesn't distort it): the bytes of this
+    connection the browser acknowledged, TLS and WebSocket framing
+    included, after compression. Shown plainly ("85 KB/s"). A counter or
+    clock that goes back starts the window anew; no message for 3.5 s
+    (`NET_RCV_STALE_MS`) = back to the page's count.
+  - **The page's own count** (any receiver - round 6's, an older one,
+    Windows / macOS): `net.rx` counts in ONE place, the top of
+    `ws.onmessage`, every message's size (a binary one's `byteLength`, a
+    text one's length - JSON, nearly all ASCII); `netTick` samples it once a
+    second. That is after permessage-deflate: the receiver worker's counting
+    proxy measured it 1.8 - 2.7x HIGH where frames travel deflated
+    (coherent 291 KB/s counted against 117 on the wire; full sets and audio
+    are counted right - since round 8 the sweep's sets come deflated for a
+    page that can inflate, and the page counts them as they travel: at Full
+    on the whole range "≤ 1.60 - 1.61 MB/s" against 1.59 on the wire, never
+    below it). So it is shown as an upper bound, "≤ 291 KB/s", and
+    the tip says so (counted after decompression, the link carries less -
+    often about half -, a Linux receiver of 2026-11-22 or later gives the
+    exact figure). No estimate of the compression, no second number.
+  - **Sweep mode: over whole sweeps** (2026-11-22, the orchestrator's run
+    on the Pi's KrakenSDR at cd91c8a, the whole range at 146 Hz, a 4.02 s
+    sweep: at Full the 5 s window showed 2.41 MB/s three seconds of four and
+    4.79 the fourth against 3.00 on the wire, at the 2.34 kHz step 179 - 328
+    KB/s against 216, the fallback "≤ 2.41" a third of the time against 2.99
+    - an upper bound below the truth; a 7.8 s sweep 30 KB/s .. 2.41 MB/s):
+    a set is one burst a sweep, and a 5 s window holds one or two. So
+    `netSweepMark` notes at each frame that completes a sweep (flag 2, not
+    paused) its arrival time, `net.rx` and the receiver's latest `tx_bytes`
+    (sent before the sweep's frames in a tick, the set's parts after the
+    flag-2 frame: it holds the earlier sets whole and nothing of the new
+    one); `netSweepRate` = the bytes between two marks over their ARRIVAL
+    times (not `t_ms`: whole seconds, 8 or 9 for 8.04), the older mark the
+    newest at least 15 s back (`NET_SWEEP_WIN_MS`), else the oldest - one
+    whole sweep at least. 15 s, not 5: on the fake a 4.5 s sweep's period
+    jitters 4.3 - 4.8 s, over two sweeps that alone moves the rate +-5 %.
+    Used while sweeps come (two marks or more, the newest no older than two
+    gaps + 2 s) - with the receiver's counters only while sweeps are at
+    least 2 s apart on average (`NET_SWEEP_MIN_GAP_MS`: its sample comes
+    once a second, so it is clean at a mark only when the previous set is
+    through a second before; faster sweeps bring many small sets in any 5 s
+    window - the FM band at Full was 1.8 % steady on the Pi with it). The
+    page's own count is exact at every mark and keeps the marks for fast
+    sweeps too (its 5 s window dipped to 0.95x the proxy on the FM band at
+    Full on the loaded dev machine: the page's own message backlog).
+    Otherwise - the other
+    modes, paused, the first sweep after a change, fast sweeps - the 5 s
+    window, so a change shows at once and then settles. Marks start anew on
+    a reconnect, entering / leaving the mode, a new grid (range,
+    resolution, dwell, tuners), a change of what `SWEEP_FULL` asks, a pause
+    (a flag-4 frame); at most one per 250 ms, 64 kept.
+    Measured (`t_netsw.py`, the fake heimdall, through the counting proxy;
+    values read twice a second once settled - 3 sweeps + 6 s after a
+    change; each against the proxy's bytes over the SAME sweeps as the
+    page's window, every completion read without its set, the way the
+    marks are): the new receiver -0.9 % .. +4.8 % in every case (a 4 - 5 s
+    sweep at the 2.34 kHz step and at Full, 7.5 s, 13.7 s); against the
+    proxy's mean over the whole watch 0 - 1.5 % swing where the fake's
+    sweep period is steady (7.5 s Full 1.61 MB/s against 1.60, 13.7 s Full
+    877 - 881 KB/s against 878, the step 67 - 68 against 67.8). The fake's
+    4 - 5 s sweep is not steady on the loaded dev machine (periods 4.0 - 5.3
+    s, each sweep exactly one 12.02 MB set): there the number follows the
+    real rate, 9 - 16 % up and down. The fallback ("≤", round 6's
+    receiver): +0.2 .. +1.4 % at Full over the same sweeps (never below, far
+    under 1.15x), +7 .. +19 % at a step (the deflated spectrum frames
+    counted decompressed). The FM band at Full: the receiver's 5 s window
+    -1.1 .. +1.0 % of the proxy over the same window, the page's marks +2.4
+    .. +3.2 %. Full followed a step within 1.5 - 2.0 sweeps; resumed after a
+    pause: over whole sweeps again within three.
+  - Both: the average over the last 5 s (`NET_WIN_S`; fewer right after a
+    connect), shown once a second; "-" before there is a rate and while not
+    connected; a reconnect counts anew; each tab its own. Units decimal
+    (`netFmt`): "8.5 KB/s", "85 KB/s", "999 KB/s", "1 MB/s", "3.17 MB/s",
+    "12.5 MB/s". The other direction (the receiver's `rx_bytes`, or `net.tx`
+    from a wrapper on this socket's `send`) only in the tip. What is in:
+    everything the socket carries - spectrum and waterfall frames, the
+    sweep's frames and sets, audio, decoder output, map points, status JSON.
+    Not in: the page and its files, map tiles (the tile servers); with the
+    page's count also TLS / TCP / WebSocket framing. Cost: one addition per
+    message, one small JSON message a second.
+  - Measured (`t_net.py`, headless Chromium, the fake heimdall, the page
+    loaded through a counting TCP proxy in front of kraken_doa,
+    `slowproxy.py` at rate 0; KB/s - the receiver's / the proxy's / shown):
+    coherent 32.3 / 32.4 / 32, wideband scan 33.8 / 34.0 / 34, independent
+    52.5 / 52.6 / 52, sweep at Fit 29.2 / 29.0 / 29, at 65 536 85.4 / 86.3
+    / 85, at Full (400 - 700 MHz at 4096) shown 534 against the proxy's 526.
+    The page's own count = DevTools' count of the frames the socket
+    delivered (`Network.webSocketFrameReceived`) within the frames at the
+    window's edges (0.4 % at most). Round 6's receiver and 178f007: "≤"
+    every mode, the count above the proxy's (coherent ≤ 35 against 31.8,
+    a sweep step ≤ 114 against 84.9; the fake's spectra compress less than
+    real ones). Two tabs each their own (Full 531 KB/s beside Fit 19).
+  - **On a Raspberry Pi 5 with its KrakenSDR** (the end-to-end record,
+    2026-11-22: the stack on the Pi, the page in headless Chromium on
+    another machine over the LAN). The reference is the Pi kernel's own
+    count of that connection, read by another program over the same window
+    (`ss -tin`, `bytes_acked`) - the same kernel counter the receiver reads,
+    so it checks the receiver's bookkeeping, the page's arithmetic and what
+    is shown, not the kernel. The interface's own tx counter read 1 - 18 %
+    above it (TCP / IP headers, the test's ssh).
+    - The receiver's messages before the page showed them (7e35fa3; B/s,
+      messages / reference): coherent 28 266 / 28 281, wideband scan 27 774
+      / 27 770, independent 46 146 / 45 884, sweep (24 - 1765 MHz at 146 Hz,
+      4.02 s a sweep) at Fit 29 950 / 29 940, at Full 2 998 798 / 2 997 645,
+      the FM band 23 699 / 23 670 - all within 0.6 %; the 2.34 kHz step
+      228 231 / 215 788 (the two 16 s windows were not the same four
+      sweeps); the messages exactly 1 000 ms apart.
+    - The readout (cd91c8a; shown / reference): coherent 28 KB/s / 28 096,
+      wideband scan 28 / 27 930, independent 46 / 46 009, sweep at Fit 30 /
+      30 102, the FM band 23 / 23 157. The fallback (`NET_STATS:0` sent
+      from the page): "≤ 34 KB/s" against 27 766 in coherent mode (1.22x on
+      this receiver's real spectra), the plain "28 KB/s" again with
+      `NET_STATS:1`.
+    - Every shown value, read twice a second through a window of a whole
+      number of sweeps, against the reference's mean over that window -
+      the 5 s window (cd91c8a) -> whole sweeps (5498e27):
+
+      | case | 5 s window: shown (x the mean) | whole sweeps: shown (x the mean) |
+      |---|---|---|
+      | the 2.34 kHz step | 178 - 328 KB/s (0.83 - 1.53) | 207 - 209 KB/s (0.995 - 1.004) |
+      | Full | 2.41 - 4.79 MB/s (0.81 - 1.61) | 2.97 - 2.99 MB/s (1.000 - 1.007) |
+      | Full, the fallback | "≤ 2.41" - "≤ 3.94" MB/s (0.81 - 1.32: below the truth a third of the time) | "≤ 2.98" - "≤ 2.99" against 2.981 (never below) |
+      | Full, a longer sweep | 30 KB/s - 2.41 MB/s (0.02 - 1.55; 7.8 s a sweep) | 864 - 865 KB/s (1.002 - 1.003; 14.0 s a sweep) |
+      | Full, the FM band (11 sweeps a second; the 5 s window in both) | 215 - 219 KB/s (0.995 - 1.013) | 212 - 216 KB/s (0.996 - 1.015) |
+      | Fit; coherent; independent | steady, within 3 % (once 7 % low, in a connection's first half minute) | steady, within 2.5 % |
+
+      A change from the step to Full showed after 1.5 s; paused, the number
+      fell to 3.9 KB/s; resumed, 2.97 - 2.98 MB/s against 2.976. 26 / 26.
+    - The Pi's earlier sweep checks (*Sweep mode*, its Tests) with the new
+      receiver under the page of before and with cd91c8a: all pass (the
+      display list 15 / 15, the kept rows 10 / 10, round 5's 27 / 27, the
+      waterfall 14 / 14, the resolutions 15 / 15 and 15 / 15, end to end 20
+      / 20). With 5498e27 the steps that need the receiver's own signals
+      could not be repeated: the Pi's KrakenSDR had been exchanged for a
+      KrakenSDR Wideband between the runs (heimdall, started without
+      `--wideband`, found no noise-source peak - "peak/mean=3.5" - from its
+      start, before a page was loaded), so "CONVERGED" (six steps) and a
+      known carrier (two) failed in four checks; every other step passed
+      (15 / 15, 10 / 10, 14 / 14, 15 / 15, 25 / 27, 12 / 15, 18 / 20), and
+      the change from cd91c8a is the Data rate's marks alone.
+    - Not tested: a link too slow for a set to be through before the next
+      sweep ends, Firefox / Safari / iOS, a Windows or macOS receiver (the
+      fallback was tested by switching the counters off and against older
+      Linux receivers).
 - Beamformed overlays (type 4): `MessageBuilders::beamformed_spectrum` once
   per VFO per tick (normalized, the beamformer's 1024 bins), then
   `build_beamformed_fft_message(bf, point_step_hz)` per page: max-pooled by a
@@ -101,3 +255,261 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   page's whole WebSocket traffic (audio + DoA + status included): 262 KB/s
   -> 26-27 KB/s
 
+## Network rate: the receiver's byte counters (NET_STATS, 2026-11-22)
+
+The user: "show the network bandwidth used ... where it shows Points sent.
+Show it for all modes." The page can count only what it gets after TLS and
+permessage-deflate; the true number for its connection is the kernel's.
+
+**Contract.**
+- `NET_STATS:<1|0>` (also true / false; junk ignored) - transport level, per
+  connection, every mode, behind the AUTH gate like `FFT_VIEW`; off by
+  default. An older receiver ignores it (no reply, no log line).
+- While on: `{"net":{"tx_bytes":N,"tx_sent":S,"rx_bytes":M,"t_ms":T}}` at
+  once (a baseline) and then every 1 000 ms (on the 50 ms broadcast tick:
+  measured 1 000 ms apart). `t_ms` = the receiver's monotonic clock; the
+  page takes the rate from differences. Whole numbers below 2^53.
+  - `tx_bytes` = `tcpi_bytes_acked`: receiver -> browser bytes the
+    browser's TCP acknowledged - TCP payload: the TLS records (their
+    overhead included) carrying the WebSocket frames, after
+    permessage-deflate. Not in it: TCP / IP headers (~3-4 % more on the
+    wire), retransmissions, and what still waits (uWS's queue, the kernel's
+    send buffer, in flight) - so on a link that can't keep up it rises at
+    the link's real throughput. The number to show.
+  - `tx_sent` = `tcpi_bytes_sent` (only when the running kernel fills it,
+    Linux 4.19+): sent incl. retransmissions; `tx_sent - tx_bytes` = in
+    flight + retransmitted.
+  - `rx_bytes` = `tcpi_bytes_received`: browser -> receiver (the page's
+    commands).
+  - The counters run since the TCP connection opened (TLS handshake and the
+    HTTP upgrade included): differences only.
+- No counter (Windows, macOS, a kernel without TCP_INFO's byte fields): no
+  message; the page counts by itself.
+
+**The receiver.** `net_stats::read` (src/networking/net_stats.cpp; Linux:
+`getsockopt(TCP_INFO)` with `<linux/tcp.h>` - glibc's `<netinet/tcp.h>` may
+lack the newer fields and the two don't mix; a field past the length the
+kernel returns is not taken; elsewhere a stub that says "no counter"). The
+descriptor: `us_poll_fd((us_poll_t *) ws)` - uWS's WebSocket is its
+`us_socket_t`, an SSL socket's struct begins with it and that with the poll,
+so this is the TCP socket under the TLS (no OpenSSL call).
+websocket_server.cpp: `handle_net_stats`, `g_net_sockets`,
+`net_stats_tick()` at the top of the broadcast timer. Cost: one getsockopt
+a second a page - 0.46 us a call on x86 (timed from Python, an upper bound),
+0.60 us on the Pi 5 - and a ~90-byte message.
+
+**Measured against an independent count** (t_net.py: a TCP proxy in front
+of the receiver counts what it forwards; the fake heimdall; x86 / Pi 5):
+
+| case | receiver | proxy | the page's own count (after inflate / TLS) |
+|---|---|---|---|
+| coherent mode (spectrum, audio, JSON) | 117.1 KB/s | 117.1 (+0.00 %) | 291 KB/s (2.5x) |
+| sweep, fit | 19.1 | 19.2 (-0.36 %) | 41.7 (2.2x) |
+| sweep, a step (65 536) | 32.0 | 32.0 (+0.00 %) | 56.7 (1.8x) |
+| sweep, full (11.9 M bins) | 3 266 | 3 266 (+0.00 %) | 3 285 (1.01x) |
+| two pages: full / fit | 3 986 / 18.9 | the same | 4 007 / 41.3 |
+
+The Pi 5 the same within 0.4 KB/s in every case (coherent 116.8 / 116.8, full 3 265 / 3 265; the page's own count 2.5x / 1.01x). Audio was already on in coherent mode (250 Opus messages in 9 s; the VFO's speaker toggle added ~25). The x86 ASan + UBSan build: the same numbers, 14 / 15 (it dropped engine packets during the full sets, as before - not this change). So the page's own count, the fallback, reads 1.8-2.7x high where
+the frames are deflated (spectrum, JSON) and right where they are not (full
+sets, audio). Tests (t_net.py 15 / 15, x86 normal and ASan + UBSan, Pi 5):
+off by default, junk ignored, a baseline at once, `tx_sent` >= `tx_bytes`,
+the five cases above within 3 % (all within 0.4 %), each page its own
+counter, `NET_STATS:0` stops, a page that never asked gets none.
+
+## The live waterfall recolours (2026-11-21)
+
+The user: "Do the same recolour fix for the live waterfall too" (sweep mode's
+waterfall had learnt it that day, *sweep-mode.md*). Before, `WaterfallDisplay`
+kept only pixels: a change of the colour map or of the contrast coloured the new
+lines, and the lines already on screen kept their old colours. This applies to the
+main waterfall (coherent, wideband scan) and to the tuner panes of independent mode.
+
+- **What is kept.** `lv`: one byte per pixel, laid out like the ImageData. It
+  holds the level the pixel was painted from: 0..254 = -20 .. +80 dB in 0.39 dB
+  steps (`WF_LV_*`). The frames' own steps are 0.47 dB (u8 over 0 - 120 dB). The
+  contrast can't tell more apart: Min >= -20 and Max <= 80 (sliders and
+  `computeAutoRange`), so a level beyond either end gets the end's colour anyway.
+  255 means no line (black). `rowMin` / `rowMax` hold each pixel row's range (the
+  one it was painted with; 16 bytes a row). A line is painted from its stored
+  levels through a 256-entry table per range (`lutFor`, packed 32-bit pixels), so
+  a repaint is exactly a fresh paint. Compared with painting the level itself (the
+  code before), the colour index differs by at most 1 where it differs. Measured
+  on the receiver's frames: about half the pixels at a 45 dB range, never more
+  than one step.
+- **Bearing colours** (*bearing-spectrum.md*: the main waterfall's lines take
+  the bearing's hue at the level's brightness). `hue` is a second plane, two
+  bytes a pixel (0..359 = the row of `binDoaLut`, 0xFFFF = none). It is made with
+  the first coloured line and dropped once none is left on screen (`hueAge`). So a
+  contrast change repaints coloured lines too: the hue stays and the brightness
+  0.2 + 0.8 x the colour scale follows. `binDoaWfTint` now returns `{at: f ->
+  hue | -1, rgb}` instead of painting.
+- **Bounds.** 1 byte a pixel: 1.31 MB at 1920 x 680, 0.61 MB for the main
+  waterfall in a 1920 px window with the sidebar and DoA pane (904 x 677), 65 KB
+  for a 360 x 180 pane. Another 2 bytes a pixel only while bearing-coloured lines
+  are on screen. The calibration burst's orange marker sits in the left margin,
+  which a repaint never touches. Speed sets the height of new lines only. A
+  resize stretches the levels and the rows' ranges exactly as it stretches the
+  pixels. A zoom changes nothing: older lines keep the span they were drawn with,
+  and only their colours follow. Sweep mode's instance never calls `addLine`, so
+  it never gets the store: no second copy of its rows, and no repaint over its
+  pixels. `swpWfRecolour` still does its repaint, and `clear()` empties the store.
+- **When it repaints.** `recolour()` repaints at the next screen refresh
+  (requestAnimationFrame), so a slider drag repaints at most once a refresh. A new
+  line in between paints only itself, and the full repaint waits for the
+  refresh. A waterfall that is not shown (another mode's) waits until it is shown
+  again. A value that doesn't change repaints nothing: `setColormap` with the
+  same map, or `setRange` with the same range when every line already has it.
+- **Auto does not recolour (the orchestrator's call, from a measurement).** The
+  first version repainted every line whenever Auto's range moved, as sweep mode's
+  waterfall does. Measured with scratch `t_auto.py` (coherent mode, the receiver
+  worker's RF-scene fake, Auto's 500 ms tick, 60 s per band):
+  - On a static scene (98 / 433.92 / 120 / 162 / 300 MHz) the range never moved.
+  - With signals that come and go (0 - 3 strong carriers or 200 kHz bands near
+    the centre, changed every 1 - 3 s), it moved 16 - 22 times a minute. At
+    98 MHz 13 of the 16 moves flipped back within 5 s (-10:35 <-> -10:40).
+  - At every move 92 - 100 % of the waterfall's pixels visibly changed colour,
+    the mean change reaching 38 / 94 / 126 of 255.
+  - In independent mode one pane flipped between -5:45 and 0:45 20 times in 20 s
+    even on the static scene (`t_indep.py`).
+
+  The whole picture flashing up to 20 times a minute is clearly worse than the
+  bands Auto leaves when only new lines take its range. So the rule is:
+  - Auto's own moves (`setRange(min, max, true)`: `autoRangeWaterfall` ->
+    `updateWaterfallRange(true)`, the panes' tick, a pane's Auto switched on)
+    colour only the new lines; each line keeps its range, as before.
+  - Switching Auto on repaints nothing.
+  - A change the user makes repaints every line, which then takes the range set:
+    Min / Max by hand (also from another browser, `viewOnRemote`, and a pane's
+    own View), or Auto switched off (`toggleAutoRange(false)` ->
+    `updateWaterfallRange()`; the range where Auto left it becomes the manual
+    one).
+  - A colour-map change repaints every line with its own range, so the picture
+    keeps Auto's bands, in the new colours.
+
+  Sweep mode keeps its own rule (Auto repaints its rows; a sweep line comes every
+  few seconds). Don't make the live Auto recolour without new measurements.
+- **Cost** (scratch `t_perf.py`, headless Chromium on the shared 16-core dev
+  machine, medians; the same frames through the class before the change, taken
+  from the page at HEAD):
+  - A full repaint at 1920 x 680: 1.4 - 1.8 ms (max 2.2; 1.5 - 1.7 / max 3.1 in an earlier run at load 11) - the sweep's repaint of 570 rows at 1573 x 677 is 21 ms, it paints through its rows' windows.
+  - A new line at 1920 x 680: 0.46 - 0.52 ms against 0.40 - 0.45 ms before (+12 - 18 %: the level plane and the rows' ranges scroll with the pixels; speed 1 and 5).
+  - 904 x 677: 0.19 ms a line against 0.17 - 0.18 ms, a repaint 0.7 ms.
+  - Phone sizes (400 x 300, 360 x 180): 0.015 - 0.03 ms a line (before 0.015 - 0.025), a repaint 0.1 ms; load 3 - 4 for these numbers. The picture is the same as the old class's within one colour step on 99.9 % of the pixels (the rest: the SDR# map's flat stretch, where equal colours hide the index).
+- **Tests** (scratch `52196024/tmp/live/`; `stack.sh` = a clean test build with
+  ports 288xx and the receiver worker's fake with its RF scene, or the coherent
+  UCA fake with `FAKE=simple`; real mouse / key events; every check compares each
+  plot pixel of the ImageData with a fresh paint from its level and its row's
+  range, and the canvas with the ImageData):
+  - `t_live.py` 30 / 30. Covered:
+    - Auto on: a move leaves the old pixels as they were (0 px) and repaints
+      nothing, with three ranges on screen at once.
+    - Auto on + Colors: every line recoloured with its own range.
+    - Auto off by the switch: every line takes the manual range.
+    - Colors by a key, Min dragged (40 pointer moves: 37 repaints over 54 - 58
+      refreshes, never two in one), Max by keys.
+    - Unchanged values (remote, the appliers, setRange / setColormap) repaint
+      nothing; Speed repaints nothing; a zoom repaints nothing.
+    - A second browser's Colors + Max: this page repaints.
+    - A resize to 1500 x 950 keeps the levels with the pixels; Colors after it.
+    - Auto on again: 0 repaints in 20 s.
+    - Quantisation: the colour index moves by at most 1.
+  - `t_indep.py` 14 / 14. Covered:
+    - A pane's own Colors repaints that pane only (pane 0: 0 px changed, no
+      repaint).
+    - Its own Auto off + Min by keys repaints it.
+    - "View · all tuners" Colors repaints all five panes.
+    - The panes' Auto (up to 20 moves in 20 s) repaints nothing, and every line
+      matches a fresh paint with its own range.
+  - `t_bin.py` 7 / 7. Covered:
+    - Bearing colours: 298 440 coloured pixels, consistent; Max -6 dB repaints
+      them (165 200 px of the top 200 rows changed).
+    - The hue plane goes after the colours are switched off.
+    - The calibration burst's marker (1 500 px) is kept through a recolour.
+  - `t_auto.py`: the measurement above, then the same dynamic scene with the
+    rule. 14 / 25 / 19 moves a minute at 98 / 433.92 / 300 MHz, 0 repaints;
+    each move again would have changed 91 - 100 % of the pixels.
+
+## A picture of the spectrum and the waterfall (2026-11-21)
+
+The user: "add an option to save a screenshot of the FFT and waterfall together".
+It lives in kraken_doa.html, script block "SPECTRUM PICTURE" (after the View
+popover's).
+
+- **The button.** A camera icon (`camera`, *icons.md*) sits right after View on
+  the spectrum's header (`#snap-btn-main`, 6 px from View, as tall as it; 32 px on
+  a phone). That header is the same in sweep mode, so the button needs nothing in
+  the sweep block. In independent mode it saves the selected tuner, and its title
+  says so (`snapBtnTitle`, called with `viewBtnTitle`). Each tuner pane's header
+  has its own after its View button (`#tpane-pb-N`; the click also selects the
+  pane). It fits: every pane header stays on one line with the button inside it,
+  at 504 px panes (1920 window) and 483 px panes (1366 window).
+- **The picture** (`snapRender`). The display's canvases are drawn onto one
+  canvas at their places on screen, in device pixels (`devicePixelRatio`):
+  - The spectrum canvases come at their own resolution. uPlot's is plot width x
+    dpr; sweep mode's and the panes' are dpr too.
+  - Canvases kept in CSS pixels (the waterfalls, the main display's VFO overlay
+    `#fo`) are scaled up without smoothing.
+  - Under them go the boxes' backgrounds and top borders as the page shows them
+    (computed styles, so the light look's colours too).
+  - What is in it is everything drawn on a canvas: the trace, grid, axes and
+    their labels, the tuning bars and their labels, squelch lines, the bearing
+    colours and their ring, sweep mode's progress bar and its messages, the
+    waterfall and its VFO overlay.
+  - What is not: the DOM over the canvases. That is the pointer's level box,
+    uPlot's cursor lines, the "DEBUG PLAYBACK" banner (the caption names it), and
+    a pane's header (its frequency and gain go into the caption). The pointer's
+    readout in sweep mode is on a canvas, but the pointer is on the button when it
+    is pressed.
+- **The caption** sits under the picture, on --s2 with --t1 text and an --l1
+  line. Its parts, joined by " · ":
+  - "KrakenSDR", then the mode: "Coherent · Antenna N", "Wideband scan",
+    "Independent · Tuner N" or "Sweep · K tuners".
+  - The centre, to the Hz where it has them; the range shown (about a thousandth
+    of the span as the last digit; in sweep mode the sweep's Range, plus Shown
+    when zoomed).
+  - FFT N (sweep mode: with its bin width) and a point's width (the View
+    popover's readout).
+  - The zoom when > 1, the gain (the top bar's, or the pane's), and the date and
+    time, local with the UTC offset ("2026-11-21 23:11:11 UTC+13:00").
+
+  It is one line at 12 px, shrunk down to 10 px where it would not fit. A picture
+  too narrow even for that (a pane, a phone) gets it on more lines, broken
+  between its parts and never cut. In the tests every picture's caption fitted
+  one line.
+- **The file.** Its name says what and when:
+  `krakensdr_<coherent|wideband|sweep|T<n>>_<lo>-<hi>MHz_<YYYYMMDD>_<HHMMSS>.png`,
+  for example `krakensdr_sweep_400-700MHz_20261121_231218.png`. It is the range
+  shown, at local time. The PNG is saved through `canvas.toBlob` -> a blob: URL
+  -> a hidden `<a download>` clicked. The URL is revoked after 60 s, because
+  Firefox and Safari read it after the click returns. A browser without `toBlob`
+  goes through `toDataURL`. Nothing is sent and nothing is uploaded; there is no
+  library (the page works offline).
+- **Browsers.** Only headless Chromium was tested. The rest is from how these
+  browsers handle a blob download, not tried here:
+  - Firefox and Safari desktop take `<a download>` with a blob: URL.
+  - iOS Safari (13 and later) asks whether to download the file and puts it into
+    Files > Downloads, not into Photos. iOS 12 and older would open the PNG in a
+    tab, where a long press saves it.
+  - Over HTTPS with the self-signed certificate nothing changes: the blob belongs
+    to the page's own origin.
+- **Tests** (scratch `t_snap.py`, 117 / 117).
+  - What every picture is checked for:
+    - Pressed by a real click (a touch tap on the phone).
+    - The download seen through the DevTools events (`Browser.downloadWillBegin`
+      with a blob: URL and the suggested name, then the file in a folder).
+    - The PNG decodes (PIL) and its size equals the display's area in device
+      pixels plus the caption strip.
+    - Every display pixel equals a composite made in the test from the page's
+      own layers (each canvas read back with getImageData, each box's
+      background), within 3. The stream is held meanwhile, so the canvases read
+      back are the ones in the picture.
+    - Known pixels: the trace's peak where uPlot puts it, and waterfall pixels
+      where they are on screen.
+    - The caption's strip, text and parts, and the file name.
+  - Modes and settings covered: coherent at 433.92 MHz; zoomed x3.8; Slow link;
+    dpr 2 (1600 x 1000: the spectrum canvas at its own 1436 px inside a 1440 px
+    picture, which is #fp x 2); a phone (400 x 860, touch, dpr 2: the button 32
+    px next to View); independent (a pane's own button, and the header's button
+    for the selected pane); wideband scan; sweep mode with the receiver's engine
+    (400 - 700 MHz, 5 tuners), whole and zoomed x3.1. In sweep mode the sweep's
+    waterfall still keeps no level store.

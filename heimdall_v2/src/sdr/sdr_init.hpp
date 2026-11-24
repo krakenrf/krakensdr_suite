@@ -124,6 +124,10 @@ bool rf_frequency_valid(uint64_t rf_hz);
 // on every open tuner, RTL2832 AGC loop off. Diagnostic/tuning aid (control
 // port set_if_vga); the next gain change re-applies the configured step.
 bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// One tuner's gain as update_sdr_settings writes it (tenths of a dB, -1 = the
+// tuner's AGC): the gain mode, the fixed IF VGA step that goes with it
+// (R820T_IF_VGA_*), the gain. Caller holds device_io_mutex. True = all written.
+bool apply_tuner_gain(rtlsdr_dev_t* dev, int g);
 // What update_sdr_settings did with a request, for a caller that answers
 // someone (the control port): its return value only says whether the hardware
 // was written. Filled on every return; frequency / gain are the settings in
@@ -131,6 +135,7 @@ bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& de
 struct SdrUpdateResult {
     bool frequency_out_of_range = false;  // outside rf_frequency_range(): frequency unchanged
     bool lo_retune_failed = false;        // Wideband variant: the LO retune failed, frequency unchanged
+    bool sweep_refused = false;           // sweep mode: the plan sets the frequencies, frequency unchanged
     // Coherent / wideband scan: the change failed on failed_channels and every
     // tuner was put back on the previous settings (rolled_back) - or that
     // failed too on restore_failed_channels (restore_failed: tuners
@@ -143,7 +148,9 @@ struct SdrUpdateResult {
     std::string restore_failed_channels;
     uint64_t frequency = 0;               // Hz
     int gain = -999;                      // tenths of dB, -1 = AGC
-    bool ok() const { return !frequency_out_of_range && !lo_retune_failed && failed_channels.empty(); }
+    bool ok() const {
+        return !frequency_out_of_range && !lo_retune_failed && !sweep_refused && failed_channels.empty();
+    }
 };
 // Rejects (logs, ignores) a frequency outside rf_frequency_range(); the gain
 // part of the request still applies. Values equal to the current ones are
@@ -167,11 +174,12 @@ bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vec
 void finish_fast_retunes(const std::vector<std::unique_ptr<SDRDevice>>& devices, const char* why, bool only_if_quiet);
 void handle_settings_change();
 
-// Operating mode (COHERENT / WIDEBAND_SCAN / INDEPENDENT, see types.hpp).
-// Leaving COHERENT parks the calibration (noise off, FFT off); returning to it
-// retunes every tuner to current_frequency on the common gain and runs the
-// phase recalibration. WIDEBAND_SCAN: the caller then spreads the tuners
-// (setup_wideband_frequencies). Non-coherent modes are unavailable in the
+// Operating mode (COHERENT / WIDEBAND_SCAN / INDEPENDENT / SWEEP, see
+// types.hpp). Leaving COHERENT parks the calibration (noise off, FFT off);
+// returning to it retunes every tuner to current_frequency on the common gain
+// and runs the phase recalibration. WIDEBAND_SCAN: the caller then spreads
+// the tuners (setup_wideband_frequencies). SWEEP: the sweep thread hops the
+// plan's tuners (sweep.hpp). Non-coherent modes are unavailable in the
 // downconverter variant, which needs every tuner parked at the IF. Returns
 // false if nothing changed / refused.
 bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<SDRDevice>>& devices);
@@ -193,6 +201,14 @@ const char* generic_mode_refusal(OperatingMode target);
 // (settings::persisted_generic_tuner_*). Not saved as the user's mode.
 void enter_generic_independent_mode(const std::vector<std::unique_ptr<SDRDevice>>& devices);
 void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+
+// A tuner was retuned / its gain changed outside coherent mode (sweep hop,
+// wideband spread, independent tuner, gain): --kerberos restores its manual
+// calibration STALE on the way back (sdr_init.cpp)
+void note_tuners_changed_outside_coherent();
+// ... and a PLL write on that tuner (counted per tuner: unequal counts mean
+// unknown lags on the way back to coherent - a full recalibration)
+void note_tuner_retuned(int tuner);
 
 // Serializes librtlsdr handle operations (see sdr_init.cpp). Innermost lock.
 extern std::recursive_mutex device_io_mutex;

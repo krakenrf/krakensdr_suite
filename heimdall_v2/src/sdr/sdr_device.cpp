@@ -5,7 +5,9 @@
 extern void signal_coherence_lost(const char* reason);
 
 SDRDevice::SDRDevice(int id, int idx, const std::string& serial)
-    : device_id(id), index(idx), serial_number(serial) {}
+    : device_id(id), index(idx), serial_number(serial) {
+    for (auto& n : ring_n) n.store(UINT64_MAX, std::memory_order_relaxed);
+}
 
 // Runs on the per-device librtlsdr USB reader thread. Must be fast and strictly
 // allocation-free: any stall here (an allocator lock, a per-device drop that
@@ -21,10 +23,12 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
     // device kept a packet the others lost (a one-packet slip).
     auto stamp = [sdr]() {
         // prev before last: the flush re-reads last to detect a torn pair
-        sdr->prev_arrival_ns.store(sdr->last_arrival_ns.load(std::memory_order_relaxed),
-                                   std::memory_order_relaxed);
-        sdr->last_arrival_ns.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_release);
+        const int64_t last = sdr->last_arrival_ns.load(std::memory_order_relaxed);
+        sdr->prev_arrival_ns.store(last, std::memory_order_relaxed);
+        const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        sdr->last_arrival_ns.store(now, std::memory_order_release);
+        return std::pair<int64_t, bool>(now, last == 0);
     };
 
     // L1 full => the sample drain fell behind on THIS device. The old behaviour
@@ -55,5 +59,18 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
     buffer.assign(buf, buf + len);
     sdr->l1_buffer.enqueue(std::move(buffer));
     sdr->l1_buffer_size.fetch_add(1, std::memory_order_relaxed);
-    stamp();
+    const auto [now, first] = stamp();
+    // This packet's number and arrival stamp (sdr_device.hpp), a seqlock
+    // per slot; l1_put last: a reader that sees n + 1 there finds the stamp
+    const uint64_t n = sdr->l1_put.load(std::memory_order_relaxed);
+    if (first) sdr->stream_first.store(n, std::memory_order_relaxed);
+    // a short transfer (stream start / cancel) breaks "packets end one
+    // period apart" in the unsafe direction: the line starts again after it
+    if (len != static_cast<uint32_t>(NUM_SAMPLES * 2)) sdr->stream_first.store(n + 1, std::memory_order_relaxed);
+    const size_t slot = static_cast<size_t>(n % SDRDevice::ARRIVAL_RING);
+    sdr->ring_n[slot].store(UINT64_MAX, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    sdr->ring_t[slot].store(now, std::memory_order_relaxed);
+    sdr->ring_n[slot].store(n, std::memory_order_release);
+    sdr->l1_put.store(n + 1, std::memory_order_release);
 }

@@ -14,7 +14,7 @@ are changing:
 | `config.h` settings, ingest robustness knobs, realtime scheduling | `docs/dev/configuration.md` |
 | Lag servo, phase calibration, retune timing, calibration hold, why phase-only, fixed IF VGA, calibration buttons | `docs/dev/calibration.md` |
 | Drag retunes (fast path), failed-retune replies, measurements | `docs/dev/drag-retunes.md` |
-| Operating modes (coherent / wideband scan / independent), generic RTL-SDR mode | `docs/dev/operating-modes.md` |
+| Operating modes (coherent / wideband scan / independent / sweep), generic RTL-SDR mode | `docs/dev/operating-modes.md` |
 | Coherence-loss detection and recovery | `docs/dev/coherence-recovery.md` |
 | `--kerberos`, `--kerberos_sw`, `--ext_noise` | `docs/dev/kerberos-and-ext-noise.md` |
 | `--wideband` downconverter (moRFeus LO, mixer sides, RF switches) | `docs/dev/wideband-variant.md` |
@@ -49,10 +49,11 @@ startup by `html_loader.cpp`.
   (enumeration by serial - by USB index in generic RTL-SDR mode,
   `update_sdr_settings()`,
   `set_bias_tee_all_devices()`, `set_operating_mode()`,
-  `wideband_retune_rf()`, `for_each_tuner`), `sdr_pipeline.cpp` (drain,
+  `wideband_retune_rf()`), `for_each_tuner.hpp`, `sdr_pipeline.cpp` (drain,
   conversion worker, `signal_coherence_lost()`), `pipeline_control.cpp`
   (thread lifecycle, `reconfigure_num_elements()`), `downconverter.cpp`,
-  `kerberos_gpio.cpp`.
+  `kerberos_gpio.cpp`, `sweep.cpp` (sweep mode: the plan, the hop thread,
+  its status).
 - `src/dsp/`: `fft_plan.cpp` (`FftPlan`, `FftPool`), `correlation.cpp`
   (`process_correlations()`, Gaussian peak interpolation, the 8070
   correlation message), `compensation.cpp` (lag / phase state machines,
@@ -78,7 +79,10 @@ Coherence
   per-device drop shifts that channel by a full packet, which no
   compensation can represent. When the callback or the drain can't keep up
   (L1 overflow, pool exhaustion, a stuck device), call
-  `signal_coherence_lost()` and let the watchdog recover.
+  `signal_coherence_lost()` and let the watchdog recover. The one exception
+  is sweep mode's gate, which drops per dongle (pairing doesn't matter
+  there); leaving sweep for coherent re-pairs with
+  `clear_l1_buffer_paired()`.
 - The RTL callback is allocation-free (`BufferPool::try_acquire`).
 - The queue size counters (`l1_buffer_size`, `l2_buffer_size`,
   `l2_raw_buffer_size`) change only by matched `fetch_add` / `fetch_sub`.
@@ -123,7 +127,8 @@ Calibration
   `update_sdr_settings()` and the cooldown (`STABILITY_DELAY_MS` 3 s, a
   debounce kept on purpose) -> noise on -> `NOISE_SETTLE_MS` -> snapshots ->
   verify, phase only - but a channel whose lag reads > 1 sample during it is
-  re-acquired by the servo (`check_lag_during_phase_recal`). A change during a recovery restarts its phase stage; the discrete
+  re-acquired by the servo (`check_lag_during_phase_recal`; with no correlation peak at all - a packet
+  off - it raises a coherence loss instead: the recovery's flush re-pairs). A change during a recovery restarts its phase stage; the discrete
   scanner defers calibration (`scanner_cal_deferred`); `hold_calibration` is
   a lease, and a coherence recovery is never held.
 - The lag servo writes only the sample-clock register
@@ -150,11 +155,36 @@ Hardware and replies
 - Downconverter HID reports are exactly 17 bytes with a leading 0
   report-id; a malformed frame wedges the moRFeus until a power cycle.
   High-side injection is undone by negating Q in the conversion loop.
+- Sweep mode (`sweep.cpp`): a packet with the 8091 `retuning_in_progress` = 0
+  holds only samples taken at the header's per-channel frequencies, after
+  the settle - clients build on it. The flag goes on before a tuner moves,
+  a tuner's frequency is stored only once it took it, the header reads the
+  frequencies before the flag, and the flag is cleared only after the gate
+  (`sweep_gate_l1`: every dongle's packets that can hold a sample from
+  before retune end + settle are dropped, judged by that stream's
+  earliest-arrival line - every kept sample is from that instant minus the
+  fastest USB delivery or later) and the downstream flush (under
+  `settings_mutex`). A silent dongle keeps the flag at 1 (status
+  `stalled_tuners`). No output per hop; its flushes are quiet and never
+  count as coherence losses. Hops use the fast tune call; the tuners are
+  finished (`rtlsdr_finish_tune`) whenever the sweep stops moving them,
+  before any calibration. The guarantee covers the header's per-channel
+  GAIN too: with a gain table (`set_sweep_gains`, gain by region;
+  `docs/dev/operating-modes.md`) a hop's gain is written with its retune,
+  stored only once the tuner took it, and every tuner is back at the
+  common gain before the mode is left; the lag FIR's tail is reset at a
+  flush (it carried 3 samples of the hop before into the next packet).
+- The fork's retunes no longer shift a stream (`RTLSDR_NO_STREAM_SLIP`: a
+  USB control IN of 3, 7, 11 ... bytes made the RTL2832U drop 2 samples -
+  `../docs/dev/librtlsdr-fork.md`). With an older library heimdall still
+  re-acquires every lag after unequal retunes; don't add a control read of
+  such a length anywhere while streaming.
 
 Persistence (`heimdall_settings.conf`)
 - The last user tuning (frequency, gain) is saved after 10 s unchanged and
-  restored before the dongles open; scanner hops are not saved. The
-  operating mode and per-tuner tuning are saved (`settings::note_mode`).
+  restored before the dongles open; scanner and sweep hops are not saved.
+  The operating mode, per-tuner tuning (`settings::note_mode`) and sweep
+  mode's plan (`settings::note_sweep`; not its run / pause) are saved.
   An element count is saved only when chosen at runtime
   (`persisted_num_elements`), never from `-n` or `--kerberos`.
 

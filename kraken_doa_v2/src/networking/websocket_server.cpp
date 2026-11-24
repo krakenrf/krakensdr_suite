@@ -1,4 +1,6 @@
+#include "sweep.hpp"
 #include "networking/websocket_server.hpp"
+#include "networking/net_stats.hpp"
 #include "ai_mcp.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
@@ -28,6 +30,9 @@
 #include "utils/fs_compat.hpp"
 #include "utils/tls_compat.hpp"
 #include "trunk_follow.hpp"
+#include "cert_status.hpp"
+#include "settings_store.hpp"
+#include <sys/stat.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -44,6 +49,13 @@
 #include <iterator>
 #include <algorithm>
 #include <thread>
+#include <atomic>
+#include <cstring>
+#ifndef _WIN32
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 #include <functional>
 #include <memory>
 #include <vector>
@@ -68,6 +80,26 @@ struct PerSocketData {
     std::array<SpecView, 1 + MAX_CHANNELS> views{};  // 0 = main, 1 + ch = tuner ch
     double main_step_hz = 0;   // point spacing of its last main frame (beamformed overlays follow it)
     bool bin_doa = false;      // 🎨 BIN_DOA_VIEW:1 - it takes type 9 frames (bin_doa.hpp)
+    // Sweep mode (SWEEP_VIEW:, type 10 - sweep.hpp): the window this page
+    // shows; a frame goes when the sweep's data, its pause or the view changed
+    bool sweep_view = false;
+    sweep::View sweep{};
+    bool sweep_dirty = false;
+    uint64_t sweep_version = 0;
+    uint32_t sweep_completions = 0;
+    uint32_t sweep_overview = 0;   // SWEEP_OVERVIEW:<points> (0 = off): the whole range with each completed sweep
+    // SWEEP_FULL:1 - the whole range at the sweep's own bins (type 11) with each
+    // completed sweep, in parts paced by this socket's buffer, one set at a time
+    bool net_stats = false;       // NET_STATS:1 - this connection's byte counters about once a second
+    int64_t net_ms = 0;           // when they last went
+    uint32_t sweep_full = 0;      // SWEEP_FULL:<n>: 0 off, 1 every bin, else at most n values (sweep::full_pool)
+    bool full_snapshot = false;   // the store as it is, once (on SWEEP_FULL:1)
+    bool full_due = false;        // its flag-2 frame went this tick: a completed sweep's set
+    std::shared_ptr<const sweep::FullSet> full;   // the set being sent
+    bool full_z = false;          // SWEEP_FULL_Z:1 - this page inflates deflated parts (type 11 flag 8)
+    size_t full_off = 0;
+    uint32_t full_id = 0;
+    uint8_t full_flags = 0;
 };
 
 // Data-stream subscription bits (the heavy/optional streams).
@@ -159,6 +191,7 @@ std::unordered_map<ClientWS*, int64_t> g_pending_auth;           // socket -> op
 std::unordered_set<ClientWS*> g_spec_sockets;  // sockets with spectrum views (uWS loop only)
 std::unordered_set<ClientWS*> g_video_sockets;  // sockets subscribed to decoder video (uWS loop only)
 std::unordered_set<ClientWS*> g_bin_doa_sockets;  // 🎨 sockets taking type 9 (uWS loop only)
+std::unordered_set<ClientWS*> g_sweep_sockets;    // sockets with a sweep view, type 10 (uWS loop only)
 std::unordered_map<std::string, std::pair<int, int64_t>> g_auth_failures;  // ip -> (count, window start)
 
 int64_t steady_ms() {
@@ -292,12 +325,285 @@ void handle_fft_view(WS* ws, string_view args) {
     }
 }
 
+constexpr unsigned SPEC_MAX_BUFFERED = 256 * 1024;   // a frame skipped past this (types 7 / 9 / 10)
+
+// SWEEP_VIEW:<seq>:<lo Hz>:<hi Hz>:<points> (sweep mode; transport level,
+// this connection only, like FFT_VIEW): the window the page shows (absolute
+// Hz, lo >= hi = the whole range) at its plot's width. Junk is ignored.
+template<typename WS>
+void handle_sweep_view(WS* ws, string_view args) {
+    string_view f[4];
+    for (int i = 0; i < 4; i++) {
+        const size_t c = args.find(':');
+        if (i < 3 && c == string_view::npos) return;
+        f[i] = args.substr(0, c);
+        args = c == string_view::npos ? string_view() : args.substr(c + 1);
+    }
+    uint32_t seq = 0, points = 0;
+    double lo = 0, hi = 0;
+    auto num = [](string_view t, auto& v) {
+#if !defined(__cpp_lib_to_chars)
+        if constexpr (std::is_floating_point_v<std::remove_reference_t<decltype(v)>>) {
+            if (t.empty() || t.size() > 64 || !(std::isdigit(static_cast<unsigned char>(t[0])) || t[0] == '-' || t[0] == '.'))
+                return false;
+            const std::string s(t);
+            char* end = nullptr;
+            v = std::strtod(s.c_str(), &end);
+            return end == s.c_str() + s.size();
+        } else
+#endif
+        {
+            auto r = std::from_chars(t.data(), t.data() + t.size(), v);
+            return r.ec == std::errc() && r.ptr == t.data() + t.size();
+        }
+    };
+    if (!num(f[0], seq) || !num(f[1], lo) || !num(f[2], hi) || !num(f[3], points)) return;
+    if (!is_finite_value(lo) || !is_finite_value(hi) || std::abs(lo) > 1e10 || std::abs(hi) > 1e10 || points > 65536) return;
+    PerSocketData* ud = ws->getUserData();
+    ud->sweep = {seq, lo, hi, points};
+    ud->sweep_dirty = true;   // answered on the next tick (also while paused)
+    if (!ud->sweep_view) {
+        ud->sweep_view = true;
+        ud->sweep_completions = sweep::completions();   // its first frame is no waterfall line
+        g_sweep_sockets.insert(ws);
+    }
+}
+
+// SWEEP_OVERVIEW:<points> (sweep mode; transport level, this connection only):
+// with every completed sweep a zoomed page also gets the whole range at about
+// that many points (type 10 flag 16, before the flag-2 frame) - its waterfall
+// rows then hold the whole range. 0 = off (every socket's default), else 16 ...
+// SPECTRUM_VIEW_MAX_POINTS. Junk is ignored
+template<typename WS>
+void handle_sweep_overview(WS* ws, string_view arg) {
+    uint32_t n = 0;
+    auto r = std::from_chars(arg.data(), arg.data() + arg.size(), n);
+    if (arg.empty() || r.ec != std::errc() || r.ptr != arg.data() + arg.size()) return;
+    ws->getUserData()->sweep_overview = n == 0 ? 0 : std::clamp<uint32_t>(n, 16, SPECTRUM_VIEW_MAX_POINTS);
+}
+
+// SWEEP_FULL:<1|0> (sweep mode; transport level, this connection only): the
+// full set (type 11) with each completed sweep, and the store as it is right
+// away (a snapshot: flag 2). Junk is ignored
+template<typename WS>
+void handle_sweep_full(WS* ws, string_view arg) {
+    PerSocketData* ud = ws->getUserData();
+    uint32_t n = 0;
+    if (arg == "true") {
+        n = 1;
+    } else if (arg == "false") {
+        n = 0;
+    } else {
+        auto r = std::from_chars(arg.data(), arg.data() + arg.size(), n);
+        if (arg.empty() || r.ec != std::errc() || r.ptr != arg.data() + arg.size()) return;   // junk: ignored
+    }
+    if (n == ud->sweep_full) return;   // the same again: nothing (no new snapshot)
+    ud->full.reset();                  // a set in flight is abandoned (the page drops it as incomplete)
+    ud->full_due = false;
+    ud->full_snapshot = n != 0;        // a new n: the store as it is, at that n, on the next tick
+    ud->sweep_full = n;
+}
+
+// NET_STATS:<1|0> (every mode; transport level, this connection only): the
+// kernel's byte counters of this connection (net_stats.hpp: Linux TCP_INFO) as
+// {"net":{"tx_bytes","tx_sent"?,"rx_bytes","t_ms"}} at once and then every
+// second - for the page's network rate. No counter (other platforms): no
+// message. Junk is ignored
+std::unordered_set<ClientWS*> g_net_sockets;   // sockets with NET_STATS on (uWS loop only)
+template<typename WS>
+void send_net_stats(WS* ws, int64_t now) {
+    PerSocketData* ud = ws->getUserData();
+    ud->net_ms = now;
+    net_stats::Counters c;
+    // (a uWS WebSocket is its us_socket_t; an SSL socket's struct begins with it,
+    // and that with the poll: the TCP descriptor under the TLS)
+    if (!net_stats::read(static_cast<int>(us_poll_fd(reinterpret_cast<us_poll_t*>(ws))), c)) return;
+    char b[160];
+    if (c.has_sent)
+        snprintf(b, sizeof b, "{\"net\":{\"tx_bytes\":%llu,\"tx_sent\":%llu,\"rx_bytes\":%llu,\"t_ms\":%lld}}",
+                 static_cast<unsigned long long>(c.tx_acked), static_cast<unsigned long long>(c.tx_sent),
+                 static_cast<unsigned long long>(c.rx), static_cast<long long>(now));
+    else
+        snprintf(b, sizeof b, "{\"net\":{\"tx_bytes\":%llu,\"rx_bytes\":%llu,\"t_ms\":%lld}}",
+                 static_cast<unsigned long long>(c.tx_acked), static_cast<unsigned long long>(c.rx), static_cast<long long>(now));
+    ws->send(b, uWS::TEXT);
+}
+template<typename WS>
+void handle_net_stats(WS* ws, string_view arg) {
+    PerSocketData* ud = ws->getUserData();
+    if (arg == "1" || arg == "true") {
+        if (ud->net_stats) return;
+        ud->net_stats = true;
+        g_net_sockets.insert(ws);
+        send_net_stats(ws, steady_ms());   // a baseline at once
+    } else if (arg == "0" || arg == "false") {
+        ud->net_stats = false;
+        g_net_sockets.erase(ws);
+    }
+}
+// on the broadcast tick (every mode): each such socket's counters every 1000 ms
+void net_stats_tick() {
+    if (g_net_sockets.empty()) return;
+    const int64_t now = steady_ms();
+    for (ClientWS* ws : g_net_sockets)
+        if (now - ws->getUserData()->net_ms >= 1000) send_net_stats(ws, now);
+}
+
+// SWEEP_FULL_Z:<1|0> (transport level, this connection only): the page can
+// inflate - its parts go deflated when the compressor made them in time and
+// they are smaller (pump_full). Read per part; junk ignored
+template<typename WS>
+void handle_sweep_full_z(WS* ws, string_view arg) {
+    if (arg == "1" || arg == "true") ws->getUserData()->full_z = true;
+    else if (arg == "0" || arg == "false") ws->getUserData()->full_z = false;
+}
+
+// The full set's parts go while this socket has less than FULL_QUEUE queued
+// (uWS drops past maxBackpressure, 2 MB): every tick, and when it drains. A set
+// starts only with a tick (the tick's sets: every pool in use from one state of
+// the store, built once, shared by the sockets) and
+// only when the socket has no set in flight and at most SPEC_MAX_BUFFERED
+// queued - else that sweep's set is skipped whole. A grid change abandons a set
+constexpr unsigned FULL_QUEUE = 1024 * 1024;
+bool g_full_active = false;   // some socket has a set in flight (released out of the mode)
+using FullCache = std::vector<std::shared_ptr<const sweep::FullSet>>;   // this tick's sets, one per pool
+template<typename WS>
+void pump_full(WS* ws, FullCache* lazy, uint32_t grid) {
+    PerSocketData* ud = ws->getUserData();
+    if (!ud->sweep_full) return;
+    if (ud->full && ud->full->grid != grid) ud->full.reset();
+    if (lazy && !ud->full && (ud->full_due || ud->full_snapshot) && (ud->sub_mask & SUB_FFT) &&
+        ws->getBufferedAmount() <= SPEC_MAX_BUFFERED) {
+        const uint32_t pool = sweep::full_pool(ud->sweep_full);
+        std::shared_ptr<const sweep::FullSet> set;
+        for (const auto& s : *lazy)
+            if (s && s->pool == pool) set = s;
+        if (set && set->grid == grid) {
+            ud->full = set;
+            ud->full_off = 0;
+            ud->full_id++;
+            ud->full_flags = static_cast<uint8_t>((ud->full_due ? 0 : 2) | (sweep::running() ? 0 : 4));
+            g_full_active = true;
+        }
+    }
+    if (lazy) ud->full_due = ud->full_snapshot = false;
+    while (ud->full && ws->getBufferedAmount() < FULL_QUEUE) {
+        const sweep::FullSet& set = *ud->full;
+        const size_t total = set.lv.size();
+        const size_t n = std::min(sweep::FULL_PART_VALUES, total - ud->full_off);
+        const bool last = ud->full_off + n >= total;
+        // SWEEP_FULL_Z: the part deflated when the compressor has it (and it is
+        // smaller); not yet - wait, but never past its deadline (then raw:
+        // never behind); a set the compressor never saw or left goes raw
+        const std::string* z = nullptr;
+        if (ud->full_z && set.zstate) {
+            const size_t k = ud->full_off / sweep::FULL_PART_VALUES;
+            const uint8_t st = set.zstate[k].load(std::memory_order_acquire);
+            if (st == sweep::Z_READY) {
+                z = &set.zpart[k];
+            } else if (st == sweep::Z_PENDING && !set.z_dropped.load(std::memory_order_acquire) &&
+                       (k == 0 || set.zstate[k - 1].load(std::memory_order_acquire) != sweep::Z_PENDING) &&
+                       sweep::z_now_ms() < sweep::z_deadline_ms(set, k)) {
+                // (only for the part the compressor is on: one still pending before it
+                // = the compressor is behind, and the rest of the set goes raw at once)
+                return;   // (the compressor's wake, or the next tick, comes back)
+            }
+        }
+        ws->send(sweep::full_part(set, static_cast<uint8_t>(ud->full_flags | (last ? 1 : 0)), ud->full_id, ud->full_off, n, z),
+                 uWS::BINARY, false);
+        ud->full_off += n;
+        if (last) ud->full.reset();
+    }
+}
+
+// Sweep mode, every 50 ms tick: each page with a sweep view gets a frame when
+// something changed (at most 20 a second while hops arrive); a completed sweep
+// marks its frame (flag 2: the page's waterfall line). A slow link skips
+void send_sweep_views() {
+    const uint64_t ver = sweep::data_version();
+    const uint32_t done = sweep::completions();
+    for (ClientWS* ws : g_sweep_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        if (!(ud->sub_mask & SUB_FFT) || ws->getBufferedAmount() > SPEC_MAX_BUFFERED) continue;
+        const bool completes = ud->sweep_completions != done;
+        if (!ud->sweep_dirty && !completes && ud->sweep_version == ver) continue;
+        string ov;
+        const string m = sweep::build_frame(ud->sweep, completes, ud->sweep_overview, &ov);
+        if (m.empty()) continue;
+        if (!ov.empty()) ws->send(ov, uWS::BINARY, true);   // (the overview first: the page pairs them by sweeps)
+        ws->send(m, uWS::BINARY, true);
+        if (completes && ud->sweep_full) ud->full_due = true;   // (its full set follows, paced)
+        ud->sweep_dirty = false;
+        ud->sweep_version = ver;
+        ud->sweep_completions = done;
+    }
+    // the full sets (SWEEP_FULL): after the frames, so the live trace goes first
+    // the sets that start this tick, every pool from one state of the store
+    std::vector<uint32_t> pools, zpools;
+    for (ClientWS* ws : g_sweep_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        if (ud->sweep_full && !ud->full && (ud->full_due || ud->full_snapshot) && (ud->sub_mask & SUB_FFT) &&
+            ws->getBufferedAmount() <= SPEC_MAX_BUFFERED) {
+            pools.push_back(sweep::full_pool(ud->sweep_full));
+            if (ud->full_z) zpools.push_back(pools.back());
+        }
+    }
+    FullCache lazy;
+    if (!pools.empty()) lazy = sweep::build_fulls(pools);
+    // the sets a deflating page starts go to the compressor (it drops older work)
+    if (!zpools.empty()) {
+        FullCache z;
+        for (const auto& s : lazy)
+            if (s && std::find(zpools.begin(), zpools.end(), s->pool) != zpools.end()) z.push_back(s);
+        if (!z.empty()) sweep::z_submit(z);
+    }
+    uint32_t grid = 0;
+    bool have_grid = false;
+    for (ClientWS* ws : g_sweep_sockets) {
+        if (!ws->getUserData()->sweep_full) continue;
+        if (!have_grid) {
+            grid = sweep::grid_id();
+            have_grid = true;
+        }
+        pump_full(ws, &lazy, grid);
+    }
+}
+
+// the compressor made a part: the sockets waiting for it go on (posted to the loop)
+std::atomic<bool> g_z_wake_posted{false};
+void pump_full_waiting() {
+    g_z_wake_posted.store(false);
+    if (!sweep_mode_enabled.load(std::memory_order_relaxed)) return;
+    uint32_t grid = 0;
+    bool have = false;
+    for (ClientWS* ws : g_sweep_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        if (!ud->full || !ud->full_z) continue;
+        if (!have) {
+            grid = sweep::grid_id();
+            have = true;
+        }
+        pump_full(ws, nullptr, grid);
+    }
+}
+
+// out of sweep mode: no set stays in flight (its memory goes)
+void release_full_sets() {
+    if (!g_full_active) return;
+    sweep::z_submit({});   // (the compressor drops its work too)
+    for (ClientWS* ws : g_sweep_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        ud->full.reset();
+        ud->full_due = ud->full_snapshot = false;
+    }
+    g_full_active = false;
+}
+
 // Each page with views gets every display of the current mode (independent:
 // one frame per tuner, else the main one), cut to its window and width, and
 // the beamformed overlays (coherent mode) at its main frame's point spacing -
 // zoomed in, they get finer with the spectrum. A slow link drops frames
 // instead of queueing them: uWS closes a socket past maxBackpressure (2 MB)
-constexpr unsigned SPEC_MAX_BUFFERED = 256 * 1024;
 void send_spectrum_views(const SpectrumSnapshot& snap, const vector<BeamformedSpectrum>& bfs) {
     const int first = snap.independent ? 1 : 0;
     const int last = snap.independent ? std::min<int>(snap.channels, MAX_CHANNELS) : 0;
@@ -532,6 +838,26 @@ void stream_parts(uWS::HttpResponse<SSL>* res, std::shared_ptr<rec::Download> d)
     (*pump)(0);
 }
 
+// GET /krakensdr-ca.crt (and PR #5's /krakensdr.crt): the receiver's CA
+// certificate - what a device installs once to trust every certificate it
+// signs (docs/dev/https-certificate.md). Public by nature (every handshake
+// sends it in the chain) and needed before the page can be trusted, so no
+// token; the Host / Origin check like the other routes. Without a CA (a
+// certificate of the user's own) the server certificate itself.
+template <typename Res>
+void send_ca_certificate(Res* res, uWS::HttpRequest* req) {
+    if (!request_allowed(req)) { refuse_request(res, req); return; }
+    string pem;
+    if (!certstatus::download(&pem)) {
+        res->writeStatus("404 Not Found")->end("certificate not found");
+        return;
+    }
+    res->writeHeader("Content-Type", "application/x-x509-ca-cert")
+       ->writeHeader("Content-Disposition", "attachment; filename=\"krakensdr-ca.crt\"")
+       ->writeHeader("Cache-Control", "no-store")
+       ->end(pem);
+}
+
 } // namespace
 
 string WebSocketServer::load_html_content() {
@@ -551,20 +877,27 @@ string WebSocketServer::load_html_content() {
 }
 
 void WebSocketServer::verify_ssl_certificates() {
-#if defined(_WIN32) || defined(__APPLE__)
-    // Windows / macOS have no install step (install.sh makes the pair with
-    // the openssl CLI on Linux; Windows has no openssl.exe): a missing pair
-    // is made here, in-process - the same kind, self-signed for 10 years
+    // The web UI's certificate (docs/dev/https-certificate.md): a CA per
+    // receiver signs the server certificate. scripts/make-cert.sh keeps it
+    // current before every start on Linux / macOS / Docker (run.sh, the
+    // entrypoint); the same logic runs here, in-process, at EVERY start on
+    // every platform (fine rule 28) - after the script it says "kept"; started
+    // by hand, without the openssl CLI, or on Windows (no openssl.exe, no
+    // start script) it renews and applies the scope / a new-CA request itself
     {
-        bool created = false;
+        tlscert::State state = tlscert::State::Kept;
         string err;
-        if (!tls_ensure_self_signed_cert(SSL_CERT_FILE, SSL_KEY_FILE, &created, &err))
-            cerr << "ERROR: cannot create the SSL certificate: " << err << endl;
-        else if (created)
-            cout << "Created a self-signed SSL certificate for the web UI (" << SSL_CERT_FILE << " + "
-                 << SSL_KEY_FILE << ")" << endl;
+        if (!tlscert::ensure("", false, false, &state, &err)) {
+            cerr << "ERROR: HTTPS certificate: " << err << endl;
+        } else if (state == tlscert::State::CaCreated) {
+            // every device that trusted the old CA must install this one
+            cerr << "WARNING: HTTPS certificate: a new certificate authority was created (" << tlscert::CA_CRT
+                 << ") - every device must install it and remove the old one (Telemetry sheet -> HTTPS certificate)"
+                 << endl;
+        } else {
+            cout << "HTTPS certificate: " << tlscert::state_name(state) << endl;
+        }
     }
-#endif
     ifstream cert_file(SSL_CERT_FILE);
     ifstream key_file(SSL_KEY_FILE);
 
@@ -573,15 +906,12 @@ void WebSocketServer::verify_ssl_certificates() {
         // listen-failure path below for why).
         StatusDashboard::end();
         cerr << "ERROR: Cannot read SSL certificate files" << endl;
-#if defined(_WIN32) || defined(__APPLE__)
         cerr << "kraken_doa makes " << SSL_CERT_FILE << " + " << SSL_KEY_FILE
              << " when they are missing - check that its folder is writable" << endl;
-#else
-        cerr << "Run: openssl req -x509 -newkey rsa:4096 -keyout " << SSL_KEY_FILE
-             << " -out " << SSL_CERT_FILE << " -days 365 -nodes -subj \"/CN=krakensdr\"" << endl;
-#endif
         platform::fast_exit(1);
     }
+    // what the page's certificate section shows (read once: what this run serves)
+    certstatus::init();
 }
 
 uWS::SSLApp WebSocketServer::create_ssl_app() {
@@ -611,6 +941,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                ->writeHeader("Cache-Control", "no-cache")  // Disable cache during debugging
                ->end(js_content);
         })
+        .get("/krakensdr-ca.crt", [](auto* res, auto* req) { send_ca_certificate(res, req); })
+        .get("/krakensdr.crt", [](auto* res, auto* req) { send_ca_certificate(res, req); })   // PR #5's page
         .get("/array_calculator.html", [](auto* res, auto* /*req*/) {
             // Antenna array calculator (opened from the MUSIC DoA panel):
             // a static page, read from disk on each request like the main UI
@@ -736,7 +1068,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         .get("/wb_telemetry/history", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
             // Wideband board telemetry sheet: the logged history of the last
-            // ?range= seconds as JSON (wb_board_history_json). The log files
+            // ?range= seconds as JSON (wb_board_history_json; ?src=host: the
+            // computer's own log instead of the board's). The log files
             // are read on a worker thread - a month of rows takes a while on a
             // Pi and must not stall the spectrum stream on the uWS loop.
             if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
@@ -744,10 +1077,11 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 return;
             }
             const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            const bool host = req->getQuery("src") == "host";   // the computer, not the Wideband board
             auto aborted = std::make_shared<bool>(false);
             res->onAborted([aborted]() { *aborted = true; });
-            std::thread([res, aborted, range]() {
-                std::string body = wb_board_history_json(range > 0 ? range : 3600);
+            std::thread([res, aborted, range, host]() {
+                std::string body = wb_board_history_json(range > 0 ? range : 3600, host);
                 if (!loop) return;
                 loop->defer([res, aborted, body = std::move(body)]() {
                     if (*aborted) return;
@@ -757,17 +1091,20 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         })
         .get("/wb_telemetry/export.csv", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
-            // ... and the logged rows of that range as a CSV download
+            // ... and the logged rows of that range as a CSV download (plain and
+            // gzipped days alike; &gz=1: the download itself gzipped, .csv.gz)
             if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
                 res->writeStatus("401 Unauthorized")->end("Access token required");
                 return;
             }
             const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            const bool host = req->getQuery("src") == "host";   // the computer, not the Wideband board
+            const bool gz = req->getQuery("gz") == "1";
             auto aborted = std::make_shared<bool>(false);
             res->onAborted([aborted]() { *aborted = true; });
-            std::thread([res, aborted, range]() {
+            std::thread([res, aborted, range, host, gz]() {
                 std::string name;
-                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name);
+                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name, host, gz);
                 if (!loop) return;
                 loop->defer([res, aborted, path = std::move(path), name = std::move(name)]() {
                     if (*aborted) return;
@@ -915,6 +1252,35 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 handle_fft_view(ws, message.substr(9));
                 return;
             }
+            // SWEEP_VIEW:<seq>:<lo Hz>:<hi Hz>:<points> - sweep mode's window
+            // (type 10 frames; an older page never sends it)
+            if (message.starts_with("SWEEP_VIEW:")) {
+                handle_sweep_view(ws, message.substr(11));
+                return;
+            }
+            // SWEEP_OVERVIEW:<points> - the whole range with each completed sweep
+            // for a zoomed page's waterfall (0 = off; an older receiver ignores it)
+            if (message.starts_with("SWEEP_OVERVIEW:")) {
+                handle_sweep_overview(ws, message.substr(15));
+                return;
+            }
+            // SWEEP_FULL:<1|0> - the whole range at the sweep's own bins (type 11)
+            // with each completed sweep (an older receiver ignores it)
+            if (message.starts_with("SWEEP_FULL:")) {
+                handle_sweep_full(ws, message.substr(11));
+                return;
+            }
+            // SWEEP_FULL_Z:<1|0> - this page inflates deflated parts of type 11
+            if (message.starts_with("SWEEP_FULL_Z:")) {
+                handle_sweep_full_z(ws, message.substr(13));
+                return;
+            }
+            // NET_STATS:<1|0> - this connection's byte counters about once a
+            // second (every mode; Linux; an older receiver ignores it)
+            if (message.starts_with("NET_STATS:")) {
+                handle_net_stats(ws, message.substr(10));
+                return;
+            }
             // 🎨 BIN_DOA_VIEW:1|0 (transport-level, this connection only):
             // the page takes type 9 frames with its main view's frames
             // (bin_doa.hpp); answered with the mode's state
@@ -931,9 +1297,17 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             ControlHandler::handle_page_message(message);
         },
         
+        // a socket's queue drained: the next parts of its full set (SWEEP_FULL)
+        .drain = [](auto* ws) {
+            if (ws->getUserData()->full && sweep_mode_enabled.load(std::memory_order_relaxed))
+                pump_full(ws, nullptr, sweep::grid_id());
+        },
+
         .close = [](auto* ws, int code, string_view reason) {
             g_pending_auth.erase(ws);
             g_spec_sockets.erase(ws);
+            g_sweep_sockets.erase(ws);
+            g_net_sockets.erase(ws);
             g_video_sockets.erase(ws);
             dig::set_video_wanted(!g_video_sockets.empty());
             if (g_bin_doa_sockets.erase(ws)) bin_doa::set_viewers(static_cast<int>(g_bin_doa_sockets.size()));
@@ -945,6 +1319,95 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
     });
 }
 
+// --- http:// typed on the HTTPS port ----------------------------------------
+// The web UI is HTTPS only (the browser needs a secure page for audio and the
+// microphone), and a TLS listener answers plain HTTP by dropping the
+// connection: http://receiver:8080 showed an empty page. Every accepted
+// connection is therefore held back (uSockets' pre-open hook) until its first
+// byte arrives: a TLS handshake (0x16) is handed to the HTTPS app unchanged,
+// anything else gets a redirect to the same address over https.
+namespace {
+
+#ifdef _WIN32
+using sniff_fd = SOCKET;
+inline void sniff_close(sniff_fd fd) { closesocket(fd); }
+inline int sniff_wait(sniff_fd fd, int ms) { WSAPOLLFD p{fd, POLLRDNORM, 0}; return WSAPoll(&p, 1, ms); }
+#else
+using sniff_fd = int;
+inline void sniff_close(sniff_fd fd) { ::close(fd); }
+inline int sniff_wait(sniff_fd fd, int ms) { struct pollfd p{fd, POLLIN, 0}; return ::poll(&p, 1, ms); }
+#endif
+
+std::atomic<int> sniffers{0};
+
+void redirect_to_https(sniff_fd fd) {
+    // the request head: a few hundred bytes, normally in the first segment
+    std::string req;
+    char buf[2048];
+    for (int tries = 0; tries < 10 && req.find("\r\n\r\n") == std::string::npos && req.size() < 8192; tries++) {
+        if (sniff_wait(fd, 300) <= 0) break;
+        const int n = static_cast<int>(recv(fd, buf, sizeof(buf), 0));
+        if (n <= 0) break;
+        req.append(buf, static_cast<size_t>(n));
+    }
+    // "GET /path HTTP/1.1" and "Host: name:port" - only harmless characters go into the Location header
+    auto clean = [](const std::string& s, const char* extra) {
+        if (s.empty() || s.size() > 1024) return false;
+        for (unsigned char c : s) if (!(std::isalnum(c) || std::strchr(extra, c))) return false;
+        return true;
+    };
+    std::string path = "/", host;
+    const size_t sp1 = req.find(' '), sp2 = sp1 == std::string::npos ? sp1 : req.find(' ', sp1 + 1);
+    if (sp2 != std::string::npos && sp2 < req.find('\r')) path = req.substr(sp1 + 1, sp2 - sp1 - 1);
+    if (!clean(path, "/-._~%?&=+#,;:@!*'()") || path[0] != '/') path = "/";
+    for (size_t at = req.find("\r\n"); at != std::string::npos; at = req.find("\r\n", at + 2)) {
+        if (req.size() >= at + 8 && (req[at + 2] | 0x20) == 'h' && (req[at + 3] | 0x20) == 'o' && (req[at + 4] | 0x20) == 's' &&
+            (req[at + 5] | 0x20) == 't' && req[at + 6] == ':') {
+            const size_t b = req.find_first_not_of(" \t", at + 7), e = req.find('\r', at + 2);
+            if (b != std::string::npos && e != std::string::npos && b < e) host = req.substr(b, e - b);
+            break;
+        }
+    }
+    std::string resp;
+    if (clean(host, ".-:[]")) {
+        resp = "HTTP/1.1 301 Moved Permanently\r\nLocation: https://" + host + path +
+               "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    } else {
+        const std::string body = "This page is served over HTTPS: open https://<this address>:" + std::to_string(WEB_PORT) + "/\n";
+        resp = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: " + std::to_string(body.size()) +
+               "\r\nConnection: close\r\n\r\n" + body;
+    }
+    // a client that reset mid-request: EPIPE, never SIGPIPE (which would end
+    // kraken_doa unless something happened to ignore it). macOS has no
+    // MSG_NOSIGNAL - uSockets set SO_NOSIGPIPE on the accepted socket there;
+    // Windows has no SIGPIPE
+#ifdef MSG_NOSIGNAL
+    send(fd, resp.data(), static_cast<int>(resp.size()), MSG_NOSIGNAL);
+#else
+    send(fd, resp.data(), static_cast<int>(resp.size()), 0);
+#endif
+    sniff_close(fd);
+}
+
+// Runs on its own short-lived thread: the first byte can take a moment.
+void sniff_first_byte(sniff_fd fd, std::string ip) {
+    unsigned char first = 0;
+    const bool got = sniff_wait(fd, 10000) > 0 && recv(fd, reinterpret_cast<char*>(&first), 1, MSG_PEEK) == 1;
+    if (got && first != 0x16 && first != 0x80) {          // not a TLS record (0x80: an SSLv2-style hello)
+        redirect_to_https(fd);
+    } else if (got && loop) {
+        loop->defer([fd, ip = std::move(ip)]() {
+            if (global_ssl_app) global_ssl_app->adoptSocket(fd, ip);
+            else sniff_close(fd);
+        });
+    } else {
+        sniff_close(fd);                                   // nothing came (a port scan, a preconnect)
+    }
+    sniffers.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+}  // namespace
+
 void WebSocketServer::web_server_main() {
     verify_ssl_certificates();
     
@@ -955,17 +1418,49 @@ void WebSocketServer::web_server_main() {
         // process (another kraken_doa, or kraken_pr) bind the same port
         // silently - the kernel then splits incoming connections randomly
         // between the processes. Fail loudly instead.
+        // http:// on this port is redirected to https:// (sniff_first_byte);
+        // with too many connections undecided, new ones go straight to TLS.
+        ssl_app.preOpen([](struct us_socket_context_t*, LIBUS_SOCKET_DESCRIPTOR fd, char* ip, int ip_len) -> LIBUS_SOCKET_DESCRIPTOR {
+            if (sniffers.load(std::memory_order_acquire) >= 64) return fd;
+            sniffers.fetch_add(1, std::memory_order_acq_rel);
+            // uSockets' C code calls this: nothing may throw out of it (no
+            // thread to be had, no memory) - that connection goes straight to TLS
+            try {
+                std::thread(sniff_first_byte, static_cast<sniff_fd>(fd), std::string(ip, ip + ip_len)).detach();
+            } catch (...) {
+                sniffers.fetch_sub(1, std::memory_order_acq_rel);
+                return fd;
+            }
+            return fd + 1;   // "not adopted here": adoptSocket() follows once it is known to be TLS
+        });
         ssl_app.listen(WEB_PORT, LIBUS_LISTEN_EXCLUSIVE_PORT, [](auto* listen_socket) {
             if (listen_socket) {
                 cout << "HTTPS server listening on port " << WEB_PORT << endl;
                 
                 loop = uWS::Loop::get();
+                // SWEEP_FULL_Z: the compressor's "a part is ready" -> the waiting sockets, on this loop
+                sweep::z_set_wake([] {
+                    if (loop && !g_z_wake_posted.exchange(true)) loop->defer([] { pump_full_waiting(); });
+                });
                 struct us_loop_t* native_loop = (struct us_loop_t*)loop;
                 broadcast_timer = us_create_timer(native_loop, 0, 0);
                 audio_timer = us_create_timer(native_loop, 0, 0);
                 doa_timer = us_create_timer(native_loop, 0, 0);
                 
                 us_timer_set(broadcast_timer, [](struct us_timer_t* /*timer*/) {
+                    net_stats_tick();   // NET_STATS (every mode)
+                    // the sweep state again when heimdall's answer changed it (every
+                    // page: the state is shared); the gain table heimdall applied is
+                    // the one saved
+                    if (const std::string g = sweep::take_gains_save(); !g.empty()) SettingsStore::record(g);
+                    if (global_ssl_app && sweep::take_state_dirty()) WebSocketServer::broadcast_json_message(sweep::state_json());
+                    // Sweep mode: the sweep frames only - no regular spectrum
+                    // (nothing is FFT'd but the sweep's hops)
+                    if (sweep_mode_enabled.load(std::memory_order_relaxed)) {
+                        if (global_ssl_app && !g_sweep_sockets.empty()) send_sweep_views();
+                        return;
+                    }
+                    release_full_sets();
                     if (global_ssl_app && data_ready) {
                         // built every tick (it feeds the scanners); encoded
                         // only for pages without spectrum views
@@ -1016,8 +1511,8 @@ void WebSocketServer::web_server_main() {
                 us_timer_set(audio_timer, [](struct us_timer_t* /*timer*/) {
                     if (!global_ssl_app) return;
 
-                    if (!fm_enabled.load()) {
-                        return;
+                    if (!fm_enabled.load() || sweep_mode_enabled.load(std::memory_order_relaxed)) {
+                        return;   // (sweep mode: nothing is demodulated)
                     }
 
                     static int64_t due_us = 0;

@@ -42,6 +42,35 @@ constexpr float SAMPLE_RATE = 2.4e6f; // 2.4 MSPS
 // is rejected. The Wideband variant uses wb_variant_rf_union_range instead.
 constexpr uint64_t RTL_TUNER_MIN_HZ = 24000000ULL;
 constexpr uint64_t RTL_TUNER_MAX_HZ = 1766000000ULL;
+// Sweep mode (src/sweep.cpp, docs/dev/sweep-mode.md "The contract"): FFT
+// size N (a power of two) -> bin fs / N; every hop contributes its centre
+// N * 51 / 64 bins, so the hops are SWEEP_STEP_HZ apart for every N. The
+// range keeps the last hop's centre below the tuners' 1766 MHz.
+constexpr int64_t SWEEP_STEP_HZ = 1912500;
+constexpr int64_t SWEEP_MIN_HZ = 24000000;
+constexpr int64_t SWEEP_MAX_HZ = 1765000000;
+constexpr int64_t SWEEP_MIN_SPAN_HZ = 100000;
+constexpr int SWEEP_FFT_MIN = 128;
+// SWEEP_RES:<N> up to SWEEP_FFT_MAX (37 Hz bins). An N over one 8091 packet
+// (16384 samples) spans the packets of a hop, so it needs a hop of at least
+// N samples: 32768 from dwell 7 ms (2 packets), 65536 from 21 ms (4).
+// Auto never goes past one packet (SWEEP_AUTO_FFT_MAX)
+constexpr int SWEEP_FFT_MAX = 65536;
+constexpr int SWEEP_AUTO_FFT_MAX = 16384;
+// The bins of one sweep: SWEEP_RES:<N> takes a smaller N when its sweep
+// would hold more, or when a hop at the dwell holds fewer than N samples (the
+// applied size is reported as fft_size); auto picks the largest N whose sweep
+// holds at most SWEEP_AUTO_BINS and whose hops still average
+// SWEEP_AUTO_FRAMES frames (50 % overlap) at the dwell. The store costs ~4
+// bytes a bin (the bins + their max pyramid, int16): 1 << 24 = 64 MB at most;
+// the whole range at 16384 (146 Hz bins) is 11.9 M bins, 48 MB
+constexpr int64_t SWEEP_MAX_BINS = 1 << 24;
+constexpr int64_t SWEEP_AUTO_BINS = 1 << 19;
+constexpr int SWEEP_AUTO_FRAMES = 8;
+constexpr int SWEEP_DWELL_MIN_MS = 5;
+constexpr int SWEEP_DWELL_MAX_MS = 1000;
+constexpr int SWEEP_DWELL_DEFAULT_MS = 5;   // one 8091 packet a hop (heimdall's SWEEP_DWELL_MS)
+constexpr size_t SWEEP_GAIN_POINTS_MAX = 64;   // gain by region: points (borders) at most (heimdall's limit)
 constexpr int DECIMATION_FACTOR = 10;
 // IMPORTANT: If browser uses different rate, change this to match!
 // Common rates: 44100 (CD quality), 48000 (professional), 96000 (high-end)
@@ -64,6 +93,9 @@ constexpr uint64_t WB_VARIANT_IF_HZ = 1268000000ULL;
 constexpr uint64_t WB_LO_MIN_HZ = 85000000ULL;      // moRFeus synthesizer span
 constexpr uint64_t WB_LO_MAX_HZ = 5400000000ULL;
 constexpr uint64_t WB_RF_MIN_HZ = 24000000ULL;      // front-end floor
+// Automatic mixer side: high below this RF, below from it up (the high side
+// loses conversion gain as its LO climbs - see heimdall_v2/config.h)
+constexpr uint64_t WB_SIDE_CROSSOVER_HZ = 2200000000ULL;
 
 enum WbMixerSide : int { WB_SIDE_HIGH = 0, WB_SIDE_LOW = 1, WB_SIDE_BELOW = 2 };
 
@@ -105,11 +137,20 @@ inline bool wb_side_valid(int side, uint64_t rf_hz) {
     return rf_hz >= min_hz && rf_hz <= max_hz;
 }
 
-// Preferred side when the current one can't reach the RF: high covers
-// everything up to its ceiling (low's range is a strict subset of high's),
-// below covers the rest. Must match heimdall's downconverter_auto_side().
+// Preferred side for an RF: high below WB_SIDE_CROSSOVER_HZ, below from it
+// up (low's range is a strict subset of high's and only ever a manual
+// choice). Must match heimdall's downconverter_auto_side().
 inline int wb_auto_side(uint64_t rf_hz) {
-    return rf_hz <= WB_LO_MAX_HZ - WB_VARIANT_IF_HZ ? WB_SIDE_HIGH : WB_SIDE_BELOW;
+    return rf_hz < WB_SIDE_CROSSOVER_HZ ? WB_SIDE_HIGH : WB_SIDE_BELOW;
+}
+
+// Side for a retune from prev_rf_hz to rf_hz: the current side (it may be a
+// manual choice) while it reaches the RF and the retune stays on one side of
+// the crossover, the preferred side otherwise. Must match heimdall's
+// downconverter_side_for_retune().
+inline int wb_side_for_retune(int current, uint64_t prev_rf_hz, uint64_t rf_hz) {
+    const bool crossed = (prev_rf_hz < WB_SIDE_CROSSOVER_HZ) != (rf_hz < WB_SIDE_CROSSOVER_HZ);
+    return (crossed || !wb_side_valid(current, rf_hz)) ? wb_auto_side(rf_hz) : current;
 }
 
 // Antenna ring auto-selection: the Wideband hardware's three concentric

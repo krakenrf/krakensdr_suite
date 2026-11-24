@@ -23,6 +23,7 @@ built separately from them: `plugins/ism` and `plugins/flarm` (section 1a).
 | libopus, compiled to WebAssembly inside `opus-decoder.min.js` | `opus-decoder.min.js` | BSD-3-Clause, text E |
 | mbelib - the IMBE decoder ported to C++ and its tables | `plugins/lib/dig_vocoder.cpp`, `plugins/lib/mbe_tables.hpp` | ISC, text F |
 | DSD - frame deinterleave tables | `plugins/lib/mbe_tables.hpp` | ISC, text F |
+| libaeroambe (github.com/jontio/libaeroambe, `libaeroambe/aeroambe.h`): the Inmarsat Aero voice frame's 96-entry deinterleave table (which received bit fills which code-vector position); the codec itself is not included | `plugins/lib/aero_ambe.cpp` | MIT, text M |
 | NTIA/ITS Irregular Terrain Model (ITM) 1.3, ported to JavaScript | `kraken_doa.html` ("📶 ITM" block) | not subject to copyright in the US; NTIA terms, text G |
 | ra-firmware (DF9DQ's "Ra" radiosonde receiver firmware): the RS41 and M10 / M20 sensor computations follow its metrology code | `plugins/radiosonde/rs41.cpp`, `plugins/radiosonde/modem.cpp` | BSD-3-Clause, text H |
 | redsea (Oona Räisänen's RDS decoder, github.com/windytan/redsea, commit 7555c9f): the RDS / RBDS lookup tables (character set, PTY names, countries, languages, ODA names, RT+ types, call signs) follow its tables.cc / rdsstring.cc, `rbds_callsign()` its getCallsignFromPI(); two design ideas credited in place (block-sync conditions, biphase pairing) | `plugins/rds/rds_tables.hpp` (+ credits in `rds_block.hpp`, `rds_demod.hpp`) | MIT (the project), ISC (those files' headers), text I |
@@ -77,7 +78,10 @@ having the rights (including any patent rights) to use them.
   conversions from huggingface.co/ggerganov/whisper.cpp) and Silero VAD (MIT).
 - **Voice codecs**: mbelib for AMBE / AMBE+2 (ISC; loaded at run time - the
   AMBE+2 algorithm may be covered by DVSI patents in some countries), the ETSI
-  TETRA codec (ETSI's terms, built by you).
+  TETRA codec (ETSI's terms, built by you), and for Inmarsat Aero C channel
+  voice the mbelib of libaeroambe (MIT / ISC; mbelib with the Aero AMBE
+  4800x3600 codec added, built by you, loaded at run time by
+  `plugins/lib/aero_ambe.cpp` - the same patent caveat).
 - **DAB+ audio**: Fraunhofer FDK AAC (libfdk-aac, the FDK AAC licence - not
   the GPL), installed by you from your system's packages (Debian `non-free`,
   Ubuntu multiverse, MSYS2, Homebrew); the dab plugin loads it at run time
@@ -687,6 +691,36 @@ furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### M. libaeroambe (MIT)
+
+The notice kept at the top of `plugins/lib/aero_ambe.cpp`
+(https://github.com/jontio/libaeroambe, `libaeroambe/LICENSE`; only the
+voice frame's deinterleave table of `libaeroambe/aeroambe.h` is used):
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2018 libaeroambe team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

@@ -532,7 +532,7 @@ lost the box too; the section is reached through the cog there as well.
 
 **Trunk Following** (`trunk`, the `trunk` icon, 2026-11-20 -
 *trunk-following.md*, "Page") was added after Saved Frequencies, in every
-operating mode: 17 keyed boxes. It is `display:none` until the receiver
+operating mode: one more keyed box. It is `display:none` until the receiver
 answers `GET_TRUNK` with its status, so an older receiver leaves the sidebar
 as it was (a hidden box keeps its place in a stored order, as the Wideband
 Board box does). Its rarely used settings fold out under the ⚙ in its first
@@ -542,6 +542,19 @@ strip across the top on every width). Its last part, *Control channels* (2026-11
 the control-channel search (a form folding out of its Search bands…
 button) and the remembered control channels, a list kept still under the
 pointer (*trunk-following.md*, "Page").
+
+### The Sweep box (2026-11-20)
+
+Sweep mode (*sweep-mode.md*, "The page") brought another keyed box, `sweep`,
+shown only in that mode (`.sweep-only`; placed first after the phone
+boxes): Resolution, Dwell, Run / Pause and what the sweep is doing. The mode
+hides the boxes that need demodulation, VFOs or DoA (`.not-sweep` with the
+`.coh-only` ones; the list and the reasons are in that file), and the Display
+box keeps only Slow link and Points sent. In the top bar the range (Start -
+Stop digits) and the tuner toggles take the frequency's place and Audio /
+Step leave; on the phone the range and the tuners are rows of the drawer's
+Tuner & Audio box, before Gain, with their labels. A move by drag counts the
+box like any other hidden one: outside sweep mode it keeps its place.
 
 ### Array diagrams (2026-11-17)
 
@@ -941,6 +954,10 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   spectrum's header reading "Antenna N" (`updateChannelSelector`), next to
   the title, which is now "Spectrum · <demods heard>" (`updatePlotTitle`).
   Coherent mode only. The phone layout no longer moves it into the drawer.
+- **The tuners shown** (`#pane-pick`, 2026-11-24): independent mode's
+  buttons in the same place - `T0`..`Tn` lit while that tuner's pane is
+  shown, then `All` - `.view-btn`s without the header's `margin-left:auto`;
+  they wrap under the title on a phone. *operating-modes.md*.
 - **The display controls** (Scale, Zoom, Speed, Colors, Min, Max, Auto)
   were moved from a bar under the waterfall into the spectrum's header on
   2026-11-17 (the user's wish; the waterfall now reaches the panel's

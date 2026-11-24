@@ -43,6 +43,8 @@ cp "$OUT/heimdall_v2/VERSION" "$OUT/kraken_doa_v2/VERSION"
 # kraken_doa: the exe + the files it serves (Dockerfile COPY list)
 cp "$K/kraken_doa.exe" "$K/kraken_doa.html" "$K/array_calculator.html" \
    "$K/opus-decoder.min.js" "$OUT/kraken_doa_v2/"
+# Signal ID's model (without it the feature says it is unavailable)
+[[ -f "$K/sigclass.model" ]] && cp "$K/sigclass.model" "$OUT/kraken_doa_v2/"
 
 # decoder plugins: the built exe of each, their test-signal catalogues and
 # generators (Debug Playback; they need Python), the codec check, the SDK tools

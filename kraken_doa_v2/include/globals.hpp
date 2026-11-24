@@ -69,16 +69,23 @@ extern std::atomic<int> ws_client_count;
 // (every tuner its own receiver, one spectrum per tuner). Outside coherent
 // DoA / beamforming are parked and each VFO decimates its own tuner
 // (DecimatorInstance::tuner_channel).
+// Sweep mode (sweep.hpp): the tuners hop through a range and only the sweep
+// engine consumes the samples - no VFO, audio, decoder, DoA or regular
+// spectrum; it counts as a multi-tuner mode, so everything coherent-only
+// stands down as in the other two.
 extern std::atomic<bool> wideband_mode_enabled;
 extern std::atomic<bool> independent_mode_enabled;
+extern std::atomic<bool> sweep_mode_enabled;
 inline bool multi_tuner_mode() {
     return wideband_mode_enabled.load(std::memory_order_relaxed) ||
-           independent_mode_enabled.load(std::memory_order_relaxed);
+           independent_mode_enabled.load(std::memory_order_relaxed) ||
+           sweep_mode_enabled.load(std::memory_order_relaxed);
 }
-// 0 coherent, 1 wideband, 2 independent
+// 0 coherent, 1 wideband, 2 independent, 3 sweep
 inline int operating_mode_index() {
     return wideband_mode_enabled.load(std::memory_order_relaxed) ? 1
-         : independent_mode_enabled.load(std::memory_order_relaxed) ? 2 : 0;
+         : independent_mode_enabled.load(std::memory_order_relaxed) ? 2
+         : sweep_mode_enabled.load(std::memory_order_relaxed) ? 3 : 0;
 }
 extern std::atomic<bool> doa_enabled_before_wideband;  // DoA state before leaving coherent mode
 // Independent mode: each tuner's requested frequency (Hz, 0 = none) and gain

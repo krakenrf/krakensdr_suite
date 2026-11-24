@@ -24,7 +24,7 @@ It runs on the Raspberry Pi 4 / 5 (the main target), x86_64 Linux, Windows
 ## Contents
 
 - [Install](#install)
-- [Run](#run)
+- [Run](#run), and the [HTTPS certificate](#https-certificate) (once per device)
 - [Features](#features)
 - [Optional setup](#optional-setup): voice codecs, Voice to Text, the AI assistant, plugins
 - [More documentation](#more-documentation)
@@ -106,7 +106,8 @@ Connect and power the KrakenSDR, then in any terminal:
 
 Then open the web pages from any computer on the network:
 
-- **KrakenSDR DOA:** `https://krakensdr.local:8080` or `https://PI_IP_ADDR:8080` (note the `s` in https)
+- **KrakenSDR DOA:** `https://krakensdr.local:8080` or `https://PI_IP_ADDR:8080` (note the `s` in https;
+  install the receiver's [HTTPS certificate](#https-certificate) once per device, or the browser warns)
 - **Heimdall:** `http://krakensdr.local:8070` or `http://PI_IP_ADDR:8070`
 
 Options:
@@ -162,6 +163,94 @@ updating, rebuild and restart **both** programs (`./run.sh stop`, then
 `./run.sh`): a heimdall that is still running has the old control port, and
 the button then says "heimdall is too old for this".
 
+### HTTPS certificate
+
+The DOA page is HTTPS only: browsers allow audio and the microphone only on
+a secure page. Each receiver makes its own small certificate authority the
+first time it starts and signs the page's certificate with it. Until a
+device trusts that authority, its browser warns about the page. **Install
+the receiver's certificate once on each device** and the warning is gone,
+also after the receiver renews its certificate or gets a new address.
+
+Get the file on the device itself: on the DOA page, click the **Host**
+telemetry at the top right (the Telemetry sheet) → **HTTPS certificate** →
+Download, or open `https://krakensdr.local:8080/krakensdr-ca.crt` (your
+receiver's name; click through the warning this once). On the receiver it
+is `kraken_doa_v2/krakensdr-ca.crt` (`docker-data/kraken_doa/` in Docker).
+**Before trusting it, compare its SHA-256 fingerprint** (the device shows it
+while installing, or in the certificate's details) with the one the
+receiver prints where only you see it: `run.sh`'s and `install.sh`'s
+terminal and log, `docker compose logs kraken_doa`, kraken_doa's start
+("HTTPS certificate: ... SHA-256 ..."). A page reached through someone
+else's network could hand you another one. Then:
+
+- **Windows** (Edge, Chrome): open the file → Install Certificate → Current
+  User → *Place all certificates in the following store* → Browse →
+  **Trusted Root Certification Authorities** → Finish → Yes. Restart the
+  browser.
+- **macOS** (Safari, Chrome): double-click the file (Keychain Access adds it
+  to the login keychain), double-click **KrakenSDR … CA …** in it → Trust →
+  *When using this certificate*: **Always Trust**; close and enter your
+  password.
+- **iPhone / iPad**: open the link in **Safari** → Allow. Settings →
+  *Profile Downloaded* (or General → VPN & Device Management) → Install.
+  Then Settings → General → About → **Certificate Trust Settings** → switch
+  on **KrakenSDR … CA …**. Without this last step iOS installs the
+  certificate but doesn't trust it for websites.
+- **Android**: Settings → Security → More security settings → Encryption &
+  credentials → Install a certificate → **CA certificate** → Install anyway
+  → pick the file (the menus differ between makers; search Settings for
+  "CA certificate"). Chrome trusts it then. Firefox for Android only after
+  Settings → About Firefox → tap the Firefox logo five times → back in
+  Settings → Secret Settings → **Use third party CA certificates**.
+- **Firefox** (Windows, macOS, Linux) keeps its own list: Settings → Privacy
+  & Security → Certificates → View Certificates → Authorities → Import →
+  tick **Trust this CA to identify websites**.
+- **Linux** (Chrome, Chromium): Settings → Privacy and security → Security →
+  Manage certificates → import it as a trusted authority, or
+  `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "KrakenSDR CA" -i krakensdr-ca.crt`
+  (package `libnss3-tools`). For curl and other programs:
+  `sudo cp krakensdr-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`.
+
+Open the page by the receiver's name: the certificate names its host name,
+`<name>.local`, `<name>.lan` / `.home` / `.localdomain` / `.home.arpa` when
+your network uses that search domain, and `localhost`; any other domain
+only through `KRAKEN_CERT_NAMES` (below).
+
+**Narrow or wide.** By default (narrow) the receiver's certificate
+authority can vouch only for this receiver's own names: even if its key
+leaked, it couldn't impersonate any other site to your devices. Opened by
+IP address, the page then still warns (click through). **Wide** (Telemetry
+sheet → HTTPS certificate) also covers the receiver's private LAN addresses,
+so `https://192.168.1.50:8080` is trusted too - at a price: a leaked key
+could then impersonate any `.local` / `.lan` name and any private address
+(your router, a NAS) to the devices that installed it. The choice applies at
+the next start.
+
+**When devices must install it again**: only when the receiver makes a new
+certificate authority - after a new host name, a switch between narrow and
+wide, after about nine years, or when you ask for one (Telemetry sheet →
+HTTPS certificate → **New certificate authority**, or `scripts/make-cert.sh
+kraken_doa_v2 --new-ca`). `run.sh` then prints a warning, and the
+Telemetry sheet names the old certificate to remove (in the same place it
+was installed). A new IP address, another network or a renewal needs
+nothing: a name the authority doesn't cover is left out of the certificate
+and named in the Telemetry sheet. That is also what happens when two
+receivers on a network are both called `krakensdr` and mDNS announces the
+second as `krakensdr-2`: rename one of them. A receiver whose clock is far
+behind (a Pi without a clock and no network yet) keeps its certificate
+authority and says so in the Telemetry sheet.
+
+**Your own certificate**: a `kraken_doa_v2/server.crt` (followed by its
+chain) + `server.key` the receiver didn't make, or a symlink, is never
+touched. More names: `KRAKEN_CERT_NAMES=sdr.example.org ./run.sh`
+(comma- or space-separated) - set before the first start, or added later
+together with a new certificate authority (the button above), since the
+existing one doesn't cover them. A new certificate authority on purpose (say
+the old key may have been copied): the same button, or `scripts/make-cert.sh
+kraken_doa_v2 --new-ca`, then restart.
+Details: `kraken_doa_v2/docs/dev/https-certificate.md`.
+
 ## Features
 
 Everything below is on the KrakenSDR DOA page. Each feature has a detailed
@@ -188,10 +277,73 @@ The **Mode** selector in the top bar (the ring-of-dots icon) picks how the tuner
 | **Coherent** (default) | One phase-calibrated antenna array | Direction finding, beamforming, the web mapper, DoA logging |
 | **Wideband** | Side by side, one stitched spectrum (about 5 x 1.9 MHz on a KrakenSDR) | A wide view and the discrete scanner. No direction finding |
 | **Independent** | Each its own receiver with its own frequency and gain | One spectrum and waterfall per tuner. No direction finding, no calibration |
+| **Sweep** | The chosen tuners step through a frequency range | One spectrum and waterfall of the whole range, up to 24 - 1765 MHz. Not live: no audio, no decoders, no direction finding |
 
 The mode is remembered across restarts. Switching back to Coherent retunes
 every tuner to the common frequency and recalibrates. The KrakenSDR Wideband
 hardware only has Coherent mode.
+
+**Sweep mode.** The top bar's frequency is replaced by the range, **Start**
+and **Stop**, and a button for each tuner. The tuners that are pressed step
+through the range together, about 1.9 MHz per tuner and step, and the page
+draws one spectrum of the whole range, with a waterfall line for every
+completed sweep. More tuners make the sweep faster: the whole 24 - 1765 MHz
+takes roughly 4 seconds with five tuners and 20 seconds with one, the FM
+broadcast band is swept about ten times a second (measured on a PC and on a
+Raspberry Pi 5, which are equally fast at it; the tuners are retuned one
+after another on Windows, which is slower). Every tuner that takes part
+needs its antenna connected - each covers its own part of the range, and a
+tuner without an antenna shows only noise in its part. The **Sweep** box in the
+sidebar sets the resolution (Auto picks one from the width of the range and
+the dwell, so that every step is still averaged; a finer one can be chosen by
+hand - down to 146 Hz for the whole range, which takes about 50 MB more
+memory and no more time, and 73 or 37 Hz for a narrower range with a longer
+dwell; the list shows which are possible), how long each step is measured
+(Dwell, 5 ms at first: longer is smoother and slower, and lets Auto use a
+finer resolution; at the finest resolutions a step is a single measurement,
+so the trace is noisy until the dwell is raised), and pauses the sweep. The
+mouse wheel zooms in as far as the resolution goes, dragging moves the view,
+and the waterfall keeps the whole range of every sweep, also of those made
+while zoomed in; a change of its colours repaints the lines already there.
+**Display resolution** in the Display box sets how much of each completed
+sweep is sent to this browser. Fit to the plot (the default) sends only as
+many points as the plot is wide. A spacing (for example 37.5 kHz) or Full
+(every point) sends the whole range at that detail: a zoom is then sharp at
+once, down to that spacing, and the waterfall's lines keep their detail when
+they are zoomed into later. The finer, the more network and browser memory it
+costs (Full: about 1.8 MB a second for the whole range at 146 Hz, 0.06 MB a
+second at Auto - the sets travel compressed, without loss, to about 60 % of
+their size; up to 256 MB in the browser). The choice is kept per browser,
+and Slow link switches it off. A change affects only the lines that come
+after it; the lines already on the waterfall keep their detail. In every
+mode, **Data rate** under "Points sent" in the Display box shows how fast
+this browser's connection brings data (KB/s or MB/s, over the last 5 seconds;
+in sweep mode over whole sweeps, since a sweep's data comes in one burst),
+so the cost of a setting can be seen at once. A Linux receiver measures it
+itself; elsewhere the page counts what it receives after decompression and
+shows it as an upper bound ("≤ 291 KB/s": the link carries less, often about
+half).
+The pointer shows the frequency and level under it. Gain is one setting for all
+tuners - or a gain per **region** of the range, set on the line under the
+spectrum: double-click it (on a touch screen: double-tap) to cut the range
+there - both parts keep the gain they had -, drag a border left or right to
+move it (borders sit between the sweep's steps), right-click a border (press
+and hold) to remove it. Click a region (tap) to pick it: the top bar's Gain
+then sets that region only, and the line shows each region's gain. So a
+broadcast band can stay at the maximum while a busy band next to a strong
+transmitter - which at full gain fills with false signals and squashes the
+weaker ones, even when the transmitter is just outside it - is turned down.
+Removing the last border makes the remaining gain the Gain of every step
+again. The Sweep box says what the sweep's gain is ("3 regions, 16.6 - 49.6
+dB"), and the pointer shows the gain of the step under it. A signal keeps its
+height across regions of different gain; a region turned down shows a higher
+noise floor - the sensitivity given up there. The regions are kept by
+frequency when the range changes, and are the same for every browser on the
+receiver. Nothing is demodulated in this mode; the VFOs and their settings are
+kept and come back with the other modes. Going back to Coherent after a sweep
+recalibrates the array's phases, which takes a second or two (about half a
+minute with an older librtlsdr, whose retunes shifted the tuners' samples
+against each other).
 
 **Ordinary RTL-SDR dongles.** Without a KrakenSDR or KerberosSDR, the suite
 also runs on one or more ordinary RTL-SDR dongles (any serial numbers): just
@@ -209,7 +361,14 @@ dB scale, zoom, and the waterfall's speed, colours and contrast (Auto, or Min
 / Max: the levels shown as the darkest and the brightest colour). In
 Independent mode every tuner pane has its own View button, and its
 settings are that tuner's own (kept in the browser); the header's View
-button then sets all tuners at once. Levels
+button then sets all tuners at once. The header's **T0**, **T1**, ...
+buttons choose which tuners' panes are shown (Shift-click: only that one;
+**All**: every one), and the shown panes get the room. A hidden tuner keeps
+running, and the browser remembers the choice. A change of the colours or the
+contrast recolours the whole waterfall, the lines already there too. The
+camera button next to View saves a picture (PNG) of the spectrum and the
+waterfall as shown, with a caption line (mode, frequencies, FFT size, gain,
+date and time); in Independent mode each pane has one too. Levels
 are drawn in dB above the receiver's noise floor. The receiver remembers
 that floor, so a signal that fills the whole band (DVB-T, LTE) still shows
 at its real height.
@@ -243,6 +402,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [UAT](kraken_doa_v2/plugins/uat/README.md) (978 MHz, United States) | Aircraft, rebroadcast traffic, ground stations and their weather / NOTAM text |
 | [SSR / Mode S / TCAS interrogations](kraken_doa_v2/plugins/ssr1030/README.md) (1030 MHz) | The radars, multilateration stations and aircraft that ask the questions ADS-B answers |
 | [ACARS](kraken_doa_v2/plugins/acars/README.md), [VDL Mode 2](kraken_doa_v2/plugins/vdl2/README.md) | Aircraft datalink messages: registration, flight, label, text; VDL2 ground stations on the map |
+| [Inmarsat Classic Aero](kraken_doa_v2/plugins/inmarsat_aero/README.md) (L-band satellite, 1545-1555 MHz; aircraft at 1626-1660 MHz) | The satellite datalink to aircraft (P channel, every rate, found automatically): log-ons, channel assignments, ACARS messages, ADS-C positions on the map; C channel voice (see [Digital voice codecs](#digital-voice-codecs)); the aircraft's own bursts with a bearing per aircraft. Its **All channels in the spectrum** option decodes every channel of the tuner's whole 2.4 MHz at once and plays every call in it (the VFO is then locked on the band, as for ADS-B) |
 | [FLARM / OGN](kraken_doa_v2/plugins/flarm/README.md) (868 / 915 MHz) | Gliders and light aircraft. OGN trackers give a position; FLARM is encrypted, so only its ID and bearing |
 | [DME / TACAN](kraken_doa_v2/plugins/dme/README.md) (962-1213 MHz) | Morse ident, channel and its VOR / ILS pairing, TACAN bearing, aircraft interrogations |
 | [ILS / VOR / markers](kraken_doa_v2/plugins/ils/README.md) | Localizer and glide slope deviation, VOR radial, marker beacons, Morse idents |
@@ -250,6 +410,7 @@ to filter) and shows the one you pick. Any number of VFOs can decode at once.
 | [AIS](kraken_doa_v2/plugins/ais/README.md) (162 MHz) | Ships, base stations, aids to navigation |
 | [406 MHz distress beacons](kraken_doa_v2/plugins/beacon406/README.md) | EPIRB / ELT / PLB: beacon ID, country, type, position. Self-tests are shown as tests |
 | [121.5 / 243 MHz distress beacons](kraken_doa_v2/plugins/beacon121/README.md) | ELT / EPIRB / PLB swept-tone homing, also 406 MHz beacons' homers: carrier, sweep, rate, pauses, Morse letter, a bearing per beacon. AM voice and plain carriers are not beacons |
+| [Inmarsat-C / STD-C](kraken_doa_v2/plugins/inmarsat_c/README.md) (L-band satellite, 1530-1545 MHz) | The NCS common channel and the LES TDM channels: network and station identity, EGC SafetyNET / FleetNET messages (navigational and weather warnings, search and rescue, group calls) put together from their packets, repeats shown once |
 | [Radiosondes](kraken_doa_v2/plugins/radiosonde/README.md) (400-406 MHz) | Weather balloons (RS41, DFM, M10 / M20, iMet, LMS6, MRZ): position, weather data, flight track, a sounding |
 | [ISM devices](kraken_doa_v2/plugins/ism/README.md) (315 / 345 / 433 / 868 / 915 MHz) | About 140 device models: weather stations, tyre pressure sensors, key fobs, alarm sensors, energy meters |
 | [LoRa / Meshtastic / LoRaWAN](kraken_doa_v2/plugins/lora/README.md) | Meshtastic's public default channel (text, node names, positions); the clear headers of everything else |
@@ -450,6 +611,17 @@ receiver retunes only for other bands. The receiver does the scanning, so it
 carries on with no browser open. Options include a VFO of its own for each
 active frequency, so that all are heard, decoded and transcribed at once.
 
+### Signal ID
+
+With **Signal ID** on (its box in the sidebar), the receiver labels every
+signal it finds in the band with its type - DMR, POCSAG, NFM voice, LoRa,
+ADS-B, DAB and more - right above the signal on the spectrum, and lists them
+in the box. Click a label to tune the selected VFO to that signal with the
+right decoder, demod and bandwidth. It looks at half a second of one tuner
+every few seconds, a few percent of one core, and needs the model file
+`kraken_doa_v2/sigclass.model`. It pauses in Sweep mode, where the tuners
+hop too fast to look at one band.
+
 ### Recording and logging
 
 - **IQ & Audio Recorder**: the calibrated IQ samples of every antenna
@@ -516,6 +688,7 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 | NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
 | Yaesu System Fusion (C4FM) | DN and V/D mode 1: AMBE+2; VW: IMBE | DN / V/D mode 1: mbelib, installed by you; VW: nothing - built in |
 | TETRA | ACELP | the ETSI reference codec, built by you |
+| Inmarsat Classic Aero (C channel) | AMBE 4.8 kbit/s | libaeroambe's mbelib, built by you |
 | MPT1327 | analogue FM | nothing - listen to the traffic channel with NBFM |
 | DAB | MPEG Layer II | nothing - built in |
 | DAB+ | HE-AAC v2 | libfdk-aac, installed by you |
@@ -540,6 +713,17 @@ control channels); what the radios themselves send on Phase 2 has only been
 tested with the decoder's own test signals, as no recording of it could be
 found.
 
+The Inmarsat decoders were checked against recordings and off air on a
+Raspberry Pi 5 with one patch antenna (Inmarsat-4 F1): Inmarsat-C's NCS
+and LES channels with real EGC messages, Classic Aero's P channels at 600,
+1200 and 10500 bit/s. Aero voice was checked on real calls by measurement,
+not by listening: the channel decodes, the codec accepts its voice frames,
+and the decoded sound of a clean three-minute call has the structure of
+speech (syllable-length voiced stretches, one speaker's smoothly moving
+pitch, talk spurts between pauses), which the same path fed random bits
+does not have. A satellite sends only the ground-to-aircraft half of a
+call, so long silences are normal.
+
 **P25 Phase 2, DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 
 ```
@@ -556,6 +740,28 @@ kraken_doa finds `libmbe.so.1` in the system library path. Set
 `KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere. Fusion's DN
 voice needs mbelib's `mbe_processAmbe2450Dataf`; a library without it plays
 no DN voice (the decoder's voice status says so).
+
+**Inmarsat Classic Aero (C channel voice): libaeroambe's mbelib**
+
+The Aero codec is not in the standard mbelib. libaeroambe carries an mbelib
+1.3 with it added (`mbe_processAmbe4800x3600Framef`); only that folder is
+needed, without Qt:
+
+```
+sudo apt-get install -y git cmake build-essential
+git clone https://github.com/jontio/libaeroambe.git
+cmake -S libaeroambe/mbelib-master -B build-aeroambe -DCMAKE_BUILD_TYPE=Release
+cmake --build build-aeroambe -j3
+export KRAKEN_AERO_AMBE=$PWD/build-aeroambe/libmbe.so.1
+```
+
+Set `KRAKEN_AERO_AMBE` where kraken_doa is started (`none` turns the voice
+off). Without it the decoder also tries `KRAKEN_MBELIB` and the system's
+`libmbe.so.1`, and uses the first one that has the Aero function - so
+installing this build in place of the standard mbelib
+(`sudo cmake --install build-aeroambe && sudo ldconfig`) serves every
+decoder; in Docker, put it in `docker-data/codecs/` as `libmbe.so.1`. The
+decoder's "Voice codec" line says which library it found.
 
 **TETRA: the ETSI codec, with osmo-tetra's patches**
 

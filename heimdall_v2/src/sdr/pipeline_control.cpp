@@ -374,7 +374,7 @@ bool reconfigure_num_elements_precheck(int new_n, std::string& err) {
     }
     if (discrete_scanner.enabled.load() ||
         operating_mode.load() != OperatingMode::COHERENT) {
-        err = "switch to coherent mode (stop the scanner / wideband / independent mode) first";
+        err = "switch to coherent mode (stop the scanner / wideband / independent / sweep mode) first";
         return false;
     }
     if (reconfig_in_progress.load(std::memory_order_acquire)) {
@@ -410,7 +410,7 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
     }
     if (discrete_scanner.enabled.load() ||
         operating_mode.load() != OperatingMode::COHERENT) {
-        err = "switch to coherent mode (stop the scanner / wideband / independent mode) first";
+        err = "switch to coherent mode (stop the scanner / wideband / independent / sweep mode) first";
         return false;
     }
 
@@ -434,6 +434,17 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
         // or gain change can't touch handles we are freeing. Command handlers
         // additionally refuse work while reconfig_in_progress is set.
         std::lock_guard<std::mutex> lock(settings_mutex);
+
+        // Re-checked under the lock every mode change takes: a
+        // set_operating_mode (or start_scanner) sent right after
+        // set_num_elements could run between the 8092 precheck and the
+        // flag above being set, and would otherwise have its tuners reopened
+        // on the coherent tuning under it (a sweep, a wideband spread)
+        if (discrete_scanner.enabled.load() || operating_mode.load() != OperatingMode::COHERENT) {
+            err = "switch to coherent mode (stop the scanner / wideband / independent / sweep mode) first";
+            reconfig_in_progress.store(false, std::memory_order_release);
+            return false;
+        }
 
         stop_pipeline_threads();
 

@@ -33,6 +33,29 @@ struct SDRDevice {
     // last-arrival times alone can't tell from the current one.
     std::atomic<int64_t> last_arrival_ns{0};
     std::atomic<int64_t> prev_arrival_ns{0};
+    // Every packet enqueued in L1 is numbered (l1_put = how many so far,
+    // stored after the packet is in L1 and its stamp below is written) and
+    // its arrival stamp kept in a ring: sweep mode's gate draws each stream's
+    // earliest-arrival line through them (sdr_pipeline.cpp, serve_gate_now).
+    // ring_n[slot] = the number of the packet whose stamp ring_t[slot] holds
+    // (UINT64_MAX while it is being written). stream_first = the number of
+    // the first packet after the stamps were reset (a stream start) or after
+    // a short transfer (the line can't run across it). Written by the
+    // callback only.
+    // LINE_PACKETS: the gate's window. A stalled reader delivers at most
+    // RTL_USB_BUF_COUNT packets late (the transfers that completed meanwhile;
+    // later samples are lost in the RTL2832's FIFO, which only makes the
+    // stream newer than its line), so a window of more than that always
+    // holds packets a running reader delivered - the line runs through one
+    // of them, never through a burst (serve_gate_now). The ring holds two
+    // windows, so a packet's whole window is readable while it can still be
+    // in L1 unjudged (an unreadable window counts as "before T").
+    static constexpr int LINE_PACKETS = RTL_USB_BUF_COUNT + 16;
+    static constexpr int ARRIVAL_RING = 2 * LINE_PACKETS + 32;
+    std::atomic<uint64_t> l1_put{0};
+    std::atomic<uint64_t> stream_first{0};
+    std::array<std::atomic<int64_t>, ARRIVAL_RING> ring_t{};
+    std::array<std::atomic<uint64_t>, ARRIVAL_RING> ring_n{};
     ChannelCompensation compensation;
     mutable std::mutex compensation_mutex;
 
@@ -50,6 +73,13 @@ struct SDRDevice {
     std::array<float, 8> frac_coeff{{0, 0, 0, 1, 0, 0, 0, 0}};
     std::array<Complex, 7> frac_tail{};
     float frac_coeff_for = 0.0f;
+    // the flush epoch frac_tail was saved under (conversion thread only): a
+    // set after a flush starts a new stream piece - in sweep mode another
+    // hop, another frequency and gain - so its tail is the set's own first
+    // sample, not the last samples before the flush (those reached the first
+    // 3 output samples: a hop's first valid packet held 3 samples of the
+    // previous one - with auto gain, values clipped at another gain)
+    uint32_t frac_tail_epoch = ~0u;
 
     // Optional per-bin phase-equalizer FIR (complex taps). Designed once at the
     // end of calibration when per-bin mode is on; applied as the final hot-path

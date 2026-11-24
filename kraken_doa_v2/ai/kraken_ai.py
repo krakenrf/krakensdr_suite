@@ -51,6 +51,7 @@ receiver's tools - no builds, no scripts), and kraken_doa doesn't run a plugin
 the assistant changed at all until it is trusted (no bwrap either).
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -93,8 +94,20 @@ DEFAULTS = {
 
 # files the agent must never read (relative to kraken_doa_v2), and the home
 # folder's credential stores (its sandboxed shell could read them otherwise)
-SECRETS = ["api_token", "doa_settings.json", "server.key", "ai/ai_config.json", "ai/run", "ai/state",
-           "noise_floors.json", "rdf_session.bin"]
+# (the web UI's keys, docs/dev/https-certificate.md fine rule 21: the server
+# key, the receiver's CA key - it can vouch for this receiver's names, in wide
+# scope for any .local / .lan name and private address -, an unusable key
+# moved aside, a replaced CA's key kept because the CA was the user's own
+# (krakensdr-ca.key.retired-YYYYMMDD: usually an UNCONSTRAINED CA, fine rule
+# 32), the generator's temporary key files, make-cert.sh's work and lock
+# folders. A name with * is a pattern, denied as a file and as a folder).
+# src/ai_sandbox.cpp masks the same two lists in the sandbox of a plugin the
+# assistant changed - keep them in step (there, of ~/.config and
+# ~/.local/share only the credential stores: programs a plugin runs live in
+# them too - uv's Pythons)
+SECRETS = ["api_token", "doa_settings.json", "server.key", "krakensdr-ca.key", "*.unreadable-*", "*.retired-*",
+           "*.key.tmp", ".make-cert.*", "ai/ai_config.json", "ai/run", "ai/state", "noise_floors.json",
+           "rdf_session.bin"]
 HOME_SECRETS = [".claude", ".claude.json", ".ssh", ".gnupg", ".config", ".local/share", ".netrc", ".git-credentials",
                 ".aws", ".docker", ".pki", ".mozilla", ".bash_history", ".python_history", ".lesshst", ".viminfo"]
 if MACOS:
@@ -473,6 +486,22 @@ def rule(kind, path, tree=True):
     return f"{kind}(/{rule_path(path)}{'/**' if tree else ''})"
 
 
+def secret_paths():
+    """SECRETS as paths for the sandbox's denyRead. A pattern as given (on
+    Linux a wildcard after the first folder name works in denyRead) and with
+    /** (a folder's contents), plus every name it matches now - the
+    patterns' files come and go (a key moved aside, make-cert.sh's folders);
+    the permission rules deny them by pattern whenever they appear"""
+    out = []
+    for x in SECRETS:
+        p = os.path.join(KRAKEN_DIR, x)
+        out.append(p)
+        if "*" in x:
+            out += [p + "/**"] + sorted(glob.glob(p))
+    seen = set()
+    return [p for p in out if not (p in seen or seen.add(p))]
+
+
 def claude_settings(sdir, sandbox):
     # (Windows: no /usr/include - and no shell to build with anyway)
     readable = [KRAKEN_DIR, PLUGIN_DIR, sdir, KNOWLEDGE] + ([] if WINDOWS else system_includes())
@@ -484,6 +513,10 @@ def claude_settings(sdir, sandbox):
     deny = []
     for s in SECRETS:
         p = os.path.join(KRAKEN_DIR, s)
+        if "*" in s:
+            # a pattern: the names themselves and, for a folder, all in it
+            deny += [rule("Read", p, False), rule("Read", p), rule("Edit", p, False), rule("Edit", p)]
+            continue
         deny += [rule("Read", p, os.path.isdir(p) or s in ("ai/run", "ai/state")), rule("Edit", p, os.path.isdir(p))]
     for s in PLUGIN_CORE:
         p = os.path.join(PLUGIN_DIR, s)
@@ -515,7 +548,7 @@ def claude_settings(sdir, sandbox):
                 "allowWrite": [sdir, PLUGIN_DIR, KNOWLEDGE],
                 "denyWrite": [os.path.join(PLUGIN_DIR, x) for x in PLUGIN_CORE] +
                              [os.path.join(AI_DIR, x) for x in ("kraken_ai.py", "sigtool.py", "memguard", "state", "run")],
-                "denyRead": [os.path.join(KRAKEN_DIR, x) for x in SECRETS] + [os.path.join(HOME, x) for x in HOME_SECRETS],
+                "denyRead": secret_paths() + [os.path.join(HOME, x) for x in HOME_SECRETS],
             },
             "network": {"allowedDomains": []},
         }

@@ -4,6 +4,7 @@
 #include "../sdr/pipeline_control.hpp"
 #include "../sdr/downconverter.hpp"
 #include "../sdr/sdr_pipeline.hpp"
+#include "../sdr/sweep.hpp"
 #include "../dsp/compensation.hpp"
 #include "../core/config.hpp"
 #include "../core/version_info.hpp"
@@ -13,6 +14,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 
 namespace {
@@ -70,6 +72,7 @@ std::string settings_error_reply(const SdrUpdateResult& res, bool is_frequency) 
     auto add = [&msg](const std::string& part) { msg += (msg.empty() ? "" : "; ") + part; };
     if (res.frequency_out_of_range) add("Frequency out of range - unchanged");
     if (res.lo_retune_failed) add("LO retune failed - frequency unchanged");
+    if (res.sweep_refused) add("the sweep plan sets the frequencies in sweep mode (set_sweep) - unchanged");
     if (!res.failed_channels.empty()) {
         if (res.restore_failed)
             add(std::string(what) + " failed on channel(s) " + res.failed_channels +
@@ -244,6 +247,63 @@ std::string rf_range_error(const std::string& given) {
            std::to_string(rf_min / 1000000) + "-" + std::to_string(rf_max / 1000000) + " MHz)\"}";
 }
 
+// The JSON number grammar exactly (stod alone takes "12abc", "0x10", "+5",
+// "1e2x"): -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?
+bool json_number_text(const std::string& v) {
+    size_t i = 0;
+    auto digits = [&]() { const size_t b = i; while (i < v.size() && v[i] >= '0' && v[i] <= '9') i++; return i > b; };
+    if (i < v.size() && v[i] == '-') i++;
+    if (i < v.size() && v[i] == '0') i++;
+    else if (!digits()) return false;
+    if (i < v.size() && v[i] == '.') { i++; if (!digits()) return false; }
+    if (i < v.size() && (v[i] == 'e' || v[i] == 'E')) {
+        i++;
+        if (i < v.size() && (v[i] == '+' || v[i] == '-')) i++;
+        if (!digits()) return false;
+    }
+    return i == v.size();
+}
+
+// "key":[n, n, ...] out of a command: true = present and a list of JSON
+// numbers (out = them; [] = empty); false = absent or malformed (err says
+// which, "" = absent)
+bool json_number_list(const std::string& json, const char* key, std::vector<double>& out, std::string& err) {
+    out.clear();
+    err.clear();
+    const std::string k = std::string("\"") + key + "\"";
+    size_t p = json.find(k);
+    if (p == std::string::npos) return false;
+    p += k.size();
+    auto ws = [&] { while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p]))) p++; };
+    ws();
+    if (p >= json.size() || json[p] != ':') { err = std::string(key) + " must be a list of numbers"; return false; }
+    p++;
+    ws();
+    const size_t close = json.find(']', p);
+    if (p >= json.size() || json[p] != '[' || close == std::string::npos) {
+        err = std::string(key) + " must be a list of numbers";
+        return false;
+    }
+    std::stringstream ss(json.substr(p + 1, close - p - 1));
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        tok.erase(std::remove_if(tok.begin(), tok.end(), [](unsigned char c) { return std::isspace(c); }), tok.end());
+        if (tok.empty()) {
+            if (ss.eof() && out.empty()) break;   // "[]"
+            err = std::string(key) + " must be a list of numbers";
+            return false;
+        }
+        double d = NAN;
+        if (json_number_text(tok)) {
+            try { d = std::stod(tok); } catch (...) { d = NAN; }
+        }
+        if (!std::isfinite(d)) { err = std::string(key) + " must be a list of numbers"; return false; }
+        out.push_back(d);
+        if (out.size() > 4096) { err = std::string(key) + ": too many values"; return false; }
+    }
+    return true;
+}
+
 // Calibration commands in generic RTL-SDR mode (no array, no noise source)
 const char* const GENERIC_NO_CALIBRATION_REPLY =
     "{\"status\":\"error\",\"message\":\"no calibration with generic RTL-SDRs - they run as independent "
@@ -259,6 +319,21 @@ void TcpControlServer::stop() {
     if (server_thread.joinable()) {
         server_thread.join();
     }
+}
+
+// A setting that moves the hardware (frequency, mixer side, antenna ring) is
+// about to change: enter the retune cooldown first, so no frame taken while it
+// moves goes out flagged CONVERGED. Only from CONVERGED (the later retunes of a
+// drag are in the cooldown already); not with --kerberos (STALE would be
+// logged twice), during a recovery or a discrete scan (each call restarts /
+// defers again). The caller still runs begin_retune_cooldown() after the
+// change, which restarts the timer from the moment the hardware settled.
+static void cooldown_before_change(const char* what) {
+    if (kerberos_manual_cal_only() || discrete_scanner.enabled.load() ||
+        recovery_in_progress.load(std::memory_order_acquire) ||
+        get_phase_compensation_state() != PhaseCompensatorState::CONVERGED)
+        return;
+    begin_retune_cooldown(what);
 }
 
 // The status object: broadcast at 2 Hz (as_reply = false) and returned by
@@ -374,6 +449,9 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                // channels whose lag calibration finds no correlation peak
                // (stream skew beyond +-NUM_SAMPLES; config.h LAG_NO_PEAK_*)
                << ",\"lag_no_peak\":" << lag_no_peak_json();
+
+    // Sweep mode's plan and progress (always present; sweep.hpp)
+    status_json << ",\"sweep\":" << sweep_status_json();
 
     // the suite's version (core/version_info.hpp; kraken_doa shows it in its
     // sidebar's tooltip)
@@ -639,22 +717,26 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         return std::isfinite(out);
     };
 
-    // Operating mode: {"command":"set_operating_mode","mode":"coherent|wideband|independent"}
+    // Operating mode: {"command":"set_operating_mode","mode":"coherent|wideband|independent|sweep"}
     // wideband spreads the tuners around the current frequency; independent
     // keeps them where they are (then set_independent_tuner per tuner);
-    // coherent retunes all to the current frequency and recalibrates.
+    // sweep hops the plan's tuners (set_sweep); coherent retunes all to the
+    // current frequency and recalibrates.
     if (json_str.find("\"set_operating_mode\"") != std::string::npos) {
         OperatingMode target;
         if (json_str.find("\"mode\":\"independent\"") != std::string::npos) target = OperatingMode::INDEPENDENT;
         else if (json_str.find("\"mode\":\"wideband\"") != std::string::npos) target = OperatingMode::WIDEBAND_SCAN;
         else if (json_str.find("\"mode\":\"coherent\"") != std::string::npos) target = OperatingMode::COHERENT;
-        else return "{\"status\":\"error\",\"message\":\"mode must be coherent, wideband or independent\"}";
+        else if (json_str.find("\"mode\":\"sweep\"") != std::string::npos) target = OperatingMode::SWEEP;
+        else return "{\"status\":\"error\",\"message\":\"mode must be coherent, wideband, independent or sweep\"}";
         if (target != OperatingMode::COHERENT && discrete_scanner.enabled.load())
             return "{\"status\":\"error\",\"message\":\"stop the scanner first\"}";
         const bool changed = set_operating_mode(target, devices);
         if (changed && target == OperatingMode::WIDEBAND_SCAN)
             setup_wideband_frequencies(current_frequency.load(), devices);
         if (!changed && operating_mode.load() != target) {
+            if (reconfig_in_progress.load(std::memory_order_acquire))
+                return "{\"status\":\"error\",\"message\":\"Element-count reconfiguration in progress - retry shortly\"}";
             if (const char* why = generic_mode_refusal(target))
                 return "{\"status\":\"error\",\"message\":\"" + std::string(why) + "\"}";
             return "{\"status\":\"error\",\"message\":\"" + std::string(operating_mode_name(target)) +
@@ -685,6 +767,123 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         o << "{\"status\":\"success\",\"channel\":" << ch << ",\"frequency\":" << wideband_config.get_tuner_frequency(ch)
           << ",\"gain\":" << (tg == -1 ? -1.0 : tg / 10.0) << "}";
         return o.str();
+    }
+
+    // Sweep mode's gain by region (docs/dev/operating-modes.md, "Gain by region"):
+    // {"command":"set_sweep_gains","points_hz":[f1,..,fn],"gains_db":[g0,..,gn]} -
+    // n <= 64 points (whole Hz, strictly rising), n + 1 gains (dB, 0-50; not
+    // the AGC); both [] = no table (the sweep takes the common gain again).
+    // All or nothing; the reply carries the table as applied (each gain the
+    // nearest of the tuners' list). Accepted in every mode, used in sweep mode
+    // from the next hop on; not saved (the client sends it after every set_sweep)
+    if (json_str.find("\"set_sweep_gains\"") != std::string::npos) {
+        auto error = [](const std::string& m) { return "{\"status\":\"error\",\"message\":\"" + m + "\"}"; };
+        std::vector<double> pts, gns;
+        std::string err;
+        if (!json_number_list(json_str, "points_hz", pts, err))
+            return error(err.empty() ? "set_sweep_gains needs points_hz (a list, [] = no points)" : err);
+        if (!json_number_list(json_str, "gains_db", gns, err))
+            return error(err.empty() ? "set_sweep_gains needs gains_db (a list, [] with no points = no table)" : err);
+        std::string applied;
+        if (std::string e = apply_sweep_gains(pts, gns, applied); !e.empty()) return error(e);
+        return "{\"status\":\"success\"," + applied + "}";
+    }
+
+    // Sweep mode's plan (kraken_doa_v2/docs/dev/sweep-mode.md, "The contract"):
+    // {"command":"set_sweep"[,"first_center_hz":F0,"step_hz":S,"steps":H]
+    //  [,"tuners":[i,j,..]][,"dwell_ms":D][,"settle_ms":T][,"run":true|false]}
+    // Accepted in every mode, used in sweep mode, persisted. All or nothing:
+    // a bad field changes nothing.
+    if (json_str.find("\"set_sweep\"") != std::string::npos) {
+        auto error = [](const std::string& m) { return "{\"status\":\"error\",\"message\":\"" + m + "\"}"; };
+        // The value after "key" (whitespace allowed around the colon); npos if absent
+        auto value_at = [&](const char* key) -> size_t {
+            const std::string k = std::string("\"") + key + "\"";
+            size_t p = json_str.find(k);
+            if (p == std::string::npos) return p;
+            p += k.size();
+            while (p < json_str.size() && std::isspace(static_cast<unsigned char>(json_str[p]))) p++;
+            if (p >= json_str.size() || json_str[p] != ':') return std::string::npos;
+            p++;
+            while (p < json_str.size() && std::isspace(static_cast<unsigned char>(json_str[p]))) p++;
+            return p;
+        };
+        auto json_number = [](const std::string& v) { return json_number_text(v); };
+        // A whole, non-negative JSON number no larger than `max`
+        auto whole = [&](const char* key, uint64_t max, uint64_t& out, std::string& err) {
+            const size_t p = value_at(key);
+            if (p == std::string::npos) return false;
+            const std::string v = json_str.substr(p, json_str.find_first_of(",}] \t\r\n", p) - p);
+            double d = 0;
+            if (json_number(v)) {
+                try { d = std::stod(v); } catch (...) { d = NAN; }
+            } else {
+                d = NAN;
+            }
+            if (!std::isfinite(d) || d < 0 || d != std::floor(d) || d > static_cast<double>(max)) {
+                err = std::string(key) + " must be a whole number 0-" + std::to_string(max);
+                return false;
+            }
+            out = static_cast<uint64_t>(d);
+            return true;
+        };
+        SweepRequest req;
+        std::string err;
+        uint64_t f0 = 0, step = 0, steps = 0, v = 0;
+        const bool h_f0 = whole("first_center_hz", 10'000'000'000ULL, f0, err);
+        if (!err.empty()) return error(err);
+        const bool h_step = whole("step_hz", 10'000'000'000ULL, step, err);
+        if (!err.empty()) return error(err);
+        const bool h_steps = whole("steps", 1'000'000ULL, steps, err);
+        if (!err.empty()) return error(err);
+        if (h_f0 || h_step || h_steps) {
+            if (!(h_f0 && h_step && h_steps))
+                return error("first_center_hz, step_hz and steps go together");
+            req.has_plan = true;
+            req.first_center_hz = f0;
+            req.step_hz = step;
+            req.steps = static_cast<uint32_t>(steps);
+        }
+        if (whole("dwell_ms", 1'000'000ULL, v, err)) { req.has_dwell = true; req.dwell_ms = static_cast<uint32_t>(v); }
+        if (!err.empty()) return error(err);
+        if (whole("settle_ms", 1'000'000ULL, v, err)) { req.has_settle = true; req.settle_ms = static_cast<uint32_t>(v); }
+        if (!err.empty()) return error(err);
+        if (const size_t p = value_at("run"); p != std::string::npos) {
+            // the literal and then a delimiter ("truex" is not true)
+            auto literal = [&](const char* w) {
+                const size_t n = std::strlen(w);
+                return json_str.compare(p, n, w) == 0 &&
+                       (p + n >= json_str.size() || std::strchr(",} \t\r\n", json_str[p + n]) != nullptr);
+            };
+            if (literal("true")) req.run = true;
+            else if (literal("false")) req.run = false;
+            else return error("run must be true or false");
+            req.has_run = true;
+        }
+        if (const size_t p = value_at("tuners"); p != std::string::npos) {
+            const size_t close = json_str.find(']', p);
+            if (json_str[p] != '[' || close == std::string::npos) return error("tuners must be a list of tuner numbers");
+            std::stringstream ss(json_str.substr(p + 1, close - p - 1));
+            std::string tok;
+            while (std::getline(ss, tok, ',')) {
+                tok.erase(std::remove_if(tok.begin(), tok.end(), [](unsigned char c) { return std::isspace(c); }),
+                          tok.end());
+                if (tok.empty()) {
+                    if (ss.eof() && req.tuners.empty()) break;  // "[]"
+                    return error("tuners must be a list of tuner numbers");
+                }
+                double d = NAN;
+                if (json_number(tok)) {
+                    try { d = std::stod(tok); } catch (...) { d = NAN; }
+                }
+                if (!std::isfinite(d) || d != std::floor(d) || d < -1e6 || d > 1e6)
+                    return error("tuners must be a list of tuner numbers");
+                req.tuners.push_back(static_cast<int>(d));
+            }
+            req.has_tuners = true;
+        }
+        if (std::string e = apply_sweep_request(req); !e.empty()) return error(e);
+        return "{\"status\":\"success\",\"sweep\":" + sweep_status_json() + "}";
     }
 
     // Runtime element-count change: {"command":"set_num_elements","num_elements":N}
@@ -780,6 +979,11 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                 rf_frequency_range(rf_min, rf_max);
 
                 if (frequency >= rf_min && frequency <= rf_max) {
+                    // Sweep mode: the plan sets the frequencies
+                    if (operating_mode.load() == OperatingMode::SWEEP) {
+                        return "{\"status\":\"error\",\"message\":\"the sweep plan sets the frequencies in sweep "
+                               "mode (set_sweep)\",\"frequency\":" + std::to_string(current_frequency.load()) + "}";
+                    }
                     // In wideband mode, SKIP update_sdr_settings (which sets all tuners to same freq)
                     // and ONLY call setup_wideband_frequencies (which sets each tuner to its spread freq)
                     // This prevents a race condition where packets briefly show all tuners at same frequency
@@ -793,21 +997,23 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                         return "{\"status\":\"success\",\"frequency\":" + std::to_string(frequency) + "}";
                     }
 
+                    // Enter the cooldown BEFORE the hardware moves, so clients
+                    // see WAITING_FOR_STABILITY (and hold DoA) for every frame
+                    // taken while it moves, not only once it is done:
+                    //  - Windows retunes the tuners one after the other (the
+                    //    array is split across two frequencies meanwhile);
+                    //  - the wideband board's LO write takes tens of ms on any
+                    //    OS, and until this ran first every retune sent 3-13
+                    //    frames (up to 0.44 s) flagged CONVERGED with the old
+                    //    calibration on the new LO - phase off by anything up
+                    //    to 180 degrees.
 #ifdef _WIN32
-                    // Windows retunes the tuners one after the other: enter the
-                    // cooldown before the sweep too, so clients see
-                    // WAITING_FOR_STABILITY (and hold DoA) while the array is
-                    // split across two frequencies, not only once it is done.
-                    // Only from CONVERGED (the later retunes of a drag are in the
-                    // cooldown already); not with --kerberos (STALE logged twice),
-                    // during a recovery or a discrete scan (each call restarts /
-                    // defers again) or on the downconverter (an LO retune).
-                    if (frequency != current_frequency.load() && !kerberos_manual_cal_only() &&
-                        !downconverter.enabled.load() && !discrete_scanner.enabled.load() &&
-                        !recovery_in_progress.load(std::memory_order_acquire) &&
-                        get_phase_compensation_state() == PhaseCompensatorState::CONVERGED)
-                        begin_retune_cooldown("Frequency changing");
+                    const bool cooldown_first = true;
+#else
+                    const bool cooldown_first = downconverter.enabled.load();
 #endif
+                    if (cooldown_first && frequency != current_frequency.load())
+                        cooldown_before_change("Frequency changing");
                     // Coherent mode: update all tuners to same frequency
                     SdrUpdateResult res;
                     bool changed = update_sdr_settings(frequency, -999, devices, &res);
@@ -840,7 +1046,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // low (LO = IF - RF) is upright but caps the RF below the IF; below
     // (LO = RF - IF) is upright and the only side past 4132 MHz (up to
     // 6668 MHz). The side normally follows the frequency automatically
-    // (wideband_retune_rf); this override only accepts sides that can reach
+    // (wideband_retune_rf: high below WB_SIDE_CROSSOVER_HZ, below from it up,
+    // re-applied when a retune crosses that frequency); this override only
+    // accepts sides that can reach
     // the CURRENT RF - the client UI greys the others out.
     if (json_str.find("\"set_mixer_side\"") != std::string::npos) {
         if (!downconverter.enabled.load()) {
@@ -859,6 +1067,12 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         }
 
         std::string side_json = std::string("\"side\":\"") + mixer_side_name(side) + "\"";
+
+        // The side is about to move the LO and flip the spectrum: cooldown
+        // first, as for a frequency change (only when the request will do
+        // something - checked again under the lock below).
+        if (side != downconverter.side.load() && downconverter_rf_valid(current_frequency.load(), side))
+            cooldown_before_change("Mixer side changing");
 
         // RF read, checks and LO programming all under settings_mutex (every
         // retune path holds it): read before the lock, a retune landing in
@@ -929,6 +1143,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         if (array == downconverter.array_select.load()) {
             return "{\"status\":\"success\",\"array\":" + std::to_string(array) + "}";
         }
+
+        cooldown_before_change("Array changing");  // before the RF switches move, as for a frequency change
 
         downconverter.array_select.store(array);
         // Re-throw the switches for the new ring on whichever path (noise /
@@ -1353,8 +1569,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
 
     // Start discrete scanner
     if (json_str.find("\"start_scanner\"") != std::string::npos) {
-        if (operating_mode.load() == OperatingMode::INDEPENDENT) {
-            return "{\"status\":\"error\",\"message\":\"The scanner is not available in independent mode\"}";
+        if (operating_mode.load() == OperatingMode::INDEPENDENT || operating_mode.load() == OperatingMode::SWEEP) {
+            return "{\"status\":\"error\",\"message\":\"The scanner is not available in " +
+                   std::string(operating_mode_name(operating_mode.load())) + " mode\"}";
         }
         if (discrete_scanner.get_num_groups() == 0) {
             return "{\"status\":\"error\",\"message\":\"Scanner not configured. Use configure_scanner first.\"}";

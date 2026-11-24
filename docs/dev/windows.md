@@ -61,7 +61,12 @@ launcher `krakensdr.exe` (repo root, from `windows/krakensdr.cpp`).
   issuer goes to `CertGetCertificateChain` (Windows downloads roots it hasn't
   got yet on demand), then OpenSSL verifies it again with Windows' root as the
   only anchor (host name, dates, purpose stay OpenSSL's checks). The 8080
-  `server.key` is written owner-only (an explicit DACL)
+  `server.key` and the receiver's CA key `krakensdr-ca.key` are written
+  owner-only (an explicit DACL)
+- The 8080 certificate: Windows has no openssl.exe and no run.sh, so
+  kraken_doa makes and renews the pair itself (`tlscert::ensure`) on every
+  start - CA, re-issue, scope, the same rules as `scripts/make-cert.sh`
+  (`kraken_doa_v2/docs/dev/https-certificate.md`)
 - Shared compat layer (identical copies in both apps, like host_check.hpp):
   - `win/posix_compat.h` (force-included into every Windows C++ TU,
     `-include`): POSIX names MinGW lacks WITH their Linux meaning only

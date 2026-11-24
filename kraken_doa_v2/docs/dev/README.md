@@ -41,6 +41,8 @@ every session needs and points here.
 | `plugin-analogtv.md` | Analog TV plugin (PAL / NTSC luma, the video display) |
 | `plugin-beacon406.md` | 406 MHz distress beacons plugin |
 | `plugin-beacon121.md` | 121.5 / 243 MHz swept-tone distress beacons plugin |
+| `plugin-inmarsat-c.md` | Inmarsat-C (STD-C) TDM / EGC plugin; survey of the other Inmarsat services |
+| `plugin-inmarsat-aero.md` | Inmarsat Classic Aero plugin (P channel at every rate, ACARS / ADS-C, C channel voice, aircraft R / T bursts; All channels in the spectrum - every channel of the tuner's 2.4 MHz at once, the VFO locked on the band) |
 | `plugin-cells.md` | LTE / 5G NR Cell Decoder plugin |
 | `plugin-dab.md` | DAB / DAB+ plugin |
 | `plugin-dme.md` | DME / TACAN plugin |
@@ -63,8 +65,10 @@ every session needs and points here.
 | `reference.md` | Hot paths, development tasks, key files, common issues, testing, dependencies |
 | `saved-frequencies.md` | Saved frequencies and map markers |
 | `saved-frequency-scan.md` | Saved-frequency scan |
+| `signal-classifier.md` | Signal ID: the signal classifier (core, training, runtime, labels on the spectrum); the Bands bar |
 | `spectrum-views.md` | Spectrum views (FFT message type 7) |
 | `station-on-map.md` | Station on the map |
+| `sweep-mode.md` | Sweep mode: the tuners step through a range, one wide spectrum + waterfall (FFT types 10 / 11, the gain by region) |
 | `tempest-deep-plan.md` | TEMPEST deep-reconstruction plan |
 | `vfo-audio.md` | VFO audio |
 | `vfo-bandwidth.md` | Arbitrary VFO bandwidth and the VFO decimator |

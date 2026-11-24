@@ -500,6 +500,7 @@ void reset_lag_compensation_all_channels() {
             device->compensation.lag_compensation_locked = false;
             device->compensation.frac_delay = 0.0f;
             device->compensation.lag_no_peak.store(false, std::memory_order_release);
+            device->compensation.reacquire_from_recal = false;
 
             std::cout << "Channel " << device->index << " lag compensation unlocked and reset" << std::endl;
         }
@@ -1043,6 +1044,15 @@ static void check_lag_no_peak(int channel, ChannelCompensation& comp, float lag,
         static_cast<double>(LAG_NO_PEAK_RATIO), LAG_NO_PEAK_READINGS, std::lround(*lo), std::lround(*hi),
         NUM_SAMPLES);
     std::cerr << msg << std::endl;
+    // A channel the phase recalibration handed back to its servo (a slip on
+    // the way back from sweep / independent mode) that finds no peak: its
+    // stream is a packet or more off - the servo can't pull that in, the
+    // recovery's flush re-pairs the streams (check_lag_during_phase_recal
+    // catches the usual case at once; this is the net behind it)
+    if (comp.reacquire_from_recal) {
+        comp.reacquire_from_recal = false;
+        signal_coherence_lost("a channel without a correlation peak after the phase recalibration's lag check");
+    }
 }
 
 std::string lag_no_peak_json() {
@@ -1259,6 +1269,7 @@ bool process_channel_lag_compensation(int channel, float lag, float peak_ratio) 
                     comp.state = LagCompensatorState::CONVERGED;
                     comp.lag_compensation_locked = true;
                     comp.lag_no_peak.store(false, std::memory_order_release);
+                    comp.reacquire_from_recal = false;
                     std::cout << "Channel " << channel << " LAG CONVERGED via servo! (med lag="
                               << med << ", after " << comp.acq_active_s << " s) [LOCKED]" << std::endl;
                     return true;
@@ -1366,10 +1377,20 @@ static void park_stale_servo(int channel) {
 // settled readings goes back to the servo, and the phase stage waits for it
 // (WAITING_FOR_LAG_COMPLETION -> MEASURING_INITIAL_PHASE). A channel within
 // tolerance is left alone. Returns the updated consecutive-bad count.
+//
+// Readings without a correlation peak (peak / mean below LAG_NO_PEAK_RATIO:
+// ~4-6 against ~150-190 for a real lag on the noise source) mean the stream
+// is further off than the correlator sees - a whole packet or more (the
+// re-pairing flush on the way back from sweep mode left one dongle a packet
+// ahead, or a USB transfer was lost). The servo can't pull that in: it chased
+// noise for 60 s until lag_no_peak, and the array stayed uncalibrated until
+// the next mode change. Such a channel goes to the coherence recovery instead
+// (flush - which re-pairs the streams - and the full lag + phase
+// recalibration; uncalibrated with --kerberos).
 static constexpr int RECAL_LAG_BAD_READINGS = 2;
 
-static int check_lag_during_phase_recal(int channel, float lag, int bad_count,
-                                        CorrelationResult& correlation_result) {
+static int check_lag_during_phase_recal(int channel, float lag, float peak_ratio, int bad_count,
+                                        int& no_peak_count, CorrelationResult& correlation_result) {
     if (!phase_compensation || operating_mode.load() != OperatingMode::COHERENT ||
         !bias_tee_enabled.load(std::memory_order_acquire)) return 0;
 
@@ -1392,8 +1413,11 @@ static int check_lag_during_phase_recal(int channel, float lag, int bad_count,
     if (since_noise_on_ns < static_cast<long long>(PhaseCompensationData::NOISE_SETTLE_MS) * 1000000LL)
         return 0;
 
+    // (the caller zeroes no_peak_count whenever this returns 0)
     if (!(std::abs(lag) > PERIODIC_RECAL_LAG_THRESHOLD)) return 0;
+    if (!(peak_ratio >= LAG_NO_PEAK_RATIO)) no_peak_count++;
     if (++bad_count < RECAL_LAG_BAD_READINGS) return bad_count;
+    const bool no_peak = no_peak_count >= RECAL_LAG_BAD_READINGS;
 
     auto device_it = std::find_if(devices.begin(), devices.end(),
         [channel](const auto& dev) { return dev && dev->index == channel; });
@@ -1403,6 +1427,7 @@ static int check_lag_during_phase_recal(int channel, float lag, int bad_count,
         std::lock_guard<std::mutex> lock(device->compensation_mutex);
         auto& comp = device->compensation;
         if (comp.state != LagCompensatorState::CONVERGED) return 0;  // already acquiring
+        comp.reacquire_from_recal = !no_peak;
         // MEASURING re-engages the servo (zeroes the register, which a
         // CONVERGED channel holds at 0 anyway) on the next fresh reading
         comp.state = LagCompensatorState::MEASURING;
@@ -1428,6 +1453,36 @@ static int check_lag_during_phase_recal(int channel, float lag, int bad_count,
             reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
         }
     }
+    if (no_peak) {
+        // (the phase stage waits above, so no calibration latches before the
+        // watchdog's next tick runs the recovery)
+        // What kind of offset (diagnostics for the log): packets each dongle
+        // delivered against channel 0 since the streams started (a dongle a
+        // packet short for good lost a USB transfer; all equal: the pairing
+        // was cut wrong) and the deepest L1 over 8 ms (a pairing offset is a
+        // depth imbalance that persists: one side always a packet deeper)
+        std::string put, depth;
+        {
+            const int n = std::min<int>(active_num_elements.load(), static_cast<int>(devices.size()));
+            std::vector<size_t> deepest(static_cast<size_t>(std::max(n, 0)), 0);
+            for (int k = 0; k < 8; k++) {
+                for (int i = 0; i < n; i++)
+                    if (devices[i]) deepest[i] = std::max(deepest[i], devices[i]->l1_buffer_size.load());
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            const uint64_t p0 = n > 0 && devices[0] ? devices[0]->l1_put.load() : 0;
+            for (int i = 0; i < n; i++) {
+                const long long d = devices[i] ? static_cast<long long>(devices[i]->l1_put.load() - p0) : 0;
+                put += (i ? " " : "") + std::to_string(d);
+                depth += (i ? " " : "") + std::to_string(deepest[i]);
+            }
+        }
+        std::cerr << "Channel " << channel << ": no correlation peak during the phase recalibration (peak/mean "
+                  << peak_ratio << ") - its stream is a packet or more off: re-pairing the streams (packets "
+                  << "delivered vs channel 0: " << put << "; deepest L1 over 8 ms: " << depth << ")" << std::endl;
+        signal_coherence_lost("a channel without a correlation peak during the phase recalibration");
+        return 0;
+    }
     std::cerr << "Channel " << channel << ": lag " << lag
               << " samples during the phase recalibration (sample slip) - re-acquiring its lag"
               << std::endl;
@@ -1437,6 +1492,7 @@ static int check_lag_during_phase_recal(int channel, float lag, int bad_count,
 void channel_lag_compensation_processor(int channel, CorrelationResult& correlation_result) {
     std::cout << "Starting lag compensation for channel " << channel << std::endl;
     int recal_lag_bad = 0;  // consecutive out-of-tolerance readings (check_lag_during_phase_recal)
+    int recal_no_peak = 0;  // ... of them without a correlation peak
 
     uint64_t last_processed_sequence = 0;
     auto last_fresh = std::chrono::steady_clock::now();
@@ -1537,8 +1593,9 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
             }
             
             if (fresh) {
-                recal_lag_bad = check_lag_during_phase_recal(channel, *current_lag, recal_lag_bad,
-                                                             correlation_result);
+                recal_lag_bad = check_lag_during_phase_recal(channel, *current_lag, current_peak_ratio,
+                                                             recal_lag_bad, recal_no_peak, correlation_result);
+                if (recal_lag_bad == 0) recal_no_peak = 0;
                 process_channel_lag_compensation(channel, *current_lag, current_peak_ratio);
             }
 

@@ -54,6 +54,58 @@
 #define RTL_TUNER_MAX_HZ 1766000000ULL  // path checks it (rf_frequency_range())
 
 // ========================================================================
+// SWEEP MODE (OperatingMode::SWEEP, docs/dev/operating-modes.md "Sweep mode")
+// ========================================================================
+// The chosen tuners hop through a plan of hop centres (8092 set_sweep) so a
+// client can stitch one wide spectrum out of the hops. A hop: the 8091
+// header's retuning flag on -> flush -> retune -> SWEEP_SETTLE_MS -> gate
+// (each dongle drops its packets up to the last that can hold a sample from
+// before the settle's end) -> flag off -> dwell. SWEEP_SETTLE_MS: on the
+// KrakenSDR (x86 PC, 2026-11-20 / 21) settle 0 already held - the first
+// valid set after a hop showed nothing of the previous hop, against a
+// station 16-24 dB over the floor. What the gate guarantees is "taken at or
+// after retune end + settle - L*", L* = that dongle's fastest USB delivery
+// (~1 ms on the PC; a Raspberry Pi and a reader that runs behind under load
+// are NOT measured), so the settle is the margin over L*. Default 2 ms: the
+// stream measured clean at settle 0 already (i.e. from ~1 ms BEFORE the tune
+// call returns - the PLL is written one control transfer or more before
+// that), so 2 leaves ~3 ms over the measured-clean point; and with the
+// receiver attached a settle of 5 pushes the first packet that counts one
+// packet period later in nearly every hop (28 ms a round against 21: the
+// whole range with 5 tuners 5.1 s against 4.0 s, 2026-11-21). A host where
+// t_contrast.py shows the previous hop in the first valid packet needs more
+// (set_sweep settle_ms, or this constant). Numbers in the doc.
+#define SWEEP_SETTLE_MS          2      // default settle, ms (set_sweep settle_ms 0-1000)
+#define SWEEP_SETTLE_MAX_MS      1000
+// The dwell is whole USB packets of valid data per tuner and hop: dwell_ms
+// asks for at least that much, a hop delivers sweep_hop_packets(dwell_ms) =
+// ceil(dwell_ms x SAMPLE_RATE / (1000 x NUM_SAMPLES)) packets (6.83 ms each:
+// 5 -> 1, 10 -> 2, 20 -> 3, 50 -> 8, 100 -> 15) and moves on as soon as the
+// last has gone out on 8091 (status "hop_packets").
+// Default 5 ms = ONE packet a hop (2026-11-21, was 20 = 3): the fastest sweep
+// (24-1765 MHz with 5 tuners 4.3 s against 6.6 s at 20), and a packet still
+// gives the client its 8 averaged FFT frames at the resolution it picks.
+#define SWEEP_DWELL_MS           5      // default dwell, ms (set_sweep dwell_ms; the contract): 1 packet
+#define SWEEP_DWELL_MIN_MS       5
+#define SWEEP_DWELL_MAX_MS       5000
+// A hop waits for its packets at most this much longer than they take (a
+// stalled stream must not stop the sweep)
+#define SWEEP_DWELL_GRACE_MS     250
+// Gain by region (set_sweep_gains): at most this many points (borders) in the table
+#define SWEEP_GAIN_POINTS_MAX    64u
+// The conversion worker's wait slice in sweep mode (sdr_pipeline.cpp): it
+// re-reads the flush epoch this often, so the first set after a hop's flush
+// is not dropped as converted across it
+#define SWEEP_CONVERT_WAIT_MS    2
+#define SWEEP_STEP_HZ            1912500ULL   // the contract's hop spacing (51/64 of 2.4 MHz)
+#define SWEEP_STEP_MIN_HZ        100000ULL
+#define SWEEP_STEP_MAX_HZ        2400000ULL
+#define SWEEP_STEPS_MAX          20000
+// The plan before any set_sweep: 88-108 MHz (FM broadcast), every tuner
+#define SWEEP_DEFAULT_START_HZ   88000000ULL
+#define SWEEP_DEFAULT_STEPS      11     // ceil(20 MHz / SWEEP_STEP_HZ)
+
+// ========================================================================
 // KRAKENSDR WIDEBAND (DOWNCONVERTER) VARIANT
 // ========================================================================
 // The KrakenSDR Wideband hardware variant places a mixer in front of every
@@ -70,6 +122,13 @@
 #define WB_VARIANT_IF_HZ    1268000000ULL  // fixed IF the tuners are parked at
 #define WB_LO_MIN_HZ        85000000ULL    // synthesizer LO limits (moRFeus-class)
 #define WB_LO_MAX_HZ        5400000000ULL
+// Automatic mixer side: high below this RF, below from it up. Measured on the
+// 3v0 board (common CW into all five inputs, same RF on both sides): the high
+// side loses conversion gain as its LO climbs - 16 dB behind the below side at
+// 2300 MHz (LO 3568), 38 dB at 3600, no usable signal from 3900 (LO > 5.1
+// GHz) - while the below side is level with it or better from 1700 MHz up.
+// Must match the client's WB_SIDE_CROSSOVER_HZ.
+#define WB_SIDE_CROSSOVER_HZ 2200000000ULL
 #define WB_LO_CURRENT       3              // default LO output drive current (0-7),
                                            // runtime-adjustable from the client UI
 #define WB_RF_MIN_HZ        24000000ULL    // lowest RF the front end usefully passes

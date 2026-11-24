@@ -303,6 +303,13 @@ struct Info {
     // can't be dragged or resized; you move it by tuning the receiver (a
     // decoder of the whole band: ism, cells, dtv)
     bool lock_vfo = false;
+    // "key=value" of one of your own options (e.g. "mode=all"): the same lock
+    // as lock_vfo, but only while that option has that value on the VFO -
+    // the tuner's whole 2.4 MHz on its centre (whatever min_vfo_rate says),
+    // drawn as a line, the tuner left alone; with any other value the VFO is
+    // an ordinary one (inmarsat_aero: "All channels in the spectrum"). "" =
+    // none. A host from before it ignores it (the VFO is never locked)
+    const char* lock_vfo_opt = "";
     // true: takes every antenna of a coherent array (Decoder::process_multi)
     // when kraken_doa has them - coherent mode with DoA on; otherwise (an
     // independent / wideband tuner, DoA off, an offline test of one channel)

@@ -1971,19 +1971,32 @@ private:
             for (const auto& v : valid_) cnt[v.second]++;
             afc_update(t);
             old = detected_;
+            // A plugin whose valid frames come further apart than the window
+            // (its squelch hold says so: inmarsat_c, 8.64 s frames) stays
+            // detected for that hold - else the status would say "Signal
+            // lost" / "Receiving" once per frame
+            auto held = [&](const std::string& id) {
+                const auto h = hold_ms_by_.find(id);
+                const auto lv = last_valid_by_.find(id);
+                return h != hold_ms_by_.end() && h->second > DETECT_WINDOW_MS &&
+                       lv != last_valid_by_.end() && t - lv->second < h->second;
+            };
             if (mode_ == Mode::PLUGIN) {
-                detected_ = cnt[plugin_] > 0 ? plugin_ : "";
+                detected_ = cnt[plugin_] > 0 || held(plugin_) ? plugin_ : "";
             } else {
                 std::string best;
                 int bc = 0;
                 for (const auto& kv : cnt)
                     if (kv.second > bc) { bc = kv.second; best = kv.first; }
                 // switch only on a clear majority (2+ frames), keep the
-                // current one while it is still receiving
+                // current one while it is still receiving - or held (above)
+                // with no other plugin taking over
                 if (!detected_.empty() && cnt[detected_] > 0 && cnt[detected_] * 2 >= bc) {
                     // keep
-                } else {
-                    detected_ = bc >= 2 ? best : "";
+                } else if (bc >= 2) {
+                    detected_ = best;
+                } else if (detected_.empty() || !held(detected_)) {
+                    detected_ = "";
                 }
             }
             now = detected_;

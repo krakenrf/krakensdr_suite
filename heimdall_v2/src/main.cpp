@@ -11,6 +11,7 @@
 #include "sdr/pipeline_control.hpp"
 #include "sdr/downconverter.hpp"
 #include "sdr/kerberos_gpio.hpp"
+#include "sdr/sweep.hpp"
 #include "dsp/correlation.hpp"
 #include "dsp/compensation.hpp"
 #include "net/tcp_data_server.hpp"
@@ -89,6 +90,7 @@ std::atomic<float> last_cal_check_lag{0.0f};
 std::atomic<float> last_cal_check_phase{0.0f};
 WidebandConfig wideband_config;
 DiscreteScannerConfig discrete_scanner;
+SweepState sweep_state;
 
 // Global variables
 std::vector<std::unique_ptr<SDRDevice>> devices;
@@ -827,6 +829,7 @@ int main(int argc, char* argv[]) {
     std::thread correlation_processor_thread([](){ correlation_processor(correlation_result, fft_control); });
     std::thread tcp_status_thread(tcp_status_broadcaster);
     std::thread scanner_thread(discrete_scanner_thread);
+    std::thread sweep_hop_thread(sweep_thread);   // hops only in sweep mode (sdr/sweep.cpp)
     std::thread coherence_watchdog_thread(coherence_watchdog);
     std::thread periodic_recal_thread([](){ periodic_calibration_monitor(correlation_result); });
 
@@ -838,8 +841,8 @@ int main(int argc, char* argv[]) {
         kerberos_enter_uncalibrated("startup");
     }
 
-    // The saved wideband / independent mode (and independent mode's per-tuner
-    // tuning): a restart - e.g. the supervisor after a crash - comes back in
+    // The saved wideband / independent / sweep mode (and independent mode's
+    // per-tuner tuning; sweep mode's plan was loaded with the settings): a restart - e.g. the supervisor after a crash - comes back in
     // it instead of starting a calibration the user switched away from
     // (generic RTL-SDR mode entered its own mode above)
     if (!generic_rtlsdr()) restore_operating_mode(devices);

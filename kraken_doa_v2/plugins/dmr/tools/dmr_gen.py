@@ -36,7 +36,7 @@ Three kinds of transmitter:
               burst every 60 ms, ramped), the TS1 / TS2 direct-mode syncs
 
   dmr_gen.py OUT.cf32 [--rate 48000] [--mode bs|dmo|tscc] [--cc 1] [--voice ambe|random]
-             [--sys MODEL.NET.SITE] [--seconds S] [--key-slot 1|2]
+             [--sys MODEL.NET.SITE] [--seconds S] [--key-slot 1|2] [--seed N]
              --at T --slot 1|2 --dur S --src ID --dst TG [--unit 1] [--pi 1] [--emerg 1] [--clear S]
              [--at ... (next call)]
   tscc only: --grant T,KIND,CH,SLOT,DST,SRC[,DUR[,FLAGS]]   KIND tv|btv|pv|td|pd; CH = a logical
@@ -46,6 +46,9 @@ Three kinds of transmitter:
              --chanfreq LCN,RX_MHZ,TX_MHZ   a Chan_Freq announcement (repeated every ~2 s)
              --adjacent SITE,LCN            an adjacent site announcement
              --move LCN,T                   C_MOVE (mask 0: every radio) to LCN from T s on
+
+--seed N: the random generator's seed (voice bits, CACH, idle bursts);
+without it 31 + the colour code, so the same options give the same file.
 
 MODEL = tiny|small|large|huge. One transmitter as complex baseband (cf32) +
 OUT.json. Put several at their own bearings with plugins/sdk/tools/uca_scene.py,
@@ -589,7 +592,7 @@ def main():
         print(__doc__)
         sys.exit(2)
     out = a[0]
-    rate, mode, cc, voice = RATE, 'bs', 1, 'ambe'
+    rate, mode, cc, voice, seed = RATE, 'bs', 1, 'ambe', None
     calls, cur = [], None
     sysc, seconds, key_slot = None, None, 0
     grants, chanfreqs, adjacents, moves = [], [], [], []
@@ -621,6 +624,8 @@ def main():
         elif k == 'move':
             f = v.split(',')
             moves.append((int(f[0]), float(f[1])))
+        elif k == 'seed':
+            seed = int(v)
         elif k == 'at':
             cur = {'at': float(v), 'dur': 2.0, 'slot': 1, 'src': 1001, 'dst': 1, 'unit': 0, 'pi': 0, 'emerg': 0}
             calls.append(cur)
@@ -631,7 +636,7 @@ def main():
         i += 2
     if mode == 'tscc' and sysc is None:
         sysc = syscode('small.1.1')
-    rng = np.random.default_rng(31 + cc)
+    rng = np.random.default_rng(31 + cc if seed is None else seed)
     slot_syms = 144                                  # a timeslot = 30 ms
     if calls:
         t_end = max(c['at'] + c['dur'] + 0.8 + c.get('clear', 0) for c in calls) + 0.5

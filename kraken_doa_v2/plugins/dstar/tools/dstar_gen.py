@@ -5,8 +5,11 @@ CRC-16/X.25, rate-1/2 K=3 code, 24-column interleaver, x^7+x^4+1
 scrambler), voice frames (72 voice bits - random, no AMBE - + 24 scrambled
 slow-data bits, a data sync every 21st frame) and the end pattern.
 
-  dstar_gen.py OUT.cf32 [--rate 48000] --at T --dur S --my CALL [--sfx ID51] [--ur CQCQCQ]
+  dstar_gen.py OUT.cf32 [--rate 48000] [--seed N] --at T --dur S --my CALL [--sfx ID51] [--ur CQCQCQ]
                [--rpt1 "F1ZIL  B"] [--rpt2 "F1ZIL  G"] [--at ... (next transmission)]
+
+--seed N: the random generator's seed (the voice bits); without it 7, so the
+same options give the same file.
 
 One radio's transmissions as complex baseband (cf32) + OUT.json. Put several
 radios at their own bearings with plugins/sdk/tools/uca_scene.py.
@@ -105,20 +108,22 @@ def main():
         print(__doc__)
         sys.exit(2)
     out = a[0]
-    rate = 48000.0
+    rate, seed = 48000.0, None
     txs, cur = [], None
     i = 1
     while i < len(a):
         k, v = a[i].lstrip('-'), a[i + 1]
         if k == 'rate':
             rate = float(v)
+        elif k == 'seed':
+            seed = int(v)
         elif k == 'at':
             cur = {'at': float(v), 'dur': 3.0, 'my': 'N0CALL', 'sfx': '', 'ur': 'CQCQCQ', 'rpt1': '', 'rpt2': ''}
             txs.append(cur)
         else:
             cur[k] = float(v) if k == 'dur' else v
         i += 2
-    rng = np.random.default_rng(7)
+    rng = np.random.default_rng(7 if seed is None else seed)
     parts = []
     for tx in txs:
         y = gmsk(transmission(tx['my'], tx['sfx'], tx['ur'], tx['rpt1'], tx['rpt2'], tx['dur'], rng), rate)

@@ -1,6 +1,7 @@
 #include "sdr_pipeline.hpp"
 #include "pipeline_control.hpp"
 #include "downconverter.hpp"
+#include "sweep.hpp"
 #include "../core/utils.hpp"
 #include "../core/config.hpp"
 #include "../core/buffer_pool.hpp"
@@ -70,7 +71,27 @@ static void recycle_raw_set(std::vector<SampleBuffer>& set) {
 static std::atomic<uint32_t> flush_requests{0};    // bumped by clear_l1_buffer()
 static std::atomic<uint32_t> flush_completed{0};   // last request the drain served
 static std::atomic<bool> drain_active{false};
+// whether the flush the drain served last found its quiet point (stored
+// before flush_completed, read after it)
+static std::atomic<bool> last_served_quiet{true};
 static std::atomic<std::thread::id> drain_thread_id{};
+
+// The sweep's per-hop gate (sweep_gate_l1, sweep mode only), served by the
+// drain like a flush: every dongle drops its packets that can hold a sample
+// from before gate_from_ns, each on its own - no cross-device quiet point:
+// in sweep mode no channel's packet has to pair with another's, and with
+// spread buffer timing that point never comes (serve_gate_now;
+// docs/dev/operating-modes.md, "Hop timing").
+static std::atomic<uint32_t> gate_requests{0};
+static std::atomic<uint32_t> gate_completed{0};
+static std::atomic<int64_t> gate_from_ns{0};     // stored before gate_requests is bumped
+static std::atomic<int> gate_last_outcome{0};    // GateOutcome, stored before gate_completed
+
+// a flush or a gate waits for the drain
+static bool l1_request_pending() {
+    return flush_requests.load(std::memory_order_acquire) != flush_completed.load(std::memory_order_relaxed) ||
+           gate_requests.load(std::memory_order_acquire) != gate_completed.load(std::memory_order_relaxed);
+}
 
 // Downstream flush epoch. Every flush (clear_l1_buffer / clear_l2_buffer)
 // bumps it under l2_flush_mutex while emptying L2-raw and L2. The conversion
@@ -99,7 +120,14 @@ static int64_t steady_now_ns() {
 //    flushed then, it keeps one packet fewer (a one-packet slip)
 // If there is no such point (arrival skew above half a period, a reader stuck
 // in catch-up) flush anyway after the timeout, as before, with a warning.
-static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
+// L1 flushes that found no quiet point (a channel may have slipped by a packet)
+static std::atomic<uint32_t> l1_unquiet_flush_count{0};
+uint32_t l1_unquiet_flushes() { return l1_unquiet_flush_count.load(std::memory_order_relaxed); }
+
+// Returns whether the flush found its quiet point (true without wait_quiet
+// or with no device: nothing to pair)
+static bool flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
+    bool found_quiet = true;
     if (wait_quiet && num_elements > 0) {
         const int64_t period = static_cast<int64_t>(1e9 * NUM_SAMPLES / SAMPLE_RATE);
         const int64_t deadline = steady_now_ns() + 4 * period;
@@ -128,6 +156,8 @@ static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
                     (steady && hi - lo < period / 2 && steady_now_ns() - hi < period / 2);
             if (!quiet) std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
+        found_quiet = quiet;
+        if (!quiet && warn) l1_unquiet_flush_count.fetch_add(1, std::memory_order_relaxed);
         if (!quiet && warn) {
             static int64_t last_warn_ns = 0;  // flush callers are serialized by the drain
             const int64_t now = steady_now_ns();
@@ -148,6 +178,195 @@ static void flush_l1_now(int num_elements, bool wait_quiet, bool warn = true) {
         // No store(0) - see clear_l2_raw_buffer(); a phantom here is fatal
         // (callback would see l1 size == SIZE_MAX and drop every packet).
     }
+    return found_quiet;
+}
+
+// The sweep's gate, on the drain (the only L1 consumer): for each active
+// dongle, drop every packet that can hold a sample taken before `from_ns`
+// (T: the hop's retune end + settle), and nothing it does not have to.
+//
+// What a packet holds is decided from when its samples were TAKEN, not from
+// when it happened to arrive. Packet n of a stream ends at E_n (its last
+// sample) and arrives at A_n = E_n + L_n, with a latency L_n >= 0 (never
+// negative; large for a packet a held-up reader delivers late or in a
+// burst). In the dongle's own time its full packets end one period P apart:
+// E_s - E_n >= (s - n) P (1 - eps) for s > n - samples the RTL2832 loses
+// (a FIFO overflow) and a packet the callback drops only make the
+// difference larger (a SHORT packet would make it smaller: the line starts
+// again after one, sdr_device.cpp); eps is the sample clock's error against
+// the host clock (crystal, <= 100 ppm). So for every packet n <= s:
+//     E_s >= A_n + (s - n) P - L_n - d,   d <= LINE_PACKETS P eps (33 us).
+// The earliest-arrival line through the stamps (the callback numbers and
+// stamps every packet, sdr_device.hpp)
+//     f(s) = min over the LINE_PACKETS packets n = s - W + 1 .. s of (A_n + (s - n) P)
+// is at most every one of those terms, hence
+//     E_s >= f(s) - L* - d,   L* = min over the same packets of L_n:
+// the fastest delivery among them. Which is small by construction: a
+// stalled reader delivers at most RTL_USB_BUF_COUNT packets late (the
+// transfers that completed while it stood; later samples are lost in the
+// FIFO), and the window is longer (W = RTL_USB_BUF_COUNT + 16) and complete
+// - all W packets readable and none before a stream (re)start or a short
+// transfer, else f(s) counts as "before T" -, so it always holds packets a
+// running reader delivered: L* is the USB transfer's floor (~1 ms on a PC).
+// Not bounded by anything here: a reader that runs steadily behind (every
+// packet of the window late) - then L* is that lateness, and the settle has
+// to cover it. The gate drops every packet up to and including the first s
+// with f(s) >= T, per dongle, and keeps s + 1 on; the first sample of
+// packet s + 1 is the one after E_s, so
+//     every sample of a kept packet was taken at or after T - L* - d.
+// f is non-decreasing (stamps are in order), so "the first s" is found by
+// a scan; all packets with f < T are dropped as they arrive. Indices: the
+// head of L1 is l1_put - l1_buffer_size, read in that order (the callback
+// counts the size first): never later than the true head, so a race drops
+// one packet more, never one too few. Allocation-free; the callback only
+// stamps.
+// Outcome: GATE_DONE; GATE_STALLED - a dongle delivered nothing for
+// GATE_STALL_NS (gate_stalled_mask says which; after
+// STUCK_DEVICE_MAX_TIMEOUTS x 100 ms of silence it is reported as the
+// drain's stuck device, as outside the gate); GATE_SLOW - packets arrive but
+// the line hasn't passed T within GATE_MAX_NS (gate_slow_mask: lost
+// packets, a stream restart's gap - the line catches up after W packets);
+// GATE_LEFT - the mode was left. After a failed gate the drain keeps every
+// L1 empty until the next gate or the mode is left (gate_hold).
+enum GateOutcome { GATE_DONE, GATE_STALLED, GATE_SLOW, GATE_LEFT };
+static constexpr int GATE_LINE_PACKETS = SDRDevice::LINE_PACKETS;
+static_assert(GATE_LINE_PACKETS > RTL_USB_BUF_COUNT, "the gate's window must outlast a stalled reader's backlog");
+static_assert(SDRDevice::ARRIVAL_RING >= 2 * GATE_LINE_PACKETS, "the stamp ring must hold two windows");
+static constexpr int64_t GATE_STALL_NS = 100'000'000;
+static constexpr int64_t GATE_MAX_NS = 400'000'000;
+// a dongle past its straddler keeps at most this many packets while the gate
+// waits for another (no L1 can approach its overflow during a gate)
+static constexpr size_t GATE_KEEP_PACKETS = 16;
+static std::atomic<uint32_t> gate_stalled_mask{0};
+static std::atomic<uint32_t> gate_slow_mask{0};
+// after a failed gate (sweep mode): the drain drops every packet of every
+// dongle until the next gate is served or the mode is left
+static std::atomic<bool> gate_hold{false};
+static std::atomic<uint32_t> gate_late_count{0};
+static std::atomic<uint32_t> gate_failed_count{0};
+uint32_t sweep_gate_stalled() { return gate_stalled_mask.load(std::memory_order_relaxed); }
+uint32_t sweep_gate_slow() { return gate_slow_mask.load(std::memory_order_relaxed); }
+void sweep_gate_reset_diagnostics() {
+    gate_stalled_mask.store(0, std::memory_order_relaxed);
+    gate_slow_mask.store(0, std::memory_order_relaxed);
+}
+uint32_t sweep_gates_late() { return gate_late_count.load(std::memory_order_relaxed); }
+uint32_t sweep_gates_failed() { return gate_failed_count.load(std::memory_order_relaxed); }
+
+// Arrival stamp of packet n of `d` (0: not in the ring any more / being written)
+static int64_t arrival_of(const SDRDevice& d, uint64_t n) {
+    const size_t slot = static_cast<size_t>(n % SDRDevice::ARRIVAL_RING);
+    const uint64_t q1 = d.ring_n[slot].load(std::memory_order_acquire);
+    const int64_t t = d.ring_t[slot].load(std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const uint64_t q2 = d.ring_n[slot].load(std::memory_order_relaxed);
+    return (q1 == n && q2 == n) ? t : 0;
+}
+
+// f(s): the earliest-arrival line at packet s over its whole window;
+// INT64_MIN ("before T") if the window is not complete: fewer than W packets
+// since the stream's first / a short one, or a stamp not readable (the ring
+// overwrote it - the packet is that old)
+static int64_t line_at(const SDRDevice& d, uint64_t s, double period_ns) {
+    const uint64_t first = d.stream_first.load(std::memory_order_relaxed);
+    if (s + 1 < first + GATE_LINE_PACKETS) return INT64_MIN;
+    int64_t f = INT64_MAX;
+    for (uint64_t n = s + 1 - GATE_LINE_PACKETS; n <= s; n++) {
+        const int64_t a = arrival_of(d, n);
+        if (a == 0) return INT64_MIN;
+        f = std::min(f, a + static_cast<int64_t>(static_cast<double>(s - n) * period_ns));
+    }
+    return f;
+}
+
+static GateOutcome serve_gate_now(int num_elements, int64_t from_ns) {
+    const double period_ns = 1e9 * NUM_SAMPLES / SAMPLE_RATE;
+    const int64_t start = steady_now_ns();
+    const int n = std::min({num_elements, static_cast<int>(devices.size()), NUM_DEVICES});
+    bool done[NUM_DEVICES] = {};
+    uint64_t head[NUM_DEVICES] = {};   // number of the packet at the head of L1
+    for (int i = 0; i < n; i++) {
+        if (!devices[i] || !devices[i]->dev) { done[i] = true; continue; }
+        const uint64_t put = devices[i]->l1_put.load(std::memory_order_acquire);
+        const size_t size = devices[i]->l1_buffer_size.load(std::memory_order_relaxed);
+        head[i] = put >= size ? put - size : 0;
+    }
+    auto drop = [](SDRDevice& d, uint64_t count) {
+        SampleBuffer discard;
+        for (uint64_t k = 0; k < count && d.l1_buffer.try_dequeue(discard); k++) {
+            d.l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+            d.sample_pool.release(std::move(discard));
+        }
+    };
+    for (;;) {
+        if (operating_mode.load() != OperatingMode::SWEEP || !global_running.load()) return GATE_LEFT;
+        bool all = true;
+        uint32_t silent = 0;
+        const int64_t now = steady_now_ns();
+        for (int i = 0; i < n; i++) {
+            if (done[i]) {
+                // past its straddler: what it delivers now is valid, but
+                // while another dongle holds the gate up it piles up -
+                // keep the newest GATE_KEEP_PACKETS (later packets are as
+                // valid as earlier ones; sweep mode pairs nothing)
+                const size_t depth = devices[i]->l1_buffer_size.load(std::memory_order_relaxed);
+                if (depth > GATE_KEEP_PACKETS) drop(*devices[i], depth - GATE_KEEP_PACKETS);
+                continue;
+            }
+            SDRDevice& d = *devices[i];
+            const uint64_t put = d.l1_put.load(std::memory_order_acquire);
+            // the first packet s >= head - 1 with f(s) >= T among those
+            // arrived: packets before the head are gone already (the
+            // partial set the drain held when it served the gate - the one
+            // that woke it -, sets before it are flushed downstream), so if
+            // the last of them ends past T nothing more goes
+            uint64_t s = head[i] > 0 ? head[i] - 1 : 0;
+            int64_t f = INT64_MIN;
+            for (; s < put; s++) {
+                f = line_at(d, s, period_ns);
+                if (f >= from_ns) break;
+            }
+            if (s < put) {
+                if (s >= head[i]) drop(d, s + 1 - head[i]);
+                head[i] = s + 1;
+                done[i] = true;
+                // a straddler delivered more than half a period after the line
+                if (const int64_t a = arrival_of(d, s); a && a - f > static_cast<int64_t>(period_ns / 2))
+                    gate_late_count.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            drop(d, put - head[i]);   // all of them before T's packet: they go in any case
+            head[i] = put;
+            all = false;
+            const int64_t last = d.last_arrival_ns.load(std::memory_order_acquire);
+            if (now - std::max(last, start) > GATE_STALL_NS) silent |= 1u << i;
+            // the drain's stuck-device alarm (its wait loop is not reached
+            // while a gate is pending)
+            static int64_t last_stuck_ns = 0;   // (the drain thread only)
+            if (last && now - last > STUCK_DEVICE_MAX_TIMEOUTS * 100'000'000LL &&
+                now - last_stuck_ns > STUCK_DEVICE_MAX_TIMEOUTS * 100'000'000LL) {
+                last_stuck_ns = now;   // re-alerted as often as the drain's own alarm
+                signal_coherence_lost("sample drain: a device stalled (no data)");
+            }
+        }
+        if (all) {
+            gate_stalled_mask.store(0, std::memory_order_relaxed);
+            gate_slow_mask.store(0, std::memory_order_relaxed);
+            return GATE_DONE;
+        }
+        uint32_t pending = 0;
+        for (int i = 0; i < n; i++) if (!done[i]) pending |= 1u << i;
+        if (silent || now - start > GATE_MAX_NS) {
+            // failed: the hop thread tries again; until then nothing of
+            // this hop can be kept - every L1 stays empty (gate_hold)
+            gate_stalled_mask.store(silent, std::memory_order_relaxed);
+            gate_slow_mask.store(pending & ~silent, std::memory_order_relaxed);
+            gate_failed_count.fetch_add(1, std::memory_order_relaxed);
+            gate_hold.store(true, std::memory_order_relaxed);
+            return silent ? GATE_STALLED : GATE_SLOW;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
 }
 
 // One read of everything the conversion applies set-wide (see SetConversionState).
@@ -167,8 +386,10 @@ static void snapshot_conversion_state(SetConversionState& st, int num_elements) 
     const bool fwd = forward_comp.enabled.load(std::memory_order_relaxed) &&
                      forward_comp.ready.load(std::memory_order_acquire) &&
                      !bias_tee_enabled.load(std::memory_order_relaxed);
-    // Independent mode: every tuner is its own receiver - no array correction
-    const bool independent = operating_mode.load(std::memory_order_relaxed) == OperatingMode::INDEPENDENT;
+    // Independent / sweep mode: every tuner is its own receiver - no array
+    // correction
+    const OperatingMode mode = operating_mode.load(std::memory_order_relaxed);
+    const bool independent = mode == OperatingMode::INDEPENDENT || mode == OperatingMode::SWEEP;
     for (int ch = 0; ch < num_elements && ch < NUM_DEVICES; ch++) {
         if (independent) { st.comp[ch] = Complex(1.0f, 0.0f); continue; }
         // Lock-free atomic load - no mutex
@@ -259,6 +480,10 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
         auto& tail = dev->frac_tail;
         const Complex* __restrict x = tmp.data();
         Complex* __restrict y = fir_out.data();
+        if (dev->frac_tail_epoch != st.epoch) {   // the first set after a flush (see frac_tail_epoch)
+            if (count > 0) tail.fill(x[0]);
+            dev->frac_tail_epoch = st.epoch;
+        }
 
         // Head: taps reach into the previous chunk's tail
         const int head = std::min(7, count);
@@ -413,10 +638,27 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     };
     // A pending clear_l1_buffer() request: drop the partial set (its buffers
     // are pre-flush) and flush every queue at a quiet point.
+    // A pending sweep gate first, then a flush: a flush filed meanwhile (the
+    // re-pairing one on the way out of sweep mode) is served after the gate,
+    // so it is the last word. A gate still pending once the mode was left
+    // (its requester gave up) drops nothing from L1 - but when it is served
+    // mid-collection, the partial set (devices 0 .. i) is still dropped: a
+    // one-packet slip of those channels, which the paired flush on every
+    // way back to coherent repairs.
     auto serve_flush = [](int n) {
+        bool served = false;
+        if (const uint32_t g = gate_requests.load(std::memory_order_acquire);
+            g != gate_completed.load(std::memory_order_relaxed)) {
+            gate_hold.store(false, std::memory_order_relaxed);   // the gate itself drains (or sets it again)
+            const GateOutcome o = operating_mode.load() != OperatingMode::SWEEP
+                                      ? GATE_LEFT : serve_gate_now(n, gate_from_ns.load(std::memory_order_relaxed));
+            gate_last_outcome.store(o, std::memory_order_relaxed);
+            gate_completed.store(g, std::memory_order_release);
+            served = true;
+        }
         const uint32_t req = flush_requests.load(std::memory_order_acquire);
-        if (req == flush_completed.load(std::memory_order_relaxed)) return false;
-        flush_l1_now(n, true);
+        if (req == flush_completed.load(std::memory_order_relaxed)) return served;
+        last_served_quiet.store(flush_l1_now(n, true), std::memory_order_relaxed);
         flush_completed.store(req, std::memory_order_release);
         return true;
     };
@@ -433,6 +675,27 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
         // L1 dequeues below (each owned by its device's sample_pool).
         serve_flush(num_elements);
 
+        // Sweep mode after a failed gate (a dongle silent or its line short
+        // of T): nothing can be kept until the next gate, so every L1 is
+        // emptied as packets come - none can overflow while the gate is
+        // retried, however long that takes (serve_gate_now)
+        if (gate_hold.load(std::memory_order_relaxed)) {
+            if (operating_mode.load() != OperatingMode::SWEEP) {
+                gate_hold.store(false, std::memory_order_relaxed);
+            } else {
+                for (int i = 0; i < num_elements; i++) {
+                    if (!devices[i]) continue;
+                    SampleBuffer discard;
+                    while (devices[i]->l1_buffer.try_dequeue(discard)) {
+                        devices[i]->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+                        devices[i]->sample_pool.release(std::move(discard));
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::microseconds(500));
+                continue;
+            }
+        }
+
         auto raw_set = l2_raw_buffer_pool.acquire();
         raw_set.resize(num_elements);
         bool flushed_mid_set = false;
@@ -446,23 +709,27 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
             // overflowing their L1): bound the wait, then declare coherence lost
             // so the watchdog flushes+recalibrates instead of spinning forever on
             // a stuck dongle.
-            int timeouts = 0;
-            while (!device->l1_buffer.wait_dequeue_timed(raw_set[i], std::chrono::milliseconds(100))) {
+            // Sweep mode waits in 5 ms slices: a hop's gate is filed while the
+            // drain may be waiting here for a silent dongle, and every other
+            // dongle's L1 fills until it notices (100 ms slices elsewhere;
+            // the stuck-device alarm counts the time waited either way)
+            const int slice_ms = operating_mode.load(std::memory_order_relaxed) == OperatingMode::SWEEP ? 5 : 100;
+            int waited_ms = 0;
+            while (!device->l1_buffer.wait_dequeue_timed(raw_set[i], std::chrono::milliseconds(slice_ms))) {
                 if (!global_running || !pipeline_running.load(std::memory_order_acquire)) {
                     recycle_partial(raw_set, i);
                     return;
                 }
-                if (flush_requests.load(std::memory_order_acquire) !=
-                    flush_completed.load(std::memory_order_relaxed)) {
+                if (l1_request_pending()) {
                     break;  // served below, with the partial set dropped
                 }
-                if (++timeouts >= STUCK_DEVICE_MAX_TIMEOUTS) {
+                waited_ms += slice_ms;
+                if (waited_ms >= STUCK_DEVICE_MAX_TIMEOUTS * 100) {
                     signal_coherence_lost("sample drain: a device stalled (no data)");
-                    timeouts = 0;  // re-alert periodically if it stays stuck
+                    waited_ms = 0;  // re-alert periodically if it stays stuck
                 }
             }
-            if (flush_requests.load(std::memory_order_acquire) !=
-                flush_completed.load(std::memory_order_relaxed)) {
+            if (l1_request_pending()) {
                 // slot i holds a dequeued buffer unless the wait above broke out
                 // empty-handed; either way everything collected is pre-flush
                 const bool got = !raw_set[i].empty();
@@ -543,7 +810,15 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
         // the pre-flush epoch (see l2_flush_epoch)
         const uint32_t epoch = l2_flush_epoch.load(std::memory_order_acquire);
         std::vector<SampleBuffer> raw_set;
-        if (!l2_raw_buffer.wait_dequeue_timed(raw_set, std::chrono::milliseconds(100))) {
+        // Sweep mode waits in short slices: a wait that spans a flush keeps
+        // the epoch read before it, so the first set after every hop's flush
+        // (the first valid one, a packet period later) was dropped as
+        // "converted across a flush" - a whole packet of every hop.
+        // Re-reading the epoch every 2 ms drops nothing that wasn't dequeued
+        // after the flush (every dequeue still follows its own epoch read).
+        const auto wait = operating_mode.load(std::memory_order_relaxed) == OperatingMode::SWEEP
+                              ? std::chrono::milliseconds(SWEEP_CONVERT_WAIT_MS) : std::chrono::milliseconds(100);
+        if (!l2_raw_buffer.wait_dequeue_timed(raw_set, wait)) {
             if (!global_running || !pipeline_running.load(std::memory_order_acquire)) return;
             continue;  // timeout: nothing to convert yet
         }
@@ -564,6 +839,7 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
         auto complex_samples = l2_buffer_pool.acquire();
         complex_samples.resize(num_elements);
         snapshot_conversion_state(conv_state, num_elements);
+        conv_state.epoch = epoch;
         for (int i = 0; i < num_elements; ++i) {
             auto& sb = raw_set[i];
             // sb.size() is bytes of interleaved IQ; divide by 2 for complex count
@@ -584,8 +860,14 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
             if (l2_flush_epoch.load(std::memory_order_relaxed) != epoch) {
                 l2_buffer_pool.release(std::move(complex_samples));
             } else {
+                // Sweep mode: count the sets sent as valid (retuning flag 0
+                // before and after the header was built, so the header said
+                // 0 too) - a hop's dwell lasts until one has gone out
+                const bool sweep = operating_mode.load(std::memory_order_relaxed) == OperatingMode::SWEEP;
+                const bool valid_before = sweep && !sweep_state.retuning_in_progress.load();
                 if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples);
                 if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
+                if (valid_before && !sweep_state.retuning_in_progress.load()) sweep_note_valid_set();
 
                 // Drop oldest if full - coherence-safe
                 if (l2_buffer_size.load(std::memory_order_relaxed) >= BUFFER_SIZE) {
@@ -653,31 +935,113 @@ static void flush_downstream() {
     l2_flush_epoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
-void clear_l1_buffer() {
-    std::cout << "Clearing L1 buffers for all devices..." << std::endl;
+// quiet: nothing on stdout, and the "did not respond" fault throttled (the
+// re-pairing flush on leaving sweep mode)
+static bool clear_l1_buffer_impl(bool quiet) {
+    if (!quiet) std::cout << "Clearing L1 buffers for all devices..." << std::endl;
     // The drain performs the flush (see flush_l1_now); wait for it. Flush
     // directly when there is no drain (pipeline stopped) or it doesn't answer.
-    bool served = false;
+    bool served = false, found_quiet = true;
     if (drain_active.load(std::memory_order_acquire) &&
         drain_thread_id.load() != std::this_thread::get_id()) {
         const uint32_t req = flush_requests.fetch_add(1, std::memory_order_acq_rel) + 1;
         for (int waited_ms = 0; waited_ms < 500 && !served; waited_ms++) {
             if (static_cast<int32_t>(flush_completed.load(std::memory_order_acquire) - req) >= 0) {
                 served = true;
+                found_quiet = last_served_quiet.load(std::memory_order_relaxed);
                 break;
             }
             if (!drain_active.load(std::memory_order_acquire)) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        if (!served) std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
+        if (!served) {
+            // throttled against the last LOG line (an exchange on every
+            // occurrence kept a fault recurring faster than 10 s silent)
+            static std::atomic<int64_t> last_warn_ns{-20'000'000'000LL};
+            const int64_t now = steady_now_ns();
+            const bool log = !quiet || now - last_warn_ns.load() > 10'000'000'000LL;
+            if (log) last_warn_ns.store(now);
+            if (log) std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
+        }
     }
-    if (!served) flush_l1_now(active_num_elements.load(), true);
+    if (!served) found_quiet = flush_l1_now(active_num_elements.load(), true);
     // AFTER the L1 flush: a set the drain completed before serving it went
     // into L2-raw, and anything already downstream is older still
     flush_downstream();
+    return found_quiet;
+}
+
+void clear_l1_buffer() { clear_l1_buffer_impl(false); }
+bool clear_l1_buffer_paired() { return clear_l1_buffer_impl(true); }
+
+void sweep_gates_quiesce() {
+    // (the mode has left SWEEP and no gate can be filed any more: the
+    // caller holds sweep.cpp's flush_mutex) Every gate filed is served by
+    // the drain before this returns - a stale one (its requester gave up
+    // when the mode was left) is completed without touching L1 but still
+    // drops the partial set it interrupted - so the re-pairing flush that
+    // follows is the last thing to touch the pairing. No drain: nothing to
+    // serve them, nothing streams.
+    gate_hold.store(false, std::memory_order_relaxed);
+    const int64_t give_up = steady_now_ns() + 1'000'000'000LL;
+    while (gate_completed.load(std::memory_order_acquire) != gate_requests.load(std::memory_order_acquire)) {
+        if (!drain_active.load(std::memory_order_acquire) || steady_now_ns() > give_up) {
+            if (drain_active.load(std::memory_order_acquire))
+                std::cerr << "Sweep: the sample drain did not serve a pending gate within 1 s of leaving sweep mode"
+                          << std::endl;
+            gate_completed.store(gate_requests.load(std::memory_order_acquire), std::memory_order_release);
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+}
+
+int sweep_gate_l1(int64_t from_ns) {
+    int result = -2;   // 1 done, 0 not (a dongle stalled, too slow, no answer), -1 mode left, -2 no drain
+    if (drain_active.load(std::memory_order_acquire) && drain_thread_id.load() != std::this_thread::get_id()) {
+        gate_from_ns.store(from_ns, std::memory_order_relaxed);
+        const uint32_t req = gate_requests.fetch_add(1, std::memory_order_acq_rel) + 1;
+        // the drain starts it at its next packet (or its 100 ms wait's end);
+        // the gate itself ends within GATE_MAX_NS
+        const int64_t give_up = std::max(steady_now_ns(), from_ns) + 600'000'000LL;
+        for (;;) {
+            if (static_cast<int32_t>(gate_completed.load(std::memory_order_acquire) - req) >= 0) {
+                const int o = gate_last_outcome.load(std::memory_order_relaxed);
+                result = o == GATE_DONE ? 1 : o == GATE_LEFT ? -1 : 0;
+                break;
+            }
+            if (!drain_active.load(std::memory_order_acquire)) { result = -2; break; }
+            // leaving the mode: don't wait (the drain completes it without effect)
+            if (operating_mode.load() != OperatingMode::SWEEP) { result = -1; break; }
+            if (steady_now_ns() > give_up) {
+                result = 0;
+                gate_failed_count.fetch_add(1, std::memory_order_relaxed);
+                static std::atomic<int64_t> last_warn_ns{-20'000'000'000LL};
+                const int64_t now = steady_now_ns();
+                if (now - last_warn_ns.load() > 10'000'000'000LL) {
+                    last_warn_ns.store(now);
+                    std::cerr << "Sweep: the sample drain did not serve a hop's gate in 600 ms" << std::endl;
+                }
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+    }
+    if (result == -2) {
+        // no drain (the pipeline stopped or not started): nothing streams,
+        // so nothing can straddle - empty L1 directly
+        flush_l1_now(active_num_elements.load(), true, false);
+        result = 1;
+    }
+    // AFTER L1, as every flush: what the drain completed before the gate is
+    // in L2-raw or in the conversion worker's hands
+    flush_downstream();
+    return result;
 }
 
 void clear_l2_buffer() {
     std::cout << "Clearing entire L2 buffer..." << std::endl;
     flush_downstream();  // L2-raw too, so it can't refill L2
 }
+
+void clear_l2_buffer_quiet() { flush_downstream(); }

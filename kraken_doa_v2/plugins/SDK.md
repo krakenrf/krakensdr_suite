@@ -37,7 +37,8 @@ plugins/
 │                         TETRA ACELP), dig_common (front ends, the Bridge below),
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
 │                         beam - radar, ssr1030), acars_msg.hpp (ACARS block fields -
-│                         acars, vdl2)
+│                         acars, vdl2, inmarsat_aero), aero_ambe (the Inmarsat Aero AMBE
+│                         codec, the user's library loaded at run time - inmarsat_aero)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ ysf/ mpt1327/   the shipped protocol decoders
 ├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
@@ -74,6 +75,20 @@ plugins/
 ├── beacon121/            121.5 / 243 MHz swept-tone homing signals (ELT / EPIRB / PLB, 406 MHz beacons' homers):
 │                         carriers found in a 32 kHz VFO, the sweep from a folded two-sided spectrogram;
 │                         no ID - a packet talker per beacon on its own 100 Hz carrier channel
+├── inmarsat_c/           Inmarsat-C (STD-C) TDM on the L-band downlink: 1200 symbols/s BPSK found within
+│                         +-3.6 kHz (spectrum shape, then the squared signal's line), Costas / Gardner,
+│                         unique word, 64 x 162 de-interleaver, soft Viterbi, group descrambler, packets
+│                         by their Fletcher sum check; EGC SafetyNET / FleetNET messages put together
+│                         across frames, repeats suppressed; the ocean region's satellite as a packet talker
+├── inmarsat_aero/        Inmarsat Classic Aero (L band): P channel at 0.6 - 10.5 kbit/s (rate + carrier
+│                         from the squared spectrum's line pair), coherent A-BPSK / A-QPSK, frame sync,
+│                         de-interleaver, streaming soft Viterbi, signal units by type, ACARS + ADS-C
+│                         (map); C channel voice through the user's Aero AMBE (lib/aero_ambe); R / T
+│                         bursts from aircraft: a packet talker per aircraft (ICAO address). At the
+│                         VFO's own rate (sample_rate 0): "All channels in the spectrum" (lock_vfo_opt
+│                         mode=all: the VFO locked on the tuner's whole 2.4 MHz) runs an overlap-save
+│                         FFT bank, surveys its bins for carriers and decodes every P / C channel of
+│                         the band side by side in the one process, every call's voice mixed
 ├── lora/                 LoRa CSS in the full 2.4 MHz (lock_vfo): per-channel dechirp receiver
 │                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
 │                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet
@@ -169,6 +184,7 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .messages = false,              // true: sends text messages (host.message)
                           .talkers = false,               // true: reports who transmits (host.talker)
                           .lock_vfo = false,              // true: the VFO stays on its tuner's centre (below)
+                          .lock_vfo_opt = "",             // "key=value": that lock while an option has that value
                           .multichannel = false,          // true: takes every antenna (process_multi, below)
                           .video = false,                 // true: rebuilds a picture (host.video_frame, below)
                           .squelch_hold_s = 0,            // > 0: the Digital squelch's hold (below)
@@ -273,6 +289,23 @@ instead: picking it does the same - narrowest bandwidth >= `min_vfo_rate`,
 VFO on its tuner's centre, a single line, fields locked - but leaves the
 tuner where it is; the user tunes the receiver to the band (a 📍 map
 marker's frequency button retunes the tuner then, rather than refusing).
+
+**Locked VFO by an option.** A decoder that works on one channel in most of
+its modes but on the whole band in one of them (inmarsat_aero: Channel "All
+channels in the spectrum") sets `.lock_vfo_opt = "key=value"` - one of its
+own options and the value that locks, e.g. `"mode=all"` - and leaves
+`lock_vfo` false. While that option has that value on the VFO (its default
+counts when the VFO has none set) the VFO is locked exactly as a `lock_vfo`
+one, with the tuner's whole 2.4 MHz whatever `min_vfo_rate` says; with any
+other value it is an ordinary VFO. Setting the option to the value applies
+the lock (the whole band, the VFO on its tuner's centre, the tuner left
+alone), as does picking the decoder on a VFO whose option already has it;
+setting it to another value gives the VFO back the narrowest efficient width
+>= `min_vfo_rate`, on the centre for the user to move. Use it with
+`.sample_rate = 0` so the locked mode gets the whole band. A key that is not
+one of the plugin's options is ignored. Wire: `--info` `"lock_vfo_opt"`,
+only when set; a kraken_doa from before ignores it (the option then never
+locks, so keep a narrow-input fallback that says what is wrong).
 
 **Every antenna.** A plugin that sets `.multichannel = true` gets every
 antenna of the array through `process_multi(x, m, n)` (`x[k][i]` = antenna
@@ -470,7 +503,15 @@ sample (`host.time()` of the block + the packet's index in it / the rate):
 kraken_doa then computes the covariance from exactly those samples and
 averages each talker's packets over the last ~2 s (its lobe on the map).
 No `talker_end`. A packet may be at most 0.25 s long (kraken_doa drops
-longer ones). The adsb plugin is the reference (`talker_packet`); its
+longer ones). Report a packet while its samples are still there: kraken_doa
+keeps the VFO's stream for 1.5 s (`RING_S`, 2.5 s on a VFO wider than
+500 kHz), and a packet - or a `host.valid` span - older than that when it
+arrives is not used. A decoder that knows a frame is good only later (a
+long interleaver, a late Viterbi decision, a burst checked at its end)
+takes its packets and spans from the last ~1.2 s before it reports
+(inmarsat_c: the last second of its 8.64 s frame; inmarsat_aero: the end
+of a burst). The offline `--uca` test does not show this - it has every
+sample. The adsb plugin is the reference (`talker_packet`); its
 start times are within half a sample of the true ones. Which talker to
 report and how to test it: *ID separation* below. Two optional packet
 fields: `t.freq_hz` / `t.bw_hz` = the packet's channel inside your band
@@ -528,6 +569,10 @@ a few hundred ms apart; a decoder of a continuous signal that reports short
 pieces (analog_id: every 50 ms while the tone is there) sets
 `.squelch_hold_s` (analog_id 0.35), so the squelch closes soon after the
 signal ends instead of passing 1.5 s of noise after every transmission.
+A decoder whose frames are further apart than 1.5 s sets a longer hold
+(inmarsat_c 9.5 for 8.64 s frames; the host clamps it to 10 s): the squelch
+stays open between frames, and a hold over 4 s also keeps the decoder's
+status at "Receiving" between them (without it: "Signal lost" every frame).
 The shipped plugins: the lib protocols report through
 `RxContext::valid_at` (`dig::report_valid(ctx, mode, start, end)` with the
 receiver's own sample indexes; `Bridge::clock(rate)` + `restart_clock()`
@@ -984,7 +1029,8 @@ least recently played go).
  "rf_hz": 144.575e6,                     the band's centre = where the VFO goes
  "tuner_offset_hz": 300000,              the band's place in the tuner's 2.4 MHz
                                          (keeps it off DC); 0 for fixed-frequency
-                                         and lock_vfo decoders
+                                         and lock_vfo decoders (and lock_vfo_opt
+                                         ones with that option in "opts")
  "seconds": 16,                          loop length (keep it short)
  "vfo": {"bw_khz": 20, "demod": "NBFM", "opts": {"key": "value"}},
                                          the VFO the playback sets up (decoder =
@@ -1124,11 +1170,22 @@ every source well inside the 2.4 MHz (`|offset_hz|` + half its width under
 
 1. **Report only what passed a check.** A sync word match alone is not a
    frame: verify CRC / FEC / parity before `host.valid()` and before showing
-   decoded content. Random noise must produce no events.
+   decoded content. Random noise must produce no events. A signal whose
+   first frame takes seconds (inmarsat_c: 8.64 s) may say earlier that it
+   was recognised - carrier, kind, when the first frame is due - but in a
+   fact, never through `valid()`, and with a false-alarm rate measured on
+   noise and on the neighbouring signals.
 2. **Handle polarity and offset.** FSK can arrive inverted (try both sync
    polarities, or use `kp::SyncWord::inverted_distance()`); the carrier can be
    a few hundred Hz to a few kHz off (track the discriminator's DC, or report
-   `freq_error`).
+   `freq_error`). Do one or the other: the host moves your input by half
+   the mean of your `freq_error` reports, at most every 300 ms, and each
+   move is a frequency STEP in your samples. A coherent decoder with its own
+   narrow carrier loop that also reports `freq_error` is thrown off by them
+   (inmarsat_c's ~10 Hz Costas loop lost the carrier after every frame,
+   inmarsat_aero lost frames at every step - only in the live path: the
+   offline test has no AFC). Such a decoder tracks the carrier itself and
+   gives its place to talker packets as `freq_hz`.
 3. **Be cheap.** It runs live on a Raspberry Pi next to the receiver. Avoid
    per-sample allocations, `std::map` lookups and `std::string` building in
    the sample loop. The offline test prints the decode time as a % of real

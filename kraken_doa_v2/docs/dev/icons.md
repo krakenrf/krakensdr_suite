@@ -61,6 +61,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `menu` | the sidebar (top bar, three lines) |
 | `chev-r` `chev-l` `chev-d` | fold / unfold (sidebar boxes, map panels, table details, categories), step, the dropdown arrow, collapse the assistant |
 | `sliders` | View (display settings) |
+| `camera` | a picture of the spectrum and the waterfall (the button right of View, on the spectrum's and each tuner pane's header: a camera body with its lens; 2026-11-21, *spectrum-views.md*) |
 | `gear` | settings: Setup Settings, Categories, scan settings, model and effort, Generate |
 | `refresh` | refresh, check, rescan, regenerate, restart |
 | `reset` | reset to defaults, the boxes' order; drive mode's Reset (bearings) |
@@ -80,6 +81,7 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `enter` | run the search |
 | `play` `pause` `stop` `next` `first` | start / play, pause / hold (also a trunk talkgroup hold), stop (also stop following a trunk call), skip / next, to the start |
 | `star` | saved frequencies, save a frequency |
+| `tag` | Signal ID (a label tag: signals labelled with their type; 2026-11-20, *signal-classifier.md*) |
 | `eye` | viewshed / line of sight, show or hide (marks, a key) |
 | `lock` | a locked signal; an encrypted call (trunk following's call rows) |
 | `pin` | a marker, From GPS, incidents |
@@ -107,6 +109,8 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `gain` | the top bar's Gain (an amplifier triangle with a line in and out; 2026-11-18, *sidebar.md* "Top bar and rail") |
 | `step` | the top bar's tuning Step (two marks with a double arrow between them; 2026-11-18) |
 | `mixer` | the Wideband variant's mixer field in the top bar (a circle with a cross, the RF mixer symbol; 2026-11-18) |
+| `span` | sweep mode: the Sweep box (a spectrum trace between two marks - a frequency span; 2026-11-20, *sweep-mode.md*) |
+| `tuners` | sweep mode: the top bar's tuner selector (three dongles with their antennas; 2026-11-20) |
 | `globe` | Web Mapper, the online search, web tools |
 | `doc` | DoA Recording |
 | `log` | Decoder Logging (its Setup Settings section, the decoder tabs' button to it) |

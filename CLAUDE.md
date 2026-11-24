@@ -137,15 +137,24 @@ the uWS loop thread; from any other thread, post it with `loop->defer`.
 **8091 phase-state field**: the low byte is the calibration state; higher
 bits are flags (0x100 KerberosSDR manual mode, 0x200 calibration stale,
 0x400 wideband scan, 0x800 independent, 0x1000 generic RTL-SDRs - coherent
-mode unavailable). Every consumer masks the low byte.
+mode unavailable, 0x2000 sweep, sent with 0x800 so an older client sees
+independent tuners). Every consumer masks the low byte.
 
 ## Modes and hardware variants
 
 - **Operating modes** (top bar): coherent (the array: calibration, DoA,
   beamforming), wideband scan (tuners side by side in one stitched spectrum;
   discrete scanner), independent (each tuner its own frequency, gain and
-  pane; no calibration). The client follows heimdall's mode from the header
-  flags and parks DoA / beamforming outside coherent mode.
+  pane; no calibration), sweep (the chosen tuners step through a frequency
+  range: one wide spectrum and waterfall, not live, nothing demodulated -
+  heimdall hops (`set_sweep`), the client stitches; the gain can be set by
+  region (`set_sweep_gains`: points cut the range into regions, each with
+  its own gain; the page's lane under the spectrum) - heimdall writes each
+  hop's gain with its retune, and the client shifts each hop's levels by
+  heimdall's measured gain curve (Auto gain was removed 2026-11-24);
+  `kraken_doa_v2/docs/dev/sweep-mode.md` holds the wire contract). The
+  client follows heimdall's mode from the header flags and parks DoA /
+  beamforming outside coherent mode.
 - **`--wideband` / `-w`** (KrakenSDR Wideband downconverter, both apps):
   tuners stay at the 1268 MHz IF and a retune reprograms one shared moRFeus
   LO. The user-facing frequency is always the true RF. Mixer side and antenna
@@ -178,8 +187,12 @@ One file per feature in `kraken_doa_v2/docs/dev/` (the full index is at
 the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 `kraken_doa_v2/plugins/<id>/README.md`.
 
-- Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7),
-  `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9)
+- Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7; the Data
+  rate readout, `NET_STATS:`),
+  `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9),
+  `sweep-mode.md` (sweep mode: `SWEEP_*`, `SWEEP_VIEW:`, type 10; `SWEEP_GAINS:`, the gain by region lane),
+  `signal-classifier.md` (Signal ID: every signal labelled with its type;
+  the Bands bar of worldwide bands over the spectrum)
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),
   `vfo-audio.md`, `operating-modes.md` (also VFO cards, the tuning step,
   zoom), `sidebar.md` (the boxes: move, collapse, the remembered layout;
@@ -308,11 +321,12 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   check out or run pull request code.
 
 ### Secrets and git
-- `doa_settings.json`, `api_token` and `server.key` stay untracked. A clean
-  filter (`scripts/git-secrets-clean`) blanks API keys and station
-  coordinates in committed settings JSON, and `.githooks/pre-push` blocks
-  secrets, recognisable map provider API keys added to any file, voice
-  codecs and any `*.exe` / `*.dll`. install.sh registers both per clone.
+- `doa_settings.json`, `api_token`, `server.key` and `krakensdr-ca.key` stay
+  untracked. A clean filter (`scripts/git-secrets-clean`) blanks API keys
+  and station coordinates in committed settings JSON, and
+  `.githooks/pre-push` blocks secrets, recognisable map provider API keys
+  added to any file, voice codecs and any `*.exe` / `*.dll`. install.sh
+  registers both per clone.
 - Voice codecs (ETSI TETRA, AMBE / mbelib, libfdk-aac for DAB+) are never
   committed or packaged (licensing); users install them themselves.
 
@@ -331,7 +345,15 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   requires 578b43d or later on every platform (`RTLSDR_FIX_MARK` =
   `rtlsdr_finish_tune`); its Makefile fast-forwards an older clone or stops
   with instructions, and the Dockerfile pins `LIBRTLSDR_COMMIT`. Don't
-  install `librtlsdr-dev`; distro rtl-sdr packages may stay installed.
+  install `librtlsdr-dev`; distro rtl-sdr packages may stay installed. A
+  fork that defines `RTLSDR_NO_STREAM_SLIP` (2026-11-21; a USB control read
+  of 3, 7, 11 ... bytes made the RTL2832U drop 2 samples, so every retune
+  shifted that dongle's stream) lets heimdall return to coherent phase-only
+  and sweep with the faster tune call; one that defines
+  `RTLSDR_HAS_GAIN_FAST` (patch 0003 in `docs/dev/librtlsdr-patches/`)
+  writes the sweep's per-hop gain inside the tune (else each write costs
+  ~9 ms: +6 % a sweep). Older forks still work
+  (`docs/dev/librtlsdr-fork.md`).
 - **uWebSockets** is pinned (`UWS_COMMIT` fe7da4cb): newer master defines
   `uWS::time_ms()` without `inline` in `HttpCache.h`, and the link fails. The
   Makefiles move a checkout on another commit back to the pin.

@@ -7,13 +7,13 @@
 #include "utils/disk_util.hpp"
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/log_retention.hpp"
 #include "utils/parse_num.hpp"
 
 #include <dirent.h>
 #include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <zlib.h>
 
 #include <algorithm>
 #include <atomic>
@@ -72,34 +72,6 @@ std::string iso_time(int64_t ms) {
     char out[64];
     snprintf(out, sizeof out, "%s.%03d%.3s:%.2s", b, static_cast<int>(ms % 1000), z, z + 3);
     return out;
-}
-
-// gzip file -> file.gz (then the original is removed); false keeps the original
-bool gzip_file(const std::string& path) {
-    FILE* in = fopen(path.c_str(), "rb");
-    if (!in) return false;
-    const std::string part = path + ".gz.part";
-    gzFile out = gzopen(part.c_str(), "wb6");
-    if (!out) { fclose(in); return false; }
-    std::vector<char> buf(1 << 20);
-    bool ok = true;
-    for (;;) {
-        const size_t n = fread(buf.data(), 1, buf.size(), in);
-        if (n == 0) break;
-        if (gzwrite(out, buf.data(), static_cast<unsigned>(n)) != static_cast<int>(n)) { ok = false; break; }
-    }
-    fclose(in);
-    ok = gzclose(out) == Z_OK && ok;
-    // fs_replace: a .gz left by an earlier try is replaced (Windows' rename()
-    // refused it, so that day was never compressed). Windows also can't
-    // delete a .jsonl another program has open: it stays, and the next
-    // pass gzips it again
-    if (!ok || fs_replace(part.c_str(), (path + ".gz").c_str()) != 0) {
-        unlink(part.c_str());
-        return false;
-    }
-    unlink(path.c_str());
-    return true;
 }
 
 // a gzip file's uncompressed size (its ISIZE trailer, mod 4 GiB); 0 = unknown
@@ -191,8 +163,6 @@ struct State {
     uint64_t dropped = 0;
     std::unordered_map<std::string, int64_t> last_pos;   // vfo|plugin|id -> last logged
     std::string error;
-    bool restored = false;      // the settings replay ran (retention waits for the stored Keep days)
-    bool pass_running = false, pass_again = false;
     // the files (the worker; flush / set_dir / stop with the io lock)
     std::mutex io;
     std::map<std::string, OpenFile> open;   // folder name -> its file of the day
@@ -312,66 +282,60 @@ void flush_locked(State& s, const std::string& day) {
     }
 }
 
-// The retention pass (background, one at a time): each finished day of each file by its age -
-// plain for `days`, gzip for `zip_days` more, then deleted (retention_action). Deletions first,
-// then the compressions one by one
-void run_pass(const std::string& dir, int keep, int zip) {
+// The retention pass (background, one at a time - logret::Scheduler): each finished day of each
+// file by its age - plain for `days`, gzip for `zip_days` more, then deleted (retention_action).
+// Deletions first, then the compressions one by one (logret::run_pass, the rule every daily log
+// shares)
+void run_pass(const std::string& dir, int keep, int zip, bool deletions) {
     const long today = day_number(local_date(time(nullptr)));
-    std::vector<std::string> todo;
-    for (const auto& f : list_files(dir)) {
-        const long dn = day_number(f.date);
-        if (dn < 0) continue;
-        const Action a = retention_action(today - dn, f.kind, keep, zip);
-        if (a == Action::DELETE) {
-            if (unlink(f.path.c_str()) == 0 && f.kind != Kind::PART)
-                std::cout << "Decoder log: deleted " << f.path << " (older than " << keep << " + " << zip << " days)" << std::endl;
-        } else if (a == Action::COMPRESS) {
-            todo.push_back(f.path);
-        }
-    }
+    std::vector<logret::File> files;
+    for (const auto& f : list_files(dir)) files.push_back({f.path, day_number(f.date), f.kind});
     State& s = S();
-    if (!todo.empty()) {
+    logret::run_pass(files, today, keep, zip, "Decoder log", [&s](int n) {
         std::lock_guard<std::mutex> lk(s.mu);
-        s.compressing += static_cast<int>(todo.size());
-    }
-    for (const auto& p : todo) {
-        if (gzip_file(p)) std::cout << "Decoder log: gzipped " << p << std::endl;
-        else std::cerr << "Decoder log: cannot gzip " << p << std::endl;
-        std::lock_guard<std::mutex> lk(s.mu);
-        s.compressing--;
-    }
+        s.compressing += n;
+    }, deletions);
     s.rescan = true;
 }
 
+// the deletion grace after a settings change: 10 min, as the telemetry logs'
+// (KRAKEN_LOGRET_GRACE_S shortens it for tests - the same variable)
+std::chrono::milliseconds delete_grace() {
+    const char* e = getenv("KRAKEN_LOGRET_GRACE_S");
+    const int v = e ? atoi(e) : 0;
+    return std::chrono::seconds(v >= 1 && v <= 3600 ? v : 600);
+}
+
 // a pass with the settings as they are now: at startup (once the settings are replayed), the day
-// change, a Keep / Then compressed / folder change and every 10 min. A request during a pass
-// runs another after it
-void request_pass() {
-    State& s = S();
-    {
-        std::lock_guard<std::mutex> lk(s.mu);
-        if (!s.restored) return;   // not before the stored Keep days are known
-        if (s.pass_running) { s.pass_again = true; return; }
-        s.pass_running = true;
-        s.pass_again = false;
-    }
-    std::thread([] {
+// change and every 10 min; a Keep / Then compressed / folder change a few seconds after the last
+// one (a replay sets Keep and Then compressed one after the other - logret::Scheduler). After a
+// change the passes only compress; what the new rule deletes is deleted 10 min after the LAST
+// change (the grace, as the telemetry logs': a person setting Keep and then Then compressed, or
+// two separate commands, must not get the deletions of the rule in between). A request during a
+// pass runs another after it; none before settings_restored() (the stored Keep days), none
+// during a debug playback (its settings are a sandbox - the stored ones are replayed first)
+logret::Scheduler& passes() {
+    static logret::Scheduler* p = new logret::Scheduler([](bool deletions) {   // never destroyed (a pass may run at exit)
         State& st = S();
-        for (;;) {
-            std::string dir;
-            int keep, zip;
-            {
-                std::lock_guard<std::mutex> lk(st.mu);
-                dir = st.dir;
-                keep = st.days;
-                zip = st.zip_days;
-                st.pass_again = false;
-            }
-            run_pass(dir, keep, zip);
+        std::string dir;
+        int keep, zip;
+        {
             std::lock_guard<std::mutex> lk(st.mu);
-            if (!st.pass_again) { st.pass_running = false; return; }
+            dir = st.dir;
+            keep = st.days;
+            zip = st.zip_days;
         }
-    }).detach();
+        run_pass(dir, keep, zip, deletions);
+    }, [] { return playback::active(); }, logret::Scheduler::DEBOUNCE, delete_grace());
+    return *p;
+}
+void request_pass() { passes().request(); }
+// a Keep / Then compressed / folder change: the debounced pass and the deletion grace - not for
+// the startup replay (before settings_restored() no pass runs, and the first one applies the
+// stored values as they are, like the telemetry logs' stored settings): a receiver that never
+// runs 10 min would otherwise never delete a day
+void setting_changed() {
+    if (passes().allowed()) passes().request_after_change();
 }
 
 void worker() {
@@ -543,12 +507,7 @@ void flush() {
 }
 
 void settings_restored() {
-    {
-        State& s = S();
-        std::lock_guard<std::mutex> lk(s.mu);
-        s.restored = true;
-    }
-    request_pass();
+    passes().allow();
 }
 
 void set_enabled(bool on) {
@@ -584,20 +543,24 @@ bool legacy_raw() {
 
 void set_days(int days) {
     State& s = S();
+    bool changed;
     {
         std::lock_guard<std::mutex> lk(s.mu);
+        changed = s.days != std::clamp(days, 0, 3650);
         s.days = std::clamp(days, 0, 3650);
     }
-    request_pass();
+    if (changed) setting_changed();
 }
 
 void set_zip_days(int days) {
     State& s = S();
+    bool changed;
     {
         std::lock_guard<std::mutex> lk(s.mu);
+        changed = s.zip_days != std::clamp(days, 0, 3650);
         s.zip_days = std::clamp(days, 0, 3650);
     }
-    request_pass();
+    if (changed) setting_changed();
 }
 
 void set_pos_interval(int seconds) {
@@ -661,7 +624,7 @@ bool set_dir(const std::string& path_in, std::string* err) {
         s.error.clear();
         s.scan_ms = 0;
     }
-    request_pass();
+    setting_changed();
     return true;
 }
 

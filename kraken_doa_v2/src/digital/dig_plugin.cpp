@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "config.hpp"
 #include "digital/dig_report.hpp"
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
@@ -178,6 +179,16 @@ void PluginRegistry::scan() {
                             if (ok) pi.options.push_back({f[0], f[1], f[2], f[3], f[4], hidden});
                         }
                     }
+                    // kp::Info::lock_vfo_opt "key=value": taken only for one of its own
+                    // options (else ignored - the VFO is never locked by it)
+                    if (json_find(js, "lock_vfo_opt", v)) {
+                        const size_t eq = v.find('=');
+                        const std::string k = eq == std::string::npos ? "" : v.substr(0, eq);
+                        if (std::any_of(pi.options.begin(), pi.options.end(), [&](const PluginOption& o) { return o.key == k; })) {
+                            pi.lock_opt_key = k;
+                            pi.lock_opt_val = v.substr(eq + 1);
+                        }
+                    }
                     // 0 = the VFO's own rate (kp::Info::sample_rate)
                     if (!(pi.sample_rate == 0 || (pi.sample_rate >= 1000 && pi.sample_rate <= 2.4e6))) {
                         pi.error = "bad sample_rate";
@@ -200,6 +211,33 @@ void PluginRegistry::scan() {
     if (key(found) != key(plugins_)) generation_++;
     plugins_ = std::move(found);
     scanned_ = true;
+}
+
+bool holds_vfo(const PluginInfo& pi, const std::map<std::string, std::string>* opts) {
+    if (pi.fixed_freq_hz > 0 || pi.lock_vfo) return true;
+    if (pi.lock_opt_key.empty()) return false;
+    std::string v;
+    for (const auto& o : pi.options)
+        if (o.key == pi.lock_opt_key) v = o.def;
+    if (opts) {
+        // (DIGITAL_OPT with "" erases the key: the default again)
+        const auto it = opts->find(pi.id + "." + pi.lock_opt_key);
+        if (it != opts->end()) v = it->second;
+    }
+    return v == pi.lock_opt_val;
+}
+
+bool decoder_holds_vfo(const std::string& mode, const std::map<std::string, std::string>* opts, PluginInfo* out) {
+    if (mode.rfind("PLUGIN:", 0) != 0) return false;
+    PluginInfo pi;
+    if (!PluginRegistry::instance().get(mode.substr(7), &pi) || !holds_vfo(pi, opts)) return false;
+    if (out) *out = std::move(pi);
+    return true;
+}
+
+double lock_bandwidth_hz(const PluginInfo& pi) {
+    if (pi.fixed_freq_hz > 0 || pi.lock_vfo) return pi.min_vfo_rate;
+    return VFO_BW_MAX_HZ;   // the tuner's whole band
 }
 
 bool PluginRegistry::get(const std::string& id, PluginInfo* out) const {
@@ -259,8 +297,10 @@ std::string PluginRegistry::list_json() const {
           << "\",\"author\":\"" << json_escape(p.author) << "\",\"sample_rate\":" << p.sample_rate
           << ",\"min_vfo_rate\":" << p.min_vfo_rate << ",\"auto\":" << (p.auto_detect ? "true" : "false")
           << ",\"map\":" << (p.map ? "true" : "false") << ",\"manual_only\":" << (p.manual_only ? "true" : "false")
-          << ",\"fixed_freq_hz\":" << static_cast<long long>(p.fixed_freq_hz) << ",\"lock_vfo\":" << (p.lock_vfo ? "true" : "false")
-          << ",\"voice\":" << (p.voice ? "true" : "false")
+          << ",\"fixed_freq_hz\":" << static_cast<long long>(p.fixed_freq_hz) << ",\"lock_vfo\":" << (p.lock_vfo ? "true" : "false");
+        // (only when set: the other plugins' entries as before; an older page ignores it)
+        if (!p.lock_opt_key.empty()) o << ",\"lock_vfo_opt\":\"" << json_escape(p.lock_opt_key + "=" + p.lock_opt_val) << "\"";
+        o << ",\"voice\":" << (p.voice ? "true" : "false")
           << ",\"messages\":" << (p.messages ? "true" : "false") << ",\"talkers\":" << (p.talkers ? "true" : "false")
           << ",\"array\":" << (p.array ? "true" : "false") << ",\"video\":" << (p.video ? "true" : "false")
           << ",\"tunes\":" << (p.tunes ? "true" : "false") << ",\"trunking\":" << (p.trunking ? "true" : "false")

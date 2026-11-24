@@ -9,7 +9,14 @@ code). Frames 1-17: normal bursts, SCH/F (an empty MAC-RESOURCE) on
 timeslot 1, the AACH (Reed-Muller 30,14) on every slot.
 
   tetra_gen.py OUT.cf32 --mcc 530 --mnc 1 --cc 12 --la 1001 [--carrier 3600]
-               [--rate 72000] --at T --dur S [--at T --dur S ...]
+               [--rate 72000] [--seed N] [--traffic K] --at T --dur S [--at T --dur S ...]
+
+--seed N: the random generator's seed (the cell's TDMA time at the start and
+its slot timing); without it the colour code, so the same options give the
+same file.
+--traffic K (K >= 1): a loaded cell - random SCH/F and AACH bits in every
+burst (K seeds them, with the seed); without it every normal burst is the
+same empty one and the output is unchanged.
 
 The cell's carrier on during each [at, at + dur) (cf32 + OUT.json). Put
 several cells at their own bearings with plugins/sdk/tools/uca_scene.py.
@@ -148,20 +155,24 @@ def sysinfo(cell):
     return b
 
 
-def slot_bits(cell, tn, fn, mn):
+def slot_bits(cell, tn, fn, mn, rnd=None):
     scr = scramb_init(cell['mcc'], cell['mnc'], cell['cc'])
+    # (rnd: --traffic - every normal burst's SCH/F block and every AACH carry random
+    # bits, as a loaded cell's signalling / traffic does; without it the empty
+    # MAC-RESOURCE and an all-zero AACH, the same burst every frame)
     if fn == 18:
         # synchronization continuous downlink burst
         b = [0] * 14 + [1] * 8 + [0] * 64 + [1] * 8
         b += block(bsch(cell, tn, fn, mn), 120, 11, 3)
         b += Y
-        b += aach(0, scr)
+        b += aach(0 if rnd is None else int(rnd.integers(0, 1 << 14)), scr)
         b += block(sysinfo(cell), 216, 101, scr)
         b += [0] * 12
     else:
         # normal continuous downlink burst: SCH/F (empty MAC-RESOURCE)
-        blk = block([0] * 268, 432, 103, scr)
-        bb = aach(0, scr)
+        info = [0] * 268 if rnd is None else [int(v) for v in rnd.integers(0, 2, 268)]
+        blk = block(info, 432, 103, scr)
+        bb = aach(0 if rnd is None else int(rnd.integers(0, 1 << 14)), scr)
         b = [0] * 14 + blk[:216] + bb[:14] + N + bb[14:] + blk[216:] + [0] * 12
     assert len(b) == 510, len(b)
     return b
@@ -480,7 +491,7 @@ def main():
         sys.exit(2)
     out = a[0]
     cell = {'mcc': 530, 'mnc': 1, 'cc': 12, 'la': 1001, 'carrier': 3600}
-    rate = FS
+    rate, seed, traffic = FS, None, 0
     on = []
     calls = []
     seconds = None
@@ -489,6 +500,8 @@ def main():
         k, v = a[i].lstrip('-'), a[i + 1]
         if k == 'rate':
             rate = float(v)
+        elif k == 'seed':
+            seed = int(v)
         elif k == 'at':
             on.append([float(v), 5.0])
         elif k == 'dur':
@@ -500,6 +513,8 @@ def main():
         elif k == 'truncate':
             global TRUNCATE
             TRUNCATE = int(v)
+        elif k == 'traffic':
+            traffic = int(v)
         else:
             cell[k] = int(v)
         i += 2
@@ -508,13 +523,15 @@ def main():
         return trunk_main(out, cell, calls, seconds or 15.0, rate)
     end = max(t + d for t, d in on) + 0.2
     nslots = int(end * 18000 / 255) + 2
-    rng = np.random.default_rng(cell['cc'])
+    rng = np.random.default_rng(cell['cc'] if seed is None else seed)
     # the cell's own TDMA time and symbol timing
     tn, fn, mn = 1, int(rng.integers(1, 18)), int(rng.integers(1, 61))
     dphi = {(0, 0): np.pi / 4, (0, 1): 3 * np.pi / 4, (1, 0): -np.pi / 4, (1, 1): -3 * np.pi / 4}
     ph, syms = 0.0, []
+    # (its own generator: the cell's timing above is drawn the same with or without it)
+    rnd = np.random.default_rng([traffic, cell['cc'] if seed is None else seed]) if traffic else None
     for _ in range(nslots):
-        b = slot_bits(cell, tn, fn, mn)
+        b = slot_bits(cell, tn, fn, mn, rnd)
         for k in range(255):
             ph += dphi[(b[2 * k], b[2 * k + 1])]
             syms.append(np.exp(1j * ph))

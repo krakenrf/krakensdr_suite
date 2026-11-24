@@ -122,19 +122,23 @@ RUN for b in heimdall_v2/heimdall kraken_doa_v2/kraken_doa librtlsdr/build/src/r
 FROM debian:${DEBIAN_RELEASE}-slim
 
 COPY --from=build /src/runtime-packages /tmp/runtime-packages
-# openssl: TLS certificate for the client web UI on first start
+# openssl: the client web UI's HTTPS certificate (scripts/make-cert.sh at
+# every start); iproute2: its `ip`, for the LAN addresses in wide scope
 # usbutils: lsusb for checking the passthrough
 # curl: Voice to Text's model downloads (the sidebar's "⬇ Get")
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        $(cat /tmp/runtime-packages) openssl usbutils ca-certificates curl \
+        $(cat /tmp/runtime-packages) openssl iproute2 usbutils ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* /tmp/runtime-packages
 
 WORKDIR /opt/krakensdr
 COPY --from=build /src/heimdall_v2/heimdall /src/heimdall_v2/index.html heimdall_v2/
+# (sigclass.mode[l]: Signal ID's model - a pattern, so a tree without the
+# file still builds; the feature then says it is unavailable)
 COPY --from=build /src/kraken_doa_v2/kraken_doa \
                   /src/kraken_doa_v2/kraken_doa.html \
                   /src/kraken_doa_v2/array_calculator.html \
-                  /src/kraken_doa_v2/opus-decoder.min.js kraken_doa_v2/
+                  /src/kraken_doa_v2/opus-decoder.min.js \
+                  /src/kraken_doa_v2/sigclass.mode[l] kraken_doa_v2/
 # decoder plugins (built ones: plugins/<id>/build/decoder); kraken_doa finds
 # them through KRAKEN_PLUGIN_DIR (entrypoint)
 COPY --from=build /src/kraken_doa_v2/plugins/ kraken_doa_v2/plugins/
@@ -147,7 +151,9 @@ COPY --from=build /src/licenses/ /usr/share/doc/krakensdr/
 COPY --from=build /src/VERSION heimdall_v2/
 COPY --from=build /src/VERSION kraken_doa_v2/
 COPY docker/entrypoint.sh /usr/local/bin/krakensdr-entrypoint
-RUN chmod 755 /usr/local/bin/krakensdr-entrypoint
+# the web UI's HTTPS certificate (entrypoint: ensure_cert)
+COPY scripts/make-cert.sh scripts/
+RUN chmod 755 /usr/local/bin/krakensdr-entrypoint scripts/make-cert.sh
 
 # State (settings, TLS cert, DoA / IQ recordings, ...) lives here
 VOLUME /data

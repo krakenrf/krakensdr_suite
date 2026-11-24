@@ -178,6 +178,28 @@ KRAKEN_ALLOWED_HOSTS=  # extra host names for the web UIs (reverse proxy, custom
 KRAKEN_API_TOKEN=      # client web UI API token (instead of the api_token file)
 KRAKEN_GPSD_HOST=      # gpsd somewhere other than localhost:2947
 KRAKEN_GPSD_PORT=
+KRAKEN_CERT_HOST=      # the host name the HTTPS certificate names (see below)
+KRAKEN_CERT_NAMES=     # more names for it, separated by commas or spaces
+```
+
+**HTTPS certificate.** As natively (README, "HTTPS certificate"): the
+receiver makes its own certificate authority,
+`docker-data/kraken_doa/krakensdr-ca.crt`, which you install once on each
+device, and renews the page's certificate with it at every start that needs
+it (`docker compose logs kraken_doa` says so). The log also prints the
+authority's SHA-256 fingerprint at every start: compare it with what a
+device shows before trusting the certificate. The container sees the host's
+host name but can't ask the host's mDNS service (avahi) for the name it
+announces: if two receivers on the network are both called `krakensdr`,
+rename one of them (or put `KRAKEN_CERT_HOST=krakensdr-2` in `.env`). A
+changed name makes a new certificate authority, which every device must
+install again (the log warns). A new certificate authority on purpose: the
+page's Telemetry sheet → HTTPS certificate → **New certificate authority**,
+or
+
+```bash
+docker compose exec kraken_doa /opt/krakensdr/scripts/make-cert.sh /data/kraken_doa --new-ca
+docker compose restart kraken_doa
 ```
 
 ## 6. Your data
@@ -190,12 +212,16 @@ docker-data/heimdall/heimdall_settings.conf   last frequency/gain, element count
 docker-data/heimdall/s2p_calibration/         forward-compensation files
 docker-data/kraken_doa/doa_settings.json      client settings, incl. KrakenPro API key + station location
 docker-data/kraken_doa/api_token              web UI API token (if used)
-docker-data/kraken_doa/server.crt/.key        TLS certificate (self-signed, made on first start)
+docker-data/kraken_doa/krakensdr-ca.crt       this receiver's certificate authority: install it once per device
+docker-data/kraken_doa/krakensdr-ca.key       ... its key (a secret), server.crt/.key the page's certificate,
+                                              cert_options its scope (narrow / wide), *.retired.crt replaced ones
 docker-data/kraken_doa/doa_recordings/        DoA recordings
 docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
                                               cdecoder, sdecoder; libfdk-aac.so.2 for DAB+ -
-                                              README "Digital voice codecs")
+                                              README "Digital voice codecs"; for Inmarsat Aero
+                                              voice the libmbe.so.1 is libaeroambe's build, which
+                                              serves the other decoders too)
 docker-data/whisper_models/                   Voice to Text speech models ("⬇ Get" in ⚙ Setup Settings → 🗣 Voice to Text)
 docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (🗣 Transcription)
 docker-data/kraken_doa/decoder_logs/          Decoder Logging files (a folder per decoder, transcripts/),
@@ -226,7 +252,9 @@ you want to keep:
 mkdir -p docker-data/heimdall docker-data/kraken_doa
 cp heimdall_v2/heimdall_settings.conf docker-data/heimdall/
 cp kraken_doa_v2/doa_settings.json kraken_doa_v2/server.crt kraken_doa_v2/server.key docker-data/kraken_doa/
-# plus kraken_doa_v2/api_token if you have one
+# the HTTPS certificate authority your devices already trust (if there is one)
+cp kraken_doa_v2/krakensdr-ca.crt kraken_doa_v2/krakensdr-ca.key docker-data/kraken_doa/
+# plus kraken_doa_v2/api_token and kraken_doa_v2/cert_options if you have them
 ```
 
 Copy `doa_settings.json` even if nothing else: the client sends its saved
@@ -287,7 +315,8 @@ services:
   `/data`, with the web files linked in. The apps save their state in their
   working directory, so it ends up in `docker-data/`.
   - For heimdall it waits for the dongles first.
-  - For kraken_doa it creates the TLS certificate if needed, then waits for
+  - For kraken_doa it runs `scripts/make-cert.sh` (the HTTPS certificate,
+    `KRAKEN_CERT_HOST` / `KRAKEN_CERT_NAMES`; never fatal), then waits for
     convergence by reading the phase state from the 8091 packet header, like
     `run.sh`. It doesn't wait in KerberosSDR manual mode, or in Wideband /
     Independent mode, which it detects from the header flags.

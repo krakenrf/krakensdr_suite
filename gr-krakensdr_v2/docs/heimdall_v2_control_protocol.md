@@ -220,6 +220,107 @@ the control thread, the mask is saved (`antenna_bias_tee_mask` in
 
 ---
 
+### 2.18 `set_sweep` and sweep mode (added 2026-11-20, checked right after `set_independent_tuner`)
+The interface is fixed in `kraken_doa_v2/docs/dev/sweep-mode.md` ("The
+contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
+*Sweep mode*.
+```json
+{"command":"set_operating_mode","mode":"sweep"}
+{"command":"set_sweep","first_center_hz":88956250,"step_hz":1912500,"steps":11,
+ "tuners":[0,1,2,3,4],"dwell_ms":20,"settle_ms":5,"run":true}
+```
+- `set_operating_mode` `sweep`: the calibration parks as in the other
+  non-coherent modes (noise source off); every tuner on the common gain.
+  Refused on the Wideband variant (`--wideband`) and while the discrete
+  scanner runs; allowed with generic RTL-SDRs, also with one. Entering the
+  mode runs the plan (`run` true) from round 0. Leaving it: to coherent every
+  tuner returns to `center_freq` and the array recalibrates (KerberosSDR:
+  its manual-calibration rules); to independent the tuners stay where the
+  sweep left them; to wideband they are spread as usual.
+- `set_sweep`: accepted in every mode, used in sweep mode, saved in
+  `heimdall_settings.conf` (`sweep_*`; not `run`). Every field optional; the
+  three plan fields only together. Whitespace around the colons is allowed.
+  - `first_center_hz`, `step_hz`, `steps`: hop h's tuner centre is
+    `first_center_hz + h * step_hz`. Whole numbers; every centre inside the
+    tuner range (24-1766 MHz), `step_hz` 100000-2400000, `steps` 1-20000.
+  - `tuners`: the tuners that take part - unique whole numbers below
+    `num_channels`, at least one.
+  - `dwell_ms` 5-5000 (default 5): how much settled data a hop delivers, in
+    whole 8091 packets per tuner: `ceil(dwell_ms x 2.4e6 / (1000 x 16384))`
+    (5 ms -> 1, 10 -> 2, 20 -> 3, 50 -> 8, 100 -> 15; the status object's
+    `hop_packets`). `settle_ms` 0-1000 (default `SWEEP_SETTLE_MS` = 2 ms,
+    config.h): the wait between the end of the retune and the first sample
+    that may count. Both take effect at once and don't restart the sweep.
+  - `run`: `false` pauses (the tuners stay put; the retuning flag is 0 again
+    once a hop under way has settled), `true` resumes at the round it was on.
+  - A hop ends as soon as its `hop_packets` have gone out on 8091 with the
+    flag 0 (it waits for them at most 250 ms longer than they take). Before
+    them every dongle's packets that can hold a sample from before the
+    retune's end + the settle are dropped, per dongle. A tuner already on
+    its round's hop is not retuned (with as many tuners as hops the stream
+    runs on without a gap; the counter still counts the rounds). A dongle
+    that stops delivering keeps the flag at 1 (`stalled_tuners`).
+  - Reply `{"status":"success","sweep":{...}}` (the status object below) or
+    `{"status":"error","message":"..."}`; nothing changes on an error. A plan
+    or tuner change restarts the sweep at round 0.
+- Who measures what: K' = min(selected tuners, steps); the k-th selected
+  tuner (ascending index, k < K') covers the contiguous hops
+  `[floor(k*H/K'), floor((k+1)*H/K'))`; in round r (`R = ceil(H/K')` rounds)
+  it goes to hop `base + r` if it has one, else stays. Tuners that take no
+  part (unselected, or selected beyond K') are never retuned.
+- In sweep mode: `set_frequency` is refused (`{"status":"error",...,
+  "frequency":<center_freq>}`; the web page's frequency box too), as are
+  `set_independent_tuner`, `start_scanner` and `set_num_elements`;
+  `set_gain` sets every tuner (and marks the stream invalid until the next
+  settle, like a hop).
+- Gain by region (added 2026-11-24; `heimdall_v2/docs/dev/operating-modes.md`,
+  "Gain by region"): `{"command":"set_sweep_gains","points_hz":[f1,...,fn],
+  "gains_db":[g0,...,gn]}` - n <= 64 points (whole Hz, strictly rising) cut
+  the sweep's frequency axis into n + 1 regions, `gi` for `points[i-1] <= f <
+  points[i]`; each gain in dB as `set_gain` takes it (0 - 50; the tuner's AGC,
+  -1, is refused in a table), put on the nearest value of the tuners' gain
+  list. `points_hz: []` with `gains_db: []` clears the table (the sweep takes
+  the common gain again). All or nothing: `{"status":"success","points_hz":
+  [..],"gains_db":[..]}` with the table as applied, or `{"status":"error",
+  "message":"..."}` and nothing changes. A hop takes the gain of the region
+  its centre lies in, written with its retune, from the next hop on (no
+  restart of the plan). Accepted in every mode, used in sweep mode, not
+  saved (the client sends it after its plan). With a table the common gain
+  (`set_gain`) is left alone - the other modes use it and every tuner
+  returns to it when sweep mode is left; with the common gain at the tuner's
+  AGC the table still wins in sweep mode. The gain a packet was taken with
+  is in its 8091 header (the data protocol's sweep paragraph). The status'
+  sweep object always carries `gain_points_hz` and `gain_db` (the table as
+  applied, empty = none: their presence is how a client tells this heimdall
+  from an older one, whose unknown-command error names nothing), and
+  `gain_writes` (of the last completed sweep), `gain_write_failures`,
+  `gain_fast` (the tuner library has the fast gain write) and
+  `gain_real_db` (`[[g, real], ...]`: the measured gain of each value of
+  the tuner's gain list in dB against the list's top - the list itself is up
+  to 6.7 dB off; only for tuners it was measured for, R820T / R828D).
+  (Rounds 9 - 10's `set_sweep_auto_gain` and its status counts were removed
+  2026-11-24: an older client that sends it gets "Unknown command".)
+- Status (2 Hz broadcast, `get_status`, the web STATE): always
+  `"sweep":{"first_center_hz","step_hz","steps","tuners":[..],"dwell_ms",
+  "settle_ms","run","round","rounds","sweeps","round_ms"}` - `tuners` the
+  ones taking part (every open tuner when the saved list names none of
+  them), `sweeps` completed since the plan changed, `round_ms` the measured
+  time of the last round - plus three diagnostic fields beyond the contract:
+  `retuning` (the 8091 flag, false outside sweep mode), `failed_retunes`
+  (tuner retunes that failed twice this session; such a tuner's 8091
+  frequency is 0 until its next successful retune - see the data protocol),
+  `failed_tuners` (the tuners whose last retune failed) and
+  `l1_unquiet_flushes` (L1 flushes
+  that found no quiet point between USB packet rounds, since startup).
+  Since 2026-11-21 also `hop_packets` (valid packets per tuner and hop, from
+  `dwell_ms`), `stalled_tuners` (dongles that deliver nothing: the flag
+  stays 1 while there is one), `gates_failed` / `gates_late` (hops whose
+  per-dongle drop of pre-settle packets had to be retried / was served
+  late) and `timing` (a hop's timeline in ms, averaged over the last 64
+  hops: `retune_ms`, `tune_max_ms`, `settle_ms`, `gate_ms`,
+  `first_valid_ms`, `dwell_ms`, `round_ms`, `valid_per_hop`, ...).
+  `operating_mode` is `"sweep"` and `tuner_frequencies` lists every tuner.
+
 ## 3. The 2 Hz status broadcast (exact schema, `broadcast_status()` lines 53–147)
 
 One line per broadcast, terminated `"}\n"`:
@@ -323,7 +424,8 @@ then uint8 interleaved IQ per channel
   - That is the LOW BYTE; higher bits are flags - mask them off: `0x100`
     KerberosSDR manual mode, `0x200` calibration stale, `0x400` wideband scan,
     `0x800` independent, `0x1000` generic RTL-SDRs (no coherent array; set on
-    every frame with `0x800` or `0x400`, §2.16).
+    every frame with `0x800` or `0x400`, §2.16), `0x2000` sweep mode (with
+    `0x800`, §2.18).
 - `noise_source` = `bias_tee_enabled ? 1 : 0` (1 = calibration noise source is routed in; data is NOT antenna signal).
 - Lag states (`LagCompensatorState`, types.hpp:22): `0`=`MEASURING`, `1`=`SERVOING`, `2`=`CONVERGED` — visible only in the web UI/WebSocket, not on 8092/8091.
 

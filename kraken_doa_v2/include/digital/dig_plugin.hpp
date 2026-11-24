@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <set>
 #include <string>
@@ -40,6 +41,9 @@ struct PluginInfo {
     bool manual_only = false;     // never in Auto detect (kp::Info::manual_only)
     double fixed_freq_hz = 0;     // kp::Info::fixed_freq_hz (the web UI tunes the VFO there)
     bool lock_vfo = false;        // kp::Info::lock_vfo (the web UI locks the VFO on its tuner's centre)
+    // kp::Info::lock_vfo_opt "key=value": the lock_vfo lock (with the whole 2.4 MHz) only while
+    // the option key (one of the plugin's own) has that value on the VFO; "" = none. holds_vfo()
+    std::string lock_opt_key, lock_opt_val;
     bool voice = false;           // decodes voice (kp::Info::voice): the panel offers Listen
     bool messages = false;        // sends text messages (kp::Info::messages): incident addresses
     bool talkers = false;         // reports who transmits (kp::Info::talkers): DoA per talker
@@ -57,6 +61,22 @@ struct PluginInfo {
     bool stale = false;           // a source file is newer than exe
     std::string error;            // why it isn't usable
 };
+
+// The lock of a VFO whose decoder is this plugin (kraken_doa's one answer to
+// "is this VFO locked" - the web UI's vfoLocked() is the same test):
+// fixed_freq_hz (on that frequency) or lock_vfo always, lock_vfo_opt while the
+// VFO's option has that value. opts = the VFO's decoder options
+// (dig::Options::plugin, "<plugin id>.<key>" -> value; a key not there has the
+// option's default); nullptr = the defaults (a VFO without options of its own)
+bool holds_vfo(const PluginInfo& pi, const std::map<std::string, std::string>* opts);
+// The same for a VFO's decoder by mode string ("PLUGIN:<id>"; anything else
+// never holds a VFO); *out = the plugin when it does
+bool decoder_holds_vfo(const std::string& mode, const std::map<std::string, std::string>* opts,
+                       PluginInfo* out = nullptr);
+// The VFO bandwidth a lock gives (Hz): the whole band (VFO_BW_MAX_HZ) for the
+// option lock, else min_vfo_rate (the caller takes the narrowest efficient
+// width at least that, as the web UI does)
+double lock_bandwidth_hz(const PluginInfo& pi);
 
 class PluginRegistry {
 public:

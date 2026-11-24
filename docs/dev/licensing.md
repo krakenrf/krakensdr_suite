@@ -166,6 +166,45 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   its low nibble `[UNVERIFIED]` (`dmr_trunk.cpp`). Lists: the plugins'
   READMEs (*Sources*). No similarity audit against those projects' code was
   run
+- INMARSAT (2026-11-22, `plugins/inmarsat_c` 1.0 and `plugins/inmarsat_aero`
+  1.0, both source-available, written new; no GPL decoder - SatDump,
+  Scytale-C, cropinghigh/inmarsatc, gr-* - was opened, none was run).
+  `inmarsat_aero`: from ICAO Annex 10 Vol III Part I chapter 4 (the full
+  AMSS chapter, consolidated to amendment 77). Permissive projects read for
+  FACTS, no code taken: libacars (MIT) as the description of ARINC 622 / 745
+  (ADS-C layouts, scaling, CRC parameters), JAERO (MIT) to confirm the C
+  channel's field offsets. Code taken: libaeroambe's (MIT) 96-entry voice
+  frame deinterleave table in `plugins/lib/aero_ambe.cpp`, notice kept
+  (THIRD_PARTY_NOTICES text M) - a bit order like DSD's tables in
+  `mbe_tables.hpp`; the Aero AMBE codec itself stays the user's library
+  (libaeroambe's mbelib, dlopened; section 3 of the notices).
+  `inmarsat_c`: the frame facts (unique word, interleaver, scrambler, code,
+  packet lengths, sum check) were first read in an UNOFFICIAL online copy of
+  the Inmarsat-C System Definition Manual (CD004, Volumes 1-3; Inmarsat does
+  not publish the manual; Volume 4, the packet layouts, was not available
+  and is why most packet types are only counted), then each one settled
+  independently by measurement on a public recording (the table in
+  `kraken_doa_v2/docs/dev/plugin-inmarsat-c.md`); the EGC codes from IMO
+  MSC.1/Circ.1364 (SafetyNET manual) and IEC 61097-4. Whether that copy is
+  cited / relied on is the user's call (raised 2026-11-22, open).
+  CHECKED afterwards from the two authors' sessions (every fetch they made)
+  and their scratch folders, not from their reports: no source file of a
+  GPL project was fetched. inmarsat_c's author fetched documents only (the
+  SDM copy, a Nera manual, WAVECOM's manual page, IEC 61097-4, the SafetyNET
+  manual) and one decoder repository's front page, asked only for its
+  licence and sample files. inmarsat_aero's author fetched source from
+  JAERO (aerol.cpp / .h, oqpskdemodulator.cpp, jconvolutionalcodec.cpp),
+  libacars (adsc, arinc, crc) and libaeroambe - all MIT, JAERO's LICENSE
+  re-read independently; a mechanical comparison of the plugin with those
+  nine files found no identical code line (30+ characters, whitespace
+  removed) and only ordinary words as shared identifiers. ONE THING TO KNOW:
+  while looking for a C channel voice sample - after all protocol code was
+  committed (c01243d; those files did not change later) - documentation of
+  three GPL-3.0 Aero decoders was downloaded and keyword-searched for
+  download links (DecAero README.md + docs/DESIGN.md, OnAir docs/CODECS.md,
+  InmarScope README + TESTING.md; at most 80 matching lines were shown, none
+  of their source). NO similarity audit against the GPL decoders' own code
+  (SatDump, Scytale-C, DecAero ...) was run
 
 ## Contributions (CONTRIBUTING.md, .github/)
 

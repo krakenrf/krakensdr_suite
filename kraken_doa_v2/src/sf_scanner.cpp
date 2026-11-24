@@ -147,14 +147,22 @@ void set_heard(int vfo, bool on) {
 }
 
 // A decoder that can't be scanned: one that holds its VFO on a fixed
-// frequency (ADS-B, AIS) or on its tuner's centre (ism, cells, ...)
-std::string decoder_why_not(const std::string& dec) {
-    if (dec.rfind("PLUGIN:", 0) != 0) return "";
-    dig::PluginInfo pi;
-    if (!dig::PluginRegistry::instance().get(dec.substr(7), &pi)) return "";   // (refused when it locks)
-    if (pi.fixed_freq_hz > 0 || pi.lock_vfo)
-        return "its decoder (" + (pi.name.empty() ? pi.id : pi.name) + ") needs a VFO of its own";
-    return "";
+// frequency (ADS-B, AIS) or on its tuner's centre (ism, cells, ...; Aero's
+// All channels: by the option, with the scan VFO's options - opts)
+std::string decoder_why_not(const std::string& dec, const std::map<std::string, std::string>* opts) {
+    dig::PluginInfo pi;   // (an unknown plugin: refused when it is set)
+    if (!dig::decoder_holds_vfo(dec, opts, &pi)) return "";
+    return "its decoder (" + (pi.name.empty() ? pi.id : pi.name) + ") needs a VFO of its own";
+}
+
+// a VFO's decoder options ("<plugin>.<key>" -> value); false if it is gone
+bool vfo_plugin_opts(int vfo, std::map<std::string, std::string>* out) {
+    for (const auto& d : decimator_manager.getDecimatorInfoList())
+        if (d.id == vfo) {
+            *out = d.digital_opts.plugin;
+            return true;
+        }
+    return false;
 }
 
 // what a Digital VFO's decoder needs (Hz): the page's digMinRateK
@@ -201,7 +209,10 @@ Layout layout_for(bool wideband) {
 Plan make_plan(int vfo, const Layout& lay) {
     uint64_t lo, hi;
     tunable_range(&lo, &hi);
-    return build_plan(savedfreq::scan_entries(), lay, lo, hi, vfo_bandwidth_hz(vfo), decoder_why_not);
+    std::map<std::string, std::string> opts;
+    vfo_plugin_opts(vfo, &opts);
+    return build_plan(savedfreq::scan_entries(), lay, lo, hi, vfo_bandwidth_hz(vfo),
+                      [&opts](const std::string& dec) { return decoder_why_not(dec, &opts); });
 }
 
 bool is_extra(const DecimatorInstance* p);
@@ -228,7 +239,7 @@ std::string vfo_held_by(int vfo) {
     for (const auto& d : decimator_manager.getDecimatorInfoList()) {
         if (d.id != vfo) continue;
         if (static_cast<dig::Mode>(d.digital_mode) != dig::Mode::PLUGIN) return "";
-        return decoder_why_not("PLUGIN:" + d.digital_plugin).empty() ? "" : d.digital_plugin;
+        return dig::decoder_holds_vfo("PLUGIN:" + d.digital_plugin, &d.digital_opts.plugin) ? d.digital_plugin : "";
     }
     return "";
 }
@@ -1230,7 +1241,8 @@ std::string start(int vfo) {
     std::lock_guard<std::mutex> lk(g_life);
     if (g_run.load()) return "the scan is already running";
     if (playback::active()) return "a playback is running - the receiver can't be tuned";
-    const int mode = operating_mode_index();   // 0 coherent, 1 wideband scan, 2 independent
+    const int mode = operating_mode_index();   // 0 coherent, 1 wideband scan, 2 independent, 3 sweep
+    if (mode == 3) return "not in sweep mode - the tuners follow the sweep (Mode: Coherent / Wideband / Independent)";
     if (vfo < 0 || !decimator_manager.getDecimator(vfo)) {
         vfo = -1;
         for (const auto& d : decimator_manager.getDecimatorInfoList()) { vfo = d.id; break; }

@@ -695,7 +695,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, ysf, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, beacon121 (121.5 / 243 MHz swept-tone beacons), lora, wildlife, rds, acars, vdl2, dab, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, beacon121 (121.5 / 243 MHz swept-tone beacons), inmarsat_c (Inmarsat-C TDM / EGC), inmarsat_aero (Inmarsat Classic Aero), lora, wildlife, rds, acars, vdl2, dab, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -1385,12 +1385,15 @@ EXPERIMENTAL / on the back burner: on the live array the aircraft's
 responses were too distorted (multipath / low elevation) for a good fit -
 see the client CLAUDE.md
 
-### Operating Modes (top-bar Mode selector: Coherent / Wideband / Independent)
+### Operating Modes (top-bar Mode selector: Coherent / Wideband / Independent / Sweep)
 
 - **Coherent**: the array (DoA, beamforming, calibration). **Wideband**: the
   tuner-spread scan (one stitched spectrum, discrete scanner). **Independent**:
   every tuner its own receiver - own frequency + gain, one spectrum +
-  waterfall pane per tuner, VFOs on any tuner, no calibration
+  waterfall pane per tuner, VFOs on any tuner, no calibration. The
+  spectrum header's T0..Tn buttons pick the panes shown (per browser,
+  localStorage `kraken_pane_hidden`; a hidden pane asks for 16 points -
+  kraken_doa_v2/docs/dev/operating-modes.md, "Tuners shown")
 - Client: `OPERATING_MODE:coherent|wideband|independent` (persisted; the old
   `WIDEBAND_MODE:` maps to it), `TUNER_FREQ:ch:mhz` / `TUNER_GAIN:ch:db` (+
   composite `TUNERS:` persisted), `SET_DECIMATOR_FREQ:id:khz:tuner` (VFO onto a
@@ -1409,6 +1412,18 @@ see the client CLAUDE.md
 - The assistant's IQ captures (`capture_iq`, done inside kraken_doa -
   `ai_capture.cpp`) record the tuner whose band holds the signal outside
   coherent mode
+- **Sweep** (the fourth mode, 2026-11-20): the chosen tuners step through a
+  range (24 - 1765 MHz at most, 1 912 500 Hz per tuner and step, contiguous
+  blocks of steps per tuner), heimdall hops them (`set_sweep`, 8091 flag
+  0x2000 with 0x800, the scanner fields as round counter / retuning flag) and
+  the client stitches one spectrum (`SWEEP_RANGE` / `SWEEP_TUNERS` /
+  `SWEEP_RES` / `SWEEP_DWELL` / `SWEEP_RUN`, per-page `SWEEP_VIEW`, FFT
+  message type 10). Not live: no VFO processing, audio, decoders or DoA. The
+  top bar shows the range and the tuner selector in place of the frequency.
+  Signal ID is parked there (no snapshot can hold one band); the Bands bar
+  follows the sweep's axis.
+  `kraken_doa_v2/docs/dev/sweep-mode.md` (the wire contract and all three
+  parts), `heimdall_v2/docs/dev/operating-modes.md` *Sweep mode*
 - Only coherent exists on the downconverter variant. See heimdall_v2/CLAUDE.md
   *Operating Modes* and kraken_doa_v2/CLAUDE.md *Operating modes*
 
@@ -1429,8 +1444,10 @@ with `--wideband` (`-w`) on BOTH apps, or `./run.sh --wideband` for the stack.
   `LO = IF - RF` (RF 24-1183 MHz, upright) or below `LO = RF - IF` (LO under
   the RF, RF 1353-6668 MHz, upright - the only side past 4.1 GHz). Every
   retune runs `wideband_retune_rf()` (heimdall sdr_init.cpp): keeps the
-  current side if it can reach the RF, else auto-selects (high up to its
-  ceiling, below above it). Manual override where several sides reach the
+  current side if it can reach the RF and the retune stays on one side of
+  `WB_SIDE_CROSSOVER_HZ` (2200 MHz), else auto-selects (high below the
+  crossover, below from it up - the high side loses conversion gain as its
+  LO climbs). Manual override where several sides reach the
   RF (image dodging): client `MIXER_SIDE:high|low|below` -> heimdall
   `set_mixer_side`, which REJECTS a side that can't reach the current RF
   (the UI greys those buttons out). Side changes trigger the normal retune
