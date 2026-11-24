@@ -1826,6 +1826,54 @@ clipping rule stays the fast guard and is the search's ceiling.
     stayed at the ceiling.
   - Sweep time against Auto off in the same minute: +0.1 %, with 74 gain
     writes a sweep.
+- *The spectrum estimate off the hop's path* (2026-11-24, the Pi 5):
+  - The orchestrator's check measured a sweep with Auto on and nothing to
+    do at +3.0 % against Auto off (4.142 s against 4.021 s), with no gain
+    writes. Each set's five Welch estimates, about 0.66 ms a round there,
+    were computed in the conversion worker before the set was counted, so
+    the hop waited for them.
+  - Now the conversion worker counts the set at once. Its clip count, rms
+    and peak are still computed inline: the clipping rule needs them at
+    the dwell's end.
+  - The visit's first packet goes to an estimator thread (normal
+    priority). Its floor and strongest bins come back by the visit's
+    number.
+  - The hop thread learns the linearity rule from the visit when that
+    result is there, at the end of a following round, as of the sweep the
+    visit was taken in. The result is used at the hop's next visit, a
+    sweep away.
+  - A result not there after 4 rounds makes the visit one without a
+    verdict. Status `gain_est_late` counts them.
+  - The visit numbers count per tuner, so each tuner's last four visits
+    have four result slots whatever the tuner count. With one counter for
+    all tuners (633202b), a tuner's numbers stepped by the tuner count.
+    With 4 tuners, every visit of a tuner took the same slot, and with 2
+    tuners every other one did.
+    - A visit's result is never picked up in its own round: a 5 ms dwell
+      ends at the visit's first valid set, the one that is queued.
+    - So with 2 or 4 tuners the next visit overwrote it: on the fake, every
+      visit was late, even with no delay.
+    - With the counter per tuner, on the fake (results delayed 30 ms, 1.5
+      rounds): 0 late with 2, 4 and 5 tuners. Before, with 2 and 4
+      tuners, every visit was late (99 late in 8 sweeps of 12 visits). A result 50 ms late is still
+      in time; at 70 ms (3.5 rounds) it is past the 4-round limit.
+  - Measured on the Pi 5: worker S's `pi_sweepcost.py`, heimdall alone
+    (no kraken_doa), the whole plan, nothing to adjust.
+
+    | | Auto off | Auto on |
+    |---|---|---|
+    | Hop dwell, before | 7.12 ms | 7.67 ms (+0.55 ms a round, ~100 ms a sweep) |
+    | Hop dwell, after | 7.13 ms | 7.30 ms (+0.17 ms a round: the inline clip / rms loop and the copy, ~30 ms a sweep, < 1 %) |
+
+    - Sweeps: 3.94-4.02 s. The round is paced by the USB packets (21.0
+      ms), so the sweep total moves in steps.
+    - 10-sweep on / off differences: before +0.0 ... +1.8 %, mean +1.1 %;
+      after -1.3 ... +1.6 %, mean +0.5 %.
+    - heimdall: 12 % of a core with Auto off, 14.5-15 % with it on.
+    - Estimates late: 0.
+  - On the dev machine's KrakenSDR (the whole plan, a cold start), the
+    rule behaves as before: probes 8.2 a sweep, 7.65 pairs a sweep with
+    0.8 unbracketed, and 417.02 at the clipping rule's 22.9 on a busy band.
 - *What stays from the floor search*:
   - the brackets and the reliability gate (at most a quarter of the last 8
     brackets failed; a search ends after 4 failed in a row);
