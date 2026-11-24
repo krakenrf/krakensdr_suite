@@ -45,6 +45,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <map>
 #include <numeric>
 
@@ -73,6 +74,27 @@ void runs_of(const std::vector<uint8_t>& m, int n, std::vector<Run>& out, int cl
         if (!out.empty() && i - out.back().b - 1 <= close_gap) out.back().b = j;
         else out.push_back({i, j});
         i = j + 1;
+    }
+}
+
+// the burst search's box test of one frame at one scale (box S short bins, stride
+// S / 2): does any box sum pre[k0 + S] - pre[k0] exceed its threshold bt[j]? The
+// burst search's own comparisons, branch-free with the scale a constant (vectorised)
+template <int S>
+bool any_box_over_s(const double* pre, const double* bt) {
+    constexpr int ST = S / 2 > 1 ? S / 2 : 1;
+    constexpr int NB = (SPEC_N - S) / ST + 1;
+    int any = 0;
+    for (int j = 0; j < NB; j++) any |= pre[j * ST + S] - pre[j * ST] > bt[j] ? 1 : 0;
+    return any != 0;
+}
+bool any_box_over(int si, const double* pre, const double* bt) {
+    switch (si) {
+    case 0: return any_box_over_s<1>(pre, bt);
+    case 1: return any_box_over_s<4>(pre, bt);
+    case 2: return any_box_over_s<16>(pre, bt);
+    case 3: return any_box_over_s<64>(pre, bt);
+    default: return any_box_over_s<256>(pre, bt);
     }
 }
 
@@ -107,6 +129,7 @@ void mask_multiscale(const double* x, int n, double kappa1, double p, std::vecto
 // ------------------------------------------------------------------ floor
 
 void Detector::estimate_floor(const FrontEnd& fe, const Config& cfg) {
+    SC_PROF("det.floor");
     (void)cfg;
     const double fs = fe.fs;
     std::vector<float> m(NCELL, 0.0f), Fc(NCELL, 0.0f), nf(NCELL, 0.0f);
@@ -209,6 +232,7 @@ void Detector::estimate_floor(const FrontEnd& fe, const Config& cfg) {
 
 // band power series of short bins k0..k1: e_t = power / floor - 1
 void Detector::band_series(const FrontEnd& fe, int k0, int k1, std::vector<float>& e, double* sigma) const {
+    SC_PROF("det.band_series");
     k0 = std::clamp(k0, 0, SPEC_N - 1);
     k1 = std::clamp(k1, k0, SPEC_N - 1);
     double fl = 0.0;
@@ -236,6 +260,7 @@ void Detector::band_series(const FrontEnd& fe, int k0, int k1, std::vector<float
 // --------------------------------------------------------------- measure
 
 bool Detector::measure(const FrontEnd& fe, const Region& rg, Cand& c, const Config& cfg) {
+    SC_PROF("det.measure");
     (void)cfg;
     const double df = fe.fs / LONG_N;
     const int i0 = std::max(0, (rg.a - 1) * BASE_BINS), i1 = std::min(LONG_N - 1, (rg.b + 2) * BASE_BINS - 1);
@@ -278,6 +303,7 @@ bool Detector::measure(const FrontEnd& fe, const Region& rg, Cand& c, const Conf
 }
 
 bool Detector::spectro_stats(const FrontEnd& fe, Cand& c, bool continuous) {
+    SC_PROF("det.spectro_stats");
     if (fe.nframes < 4) return false;
     const double dfs = fe.fs / SPEC_N;
     const double flo = c.det.offset_hz - 0.5 * c.det.bw_hz, fhi = c.det.offset_hz + 0.5 * c.det.bw_hz;
@@ -378,6 +404,7 @@ bool Detector::spectro_stats(const FrontEnd& fe, Cand& c, bool continuous) {
 
 void Detector::burst_search(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& cont,
                             std::vector<Cand>& out) {
+    SC_PROF("det.burst_search");
     const int T = fe.nframes;
     if (T < 8) return;
     const double fs = fe.fs, dfs = fs / SPEC_N;
@@ -450,26 +477,67 @@ void Detector::burst_search(const FrontEnd& fe, const Config& cfg, const std::ve
             boxthr[si].push_back(u == 0 ? 1e300 : double(thr[si][size_t(u)]) * s);
         }
     }
-    std::vector<double> pre(SPEC_N + 1);   // double: a strong bin must not swamp its neighbours' sums
-    std::vector<float> rrow(SPEC_N);
+    // per frame the prefix sums of its ratios (double: a strong bin must not swamp its
+    // neighbours' sums), then every box against its threshold. A prefix sum is one long
+    // chain of dependent additions: FR frames run side by side (independent chains the
+    // CPU overlaps; each frame's sums are added in the same order as one at a time)
+    constexpr int FR = 4;
+    std::vector<double> preg(size_t(FR) * (SPEC_N + 1));
+    std::vector<float> rrowg(size_t(FR) * SPEC_N);
     std::vector<uint8_t> hitbin(SPEC_N, 0);
-    for (int t = 0; t < T && hits.size() < 400000; t++) {
-        const float* row = fe.spec.data() + size_t(t) * SPEC_N;
-        for (int k = 0; k < SPEC_N; k++) rrow[size_t(k)] = masked[size_t(k)] ? 1.0f : row[k] * inv_floor[size_t(k)];
-        pre[0] = 0.0;
-        for (int k = 0; k < SPEC_N; k++) pre[size_t(k) + 1] = pre[size_t(k)] + rrow[size_t(k)];
-        for (int si = 0; si < NS; si++) {
-            const int s = scales[si], stride = std::max(1, s / 2);
-            const double* bt = boxthr[si].data();
-            int j = 0;
-            for (int k0 = 0; k0 + s <= SPEC_N; k0 += stride, j++) {
-                if (pre[size_t(k0 + s)] - pre[size_t(k0)] > bt[j]) {
-                    hits.push_back({t, k0, k0 + s - 1});
-                    for (int k = k0; k < k0 + s; k++)
-                        if (!masked[size_t(k)]) hitbin[size_t(k)] = 1;
+    {
+    SC_PROF("det.burst.frames");
+    for (int t0 = 0; t0 < T && hits.size() < 400000; t0 += FR) {
+        const int g = std::min(FR, T - t0);
+        for (int q = 0; q < g; q++) {
+            const float* row = fe.spec.data() + size_t(t0 + q) * SPEC_N;
+            float* rrow = rrowg.data() + size_t(q) * SPEC_N;
+            for (int k = 0; k < SPEC_N; k++) rrow[k] = masked[size_t(k)] ? 1.0f : row[k] * inv_floor[size_t(k)];
+        }
+        if (g == FR) {
+            static_assert(FR == 4, "the interleaved prefix below is written for 4 frames");
+            const float *r0 = rrowg.data(), *r1 = r0 + SPEC_N, *r2 = r1 + SPEC_N, *r3 = r2 + SPEC_N;
+            double *p0 = preg.data(), *p1 = p0 + (SPEC_N + 1), *p2 = p1 + (SPEC_N + 1), *p3 = p2 + (SPEC_N + 1);
+            double a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0;
+            p0[0] = p1[0] = p2[0] = p3[0] = 0.0;
+            for (int k = 0; k < SPEC_N; k++) {
+                a0 = a0 + r0[k];
+                p0[k + 1] = a0;
+                a1 = a1 + r1[k];
+                p1[k + 1] = a1;
+                a2 = a2 + r2[k];
+                p2[k + 1] = a2;
+                a3 = a3 + r3[k];
+                p3[k + 1] = a3;
+            }
+        } else {
+            for (int q = 0; q < g; q++) {
+                const float* rrow = rrowg.data() + size_t(q) * SPEC_N;
+                double* pre = preg.data() + size_t(q) * (SPEC_N + 1);
+                pre[0] = 0.0;
+                for (int k = 0; k < SPEC_N; k++) pre[k + 1] = pre[k] + rrow[k];
+            }
+        }
+        for (int q = 0; q < g && hits.size() < 400000; q++) {
+            const int t = t0 + q;
+            const double* pre = preg.data() + size_t(q) * (SPEC_N + 1);
+            for (int si = 0; si < NS; si++) {
+                const int s = scales[si], stride = std::max(1, s / 2);
+                const double* bt = boxthr[si].data();
+                // (the same comparisons without a branch first - a loop that vectorises;
+                // hits are rare, the loop below then finds them)
+                if (!any_box_over(si, pre, bt)) continue;
+                int j = 0;
+                for (int k0 = 0; k0 + s <= SPEC_N; k0 += stride, j++) {
+                    if (pre[size_t(k0 + s)] - pre[size_t(k0)] > bt[j]) {
+                        hits.push_back({t, k0, k0 + s - 1});
+                        for (int k = k0; k < k0 + s; k++)
+                            if (!masked[size_t(k)]) hitbin[size_t(k)] = 1;
+                    }
                 }
             }
         }
+    }
     }
     if (hits.empty()) return;
     // masked bins (a detection inside a burst hump: ADS-B's carrier line) don't split a run
@@ -562,6 +630,7 @@ void Detector::burst_search(const FrontEnd& fe, const Config& cfg, const std::ve
 // ------------------------------------------------------------ band filling
 
 bool Detector::band_fill(const FrontEnd& fe, const Config& cfg, const std::vector<Cand>& found, Cand& c, int force) {
+    SC_PROF("det.band_fill");
     const double fs = fe.fs, df = fs / LONG_N;
     for (const Cand& f : found)
         if (f.det.bw_hz >= 0.6 * fs) return false;
@@ -884,6 +953,7 @@ void Detector::segment(const FrontEnd& fe, const Config& cfg, const float* rr, i
 // band's bins with 10 % raised-cosine edges, one inverse FFT of LONG_N / D points per
 // block, the overlap-save reach dropped); the kept samples of the blocks in blks, in order
 void Detector::band_power(const FrontEnd& fe, double lo_hz, double hi_hz, int D, const std::vector<int>& blks, std::vector<float>& p) {
+    SC_PROF("det.tone.band_power");
     const double df = fe.fs / LONG_N;
     const int M = LONG_N / D, skip = LONG_OV2 / D, keep = LONG_HOP / D;
     tone_fft_.init(M, false);
@@ -931,6 +1001,7 @@ void Detector::band_power(const FrontEnd& fe, double lo_hz, double hi_hz, int D,
 // The pair becomes one detection over the union band; pieces inside its band no
 // stronger than its tones (+3 dB) and on only while it is (or continuous like it) go.
 void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& out) {
+    SC_PROF("det.tone_pairs");
     (void)cfg;
     const int T = fe.nframes;
     if (T < 16 || out.size() < 2) return;
@@ -951,8 +1022,24 @@ void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vect
     };
     static const int DS[] = {100, 50, 25, 20, 10, 5, 4, 2};
     int tests = 0;
-    std::vector<float> pa, pb;
+    // a detection's sample-level band power for a (decimation, blocks) choice, computed
+    // once per round (continuous channels tested against several partners share both)
+    struct BandPower {
+        size_t k;
+        int D;
+        std::vector<int> blks;
+        std::vector<float> p;
+    };
+    std::deque<BandPower> bp_cache;   // (a deque: the references handed out stay valid)
     for (int guard = 0; guard < 16; guard++) {
+        bp_cache.clear();
+        auto power_of = [&](size_t k, double lo, double hi, int D, const std::vector<int>& blks) -> const std::vector<float>& {
+            for (const BandPower& e : bp_cache)
+                if (e.k == k && e.D == D && e.blks == blks) return e.p;
+            bp_cache.push_back({k, D, blks, {}});
+            band_power(fe, lo, hi, D, blks, bp_cache.back().p);
+            return bp_cache.back().p;
+        };
         std::vector<size_t> ord(out.size());
         std::iota(ord.begin(), ord.end(), size_t(0));
         std::sort(ord.begin(), ord.end(), [&](size_t a, size_t b) { return out[a].det.peak_db > out[b].det.peak_db; });
@@ -980,6 +1067,7 @@ void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vect
                 if (std::min(ahi, bhi) - std::max(alo, blo) > 0.0) continue;   // overlapping: not two tones
                 if (tests >= 48) break;
                 // burst level
+                SC_PROF("det.tone.pair");
                 const std::vector<uint8_t>& onA = mask_of(ia);
                 const std::vector<uint8_t>& onB = mask_of(ib);
                 U.assign(size_t(T), 0);
@@ -1017,21 +1105,27 @@ void Detector::merge_tone_pairs(const FrontEnd& fe, const Config& cfg, std::vect
                 for (int d : DS)
                     if (fs / d >= 1.25 * wmax) { D = d; break; }
                 std::vector<std::pair<int, int>> bc;
-                for (int b = 0; b < fe.nblocks; b++) {
-                    int n = 0;
+                SC_PROF("det.tone.sample_level");
+                {
+                    // packet frames per long block (a frame's centre t x hop + SPEC_N / 2 lies
+                    // in block b's kept samples [b x LONG_HOP, (b + 1) x LONG_HOP))
+                    std::vector<int> nper(size_t(std::max(fe.nblocks, 0)), 0);
                     for (int t = 0; t < T; t++) {
-                        const double s = double(t) * fe.hop + 0.5 * SPEC_N;
-                        n += U[size_t(t)] && s >= double(b) * LONG_HOP && s < double(b + 1) * LONG_HOP;
+                        if (!U[size_t(t)]) continue;
+                        const int64_t s = int64_t(t) * fe.hop + SPEC_N / 2;
+                        const int64_t b = s / LONG_HOP;
+                        if (b < fe.nblocks) nper[size_t(b)]++;
                     }
-                    if (n) bc.push_back({-n, b});
+                    for (int b = 0; b < fe.nblocks; b++)
+                        if (nper[size_t(b)]) bc.push_back({-nper[size_t(b)], b});
                 }
                 std::sort(bc.begin(), bc.end());
                 std::vector<int> blks;
                 for (size_t q = 0; q < bc.size() && q < 4; q++) blks.push_back(bc[q].second);
                 std::sort(blks.begin(), blks.end());
                 tests++;
-                band_power(fe, alo, ahi, D, blks, pa);
-                band_power(fe, blo, bhi, D, blks, pb);
+                const std::vector<float>& pa = power_of(ia, alo, ahi, D, blks);
+                const std::vector<float>& pb = power_of(ib, blo, bhi, D, blks);
                 // smoothed over the tones' resolution, gated to the packets
                 const int L = std::max(1, int(std::lround(fs / D / wmax)));
                 double n = 0, xa = 0, xb = 0, qa = 0, qb = 0, cab = 0;
@@ -1158,7 +1252,10 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
 
     // continuous detection: the whole band against the floor ...
     std::vector<Region> regs;
-    segment(fe, cfg, r_.data(), 0, NBASE - 1, 1.0f, regs);
+    {
+        SC_PROF("det.segment_band");
+        segment(fe, cfg, r_.data(), 0, NBASE - 1, 1.0f, regs);
+    }
     // ... and inside each wide region against floor x the region's own
     // plateau: a narrow signal on a wide one (a carrier on a DAB block, NFM
     // next to a broadband hump) is a signal of its own when it is narrow,
@@ -1166,6 +1263,7 @@ void Detector::detect(const FrontEnd& fe, const Config& cfg, std::vector<Cand>& 
     // carrier) and has no mirror image about it (not FSK tones)
     std::vector<Region> extra, subs;
     for (Region& g : regs) {
+        SC_PROF("det.sub_regions");
         const int W = g.b - g.a + 1;
         if (W < 64 || g.comb) continue;   // (a comb's lines are the signal itself)
         const int sub = std::max(8, W / 8);

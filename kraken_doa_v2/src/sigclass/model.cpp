@@ -41,6 +41,7 @@
 // probabilities = softmax(last layer / temperature).
 
 #include "sigclass/sigclass.hpp"
+#include "sc_prof.hpp"
 
 #include <algorithm>
 #include <array>
@@ -542,6 +543,7 @@ void net_forward(const Net& nt, const float* x, std::vector<float>& probs) {
 }  // namespace
 
 bool Model::predict(int view, const float* x, std::vector<float>& probs) const {
+    SC_PROF("model.predict");
     probs.clear();
     if (!has_view(view) || !x) return false;
     const ViewModel& vm = impl_->views[view];

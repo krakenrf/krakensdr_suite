@@ -5,6 +5,7 @@
 
 #include "sigclass/sigclass.hpp"
 #include "sc_util.hpp"
+#include "sc_prof.hpp"
 
 #include <map>
 #include <string>

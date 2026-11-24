@@ -474,10 +474,28 @@ no other dependency; the same code runs in kraken_doa and in
   3), the frame groups < 0.05 ms; model (1082-192-96-C) 0.05 ms. A Pi 5 is
   an ESTIMATE, not measured: 3-4x this machine per core -> ~70-90 ms fixed,
   ~4-6 ms per narrow signal, ~15 ms per wide one
+- **Known bands** (S1, 2026-11-24; `analyze(..., centre_hz, known)`, opt-in,
+  nullptr = as before): the caller passes the bands of signals whose class
+  it already knows (`KnownBand {lo_hz, hi_hz, view}`, absolute RF with a
+  `centre_hz`, else offsets). A detection whose band overlaps one by >= half
+  the union is reported without features and probabilities (`probs` empty,
+  `best` -1, `det.view` = the band's view): no channelizer, features, model
+  or second look. The detector runs as before - everything up to the views
+  is unchanged, so the detection's offset, width, SNR, duty, bursty and
+  band-fill flags are the detector's own. `Timing::known` counts them. Not
+  used with `features_out` (training rows stay complete). The service's
+  policy is S1 under *Runtime*
+- **Profiling scopes** (`src/sigclass/sc_prof.hpp`, 2026-11-24): `SC_PROF("name")`
+  in the stages; compiled in only with `-DSIGCLASS_PROF` (otherwise empty
+  macros) - the fine profile of the speed work
 - **Tool** `tools/sigclass_tool.cpp`: `layout`, `features`, `classify
   [--track]` (tracks with lo_hz / hi_hz), `bench`, `view`, `forward`,
   `selftest`; `make sigclass-tool` or the one-line g++ in its header.
-  `SIGCLASS_DEBUG_FILL=1` prints the band-fill test's numbers to stderr
+  `SIGCLASS_DEBUG_FILL=1` prints the band-fill test's numbers to stderr.
+  `classify --track --settled 1` emulates the service's S1 on the tool's
+  tracker (the snapshots of a file are its looks; the sure levels from the
+  model's metadata); each line then carries `known`. `--settled 0` (the
+  default) prints byte for byte what it printed before
 - **Acceptance** (the core author's sets, re-run after every detector
   change, 2026-11-20): Pd 1.00 unchanged for every type and SNR (carriers,
   2- / 4-FSK, 25 k - 1.5 MHz noise blocks, 1 ms bursts, ADS-B-like pulses,
@@ -1188,7 +1206,11 @@ to win.
   averaged and stacked models) and `ds_2026-11-22/genB/` (the generation-B
   rows)
 
-### Investigation (2026-11-24): can a look be made faster? Yes - prototypes on branch `sigid-speed`, nothing adopted
+### Investigation (2026-11-24): can a look be made faster? Yes - P1-P5 adopted, S1 merged (see *Adopted* at the end)
+
+(Written before the merge as the investigation's report; what was adopted,
+and the measurements of the merged code, are in *Adopted (2026-11-24, the
+speed merge)* at the end of this section.)
 
 The question (Carl): "Is there any way to further optimize the
 classification speed?", with the MLP kept as it is. Two meanings: the CPU
@@ -1265,12 +1287,177 @@ runs both alternately on 11 snapshots, prints the stage tables) is in
 `~/.cache/kraken_sigclass/speed_2026-11-24/pkg/` (`./run_pi.sh`; eight of
 its snapshots are cut from own captures: local use only).
 
-**Open decision.** Recommended by the worker and the orchestrator: adopt
+**Open decision (then).** Recommended by the worker and the orchestrator: adopt
 P1, P2, P4, P5 (same answers); P3 with them if 0.04 % of low-confidence
 guesses moving is accepted (a different compiler moves more: the shipped
 core built with clang 14 instead of GCC 11 changes 1 of 1,150 labels); S1
 only on Carl's word, after a run in a receiver and on top of the
 multi-tuner rules.
+
+**Adopted (2026-11-24, the speed merge, branch `sigid-speedmerge`).** Carl:
+"merge sigid-speed". Merged: the profiling scopes, P1-P5 and S1 (the core's
+known bands and the service's policy, re-made on the multi-tuner look loop
+- *Runtime*, Settled tracks). Measured against the core / service of
+6eb5446 (the Signal ID branch before the merge); scripts and outputs in job
+scratch `sigid3/w6/`:
+
+- **The merge**: the core commits merged without a conflict next to the
+  tracker's `erase()` and the burst-hump guard (no core file changed on both
+  sides except `sigclass.hpp` / `tracker.cpp`, in different places); one
+  conflict, the service's look: the prototype took the TUNER's tracker
+  before the 9751af3 loop's analysis - re-made per band (*Runtime*, Settled
+  tracks), with two rules the prototype did not have: a track that may not
+  survive the look's expiry or the ceiling is classified, and the refresh
+  count moves and restarts with its tracker
+- **Same answers** (the acceptance set: 250 captures of the synthetic
+  regression set, every 8th, and all 36 own 2.4 MS/s captures of the
+  library - 7,399 snapshots, 168,448 detections, 275,151 track rows of
+  `classify --track`; `features` on the 250 + the 29 short own captures:
+  11,397 rows x 3,134 values): the merged core with P3 taken out (a204743
+  reverted in a scratch copy) is BYTE-IDENTICAL to 6eb5446's - outputs and
+  features. With P3 (as merged): every feature row moves in its last bits
+  (median relative difference 2e-7; the largest |df| 1.94, a choice flip in
+  the symbol group), 64 of 168,448 detection labels differ (0.038 %), 77 of
+  275,151 track labels; 12 detections and 20 track rows cross their class's
+  sure level (`min_p` / `min_confidence`) in either direction, and NO sure
+  label changes its class; max |dp| 0.24. The tool with `--settled 0` prints
+  byte for byte what the merged core's tool prints
+- **The whole merged core against 6eb5446** (S1 is the service's; offline
+  it is emulated with `classify --settled 1`):
+
+  | | 6eb5446 | merged | merged, S1 emulated |
+  |---|---|---|---|
+  | synthetic regression set (2,000 captures, 6,255 signals): top-1 / false labels | 4109 / 129 | 4109 / 129 (1 carrier gained, 1 ACARS lost) | 4113 / 129 (+4 FM broadcast) |
+  | real recordings, public decoder-confirmed: top-1 | 199 / 336 | 199 / 336 (0 of 663 rows differ) | 201 / 336 |
+  | own captures: top-1; sure right / wrong | 115 / 123; 106 / 0 | 115 / 123; 106 / 0 | 116 / 123; 109 / 0 |
+
+  The 4 rows S1 moves in the evaluation: two FM broadcast rows from
+  "unknown PSK" to FM (right), an own DMR row from "none" to DMR (right),
+  an unconfirmed ISM row from a SURE wrong "LoRa" to "none" - no sure and
+  wrong label added, one removed. (The synthetic captures are 2 s: S1 can
+  only act in their 4th snapshot)
+- **Speed of a look, P1-P5** (the investigation's package, `run_pi.sh`
+  with the two cores; thread CPU time, 6 rounds x 8 looks per file,
+  alternating, pinned to the idlest core; i7-11800H at load 7.5-8.9 - the
+  machine was shared; ms):
+
+  | snapshot (detections) | 6eb5446 min / median | merged min / median | saving (min) |
+  |---|---|---|---|
+  | noise (0) | 22.9 / 26.5 | 17.5 / 20.5 | 24 % |
+  | one narrow (1) | 24.3 / 28.6 | 18.9 / 22.4 | 22 % |
+  | DVB-T (1, band-filling) | 35.4 / 41.3 | 28.6 / 33.3 | 19 % |
+  | ISM 433 (8) | 67.0 / 75.4 | 51.7 / 60.0 | 23 % |
+  | DMR 456.8 (16) | 54.9 / 63.1 | 43.7 / 50.5 | 20 % |
+  | site 416.5 (20) | 78.5 / 90.5 | 66.4 / 76.0 | 15 % |
+  | busy 142.3 (25) | 108.0 / 129.4 | 86.8 / 101.9 | 20 % |
+  | P25 499.8 (32) | 95.2 / 108.7 | 79.9 / 91.6 | 16 % |
+
+  The detector 10-24 -> 5-16 ms a look (P1, P2, P5), the features 14-20 %
+  less on the busy snapshots (P3, P4); the front end, the model and the
+  tracker unchanged. On top of
+  this S1 skips the views, features and model of the settled tracks'
+  detections in 3 looks of 4 (*S1 in a receiver* below)
+- **The strict debug playback** (28 entries, 40 s each, the TEST receiver;
+  S1 set by `KRAKEN_SIGCLASS_SETTLED`, the two lanes side by side, three
+  pairs): S1 off 28 / 28, 28 / 28, 28 / 28 (24, 23, 25 sure); S1 on 27 / 28
+  (26 sure; `uat-five` WRONG: the entry's last state had no track at all),
+  28 / 28 (26 sure), 28 / 28 (27 sure). No sure label of another class in
+  any run. The UAT loss did not come back in two more full runs nor in a
+  traced UAT run (its label held in every state); momentary empty lists
+  happen without S1 too (POCSAG 2-3 of 22-25 states, a 406 MHz beacon 1) -
+  but the acceptance said 28 of 28, and one S1 run did not keep it
+- **S1 at the service's cadence, offline** (`classify --settled 0 / 1` on
+  the six own long captures, a 0.5 s look every 2.5 s, 120-240 looks each,
+  the same IQ): 9,275 of 27,630 detections known (25-48 % per capture); the
+  whole run's CPU 14-33 % less (busy 142.3 MHz 11.3 -> 8.0 s, P25 9.5 ->
+  6.3 s, the 416.5 MHz site 21.4 -> 16.7 s; the front end and detector are
+  in both); of 23,280 label-looks (shown labels x looks) 98.0 % the same,
+  71 of another class, 385 missing, 268 extra. The 71 are on the clipped
+  416.5 MHz capture (17:30): S1 held a sure label where every-look
+  classification had drifted - in 60 label-looks S1's was SURE (3 the
+  other way). The worst: an MPT1327 control channel (416.670 MHz, MPT1327
+  in coherent mode live) held as a sure "DMR" 0.97 -> 0.80 for 25 looks
+  while S1 off showed DMR 0.62 -> 0.45, then MPT1327 from look 70. The
+  cause is S1's design: a refresh look moves the frozen evidence like ONE
+  ordinary look (the tracker's 0.1 EWMA), so a label the next looks would
+  revise moves 4 x slower - and stays known while it stays sure
+- **S1 in a receiver** (two TEST receivers side by side on the same IQ at
+  the same time, each with its own fake heimdall streaming the own
+  recordings from the same positions - worker 2's bank; lane A S1 off,
+  lane B S1 on; 150 s a job: every recording in coherent mode and in
+  wideband scan on the middle tuner, independent mode with the recordings
+  on the tuners, the user's layout; then the same matrix with S1 off in
+  both lanes for the spread of two S1-off runs):
+
+  | per mode: signals published in lane A / B; of their union labelled differently or in one lane only | S1 off / S1 on | S1 off / S1 off |
+  |---|---|---|
+  | coherent (9 recordings) | 87 / 85; 14 of 93 (15.1 %) | 81 / 80; 8 of 84 (9.5 %) |
+  | wideband scan (9) | 441 / 436; 98 of 487 (20.1 %) | 448 / 432; 91 of 485 (18.8 %) |
+  | independent (3 layouts) | 118 / 110; 26 of 127 (20.5 %) | 100 / 99; 31 of 115 (27.0 %) |
+  | labelled with the lane's coherent class: wideband scan / independent / the user's layout (A; B) | 79 of 91, 75 of 91, 11 of 12; 81 of 95, 73 of 95, 10 of 15 | 75 of 91, 67 of 91, 13 of 17; 77 of 88, 70 of 88, 11 of 13 |
+  | sure labels of another class than the other lane's / the lane's coherent class | 1 and 1 / 1 (lane A) and 0 | 0 and 1 / 0 and 1 |
+  | look period, coherent: P25 499.8 / busy 142.3 / VOR 114.5 / 416.5 / 418.0 MHz (ms) | 2155 -> 1398 (-35 %) / 2473 -> 1732 (-30 %) / 1947 -> 1112 (-43 %) / 1866 -> 1564 (-16 %) / 1988 -> 1565 (-21 %) | 2186 / 2186, 2407 / 2379, ... (within 1 %) |
+  | look period summed per mode: coherent / wideband scan / independent | -17.8 % / -15.9 % / -18.3 % | +0.7 % / -0.8 % / +3.2 % |
+  | the sigclass thread's CPU | 3.8-4.1 % / 3.5-4.0 % | 3.3-4.1 % both |
+  | first label of a signal: per job (>= 5 signals) the median over the signals both lanes label, lane B minus lane A | -2.5 .. +3.2 s (13 of 17 jobs within 0.2 s) | -5.6 .. +5.2 s (11 of 17 within 0.2 s) |
+
+  Two overlapping tuners (INV-K's run: independent mode, tuners 0 / 1 on
+  499.800 / 499.850 MHz with the same recording, 120 s, side by side): S1
+  off 32 signals, 7 id / 7 tuner / 3 class changes; S1 on 34, 6 / 5 / 3. The
+  replay of worker 5's live clipped wideband stream (416.5 MHz, 160 s): S1
+  off / on 58 / 56 signals, 38 the same, 5 another class, 28 in one lane;
+  periods 3264 -> 2763 ms (two S1-off runs on the same replay: 55 / 56,
+  39 the same, 5 another class, 23 in one lane; 2985 / 2976 ms). S1 shortens the period on a busy band
+  by 30-43 % in coherent mode and 16-24 % with tuners in turn (the share
+  stays 4 %, so the looks per band go up as much); it does not change the
+  time to a signal's first label (that is the capture round, not the
+  analysis). The coherent difference between the lanes (14 signals) is
+  above the one S1-off pair's (8) - one pair each, small numbers
+- **Live on the KrakenSDR** (the orchestrator's two plans, 416.5 MHz, gain
+  29.7 dB, a build of this branch with the real 8091 / 8092, 17:07-17:44
+  NZDT, S1 off then on, back to back; receive only, no bias tee - the mask
+  0 at start and end, no change we did not make):
+
+  | | before the merge (the orchestrator, earlier that day) | merged, S1 off | merged, S1 on |
+  |---|---|---|---|
+  | coherent through CH0: signals labelled >= 30 % of the time | 44 | 34 | 37 |
+  | wideband scan: tracks a state on tuner 2 / signals labelled | 33.8 / 110 | 20.2 / 52 | 15.2 / 31 |
+  | ... of the coherent ones with the same class | 26 of 44 | 8 of 34 | 6 of 37 |
+  | independent: coherent signals inside the panes with the same class | 29 of 38 | 6 of 30 | 10 of 32 |
+  | bracketed (coherent CH2 -> wideband scan -> coherent CH2): labelled in coherent 1 / 2 | 39 / 41 | 23 / 28 | 19 / 22 |
+  | ... the same in both coherent phases / of those the same in wideband scan | 23 / 20 | 9 / 7 | 9 / 8 |
+  | look period, coherent CH0 / wideband scan / independent (median, ms) | 5792 / 2433 / 2870 | 2360 / 2300 / 1893 | 2165 / 1660 / 1449 |
+  | look period, bracketed: coherent CH2 / wideband scan / coherent CH2 | 4180 / 2337 / 3992 | 3702 / 2128 / 4114 | 3514 / 1856 / 3670 |
+  | the sigclass thread's CPU per phase | | 3.5-4.1 % | 3.6-4.1 % |
+
+  The site was far quieter in the evening: coherent mode labelled 34-37
+  signals through CH0 (44-55 earlier) and 19-28 through CH2 (39-41), most
+  of them DMR channels on air 30-60 % of the time - the kind wideband scan
+  and independent mode (one look per band a round) catch least. The
+  live numbers therefore say "it runs" (labels in every mode, the share
+  held, the periods), not "the merge changed the labels"; the offline and
+  fake-receiver comparisons on the same IQ above and below are the ones
+  that do. S1 shortened the multi-tuner periods by 13-28 % and the coherent
+  ones by 5-11 % here (the site's settled share is small: DMR p is often
+  under its 0.82 sure level)
+- **The acceptance for S1 on by default** (stated before the
+  measurements), item by item: (1) the strict playback keeps 28 of 28 with
+  the same sure labels - NOT met: 27 of 28 in one of three S1 runs (no sure
+  label of another class in any); (2) no sure-and-wrong label that S1 off
+  does not have - met in the real-recording evaluation (S1 removes one)
+  and in the fake receiver's matrix (0), NOT met on the same IQ at the
+  service's cadence (the clipped 416.5 MHz capture: an MPT1327 control
+  channel held as a sure "DMR" for 25 looks); (3) the A/B counts per mode
+  within what two S1-off runs differ by - wideband scan and independent
+  mode within, coherent mode above (14 against 8 signals, one pair each);
+  (4) the period on a busy band at least 20 % shorter - met (30-43 % in
+  coherent mode, 16-24 % with tuners in turn). So: **P1-P5 are on (they are
+  the core); S1 is merged but OFF** (`SETTLED_SKIP = false` in
+  `sigclass_service.cpp`; `KRAKEN_SIGCLASS_SETTLED=1` turns it on for
+  tests). With it off the service passes `analyze()` an empty known list
+  and the look is the merged core's full look. Before S1 is tried again:
+  a refresh look weighted as the looks it stands for (*Runtime*, Settled
+  tracks), then this acceptance again
 
 ### Results (2026-11-20, phase 5, the weights still shipped)
 
@@ -1579,6 +1766,63 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   page ignores it). No thread priority change: the code
   base has no portable per-thread helper (`kproc::lower_own_priority` lowers
   the whole process on Windows), so the budget is the only limit
+- **Settled tracks (S1, 2026-11-24; `SETTLED_SKIP` - OFF by default: its
+  acceptance failed, see *Investigation: can a look be made faster?*,
+  Adopted)**: when on, before each look the
+  band's settled tracks go to `analyze()` as known bands (*Core*, Known
+  bands) - their detections are found and tracked but not channelized,
+  featured or classified; each is still classified in one look of
+  `KNOWN_REFRESH` (4) of its band, so its evidence keeps moving. A look
+  then costs little more than the detector, the budget's period shrinks
+  with it (the CPU share stays 4 %), and new signals get looks sooner.
+  `KRAKEN_SIGCLASS_SETTLED=0 / 1` overrides the default (read once, when
+  the worker starts: A/B tests); the model-loaded line says which. The
+  rules (`known_bands` in the worker, its comment has the reasoning):
+  - per BAND: the band's tracker (the one that moves with the band,
+    `rules::regroup`; tuners on one band share it)
+  - settled: >= `KNOWN_HITS` (3) hits, a class, p >= its class's sure level
+    (`min_p`, else `min_confidence`, else 0.7). A guess is classified in
+    every look (S1b - every track with 3 hits - was rejected: 5 % of the
+    labels moved and the playback lost a sure label)
+  - only a track that surely survives the look: the expiry inside the
+    update (tuners in turn: the clock moves at most `EXPIRE_STEP_S` a look;
+    coherent: by the wall time since the previous look) and the 180 s
+    ceiling, each with `KNOWN_MARGIN_S` (10 s) to spare - else its detection
+    would come back as a new track without evidence
+  - the refresh turn: classified when (looks + its id) % 4 == 0; `looks`
+    counts the tracker's looks, moves with it (a regroup, a lead change)
+    and restarts with it (a mode change, a disable, the calibration pause,
+    a fresh tracker for a slot - their tracks go too). So each track is
+    classified in exactly one of any 4 consecutive looks of its band,
+    whatever the restarts, regroupings and lead changes; the id spreads a
+    band's refreshes over its looks
+  - what a known detection carries: the detector's measurements and the
+    track's view, no probabilities. The tracker's rules read only those
+    and the hits - none reads a detection's class: the hump guard
+    (bursty, widths), the core rule (the width, the energy from SNR x
+    width x duty), the pedestal rule (SNR), the merges and the absorption
+    (hits, bursty, band-fill, the evidence as it is) see the same detection.
+    The track is SEEN as without S1: hits, last seen (the expiry: 45 s and
+    6 missed looks), `updated` (the ceiling's clock; fresh - the age INV-K's
+    sent view carries), SNR (INV-K's 3 dB margin, the duplicate rule's
+    order), band, view; ids follow the core's track ids (the book is
+    unchanged). Only its class evidence stands still between its refresh
+    looks: class, p and alternatives are those of its latest classified
+    looks (the duplicate rule's "a view with a class first" reads that
+    class). A detection may still land on another track than the one whose
+    band it matched, or start a new one: that track gets a hit without
+    evidence, and no label from it until a classified look (a new track has
+    < 3 hits: its next look is classified)
+  - why it is off: a refresh look moves the frozen evidence like ONE
+    ordinary look (the tracker's 0.1 EWMA), so a sure label that the next
+    looks would revise moves 4 x slower and stays settled while it stays
+    sure (an own capture at the service's cadence: an MPT1327 control
+    channel held as a sure "DMR" for 25 looks), and one of three strict
+    playback runs lost a
+    label. What would have to change before it is tried again (not done):
+    a refresh look weighted as the looks it stands for (1 - 0.9^k for k
+    looks since the last classified one - the tracker would need that k
+    from the caller), then the same acceptance again
 - **Trackers**: one per band (`TunerTracks`; coherent mode uses [0] only;
   tuners in turn: in the slot of the tuner standing for the band - the
   lowest-numbered one on it -, and it MOVES with the band
@@ -1712,7 +1956,16 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
     the oldest (`turn_seq`: its latest look; a new band's turn counts from
     its start, behind every band looked before it); with nothing retuned
     this is the old round robin exactly. Ties in either pass: the band
-    whose latest look is older, then cursor order. Until
+    whose latest look is older, then cursor order - except two bands BOTH
+    waiting for their first look tied in pass (2) (their tokens spent, both
+    new since the same look): the one that began waiting first goes first,
+    as in pass (1). Before (until the speed merge, 2026-11-24) the older
+    latest look decided there too, and a band whose lead had just taken
+    over another tuner's new band overtook a band waiting since before it a
+    second time (INV-C; the rules test's S1 model found it with seed 99, 1
+    random scenario of 6,000 - the same scenario without S1 at a 45 ms
+    analysis too). After a restart every band waits from the same moment,
+    so INV-H's order is unchanged. Until
     2026-11-24 a first look always won and moved the cursor: one tuner
     retuned every 2.8 s (the saved-frequency scanner's dwell, a user
     stepping a pane, the assistant) took every other look - 120 s, 5
@@ -3036,4 +3289,48 @@ harness scripts are kept in `~/.cache/kraken_sigclass/sigid3_2026-11-24/`):
   variant, generic RTL-SDR mode on hardware, Windows / macOS builds of the
   new code (no MinGW / zig here; portable C++20 by reading), the 200-track
   cap together with the sent-ids memory (by code only), the service half of
-  the speed prototype S1 on top of these rules
+  the speed prototype S1 on top of these rules (since done: *The speed
+  merge* below)
+
+### The speed merge (2026-11-24, branch `sigid-speedmerge`)
+
+`sigid-speed` (P1-P5, S1; base 9751af3) merged into this branch; the
+measurements are in *Investigation: can a look be made faster?*, Adopted.
+What else was tested, and how (scripts in job scratch `sigid3/w6/`):
+
+- **The rules test** (`tools/sigclass_rules_test.cpp`): S1 added to its
+  model (`SimOpt::s1`: a band's look costs 0.35 x the analysis except in one
+  look of four - the analysis then varies per look and band; the schedule
+  reads only its duration). Its L3 check is a ratio to the steady bands,
+  which S1 speeds up while a swapped band stays bound by its retunes - with
+  S1 a swapped band must keep >= 80 % of its looks without S1 instead (0.3 s
+  analysis, the swap +-20 %: 28 / 24 with S1 against 28 / 26; the steady
+  bands 85 against 35). The S1 runs found an INV-C violation (seed 99, one
+  random scenario of 6,000; the same scenario WITHOUT S1 at a 45 ms analysis
+  too): fixed in `pick_band` (*Runtime*, Which band: a tie of two first
+  looks in the turn pass goes first come first served). Then: seeds 99,
+  12345, 1, 777, 20261124, 4242 all passed (every mutant caught); the random
+  schedule alone, with and without S1, 50 more seeds (90-114, 200-224): 0
+  violations; the test under ASan + UBSan + `_GLIBCXX_DEBUG` (20,000 rounds,
+  seed 99) passed. A strictly periodic swap without jitter can lock in at
+  one analysis time or another with or without S1 (0.3 s without: 1 look;
+  0.051 s with: 6) - not in the directed set, as before
+- **Sanitizers on the service** (the review harness `r1/svc_harness.cpp`
+  against this tree, the unmodified service; its model's `min_confidence`
+  set to 0.2 so that S1's known bands are used): clang TSan, the race
+  scenario 60 s with S1 on (`setarch -R`): 0 reports; ASan + UBSan: the
+  swap (S1 off and on), hop, mode, toggle, lead-change, race and default
+  scenarios - 0 errors, 0 leaks
+- **`sigclass_tool selftest`** passed; the tool's `--settled 0` output is
+  byte-identical to the merged core's tool
+- **By code only**: S1 under a Signal ID toggle, a mode change, the
+  calibration pause and a lead change in a receiver (the harness ran the
+  patterns, but under ASan its looks were 10 s apart and few tracks were
+  settled; the reasoning is in `known_bands`' comment); the
+  `KNOWN_MARGIN_S` guard (no test reaches a track that is settled right
+  before its expiry or the ceiling); Windows / macOS (no MinGW / zig here:
+  portable C++20 by reading, no platform code added); a Raspberry Pi
+  (the investigation's package `run_pi.sh` takes this branch's
+  `kraken_doa_v2` as a checkout; not run); the live runs are one per plan
+  and S1 setting, at a quiet hour - a statement that every mode runs and
+  labels on the hardware, not a measurement of the merge's effect on labels

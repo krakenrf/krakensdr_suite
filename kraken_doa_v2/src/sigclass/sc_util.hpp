@@ -113,16 +113,16 @@ inline float clampf(float v, float lo, float hi) {
 }
 inline float db10(double x) { return float(10.0 * std::log10(std::max(x, 1e-30))); }
 
-// atan2 from Abramowitz & Stegun 4.4.49 (|error| <= 1e-5 rad), deterministic
+// atan2 from Abramowitz & Stegun 4.4.49 (|error| <= 1e-5 rad), deterministic.
+// Branch-free (selects only), so the loops over it vectorise; (0, 0) gives 0
 inline float fast_atan2(float y, float x) {
     const float ax = std::fabs(x), ay = std::fabs(y);
     const float mx = std::max(ax, ay), mn = std::min(ax, ay);
-    if (mx <= 0.0f) return 0.0f;
-    const float a = mn / mx;
+    const float a = mn / (mx > 0.0f ? mx : 1.0f);
     const float s = a * a;
     float r = a * (0.9998660f + s * (-0.3302995f + s * (0.1801410f + s * (-0.0851330f + s * 0.0208351f))));
-    if (ay > ax) r = 1.57079632679f - r;
-    if (x < 0.0f) r = 3.14159265359f - r;
+    r = ay > ax ? 1.57079632679f - r : r;
+    r = x < 0.0f ? 3.14159265359f - r : r;
     return y < 0.0f ? -r : r;
 }
 

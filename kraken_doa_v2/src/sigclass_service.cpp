@@ -51,6 +51,24 @@ constexpr double MIN_PERIOD_S = 1.0, MAX_PERIOD_S = 10.0;
 // bursts, and that independent mode's round over 8 tuners at the longest
 // period still revisits each before its tracks go
 constexpr double TRACK_EXPIRE_S = 45.0;
+// S1: a settled track (>= KNOWN_HITS hits, its label sure) is not classified
+// again in every look - the detector still finds it, the tracker keeps it - only
+// in one of KNOWN_REFRESH looks of its band (its evidence still moves); a look then
+// costs little more than the detector, the period shrinks and new signals are
+// looked at sooner. SETTLED_SKIP is the default; KRAKEN_SIGCLASS_SETTLED=0 / 1
+// overrides it (read once, at the worker's start: A/B tests). See known_bands
+// in worker() and docs/dev/signal-classifier.md (Runtime, S1). OFF since the
+// speed merge (2026-11-24): its acceptance failed - a refresh look moves the
+// frozen evidence like one ordinary look, so a sure label that the next
+// looks would revise stays ~4x as many looks (an MPT1327 control channel
+// held as a SURE "DMR" for 25 looks where every-look classification had
+// it unsure, then MPT1327), and one strict playback run of three lost a label
+// (UAT, 27 of 28). The numbers are in the doc
+constexpr bool SETTLED_SKIP = false;
+constexpr int KNOWN_HITS = 3, KNOWN_REFRESH = 4;
+// ... and only a track that surely survives the look (its tracker's expiry and
+// the ceiling, with this much to spare for the capture and the analysis)
+constexpr double KNOWN_MARGIN_S = 10.0;
 // clean packets after the last one used before a snapshot counts: heimdall's
 // noise flag trails the samples by up to 2 packets (bearing-spectrum.md)
 constexpr int TRAIL_PACKETS = 3;
@@ -459,6 +477,7 @@ struct TunerTracks {
     sigclass::Tracker trk;
     double clock = 0;            // the tracker's clock (s)
     double last_look = -1;       // now_s() of its latest snapshot; < 0 none yet
+    int looks = 0;               // its looks since it was (re)made - the settled tracks' refresh turn (S1)
     std::vector<std::pair<int, double>> seen;   // track id -> now_s() last seen
     std::vector<rules::TrackPubId> book;        // track id -> the id the pages get (moves with the tracker)
     explicit TunerTracks(const sigclass::TrackerConfig& c) : trk(c) {}
@@ -485,6 +504,7 @@ void worker() {
             x.trk.clear();
             x.clock = 0;
             x.last_look = -1;
+            x.looks = 0;
             x.seen.clear();
             x.book.clear();
         }
@@ -504,6 +524,12 @@ void worker() {
     int retried = -1;                                // tuners in turn: the tuner whose aborted capture is tried again (L3)
     double ewma_ms = 0, period_now = MIN_PERIOD_S;   // (the cycle period, s)
     double sure_conf = NAN;                          // the model's min_confidence (the one-hit rule)
+    // S1 on or off (SETTLED_SKIP; KRAKEN_SIGCLASS_SETTLED=0 / 1 for A/B tests)
+    const bool settled_on = [] {
+        const char* e = std::getenv("KRAKEN_SIGCLASS_SETTLED");
+        if (e && (*e == '0' || *e == '1') && e[1] == '\0') return *e == '1';
+        return SETTLED_SKIP;
+    }();
     int64_t settle_until = 0;                        // coherent mode: after a retune
     int64_t last_start_ms = -1;                      // the latest look's start (the budget's clock)
     rules::Budget budget;
@@ -522,6 +548,7 @@ void worker() {
         x.trk.clear();
         x.clock = 0;
         x.last_look = -1;
+        x.looks = 0;
         x.seen.clear();
         x.book.clear();
     };
@@ -566,6 +593,67 @@ void worker() {
             }
             for (int id : gone) x.trk.erase(id);
         }
+    };
+    // S1 (2026-11-24): the settled tracks of the band about to be looked at -
+    // analyze() reports their detections unclassified (KnownBand: overlap /
+    // union >= 0.5 with the track's band), so their channelizer, features and
+    // model are skipped. Rules:
+    // - Per BAND: x is the band's tracker, the one that moves with the band
+    //   (rules::regroup; tuners sharing a band share it), so "settled" is that
+    //   band's history whichever tuner stands for it now.
+    // - Settled: >= KNOWN_HITS hits, a class, p >= its class's sure level (min_p,
+    //   else min_confidence, else 0.7 - the page's and the one-hit rule's "sure").
+    //   A guess (p below it) is classified in every look as before (S1b, every
+    //   track with 3 hits, was rejected: 5 % of the labels moved).
+    // - Only a track that surely survives this look: the expiry inside update()
+    //   (tuners in turn: the clock moves at most EXPIRE_STEP_S a look; coherent:
+    //   by the wall time, so the time since the previous look is counted) and the
+    //   ceiling() before it (seen within TRACK_CEILING_S), each with KNOWN_MARGIN_S
+    //   to spare. A track that went before its detection reached the tracker would
+    //   come back as a new track WITHOUT evidence (no label for a look or two).
+    // - The refresh turn: a settled track is still classified when (looks + its id)
+    //   % KNOWN_REFRESH == 0 - looks counts this tracker's looks and moves with it
+    //   (a regroup, a lead change: the tracker, its tracks and the count move
+    //   together), and restarts at 0 with the tracker (a mode change, a disable,
+    //   the calibration pause, a fresh tracker for a slot: their tracks go too). So
+    //   each track is classified in exactly one of any KNOWN_REFRESH consecutive
+    //   looks of its band, whatever the restarts, regroupings and lead changes;
+    //   the id spreads a band's refreshes over the looks.
+    // What a known detection carries (analyzer.cpp): the detector runs as before
+    // (S1 changes nothing before the views), so its offset, bw, SNR, duty, bursty
+    // and fills_band are the detector's own; its view is the track's; it has no
+    // probabilities. The tracker's rules read only those and the hits - none reads
+    // a detection's class: the hump guard (bursty, widths), the core rule (det_bw,
+    // the energy from SNR x bw x duty), the pedestal rule (SNR, look_snr), the
+    // merges and the absorption (hits, bursty, fills_band, the evidence as it is)
+    // see the same detection as without S1. The track is SEEN exactly as without
+    // S1: hits, last_s (its expiry: 45 s and 6 missed looks), updated (-> seen, the
+    // ceiling's clock; fresh, the age INV-K's sent view carries), SNR (INV-K's 3 dB
+    // margin, the duplicate rule's order), band, view; the id book follows track
+    // ids (unchanged). Only its class evidence stands still between its refresh
+    // looks - its class, p and alternatives are those of its latest classified
+    // looks (the duplicate rule's "a view with a class first" reads that class).
+    // A detection may still land on another track than the one whose band it
+    // matched (the tracker pairs on its own) or start a new one: that track gets a
+    // hit without evidence - no label from it until a classified look (a new track
+    // has < KNOWN_HITS hits, so its next look is classified).
+    const auto known_bands = [&](const TunerTracks& x, bool coherent) {
+        std::vector<sigclass::KnownBand> known;
+        if (!settled_on) return known;
+        const double t = now_s();
+        // the tracker's clock at the coming update, at the latest
+        const double clk = x.last_look < 0 ? x.clock : (coherent ? x.clock + (t - x.last_look) + KNOWN_MARGIN_S : x.clock + EXPIRE_STEP_S);
+        for (const sigclass::Track& k : x.trk.tracks()) {
+            if (k.hits < KNOWN_HITS || k.best < 0 || k.best >= static_cast<int>(k.probs.size())) continue;
+            if ((x.looks + k.id) % KNOWN_REFRESH == 0) continue;   // its refresh look
+            if (!(clk - k.last_s < TRACK_EXPIRE_S)) continue;
+            const double sa = x.seen_at(k.id);
+            if (!(sa >= 0 && t - sa < rules::TRACK_CEILING_S - KNOWN_MARGIN_S)) continue;
+            const ClassMeta* m = table ? table->find(model.class_info(k.view, k.best).id) : nullptr;
+            const double sure = m && is_finite_value(m->min_p) ? m->min_p : (is_finite_value(sure_conf) ? sure_conf : 0.7);
+            if (k.best_p >= sure) known.push_back({k.lo_hz, k.hi_hz, k.view});
+        }
+        return known;
     };
 
     // what the pages get: per tracker the tracks inside its tuner's band now
@@ -750,7 +838,8 @@ void worker() {
                     int views = 0;
                     for (int v = 0; v < sigclass::NUM_VIEWS; v++) views += model.has_view(v) ? 1 : 0;
                     std::cout << "Signal ID: model " << path << " loaded (" << table->classes.size() << " classes, "
-                              << views << " views)" << std::endl;
+                              << views << " views; settled tracks " << (settled_on ? "skipped 3 looks in 4" : "classified in every look")
+                              << ")" << std::endl;
                 } else {
                     std::cerr << "Signal ID unavailable: " << (err.empty() ? "cannot load " + path : err) << std::endl;
                 }
@@ -897,11 +986,17 @@ void worker() {
         // early cost nothing - the next one may follow at once, as before)
         if (last_start_ms >= 0) budget.started(static_cast<double>(cycle0 - last_start_ms) / 1000.0, ewma_ms / 1000.0);
         last_start_ms = cycle0;
+        // this band's tracker (coherent: [0]; tuners in turn: its lead's slot -
+        // no regroup between the pick and here) and its settled tracks, which
+        // this look does not classify (S1, see known_bands)
+        TunerTracks& x = tt[size_t(mode == 0 ? 0 : ch)];
+        const std::vector<sigclass::KnownBand> known = known_bands(x, mode == 0);
+        x.looks++;
         const auto t0 = std::chrono::steady_clock::now();
         // (the buffer is the worker's while not armed)
         const std::vector<sigclass::Scored> res =
             analyzer.analyze(g_cap.buf.data(), sigclass::NOMINAL_SNAPSHOT_SAMPLES, static_cast<double>(SAMPLE_RATE_HZ), &model,
-                             nullptr, centre);   // (centre: the RF mask of the model)
+                             nullptr, centre, &known);   // (centre: the RF mask of the model)
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         ewma_ms = ewma_ms > 0 ? ewma_ms + 0.3 * (ms - ewma_ms) : ms;
         // the next look's period (the budget; a first-look debt lengthens it)
@@ -909,7 +1004,6 @@ void worker() {
         period_now = period_s;
         const double t = now_s();
         // this band's look: its tracker's clock moves on (see TunerTracks)
-        TunerTracks& x = tt[size_t(mode == 0 ? 0 : ch)];
         if (x.last_look >= 0) x.clock += mode == 0 ? t - x.last_look : std::min(t - x.last_look, EXPIRE_STEP_S);
         x.last_look = t;
         if (mode != 0) rules::note_look(slots, reps, ch, first_look, look_seq++);
