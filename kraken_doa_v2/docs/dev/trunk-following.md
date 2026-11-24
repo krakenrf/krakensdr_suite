@@ -1746,10 +1746,16 @@ the broadcasts:
   `t42_sigclass` 10: Signal ID on beside a control VFO, a followed call and
   a search (done, its 3 channels found; Signal ID kept taking snapshots),
   both standing down in sweep mode and running again after it. The whole
-  kit on the final build: every suite as before (t34 19 / 21 as designed;
-  t20 15-16 / 18 - its file section's restart flake: the receiver of one
-  case is never signalled, so the next case's checks read it; case 18
-  passes now).
+  kit on the final build (ba32775 + docs): 771 of 774 - t34 19 / 21 as
+  designed, t40 53 / 54 (its window opened before the answers to the
+  check's own VFO queries had come: fixed in the test, 54 / 54 twice
+  since), every other suite complete, t20 18 / 18. t20's file section had
+  failed in 3 of 4 runs - a case's restart did not happen and the next
+  case's checks read the previous receiver; the kit's restart now stops
+  every receiver of its own (found by exe and folder in /proc and as the
+  web port's owner, not from a pid file), waits for the process to end and
+  the port to close, and fails loudly unless the port belongs to the new
+  process: t20 18 / 18 in four runs since.
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
   / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a
