@@ -10,9 +10,12 @@ LCO 0x0F call termination, Golay(24,12) + RS(24,12,13)). Every frame with
 its frame sync, NID (NAC + DUID, BCH(63,16) + parity) and a status symbol
 after every 35 dibits.
 
-  p25_gen.py OUT.cf32 [--rate 48000] --at T --dur S --src UNIT --dst TG [--nac 0x293]
+  p25_gen.py OUT.cf32 [--rate 48000] [--seed N] --at T --dur S --src UNIT --dst TG [--nac 0x293]
              [--end tdu|tdulc] [--voice imbe|random] [--algid 0x80] [--kid 0]
              [--adj K] [--at ... (next call)]
+
+--seed N: the random generator's seed (the voice bits); without it 25, so the
+same options give the same file.
 
 --algid / --kid: the call's algorithm and key in the HDU and every LDU2; an
 ALGID other than 0x80 also sets the link control's "protected" service
@@ -347,13 +350,15 @@ def main():
         print(__doc__)
         sys.exit(2)
     out = a[0]
-    rate = RATE
+    rate, seed = RATE, None
     txs, cur = [], None
     i = 1
     while i < len(a):
         k, v = a[i].lstrip('-'), a[i + 1]
         if k == 'rate':
             rate = float(v)
+        elif k == 'seed':
+            seed = int(v, 0)
         elif k == 'at':
             cur = {'at': float(v), 'dur': 3.0, 'src': 1001, 'dst': 101, 'nac': 0x293, 'end': 'tdu', 'voice': 'imbe',
                    'algid': 0x80, 'kid': 0, 'adj': 0}
@@ -365,7 +370,7 @@ def main():
         else:
             cur[k] = int(v, 0)
         i += 2
-    rng = np.random.default_rng(25)
+    rng = np.random.default_rng(25 if seed is None else seed)
     parts = []
     for tx in txs:
         y = modulate(call(tx['src'], tx['dst'], tx['nac'], tx['dur'], tx['end'], tx['voice'], rng, tx['algid'], tx['kid'],

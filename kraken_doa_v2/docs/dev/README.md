@@ -64,6 +64,7 @@ every session needs and points here.
 | `reference.md` | Hot paths, development tasks, key files, common issues, testing, dependencies |
 | `saved-frequencies.md` | Saved frequencies and map markers |
 | `saved-frequency-scan.md` | Saved-frequency scan |
+| `signal-classifier.md` | Signal ID: the signal classifier (core, training, runtime, labels on the spectrum) |
 | `spectrum-views.md` | Spectrum views (FFT message type 7) |
 | `station-on-map.md` | Station on the map |
 | `tempest-deep-plan.md` | TEMPEST deep-reconstruction plan |

@@ -1,0 +1,1016 @@
+#!/usr/bin/env python3
+"""Signal classifier training data: the signal classes no plugin generator
+makes - analog AM and SSB voice, CW Morse, bare carriers - and the "unknown"
+families the classifier rejects into (random FSK, PSK / QAM, OFDM, pulse
+trains, band-limited noise). One clean, noise-free transmitter per file.
+
+  synth.py KIND OUT.cf32 --seed N [--seconds S]
+
+KIND: am | ssb | cw | carrier | wfm | wfm_loud | ism_ook | ism_ook2 | ism_fsk | ism_fsk2 |
+      unk_fsk | unk_psk | unk_ofdm | unk_pulse | unk_noise | p25cc | p25lsm | nxdn48 | vor | dmr_ms
+(ism_fsk2 / ism_ook2 / wfm_loud, 2026-11-22: ISM FSK over bit times 10 us - 2 ms and
+tone spacings 10 - 200 kHz drawn independently; OOK with long, very short or shallow
+keying and ASK with a residual carrier; loud, dense broadcast FM)
+(p25cc / p25lsm / nxdn48 / vor: physical-layer variants of plugin classes that
+their generators do not make - a P25 control channel in C4FM, P25 in CQPSK /
+LSM, NXDN 4800, VOR at measured rather than nominal depths.)
+Every other parameter is drawn from the seed. Writes OUT.cf32 (complex64,
+the signal centred on 0 Hz) + OUT.json {"rate", "variant": {...}}.
+
+The unknown families keep away from the known protocols' exact parameters
+(symbol rates, subcarrier spacings, pulse timings: AVOID_* below), so the
+model has somewhere to put a signal it does not know without being taught
+that a real DMR or DVB-T signal is unknown. numpy + scipy only.
+"""
+import importlib.util
+import json
+import os
+import sys
+
+import numpy as np
+from scipy.signal import butter, hilbert, resample_poly, sosfilt
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PLUGINS = os.path.normpath(os.path.join(HERE, '..', '..', 'plugins'))
+
+# output rates a clip may have (all divide 2.4 MHz)
+RATES = [48000, 96000, 240000, 480000, 800000, 1200000, 2400000]
+
+# symbol rates (Bd) of the known protocols, kept +-6 % away from
+AVOID_RS = [400, 512, 1200, 1600, 2400, 3200, 4800, 6000, 6400, 9600, 10500, 17241, 18000, 19231,
+            38400, 100000, 1041667]
+# OFDM subcarrier spacings (Hz) of the known systems (DAB, DVB-T 2k / 4k / 8k, DVB-T2 16k / 32k,
+# ISDB-T modes 1-3, DTMB, ATSC 3.0, LTE / NR), kept +-5 % away from
+AVOID_SCS = [1000, 1116, 2232, 4464, 279, 558, 992, 1984, 3968, 2000, 843, 1688, 3375, 15000, 30000]
+
+
+def _speech_module():
+    spec = importlib.util.spec_from_file_location('analog_gen', os.path.join(PLUGINS, 'analog_id', 'tools', 'analog_gen.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def speech(n, rate, rng):
+    """speech-like audio (analog_gen.py's synth_speech), peak 1"""
+    return _speech_module().synth_speech(n, rate, rng)
+
+
+def away(x, avoid, frac):
+    """True if x is not within frac of any value in avoid"""
+    return all(abs(x - a) > frac * a for a in avoid)
+
+
+def draw_away(rng, lo, hi, avoid, frac):
+    for _ in range(1000):
+        x = float(np.exp(rng.uniform(np.log(lo), np.log(hi))))
+        if away(x, avoid, frac):
+            return x
+    raise RuntimeError('no value away from the known ones')
+
+
+def pick_rate(bw):
+    """the lowest rate that holds a signal of bandwidth bw within +-0.35 rate"""
+    for r in RATES:
+        if bw <= 0.7 * r:
+            return r
+    return RATES[-1]
+
+
+def ramp_env(n, rate, ivals, ramp_s):
+    """an on / off envelope: 1 inside the intervals (s), raised-cosine edges"""
+    e = np.zeros(n)
+    k = max(1, int(ramp_s * rate))
+    up = 0.5 - 0.5 * np.cos(np.pi * np.arange(k) / k)
+    for a, b in ivals:
+        i, j = int(a * rate), min(n, int(b * rate))
+        if j - i < 2 * k + 1:
+            continue
+        e[i:j] = 1
+        e[i:i + k] = up
+        e[j - k:j] = up[::-1]
+    return e
+
+
+def keyed_intervals(rng, seconds, on=(1.0, 6.0), off=(0.3, 3.0), start=(0.05, 1.0)):
+    t = rng.uniform(*start)
+    out = []
+    while t < seconds - 0.2:
+        d = rng.uniform(*on)
+        out.append([t, min(seconds - 0.05, t + d)])
+        t += d + rng.uniform(*off)
+    return out
+
+
+def bandpass_audio(x, rate, lo, hi):
+    sos = butter(4, [lo, hi], btype='bandpass', fs=rate, output='sos')
+    return sosfilt(sos, x)
+
+
+def compress(x, rng):
+    """a transmitter's speech processor: soft limiting by a random amount"""
+    g = rng.uniform(1.0, 6.0)
+    y = np.tanh(g * x / max(np.max(np.abs(x)), 1e-9))
+    return y / max(np.max(np.abs(y)), 1e-9)
+
+
+# --------------------------------------------------------------- analog voice
+
+def gen_am(rng, seconds):
+    rate = 48000
+    n = int(seconds * rate)
+    chan = '8.33k' if rng.random() < 0.4 else '25k'
+    hi = 2500 if chan == '8.33k' else rng.uniform(2700, 3400)
+    a = compress(bandpass_audio(speech(n, rate, rng), rate, 300, hi), rng)
+    depth = rng.uniform(0.4, 0.95)
+    cont = rng.random() < 0.25      # a broadcast / ATIS-style carrier that stays on
+    ivals = [[0.0, seconds]] if cont else keyed_intervals(rng, seconds)
+    env = ramp_env(n, rate, ivals, rng.uniform(0.002, 0.01))
+    x = env * (1 + depth * a)
+    v = {'channel': chan, 'depth': round(depth, 2), 'keyed': not cont, 'audio_hi_hz': round(hi)}
+    return rate, x.astype(np.complex128), v
+
+
+def gen_ssb(rng, seconds):
+    rate = 48000
+    n = int(seconds * rate)
+    side = 'usb' if rng.random() < 0.5 else 'lsb'
+    lo, hi = rng.uniform(200, 400), rng.uniform(2400, 3000)
+    a = compress(bandpass_audio(speech(n, rate, rng), rate, lo, hi), rng)
+    z = hilbert(a)
+    if side == 'lsb':
+        z = np.conj(z)
+    ivals = keyed_intervals(rng, seconds, on=(2.0, 12.0), off=(0.3, 3.0))
+    env = ramp_env(n, rate, ivals, 0.005)
+    x = env * z
+    car = 0.0
+    if rng.random() < 0.3:          # carrier leakage of a cheap transmitter
+        car = 10 ** (rng.uniform(-40, -20) / 20)
+        x = x + car * env
+    return rate, x, {'side': side, 'audio_hz': [round(lo), round(hi)], 'carrier_db': round(20 * np.log10(car), 1) if car else None}
+
+
+MORSE = {'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.', 'F': '..-.', 'G': '--.', 'H': '....', 'I': '..',
+         'J': '.---', 'K': '-.-', 'L': '.-..', 'M': '--', 'N': '-.', 'O': '---', 'P': '.--.', 'Q': '--.-', 'R': '.-.',
+         'S': '...', 'T': '-', 'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-', 'Y': '-.--', 'Z': '--..',
+         '0': '-----', '1': '.----', '2': '..---', '3': '...--', '4': '....-', '5': '.....', '6': '-....',
+         '7': '--...', '8': '---..', '9': '----.', '/': '-..-.', '?': '..--..', '=': '-...-'}
+
+
+def morse_text(rng):
+    """random groups that look like CW traffic (synthetic callsigns, reports, random groups)"""
+    al = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+    def call():
+        return ''.join(rng.choice(list(al), int(rng.integers(1, 3)))) + str(int(rng.integers(0, 10))) + \
+            ''.join(rng.choice(list(al), int(rng.integers(1, 4))))
+    words = []
+    for _ in range(int(rng.integers(8, 30))):
+        r = rng.random()
+        if r < 0.3:
+            words.append(call())
+        elif r < 0.45:
+            words.append(rng.choice(['CQ', 'DE', 'K', 'TU', 'RST', '5NN', 'QTH', 'QRZ?', 'BK', '73', 'R', '=']))
+        elif r < 0.7:
+            words.append(''.join(rng.choice(list(al + '0123456789'), 5)))
+        else:
+            words.append(''.join(rng.choice(list(al), int(rng.integers(2, 7)))))
+    return ' '.join(words)
+
+
+def gen_cw(rng, seconds):
+    rate = 48000
+    n = int(seconds * rate)
+    wpm = rng.uniform(8, 35)
+    dot = 1.2 / wpm
+    dash = rng.uniform(2.7, 3.3)
+    weight = rng.uniform(0.85, 1.15)
+    ivals = []
+    t = rng.uniform(0.05, 0.8)
+    while t < seconds - 0.5:
+        for w in morse_text(rng).split(' '):
+            for ch in w:
+                for s in MORSE.get(ch, ''):
+                    d = dot * (dash if s == '-' else 1) * weight
+                    ivals.append([t, t + d])
+                    t += d + dot * (2 - weight)
+                t += 2 * dot * rng.uniform(0.9, 1.4)
+            t += 4 * dot * rng.uniform(0.9, 1.6)
+            if t > seconds - 0.2:
+                break
+        t += rng.uniform(0.5, 3.0)       # a pause between overs
+    ivals = [iv for iv in ivals if iv[1] < seconds - 0.01]
+    rise = rng.uniform(0.002, 0.008)
+    env = np.zeros(n)
+    k = max(1, int(rise * rate))
+    up = 0.5 - 0.5 * np.cos(np.pi * np.arange(k) / k)
+    for a, b in ivals:
+        i, j = int(a * rate), int(b * rate)
+        e = np.ones(j - i + k)
+        e[:k] = up
+        e[-k:] = up[::-1]
+        m = min(n, i + len(e))
+        env[i:m] = np.maximum(env[i:m], e[:m - i])
+    ph = np.zeros(n)
+    chirp = 0.0
+    if rng.random() < 0.2:             # a chirpy oscillator pulled by the keying
+        chirp = rng.uniform(-25, 25)
+        ph = 2 * np.pi * np.cumsum(chirp * env) / rate
+    x = env * np.exp(1j * ph)
+    return rate, x, {'wpm': round(wpm, 1), 'rise_ms': round(rise * 1e3, 1), 'chirp_hz': round(chirp, 1)}
+
+
+def gen_carrier(rng, seconds):
+    rate = 48000
+    n = int(seconds * rate)
+    t = np.arange(n) / rate
+    kind = rng.choice(['steady', 'keyed', 'drift', 'hum'], p=[0.4, 0.2, 0.25, 0.15])
+    ivals = [[0.0, seconds]]
+    env = np.ones(n)
+    if kind == 'keyed':
+        ivals = keyed_intervals(rng, seconds, on=(1.5, 8.0), off=(0.5, 3.0))
+        env = ramp_env(n, rate, ivals, rng.uniform(0.001, 0.02))
+    f = np.zeros(n)
+    if kind == 'drift':
+        f = rng.uniform(-8, 8) * (t - seconds / 2) + rng.uniform(0, 3) * np.sin(2 * np.pi * t / rng.uniform(2, 20))
+    am = np.ones(n)
+    if kind == 'hum':
+        am = 1 + rng.uniform(0.01, 0.08) * np.sin(2 * np.pi * rng.choice([50.0, 60.0, 100.0, 120.0]) * t)
+    ph = 2 * np.pi * np.cumsum(f) / rate + np.cumsum(rng.standard_normal(n)) * np.sqrt(2 * np.pi * rng.uniform(0.05, 3) / rate)
+    x = env * am * np.exp(1j * ph)
+    return rate, x, {'kind': str(kind)}
+
+
+# ------------------------------------------------------------ unknown families
+
+def bursts_or_continuous(rng, seconds, p_cont, on=(0.02, 1.5), off=(0.05, 2.0)):
+    if rng.random() < p_cont:
+        return [[0.0, seconds]], True
+    return keyed_intervals(rng, seconds, on=on, off=off, start=(0.02, 0.5)), False
+
+
+def gen_unk_fsk(rng, seconds):
+    M = int(rng.choice([2, 4, 8], p=[0.5, 0.35, 0.15]))
+    kind = rng.choice(['cpfsk', 'gfsk', 'afsk'], p=[0.4, 0.4, 0.2])
+    if kind == 'afsk':
+        M = 2
+        rs = draw_away(rng, 150, 4000, AVOID_RS, 0.06)
+        while True:
+            f1, f2 = sorted(rng.uniform(300, 4000, 2))
+            # not the Bell 202 / V.23 / MPT1327 / FFSK tone pairs
+            if f2 - f1 > 0.5 * rs and all(abs(f1 - a) > 60 or abs(f2 - b) > 60
+                                          for a, b in ((1200, 2200), (1300, 2100), (1200, 1800), (1300, 1700))):
+                break
+        dev = rng.uniform(1500, 5000)
+        bw = 2 * (dev + f2)
+    else:
+        rs = draw_away(rng, 300, 150000, AVOID_RS, 0.06)
+        h = rng.uniform(0.3, 2.5) if M == 2 else rng.uniform(0.2, 1.0)
+        dev = h * rs / 2               # outer tone - centre, per unit level spacing
+        bw = (M - 1) * h * rs + 2 * rs
+    rate = pick_rate(bw)
+    sps = rate / rs
+    ivals, cont = bursts_or_continuous(rng, seconds, 0.3, on=(max(0.01, 200 / rs), max(0.05, min(2.0, 6000 / rs))))
+    n = int(seconds * rate)
+    nsym = int(seconds * rs) + 2
+    sym = rng.integers(0, M, nsym)
+    pre = int(rng.integers(16, 200))
+    # every burst starts with an alternating preamble
+    for a, b in ivals:
+        i = int(a * rs)
+        sym[i:i + pre] = np.where(np.arange(min(pre, nsym - i)) % 2 == 0, 0, M - 1)
+    lev = (2 * sym - (M - 1)).astype(float)
+    idx = np.minimum((np.arange(n) / sps).astype(int), nsym - 1)
+    fr = lev[idx]
+    bt = None
+    if kind == 'gfsk':
+        bt = rng.uniform(0.3, 1.0)
+        L = int(4 * sps) | 1
+        tt = (np.arange(L) - L // 2) / sps
+        g = np.exp(-(2 * np.pi ** 2 * bt ** 2 * tt ** 2) / np.log(2))
+        fr = np.convolve(fr, g / g.sum(), mode='same')
+    if kind == 'afsk':
+        bits = (fr > 0)
+        tone = np.where(bits, f2, f1)
+        audio = np.sin(2 * np.pi * np.cumsum(tone) / rate)
+        phase = 2 * np.pi * dev * np.cumsum(audio) / rate
+    else:
+        phase = 2 * np.pi * dev * np.cumsum(fr) / rate
+    env = ramp_env(n, rate, ivals, min(0.002, 4 / rs))
+    x = env * np.exp(1j * phase)
+    v = {'kind': str(kind), 'M': M, 'rs': round(rs, 1), 'dev_hz': round(dev, 1), 'continuous': cont}
+    if bt:
+        v['bt'] = round(bt, 2)
+    if kind == 'afsk':
+        v['tones'] = [round(f1), round(f2)]
+    return rate, x, v
+
+
+def rrc(beta, sps, span):
+    n = np.arange(-span * sps, span * sps + 1) / sps
+    h = np.zeros_like(n)
+    for i, t in enumerate(n):
+        if abs(t) < 1e-9:
+            h[i] = 1 - beta + 4 * beta / np.pi
+        elif beta > 0 and abs(abs(t) - 1 / (4 * beta)) < 1e-9:
+            h[i] = beta / np.sqrt(2) * ((1 + 2 / np.pi) * np.sin(np.pi / (4 * beta)) + (1 - 2 / np.pi) * np.cos(np.pi / (4 * beta)))
+        else:
+            h[i] = (np.sin(np.pi * t * (1 - beta)) + 4 * beta * t * np.cos(np.pi * t * (1 + beta))) / (np.pi * t * (1 - (4 * beta * t) ** 2))
+    return h / np.sqrt(np.sum(h ** 2))
+
+
+def constellation(name):
+    if name == 'bpsk':
+        return np.array([1, -1], complex)
+    if name in ('qpsk', 'oqpsk'):
+        return np.exp(1j * (np.pi / 4 + np.pi / 2 * np.arange(4)))
+    if name == '8psk':
+        return np.exp(1j * np.pi / 4 * np.arange(8))
+    if name == '16qam':
+        a = np.array([-3, -1, 1, 3])
+        return (a[:, None] + 1j * a[None, :]).ravel() / np.sqrt(10)
+    if name == '32apsk':
+        return np.concatenate([np.exp(1j * (np.pi / 4 + np.pi / 2 * np.arange(4))) * 0.4,
+                               np.exp(1j * (np.pi / 12 + np.pi / 6 * np.arange(12))) * 0.75,
+                               np.exp(1j * np.pi / 8 * np.arange(16))])
+    raise ValueError(name)
+
+
+def gen_unk_psk(rng, seconds):
+    mod = str(rng.choice(['bpsk', 'qpsk', 'oqpsk', '8psk', '16qam', '32apsk'], p=[0.2, 0.3, 0.1, 0.15, 0.15, 0.1]))
+    rs = draw_away(rng, 500, 700000, AVOID_RS, 0.06)
+    beta = rng.uniform(0.1, 0.6)
+    bw = rs * (1 + beta)
+    rate = pick_rate(bw)
+    # 4 samples per symbol, then to the clip's rate by a small ratio (sets the true symbol rate)
+    from fractions import Fraction
+    sps = 4
+    fr = Fraction(rate / (rs * sps)).limit_denominator(64)
+    rs = rate / (sps * float(fr))
+    ivals, cont = bursts_or_continuous(rng, seconds, 0.5, on=(max(0.005, 300 / rs), max(0.05, min(2.0, 20000 / rs))))
+    nsym = int(seconds * rs) + 16
+    C = constellation(mod)
+    s = C[rng.integers(0, len(C), nsym)]
+    for a, b in ivals:      # a known preamble at each burst start (BPSK-like)
+        i = int(a * rs)
+        k = min(int(rng.integers(32, 128)), nsym - i)
+        s[i:i + k] = C[0] * np.where(rng.random(k) < 0.5, 1, -1)
+    up = np.zeros(nsym * sps, complex)
+    up[::sps] = s
+    h = rrc(beta, sps, 8)
+    y = np.convolve(up, h, mode='same')
+    if mod == 'oqpsk':
+        y = y.real + 1j * np.roll(y.imag, sps // 2)
+    if fr != 1:
+        y = resample_poly(y, fr.numerator, fr.denominator)
+    n = int(seconds * rate)
+    y = np.resize(y, n) if len(y) < n else y[:n]
+    env = ramp_env(n, rate, ivals, min(0.001, 4 / rs))
+    x = env * y / np.sqrt(np.mean(np.abs(y) ** 2))
+    return rate, x, {'mod': mod, 'rs': round(float(rs), 1), 'rolloff': round(beta, 2), 'continuous': cont}
+
+
+def gen_unk_ofdm(rng, seconds):
+    for _ in range(1000):
+        scs = draw_away(rng, 400, 80000, AVOID_SCS, 0.05)
+        bw = float(np.exp(rng.uniform(np.log(15e3), np.log(2.2e6))))
+        nused = int(bw / scs)
+        if 12 <= nused <= 4000:
+            break
+    rate = pick_rate(nused * scs * 1.05)
+    nfft = int(round(rate / scs))
+    scs = rate / nfft
+    nused = min(nused, int(0.8 * nfft))
+    cpf = float(rng.choice([1 / 4, 1 / 8, 1 / 16, 1 / 32, rng.uniform(0.05, 0.3)]))
+    ncp = max(1, int(round(cpf * nfft)))
+    mod = str(rng.choice(['qpsk', '16qam', 'bpsk']))
+    C = constellation(mod)
+    pilot_every = int(rng.choice([0, 3, 6, 12]))
+    ivals, cont = bursts_or_continuous(rng, seconds, 0.5, on=(0.005, 1.0))
+    n = int(seconds * rate)
+    symlen = nfft + ncp
+    nsym = n // symlen + 2
+    k = np.arange(nused) - nused // 2
+    k = k[k != 0] if rng.random() < 0.7 else k      # often a null DC carrier
+    X = np.zeros((nsym, nfft), complex)
+    X[:, k % nfft] = C[rng.integers(0, len(C), (nsym, len(k)))]
+    if pilot_every:
+        X[:, k[::pilot_every] % nfft] = 4 / 3
+    y = np.fft.ifft(X, axis=1) * np.sqrt(nfft)
+    y = np.concatenate([y[:, -ncp:], y], axis=1).ravel()[:n]
+    env = ramp_env(n, rate, ivals, 0.0005)
+    x = env * y
+    return rate, x, {'scs_hz': round(scs, 1), 'nfft': nfft, 'used': int(len(k)), 'cp': round(ncp / nfft, 4),
+                     'mod': mod, 'pilots_every': pilot_every, 'continuous': cont}
+
+
+def gen_unk_pulse(rng, seconds):
+    kind = str(rng.choice(['periodic', 'random', 'chirp', 'coded'], p=[0.35, 0.25, 0.2, 0.2]))
+    width = float(np.exp(rng.uniform(np.log(100e-6), np.log(5e-3))))
+    bwc = rng.uniform(20e3, 400e3) if kind == 'chirp' else 0.0
+    rate = 480000 if bwc > 150e3 else 240000 if (bwc > 0 or width < 400e-6) else 96000
+    n = int(seconds * rate)
+    t0 = rng.uniform(0.0, 0.05)
+    starts = []
+    if kind in ('periodic', 'chirp'):
+        pri = float(np.exp(rng.uniform(np.log(max(2e-3, 2.5 * width)), np.log(100e-3))))
+        jit = rng.uniform(0, 0.05)
+        t = t0
+        while t < seconds - width:
+            starts.append(t)
+            t += pri * (1 + jit * rng.standard_normal())
+    elif kind == 'random':
+        lam = rng.uniform(3, 200)
+        pri = 1 / lam
+        t = t0
+        while t < seconds - width:
+            starts.append(t)
+            t += width + rng.exponential(1 / lam)
+    else:       # coded groups: a random pattern of pulses, repeated
+        g = rng.integers(0, 2, int(rng.integers(4, 16)))
+        g[0] = 1
+        slot = width * rng.uniform(1.5, 3.0)
+        pri = rng.uniform(len(g) * slot * 1.5, len(g) * slot * 6 + 0.02)
+        t = t0
+        while t < seconds - len(g) * slot:
+            starts += [t + i * slot for i in np.nonzero(g)[0]]
+            t += pri
+    rise = min(width / 4, rng.uniform(5e-6, 100e-6))
+    x = np.zeros(n, complex)
+    L = int(width * rate)
+    k = max(1, int(rise * rate))
+    e = np.ones(L)
+    up = 0.5 - 0.5 * np.cos(np.pi * np.arange(k) / k)
+    e[:k] = up
+    e[-k:] = up[::-1]
+    tt = np.arange(L) / rate
+    p = e * (np.exp(1j * np.pi * bwc / width * (tt - width / 2) ** 2) if bwc else 1)
+    for s in starts:
+        i = int(s * rate)
+        if i + L <= n:
+            x[i:i + L] += p
+    v = {'kind': kind, 'width_us': round(width * 1e6, 1), 'pri_ms': round(pri * 1e3, 2)}
+    if bwc:
+        v['chirp_hz'] = round(bwc)
+    return rate, x, v
+
+
+def gen_unk_noise(rng, seconds):
+    bw = float(np.exp(rng.uniform(np.log(2e3), np.log(2.0e6))))
+    rate = pick_rate(bw * 1.1)
+    n = int(seconds * rate)
+    shape = str(rng.choice(['flat', 'tilt', 'notch', 'bumps']))
+    X = np.fft.fft(rng.standard_normal(n) + 1j * rng.standard_normal(n))
+    f = np.fft.fftfreq(n, 1 / rate)
+    edge = rng.uniform(0.02, 0.15) * bw
+    H = np.clip((bw / 2 - np.abs(f)) / edge + 0.5, 0, 1)
+    if shape == 'tilt':
+        H = H * 10 ** (rng.uniform(-10, 10) * f / bw / 20)
+    elif shape == 'notch':
+        H = H * (1 - 0.95 * np.exp(-((f - rng.uniform(-0.4, 0.4) * bw) / (rng.uniform(0.02, 0.1) * bw)) ** 2))
+    elif shape == 'bumps':
+        for _ in range(int(rng.integers(2, 5))):
+            H = H * (1 + rng.uniform(0.5, 3) * np.exp(-((f - rng.uniform(-0.45, 0.45) * bw) / (rng.uniform(0.03, 0.15) * bw)) ** 2))
+    y = np.fft.ifft(X * H)
+    ivals, cont = bursts_or_continuous(rng, seconds, 0.5, on=(0.01, 2.0))
+    x = ramp_env(n, rate, ivals, 0.0005) * y
+    return rate, x, {'bw_hz': round(bw), 'shape': shape, 'continuous': cont}
+
+
+# ----------------------------------------------- broadcast FM, generic ISM devices
+
+def music(n, rate, rng):
+    """music-like audio: notes with harmonics on a scale, a bass line, drum hits (peak 1)"""
+    out = np.zeros(n)
+    t = 0
+    scale = 110.0 * 2 ** (np.array([0, 2, 3, 5, 7, 8, 10]) / 12.0)
+    while t < n:
+        L = int(rng.uniform(0.08, 0.6) * rate)
+        f0 = float(rng.choice(scale)) * 2 ** int(rng.integers(0, 4))
+        tt = np.arange(min(L, n - t)) / rate
+        env = np.exp(-tt * rng.uniform(1, 8)) * (1 - np.exp(-tt * 200))
+        v = sum(rng.uniform(0.2, 1) / (h + 1) * np.sin(2 * np.pi * f0 * (h + 1) * tt + rng.uniform(0, 6.28)) for h in range(6))
+        out[t:t + len(tt)] += env * v
+        t += int(L * rng.uniform(0.3, 1.0))
+    bpm = rng.uniform(70, 160)
+    step = int(60 / bpm * rate)
+    for s in range(int(rng.integers(0, step)), n, step):
+        L = min(int(0.15 * rate), n - s)
+        tt = np.arange(L) / rate
+        out[s:s + L] += rng.uniform(0.5, 1.5) * rng.standard_normal(L) * np.exp(-tt * 30)
+        out[s:s + L] += 1.2 * np.sin(2 * np.pi * 60 * tt) * np.exp(-tt * 12)
+    return out / max(np.max(np.abs(out)), 1e-9)
+
+
+def gen_wfm_loud(rng, seconds):
+    """broadcast FM as most stations sound now: the programme through a slow AGC and
+    a hard limiter (dense, loud audio), so the deviation sits near its 70 - 80 kHz
+    peak most of the time and the station occupies 150 - 200 kHz"""
+    return gen_wfm(rng, seconds, loud=True)
+
+
+def gen_wfm(rng, seconds, loud=False):
+    """broadcast FM: music / speech, pre-emphasis, a limiter, stereo MPX with the 19 kHz
+    pilot and (often) an RDS-like BPSK subcarrier at 57 kHz, up to 75 kHz deviation"""
+    arate, rate = 48000, 480000
+    na = int(seconds * arate) + 4800
+    kind = str(rng.choice(['music', 'speech', 'mixed']))
+    def prog():
+        if kind == 'music':
+            return music(na, arate, rng)
+        if kind == 'speech':
+            return speech(na, arate, rng)
+        return 0.6 * music(na, arate, rng) + 0.7 * speech(na, arate, rng)
+    Lc = prog()
+    Rc = 0.7 * Lc + 0.3 * prog() if rng.random() < 0.8 else Lc.copy()
+    tau = float(rng.choice([50e-6, 75e-6]))
+    out = []
+    for a in (Lc, Rc):
+        a = bandpass_audio(a, arate, 30, 15000)
+        if loud:
+            # a slow AGC (the level over ~50 ms brought up to one): dense, loud programme
+            w = int(0.05 * arate)
+            lv = np.sqrt(np.convolve(a * a, np.ones(w) / w, mode='same')) + 1e-3 * np.sqrt(np.mean(a * a))
+            a = a / lv
+        a = a + tau * arate * np.diff(a, prepend=a[0])        # pre-emphasis (first order)
+        g = rng.uniform(6, 20) if loud else rng.uniform(1.5, 5)
+        a = np.tanh(g * a / max(np.max(np.abs(a)), 1e-9))   # the station's limiter
+        out.append(resample_poly(a, 10, 1)[:int(seconds * rate)])
+    L, R = out
+    n = len(L)
+    t = np.arange(n) / rate
+    stereo = rng.random() < 0.8
+    mpx = 0.5 * (L + R)
+    if stereo:
+        mpx = mpx + 0.5 * (L - R) * np.cos(2 * np.pi * 38000 * t)
+    mpx = 0.9 * mpx / max(np.max(np.abs(mpx)), 1e-9)
+    if stereo:
+        mpx = mpx + 0.09 * np.cos(2 * np.pi * 19000 * t)
+    rds = rng.random() < 0.7
+    if rds:
+        bits = rng.integers(0, 2, int(seconds * 1187.5) + 2) * 2 - 1
+        sym = np.repeat(bits, 2)                              # biphase halves
+        sym[1::2] *= -1
+        idx = np.minimum((t * 2375).astype(int), len(sym) - 1)
+        b = np.convolve(sym[idx].astype(float), np.hanning(101) / np.hanning(101).sum(), mode='same')
+        mpx = mpx + 0.04 * b * np.cos(2 * np.pi * 57000 * t)
+    dev = float(rng.uniform(70e3, 80e3) if loud else rng.uniform(45e3, 80e3))
+    x = np.exp(1j * 2 * np.pi * dev * np.cumsum(mpx) / rate)
+    return rate, x, {'kind': kind, 'stereo': stereo, 'rds': rds, 'dev_khz': round(dev / 1e3), 'synth': 'wfm_loud' if loud else True}
+
+
+def gen_ism_ook(rng, seconds):
+    """a generic OOK remote / sensor: PWM / PPM / Manchester frames of random timing,
+    repeated, keyed hard or soft, the oscillator pulled at key-up (cheap SAW / LC)"""
+    rate = 600000
+    n = int(seconds * rate)
+    coding = str(rng.choice(['pwm', 'ppm', 'manchester']))
+    te = float(np.exp(rng.uniform(np.log(80e-6), np.log(1000e-6))))
+    nbits = int(rng.integers(12, 72))
+    reps = int(rng.integers(1, 10))
+    rise = float(np.exp(rng.uniform(np.log(0.3e-6), np.log(30e-6))))
+    pull = rng.uniform(-30e3, 30e3) if rng.random() < 0.6 else 0.0
+    pull_tau = rng.uniform(20e-6, 2e-3)
+    env = np.zeros(n)
+    fr = np.zeros(n)
+    t = rng.uniform(0.05, 0.4)
+    on_iv = []
+
+    def key(a, b):
+        i, j = int(a * rate), min(n, int(b * rate))
+        if j - i < 2:
+            return
+        k = max(1, int(rise * rate))
+        e = np.ones(j - i)
+        r = 0.5 - 0.5 * np.cos(np.pi * np.arange(min(k, len(e))) / max(k, 1))
+        e[:len(r)] = r
+        e[len(e) - len(r):] = np.minimum(e[len(e) - len(r):], r[::-1])
+        env[i:j] = np.maximum(env[i:j], e)
+        tt = np.arange(j - i) / rate
+        fr[i:j] += pull * np.exp(-tt / pull_tau)
+    while t < seconds - 0.3:
+        bits = rng.integers(0, 2, nbits)
+        t0 = t
+        for _ in range(reps):
+            key(t, t + te)      # a sync pulse, then the long sync gap
+            t += te * rng.uniform(8, 32)
+            for b in bits:
+                if coding == 'pwm':
+                    w = te * (3 if b else 1)
+                    key(t, t + w)
+                    t += 4 * te
+                elif coding == 'ppm':
+                    key(t, t + te)
+                    t += te * (4 if b else 2)
+                else:
+                    half = te / 2
+                    key(t + (0 if b else half), t + (half if b else te))
+                    t += te
+            t += te * rng.uniform(4, 30)
+            if t > seconds - 0.05:
+                break
+        on_iv.append([t0, t])
+        t += rng.uniform(0.25, 1.2)
+    ph = 2 * np.pi * np.cumsum(fr) / rate
+    x = env * np.exp(1j * ph)
+    return rate, x, {'coding': coding, 'te_us': round(te * 1e6), 'bits': nbits, 'rise_us': round(rise * 1e6, 1),
+                     'pull_khz': round(pull / 1e3, 1), 'synth': True}
+
+
+def gen_ism_fsk(rng, seconds):
+    """a generic 2-FSK sensor / meter: preamble 1010.., a sync word, a payload, NRZ or
+    Manchester, 2-100 kbit/s, +-5..80 kHz, packets of a few ms, repeated"""
+    rate = 480000
+    n = int(seconds * rate)
+    br = float(np.exp(rng.uniform(np.log(2e3), np.log(100e3))))
+    dev = float(np.clip(rng.uniform(0.5, 3.0) * br / 2, 5e3, 80e3))
+    manch = rng.random() < 0.4
+    gauss = rng.random() < 0.5
+    sps = rate / br
+    x = np.zeros(n, complex)
+    t = rng.uniform(0.05, 0.4)
+    while t < seconds - 0.2:
+        nb = int(rng.integers(16, 64)) + 16 + 8 * int(rng.integers(6, 40))
+        bits = np.concatenate([np.tile([1, 0], int(rng.integers(8, 32))), rng.integers(0, 2, nb)])
+        if manch:
+            bits = np.column_stack([bits, 1 - bits]).ravel()
+            spb = sps / 2
+        else:
+            spb = sps
+        L = int(len(bits) * spb)
+        i0 = int(t * rate)
+        if i0 + L >= n:
+            break
+        lev = 2.0 * bits[np.minimum((np.arange(L) / spb).astype(int), len(bits) - 1)] - 1
+        if gauss:
+            k = int(max(3, 2 * spb)) | 1
+            g = np.exp(-0.5 * ((np.arange(k) - k // 2) / max(spb * 0.4, 1.0)) ** 2)
+            lev = np.convolve(lev, g / g.sum(), mode='same')
+        drift = rng.uniform(-5e3, 5e3)
+        ph = 2 * np.pi * np.cumsum(dev * lev + drift) / rate
+        r = max(2, int(20e-6 * rate))
+        e = np.ones(L)
+        e[:r] = np.linspace(0, 1, r)
+        e[-r:] = np.linspace(1, 0, r)
+        x[i0:i0 + L] = e * np.exp(1j * ph)
+        t += L / rate + (rng.uniform(0.005, 0.05) if rng.random() < 0.5 else rng.uniform(0.25, 1.2))
+    return rate, x, {'br': round(br), 'dev_khz': round(dev / 1e3, 1), 'manchester': manch, 'gauss': gauss, 'synth': True}
+
+
+def keyup_drift(rng, n, rate):
+    """a cheap transmitter's frequency at key-up (Hz per sample, n samples): an
+    oscillator pulled by the switched supply settling exponentially, plus a slow
+    linear chirp over the packet (in 40 % of packets none of it)"""
+    if rng.random() < 0.4:
+        return np.zeros(n)
+    t = np.arange(n) / rate
+    pull = rng.uniform(-30e3, 30e3) * (rng.random() < 0.7)
+    tau = float(np.exp(rng.uniform(np.log(50e-6), np.log(5e-3))))
+    chirp = rng.uniform(-20e3, 20e3)          # Hz per second
+    return pull * np.exp(-t / tau) + chirp * t
+
+
+def gen_ism_fsk2(rng, seconds):
+    """a generic 2-FSK device over the whole parameter range real ones use: bit time
+    10 us - 2 ms and tone spacing 10 - 200 kHz drawn independently (log-uniform,
+    modulation index 0.5 - 60), NRZ, Manchester, NRZI (differential) or the
+    information in the length of one tone (PWM-FSK: a mark of 1 or 2 bit times, then
+    a space), Gaussian-filtered (BT 0.3 - 1) or hard keyed, packets of 2 ms - 1 s
+    (preamble 1010.., a sync word, a payload) sent 1 - 6 times 1 - 50 ms apart, the
+    groups 0.1 - 1.5 s apart, key-up drift / chirp (keyup_drift)"""
+    for _ in range(1000):
+        tb = float(np.exp(rng.uniform(np.log(10e-6), np.log(2e-3))))
+        sp = float(np.exp(rng.uniform(np.log(10e3), np.log(200e3))))
+        if 0.5 <= sp * tb <= 60.0:
+            break
+    coding = str(rng.choice(['nrz', 'manchester', 'nrzi', 'pwm'], p=[0.4, 0.3, 0.15, 0.15]))
+    gauss = rng.random() < 0.5
+    bt = float(rng.uniform(0.3, 1.0))
+    plen = float(np.exp(rng.uniform(np.log(2e-3), np.log(1.0))))
+    reps = int(rng.integers(1, 7))
+    occ = sp + 3.0 / tb + 60e3                 # tones + main lobes + the drift
+    rate = pick_rate(occ)
+    n = int(seconds * rate)
+    x = np.zeros(n, complex)
+    spb = tb * rate                             # samples per bit (per half bit for Manchester below)
+    t = rng.uniform(0.02, 0.3)
+    nbits_pkt = max(16, int(plen / tb))
+
+    def levels(bits):
+        if coding == 'manchester':
+            ch = np.column_stack([bits, 1 - bits]).ravel()
+            per = spb / 2
+        elif coding == 'nrzi':
+            ch = np.cumsum(bits) % 2
+            per = spb
+        elif coding == 'pwm':
+            # one symbol = mark for 1 (0) or 2 (1) bit times, then a space of 3 - that
+            ch = np.concatenate([[1] * (1 + int(b)) + [0] * (2 - int(b)) for b in bits]) if len(bits) else np.zeros(0)
+            per = spb
+        else:
+            ch, per = bits, spb
+        L = int(len(ch) * per)
+        idx = np.minimum((np.arange(L) / per).astype(int), len(ch) - 1)
+        lev = 2.0 * np.asarray(ch, float)[idx] - 1.0
+        if gauss and per >= 1.5:
+            sg = max(np.sqrt(np.log(2)) / (2 * np.pi * bt) * per, 0.5)
+            k = int(6 * sg) | 1
+            g = np.exp(-0.5 * ((np.arange(k) - k // 2) / sg) ** 2)
+            lev = np.convolve(lev, g / g.sum(), mode='same')
+        return lev
+    while t < seconds - 0.05:
+        pre = int(rng.integers(8, 64))
+        sync = rng.integers(0, 2, int(rng.choice([16, 24, 32])))
+        nb = max(8, nbits_pkt - pre - len(sync)) if coding != 'pwm' else max(8, (nbits_pkt - pre - len(sync)) // 3)
+        bits = np.concatenate([np.tile([1, 0], pre // 2), sync, rng.integers(0, 2, nb)]).astype(int)
+        lev = levels(bits)
+        off = rng.uniform(-5e3, 5e3)
+        for _r in range(reps):
+            i0 = int(t * rate)
+            L = len(lev)
+            if i0 + L >= n:
+                t = seconds
+                break
+            f = 0.5 * sp * lev + off + keyup_drift(rng, L, rate)
+            ph = 2 * np.pi * np.cumsum(f) / rate
+            e = np.ones(L)
+            r = max(2, int(rng.uniform(2e-6, 30e-6) * rate))
+            if 2 * r < L:
+                e[:r] = np.linspace(0, 1, r)
+                e[-r:] = np.linspace(1, 0, r)
+            x[i0:i0 + L] = e * np.exp(1j * ph)
+            t += L / rate + rng.uniform(1e-3, 50e-3)
+        t += rng.uniform(0.1, 1.5)
+    return rate, x, {'bit_us': round(tb * 1e6, 1), 'spacing_khz': round(sp / 1e3, 1), 'index': round(sp * tb, 2), 'coding': coding,
+                     'gauss': bool(gauss), 'packet_ms': round(plen * 1e3, 1), 'reps': reps, 'synth': 'ism_fsk2'}
+
+
+def gen_ism_ook2(rng, seconds):
+    """generic OOK / ASK devices the first generic kind does not reach: hard-keyed
+    long pulses (te 0.4 - 2 ms), very short pulses (10 - 80 us: meter
+    transmitters), shallow keying (6 - 20 dB between on and off) and ASK with a
+    residual carrier (the carrier stays on through the packet, keyed 6 - 12 dB);
+    PWM / PPM / Manchester frames, repeated, with key-up drift"""
+    kind = str(rng.choice(['long', 'short', 'shallow', 'ask'], p=[0.35, 0.25, 0.2, 0.2]))
+    if kind == 'long':
+        te = float(np.exp(rng.uniform(np.log(0.4e-3), np.log(2e-3))))
+    elif kind == 'short':
+        te = float(np.exp(rng.uniform(np.log(10e-6), np.log(80e-6))))
+    else:
+        te = float(np.exp(rng.uniform(np.log(80e-6), np.log(1e-3))))
+    depth = float(rng.uniform(6, 20)) if kind == 'shallow' else (float(rng.uniform(6, 12)) if kind == 'ask' else 80.0)
+    low = 10 ** (-depth / 20)
+    coding = str(rng.choice(['pwm', 'ppm', 'manchester']))
+    rise = float(np.exp(rng.uniform(np.log(0.2e-6), np.log(5e-6)))) if kind in ('long', 'short') else float(np.exp(rng.uniform(np.log(0.3e-6), np.log(30e-6))))
+    nbits = int(rng.integers(12, 96))
+    reps = int(rng.integers(1, 10))
+    rate = pick_rate(4.0 / te + 60e3)
+    n = int(seconds * rate)
+    env = np.zeros(n)
+    t = rng.uniform(0.02, 0.3)
+    k = max(1, int(rise * rate))
+    up = 0.5 - 0.5 * np.cos(np.pi * np.arange(k) / k)
+
+    def key(a, b, lvl=1.0):
+        i, j2 = int(a * rate), min(n, int(b * rate))
+        if j2 - i < 1:
+            return
+        e = np.full(j2 - i, lvl)
+        m = min(k, len(e))
+        e[:m] *= up[:m]
+        e[len(e) - m:] = np.minimum(e[len(e) - m:], lvl * up[:m][::-1])
+        env[i:j2] = np.maximum(env[i:j2], e)
+    iv = []
+    while t < seconds - 0.05:
+        bits = rng.integers(0, 2, nbits)
+        t0 = t
+        for _ in range(reps):
+            a = t
+            key(t, t + te)
+            t += te * rng.uniform(8, 32)
+            for b in bits:
+                if coding == 'pwm':
+                    key(t, t + te * (3 if b else 1))
+                    t += 4 * te
+                elif coding == 'ppm':
+                    key(t, t + te)
+                    t += te * (4 if b else 2)
+                else:
+                    h = te / 2
+                    key(t + (0 if b else h), t + (h if b else te))
+                    t += te
+            t += te * rng.uniform(4, 30)
+            if kind in ('shallow', 'ask'):
+                i, j2 = int(a * rate), min(n, int(t * rate))
+                env[i:j2] = np.maximum(env[i:j2], low)     # the carrier never off inside the frame
+            if t > seconds - 0.05:
+                break
+        iv.append([t0, t])
+        t += rng.uniform(0.1, 1.2)
+    fr = np.zeros(n)
+    for a, b in iv:
+        i, j2 = int(a * rate), min(n, int(b * rate))
+        fr[i:j2] = keyup_drift(rng, j2 - i, rate)
+    ph = 2 * np.pi * np.cumsum(fr) / rate
+    return rate, env * np.exp(1j * ph), {'kind': kind, 'coding': coding, 'te_us': round(te * 1e6, 1), 'depth_db': round(depth, 1),
+                                          'rise_us': round(rise * 1e6, 2), 'synth': 'ism_ook2'}
+
+
+# ---- physical-layer variants of plugin classes their generators do not make
+
+def _plugin_module(plugin, name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(PLUGINS, plugin, 'tools', name + '.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def p25_cc_syms(p, rng, seconds, nac):
+    """a P25 Phase 1 control channel: TSDUs back to back, each the frame sync + NID
+    (p25_gen.py's) and three TSBKs (196 bits each; random here - trellis-coded on the
+    air) with the status symbols: 360 symbols = 75 ms"""
+    syms = []
+    for _ in range(int(seconds / 0.075) + 2):
+        syms += p.with_status(p.head(nac, 0x7) + [int(b) for b in rng.integers(0, 2, 588)], 360)
+    return syms
+
+
+def p25_voice_syms(p, rng, seconds, nac):
+    """voice calls (p25_gen.py's call(): HDU, LDU1 / LDU2, TDU) at keyed intervals:
+    [(start s, symbols)]"""
+    out = []
+    for a, b in keyed_intervals(rng, seconds, on=(1.0, 5.0), off=(0.3, 3.0), start=(0.05, 0.8)):
+        out.append((a, p.call(int(rng.integers(1, 16777215)), int(rng.integers(1, 65535)), nac, b - a,
+                              str(rng.choice(['tdu', 'tdulc'])), 'imbe', rng)))
+    return out
+
+
+def gen_p25cc(rng, seconds):
+    """P25 Phase 1 control channel in C4FM (continuous; p25_gen.py's modulator)"""
+    p = _plugin_module('p25', 'p25_gen')
+    nac = int(rng.integers(1, 0xFFE))
+    syms = p25_cc_syms(p, rng, seconds, nac)
+    x = p.modulate(syms, 48000.0)[:int(seconds * 48000)]
+    return 48000, x, {'mod': 'c4fm', 'channel': 'cc'}
+
+
+def lsm(syms, rate, beta=0.2):
+    """P25 CQPSK / LSM: each symbol a phase step (+3: +135, +1: +45, -1: -45, -3: -135
+    degrees - the C4FM symbol's phase change), RRC-shaped at 4800 symbols/s"""
+    step = {3: 3 * np.pi / 4, 1: np.pi / 4, -1: -np.pi / 4, -3: -3 * np.pi / 4}
+    ph = np.cumsum([step[s] for s in syms])
+    sps = int(rate // 4800)
+    up = np.zeros(len(syms) * sps + 16 * sps, complex)
+    up[8 * sps:8 * sps + len(syms) * sps:sps] = np.exp(1j * ph)
+    return np.convolve(up, rrc(beta, sps, 8), 'same')
+
+
+def gen_p25lsm(rng, seconds):
+    """P25 Phase 1 in CQPSK / LSM (simulcast): a control channel or voice calls"""
+    p = _plugin_module('p25', 'p25_gen')
+    rate = 48000
+    nac = int(rng.integers(1, 0xFFE))
+    n = int(seconds * rate)
+    # the pulse's roll-off: on the air LSM signals occupy up to ~9 kHz (the plain
+    # alpha 0.2 shape would be 5.8 kHz)
+    beta = float(rng.uniform(0.6, 1.0) if rng.random() < 0.6 else rng.uniform(0.2, 0.6))
+    if rng.random() < 0.5:
+        x = lsm(p25_cc_syms(p, rng, seconds, nac), rate, beta)[:n]
+        return rate, x, {'mod': 'lsm', 'channel': 'cc', 'beta': round(beta, 2)}
+    x = np.zeros(n, complex)
+    for a, syms in p25_voice_syms(p, rng, seconds, nac):
+        y = lsm(syms, rate, beta)
+        i = int(a * rate)
+        m = min(n - i, len(y))
+        if m > 0:
+            e = ramp_env(m, rate, [[0.0, m / rate]], 0.002)
+            x[i:i + m] += y[:m] * e
+    return rate, x, {'mod': 'lsm', 'channel': 'voice', 'beta': round(beta, 2)}
+
+
+def gen_nxdn48(rng, seconds):
+    """NXDN 4800 bit/s (6.25 kHz): 2400 symbols/s 4-FSK, +-350 / +-1050 Hz, RRC 0.2
+    (nxdn_gen.py's filter and frame sync word); 80 ms frames of 192 symbols = the
+    10-symbol FSW + 182 random symbols (the scrambled LICH / SACCH / voice; nxdn_gen.py
+    frames NXDN96 only); calls at keyed intervals"""
+    m = _plugin_module('nxdn', 'nxdn_gen')
+    rate, sps = 48000, 20
+    n = int(seconds * rate)
+    h = m.rrc(sps, 6, 0.2)
+    h = h / h[len(h) // 2]
+    x = np.zeros(n, complex)
+    for a, b in keyed_intervals(rng, seconds, on=(1.0, 5.0), off=(0.3, 3.0), start=(0.05, 0.8)):
+        syms = []
+        for _ in range(max(1, int((b - a) / 0.08))):
+            syms += list(m.FSW) + [int(s) for s in rng.choice([-3, -1, 1, 3], 182)]
+        up = np.zeros(len(syms) * sps + 12 * sps)
+        up[6 * sps:6 * sps + len(syms) * sps:sps] = syms
+        f = np.convolve(up, h, 'same') * 350.0
+        y = np.exp(2j * np.pi * np.cumsum(f) / rate)
+        i = int(a * rate)
+        k = min(n - i, len(y))
+        if k > 0:
+            x[i:i + k] += y[:k] * ramp_env(k, rate, [[0.0, k / rate]], 0.002)
+    return rate, x, {'mod': 'nxdn48'}
+
+
+def gen_dmr_ms(rng, seconds):
+    """DMR from a mobile to a repeater (MS-sourced): dmr_gen.py's TDMA direct-mode bursts
+    (a 27.5 ms burst every 60 ms) with the MS-sourced voice / data sync words of ETSI TS
+    102 361-1 (table 9.2) in place of the direct-mode ones - the bank's generator makes
+    BS and direct-mode traffic only, a repeater's input carries these"""
+    import contextlib
+    import io
+    m = _plugin_module('dmr', 'dmr_gen')
+    for slot in ('ts1', 'ts2'):
+        m.SYNC[(slot, 'voice')] = 0x7F7D5DD57DFD
+        m.SYNC[(slot, 'data')] = 0xD5D7F77FD757
+    tmp = '/dev/shm/synth_dmr_ms_%d.cf32' % os.getpid()
+    argv = [tmp, '--mode', 'dmo', '--cc', str(int(rng.integers(0, 16))), '--seed', str(int(rng.integers(1, 1 << 30)))]
+    for a, b in keyed_intervals(rng, seconds - 1.2, on=(0.8, 4.0), off=(0.3, 3.0), start=(0.05, 0.8)):
+        argv += ['--at', '%.3f' % a, '--slot', str(int(rng.integers(1, 3))), '--dur', '%.3f' % (b - a),
+                 '--src', str(int(rng.integers(1, 16776415))), '--dst', str(int(rng.integers(1, 99999)))]
+    old = sys.argv
+    sys.argv = ['dmr_gen.py'] + argv
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            m.main()
+    finally:
+        sys.argv = old
+    x = np.fromfile(tmp, np.complex64).astype(complex)
+    for f in (tmp, tmp[:-5] + '.json'):
+        if os.path.exists(f):
+            os.remove(f)
+    n = int(seconds * 48000)
+    y = np.zeros(n, complex)
+    y[:min(n, len(x))] = x[:n]
+    return 48000, y, {'mode': 'ms'}
+
+
+def gen_vor(rng, seconds):
+    """VOR as measured on the air (not the nominal 30 % / 30 %): carrier, 30 Hz AM of
+    8-35 %, the 9960 Hz subcarrier at 18-32 % FM +-480 Hz by the 30 Hz reference, the
+    1020 Hz Morse ident at 5-15 % (or none)"""
+    rate = 48000
+    n = int(seconds * rate)
+    t = np.arange(n) / rate
+    m30, msub = rng.uniform(0.08, 0.35), rng.uniform(0.18, 0.32)
+    r = rng.uniform(0, 2 * np.pi)
+    env = 1 + m30 * np.cos(2 * np.pi * 30 * t - r) + msub * np.cos(2 * np.pi * 9960 * t + 16.0 * np.sin(2 * np.pi * 30 * t))
+    ident = rng.random() < 0.6
+    if ident:
+        wpm = rng.uniform(6, 12)
+        dot = 1.2 / wpm
+        key = np.zeros(n)
+        txt = ''.join(rng.choice(list('ABCDEFGHIJKLMNOPQRSTUVWXYZ'), int(rng.integers(2, 4))))
+        t0 = rng.uniform(0.1, 3.0)
+        every = rng.uniform(4.0, 12.0)
+        while t0 < seconds:
+            tt = t0
+            for ch in txt:
+                for s in MORSE.get(ch, ''):
+                    d = dot * (3 if s == '-' else 1)
+                    key[int(tt * rate):min(n, int((tt + d) * rate))] = 1
+                    tt += d + dot
+                tt += 2 * dot
+            t0 += every
+        w = np.hanning(int(0.005 * rate) | 1)
+        key = np.convolve(key, w / w.sum(), 'same')
+        env = env + rng.uniform(0.05, 0.15) * key * np.cos(2 * np.pi * 1020 * t)
+    return rate, env.astype(complex), {'m30': round(m30, 3), 'msub': round(msub, 3), 'ident': ident}
+
+
+KINDS = {'wfm': gen_wfm, 'ism_ook': gen_ism_ook, 'ism_fsk': gen_ism_fsk, 'am': gen_am, 'ssb': gen_ssb, 'cw': gen_cw, 'carrier': gen_carrier, 'unk_fsk': gen_unk_fsk,
+         'unk_psk': gen_unk_psk, 'unk_ofdm': gen_unk_ofdm, 'unk_pulse': gen_unk_pulse, 'unk_noise': gen_unk_noise,
+         'p25cc': gen_p25cc, 'p25lsm': gen_p25lsm, 'nxdn48': gen_nxdn48, 'vor': gen_vor, 'dmr_ms': gen_dmr_ms,
+         'ism_fsk2': gen_ism_fsk2, 'ism_ook2': gen_ism_ook2, 'wfm_loud': gen_wfm_loud}
+
+
+def main():
+    a = sys.argv[1:]
+    if len(a) < 2 or a[0] not in KINDS:
+        print(__doc__)
+        sys.exit(2)
+    kind, out = a[0], a[1]
+    seed, seconds = 1, 10.0
+    i = 2
+    while i < len(a):
+        if a[i] == '--seed':
+            seed = int(a[i + 1])
+        elif a[i] == '--seconds':
+            seconds = float(a[i + 1])
+        else:
+            sys.exit('unknown option ' + a[i])
+        i += 2
+    rng = np.random.default_rng(seed)
+    rate, x, variant = KINDS[kind](rng, seconds)
+    x = np.asarray(x, np.complex128)
+    x = x / max(np.sqrt(np.mean(np.abs(x[np.abs(x) > 0]) ** 2)) if np.any(np.abs(x) > 0) else 1.0, 1e-12) * 0.3
+    x.astype(np.complex64).tofile(out)
+    with open(out.rsplit('.', 1)[0] + '.json', 'w') as fh:
+        json.dump({'rate': rate, 'variant': variant}, fh)
+    print('%s: %s %.1f s at %d Hz %s' % (out, kind, seconds, rate, json.dumps(variant)))
+
+
+if __name__ == '__main__':
+    main()

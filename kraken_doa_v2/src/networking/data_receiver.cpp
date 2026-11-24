@@ -20,6 +20,7 @@
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/noise_floor.hpp"
 #include "signal_processing/bin_doa.hpp"
+#include "sigclass_service.hpp"
 #include "decimator_manager.hpp"
 #include "doa_logger.hpp"
 #include "voice2text.hpp"
@@ -173,6 +174,9 @@ void DataReceiver::data_receiver_thread() {
 
     vector<uint8_t> buffer(4 * 1024 * 1024);
     size_t bytes_in_buffer = 0;
+    // bytes were lost before the next packet (a resync, a reconnect, a
+    // source switch): the Signal ID tap restarts its snapshot (sigclass_service.hpp)
+    bool stream_gap = true;
 
     // Upper bound for the per-channel sample count in a packet header
     constexpr size_t MAX_SAMPLES_PER_CHANNEL = 65536;
@@ -241,6 +245,7 @@ void DataReceiver::data_receiver_thread() {
         // over from the previous connection so old and new bytes never splice
         // into one structurally-valid-but-garbage packet.
         bytes_in_buffer = 0;
+        stream_gap = true;
 
         while (running) {
             if (playback::active() != pb) break;   // source switched
@@ -288,6 +293,7 @@ void DataReceiver::data_receiver_thread() {
 
                 if (magic != TCP_MAGIC) {
                     offset++;
+                    stream_gap = true;
                     continue;
                 }
 
@@ -323,6 +329,7 @@ void DataReceiver::data_receiver_thread() {
                 if (channels == 0 || channels > MAX_CHANNELS ||
                     samples == 0 || samples > MAX_SAMPLES_PER_CHANNEL) {
                     offset++;
+                    stream_gap = true;
                     continue;
                 }
 
@@ -501,6 +508,15 @@ void DataReceiver::data_receiver_thread() {
                     aicap::on_packet(buffer.data() + offset + header_size, std::min<uint32_t>(channels, MAX_CHANNELS), samples,
                                      noise_source != 0, is_retuning, rf, rg);
                 }
+
+                // Signal ID (sigclass_service.hpp): one channel's bytes into
+                // the classifier's snapshot while a capture is armed (one
+                // atomic load per packet otherwise). Here every packet passes,
+                // heimdall's and a playback's, retuning and noise ones included
+                if (sigsvc::armed())
+                    sigsvc::on_packet(buffer.data() + offset + header_size, channels, samples, ch_freq_hz.data(),
+                                      noise_source != 0, is_retuning, stream_gap);
+                stream_gap = false;
 
                 // SKIP PROCESSING if server is currently retuning (data contains noise)
                 // Only advance past the packet without processing it
