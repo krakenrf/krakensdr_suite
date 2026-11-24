@@ -1713,15 +1713,17 @@ the broadcasts:
   The whole kit on the merged tree before any change: every suite passed
   but t34's two known checks and t20 case 18 (a control-channel list
   message in the "idle minute": the first heard refresh after a start sent
-  it at once - since then it waits `CC_STATS_MS` too). `t40_sweep` 53 (20
-  failed on the merged tree before the changes): a followed call, then
+  it at once - since then it waits `CC_STATS_MS` too). `t40_sweep` 54 (20
+  of its first 53 failed on the merged tree before the changes; 54 / 54 in
+  three runs on the final build): a followed call, then
   `OPERATING_MODE:sweep` - status `mode` "sweep", paused "sweep mode", the
   call ended `mode`, the voice VFOs gone, D0 untouched, the settings file's
   trunk keys / VFOs / centre unchanged; in the mode a grant, `TRUNK_SEARCH`
   and both click forms - the three refusals word for word, nothing started,
   nothing of the manager's to heimdall (no `set_frequency`, hold, tuner,
   mode) and no VFO message for 6 s; leaving resumes (heimdall back to 851,
-  the control VFO decodes, the next call followed, no "put back"). An
+  the control VFO decodes, the call of before not revived, the next call
+  followed, no "put back"). An
   excursion away + the command: `set_frequency` home before
   `set_operating_mode` sweep; + heimdall's own switch: the excursion over,
   D0 on its home offset, leaving sends heimdall home (before: the away
@@ -1743,7 +1745,11 @@ the broadcasts:
   meanwhile: D0 left on its centre (before: put on the old control offset).
   `t42_sigclass` 10: Signal ID on beside a control VFO, a followed call and
   a search (done, its 3 channels found; Signal ID kept taking snapshots),
-  both standing down in sweep mode and running again after it.
+  both standing down in sweep mode and running again after it. The whole
+  kit on the final build: every suite as before (t34 19 / 21 as designed;
+  t20 15-16 / 18 - its file section's restart flake: the receiver of one
+  case is never signalled, so the next case's checks read it; case 18
+  passes now).
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
   / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a
