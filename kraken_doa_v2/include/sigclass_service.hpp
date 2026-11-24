@@ -12,7 +12,8 @@
 // comes first -, exact_tuner_hz; sigclass_rules.hpp), arm a capture, wait
 // for it, analyze, update the band's tracker (absolute Hz), publish
 // {"sigclass":{...}} to the pages; before the next look it rests to keep
-// analysis within CPU_SHARE of the wall time.
+// analysis within CPU_SHARE of the wall time. Sweep mode (the tuners hop):
+// parked - no capture, no tracks - until the mode is left.
 //
 // The tap: the data receiver thread hands every packet to on_packet() while
 // a capture is armed (armed(): one atomic load per packet otherwise). It

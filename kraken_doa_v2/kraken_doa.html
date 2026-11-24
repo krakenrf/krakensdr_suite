@@ -15356,6 +15356,7 @@ function swpDraw() {
       if (x > L + 18 && x < R - 18) { ctx.fillStyle = '#707883'; ctx.fillText((f / 1e6).toFixed(dec), x, bot + 5); }
     }
   }
+  bandStripSweep(win);   // the Bands bar over the plot (BANDS: only when the window changed)
   const tr = swp.tr;
   if (tr && tr.freqs.length > 1 && tr.w1 > tr.w0) {
     const n = tr.freqs.length, sp = tr.w1 - tr.w0;
@@ -16298,6 +16299,7 @@ function bandApply() {
   if (opMode === 'independent' && typeof panesResizeNow === 'function') panesResizeNow();
   sigRender();
   if (fftPlot) drawBox();
+  if (opMode === 'sweep') swpDrawSoon();   // (its strip: bandStripSweep)
 }
 // a label's width in the strip's font (measured once per label: bandTextW)
 function bandLabelW(s) {
@@ -16350,7 +16352,7 @@ function bandStripDraw(el, f0, f1, x0, x1) {
 }
 // the main display (drawBox, every frame): its plot area's frequency axis
 function bandStripMain() {
-  if (!sigUi.bands || opMode === 'independent' || !fftPlot || !fftPlot.over) return;
+  if (!sigUi.bands || opMode === 'independent' || opMode === 'sweep' || !fftPlot || !fftPlot.over) return;
   const el = $id('band-strip-main'), sx = fftPlot.scales && fftPlot.scales.x;
   if (!el || !sx || !(sx.max > sx.min)) return;
   const w = fftPlot.over.clientWidth, bl = fftPlot.bbox ? fftPlot.bbox.left : 0;
@@ -16360,6 +16362,20 @@ function bandStripMain() {
   // the plot area's left edge in the strip (the y axis' width; both share the panel's left)
   const x0 = fftPlot.over.getBoundingClientRect().left - el.getBoundingClientRect().left;
   bandStripDraw(el, sx.min, sx.max, x0 + fftPlot.valToPos(sx.min, 'x'), x0 + fftPlot.valToPos(sx.max, 'x'));
+}
+// sweep mode (swpDraw, every frame): the same strip over the sweep's plot, its
+// window w0..w1 Hz from SWP_L to the plot's right edge. Its key shares el._mk
+// with bandStripMain's (a leading 's' never equals a number), so either
+// display draws its own axis again after the other's
+function bandStripSweep(win) {
+  if (!sigUi.bands || !win) return;
+  const el = $id('band-strip-main'), c = $id('swp-spec');
+  if (!el || !c) return;
+  const k = el._mk;
+  if (k && el._bk && k[0] === 's' && k[1] === win[0] && k[2] === win[1] && k[3] === swp.sw) return;
+  el._mk = ['s', win[0], win[1], swp.sw];
+  const dx = c.getBoundingClientRect().left - el.getBoundingClientRect().left;
+  bandStripDraw(el, win[0] / 1e6, win[1] / 1e6, dx + SWP_L, dx + swp.sw - SWP_R);
 }
 // an independent-mode pane (paneDrawSpec, every frame): its span from p.L to the plot's right edge
 function bandStripPane(p, span) {

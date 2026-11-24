@@ -862,8 +862,23 @@ void worker() {
                 clear_tracks_pub();
                 publish(true);   // (at once: the pages show the new mode already)
             }
+            if (last_mode == 3) set_parked("");   // (out of sweep mode: not "paused" through the first rest)
             last_mode = mode;
             restart_bands();
+        }
+        // sweep mode (3, sweep.hpp): the tuners hop every few ms and only the
+        // sweep engine reads the samples - no snapshot could hold one band, and
+        // nothing is demodulated to tune to. Parked as DoA is: no capture, no
+        // look, no tracks (the mode change above cleared them and sent the empty
+        // list), nothing sent anywhere. heimdall sends sweep's 0x2000 together
+        // with 0x800, but the mode index is the receiver's own (3, not
+        // independent's 2), so the tuners-in-turn branch below never sees a
+        // sweep. Leaving the mode ends the rest at once (rest() watches the
+        // mode) and the next look is every band's first look again
+        if (mode == 3) {
+            set_parked("sweep mode (the tuners hop)");
+            rest(5000);
+            continue;
         }
         // parked: the noise source (calibration) - the tracks go, a burst of
         // the noise source is no signal; a retune's settling packets
