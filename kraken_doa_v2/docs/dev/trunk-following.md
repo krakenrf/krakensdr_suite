@@ -1712,8 +1712,31 @@ CONTROL part misses its 0.6 s grant tone (5 of 27, timing only).
 ## Page
 
 `kraken_doa.html`, script section "📡 TRUNK FOLLOWING" (`tk…`), the box
-`data-sb="trunk"` after Saved Frequencies (all operating modes), the editor
-`#tk-dlg`. The page shows the receiver's state and sends its commands; no
+`data-sb="trunk"` after Saved Frequencies and before main's Signal ID box
+(every operating mode but sweep mode), the editor `#tk-dlg`.
+
+**Sweep mode** (main's fourth operating mode, merged 2026-11-25: the tuners
+hop across a range, no VFO, audio or decoder runs). The receiver stands
+trunk following down there (the status' `mode` "sweep", the pause reason
+"sweep mode", `TRUNK_SEARCH` / `TRUNK_CC_FOLLOW` refused with "not in sweep
+mode - switch to coherent or independent first"). The page follows main's
+pattern for the boxes that need VFOs: the box is `.not-sweep` (hidden with
+Decimators, Saved Frequencies, the Recorder; a box shown paused would offer
+nothing that works there), the top-bar banner is hidden in sweep mode
+whatever the status says (`body.mode-sweep #tk-exc-banner`: the range digits
+replace the frequency it marks), and the sweep display draws no VFO, so no
+trunk bar or tag. Leaving the mode shows everything again (CSS only: the
+box's own `display` is untouched, a reload or a second page needs nothing
+more). Where the words can still surface - a page that has not had the
+mode message yet, the moment of the switch - they read: the state "Paused"
+with "Paused in sweep mode: no VFO runs there - switch to coherent or
+independent mode (top bar) to follow calls" as its tip, the note "Paused
+in sweep mode: switch to coherent or independent mode to follow calls"
+(`tkSweepPause`: the reason or the status' mode; never "the sweep mode
+runs"), a click to follow "Not in sweep mode: switch to coherent or
+independent mode (top bar)" at once, nothing sent, and a note in the
+control-channel part; the receiver's refusals as it words them with "(the
+top bar's Mode)" after them. The page shows the receiver's state and sends its commands; no
 optimistic updates - every page redraws from the broadcasts (a second tab
 follows at once). `tkSt` (the last status) and `tkLists` (lists by system id)
 sit in the globals block: the VFO cards and `drawBox` read them.
@@ -2135,7 +2158,8 @@ Export for a copy) - or, while a save fails (`trunk_cc.file.state`
   shown safely: a time in the future "at an unknown time" (never "new",
   sorted as now), no "Invalid Date" (`tkCcDate`), a negative level "-12 dB"
   (`tkCcLv`).
-- Notes there also say: a playback (following waits), wideband scan mode.
+- Notes there also say: a playback (following waits), wideband scan mode,
+  sweep mode.
   The empty list says one line ("Nothing remembered yet - Search bands…
   finds them."), the rest in its tooltip.
 

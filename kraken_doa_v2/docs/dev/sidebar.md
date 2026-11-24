@@ -532,7 +532,12 @@ lost the box too; the section is reached through the cog there as well.
 
 **Trunk Following** (`trunk`, the `trunk` icon, 2026-11-20 -
 *trunk-following.md*, "Page") was added after Saved Frequencies, in every
-operating mode: one more keyed box. It is `display:none` until the receiver
+operating mode but sweep mode (`.not-sweep`, since the merge with main of
+2026-11-25: no VFO runs there): one more keyed box. Main's Signal ID box
+(`signal-id`, *signal-classifier.md*, "Page") was added at the same place;
+the merge put Trunk Following first, then Signal ID - with the Sweep box the
+sidebar has 19 keyed boxes. A layout stored before either box loads with
+both after Saved Frequencies (`sbBoxOrder`), open. It is `display:none` until the receiver
 answers `GET_TRUNK` with its status, so an older receiver leaves the sidebar
 as it was (a hidden box keeps its place in a stored order, as the Wideband
 Board box does). Its rarely used settings fold out under the ⚙ in its first

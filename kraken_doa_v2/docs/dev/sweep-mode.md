@@ -2165,7 +2165,10 @@ Sweeps. Box by box in sweep mode:
   Mapper, DoA Recording, Continuous Scanner, Experimental (`.coh-only`, as in
   the other non-coherent modes), Scanner (wideband scan only), IQ & Audio
   Recorder (IQ is coherent-only, audio needs VFOs), Saved Frequencies (a
-  click tunes a VFO; its scan needs one), Debug Playback (a coherent array's
+  click tunes a VFO; its scan needs one), Trunk Following (since the merge
+  with trunk following, 2026-11-25: its voice and control VFOs can't run -
+  the receiver pauses it, "sweep mode", and its top-bar banner is hidden
+  too; *trunk-following.md*, "Page"), Debug Playback (a coherent array's
   test transmissions through the VFOs and decoders). The rail's Decoders and
   Transcription buttons and the panel under the waterfall go too (nothing is
   decoded); the panel comes back as it was.
