@@ -2914,6 +2914,29 @@ linearity search"; the receiver and the page: their sections above):
     and the readout is an average over 15 s.
   - 20 minutes (300 sweeps): the quiet bands never move, 2 - 3 trials a
     sweep, 3 - 9 hops being tried again, the search over at the 16th sweep.
+- *The cost on a Pi, found after that pass* (the test Pi 5; its receiver is
+  the Wideband unit run in plain mode - noise only, nothing to adjust;
+  `agc_cpu_pi.py`): with Auto on a sweep took 4.142 s against 4.021 s,
+  +3.0 %, with no gain write at all - the conversion worker computed the
+  five tuners' spectrum estimates before the set was counted, and the hop
+  waited for them (7.12 -> 7.67 ms a hop; on the dev machine +0.1 %).
+  heimdall a352c26 computes the estimate on its own thread and learns from
+  a visit when its result is there: the same check then reads 4.021 s with
+  Auto off and on, heimdall 18.0 -> 21.3 % of a core, the receiver 15.4 ->
+  15.5. Its first form numbered the visits with one counter for all
+  tuners, which lost every result when 2 or 4 tuners sweep (the review;
+  the heimdall worker's fake: 99 late visits against 0); per tuner now. On
+  the KrakenSDR with that build (`est_tuners.py`: 380 - 520 MHz with 4, 2,
+  5 and 1 sweep tuners, 25 s each): no estimate late in any sweep, 121 /
+  85 / 57 / 80 pairs kept; the whole plan and one tuner as in the last
+  pass (417.02 at 28.0 by the 4th sweep, then 22.9 - that hour's best
+  gain; a sweep 3.941 s manual, 3.942 s with Auto); the page 19 / 19,
+  round 9's chain 22 / 24 (the clipping wobble; an FM station's peak
+  moving 21.2 / 26.8 / 24.0 dB over a median that stood still), end to end
+  20 / 20 with Auto off and on. And once more from the merged tree's own
+  builds: the page 19 / 19, end to end 20 / 20 twice, round 9's chain
+  23 / 24 (hops over 1 % clipped after the switch 31, 26, 9, 2, 0 ...; a
+  sweep 3.939 s manual, 3.951 s with Auto).
 - *Limits, measured and left*: (1) a hop whose own carrier stands within a
   few dB of full scale and varies (415.11 MHz: -1.1 dBFS rms at 29.7 dB on
   a quiet night, 5 dB more at midday) is cut at each burst and comes back
@@ -2930,8 +2953,9 @@ linearity search"; the receiver and the page: their sections above):
   keyed carrier). (5) Levels: the client still shifts a hop by ONE curve,
   and the real steps differ by band (above) - a hop far down can stand 1 -
   2 dB off its neighbours. Not run: the Pi with a KrakenSDR (the test Pi
-  carries the Wideband unit: build and the fake only), Windows and macOS,
-  Firefox / Safari, a fork without the fast gain write on hardware.
+  carries the Wideband unit: the build, the cost and the fake only - no
+  strong signal to turn down there), a Pi 4, Windows and macOS, Firefox /
+  Safari, a fork without the fast gain write on hardware.
 
 Open after round 6, as after round 5: Firefox, Safari and iOS have not run the picture's
 download or the full sets (headless Chromium only); a slow link was tried
