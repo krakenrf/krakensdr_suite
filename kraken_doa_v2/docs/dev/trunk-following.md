@@ -127,7 +127,7 @@ applies, `why`):
 | why | when |
 |---|---|
 | `off` | following is off |
-| `paused` | a scanner runs (below) |
+| `paused` | a scanner runs, or the receiver is in sweep mode (below) |
 | `stopped` | the user stopped it (`TRUNK_END`) or removed its voice VFO by hand: not rejoined (below) |
 | `no_signal` | its SETUP gave up (nothing received): not followed again this over |
 | `data` | a data grant - counted only, no call row (below) |
@@ -532,6 +532,38 @@ same call). A `hang` call goes back to `active` with new activity.
   saved-frequency scan", "... outside the receiver's span: tune back ...",
   "... then set by hand - left as it is") and a log line. The scanners'
   own behaviour is unchanged.
+- **Sweep mode** (operating mode 3, *sweep-mode*; 2026-11-25): only the
+  sweep engine gets samples - no VFO decodes, so there is nothing to follow.
+  The manager stands down as for a scanner: entering it ends the followed
+  calls (`mode`) and removes the voice VFOs; it is paused (`paused_why`
+  "sweep mode"), places nothing, starts no excursion and takes no voice
+  tuner; `TRUNK_SEARCH` and `TRUNK_CC_FOLLOW` (both forms) are refused with
+  "not in sweep mode - switch to coherent or independent first". Nothing of
+  the user's is changed or saved by it (the settings, his VFOs - the control
+  VFOs stay as they are, enabled, idle). Leaving the mode resumes everything
+  by itself (the control VFOs decode again, following as it was set); no
+  control VFO is "put back" then (the sweep moved none, and the stream may
+  still show a hop for a moment), and click to follow's bookkeeping
+  (`cc_followed`) is not re-checked in the mode and for 5 s after it (a VFO's
+  RF measured against a hop). What was in flight goes home - by the
+  `OPERATING_MODE:sweep` command `before_command` returns it while the old
+  mode still applies (an excursion: `FREQ:` home, the hold released, before
+  heimdall gets `set_operating_mode`; a search: home, end `mode`; voice
+  tuners: back) - main stops the other scanners there too: the mode wins.
+  When heimdall reports the mode itself (no command; `FREQ:` / `TUNER_FREQ:`
+  are refused by then) the next tick ends them without a retune, and the
+  REQUESTED state is set home directly (`requested_freq_hz` for an excursion
+  or a coherent search, the search tuner's `indep_tuner_freq_hz`, the voice
+  tuners' home as before): leaving sweep mode sends heimdall back to the
+  user's frequency, not to an away centre or a search step. The control VFOs
+  an excursion moved get their home offsets back at that moment (a one-off
+  write to idle VFOs); after it the manager's ticks send heimdall nothing (no
+  hold, no retune), move no VFO and reset no spectrum average while the
+  sweep runs. A click's retune just before the mode is the user's tuning and
+  stands (heimdall returns to it). heimdall's packets in sweep mode go to the
+  sweep engine only, so `note_packet()` isn't called (`heimdall_up()` false
+  after 2 s - unused while paused; the search's frame counters
+  `fft_frame_hz` / `fft_frames_here` stop, no search runs).
 - **Centre / tuner retuned**: the calls on that tuner end (`retuned`, or
   `control_reset` when the control VFO's RESET comes first - in coherent mode
   the control VFO moves with the centre).
@@ -610,7 +642,8 @@ no hold) - the tuner of the user's control VFO if there is one, else tuner
 other tuners keep what they do. Wideband scan mode: refused ("switch to
 coherent or independent first" - its tuners are spread around one centre,
 a step would move all five and the probes' placement across the panes is
-not worth it for a search). The centre steps by the
+not worth it for a search). Sweep mode: refused ("not in sweep mode -
+switch to coherent or independent first"). The centre steps by the
 usable band (edge clip x 2.4 MHz) less a 50 kHz overlap; heimdall's
 calibration is HELD for the whole sweep (lease 3 s renewed every second, no
 noise-source bursts) and released at the end (the calibration at home at
@@ -727,8 +760,28 @@ the voice its decoder decodes - nothing on a control channel) and leaves
 the speaker as the user set it: muting it would leave a speaker off he'd
 have to find, and the Digital demod shows on D0's card like any demod he
 picks (the VFOs "Follow it too" adds get Digital too, muted as new VFOs
-are). Refused during a playback, in wideband scan mode, while a scanner
-runs. The entry's `followed` is set; following switches on.
+are). Refused during a playback, in wideband scan mode, in sweep mode ("not
+in sweep mode - switch to coherent or independent first", both forms), while
+a scanner runs. The entry's `followed` is set; following switches on.
+**A locked D0** (2026-11-25): D0's decoder may be one that holds its VFO -
+ADS-B / AIS (`fixed_freq_hz`), `lock_vfo` (ism, cells, ...), main's
+`lock_vfo_opt` (Inmarsat Aero's All channels: `mode=all`). The receiver
+itself enforces no lock (the page, the assistant and the saved-frequency
+scan do), so the old order - bandwidth, frequency, options, decoder, demod -
+ended right on the receiver (reproduced: ADS-B with the receiver at 1090
+MHz, the `lock_vfo` scratch plugin, Aero with `mode=all`, coherent and
+independent - D0 on the entry, 12.5 kHz, the entry's decoder), but D0's
+bandwidth and frequency messages reached the pages while their latest VFO
+list still showed it locked. The click now writes as main's own writers do
+(the page's `sfTune`, the assistant's `set_vfo`): the plugin options are
+cleared, then the entry's options, the decoder, the bandwidth, the
+frequency, the Digital demod. The scan restore writes the decoder before the
+bandwidth and the place too; an excursion's return (and its end without a
+retune) leaves alone a control VFO whose decoder now holds it (the user put
+one on it while away: its place is the decoder's, not the home offset).
+Voice VFOs already wrote the decoder first (a reused one the user changed by
+hand is set up again from the decoder on); the search's probes are new VFOs
+with trunking decoders only (no lock), so their order doesn't matter.
 
 **After the review (2026-11-22), the acceptance on the KrakenSDR**: 496-502
 MHz at 33.8 dB, coherent, the receiver and its plugins pinned to 2 cores
@@ -1049,8 +1102,9 @@ renamed.
   call ACTIVE), back_arrive_ms, back_cal_ms, ctl_back_ms (return -> a
   control VFO reporting again); -1 = not seen}}`.
 - `paused` (bool), `paused_why` (`"saved-frequency scan"` | `"discrete
-  scanner"` | `"continuous scanner"` | `""`), `playback` (bool), `mode`
-  (`coherent` | `wideband` | `independent`), `hold`: `{"sys","tg"}` | null.
+  scanner"` | `"continuous scanner"` | `"control-channel search"` |
+  `"sweep mode"` | `""`), `playback` (bool), `mode`
+  (`coherent` | `wideband` | `independent` | `sweep`), `hold`: `{"sys","tg"}` | null.
 - `scan_restore`: the control VFOs a scanner moved, put back (or not) when
   it stopped, the last 60 s: `[{vfo, sys, hz (where it was), restored,
   note}]` (below).
@@ -1645,6 +1699,45 @@ the broadcasts:
   t22 4, t23 4, t14 36, t15 12 - all passing; t20 15-16 of 18 in two runs
   (in its file section one restart did not happen and the checks read the
   previous receiver - a kit flake, 18 / 18 in a third run with prints).
+- After the merge with main (2026-11-25, scratch `mrx/`; the fake
+  heimdall got a minimal sweep mode - header 0x2000 | 0x800, the tuners
+  hopping a `set_sweep` plan, `set_frequency` / `set_independent_tuner`
+  refused there, and a scene key `mode` with which it changes its mode by
+  itself as from its own web UI; a scratch `lock_vfo` plugin `lockvfo`).
+  The whole kit on the merged tree before any change: every suite passed
+  but t34's two known checks and t20 case 18 (a control-channel list
+  message in the "idle minute": the first heard refresh after a start sent
+  it at once - since then it waits `CC_STATS_MS` too). `t40_sweep` 53 (20
+  failed on the merged tree before the changes): a followed call, then
+  `OPERATING_MODE:sweep` - status `mode` "sweep", paused "sweep mode", the
+  call ended `mode`, the voice VFOs gone, D0 untouched, the settings file's
+  trunk keys / VFOs / centre unchanged; in the mode a grant, `TRUNK_SEARCH`
+  and both click forms - the three refusals word for word, nothing started,
+  nothing of the manager's to heimdall (no `set_frequency`, hold, tuner,
+  mode) and no VFO message for 6 s; leaving resumes (heimdall back to 851,
+  the control VFO decodes, the next call followed, no "put back"). An
+  excursion away + the command: `set_frequency` home before
+  `set_operating_mode` sweep; + heimdall's own switch: the excursion over,
+  D0 on its home offset, leaving sends heimdall home (before: the away
+  centre). A search at its second step + the command (home and the hold
+  released before the mode, end `mode`, no probe left, D0 enabled) and +
+  heimdall's switch (leaving: home, before: the step); a click to follow and
+  sweep mode right after (the click's retune before the mode, D0 still in
+  `cc_followed` 9 s into the mode - before: dropped -, heimdall back to the
+  click's centre after it); sweep -> independent seeds untuned tuners at the
+  array's 851 MHz; independent mode with a voice tuner taken + the command
+  (tuner 1 home before the mode) and + heimdall's switch (home on leaving);
+  an independent search + heimdall's switch (tuner 0 home on leaving, before:
+  the step). `t41_lockd0` 36: D0 with ADS-B (the receiver at 1090 MHz),
+  `lockvfo`, Aero `mode=all`, coherent and independent (tuner 2): D0 on the
+  entry, 12.5 kHz, trunktest, Digital, no options left, receiving, followed,
+  and no D0 bandwidth / frequency message while the pages' VFO list still
+  showed it locked (3 of 3 failed that before; the end state was right
+  before too); an excursion's return with a `lockvfo` put on the parked D0
+  meanwhile: D0 left on its centre (before: put on the old control offset).
+  `t42_sigclass` 10: Signal ID on beside a control VFO, a followed call and
+  a search (done, its 3 channels found; Signal ID kept taking snapshots),
+  both standing down in sweep mode and running again after it.
 - 308 checks, all passing on the final build (2026-11-20) but one
   load-sensitive check of t7 (the idle manager's CPU, 10.7 / 12.3 % and 18.3
   / 12.8 % of a core at load average 17-25 - it passed at load 3-7). Found on the way: a
