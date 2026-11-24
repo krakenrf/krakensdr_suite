@@ -324,23 +324,22 @@ itself; elsewhere the page counts what it receives after decompression and
 shows it as an upper bound ("≤ 291 KB/s": the link carries less, often about
 half).
 The pointer shows the frequency and level under it. Gain is one setting for all
-tuners - or, with **Auto gain** in the Sweep box, the upper limit: each step
-of the sweep then gets the highest gain at which it is still received cleanly.
-A step is taken lower where a strong signal overloads the tuner (a strong
-transmitter nearby: at full gain such a step fills with false signals and its
-weaker signals are squashed) - also when that transmitter is just outside the
-step and nothing clips. The sweep finds this by trying steps a little lower or
-higher on some passes: after Auto gain is switched on it takes about 20 sweeps
-to settle (the Sweep box says "settling" meanwhile), then a few steps are tried
-each sweep, and a step goes back up once the transmitter has gone. Every other
-step keeps the gain you set, so a broadcast band stays at the maximum while a
-busy band next to a strong transmitter is turned down. The sweep stays as
-fast. An amber strip under the spectrum marks the steps that were taken
-lower, the pointer shows the gain of the step under it, and the Sweep box says
-how many there are and the lowest (its tooltip: how many because the
-converter clipped and how many for a strong signal nearby). A signal keeps its
-height across steps of different gain; a step that had to go far down shows a
-higher noise floor - the sensitivity it gave up. Nothing is demodulated in this mode; the VFOs and their settings are
+tuners - or a gain per **region** of the range, set on the line under the
+spectrum: double-click it (on a touch screen: double-tap) to cut the range
+there - both parts keep the gain they had -, drag a border left or right to
+move it (borders sit between the sweep's steps), right-click a border (press
+and hold) to remove it. Click a region (tap) to pick it: the top bar's Gain
+then sets that region only, and the line shows each region's gain. So a
+broadcast band can stay at the maximum while a busy band next to a strong
+transmitter - which at full gain fills with false signals and squashes the
+weaker ones, even when the transmitter is just outside it - is turned down.
+Removing the last border makes the remaining gain the Gain of every step
+again. The Sweep box says what the sweep's gain is ("3 regions, 16.6 - 49.6
+dB"), and the pointer shows the gain of the step under it. A signal keeps its
+height across regions of different gain; a region turned down shows a higher
+noise floor - the sensitivity given up there. The regions are kept by
+frequency when the range changes, and are the same for every browser on the
+receiver. Nothing is demodulated in this mode; the VFOs and their settings are
 kept and come back with the other modes. Going back to Coherent after a sweep
 recalibrates the array's phases, which takes a second or two (about half a
 minute with an older librtlsdr, whose retunes shifted the tuners' samples

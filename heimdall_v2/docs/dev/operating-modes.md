@@ -248,7 +248,7 @@ There used to be one exception, thought negligible: the lag FIR's 7-sample
 tail (`frac_tail`, kept across sets for the coherent conversion) was not
 reset by a flush. So the first 3 output samples of each channel in a hop's
 first valid packet were the last 3 samples before the flush - another hop,
-and with auto gain another gain (2026-11-23: after independent -> sweep, 3
+and with a gain per hop another gain (2026-11-23: after independent -> sweep, 3
 full-scale samples from a saturated hop at 49.6 dB opened a packet headed
 8.7 dB, 0.02 % of its values clipped). Since then a set after a flush
 replaces the tail with its own first sample (`frac_tail_epoch` against the
@@ -1328,676 +1328,128 @@ A second board, a Pi 5 Rev 1.0 (4 GB, no KrakenSDR), ran the fake set
 parts A-C before the round moved to the board above: all pass, `t_long`
 2 min CPU 44-47 % of a core (PC 26-37 %).
 
-**Auto gain in sweep mode** (2026-11-23, round 9; sweep.cpp "Auto gain";
-job scratch 52196024 `speed/`: `t_autogain.py`, `t_agplan.py`,
-`t_agpump.py`, `t_gaintable.py`, `t_gaincurve.py`, `t_neighbours.py`). At the
-maximum gain (49.6 dB) 53-56 of the 911 hops of the full range clip on the
-user's antenna. The worst are 415.1 MHz (25 % of the values at 0 / 255),
-455.3 / 457.2 MHz (26-30 %), 499.3 MHz and 759-803 MHz (LTE). The FM band
-wants the maximum (-38.7 dBFS, nothing clipped). At 16.6 dB nothing clips,
-but every quiet hop sits on the converter's floor. So the gain is set per hop.
+**Gain in sweep mode: Auto gain (removed) and gain by region** (2026-11-24,
+round 11). Rounds 9 and 10 (2026-11-23 / 24) gave sweep mode an automatic
+gain per hop, `set_sweep_auto_gain`: a clipping rule (a hop whose values
+clip went down, came back up after a clean hold) and a linearity search
+(trial visits a list step off a hop's gain, flagged in the 8091 header -
+`0x4000`, `0x10000 << ch` - to find the highest gain at which the chain
+stays linear). The user, after rounds 9, 9b and 10: "Auto gain doesn't work
+well. Remove it. Instead we'll add a feature where we can manually set the
+gain for different regions of the spectrum." Removed 2026-11-24 with
+everything that served it (the rule, the search, the spectrum estimator
+thread, `HEIMDALL_AG_TRACE`, the trial bits - never released - and the
+status counts); a client that still sends `set_sweep_auto_gain` gets
+"Unknown command". Its records are in git history (this file at fe8eb74)
+and in kraken_doa_v2/docs/dev/sweep-mode.md's test records. What it found
+and what it built that stays:
 
-*Contract* (kraken_doa_v2/docs/dev/sweep-mode.md holds the client side):
-- 8092 `{"command":"set_sweep_auto_gain","enable":true|false}` replies
-  `{"status":"success","auto_gain":bool}`. The field is how a client tells
-  this heimdall from one without the command. The switch is not saved: the
-  client replays it after `set_sweep`.
-- The common gain (`set_gain`) is the ceiling. With the tuner's own AGC (-1)
-  there is no ceiling and Auto does nothing (`auto_gain_active` false).
-- Status, sweep object: `auto_gain`, `auto_gain_active`, `gain_ceiling_db`,
-  `gain_reduced_hops`, `gain_min_db`, `clipped_hops`, `gain_changes` and
-  `gain_writes` (of the last completed sweep - `gain_reduced_hops` /
-  `gain_min_db` count the gains the hops were really taken with, as the
-  8091 headers carried them, not the map; since round 10 without the
-  linearity probes' visits, which the trial flag marks), `gain_write_failures`;
-  `timing.gain_hops` / `timing.gain_write_ms` (gain-only writes);
-  `gain_fast` (the fork's fast gain write in use, else the ordinary call);
-  `gain_real_db` ([[table gain, real dB against the top value], ...] - only
-  when every sweep tuner is an R820T / R828D, the tuner measured below).
-- 8091 in sweep mode: the per-channel gain is the gain of that tuner's
-  samples in this packet. It is read with the frequencies, before the
-  retuning flag, and a hop stores it only after the tuner took it - the
-  frequency's guarantee covers it. With Auto off it is the common gain, as
-  before.
-- Leaving sweep mode (`set_operating_mode`, before anything else) and Auto
-  off: every tuner back at the common gain, under the flag.
+- *A gain per hop*: written with the hop's retune (the fork's
+  `rtlsdr_set_center_freq_gain_fast`, `RTLSDR_HAS_GAIN_FAST`: +1 USB
+  transfer; else the fast retune + `rtlsdr_set_tuner_gain`, ~8 transfers,
+  9.1-9.5 ms on the KrakenSDR) and alone, under the same flag, settle and
+  gate, when only the gain changes; stored only once the tuner took it.
+  The 8091 per-channel gain is the gain of that tuner's samples in that
+  packet: read with the frequencies, before the retuning flag - the
+  frequency's guarantee covers it. Every tuner is back at the common gain
+  before the mode is left (`sweep_restore_common_gain`, under the flag).
+  The lag FIR's tail is reset at a flush (*The guarantee* above: 3
+  samples of the hop before used to open a hop's first packet).
+- *The settle covers a gain write*: one hop, the gain alternated; the first
+  valid packet against the later ones at the same gain: median -0.05 /
+  -0.57 dB (FM 98 MHz), -0.03 / +0.02 dB (GSM 941 MHz).
+- *The gain table is not the real gain* (`t_gaincurve.py`, the dev
+  machine's KrakenSDR, five tuners; per adjacent table step the median
+  level change of every bin at least 10 dB over the converter's floor at
+  both gains; the DVB-T multiplexes 517-606 MHz; real dB against 49.6):
 
-*How*:
-- The conversion worker reads each sweep tuner's frequency and gain before
-  the flag. For a set it sends as valid, it counts that tuner's values at 0
-  / 255, its peak and its power, and hands them to the hop thread
-  (`hop_acc`, before the count that ends the dwell).
-- At the dwell's end the hop thread updates `gain_map` (hop centre ->
-  gain). A new plan's centres take the lowest gain learned within 1.2 MHz.
-  A ceiling change keeps the map: a hop uses min(learned, ceiling).
-- A tuner's next hop writes its gain only when it differs from the tuner's
-  gain now. With the fork's fast call (`gain_fast`: the gain inside the
-  retune, +1 USB transfer) every hop takes the gain the map wants. Without it
-  (~8 transfers, 9 ms) a step UP of less than 3 dB may wait ONE hop: the hop
-  after the one that caused it is taken up to 3 dB low (its header says
-  so), the next one is written. Until 2026-11-23 the skip had no bound:
-  in the user's session, one hop of tuner 4's block (1354.7 MHz) raised to
-  48.0 left every following hop of the block - and the block's start in the
-  next sweep - at 48.0, 166 hops 1.6 dB low. The page counted 237 hops under
-  the ceiling where the status (then counted from the map) said 72.
-- A hop that changes only its gain gets the same flag, settle and gate as a
-  retune.
-- The rule:
-  - Clipped beyond 0.01 % of the values: down by 18 / 12 / 6 / 4.5 dB for a
-    share > 15 / 1 / 0.1 / 0.01 %. A hard clip says nothing about the
-    overdrive: 415.1 MHz reads -2.6 dBFS RMS at 49.6, 38.6 and 28.0 alike.
-  - A mild clip (<= 0.1 %) costs a step only when it comes again within
-    60 s. LTE traffic bursts must not cost a gain, and two writes a sweep,
-    each time.
-  - After a step down, the next clean visit is an unsaturated measurement.
-    Up to 2 such visits take the hop up at once to where its peak would
-    sit at -12 dBFS, when that leaves at least 6 dB of room. A probe that
-    clips goes back to the last clean gain, doubles the hold and blocks
-    probes for that hold.
-  - Up again otherwise only after a hold without a single clipped value
-    (8 visits and 20 s, doubled after each raise that clipped again, up to
-    256 / 640 s), by +3 dB, with the peaks of the hold 6 dB under full scale.
-    A hold whose peaks leave too little room starts over with fresh peaks.
-    Until 2026-11-23 its highest peak never decayed: one loud clean visit
-    (a carrier that keyed while the hop was clean) blocked every raise of
-    that hop for good.
-  - Neighbours (round 9 only; OFF since round 10, `AG_NEIGHBOUR_RULE`): a
-    hop whose centre lies within 2.4 MHz of a hop held 18 dB or more under
-    the ceiling was held at most 12 dB under it (*Front end* below). It held
-    413.19 / 418.93 MHz at 37.2 for nothing; the linearity search below
-    measures what the cap guessed.
-  - Under the clipping rule's gain, the linearity search (round 10, below)
-    may hold a hop lower still.
-- The gain write is the fork's `rtlsdr_set_center_freq_gain_fast` with the
-  retune, or `rtlsdr_set_tuner_gain_fast` alone (worker F,
-  `RTLSDR_HAS_GAIN_FAST`; +1 USB transfer when the gain changes). On a fork
-  without it: the fast retune + `rtlsdr_set_tuner_gain`, ~8 transfers,
-  9.1-9.5 ms on the KrakenSDR, more than the retune itself.
+  | table gain | 44.5 | 38.6 | 29.7 | 22.9 | 16.6 | 12.5 | 8.7 | 7.7 |
+  |---|---|---|---|---|---|---|---|---|
+  | table dB | -5.1 | -11.0 | -19.9 | -26.7 | -33.0 | -37.1 | -40.9 | -41.9 |
+  | real dB | -3.2 | -7.9 | -15.6 | -21.2 | -27.8 | -31.9 | -34.2 | -35.7 |
 
-*Measured* (the dev machine's KrakenSDR, full range 24-1765 MHz, 911 hops,
-5 tuners, dwell 5, settle 2, ceiling 49.6):
-- Duration: manual 3.95-4.02 s a sweep. With Auto, F's call: 3.95-4.09 s,
-  median +0.6 %, 37-50 writes a sweep, tune_max 8.1 ms (7.9 without). The
-  fallback call: 4.18-4.34 s, +5-8 %, 40-51 writes of 9.1-9.5 ms.
-- Convergence, the final rule with the neighbour rule (30 sweeps; the counts
-  start with the 2nd whole sweep after the switch): hops over 1 % clipped
-  7, then 0 - except one hop in the 5th and one in the 24th (single bursts);
-  hops over 0.01 % 26, 14, 4, 3, 5, 1, 3, 2, then 0-1. The hard cases:
-  415.1 MHz clean from the 2nd counted sweep (it ends at 8.7 dB), 455.3 MHz
-  clipped once more in the 7th (bursty, 29.7 dB), 457.2 and 499.3 MHz
-  clean from the 1st (29.7 dB); 413.2 MHz one burst in the 24th. Duration
-  3.96-4.10 s, median +0.3 % against manual; 41-56 writes a sweep; 73 hops
-  reduced (12 by the neighbour rule's cap at 37.2 dB).
-- The revised rule before the neighbour rule: clipped hops per sweep 34,
-  15, 8, 5, 5, 2, 1, 3, then 0-2; the first clean sweep is the 9th. The late ones are LTE
-  (759-803 MHz) and GSM (872 / 941 / 952 MHz) hops with traffic bursts.
-  Steady signals were clean from the 2nd-3rd sweep (400-470 MHz plan: the
-  2nd).
-- Steady state (30 sweeps): gain changes 0-1 a sweep; 60 hops reduced, the
-  lowest 8.7 dB. The FM band and every quiet hop stay at 49.6.
-- Peaks of the reduced hops: p10 -10.2, median -4.1, p90 -0.8 dBFS. 34 of 60
-  sit within 3-12 dB of full scale, 23 above -3 (mostly the DVB-T hops
-  518-604 MHz: OFDM, RMS -10..-12 dBFS, crest ~10 dB), 3 below -12. RMS:
-  median -17.5 dBFS.
-- The first rule (before the probes) settled 8-20 dB too low: LTE hops at
-  8.7 dB with RMS -24..-30 dBFS (the orchestrator's check of f3ca686).
-- Fake, pumping (`t_agpump.py`, a carrier keying 1-5 s on / 2-40 s off) and
-  the strong-carrier scene (`FAKE_STRONG`): no packet's clipping contradicts
-  its header gain; clean from the 3rd sweep; subsets of 1-2 tuners; a dwell
-  change, other centres (the swath's gain), pause / resume, independent
-  mode in between and generic RTL-SDRs (`FAKE_RTL_GENERIC`) keep what was
-  learned; Auto on -> coherent CONVERGED 1.6 s, check |lag| 0.0.
+  43.9 -> 44.5 is a no-op step; in the FM band the top end is shorter
+  still (38.6: -6.3, 29.7: -13.5); below 7.7 dB nothing was measurable.
+  The status' `gain_real_db` carries this curve (below 7.7 continued at
+  the table's own steps, not measured) when every sweep tuner is an R820T
+  / R828D; the client shifts each hop's levels by real(reference) -
+  real(its gain). Left uncorrected: the frequency dependence (2-3 dB) and
+  the spread between units (one KrakenSDR's five tuners agree).
+- *Why a user turns a region down* - the front end saturates without a
+  clipped value. A strong carrier 1.4 - 1.8 MHz BELOW a hop's centre
+  (outside the hop's kept band, inside the tuner's IF; the decimation
+  filter removes the carrier, its damage stays) compresses that hop: 417.02
+  MHz (the 415.64 MHz carrier 1.38 MHz below) read -8.9 dBFS rms from 49.6
+  down to 29.7 dB - pinned over 16 dB of gain, nothing clipped - and was
+  compressed 16 dB at 49.6, 7 at 37.2, 2 at 32.8, linear from 29.7 (its
+  carrier over floor 52.9 at the top, 59.9 at 29.7); 417.43 MHz (the
+  carrier 1.79 MHz below) was linear up to 33.8. At 2.34-3.7 MHz below the
+  IF filter's slope took over. The hop beside a saturating one shows
+  intermodulation products (falling 29-44 dB for an 11 dB step, against
+  6.7 for real signals; gone at 38.6) and a floor ~10 dB up. On the user's
+  antenna at 49.6 dB, 53-56 of the 911 hops of the full range clip (415.1,
+  455.3 / 457.2, 499.3 MHz, the LTE bands 759-803 MHz); the FM band wants
+  the maximum; at 16.6 dB nothing clips, but every quiet hop sits on the
+  converter's floor. A gain set by region lets the user take exactly those
+  stretches down and keep the rest at the top.
 
-*The settle covers a gain write*: one hop, the gain alternated (the set_gain
-path, the same flag / settle / gate). The first valid packet against the
-later ones at the same gain: median -0.05 / -0.57 dB (FM 98 MHz), -0.03 /
-+0.02 dB (GSM 941 MHz).
-
-*The gain table is not the real gain* (`t_gaincurve.py`). Per adjacent table
-step: the median level change of every spectrum bin at least 10 dB over the
-converter's floor at both gains, all hops and tuners, unclipped packets only.
-On the DVB-T multiplexes 517-606 MHz, real dB against 49.6:
-
-| table gain | 44.5 | 38.6 | 29.7 | 22.9 | 16.6 | 12.5 | 8.7 | 7.7 |
-|---|---|---|---|---|---|---|---|---|
-| table dB | -5.1 | -11.0 | -19.9 | -26.7 | -33.0 | -37.1 | -40.9 | -41.9 |
-| real dB | -3.2 | -7.9 | -15.6 | -21.2 | -27.8 | -31.9 | -34.2 | -35.7 |
-
-- 43.9 -> 44.5 is a no-op step (0.0 dB). 44.5 -> 48.0 gives 1.8 dB (table
-  3.5); 8.7 -> 12.5 gives 2.3 (3.8).
-- In the FM band the top end is shorter still: 38.6 is -6.3 dB, 29.7 is
-  -13.5 dB. Below 29.7 there it can't be measured: the stations reach the
-  converter floor.
-- Below 7.7 dB nothing was measurable.
-- So a client that shifts a hop by (ceiling - its gain) over-corrects by up
-  to ~6-7 dB, and by a frequency-dependent amount. The header carries the
-  table value (the gain that was set); the status' `gain_real_db` carries
-  this curve (below 7.7 dB continued at the table's own steps: 0 / 0.9 /
-  1.4 / 2.7 / 3.7 dB are -43.6 / -42.7 / -42.2 / -40.9 / -39.9, NOT
-  measured), and the receiver shifts by real(ceiling) - real(hop's gain).
-- Left uncorrected: the frequency dependence (2-3 dB: the FM band's top end
-  is short by more than UHF - 38.6 dB reads -6.3 there against -7.9), and
-  the spread between units (only the five tuners of one KrakenSDR, which
-  agree within the measurement).
-
-*Front end* (`t_neighbours.py`, 405-428 MHz, tuner 0, manual). The hop
-holding 415.1 MHz (415.52) and the hop beside it (417.43 MHz: 415.1 is 2.3
-MHz outside its band but inside the tuner's IF) show floors of -14.8 / -17.5
-dBFS per bin at 49.6, against -25..-31 for the other hops. Their peaks fall
-29-44 dB for an 11 dB gain step, against 6.7 dB for real signals: these are
-intermodulation products. In the full-range plan that neighbour clips too, so
-the rule takes it down. At 38.6 dB those products are gone (they fall
-29-44 dB for the 11 dB step and stood 15-35 dB over the floor), so the
-neighbour rule caps such a hop 12 dB under the ceiling (37.2 dB) rather than
-taking it down with the saturated one. In the full-range plan it held 411.3
-/ 418.9 MHz (beside 413.2 at 16.6 and 415.1 at 8.7) and 453.4 / 459.1 MHz
-(beside 455.3 / 457.2 at 29.7) at 37.2. What it costs: those hops' own
-sensitivity, ~9 dB real (the curve) while the cause lasts. In that run it
-capped 12 hops; 4 of them (805.3, 937.2, 946.8, 948.7 MHz, beside the LTE /
-GSM hops held 18 dB or more down) then sat near the converter's floor (RMS
--44 dBFS) - quiet hops whose weak signals the cap costs; they are most of
-the 14 reduced hops with peaks under -12 dBFS. At 457.2 MHz the
-same measurement (448-466 MHz, manual) found no products and even floors:
-its signal was off at the time. The release (the cause raised again) was
-not timed on hardware.
-
-*Found and fixed (the lag FIR's tail)*: on the fake, 1 run in about 10 of
-`t_agplan.py` saw one valid packet 14 ms after independent -> sweep mode
-whose header said 8.7 dB at 415.52 MHz while 0.02 % of its values clipped.
-The fake's trace (`FAKE_TRACE_FILE`) showed that the fake never generated
-that packet with a clipped value: its packets at 49.6 dB ended 0.75 ms
-before the gain write, and the ones after it had none. The clipped values
-sat at bytes 0-5, i.e. the first 3 samples. That is the lag FIR's tail: the
-kernel is a delta at tap 3, so the first 3 output samples of a set are the
-last 3 input samples of the set converted before it, here the saturated
-independent-mode packet. Fixed in heimdall: a set after a flush starts its
-tail fresh (*The guarantee*, above). Rarely seen in normal sweeping,
-because a hop's predecessor on that tuner is rarely that much louder. But
-6 such values are 0.018 % of a packet, enough for auto gain to count a
-mild clip.
-
-*The block case* (`t_agblock.py`, fake, 2026-11-23): one hop (414.34 MHz)
-learned at 43.4 dB by a mild clip, its carrier then off. It comes back via
-44.5 and 48.0 to the ceiling in about 1.5 minutes.
-- With the fast call: no other hop is ever under the ceiling, the status
-  agrees with the headers, the sweep 0.165 s as manual.
-- Without it (the fake's ordinary write: 9 ms): in the 48.0 phase the hop
-  after it (416.26 MHz) also reads 48.0 - the one carried hop - and nothing
-  beyond. 2 writes a sweep, 0.175 s against 0.165 s.
-- `t_agpump.py` (a keyed carrier, 4 min): 2 reductions, 4 raises,
-  0.009 gain changes a sweep.
-- The hardware run of this fix (headers against the map, the duration
-  against manual) was not possible: the dev machine's KrakenSDR was in use
-  by another worktree's live stack.
-
-*The linearity search* (round 10, 2026-11-24; sweep.cpp `floor_wanted` /
-`floor_pair` / `floor_learn`). Clipping is a late symptom. The tuner's front
-end compresses and makes products before a value reaches 0 / 255, often
-driven by a carrier OUTSIDE the hop's sampled band: the decimation filter
-removes the carrier, but its damage stays.
-
-The orchestrator's manual scans found:
-- 417.02 MHz (tuner 1; 416.59 MHz sits -430 kHz from the centre, the 415.64
-  carrier 1.38 MHz below it): rms -8.9 dBFS from 49.6 down to 29.7, pinned
-  over 16 dB of gain, nothing clipped. It is compressed 16 dB at 49.6, 7 at
-  37.2, 2 at 32.8, and linear from 29.7. Carrier over floor is 52.9 at the
-  top and 59.9 at 29.7.
-- The floor referred to the input LOOKS best at the top there. So the first
-  round-10 rule, the lowest input-referred floor, pointed the wrong way.
-
-The rule: per hop, the HIGHEST GAIN AT WHICH THE CHAIN IS LINEAR. The
-clipping rule stays the fast guard and is the search's ceiling.
-- *Pairs*: a probe is a normal visit at a neighbouring gain, at least 2.5
-  dB real away. Between the hop's visits before and after it (the bracket;
-  each quantity on its own, within 1 dB) the visit's power (rms) and its
-  floor (the 20th percentile of a Welch spectrum of the kept band) must
-  change by the step. The converter's own noise is subtracted from both
-  visits: rms -45.0 dBFS and floor -46.5, the KrakenSDR at gain 0 over the
-  whole range.
-- *Which tests count*: a test counts when its quantity at the lower gain is
-  10 dB over the converter, AND the quantity is steady: the median change
-  of its last 8 brackets is at most 0.75 dB.
-  - Why steady: on the fake's self-varying band (the floor +-6 dB packet
-    to packet) the power bracket held while the floor's held by chance,
-    and two such pairs "agreed".
-  - A hop whose content moves by itself (LTE load, pagers) is the clip
-    guard's alone.
-- *Too steep*: a one-sided test sees a floor that falls faster than the
-  gain into the converter's noise. It uses the higher gain's value, and the
-  lower gain's raw value as an upper bound.
-- *The step reference* is learned. Per 10 MHz bucket, gain pair and
-  quantity, each hop's measured step is kept. The reference is the median of
-  the OTHER hops' (at least 3) over the bucket and its two neighbours,
-  trusted within 2.5 dB of the curve; otherwise the curve is used. The
-  table is cleared when the plan or its tuners change.
-  - Why: the real step depends on the frequency. On the bracketed
-    reference, 49.6 -> 43.4 is 5.5 dB at 174-380 MHz, 4.7 at 380-520 and
-    4.1 at 520-700, against 4.2 on the curve. At 86-98 MHz 49.6 -> 48.0
-    RAISES the output by ~1 dB.
-  - Why the hop's own values are excluded: a saturated hop must not teach
-    its own reference.
-- *Non-linear*:
-  - Products (more than the step): the power off the reference by
-    max(1.5 dB, half the step), the floor by 1.5 dB.
-  - Compression (less than the step): short by the SMALLER of 1.5 dB and
-    0.45 of the step, for the power and the floor alike. Compression adds up
-    over a step, so a bigger step earns no bigger tolerance.
-    - 0.45, not half: with half, 417.43 MHz on one tuner (1aa6ecc + the
-      fixes, hardware) sat at 36.4 dB following 1.5 of 2.9 dB, 1.4 short and
-      inside 1.45. A linear hop with the curve 1.3 dB long on that step
-      still passes.
-    - The orchestrator's 405-428 MHz run on 62b62c1 had max(): 37.2 -> 33.8
-      following 0.7 of 2.9 dB read linear, and the hop stayed 2.8 dB
-      compressed (carrier over floor 63.5 against 69.3 at 33.8).
-  - "Follows less than the step" (compression) needs a cause: content of at
-    least -15 dBFS rms at the higher gain, in the hop or within 3 MHz of it.
-    Without it, 26.87 MHz (-35.5 dBFS) and 633.13 MHz (-32.1) would be
-    judged by the gain's own shape; -20 to -10 dBFS give the same verdicts
-    on the reference.
-  - Products ("more than the step") need no cause.
-- *Gross* (one pair decides once the last 4 brackets held): a step of at
-  least 4 dB that the power follows by less than half, or a floor 4 dB off.
-- *Bursts*: more power at the lower gain by more than 4 dB is a burst, not
-  physics. Such a pair is dropped and counts as a failed bracket.
-  Saturation's jitter stays inside that: 417.02 read -6.1 at 43.4 once.
-- *Decisions*:
-  - DOWN: two agreeing non-linear pairs (the same probe, deviations within
-    1.5 dB), or one gross pair. The search then goes on down by 6 dB steps
-    while gross, else 3 dB steps.
-  - A down search whose 6 dB probe is linear does not end there. It goes
-    on from the same gain with the 3 dB step: compression that the big
-    step hides inside its tolerance still shows over the small one.
-    - Why: 417.43 MHz on one tuner passed 37.2 -> 29.7 following 4.5 of
-      6.7 dB, then waited 26-50 sweeps for the settled probes to find
-      37.2 -> 33.8 non-linear.
-  - A pending agreement whose probe the hop's own gain has passed is void.
-    - Why: the clipping rule stepped down onto the probe's gain, and the
-      agreement asked for a probe at the hop's own gain forever: no pair,
-      no end.
-  - An up-probe on a hop where nothing can be tested, and that nothing
-    finds non-linear, is decided by the clip test alone on one pair, as
-    the clipping rule's raise was before this rule. "Nothing can be
-    tested" means each quantity is under the validity level or unsteady.
-    A single failed bracket on a steady quantity is no verdict.
-    - Why: 415.11 MHz, cut to 8.7 dB by a heavy clip with its power
-      alternating -20.3 / -17.4 dBFS, otherwise never came back.
-    - Why not looser: a probe 33.8 -> 38.6 with one failed bracket on a
-      pinned power went up that way.
-  - A baseline clipped up to 1 % is still a baseline. Only a heavier clip
-    is the clipping rule's alone. A probe cancelled for any reason counts
-    as a pair without a verdict.
-    - Why: 417.43, clipping 0.06-0.1 % now and then at 43.4-49.6, never
-      closed a pair after its first move. A linearity move down spends
-      the clipping rule's noted mild clip.
-  - After a 6 dB move, the bisection: back up by small steps while the step
-    up is linear, staying under the gain it left. Without it, 417.02
-    overshoots to 25.4.
-  - UP (settled probes, and the bisection): two agreeing linear pairs with
-    the probe unclipped. When no quantity is over the converter (FM: the
-    tuner's noise barely over it), one such pair is enough: more gain is
-    sensitivity there.
-  - A pair whose over-converter quantity is unbracketed (or unsteady)
-    gives no verdict. A pair without a verdict still uses the search up: it
-    counts as a failed bracket, and after 3 in a row the search ends and
-    the hop stays. Settled, the probe period doubles.
-    - Why: on the first hardware run 16-18 hops of the LTE block
-      (763-800 MHz), 952 / 954 and 157 / 159 MHz probed 6-8 dB down every
-      other sweep for good.
-  - Against the curve (nothing learned yet for that bucket and gain pair)
-    the 1.5 dB tolerances are 1 dB wider (`AG_LIN_CURVE_SLACK`).
-  - A raise must be clearly linear. Against compression an up-probe's
-    tolerance is at most 1 dB (the power: or a quarter of the step), plus
-    the slack. With half the step, the fake's
-    417.43 MHz came up 28.0 -> 32.8 with 2.1 dB of compression. The
-    difference is a hysteresis: a hop doesn't go down for what it wouldn't
-    have come up for.
-  - Any gross verdict counts as non-linear.
-- *One way up*: the gain used is min(the linearity rule's, the clipping
-  rule's).
-  - When the clipping rule raises its own gain (its probes after a step
-    down, its +3 dB after a clean hold), the hop stays where it is. The
-    raise becomes this rule's up search: each step up is a probe that must
-    be linear where anything is testable, and unclipped.
-  - A hop held for linearity is not lifted by a clean clipping rule; only
-    the settled up-probes (with the doubling hold) can raise it.
-  - Up-probes go up to the ceiling, past the clipping rule's gain. They
-    test clipping too: one that clips (> 0.01 %) is refused. One that
-    passes lifts the clipping rule's gain with it (a fresh hold, so a clip
-    after it is a clip after a raise).
-  - The exception is while the clipping rule blocks probes (one of its own
-    clipped).
-  - A probe's visit (trial flag) is not the clipping rule's to learn from.
-    A heavily clipped up-probe once took the hop's own gain 18 dB under it.
-  - A settled up-probe that passes starts an up search (6 dB steps in the
-    probe sweeps while linear and clean). An over-reduced hop then comes
-    back in a few probe sweeps, not one step per probe period.
-  - Fake (`t_aglin.py --key-strong`: a carrier keyed 10 s in 417.43's band;
-    the clipping rule takes the hop to 8.7). The clipping rule's first
-    raise came after its hold, 171 sweeps (10.6 s) after the key-off. From there the up
-    search took the hop 8.7 -> 28.0 in 40 sweeps (one list step under its
-    linear limit 29.7, carrier over floor 2.0 dB under the best), and no
-    raise followed in the next ~800 sweeps.
-  - A raise through the clipping rule's gain is allowed only in the up
-    search that a raise of the clipping rule started (its hold was clean),
-    and only while that hold has never doubled. A hop that clipped again
-    after a raise (a keyed carrier) climbs at the clipping rule's own
-    pace, one raise per hold. The clipping rule's entry is kept when a
-    raise reaches the ceiling, so the hold survives.
-  - `t_agpump.py`: the fake's pumped carrier, 1-5 s on / 2-40 s off,
-    4 min.
-
-    | Version | Raises | Keyed-on visits clipped |
-    |---|---|---|
-    | Every up-probe could pass the clipping rule's gain | 103 | 21 of 161 |
-    | Passing only in that up search, entry erased at the ceiling | 33-39 | 7-8 of 191 |
-    | Now (two runs) | 10 and 16 | 3 of 205, 4 of 168 |
-    | Round 9 | 4 | 2 of 178 |
-  - A step up of less than 2.5 dB (48.0 -> 49.6, the only one: down probes
-    always take 2.5 dB) can't show compression. It is not taken with a
-    cause near, so the hop stays 1.4 dB low. On the fake, 413.61 MHz came
-    up to 49.6 that way, 3.5 dB compressed.
-  - A raised ceiling (`set_gain`) is not a raise of the clipping rule: the
-    hops at it follow at once.
-  - An up-probe is also refused when its peak is over the clipping rule's
-    raise headroom (-6 dBFS): the same criterion its own +3 dB raise has.
-    - Why: on the hardware (cf70c9b, the whole plan) 415.11 MHz passed an
-      up-probe 19.7 -> 28.0 dB with an unclipped carrier at -2.6 dBFS rms
-      (a constant envelope at 0.74 of full scale). Its next visits at 28.0
-      clipped 1-5 %, and the clipping rule cut it to 15.7.
-  - The lift of the clipping rule's gain also updates the hop's record of
-    that gain, so the lift is not read as a raise of the clipping rule.
-    - Why: without it, each lift held the hop back at the old gain and
-      started a new up search. 499.26 MHz climbed in a sawtooth on the
-      hardware: 29.7 -> 33.8 -> 32.8 -> 36.4 -> 33.8 -> 37.2 -> 36.4 ->
-      40.2 -> 37.2, and then a burst at 37.2 sent it back to 29.7.
-- *The first guess from the lower neighbour's level*:
-  - The idea: a saturated hop's linear limit is where the carrier of the
-    hop BELOW it reads about -2 dBFS in band. On the orchestrator's
-    measurements:
-    - 415.11 MHz reads -1.1 dBFS rms at 29.7 dB, and 417.02 (that carrier
-      1.38 MHz below its centre) is linear up to 29.7.
-    - 415.52 reads -2.3 dBFS at 33.8, and 417.43 (1.79 MHz below) is
-      linear up to 33.8.
-    - The IF filter gives ~0 dB there. At 2.34-3.7 MHz below it was
-      falling: nothing on the reference day at a would-clip level.
-  - The guess: the highest list gain at which the neighbour's level
-    (referred to the input) would read at most -2 dBFS. The neighbour is
-    the same tuner's lower hop, and its level is the highest of its last
-    4 visits that were not heavily clipped.
-  - When it applies:
-    - Only where the neighbour's carrier sits within 2.2 MHz below this
-      hop's centre. The carrier is the neighbour's strongest bin when it
-      stands 20 dB over its floor; flat content counts at the band's
-      upper edge.
-    - At the hop's first visits, and again when the neighbour's level
-      rises 3 dB over the level the last guess was made at.
-    - Only ever down, and never by less than 2.5 dB.
-  - The rule's probes go on from there. Up-probes with something to test
-    may pass the guess; up-probes with nothing testable stay under it
-    while the neighbour's level holds.
-  - The level is the in-window carrier's OWN (2026-11-24, from the
-    orchestrator's acceptance on 9dc3bbc). It is the strongest bin in the
-    window, at least 20 dB over the floor, taken together with the two
-    bins beside it, so it measures the carrier's power.
-    - The window is the part of the neighbour's band within 2.2 MHz below
-      this hop's centre.
-    - Check: 415.52's 415.64 carrier reads +10.0 dB, the same as that
-      hop's total rms.
-    - A band of flat content uses its total level. A band whose carriers
-      all sit outside the window gives no guess.
-    - Why: 417.43's band held 416.59 MHz (outside the window of 419.34)
-      and a keyed 417.86 (inside it). The guess took the position from one
-      carrier and the level from the band's total. So 418.93 / 419.34
-      were guessed far down and held there for 17 min with their own
-      content at the converter's noise.
-  - The guess and its up-probe ceiling follow that carrier. They are
-    released when it is gone (none within 300 kHz of its offset) or 3 dB
-    down in two visits of the neighbour in a row. A hop the guess held
-    then starts an up search at once.
-  - An up-probe whose leftover step to the top would be too small to test
-    (48.0 -> 49.6) goes to the top directly. Otherwise 419.34 stopped at
-    48.0 after its guess was released.
-  - Fake: a band with +20 dBFS outside the window and a keyed +5 dBFS
-    inside it. The hop above is guessed by the keyed carrier only (38.6,
-    against ~25 by the total), and is back at 49.6 11 sweeps after the
-    key-off.
-  - Hardware (one tuner, 3 cold starts):
-    - 417.43 at 33.8 (sweep 3), 32.8, and 29.7 (sweep 8); 415.52 at
-      25.4 / 22.9 / 16.6.
-    - 419.34 stayed at 49.6 in two runs. In the third, the keyed carrier
-      guessed it to 43.4, and it came back to 48.0 at sweep 18. That run
-      predates the leftover-step fix.
-  - Status `gain_level_guesses`.
-- *The clipping rule's cut from the level*: a clip of at most 5 % on a
-  visit whose rms is at least -6 dBFS (a carrier near full scale, crest
-  under ~6 dB) cuts by the smallest step that brings the rms to -7 dBFS
-  on the real curve, at least one list step. Heavier clips, and bursty
-  content, keep the table's steps.
-  - Why: 415.11 at -1.1 dBFS and 2-4 % clipped in a strong minute lost
-    12 dB by the table (29.7 -> 16.6), where its carrier over floor is
-    10 dB worse than at 22.9.
-  - Why not at -12 dBFS: the GSM / LTE hops then came down one list step
-    per clipped visit (944.87 MHz in 10 steps).
-- *The clipping rule's raises sized by the level* (2026-11-24, the
-  orchestrator's 20 min run on 6ba2c1f):
-  - WHEN the clipping rule raises is unchanged: after a clean hold, which
-    doubles after a clip that followed a raise.
-  - The SIZE is now the highest list gain whose predicted rms (the hold's
-    highest, by the real-gain curve) stays at or under -7 dBFS and whose
-    peak stays under -6 dBFS. It is at least one list step and at most the
-    ceiling. If even one step would break that, there is no raise and a
-    new hold starts.
-  - At the ceiling the entry is kept (with its hold) until a clean hold up
-    there.
-  - The linearity rule's up search after such a raise probes straight to
-    its target. When refused, the step halves.
-  - Why: after a cause had gone, hops sat near the converter's noise for
-    minutes at +3 dB per hold. 413.19 MHz stayed at 22.9 dB at -37.7 dBFS
-    for 7 min, and 418.93 at 29.7 at -35 dBFS for 17 min.
-- *The correction of a blind cut*: a cut taken from the table, not from the
-  level, is corrected at the hop's first clean visit, when that visit
-  reads a carrier-like level (rms at least -20 dBFS, crest at most 8 dB).
-  The clipping rule's gain moves in one step to the highest list gain
-  whose predicted rms stays at or under -7 dBFS: at least one list step
-  up, never above the gain before the cut. This happens once per cut, and
-  not on a hop whose hold has doubled.
-  - Why: 415.52 MHz on one tuner was cut blind 49.6 -> 29.7 -> 16.6 by
-    28 % and 13 % clips. It reads -7.4 dBFS at 25.4, where its carrier
-    over floor is 71.3 dB against 64.9 at 16.6, yet it sat at 16.6 for a
-    whole run.
-  - Hardware (3 cold starts, one tuner): 415.52 at 22.9 / 25.4 / 25.4 by
-    sweep 3-4.
-  - Whole plan: 415.11 MHz went 49.6 -> 29.7 -> 16.6 (blind) -> 20.7 at
-    sweep 4 (-9.6 dBFS). When its carrier rose (-4.7 dBFS, 0.37 %
-    clipped) the level cut took it back to 16.6.
-  - Fake (`t_aglin.py`, a carrier at +17 dBFS at 49.6): 49.6 -> 29.7 ->
-    8.7 -> 19.7 at sweep 4, where its rms is -7.
-  - `t_agpump.py`: 3 raises and 4 of 192 keyed-on visits clipped, against
-    13 and 4 of 231 before.
-- *Hardware with the guess* (the dev machine's KrakenSDR):
-  - One tuner, 5 cold starts: 417.43 reaches 33.8 / 32.8 / 29.7 at sweeps
-    4, 8, 3, 6, 3.
-  - In 417.43's band the strongest bin stood at +431 kHz, 57 dB over its
-    floor (a carrier at 417.86 MHz). So 419.34 was guessed in 2 of 5 runs
-    and measured non-linear (gross) as well.
-  - On the whole plan the RF was busier that day than on the reference
-    day: 417.02's 416.59 carrier was at -3.2 dBFS rms and 6 % clipped at
-    49.6. 417.02 went to the clipping rule's 22.9 at sweep 3, and 413.19
-    stayed at the ceiling.
-  - Sweep time against Auto off in the same minute: +0.1 %, with 74 gain
-    writes a sweep.
-- *The spectrum estimate off the hop's path* (2026-11-24, the Pi 5):
-  - The orchestrator's check measured a sweep with Auto on and nothing to
-    do at +3.0 % against Auto off (4.142 s against 4.021 s), with no gain
-    writes. Each set's five Welch estimates, about 0.66 ms a round there,
-    were computed in the conversion worker before the set was counted, so
-    the hop waited for them.
-  - Now the conversion worker counts the set at once. Its clip count, rms
-    and peak are still computed inline: the clipping rule needs them at
-    the dwell's end.
-  - The visit's first packet goes to an estimator thread (normal
-    priority). Its floor and strongest bins come back by the visit's
-    number.
-  - The hop thread learns the linearity rule from the visit when that
-    result is there, at the end of a following round, as of the sweep the
-    visit was taken in. The result is used at the hop's next visit, a
-    sweep away.
-  - A result not there after 4 rounds makes the visit one without a
-    verdict. Status `gain_est_late` counts them.
-  - The visit numbers count per tuner, so each tuner's last four visits
-    have four result slots whatever the tuner count. With one counter for
-    all tuners (633202b), a tuner's numbers stepped by the tuner count.
-    With 4 tuners, every visit of a tuner took the same slot, and with 2
-    tuners every other one did.
-    - A visit's result is never picked up in its own round: a 5 ms dwell
-      ends at the visit's first valid set, the one that is queued.
-    - So with 2 or 4 tuners the next visit overwrote it: on the fake, every
-      visit was late, even with no delay.
-    - With the counter per tuner, on the fake (results delayed 30 ms, 1.5
-      rounds): 0 late with 2, 4 and 5 tuners. Before, with 2 and 4
-      tuners, every visit was late (99 late in 8 sweeps of 12 visits). A result 50 ms late is still
-      in time; at 70 ms (3.5 rounds) it is past the 4-round limit.
-  - Measured on the Pi 5: worker S's `pi_sweepcost.py`, heimdall alone
-    (no kraken_doa), the whole plan, nothing to adjust.
-
-    | | Auto off | Auto on |
-    |---|---|---|
-    | Hop dwell, before | 7.12 ms | 7.67 ms (+0.55 ms a round, ~100 ms a sweep) |
-    | Hop dwell, after | 7.13 ms | 7.30 ms (+0.17 ms a round: the inline clip / rms loop and the copy, ~30 ms a sweep, < 1 %) |
-
-    - Sweeps: 3.94-4.02 s. The round is paced by the USB packets (21.0
-      ms), so the sweep total moves in steps.
-    - 10-sweep on / off differences: before +0.0 ... +1.8 %, mean +1.1 %;
-      after -1.3 ... +1.6 %, mean +0.5 %.
-    - heimdall: 12 % of a core with Auto off, 14.5-15 % with it on.
-    - Estimates late: 0.
-  - On the dev machine's KrakenSDR (the whole plan, a cold start), the
-    rule behaves as before: probes 8.2 a sweep, 7.65 pairs a sweep with
-    0.8 unbracketed, and 417.02 at the clipping rule's 22.9 on a busy band.
-- *What stays from the floor search*:
-  - the brackets and the reliability gate (at most a quarter of the last 8
-    brackets failed; a search ends after 4 failed in a row);
-  - the whole-plan probe sweeps in alternate sweeps while any hop searches
-    (`gain_probe_sweep`);
-  - settled probes once in 50 sweeps (200 without the fast gain write;
-    hops held down: a third of that). The period doubles, up to x8, when a
-    probe confirms where the hop is: a down-probe that stays linear, an
-    up-probe refused, 3 pairs without a verdict. It also doubles after a
-    raise that went non-linear. It is back to x1 on a decision or a
-    trigger.
-  - *No down-probe that can't tell anything*: when the last baseline's
-    power and floor, taken down by the probe's step, would both be under
-    the validity level, a smaller step is tried, down to the smallest
-    (2.5 dB). If that fails too there is no down-probe: a search ends there
-    and the hop stays, and settled, the next probe is an up one.
-    - This applies to the FM band and the quiet L band: 3 of 44 and 0 of
-      400 hops are testable on the bracketed reference. A down-probe there
-      only costs: a visit several dB lower where every dB is sensitivity.
-    - Counted in `gain_probes_skipped`.
-  - the triggers: a baseline whose floor or power referred to the input
-    jumps 3 dB over the hop's slow average twice reopens the search down,
-    and 1.5 dB under it on a held hop reopens it up.
-  - F_in (floor - real gain) is now only the triggers' and the scatter's
-    measure.
-- *The trial gain flag*: 8091 phase-state bit 14 (0x4000) is set when some
-  channel of the packet was taken at a probe's gain. Bits 16 + ch
-  (0x10000 << ch) say which channels. They are read with the per-channel
-  frequency and gain, before the retuning flag (`sweep_trial_mask`).
-- *Status* (sweep object, of the last completed sweep):
-  - `gain_floor_hops`: hops held under the clipping rule's gain by this rule;
-  - `gain_probes`, `gain_floor_decisions`, `gain_search_hops`;
-  - `gain_pairs`, `gain_pairs_unbracketed` (bracket failed, or a burst),
-    `gain_pairs_nonlinear`;
-  - `gain_step_learned`: pairs whose reference came from the learned table;
-  - `gain_probes_skipped`: down-probes left out as untestable;
-  - `floor_scatter_db`, `gain_probe_sweep`.
-  - All of them are sent whenever the sweep object is, with zeros / false
-    while Auto is off. The presence of `gain_floor_hops` is how a client
-    (the page's wording of the switch) tells a heimdall with the measured
-    rule from one without.
-  - `HEIMDALL_AG_TRACE=1` (with `HEIMDALL_VERBOSE_LOG=1` when stdout isn't
-    a terminal): one `AGT` line per pair on stdout - the hop, both gains,
-    the references (L learned / C curve), both visits' power and floor,
-    the tests, the verdict.
-
-*Checked offline* on the orchestrator's bracketed reference (imd_pairs_r9:
-the common gain alternated sweep by sweep, 14 sweeps per pair, 911 hops;
-`replay_pairs.py`):
-- DOWN at 49.6 / 43.4 / 38.6 / 33.8: 417.02 at every pair, 501.17 at 43.4,
-  803.34 at 38.6 and 33.8. Nothing in 24-380 MHz or above 1 GHz.
-- Bursty hops (156.92, 872-884 MHz) are untouched.
-- 944.87 clips mildly at those gains (0.06-0.3 %): it is the clip guard's.
-- UP: refused for 417.02 at every pair, allowed for 411.28 / 413.19 /
-  418.93 at every pair.
-
-*Fake* (`t_aglin.py`, `FAKE_SAT`: a carrier 1.8 MHz below a hop that
-saturates the front end - the hop's content compressed by the overdrive,
-an erratic floor, two ghost tones, no 0 / 255; the converter at -45 dBFS,
-`FAKE_CONV_NOISE=0.004`):
-- 417.43 MHz settles at 29.7: carrier over floor 49.8 against the best
-  manual 50.9; compression 0.0 dB, against 15.3 at 49.6.
-- A hop 3.4 dB compressed at the top goes to 43.4.
-- Linear hops stay at 49.6.
-- Third-order floors (`FAKE_IMD` -12 dBFS at 49.6, falling 3 dB per dB):
-  within 1.3 dB of the best carrier over floor. A harder case, whose
-  products equal the tuner's noise at 37.2, stays at 37.2, 2.0 dB short:
-  below it the lower gain's floor is within 10 dB of the converter, so the
-  last 3 dB of products can't be seen.
-- Probes 0.2-0.3 a sweep (13-37 hops); decisions 0 a sweep settled.
-- A narrow plan where nothing is learned (2 hops, one tuner, the curve's
-  references, the clipping rule quiet): 417.43 goes 49.6 -> 43.4 -> 37.2 ->
-  29.7 by sweep 16, its linear limit, by the linearity rule alone.
-
-*Hardware* (cf70c9b, 2026-11-24, the dev machine's KrakenSDR, the whole
-plan 24-1765 MHz, 911 hops, 5 tuners, dwell 5 ms, a cold start with Auto,
-60 sweeps; `t_aghw.py`, the AGT trace):
-- 417.02 MHz: 49.6 -> 43.4 (sweep 6) -> 37.2 (14) -> 29.7 (16), then
-  stays. 411.28 / 413.19 / 418.93 / 361.56 stay at 49.6.
-- Nothing in 24-380 MHz or above 1 GHz leaves the ceiling.
-- Hops searching: 906 -> 326 -> 80 -> 25 (sweep 10) -> 1-8. The rest are
-  bursty hops ending on pairs without a verdict.
-- Over the last 20 sweeps:
-  - probes 7.85 a sweep (0.86 % of the hops), at most 13;
-  - linearity decisions 0, gain changes 0.15 a sweep;
-  - 55 gain writes a sweep;
-  - a sweep 4.015 s against 3.945 s manual (+1.8 %).
-- The orchestrator's earlier run on 62b62c1 had 31-39 probes a sweep and
-  16-18 searches that never ended.
-- 63 hops are under the ceiling, nearly all the clipping rule's: the
-  DVB-T multiplexes, the LTE block at 16.6 / 22.9, 941-958 MHz.
-  `gain_floor_hops` is 1-4.
-- Hop visits over 1 % clipped after the 4th sweep: 4, all bursts (415.11
-  twice, 417.02 during its descent, the 455.27 pager).
-
-*Hardware, the whole plan again* (1aa6ecc's code, 60 sweeps):
-- 417.02 MHz: 49.6 -> 43.4 (sweep 6) -> 37.2 (7) -> 29.7 (14), then
-  stays.
-- 415.11 and 499.26 MHz: 29.7 from sweep 2 to the end. That is the
-  clipping rule's gain; 415.11's carrier reads -1.2 dBFS rms there. There
-  is no climb into clipping and no sawtooth.
-- 413.19 / 418.93 stay at 49.6.
-- 944.87 MHz: 49.6 -> 43.4 -> 37.2 -> 29.7 (sweep 5) -> 22.9 (16), by the
-  clipping rule's mild clips.
-- Over the last 20 sweeps: probes 6.9 a sweep (0.76 %), linearity
-  decisions 0.05, gain changes 0.20, 55 writes a sweep; a sweep 4.034 s
-  against 3.958 s manual (+1.9 %).
-- Over 1 % clipped after the 4th sweep: only the 455.27 pager, twice.
-
-*Hardware, one tuner* (1aa6ecc's code; tuner 0, 405-428 MHz, 12 hops, a
-cold start, 300 sweeps):
-- 417.43 MHz goes 49.6 -> 43.4 (sweep 9) -> 37.2 (17) -> 33.8 (35), then
-  stays. 33.8 is the best gain by the manual scan: carrier over floor 69.3
-  there, against 63.5 at 37.2. Its later probes at 29.7 confirm.
-- 415.52 (the 415.64 carrier in its band) is at 29.7, the clipping rule's.
-- 411.69 / 413.61 / 419.34 stay at 49.6.
-- Settled: probes 0.15 a sweep (1.25 % of the hops), no decisions, no
-  gain changes, 3.25 writes a sweep. A sweep 0.266 s against 0.265 s
-  manual.
-- Nothing over 1 % clipped after the 4th sweep.
-
-*Not tested*: Windows (3-4 ms a USB transfer: the fallback call there would
-add about a second a sweep, F's call ~0.15 s); the Pi; the neighbour rule's
-release on hardware; `--wideband` (sweep
-mode is refused with the downconverter variant, so Auto doesn't arise there);
-generic RTL-SDRs on hardware (only the fake's R820T list); 457.2 MHz's
-neighbours; minutes-long trunked behaviour on hardware beyond 3.5 min.
+**Gain by region** (`set_sweep_gains`, 2026-11-24; sweep.cpp "Gain by
+region"; the client side: kraken_doa_v2/docs/dev/sweep-mode.md):
+- 8092 `{"command":"set_sweep_gains","points_hz":[f1,...,fn],"gains_db":[g0,
+  ...,gn]}`: n <= 64 points (`SWEEP_GAIN_POINTS_MAX`; whole Hz, 1 -
+  4294967295, strictly rising) cut the sweep's frequency axis into n + 1
+  segments, gain gi for points[i-1] <= f < points[i]; each gain in dB as
+  `set_gain` takes it (0 - 50; the tuner's AGC, negative, is refused in a
+  table), put on the nearest value of the tuners' gain list (a tie: the
+  lower). `points_hz: []` with `gains_db: []` clears the table. All or
+  nothing; the answer `{"status":"success","points_hz":[..],"gains_db":
+  [..]}` carries the table as applied. Accepted in every mode, used in sweep
+  mode; not saved (the client sends it after every `set_sweep`). Status,
+  sweep object, always: `"gain_points_hz":[..],"gain_db":[..]` (empty = no
+  table) - their presence tells a client this heimdall has the command.
+- A hop takes the gain of the segment its CENTRE lies in, so a border acts
+  at a hop edge (the client snaps points to the plan's hop edges). No table
+  = the common gain everywhere, as before; with a table the common gain is
+  left alone - it is what the other modes use and what every tuner returns
+  to when the mode is left. A table change takes effect from the next hop:
+  the hop thread copies the table when its generation moved, before the hop
+  and again under `settings_mutex` + `device_io_mutex`; the plan, its round
+  and its sweep count run on.
+- The common gain at the tuner's AGC (-1): the table wins in sweep mode. A
+  hop whose write switches between the AGC and a manual gain (either side
+  negative: the AGC, or -2 after a failed write) goes through
+  `apply_tuner_gain` - the gain mode, the fixed IF VGA step that goes with
+  it (`R820T_IF_VGA_*`), the gain, as `update_sdr_settings` writes them -
+  instead of the fast write; so does the return to the common gain when the
+  mode is left or the table cleared. Calibration only runs in coherent
+  mode, after that return, so it sees the step it always saw. (Chosen over
+  "the table idle while the common gain is the AGC": the page then never
+  shows a table that isn't in force.)
+- `set_gain` in sweep mode with a table still sets the common gain and
+  writes every tuner (as before); the next hops put the table's gains back.
+- Tested on the fake build (`t_regions.py`, job scratch 52196024
+  `regions/h/`; 400-470 MHz, 37 hops, dwell 5, the fake's 14 ms tune / 7.5
+  ms fast tune / 9.3 ms gain write / 1.2 ms fast gain write): for 5, 4, 2
+  and 1 sweep tuners, three regions (borders on hop edges 9 and 20) - every
+  valid packet's header gain on the plan's tuners is its hop's segment's
+  (106-156 channel-packets each, 6-9 of them on a border hop: 0 wrong), the
+  table in force 0.00-0.01 s after the answer (a sweep: 0.16-0.74 s), the
+  sweeps count running on (no restart); a changed table (gain and border)
+  and the cleared table the same. A carrier (`FAKE_STRONG`, -3 dBFS at
+  49.6) in a region set to 49.6 / 38.6 / 29.7: every packet at that header
+  gain, level minus header gain 12.91 / 12.97 / 12.84 dB (within 0.35 dB
+  packet to packet). 15 malformed tables refused, the table unchanged; 31.0
+  / 0.3 / 49.9 dB applied as 29.7 / 0.0 / 49.6; 64 points taken. The AGC
+  as the common gain: the table's gains in every header (the table wins),
+  every header -1 once it is cleared. Leaving for coherent: every packet
+  after the reply at the common gain (29.7, 293 packets), CONVERGED.
+- What a table costs (`t_regcost.py`, 400-1000 MHz, 314 hops, 5 tuners;
+  the sweep timed over 30 s): 8 regions (7 borders inside the tuners'
+  blocks) 11 writes a sweep, 1.290 s against 1.290 s without a table
+  (+0.0 %) with the fast gain write; the build without it (the fork's
+  header with `RTLSDR_HAS_GAIN_FAST` removed) 1.356 against 1.291 s (+5.0
+  %). With 4 of the 7 borders on block starts: 6 writes, +0.0 % / +5.2 %.
+  A border inside a block costs its tuner about two writes a sweep (at the
+  border and at the wrap to its block's first hop), one on a block start.
+- Not tested: the KrakenSDR (the orchestrator's), Windows (a write's ~8
+  transfers at 3-4 ms each without the fast call), the Pi.

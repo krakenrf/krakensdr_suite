@@ -1024,19 +1024,20 @@ static void sweep_plan_after_replay() {
     ControlHandler::send_sweep_plan_now();
 }
 
-// the plan, then the auto gain switch (SWEEP_AUTO_GAIN: heimdall doesn't keep
-// it - it goes wherever the plan goes); its answer says whether heimdall has it
+// the plan, then the gain table (heimdall doesn't keep it: it goes wherever the
+// plan goes)
 void ControlHandler::send_sweep_plan_now() {
     send_control_command(sweep::plan_command());
-    ask_sweep_auto_gain();
+    send_sweep_gains_now();
 }
 
-// (what heimdall sent before the ask - its status lines, which carry "auto_gain"
-// when it has the command - is read first: only the lines after it answer it)
-void ControlHandler::ask_sweep_auto_gain() {
+// (counted as asked BEFORE what heimdall sent so far is read: an answer to an earlier
+// table drained here then leaves this one open and is not taken over it)
+void ControlHandler::send_sweep_gains_now() {
+    sweep::note_gains_asked();
     DataReceiver::drain_control_socket();
-    sweep::note_auto_gain_asked();
-    send_control_command(sweep::auto_gain_command());
+    sweep::note_gains_sent();
+    send_control_command(sweep::gains_command());
 }
 
 void ControlHandler::send_sweep_plan() {
@@ -2650,8 +2651,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         handle_message_impl("GET_DECIMATOR_INFO");  // push restored state to browsers
     }
     else if (message.starts_with("SWEEP_RANGE:") || message.starts_with("SWEEP_TUNERS:") ||
-             message.starts_with("SWEEP_RES:") || message.starts_with("SWEEP_DWELL:") || message.starts_with("SWEEP_RUN:") ||
-             message.starts_with("SWEEP_AUTO_GAIN:")) {
+             message.starts_with("SWEEP_RES:") || message.starts_with("SWEEP_DWELL:") || message.starts_with("SWEEP_RUN:")) {
         // Sweep mode's settings (sweep.hpp, docs/dev/sweep-mode.md): each is
         // answered by the sweep message to every page (no echo); all but
         // SWEEP_RUN saved; heimdall gets the plan when it changed in sweep
@@ -2675,13 +2675,6 @@ void ControlHandler::handle_message_impl(string_view message) {
                 applied = sweep::set_res(val);
             } else if (key == "SWEEP_DWELL:") {
                 applied = sweep::set_dwell(parse_double(message, key.size()));
-            } else if (key == "SWEEP_AUTO_GAIN:") {
-                // heimdall's per-hop gain under the common gain (the ceiling); kept,
-                // replayed, sent with the plan and at once in sweep mode
-                if (val != "1" && val != "0" && val != "true" && val != "false")
-                    throw std::invalid_argument("SWEEP_AUTO_GAIN takes 1 or 0");
-                applied = sweep::set_auto_gain(parse_bool(val));
-                if (sweep_mode_enabled.load() && !g_replaying_settings.load()) ask_sweep_auto_gain();
             } else {
                 if (val != "1" && val != "0" && val != "true" && val != "false")
                     throw std::invalid_argument("SWEEP_RUN takes 1 or 0");
@@ -3021,6 +3014,30 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(json.str());
 
         cout << "FFT size changed: " << old_size << " -> " << FFTProcessor::get_current_size() << endl;
+    }
+    else if (message.starts_with("SWEEP_GAINS:")) {
+        // Sweep mode's gain by region (sweep.hpp, docs/dev/sweep-mode.md): the
+        // whole table, validated; saved (heimdall's answer replaces it when it
+        // applied other values - sweep::take_gains_save); every page gets the
+        // sweep message (no echo); heimdall gets it at once in sweep mode, else
+        // with the plan at the mode's entry (the replay leaves it to that too)
+        string applied;
+        try {
+            applied = sweep::set_gains(string(message.substr(12)));
+        } catch (const std::invalid_argument& e) {
+            throw CommandRejected(e.what());
+        } catch (const std::out_of_range&) {
+            throw CommandRejected("number out of range");
+        }
+        g_applied_cmd = applied;
+        if (!g_replaying_settings.load() && !sfscan::dispatching()) SettingsStore::record(applied);
+        if (sweep_mode_enabled.load() && !g_replaying_settings.load()) send_sweep_gains_now();
+        broadcast(sweep::state_json());
+    }
+    else if (message.starts_with("SWEEP_AUTO_GAIN:")) {
+        // Sweep mode's Auto gain was removed (2026-11-24; docs/dev/sweep-mode.md):
+        // accepted and ignored for an older page in an open tab (SWEEP_ is in
+        // is_query_command: not echoed, not saved)
     }
     else if (message.starts_with("FFT_DECIMATION:")) {
         // The "Downsampling" setting is gone: each page gets its plot's width

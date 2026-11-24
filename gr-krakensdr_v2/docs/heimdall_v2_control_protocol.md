@@ -273,42 +273,33 @@ contract"); heimdall's design: `heimdall_v2/docs/dev/operating-modes.md`,
   `set_independent_tuner`, `start_scanner` and `set_num_elements`;
   `set_gain` sets every tuner (and marks the stream invalid until the next
   settle, like a hop).
-- Auto gain (added 2026-11-23; `heimdall_v2/docs/dev/operating-modes.md`,
-  "Auto gain in sweep mode"): `{"command":"set_sweep_auto_gain",
-  "enable":true|false}` -> `{"status":"success","auto_gain":true|false}`
-  (an `enable` that is missing or not a bool: an error naming it; an older
-  heimdall: its unknown-command error, which names nothing - the
-  `auto_gain` field in the reply is how a client tells the two apart).
-  Accepted in every mode, acts in sweep mode, not saved (the client sends
-  it again after its plan). With it on, the common gain (`set_gain`) is the
-  ceiling and heimdall keeps a gain per hop frequency below it: a hop whose
-  samples clip the converter is taken lower for its next visits and comes
-  back up slowly; the gain is written with the hop's retune. With the
-  tuner's own AGC as the common gain (-1) it does nothing. Leaving sweep
-  mode, or switching it off, puts every tuner back at the common gain
-  first. The gain a packet was taken with is in its 8091 header (the data
-  protocol's sweep paragraph). The status object adds `auto_gain`,
-  `auto_gain_active` (on, sweep mode, a manual ceiling), `gain_ceiling_db`,
-  `gain_reduced_hops`, `gain_min_db`, `clipped_hops` (hops with more than
-  0.01 % of their I / Q values at 0 or 255), `gain_changes`, `gain_writes`
-  (each of the last completed sweep), `gain_write_failures`, `gain_fast`
-  (the tuner library has the fast gain write) and `gain_real_db`
-  (`[[g, real], ...]`: the measured gain of each value of the tuner's gain
-  list in dB against the list's top - the list itself is up to 6.7 dB off;
-  only for tuners it was measured for, R820T / R828D).
-  Since 2026-11-24 (round 10, the linearity search: under the clipping
-  rule's gain, the highest gain at which the chain is linear, by probe
-  visits flagged in the 8091 header, `0x4000`) the sweep object also
-  carries `gain_floor_hops` (hops held under the clipping rule's gain by
-  that rule), `gain_probes`, `gain_floor_decisions`, `gain_search_hops`,
-  `gain_pairs`, `gain_pairs_unbracketed`, `gain_pairs_nonlinear`,
-  `gain_step_learned`, `gain_probes_skipped`, `gain_level_guesses` (hops
-  whose gain was guessed from the level of a carrier in the hop below),
-  `gain_est_late` (visits whose spectrum estimate did not arrive in time:
-  no verdict from them), `floor_scatter_db` (each of the last completed
-  sweep) and `gain_probe_sweep`. They are sent whenever the sweep object is,
-  with zeros / false while Auto is off. The presence of `gain_floor_hops`
-  is how a client tells a heimdall with the measured rule from one without.
+- Gain by region (added 2026-11-24; `heimdall_v2/docs/dev/operating-modes.md`,
+  "Gain by region"): `{"command":"set_sweep_gains","points_hz":[f1,...,fn],
+  "gains_db":[g0,...,gn]}` - n <= 64 points (whole Hz, strictly rising) cut
+  the sweep's frequency axis into n + 1 regions, `gi` for `points[i-1] <= f <
+  points[i]`; each gain in dB as `set_gain` takes it (0 - 50; the tuner's AGC,
+  -1, is refused in a table), put on the nearest value of the tuners' gain
+  list. `points_hz: []` with `gains_db: []` clears the table (the sweep takes
+  the common gain again). All or nothing: `{"status":"success","points_hz":
+  [..],"gains_db":[..]}` with the table as applied, or `{"status":"error",
+  "message":"..."}` and nothing changes. A hop takes the gain of the region
+  its centre lies in, written with its retune, from the next hop on (no
+  restart of the plan). Accepted in every mode, used in sweep mode, not
+  saved (the client sends it after its plan). With a table the common gain
+  (`set_gain`) is left alone - the other modes use it and every tuner
+  returns to it when sweep mode is left; with the common gain at the tuner's
+  AGC the table still wins in sweep mode. The gain a packet was taken with
+  is in its 8091 header (the data protocol's sweep paragraph). The status'
+  sweep object always carries `gain_points_hz` and `gain_db` (the table as
+  applied, empty = none: their presence is how a client tells this heimdall
+  from an older one, whose unknown-command error names nothing), and
+  `gain_writes` (of the last completed sweep), `gain_write_failures`,
+  `gain_fast` (the tuner library has the fast gain write) and
+  `gain_real_db` (`[[g, real], ...]`: the measured gain of each value of
+  the tuner's gain list in dB against the list's top - the list itself is up
+  to 6.7 dB off; only for tuners it was measured for, R820T / R828D).
+  (Rounds 9 - 10's `set_sweep_auto_gain` and its status counts were removed
+  2026-11-24: an older client that sends it gets "Unknown command".)
 - Status (2 Hz broadcast, `get_status`, the web STATE): always
   `"sweep":{"first_center_hz","step_hz","steps","tuners":[..],"dwell_ms",
   "settle_ms","run","round","rounds","sweeps","round_ms"}` - `tuners` the

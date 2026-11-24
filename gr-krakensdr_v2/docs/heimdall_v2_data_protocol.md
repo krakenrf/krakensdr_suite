@@ -59,21 +59,16 @@ bits are flags every consumer masks off - `0x100` KerberosSDR manual mode,
 array, coherent mode unavailable; set on every frame together with `0x800`
 or `0x400`), `0x2000` sweep mode (always together with `0x800`, so a client
 that doesn't know sweep mode takes the stream for independent tuners; one
-that does tests `0x2000` first), `0x4000` trial gain (sweep mode with Auto
-gain, added 2026-11-24: some channel of this packet was taken at a trial gain -
-a linearity probe, not the hop's own gain; bits 16 + ch, `0x10000 << ch`, say
-which channels. The samples are valid and the per-channel gain is the one
-they were taken with. Read with the per-channel frequency and gain, before
-the retuning flag, so the guarantee below covers it. A client that keeps one
-level per hop can leave such a visit out, or shift it by its gain like any other).
+that does tests `0x2000` first). (The trial gain bits of round 10's Auto
+gain, `0x4000` and `0x10000 << ch`, were never released and are gone.)
 
 **Sweep mode** (`0x2000`, added 2026-11-20; the contract:
 `kraken_doa_v2/docs/dev/sweep-mode.md`): the chosen tuners hop through the
 plan set with `set_sweep` (control protocol §2.18). Per-channel frequency =
 where that tuner is, per-channel gain = the gain that tuner's samples in
-this packet were taken with - the common gain, or with Auto gain
-(`set_sweep_auto_gain`, 2026-11-23) the gain of that hop, a value of the
-tuner's gain list at or below the common gain. It is read with the
+this packet were taken with - the common gain, or with a gain table
+(`set_sweep_gains`, 2026-11-24) the gain of the region that hop's centre
+lies in (-1 = the tuner's AGC). It is read with the
 frequency, before the flag, so the guarantee below covers it too. The scanner fields
 belong to the sweep: `frequency_change_counter` + 1 per round,
 `current_group_index` = the round r the tuners are on, and

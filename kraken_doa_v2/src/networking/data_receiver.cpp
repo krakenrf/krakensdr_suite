@@ -313,8 +313,6 @@ void DataReceiver::data_receiver_thread() {
                 uint32_t channels = EndianUtils::read_be32(buffer.data(), offset + 4);
                 uint32_t samples = EndianUtils::read_be32(buffer.data(), offset + 8);
                 uint32_t phase_comp_state = EndianUtils::read_be32(buffer.data(), offset + 12);
-                // (the field before its low byte is taken: sweep mode's per-channel trial bits)
-                const uint32_t phase_flags_raw = phase_comp_state;
                 uint32_t noise_source = EndianUtils::read_be32(buffer.data(), offset + 16);
 
                 // KerberosSDR support flags piggyback on the phase-state
@@ -566,16 +564,14 @@ void DataReceiver::data_receiver_thread() {
                     note_calibration_state(phase_comp_state, noise_source);
                     // the common gain as heimdall runs it: the pages learn a change
                     // (another page's, the assistant's) from the sweep message
-                    // (with Auto on a header's gain is that hop's, not the common one: the
-                    // engine takes the ceiling from the sweep's gain map then)
-                    if (!sweep::auto_gain() && sweep::note_gain(EndianUtils::read_le_float(buffer.data(), offset + 32 + 4), true) && loop)
+                    // (with a gain table a header's gain is that hop's region's, not the common one)
+                    if (!sweep::regions_active() && sweep::note_gain(EndianUtils::read_le_float(buffer.data(), offset + 32 + 4), true) && loop)
                         loop->defer([] { WebSocketServer::broadcast_json_message(sweep::state_json()); });
                     std::array<float, MAX_CHANNELS> ch_gain{};
                     for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++)
                         ch_gain[ch] = EndianUtils::read_le_float(buffer.data(), offset + 32 + ch * 8 + 4);
                     sweep::on_packet(buffer.data() + offset + header_size, channels, samples, ch_freq_hz.data(), ch_gain.data(),
-                                     frequency_change_counter, current_group_index, is_retuning,
-                                     phase_flags_raw >> 16);   // heimdall's per-channel trial bits (round 10)
+                                     frequency_change_counter, current_group_index, is_retuning);
                     num_channels = channels;
                     data_ready = true;
                     offset += packet_size;
@@ -1800,7 +1796,7 @@ static void drain_control_socket_locked() {
             heimdall_version_ingest(scratch, static_cast<size_t>(n));
             antbias::ingest(scratch, static_cast<size_t>(n));
             ControlHandler::ingest_sweep_reply(scratch, static_cast<size_t>(n));   // an older heimdall's refusal
-            sweep::ingest_control_reply(scratch, static_cast<size_t>(n));          // set_sweep_auto_gain's answer
+            sweep::ingest_control_reply(scratch, static_cast<size_t>(n));          // the gain curve in its status
             if (static_cast<size_t>(n) < sizeof(scratch)) break;  // drained
             continue;                                             // more waiting
         }

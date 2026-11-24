@@ -91,6 +91,8 @@
 // A hop waits for its packets at most this much longer than they take (a
 // stalled stream must not stop the sweep)
 #define SWEEP_DWELL_GRACE_MS     250
+// Gain by region (set_sweep_gains): at most this many points (borders) in the table
+#define SWEEP_GAIN_POINTS_MAX    64u
 // The conversion worker's wait slice in sweep mode (sdr_pipeline.cpp): it
 // re-reads the flush epoch this often, so the first set after a hop's flush
 // is not dropped as converted across it

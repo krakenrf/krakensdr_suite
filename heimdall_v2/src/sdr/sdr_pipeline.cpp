@@ -864,27 +864,10 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
                 // before and after the header was built, so the header said
                 // 0 too) - a hop's dwell lasts until one has gone out
                 const bool sweep = operating_mode.load(std::memory_order_relaxed) == OperatingMode::SWEEP;
-                // Auto gain's statistics: each tuner's frequency and gain read
-                // BEFORE the flag (as the header does) - with the flag 0 then
-                // and after the broadcast they are this set's (a hop stores
-                // its new ones only after it set the flag)
-                const bool stats = sweep && sweep_auto_gain_active();
-                uint32_t st_hz[NUM_DEVICES];
-                int st_gain[NUM_DEVICES];
-                if (stats)
-                    for (int i = 0; i < num_elements && i < NUM_DEVICES; i++) {
-                        st_hz[i] = wideband_config.get_tuner_frequency(i);
-                        st_gain[i] = wideband_config.get_tuner_gain(i);
-                    }
                 const bool valid_before = sweep && !sweep_state.retuning_in_progress.load();
                 if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples);
                 if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
-                if (valid_before && !sweep_state.retuning_in_progress.load()) {
-                    // (before the count: the hop thread, woken by it, finds
-                    // the dwell's statistics complete)
-                    if (stats) sweep_note_hop_stats(raw_set, st_hz, st_gain, num_elements);
-                    sweep_note_valid_set();
-                }
+                if (valid_before && !sweep_state.retuning_in_progress.load()) sweep_note_valid_set();
 
                 // Drop oldest if full - coherence-safe
                 if (l2_buffer_size.load(std::memory_order_relaxed) >= BUFFER_SIZE) {
