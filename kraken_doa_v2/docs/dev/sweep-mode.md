@@ -3289,8 +3289,35 @@ empty).
   one on the same fake and scene: the same signals and classes in coherent
   (4), wideband scan (6) and independent mode (6; centres within 1 kHz),
   labels drawn 4 / 4, 6 / 6, 18 / 18, no page errors.
-- Not tested: the KrakenSDR and the Pi (the orchestrator's), real signals
-  on the air with Signal ID around a sweep, MinGW and zig (the portability
+- On the KrakenSDR (the orchestrator; the dev machine's unit, the merged
+  receiver and page, heimdall's binary the same file as round 11's):
+  - Round 11's gain-by-region run again (`pi/regions_pi.py`): 32 / 32 -
+    every hop's gain as the table says (0 wrong of 2733 hop visits a
+    case), a sweep 3.939 s with and without the table, the 416.59 MHz
+    carrier 59.3 - 60.2 dB over its floor in its 25.4 dB region (54.6
+    saturated), the lane's gestures with real mouse events. Its return to
+    coherent took 24.6 s in this run where round 11's took 3.7 s: this
+    start's first calibration (lags of ~250 samples to servo) had not
+    converged when the check entered sweep mode ~15 s after the start, so
+    the lag states were not CONVERGED and the return ran the whole lag
+    acquisition - heimdall's behaviour at any start, not the merge's (its
+    binary is unchanged); the check's start is a race with the first
+    convergence.
+  - Signal ID beside sweep mode on signals on the air (`pi/sig_pi.py`,
+    coherent at 416 MHz, 25.4 dB): 20 / 20. Coherent: 6 signals labelled
+    0.7 s after switching it on (DMR at 415.638 / 415.676 / 415.714 MHz,
+    MPT1327 at 416.587 / 416.675 / 416.750 MHz). Into sweep: the labels
+    gone 0.16 s after the mode command, "Paused" / "Sweep mode (the tuners
+    hop)", no snapshot, track or label in 35 s; a sweep 3.970 s with
+    Signal ID on, 3.964 s with it off; the lane directly under the
+    spectrum, the Bands bar (37 segments at 24 - 1765 MHz) above it, no
+    tuner buttons. Back to coherent (the calibration converged before the
+    sweep): lag states kept, CONVERGED within a second, the same six
+    labels 1.2 s later. Independent: the old labels off, new ones 0.6 s
+    later, drawn in every pane (7 / 6 / 7 / 6 / 6), the tuner buttons
+    shown; -> sweep: gone in 0.15 s, parked, no buttons; -> coherent:
+    CONVERGED. No page error.
+- Not tested: the Pi with the merged build, MinGW and zig (the portability
   syntax checks: not on this machine), Windows / macOS, Firefox / Safari, a
   real phone; main's own job-scratch suites (`ui_bands.py`, `ui_sig.py`,
   the strict playback) - not this job's, not rerun.
