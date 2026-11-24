@@ -36,6 +36,8 @@
 !kraken_doa_v2/kraken_doa.html
 !kraken_doa_v2/array_calculator.html
 !kraken_doa_v2/opus-decoder.min.js
+# Signal ID's model (docs/dev/signal-classifier.md)
+!kraken_doa_v2/sigclass.model
 !kraken_doa_v2/plugins/
 kraken_doa_v2/plugins/*/build/
 kraken_doa_v2/plugins/sdk/build/
