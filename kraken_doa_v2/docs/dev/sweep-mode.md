@@ -569,8 +569,8 @@ refused; out-of-range numbers are clamped:
   (that folded a lower region's lost sensitivity into the next block, and
   its signals' heights with it). The histories (`Store::gain_changed`)
   restart when `g_ref` changes (compared at 0.1 dB since round 12), not
-  when a region below it does; the base's own history also restarts when
-  the table's set of gains changes (*The base by gain group*, next). The data
+  when a region below it does; the base's own history also restarts at
+  any change of the table (*The base by gain group*, next). The data
   receiver no longer takes the header's channel 0 gain for the common gain
   while a table is in force (`regions_active`).
 - **The base by gain group** (round 12, 2026-11-25; `evaluate`): the hops
@@ -600,20 +600,24 @@ refused; out-of-range numbers are clamped:
   group's 5th-percentile floor is under the base - the lowest group's
   quiet twentieth at +2 dB, as a sweep of its hops alone would put it, the
   others above by what they are higher; a point added with the same gain
-  on both sides changes nothing (grouping is by gain, not by region); a
+  on both sides leaves the base's number as it was (grouping is by gain,
+  not by region; its history restarts, as at any table edit); a
   group of fewer than 20 hops is its lowest hop (a narrow region at the
   highest gain in a quiet band isn't drawn under the line either). The seams' steps, the tuners'
   offsets, the per-hop `delta`, the rewrite of stored hops and the
   dead-dongle rule are untouched. A hop's stored floor keeps the gain it
   was measured at until its next visit, so during the sweep a table change
   falls in it counts in its old gain's group - its floor and its key
-  match. Restarts: the base's history (`base_hist`) restarts when the
-  table's set of distinct gains changes (`g_gain_set`, made by
-  `update_ref`: a table set or cleared, a region given a gain no other
-  has, a gain gone); a border moved or a point added keeps the set. Without
-  that the median held the old base for two more sweeps after a table set
-  or cleared, and after a clear the regions that were turned down stood
-  under the line for those sweeps. With it the base follows now's value
+  match. Restarts: the base's history (`base_hist`) restarts at any
+  change of the table in force - set, cleared, a gain, a point added,
+  moved or removed (`g_table_sig`, a hash of its points and gains made by
+  `update_ref`; 0 = no table). Without that the median held the old base
+  for two more sweeps and then jumped: after a table set or cleared (the
+  regions that had been turned down under the line for those sweeps), and,
+  with the 5th percentile, after a border moved onto the plateau (a
+  top-gain region on the 150 - 412 MHz hump widened onto the FM band and
+  the airband moves the base ~10 dB: 13 - 15 % of its hops under the line
+  for two sweeps). With it the base follows now's value
   through the sweep the change falls in (the groups' members move hop by
   hop, so it moves gradually) and the median is back after two completed
   sweeps; the cost is that an odd visit is not filtered in those two
@@ -3609,3 +3613,42 @@ running with lower gain."
   border moved onto quiet hops on hardware (the 3.5 dB move over 2 sweeps
   above - whether its new hops show under the axis meanwhile was not
   measured).
+- Third pass: the base's history restarts at ANY change of the table in
+  force (`g_table_sig`, a hash of its points and gains; it was its set of
+  gains). With the 5th percentile a border moved onto quiet hops moves the
+  base by several dB, and the median over the kept sweeps held the old
+  base for two more sweeps - the new hops under the line - and then
+  jumped; dragging points on the lane is the user's main action there.
+  Tests (fakes; `rx/t_move.py` on the hardware-shaped fake, no dongle
+  offsets; per completed sweep from the one before the edit: the base /
+  the 49.6 dB hops with their noise median at 0 / their 5th percentile):
+  - (a) points 150.6 / 412.625 MHz, 16.6 | 49.6 | 16.6 (137 hops at
+    49.6, the hump), then the first point to 100.9 MHz (163 hops, the
+    airband and part of the FM band added). 22ccf55: 47.93 / 0 / 2.35 (the
+    sweep before), 47.91 / 12.9 % / 0 (the edit's sweep), 47.90 / 15.3 % /
+    0, 37.42 / 2.5 % / 0.94, 36.67 / 0 / 1.88, then 36.55. This build: 47.82 / 0 / 2.35, 37.47 / 2.5 % /
+    1.88 (the edit's own sweep), 36.49 / 0 / 1.88, then 36.52.
+  - (b) back to 150.6 MHz: 22ccf55 36.61 / 0 / 13.18 in the edit's sweep
+    and the next (the region 11 dB too high), 47.66, then 47.91. This
+    build: 36.56 / 0 / 13.65 (the sweep before), 47.88 / 0 / 1.88 in the
+    edit's sweep, then 47.81.
+  - (c) the 10-hop border move of the earlier settling test (onto quiet
+    hops, the base 3.3 dB lower): 22ccf55 51.69 in the edit's sweep and
+    the next, then 48.77, 48.45, 48.43; this build 48.80 in the first
+    completed sweep, then 48.44 .. 48.37.
+  - I3 (a point added inside the 49.6 dB region, the same gain on both
+    sides): the base's number stays (47.89 .. 47.95 before, 47.92 ..
+    48.01 after); its history restarts (kept 0 -> 4 over 4 sweeps). The
+    jitter without the median: the base's steps between evaluations at
+    most 0.08 dB (0.06 before), none over the 0.25 dB rewrite threshold
+    (no hop rewritten); the 49.6 dB hops' medians sweep to sweep mean 0.11
+    / p95 0.47 dB against 0.09 / 0.47 before - within one level step.
+    `t_cases` I3: now's base 47.67 +- 0.02 -> 47.67 +- 0.06 dB.
+  - `t_cases` on this build: 39 / 40 - the one failure is I3's "no
+    restart" check, which this pass changes on purpose; the three-gain
+    offsets at 0.11 dB this time. Rounds 3 - 11's suites: `t_rx` 32 / 32,
+    `t_sweep` 207 / 207, `t_full` 31 / 31, `t_overview` 23 / 23, `t_res`
+    175 / 181 (6 of the known 7). Not tested in this pass: the KrakenSDR,
+    a Pi, MinGW / zig, Windows / macOS; a drag on the page itself (the
+    edits came as `SWEEP_GAINS:` commands; the lane sends the table once,
+    on release, so a drag is one edit).

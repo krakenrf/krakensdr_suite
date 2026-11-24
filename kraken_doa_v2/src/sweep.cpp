@@ -320,7 +320,7 @@ struct Store {
     std::array<float, SEAM_HIST> base_hist{};
     uint8_t base_pos = 0;
     float base_gain = NAN;        // the reference gain (g_ref) the histories were taken at
-    uint64_t base_set = 0;        // the table's set of gains (g_gain_set) base_hist was taken with
+    uint64_t base_table = 0;      // the table in force (g_table_sig) base_hist was taken with
     // per seam the median of its kept steps when the common gain last changed (NaN = none):
     // used only while the seam has no step of its own at the new gain
     std::array<float, MAX_CHANNELS> seam_fallback{};
@@ -388,25 +388,23 @@ std::atomic<int> g_reg_known{0};          // 1 heimdall has set_sweep_gains, -1 
 // The level shift's reference: the highest gain of the table (heimdall has it), else the common
 // gain (NaN = not known, -1 = the tuner's AGC: no shift)
 std::atomic<float> g_ref{NAN};
-// The set of gains the table in force holds (0.1 dB; 0 = no table): a change restarts the
-// base's history (evaluate)
-std::atomic<uint64_t> g_gain_set{0};
+// The table in force - its points and gains (0.1 dB) - as one number (0 = no table): any
+// change restarts the base's history (evaluate)
+std::atomic<uint64_t> g_table_sig{0};
 void update_ref() {
     float r = g_gain.load();
-    uint64_t set = 0;
+    uint64_t sig = 0;
     {
         std::lock_guard<std::mutex> lk(g_reg_mu);
         if (!g_reg.gains.empty() && g_reg_known.load() != -1) {
             r = *std::max_element(g_reg.gains.begin(), g_reg.gains.end());
-            std::vector<long> k;
-            for (float g : g_reg.gains) k.push_back(std::lround(g * 10.0f));
-            std::sort(k.begin(), k.end());
-            k.erase(std::unique(k.begin(), k.end()), k.end());
-            set = 1469598103934665603ull;   // (FNV-1a over the distinct gains)
-            for (long x : k) set = (set ^ static_cast<uint64_t>(x)) * 1099511628211ull;
+            sig = 1469598103934665603ull;   // (FNV-1a over the points, then the gains)
+            auto mix = [&sig](uint64_t x) { sig = (sig ^ x) * 1099511628211ull; };
+            for (int64_t p : g_reg.points) mix(static_cast<uint64_t>(p));
+            for (float g : g_reg.gains) mix(static_cast<uint64_t>(std::llround(g * 10.0f)));
         }
     }
-    g_gain_set.store(set);
+    g_table_sig.store(sig);
     g_ref.store(r);
 }
 
@@ -499,12 +497,13 @@ void shift_hop(int h, float d) {
 //   the others above it by what they are higher (a turned-down region: its lost
 //   sensitivity);
 // - I3 grouping is by gain, not by region: a point added with the same gain on both sides
-//   changes nothing;
+//   doesn't change the base's number (its history restarts, as at any table edit: now's
+//   value alone for two sweeps);
 // - I4 a region's new gain that is not the lowest group's moves the base by nothing but
 //   the lowest group's own quantile (its members don't change); the seams' histories
-//   restart only when the reference gain changes (gain_changed, above), the base's also
-//   when the table's set of gains changes (evaluate: a new lowest group, several dB away,
-//   is followed within the sweep the change falls in instead of two sweeps later);
+//   restart only when the reference gain changes (gain_changed, above), the base's also at
+//   any change of the table (evaluate: a new lowest group, several dB away, is followed
+//   within the sweep the change falls in instead of two sweeps later);
 // - I5 a group of fewer than 20 hops is its lowest hop (k = 0): a narrow region at the
 //   highest gain in a quiet band isn't drawn under the line either. The cost: one odd
 //   visit of such a hop (a short visit, a clipped hop) is now's base for that evaluation -
@@ -544,16 +543,16 @@ void evaluate(bool sweep_done = false) {
         S.gain_changed();
         S.base_gain = ref_db;
     }
-    // the base's history alone restarts when the table's set of gains changes (a table set
-    // or cleared, a region given a gain no other has, a gain gone): the lowest gain group
-    // can be another set of hops then, and its base several dB away - the median with the
-    // sweeps from before would hold the old base for two more sweeps (with most of the range
-    // turned down: the bug's picture for those sweeps). A border moved or a point added
-    // keeps the set (and the base within a little)
-    if (const uint64_t gs = g_gain_set.load(std::memory_order_relaxed); gs != S.base_set) {
+    // the base's history alone restarts at any change of the table in force (set, cleared, a
+    // gain, a point added, moved or removed): the lowest gain group can be another set of
+    // hops then, and with the 5th percentile its base several dB away (a border moved onto
+    // the receiver's own-noise plateau: ~10 dB) - the median with the sweeps from before
+    // would hold the old base for two more sweeps (the new hops under the line) and then
+    // jump. Now's value is used alone until two sweeps are kept again
+    if (const uint64_t ts = g_table_sig.load(std::memory_order_relaxed); ts != S.base_table) {
         S.base_hist.fill(NAN);
         S.base_pos = 0;
-        S.base_set = gs;
+        S.base_table = ts;
     }
     // a hop's gain group: the gain its stored floor was measured at, 0.1 dB (unknown and the
     // tuner's AGC each a group of their own)
