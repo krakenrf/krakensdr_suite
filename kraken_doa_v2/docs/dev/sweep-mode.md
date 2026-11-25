@@ -3934,3 +3934,53 @@ alternative".
     (not on this machine), Windows / macOS, Firefox / Safari; a real wide
     signal filling a region (the fake's flat band only); the bound's (b)
     side biting (no case made it bite).
+- On the KrakenSDR (the orchestrator; the dev machine's unit, 2026-11-25
+  19:00 - 20:15, the merged tree - main's trunk following with rounds 12
+  and 13; job scratch `pi/levels_pi.py`; the user's sweep 87.5 - 1008 MHz,
+  Resolution Auto, dwell 5, and table: one point at 412.625 MHz, 49.6 |
+  16.6 dB):
+  - The two settings on ONE paused sweep: the 49.6 dB region the same
+    picture (the frame's percentiles and two zoomed places: 0.0 dB apart);
+    everything in the 16.6 dB region 27.3 dB lower in `noise` - the
+    frame's 20th percentile, median, 90th percentile and maximum, the
+    775 MHz block and 606 MHz zoomed, all eight by that one amount -, its
+    floor (the frame's 5th percentile) from 31 - 32 dB to 4.2 - 4.7 dB;
+    the change of the setting on the page 0.1 s after the command;
+    changed back: the first picture, 0.00 dB apart. No point at 0 in
+    either setting. No table (a running sweep): the two within 1.0 - 1.4
+    dB (the signals' own movement). Running in `noise`: both regions'
+    5th percentile at 4.7 - 5.2 dB.
+  - A region laid over one wideband signal (762 - 786 MHz at 16.6 dB, the
+    rest 49.6): the block's median 60.7 - 61.6 dB in `signal`, 29.6 -
+    32.5 dB in `noise` (zoomed 56.5 dB against 22.6 - 29.2), beside it the
+    49.6 dB floor at 8.9 - 9.9 dB - the bound's (a) side keeps the block
+    in the picture; its height there is a lower figure, not its distance
+    over a noise nobody could measure.
+  - The setting and the table after a reload, and after sweep -> coherent
+    (CONVERGED 0.6 s) -> sweep. No page error.
+  - Three runs: 15 / 17 (two checks compared a running sweep at two
+    times - the 775 MHz block's own level moved ~7 dB between them), 18 /
+    19 on the paused sweep (a "quiet" window at 606 MHz that carries
+    signals: its median 5.2 dB, its 20th percentile 1.9 dB), 19 / 19.
+  - The merged tree's regressions: Signal ID beside sweep mode
+    (`pi/sig_pi.py`) 20 / 20; round 12's tables (`pi/floor_pi.py`) in
+    `signal` and in `noise`: no point at 0 in any region of any table, a
+    border moved onto quiet steps right from the first completed sweep (21
+    / 22 each; the one is the comparison with round 12's 01:00 record of
+    main's build, void at another hour); round 11's run
+    (`pi/regions_pi.py`, `signal`) 31 / 32.
+  - That one, and the evening's floors: the 413.3 - 414.1 MHz step's
+    floor went 22.6 - 23.5 -> 28.2 - 28.7 dB when its region went from
+    49.6 to 25.4 dB (the check allows 3 dB; the nights before 36 - 38 ->
+    35 - 37 dB). Round 12's build, run the same hour: 23.5 -> 28.2 - 29.2
+    dB, 31 / 32 too. That evening the step was not saturated at 49.6 dB
+    (with no table the FM band's floor read 8.0 dB against 17 - 19 dB on
+    the nights before, 650 MHz 14.6 against 18 - 19 dB), so in `signal`
+    its floor rises with the sensitivity given up; on the nights before
+    its floor was the overload's and did not move. Same hour, same
+    hardware, round 12's build against this one in `signal`: no table 6.6
+    / 9.4 / 15.5 against 6.1 / 9.4 / 15.5 dB (5th / 20th percentile /
+    median), the user's 49.6 dB region 5.2 / 13.6 / 18.4 against 5.6 /
+    13.6 / 18.4 dB - one picture.
+  - Not tested: a Pi with this build, Windows / macOS, MinGW and zig,
+    Firefox / Safari.
