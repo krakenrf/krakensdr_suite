@@ -750,6 +750,9 @@ body.mode-sweep.swp-regions.swp-panning #swp-lane-box {cursor:grabbing}
 #swp-lane-box:focus-visible {box-shadow:inset 0 0 0 1px var(--ac-l)}
 #swp-lane-box canvas {position:absolute;left:0;top:0;display:block}
 @media (pointer:coarse) { body.mode-sweep.swp-regions #swp-lane-box {height:40px} }
+/* the Sweep box's Levels (how the regions are drawn): only where the receiver has it and the lane is offered */
+#swp-levels-row {display:none}
+body.mode-sweep.swp-regions.swp-levels #swp-levels-row {display:flex}
 .vbar.gn-region {box-shadow:0 0 0 1px var(--ac-l)}
 body.mode-sweep.swp-zoomed #swp-spec-box, body.mode-sweep.swp-zoomed #swp-wf-box {cursor:grab}
 body.mode-sweep.swp-panning #swp-spec-box, body.mode-sweep.swp-panning #swp-wf-box {cursor:grabbing}
@@ -2761,7 +2764,11 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <input type="number" id="swp-dwell" min="5" max="1000" step="5" value="5" onchange="swpSetDwell(this.value)" title="How long each step of the sweep is listened to, 5 - 1000 ms">
           <span class="u">ms</span>
         </div>
-        <div class="kv" id="swp-gain-kv" title="The gain the sweep uses: the top bar's Gain on every step, or a gain per region of the range. The regions are set on the line under the spectrum: double-click it (on a touch screen: double-tap) to cut the range there - both parts keep the gain; drag a border left or right to move it (borders sit between the sweep's steps); right-click a border (press and hold) to remove it. Click a region (tap) to pick it: the top bar's Gain then sets that region only. Removing the last border makes the remaining gain the Gain of every step again. A region turned down shows a higher noise floor - the sensitivity given up there; signals keep their height. For every browser on this receiver"><span>Gain</span><span id="swp-gain-st">-</span></div>
+        <div class="kv" id="swp-gain-kv" title="The gain the sweep uses: the top bar's Gain on every step, or a gain per region of the range. The regions are set on the line under the spectrum: double-click it (on a touch screen: double-tap) to cut the range there - both parts keep the gain; drag a border left or right to move it (borders sit between the sweep's steps); right-click a border (press and hold) to remove it. Click a region (tap) to pick it: the top bar's Gain then sets that region only. Removing the last border makes the remaining gain the Gain of every step again. How regions of different gain are drawn: Levels, below. For every browser on this receiver"><span>Gain</span><span id="swp-gain-st">-</span></div>
+        <div class="ctrl-row" id="swp-levels-row">
+          <label title="Over noise: every region's noise sits at 0 dB, as in the live spectrum, and a signal's height is how far it stands over the noise of its own region. One scale: every region is drawn on the scale of the highest gain - a signal keeps its height from region to region, and a turned-down region shows a higher noise floor. It only changes the picture where regions have different gains; for every browser on this receiver">Levels</label>
+          <select id="swp-levels" onchange="swpSetLevels(this.value)" title="Over noise: every region's noise sits at 0 dB, as in the live spectrum, and a signal's height is how far it stands over the noise of its own region. One scale: every region is drawn on the scale of the highest gain - a signal keeps its height from region to region, and a turned-down region shows a higher noise floor. It only changes the picture where regions have different gains; for every browser on this receiver"><option value="noise">Over noise</option><option value="signal">One scale</option></select>
+        </div>
         <div class="ctrl-row">
           <button type="button" class="btn primary" id="swp-run" style="flex:1" onclick="swpRunToggle()"><svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause</span></button>
         </div>
@@ -4965,7 +4972,7 @@ let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO ba
 // popover, the zoom slider and applyOpModeUI read it, and they can run before that block is evaluated.
 let swpKnown = false;
 const swp = {st: null, fr: null, tr: null, zoom: {level: 1, off: 0}, wf: null, sw: 0, sh: 0, dpr: 1,
-             ui: {a: 0, b: 0, holdR: 0, tun: null, holdRes: 0, holdDw: 0}, view: null, viewSeq: 0, seqMin: 0,
+             ui: {a: 0, b: 0, holdR: 0, tun: null, holdRes: 0, holdDw: 0, holdLv: 0}, view: null, viewSeq: 0, seqMin: 0,
              hover: null, drag: null, wfAt: 0, wfPend: null, wfTimer: null, gridOdd: null, readout: '', resText: '', lines: 0,
              stale: false,    // stale: a new connection, the receiver's state not told anew yet
              // gain by region (swpReg*): selF = a frequency in the selected region (NaN: the middle of the view),
@@ -14390,7 +14397,9 @@ function swpNorm(r) {
     // has it; absent / false: no lane)
     gain_points_hz: Array.isArray(r.gain_points_hz) ? r.gain_points_hz.filter(x => typeof x === 'number' && Number.isFinite(x)) : [],
     gain_regions_db: Array.isArray(r.gain_regions_db) ? r.gain_regions_db.filter(x => typeof x === 'number' && Number.isFinite(x)) : [],
-    gain_regions_known: r.gain_regions_known === true};
+    gain_regions_known: r.gain_regions_known === true,
+    // (round 13: how the regions are drawn - "noise" | "signal"; null: a receiver without SWEEP_LEVELS, no control)
+    levels: r.levels === 'noise' || r.levels === 'signal' ? r.levels : null};
   if (s.gain_regions_db.length !== s.gain_points_hz.length + 1 || s.gain_points_hz.some((x, i) => i && !(x > s.gain_points_hz[i - 1]))) {
     s.gain_points_hz = []; s.gain_regions_db = [];   // (malformed: no table)
   }
@@ -14636,6 +14645,7 @@ const SWP_GN_TIP = (document.getElementById('gn-slider') || {getAttribute: () =>
 function swpRegRender() {
   const on = swpRegOn(), act = swpRegActive();
   document.body.classList.toggle('swp-regions', on);
+  swpLevelsRender();
   const gs = $id('gn-slider');
   if (gs) {
     const mn = act ? '1' : '0';   // (Auto - the tuners' AGC - is no region's gain)
@@ -15067,6 +15077,23 @@ function swpSetDwell(raw) {
   swp.ui.holdDw = Date.now() + SWP_HOLD_MS;
   swpHoldLater();
   swpSendSoon('dwell', 'SWEEP_DWELL:' + v);
+}
+// Levels (round 13): how the regions of the gain line are drawn - the receiver's setting (SWEEP_LEVELS), shown
+// with the lane when the receiver has it; the choice made shows until the receiver's answer is in or the hold is
+// over, the picture follows the receiver's frames
+function swpLevelsRender() {
+  const st = swp.st, sel = $id('swp-levels');
+  document.body.classList.toggle('swp-levels', !!(st && st.levels));
+  if (!sel || !st || !st.levels) return;
+  if (Date.now() < swp.ui.holdLv && sel.value !== st.levels) return;
+  swp.ui.holdLv = 0;
+  if (sel.value !== st.levels) sel.value = st.levels;
+}
+function swpSetLevels(v) {
+  if (v !== 'noise' && v !== 'signal') return;
+  swp.ui.holdLv = Date.now() + SWP_HOLD_MS;
+  swpHoldLater();
+  send('SWEEP_LEVELS:' + v);
 }
 function swpRunToggle() {
   if (!swp.st) return;
