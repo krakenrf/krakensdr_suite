@@ -444,11 +444,17 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
         p += 2;
     }
 
-    // Software fractional-delay FIR (8-tap windowed sinc, group delay 3+d).
-    // Runs on EVERY channel so they all share the same base group delay; the
-    // kernel is a pure delta until a correction is commanded. This gives
-    // deterministic sub-sample alignment - hardware register writes kick the
-    // lag by a random +/-0.2-0.3 samples, so the final trim must be digital.
+    // Software fractional-delay FIR (SDRDevice::FRAC_TAPS = 16 taps, Hann-
+    // windowed sinc, group delay FRAC_CENTRE (7) + d). Runs on EVERY channel so
+    // they all share the same base group delay; the kernel is a pure delta
+    // until a correction is commanded. This gives deterministic sub-sample
+    // alignment - hardware register writes kick the lag by a random +/-0.2-0.3
+    // samples, so the final trim must be digital. 16 taps, not 8: after the
+    // lag lock the 8-tap kernel's phase was off by up to 5.0 deg at 0.3 fs and
+    // 11.8 deg at 0.4 fs (trim -0.45; up to 3.1 dB droop) - bearing error for
+    // a VFO away from the centre; 16 taps: <= 0.15 / 0.20 deg, <= 0.07 dB over
+    // the whole trim range (docs/dev/calibration.md *Fractional-delay trim
+    // filter*).
     //
     // `out` is the caller's (pooled) buffer, written in place so a recycled
     // buffer's capacity is reused. When the per-bin EQ stage follows, the lag
@@ -459,14 +465,17 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
     ComplexBuffer& fir_out = eq_active ? fir_tmp : out;
     fir_out.resize(count);
     {
+        constexpr int TAPS = SDRDevice::FRAC_TAPS;
+        constexpr int TL = TAPS - 1;   // input samples carried to the next set
         const float d = dev->compensation.frac_delay.load(std::memory_order_relaxed);
         if (d != dev->frac_coeff_for) {
             float g = 0.0f;
-            for (int n = 0; n < 8; n++) {
-                const float x = static_cast<float>(n) - 3.0f - d;
+            for (int n = 0; n < TAPS; n++) {
+                const float x = static_cast<float>(n - SDRDevice::FRAC_CENTRE) - d;
                 const float s = (std::abs(x) < 1e-6f) ? 1.0f
                     : std::sin(static_cast<float>(M_PI) * x) / (static_cast<float>(M_PI) * x);
-                const float w = 0.5f - 0.5f * std::cos(2.0f * static_cast<float>(M_PI) * (n + 0.5f) / 8.0f);
+                const float w = 0.5f - 0.5f * std::cos(2.0f * static_cast<float>(M_PI) * (n + 0.5f) /
+                                                       static_cast<float>(TAPS));
                 dev->frac_coeff[n] = s * w;
                 g += dev->frac_coeff[n];
             }
@@ -486,12 +495,12 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
         }
 
         // Head: taps reach into the previous chunk's tail
-        const int head = std::min(7, count);
+        const int head = std::min(TL, count);
         for (int i = 0; i < head; i++) {
             Complex acc(0.0f, 0.0f);
-            for (int n = 0; n < 8; n++) {
+            for (int n = 0; n < TAPS; n++) {
                 const int j = i - n;
-                acc += h[n] * ((j >= 0) ? x[j] : tail[7 + j]);
+                acc += h[n] * ((j >= 0) ? x[j] : tail[TL + j]);
             }
             y[i] = acc;
         }
@@ -499,29 +508,43 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
         // and Q filter alike: float k's tap n is float k - 2n). Written on
         // floats because clang doesn't vectorize the std::complex form (6x
         // slower on macOS); one statement per multiply and per add, in the
-        // std::complex loop's order, so no FMA is contracted and the output
-        // stays bit-identical to it.
+        // std::complex loop's order, written out tap by tap so the compiler
+        // vectorizes over k with every tap in a register. GCC fuses each
+        // multiply-add into an FMA all the same (its C++ default is
+        // -ffp-contract=fast; only C's ISO modes turn that off - seen in the
+        // x86 build), clang doesn't (-ffp-contract=on stops at a statement).
+        static_assert(TAPS == 16, "the body below is written out for 16 taps");
         {
             const float* __restrict xf = reinterpret_cast<const float*>(x);
             float* __restrict yf = reinterpret_cast<float*>(y);
             const float h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3];
             const float h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
+            const float h8 = h[8], h9 = h[9], h10 = h[10], h11 = h[11];
+            const float h12 = h[12], h13 = h[13], h14 = h[14], h15 = h[15];
             for (int k = 2 * head; k < 2 * count; k++) {
                 float a = 0.0f, m;
-                m = h0 * xf[k];      a += m;
-                m = h1 * xf[k - 2];  a += m;
-                m = h2 * xf[k - 4];  a += m;
-                m = h3 * xf[k - 6];  a += m;
-                m = h4 * xf[k - 8];  a += m;
-                m = h5 * xf[k - 10]; a += m;
-                m = h6 * xf[k - 12]; a += m;
-                m = h7 * xf[k - 14]; a += m;
+                m = h0  * xf[k];      a += m;
+                m = h1  * xf[k - 2];  a += m;
+                m = h2  * xf[k - 4];  a += m;
+                m = h3  * xf[k - 6];  a += m;
+                m = h4  * xf[k - 8];  a += m;
+                m = h5  * xf[k - 10]; a += m;
+                m = h6  * xf[k - 12]; a += m;
+                m = h7  * xf[k - 14]; a += m;
+                m = h8  * xf[k - 16]; a += m;
+                m = h9  * xf[k - 18]; a += m;
+                m = h10 * xf[k - 20]; a += m;
+                m = h11 * xf[k - 22]; a += m;
+                m = h12 * xf[k - 24]; a += m;
+                m = h13 * xf[k - 26]; a += m;
+                m = h14 * xf[k - 28]; a += m;
+                m = h15 * xf[k - 30]; a += m;
                 yf[k] = a;
             }
         }
-        // Save the last 7 input samples for the next chunk
-        if (count >= 7) {
-            for (int t = 0; t < 7; t++) tail[t] = x[count - 7 + t];
+        // Save the last TL input samples for the next chunk
+        if (count >= TL) {
+            for (int t = 0; t < TL; t++) tail[t] = x[count - TL + t];
         }
     }
 

@@ -67,18 +67,29 @@ struct SDRDevice {
     BufferPool<SampleBuffer> sample_pool{MAX_BUFFER_SIZE + L2_RAW_MAX + 4};
 
     // Software fractional-delay FIR state (owned by the sample pipeline
-    // thread). The kernel starts as a pure delta at tap 3 (= uniform integer
+    // thread): FRAC_TAPS taps, group delay FRAC_CENTRE + frac_delay. The
+    // kernel starts as a pure delta at tap FRAC_CENTRE (= uniform integer
     // group delay on every channel, preserving relative alignment) and is
-    // recomputed whenever compensation.frac_delay changes.
-    std::array<float, 8> frac_coeff{{0, 0, 0, 1, 0, 0, 0, 0}};
-    std::array<Complex, 7> frac_tail{};
+    // recomputed whenever compensation.frac_delay changes. 16 taps since
+    // 2026-11-26 (8 before: its phase error reached 11.8 deg at 0.4 fs -
+    // docs/dev/calibration.md *Fractional-delay trim filter*).
+    static constexpr int FRAC_TAPS = 16;
+    static constexpr int FRAC_CENTRE = FRAC_TAPS / 2 - 1;  // 7
+    static constexpr std::array<float, FRAC_TAPS> frac_delta() {
+        std::array<float, FRAC_TAPS> a{};
+        a[FRAC_CENTRE] = 1.0f;
+        return a;
+    }
+    std::array<float, FRAC_TAPS> frac_coeff = frac_delta();
+    std::array<Complex, FRAC_TAPS - 1> frac_tail{};
     float frac_coeff_for = 0.0f;
     // the flush epoch frac_tail was saved under (conversion thread only): a
     // set after a flush starts a new stream piece - in sweep mode another
     // hop, another frequency and gain - so its tail is the set's own first
     // sample, not the last samples before the flush (those reached the first
-    // 3 output samples: a hop's first valid packet held 3 samples of the
-    // previous one - with auto gain, values clipped at another gain)
+    // FRAC_CENTRE output samples: with the 8-tap filter of the time, a hop's
+    // first valid packet held 3 samples of the previous one - with auto gain,
+    // values clipped at another gain)
     uint32_t frac_tail_epoch = ~0u;
 
     // Optional per-bin phase-equalizer FIR (complex taps). Designed once at the

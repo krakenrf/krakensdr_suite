@@ -179,7 +179,8 @@ Hardware and replies
   `docs/dev/operating-modes.md`) a hop's gain is written with its retune,
   stored only once the tuner took it, and every tuner is back at the
   common gain before the mode is left; the lag FIR's tail is reset at a
-  flush (it carried 3 samples of the hop before into the next packet).
+  flush (it carried the hop before's last samples into the next packet's
+  first ones - 3 with the 8-tap filter of the time, 7 with today's 16).
 - The fork's retunes no longer shift a stream (`RTLSDR_NO_STREAM_SLIP`: a
   USB control IN of 3, 7, 11 ... bytes made the RTL2832U drop 2 samples -
   `../docs/dev/librtlsdr-fork.md`). With an older library heimdall still

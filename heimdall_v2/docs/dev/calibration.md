@@ -209,6 +209,66 @@ landing point dice on a loaded machine (landing = lag −
 ppm×2.4×(duration + timing jitter) − slip). The register-only servo has
 none of these failure modes.
 
+### Fractional-delay trim filter (16 taps since 2026-11-26)
+
+The servo's endgame folds a residual below 0.75 samples into
+`compensation.frac_delay` (clamped to ±0.9), which the conversion loop
+(`samples_to_complex_with_compensation`, `sdr_pipeline.cpp`) applies as a
+Hann-windowed sinc on every channel: `SDRDevice::FRAC_TAPS` = 16 taps, group
+delay `FRAC_CENTRE` (7) + d, unity DC gain. CH0 and untrimmed channels keep a
+pure delta, so all share the 7-sample base delay. The lock nulls the
+broadband correlation peak - the filter's mean delay -, not the filter's
+phase curvature across the band, and that curvature lands on the DoA of a
+VFO away from the centre.
+
+Why 16, not 8 (model: phase error after removing the constant and the slope
+over |f| <= 0.42 fs, worst case over d in ±0.9):
+
+| taps | 0.2 / 0.3 / 0.4 fs | droop at 0.4 fs |
+|---|---|---|
+| 8 | 4.0 / 5.0 / 11.8° (worst at d −0.45) | up to 3.1 dB |
+| 16 | 0.06 / 0.15 / 0.20° | ≤ 0.07 dB |
+
+The window is fixed (centred on tap (N−1)/2), so negative trims were the
+8-tap kernel's worst case; a window that follows d would only gain 0.20 ->
+0.14° at 16 taps. 12 taps would still leave 1.8° at 0.4 fs.
+
+Hardware A/B (2026-11-26, x86 dev machine and its KrakenSDR, 100 MHz, gain
+49.6, five full recalibrations per build, job scratch 14951841 `trimtest/`):
+the phase of each channel against CH0 from the 8091 stream with the noise
+source on in CONVERGED (1024-point cross-spectra over ~2.5 s), constant and
+slope removed. The difference between the 8- and 16-tap builds is the 8-tap
+kernel's predicted curvature for each channel's logged trim (CH1, d +0.134:
+−4.03 / +3.90° at −0.4 / +0.4 fs, predicted −4.18 / +4.02; all four
+channels alike, CH4 with trims of opposite sign in the two runs). Measured
+minus predicted - the dongles' own curvature - agrees between the builds
+within ~0.1-0.7°: 1.6-2.1° at −0.4 fs, 0.5-1.0° at ±0.3 fs, 3.7-7.0° at
++0.4 fs. That is what remains at the band edges with 16 taps; only the
+per-bin EQ (off by default) flattens it. Both builds: CONVERGED 23.3 s
+after a cold start, 2.6-4.7 s per full recalibration, Check Calibration
+|lag| 0.003-0.019 (8 taps) / 0.004-0.005 (16), |phase| 0.13-0.31°,
+`coherence_events` 0, `lag_no_peak` empty.
+
+CPU (one core: the convert thread filters the channels one after another;
+5 channels x 2.4 MS/s): the loop alone on the i7-11800H dev machine 0.4 %
+(8 taps) -> 0.7 % (16) of a core. Not measured on a Pi (none reachable
+that day); estimated from the Cortex-A76's throughput and kraken_doa's
+measured Pi 5 cost per tap (`R_TAP`, `shared_decimator.cpp`): Pi 5 2.0-2.6 %
+of a core (+1.0-1.3), Pi 4 (Cortex-A72, 1.8 GHz) 5.3-6.0 % (+2.7-3.0). The
+convert thread was 32.6 % of a Pi 5 core in coherent mode
+(`operating-modes.md`, the per-thread table); no Pi 4 figure. GCC compiles
+each multiply-add into an FMA (C++'s default `-ffp-contract=fast`; the x86
+build has 118 `vfmadd` against 10 `vmulps` in the function) - without them
+the Pi 4 figure would double. The body is written out tap by tap
+(`static_assert` on 16) so the compiler vectorizes over the output with
+every tap in a register.
+
+Found while measuring, not changed: `main.cpp`'s startup banner leaves
+`std::cout` at `std::fixed` + `setprecision(1)`, so every lag / trim /
+residual heimdall logs after it is rounded to 0.1 sample (the test builds
+restored the default format after the banner). Not measured: any Pi, the
+wideband and Kerberos variants, frequencies other than 100 MHz.
+
 ### Phase Compensation (phase-only)
 
 Uses eigenvalue decomposition of the spatial correlation matrix. The dominant

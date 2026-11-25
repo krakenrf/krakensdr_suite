@@ -141,7 +141,7 @@ resampler-offset registers, no tuner-PLL retune. Resolution ≈ one register cou
 |-------|--------|--------|
 | `BURSTING` | \|lag\| ≥ 6 | Coarse open-loop PPM bursts bring lag into the fine regime (the peak smears at high PPM). |
 | `SERVOING` | \|lag\| < 6 | Continuous proportional servo on the **median of 10 readings** (~4 Hz). Rate tiers: 16 counts > 2 samples, 4 counts > 1, then **1 count** (hardware minimum) < 1 sample. The servo also *learns* the random ±0.2–0.3-sample kick each register write produces. |
-| Digital trim | \|residual\| < 0.75 | Final sub-sample residual folds into a per-channel **8-tap windowed-sinc fractional-delay FIR** in software — because every hardware write kicks the lag, the finest alignment must never touch hardware. |
+| Digital trim | \|residual\| < 0.75 | Final sub-sample residual folds into a per-channel **16-tap windowed-sinc fractional-delay FIR** in software — because every hardware write kicks the lag, the finest alignment must never touch hardware. |
 | `CONVERGED` | \|lag\| < 0.02 | Locked after two quiet windows. |
 
 All channels run the fractional-delay FIR at all times (a unit delta when idle) so

@@ -103,7 +103,7 @@ struct ChannelCompensation {
     bool kick_pending = false;
     int updates_since_write = 0;
     // Software fractional-delay command (samples), applied by the sample
-    // pipeline as an 8-tap windowed-sinc FIR. Deterministic sub-sample
+    // pipeline as a 16-tap windowed-sinc FIR. Deterministic sub-sample
     // alignment: hardware register writes kick the lag by a random
     // +/-0.2-0.3 samples, so the final correction must not touch hardware.
     std::atomic<float> frac_delay{0.0f};
