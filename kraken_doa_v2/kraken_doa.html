@@ -1891,6 +1891,9 @@ html.sb-drag-on,html.sb-drag-on * {cursor:grabbing !important;user-select:none !
 .sidebar input[type="number"]:focus,.sidebar input[type="text"]:focus,.sidebar input[type="password"]:focus,.sidebar input[type="search"]:focus,.sidebar select:focus {
   border-color:var(--ac-l);outline:none;box-shadow:0 0 0 2px rgba(72,160,244,.22)}
 .sidebar .ctrl-row > select {flex:1 1 0;width:auto;max-width:none;min-width:0}
+/* Signal ID protocol picker: leave an inset at the sidebar's right edge. */
+.sidebar #sig-preset-editor .sig-protocol-row > label:first-child:not([style]) {flex-basis:80px}
+.sidebar #sig-preset-editor .sig-protocol-row > .dd-btn {flex:1 1 0;min-width:0;margin-right:12px}
 .sidebar .ctrl-row > input[type="number"],.sidebar .ctrl-row > input[type="text"],.sidebar .ctrl-row > input[type="password"] {flex:1 1 50px;min-width:0}
 .sidebar .sb-content > .ctrl-row:first-child {margin-top:0}
 .sidebar .sb-content > :last-child {margin-bottom:0}
@@ -3546,6 +3549,18 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <label for="sig-bands">Bands</label>
           <input type="checkbox" class="sw" id="sig-bands" onchange="bandSet(this.checked)" title="A bar over every spectrum naming the radio bands in view - the ITU's worldwide bands, and the two Region-only ISM bands (this browser)">
         </div>
+        <button type="button" class="btn sm" id="sig-preset-open" disabled onclick="sigPresetToggle()" aria-expanded="false" aria-controls="sig-preset-editor" title="Receiver-wide settings used when clicking an identified signal"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg><span>Tuning presets</span></button>
+        <div id="sig-preset-editor" style="display:none">
+          <div class="sb-note" id="sig-preset-status" role="status"></div>
+          <div class="ctrl-row sig-protocol-row"><label for="sig-preset-class">Protocol</label><select id="sig-preset-class" onchange="sigPresetSelect()"></select></div>
+          <div class="sb-note" id="sig-preset-factory"></div>
+          <div class="ctrl-row"><label for="sig-preset-demod">Demod</label><select id="sig-preset-demod" onchange="sigPresetEdit()"><option value="FACTORY">Factory / unchanged</option><option>NBFM</option><option>WBFM</option><option>AM</option><option value="DIGITAL">Digital</option></select></div>
+          <div class="ctrl-row"><label for="sig-preset-bw">BW (kHz)</label><input id="sig-preset-bw" type="number" min="1" max="2400" step="0.1" oninput="sigPresetEdit()" onblur="sigPresetFormatBw()"></div>
+          <div class="sb-note" id="sig-preset-note"></div>
+          <div class="ctrl-row"><button type="button" class="btn sm" id="sig-preset-save" onclick="sigPresetSave()">Save preset</button><button type="button" class="btn sm" id="sig-preset-reset" onclick="sigPresetReset(false)">Reset protocol</button></div>
+          <button type="button" class="btn sm" id="sig-preset-reset-all" onclick="sigPresetReset(true)">Reset all presets</button>
+          <div class="sb-note">Applies on the next Signal ID click. Shared by every browser; saved on the receiver.</div>
+        </div>
         <div class="sig-list" id="sig-list"></div>
       </div>
     </div>
@@ -4824,6 +4839,7 @@ let binDoaOn = false, binDoaFrame = null, binDoaState = null;
 // Bands bar; the main spectrum's label targets, a click they took.
 // Up here: drawBox and the panes read them
 let sigSt = null, sigStAt = 0, sigHelloOk = false, sigHelloTimer = null, sigRects = [], sigConsumed = false;
+let sigPresetReady = false, sigPresetCatalog = [], sigPresetOverrides = new Map(), sigPresetDirty = false, sigPresetPending = false, sigPresetSelected = "";
 let sigNoRx = false;             // no state 8 s after the socket opened: an older receiver
 const sigDy = new Map();         // track id -> the row its label took last (sigLayout)
 const SIG_FADE_S = [5, 40];      // not seen for: from the first, fading to SIG_FADE_MIN at the second
@@ -7934,6 +7950,9 @@ function applySyncCmdInner(cmd) {
   }
   else if ((v = arg('TOPOLOGY:')) !== null) {
     if (v !== currentTopology) sto(v);
+  }
+  else if ((v = arg('SIGCLASS_PRESETS:')) !== null) {
+    sigPresetSync(v);
   }
   else if ((v = arg('BIN_DOA:')) !== null) {
     binDoaApply(v === '1');   // bearing spectrum
@@ -12483,6 +12502,12 @@ function connect() {
           else if(msg.bin_doa) {
             binDoaOnState(msg.bin_doa);   // bearing spectrum
           }
+          else if(msg.sigclass_catalog) {
+            sigPresetOnCatalog(msg.sigclass_catalog);
+          }
+          else if(msg.sigclass_preset_result) {
+            sigPresetResult(msg.sigclass_preset_result);
+          }
           else if(msg.sigclass) {
             sigOnState(msg.sigclass);     // Signal ID
           }
@@ -13778,6 +13803,7 @@ function paneMove(p, e) {
     const sft = sfSpecAt(p.sf || [], x, paneXY(e).y, 2);
     const sgt = sft ? null : sigAt(p.sig || [], x, paneXY(e).y, 2);   // (Signal ID's labels)
     const tip = sft ? sfTagTip(sft) : sgt ? sigTip(sgt.t) : '';
+    sigRememberMarkerTip(e.currentTarget, sgt && sgt.t, tip);
     if (tipText(e.currentTarget) !== tip) e.currentTarget.title = tip;
     if (sft || (sgt && sigAt(p.sig || [], x, paneXY(e).y, 2, true))) e.currentTarget.style.cursor = 'pointer';
     // 📏 the level readout over a VFO's bar (not over a tag, nor its squelch line)
@@ -16443,7 +16469,15 @@ function sigHello() {
   }, 8000);
 }
 function sigHelloAuth() { clearTimeout(sigHelloTimer); sigNoRx = false; sigRender(); }
-function sigSocketDown() { clearTimeout(sigHelloTimer); sigNoRx = false; sigRender(); }
+function sigSocketDown() {
+  clearTimeout(sigHelloTimer); sigNoRx = false;
+  sigPresetReady = false; sigPresetCatalog = []; sigPresetOverrides = new Map(); sigPresetDirty = false; sigPresetPending = false; sigPresetSelected = "";
+  $id('sig-preset-open').disabled = true;
+  $id('sig-preset-open').setAttribute('aria-expanded', 'false');
+  $id('sig-preset-editor').style.display = 'none';
+  if (ddOpenSel === $id('sig-preset-class')) ddClose();
+  sigRefreshPresetTips();
+}
 function sigOnState(s) {
   if (!s || typeof s !== 'object') return;
   sigHelloOk = true;
@@ -16639,6 +16673,142 @@ function sigBandCentre(t) {
 // its demod and VFO width (else the detected width with some room). Without
 // a decoder for it the VFO's own decoder stays - unless that one holds the
 // VFO (a fixed-frequency or lock_vfo decoder: ADS-B, ism), which then goes off
+// Only the backend's confirmed snapshot is used for tuning. Factory track
+// metadata is never modified, and a receiver without this setting behaves as before.
+function sigPresetSync(text) {
+  const next = new Map();
+  for (const row of String(text).split(';').filter(Boolean)) {
+    const [id, demod, bw] = row.split(',');
+    const hz = Number(bw);
+    if (/^[a-z0-9_-]{1,64}$/.test(id) && ['FACTORY','NBFM','WBFM','AM','DIGITAL'].includes(demod)
+        && Number.isInteger(hz) && hz >= BW_MIN_HZ && hz <= BW_MAX_HZ) next.set(id, {demod,hz});
+  }
+  sigPresetOverrides = next; sigPresetReady = true;
+  sigRefreshPresetTips();
+  $id('sig-preset-open').disabled = false;
+  if ($id('sig-preset-editor').style.display !== 'none') {
+    if (!sigPresetPending) $id('sig-preset-status').textContent = sigPresetDirty ? 'Receiver presets updated; your unsaved edit is retained.' : 'Receiver presets synchronized.';
+    if (!sigPresetDirty && !sigPresetPending) sigPresetSelect();
+    else sigPresetNote();
+  }
+}
+function sigPresetToggle() {
+  const box = $id('sig-preset-editor'), open = box.style.display === 'none';
+  if (sigPresetPending || (!open && sigPresetDirty && !confirm('Discard unsaved preset edit?'))) return;
+  box.style.display = open ? '' : 'none';
+  if (!open && ddOpenSel === $id('sig-preset-class')) ddClose();
+  $id('sig-preset-open').setAttribute('aria-expanded', String(open));
+  if (open) {
+    sigPresetDirty = false;
+    $id('sig-preset-status').textContent = 'Loading factory catalog…';
+    sigPresetSelect();
+    send('GET_SIGCLASS_PRESETS');
+  }
+}
+function sigPresetOnCatalog(s) {
+  const sel = $id('sig-preset-class'), old = sel.value;
+  const catalog = s.available && Array.isArray(s.classes) ? s.classes : [];
+  const same = JSON.stringify(catalog) === JSON.stringify(sigPresetCatalog) && sel.options.length === catalog.length;
+  sigPresetCatalog = catalog;
+  if (!same) {
+    if (ddOpenSel === sel) ddClose();
+    sel.replaceChildren();
+    for (const c of sigPresetCatalog) {
+      const opt = document.createElement('option');
+      opt.value = c.id; opt.textContent = c.name || c.id;
+      sel.appendChild(opt);
+    }
+    if (sigPresetCatalog.some(c => c.id === old)) sel.value = old;
+  }
+  ddEnhance(sel);
+  $id('sig-preset-status').textContent = s.loading ? 'Loading factory catalog…' : s.available ? 'Factory catalog loaded.' : (s.reason || 'Factory catalog unavailable.');
+  if (sel.value !== old) sigPresetDirty = false;
+  if (!sigPresetDirty && !sigPresetPending) sigPresetSelect();
+  else sigPresetNote();
+}
+function sigPresetClass() {
+  return sigPresetCatalog.find(c => c.id === $id('sig-preset-class').value);
+}
+function sigPresetLocked(pl) { return !!(pl && (pl.fixed_freq_hz > 0 || pl.lock_vfo)); }
+function sigPresetSelect() {
+  const sel = $id('sig-preset-class');
+  if (sigPresetDirty && sigPresetSelected !== sel.value && !confirm('Discard unsaved preset edit?')) {
+    sel.value = sigPresetSelected; ddSync(sel); return;
+  }
+  sigPresetSelected = sel.value;
+  sigPresetDirty = false;
+  const c = sigPresetClass(), p = c && sigPresetOverrides.get(c.id);
+  $id('sig-preset-factory').textContent = c ? 'Factory: ' + (c.demod || 'unchanged') + ' / ' + (c.bw_hz > 0 ? bwLabel(c.bw_hz) : 'detected width') + (p ? ' · Custom preset saved' : '') : '';
+  $id('sig-preset-demod').value = p ? p.demod : (c && c.demod || 'FACTORY');
+  $id('sig-preset-bw').value = p ? (p.hz / 1000).toFixed(1) : c && c.bw_hz > 0 ? (c.bw_hz / 1000).toFixed(1) : '';
+  sigPresetNote();
+}
+// The preset editor uses tenths of a kHz; the receiver still stores whole Hz.
+function sigPresetBwHz() {
+  const v = $id('sig-preset-bw').value;
+  return v === '' ? NaN : Math.round(Number(v) * 10) * 100;
+}
+function sigPresetFormatBw() {
+  const hz = sigPresetBwHz();
+  if (Number.isFinite(hz)) $id('sig-preset-bw').value = (hz / 1000).toFixed(1);
+  sigPresetNote();
+}
+function sigPresetEdit() { sigPresetDirty = true; sigPresetNote(); }
+function sigPresetNote() {
+  const c = sigPresetClass(), pl = c && c.plugin ? digPlugin(c.plugin) : null;
+  const locked = sigPresetLocked(pl), available = sigPresetReady && !!c && !locked && !sigPresetPending;
+  const sel = $id('sig-preset-class');
+  sel.disabled = sigPresetPending || !sigPresetCatalog.length;
+  ddSync(sel);
+  if (sel.__dd) {
+    sel.__dd.setAttribute('aria-label', 'Protocol: ' + (c ? c.name || c.id : 'Select protocol'));
+    if (sel.disabled && ddOpenSel === sel) ddClose();
+  }
+  $id('sig-preset-open').disabled = sigPresetPending || !sigPresetReady;
+  const hz = sigPresetBwHz(), mode = $id('sig-preset-demod').value;
+  const digitalUnavailable = mode === 'DIGITAL' && !(pl && pl.built);
+  $id('sig-preset-demod').disabled = !available;
+  $id('sig-preset-bw').disabled = !available;
+  $id('sig-preset-save').disabled = !available || digitalUnavailable || !['FACTORY','NBFM','WBFM','AM','DIGITAL'].includes(mode) || hz < BW_MIN_HZ || hz > BW_MAX_HZ || !Number.isFinite(hz);
+  $id('sig-preset-reset').disabled = sigPresetPending || !c || !sigPresetOverrides.has(c.id);
+  $id('sig-preset-reset-all').disabled = sigPresetPending || !sigPresetReady || !sigPresetOverrides.size;
+  const notes = [];
+  if (locked) notes.push('This decoder controls its frequency or bandwidth; factory tuning is preserved.');
+  else if (digitalUnavailable) notes.push('Digital requires an available decoder.');
+  else {
+    if (mode === 'DIGITAL' && pl && !pl.voice)
+      notes.push('This decoder does not produce voice audio. Digital decoding and digital squelch remain available.');
+    if (pl && pl.min_vfo_rate > hz && hz >= BW_MIN_HZ)
+      notes.push('Below the decoder’s declared minimum (' + bwLabel(pl.min_vfo_rate) + '); decoding may be affected.');
+    if (sigPresetDirty) notes.push('Unsaved edit.');
+  }
+  $id('sig-preset-note').textContent = notes.join(' ');
+}
+function sigPresetSave() {
+  if ($id('sig-preset-save').disabled) return;
+  const c = sigPresetClass(), mode = $id('sig-preset-demod').value, hz = sigPresetBwHz();
+  sigPresetFormatBw();
+  sigPresetPending = true;
+  $id('sig-preset-status').textContent = 'Waiting for receiver confirmation…';
+  sigPresetNote();
+  send('SIGCLASS_PRESET_SET:' + c.id + ',' + mode + ',' + hz);
+}
+function sigPresetReset(all) {
+  const c = sigPresetClass();
+  if (all && !confirm('Restore all Signal ID tuning presets to factory defaults?')) return;
+  if (!all && !c) return;
+  sigPresetPending = true;
+  $id('sig-preset-status').textContent = 'Waiting for receiver confirmation…';
+  sigPresetNote();
+  send(all ? 'SIGCLASS_PRESETS_RESET' : 'SIGCLASS_PRESET_RESET:' + c.id);
+}
+function sigPresetResult(result) {
+  if (!sigPresetPending) return;
+  sigPresetPending = false;
+  if (result.ok) sigPresetDirty = false;
+  sigPresetNote();
+  $id('sig-preset-status').textContent = result.ok ? 'Receiver accepted preset change.' : (result.error || 'Preset change rejected.');
+}
 function sigEntry(t) {
   let pl = t.plugin && typeof digPlugin === 'function' ? digPlugin(t.plugin) : null;
   if (pl && pl.fixed_freq_hz > 0) {
@@ -16647,10 +16817,20 @@ function sigEntry(t) {
     const inBand = c !== null && Math.abs(c * 1e6 - ff) <= 1.2e6 && Math.abs(c * 1e6 - t.hz) <= 1.2e6;
     if (!near && !inBand) pl = null;
   }
-  const bw = +t.vbw > 0 ? +t.vbw : +t.bw > 0 ? Math.min(2400000, Math.max(1000, Math.round(+t.bw * 1.25))) : 0;
+  let bw = +t.vbw > 0 ? +t.vbw : +t.bw > 0 ? Math.min(2400000, Math.max(1000, Math.round(+t.bw * 1.25))) : 0;
+  let mode = ['NBFM', 'WBFM', 'AM', 'DIGITAL'].includes(t.demod) ? t.demod : '';
+  const preset = sigPresetReady && !t.unknown && !t.hidden && sigPresetOverrides.get(t.cls);
+  // Never replace a fixed-frequency or locked plugin's factory policy,
+  // even if its frequency guard above rejected the detected track.
+  const factoryPlugin = t.plugin && typeof digPlugin === 'function' ? digPlugin(t.plugin) : null;
+  if (preset && !sigPresetLocked(factoryPlugin) && (!t.plugin || factoryPlugin) &&
+      (preset.demod !== 'DIGITAL' || (pl && pl.built))) {
+    if (preset.demod !== 'FACTORY') mode = preset.demod;
+    bw = preset.hz;
+  }
   const d = decimatorInfo.find(z => z.id === activeDecimatorId);
   const dec = pl && pl.built ? 'PLUGIN:' + t.plugin : d && vfoLocked(d) ? 'OFF' : '';
-  return {id: '', name: t.name || 'Signal', hz: Math.round(t.hz), dec, mode: ['NBFM', 'WBFM', 'AM', 'DIGITAL'].includes(t.demod) ? t.demod : '', bw};
+  return {id: '', name: t.name || 'Signal', hz: Math.round(t.hz), dec, mode, bw};
 }
 function sigTune(t, opts) { if (t) sfTune(sigEntry(t), opts || {}); }
 function sigTuneId(id) { const t = sigSt && sigSt.tracks.find(k => k.id === id); if (t) sigTune(t); }
@@ -16666,6 +16846,43 @@ function sigTip(t, noAge) {
          (t.burst ? ' · bursts' : '') + (!noAge && age >= 3 ? ` · last seen ${sigFmtAge(age)} ago` : '') +
          `\nClick the label to tune the selected VFO` + (how.length ? ` (${how.join(', ')})` : '');
 }
+// A spectrum overlay can also own saved-frequency or AI help. Remember
+// only Signal ID text, and never replace a tooltip another feature owns.
+function sigRememberMarkerTip(el, t, text) {
+  el._sigMarkerTip = t ? {id:t.id, text} : null;
+}
+function sigRefreshPresetTips() {
+  const shown = tipFor, pending = tipPend;
+  const wasRow = el => !!(el && el.matches('#sig-list .sig-row'));
+  const owners = new Set([...(document.querySelectorAll('#fo, .tpane-ov'))]);
+  const updated = new Set();
+  if (wasRow(shown)) updated.add(shown);
+  if (wasRow(pending)) updated.add(pending);
+  sigRender();
+  for (const el of document.querySelectorAll('#sig-list .sig-row')) {
+    if (el.hasAttribute('title')) tipAdopt(el);
+    updated.add(el);
+  }
+  for (const el of owners) {
+    const previous = el._sigMarkerTip;
+    if (!previous || tipText(el) !== previous.text) continue;
+    const t = sigSt && sigSt.tracks.find(t => t.id === previous.id);
+    const text = t ? sigTip(t) : '';
+    if (text !== previous.text) {
+      el.title = text;
+      tipAdopt(el);
+      sigRememberMarkerTip(el, t, text);
+    }
+    updated.add(el);
+  }
+  // Refresh an already-visible Signal ID bubble even without mouse motion.
+  // A pending hover reads the updated text itself when its timer expires.
+  if (updated.has(shown)) {
+    if (!shown.isConnected || !tipText(shown).trim()) tipHide();
+    else tipShow(shown, tipHow);
+  }
+  if (pending && updated.has(pending) && (!pending.isConnected || !tipText(pending).trim())) tipHide();
+}
 function sigMarkerHover(e) {
   const c = $id('fo');
   if (!c) return false;
@@ -16673,6 +16890,7 @@ function sigMarkerHover(e) {
   const x = e.clientX - r.left, y = e.clientY - r.top;
   const g = sigRects.length ? sigAt(sigRects, x, y, 2) : null;
   const tip = g ? sigTip(g.t) : '';
+  sigRememberMarkerTip(c, g && g.t, tip);
   if (tipText(c) !== tip) c.title = tip;
   if (g && sigAt(sigRects, x, y, 2, true)) c.style.cursor = 'pointer';   // (a box: it takes the press)
   return !!g;
@@ -17747,6 +17965,11 @@ function addTouchHandlers(el, down, move, up) {
     pop.innerHTML = '<input type="text" class="dd-q" size="1" placeholder="Type to filter…" autocomplete="off" spellcheck="false" aria-label="Filter the decoders">' +
       `<div class="dd-list" role="listbox">${html}<div class="dd-none" hidden>No matching decoder</div></div>`;
     const q = pop.querySelector('.dd-q');
+    const protocol = sel.id === 'sig-preset-class';
+    if (protocol) {
+      q.setAttribute('aria-label', 'Filter protocols');
+      pop.querySelector('.dd-none').textContent = 'No matching protocol';
+    }
     q.addEventListener('input', ddFilter);
     pop.addEventListener('pointerdown', e => e.stopPropagation());
     pop.addEventListener('click', e => {
@@ -17766,10 +17989,15 @@ function addTouchHandlers(el, down, move, up) {
     b.setAttribute('aria-expanded', 'true');
     const r = b.getBoundingClientRect(), m = 8, vw = window.innerWidth, vh = window.innerHeight;
     pop.style.minWidth = (r.width / z) + 'px';
-    pop.style.maxWidth = (Math.min(460, vw - 2 * m) / z) + 'px';
+    const panel = protocol && b.closest('.sb-section');
+    const panelRect = panel ? panel.getBoundingClientRect() : null;
+    const inset = 8 * z;
+    pop.style.maxWidth = (Math.min(460, vw - 2 * m, panelRect ? panelRect.width - 2 * inset : Infinity) / z) + 'px';
     pop.style.maxHeight = (Math.max(120, Math.max(vh - r.bottom, r.top) - 2 * m) / z) + 'px';
     const pr = pop.getBoundingClientRect();
     let left = r.left;
+    // The protocol list must fit inside the sidebar box, including at zoom.
+    if (panelRect) left = Math.max(panelRect.left + inset, Math.min(r.left - 12 * z, panelRect.right - inset - pr.width));
     if (left + pr.width > vw - m) left = vw - m - pr.width;
     if (left < m) left = m;
     ddUp = r.bottom + 2 + pr.height > vh - m && r.top - pr.height - 2 >= m;   // room above: open upwards
@@ -17856,6 +18084,8 @@ function addTouchHandlers(el, down, move, up) {
 
   function digOnPlugins(list, msg) {
     digPlugins = list || [];
+    sigRefreshPresetTips();
+    if ($id('sig-preset-editor').style.display !== 'none') sigPresetNote();
     digAutoStreams = !!(msg && msg.auto_streams);
     // the panel opened (page load) before the plugin list: now there may be
     // tabs - or the restored one is not installed here any more

@@ -240,6 +240,14 @@ std::shared_ptr<const Table> parse_table(const std::string& meta) {
     return t;
 }
 
+// The editor may be opened with Signal ID off. Cache just the parsed
+// metadata, not a second copy of the learned model.
+std::mutex preset_catalog_mu;
+std::shared_ptr<const Table> preset_catalog;
+std::string preset_catalog_error;
+std::atomic<bool> preset_catalog_requested{false};
+bool preset_catalog_loading = false;  // preset_catalog_mu
+
 // a track's band edges: the core's own when its Track has them, else the
 // centre +- half the bandwidth
 template <class T>
@@ -448,6 +456,43 @@ Result capture(int ch) {
 std::string model_path() {
     const char* e = std::getenv("KRAKEN_SIGCLASS_MODEL");
     return (e && *e) ? std::string(e) : std::string("sigclass.model");
+}
+
+// Merged classes can occur in metadata but have no classifier output.
+// Show only classes that can actually be identified by this model.
+std::shared_ptr<const Table> preset_table_for_model(const sigclass::Model& m,
+                                                   const std::shared_ptr<const Table>& full) {
+    auto out = std::make_shared<Table>();
+    for (const auto& c : full->classes) {
+        if (c.hidden || c.unknown) continue;
+        bool present = false;
+        for (int v = 0; v < sigclass::NUM_VIEWS && !present; ++v)
+            for (int i = 0; i < m.classes(v); ++i)
+                if (m.class_info(v, i).id == c.id) { present = true; break; }
+        if (present) out->classes.push_back(c);
+    }
+    return out;
+}
+
+// Run only on the classifier worker, never on the WebSocket loop. A
+// request while Signal ID is off does not enable it or arm an IQ capture.
+void load_requested_catalog() {
+    if (!preset_catalog_requested.exchange(false)) return;
+    {
+        std::lock_guard<std::mutex> lk(preset_catalog_mu);
+        if (preset_catalog) { preset_catalog_loading = false; return; }
+    }
+    sigclass::Model m;
+    std::string err;
+    const bool ok = m.load(model_path(), &err);
+    auto result = ok ? preset_table_for_model(m, parse_table(m.meta_json())) : nullptr;
+    {
+        std::lock_guard<std::mutex> lk(preset_catalog_mu);
+        preset_catalog = std::move(result);
+        preset_catalog_error = ok ? "" : err;
+        preset_catalog_loading = false;
+    }
+    WebSocketServer::broadcast_json_message(preset_catalog_json());
 }
 
 // One tracker per band (coherent mode: [0] only; tuners in turn: one per
@@ -786,6 +831,7 @@ void worker() {
     };
 
     while (!g_stop.load()) {
+        load_requested_catalog();
         const bool on = g_enabled.load();
         if (!on) {
             if (was_on) {
@@ -796,7 +842,7 @@ void worker() {
                 was_on = false;
             }
             std::unique_lock<std::mutex> lk(g_mu);
-            g_cv.wait(lk, [] { return g_wake || g_stop.load(); });
+            g_cv.wait(lk, [] { return g_wake || g_stop.load() || preset_catalog_requested.load(); });
             g_wake = false;
             continue;
         }
@@ -833,6 +879,13 @@ void worker() {
                     g_reason = ok ? "" : (err.empty() ? "cannot load " + path : err);
                     g_min_conf = mc;
                 }
+                {
+                    std::lock_guard<std::mutex> lk(preset_catalog_mu);
+                    preset_catalog = ok ? preset_table_for_model(model, table) : nullptr;
+                    preset_catalog_error = ok ? "" : err;
+                    preset_catalog_loading = false;
+                }
+                WebSocketServer::broadcast_json_message(preset_catalog_json());
                 sure_conf = mc;
                 if (ok) {
                     int views = 0;
@@ -850,7 +903,7 @@ void worker() {
             // unavailable: nothing until the next disable (then an enable
             // tries the file again) - no retries in a loop
             std::unique_lock<std::mutex> lk(g_mu);
-            g_cv.wait(lk, [] { return g_wake || g_stop.load(); });
+            g_cv.wait(lk, [] { return g_wake || g_stop.load() || preset_catalog_requested.load(); });
             g_wake = false;
             continue;
         }
@@ -1114,6 +1167,62 @@ bool enabled() { return g_enabled.load(); }
 std::string state_json() {
     std::lock_guard<std::mutex> lk(g_st_mu);
     return build_json_locked(nullptr);
+}
+
+std::string preset_catalog_json() {
+    std::lock_guard<std::mutex> lk(preset_catalog_mu);
+    std::ostringstream o;
+    o << "{\"sigclass_catalog\":{\"available\":" << (preset_catalog ? "true" : "false")
+      << ",\"loading\":" << (preset_catalog_loading ? "true" : "false")
+      << ",\"reason\":\"" << json_escape(preset_catalog_error) << "\",\"classes\":[";
+    bool first = true;
+    if (preset_catalog) for (const auto& c : preset_catalog->classes) {
+        if (c.hidden || c.unknown) continue;
+        if (!first) o << ',';
+        first = false;
+        o << "{\"id\":\"" << json_escape(c.id) << "\",\"name\":\"" << json_escape(c.name)
+          << "\",\"plugin\":" << str_or_null(c.plugin) << ",\"demod\":" << str_or_null(c.demod)
+          << ",\"bw_hz\":" << num(c.bw_hz, 0) << '}';
+    }
+    o << "]}}";
+    return o.str();
+}
+
+void request_preset_catalog() {
+    bool wake = false;
+    {
+        std::lock_guard<std::mutex> lk(preset_catalog_mu);
+        if (!preset_catalog && !preset_catalog_loading) {
+            preset_catalog_loading = true;
+            preset_catalog_error.clear();
+            wake = true;
+        }
+    }
+    // The requesting page displays "Loading" itself. Publish only a
+    // completed catalog (or failure), so a stale loading message cannot
+    // overtake the worker's completed result.
+    if (wake) {
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            preset_catalog_requested.store(true);
+        }
+        g_cv.notify_all();
+    } else {
+        bool ready;
+        {
+            std::lock_guard<std::mutex> lk(preset_catalog_mu);
+            ready = !!preset_catalog;
+        }
+        if (ready) WebSocketServer::broadcast_json_message(preset_catalog_json());
+    }
+}
+
+bool preset_class_plugin(const std::string& id, std::string& plugin) {
+    std::lock_guard<std::mutex> lk(preset_catalog_mu);
+    const auto* c = preset_catalog ? preset_catalog->find(id) : nullptr;
+    if (!c) return false;
+    plugin = c->plugin;
+    return true;
 }
 
 void start() {

@@ -12,7 +12,7 @@ public:
     // only): the same dispatch, and the power commands (power.hpp) are taken
     // only from here - never from the settings replay, the AI assistant, the
     // web mapper or the scanners, which use the two calls around it
-    static void handle_page_message(std::string_view message);
+    static std::string handle_page_message(std::string_view message);
     // The same, for callers that need to know whether it was taken (the AI
     // assistant's control tools, ai_mcp.cpp): "" = applied, else why it was
     // refused (CommandRejected, a debug playback's refusal, malformed). Same
