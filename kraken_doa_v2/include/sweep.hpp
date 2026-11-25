@@ -34,6 +34,13 @@ std::string set_dwell(double ms);
 // the AGC); "|" = no table (the common gain everywhere). Kept by frequency whatever
 // the plan does, one per receiver, saved and replayed
 std::string set_gains(const std::string& v);
+// SWEEP_LEVELS:noise|signal (round 13, 2026-11-25): how a gain table's regions are drawn - noise
+// (the default): every gain's noise at the 0 dB line, a signal's height its distance over the noise
+// of its step's gain; signal: every step on the table's highest gain's scale. A change redraws the
+// stored sweep at once. Saved and replayed; throws std::invalid_argument for anything else
+std::string set_levels(const std::string& v);
+std::string levels_cmd();     // the setting in its command form (what is saved)
+uint32_t levels_gen();        // + 1 per change of the setting (a full-resolution page gets a snapshot)
 // {"command":"set_sweep_gains",...} for heimdall: sent after every set_sweep and on
 // a change in sweep mode. note_gains_asked() before the control socket is drained
 // (an answer to an earlier table then doesn't count as this one's), note_gains_sent()

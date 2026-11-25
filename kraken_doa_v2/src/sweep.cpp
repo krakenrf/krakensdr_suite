@@ -73,6 +73,15 @@ int u_of(int n) { return n * 51 / 64; }
 // line (the regular spectrum's noise sits ~2 dB over its floor too)
 constexpr float NOISE_SHOWN_DB = 2.0f;
 
+// SWEEP_LEVELS (round 13, 2026-11-25): how a gain table's regions are drawn (evaluate). NOISE (the
+// default): every gain's noise at the 0 dB line, a signal's height its distance over the noise of the
+// gain its step was taken with; SIGNAL (rounds 11 - 12): every step referred to the table's highest
+// gain - a signal reads the same in every region, a turned-down region's floor stands higher
+enum Levels : int { LEVELS_NOISE = 0, LEVELS_SIGNAL = 1 };
+// The physical bound on a gain group's noise in NOISE levels (evaluate). Always on; a test build
+// turns it off to show what it does
+constexpr bool LEVELS_BOUND = true;
+
 // A noise bin averaged over m Hann frames (no overlap) is Gamma(m, 1/m)
 // distributed: its median stands spread_db(m) over its 10th percentile - the
 // hop's floor is measured as that percentile (robust to signals in 90 % of
@@ -321,15 +330,36 @@ struct Store {
     uint8_t base_pos = 0;
     float base_gain = NAN;        // the reference gain (g_ref) the histories were taken at
     uint64_t base_table = 0;      // the table in force (g_table_sig) base_hist was taken with
+    // NOISE levels (round 13): per gain group (its gkey) the raw noise reference of the last
+    // SEAM_HIST completed sweeps (NaN = none) - kept in SIGNAL levels too, so a change of the
+    // setting is right at once; restarted with base_hist
+    struct GroupHist {
+        int key;
+        std::array<float, SEAM_HIST> v;
+        uint8_t pos;
+    };
+    std::vector<GroupHist> ghist;
+    // ... and each group's reference as the last evaluation made it (raw dB less the tuner's
+    // offset, the bound applied): what store() puts a new hop against in NOISE levels
+    struct GroupRef {
+        int key;
+        float ref;
+    };
+    std::vector<GroupRef> gref;
     // per seam the median of its kept steps when the common gain last changed (NaN = none):
     // used only while the seam has no step of its own at the new gain
     std::array<float, MAX_CHANNELS> seam_fallback{};
+    void base_restart() {
+        base_hist.fill(NAN);
+        base_pos = 0;
+        ghist.clear();
+    }
     void seam_clear() {
         for (auto& a : seam_hist) a.fill(NAN);
         seam_pos.fill(0);
         seam_fallback.fill(NAN);
-        base_hist.fill(NAN);
-        base_pos = 0;
+        base_restart();
+        gref.clear();
     }
     // a new gain: every hop moves at once, and the steps with it
     // (the converter's share of a floor changes with the gain) - the histories start again
@@ -346,12 +376,14 @@ struct Store {
             seam_hist[k].fill(NAN);
         }
         seam_pos.fill(0);
-        base_hist.fill(NAN);
-        base_pos = 0;
+        base_restart();
     }
     Store() { seam_clear(); }
     std::vector<Level> lv;
-    std::vector<float> floor;     // per hop: its 10th percentile (dB, shape off, as measured), NaN = none
+    std::vector<float> floor;     // per hop: its 10th percentile (dB, shape off, as measured, + corr), NaN = none
+    // per hop: the level shift its floor and its bins carry - real(g_ref) - real(its gain) as the hop
+    // code took it when the hop was stored (0: one gain, the AGC, unknown). floor - corr = the raw floor
+    std::vector<float> corr;
     std::vector<float> applied;   // per hop: the reference its bins are stored against
     std::vector<float> delta;     // per hop: median_db(its frames) - NOISE_SHOWN_DB (its reference = base + step + delta)
     std::vector<int8_t> tuner;    // per hop: who measured it last (-1 none)
@@ -362,7 +394,13 @@ struct Store {
     uint32_t done = 0;            // sweeps completed on this grid
     float last_s = 0;             // the last complete sweep's duration
     std::vector<float> scratch;   // evaluate
-    std::vector<std::pair<int, float>> grp;   // evaluate: per hop (its gain key, its floor less its tuner's offset)
+    // evaluate: per hop its gain key, its floor less its tuner's offset, and that less its corr (raw)
+    struct Grp {
+        int key;
+        float sig, raw;
+        bool operator<(const Grp& o) const { return key != o.key ? key < o.key : sig < o.sig; }
+    };
+    std::vector<Grp> grp;
 } S;
 std::atomic<uint32_t> g_plan_gen{0};
 std::atomic<uint32_t> g_mask{0};          // the plan's tuners, for the data receiver
@@ -391,6 +429,9 @@ std::atomic<float> g_ref{NAN};
 // The table in force - its points and gains (0.1 dB) - as one number (0 = no table): any
 // change restarts the base's history (evaluate)
 std::atomic<uint64_t> g_table_sig{0};
+// SWEEP_LEVELS (Levels): written under g_mu (set_levels), so evaluate and store() see one value
+std::atomic<int> g_levels{LEVELS_NOISE};
+std::atomic<uint32_t> g_levels_gen{0};   // + 1 per change: the server sends full-resolution pages a snapshot
 void update_ref() {
     float r = g_gain.load();
     uint64_t sig = 0;
@@ -461,6 +502,65 @@ void shift_hop(int h, float d) {
     pyr_update(static_cast<size_t>(a), static_cast<size_t>(b - 1));
 }
 
+// The tuner's real gain against its gain list (heimdall's "gain_real_db" in its
+// status: [[list gain, real dB relative to the list's top], ...], measured - the
+// R820T's list is not true: 8.7 is -34.2 dB, not -40.9). Empty = none (an older
+// heimdall, an unmeasured tuner): the list's difference is taken
+std::mutex g_curve_mu;
+std::vector<std::pair<float, float>> g_curve;
+std::atomic<uint32_t> g_curve_ver{0};
+
+// real(g) from a curve: linear between its points, clamped to its ends
+float curve_real(const std::vector<std::pair<float, float>>& c, float g) {
+    if (g <= c.front().first) return c.front().second;
+    if (g >= c.back().first) return c.back().second;
+    for (size_t i = 1; i < c.size(); i++)
+        if (g <= c[i].first) {
+            const float a = c[i - 1].first, b = c[i].first;
+            const float t = b > a ? (g - a) / (b - a) : 0.0f;
+            return c[i - 1].second + t * (c[i].second - c[i - 1].second);
+        }
+    return c.back().second;
+}
+
+// (g_mu) NOISE levels' bound (LEVELS_BOUND) on gain group i's noise reference r[i] (raw dB, the
+// tuners' offsets off), from the other groups' r[k] - both are upper bounds on what that gain's raw
+// noise can be, and both only ever LOWER a reference (the group's noise then stands over the line,
+// never under it):
+// (a) lowering the gain never raises the raw noise (every noise source in the chain is amplified
+//     by at most the gain): r[i] <= r[k] for every group k of a higher gain;
+// (b) raising it raises the raw noise by at most the gain step (k G N_in + N_conv <= k (G N_in +
+//     N_conv) for k >= 1): r[i] <= r[k] + real(g_i) - real(g_k) for every group k of a lower gain,
+//     real() as the hop code takes it (heimdall's curve, else the list's values).
+// A region filled by one wide signal (an LTE / DVB-T / DAB block over every step of it: no quiet
+// step) has that signal as its quantile; without (a) it would be drawn at the 0 dB line. For the
+// highest gain only (b) applies - which is SIGNAL levels' rule (the lowest group's reference less the
+// level shift, compared in raw dB), so the top group is drawn as in SIGNAL levels.
+// keys: gkey (0.1 dB; < 0 - the AGC, an unknown gain - takes no part, gives no bound).
+// Returns the bounded references in the same order
+void levels_bound(const std::vector<int>& key, std::vector<float>& r) {
+    if (!LEVELS_BOUND) return;
+    const size_t n = r.size();
+    if (n < 2) return;
+    std::vector<std::pair<float, float>> c;
+    {
+        std::lock_guard<std::mutex> lk(g_curve_mu);
+        c = g_curve;
+    }
+    auto real = [&c](int k) { const float g = static_cast<float>(k) / 10.0f; return c.size() >= 2 ? curve_real(c, g) : g; };
+    const std::vector<float> r0 = r;
+    for (size_t i = 0; i < n; i++) {
+        if (key[i] < 0 || !is_finite_value(r0[i])) continue;
+        const float ri = real(key[i]);
+        for (size_t k = 0; k < n; k++) {
+            if (k == i || key[k] < 0 || !is_finite_value(r0[k])) continue;
+            if (key[k] > key[i]) r[i] = std::min(r[i], r0[k]);                       // (a)
+            // (a curve that is not rising between two list values: the higher one is no higher gain)
+            else if (key[k] < key[i]) r[i] = std::min(r[i], r0[k] + std::max(0.0f, ri - real(key[k])));   // (b)
+        }
+    }
+}
+
 // (g_mu) The reference: ONE for the whole sweep - base (below) - plus each tuner's gain
 // step, measured where its block meets the next one's: the lowest floor of
 // the SEAM_HOPS hops on each side (neighbours in frequency, so they differ
@@ -511,20 +611,46 @@ void shift_hop(int h, float d) {
 //   does for an odd seam step;
 // - I6 the seams' steps, the tuners' offsets, the per-hop delta, the rewrite of stored
 //   hops and the dead-dongle rule are not touched by it.
+// That is SIGNAL levels (SWEEP_LEVELS:signal, rounds 11 - 12). NOISE levels (round 13, the
+// default; the user: "why is it when I INCREASE the gain, that the noise floor drops?"): every
+// gain's noise at the 0 dB line, as the live modes draw it - a hop's reference is ITS gain
+// group's own REF_QUANTILE floor instead of the lowest group's (plus its tuner's offset and its
+// delta, as in SIGNAL levels), so a signal's height is its distance over the noise of the gain its
+// step was taken with. The level shift: a hop's floor and its stored bins both carry its corr
+// (real(g_ref) - real(its gain)); the group's reference is taken over the RAW floors (floor -
+// corr - offset) and the hop is stored against raw reference + its own corr + offset + delta, so
+// corr cancels in every bin: level = raw bin - raw reference - offset - delta. (corr is constant
+// inside a group only while g_ref is: a table edit that moves the highest gain leaves hops stored
+// with the old one until their next visit - taken over the raw floors, the group's reference
+// doesn't mix the two.) With one gain everywhere it is one group and corr = 0: the same picture
+// as SIGNAL levels. Each group's reference is the median of now's with its last SEAM_HIST
+// completed sweeps' (ghist, kept in both settings and restarted with base_hist: at a table edit,
+// a new reference gain, a new grid), then bounded by the others (levels_bound: a region filled by
+// one wide signal is not drawn at the line; the top group is drawn as in SIGNAL levels). Both
+// settings' references are made at every evaluation, so a change of the setting rewrites the
+// stored hops at once (set_levels: evaluate with flipped = true) - nothing is measured again.
 // KRAKEN_SWEEP_SEAM_DEBUG=1: every evaluation logs (stderr) per seam the hops taken on each side
 // (h:floor@gain, * = at the reference gain), where the step came from (C the reference steps'
 // median with now's, M their median alone - now's past the cap or no reference hop on a side -, S
 // the hops at a gain both sides have, 0 none), the step and now's raw difference at the reference;
 // then the base, now's base, the quantile over every hop (the rule without groups) and the
 // 20th percentile over every hop (rounds 3 - 11's base), the kept sweeps, the reference gain,
-// each gain group (gain=quantile/hops; AGC -1, unknown nan) and the tuners' offsets
+// the setting (lv noise | signal), NOISE levels' references per group (nref gain=now/median/bounded,
+// raw dB less the offsets), each gain group (gain=quantile/hops; AGC -1, unknown nan) and the
+// tuners' offsets
 bool seam_debug() {
     static const bool on = [] { const char* e = std::getenv("KRAKEN_SWEEP_SEAM_DEBUG"); return e && *e == '1'; }();
     return on;
 }
 
-// sweep_done: called at a completed sweep (the steps taken now go into the seams' history)
-void evaluate(bool sweep_done = false) {
+// a hop's gain group: the gain its stored floor was measured at, 0.1 dB (unknown -9999 and the
+// tuner's AGC -10 each a group of their own)
+int gkey_of(float g) { return !is_finite_value(g) ? -9999 : g < 0.0f ? -10 : static_cast<int>(std::lround(g * 10.0f)); }
+
+// sweep_done: called at a completed sweep (the steps taken now go into the seams' history);
+// flipped: SWEEP_LEVELS just changed - every hop moves by the two settings' difference (set_levels: the
+// picture after two changes is the one before them), else a hop is rewritten past REWRITE_DB
+void evaluate(bool sweep_done = false, bool flipped = false) {
     const Plan& p = S.plan;
     S.eval_ms = now_ms();
     if (S.tuner.size() != static_cast<size_t>(p.H) || S.lv.empty()) return;
@@ -549,16 +675,14 @@ void evaluate(bool sweep_done = false) {
     // the receiver's own-noise plateau: ~10 dB) - the median with the sweeps from before
     // would hold the old base for two more sweeps (the new hops under the line) and then
     // jump. Now's value is used alone until two sweeps are kept again
+    // (NOISE levels' per-group histories with it)
     if (const uint64_t ts = g_table_sig.load(std::memory_order_relaxed); ts != S.base_table) {
-        S.base_hist.fill(NAN);
-        S.base_pos = 0;
+        S.base_restart();
         S.base_table = ts;
     }
-    // a hop's gain group: the gain its stored floor was measured at, 0.1 dB (unknown and the
-    // tuner's AGC each a group of their own)
+    // a hop's gain group: the gain its stored floor was measured at
     auto gkey = [&](int h) {
-        const float g = static_cast<size_t>(h) < S.hop_gain.size() ? S.hop_gain[static_cast<size_t>(h)] : NAN;
-        return !is_finite_value(g) ? -9999 : g < 0.0f ? -10 : static_cast<int>(std::lround(g * 10.0f));
+        return gkey_of(static_cast<size_t>(h) < S.hop_gain.size() ? S.hop_gain[static_cast<size_t>(h)] : NAN);
     };
     const bool dbg = seam_debug();
     std::ostringstream dl;
@@ -680,27 +804,39 @@ void evaluate(bool sweep_done = false) {
     for (int h = 0; h < p.H; h++) {
         const int8_t t = S.tuner[static_cast<size_t>(h)];
         if (t < 0) continue;
-        grp.emplace_back(gkey(h), S.floor[static_cast<size_t>(h)] - ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f));
+        const float sig = S.floor[static_cast<size_t>(h)] - ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f);
+        grp.push_back({gkey(h), sig, sig - S.corr[static_cast<size_t>(h)]});
     }
     const size_t n = grp.size();
     if (n == 0) return;
+    const bool noise = g_levels.load(std::memory_order_relaxed) == LEVELS_NOISE;
+    // NOISE levels: per group its key and its reference (raw dB less the offsets), for the rewrite
+    std::vector<int> nkey;
+    std::vector<float> nref;
     {
         // now's base: the lowest of the gain groups' REF_QUANTILE (each the k-th lowest floor
         // of its m hops, k as quantile() takes it - one group gives quantile()'s value over
         // every hop: I1)
         std::sort(grp.begin(), grp.end());
         float now_base = INFINITY;
-        std::ostringstream gl;
+        std::ostringstream gl, nl;
+        std::vector<float> nnow;
         for (size_t a = 0; a < n;) {
             size_t b = a + 1;
-            while (b < n && grp[b].first == grp[a].first) b++;
+            while (b < n && grp[b].key == grp[a].key) b++;
             const size_t m = b - a;
             const size_t k = std::min(m - 1, static_cast<size_t>(REF_QUANTILE * static_cast<float>(m)));
-            const float q = grp[a + k].second;
+            const float q = grp[a + k].sig;
             now_base = std::min(now_base, q);
+            // (NOISE levels: the same quantile of the group's raw floors)
+            S.scratch.resize(m);
+            for (size_t i = 0; i < m; i++) S.scratch[i] = grp[a + i].raw;
+            std::nth_element(S.scratch.begin(), S.scratch.begin() + static_cast<std::ptrdiff_t>(k), S.scratch.begin() + static_cast<std::ptrdiff_t>(m));
+            nkey.push_back(grp[a].key);
+            nnow.push_back(S.scratch[k]);
             if (dbg) {
                 char g[48];
-                const int key = grp[a].first;
+                const int key = grp[a].key;
                 const unsigned mu = static_cast<unsigned>(m);
                 if (key == -9999) snprintf(g, sizeof g, " nan=%.2f/%u", q, mu);
                 else if (key == -10) snprintf(g, sizeof g, " -1=%.2f/%u", q, mu);
@@ -708,6 +844,49 @@ void evaluate(bool sweep_done = false) {
                 gl << g;
             }
             a = b;
+        }
+        // NOISE levels: each group's median of now's with its kept sweeps' (fewer than 2 kept:
+        // now's alone, as for the base below), then the bound
+        nref.resize(nkey.size());
+        for (size_t i = 0; i < nkey.size(); i++) {
+            auto it = std::find_if(S.ghist.begin(), S.ghist.end(), [&](const Store::GroupHist& x) { return x.key == nkey[i]; });
+            float v[SEAM_HIST + 1];
+            int nv = 0;
+            if (it != S.ghist.end())
+                for (float x : it->v)
+                    if (is_finite_value(x)) v[nv++] = x;
+            if (nv < 2) {
+                nref[i] = nnow[i];
+            } else {
+                v[nv++] = nnow[i];
+                std::sort(v, v + nv);
+                nref[i] = nv % 2 ? v[nv / 2] : 0.5f * (v[nv / 2 - 1] + v[nv / 2]);
+            }
+            if (sweep_done) {
+                if (it == S.ghist.end()) {
+                    Store::GroupHist g{nkey[i], {}, 0};
+                    g.v.fill(NAN);
+                    S.ghist.push_back(g);
+                    it = S.ghist.end() - 1;
+                }
+                it->v[it->pos] = nnow[i];
+                it->pos = static_cast<uint8_t>((it->pos + 1) % SEAM_HIST);
+            }
+        }
+        const std::vector<float> nmed = nref;
+        levels_bound(nkey, nref);
+        S.gref.clear();
+        for (size_t i = 0; i < nkey.size(); i++) S.gref.push_back({nkey[i], nref[i]});
+        if (dbg) {
+            for (size_t i = 0; i < nkey.size(); i++) {
+                char g[64];
+                if (nkey[i] == -9999) snprintf(g, sizeof g, "%snan=", i ? "," : "");
+                else if (nkey[i] == -10) snprintf(g, sizeof g, "%s-1=", i ? "," : "");
+                else snprintf(g, sizeof g, "%s%.1f=", i ? "," : "", nkey[i] / 10.0);
+                nl << g;
+                snprintf(g, sizeof g, "%.2f/%.2f/%.2f", nnow[i], nmed[i], nref[i]);
+                nl << g;
+            }
         }
         float v[SEAM_HIST + 1];
         int nv = 0;
@@ -729,12 +908,12 @@ void evaluate(bool sweep_done = false) {
         if (dbg) {
             // (beside it: the quantile over every hop, and rounds 3 - 11's 20th percentile)
             S.scratch.resize(n);
-            for (size_t i = 0; i < n; i++) S.scratch[i] = grp[i].second;
+            for (size_t i = 0; i < n; i++) S.scratch[i] = grp[i].sig;
             const float all_q = quantile(S.scratch, n, REF_QUANTILE), all_20 = quantile(S.scratch, n, 0.20f);
-            char b[128];
-            snprintf(b, sizeof b, " || base %.2f now %.2f all %.2f all20 %.2f kept %d ref %.2f grp", S.base, now_base,
-                     all_q, all_20, nv < 2 ? nv : nv - 1, ref_db);
-            dl << b << gl.str();
+            char b[160];
+            snprintf(b, sizeof b, " || base %.2f now %.2f all %.2f all20 %.2f kept %d ref %.2f lv %s nref ", S.base, now_base,
+                     all_q, all_20, nv < 2 ? nv : nv - 1, ref_db, noise ? "noise" : "signal");
+            dl << b << nl.str() << " grp" << gl.str();
         }
     }
     S.off = off;
@@ -753,9 +932,29 @@ void evaluate(bool sweep_done = false) {
     for (int h = 0; h < p.H; h++) {
         const int8_t t = S.tuner[static_cast<size_t>(h)];
         if (t < 0) continue;
-        const float r = S.base + ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f) + S.delta[static_cast<size_t>(h)];
-        const float d = S.applied[static_cast<size_t>(h)] - r;
-        if (std::fabs(d) > REWRITE_DB) {
+        // SIGNAL levels: one base for every hop; NOISE levels: its group's reference + its corr
+        float bn = S.base;
+        const int key = gkey(h);
+        for (size_t i = 0; i < nkey.size(); i++)
+            if (nkey[i] == key) {
+                bn = nref[i] + S.corr[static_cast<size_t>(h)];
+                break;
+            }
+        const float rest = ((p.tuners >> t) & 1u ? off[static_cast<size_t>(t)] : 0.0f) + S.delta[static_cast<size_t>(h)];
+        const float r = (noise ? bn : S.base) + rest;
+        float d = S.applied[static_cast<size_t>(h)] - r;
+        if (flipped) {
+            // the setting changed: every hop moves by the difference of the two settings'
+            // references, its old rounding kept (|applied - reference| <= REWRITE_DB stays what it
+            // was) - two changes give back the picture they began with, bin for bin, and with one
+            // gain (the two references the same) nothing moves
+            d = (noise ? S.base : bn) + rest - r;
+            if (std::lround(d * 100.0f) != 0) {
+                shift_hop(h, d);
+                S.applied[static_cast<size_t>(h)] -= d;
+                moved = true;
+            }
+        } else if (std::fabs(d) > REWRITE_DB) {
             shift_hop(h, d);
             S.applied[static_cast<size_t>(h)] = r;
             moved = true;
@@ -767,12 +966,13 @@ void evaluate(bool sweep_done = false) {
 // The store's arrays: made and freed outside g_mu (apply_plan)
 struct Arrays {
     std::vector<Level> lv;
-    std::vector<float> floor, applied, delta;
+    std::vector<float> floor, corr, applied, delta;
     std::vector<int8_t> tuner;
     std::vector<float> hop_gain;
     void swap_with_store() {
         lv.swap(S.lv);
         floor.swap(S.floor);
+        corr.swap(S.corr);
         applied.swap(S.applied);
         delta.swap(S.delta);
         tuner.swap(S.tuner);
@@ -844,6 +1044,7 @@ bool apply_plan(bool bump) {
         try {
             pyr_alloc(fresh.lv, static_cast<size_t>(np.bins));
             fresh.floor.assign(static_cast<size_t>(np.H), NAN);
+            fresh.corr.assign(static_cast<size_t>(np.H), 0.0f);
             fresh.applied.assign(static_cast<size_t>(np.H), 0.0f);
             fresh.delta.assign(static_cast<size_t>(np.H), 0.0f);
             fresh.tuner.assign(static_cast<size_t>(np.H), -1);
@@ -905,27 +1106,6 @@ std::atomic<bool> g_reg_answered{false};  // its answer came since
 // A count left open for 3 s (a command lost with the connection) starts over
 std::atomic<int> g_reg_open{0};
 std::atomic<bool> g_reg_save{false};      // heimdall's answer changed the table: the loop saves it
-
-// The tuner's real gain against its gain list (heimdall's "gain_real_db" in its
-// status: [[list gain, real dB relative to the list's top], ...], measured - the
-// R820T's list is not true: 8.7 is -34.2 dB, not -40.9). Empty = none (an older
-// heimdall, an unmeasured tuner): the list's difference is taken
-std::mutex g_curve_mu;
-std::vector<std::pair<float, float>> g_curve;
-std::atomic<uint32_t> g_curve_ver{0};
-
-// real(g) from a curve: linear between its points, clamped to its ends
-float curve_real(const std::vector<std::pair<float, float>>& c, float g) {
-    if (g <= c.front().first) return c.front().second;
-    if (g >= c.back().first) return c.back().second;
-    for (size_t i = 1; i < c.size(); i++)
-        if (g <= c[i].first) {
-            const float a = c[i - 1].first, b = c[i].first;
-            const float t = b > a ? (g - a) / (b - a) : 0.0f;
-            return c[i - 1].second + t * (c[i].second - c[i - 1].second);
-        }
-    return c.back().second;
-}
 
 // "gain_real_db":[[g,r],...] out of a status line; false = absent or malformed
 // (then nothing changes): at least 2 points, finite, the gains rising, each
@@ -1189,7 +1369,7 @@ struct Worker {
             // leaves nothing, ~-200 dB) is no measurement - it would drag the reference
             // down for every hop; uint8 noise of even 1 count stands ~60 dB over it
             if (is_finite_value(phi) && p10 > DEAD_DB) {
-                store(h, t, phi, dlt, hg);
+                store(h, t, phi, dlt, hg, corr);
             } else if (p10 <= DEAD_DB) {
                 // and what it measured before goes out of the reference too: the hop
                 // measured as the dongle died held part live, part constant samples
@@ -1202,16 +1382,39 @@ struct Worker {
         std::fill(a.pw.begin(), a.pw.end(), 0.0f);
     }
 
-    void store(int h, int t, float phi, float dlt, float hg) {
+    void store(int h, int t, float phi, float dlt, float hg, float corr) {
         std::lock_guard<std::mutex> lk(g_mu);
         const Plan& sp = S.plan;
         if (!sp.ok || sp.grid_gen != p.grid_gen || S.lv.empty()) return;   // the grid changed meanwhile
         if (static_cast<size_t>(h) < S.hop_gain.size()) S.hop_gain[static_cast<size_t>(h)] = hg;
         if (!is_finite_value(S.base)) S.base = phi;   // the first hop of a grid
         S.floor[static_cast<size_t>(h)] = phi;
+        S.corr[static_cast<size_t>(h)] = corr;
         S.delta[static_cast<size_t>(h)] = dlt;
         S.tuner[static_cast<size_t>(h)] = static_cast<int8_t>(t);
-        const float r = S.base + ((sp.tuners >> t) & 1u ? S.off[static_cast<size_t>(t)] : 0.0f) + dlt;
+        const float ofs = (sp.tuners >> t) & 1u ? S.off[static_cast<size_t>(t)] : 0.0f;
+        float base = S.base;
+        if (g_levels.load(std::memory_order_relaxed) == LEVELS_NOISE) {
+            // NOISE levels: its gain group's reference as the last evaluation made it; a group seen
+            // for the first time (the first hop of a grid, of a new gain after a table edit) takes
+            // the hop's own raw floor, bounded by the groups there are, as evaluate takes a group
+            // of one hop - until the next evaluation (at most EVAL_MS) sets it over its hops
+            const int key = gkey_of(hg);
+            auto it = std::find_if(S.gref.begin(), S.gref.end(), [key](const Store::GroupRef& x) { return x.key == key; });
+            if (it == S.gref.end()) {
+                std::vector<int> keys{key};
+                std::vector<float> refs{phi - corr - ofs};
+                for (const auto& x : S.gref) {
+                    keys.push_back(x.key);
+                    refs.push_back(x.ref);
+                }
+                levels_bound(keys, refs);
+                S.gref.push_back({key, refs[0]});
+                it = S.gref.end() - 1;
+            }
+            base = it->ref + corr;
+        }
+        const float r = base + ofs + dlt;
         S.applied[static_cast<size_t>(h)] = r;
         const int64_t a = static_cast<int64_t>(h) * sp.U, b = std::min<int64_t>(a + sp.U, sp.bins);
         Level& v = S.lv[0];
@@ -1487,6 +1690,28 @@ std::string set_gains(const std::string& v) {
     return out;
 }
 
+std::string set_levels(const std::string& v) {
+    std::string l = v;
+    for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const int lv = l == "noise" ? LEVELS_NOISE : l == "signal" ? LEVELS_SIGNAL : -1;
+    if (lv < 0) throw std::invalid_argument("SWEEP_LEVELS takes noise or signal");
+    {
+        // (under g_mu: a hop stored meanwhile goes in against the setting evaluate then rewrites by)
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (g_levels.exchange(lv) != lv) {
+            // the stored sweep drawn the other way at once: both settings' references are made
+            // at every evaluation, nothing is measured again (a paused sweep too)
+            evaluate(false, true);
+            g_levels_gen.fetch_add(1, std::memory_order_release);
+            g_version.fetch_add(1, std::memory_order_release);
+        }
+    }
+    return levels_cmd();
+}
+
+std::string levels_cmd() { return g_levels.load() == LEVELS_SIGNAL ? "SWEEP_LEVELS:signal" : "SWEEP_LEVELS:noise"; }
+uint32_t levels_gen() { return g_levels_gen.load(std::memory_order_acquire); }
+
 std::string gains_command() {
     std::lock_guard<std::mutex> lk(g_reg_mu);
     std::ostringstream o;
@@ -1736,6 +1961,9 @@ std::string state_json() {
         }
         o << "],\"gain_regions_known\":" << (g_reg_known.load() == 1 ? "true" : "false");
     }
+    // (round 13, additive: its presence tells a page the receiver has SWEEP_LEVELS) how a gain table's
+    // regions are drawn - "noise": every gain's noise at the 0 dB line; "signal": on the highest gain's scale
+    o << ",\"levels\":\"" << (g_levels.load() == LEVELS_SIGNAL ? "signal" : "noise") << "\"";
     o << "}}";
     return o.str();
 }

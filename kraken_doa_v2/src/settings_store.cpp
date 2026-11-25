@@ -190,6 +190,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"sweep_dwell_ms",           "SWEEP_DWELL:",              VType::NUMBER, "5"},   // SWEEP_DWELL_DEFAULT_MS
         // gain by region: "<f1,f2,..>|<g0,g1,..>" (Hz | dB), "|" = no table
         {"sweep_gains",              "SWEEP_GAINS:",              VType::STRING, "|"},
+        // how a gain table's regions are drawn: "noise" (every gain's noise at 0 dB) | "signal"
+        {"sweep_levels",             "SWEEP_LEVELS:",             VType::STRING, "noise"},
         {"operating_mode",           "OPERATING_MODE:",           VType::STRING, "coherent"},
         // Trunk following (trunk_follow.hpp): on / off, voice VFOs at most,
         // follow encrypted / unit-to-unit calls, hear followed calls, hang

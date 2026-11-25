@@ -94,6 +94,7 @@ struct PerSocketData {
     int64_t net_ms = 0;           // when they last went
     uint32_t sweep_full = 0;      // SWEEP_FULL:<n>: 0 off, 1 every bin, else at most n values (sweep::full_pool)
     bool full_snapshot = false;   // the store as it is, once (on SWEEP_FULL:1)
+    uint32_t levels_gen = 0;      // sweep::levels_gen() this socket's set was made at (SWEEP_LEVELS: a snapshot)
     bool full_due = false;        // its flag-2 frame went this tick: a completed sweep's set
     std::shared_ptr<const sweep::FullSet> full;   // the set being sent
     bool full_z = false;          // SWEEP_FULL_Z:1 - this page inflates deflated parts (type 11 flag 8)
@@ -365,6 +366,7 @@ void handle_sweep_view(WS* ws, string_view args) {
     if (!ud->sweep_view) {
         ud->sweep_view = true;
         ud->sweep_completions = sweep::completions();   // its first frame is no waterfall line
+        ud->levels_gen = sweep::levels_gen();
         g_sweep_sockets.insert(ws);
     }
 }
@@ -522,8 +524,15 @@ void pump_full(WS* ws, FullCache* lazy, uint32_t grid) {
 void send_sweep_views() {
     const uint64_t ver = sweep::data_version();
     const uint32_t done = sweep::completions();
+    const uint32_t lgen = sweep::levels_gen();
     for (ClientWS* ws : g_sweep_sockets) {
         PerSocketData* ud = ws->getUserData();
+        // SWEEP_LEVELS changed: the stored sweep was redrawn - a full-resolution page gets it as a
+        // snapshot (its last set showed the other levels; paused, no completed sweep brings one)
+        if (ud->levels_gen != lgen) {
+            ud->levels_gen = lgen;
+            if (ud->sweep_full) ud->full_snapshot = true;
+        }
         if (!(ud->sub_mask & SUB_FFT) || ws->getBufferedAmount() > SPEC_MAX_BUFFERED) continue;
         const bool completes = ud->sweep_completions != done;
         if (!ud->sweep_dirty && !completes && ud->sweep_version == ver) continue;

@@ -3076,6 +3076,20 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (sweep_mode_enabled.load() && !g_replaying_settings.load()) send_sweep_gains_now();
         broadcast(sweep::state_json());
     }
+    else if (message.starts_with("SWEEP_LEVELS:")) {
+        // Sweep mode's levels with a gain table (sweep.hpp, docs/dev/sweep-mode.md):
+        // noise | signal, else refused; saved; every page gets the sweep message (no
+        // echo); nothing goes to heimdall - the stored sweep is redrawn at once
+        string applied;
+        try {
+            applied = sweep::set_levels(string(message.substr(13)));
+        } catch (const std::invalid_argument& e) {
+            throw CommandRejected(e.what());
+        }
+        g_applied_cmd = applied;
+        if (!g_replaying_settings.load() && !sfscan::dispatching()) SettingsStore::record(applied);
+        broadcast(sweep::state_json());
+    }
     else if (message.starts_with("SWEEP_AUTO_GAIN:")) {
         // Sweep mode's Auto gain was removed (2026-11-24; docs/dev/sweep-mode.md):
         // accepted and ignored for an older page in an open tab (SWEEP_ is in
