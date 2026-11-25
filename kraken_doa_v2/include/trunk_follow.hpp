@@ -11,8 +11,11 @@
 // ControlHandler::apply_command, tick() from a loop timer), except the few
 // functions marked "any thread".
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "digital/trunk_event.hpp"   // trunk::Channel, trunk::PluginEvent
