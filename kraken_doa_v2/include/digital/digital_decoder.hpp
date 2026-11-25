@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "digital/dig_report.hpp"
+#include "digital/trunk_event.hpp"
 
 namespace dig {
 
@@ -155,6 +156,15 @@ using VideoHandler = std::function<void(const VideoFrameReport&)>;
 // the decoder's worker thread.
 using TuneHandler = std::function<std::string(double rf_hz)>;
 
+// What a plugin reports about a trunked system (kp::Host::trunk_system ...
+// call, checked against the kp::wire::TRUNK_* limits), and the engine's own
+// RESET when that state goes stale - trunk_event.hpp. plugin = the plugin
+// that sent it (RESET: the one whose state is stale). Only the lead plugin's
+// (Auto detect: the detected one). Called on the decoder's worker thread
+// (or, for a RESET, wherever the decoder is stopped / destroyed); unset =
+// dropped. DecimatorManager passes them to trunk::on_plugin_event
+using TrunkHandler = std::function<void(const std::string& plugin, trunk::PluginEvent&& ev)>;
+
 // Auto detect's internal streams (docs/dev/digital-decoders.md, "Internal
 // streams"): a plugin that needs a wider bandwidth than the VFO has runs on
 // the VFO's centre decimated to a width of its own - what it would get if
@@ -204,6 +214,11 @@ public:
     // The Digital squelch's live state: the active plugin (fixed, or what
     // Auto detect locked onto) reported a valid frame within the last ms
     bool frames_within(int64_t ms) const;
+    // it delivered trunked-system reports since its last RESET (so a reset now
+    // - a retune > 100 Hz, another mode / plugin - sends the trunk manager a
+    // RESET; false: it sends none)
+    bool trunk_reported() const { return trunk_reported_.load(std::memory_order_acquire); }
+    void set_trunk_reported(bool b) { trunk_reported_.store(b, std::memory_order_release); }
     // ... within its own hold (kp::Info::squelch_hold_s; def_ms when it sets none)
     bool squelch_open(int64_t def_ms) const;
     // The VFO's voice comes from this decoder (Voice to Text, the analog
@@ -287,6 +302,9 @@ public:
     // Retune requests of plugins that declare kp::Info::tunes (DecimatorManager)
     void set_tune_handler(TuneHandler h);
     std::string deliver_tune(double rf_hz);
+    // Trunked-system reports (TrunkHandler)
+    void set_trunk_handler(TrunkHandler h);
+    void deliver_trunk(const std::string& plugin, trunk::PluginEvent&& ev);
     // Offline tests: wait until the plugins have processed all input
     void drain(int timeout_ms = 30000);
 
@@ -318,6 +336,7 @@ public:
 private:
     std::atomic<int> vfo_id_{-1};
     std::atomic<bool> takes_voice_{true};
+    std::atomic<bool> trunk_reported_{false};
     mutable std::mutex lead_mu_;
     std::string lead_tid_, lead_tlabel_;
     std::atomic<Mode> mode_{Mode::OFF};
@@ -347,6 +366,7 @@ private:
     SpatialHandler spatial_handler_;
     VideoHandler video_handler_;
     TuneHandler tune_handler_;
+    TrunkHandler trunk_handler_;
     std::atomic<bool> want_array_{false};
     std::atomic<bool> array_only_{false};   // nothing but array plugins: push() only ticks
     uint64_t tick_pos_ = NO_POS;            // the last tick (pipeline thread)

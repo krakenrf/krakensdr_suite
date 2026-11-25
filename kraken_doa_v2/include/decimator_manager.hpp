@@ -17,6 +17,13 @@ class DecimatorManager {
 public:
     struct DecimatorInstance {
         int id;
+        // given when the instance is made, never repeated (the trunk manager tells
+        // a reused id apart by it - an address can be the next instance's)
+        const uint64_t serial = next_serial();
+        static uint64_t next_serial() {
+            static std::atomic<uint64_t> n{0};
+            return n.fetch_add(1) + 1;
+        }
         std::unique_ptr<SharedDecimator> decimator;
         std::unique_ptr<MUSICProcessor> music_processor;
         // Per-decimator coherent beamformer (steered by this decimator's DoA)
@@ -51,6 +58,9 @@ public:
         mutable std::mutex digital_mu;
         std::shared_ptr<dig::DigitalDecoder> digital;
         std::atomic<int> digital_mode{0};   // dig::Mode, mirrors digital->mode()
+        // a number given to the decoder when it is made, never repeated (the trunk
+        // manager tells a reused VFO id's decoder apart by it; an address can repeat)
+        std::atomic<uint64_t> digital_serial{0};
         std::shared_ptr<dig::DigitalDecoder> getDigital() const {
             std::lock_guard<std::mutex> lk(digital_mu);
             return digital;

@@ -409,7 +409,11 @@ every packet to `sweep::on_packet` and `continue`s before the uint8 -> complex
 conversion: nothing reaches `raw_data_buffer`, so no VFO decimation, audio,
 decoder input, squelch or regular FFT runs; the 50 ms tick sends type 10
 frames only (no type 0 / 6 / 7 / 4 / 9) and the audio timer sends nothing. The
-VFOs and their settings stay as they are, idle. Leaving the mode bumps
+VFOs and their settings stay as they are, idle. Trunk following stands down
+as for a scanner (*trunk-following*, "Sweep mode"; 2026-11-25): paused
+"sweep mode", its calls freed and voice VFOs removed, an excursion / a
+control-channel search / voice tuners home first, its search and click to
+follow refused; it resumes on leaving. Leaving the mode bumps
 `fft_reset_generation` (the averaged spectra held the bands from before).
 Also silent in sweep mode: the per-retune lines (`[RETUNING]`, "Server
 frequency change detected", "[DoA] Reference frequency changed"), the FM
@@ -2228,7 +2232,10 @@ Sweeps. Box by box in sweep mode:
   Mapper, DoA Recording, Continuous Scanner, Experimental (`.coh-only`, as in
   the other non-coherent modes), Scanner (wideband scan only), IQ & Audio
   Recorder (IQ is coherent-only, audio needs VFOs), Saved Frequencies (a
-  click tunes a VFO; its scan needs one), Debug Playback (a coherent array's
+  click tunes a VFO; its scan needs one), Trunk Following (since the merge
+  with trunk following, 2026-11-25: its voice and control VFOs can't run -
+  the receiver pauses it, "sweep mode", and its top-bar banner is hidden
+  too; *trunk-following.md*, "Page"), Debug Playback (a coherent array's
   test transmissions through the VFOs and decoders). The rail's Decoders and
   Transcription buttons and the panel under the waterfall go too (nothing is
   decoded); the panel comes back as it was.

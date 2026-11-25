@@ -16,7 +16,10 @@
 // lon, alt_m, kmh, hdg - at most one per object every N s, the VFO decoder's
 // "Positions every", dig::Options::pos_s), "raw"
 // (raw frames: ADS-B Mode S hex, APRS TNC2, POCSAG / FLEX codewords),
-// "incident" (an address found in a message, incidents.cpp), "voice" (a
+// "incident" (an address found in a message, incidents.cpp), "call" (a
+// finished call of a trunked system - trunk_follow.cpp: sys, target, group,
+// source(s), ch, call_mhz, slot, enc, emerg, followed, voice_vfo, dur_s, end,
+// why), "voice" (a
 // transcript of what was said - voice2text.cpp: text, src, dur, conf, from /
 // to (talker), doa / brg, clip; t = when the transmission began).
 //
@@ -90,6 +93,11 @@ void record_incident(int vfo, int log_mode, const std::string& plugin, const std
 // the "dec" field (plugin id or NBFM / AM / WBFM), fields = the rest of the
 // record as JSON members, each starting with a comma
 void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source, const std::string& fields);
+// trunk_follow.cpp: a finished call of a trunked system (type "call"), in the
+// folder of the control channel's decoder; log_mode = that control VFO's
+// Logging (written at Log / Log All). fields = the rest of the record as JSON
+// members, each starting with a comma
+void record_call(int vfo, int log_mode, double rf_hz, const std::string& plugin, const std::string& fields);
 // logging is allowed and the transcripts' Logging is Log
 bool voice_logged();
 // The log folder (as set, possibly relative) and its Keep days (0 = forever):

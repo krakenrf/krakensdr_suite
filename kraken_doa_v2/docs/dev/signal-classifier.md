@@ -2211,7 +2211,10 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   a bracket 3 px above the peak over the track's band (`sigBand`: lo..hi;
   ends ticked; a
   thin line to the box when it moved), never above y 20 (the VFO labels' and
-  AI badges' row) or the saved-frequency tags' rows. Declutter
+  AI badges' row) or the saved-frequency tags' rows, and never over a trunk
+  voice VFO's call label (its second row, y 17-31: `sigLayout`'s `avoid`,
+  *trunk-following.md*; with one above the signal the rows under it are
+  tried too). Declutter
   (`sigLayout`): the more certain first (p in 10 % steps, then the older
   track - the layout doesn't shuffle with every update), a box that would
   overlap one placed moves up a row (at most 3; down only when it already

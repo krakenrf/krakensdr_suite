@@ -23,6 +23,7 @@
 #include "incidents.hpp"
 #include "saved_freqs.hpp"
 #include "sf_scanner.hpp"
+#include "trunk_follow.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
@@ -337,6 +338,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
            msg.starts_with("SF_") ||           // 📻 saved frequencies + map markers: {"savedfreq":...} broadcasts
            msg.starts_with("SFSCAN_") ||       // 📻 saved-frequency scan: {"sfscan":...} broadcasts (saves its settings itself)
+           msg.starts_with("TRUNK_") ||        // trunk following: {"trunk":...} broadcasts (saves its settings itself)
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
            msg.starts_with("RECORDER_") ||     // 📼 recorder: {"recorder":...} / {"recordings":...} broadcasts
            msg.starts_with("AUDIO_VFO:") ||    // 🔊 VFOs heard: decimator_info broadcasts
@@ -438,6 +440,11 @@ static void store_for_replay(string_view msg, size_t key_len) {
 // (12) the bandwidth in Hz (arbitrary bandwidths; a file without it: the index).
 static string build_decimator_snapshot() {
     auto info = decimator_manager.getDecimatorInfoList();
+    // the trunk manager's voice VFOs are never part of the user's setup: left
+    // out, the positions of the VFOs heard counted without them
+    info.erase(std::remove_if(info.begin(), info.end(),
+                              [](const DecimatorManager::DecimatorInfo& d) { return trunk::is_trunk_vfo(d.id); }),
+               info.end());
     string heard;
     for (size_t i = 0; i < info.size(); i++)
         if (info[i].audio_out) heard += (heard.empty() ? "" : ",") + to_string(i);
@@ -447,7 +454,9 @@ static string build_decimator_snapshot() {
     for (size_t i = 0; i < info.size(); i++) {
         const auto& d = info[i];
         if (i) ss << ";";
-        ss << d.frequency_offset_hz << "," << d.bandwidth_index << ","
+        float off = d.frequency_offset_hz;
+        trunk::home_offset(d.id, &off);   // (a control VFO an excursion moved: where it is at home)
+        ss << off << "," << d.bandwidth_index << ","
            << DecimatorManager::demodModeToString(d.demod_mode) << ","
            << (d.squelch_enabled ? 1 : 0) << "," << d.squelch_level << ","
            << d.squelch_method << ",0,"   // (was the eigenvalue threshold: the column stays for older files)
@@ -465,6 +474,8 @@ static string build_decimator_snapshot() {
 // would capture their transient state.
 static void record_decimator_snapshot() {
     if (g_replaying_settings.load()) return;
+    // the trunk manager setting up its voice VFOs: the snapshot leaves them out anyway
+    if (trunk::dispatching()) return;
     // While a scanner runs, the live VFO set is the scan's (offsets, VFOs heard,
     // bandwidths it moved) - saving it made the scan state the user's setup
     // after a restart. Edits made during a scan are therefore not persisted.
@@ -543,6 +554,9 @@ static bool apply_decimator_snapshot(const string& snap) {
     }
     if (vfos.empty()) return false;
 
+    // the snapshot works by list position: the trunk manager's voice VFOs go
+    // first (a replay after a playback, RESET_SETTINGS)
+    trunk::release_all_vfos("settings");
     auto info = decimator_manager.getDecimatorInfoList();
     while (info.size() < vfos.size()) {
         if (decimator_manager.addDecimator() < 0) break;
@@ -850,7 +864,10 @@ static string tuners_string() {
     ostringstream o;
     for (int i = 0; i < MAX_CHANNELS; i++) {
         if (i) o << ",";
-        o << static_cast<long long>(llround(indep_tuner_freq_hz[i].load())) << "/" << indep_tuner_gain_db[i].load();
+        double f = indep_tuner_freq_hz[i].load();
+        float g = indep_tuner_gain_db[i].load();
+        trunk::tuner_home(i, &f, &g);   // (a voice tuner of the trunk manager: where the user had it)
+        o << static_cast<long long>(llround(f)) << "/" << g;
     }
     return o.str();
 }
@@ -1144,11 +1161,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         // If wideband mode is active, disable it first to turn off bias-tee/noise source
         // A manual retune ends a discrete scan: heimdall would keep hopping
         // over it (and the client scanner is only fed in wideband mode)
-        if (scanner_manager.isRunning() && !g_replaying_settings.load()) {
+        if (scanner_manager.isRunning() && !g_replaying_settings.load() && !trunk::dispatching()) {
             cout << "Manual retune: stopping the discrete scanner" << endl;
             scanner_manager.stop();
         }
-        if (sfscan::running() && !sfscan::dispatching() && !g_replaying_settings.load())
+        if (sfscan::running() && !sfscan::dispatching() && !trunk::dispatching() && !g_replaying_settings.load())
             sfscan::stop("the receiver was retuned by hand");
         if (wideband_mode_enabled.load(std::memory_order_relaxed)) {
             cout << "Disabling wideband mode before manual frequency retune (prevents bias-tee staying active)" << endl;
@@ -1188,7 +1205,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                 side = want;
                 wb_variant_mixer_side = side;
                 string side_cmd = string("MIXER_SIDE:") + wb_mixer_side_name(side);
-                SettingsStore::record(side_cmd);
+                if (!trunk::dispatching()) SettingsStore::record(side_cmd);   // (an excursion's: not the user's)
                 broadcast(make_sync_cmd_json(side_cmd));
                 cout << "Mixer side auto-selected: " << wb_mixer_side_name(side)
                      << " for " << freq_hz / 1e6 << " MHz" << endl;
@@ -2268,7 +2285,8 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("DIGITAL_HISTORY:")) {
         // A page opening the decoder panel asks for the whole event log
         int id = parse_int(message, 16);
-        broadcast(MessageBuilders::build_digital_message(id, true));
+        const string m = MessageBuilders::build_digital_message(id, true);
+        if (!m.empty()) broadcast(m);   // (no such VFO / no decoder - a probe gone already: nothing)
     }
     else if (message.starts_with("GEO_RADIUS_KM:")) {
         // Incident map: addresses are looked up within this radius of the
@@ -2591,6 +2609,15 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message == "GET_SFSCAN") {
         broadcast(sfscan::status_json());   // a page connecting
     }
+    // Trunk following (trunk_follow.hpp, docs/dev/trunk-following.md): every
+    // command answered with {"trunk":...} to every page, a refusal also with
+    // {"trunk_error":...}; its settings saved here (TRUNK_ is a query command)
+    else if (message.starts_with("TRUNK_") || message == "GET_TRUNK" || message == "GET_TRUNK_CC" || message.starts_with("GET_TRUNK_SYS:")) {
+        string err, persist;
+        if (!trunk::handle_command(string(message), &err, &persist)) throw CommandRejected("unknown trunk command");
+        if (!err.empty()) throw CommandRejected(err);
+        if (!persist.empty() && !g_replaying_settings.load()) SettingsStore::record(persist);
+    }
     // ✈ Array calibration from ADS-B aircraft (array_cal.hpp; array_cal.json, not
     // the settings file). Collecting is not remembered across restarts (the
     // packets aren't either)
@@ -2786,10 +2813,12 @@ void ControlHandler::handle_message_impl(string_view message) {
         // Entering independent from coherent: tuners without a saved tuning
         // start where the array was (so the saved set is complete)
         if (mode == 2 && (was_coherent || was_sweep)) {
-            // (from sweep mode: where the array was before it - the sweep's
-            // hops aren't anyone's tuning)
+            // (the centre asked for: from coherent the stream's header may
+            // still be a control-channel search step / an excursion's centre;
+            // from sweep mode it is where the array was before it - the
+            // sweep's hops aren't anyone's tuning)
             const uint64_t req = requested_freq_hz.load();
-            const double f0 = was_sweep && req ? static_cast<double>(req) : static_cast<double>(tuner_frequencies[0].load());
+            const double f0 = req ? static_cast<double>(req) : static_cast<double>(tuner_frequencies[0].load());
             for (int ch = 0; ch < MAX_CHANNELS; ch++)
                 if (indep_tuner_freq_hz[ch].load() <= 0 && f0 > 0) indep_tuner_freq_hz[ch] = f0;
             if (!g_replaying_settings.load()) SettingsStore::record("TUNERS:" + tuners_string());
@@ -2814,7 +2843,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (is_freq) {
             if (!(v * 1e6 >= RTL_TUNER_MIN_HZ && v * 1e6 <= RTL_TUNER_MAX_HZ))
                 throw CommandRejected("outside the tuner range (24-1766 MHz)");
-            if (sfscan::uses_tuner(ch) && !sfscan::dispatching())
+            if (sfscan::uses_tuner(ch) && !sfscan::dispatching() && !trunk::dispatching())
                 sfscan::stop("tuner " + to_string(ch) + " was retuned by hand");
             const double hz = static_cast<double>(llround(v * 1e6));
             indep_tuner_freq_hz[ch] = hz;
@@ -2829,7 +2858,8 @@ void ControlHandler::handle_message_impl(string_view message) {
             o << "{\"set_independent_tuner\":{\"channel\":" << ch << ",\"gain\":" << g << "}}";
             send_control_command(o.str());
         }
-        if (!sfscan::dispatching()) SettingsStore::record("TUNERS:" + tuners_string());
+        // (the trunk manager's voice tuners: not the user's tuning - not saved)
+        if (!sfscan::dispatching() && !trunk::dispatching()) SettingsStore::record("TUNERS:" + tuners_string());
         broadcast(build_operating_mode_json());
     }
     else if (message.starts_with("TUNERS:")) {
@@ -3216,6 +3246,11 @@ string ControlHandler::apply_command(string_view message) {
         }
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
+        // (an excursion outside the span ends first; a control-channel search refuses the other scanners / a playback)
+        if (const char* why = trunk::before_command(message)) {
+            cout << "Rejected control message: '" << string(message.substr(0, 100)) << "' (" << why << ")" << endl;
+            return why;
+        }
         if (playback::handle_command(message)) return "";
         if (playback::active() && !playback::internal() && !g_replaying_settings.load()) {
             uint64_t f = 0;
@@ -3275,7 +3310,7 @@ string ControlHandler::apply_command(string_view message) {
             }
             // Persist remembered settings to disk (the schema decides which;
             // skipped while we are replaying the saved file ourselves).
-            if (!g_replaying_settings.load() && !sfscan::dispatching()) {
+            if (!g_replaying_settings.load() && !sfscan::dispatching() && !trunk::dispatching()) {
                 SettingsStore::record(applied);
             }
             broadcast(make_sync_cmd_json(sync_msg));

@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <limits>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -16,6 +18,9 @@
 
 #include <liquid/liquid.h>
 
+// the wire's shared rules (kp::wire::clean_text, host_option): by path, so
+// every build line of this file (tools/digi_test's too) finds it
+#include "../../plugins/sdk/kraken_plugin.hpp"
 #include "config.hpp"   // efficient_bandwidth_at_least
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
@@ -45,7 +50,15 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31,
                    W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_AUDIO_CHANNEL = 34, W_SAMPLES_MC = 8,
                    W_SAMPLES_ARRAY = 9, W_SPATIAL = 35, W_PLOT = 36, W_TUNE = 37, W_TABLE_DETAIL = 38,
-                   W_SPATIAL_REMOVE = 39, W_VIDEO = 40, W_PLOT_EX = 41, W_OPTION_CHOICES = 42;
+                   W_SPATIAL_REMOVE = 39, W_VIDEO = 40, W_PLOT_EX = 41, W_OPTION_CHOICES = 42, W_TRUNK_SYSTEM = 43,
+                   W_TRUNK_CHANNEL = 44, W_CONTROL_CHANNEL = 45, W_GRANT = 46, W_GRANT_END = 47, W_CALL = 48;
+// kp::wire::TRUNK_* limits (trunked systems; a plugin is untrusted input:
+// everything is checked again here)
+constexpr size_t TRUNK_KEY_MAX = 48, TRUNK_TEXT_MAX = 64, TRUNK_NAME_MAX = 32, TRUNK_ID_MAX = 32, TRUNK_DEMOD_MAX = 16,
+                 TRUNK_OPTIONS_MAX = 16, TRUNK_OPTION_VALUE_MAX = 100;
+constexpr int TRUNK_SLOT_MAX = 15;
+constexpr double TRUNK_FREQ_MAX_HZ = 6e9, TRUNK_BW_MAX_HZ = 2.4e6;
+constexpr size_t GRANT_FIXED_KNOWN = 12;   // kp::wire::GRANT's fixed fields this host reads
 // kp::Host::option_choices limits (kp::wire::CHOICES_MAX ...)
 constexpr size_t CHOICES_MAX = 100, CHOICE_VALUE_MAX = 100, CHOICE_LABEL_MAX = 80;
 // named plots (kp::Plot::id) one plugin may keep
@@ -205,6 +218,9 @@ struct Runner {
     double rf_sent = -1;               // kp::Host::rf_hz sent (0 = unknown, -1 = nothing yet)
     std::map<std::string, std::string> opts_sent;   // key (without the id prefix) -> value
     uint32_t sync_sent = 0, sync_done = 0;
+    // trunked-system reports are dropped until sync_done reaches this (the
+    // SYNC sent after a RESET: reports still in the pipe from before it)
+    uint32_t trunk_fence = 0;
     std::string state = "starting", error;
     std::vector<std::string> tail;
     uint64_t dropped = 0;
@@ -360,6 +376,7 @@ public:
                     r->proc->stop();
                     r->proc.reset();
                     close_talker(*r);
+                    trunk_reset_if(*r);
                     r->retry_ms = 0;
                     r->note = "new VFO rate";
                 }
@@ -457,9 +474,16 @@ public:
     // on): the plugins get a RESET, detection starts over
     void reset_all() {
         for (auto& r : runners_) {
-            if (r->proc && r->proc->running()) r->proc->send(W_RESET, nullptr, 0, 0);
+            if (r->proc && r->proc->running()) {
+                r->proc->send(W_RESET, nullptr, 0, 0);
+                // what it reports about a trunked system before it has seen
+                // the RESET is stale: dropped until it answers this SYNC
+                r->trunk_fence = ++r->sync_sent;
+                r->proc->send(W_SYNC, &r->trunk_fence, 4, 0);
+            }
             close_talker(*r);   // the plugin forgets its call with the RESET
         }
+        trunk_reset();   // ... and its trunked system
         std::lock_guard<std::mutex> lk(st_mu_);
         detected_.clear();
         valid_.clear();
@@ -596,6 +620,9 @@ private:
     std::map<std::string, int64_t> last_valid_by_;   // plugin -> its last valid frame (the Digital squelch)
     std::map<std::string, int64_t> hold_ms_by_;      // plugin -> its squelch hold (kp::Info::squelch_hold_s)
     std::string lead_tid_sent_, lead_tlabel_sent_;   // what set_lead_talker last got (worker thread)
+    // the plugin whose trunked-system reports went out since the last trunk
+    // RESET ("" = none: nothing to reset)
+    std::string trunk_from_;
     std::vector<PluginStatus> status_plugins_;
 
     // --- runner set ---------------------------------------------------------
@@ -606,6 +633,7 @@ private:
             if (r->proc) r->proc->request_stop();
             close_talker(*r);
         }
+        trunk_reset();
         for (auto& r : runners_)
             if (r->proc) r->proc->stop();
         runners_.clear();
@@ -877,6 +905,7 @@ private:
                 r->proc->stop();
                 r->proc.reset();
                 close_talker(*r);
+                trunk_reset_if(*r);
                 r->retry_ms = 0;
                 r->note = "rebuilt";
                 continue;
@@ -978,7 +1007,7 @@ private:
         r.station_sent = 0;
         r.rf_sent = -1;
         r.opts_sent.clear();
-        r.sync_sent = r.sync_done = 0;
+        r.sync_sent = r.sync_done = r.trunk_fence = 0;
         r.state = "running";
         r.error.clear();
         // a fixed decoder says it started; in Auto detect only restarts are news
@@ -1135,6 +1164,7 @@ private:
             r.proc->stop();
             r.proc.reset();
             close_talker(r);
+            trunk_reset_if(r);
             report_.choices_clear(r.id);   // (the restarted process sends its own)
             r.crashes++;
             int64_t delay = std::min<int64_t>(30000, 1000LL << std::min(r.crashes, 5));
@@ -1320,6 +1350,14 @@ private:
             case W_OPTION_CHOICES:
                 on_option_choices(r, p, len);
                 break;
+            case W_TRUNK_SYSTEM:
+            case W_TRUNK_CHANNEL:
+            case W_CONTROL_CHANNEL:
+            case W_GRANT:
+            case W_GRANT_END:
+            case W_CALL:
+                on_trunk(r, type, p, len);
+                break;
             case W_TUNE: {
                 // kp::Host::tune - only plugins that declare kp::Info::tunes
                 const double hz = num_or_nan(std::string(p, std::min<size_t>(len, 32)));
@@ -1352,6 +1390,153 @@ private:
             default:
                 break;
         }
+    }
+
+    // --- trunked systems (kp::wire::TRUNK_SYSTEM .. CALL) -----------------
+    // the lead plugin's reports, checked again (cut to the limits, control
+    // characters removed, frequencies outside (0, 6 GHz] NAN, slots outside
+    // -1..15 -1, options checked), to the owner's TrunkHandler. A channel
+    // without a name, a CALL with an unknown state or a GRANT whose E fields
+    // aren't there are dropped
+    double stream_time() const { return in_rate_ > 0 ? static_cast<double>(next_pos_) / in_rate_ : static_cast<double>(NAN); }
+    void trunk_send(const std::string& plugin, trunk::PluginEvent&& ev) {
+        ev.t_s = stream_time();
+        owner_->deliver_trunk(plugin, std::move(ev));
+    }
+    // the reports so far are stale: one RESET (only if there were any)
+    void trunk_reset() {
+        if (trunk_from_.empty()) return;
+        std::string id;
+        id.swap(trunk_from_);
+        owner_->set_trunk_reported(false);
+        trunk::PluginEvent ev;
+        ev.kind = trunk::PluginEvent::RESET;
+        trunk_send(id, std::move(ev));
+    }
+    void trunk_reset_if(const Runner& r) {
+        if (trunk_from_ == r.id) trunk_reset();
+    }
+    // text: valid UTF-8 without C0 / DEL / C1 controls, cut to max bytes at
+    // a character boundary - the SDK's own rule (kp::wire::clean_text, the
+    // plugin side applied it already), so a name is the same bytes everywhere
+    static std::string tk_text(const std::string& in, size_t max) { return kp::wire::clean_text(in, max); }
+    // a lowercase token ([a-z0-9_], with '-' if dash) of <= max bytes, else ""
+    static std::string tk_token(const std::string& in, size_t max, bool dash) {
+        if (in.size() > max) return "";
+        for (char c : in)
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || (dash && c == '-'))) return "";
+        return in;
+    }
+    static double tk_freq(const std::string& t) {
+        const double v = num_or_nan(t);
+        return is_finite_value(v) && v > 0 && v <= TRUNK_FREQ_MAX_HZ ? v : static_cast<double>(NAN);
+    }
+    // a whole decimal integer in lo..hi, else def ("" = def)
+    static long long tk_int(const std::string& t, long long lo, long long hi, long long def) {
+        if (t.empty() || t.size() > 20) return def;
+        char* e = nullptr;
+        errno = 0;
+        const long long v = strtoll(t.c_str(), &e, 10);
+        return (e && *e == '\0' && errno == 0 && v >= lo && v <= hi) ? v : def;
+    }
+    // a channel from f[at] ..: name, number, freq_hz, slot - and uplink_hz in f[up] (NAN when not there)
+    static bool tk_channel(const std::vector<std::string>& f, size_t at, size_t up, trunk::Channel* c) {
+        auto fld = [&](size_t i) { return i < f.size() ? f[i] : std::string(); };
+        c->name = tk_text(fld(at), TRUNK_NAME_MAX);
+        if (c->name.empty()) return false;
+        c->number = tk_int(fld(at + 1), 0, std::numeric_limits<long long>::max(), -1);
+        c->freq_hz = tk_freq(fld(at + 2));
+        c->slot = static_cast<int>(tk_int(fld(at + 3), -1, TRUNK_SLOT_MAX, -1));
+        c->uplink_hz = tk_freq(fld(up));
+        return true;
+    }
+    void on_trunk(Runner& r, uint32_t type, const char* p, size_t len) {
+        if (!is_lead(r)) return;   // Auto detect: only the plugin it locked onto
+        if (r.sync_done < r.trunk_fence) return;   // from before the last RESET
+        trunk::PluginEvent ev;
+        auto fl = [](const std::string& flags, char c) { return flags.find(c) != std::string::npos; };
+        switch (type) {
+            case W_TRUNK_SYSTEM: {
+                auto f = split0(p, len, 4);
+                f.resize(4);
+                ev.kind = trunk::PluginEvent::SYSTEM;
+                ev.sys_key = f[0].substr(0, TRUNK_KEY_MAX);
+                for (char& c : ev.sys_key)
+                    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '_' || c == '-')) c = '_';
+                ev.sys_name = tk_text(f[1], TRUNK_TEXT_MAX);
+                ev.sys_site = tk_text(f[2], TRUNK_TEXT_MAX);
+                ev.control = f[3] == "1";
+                break;
+            }
+            case W_TRUNK_CHANNEL:
+            case W_CONTROL_CHANNEL:
+            case W_GRANT_END: {
+                const auto f = split0(p, len, 5);
+                if (!tk_channel(f, 0, 4, &ev.ch)) return;
+                ev.kind = type == W_TRUNK_CHANNEL     ? trunk::PluginEvent::CHANNEL
+                          : type == W_CONTROL_CHANNEL ? trunk::PluginEvent::CONTROL
+                                                      : trunk::PluginEvent::GRANT_END;
+                break;
+            }
+            case W_GRANT: {
+                // E, E fixed fields (the ones this host knows taken, the rest
+                // skipped), then option key / value pairs
+                const size_t nl = static_cast<size_t>(std::find(p, p + std::min<size_t>(len, 4), '\0') - p);
+                const std::string es(p, nl);
+                if (es.empty() || es.size() > 2 || es.find_first_not_of("0123456789") != std::string::npos) return;
+                const size_t ne = static_cast<size_t>(std::stoi(es));
+                const auto f = split0(p, len, 1 + ne + 2 * 64);
+                if (f.size() < 1 + ne) return;
+                std::vector<std::string> x(GRANT_FIXED_KNOWN);
+                for (size_t i = 0; i < GRANT_FIXED_KNOWN && i < ne; i++) x[i] = f[1 + i];
+                // name, number, freq_hz, slot, target, group, source, flags, decoder, demod, bw_hz, uplink_hz
+                if (!tk_channel(x, 0, 11, &ev.ch)) return;
+                ev.kind = trunk::PluginEvent::GRANT;
+                ev.target = tk_text(x[4], TRUNK_ID_MAX);
+                ev.group = x[5] != "0";
+                ev.source = tk_text(x[6], TRUNK_ID_MAX);
+                ev.encrypted = fl(x[7], 'e');
+                ev.emergency = fl(x[7], 'm');
+                ev.data = fl(x[7], 'd');
+                ev.update = fl(x[7], 'u');
+                ev.decoder = tk_token(x[8], TRUNK_ID_MAX, true);
+                ev.demod = tk_token(x[9], TRUNK_DEMOD_MAX, false);
+                const double bw = num_or_nan(x[10]);
+                ev.bw_hz = is_finite_value(bw) && bw > 0 && bw <= TRUNK_BW_MAX_HZ ? bw : 0.0;
+                for (size_t i = 1 + ne; i + 1 < f.size() && ev.options.size() < TRUNK_OPTIONS_MAX; i += 2) {
+                    const std::string& k = f[i];
+                    const std::string& v = f[i + 1];
+                    // not one of the host's own OPTION keys (verbose, log_raw,
+                    // video_wanted: kp::wire::host_option), the value clean text
+                    bool ok = !tk_token(k, 32, false).empty() && !kp::wire::host_option(k) &&
+                              v.size() <= TRUNK_OPTION_VALUE_MAX && kp::wire::clean_text(v, v.size()) == v;
+                    for (const auto& o : ev.options) ok = ok && o.first != k;
+                    if (ok) ev.options.emplace_back(k, v);
+                }
+                break;
+            }
+            case W_CALL: {
+                auto f = split0(p, len, 6);
+                f.resize(6);
+                const long long st = f[0].empty() ? 1 : tk_int(f[0], 0, 2, -1);
+                if (st < 0) return;
+                ev.kind = trunk::PluginEvent::CALL;
+                ev.call_state = static_cast<int>(st);
+                ev.target = tk_text(f[1], TRUNK_ID_MAX);
+                ev.group = f[2] != "0";
+                ev.source = tk_text(f[3], TRUNK_ID_MAX);
+                ev.call_slot = static_cast<int>(tk_int(f[4], -1, TRUNK_SLOT_MAX, -1));
+                ev.encrypted = fl(f[5], 'e');
+                ev.emergency = fl(f[5], 'm');
+                break;
+            }
+            default:
+                return;
+        }
+        if (!trunk_from_.empty() && trunk_from_ != r.id) trunk_reset();   // (another plugin's state)
+        trunk_from_ = r.id;
+        owner_->set_trunk_reported(true);   // (before the report goes: a reader that sees false has none in the pipe)
+        trunk_send(r.id, std::move(ev));
     }
 
     // kp::wire::OPTION_CHOICES: key, then value / label pairs (kp::Host::option_choices).
@@ -1824,6 +2009,9 @@ private:
                 residual_hz_ = 0;
             }
         }
+        // Auto detect locked onto another plugin: what the previous lead
+        // said about a trunked system is stale (it going quiet is not)
+        if (now != old && !now.empty() && !trunk_from_.empty() && now != trunk_from_) trunk_reset();
         if (now != old) {
             if (!now.empty())
                 report_.event(now, std::string(mode_ == Mode::AUTO ? "Detected " : "Receiving ") + name_of(now), 0.0);
@@ -2125,6 +2313,20 @@ std::string DigitalDecoder::deliver_tune(double rf_hz) {
         h = tune_handler_;
     }
     return h ? h(rf_hz) : std::string("this receiver can't retune for plugins");
+}
+
+void DigitalDecoder::set_trunk_handler(TrunkHandler h) {
+    std::lock_guard<std::mutex> lk(talker_mu_);
+    trunk_handler_ = std::move(h);
+}
+
+void DigitalDecoder::deliver_trunk(const std::string& plugin, trunk::PluginEvent&& ev) {
+    TrunkHandler h;
+    {
+        std::lock_guard<std::mutex> lk(talker_mu_);
+        h = trunk_handler_;
+    }
+    if (h) h(plugin, std::move(ev));
 }
 
 void DigitalDecoder::set_spatial_handler(SpatialHandler h) {

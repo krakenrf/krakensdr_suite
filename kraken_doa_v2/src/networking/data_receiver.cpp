@@ -32,6 +32,7 @@
 #include "utils/iq_converter.hpp"
 #include "channel_manager.hpp"
 #include "scanner_manager.hpp"
+#include "trunk_follow.hpp"
 #include "control_handler.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/endian_utils.hpp"
@@ -764,6 +765,7 @@ void DataReceiver::decimation_processor_thread() {
         // Update scanner with phase calibration status from server
         // This allows scanner to avoid checking for signal loss during calibration.
         // Calibration-state / noise-flag changes go to the browsers at once
+        trunk::note_packet();
         // (the system_status broadcast is every 500 ms - the "(Noise On)"
         // badge lagged a ~0.4 s retune calibration by up to half a second).
         note_calibration_state(raw_packet.phase_compensation_state, raw_packet.noise_source_active);
@@ -1570,6 +1572,8 @@ void DataReceiver::decimation_processor_thread() {
 
                         FFTWorkItem work_item(current_active, dest, num_samples,
                                               persistent_buffer_generation.load(std::memory_order_relaxed));
+                        work_item.freq_hz = raw_packet.freq_hz[current_active];   // (where its spectrum is: the search counts frames by it)
+                        work_item.seq = raw_packet.seq;
 
                         // OPTIMIZATION: ConcurrentQueue is already lock-free, no mutex needed
                         // Removing mutex reduces contention and improves performance by 10-20%

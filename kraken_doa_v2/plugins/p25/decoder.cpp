@@ -16,6 +16,7 @@
 #include "p25.hpp"
 #include "p25p2.hpp"
 #include "p25p2_phy.hpp"
+#include "p25_trunk.hpp"
 
 namespace {
 
@@ -42,24 +43,34 @@ int parse_hex(const std::string& v, long max) {
 class P25Plugin : public kp::Decoder {
 public:
     explicit P25Plugin(kp::Host& h)
-        : Decoder(h), br_(h), sink_(br_.ctx), rx_(sink_, true, false), p2_(br_.ctx, sink_.p25), phy_(p2_) {
+        : Decoder(h), br_(h), sink_(br_.ctx), rx_(sink_, true, false), p2_(br_.ctx, sink_.p25), phy_(p2_), trunk_(h) {
         br_.talkers(dig::FmFrontEnd::RATE);
         sink_.p2 = &p2_;
+        trunk_.set_phase1(&sink_.p25);
+        sink_.p25.trunk = &trunk_;
         facts();
     }
+    // phase_ (the hidden option a grant passes, from the channel
+    // identifier's access type): 1 = only the Phase 1 receiver runs, 2 =
+    // only Phase 2's; 0 = both (the phases told apart by the signal)
     void process(const kp::cf* x, size_t n) override {
-        const auto& d = fe_.process(x, n);
-        rx_.process(d.data(), d.size());
-        phy_.process(x, n);
+        if (phase_ != 2) {
+            const auto& d = fe_.process(x, n);
+            rx_.process(d.data(), d.size());
+        }
+        if (phase_ != 1) phy_.process(x, n);
         pos_ += static_cast<int64_t>(n);
         sink_.p25.tick(pos_);
         p2_.tick(pos_);
+        trunk_.tick();
     }
     void reset() override {
         fe_.reset();
         rx_.reset();
         phy_.reset();
         p2_.reset();
+        trunk_.reset();
+        trunk_.network_hint(wacn_, sysid_);
         br_.restart_clock();
         pos_ = 0;
         facts();
@@ -73,10 +84,20 @@ public:
             const int s = atoi(v.c_str());
             p2_.set_lch(s >= 0 && s <= 2 ? s : 0);
             return;
+        } else if (k == "phase") {
+            const int p = v == "1" ? 1 : v == "2" ? 2 : 0;
+            if (p != phase_) {
+                phase_ = p;
+                // a receiver that was off has not counted the input since:
+                // all start again from here (both count from the same reset)
+                if (pos_ > 0) reset();
+            }
+            return;
         } else {
             return;
         }
         p2_.set_network(wacn_, sysid_, nac_);
+        trunk_.network_hint(wacn_, sysid_);
     }
 private:
     dig::Bridge br_;
@@ -85,6 +106,8 @@ private:
     dig::FmFrontEnd fe_;
     dig::P25p2Proto p2_;
     dig::P25p2Phy phy_;
+    dig::P25Trunk trunk_;
+    int phase_ = 0;
     int64_t pos_ = 0;     // input samples since the receivers' reset (both receivers count these)
     int wacn_ = -1, sysid_ = -1, nac_ = -1;
     void facts() {
@@ -101,8 +124,9 @@ KRAKEN_PLUGIN(P25Plugin, {.id = "p25",
                                          "H-DQPSK, radios' H-CPM), 12.5 kHz, told apart automatically. Control "
                                          "channels: system, site, neighbours and channel grants. Voice channels: "
                                          "talkgroup, unit ID, encryption, per Phase 2 timeslot. Voice: IMBE (built in), "
-                                         "Phase 2 AMBE+2 (mbelib, README \"Digital voice codecs\"). Bandwidth 12-24 kHz.",
-                          .version = "3.0",
+                                         "Phase 2 AMBE+2 (mbelib, README \"Digital voice codecs\"). Bandwidth 12-24 kHz. "
+                                         "Trunk following: grants and calls; the Phase option is set by a grant.",
+                          .version = "3.1",
                           .sample_rate = 48000,
                           .min_vfo_rate = 12000,
                           .author = "KrakenSDR",
@@ -119,6 +143,12 @@ KRAKEN_PLUGIN(P25Plugin, {.id = "p25",
                                        "from the signal."},
                                       {"lch", "Timeslot", "0", "0=Both|1=LCH 0|2=LCH 1",
                                        "Phase 2: only show and play this logical channel's calls. Both = the first to "
-                                       "talk is played until it has been quiet for a second."}},
+                                       "talk is played until it has been quiet for a second."},
+                                      {"phase", "Phase", "", "",
+                                       "Which receiver runs: 1 = Phase 1 only, 2 = Phase 2 only, empty = both (told "
+                                       "apart by the signal). Set by trunk following from the granted channel's "
+                                       "identifier.",
+                                       true}},
                           .voice = true,
-                          .talkers = true})
+                          .talkers = true,
+                          .trunking = true})

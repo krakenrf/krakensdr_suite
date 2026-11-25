@@ -63,5 +63,57 @@
    "bearing": 345
   }
  ]
+},
+{
+ "id": "mpt1327-trunk-two-calls",
+ "title": "MPT1327 trunking: a control channel and two calls on traffic channels",
+ "description": "Site SYS 0x2C35 (made up), MPT 1343 Band III channel numbers (Channel plan option): control channel CH 100 on 202.4500 MHz (bearing 300 deg) with grants for group 042-0100 from 042-1234 on CH 60 (201.9500 MHz, 1.0 s, repeated at 3, 5, 7 s), an emergency unit-to-unit call 042-2001 -> 042-0555 on CH 132 (202.8500 MHz, 6.0 s, AHY + ACKE first) and a data call on CH 75 (10.5 s, not followed); announced control channel CH 110, an adjacent site, call maintenance parameters. The traffic channels' downlinks: CH 60 at 40 deg (042-1234, then 042-1300 talk; clear-down 6.2 s), CH 132 at 200 deg (042-2001, 042-0555, 042-2001 with disconnect; clear-down 12.3 s) - Pressel On / periodic / Pressel Off call maintenance repeated by the site, made-up speech-like FM audio between. Expect (system) / (grant) on VFO 0, a voice VFO per call, talkers 042-1234 and 042-1300 at 40 deg, 042-2001 and 042-0555 at 200 deg, the site SYS 2C35 at 300 deg.",
+ "rf_hz": 202450000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 14,
+ "vfo": {
+  "bw_khz": 12.5,
+  "opts": {
+   "plan": "mpt1343"
+  }
+ },
+ "commands": [
+  "TRUNK_FOLLOW:1"
+ ],
+ "files": {
+  "scene.json": {
+   "rf_hz": 202150000.0,
+   "seconds": 14,
+   "snr_db": 20,
+   "seed": 7,
+   "sources": [
+    {"name": "SYS 2C35", "file": "cc.cf32", "rate": 48000, "at": 0, "offset_hz": 300000, "bearing": 300},
+    {"name": "CH 60", "file": "ch60.cf32", "rate": 48000, "at": 0, "offset_hz": -200000, "bearing": 40},
+    {"name": "CH 132", "file": "ch132.cf32", "rate": 48000, "at": 0, "offset_hz": 700000, "bearing": 200, "gain_db": -3}
+   ]
+  }
+ },
+ "steps": [
+  ["{tools}/mpt1327_gen.py", "cc.cf32", "--sys", "0x2C35", "--at", "0", "--dur", "14",
+   "--grant", "1.0:60:042-0100:042-1234:r2", "--grant", "6.0:132:042-0555:042-2001:ue",
+   "--grant", "10.5:75:042-0300:042-1500:d",
+   "--bcast", "0:110", "--bcast", "4:120:0x2C36", "--maint", "0:10:0:1"],
+  ["{tools}/mpt1327_gen.py", "ch60.cf32", "--traffic", "--chan", "60", "--cont", "100", "--seed", "1",
+   "--item", "1.3:2.2:042-1234", "--item", "4.0:1.6:042-1300", "--periodic", "1.0", "--clear", "6.2"],
+  ["{tools}/mpt1327_gen.py", "ch132.cf32", "--traffic", "--chan", "132", "--cont", "100", "--seed", "2",
+   "--item", "6.3:2.0:042-2001", "--item", "8.7:1.8:042-0555", "--item", "10.8:1.0:042-2001:x",
+   "--periodic", "1.0", "--clear", "12.3"],
+  ["{sdk}/wide_scene.py", "scene.json", "out.cu8"]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {"tid": "042-1234", "bearing": 40},
+  {"tid": "042-1300", "bearing": 40},
+  {"tid": "042-2001", "bearing": 200},
+  {"tid": "042-0555", "bearing": 200},
+  {"tid": "SYS 2C35", "bearing": 300},
+  {"event": "Grant: 042-1234 -> 042-0100 on channel 60 (201.9500 MHz)"}
+ ],
+ "tol_deg": 5
 }
 ]

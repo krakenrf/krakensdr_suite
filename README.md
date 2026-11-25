@@ -443,6 +443,79 @@ Things to know:
 - **On the map.** Tick **Plot on map** in a decoder's tab to show the
   positions it decodes.
 
+### Trunk following
+
+A trunked radio system hands out a traffic channel for each call on its
+control channel. Put a VFO on the control channel with its decoder, and the
+sidebar's **Trunk Following** box shows the system; switch **Follow calls**
+on and the receiver puts a voice VFO with the right decoder on each granted
+channel for as long as the call lasts - heard, decoded, logged and with a
+bearing like any other VFO. The box lists the calls in progress and the
+recent ones (who talks to whom, the channel, how each ended or why it was
+not followed); a call's menu stops following it, holds on its talkgroup,
+names the talkgroup or makes it Priority / Skip. **Edit** on a system holds
+its name, the talkgroup list and the channel table. Voice VFOs are marked
+as the receiver's on their cards and on the spectrum and are never saved.
+Optionally the receiver also follows calls outside its 2.4 MHz: in coherent
+mode it retunes there for the call, calibrates and comes back afterwards
+(your other VFOs move with it meanwhile); in independent mode it retunes the
+tuners you give it as voice tuners.
+
+Don't know the control channel? **Search bands…** under *Control channels*
+in the box sweeps the bands you tick (or ranges you type) and tries every
+trunking decoder on each steady carrier; the receiver is away from your
+frequency while it runs and comes back at the end (or on **Stop**). What it
+finds - and every control channel you tune yourself - lands in a list kept
+on the receiver (`trunk_control_channels.json`, saved by itself; Export /
+Import in its **…** menu), and **one click on an entry follows it**: D0
+becomes the control VFO with the right decoder on it (whatever D0 did is
+replaced; it is set to the Digital demod, so you hear decoded voice only, not
+the control channel's data; the receiver retunes when it is outside the
+band) and following switches on. **Follow it too** adds a further control
+VFO for a second channel in the band.
+
+What each protocol needs:
+
+| Protocol | Tune a VFO to | Channel frequencies |
+|---|---|---|
+| P25 Phase 1 / 2 | a control channel | announced by the system: nothing to enter |
+| TETRA | the site's main carrier | announced by the system: nothing to enter |
+| DMR Tier III | a control channel (TSCC) | usually sent as numbers only: enter them (one rule like "base + (n - 1) x 12.5 kHz" often covers all). Two networks that send the same network code look like one system: set the DMR decoder's **Network tag** option on one network's control VFOs to keep them apart |
+| NXDN (Type-C) | a control channel | always numbers only: enter them |
+| MPT1327 | a control channel | numbers only (Band III with the decoder's `plan=mpt1343` option): enter them; the calls are analogue FM |
+
+- **Missing frequencies.** When grants name channels the receiver has no
+  frequency for, the box says which ones; **Enter** opens the channel table
+  with those channels on top and a rule form that shows what each would get.
+  Channels the system announces, and ones the receiver sees a call on twice,
+  fill in by themselves. A system's table can also be entered before it is
+  heard: the box's ⚙ → **System ahead**, with the system's key as its
+  decoder reports it.
+- **Calls outside the band.** By default calls are followed inside the
+  band the receiver takes in now. Calls outside it are counted, and
+  **Centre** retunes to the frequency that holds the control channels and
+  most of the system's channels (it asks first). Two options follow them
+  anyway, in the box's settings (⚙):
+  - **Outside the span** (Coherent mode): the receiver goes to the call's
+    channel, calibrates there, follows the call and comes back, calibrating
+    again. While it is away the box and the top bar say so (which call,
+    since when, when it comes back; **Return now**), all your VFOs move with
+    it, and the control channel is not heard unless it fits the new band -
+    grants made meanwhile are missed. Each calibration blanks reception for
+    about half a second; with **Calibrate there** off the call is heard whole but
+    has no bearing. **Longest away** stops an excursion that runs too long.
+  - **Voice tuners** (Independent mode): tick the tuners trunk following may
+    retune for calls outside every tuner's band; the tuner with the control
+    channel stays on it. Up to four calls at once on five tuners; with two
+    generic RTL-SDRs, one control tuner and one voice tuner. A voice tuner is
+    trunk following's while it uses it: your VFOs on it move with it, and it
+    goes back to its own frequency and gain when following stops. With a
+    single tuner there is no way to follow calls outside its band.
+- **Encrypted calls** are followed and shown (who, where, the bearing) but
+  stay muted; nothing is ever decrypted.
+- Following pauses while a scanner runs. DMR Capacity Plus and Connect Plus
+  calls are not followed.
+
 ### Direction finding
 
 Direction finding needs Coherent mode.

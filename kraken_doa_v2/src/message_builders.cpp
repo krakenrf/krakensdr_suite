@@ -24,6 +24,7 @@
 #include "utils/parse_num.hpp"
 #include "incidents.hpp"
 #include "vfo_level.hpp"
+#include "trunk_follow.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -979,6 +980,8 @@ string MessageBuilders::build_decimator_info_message() {
             fo = false;
         }
         json << "}}"
+             // trunk following: a voice VFO of the manager / a control VFO (trunk_follow.hpp)
+             << trunk::vfo_info_json(info.id)
              << "}";
     }
     json << "]}";

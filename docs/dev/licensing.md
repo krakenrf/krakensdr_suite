@@ -149,6 +149,23 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   `[GPL-fact ...]`, the two unconfirmed GopherTrunk rules `[SINGLE ...]`
   where they are used. NO similarity audit against SDRTrunk / OP25 /
   GopherTrunk code was run
+- TRUNK FOLLOWING (2026-11-20; `plugins/p25` 3.1, `plugins/dmr` 2.2, the
+  manager `src/trunk_follow.cpp` uses no third-party facts): written from
+  the standards (TIA-102.AABC / BBAC-A, ETSI TS 102 361-1 / -2 / -4, NXDN TS
+  1-A / 1-C, ETSI EN 300 392-2, MPT 1327 / 1343) and measurements. FACTS
+  (layouts, no code) from GPL projects' documentation, marked in the code
+  where used: P25 - Motorola MFID 0x90 opcodes 0x02 (patch voice channel
+  grant; UNVERIFIED, not seen on air) and 0x03 (its update; seen once on a
+  public Motorola control channel) `[GPL-fact OP25 / SDRTrunk]`
+  (`p25.cpp`); Phase 2 MAC_RELEASE's layout `[GPL-fact]` (never seen on
+  air) and the explicit / extended grants 0xC0 / 0xC3 / 0xC4 / 0xC6 / 0x25
+  `[INFERRED]` from the MAC message length table `[GPL-fact]` (SDRTrunk)
+  and their explicit siblings' fields (not seen on air) (`p25p2.cpp`).
+  DMR - Capacity Plus CSBKO 0x3E octet 2 `[GPL-fact DSD-FME / SDRTrunk]`
+  (its timeslot bit confirmed on a recording), the rest channel's number in
+  its low nibble `[UNVERIFIED]` (`dmr_trunk.cpp`). Lists: the plugins'
+  READMEs (*Sources*). No similarity audit against those projects' code was
+  run
 - INMARSAT (2026-11-22, `plugins/inmarsat_c` 1.0 and `plugins/inmarsat_aero`
   1.0, both source-available, written new; no GPL decoder - SatDump,
   Scytale-C, cropinghigh/inmarsatc, gr-* - was opened, none was run).

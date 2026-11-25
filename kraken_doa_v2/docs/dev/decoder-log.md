@@ -1,5 +1,9 @@
 # Decoder data log
 
+(2026-11-20: records of type `call` - one per finished call of a trunked
+system, in the control channel's decoder folder at that VFO's Log / Log All:
+*trunk-following*, "Decoder log".)
+
 Moved verbatim from `kraken_doa_v2/CLAUDE.md` on 2026-10-24 (that file now keeps
 only what every kraken_doa session needs, plus an index of these files). Not
 loaded automatically. *Italic* topic names refer to the other files in this

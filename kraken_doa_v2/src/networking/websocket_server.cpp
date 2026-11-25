@@ -29,6 +29,7 @@
 #include "utils/platform.hpp"
 #include "utils/fs_compat.hpp"
 #include "utils/tls_compat.hpp"
+#include "trunk_follow.hpp"
 #include "cert_status.hpp"
 #include "settings_store.hpp"
 #include <sys/stat.h>
@@ -1614,6 +1615,11 @@ void WebSocketServer::web_server_main() {
                     for (const auto& m : rec::tick_messages()) global_ssl_app->publish(TOPIC_CTL, m, uWS::TEXT, false);
                 }, 1000, 1000);
 
+                // Trunk following: the state machine (grants -> voice VFOs), its
+                // status on change / every second while active - trunk_follow.hpp
+                struct us_timer_t* trunk_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(trunk_timer, [](struct us_timer_t* /*timer*/) { trunk::tick(); }, trunk::TICK_MS, trunk::TICK_MS);
+
                 // 🗂 Decoder Logging status (disk space, sizes) - every 2 s
                 struct us_timer_t* declog_timer = us_create_timer(native_loop, 0, 0);
                 us_timer_set(declog_timer, [](struct us_timer_t* /*timer*/) {
@@ -1668,7 +1674,7 @@ void WebSocketServer::web_server_main() {
 bool WebSocketServer::auth_enabled() { return auth_required(); }
 
 void WebSocketServer::broadcast_json_message(const string& json) {
-    if (!global_ssl_app || !loop) return;
+    if (!global_ssl_app || !loop || json.empty()) return;   // (never an empty frame: a builder with nothing to say returns "")
 
     // CRITICAL: uWebSockets publish() is NOT thread-safe.
     // The scanner thread (and potentially others) call this from outside the

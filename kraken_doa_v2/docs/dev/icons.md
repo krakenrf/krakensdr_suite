@@ -68,10 +68,10 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `power` | shut down; Setup Settings' System tab (restart and shut down from the page) |
 | `edit` | edit (pencil) |
 | `trash` | delete |
-| `download` `upload` | download / get, upload |
+| `download` `upload` | download / get, upload (also Export / Import of the control channel list) |
 | `plus` `minus` | a new conversation; zoom in / out (drive mode) |
-| `search` | the map search |
-| `home` | the map back to the station |
+| `search` | the map search; trunk following's control-channel search (its button, the running block, the top-bar banner) |
+| `home` | the map back to the station; trunk following's Return (the receiver back to its own frequency) |
 | `wheel` | drive mode (a steering wheel: the rail's Drive button) |
 | `sun` `moon` | drive mode's Day / Night (the button shows the look it switches to) |
 | `mute` | audio off (the top bar's speaker button while off, drive mode's Audio button) |
@@ -79,11 +79,11 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `crosshair` | centre the map on something, a typed coordinate; drive mode's Follow |
 | `fit` | show everything (fit the map) |
 | `enter` | run the search |
-| `play` `pause` `stop` `next` `first` | start / play, pause / hold, stop, skip / next, to the start |
+| `play` `pause` `stop` `next` `first` | start / play, pause / hold (also a trunk talkgroup hold), stop (also stop following a trunk call), skip / next, to the start |
 | `star` | saved frequencies, save a frequency |
 | `tag` | Signal ID (a label tag: signals labelled with their type; 2026-11-20, *signal-classifier.md*) |
 | `eye` | viewshed / line of sight, show or hide (marks, a key) |
-| `lock` | a locked signal |
+| `lock` | a locked signal; an encrypted call (trunk following's call rows) |
 | `pin` | a marker, From GPS, incidents |
 | `clock` | time (auto-name, earlier conversations) |
 | `timer` | the drive's write-speed test |
@@ -123,6 +123,8 @@ the pane tab and the "Pick on map" button is the same symbol).
 | `bug` | Debug Playback |
 | `plane` | aircraft, Array Calibration (from aircraft) |
 | `decoder` | the decoders |
+| `trunk` | trunk following (a trunk forking into three branches: one control channel handing out many calls; the box, its editor, the VFO cards' line; 2026-11-20, *trunk-following.md*) |
+| `more` | more actions on a row (three dots: a trunk call's / talkgroup's menu, a remembered control channel's, the control channel list's Export / Import / Clear) |
 | `speech` | Voice to Text, Transcription (not the VFO card's Transcribe tick: 2026-11-18, like its neighbours it has none) |
 | `bot` | the AI assistant |
 | `map` | the map |

@@ -337,6 +337,24 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     `talker_end`, inbound `in_named` / `unit_end`), no dedup; before they
     followed the call with 5 s / 2 s dedup and lost starts / ends on 6 of
     14 real traffic channels
+  - P25 trunk following (3.1, 2026-11-20; plugins/p25/README.md *Trunk
+    following*): `P25Trunk` (p25_trunk.cpp), one for both phases, fed by
+    `P25Proto::tsbk()` (so the TSBK, link-control and Phase 2 abbreviated
+    forms share it) and the Phase 2 MAC: `trunk_system` (WACN.SYSID, RFSS /
+    site, control = trunking blocks / LCCH in the last 10 s; sent at most
+    once per input block from `tick()`, before any grant / channel / call),
+    `trunk_channel` (site / neighbour / secondary control channels, data
+    channels; again when the identifier arrives), `control_channel` (the
+    RFSS status names a control channel > 4 kHz from the VFO's RF), `grant`
+    for every grant form (TSBK 0x00 0x02 0x03 0x04 0x06 0x08 0x09 0x14, MFID
+    0x90 0x02 / 0x03, Phase 2 0x05 0x25 0xC0 0xC3 0xC4 0xC6 and the 0x4x
+    abbreviated ones; `phase1_parses` now also 0x06 0x14 0x39) with options
+    nac / wacn / sysid / lch / phase (new hidden option: which receiver runs),
+    channel -> downlink / uplink / slot through the identifier tables (TDMA:
+    number / slots, slot = number % slots), and `call` per slot (Phase 1 -1,
+    Phase 2 LCH; ACTIVE / ENDED / RELEASED - README). Generator: `p25_gen.py
+    --control` (TSDUs, its TSBK coding reproduces 361 real blocks of three
+    sites bit for bit), scene `p25-trunk-three-calls`
   - `DmrProto` (plugins/dmr): CACH TACT (timeslot), slot type Golay(20,8)
     (max 2 corrections - a third of random words are within 3), BPTC(196,96)
     voice LC header / terminator (RS(12,9)), CSBK, PI and data headers, EMB
@@ -347,7 +365,43 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     false direct-mode data sync inside a repeater's burst made the next
     burst B..F skip its CACH, on the wrong slot (2026-10-16). Real
     recordings: dmr_1 263 -> 269 valid bursts, dmr_it_8 604 -> 605, dmr_2
-    identical, talkers unchanged
+    identical, talkers unchanged.
+    Trunking (2026-11-20, plugin 2.1, `dmr_trunk.cpp`): Tier III TSCC ->
+    `trunk_system` (C_SYScode: model + NET = key, SITE), every grant form
+    (0x30-0x38; MBC with CG_AP = absolute downlink / uplink + colour code),
+    C_BCAST (Chan_Freq / adjacent site / vote now -> `trunk_channel`), C_MOVE
+    mask 0 -> `control_channel`; payload channels -> `call()` per slot
+    (LC -> ACTIVE, terminator -> ENDED, P_CLEAR -> RELEASED), the CACH short
+    LC (C_ / P_SYS_Parms) for the system on either; Capacity Plus rest
+    channel only (README). Opcode names corrected: 0x2E is P_CLEAR, 0x2F
+    P_PROTECT, 0x39 C_MOVE (were C_MOVE / P_CLEAR / -). An extrapolated
+    burst takes its slot from the 30 ms alternation (by sample position;
+    was a wall-clock window) when its TACT disagrees: a miscorrected TACT on
+    an empty or weak slot named the other slot and cut its superframe short.
+    A terminator's hang-time repeats (every 60 ms until P_CLEAR on a Tier
+    III payload channel) no longer make a 27 ms talker each. Review fixes
+    (2.2): a CACH short LC counts only from a burst whose slot type / EMB
+    passed (with the `cc` filter: of that colour code) - a co-channel TSCC's
+    C_SYS_Parms made a payload VFO claim `control`; a `traffic` instance
+    (grant option) and a single-slot instance on a composite TSCC never do;
+    an MBC continuation must be the header slot's next burst (60 ms +-3
+    symbols); a Capacity Plus rest-channel move needs 3 status CSBKs in a
+    row, at most one per 5 s. 2.3 (sanitizer run): a DMR sync less than 89
+    symbols after the stream start / a reset() is skipped in
+    `Fsk4Receiver::on_sync` (its burst was read in front of the buffer -
+    ASan heap-buffer-overflow in 509 of 1023 runs of a start-offset / RESET
+    sweep, 0 after); `SymSrc::sym` returns 0 outside the history (all
+    users of the lib receivers). P25 reads at most 23 symbols back - the
+    sync itself, which the correlator only finds inside the buffer; NXDN
+    has its own receiver and checks its FSW start. A call without an LC
+    needs the colour code known + two good EMBs (a false voice sync + one
+    lucky EMB made calls from noise: 2 per hour, now 0)
+    Option `net_tag` (2.4): two unrelated Tier III networks on air here send
+    the same network code (Huge / NET 1, at 455 and 414 MHz) and nothing
+    else network-wide is on air - a tag the user sets on one network's
+    control VFOs is added to the key (`Huge.1.tait`; Capacity Plus too) and
+    passed on by every grant. Gateway / special addresses (annex A.4) are
+    reported by their alias (`PSTNI`) in grants and calls
   - `DstarReceiver` (plugins/dstar): RF header (scrambler, 24-column
     interleaver, K=3 Viterbi, CRC-16/X.25), slow data (text message, GPS /
     DPRS, header copy), end pattern
@@ -361,7 +415,30 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     exactly one frame later (CRC-6 alone passes 1 random word in 64);
     FACCH1 counts alone. Layer 3: VCALL (unit/TG, cipher), TX_REL, DCALL,
     trunking CAC (site / service info, grants). Voice: 4 (or 2) AMBE+2
-    frames per frame -> mbelib (nW..nZ)
+    frames per frame -> mbelib (nW..nZ). Trunking (2.1, 2026-11-20, from
+    the NXDN Forum's TS 1-A / TS 1-C 1.3; plugins/nxdn/README.md): the
+    outbound CAC only (300 bits, 25 x 12, puncture 1111111 / 1011101, CRC-16
+    preset ones over SR + 144 + 3 null), single or dual message format (SR
+    structure bit 0: two 9-octet messages); UDCH / FACCH2 (348 bits, 29 x
+    12, CRC-15) on traffic channels - a false sync whose LICH read as UDCH
+    no longer resets the SACCH lock. Reports through kp::Host directly
+    (`NxdnReceiver(ctx, &host)`): trunk_system (key = Location ID category
+    + system code, `global.123`), trunk_channel (SITE_INFO / CCH_INFO /
+    ADJ_SITE_INFO control channels), control_channel (CCH_INFO New, this
+    site), grant (VCALL_ASSGN / _DUP, DCALL_ASSGN / _DUP; channel `CH n`,
+    no frequency - Type-C channel plans live in the radios; options `ran`,
+    `rate`), call (VCALL ACTIVE, TX_REL / TX_REL_EX / 1 s gap ENDED, DISC
+    RELEASED only for a call this instance reported - a DISC heard first
+    may be the previous call's; RTCH / RTCH_C only). Any SACCH superframe
+    message needs its 4 fragments from 4 consecutive frames in order (a
+    failed head fragment once let the previous superframe's complete it:
+    message type, CC Option, call type). The system is sent every 5 s and
+    ahead of a grant (the engine can drop it without a RESET: Auto
+    detect's lead changing). Hidden
+    options `ran` (a frame's SR RAN, inherited by frames that name none)
+    and `rate` (one branch only). VCALL Transmission Mode 011 (EFR) is not
+    played. Not decoded: direct frequency assignment (not in 1.3), Type-D.
+    Control channel not seen on air
   - `YsfReceiver` (plugins/ysf, 2026-11): Yaesu System Fusion, written
     from Yaesu's "Amateur Radio Digital Standards" 1.02 alone (section
     numbers are that document's). 4800 Bd C4FM, RRC 0.2 (span 4, 10 sps);
@@ -425,16 +502,91 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     channel system codeword (CCSC = 0, SYS 15 bits, CCS, 0xAAAA), so the
     CCSC starts 44 bits before the pattern; the address codeword (message)
     follows it. Codewords: 48 bits + BCH(63,48) g 0xE815 with the last check
-    bit inverted + even parity; single-bit errors corrected. Messages: GTC
-    grants (type < 256), Aloha variants, ACK*, AHOY*, status, CLEAR, MOVE,
-    BCAST (SYSDEF), data headers; idents shown prefix-ident. Validated on
-    a live NZ control channel (SYS 0x42E1, ~96 % of slots); GTC field
-    positions follow sdrtrunk and have not been seen live yet
+    bit inverted + even parity; on the control channel single-bit errors
+    corrected (facts, events, valid slots), after a SYNT and for every trunk
+    report error-free only. A CCSC counts only on the 128-bit slot grid of
+    another with the same SYS (a lone one passed 7 times in 1 h of noise, 8
+    in 1 h of FM speech; with the check none). A GTC after a SYNT counts
+    only when the same codeword comes twice within 2 s (3.1: one codeword
+    after a false SYNT has 18 bits of protection - ~400 false grants per
+    VFO-year in noise at 11 000 SYNT candidates an hour); a CLEAR has 38
+    (REVS, type). The system goes out at once after a reset, before any
+    grant. 3.2 (after real calls, NZ 2026-11-20): a granted traffic channel's
+    carrier = the call ACTIVE (the radios' MAINT hardly ever reached the
+    downlink: 2 Pressel On in 24 calls; the carrier was up from before the
+    GTC to the CLEAR); control-channel slots on a traffic VFO count only with
+    that channel's CHAN4 (the site's control channel came onto 5 of its
+    traffic channels by intermodulation); ACKV QUAL 0 marks a unit; option
+    `undecided` (group / unit) for calls nothing shows to be unit calls; a
+    release forgets the call's parties. The discriminator's DC is
+    removed before the correlators (an offset of 2 kHz lost most slots: the
+    1.5 cycles of 1800 Hz don't reject DC) and reported as freq_error.
+    Messages (field positions checked against MPT 1327 section 5,
+    2026-11-20): GTC (bit 22 = 0: PFIX, IDENT1, D, CHAN, IDENT2), Aloha
+    (CHAN4), ACK*, AHY (POINT, E), AHYX / AHYP / AHYQ / AHYC, MARK, MAINT
+    (CHAN bits 31-40, OPER), CLEAR (CHAN, CONT, REVS), MOVE (CONT, (M)),
+    BCAST SYSDEF 0-5 (CHAN, SYS, ADJSITE; PER / IVAL / PON / ID), data
+    headers; idents shown prefix-ident. Before 3.0 MAINT / MOVE read their
+    channel from bits 16-25 (wrong). Trunk following (version 3.0): the
+    system (key = SYS hex, or MPT 1343's OPID / NET with the System key
+    option), grants per GTC (target IDENT1, source IDENT2, D = data,
+    emergency from ACKE / AHY E, unit vs group only from an AHY or an
+    earlier call by that ident - not in the GTC -, update = the same GTC
+    within 5 s, demod nfm, options chan / sys / target / source / group),
+    BCAST channels as trunk channels, MOVE (M) = 0 as control channel. Channel
+    numbers -> Hz only with the Channel plan option (MPT 1343 Band III;
+    else the receiver's table). On a traffic channel: MAINT Pressel On /
+    Periodic -> call ACTIVE, Pressel Off / Disconnect -> ENDED, CLEAR (REVS,
+    CHAN) -> RELEASED (one is enough), a CCSC or a replacement GTC releases
+    too; no Pressel Off: ENDED 1 s after the carrier goes (noise squelch on
+    the discriminator's first difference); a talker per speech item named
+    by the MAINT ident ("via site" on the downlink). Validated on live NZ
+    control channels (SYS 0x42E1 ~96 % of slots; 2026-11-19 capture: 0x42E1
+    / 0x42C1 / 0x4221 / 0x4201, channel plan 414.0000 MHz + n x 12.5 kHz
+    from their own CHAN4 and each other's vote-now channel numbers); details
+    and tests in the plugin README
   - `TetraReceiver` (plugins/tetra, 72 kHz RRC 0.35 input): differential
     detection, 4th-power frequency estimate, slot sync from the training
     sequences (both spectral orientations tried), BSCH (MCC/MNC/colour code
-    -> scrambling code), BNCH SYSINFO, AACH (Reed-Muller), SCH/F and SCH/HD
-    MAC-RESOURCE with the MM/CMCE PDU type of clear signalling
+    -> scrambling code), BNCH SYSINFO, AACH (Reed-Muller), SCH/F, SCH/HD
+    and STCH MAC PDUs (2026-11-20, version 2.2): MAC-RESOURCE with every
+    header field and the channel allocation element (`parse_alloc`,
+    EN 300 392-2 table 21.87, the augmented fields too), fragmented TM-SDUs
+    reassembled per timeslot (`frag_`: MAC-RESOURCE LI 0x3F + MAC-FRAG +
+    MAC-END; a failed CRC on that timeslot or 8 slots without a fragment
+    drop it), the basic link (FCS = CRC-32 of annex C checked), MLE, the
+    CMCE call control PDUs with their type-1 / 2 / 3 elements
+    (`parse_cmce`, annex E rules; a PDU counts only when its elements end
+    exactly at the TM-SDU's end). Trunking: allocation + call PDU ->
+    `grant()` (carrier -> Hz with SYSINFO's or the extended band / offset,
+    uplink by TS 100 392-15's duplex table), a call table by call
+    identifier (64) for target / source / encryption across PDUs,
+    D-RELEASE -> `grant_end()`; a TRAFFIC instance (hidden option
+    `timeslot`, set by the grant with `mcc` / `mnc` / `cc` / `call` /
+    `group`) plays, reports valid frames / cell packets and `call()` /
+    per-transmission talkers for that timeslot only, valid frames only
+    while its AACH says assigned (`tr_`: ACTIVE at TCH
+    or D-TX GRANTED, ENDED at D-TX CEASED / hang time / 1 s without
+    traffic, RELEASED at D-RELEASE / the AACH unallocated twice); with the
+    identity options it accepts that cell only (another cell's BSCH is
+    ignored, the AACH counts only within 1.5 s of a CRC-valid block of the
+    wanted cell). Call records start anew at each D-SETUP and go 60 s
+    after last heard. Search (review fixes 2026-11-20): a training
+    sequence counts anywhere in the window (2.1 missed carriers that kept
+    an unlucky place in the slot grid - after a RESET, after silence),
+    one slot dropped per failed search, repeated in `process()` until
+    less than a window is left (bounded history; a half-slot drop per
+    10 ms block grew it without limit); a RESET clears the statistics.
+    After a loss of slot sync the TDMA numbers are unknown (nothing
+    timeslot-dependent reported, tracked or played) until the cell's BSCH
+    or until the carrier is back on the old slot grid (`resume_numbering`:
+    a whole number of slots after the last good one within 2 samples, at
+    most 10 s later; a 250 ms fade costs a call ~0.33 s of talker / audio;
+    before, the old count ran on and a fade put another timeslot's grant /
+    target on a traffic instance - the sanitize run's damage sweep). Real
+    sigidwiki recording: 8 allocations, all parsed, all pointing to the
+    timeslot the AACH marks as traffic. Details and tests:
+    plugins/tetra/README.md
 - Report (`dig_report.hpp`): facts table per plugin id (key, value, age),
   event log (400 entries, identical texts de-duplicated per window; events
   carry `src` = plugin id and `p` = its name, "" = the decoder itself).
@@ -823,7 +975,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   still needs them) ⚙ Setup Settings → Decoders
   (a sidebar box, "🔐 Digital Decoders", until 2026-11-17 - *sidebar.md*,
   "Setup Settings dialog") shows the plugin list (`aiRenderPlugins` -> `#ai-plugins`:
-  Auto detect tick, ↻ = `PLUGINS_RESCAN` after a manual copy + make; no
+  Auto detect tick, a "Trunk following" tag on the plugins whose list entry
+  has `trunking` (2026-11-20; *trunk-following.md*), ↻ = `PLUGINS_RESCAN` after a manual copy + make; no
   export / import / rebuild in the web UI - plugins move as folders + `make`;
   a plugin is put on a VFO with the VFO card's decoder list; the
   heading shows the count, the Decoders tab a ⚠ count of plugins with an

@@ -76,5 +76,50 @@
    "bearing": 330
   }
  ]
+},
+{
+ "id": "nxdn-trunk-two-calls",
+ "title": "NXDN Type-C trunking: a control channel and two calls on traffic channels",
+ "description": "NXDN96 trunked site, global system 123 site 9, RAN 9: control channel CH 88 on 452.1 MHz (bearing 300 deg) with SITE_INFO / SRV_INFO / ADJ_SITE_INFO; VCALL_ASSGN then VCALL_ASSGN_DUP every 0.5 s for TG 100 <- unit 2001 on CH 32 (451.4 MHz, grant 1.5 s, call 1.8 - 4.8 s, TX_REL_EX hang 1 s, DISC on FACCH1) and for TG 200 <- unit 2002 on CH 116 (452.45 MHz, grant 7.5 s, AES-encrypted call 7.8 - 10.8 s, DISC on FACCH2); the traffic channels at 40 and 200 deg. NXDN Type-C grants carry channel numbers only: the system's channel table must give CH n = 451.0 MHz + n x 12.5 kHz. Expect (system) / (grant) on VFO 0, a voice VFO per call (options ran=9, rate=9600), talkers 2001 at 40 deg and 2002 at 200 deg.",
+ "rf_hz": 452100000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 15,
+ "vfo": {
+  "bw_khz": 12.5
+ },
+ "commands": [
+  "TRUNK_FOLLOW:1",
+  "TRUNK_RULE_SET:{\"sys\":\"nxdn:global.123\",\"first\":1,\"last\":1023,\"base_hz\":451012500,\"step_hz\":12500}"
+ ],
+ "files": {
+  "scene.json": {
+   "rf_hz": 451800000.0,
+   "seconds": 15,
+   "snr_db": 20,
+   "seed": 5,
+   "sources": [
+    {"name": "site", "file": "cc.cf32", "rate": 48000, "loop": true, "at": 0, "offset_hz": 300000, "bearing": 300},
+    {"name": "2001", "file": "call1.cf32", "rate": 48000, "at": 0, "offset_hz": -400000, "bearing": 40},
+    {"name": "2002", "file": "call2.cf32", "rate": 48000, "at": 0, "offset_hz": 650000, "bearing": 200, "gain_db": -3}
+   ]
+  }
+ },
+ "steps": [
+  ["{tools}/nxdn_gen.py", "cc.cf32", "--control", "--seconds", "15", "--ran", "9", "--cat", "global", "--system", "123",
+   "--site", "9", "--cc1", "88", "--adj", "10:3", "--grant", "1.5:4.6:32:100:2001", "--grant", "7.5:4.6:116:200:2002"],
+  ["{tools}/nxdn_gen.py", "call1.cf32", "--at", "1.8", "--dur", "3", "--src", "2001", "--dst", "100", "--ran", "9",
+   "--outbound", "1", "--trunk", "1", "--hold", "1", "--disc", "1"],
+  ["{tools}/nxdn_gen.py", "call2.cf32", "--at", "7.8", "--dur", "3", "--src", "2002", "--dst", "200", "--ran", "9",
+   "--outbound", "1", "--trunk", "1", "--cipher", "3", "--key", "1", "--hold", "1", "--disc", "2"],
+  ["{sdk}/wide_scene.py", "scene.json", "out.cu8"]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {"event": "Voice grant: TG 100 <- 2001 on channel 32"},
+  {"event": "Voice grant: TG 200 <- 2002 on channel 116"},
+  {"tid": "2001", "bearing": 40},
+  {"tid": "2002", "bearing": 200}
+ ],
+ "tol_deg": 5
 }
 ]

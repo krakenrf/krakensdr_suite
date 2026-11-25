@@ -12,9 +12,92 @@ bursts B..F extrapolated from the last sync) hands each burst to `dmr.cpp`:
 - voice superframes: EMB (QR(16,7)) + the embedded LC over bursts B..E
   (Hamming(16,11) + column parity + 5-bit checksum); GPS and talker alias LCs
 - CSBK (grants, preambles, Tier III control-channel chatter with verbose),
-  PI and data headers, idle bursts
+  MBC (header + continuation blocks, the last block's CRC), PI and data
+  headers, idle bursts; the CACH short LC (4 CACH bursts, Hamming(17,12)
+  rows + column parity + CRC-8): C_SYS_Parms / P_SYS_Parms
+- Tier III trunking (`dmr_trunk.cpp`, ETSI TS 102 361-4) for trunk
+  following - see below; Motorola Capacity Plus: the rest channel
 - Voice: AMBE+2 through a user-installed mbelib (README "Digital voice
-  codecs"); privacy calls are muted, never decrypted. Option `slot`
+  codecs"); privacy calls are muted, never decrypted. Option `slot` (talkers,
+  calls, events and audio of that timeslot only; the other slot's radio is
+  reported as "?" so its samples stay out of the DoA); hidden options set
+  by trunk following: `cc` (only bursts of that colour code - also a CACH
+  short LC counts only from a burst whose own slot type / EMB carried it,
+  and none from a voice burst A, which has no colour code) and `traffic`
+  (this VFO follows a payload channel: never `control = true`, never
+  `control_channel`). Option `net_tag` (Network tag, free text: letters,
+  digits, `_`, `-`, up to 16; anything else is dropped): see below
+
+## Trunk following (Tier III)
+
+`Info::trunking`. On a TSCC (trunked station control channel):
+
+- System: the C_SYScode of C_ALOHA / C_BCAST, or of the CACH short LC
+  (C_SYS_Parms on a TSCC, P_SYS_Parms on a payload channel - so a payload
+  channel names its system too). `trunk_system` key = the NETWORK: model +
+  network code (`Huge.1`, `Small.37`; the model sets the NET / SITE split,
+  table 6.5), site = `site <SITE>` (raw value), `control` while TSCC PDUs
+  were heard on a slot the instance follows in the last 5 s (C_SYS_Parms
+  counts only without a `slot` option: it says one of the carrier's slots
+  is a TSCC; never with `traffic`). Sent on a change - at once after a
+  reset - and every 5 s
+- Network tag: private networks choose their network code, and two
+  unrelated networks here send the same one (both model Huge, NET 1: one
+  at 455-458 MHz, plan 455.30625 MHz + LCN x 12.5 kHz, colour code 4; a
+  Tait network at 414-418 MHz, plan 414.0000 MHz + LCN x 12.5 kHz, colour
+  code 0) - both were `Huge.1`, so the host applied one's channel table to
+  the other. Tier III sends nothing else network-wide (the colour code is
+  per channel, the adjacent-site lists name the same NET, vendor FIDs name
+  the manufacturer), so the user tells them apart: `net_tag` on the control
+  VFOs of one of them makes the key `<model>.<NET>.<tag>` (`Huge.1.tait`)
+  and the name "... (tait)"; every grant passes it on (`opt.net_tag`), so
+  the traffic instances report the same system. Capacity Plus: key
+  `CapPlus.CC<cc>.<tag>`. Empty = as before
+- Grants: PV / TV / BTV / PD / TD / PV_DX / PD_DX / PD_MI / TD_MI (CSBKO
+  0x30-0x38; 0x38 from an MS is BS_Dwn_Act) on a TSCC or a payload channel
+  -> `grant`: channel `LCN <n>` / number n, slot = the LCN bit, group (TV,
+  BTV, TD, TD_MI), emergency, `update` = Late_Entry (TV / BTV), `data` for
+  the data grants, a duplex grant's Call Direction turned into called /
+  calling (a gateway / special address - TS 102 361-4 annex A.4 - by its
+  alias: `PSTNI`, `TSI`, `ALLMSID` ..., in grants and calls alike; a unit
+  call to PSTNI is a telephone call, private, followed like any other),
+  options `slot` = 1 / 2, `traffic` = 1, `net_tag` when set and - with absolute
+  parameters - `cc`. A single-slot instance reports only its own slot's
+  grants.
+  Logical channel 0xFFF = an MBC with the CG_AP block: downlink = its RX
+  (the MS receive) frequency, uplink = its TX, the payload channel's colour
+  code. An MBC's continuation must be the next burst of the header's slot:
+  60 ms (+-3 symbols) after it; one 30 ms after it (the other slot's, its
+  TACT misdecoded) is ignored, a later one breaks the MBC. The grant PDUs
+  carry no privacy flag: `encrypted` comes only from
+  the payload channel's own LC
+- Channel numbers -> Hz only where the system says: C_BCAST Chan_Freq (MBC
+  with BC_AP), CG_AP / MV_AP / VN_AP blocks; the plugin keeps them
+  (`trunk_channel` with downlink and uplink) and uses them for later grants
+  of that channel. The fixed / flexible channel plans of annex C are
+  personalisation data, never on air: otherwise `freq_hz` NAN, and the
+  user's channel table (or the host's learning) maps `LCN <n>`
+- C_BCAST: call timers, adjacent sites and vote-now advice (facts +
+  `trunk_channel` of the neighbour's TSCC), announce / withdraw TSCC,
+  local time, general site parameters, mass registration (verbose)
+- C_MOVE with Mask 0 (every radio) -> `control_channel`; a C_MOVE for some
+  radios only is an event
+- Payload channel, per timeslot: `call(ACTIVE)` from the voice LC header /
+  embedded LC (late entry: a voice burst without an LC yet gives an ACTIVE
+  with no target) - group or unit from the FLCO, encrypted = the privacy
+  bit of the LC's service options or the EMB's PI; `ENDED` at the
+  terminator with LC (its hang-time repeats every 60 ms are skipped) or
+  1 s without voice; `RELEASED` at P_CLEAR (repeated P_CLEARs: one per 2 s).
+  P_PROTECT is an event. With `slot` set only that timeslot is reported
+- Motorola Capacity Plus (no public standard): CSBKO 0x3E FID 0x10 on the
+  rest channel -> `trunk_system` key `CapPlus.CC<colour code>` (nothing
+  better is on air: two systems on one colour code in reach share it),
+  `control_channel` `LCN <n>` when the rest channel number changes - only
+  after 3 status CSBKs in a row name the new one (both slots count: up to
+  ~6 s on an idle rest channel's beacons) and at most once per 5 s. Its
+  active-channel / group list is not decoded (no recording with traffic),
+  so there are no Capacity Plus grants. Connect Plus (FID 0x06) and Hytera
+  XPT: only named
 
 ## ID separation (DoA per radio)
 
@@ -58,10 +141,111 @@ repeater output every radio's bearing is the repeater's, in direct mode
   recordings: dmr_1 263 -> 269 valid bursts, dmr_it_8 604 -> 605, dmr_2
   unchanged, the talkers unchanged.
 
+- Trunking, generator (2026-11-20): `dmr_gen.py --mode tscc` (C_ALOHA,
+  C_BCAST, Chan_Freq MBC, grants twice then late entry once a second,
+  C_MOVE, C_SYS_Parms in the CACH) and `--mode bs --sys ... --clear S`
+  payload channels -> catalogue entry `dmr-tier3-trunk-three-calls` (14 s,
+  2.4 MHz: TSCC at +300 kHz, channel 301 at -500 kHz with one call per
+  timeslot from two transmitters, channel 302 at -100 kHz from a grant
+  with absolute parameters, colour code 2). Offline: the TSCC gives the
+  system (Small.37 site 5), 3 channels (301 / 302 with downlink and
+  uplink exact, 320 without), 15 grants (9 late entry) of 3 calls with
+  the frequencies, slots and the `cc` option as generated; each payload
+  channel with the grant's options (`--opt slot=1|2 [--opt cc=2]`):
+  ACTIVE at the call's first burst, ENDED at the terminator, RELEASED at
+  the P_CLEAR (+0.6 / +1.0 s), talkers 3100001 40.0, 3100003 160.0,
+  3100002 220.0 deg (each the other slot's talker as "?"; with the two
+  calls overlapping the offline estimator - which takes a talker's whole
+  span - mixed them: 43.8 / 138.3 deg, so the entry has them one after
+  the other). `tools/digi_test` delivers the same SYSTEM / CHANNEL /
+  GRANT / CALL reports through the engine
+- Robustness (TSCC, 12 s, 15 grant messages, SNR in 12.5 kHz, 3 noise
+  seeds each): all 15 down to 8 dB, 10-12 at 6 dB, none at 4 dB; +-1 kHz
+  carrier offset: all 15 (offset measured -1001 / +1002 Hz). Damaged
+  grants (114: 1..14 flipped BPTC bits, a wrong CRC mask, an MBC header
+  without / with a broken continuation or a CG_AP of another CSBKO, a
+  burst cut short): 0 false grants; BPTC repaired 6/6 with up to 5 flips,
+  2-5/6 with 6-14, every other kind none. Each grant form is guarded by
+  BPTC(196,96) + CRC-CCITT (mask 0xA5A5; MBC header 0xAAAA, the last
+  block's own CRC over the continuation, its CSBKO must repeat the
+  header's), Cdeftype 0 and 50-999 MHz for absolute parameters
+- Real Tier III network (2026-11-20, 600 s off air, 2.4 MHz of UHF, one
+  antenna): three TSCCs (sites 1-3 of one network) and seven payload
+  carriers named by their CACH
+  P_SYS_Parms (sites 1-3). Only C_BCAST Adjacent_Site is sent (no
+  Chan_Freq, no MBC, no absolute parameters): grants carry logical
+  channels only. From the grants and which carrier carried the granted
+  talkgroup: one linear plan, f = base + LCN x 12.5 kHz, for all 10
+  channels seen (the base is personalisation data); uplinks are not on air.
+  13 voice grants (TV_GRANT, sent twice 60 ms apart, then as late-entry
+  grants 4 at a time every 360 ms until the clear-down): 12 matched a call
+  of the same talkgroup on the granted carrier and slot 0.34-0.58 s later
+  (median 0.50; one weak carrier 3.5 s: its first LCs lost), 1 never keyed
+  up (P_CLEAR to the talkgroup 2.0 s after). A transmission ends with a
+  terminator (repeated every 60 ms through the hang time), a new one
+  inside the hang time is the same call; 1.98 s after the last terminator
+  the slot is cleared with 3 P_CLEARs 60 ms apart, addressed to the
+  talkgroup (data calls: ALLMSI). The TSCC carriers' slot 2 carries a
+  Motorola-FID CSBKO 0x19 (aloha-like, its own system code, about 300 per
+  600 s) and some data; data grants (PD_GRANT / PD_GRANT_MI, 102 at site
+  1) go to the payload channels and the TSCC's own slot 2 (composite).
+  Not parsed (shown with Show all messages): FID 0x10 CSBKO 0x19, C_ACKD
+  / C_AHOY (standard, no trunking content). A 30 s probe of another
+  Tier III network showed call timers and vote-now advice too
+- Capacity Plus: a 30 s rest-channel recording (no traffic): the rest
+  channel's CSBKO 0x3E on both slots, its timeslot bit matching each
+  (system `CapPlus.CC1`, rest channel 1); nothing to check grants against
+- Review fixes (2026-11-20; plugin 2.2; each test fails with 2.1 and passes
+  with 2.2): a CC 2 payload channel with a CC 1 TSCC 20 dB weaker on
+  its frequency, `slot=1 cc=2`: was `control=1` (C_SYS_Parms from the
+  CACH) every 5 s before its own carrier keyed up, now only its own
+  `control=0`; a composite TSCC whose slot 2 carries a call, `slot=2`: was
+  `control=1` and slot 1's 6 grants, now `control=0`, no grants, the call
+  as before; 24 pairs of interleaved MBC grants (slot 1 + slot 2, the same
+  CSBKO) with 18 of the slot-2 continuations' TACTs corrupted to slot 1:
+  was 18 grants with one call's target on the other's channel, now 0 (24
+  slot-1 grants right, the 6 intact slot-2 ones right); Capacity Plus with
+  one glitching status CSBK and two real moves 1 s apart: was 4 moves (to
+  the glitch and back), now 2 (the second 5 s after the first).
+  `tools/digi_test --retune` from one network (Chan_Freq for channel 301)
+  to another: after the RESET the new network's SYSTEM comes before its
+  first GRANT, and its channel 301 has no frequency (the old table is gone)
+- Sanitizer findings (2026-11-20, plugin 2.3): (1) a DMR sync ending less
+  than 89 symbols after the stream's start or a reset() read the burst's
+  CACH / first half in front of the sample buffer (`lib/dig_fsk4.cpp`: a
+  real sync's job checked only the forward end) - such a sync is skipped now
+  (its burst was never received whole: the first burst after a retune at
+  most), and `SymSrc::sym` reads a symbol outside the history as 0. ASan +
+  UBSan build, every start offset 0..2000 samples in steps of 7 of a TSCC,
+  a payload channel and a repeater (858 runs) and a RESET 1 s + 0..2000
+  samples in (165 `--serve` runs): before 484 + 25 runs with a
+  heap-buffer-overflow, after 0 - also with the `sym` bound taken out (the
+  job check alone); the regression set under the sanitizer: no report, the
+  output identical. (2) A call from noise: a false voice sync + one burst
+  whose EMB was within 1 bit of a codeword gave `call(ACTIVE)` with the
+  encrypted flag. A call without an LC now needs the colour code known (a
+  checked data burst or `cc`) and two good EMBs in the superframe; the
+  encrypted flag two PI bits in a row (or a checked PI header); a talker
+  from EMBs alone needs the colour code known or two EMBs. 1 h of noise /
+  30 min of analogue FM on the channel / 30 min of FM on the adjacent
+  channel: before 2 / 2 / 3 false calls (no option), after 0 everywhere
+  (also with `cc`, `slot`, `traffic`); left: 2 / 1 / 0 talker spans of one
+  burst with `cc` set. Late entry into 8 real calls: the first ACTIVE 60 ms
+  (one burst) later than before
+- Every earlier test unchanged (dmr_1 269, dmr_2 294 valid bursts and their
+  talkers, the `dmr-repeater-and-direct` entry's talkers and bearings),
+  except: the GopherTrunk voice-terminator fixture's hang-time terminator
+  train is 1 talker instead of 23 of 27 ms; opcode names 0x2E / 0x2F
+
 ## Sources / limits
 
-ETSI TS 102 361 (public); DSD / dsdcc / sdrtrunk as documentation only;
-the AMBE frame interleave tables from DSD (ISC, notice in
-`lib/mbe_tables.hpp`). A repeater INPUT with both slots busy can't be split
+ETSI TS 102 361 (public; trunking: -4 V1.12.1 clauses 6.3.2.2.1, 7.1.1.1,
+7.1.1.3, 7.1.2, 7.2.19, 7.2.42, annexes A.4 / B.1 / C; MBC and short LC:
+-1 V2.6.1 7.4, 7.1.4, B.2.3, B.3.3, B.3.7, B.3.12); DSD / dsdcc / sdrtrunk
+as documentation only; the AMBE frame interleave tables from DSD (ISC,
+notice in `lib/mbe_tables.hpp`). Capacity Plus (`capplus()` in
+dmr_trunk.cpp): the CSBKO 0x3E octet-2 layout is a [GPL-fact] from
+DSD-FME / SDRTrunk, its timeslot bit confirmed on a recording, the rest
+channel number [UNVERIFIED]. A repeater INPUT with both slots busy can't be split
 (MS bursts carry no slot); two radios in direct mode on both timeslots at
 once: the receiver follows one burst sequence at a time.

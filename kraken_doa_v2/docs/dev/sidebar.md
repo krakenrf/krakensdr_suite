@@ -535,9 +535,27 @@ lost the box too; the section is reached through the cog there as well.
 - **Decoder Logging** is the Decoder Logging section of Setup Settings
   (below; *decoder-log.md*).
 
+**Trunk Following** (`trunk`, the `trunk` icon, 2026-11-20 -
+*trunk-following.md*, "Page") was added after Saved Frequencies, in every
+operating mode but sweep mode (`.not-sweep`, since the merge with main of
+2026-11-25: no VFO runs there): one more keyed box. Main's Signal ID box
+(`signal-id`, *signal-classifier.md*, "Page") was added at the same place;
+the merge put Trunk Following first, then Signal ID - with the Sweep box the
+sidebar has 19 keyed boxes. A layout stored before either box loads with
+both after Saved Frequencies (`sbBoxOrder`), open. It is `display:none` until the receiver
+answers `GET_TRUNK` with its status, so an older receiver leaves the sidebar
+as it was (a hidden box keeps its place in a stored order, as the Wideband
+Board box does). Its rarely used settings fold out under the ⚙ in its first
+row (the saved-frequency scan's pattern); a system's names, talkgroups and
+channel table are in its own dialog (the Setup Settings look, sections as a
+strip across the top on every width). Its last part, *Control channels* (2026-11-22), holds
+the control-channel search (a form folding out of its Search bands…
+button) and the remembered control channels, a list kept still under the
+pointer (*trunk-following.md*, "Page").
+
 ### The Sweep box (2026-11-20)
 
-Sweep mode (*sweep-mode.md*, "The page") brought a 17th keyed box, `sweep`,
+Sweep mode (*sweep-mode.md*, "The page") brought another keyed box, `sweep`,
 shown only in that mode (`.sweep-only`; placed first after the phone
 boxes): Resolution, Dwell, Run / Pause and what the sweep is doing. The mode
 hides the boxes that need demodulation, VFOs or DoA (`.not-sweep` with the

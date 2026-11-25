@@ -50,7 +50,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   good TSBK; Phase 2: a checked outbound slot, an inbound burst's symbols
   6-173), dmr (burst), nxdn (frame; the CAC path computes its own),
   ysf (a 100 ms frame whose FICH passed, from its FS), dstar (RF header; a superframe from the previous data sync), tetra (the
-  slot), mpt1327 (CCSC / SYNT + address codeword). Standalone: pagers (a
+  slot; a trunk-following traffic instance: only its timeslot's, TCH
+  slots with a traffic AACH included), mpt1327 (CCSC / SYNT + address codeword). Standalone: pagers (a
   synced POCSAG batch with <= 2 bad codewords - replaces the old valid() per
   address codeword -, a FLEX block with <= 1 lost word per phase), aprs + v23_telemetry (frame end - length at 1200 bit/s),
   radiosonde (`FskRx::clock` per block -> `FskFrame::t_start / t_end`;

@@ -11,6 +11,7 @@
 #include "networking/websocket_server.hpp"
 #include "signal_processing/fft_processor.hpp"
 #include "voice2text.hpp"
+#include "trunk_follow.hpp"
 #include <atomic>
 #include <iostream>
 #include <algorithm>
@@ -387,6 +388,16 @@ void DecimatorManager::ensureDigital(DecimatorInstance& inst) {
     // on the uWS loop like a browser's command (only the VFO's id is held)
     const int id = inst.id;
     inst.digital->set_tune_handler([id](double rf_hz) { return ControlHandler::request_plugin_tune(id, rf_hz); });
+    // what a plugin reports about a trunked system (kp::Host::grant ...) and
+    // the decoder's RESETs -> the trunk manager (trunk_follow.cpp)
+    // (the decoder's serial: the manager tells a reused id's events apart - an
+    // address could be the new decoder's too, a serial is never repeated)
+    static std::atomic<uint64_t> serials{0};
+    const uint64_t sn = serials.fetch_add(1) + 1;
+    inst.digital_serial = sn;
+    inst.digital->set_trunk_handler([id, sn](const std::string& plugin, trunk::PluginEvent&& ev) {
+        trunk::on_plugin_event(id, sn, plugin, std::move(ev));
+    });
     // reconstructed pictures (kp::Info::video plugins) -> the decoder panel's
     // canvas, as a binary frame carrying this VFO's id (type 8)
     inst.digital->set_video_handler([id](const dig::VideoFrameReport& f) {

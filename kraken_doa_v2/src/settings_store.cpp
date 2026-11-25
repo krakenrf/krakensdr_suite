@@ -191,6 +191,20 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // gain by region: "<f1,f2,..>|<g0,g1,..>" (Hz | dB), "|" = no table
         {"sweep_gains",              "SWEEP_GAINS:",              VType::STRING, "|"},
         {"operating_mode",           "OPERATING_MODE:",           VType::STRING, "coherent"},
+        // Trunk following (trunk_follow.hpp): on / off, voice VFOs at most,
+        // follow encrypted / unit-to-unit calls, hear followed calls, hang
+        // time (s), a talkgroup through every site that grants it. What it knows about each system is in trunk_systems.json
+        {"trunk_follow",             "TRUNK_FOLLOW:",             VType::BOOL,   "0"},
+        {"trunk_max_vfos",           "TRUNK_MAX_VFOS:",           VType::NUMBER, "2"},
+        {"trunk_encrypted",          "TRUNK_ENCRYPTED:",          VType::BOOL,   "1"},
+        {"trunk_unit",               "TRUNK_UNIT:",               VType::BOOL,   "1"},
+        {"trunk_audio",              "TRUNK_AUDIO:",              VType::BOOL,   "1"},
+        {"trunk_hang_s",             "TRUNK_HANG:",               VType::NUMBER, "2.0"},
+        {"trunk_all_sites",          "TRUNK_ALL_SITES:",          VType::BOOL,   "0"},
+        {"trunk_retune",             "TRUNK_RETUNE:",             VType::BOOL,   "0"},
+        {"trunk_retune_cal",         "TRUNK_RETUNE_CAL:",         VType::BOOL,   "1"},
+        {"trunk_retune_max_s",       "TRUNK_RETUNE_MAX:",         VType::NUMBER, "120"},
+        {"trunk_tuners",             "TRUNK_TUNERS:",             VType::STRING, ""},
         // Station
         {"station_id",               "STATION_ID:",               VType::STRING, "KrakenSDR"},
         {"location_source",          "LOCATION_SOURCE:",          VType::STRING, "gps"},

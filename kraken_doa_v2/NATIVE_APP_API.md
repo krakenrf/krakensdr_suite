@@ -422,3 +422,21 @@ printf 'AUTH:%s\nSUBSCRIBE:FFT,DOA\nDOA:1\n' "$TOKEN" \
 
 (`--insecure` skips the certificate check for testing — a real app pins the
 server key or the receiver's CA, section 1.)
+
+---
+
+## 8. Trunk following
+
+Commands `TRUNK_FOLLOW:0|1`, `TRUNK_MAX_VFOS:n`, `TRUNK_ENCRYPTED:0|1`,
+`TRUNK_UNIT:0|1`, `TRUNK_AUDIO:0|1`, `TRUNK_HANG:s`, `TRUNK_ALL_SITES:0|1`,
+`TRUNK_RETUNE:0|1`, `TRUNK_RETUNE_CAL:0|1`, `TRUNK_RETUNE_MAX:s`, `TRUNK_RETURN`,
+`TRUNK_TUNERS:<list>`, `TRUNK_SEARCH:{..}`, `TRUNK_SEARCH_STOP`, `GET_TRUNK_CC`
+(-> `{"trunk_cc":{...}}`), `TRUNK_CC_NAME:` / `_DEL:` / `_SET:` / `_FOLLOW:{..}`,
+`TRUNK_CC_CLEAR`,
+`TRUNK_END:id`, `TRUNK_HOLD:{..}`, the system edits `TRUNK_SYS_SET:` /
+`TRUNK_TG_SET:` / `TRUNK_CH_SET:` / `TRUNK_RULE_SET:` (+ `_DEL`), `GET_TRUNK`,
+`GET_TRUNK_SYS:<id>`; replies `{"trunk":{...}}` (status), `{"trunk_sys":{...}}`
+(a system's lists), `{"trunk_error":{"cmd","error"}}`. A voice VFO carries
+`"trunk":{"role":"voice",..}` in `decimator_info` (a control VFO
+`"role":"control"`); its live state is in the status' `vfos`. Exact syntax
+and every field: `docs/dev/trunk-following.md`.

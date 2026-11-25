@@ -229,6 +229,7 @@ APP_SRCS = \
 	$(SRCDIR)/rdf_mapper.cpp \
 	$(SRCDIR)/vfo_level.cpp \
 	$(SRCDIR)/talker_doa.cpp \
+	$(SRCDIR)/trunk_follow.cpp \
 	$(SRCDIR)/array_cal.cpp \
 	$(SRCDIR)/voice2text.cpp \
 	$(SRCDIR)/playback.cpp \
