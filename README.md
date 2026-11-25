@@ -347,7 +347,9 @@ receiver. Nothing is demodulated in this mode; the VFOs and their settings are
 kept and come back with the other modes. Going back to Coherent after a sweep
 recalibrates the array's phases, which takes a second or two (about half a
 minute with an older librtlsdr, whose retunes shifted the tuners' samples
-against each other).
+against each other; `./run.sh` brings an older `librtlsdr` clone up to the
+fork's latest when it can, and says so when it can't - offline, say -, as
+does `./install.sh`).
 
 **Ordinary RTL-SDR dongles.** Without a KrakenSDR or KerberosSDR, the suite
 also runs on one or more ordinary RTL-SDR dongles (any serial numbers): just

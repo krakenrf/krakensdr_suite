@@ -30,6 +30,12 @@ make            # also clones the pinned uWebSockets and builds ../librtlsdr's s
 make run | status | debug | clean | rebuild | distclean | deps | deps-fedora | deps-arch
 ```
 
+`make` also brings a `../librtlsdr` clone that lacks the newest fork feature
+heimdall uses (`RTLSDR_FEATURE_MARK`) up to the fork's latest - softly, once
+per HEAD or week (`../scripts/librtlsdr-update.sh`); move the mark (and the
+Dockerfile's `LIBRTLSDR_COMMIT`) when heimdall starts using a newer fork
+feature (`../docs/dev/librtlsdr-fork.md`, *Keeping the clone current*).
+
 CMake works too (`mkdir build && cd build && cmake .. && make -j3`) once
 `make check-uws` has fetched uWebSockets and `../librtlsdr/build/src/librtlsdr.a`
 exists. `index.html` sits in `heimdall_v2/` (not `src/web/`) and is read at

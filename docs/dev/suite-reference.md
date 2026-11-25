@@ -1777,7 +1777,12 @@ tree at the repo root):
   heimdall` shows no librtlsdr.
 - heimdall's `make` clones/builds just the static library when it's missing,
   and fast-forwards a clone older than 578b43d (the fast drag calls + the
-  stalled control OUT retry; else it stops - `librtlsdr-fork.md`);
+  stalled control OUT retry; else it stops - `librtlsdr-fork.md`); a clone
+  from 578b43d on that lacks the newest fork feature heimdall uses
+  (`RTLSDR_FEATURE_MARK`, today 9644d07's fast gain write) is fetched and
+  fast-forwarded softly (`scripts/librtlsdr-update.sh`: bounded, nothing
+  discarded, at most once per HEAD or week; when it can't, one line and the
+  build goes on - `librtlsdr-fork.md`, *Keeping the clone current*);
   `install.sh` builds the fork and installs it to `/usr/local` (library,
   headers, udev rules) with its `rtl_*` tools linked statically too
   (`-DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON`)

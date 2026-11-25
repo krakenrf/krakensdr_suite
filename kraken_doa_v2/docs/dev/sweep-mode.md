@@ -2493,7 +2493,8 @@ worker's test are in `docs/dev/librtlsdr-fork.md`, *The rule, and the fix*
 and *Review round*, and `heimdall_v2/docs/dev/operating-modes.md`, *Hop
 timing* and its review rounds):
 - librtlsdr (two commits on the fork, not upstream yet; the patches are in
-  `docs/dev/librtlsdr-patches/`): any USB control IN of 3, 7, 11 ... bytes
+  `docs/dev/librtlsdr-patches/` [since 2026-11-25 on the fork's master,
+  6da393d + 88993d3, and that folder is gone]): any USB control IN of 3, 7, 11 ... bytes
   made the RTL2832U drop 4 bytes of its stream - every retune's lock check
   read 3 tuner registers. Such reads are padded and the lock check reads 4;
   a PLL settle after big VCO jumps; registers repaired after a lock retry;
@@ -3238,7 +3239,9 @@ through a 2 MB/s proxy by the page worker, not over a real one; a 1 GB Pi 4
 at the finest grids - and holds the store's lock 8.5 ms a set on the Pi 5,
 unmeasured there). And as before: the fork's commits are local (the Dockerfile's pin and
 heimdall's minimum stay 578b43d; an older fork gives the round-1
-behaviour). The cause of the one failed return. A Raspberry Pi 4 (another
+behaviour) [pushed 2026-11-25: the fork's master is 9644d07, the
+Dockerfile pins it, and make brings an older clone up to it -
+`docs/dev/librtlsdr-fork.md`, *Keeping the clone current*]. The cause of the one failed return. A Raspberry Pi 4 (another
 USB controller and a third of the CPU: the 9 % a core that sweeping takes
 on the Pi 5 leaves room, but it is not measured - nor is the 48 - 64 MB of
 the finest grids on its 1 GB; the receiver worker's proposal, not built: a

@@ -720,7 +720,8 @@ older samples lost - that far apart), `FAKE_FAST_TUNE_MS`,
    27.3-27.9 / 34.2-34.6 ms (FM, 5 tuners: 15.5 / 11.9 / 9.7 sweeps a
    second; dwell 5 / settle 0 16.3).
 5. *On the KrakenSDR with F's final library* (fork branch
-   `lock-read-no-slip`: no control IN of 3 mod 4 bytes, so no tune shifts a
+   `lock-read-no-slip`, now krakenrf/librtlsdr 6da393d + 88993d3 on the
+   fork's `master`: no control IN of 3 mod 4 bytes, so no tune shifts a
    stream; the 5 ms PLL settle also after a VCO jump > 400 MHz;
    `RTLSDR_TUNE_NO_DUMMY_READ`), 5 tuners, x86 PC, 03:46-04:23, load
    1.9-2.5. The library rebuilt from scratch in the worktree (the copied
@@ -1048,7 +1049,9 @@ exactly 3 registers costs no samples at all (`../../../docs/dev/
 librtlsdr-fork.md`, *A 3-register tuner read drops 2 samples*).
 
 **The library fix and the way back to coherent** (2026-11-21). The fork
-branch `lock-read-no-slip` makes no control IN of 3 mod 4 bytes (the cause:
+(krakenrf/librtlsdr 6da393d + 88993d3, written as the branch
+`lock-read-no-slip`, on the fork's `master` since 2026-11-25) makes no
+control IN of 3 mod 4 bytes (the cause:
 any such IN drops 4 bytes of the stream) and defines `RTLSDR_NO_STREAM_SLIP`
 (`../../../docs/dev/librtlsdr-fork.md`, *The rule, and the fix*). heimdall
 (`set_operating_mode`, sdr_init.cpp): built against a library with the macro,
@@ -1061,13 +1064,14 @@ sweep (`clear_l1_buffer_paired`, else the coherence recovery), the lag check
 of the phase recalibration (`check_lag_during_phase_recal`: a channel more
 than 1 sample off goes back to its servo) as the net, `--kerberos` (STALE
 after any retune outside coherent, unchanged), and the retune counters (only
-logged now). Built against a library without the macro (the Dockerfile's
-pinned 578b43d, an older clone) heimdall behaves as before (the forced full
+logged now). Built against a library without the macro (a fork older than
+6da393d - a clone make could not update, `../../../docs/dev/librtlsdr-fork.md`,
+*Keeping the clone current*) heimdall behaves as before (the forced full
 recalibration). Measurements: below (*Return-path measurements*).
 
 *Return-path measurements* (2026-11-21, the KrakenSDR, x86_64 PC, clean
-test builds against the fixed library and against the fork's master without
-the fix; job scratch 52196024 `fork/htest/`, `fork/out/q6.out`; seconds to
+test builds against the fixed library and against the fork's master of
+then, 3ad1746, without the fix; job scratch 52196024 `fork/htest/`, `fork/out/q6.out`; seconds to
 CONVERGED from the mode reply, `t_lagshift.py`):
 
 | before coherent | fixed library | without the fix |

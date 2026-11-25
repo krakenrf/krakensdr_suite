@@ -272,7 +272,10 @@ load the stock library; linked in, it can't (`ldd heimdall` shows no
 librtlsdr). `make` clones/builds the static library if it's missing, and
 fast-forwards a clone older than krakenrf/librtlsdr 578b43d (or stops with
 instructions; `RTLSDR_FIX_MARK` = `rtlsdr_finish_tune`, every platform -
-CMakeLists.txt checks the same); do NOT install `librtlsdr-dev` (distro
+CMakeLists.txt checks the same), and brings one that lacks the newest fork
+feature heimdall uses (`RTLSDR_FEATURE_MARK`) up to the fork's latest,
+softly (`../scripts/librtlsdr-update.sh`; docs/dev/librtlsdr-fork.md,
+*Keeping the clone current*); do NOT install `librtlsdr-dev` (distro
 rtl-sdr packages may stay installed).
 The fork's retune changes in 578b43d, on top of 00606c0 (skip-unchanged
 register writes, one N / SDM write, the I2C repeater left on,

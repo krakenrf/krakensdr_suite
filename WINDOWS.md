@@ -124,7 +124,10 @@ librtlsdr fork and its tools, libusb). Pass the folder on with the package
   fixes in the librtlsdr fork ([krakenrf/librtlsdr](https://github.com/krakenrf/librtlsdr)
   since commit 00606c0; heimdall needs 578b43d or later on every platform -
   its faster retunes and the retry of a stalled USB control write - and its
-  `make` updates an older `librtlsdr` clone, or stops if it can't). The important one: the sample stream runs
+  `make` (`build_windows.bat`) updates an older `librtlsdr` clone, or stops
+  if it can't; a clone that only lacks the fork's newest features is
+  updated too, and when that can't be done the build goes on with one line
+  saying so - `run.bat` itself never builds). The important one: the sample stream runs
   with WinUSB's RAW_IO policy - without it the dongles dropped short bursts of
   samples a few times a minute and the array lost its sample alignment. It
   needs libusb 1.0.30 or newer (MSYS2's current one; an older libusb gives a

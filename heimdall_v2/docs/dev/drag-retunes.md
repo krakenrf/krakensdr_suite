@@ -141,7 +141,7 @@ reply; library details docs/dev/librtlsdr-fork.md):
 Needs a fork with the call (`#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE`: the code
 still compiles the full path only against an older one, but the Makefile and
 CMake now require krakenrf/librtlsdr 578b43d - `RTLSDR_FIX_MARK`, every
-platform, the Dockerfile pins it); they also rebuild / check
+platform; the Dockerfile pins a later one, 9644d07); they also rebuild / check
 `../librtlsdr/build/src/librtlsdr.a` against the fork's sources on every
 platform, since a new header with an old library would fail the link.
 

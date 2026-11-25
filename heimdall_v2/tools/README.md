@@ -52,11 +52,11 @@ It prints one line per dongle and a `TOTAL:` line; a clean run has
 first buffers of a stream are reported separately (`startup:`) - the
 RTL2832 FIFO may overflow before the transfers are submitted.
 
-## librtlsdr-zerocopy-map-once.patch
+## The zero-copy change in the fork
 
-The change to krakenrf/librtlsdr from that investigation, kept here until it
-is in the fork (the two commits on the local librtlsdr `master`, 701a832
-and 3ad1746): zero-copy is compiled in on Linux and used by a handle that
+The change to krakenrf/librtlsdr from that investigation is in the fork
+(701a832 and 3ad1746, on its `master`; the patch that stood in for them here
+until then is gone): zero-copy is compiled in on Linux and used by a handle that
 calls `rtlsdr_prealloc_async()` (`-DENABLE_ZEROCOPY=0` leaves it out),
 zero-copy buffers are mapped once per handle and kept until
 `rtlsdr_close()`, `rtlsdr_prealloc_async()` maps them ahead of the stream
@@ -65,9 +65,5 @@ start (`RTLSDR_HAS_PREALLOC_ASYNC`; heimdall calls it in
 waits for every cancelled transfer, and (added 2026-11-13) the FIFO hold:
 `rtlsdr_set_fifo_hold()` / `rtlsdr_release_fifos()` (`RTLSDR_HAS_FIFO_HOLD`;
 heimdall holds every dongle's FIFO at open and starts all streams together
-on Linux - `../../docs/dev/librtlsdr-fork.md`, *FIFO hold*). Regenerated
-against krakenrf/librtlsdr 578b43d's `src/librtlsdr.c` and
-`include/rtl-sdr.h`. Apply it in `../librtlsdr` with
-`patch -p1 < ../heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch` and
-rebuild the static library (`make -C heimdall_v2` does). Details and
+on Linux - `../../docs/dev/librtlsdr-fork.md`, *FIFO hold*). Details and
 measurements: `../../docs/dev/librtlsdr-fork.md`, *Zero-copy USB buffers*.

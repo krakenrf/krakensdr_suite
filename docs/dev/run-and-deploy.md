@@ -205,7 +205,19 @@ make, no network, nothing written). An app needs a build when:
 - uWebSockets missing, `uWebSockets/.git/HEAD` not the pinned `UWS_COMMIT`,
   or no `uSockets/*.o`;
 - heimdall: `librtlsdr/build/src/librtlsdr.a` missing, a fork source newer
-  than it, or `librtlsdr.c` without `rtlsdr_finish_tune` (RTLSDR_FIX_MARK).
+  than it, or `librtlsdr.c` without `rtlsdr_finish_tune` (RTLSDR_FIX_MARK);
+  or the clone lacks the newest fork feature heimdall uses
+  (RTLSDR_FEATURE_MARK, both marks read from heimdall_v2/Makefile) and
+  `scripts/librtlsdr-update.sh due` says an update attempt is due (no
+  failed attempt for this HEAD + branch in the last 7 days: the stamp
+  `librtlsdr/build/.fork_feature_tried`; `git rev-parse` / `symbolic-ref`
+  only, no network). make then runs the same script's `update` while it
+  reads its rules - fetch (30 s at most) + `merge --ff-only`, or one line
+  and the build goes on - so after one attempt check and make agree there
+  is nothing to do (`docs/dev/librtlsdr-fork.md`, *Keeping the clone
+  current*). The build's progress plan then has an "Updating the librtlsdr
+  fork" step (and the library + link, dropped when the update didn't go
+  through).
 Not covered (make doesn't rebuild for them either): compiler / system
 library upgrades, whisper (optional, kraken_doa's make updates it). Also
 not covered: a single plugin's missing `build/decoder` (e.g. a build

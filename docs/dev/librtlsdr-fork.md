@@ -6,7 +6,98 @@ this area. Where this and the component `CLAUDE.md` files disagree, the code and
 the component files win.
 
 heimdall links krakenrf/librtlsdr statically and requires 578b43d or later
-on every platform. The two notes below were bullets of the Windows section.
+on every platform.
+
+## Keeping the clone current (2026-11-25)
+
+The fork's `master` - krakenrf/librtlsdr **9644d07** since 2026-11-25 - has
+everything heimdall uses: 578b43d (the fast retunes, the stall retry), 701a832
++ 3ad1746 (zero-copy buffers, the FIFO hold), 6da393d + 88993d3 (no retune
+drops a sample - `RTLSDR_NO_STREAM_SLIP` -, `RTLSDR_TUNE_NO_DUMMY_READ`, the
+register repair after an early lock read) and 9644d07 (the fast tuner gain
+write, `RTLSDR_HAS_GAIN_FAST`). The newer five were local commits (the last
+three on a branch `lock-read-no-slip`, as patches in `docs/dev/librtlsdr-patches/`
+and `heimdall_v2/tools/`) until they were pushed on 2026-11-25; the sections
+below keep the names they had while they were written.
+
+heimdall builds and runs with any fork from 578b43d on; without the newer
+commits it falls back (`#ifdef`): sweep / independent mode back to coherent
+in 25-30 s instead of ~2 s (every lag re-acquired), the slower tune call per
+sweep hop, ~9 ms per region gain write, no zero-copy / held stream start.
+
+What brings the `librtlsdr/` clone up to the fork's latest:
+- `./install.sh`: `git pull --ff-only` on an existing clone (it warns and
+  builds the checkout as it is when that fails), a fresh clone of `master`
+  otherwise.
+- `make -C heimdall_v2` - and so `./run.sh` (`scripts/autobuild.sh`) and
+  `build_windows.bat` (`windows/build.sh`; `krakensdr.exe` / `run.bat` never
+  build) - by two marks in `heimdall_v2/Makefile`:
+  - `RTLSDR_FIX_MARK` (`rtlsdr_finish_tune` in `src/librtlsdr.c`, 578b43d):
+    the oldest fork heimdall builds with. A clone without it is fetched and
+    fast-forwarded to its upstream, else the build stops with instructions
+    (the hard path: *WinUSB fixes and fast retunes*, below).
+  - `RTLSDR_FEATURE_MARK` (`rtlsdr_set_center_freq_gain_fast` in
+    `include/rtl-sdr.h`, 9644d07): the newest fork feature heimdall uses -
+    move it when heimdall starts using a newer one (and the Dockerfile's
+    pin with it). A clone that has the first mark but not this one is
+    updated SOFTLY by `scripts/librtlsdr-update.sh`, which make runs while
+    it reads its rules (`$(shell)`, only for the goals `all` / `run` /
+    `rebuild` / `heimdall`), so the same make sees the new sources: the
+    library is rebuilt (`RTLSDR_SRCS`) and the objects that include
+    `rtl-sdr.h` recompiled (their `.d` files), then heimdall relinked. The
+    update is `git fetch` + `git merge --ff-only @{u}` and nothing else:
+    nothing local is discarded, stashed or reset - git refuses a merge
+    that would overwrite a local change. When it can't be done (git
+    missing, not a git clone, a detached HEAD, no upstream, the fetch
+    failed or took too long, local commits, local changes in the way, the
+    upstream lacks the mark too) ONE line says why, what heimdall goes
+    without and how to get it (`git -C librtlsdr pull --ff-only`, or
+    `./install.sh`), and the build goes on with the clone as it is.
+  - The fetch is bounded: no credential or host-key prompt
+    (`GIT_TERMINAL_PROMPT=0`, stdin `/dev/null`, ssh `BatchMode` +
+    `ConnectTimeout=10` unless `GIT_SSH_COMMAND` is set), an HTTP transfer
+    under 1 KB/s for 10 s is dropped (`http.lowSpeedLimit` / `lowSpeedTime`),
+    and a watchdog kills git and its remote helper after 30 s
+    (`RTLSDR_FETCH_SECS`) - git has no connect timeout, and a black-holed
+    address otherwise waits out the kernel's SYN retries (~2 min on Linux).
+    Plain sh with `sleep` / `kill` (and `pgrep` when there is one): no
+    `timeout` binary, which macOS lacks. The hard path's fetch goes through
+    the same bound (`RTLSDR_FETCH`); its git output lands in
+    `librtlsdr/build/.fork_fetch.log`.
+  - When: a clone with the mark is never contacted. A failed attempt writes
+    `librtlsdr/build/.fork_feature_tried` (HEAD commit + branch) and is not
+    repeated before the HEAD or branch changes or the stamp is 7 days old -
+    a Pi that first starts offline gets the update a week later at the
+    latest (or at once with `git pull` / `./install.sh`); a successful one
+    removes the stamp. `scripts/autobuild.sh check` asks the same script
+    (`due`: greps, `git rev-parse`, the stamp - read-only, no network), so
+    run.sh builds exactly when make would try, and after one attempt, done
+    or failed, both agree that nothing is to do: no rebuild loop. The
+    stamp lives in `librtlsdr/build/`, which install.sh deletes - its own
+    pull comes first.
+- Docker: the Dockerfile pins `LIBRTLSDR_COMMIT` = 9644d07 (a checkout of a
+  commit; the image build copies `heimdall_v2/` but not `scripts/`, so it
+  never fetches).
+
+Tested 2026-11-25 on x86_64 Ubuntu with scratch upstreams made from the
+fork's objects (no network): clones at 3ad1746 and 578b43d went to 9644d07
+in one make (fetch + merge, cmake once, 12 heimdall objects, one link; the
+binary then has `rtlsdr_set_center_freq_gain_fast` / `_tuner_gain_fast` and
+`"gain_fast":true`, the old one `false`), the next check and make did
+nothing and made no git network call; a clone at 00606c0 by the hard path
+to the tip; one at 9644d07 with an upstream that would fail - no fetch. An
+upstream that is gone or refuses: the line after 0.1 s; one that accepts
+and never answers: 10.3 s (low-speed limit); one whose connect hangs (a
+full accept queue - SYNs dropped): 30.0 s (watchdog), no git process left
+behind. A local change, a local commit, a detached HEAD, no upstream, a
+tree without `.git`: nothing in the clone changed, the line, the build went
+on (the local change rebuilt the library, being a newer source). Retry: a
+stamp 8 days old - one more attempt, 5 days old - none. The script under
+dash and `bash --posix`; not run on macOS or MSYS2 (no Mac / MinGW here).
+
+## WinUSB fixes and fast retunes
+
+The two notes below were bullets of the Windows section.
 
 - librtlsdr fork on WinUSB: fixes in the fork itself since
   krakenrf/librtlsdr 00606c0 (bd357dd + its follow-up, all under `_WIN32`;
@@ -50,9 +141,11 @@ on every platform. The two notes below were bullets of the Windows section.
   older than the fork's sources. heimdall's code itself still compiles
   against an older fork (`#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE`: full path
   only), but neither build accepts one any more. The Dockerfile pins
-  `LIBRTLSDR_COMMIT` = 578b43d; install.sh clones master (a fresh install)
-  or `git pull --ff-only`s an existing clone (if that fails it warns and
-  builds the old checkout - heimdall's make then updates or stops). Linux:
+  `LIBRTLSDR_COMMIT` (578b43d then, 9644d07 since 2026-11-25); install.sh
+  clones master (a fresh install) or `git pull --ff-only`s an existing
+  clone (if that fails it warns and builds the old checkout - heimdall's
+  make then updates or stops; a clone from 578b43d on that lacks the newest
+  features is updated softly, *Keeping the clone current* above). Linux:
   the Makefile's update rebuilds only the static library heimdall links -
   the `rtl_*` tools in /usr/local stay until install.sh runs again. The
   library is rebuilt / checked against the fork's sources on every platform
@@ -189,8 +282,8 @@ on every platform. The two notes below were bullets of the Windows section.
   previous build's on the Pi and on Windows (where the compiled library
   is the same code: identical disassembly).
   Pushed as 578b43d (2026-10-20): heimdall's Makefile and CMakeLists.txt
-  require it (`RTLSDR_FIX_MARK` = `rtlsdr_finish_tune`, see above), the
-  Dockerfile pins it.
+  require it (`RTLSDR_FIX_MARK` = `rtlsdr_finish_tune`, see above); the
+  Dockerfile pinned it until 2026-11-25 (9644d07 since).
   A drag sends ~20 FREQ/s and kraken_doa forwards each at once,
   so heimdall used to run every one in order: a 2 s drag ended 15.5 s late.
   Now (all `#ifdef _WIN32`): the 8092 server reads everything waiting and
@@ -279,8 +372,9 @@ What follows:
   (`uint8_t data[3]`), once per drag; a 3-register read as control -400.00.
   So the three reads of exactly 3 registers are the whole effect:
   `r82xx_set_pll`'s lock check, `r82xx_set_pll_yc`'s, `r82xx_finish_tune`'s.
-  (Since FIXED on the branch `lock-read-no-slip`: *The rule, and the fix*,
-  below - the rest of this bullet is what was known before.)
+  (Since FIXED in the fork - 6da393d, on its `master` since 2026-11-25: *The
+  rule, and the fix*, below - the rest of this bullet is what was known
+  before.)
   NOT changed in the fork: the lock read was cut to registers 0..2 because
   reading 3 / 4 while the PLL settled was followed by the 0x0b / 0x0c
   corruption (`R82XX_PLL_SETTLE_US`; that wait is in place now, which may
@@ -293,8 +387,9 @@ What follows:
 
 ## The rule, and the fix: no control IN of 3 mod 4 bytes (2026-11-21)
 
-FIXED on the fork branch `lock-read-no-slip` (local, not pushed; patches in
-job scratch 52196024 `fork/patches/`). Measured on the KrakenSDR attached to
+FIXED in the fork: krakenrf/librtlsdr 6da393d + 88993d3 (written as the
+local branch `lock-read-no-slip`; on the fork's `master` since 2026-11-25,
+with 9644d07 on top). Measured on the KrakenSDR attached to
 the dev PC (x86_64 Ubuntu, kernel 6.8, the KrakenSDR's hub on the PC's xHCI),
 every number from job scratch 52196024 `fork/` (`README.txt` there lists the
 scripts and outputs).
@@ -565,7 +660,7 @@ below" level except where its blocks start (a wrap from a higher block).
 Cause unknown (the VCO at the top of its range: LO 1.6-1.77 GHz = VCO
 3.2-3.54 GHz, vco_max 3.54 GHz).
 
-**Review round (second commit on `lock-read-no-slip`, 2026-11-21).** An
+**Review round (the second commit, 88993d3, 2026-11-21).** An
 independent review found no hard defect; three risks and three nits were
 closed:
 1. *A lock retry left corrupted registers unrepaired* (the cache keeps the
@@ -725,7 +820,7 @@ both, 60k + 11k tunes on the Pi); the I2C clock change under load. No MinGW / zi
 glibc syntax checks of the suite rule were not run (the changes are plain C99
 / C++ without new platform calls).
 
-## A fast tuner gain write (2026-11-23, third commit on `lock-read-no-slip`)
+## A fast tuner gain write (2026-11-23, the third commit: 9644d07)
 
 Sweep mode's automatic gain writes a tuner's gain with its retune whenever
 the next hop wants another (30-44 writes in a 4 s sweep of 911 hops). The
@@ -734,7 +829,7 @@ dummy demod read, `r82xx_set_gain`'s read of tuner registers 0..3 (its
 result is not used), the LNA write (0x05), the mixer write (0x07) - and
 heimdall's gain change (gain mode + gain + IF mode) 10.
 
-The patch (`docs/dev/librtlsdr-patches/0003-*`, on 88993d3; macro
+The commit (krakenrf/librtlsdr 9644d07, on 88993d3; macro
 `RTLSDR_HAS_GAIN_FAST`):
 - `r82xx_set_gain_fast()`: the manual gain the ordinary call sets - the same
   table and rounding (`r82xx_get_rf_gain_index`), the same cache and
@@ -798,8 +893,9 @@ other tuners (they take the ordinary call), heimdall's use of it (worker S).
 
 ## Zero-copy USB buffers (investigated 2026-11-12/14)
 
-**State since 2026-11-14** (librtlsdr 701a832 + 3ad1746, on the local
-`master`; the rest of this section is the history that led there, written
+**State since 2026-11-14** (krakenrf/librtlsdr 701a832 + 3ad1746 - local
+commits until they were pushed on 2026-11-25; the rest of this section is
+the history that led there, written
 while zero-copy was still off): zero-copy is compiled in on Linux by default
 (`ENABLE_ZEROCOPY 1`; `-DENABLE_ZEROCOPY=0` leaves it out), and a handle
 uses it only if its application called `rtlsdr_prealloc_async()` - heimdall
@@ -861,9 +957,9 @@ Measured on x86_64 Ubuntu (kernel 6.8) with a 5-channel KrakenSDR:
   37.7 s -> 33.0 s CPU per 600 s, about 1.3 % of one core for the whole
   process.
 
-The patch (`heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch` = the
-local librtlsdr `master`'s two commits against 578b43d; not pushed to the
-krakenrf fork as of 2026-11-14): as first written zero-copy stayed OFF by
+The change (krakenrf/librtlsdr 701a832 + 3ad1746 on 578b43d; until they were
+pushed, 2026-11-25, a patch in `heimdall_v2/tools/` stood in for them): as
+first written zero-copy stayed OFF by
 default (see the state paragraph above for today's default); in a zero-copy
 build the buffers are
 mapped once per handle and kept until `rtlsdr_close()` (or a read with
@@ -875,8 +971,8 @@ and the stop path waits (<= 5 s) for every cancelled transfer before the
 buffers are reused, leaking them rather than freeing a transfer libusb still
 owns. heimdall calls `rtlsdr_prealloc_async()` in `init_rtlsdr_device()`
 just before `rtlsdr_reset_buffer()`, under `#ifdef RTLSDR_HAS_PREALLOC_ASYNC`
-- the Dockerfile's pinned `LIBRTLSDR_COMMIT` (578b43d) and any unpatched
-clone lack it, and heimdall builds against them unchanged.
+- a fork older than 701a832 (578b43d) lacks it, and heimdall builds against
+it unchanged.
 
 The patch set with zero-copy OFF (the default), hardware check 2026-11-13
 (heimdall with the patched library and its `rtlsdr_prealloc_async()` call,
@@ -904,9 +1000,8 @@ and `lag_no_peak`, and the reader threads' CPU.
 
 ## FIFO hold: starting several streams together (2026-11-13)
 
-Part of the same two commits on the local librtlsdr `master` (and of
-`heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch`); not pushed to the
-krakenrf fork as of 2026-11-14. Pi 4 (2026-11-14, 8 starts each): cold-start
+Part of the same two commits (krakenrf/librtlsdr 701a832 + 3ad1746, on the
+fork's `master`). Pi 4 (2026-11-14, 8 starts each): cold-start
 max |first lag| 2416 / 3695 / 8089 before, 332 / 611 / 1382 with the held
 start (zero-copy on: 472 / 760 / 1655); release completion spread 270 / 498
 / 577 us; against the unpatched fork (gate + flush) 2062 / 2346 / 3228. Two calls (macro `RTLSDR_HAS_FIFO_HOLD`):
