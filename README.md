@@ -335,9 +335,13 @@ transmitter - which at full gain fills with false signals and squashes the
 weaker ones, even when the transmitter is just outside it - is turned down.
 Removing the last border makes the remaining gain the Gain of every step
 again. The Sweep box says what the sweep's gain is ("3 regions, 16.6 - 49.6
-dB"), and the pointer shows the gain of the step under it. A signal keeps its
-height across regions of different gain; a region turned down shows a higher
-noise floor - the sensitivity given up there. The regions are kept by
+dB"), and the pointer shows the gain of the step under it. The Sweep box's
+**Levels** chooses how regions of different gain are drawn: *Over noise* (the
+default) puts every region's noise at 0 dB, as the live spectrum does, so a
+signal's height is how far it stands over the noise of its own region; *One
+scale* draws every region on the scale of the highest gain, so a signal keeps
+its height across regions and a region turned down shows a higher noise floor -
+the sensitivity given up there. The regions are kept by
 frequency when the range changes, and are the same for every browser on the
 receiver. Nothing is demodulated in this mode; the VFOs and their settings are
 kept and come back with the other modes. Going back to Coherent after a sweep

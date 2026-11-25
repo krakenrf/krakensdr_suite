@@ -150,8 +150,9 @@ independent tuners). Every consumer masks the low byte.
   heimdall hops (`set_sweep`), the client stitches; the gain can be set by
   region (`set_sweep_gains`: points cut the range into regions, each with
   its own gain; the page's lane under the spectrum) - heimdall writes each
-  hop's gain with its retune, and the client shifts each hop's levels by
-  heimdall's measured gain curve (Auto gain was removed 2026-11-24);
+  hop's gain with its retune; the client draws each region's noise at 0 dB
+  (`SWEEP_LEVELS:noise`, the default) or every hop on the highest gain's
+  scale by heimdall's measured gain curve (`signal`); Auto gain was removed;
   `kraken_doa_v2/docs/dev/sweep-mode.md` holds the wire contract). The
   client follows heimdall's mode from the header flags and parks DoA /
   beamforming outside coherent mode.
@@ -190,7 +191,7 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 - Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7; the Data
   rate readout, `NET_STATS:`),
   `noise-floor.md`, `bearing-spectrum.md` (colours by DoA, type 9),
-  `sweep-mode.md` (sweep mode: `SWEEP_*`, `SWEEP_VIEW:`, type 10; `SWEEP_GAINS:`, the gain by region lane),
+  `sweep-mode.md` (sweep mode: `SWEEP_*`, `SWEEP_VIEW:`, type 10; `SWEEP_GAINS:`, the gain by region lane; `SWEEP_LEVELS:`),
   `signal-classifier.md` (Signal ID: every signal labelled with its type;
   the Bands bar of worldwide bands over the spectrum)
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),

@@ -212,7 +212,7 @@ the job's scratch directory (not committed). The established setup:
 | Config constants, MUSIC DoA, UCA element ordering | `configuration.md` |
 | Arbitrary VFO bandwidth, the decimator (plans, block FIRs, shared pass, measurements) | `vfo-bandwidth.md` |
 | Operating modes, VFO cards, VFO tuning step, spectrum zoom, independent panes | `operating-modes.md` |
-| Sweep mode (the fourth operating mode: the tuners step through a range, one wide spectrum + waterfall; the wire contract with heimdall and the page, the engine, FFT message types 10 and 11 - the full-resolution sets, deflated for a page that asks; the gain by region and its lane under the spectrum) | `sweep-mode.md` |
+| Sweep mode (the fourth operating mode: the tuners step through a range, one wide spectrum + waterfall; the wire contract with heimdall and the page, the engine, FFT message types 10 and 11 - the full-resolution sets, deflated for a page that asks; the gain by region and its lane under the spectrum; its levels over the noise or on one scale, `SWEEP_LEVELS`) | `sweep-mode.md` |
 | The sidebar's boxes (collapse, move, remembered layout); how controls and text are written on the whole page | `sidebar.md` |
 | The colour palette (tokens, the reasoning, rules, data colours that stay) | `theme.md` |
 | The icon set (one monochrome SVG sprite, `icon()`, the names; no emoji) | `icons.md` |

@@ -203,6 +203,16 @@ the hops into the sweep spectrum, the page shows it.
   is kept, saved and broadcast. Kept by frequency whatever the range,
   tuners, dwell or resolution do; one table per receiver. Not refused
   outside sweep mode: it takes effect on entry.
+- `SWEEP_LEVELS:noise|signal` (2026-11-25, round 13) - how a gain table's
+  regions are drawn: `noise` (the default) every gain's noise at the 0 dB
+  line, `signal` every step on the highest gain's scale (the messages'
+  *Levels* below). Case is ignored; anything else is refused
+  (CommandRejected: not saved, nothing sent). Saved (`sweep_levels`,
+  replayed after `SWEEP_GAINS`; a settings file without the key: `noise`),
+  answered by the `sweep` message to every page; nothing goes to heimdall.
+  A change redraws the stored sweep at once (also paused; nothing is
+  measured again). Not refused outside sweep mode or during a playback
+  (sandboxed there like the other sweep settings).
 - `SWEEP_AUTO_GAIN:` (rounds 9 - 10, removed 2026-11-24): accepted and
   ignored for an older page (no reply, not saved, nothing to heimdall); an
   old saved `sweep_auto_gain` is dropped from `doa_settings.json` at the
@@ -252,6 +262,10 @@ the hops into the sweep spectrum, the page shows it.
   `auto_gain*` fields and their `{"sweep_gain":{..}}` map message are gone
   (an older page ignores their absence: its Auto gain switch stays
   disabled); the table serves the page's readout of a step's gain.
+- Added 2026-11-25 (round 13), always sent: `"levels":"noise"|"signal"`
+  (`SWEEP_LEVELS`). Its presence tells a page the receiver has the setting
+  (an older receiver: no field - the page offers no control); an older page
+  ignores it.
 - `{"operating_mode":{"mode":"sweep",...}}` as for the other modes.
 - Binary type 10, the sweep spectrum for one page's view (little-endian,
   64-byte header), sent to every socket that sent a `SWEEP_VIEW`, at most
@@ -390,6 +404,15 @@ the hops into the sweep spectrum, the page shows it.
   the curve's dependence on frequency (2 - 3 dB, the FM band's top end
   more), the spread between units (not measured); the header and the table
   stay the list's values (the gain set).
+  That is how a gain table's regions are drawn with `SWEEP_LEVELS:signal`
+  (rounds 11 - 12). With `SWEEP_LEVELS:noise` (round 13, the default) every
+  gain's noise stands at the 0 dB line instead, as the live modes draw it:
+  a hop's reference is the noise of ITS gain (its gain group's own quiet
+  twentieth, *Levels over the noise* under the receiver), so a signal's
+  height is its distance over the noise of the gain its step was taken with
+  - lower than with `signal` in a region turned down from a clean band (by
+  the region's floor rise there), and a step at a border. With one gain
+  everywhere the two are the same picture.
 
 ## heimdall
 
@@ -532,8 +555,11 @@ refused; out-of-range numbers are clamped:
 - `SWEEP_DWELL:` - 5 .. 1000 ms. `SWEEP_RUN:` - 1 / 0 / true / false, else
   refused (junk paused the sweep: review finding 6); not saved; `set_sweep
   {"run":..}` alone.
+- `SWEEP_LEVELS:` - `noise` / `signal` (any case), else refused; saved;
+  `sweep::set_levels` (*Levels over the noise* below).
 - Settings schema (replay order): `SWEEP_RANGE` `SWEEP_TUNERS` `SWEEP_RES`
-  `SWEEP_DWELL` (and since round 11 `SWEEP_GAINS`, default `|`) right
+  `SWEEP_DWELL` (and since round 11 `SWEEP_GAINS`, default `|`, since
+  round 13 `SWEEP_LEVELS`, default `noise`) right
   before `OPERATING_MODE:` (defaults 87.5-108 MHz, all, auto, 20 ms). During the replay the setters send nothing; the replayed
   `OPERATING_MODE:sweep` sends the plan. `set_sweep` goes to heimdall only
   when what it holds changed (`take_plan_changed`: centres, tuners, dwell -
@@ -631,7 +657,66 @@ refused; out-of-range numbers are clamped:
   evaluation; the median takes it out unless it repeats in most of the
   last 5 values, and an odd floor that stays moves the whole picture by
   its error after 2 - 3 sweeps. The debug log (`KRAKEN_SWEEP_SEAM_DEBUG`)
-  shows each group.
+  shows each group. This is how `SWEEP_LEVELS:signal` draws; the default is
+  the next rule.
+- **Levels over the noise** (round 13, 2026-11-25; `SWEEP_LEVELS`,
+  `sweep::set_levels`, `evaluate`, `levels_bound`, `store`): `noise` (the
+  default) draws every gain's noise at the 0 dB line, `signal` is *The base
+  by gain group* above.
+  - The rule: a hop is stored against ITS gain group's reference - the
+    group's `REF_QUANTILE` of its RAW floors (the stored floor less the
+    hop's level shift and its tuner's offset), the median of now's with that
+    group's last `SEAM_HIST` completed sweeps' (`ghist`) - plus the hop's
+    level shift, its tuner's offset and its `delta`. The level shift
+    cancels: a hop's stored floor and its bins both carry it (`S.corr`:
+    real(`g_ref`) - real(its gain), as the hop code took it when the hop was
+    stored), so a bin reads raw - raw reference - offset - delta; the
+    group's quiet twentieth stands at `NOISE_SHOWN_DB`. Taken over the raw
+    floors, a group whose hops were stored under two different `g_ref` (a
+    table edit that moved the highest gain, in the sweep it falls in) does
+    not mix the two. One gain everywhere: one group, no shift - the same
+    references as `signal`.
+  - The bound (`levels_bound`; `LEVELS_BOUND`, a constant a test build
+    turns off): two upper bounds on a gain's raw noise from the other
+    groups' references - (a) lowering the gain never raises the raw noise
+    (every noise source in the chain is amplified by at most the gain): a
+    group's reference is at most every higher-gain group's; (b) raising it
+    raises the raw noise by at most the gain step (k G N_in + N_conv <= k (G
+    N_in + N_conv) for k >= 1): at most a lower-gain group's + real(g) -
+    real(that gain) (heimdall's curve as the hop code takes it, else the
+    list's values; a step where the curve does not rise counts 0). Both only
+    lower a reference, so a group's noise can stand over the line, never
+    under it. Why (a): a region made for one wide signal (an LTE / DVB-T /
+    DAB block over every step of it, no quiet step) has that signal as its
+    quantile and would be drawn on the line; with (a) it stands at least as
+    high over the line as its raw level stands over the higher gain's raw
+    floor - a signal whose raw level at the lower gain is under that floor
+    still goes to the line (round 13's numbers). The highest gain has only
+    (b), which is `signal`'s rule (the lowest group's reference less the
+    level shift) compared in raw dB: its region is drawn as with `signal`,
+    also when IT has no quiet step - its own wide signal on the line then,
+    in both settings, as with no table. The tuner's AGC and an unknown gain
+    take no part.
+  - Histories: per gain group, restarted with the base's (any table edit, a
+    new reference gain, a new grid or tuners) and kept in both settings:
+    both settings' references are made at every evaluation.
+  - A change of the setting: `set_levels` (under `g_mu`) runs `evaluate`
+    with `flipped`: every stored hop moves by the difference of the two
+    settings' references and keeps its rounding (|applied - reference| <=
+    `REWRITE_DB`, as it was), so two changes give back the picture they
+    began with, bin for bin, and with one gain nothing moves. Nothing is
+    measured again; a paused sweep is redrawn too: every page with a view
+    gets a type 10 frame on the next tick (`data_version`), a page with Full
+    resolution a snapshot set (`levels_gen` -> `full_snapshot`).
+  - A new hop (`store`): its group's reference from the last evaluation; a
+    group seen for the first time (a grid's first hop, a new gain after a
+    table edit) takes the hop's own raw floor, bounded by the groups there
+    are - as `evaluate` takes a group of one hop - until the next
+    evaluation (`EVAL_MS`).
+  - The debug log adds `lv noise|signal nref <gain>=<now>/<median>/<bounded>,...`
+    (raw dB less the offsets) before `grp`.
+  - Untouched: the seams' steps, the tuners' offsets, the per-hop `delta`,
+    the dead-dongle rule, `signal`'s base, the frames' scale.
 - Round 10 (2026-11-24; history - Auto gain was removed in round 11): heimdall's Auto gain seeks each hop's highest
   gain at which the chain is still linear (the first design - the lowest
   floor referred to the input - was dropped after the first hardware scan:
@@ -1836,6 +1921,24 @@ used"):
     regions (`swpRegGainAt`: the hop's centre's region). The picture (PNG)
     has the lane between the spectrum and the waterfall; its caption's gain
     is the Gain line's.
+  - Levels (round 13, 2026-11-25; `swpLevelsRender`, `swpSetLevels`): a
+    row of the Sweep box right under the Gain line, label `Levels`, a
+    select of two choices - `Over noise` (`noise`) and `One scale`
+    (`signal`) -, the two ways explained in its title (what the user sees:
+    every region's noise at 0 dB and a signal's height over its own
+    region's noise, or every region on the highest gain's scale with a
+    turned-down region's floor higher; it matters only where regions have
+    different gains). Shown (body class `swp-levels`, with `swp-regions`)
+    whenever the receiver's `sweep` message carries `levels` and the lane
+    is offered - also with no table: the setting is saved and applies the
+    moment a border is added, so it can be chosen first, and the box does
+    not grow under the pointer when the first border goes in or shrink when
+    the last goes. An older receiver (no `levels`): no row, no error. A
+    pick sends `SWEEP_LEVELS:<v>`; the select keeps the pick until the
+    receiver's state says it or `SWP_HOLD_MS` is over (then the receiver's
+    value shows), the picture follows the receiver's frames - no optimistic
+    redraw. The Gain line's title no longer says how regions are drawn; it
+    points at Levels.
 - **Auto gain** (history: round 9, 2026-11-23 - removed in round 11, 2026-11-24; the user: "Could we auto adjust the
   gain based on the current swath, and still have the sweep update fast,
   and have the sweep stitch together well?"). heimdall learns a gain per
@@ -3704,3 +3807,130 @@ running with lower gain."
     the lane's gestures (each an edit that restarts the base's history),
     sweep -> coherent CONVERGED in 4.6 s.
   - Not tested: a Pi, Windows / macOS, MinGW and zig, Firefox / Safari.
+
+**Round 13 (2026-11-25): levels over the noise.** The user, after round
+12's fix: "ok but why is it when I INCREASE the gain, that the noise floor
+drops? And when I decrease the gain, the noise floor rises?" - the levels
+were drawn referred to the table's highest gain (a signal keeps its height,
+a turned-down region shows the sensitivity it gave up as a higher floor).
+Offered the alternative - every region's noise at the line like the live
+modes, a signal's height its distance over the noise -, the user: "Try the
+alternative".
+- Built (the receiver's *Levels over the noise*, the page's Levels, the
+  contract's `SWEEP_LEVELS` / `"levels"`): `SWEEP_LEVELS:noise|signal`,
+  `noise` the default; `signal` is rounds 11 - 12's picture, unchanged. In
+  `noise` each gain group's raw quiet twentieth is its reference, bounded
+  by the other groups' (a lower gain never raises the raw noise; a higher
+  one raises it by at most the gain step); a change redraws the stored
+  sweep at once. The page: Levels, `Over noise` / `One scale`, under the
+  Gain line in the Sweep box.
+- Branch merged with main first (b705bd5, trunk following: no conflict;
+  main's 11 lines of this file merged automatically; the Trunk Following
+  box stays hidden in sweep mode - tested below).
+- Tests (fakes only; job scratch 52196024 `levels/`: a TEST receiver on
+  2880x / 2881x, exe `kdlv13`; `kdlv13sig` = the same with `signal` as the
+  default, for the earlier rounds' suites; `kdlv13nb` = the bound turned
+  off; the python fake heimdall; every bin through `SWEEP_FULL`):
+  - The real-shaped fake (`rx/t_lv1.py`: the KrakenSDR's per-hop floors of
+    round 12's dump, 87.5 - 1008 MHz, 482 hops, 5 tuners, heimdall's curve
+    published), with and without the dongles' offsets (0 / 1.5 / -1 / 2 /
+    -0.5 dB): no table, the user's table (412.625 MHz; 49.6 | 16.6), 90 %
+    turned down (179.3 MHz), three gains (300 / 600 MHz; 49.6 | 29.7 |
+    16.6), reversed, equal gains, no table again - 63 / 63 checks in each
+    run. In `noise` every group's quiet twentieth (the 5th percentile of
+    its steps' noise medians, a 4-sweep mean) at 1.88 - 2.12 dB (a level
+    step is 0.47), at most 0.8 % of a group's steps at 0 (the 29.7 dB
+    group; every other 0 - 0.6 %). On the SAME stored sweep (paused,
+    snapshots both ways, bin by bin): the top-gain region identical in the
+    two settings (largest difference 0.00 dB in every case), with one gain
+    (no table, equal gains) every bin identical; a carrier in a 16.6 dB
+    region lower in `noise` by exactly its step's shift (15.53 / 16.00 /
+    11.76 / 19.29 dB with offsets, 18.82 / 18.35 / 16.00 / 16.47 without -
+    the region's floor rise there, within one level step). The bound never
+    bit in these cases (each group's median reference = its bounded one in
+    the log). "The 49.6 dB region as with no table": in `noise` the same as
+    in `signal`, which is round 12's rule - without the dongles' offsets
+    within 0.03 - 0.33 dB (mean over its steps), with them 2.5 - 2.8 dB
+    lower than with no table when that region is 87.5 - 412 MHz (round
+    12's `t_real` had the same: base 33.11 with no table, 36.07 with the
+    table - the whole range's quiet twentieth lies in another tuner's
+    block there).
+  - The setting flipped (`rx/t_lv2.py`, the user's table): paused - the
+    sweep message 1 ms after the command, a type 10 frame 32 - 35 ms
+    after, the five snapshots of one sweep (the same `sweeps`), nothing
+    sent to heimdall; the 16.6 dB region's quiet twentieth 1.88 -> 20.71 dB,
+    the 49.6 dB region's 1.88 -> 1.88; noise -> signal -> noise and again:
+    0 of 392 747 bins differ. Running: the first frame 9 - 11 ms after the
+    command, the first completed sweep after it already at its final
+    picture (0 sweeps to settle), both ways. Table edits in `noise`, the
+    sweeps through which a group's quiet twentieth is off its final by >
+    0.5 dB: set (150 / 412.625 MHz, 16.6 | 49.6 | 16.6) 1, a border moved
+    onto quiet steps (150 -> 100 MHz) 0, a gain changed (16.6 -> 29.7) 0, a
+    point added (600 MHz, 29.7 | 38.6) 1, cleared 0; every group at 1.88 -
+    2.12 dB at the end. (The first version rewrote every hop to the new
+    setting's exact reference: two flips then changed 10 - 16 % of the
+    bins by one level step - the rewrite threshold's residue -, and with
+    one gain 39 350 bins. Now a flip moves each hop by the two settings'
+    difference and keeps its residue.)
+  - A region filled by one flat wide signal over every step (`rx/t_lv3.py`:
+    661 - 741 MHz, 41 steps, X dB over the tuner's noise at 49.6 dB; that
+    region at 16.6, the rest at 49.6), the block's median level on the same
+    stored sweep: X = 20 dB (21.2 dB with no table) - `signal` 23.1,
+    `noise` 2.35 with the bound, 1.88 without; X = 28 - 29.7 / 1.88 / 2.35;
+    X = 35 - 36.2 / 8.47 / 2.35. The bound bites only when the block's raw
+    level at the lower gain stands over the higher gain's raw floor (X =
+    35: raw 42.0 against 35.75, the reference capped at 35.75 - the block
+    6.3 dB + 2 over the line); X = 20 and 28 stand under it (raw 28.5 /
+    35.2), and such a block is drawn on the line in `noise` with or without
+    the bound - a limit of drawing over the noise when the region has no
+    quiet step: `signal` shows it.
+  - The command path (`rx/t_lv4.py`, 18 / 18): `foo`, empty, `noise `
+    (a space), `1`, `signal:x` refused (no message, logged, not saved);
+    `SIGNAL` taken; a second browser follows, a new one gets it on
+    connect; saved; replayed after a restart in sweep mode and in coherent
+    mode (then drawn by it on entering the mode); a settings file without
+    the key: `noise`, the key written back; a debug playback: taken in the
+    sandbox, the file unchanged, the user's value back when it stops.
+  - The page (`p/t_lvpage.py`, headless Chromium, real mouse / key / touch
+    events; 32 / 32 + 6 / 6): the row under the Gain line with no table
+    and with one, its tip on hover (417 characters, both ways), a pick by
+    click + arrow + Enter sends one `SWEEP_LEVELS`, both browsers follow
+    the receiver, the 16.6 dB region's trace 4.71 -> 37.65 dB and back
+    (the python fake publishes no curve: the list's difference), the 49.6
+    dB region unmoved, an unanswered pick held and then the receiver's
+    value again, the readout with the step's gain, no row outside sweep
+    mode, the Trunk Following box hidden in sweep mode, the phone width
+    (412 px: the row in the drawer's Sweep box, no horizontal scroll, a
+    tap + keys pick), no page error; round 12's receiver (no `levels`)
+    serving this page: no row, the lane there, no error. Round 11's lane
+    suite (`t_lane`, the python fake): 49 / 49. Noted: the waterfall's
+    rows drawn before a change keep the levels they were drawn with (rows
+    keep what they showed).
+  - Rounds 3 - 12's receiver suites on this build with `signal` as the
+    default (`kdlv13sig`): `t_rx` 32 / 32, `t_sweep` 207 / 207, `t_full`
+    31 / 31, `t_overview` 23 / 23, `t_res` 174 / 181 (round 12's 6 - the
+    grid count and the size cap at 8192 - 65536 on 24 - 1765 MHz - and
+    the one-frame-a-hop carrier at 16384, 46.6 for 49.5 dB, which round
+    12 also had on some runs: 174 - 175), `t_cases` 39 / 40 (I3's restart
+    check, as round 12), `t_move` 2 / 2 with the border move right in the
+    edit's sweep (the 49.6 dB steps' 5th percentile 1.88 dB, none at 0).
+    In `noise` (the shipped default): `t_sweep` 207 / 207 (one gain),
+    `t_move` 2 / 2, `t_rx` 26 / 32 and `t_cases` 27 / 40 - every failure
+    a check that a carrier in a turned-down region keeps its height
+    (-3.8 .. -17.0 dB there in `noise`: the region's floor rise; the
+    carriers at the top gain within 0.3 dB of no table) plus I3's restart
+    check - the `signal` contract those checks were written for.
+    `t_full`, `t_overview`, `t_res` have no table (one gain: the two
+    settings the same picture, bin for bin above) - run in `signal` only.
+  - The build: the merged tree's full `make` (kraken_doa, liquid-dsp, every
+    plugin) from clean without an error; the same 2 `-Wsign-compare`
+    warnings (3 places) as main's and the branch's own full builds (each
+    built from a `git archive`), none new. `sweep.cpp`,
+    `control_handler.cpp`, `websocket_server.cpp`, `settings_store.cpp`
+    through clang++ `-fsyntax-only -Wall -Wextra`: nothing new (the
+    config.hpp float warning and control_handler's geo::Json static_assert
+    under clang are main's too).
+  - Not tested: the KrakenSDR and a Pi (the orchestrator's), MinGW and zig
+    (not on this machine), Windows / macOS, Firefox / Safari; a real wide
+    signal filling a region (the fake's flat band only); the bound's (b)
+    side biting (no case made it bite).
