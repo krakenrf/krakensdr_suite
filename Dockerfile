@@ -23,12 +23,14 @@ ARG JOBS=3
 # Makefiles pin (UWS_COMMIT; keep them equal). Its submodule pins uSockets
 ARG UWS_REPO=https://github.com/uNetworking/uWebSockets
 ARG UWS_COMMIT=fe7da4cb05622b8d004718ec3ca05101782eb1c2
-# librtlsdr: the fork commit heimdall's Makefile requires at least
-# (RTLSDR_FIX_MARK: 578b43d, the fast drag calls + the stalled control OUT
-# retry); an older one stops the heimdall build - a checkout of a commit has
-# no upstream for the Makefile to fast-forward to
+# librtlsdr: the fork commit with the newest feature heimdall uses
+# (RTLSDR_FEATURE_MARK in heimdall_v2/Makefile: 9644d07, the fast tuner gain
+# write; also the zero-copy buffers / FIFO hold and the tunes that drop no
+# sample). A checkout of a commit has no upstream for the Makefile to
+# fast-forward to: one before 578b43d (RTLSDR_FIX_MARK) stops the heimdall
+# build, one before 9644d07 builds heimdall without the newer features
 ARG LIBRTLSDR_REPO=https://github.com/krakenrf/librtlsdr
-ARG LIBRTLSDR_COMMIT=578b43ddd971786e84e2a6ab3c338ee48c8739c3
+ARG LIBRTLSDR_COMMIT=9644d077cba347e7a57c84b6badc2c56ebe334d8
 
 # libjpeg-dev (libjpeg-turbo, IJG/BSD-3-Clause/zlib): the decoder plugins link
 # -ljpeg to compress video frames; the main app never links it. The runtime

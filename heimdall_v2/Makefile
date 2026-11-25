@@ -129,7 +129,8 @@ endif
 # RTLSDR_FIX_MARK = a word only that librtlsdr.c has (578b43d's
 # rtlsdr_finish_tune; 00606c0 has none). A clone from before is
 # fast-forwarded to its upstream (git fetch + merge --ff-only - what
-# install.sh's `git pull --ff-only` does); local changes the merge would
+# install.sh's `git pull --ff-only` does; the fetch bounded as below,
+# RTLSDR_FETCH); local changes the merge would
 # overwrite stop it and are never discarded (Windows only: a librtlsdr.c
 # this Makefile once patched with win/librtlsdr-windows.patch, bd357dd's
 # fixes - the patch is gone - is restored first). The working librtlsdr.c is
@@ -143,6 +144,33 @@ endif
 # rtl_* tools install.sh put in /usr/local stay until install.sh runs again.
 RTLSDR_FIX_MARK = rtlsdr_finish_tune
 RTLSDR_TRIED = $(RTLSDR_DIR)/build/.fork_update_tried
+# RTLSDR_FEATURE_MARK = the NEWEST fork feature heimdall uses, in the fork's
+# include/rtl-sdr.h (krakenrf/librtlsdr 9644d07's
+# rtlsdr_set_center_freq_gain_fast, RTLSDR_HAS_GAIN_FAST). Move it when
+# heimdall starts using a newer fork feature. A clone that has RTLSDR_FIX_MARK
+# but not this one builds and runs (heimdall's #ifdef fallbacks), so its
+# update is SOFT (../scripts/librtlsdr-update.sh): fetched and fast-forwarded
+# to its upstream while make reads this file - the build below then sees the
+# new sources (the library is rebuilt by RTLSDR_SRCS, the objects that
+# include rtl-sdr.h by their .d files) -, the fetch bounded (30 s, no
+# prompts); when that can't be done (offline, detached HEAD, no upstream,
+# local commits or changes in the way, not a clone, no git) one line says
+# what is missing, the build goes on with the clone as it is, and nothing is
+# tried again before its HEAD or branch changes or a week has passed (stamp
+# $(RTLSDR_DIR)/build/.fork_feature_tried). Never discards anything. Only
+# for the build goals (not clean / status / deps); ../scripts/autobuild.sh
+# check asks the same script whether an attempt is due, so ./run.sh builds
+# then and only then. No script (the Docker build copies heimdall_v2/ only,
+# its pinned fork has the mark) = no soft update.
+RTLSDR_FEATURE_MARK = rtlsdr_set_center_freq_gain_fast
+RTLSDR_UPDATE_SH = ../scripts/librtlsdr-update.sh
+ifneq ($(wildcard $(RTLSDR_UPDATE_SH)),)
+ifeq ($(filter-out all run rebuild $(TARGET),$(MAKECMDGOALS)),)
+RTLSDR_SOFT_UPDATE := $(shell sh $(RTLSDR_UPDATE_SH) update $(RTLSDR_DIR) $(RTLSDR_FIX_MARK) $(RTLSDR_FEATURE_MARK))
+endif
+endif
+# the hard path's fetch, bounded the same way
+RTLSDR_FETCH = $(if $(wildcard $(RTLSDR_UPDATE_SH)),sh $(RTLSDR_UPDATE_SH) fetch $(RTLSDR_DIR),git -C $(RTLSDR_DIR) fetch -q)
 RTLSDR_FILE_OK := $(shell grep -qs $(RTLSDR_FIX_MARK) $(RTLSDR_DIR)/src/librtlsdr.c && echo yes)
 ifeq ($(RTLSDR_FILE_OK),)
 RTLSDR_CHECK = rtlsdr-check
@@ -428,7 +456,7 @@ $(RTLSDR_LIB): $(RTLSDR_SRCS) $(RTLSDR_CHECK) $(RTLSDR_UPDATE) $(RTLSDR_RECONFIG
 	fi
 	@if [ -n "$(RTLSDR_UPDATE)" ] && ! git -C $(RTLSDR_DIR) grep -q $(RTLSDR_FIX_MARK) HEAD -- src/librtlsdr.c; then \
 	    echo "Updating the librtlsdr fork in $(RTLSDR_DIR) (it predates krakenrf/librtlsdr 578b43d)"; \
-	    if git -C $(RTLSDR_DIR) fetch -q && git -C $(RTLSDR_DIR) grep -q $(RTLSDR_FIX_MARK) '@{u}' -- src/librtlsdr.c 2>/dev/null && \
+	    if $(RTLSDR_FETCH) && git -C $(RTLSDR_DIR) grep -q $(RTLSDR_FIX_MARK) '@{u}' -- src/librtlsdr.c 2>/dev/null && \
 	       git -C $(RTLSDR_DIR) merge-base --is-ancestor HEAD '@{u}'; then \
 	        if [ "$(WINDOWS)" = 1 ] && git -C $(RTLSDR_DIR) diff HEAD -- src/librtlsdr.c | grep -q librtlsdr-windows.patch; then \
 	            git -c core.autocrlf=false -C $(RTLSDR_DIR) checkout -- src/librtlsdr.c || exit 1; \
@@ -436,7 +464,7 @@ $(RTLSDR_LIB): $(RTLSDR_SRCS) $(RTLSDR_CHECK) $(RTLSDR_UPDATE) $(RTLSDR_RECONFIG
 	        git -c core.autocrlf=false -C $(RTLSDR_DIR) merge -q --ff-only '@{u}' || true; \
 	    fi; \
 	    git -C $(RTLSDR_DIR) grep -q $(RTLSDR_FIX_MARK) HEAD -- src/librtlsdr.c || { \
-	        echo "Warning: could not update $(RTLSDR_DIR) to krakenrf/librtlsdr 578b43d or later"; \
+	        echo "Warning: could not update $(RTLSDR_DIR) to krakenrf/librtlsdr 578b43d or later$(if $(wildcard $(RTLSDR_UPDATE_SH)), (git fetch's output: $(RTLSDR_DIR)/build/.fork_fetch.log))"; \
 	        mkdir -p $(dir $(RTLSDR_TRIED)) && git -C $(RTLSDR_DIR) rev-parse HEAD > $(RTLSDR_TRIED); }; \
 	fi
 	@grep -q $(RTLSDR_FIX_MARK) $(RTLSDR_DIR)/src/librtlsdr.c || \

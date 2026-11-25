@@ -10,7 +10,8 @@
 #       exit 0 = built for this machine and up to date, 1 = a build is needed
 #       (what and why on stdout). Read-only, no network, no make: compares
 #       the flags stamps' "| cpu <id>" with this CPU and file times (sources
-#       newer than the executable).
+#       newer than the executable), and asks scripts/librtlsdr-update.sh
+#       whether heimdall's make would update the librtlsdr clone.
 #   scripts/autobuild.sh runnable [heimdall|kraken_doa]
 #       exit 0 = the executable exists and was not built for another CPU
 #       (it may be out of date) - run.sh's "start the old build" test.
@@ -34,6 +35,14 @@ R="$ROOT/librtlsdr"
 # set by a successful `build` (its start time): sources older than this are built
 OK_STAMP_H="$H/build/.autobuild_ok"
 OK_STAMP_K="$K/obj/.autobuild_ok"
+# the librtlsdr fork's marks, from heimdall_v2/Makefile (RTLSDR_FIX_MARK:
+# the oldest fork heimdall builds with; RTLSDR_FEATURE_MARK: the newest
+# feature it uses - a clone without it is updated softly by make)
+RTL_FIX="$(sed -n 's/^RTLSDR_FIX_MARK[[:space:]]*=[[:space:]]*//p' "$H/Makefile" 2>/dev/null)"
+RTL_FIX="${RTL_FIX:-rtlsdr_finish_tune}"
+RTL_FEATURE="$(sed -n 's/^RTLSDR_FEATURE_MARK[[:space:]]*=[[:space:]]*//p' "$H/Makefile" 2>/dev/null)"
+RTL_UPDATE_SH="$ROOT/scripts/librtlsdr-update.sh"
+RTL_DUE=0
 
 usage() { sed -n '/^# Usage:/,/^# Bash 3.2/s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
 
@@ -161,8 +170,16 @@ check_heimdall() {   # sets REASONS; 0 = up to date
     uws_ok "$H" || return 1
     local lib="$R/build/src/librtlsdr.a"
     if [[ ! -f "$lib" ]]; then need "the librtlsdr fork's static library is not built ($(rel "$lib"))"; return 1; fi
-    grep -qs rtlsdr_finish_tune "$R/src/librtlsdr.c" ||
+    grep -qs "$RTL_FIX" "$R/src/librtlsdr.c" ||
         { need "librtlsdr/ predates the fork heimdall needs (578b43d)"; return 1; }
+    # the soft update (scripts/librtlsdr-update.sh, the same test make runs):
+    # a clone without the newest fork feature heimdall uses, not tried for
+    # this HEAD in the last week - make fetches and fast-forwards it
+    if [[ -n "$RTL_FEATURE" && -f "$RTL_UPDATE_SH" ]] && sh "$RTL_UPDATE_SH" due "$R" "$RTL_FIX" "$RTL_FEATURE"; then
+        RTL_DUE=1
+        need "librtlsdr/ lacks $RTL_FEATURE (the newest fork feature heimdall uses): the build updates it if it can"
+        return 1
+    fi
     f="$(newer_source "$lib" "$R/src" "$R/include")"
     [[ -n "$f" ]] && { need "$(rel "$f") is newer than the librtlsdr build"; return 1; }
     return 0
@@ -268,7 +285,7 @@ command -v python3 >/dev/null 2>&1 || { echo "autobuild.sh: python3 is required"
 mkdir -p "$(dirname "$STATUS")" "$(dirname "$LOG")" || exit 1
 
 export AB_ROOT="$ROOT" AB_JOBS="$JOBS" AB_STATUS="$STATUS" AB_LOG="$LOG" AB_APPS="$APPS" AB_WHY="$WHY"
-export AB_OK_H="$OK_STAMP_H" AB_OK_K="$OK_STAMP_K"
+export AB_OK_H="$OK_STAMP_H" AB_OK_K="$OK_STAMP_K" AB_RTL_DUE="$RTL_DUE"
 # The build itself: python runs make, parses its output for the progress and
 # writes the status file (the progress model: docs/dev/run-and-deploy.md).
 # The arguments only name it in `ps` (run.sh's stale sweep finds a build by them)
@@ -283,6 +300,8 @@ LOG = os.environ["AB_LOG"]
 APPS = os.environ["AB_APPS"].split()
 WHY = os.environ["AB_WHY"]
 OK_STAMP = {"heimdall": os.environ["AB_OK_H"], "kraken_doa": os.environ["AB_OK_K"]}
+RTL_DUE = os.environ.get("AB_RTL_DUE") == "1"
+rtl_for_update = set()   # plan items there only because of the soft librtlsdr update
 H = os.path.join(ROOT, "heimdall_v2")
 K = os.path.join(ROOT, "kraken_doa_v2")
 R = os.path.join(ROOT, "librtlsdr")
@@ -428,6 +447,13 @@ def plan_heimdall():
             for f in (os.listdir(p) if os.path.isdir(p) else []):
                 if f.endswith((".c", ".h")) and (mtime(os.path.join(p, f)) or 0) > lt:
                     rtl_build = True
+    if RTL_DUE:
+        # make's soft update of the clone (scripts/librtlsdr-update.sh); the
+        # library and the link only follow when it went through
+        add("rtl-update", app, "heimdall: librtlsdr", W_CLONE, "Updating the librtlsdr fork", "explicit")
+        if not rtl_build:
+            rtl_for_update.add("rtl")
+        rtl_build = True
     if rtl_build:
         add("rtl", app, "heimdall: librtlsdr", W_RTL, "Building the librtlsdr fork", "explicit")
     all_stale = not stamp_matches(os.path.join(H, "build", ".flags"))
@@ -442,6 +468,9 @@ def plan_heimdall():
     exe = os.path.join(H, "heimdall")
     if stale or rtl_build or mtime(exe) is None or all_stale or \
             (mtime(os.path.join(H, "config.h")) or 0) > (mtime(exe) or 0):
+        if "h:link" not in items and "rtl" in rtl_for_update and not stale and not all_stale and \
+                mtime(exe) is not None and (mtime(os.path.join(H, "config.h")) or 0) <= (mtime(exe) or 0):
+            rtl_for_update.add("h:link")
         add("h:link", app, "heimdall", W_LINK, "Linking heimdall", "explicit")
 
 def plan_kraken():
@@ -662,6 +691,16 @@ def on_line(app, line):
             finish_where(lambda it: it.key in (app + ":uws-clone", app + ":usockets"))
             return
     if app == "heimdall":
+        if s.startswith("librtlsdr: the clone lacks"):
+            start(unplanned("rtl-update", app, "heimdall: librtlsdr", W_CLONE, "Updating the librtlsdr fork", "explicit"))
+            return
+        if s.startswith("librtlsdr: updated"):
+            finish_where(lambda it: it.key == "rtl-update")
+            return
+        if s.startswith("librtlsdr: NOT updated"):
+            # nothing changed: what was planned only for the update won't run
+            finish_where(lambda it: it.key == "rtl-update" or it.key in rtl_for_update)
+            return
         if "librtlsdr fork not found - cloning" in s:
             start(unplanned("rtl-clone", app, "heimdall: librtlsdr", W_CLONE, "Fetching the librtlsdr fork", "explicit"))
             return
