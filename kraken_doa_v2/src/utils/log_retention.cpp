@@ -221,7 +221,7 @@ PassStats run_pass(const std::vector<File>& files, long today, int keep, int zip
     for (const auto& f : files) {
         if (f.day < 0) continue;
         const Action a = retention_action(today - f.day, f.kind, keep, zip);
-        if (a == Action::DELETE && (deletions || f.kind == Kind::PART)) {
+        if (a == Action::REMOVE && (deletions || f.kind == Kind::PART)) {
             if (unlink(f.path.c_str()) == 0 && f.kind != Kind::PART) {
                 st.deleted++;
                 std::cout << label << ": deleted " << f.path << " (older than " << keep << " + " << zip << " days)"

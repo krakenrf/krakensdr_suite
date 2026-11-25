@@ -24,7 +24,8 @@ namespace logret {
 // the plain day file, its gzip (<file>.gz), a gzip a crash interrupted (<file>.gz.part)
 enum class Kind { NONE, PLAIN, GZ, PART };
 
-enum class Action { KEEP, COMPRESS, DELETE };
+// not DELETE: winnt.h defines DELETE as a macro, and this header is reached after windows.h
+enum class Action { KEEP, COMPRESS, REMOVE };
 
 // days since 1970-01-01 of a civil date (proleptic Gregorian, no time zone involved)
 inline long day_number(int y, int m, int d) {
@@ -48,10 +49,10 @@ inline long day_number(int y, int m, int d) {
 // Today's files (age <= 0, also a clock set back) are never touched.
 inline Action retention_action(long age, Kind kind, int keep, int zip) {
     if (age <= 0 || kind == Kind::NONE) return Action::KEEP;
-    if (kind == Kind::PART) return Action::DELETE;
+    if (kind == Kind::PART) return Action::REMOVE;
     if (keep <= 0) return Action::KEEP;
     const long last = static_cast<long>(keep) + (zip > 0 ? zip : 0);
-    if (age > last) return Action::DELETE;
+    if (age > last) return Action::REMOVE;
     if (kind == Kind::PLAIN && age > keep) return Action::COMPRESS;
     return Action::KEEP;
 }
