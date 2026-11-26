@@ -310,8 +310,9 @@ CH1 / CH2 / CH3 / CH4, EQ off -> on, 5 full recalibrations (round sd <=
 | FILT_CODE 0000, IF 1.815 MHz | 3.0 / 3.2 / 2.8 / 3.8° | 0.5 / 0.5 / 0.4 / 0.8° | |
 
 - Cost in time: +0.5-0.6 s per calibration (full recalibration 3.3 -> 3.9
-  s, a retune 3.45 -> 4.0 s including the 3 s cooldown). CPU not measured
-  (32 complex taps per sample and channel in the conversion loop).
+  s, a retune 3.45 -> 4.0 s including the 3 s cooldown). CPU, measured
+  afterwards: 35-61 ns per sample and channel on the x86 dev machine, most
+  of a core, and a form 14-27x cheaper - *A faster per-bin EQ* below.
 - It is phase-only: the level difference between channels stays (fork
   <= 0.25 dB at +-0.4 fs; with the old filter value 3.0 dB on CH1 at -0.4
   fs, 0.7-1.0 dB on the others).
@@ -349,6 +350,189 @@ Data and method: job scratch 14951841 `rtlfilt/w_hw2/analysis/` (`D1_`,
 `D2_`, `D3_`, `D5_COMPACT.txt`), tooling `../../tools/rtl_filter_phase/`.
 One unit, one machine, room temperature; no Pi, no off-air signal with a
 known bearing, no EQ timeline (the 20 minutes are of the uncorrected curve).
+
+### A faster per-bin EQ (measured 2026-11-26; prototype on branch `eq-fast`, not merged)
+
+The question: can the per-bin EQ be made computationally cheaper, perhaps as
+a "multi-bin" EQ that combines bins. Answer: yes, 14-27x in the running
+heimdall (the more the busier the machine) at the same accuracy, by two independent changes - a kernel the
+compiler vectorizes (same taps, same output) and a design that needs 12 taps
+where today's needs 32. Nothing of it is in the product: the code is a
+prototype behind test commands on the branch `eq-fast`; the EQ stays off by
+default and its default design and loop are today's.
+
+**What it costs today** (x86 dev machine, i7-11800H, other jobs running:
+load average 10-22, so absolute x86 figures are pessimistic; ratios hold):
+
+- The EQ block is a plain `std::complex<float>` loop over 32 taps. GCC does
+  not fully unroll a loop of more than 16 iterations
+  (`max-completely-peel-times`), so at 32 taps it is NOT vectorized: 490
+  instructions per sample, a loop-carried add chain, 36 ns per sample and
+  channel at best and 53-67 ns on the busy machine (the 16-tap trim filter
+  in front of it: 2.2 ns; the whole function without the EQ: 3.3 ns). clang
+  does not vectorize the `std::complex` form at any length.
+- In the running heimdall (5 channels, 100 MHz, CONVERGED, noise source
+  off) the `convert` thread goes from 5.1-5.3 % of a core to 75-78 % with
+  the EQ on and no 8091 client: 58-61 ns per sample and channel. With one
+  client reading the stream it is 26 % without and 98.5 % with the EQ -
+  saturated: 8091 delivered 130-138 sets a second instead of 146.5, 7-11 %
+  of the sets dropped at L2-raw (whole sets, so coherence holds), with no
+  counter and no log line; only the frame rate shows it.
+- Not measured on a Pi. Estimated (the kernel's instruction count and
+  kraken_doa's measured Pi 5 tap costs, `shared_decimator.cpp`): today's
+  loop needs roughly 50-90 % of a Pi 5 core on top of the convert thread's
+  32.6 %, and about a whole Pi 4 core. Until someone runs `eq_bench` on
+  a Pi, treat today's EQ as not usable on a Pi 4 and marginal on a Pi 5.
+
+**Change 1, the kernel** (same taps; output equal to today's within 5e-7):
+deinterleave the block once into I and Q arrays, run the taps in chunks of
+four over 256-sample blocks with the tap count a compile-time constant,
+CH0 (a delta) as a plain delay. Plain C++, no intrinsics; g++ and clang
+both vectorize it, and clang's aarch64 code has exactly L `fmla` per sample.
+Micro-benchmark at 32 taps: 4.2-4.4 ns (8-14x); at 12 taps 1.8-2.0 ns, at
+16 taps 2.4-3.5 ns. (One line, `#pragma GCC unroll 64` on today's loop,
+gives 5-7 ns with g++ and nothing with clang.)
+
+**Change 2, the design** (`src/dsp/per_bin_wls.cpp` on the branch; reference
+`design_ref.py` in the job scratch). Today's design takes the phase of each
+of 32768 bins, transforms back and cuts the impulse response to 32 taps with
+a Hamming window - the window spends most of the taps, and simply shortening
+it fails (16 taps leave 3.2° with the fork's filter setting, 7-10° with
+the old one). The new one:
+
+1. sums the cross-spectrum over 128 groups of 256 adjacent bins (bins within
+   4 of DC left out) - this is the "multi-bin" step;
+2. gates a group on CH0's power against the MEDIAN group (10 %), not against
+   the peak bin;
+3. fits the L complex taps by weighted least squares to the phase-only
+   target exp(-j arg S) over |f| <= 0.42 fs, with a weight of 1e-3 and target
+   1 outside (a don't-care band, so the fit does not spend taps on the
+   phase jump at the Nyquist edge) and a small ridge toward the delta at
+   tap L/2; an L x L Hermitian solve (Cholesky, double precision; condition
+   number 49 at L = 12, 249 at L = 16).
+
+On "multi-bin": an L-tap FIR is already an EQ with L degrees of freedom -
+L "bins" of fs/L - however many bins it was designed from, and its cost is
+L. Combining bins before the phase is taken does not change the accuracy at
+a given L (offline: within 0.0-0.3°), but it makes the design immune to the
+snapshot count and to a weak noise source. Taking it literally (L groups,
+an L-point inverse FFT, no window) is worse than the least-squares fit at
+every L <= 16 (12 taps: 2.2-5.5° against 0.5-1.0°). The taps are saved by
+the fit and its don't-care band; the binning makes it robust.
+
+**Accuracy on the hardware** (the prototype's test modes in ONE heimdall
+session per row, 5 calibrations per mode, the modes interleaved; worst
+phase against CH0 over |f| <= 0.4 fs as the stream leaves heimdall, CH1 /
+CH2 / CH3 / CH4, mean of 5; round sd 0.01-0.03° without clipping, 0.05-0.3°
+with):
+
+| condition | EQ off | today (32 taps) | least squares, 12 taps | least squares, 16 taps |
+|---|---|---|---|---|
+| fork's filter, 100 MHz, gain 49.6 (noise source clips) | 5.3 / 4.6 / 4.9 / 7.2° | 0.5 / 0.7 / 0.8 / 0.9° | 0.7 / 0.6 / 0.8 / 0.9° | 0.6 / 0.7 / 0.8 / 0.8° |
+| the same, RF gain 0 (no clipping) | 5.0 / 6.3 / 7.3 / 8.6° | 0.7 / 0.6 / 0.6 / 0.7° | 0.5 / 0.2 / 0.6 / 0.7° | 0.3 / 0.2 / 0.3 / 0.3° |
+| the same, 868 MHz, gain 49.6 | 3.6 / 6.8 / 7.6 / 8.1° | 0.6 / 0.7 / 1.2 / 1.0° | 0.6 / 0.9 / 1.1 / 1.2° | 0.6 / 0.6 / 0.9 / 0.9° |
+| old filter value (FILT_CODE 1111), gain 0 | 36.6 / 18.6 / 20.3 / 23.1° | 1.2 / 0.6 / 0.6 / 0.7° | 0.4 / 0.3 / 0.3 / 0.3° | 0.3 / 0.4 / 0.4 / 0.4° |
+| old filter value, gain 49.6 | 30.2 / 16.8 / 18.0 / 19.5° | 6.3 / 2.1 / 2.3 / 2.4° | 4.9 / 2.6 / 2.8 / 2.7° | 4.6 / 2.4 / 2.6 / 2.5° |
+| weak noise source (gain 0, IF VGA step 4) | 5.1 / 6.3 / 7.6 / 8.1° | 4.9 / 6.1 / 7.1 / 7.7° (the gate: no correction) | 0.6 / 0.3 / 0.7 / 0.4° | 0.4 / 0.3 / 0.3 / 0.3° |
+
+- Today's design with the new kernel gives today's numbers (the mean curves
+  differ by 0.05-0.07° without clipping, round sd 0.025°).
+- The old filter value at gain 49.6 stays at 2-6° with every design: the
+  clipped noise source shows the steep corner too small (*Band-edge phase*
+  above) - a limit of the measurement, not of the filter.
+- Offline, on the frames recorded for *Band-edge phase* (design from 32
+  frames, residual on other data, also checked by filtering held-out frames
+  sample by sample): 12 taps match or beat today's 32 on all nine
+  recordings, 16 taps reach what today's design gets from 64, 10 taps tie on
+  the fork's setting, 8 are not enough (1.1-1.9° on the fork's and the old
+  setting).
+- 8 snapshots instead of 32 are enough for the least-squares design on the
+  hardware (same residual within 0.1°) and take ~0.4 s off a calibration;
+  the design itself takes 0.7-1.4 ms against 5-12 ms today.
+
+**CPU in the running heimdall** (`convert` thread, % of an x86 core, no
+8091 client, 25 s windows, modes interleaved, 3 windows each; load 11-18):
+
+| | convert thread | the EQ alone, ns per sample and channel | against today |
+|---|---|---|---|
+| EQ off | 5.3 % | - | |
+| today: 32 taps, today's loop | 74.6 % (72.7-76.9) | 57.8 | 1 |
+| 32 taps, new kernel | 11.5 % (11.0-12.2) | 5.2 | 11x |
+| least squares 16 taps, new kernel | 8.7 % (8.4-9.1) | 2.8 | 20x |
+| least squares 12 taps, new kernel | 7.8 % | 2.1 | 27x |
+
+A second run by another script at load 6-8 (2 windows of 20 s each): EQ off
+2.8 %, today 44.8 % (35 ns), 32 taps with the new kernel 8.7 % (4.9 ns),
+16 taps 7.2 % (3.7 ns), 12 taps 5.8 % (2.5 ns). Today's loop is bound by a
+dependency chain and slows down more than the vectorized kernels when the
+core's sibling is busy, so the ratio moves with the load: 12 taps 14x on
+the quieter machine, 27x on the busy one; the kernel alone 7-11x.
+With one 8091 client today's loop saturated the thread and dropped sets;
+every fast mode delivered all 146.5 sets a second. Estimated for a Pi 5 from
+kraken_doa's measured cost per complex tap (0.239 ns, `C_TAP`): the EQ
+stage ~3 % of a core at 12 taps, ~4 % at 16, ~8 % at 32 with the new
+kernel; a Pi 4 about three times that. Not measured.
+
+**What the short design gives up, and what was seen on the way**
+
+- The band beyond +-0.42 fs. Today's design corrects out to its gate
+  (~0.47 fs); the 12-tap fit does not try. At -0.45 fs the stream showed
+  3-9° with 12 taps where today's EQ leaves ~0-1° (fork's setting; EQ
+  off: 3-10°), and at 868 MHz the 12-tap fit was worse than no EQ there
+  on three channels (7-8° against 2-4°); at +0.45 fs both leave 0-6°. With
+  16 taps and the fit band widened to 0.44 fs (test mode `WLS16E`) the edge
+  is back to 1-3.5° at a cost of 0.1-0.2° inside - that value was chosen
+  after seeing all the data. Out there the level is already 4-5 dB down
+  and the alias term that follows the trim sits in the phase
+  (`librtlsdr-fork.md`), so it is poor ground for a bearing either way.
+- The fit's gain outside the band: up to +0.4 dB at 12 taps (+0.64 dB at
+  16); in-band ripple <= 0.04 dB. Phase-only, like today's: the level
+  difference between channels is left as it is (a complex target was tried
+  offline and dropped: worse phase at 12 taps on a steep corner, +4-6 dB
+  gain outside the band).
+- With ANY per-bin EQ active, today's included, Check Calibration reads a
+  band-average phase of 0.3-1.6° at gain 49.6 (0.05-0.4° with the EQ off;
+  at gain 0 today's 0.06-0.11°, least squares 0.24-0.40°). The scalar
+  phasor is settled before the EQ is designed and nothing re-centres the
+  mean afterwards; taken to be the clipped noise source for every design and
+  the uncorrected band edge for the short one (not proven). Far inside the
+  10° recalibration threshold; rotating the taps by the fit's own mean
+  phase at design time should remove it (not tried).
+- `eq_tail` is not reset at a flush in today's loop (the trim's tail is):
+  the first 31 samples after a flush carry the samples from before it. The
+  prototype's kernel refills its carry; today's loop was left alone.
+
+**Considered and dropped**
+
+| candidate | why not |
+|---|---|
+| today's design with fewer taps | 16 taps leave 3.2° (fork's setting) to 9.6°, 12 taps 4.8-13.4° (offline) |
+| literal multi-bin: one correction per group, L-point inverse FFT | worse than the fit at every L <= 16; at 32 it fails on a steep corner |
+| correcting the level too (complex target) | see above |
+| main tap off-centre | no gain (a phase-only correction is close to Hermitian-symmetric) |
+| fusing the trim and the EQ into one pass or one filter | one pass: no faster (measured); one filter: the trim alone needs 16 taps, so the sum would be longer than 16 real + 12 complex |
+| FFT-domain or filter-bank application, an all-pass IIR, 16-bit fixed point | not built: at 12 taps a vectorized FIR is ~12 multiply-adds per sample and lane, below the cost of two transforms per block, and an IIR's feedback does not vectorize over samples (reasoned, not measured) |
+| a phasor per VFO in the client instead of filtering the stream (heimdall publishes the curve, 32-64 points per channel) | zero cost per sample and 0.1-0.7° for a 12.5-25 kHz VFO with the fork's setting (offline), but a 200 kHz VFO at the band edge keeps a 5-13° spread inside it, and the spectrum, gr-krakensdr and other clients get nothing; a possible addition, needs a wire field |
+| moving the tuner's IF centre so the corner leaves the band | no CPU at all and 1-2° left without any EQ - the fork's decision, `librtlsdr-fork.md` *Alternatives* |
+
+**Where it is.** Branch `eq-fast` (cut from this branch's docs commit):
+`src/dsp/per_bin_wls.{hpp,cpp}` (the design, a pure function),
+`eq_fast_stage` in `sdr_pipeline.cpp` (the kernel), test commands on the
+8070 web socket `PER_BIN_TEST_LEGACY` (default, today's) / `FAST32` /
+`WLS12` / `WLS16` / `WLS16E` / `WLS12S8` (not saved, not in the page),
+`tools/eq_bench/` (`eq_bench.cpp`: one file, build line in its header, also
+the one-minute Pi measurement that is missing; `wls_design_test.cpp`: the
+C++ design against reference taps, agreement 3e-9; README with the full
+tables). Data: job scratch 14951841 `rtlfilt/eq/` - `w_acc/out/` (offline
+tables, `summary.txt`), `w_cpu/out/`, `w_cpu/analysis/` and `w_cpu/runs/`
+(benchmarks, hardware A/B), `lead/` (the lead's own re-checks).
+
+Not tested: any Pi or other ARM machine (every Pi figure above is an
+estimate); GCC on aarch64 (the vectorization was checked with g++ on x86
+and clang for aarch64); MinGW and Apple clang builds; a bit-for-bit
+comparison of the branch's default mode with main; a signal with a known
+bearing; the wideband and Kerberos variants; another KrakenSDR unit; 4
+elements with a capture; long runs.
 
 ### Phase Compensation (phase-only)
 
