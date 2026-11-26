@@ -1100,3 +1100,206 @@ are all under `ZEROCOPY_BUILD`. A slower stop measured with an OFF build of
 the patched library (Raspberry Pi 5: 1.4-1.5 s against 0.4-0.5 s) therefore
 does not come from code the patch compiles into the library's stop path
 (compared on x86_64; the guards are not architecture-specific).
+
+## The R820T IF filter: what 359a94d changed, and the band-edge phase (measured 2026-11-26)
+
+Fork commit 359a94d (2022-03-18) is titled "disable filters on reg 0A and 0B
+as they cause noticable phase distortion, especially at rolloff". Checked on
+the x86 dev machine's KrakenSDR (serials 1000-1004), 100 MHz unless stated,
+with a test build of the fork that takes the tuner's filter registers from
+environment variables (`heimdall_v2/tools/rtl_filter_phase/`). Summary:
+
+- The commit does not switch a filter off. On heimdall's path it changes one
+  field, the channel filter's fine bandwidth code (R10 bits 3:0, FILT_CODE)
+  from 1111 (narrowest) to 0000 (widest). The filter stays powered; powering
+  it down (R10 bit 7 = 0, or the IF filter by R9 bit 7 = 1) leaves no usable
+  signal (no calibration at all).
+- The distortion is real and it is that filter: with the old value the
+  phase between channels reaches 13-26° at -0.4 fs (16-31° measured without
+  the noise source's clipping), with the fork's value 1.6-2.2° there. It is
+  the low-pass corner, which sits inside the streamed band with code 1111
+  and differs from chip to chip by 0.22 MHz (8 %).
+- What the fork's setting leaves, 3.4-7.5° at +0.4 fs, is the same filter's
+  high-pass corner at the other band edge (-3 dB at IF 0.47-0.51 MHz, which
+  is +0.45 to +0.47 fs), which the commit did not touch.
+- Stock osmocom rtl-sdr's values for 2.4 MS/s (each chip's own calibration
+  code, IF centre 1.815 MHz) leave 0.5-1.5° on this unit, and moving only
+  the IF centre to 1.815 MHz 1.1-2.2° - both less than the fork's, from 70
+  to 1575 MHz. Not adopted; see *Alternatives* below.
+- Why the calibration does not remove any of this, and what the per-bin EQ
+  does with it: `heimdall_v2/docs/dev/calibration.md`, *Band-edge phase*.
+
+### What the code writes
+
+heimdall never calls `rtlsdr_set_tuner_bandwidth`, so `rtlsdr_set_sample_rate`
+passes the sample rate (2.4 MHz) to `r82xx_set_bandwidth()` (`tuner_r82xx.c`),
+which picks the `IFi[]` row `{3, 2200+0, 1600, 0, 0x0F, 0x8F, 0x00}`: IF centre
+1.6 MHz. The tuner's LO is above the signal, so the IF spectrum is inverted:
+baseband +f sits at IF = 1.6 MHz - f (confirmed: a fit over six IF centres
+holds to 0.03-0.08 dB this way and 0.4-2.2 dB the other way). heimdall
+streams IF 0.4-2.8 MHz; +0.4 fs is IF 0.64 MHz, -0.4 fs is IF 2.56 MHz.
+
+| at 2.4 MS/s | R10 [3:0] FILT_CODE | R10 [4] FILT_Q | R11 | IF centre |
+|---|---|---|---|---|
+| stock osmocom rtl-sdr (in the fork's history: d892279) | the chip's own calibration result | 0 | 0x8F | 1.815 MHz |
+| the fork's base (hayguen's librtlsdr table, ec5ebcc / 22a920d), before 359a94d | 1111 | 1 | 0x8F | 1.6 MHz |
+| the fork since 359a94d | 0000 | 1 | 0x8F | 1.6 MHz |
+| old-dab/rtlsdr master (read 2026-11-26; not measured) | 9 + (calibration result - 8), row 2410 kHz | as its init leaves it | 0x8E | 1.825 MHz |
+
+- R10 is written with mask 0x0F, so bits 7:4 stay as `r82xx_set_tv_standard`
+  left them: 0xD (bit 7 PWD_FILT = 1, channel filter on; PW_FILT 10; FILT_Q
+  1). R11 = 0x8F (bits 7:5 FILT_BW = 100, bits 3:0 HP_COR = 1111, the lowest
+  high-pass corner) is what the table row holds anyway; R30 bit 6 (filter
+  extension) is written 0 by the fork and its base (stock osmocom does not
+  write it); R9 is not written. Both drivers that tune the filter per chip
+  (stock osmocom, old-dab) also put the IF centre near 1.82 MHz.
+- Read back on the hardware (`RTL_R820_PRINT_I2C=1`, all five dongles): R9
+  0x40, R10 0xD0, R11 0x8F, R30 0x0E.
+- `r82xx_set_tv_standard` runs the chip's filter calibration at every open
+  and stores the result (`fil_cal_code`); stock osmocom writes it to
+  FILT_CODE, the fork's base and the fork overwrite it. This unit's chips:
+  5, 3, 6, 7, 7 (serials 1000-1004; 1000 read 4 in 2 of 47 starts).
+- For the other bandwidths (not heimdall's path: a program that asks for a
+  narrower tuner bandwidth) 359a94d also replaces every row's R11 by 0x8F
+  and keeps the row's IF centre, so the request no longer narrows the filter.
+
+### Method
+
+heimdall (the test build, registers from the environment, otherwise today's
+code with the 16-tap trim filter) calibrates as usual; in CONVERGED the
+noise source is switched on and 1024-point cross-spectra of every channel
+against CH0 are averaged over ~2.5 s of the 8091 stream; then a full
+recalibration (`reset_lag_compensation`) and the next round (5 rounds for
+the main settings, 3 for sweeps). Reported: the phase of each channel
+against CH0 after removing the constant and the slope (a fit weighted by
+the cross-spectrum over |f| <= 0.42 fs - what one phasor and one delay per
+channel can remove), "detrended" below. The phase as heimdall left it
+("raw", referred to the band centre) is 0-3° larger: worst over |f| <= 0.4
+fs 3.5-8.6° with the fork's value, 15-29° with the old one, 1.9-2.4° with
+stock osmocom's. The trim filter's own response is divided out.
+Round-to-round sd <= 0.2°, between heimdall starts 0.2-0.5° at -0.4 fs and
+0.9-1.5° at +0.4 fs (7 starts over 13 hours). Only |f| <= 0.4 fs is used:
+beyond 0.42 fs the stream holds a term that follows each channel's trim
+(-6° per sample of trim at +0.42 fs, -47° at +0.45 fs, <= 1.1° at 0.40 fs;
+taken to be aliasing through the RTL2832U's decimation filter - not proven).
+Zero coherence events in every run.
+
+### The old value against the fork's (A/B)
+
+Detrended phase against CH0, CH1 / CH2 / CH3 / CH4, two heimdall starts each:
+
+| FILT_CODE | -0.4 fs | +0.4 fs | worst over \|f\| <= 0.4 fs | level difference between channels at -0.4 fs |
+|---|---|---|---|---|
+| 0000 (fork) | 1.8 / -1.7 / -1.7 / -2.0° | 3.4 / -5.3 / -5.0 / -7.0° | 7.0° (CH4, +0.40 fs) | <= 0.09 dB |
+| 0000, second start | 1.9 / -1.6 / -1.7 / -2.0° | 3.6 / -5.2 / -6.4 / -6.6° | 6.5° | |
+| 1111 (before 359a94d) | 26.0 / -13.4 / -14.5 / -17.3° | 8.6 / -7.7 / -8.2 / -10.1° | 26.0° (CH1, -0.40 fs) | 3.1 dB |
+| 1111, second start | 25.2 / -12.6 / -15.1 / -16.8° | 8.4 / -7.5 / -8.8 / -10.2° | 25.1° | 3.0 dB |
+
+At +-0.2 / 0.3 fs: fork <= 1.6°, old value up to 4.4° (the delay fit tilts
+the whole band when one edge bends). The same at RF gain 28.0 and 20.7 and
+at IF VGA steps 6 and 4 (the noise source clips 8-26 % of CH0's samples at
+every one of them - 14 % with the fork's value, 26 % with the old one).
+Without clipping (RF gain 0, 0 % at the rails) the fork's curve is the same
+(+0.4 fs: 4.0 / -5.8 / -6.4 / -7.4°), the old value's is larger: 31.0 /
+-15.5 / -16.9 / -19.2° at -0.4 fs. The clipped noise source shows a steep
+corner about 20 % too small; the same 30-32° appear at 1296 and 1575 MHz,
+where the noise source is weaker and clips 0.3-0.6 %.
+
+Over RF (70, 162, 433, 868, 1296, 1575 MHz, 3 rounds each): each setting's
+curve differs from its 100 MHz curve by <= 0.9° (fork), <= 0.6° (stock
+osmocom's values), <= 0.4° (IF centre moved only) - no more than two
+100 MHz measurements of one run differ (0.6°). Over time after ONE
+calibration (heimdall started after the tuners had been closed for 10 min,
+a capture every 30 s for 20 min, nothing recalibrated): the phase at +-0.3
+/ 0.4 fs moved <= 0.44° (fork), <= 0.38° (stock values), <= 0.55° (old
+value, 12 min), the band centre <= 0.21°, the lag <= 0.001 sample - about
+the noise of one capture (0.06-0.15°); no warm-up to see.
+
+### The cause: the corners of the tuner's IF band-pass
+
+Moving the IF centre (`RTL_R820_IF_CENTER`, 1.0-2.8 MHz in 0.3 MHz steps; the
+tuned frequency stays, FM stations keep their place within 2.4 kHz) lays
+each channel's response out against absolute IF frequency:
+
+| -3 dB corner (MHz) | CH0 (cal 5) | CH1 (cal 3) | CH2 (cal 6) | CH3 (cal 7) | CH4 (cal 7) |
+|---|---|---|---|---|---|
+| high-pass (HP_COR 1111), FILT_CODE 0000 | 0.484 | 0.470 | 0.505 | 0.505 | 0.509 |
+| low-pass, FILT_CODE 1111 | 2.649 | 2.541 | 2.731 | 2.743 | 2.759 |
+| low-pass, FILT_CODE 0000 | > 3.76 | 3.73 | > 3.76 | > 3.76 | > 3.76 |
+
+- The phase between channels is a function of the IF frequency (it follows
+  the IF centre to 0.1-0.2°; a curve fixed in baseband misses by 1.2-9.4°):
+  with FILT_CODE 0000, 7-11° at IF 0.6 MHz, <= 2.4° at 0.8 MHz, <= 0.5°
+  from 1.0 to 2.2 MHz, 1-2° at 2.6 MHz, 3-6° at 3.0 MHz. It is analog, in
+  the tuner's IF.
+- The level also has a part fixed in baseband and equal in all five chips
+  (-0.3 dB at 0.3 fs, -2.1 dB at +-0.4 fs): the RTL2832U's decimation filter.
+  It adds no phase between channels.
+- Both corners are ordered by the chip's calibration code (lowest code =
+  lowest corner): one RC spread per chip, of which the calibration code
+  describes the low-pass.
+- The high-pass peaks by +1.0-1.6 dB at IF 0.6-0.7 MHz before it falls,
+  which hides the decimation filter's roll-off at the + edge (the level at
+  +0.4 fs is -0.4 dB against -1.7 dB at -0.4 fs).
+
+One register field at a time (CH1 and CH4 against CH0, detrended):
+
+| changed | - edge (-0.4 fs, IF 2.56 MHz) | + edge (+0.4 fs, IF 0.64 MHz) |
+|---|---|---|
+| FILT_CODE 2 / 4 / 6 / 8 / 10 / 12 / 14 (0 = fork, 15 = old) | CH1 2.4 / 2.8 / 3.7 / 5.0 / 8.2 / 13.8 / 21.8°, CH4 -2.4 ... -13.0° | unchanged (CH4 -6.4 ... -9.3°) |
+| FILT_BW (R11 bits 7:5) 0 / 3 / 5 / 6 / 7 (4 = fork) | CH1 0.5 / 0.5 / 5.1 / 4.8 / 21.2° | unchanged |
+| HP_COR 14 / 13 / 12 / 11 (15 = fork) | unchanged (2.1-3.4°) | corner 0.60 / 0.71 / 0.80 / 1.02 MHz (CH0); CH0's level at +0.4 fs -3.4 / -7.4 / -9.0 / -10.5 dB; the worst point moves in to +0.36 / 0.33 / 0.27 / 0.17 fs |
+| IF centre 1.9 MHz | 1.0-2.0° | 1.2-1.8° |
+| FILT_Q 0; R9 bits 7:6 = 0 / 1; R30 bit 6 = 1 | unchanged | unchanged |
+| R10 bit 7 = 0 (filter off); R9 bit 7 = 1 | no calibration: correlation peak / mean 2.0-2.7 against 130-200 | |
+
+So the - edge follows the low-pass setting and nothing else, the + edge
+follows the high-pass corner and the IF centre and nothing else.
+
+### Alternatives measured (not adopted - a decision for the fork)
+
+Worst detrended phase over |f| <= 0.4 fs, CH1 / CH2 / CH3 / CH4, 100 MHz:
+
+| setting | worst | note |
+|---|---|---|
+| fork: code 0000, FILT_Q 1, IF 1.6 MHz | 3.4 / 5.3 / 5.0 / 7.0° | + edge; 6.4-7.4° (worst channel) from 70 to 1575 MHz |
+| chip's calibration code, IF 1.6 MHz | 2.1 / 4.2 / 5.2 / 6.0° | - edge <= 1.1°, + edge as the fork |
+| code 0000, IF 1.815 MHz | 1.9 / 1.1 / 1.4 / 1.6° | only the IF centre moved; 1.9-2.2° from 70 to 1575 MHz |
+| code 0000, FILT_Q 0, IF 1.815 MHz | 1.8 / 1.5 / 1.9 / 2.0° | |
+| calibration code, FILT_Q 1, IF 1.815 MHz | 1.2 / 1.4 / 3.5 / 2.7° | - edge worse |
+| calibration code, FILT_Q 0, IF 1.815 MHz (stock osmocom) | 0.8 / 0.7 / 1.3 / 0.8° | second start 0.6 / 0.6 / 1.5 / 0.5°; 1.0-1.5° from 70 to 1575 MHz |
+
+With the stock values the noise-off spectrum showed no new features (same
+floor, -69 to -70.5 dBFS per bin), the noise source clips 17.8 % of CH0's
+samples against 13.8 %, and the level at +0.4 fs is -1.6 dB against -0.4 dB
+(the high-pass peak no longer lifts it).
+
+Why moving the IF centre helps: at 1.6 MHz the streamed band (IF 0.4-2.8
+MHz) reaches below the high-pass corner (0.47-0.51 MHz); at 1.815 MHz it is
+IF 0.615-3.015 MHz, clear of the high-pass by 0.1 MHz, and with code 0000
+the low-pass is still 0.7 MHz above it. An IF centre of 1.9 MHz measured
+the same (1.5-1.9°); at 2.2 MHz the - edge starts to bend on the chip with
+the lowest corner (3.9°), at 2.5 MHz 9°.
+
+Open before anything is changed in the fork:
+- One KrakenSDR, one machine, room temperature, 20 minutes. Corners that
+  spread 8 % between five chips will spread differently on another unit;
+  the calibration codes and the two starts in 47 where one chip's code
+  changed (5 -> 4) say the low-pass moves in steps of the code.
+- With the IF centre at 1.815 MHz the band's - edge loses the protection the
+  high-pass stopband gives against aliasing (the term that follows the trim
+  was +17° per sample of trim at -0.45 fs with the stock values against
+  +6.5° with the fork's, +114° against +22° at -0.48 fs); inside +-0.4 fs
+  nothing was seen. Not tested
+  with a strong signal just outside the band.
+- Not tested: image rejection (a broadband source cannot show it), the
+  wideband variant (tuners at 1268 MHz), a Pi, other sample rates, strong
+  off-air signals, temperature.
+- A side observation: in one of five runs at 1575 MHz CH1 lost its stream
+  pairing on the retune (no correlation peak, peak / mean ~5, one coherence
+  event, no lock within 90 s); the fork's own filter setting, not repeated
+  in four later runs.
+
+Data: job scratch 14951841 `rtlfilt/w_hw1/` (register A/B, sweeps, IF map;
+`analysis/SUMMARY_ALL.txt`, `REGISTERS.txt`, `stitch_fc0.txt`) and
+`rtlfilt/w_hw2/` (per-bin EQ, frequency, time; `analysis/D*_COMPACT.txt`).

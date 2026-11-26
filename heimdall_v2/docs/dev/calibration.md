@@ -244,7 +244,8 @@ channels alike, CH4 with trims of opposite sign in the two runs). Measured
 minus predicted - the dongles' own curvature - agrees between the builds
 within ~0.1-0.7°: 1.6-2.1° at −0.4 fs, 0.5-1.0° at ±0.3 fs, 3.7-7.0° at
 +0.4 fs. That is what remains at the band edges with 16 taps; only the
-per-bin EQ (off by default) flattens it. Both builds: CONVERGED 23.3 s
+per-bin EQ (off by default) flattens it - where it comes from and what the
+EQ does with it: *Band-edge phase* below. Both builds: CONVERGED 23.3 s
 after a cold start, 2.6-4.7 s per full recalibration, Check Calibration
 |lag| 0.003-0.019 (8 taps) / 0.004-0.005 (16), |phase| 0.13-0.31°,
 `coherence_events` 0, `lag_no_peak` empty.
@@ -268,6 +269,86 @@ Found while measuring, not changed: `main.cpp`'s startup banner leaves
 residual heimdall logs after it is rounded to 0.1 sample (the test builds
 restored the default format after the banner). Not measured: any Pi, the
 wideband and Kerberos variants, frequencies other than 100 MHz.
+
+### Band-edge phase: what one delay and one phasor per channel leave (measured 2026-11-26)
+
+The calibration gives each channel one delay (the servo and the trim: a
+phase proportional to frequency) and one unit phasor (a constant), both
+taken over the whole band - the correlation peak and the dominant
+eigenvector are power-weighted means. A phase that bends at a band edge is
+in the noise-source data (it was measured from it), but neither number can
+hold it, so it stays. That is the design, not a fault of the noise source.
+
+What bends: the corners of each R820T's IF band-pass, which differ by ~8 %
+between the chips of one unit. With the fork's filter setting the high-pass
+corner (IF 0.47-0.51 MHz) lies at the + edge of the streamed band; the
+low-pass corner the fork moved out of the band (commit 359a94d) lay at the
+- edge. Registers, the A/B and the measurements that pin it on those
+corners: `../../../docs/dev/librtlsdr-fork.md`, *The R820T IF filter*.
+
+As heimdall leaves the stream (phase of CH1-CH4 against CH0, referred to
+the band centre, no slope removed; 100 MHz, gain 49.6, x86 dev machine's
+KrakenSDR): within +-0.2 fs <= 1.2°, within +-0.3 fs <= 2.2°, at +0.4 fs
+4.2 / -5.6 / -7.8 / -8.5°, at -0.4 fs 3.4 / -3.1 / -1.7 / -2.5°. A VFO
+at the + edge of the span gets a DoA from phases up to ~8° off; the same
+from 70 to 1575 MHz (the curve is fixed in the IF: <= 0.9° change over
+RF), at every gain, and for at least 20 minutes after a calibration (<=
+0.44° change, the band centre <= 0.21°, the lag <= 0.001 sample).
+
+**The per-bin EQ** (`PER_BIN_ENABLE`, off by default; 32 snapshots of the
+cross-spectrum after the scalar phase has converged, a phase-only target
+per bin, 32 complex taps per channel, Hamming window; re-measured on every
+recalibration) does remove most of it. Worst phase over |f| <= 0.4 fs,
+CH1 / CH2 / CH3 / CH4, EQ off -> on, 5 full recalibrations (round sd <=
+0.25°), for the fork's filter setting and three others set by a test build:
+
+| tuner IF filter | EQ off | EQ on | EQ on, no clipping (RF gain 0) |
+|---|---|---|---|
+| fork (FILT_CODE 0000, IF 1.6 MHz) | 4.1 / 5.6 / 7.7 / 8.3° | 0.6 / 0.9 / 1.3 / 1.3° | 0.6 / 0.7 / 0.7 / 0.9° (off: 5.0 / 6.8 / 7.5 / 8.2°) |
+| before 359a94d (FILT_CODE 1111) | 29.4 / 15.6 / 16.5 / 18.1° | 6.3 / 2.3 / 2.4 / 2.5° | 2.3 / 1.0 / 1.0 / 1.1° (off: 36.3 / 18.9 / 20.6 / 23.3°) |
+| stock osmocom's values (calibration code, IF 1.815 MHz) | 1.8 / 2.5 / 3.0 / 1.8° | 0.5 / 0.5 / 0.6 / 0.7° | |
+| FILT_CODE 0000, IF 1.815 MHz | 3.0 / 3.2 / 2.8 / 3.8° | 0.5 / 0.5 / 0.4 / 0.8° | |
+
+- Cost in time: +0.5-0.6 s per calibration (full recalibration 3.3 -> 3.9
+  s, a retune 3.45 -> 4.0 s including the 3 s cooldown). CPU not measured
+  (32 complex taps per sample and channel in the conversion loop).
+- It is phase-only: the level difference between channels stays (fork
+  <= 0.25 dB at +-0.4 fs; with the old filter value 3.0 dB on CH1 at -0.4
+  fs, 0.7-1.0 dB on the others).
+- 32 taps cannot follow a steep corner: on clean data the old filter value
+  still leaves 1.0-2.3° (an emulation of the design from the same frames
+  agrees with the stream within 0.06° without clipping, and gives a third
+  to a quarter of that with 64 taps).
+- The noise source clips (14 % of CH0's samples with the fork's filter
+  value, 26 % with the old one), and a clipped measurement shows a steep
+  corner too small (24.6° against 31.0° at -0.4 fs for the old value; the
+  fork's curve hardly changes, 0.3-0.5°). Inferred from the measured curves,
+  not measured on a signal: an EQ designed on the clipped noise source
+  leaves ~9 / 2 / 3 / 3.5° on an unclipped signal with the old filter value
+  and 0.3-1.0° with the fork's.
+- The "EQ on" column at gain 49.6 is read from the 8091 stream, which
+  clamps the EQ-filtered clipped noise to 8 bits; that alone hides ~10 % of
+  a correction (reproduced offline), so the 6.3° includes it.
+- Found, not changed: the design's gate (`SNR_GATE`, bins below 5 % of the
+  PEAK reference bin get no correction) compares with the strongest bin,
+  DC included. With a weak noise-source level (RF gain 0 and IF VGA step 4,
+  -31 dBFS) CH0's DC bin was 14 dB above the rest: every other bin fell
+  below the gate, heimdall logged "designed" and the stream was unchanged.
+  At the normal level the gate left the outermost bins uncorrected: beyond
+  +0.47 fs with the fork's filter value, beyond -0.45 / +0.47 fs with the
+  old one.
+
+So why open the filter instead of calibrating its corner: nothing in the
+default calibration can hold a corner at all; the optional EQ can, but a
+corner inside the band is exactly where it is weakest (tap count, level
+difference left in place, clipping bias, the gate), while a filter moved
+out of the band leaves it a gentle curve it flattens to ~1°. Drift is not
+the reason - the curves held for 20 minutes within the noise.
+
+Data and method: job scratch 14951841 `rtlfilt/w_hw2/analysis/` (`D1_`,
+`D2_`, `D3_`, `D5_COMPACT.txt`), tooling `../../tools/rtl_filter_phase/`.
+One unit, one machine, room temperature; no Pi, no off-air signal with a
+known bearing, no EQ timeline (the 20 minutes are of the uncorrected curve).
 
 ### Phase Compensation (phase-only)
 
