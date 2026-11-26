@@ -520,11 +520,30 @@ per sample and channel (mode minus off):
   running heimdall matches the five-buffer case. No such effect on a Pi 5.
 - Pi 5 running heimdall against `eq_bench` (four filtered channels + CH0's
   delay): within 6 %. Pi 4: `eq_bench` reads 18-34 % high.
+- **ARM-specific kernels** (`neon_eq.cpp`, same day; checked against a
+  double-precision FIR, then timed on five channels' buffers in rotation,
+  pinned, top clock). ns per sample and channel at 12 / 16 / 32 taps:
+
+  | kernel | Pi 4 | Pi 5 |
+  |---|---|---|
+  | `K1c planar` (portable C++, the compiler vectorizes it) | 11.9 / 17.9 / 33.4 | 4.7 / 6.8 / 13.7 |
+  | the prototype's (`K1g planar chunk4`) | 21.9 / 26.3 / 45.8 | 5.0 / 7.4 / 14.7 |
+  | NEON intrinsics: LD2 / ST2 on the interleaved I/Q (no deinterleave pass), taps by lane, 4 / 8 / 16 outputs a step, split accumulators | 13.8-15.7 / 19.6-20.3 / 38.5-40.0 | 5.3-6.0 / 6.9-7.5 / 14.5-14.7 |
+  | FP16 vector arithmetic, 8 lanes (Pi 5 only - ARMv8.2; the Pi 4's A72 has none) | - | **2.7 / 4.2 / 7.5** |
+
+  Hand-written NEON gains nothing over the compiler's code on either Pi.
+  The kernel choice does: `K1c` is 1.4-1.8x faster than the prototype's on
+  a Pi 4 (about 1.07x on a Pi 5). FP16 halves the Pi 5's EQ cost (1.7-1.8x)
+  at a relative error of 1.2-2.3e-3 against 2-3e-7 (fp32) - above the
+  float path but below an 8-bit input's quantization step (1/127.5); a Pi 5
+  already has room, so it saves ~2 % of a core. Not available on these
+  cores: FCMLA (complex multiply-add, ARMv8.3), SVE.
 
 Data: job scratch 14951841 `pi/` - `res_pi4/`, `res_pi5/` (`eq_bench_*.txt`,
 `*fix_CPU.txt` = the fixed-clock tables, `*fix_clock.txt`, `*_results.json`,
 the `ondemand` runs `pi4_CPU.txt` / `pi5_CPU.txt` / `*perf_*`), `kern_test.cpp`
-and `kern_pi*.out`, `run_perf.sh`, `build_pi.sh`.
+and `kern_pi*.out`, `neon_eq.cpp` (with `kern_proto.inc`, the prototype's
+kernel copied from `eq-fast`) and `neon_pi*.out`, `run_perf.sh`, `build_pi.sh`.
 
 **What the short design gives up, and what was seen on the way**
 
