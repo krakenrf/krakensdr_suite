@@ -1,0 +1,145 @@
+--- a/include/tuner_r82xx.h
++++ b/include/tuner_r82xx.h
+@@ -41,7 +41,8 @@
+ 
+ #define VER_NUM				49
+ 
+-#define USE_R82XX_ENV_VARS	0
++/* TEST BUILD: register knobs from environment variables on */
++#define USE_R82XX_ENV_VARS	1
+ 
+ enum r82xx_chip {
+ 	CHIP_R820T,
+@@ -122,6 +123,9 @@
+ 	int				last_Mixer_value;
+ 	int				last_VGA_value;
+ 
++	/* TEST BUILD: which dongle a debug line belongs to ("sn<serial>"), set by r820t_init */
++	char dbg_tag[32];
++
+ #if USE_R82XX_ENV_VARS
+ 	/* store some environment variables */
+ 	int printI2C;
+--- a/src/tuner_r82xx.c
++++ b/src/tuner_r82xx.c
+@@ -782,8 +782,8 @@
+ 	int r;
+ #if USE_R82XX_ENV_VARS
+ 	if (priv->printI2C) {
+-		fprintf(stderr, "%s: setting I2C register %02X: old value = %02X, new value: %02X with mask %02X\n"
+-			, func_name, reg
++		fprintf(stderr, "[%s] %s: setting I2C register %02X: old value = %02X, new value: %02X with mask %02X\n"
++			, priv->dbg_tag, func_name, reg
+ 			, r82xx_read_cache_reg(priv, reg)
+ 			, val, bit_mask );
+ 	}
+@@ -1588,12 +1588,18 @@
+ 				return rc;
+ 
+ 			priv->fil_cal_code = data[4] & 0x0f;
++			/* TEST BUILD: every try's raw result */
++			fprintf(stderr, "[%s] r82xx_set_tv_standard: filter cal try %d: R4 = %02X -> fil_cal_code %d\n",
++				priv->dbg_tag, i, (unsigned)data[4], (int)priv->fil_cal_code);
+ 			if (priv->fil_cal_code && priv->fil_cal_code != 0x0f)
+ 				break;
+ 		}
+ 		/* narrowest */
+ 		if (priv->fil_cal_code == 0x0f)
+ 			priv->fil_cal_code = 0;
++		/* TEST BUILD: the code stock osmocom would write to R10[3:0] */
++		fprintf(stderr, "[%s] r82xx_set_tv_standard: FIL_CAL_CODE = %d (0x%X)\n",
++			priv->dbg_tag, (int)priv->fil_cal_code, (unsigned)priv->fil_cal_code);
+ 	}
+ 
+ 	rc = r82xx_write_reg_mask_ext(priv, 0x0a,
+@@ -2158,6 +2164,9 @@
+ 		rc = r82xx_write_reg_mask(priv, 0x09, reg_09, 0xc0);
+ 		if (rc < 0)
+ 			fprintf(stderr, "ERROR setting I2C register 0x09 to value %02X with mask %02X\n", (unsigned)reg_09, (unsigned)reg_mask);
++		/* TEST BUILD: this path bypasses the PRINT_I2C print */
++		fprintf(stderr, "[%s] %s: R9 written: new cache value %02X (bits 7:6 = %u)\n", priv->dbg_tag, __FUNCTION__,
++			(unsigned)r82xx_read_cache_reg(priv, 0x09), priv->valR9);
+ 	}
+ #endif
+ 
+@@ -2169,7 +2178,9 @@
+ 		reg_mask = 0xf0;
+ 	}
+ 	if ( priv->haveR10L ) {
+-		reg_0a = ( reg_0a & ~0x0f ) | priv->valR10L;
++		/* TEST BUILD: R10_LO = 16 -> this chip's own filter calibration code (stock osmocom) */
++		const unsigned lo = (priv->valR10L == 16) ? (unsigned)(priv->fil_cal_code & 0x0f) : priv->valR10L;
++		reg_0a = ( reg_0a & ~0x0f ) | lo;
+ 		reg_mask |= 0x0f;
+ 	}
+ #endif
+@@ -2252,6 +2263,26 @@
+ 		fprintf(stderr, "%s: ERROR setting I2C register 0x1E to value %02X with mask %02X\n"
+ 		, __FUNCTION__, (unsigned)reg_1e, (unsigned)reg_mask);
+ 
++#if USE_R82XX_ENV_VARS
++	/* TEST BUILD: the resulting registers - cache (R9 R10 R11 R30) and the chip's
++	 * own R0..R15 read back (R16..R31 are write-only) */
++	if (priv->printI2C) {
++		uint8_t rb[16];
++		int k, rrc;
++		fprintf(stderr, "[%s] REGDUMP bw_req %d applied %u int_freq %d fil_cal_code %d"
++			" cache R9 %02X R10 %02X R11 %02X R30 %02X\n",
++			priv->dbg_tag, bw, (unsigned)*applied_bw, (int)priv->int_freq, (int)priv->fil_cal_code,
++			(unsigned)r82xx_read_cache_reg(priv, 0x09), (unsigned)r82xx_read_cache_reg(priv, 0x0a),
++			(unsigned)r82xx_read_cache_reg(priv, 0x0b), (unsigned)r82xx_read_cache_reg(priv, 0x1e));
++		memset(rb, 0, sizeof(rb));
++		rrc = r82xx_read(priv, 0x00, rb, sizeof(rb));
++		fprintf(stderr, "[%s] READBACK rc %d R0..R15:", priv->dbg_tag, rrc);
++		for (k = 0; k < 16; ++k)
++			fprintf(stderr, " %02X", (unsigned)rb[k]);
++		fprintf(stderr, "  (chip R9 %02X R10 %02X R11 %02X)\n", (unsigned)rb[9], (unsigned)rb[10], (unsigned)rb[11]);
++	}
++#endif
++
+ 	return priv->int_freq;
+ }
+ #undef FILT_HP_BW1
+@@ -2567,7 +2598,8 @@
+ 		if ( pacR10Lo ) {
+ 			priv->haveR10L = 1;
+ 			priv->valR10L = atoi(pacR10Lo);
+-			if ( priv->valR10L > 15 ) {
++			/* TEST BUILD: 16 = use this chip's own fil_cal_code */
++			if ( priv->valR10L > 16 ) {
+ 				fprintf(stderr, "*** read R10_LO from environment: %d - but value should be 0 - 15 for bit [3:0]\n", priv->valR10L);
+ 				priv->haveR10L = 0;
+ 			}
+@@ -2664,6 +2696,14 @@
+ 			fprintf(stderr, "*** read R30_LO from environment: %d\n", priv->valR30L);
+ 		}
+ 
++		/* TEST BUILD: one line per dongle with what it took from the environment */
++		fprintf(stderr, "[%s] ENV printI2C %d IF_CENTER %u R9_76 %d:%u R10_HI %d:%u R10_LO %d:%u"
++			" R11_HI %d:%u R11_LO %d:%u R30_HI %d:%u R30_LO %d:%u fil_cal_code %d\n",
++			priv->dbg_tag, priv->printI2C, priv->filterCenter,
++			(int)priv->haveR9, priv->valR9, (int)priv->haveR10H, priv->valR10H,
++			(int)priv->haveR10L, priv->valR10L, (int)priv->haveR11H, priv->valR11H,
++			(int)priv->haveR11L, priv->valR11L, (int)priv->haveR30H, priv->valR30H,
++			(int)priv->haveR30L, priv->valR30L, (int)priv->fil_cal_code);
+ 	}
+ #endif
+ 
+--- a/src/librtlsdr.c
++++ b/src/librtlsdr.c
+@@ -592,6 +592,15 @@
+ 	devt->r82xx_c.use_predetect = 0;
+ 	devt->r82xx_p.cfg = &devt->r82xx_c;
+ 
++	/* TEST BUILD: tag the tuner's debug lines with the dongle's serial */
++	{
++		char sn[256];
++		memset(sn, 0, sizeof(sn));
++		if (rtlsdr_get_usb_strings(devt, NULL, NULL, sn) != 0 || !sn[0])
++			snprintf(sn, sizeof(sn), "%p", dev);
++		snprintf(devt->r82xx_p.dbg_tag, sizeof(devt->r82xx_p.dbg_tag), "sn%.24s", sn);
++	}
++
+ 	return r82xx_init(&devt->r82xx_p);
+ }
+ int r820t_exit(void *dev) {

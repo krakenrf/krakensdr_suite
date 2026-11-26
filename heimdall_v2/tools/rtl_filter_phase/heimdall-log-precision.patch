@@ -1,0 +1,10 @@
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -656,6 +656,7 @@
+          << ", Samples: " << NUM_SAMPLES << "\n"
+          << "Frequency: " << std::fixed << std::setprecision(1) << current_frequency.load()/1e6
+          << " MHz, Sample Rate: " << SAMPLE_RATE/1e6 << " MSPS\n"
++         << std::defaultfloat << std::setprecision(6)
+          << (downconverter.enabled.load()
+                  ? std::string("Mode: KrakenSDR WIDEBAND variant (tuners at ") +
+                        std::to_string(static_cast<unsigned>(WB_VARIANT_IF_HZ / 1000000)) +

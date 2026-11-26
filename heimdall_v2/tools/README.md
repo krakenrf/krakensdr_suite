@@ -67,3 +67,53 @@ waits for every cancelled transfer, and (added 2026-11-13) the FIFO hold:
 heimdall holds every dongle's FIFO at open and starts all streams together
 on Linux - `../../docs/dev/librtlsdr-fork.md`, *FIFO hold*). Details and
 measurements: `../../docs/dev/librtlsdr-fork.md`, *Zero-copy USB buffers*.
+
+## rtl_filter_phase/ - the R820T IF filter registers from the environment (a test build)
+
+For measurements of the tuner's IF filter settings on the running array
+(`../../docs/dev/librtlsdr-fork.md`, *The R820T IF filter*). Nothing here is
+part of a normal build; it works on scratch copies only.
+
+- `r82xx-env-test.patch` (for a COPY of the fork, 9644d07): switches on the
+  fork's own `USE_R82XX_ENV_VARS` code (`include/tuner_r82xx.h` defines it 0
+  unconditionally, so a `-D` does not work) and adds test prints. The tuner
+  then takes, at every open and for every dongle of the process:
+  `RTL_R820_R10_LO` (R10 bits 3:0, FILT_CODE, 0-15; 16 = the chip's own
+  calibration code, as stock osmocom rtl-sdr writes it), `RTL_R820_R10_HI`
+  (R10 bits 7:4; without `R10_LO` the low bits are then not written),
+  `RTL_R820_R11_HI` (bits 7:5, FILT_BW), `RTL_R820_R11_LO` (bits 3:0,
+  HP_COR), `RTL_R820_R9_76`, `RTL_R820_R30_HI`, `RTL_R820_IF_CENTER` (Hz; the
+  tuned frequency stays), and with `RTL_R820_PRINT_I2C=1` prints every such
+  register write, a `REGDUMP` line (R9 / R10 / R11 / R30, the IF centre, the
+  calibration code) and a read-back, each tagged with the dongle's serial.
+- `heimdall-log-precision.patch` (for a COPY of `heimdall_v2`): heimdall's
+  log rounds every number to 0.1 after the startup banner; `analyze.py`
+  needs each channel's trim to 3 decimals.
+- `measure.py`: starts that heimdall from a scratch directory, sets
+  frequency and gain, and per round (a full `reset_lag_compensation`
+  between rounds) averages 1024-point cross-spectra of every channel against
+  CH0 from the 8091 stream with the noise source on in CONVERGED; saves
+  `runs/<label>/results.json`, `curves.npz`, `heimdall.log`.
+- `analyze.py`: per run and channel the phase against CH0 as heimdall left
+  it and with constant and slope removed, levels, coherence; the trim
+  filter's own response divided out (`NOFIR=1`: not).
+
+```bash
+T=/tmp/rtlfilt && mkdir -p $T                      # from the repository root; heimdall stopped
+cp -a librtlsdr $T/librtlsdr && rm -rf $T/librtlsdr/build
+patch -d $T/librtlsdr -p1 < heimdall_v2/tools/rtl_filter_phase/r82xx-env-test.patch
+cp -a heimdall_v2 $T/heimdall_v2
+patch -d $T/heimdall_v2 -p1 < heimdall_v2/tools/rtl_filter_phase/heimdall-log-precision.patch
+make -C $T/heimdall_v2 -j3                         # builds the patched fork copy too (../librtlsdr)
+cp $T/heimdall_v2/heimdall $T/heimdall_v2/rfp_heimdall
+cp heimdall_v2/tools/rtl_filter_phase/*.py $T/
+python3 $T/measure.py F0 --rounds 5                                    # the fork's setting
+python3 $T/measure.py B1 --rounds 5 --env RTL_R820_R10_LO=15           # FILT_CODE as before 359a94d
+python3 $T/measure.py B2 --rounds 5 --env RTL_R820_R10_LO=16 --env RTL_R820_R10_HI=12 \
+        --env RTL_R820_IF_CENTER=1815000 --env RTL_R820_PRINT_I2C=1    # stock osmocom's values
+python3 $T/analyze.py F0 B1 B2 --baseline F0       # tables: $T/analysis/<label>.txt
+```
+
+`measure.py` needs numpy, the KrakenSDR's serials 1000-1004, heimdall's ports
+free, and nothing else on the dongles. Written and used on x86_64 Linux
+(2026-11-26); not run on a Pi.
