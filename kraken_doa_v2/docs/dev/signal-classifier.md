@@ -2127,8 +2127,37 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   no offset mirroring here (the same conclusion as MUSIC's and the bearing
   spectrum's, *wideband-variant.md*). Only coherent mode exists there
 - **Read-only**: nothing is ever sent to heimdall (tested: no control
-  command in 35 s with it on); no files written; the on / off setting goes
-  through the settings store, sandboxed during a playback like any other
+  command in 35 s with it on); no files written by classification; on/off
+  and click-to-tune presets go through the settings store, sandboxed during
+  a playback like any other
+
+### Receiver-wide click-to-tune presets
+
+The Signal ID box's **Tuning presets** button edits optional per-class
+demodulation and VFO bandwidth (whole Hz). Select Factory / unchanged
+to override bandwidth alone, including classes whose factory demod is
+unspecified (SSB, CW). The factory catalog is extracted
+from the actual configured model with its existing validated reader, on
+the classifier worker, even with Signal ID off. Only visible classes that
+the model can output are listed. No IQ is captured to open the editor.
+
+An empty preset setting uses the model's original tuning values; saved
+overrides are keyed by stable class ID. The receiver merges individual
+edits, sends a canonical snapshot to all pages, and restores it on startup
+even before Heimdall connects. Edits change no active VFO, decoder, audio,
+squelch, scan or classification state. The existing click-to-tune path
+applies the effective preset and continues to enforce decoder locks.
+Digital overrides require an available decoder plugin, not voice capability;
+non-voice decoders can use Digital with silent audio and decoder-confirmed
+squelch. If that plugin becomes unavailable, factory tuning is used. Widths below a plugin's
+declared minimum are permitted with an advisory; decode quality is not
+guaranteed. Fixed-frequency and always-locked plugins retain factory
+tuning. Option-dependent locks are enforced by the existing VFO path.
+
+Reset a protocol or all presets in this editor without resetting unrelated
+receiver settings. A global settings reset also clears the overrides.
+Absent model classes remain dormant in the saved setting. Playback
+settings are sandboxed as usual.
 
 ## Protocol
 
@@ -2136,6 +2165,14 @@ commit 8b7c707 on the SAME (new) evaluation path and library state.
   persisted (schema `sigclass`, default off, replayed after `BIN_DOA:`),
   echoed as sync_cmd and in `is_replayed_command` (the page ignores the
   echo - it draws from the state). Allowed during a playback (sandboxed)
+- GET_SIGCLASS_PRESETS requests the catalog (sigclass_catalog JSON);
+  SIGCLASS_PRESET_SET:<id>,<demod>,<hz> sets one class;
+  SIGCLASS_PRESET_RESET:<id> removes one override;
+  SIGCLASS_PRESETS_RESET removes all. The canonical SIGCLASS_PRESETS:
+  suffix is the sorted semicolon-separated settings snapshot, empty for
+  factory defaults. It is persisted and broadcast via sync_cmd; page edits
+  receive a requester-only sigclass_preset_result. The canonical command
+  itself is reserved for settings replay.
 - `{"sigclass":{enabled, available, reason, parked, analyze_ms, period_ms,
   duty, snapshots, looks, min_confidence, tracks:[{id, hz, bw, lo, hi, tuner, snr,
   duty, burst, wide, cls, name, family, p, alt:[[cls, p, name], ...], plugin,

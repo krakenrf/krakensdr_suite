@@ -25,8 +25,9 @@
 //
 // Read-only: nothing is ever sent to heimdall; during a debug / recording
 // playback the snapshots are the playback's packets (the tap sits in the
-// packet parser both sources go through). Only the on / off setting is
-// persisted (SIGCLASS:, the settings store - sandboxed during a playback).
+// packet parser both sources go through). On/off and the independent
+// click-to-tune overrides are persisted (settings store, sandboxed during
+// playback); neither catalog loading nor editing captures or tunes IQ.
 
 #include <atomic>
 #include <cstdint>
@@ -46,6 +47,11 @@ bool enabled();
 // sent to every page on each change (at most ~2 a second) and to a page
 // that connects (get_connect_sync_messages)
 std::string state_json();
+
+// Factory tuning catalog, read on demand without enabling classification.
+std::string preset_catalog_json();
+void request_preset_catalog();
+bool preset_class_plugin(const std::string& id, std::string& plugin);
 
 // main(): the worker thread (idle until enabled) / its end (joined)
 void start();

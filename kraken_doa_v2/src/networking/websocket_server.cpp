@@ -1303,7 +1303,18 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             }
 
             // a page's own command (power commands are taken only from here)
-            ControlHandler::handle_page_message(message);
+            const auto result = ControlHandler::handle_page_message(message);
+            // Acknowledgement belongs only to the browser that made the edit.
+            // All browsers receive the canonical settings snapshot separately.
+            if (message.starts_with("SIGCLASS_PRESET_SET:") ||
+                message.starts_with("SIGCLASS_PRESET_RESET:") ||
+                message == "SIGCLASS_PRESETS_RESET" ||
+                message.starts_with("SIGCLASS_PRESETS:")) {
+                const string reply = "{\"sigclass_preset_result\":{\"ok\":" +
+                    string(result.empty() ? "true" : "false") + ",\"error\":\"" +
+                    json_escape(result) + "\"}}";
+                ws->send(reply, uWS::TEXT);
+            }
         },
         
         // a socket's queue drained: the next parts of its full set (SWEEP_FULL)

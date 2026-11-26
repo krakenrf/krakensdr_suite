@@ -13,6 +13,7 @@
 #include "signal_processing/music_processor.hpp"
 #include "signal_processing/bin_doa.hpp"
 #include "sigclass_service.hpp"
+#include "sigclass_presets.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
 #include "continuous_scanner.hpp"
@@ -600,6 +601,22 @@ static bool apply_decimator_snapshot(const string& snap) {
     return true;
 }
 
+// Receiver-wide preferences are available even before heimdall connects.
+// The normal settings replay is delayed until the first data connection.
+static sigpreset::Overrides& signal_id_presets() {
+    static auto state = [] {
+        for (const auto& c : SettingsStore::apply_commands()) {
+            if (!c.starts_with("SIGCLASS_PRESETS:")) continue;
+            try { return sigpreset::parse(string_view(c).substr(sizeof("SIGCLASS_PRESETS:") - 1)); }
+            catch (const std::exception& e) {
+                cerr << "Invalid saved Signal ID presets; using factory defaults: " << e.what() << endl;
+            }
+        }
+        return sigpreset::Overrides{};
+    }();
+    return state;
+}
+
 vector<string> ControlHandler::get_connect_sync_messages() {
     vector<string> out;
     // Live toggle state first, then stored settings
@@ -618,6 +635,7 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     out.push_back(antbias::state_message());
     // Signal ID: its state and the signals identified so far
     out.push_back(sigsvc::state_json());
+    out.push_back(make_sync_cmd_json("SIGCLASS_PRESETS:" + sigpreset::serialize(signal_id_presets())));
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     for (const auto& [key, cmd] : sync_replay_store) {
         out.push_back(make_sync_cmd_json(cmd));
@@ -3219,10 +3237,11 @@ void ControlHandler::handle_websocket_message(string_view message) {
 // dispatch on another thread (a rule break, but) can't see the loop's flag.
 static thread_local bool g_from_page = false;
 
-void ControlHandler::handle_page_message(string_view message) {
+string ControlHandler::handle_page_message(string_view message) {
     g_from_page = true;
-    apply_command(message);
+    auto result = apply_command(message);
     g_from_page = false;
+    return result;
 }
 
 string ControlHandler::apply_command(string_view message) {
@@ -3276,6 +3295,58 @@ string ControlHandler::apply_command(string_view message) {
                 cout << "Rejected control message: '" << string(message.substr(0, 100)) << "' (" << why << ")" << endl;
                 broadcast("{\"playback\":{\"notice\":\"" + json_escape(why) + "\"}}");
                 return why;
+            }
+        }
+        // Signal ID presets are configuration only: no tuner or decoder
+        // control here. Merge single-class edits on the uWS loop.
+        if (message == "GET_SIGCLASS_PRESETS") {
+            sigsvc::request_preset_catalog();
+            return "";
+        }
+        if (message.starts_with("SIGCLASS_PRESET_SET:") ||
+            message.starts_with("SIGCLASS_PRESET_RESET:") ||
+            message == "SIGCLASS_PRESETS_RESET" ||
+            message.starts_with("SIGCLASS_PRESETS:")) {
+            auto& presets = signal_id_presets();
+            try {
+                auto next = presets;
+                if (message.starts_with("SIGCLASS_PRESETS:")) {
+                    if (!g_replaying_settings.load())
+                        throw std::invalid_argument("use individual preset commands");
+                    try {
+                        next = sigpreset::parse(message.substr(sizeof("SIGCLASS_PRESETS:") - 1));
+                    } catch (const std::exception& e) {
+                        // Also restore factory behavior after playback if the
+                        // original stored string was malformed; do not retain
+                        // the sandbox's overrides or overwrite the bad file.
+                        cerr << "Invalid saved Signal ID presets; using factory defaults: " << e.what() << endl;
+                        next.clear();
+                    }
+                } else if (message.starts_with("SIGCLASS_PRESET_SET:")) {
+                    auto one = sigpreset::parse(message.substr(sizeof("SIGCLASS_PRESET_SET:") - 1));
+                    string plugin;
+                    if (one.size() != 1 || !sigsvc::preset_class_plugin(one.begin()->first, plugin))
+                        throw std::invalid_argument("unknown class or factory catalog not loaded");
+                    dig::PluginInfo info;
+                    const bool known = !plugin.empty() && dig::PluginRegistry::instance().get(plugin, &info);
+                    if (known && (info.fixed_freq_hz > 0 || info.lock_vfo))
+                        throw std::invalid_argument("decoder controls its tuning; factory preset retained");
+                    if (one.begin()->second.demod == "DIGITAL" && !(known && info.built))
+                        throw std::invalid_argument("Digital requires an available decoder");
+                    next.insert_or_assign(one.begin()->first, one.begin()->second);
+                } else if (message.starts_with("SIGCLASS_PRESET_RESET:")) {
+                    auto id = message.substr(sizeof("SIGCLASS_PRESET_RESET:") - 1);
+                    if (!sigpreset::valid_id(id)) throw std::invalid_argument("invalid class ID");
+                    next.erase(std::string(id));
+                } else next.clear();
+                const string canonical = "SIGCLASS_PRESETS:" + sigpreset::serialize(next);
+                presets = std::move(next);
+                if (!g_replaying_settings.load()) SettingsStore::record(canonical);
+                broadcast(make_sync_cmd_json(canonical));
+                return "";
+            } catch (const std::exception& e) {
+                cerr << "Signal ID preset rejected: " << e.what() << endl;
+                return e.what();
             }
         }
         // UI:<KEY>:<value> - browser display settings (waterfall colormap
