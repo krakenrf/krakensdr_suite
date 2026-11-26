@@ -378,11 +378,12 @@ load average 10-22, so absolute x86 figures are pessimistic; ratios hold):
   saturated: 8091 delivered 130-138 sets a second instead of 146.5, 7-11 %
   of the sets dropped at L2-raw (whole sets, so coherence holds), with no
   counter and no log line; only the frame rate shows it.
-- Not measured on a Pi. Estimated (the kernel's instruction count and
-  kraken_doa's measured Pi 5 tap costs, `shared_decimator.cpp`): today's
-  loop needs roughly 50-90 % of a Pi 5 core on top of the convert thread's
-  32.6 %, and about a whole Pi 4 core. Until someone runs `eq_bench` on
-  a Pi, treat today's EQ as not usable on a Pi 4 and marginal on a Pi 5.
+- On the Pis (measured 2026-11-27, *On the Raspberry Pi* below): today's
+  EQ alone needs 104 % of a Pi 4 core and 52 % of a Pi 5 core (`eq_bench`,
+  pinned). In a running heimdall it saturates a Pi 4's convert thread
+  (97 %; with one 8091 client only 89 of 146.5 sets a second delivered) and
+  takes a Pi 5's from 6.4 % to 70 % (with a client 88 %, no sets dropped).
+  Not usable on a Pi 4; on a Pi 5 it works with little headroom.
 
 **Change 1, the kernel** (same taps; output equal to today's within 5e-7):
 deinterleave the block once into I and Q arrays, run the taps in chunks of
@@ -468,10 +469,62 @@ dependency chain and slows down more than the vectorized kernels when the
 core's sibling is busy, so the ratio moves with the load: 12 taps 14x on
 the quieter machine, 27x on the busy one; the kernel alone 7-11x.
 With one 8091 client today's loop saturated the thread and dropped sets;
-every fast mode delivered all 146.5 sets a second. Estimated for a Pi 5 from
-kraken_doa's measured cost per complex tap (0.239 ns, `C_TAP`): the EQ
-stage ~3 % of a core at 12 taps, ~4 % at 16, ~8 % at 32 with the new
-kernel; a Pi 4 about three times that. Not measured.
+every fast mode delivered all 146.5 sets a second. (The Pi estimate first
+written here - ~3 / 4 / 8 % of a Pi 5 core at 12 / 16 / 32 taps from
+kraken_doa's `C_TAP` - was about 2.5x too low; measured below.)
+
+**On the Raspberry Pi (measured 2026-11-27).** Pi 4 Model B Rev 1.5
+(Cortex-A72, 1.8 GHz, 1 GB) and Pi 5 Model B Rev 1.0 (Cortex-A76, 2.4 GHz,
+4 GB), each with a KrakenSDR, GCC 14.2, the `eq-fast` build made on the Pi
+(`-mcpu=native`). Two measurements per Pi: `eq_bench` pinned to one core
+(it measures the core clock itself), and the running-heimdall A/B of the
+x86 run (the same `ab_cpu.py`: modes interleaved, 3 x 25 s windows each,
+convert thread's CPU from schedstat, 100 MHz, gain 49.6), with the cpufreq
+governor at `performance` and the clock logged every second (all samples at
+the top clock; the governor restored to `ondemand` after). 0 coherence
+events, no throttling (`get_throttled` 0x0, 53-64 °C on the Pi 4).
+
+Running heimdall, convert thread, % of one core; "+EQ" = the EQ's own cost
+per sample and channel (mode minus off):
+
+| | Pi 4 no client | Pi 4 one client (sets/s) | Pi 4 +EQ | Pi 5 no client | Pi 5 one client (sets/s) | Pi 5 +EQ |
+|---|---|---|---|---|---|---|
+| EQ off | 16.9 % | 53.2 % (146.5) | | 6.4 % | 24.1 % (146.5) | |
+| today, 32 taps | 97.2 % (saturated) | 96.6 % (**89**) | > 67 ns | 70.0 % | 87.9 % (146.5) | 53.0 ns |
+| new kernel, 32 taps | 60.8 % | 95.5 % (**141-142**) | 36.6 ns | 21.5 % | 39.4 % (146.5) | 12.6 ns |
+| least squares, 16 taps | 41.5 % | 79.0 % (146.5) | 20.5 ns | 14.2 % | 32.1 % (146.5) | 6.5 ns |
+| least squares, 12 taps | 38.6 % | 76.0 % (146.5) | 18.0 ns | 12.5 % | 30.4 % (146.5) | 5.1 ns |
+
+- Speed-up of the EQ stage over today's: Pi 5 4.2x (new kernel, 32 taps),
+  8.2x (16 taps), 10.4x (12 taps); Pi 4 > 1.8x / 3.3x / 3.7x (today's is
+  capped by the saturated thread, so its true cost - and the ratios - are
+  higher; `eq_bench`: 87 ns).
+- On a Pi 4 with a client only the least-squares designs keep up (76-79 %
+  of the core: little headroom); the new kernel at 32 taps still drops
+  3-4 % of the sets. On a Pi 5 every fast mode keeps up with room to spare.
+- **`ondemand` distorts this measurement.** The first runs, under the
+  default governor, put the Pi 5 at 1.6-1.7 GHz for most of the run and the
+  Pi 4 at 0.8-1.0 GHz in the light "EQ off" windows - which inflated the
+  baseline (Pi 4 33 % instead of 16.9 %) and made every EQ look cheaper
+  (Pi 4 12 taps 5.5 ns instead of 18.0). Measure CPU on a Pi at a fixed
+  clock.
+- **The prototype's kernel is not the best one on ARM.** `eq_bench`'s plain
+  planar kernel (row `K1c planar`) beats the prototype's (`K1g planar
+  chunk4`, chosen on x86) on both Pis: Pi 4 16.9 / 23.0 / 38.2 ns against
+  29-30 / 33-34 / 53-54 ns at 12 / 16 / 32 taps, Pi 5 4.9 / 7.0 / 13.8
+  against 5.9 / 7.7 / 14.9 ns. A productized kernel should be chosen on the
+  Pi (not yet measured in a running heimdall).
+- Cache, Pi 4 only (1 MB shared L2): the prototype's kernel on one
+  cache-resident channel is 1.2-1.4x faster than with five channels'
+  buffers in rotation (`kern_test.cpp`: 15.5 vs 21.9 ns at 12 taps); the
+  running heimdall matches the five-buffer case. No such effect on a Pi 5.
+- Pi 5 running heimdall against `eq_bench` (four filtered channels + CH0's
+  delay): within 6 %. Pi 4: `eq_bench` reads 18-34 % high.
+
+Data: job scratch 14951841 `pi/` - `res_pi4/`, `res_pi5/` (`eq_bench_*.txt`,
+`*fix_CPU.txt` = the fixed-clock tables, `*fix_clock.txt`, `*_results.json`,
+the `ondemand` runs `pi4_CPU.txt` / `pi5_CPU.txt` / `*perf_*`), `kern_test.cpp`
+and `kern_pi*.out`, `run_perf.sh`, `build_pi.sh`.
 
 **What the short design gives up, and what was seen on the way**
 
@@ -520,16 +573,16 @@ kernel; a Pi 4 about three times that. Not measured.
 `eq_fast_stage` in `sdr_pipeline.cpp` (the kernel), test commands on the
 8070 web socket `PER_BIN_TEST_LEGACY` (default, today's) / `FAST32` /
 `WLS12` / `WLS16` / `WLS16E` / `WLS12S8` (not saved, not in the page),
-`tools/eq_bench/` (`eq_bench.cpp`: one file, build line in its header, also
-the one-minute Pi measurement that is missing; `wls_design_test.cpp`: the
+`tools/eq_bench/` (`eq_bench.cpp`: one file, build line in its header, the
+one-minute measurement run on both Pis above; `wls_design_test.cpp`: the
 C++ design against reference taps, agreement 3e-9; README with the full
 tables). Data: job scratch 14951841 `rtlfilt/eq/` - `w_acc/out/` (offline
 tables, `summary.txt`), `w_cpu/out/`, `w_cpu/analysis/` and `w_cpu/runs/`
 (benchmarks, hardware A/B), `lead/` (the lead's own re-checks).
 
-Not tested: any Pi or other ARM machine (every Pi figure above is an
-estimate); GCC on aarch64 (the vectorization was checked with g++ on x86
-and clang for aarch64); MinGW and Apple clang builds; a bit-for-bit
+Not tested: the accuracy on a Pi (only CPU was measured there; the taps
+are designed the same way); the `K1c planar` kernel in a running heimdall;
+MinGW and Apple clang builds; a bit-for-bit
 comparison of the branch's default mode with main; a signal with a known
 bearing; the wideband and Kerberos variants; another KrakenSDR unit; 4
 elements with a capture; long runs.
