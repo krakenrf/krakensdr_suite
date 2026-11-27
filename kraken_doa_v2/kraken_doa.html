@@ -3676,7 +3676,7 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
         <!-- Debug (DOA_DEBUG, doaDebugSet): the receiver's switch for every page, never saved - the last control -->
         <div class="ctrl-row">
           <label for="doa-debug">Debug<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Keeps the <b>DoA running while heimdall's noise source is on</b> (a calibration, Check Calibration), so you can see the bearing it gives: the DoA plots, the beamformer, the bearing colours and the DoA value page (port 8081). Nothing that records or sends bearings uses them (DoA log, web mapper, the map's direction finding, DoA per talker, the assistant). The hold after a retune stays.<br><br>For testing; leave it off. It applies to every page and is off again when the receiver restarts.</span></span></label>
-          <input type="checkbox" class="sw" id="doa-debug" onchange="doaDebugSet(this)">
+          <input type="checkbox" class="sw" id="doa-debug" onchange="doaDebugSet(this)" disabled title="Not available: the receiver hasn't reported this switch (not connected, or an older kraken_doa)">
         </div>
         <!-- the version (system_status.version, sbVersionRender); empty and hidden until a receiver sends one -->
         <div class="sb-version" id="sb-version"></div>
@@ -6510,17 +6510,37 @@ let autoRangeInterval = null;
 let noiseLive = false, noiseOffAt = 0;
 // Debug (the sidebar's last switch, DOA_DEBUG): the receiver's flag - DoA keeps running while the
 // noise source is on. The page shows the receiver's state only: the switch goes back until the
-// echo (sync_cmd, also on connect) sets it
-let doaDebug = false;
+// echo (sync_cmd) sets it. Usable only once the receiver has reported it (a receiver that knows
+// it sends DOA_DEBUG on every connect): an older one echoes any command, and its echo ticked the
+// switch with DoA still held. Unknown again from each (re)connection until the report
+let doaDebug = false, doaDebugKnown = false;
+const DOA_DEBUG_NA = "Not available: the receiver hasn't reported this switch (not connected, or an older kraken_doa)";
+function doaDebugShow() {
+  const cb = $id('doa-debug');
+  if (!cb) return;
+  if (cb.checked !== doaDebug) cb.checked = doaDebug;
+  cb.disabled = !doaDebugKnown;
+  const t = doaDebugKnown ? '' : DOA_DEBUG_NA;
+  if (tipText(cb) !== t) {
+    cb.removeAttribute('data-tip');
+    if (t) cb.title = t; else cb.removeAttribute('title');
+  }
+}
 function doaDebugSet(cb) {
   const on = cb.checked;
   cb.checked = doaDebug;
+  if (!doaDebugKnown) return;   // (nothing to a receiver that doesn't know it)
   send('DOA_DEBUG:' + (on ? 1 : 0));
 }
 function doaDebugApply(on) {
   doaDebug = !!on;
-  const cb = $id('doa-debug');
-  if (cb && cb.checked !== doaDebug) cb.checked = doaDebug;
+  doaDebugKnown = true;
+  doaDebugShow();
+}
+function doaDebugUnknown() {   // a new connection, or none: until its receiver reports
+  doaDebug = false;
+  doaDebugKnown = false;
+  doaDebugShow();
 }
 
 // Toggle continuous auto-range (the common Auto: the main display's)
@@ -12297,6 +12317,7 @@ function connect() {
     videoSubReq = null;
     setTimeout(videoUpdateSub, 950);
     binDoaHello(true);   // this page takes bearing frames (type 9, bearing spectrum)
+    doaDebugUnknown();   // Debug: usable once this connection's receiver reports it
     sigHello();          // Signal ID: the receiver sends its state on connect (an older one never)
     // API auth: send a remembered token first, so the server authenticates
     // before any command/stream. Without one, nothing is sent: a server with
@@ -12359,6 +12380,7 @@ function connect() {
     pwOnClose();
     sigSocketDown();   // (Signal ID: no "not on this receiver" while the socket is down)
     biasRender();   // the Bias tee button: disabled while not connected
+    doaDebugUnknown();   // the Debug switch too
     const connEl = $id('status-connection');
     if (connEl) {
       connEl.textContent='Disconnected';

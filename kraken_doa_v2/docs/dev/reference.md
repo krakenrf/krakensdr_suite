@@ -150,7 +150,10 @@ control (footer box), `DOA_DEBUG:0|1`. One flag in the receiver for every
 page (`doa_debug_enabled()`, doa_logger.cpp): the generic sync_cmd echo, and
 a connecting page gets it with the live toggles (`get_connect_sync_messages`).
 Not in the settings schema, not replayed: off at every start. The switch
-shows the receiver's state only (it goes back until the echo ticks it).
+shows the receiver's state only (it goes back until the echo ticks it), and
+is disabled (the reason in its title) from each connection until the
+receiver reports it on connect: an older kraken_doa echoes any command, so
+its echo ticked the switch with DoA still held; a click then sends nothing.
 - Two gates: `doa_is_calibrating()` (noise flag + `NOISE_QUIET_MS`) stays
   the gate of everything that stores or sends bearings; `doa_display_held()`
   = that unless Debug is on. With Debug on only these run through the noise:
@@ -189,7 +192,11 @@ shows the receiver's state only (it goes back until the echo ticks it).
   single bearing: every azimuth fits to within 1e-6 (r 0.5 m at 100 MHz;
   1e-14 at r 50 mm), the peak falls on a multiple of 36 deg (the 5-element
   ring's 10-fold ripple) and changes frame to frame (at r 50 mm anywhere);
-  the first ~0.3 s of a burst give mixed bearings.
+  the first ~0.3 s of a burst give mixed bearings. This page against a
+  receiver without the switch (doa-debug 2118d13): disabled, the reason on
+  hover, a click on it or its label sends nothing, no page errors; the
+  receiver restarted under an open page: disabled while it is down, usable
+  (and off) at the new one's report.
 
 **Calibration bursts in the UI:** the receiver pushes `{"cal_live":{phase_state,
 noise_source}}` the moment a packet's phase state or noise flag changes (the
