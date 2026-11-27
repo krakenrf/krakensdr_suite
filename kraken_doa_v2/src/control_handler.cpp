@@ -605,6 +605,7 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     // Live toggle state first, then stored settings
     out.push_back(make_sync_cmd_json(fm_enabled.load() ? "FM:1" : "FM:0"));
     out.push_back(make_sync_cmd_json(doa_enabled.load() ? "DOA:1" : "DOA:0"));
+    out.push_back(make_sync_cmd_json(doa_debug_enabled() ? "DOA_DEBUG:1" : "DOA_DEBUG:0"));   // (never saved)
     // Wideband (downconverter) variant state - tells the browser whether to
     // show the mixing-side controls and which RF range to allow
     out.push_back(build_wb_variant_json());
@@ -1529,6 +1530,19 @@ void ControlHandler::handle_message_impl(string_view message) {
             doa_enabled = enable;
             setAllDoaEnabled(enable);
             cout << (enable ? "Enabling" : "Disabling") << " MUSIC DoA processors for all decimators" << endl;
+        }
+    }
+    else if (message.starts_with("DOA_DEBUG:")) {
+        // Debug (doa_logger.hpp doa_display_held): DoA through the noise
+        // source, for the pages and DOA_value.html. Not in the settings
+        // schema (off at every start), echoed to every page; a page
+        // connecting gets it with the live toggles (get_connect_sync_messages)
+        const string_view v = message.substr(10);
+        if (v != "0" && v != "1") throw CommandRejected("format: DOA_DEBUG:0|1");
+        if ((v == "1") != doa_debug_enabled()) {
+            set_doa_debug_enabled(v == "1");
+            cout << "DoA debug " << (v == "1" ? "on: DoA runs while the noise source is on (pages and DOA_value.html only)"
+                                              : "off") << endl;
         }
     }
     else if (message.starts_with("BEAMFORMING:")) {

@@ -1738,6 +1738,9 @@ void WebSocketServer::doa_http_server_thread() {
                 // This handler owns its cache on the same event-loop thread.
                 static std::string last_good_message;
                 static std::string last_source_key;
+                // Debug: the bearings go on through the noise source; a hold
+                // then serves the last message without a noise-source frame
+                static std::string last_clean_message;
 
                 // "Retune calibration in progress": while the server retunes it
                 // pulses the noise source, and bearings computed on that injected
@@ -1746,24 +1749,27 @@ void WebSocketServer::doa_http_server_thread() {
                 // source (+ a short hold for bursts), NOT phase_state — in steady
                 // fixed-frequency DoA the server reports phase_state 4 (CONVERGED),
                 // so a phase_state test would freeze ALL output. (Shared with the
-                // DoA logger, see doa_logger.cpp.)
-                if (doa_is_calibrating()) {
+                // DoA logger, see doa_logger.cpp.) Not with Debug on
+                // (doa_display_held): then the noise-source frames are served.
+                if (doa_display_held()) {
                     // Freeze: serve the last good bearings unchanged.
                     res->writeHeader("Content-Type", "text/html; charset=utf-8")
                        ->writeHeader("Cache-Control", "no-cache, no-store, must-revalidate")
-                           ->end(last_good_message);
+                           ->end(last_clean_message);
                     return;
                 }
 
                 // Rebuild the whole legacy CSV only if a MUSIC source frame
                 // changes; different HTTP polls must not invent measurements.
-                auto records = capture_doa_records();
+                auto records = capture_doa_records(doa_debug_enabled());
                 std::string source_key;
+                bool noise = false;
                 for (const DoaRecord& rec : records) {
                     const int64_t stamp = rec.source_stamp_ms > 0
                         ? rec.source_stamp_ms : rec.timestamp_ms;
                     source_key += std::to_string(rec.decimator_id) + ":" +
                                   std::to_string(stamp) + ";";
+                    noise |= rec.noise;
                 }
                 if (last_good_message.empty() || source_key != last_source_key) {
                     std::string message;
@@ -1772,6 +1778,7 @@ void WebSocketServer::doa_http_server_thread() {
                     }
                     last_good_message = std::move(message);
                     last_source_key = std::move(source_key);
+                    if (!noise) last_clean_message = last_good_message;
                 }
 
                 res->writeHeader("Content-Type", "text/html; charset=utf-8")

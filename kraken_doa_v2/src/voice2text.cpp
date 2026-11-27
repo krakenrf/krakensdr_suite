@@ -1562,7 +1562,7 @@ void Worker::sample_doa(Tap& tap, int vfo) {
     auto inst = decimator_manager.getDecimator(vfo);
     if (!inst || !inst->music_processor) return;
     MUSICProcessor& mp = *inst->music_processor;
-    if (!mp.isEnabled() || mp.isResultStale()) return;
+    if (!mp.isEnabled() || mp.isResultStale() || mp.isResultNoise()) return;   // (noise: Debug's frames)
     const int64_t stamp = mp.getResultStampMs();
     if (stamp == tap.doa_stamp || stamp < tap.t0_ms - 300) return;
     tap.doa_stamp = stamp;

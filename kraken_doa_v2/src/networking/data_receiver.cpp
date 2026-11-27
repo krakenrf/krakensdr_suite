@@ -1064,11 +1064,16 @@ void DataReceiver::decimation_processor_thread() {
                         // the DoA. Skip MUSIC entirely - published DoA freezes,
                         // and the accumulator/covariance/auto-squelch never see
                         // calibration data. Applies to every method, squelch on
-                        // or off.
-                        const bool doa_held = doa_is_calibrating() || doa_retune_hold_active();
+                        // or off. Debug (doa_display_held) lets MUSIC run through
+                        // the noise source - for the page only: its frames are
+                        // marked (setNoiseInput), talker DoA below keeps the gate.
+                        const bool noise_held = doa_is_calibrating();
+                        const bool retune_held = doa_retune_hold_active();
+                        const bool doa_held = noise_held || retune_held;
+                        const bool music_held = retune_held || doa_display_held(noise_held);
                         if (!wideband_enabled &&
                             squelch_allows_music &&
-                            !doa_held &&
+                            !music_held &&
                             !result.decimated_data.channels.empty() &&
                             result.decimated_data.min_samples > 0 &&
                             inst->music_processor &&
@@ -1097,6 +1102,7 @@ void DataReceiver::decimation_processor_thread() {
                                 inst->music_processor->setPublishHold(fft_bf_hold || dig_doa);
                             }
 
+                            inst->music_processor->setNoiseInput(noise_held);
                             inst->music_processor->processDecimatedIQ(result.decimated_data);
                         }
                         // per-packet DoA (ADS-B, AIS, DME, ISM devices) / the Digital
@@ -1598,7 +1604,8 @@ void DataReceiver::decimation_processor_thread() {
             else if (server_generic_rtlsdr.load(std::memory_order_relaxed)) park = "generic RTL-SDRs: no coherent array";
             else if (ne < 2 || static_cast<int>(raw_packet.channel_iq_data.size()) < ne ||
                      raw_packet.channel_iq_data[ne - 1].empty()) park = "waiting for every antenna";
-            else if (raw_packet.noise_source_active != 0 || doa_is_calibrating()) park = "calibrating (noise source on)";
+            else if (doa_display_held(raw_packet.noise_source_active != 0 || doa_is_calibrating()))
+                park = "calibrating (noise source on)";   // (not with Debug on)
             else if (doa_retune_hold_active()) park = "settling after a retune";
             else if (server_cal_stale.load(std::memory_order_relaxed)) park = "calibration stale";
             const uint64_t chz = coherent_tuner_hz();

@@ -40,11 +40,29 @@ struct DoaRecord {
     double   gps_heading = 0.0, compass_heading = 0.0;
     std::string heading_sensor;    // "GPS" / "Compass"
     std::vector<double> spectrum;  // doa_log[i] + shift (>= 0), one value per angle
+    bool     noise = false;        // a noise-source frame (MUSICProcessor::isResultNoise; Debug only)
 };
 
 // True while the server is pulsing the noise source for a retune calibration;
 // bearings computed then are garbage and must not be logged/served.
+// The noise gate of everything that stores or sends bearings (logger, web
+// mapper, mobile DF, Signal ID, the VFO level, the assistant, ...) - Debug
+// doesn't change it.
 bool doa_is_calibrating();
+
+// Debug (DOA_DEBUG:0|1, the page's sidebar): DoA keeps running while the
+// noise source is on, to see the bearing it gives. One flag for every page,
+// never saved: off at every start.
+bool doa_debug_enabled();
+void set_doa_debug_enabled(bool on);
+
+// The DoA display gate: the noise source holds the bearing computation and
+// its live outputs (MUSIC, so the page's DoA plots and the beamformer's
+// steering; the bearing spectrum; DOA_value.html) = doa_is_calibrating()
+// (or the caller's reading of it) unless Debug is on. The retune hold is
+// separate (data_receiver.cpp).
+bool doa_display_held(bool calibrating);
+inline bool doa_display_held() { return doa_display_held(doa_is_calibrating()); }
 
 // A VFO's received power as V1 and the Android app report it ("power"): the
 // peak of the averaged FFT across the VFO passband in dBFS, clamped to
@@ -57,7 +75,9 @@ float vfo_power_dbfs(int tuner_channel, float offset_hz, int bandwidth_hz);
 
 // Snapshot the current bearing rows for all enabled decimators. Caller must
 // have already checked doa_is_calibrating() (returns rows regardless).
-std::vector<DoaRecord> capture_doa_records();
+// A decimator whose latest frame came from the noise source (Debug on) is
+// left out unless noise_frames (DOA_value.html with Debug on).
+std::vector<DoaRecord> capture_doa_records(bool noise_frames = false);
 
 // Exact DOA_value.html line for one record (", " separators, trailing " \n").
 std::string format_doa_csv_line(const DoaRecord& rec);

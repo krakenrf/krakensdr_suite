@@ -47,6 +47,14 @@ bool doa_is_calibrating() {
     return scanner_manager.isNoiseRecentlyActive();
 }
 
+static std::atomic<bool> g_doa_debug{false};
+bool doa_debug_enabled() { return g_doa_debug.load(std::memory_order_relaxed); }
+void set_doa_debug_enabled(bool on) { g_doa_debug.store(on, std::memory_order_relaxed); }
+
+bool doa_display_held(bool calibrating) {
+    return calibrating && !doa_debug_enabled();
+}
+
 float vfo_power_dbfs(int tuner_channel, float offset_hz, int bandwidth_hz) {
     const int ch = multi_tuner_mode() ? tuner_channel : active_channel.load(std::memory_order_relaxed);
     return std::clamp(FFTProcessor::get_peak_magnitude_in_range(ch, offset_hz,
@@ -54,7 +62,7 @@ float vfo_power_dbfs(int tuner_channel, float offset_hz, int bandwidth_hz) {
                       -100.0f, 0.0f);
 }
 
-std::vector<DoaRecord> capture_doa_records() {
+std::vector<DoaRecord> capture_doa_records(bool noise_frames) {
     std::vector<DoaRecord> out;
 
     int64_t timestamp = chrono::duration_cast<chrono::milliseconds>(
@@ -77,6 +85,8 @@ std::vector<DoaRecord> capture_doa_records() {
         if (!dec || !dec->music_processor || dec->being_deleted.load()) continue;
         if (!dec->music_processor->isEnabled()) continue;
         if (dec->music_processor->isResultStale()) continue;  // bearing from before a retune / VFO move
+        const bool noise = dec->music_processor->isResultNoise();
+        if (noise && !noise_frames) continue;                 // a noise-source bearing (Debug)
 
         auto [bearing, confidence] = dec->music_processor->getPeakAngleWithConfidence();
         if (bearing < 0) continue;
@@ -152,6 +162,7 @@ std::vector<DoaRecord> capture_doa_records() {
         rec.heading_sensor = doa_heading_sensor;
         rec.spectrum.resize(LEGACY_ANGLES);
         for (int i = 0; i < LEGACY_ANGLES; i++) rec.spectrum[i] = doa_log[i] + shift;
+        rec.noise = noise;
 
         out.push_back(std::move(rec));
     }

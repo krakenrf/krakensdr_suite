@@ -64,10 +64,11 @@ kraken_doa.html "BEARING SPECTRUM":**
 - Parked - no valid bearing exists (no frames, the reason in `{"bin_doa"}`,
   shown under the tick and on the plot): outside coherent mode (wideband
   scan, independent, generic RTL-SDRs), while the noise source is on or just
-  was (`doa_is_calibrating`), after a retune (`doa_retune_hold_active`, the
-  DoA's hold), while heimdall reports the calibration stale (0x200; the
-  KerberosSDR after a retune), when the array model gives no steering
-  (custom positions not set, a UCA of < 3 elements). Every park drops the
+  was (`doa_is_calibrating`; not with the Debug switch on, *reference.md*),
+  after a retune (`doa_retune_hold_active`, the DoA's hold), while heimdall
+  reports the calibration stale (0x200; the KerberosSDR after a retune),
+  when the array model gives no steering (custom positions not set, a UCA
+  of < 3 elements). Every park drops the
   averages. heimdall's noise flag trails the samples by up to 2 packets: a
   packet is only used once `HOLD_PACKETS` (3) more have come unparked, so
   the noise source's first samples (the same on every antenna = a false

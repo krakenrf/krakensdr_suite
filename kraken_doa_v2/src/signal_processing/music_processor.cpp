@@ -238,6 +238,14 @@ bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecim
         return false;
     }
 
+    // Debug: noise-source blocks begin / end (setNoiseInput) - no frame mixes them with antenna samples
+    if (const bool noise = noise_input_req_.load(std::memory_order_relaxed); noise != noise_input_) {
+        noise_input_ = noise;
+        covariance_avg_valid_ = false;
+        clearAccumulatorLocked();
+        resetAutoSourceTracking();
+    }
+
     // Only ever build a frame from contiguous samples (see MAX_INPUT_GAP):
     // leftover pre-gap samples used to fill up to ~97% of the first frame
     // after a retune or a squelch opening (at narrow bandwidths).
@@ -273,6 +281,7 @@ bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecim
     // downstream consumers keep holding the last published frame.
     if (processed && frame_published_) {
         result_stale_.store(false, std::memory_order_relaxed);
+        result_noise_.store(noise_input_, std::memory_order_relaxed);
         result_stamp_ms_.store(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count(),
@@ -581,7 +590,8 @@ bool MUSICProcessor::processSnapshotCollectionOptimized() {
         computeMUSICSpectrumOptimized();
     }
 
-    if (frame_tap_ && frame_R_.rows() == num_elements_ && frame_b_ > frame_a_) {
+    // (not a noise-source frame: Debug on only - talker DoA keeps its noise gate)
+    if (frame_tap_ && !noise_input_ && frame_R_.rows() == num_elements_ && frame_b_ > frame_a_) {
         frame_tap_(frame_R_, frame_a_, frame_b_, last_input_rate_hz_, static_cast<double>(current_frequency),
                    eigenvalue_ratio_.load(std::memory_order_relaxed));
     }
@@ -1908,6 +1918,7 @@ bool MUSICProcessor::publishFromCovariance(const Eigen::MatrixXcd& R) {
     }
     applyOutputTransforms();
     result_stale_.store(false, std::memory_order_relaxed);
+    result_noise_.store(false, std::memory_order_relaxed);   // (talker DoA: never noise-source samples)
     result_stamp_ms_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::system_clock::now().time_since_epoch()).count(),
                            std::memory_order_relaxed);

@@ -421,7 +421,8 @@ void sampler() {
                 d.k = vk;
                 d.mhz = freq / 1e6;
                 const int64_t stamp = mp.getResultStampMs();
-                if (!mp.isResultStale() && stamp != 0 && stamp != s.last_stamp) {
+                // (not a noise-source frame: the Debug switch's, for the page only)
+                if (!mp.isResultStale() && !mp.isResultNoise() && stamp != 0 && stamp != s.last_stamp) {
                     s.last_stamp = stamp;
                     auto spec_d = mp.getPseudospectrum();
                     const int n = mp.getNumAngles();

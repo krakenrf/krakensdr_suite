@@ -102,6 +102,19 @@ public:
     // frequency for the ~4 s retune hold.
     bool isResultStale() const { return result_stale_.load(std::memory_order_relaxed); }
 
+    // Debug (DOA_DEBUG, doa_logger.hpp doa_display_held): the blocks given to
+    // processDecimatedIQ from now on were taken while heimdall's noise source
+    // was on (doa_is_calibrating). Set per block; only ever true with Debug
+    // on - MUSIC is skipped then otherwise. Their frames are published (the
+    // page's displays, the 8081 page) but marked (isResultNoise) and never go
+    // to the frame tap (talker DoA). Each switch drops the accumulator and the
+    // covariance average, so no frame mixes noise-source and antenna samples.
+    void setNoiseInput(bool noise) { noise_input_req_.store(noise, std::memory_order_relaxed); }
+    // True while the published frame came from noise-source blocks (only
+    // possible with Debug on): what stores or sends bearings skips it, as it
+    // skips a stale one.
+    bool isResultNoise() const { return result_noise_.load(std::memory_order_relaxed); }
+
     // Talker DoA (talker_doa.hpp): called for every computed frame - published
     // or not - with that frame's OWN trace-normalised covariance (before the
     // temporal averaging, which would mix in earlier frames = other radios),
@@ -329,6 +342,9 @@ private:
     // See getResultStampMs().
     std::atomic<int64_t> result_stamp_ms_{0};
     std::atomic<bool> result_stale_{false};   // see isResultStale()
+    std::atomic<bool> result_noise_{false};   // see isResultNoise()
+    std::atomic<bool> noise_input_req_{false};  // see setNoiseInput
+    bool noise_input_ = false;                // ... as the processing pass applied it (under config_mutex_)
 
     // Serializes the processing path against config setters (which resize
     // steering_vectors/pseudospectrum) and against result getters reading

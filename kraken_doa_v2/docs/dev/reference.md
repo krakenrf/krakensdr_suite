@@ -144,6 +144,53 @@ WAITING_FOR_STABILITY (its post-retune cooldown: compensation reset, noise
 off). Was a fixed 4 s hold + 750 ms. First new bearing ~4 s after a retune
 with heimdall's 3 s cooldown (~1.6 s with 500 ms).
 
+**Debug switch** (2026-11-27, the user: "a Debug checkbox at the bottom ...
+DoA continues working while the noise source is on"): the sidebar's last
+control (footer box), `DOA_DEBUG:0|1`. One flag in the receiver for every
+page (`doa_debug_enabled()`, doa_logger.cpp): the generic sync_cmd echo, and
+a connecting page gets it with the live toggles (`get_connect_sync_messages`).
+Not in the settings schema, not replayed: off at every start. The switch
+shows the receiver's state only (it goes back until the echo ticks it).
+- Two gates: `doa_is_calibrating()` (noise flag + `NOISE_QUIET_MS`) stays
+  the gate of everything that stores or sends bearings; `doa_display_held()`
+  = that unless Debug is on. With Debug on only these run through the noise:
+  MUSIC (data_receiver.cpp: `music_held` = retune hold, or the noise gate
+  without Debug) - so the page's DoA plots and the beamformer's steering -,
+  the bearing spectrum (not parked "calibrating"), DOA_value.html (no
+  freeze). The retune hold, the stale-calibration park and parking outside
+  coherent mode are unchanged.
+- Kept on `doa_is_calibrating()`: talker DoA's blocks and array plugins
+  (data_receiver.cpp; so a VFO on the Digital squelch, whose DoA comes from
+  talker DoA, stays held), the DoA logger, the web mapper, mobile DF / array
+  calibration (rdf_mapper), Signal ID, the VFO level, the noise floor, the
+  assistant's `calibrating`, the scanners (scanner_manager directly).
+- Frames from noise-source blocks are marked: the data receiver tells MUSIC
+  per block (`setNoiseInput(doa_is_calibrating())`); each switch drops the
+  accumulator, the covariance average and the auto source count, so no frame
+  mixes noise-source and antenna samples (without Debug the >200 ms input
+  gap did that). Such a frame is published but `isResultNoise()` until the
+  next clean one, and never reaches the frame tap (talker DoA). What reads
+  frames to store or send skips it like a stale one: `capture_doa_records()`
+  (logger, web mapper; DOA_value.html takes them only with Debug on - its
+  freeze serves the last message without one), rdf_mapper, Voice to Text's
+  DoA, the assistant's `vfo_doa`. Without Debug no frame is ever marked.
+- The page: the DoA panel's dim for phase states 0-3 is lifted while Debug
+  is on and the noise source is on (the cooldown, 5, still dims).
+- Tests (fake heimdall, 5-element UCA, a CW at 70 deg, the noise source as
+  identical noise on every antenna, 5-8 s bursts; two pages, the 8081 page
+  polled every 100 ms, the logger as CSV at 0.1 s, the web mapper's local
+  socket): Debug off - page DoA, 8081 and bearing spectrum held as before.
+  Debug on - MUSIC frames every ~100 ms, the 8081 page a new frame per poll;
+  turned off mid-burst (from the other page) - held at once, 8081 back to
+  the last clean bearing (290); logger and web mapper: no record from a burst
+  (+250 ms) in any phase, every bearing 289-291; first clean bearing ~0.3 s
+  after a burst; Debug off after a restart that it was on before, never
+  in doa_settings.json. Identical noise on a UCA has no
+  single bearing: every azimuth fits to within 1e-6 (r 0.5 m at 100 MHz;
+  1e-14 at r 50 mm), the peak falls on a multiple of 36 deg (the 5-element
+  ring's 10-fold ripple) and changes frame to frame (at r 50 mm anywhere);
+  the first ~0.3 s of a burst give mixed bearings.
+
 **Calibration bursts in the UI:** the receiver pushes `{"cal_live":{phase_state,
 noise_source}}` the moment a packet's phase state or noise flag changes (the
 500 ms system_status was too slow for a ~0.4 s retune burst) and restarts the

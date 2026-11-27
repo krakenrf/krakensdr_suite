@@ -360,7 +360,7 @@ VfoDoa vfo_doa(int id) {
     auto inst = decimator_manager.getDecimator(id);
     if (!inst || !inst->music_processor) return r;
     const auto& mp = *inst->music_processor;
-    if (mp.getResultStampMs() == 0 || mp.isResultStale()) return r;
+    if (mp.getResultStampMs() == 0 || mp.isResultStale() || mp.isResultNoise()) return r;   // (noise: Debug's)
     auto [ang, conf] = mp.getPeakAngleWithConfidence();
     if (!is_finite_value(ang)) return r;
     r.ok = true;

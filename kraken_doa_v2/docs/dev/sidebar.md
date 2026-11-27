@@ -12,9 +12,10 @@ the dialogs. Each feature's own controls are in that feature's topic file.
   (`<h3><span class="sb-title">…</span>` + optional `?` help, optional badge,
   `<span class="sb-toggle">`) and a `.sb-content`. `data-sb` is the box's
   stable key in the stored layout: never rename one, and give a new box a new
-  key. The footer box (Open Heimdall / Reset / the layout buttons, then the
-  version line - `../../../docs/dev/version.md`) has no `data-sb`: it has no
-  header and stays last.
+  key. The footer box (Open Heimdall / Reset / the layout buttons, the Debug
+  switch - DoA through the noise source, *reference.md* -, then the version
+  line - `../../../docs/dev/version.md`) has no `data-sb`: it has no header
+  and stays last.
 - `sbBoxInit()` (comment title "SIDEBAR BOXES", runs once at script load)
   draws the chevron of every keyed header, then applies the stored layout
   and sets up the drag (`sbBoxDragInit`). A click on the header collapses /

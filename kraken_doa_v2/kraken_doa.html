@@ -3673,6 +3673,11 @@ body.drive.drive-day .drive-hud,body.drive.drive-day .ui-dlg-bg {
           <button type="button" class="btn sm" onclick="sbBoxCollapseAll(false)" title="Open every box">Open all</button>
           <button type="button" class="btn sm" onclick="sbBoxReset()" title="Put the boxes back in their original order (dragging a box by its header moves it; the order and the collapsed boxes are remembered in this browser)"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg><span>Order</span></button>
         </div>
+        <!-- Debug (DOA_DEBUG, doaDebugSet): the receiver's switch for every page, never saved - the last control -->
+        <div class="ctrl-row">
+          <label for="doa-debug">Debug<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Keeps the <b>DoA running while heimdall's noise source is on</b> (a calibration, Check Calibration), so you can see the bearing it gives: the DoA plots, the beamformer, the bearing colours and the DoA value page (port 8081). Nothing that records or sends bearings uses them (DoA log, web mapper, the map's direction finding, DoA per talker, the assistant). The hold after a retune stays.<br><br>For testing; leave it off. It applies to every page and is off again when the receiver restarts.</span></span></label>
+          <input type="checkbox" class="sw" id="doa-debug" onchange="doaDebugSet(this)">
+        </div>
         <!-- the version (system_status.version, sbVersionRender); empty and hidden until a receiver sends one -->
         <div class="sb-version" id="sb-version"></div>
       </div>
@@ -6503,6 +6508,20 @@ let autoRangeInterval = null;
 // Noise source state (updateCalIndicator: cal_live + system_status) for the
 // waterfall's calibration-burst marker and the auto-range hold
 let noiseLive = false, noiseOffAt = 0;
+// Debug (the sidebar's last switch, DOA_DEBUG): the receiver's flag - DoA keeps running while the
+// noise source is on. The page shows the receiver's state only: the switch goes back until the
+// echo (sync_cmd, also on connect) sets it
+let doaDebug = false;
+function doaDebugSet(cb) {
+  const on = cb.checked;
+  cb.checked = doaDebug;
+  send('DOA_DEBUG:' + (on ? 1 : 0));
+}
+function doaDebugApply(on) {
+  doaDebug = !!on;
+  const cb = $id('doa-debug');
+  if (cb && cb.checked !== doaDebug) cb.checked = doaDebug;
+}
 
 // Toggle continuous auto-range (the common Auto: the main display's)
 function toggleAutoRange(enabled) {
@@ -7931,6 +7950,9 @@ function applySyncCmdInner(cmd) {
   }
   else if ((v = arg('DOA:')) !== null) {
     if ((v === '1') !== doaEnabled) tdo();
+  }
+  else if ((v = arg('DOA_DEBUG:')) !== null) {
+    doaDebugApply(v === '1');
   }
   else if ((v = arg('TOPOLOGY:')) !== null) {
     if (v !== currentTopology) sto(v);
@@ -36664,9 +36686,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     // not the whole right-hand pane, which also holds the map
     const doaPanel = document.querySelector('.doa-panel .doa-content');
     if (doaPanel) {
-      // States 0-3 and 5 are all "not converged" states
+      // States 0-3 and 5 are all "not converged" states (0-3 not while Debug shows
+      // the DoA through the noise source; the cooldown after a retune always)
       const isCalibrating = status.phase_state === 5 || status.cooldown_active ||
-        (status.phase_state !== undefined && status.phase_state >= 0 && status.phase_state < 4);
+        (status.phase_state !== undefined && status.phase_state >= 0 && status.phase_state < 4 &&
+         !(doaDebug && status.noise_source));
       doaPanel.style.opacity = isCalibrating && !lastStatusWideband ? '0.5' : '1';
       doaPanel.style.pointerEvents = isCalibrating && !lastStatusWideband ? 'none' : 'auto';
     }
