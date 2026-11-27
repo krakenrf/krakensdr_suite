@@ -411,6 +411,151 @@ static void snapshot_conversion_state(SetConversionState& st, int num_elements) 
                    per_bin_cal.ready.load(std::memory_order_acquire);
 }
 
+// ---- One channel's set, in blocks -------------------------------------------
+// convblk uses no heimdall globals: tools/convert_blocks/convert_blocks_test.cpp
+// includes the text between the CONVBLK markers and checks it (every block size
+// gives the same output, carried across sets; the filters against a
+// double-precision reference).
+// CONVBLK-BEGIN
+namespace convblk {
+
+constexpr int TRIM_TAPS = 16;              // SDRDevice::FRAC_TAPS
+constexpr int TRIM_HIST = TRIM_TAPS - 1;   // input samples the trim carries
+constexpr int EQ_TAPS = 32;                // PerBinCalibration::FIR_LEN
+constexpr int EQ_HIST = EQ_TAPS - 1;
+// Where a block starts in its scratch buffer: the history sits right in front
+// of it, and the block starts a multiple of 16 samples (128 bytes) in, so it
+// is as aligned as the buffer. Started TRIM_HIST in (8 bytes off 16) the
+// IQ-to-complex stores straddled cache lines: 20 % slower on a Pi 4 and a Pi 5.
+constexpr int TRIM_PAD = (TRIM_HIST + 15) / 16 * 16;
+constexpr int EQ_PAD = (EQ_HIST + 15) / 16 * 16;
+
+// uint8 IQ -> complex, times the set's phase vector (cr + j ci); qs = -1
+// negates Q (high-side spectral inversion), one multiply folded into the
+// auto-vectorized loop
+inline void iq_block(const uint8_t* __restrict p, int n, const float* __restrict lut,
+                     float cr, float ci, float qs, Complex* __restrict dst) {
+    for (int i = 0; i < n; ++i) {
+        const float I = lut[p[2 * i]];
+        const float Q = qs * lut[p[2 * i + 1]];
+        // Complex multiply: (I + jQ) * (cr + jci)
+        const float re = std::fmaf(I, cr, -Q * ci);  // I*cr - Q*ci
+        const float im = std::fmaf(I, ci,  Q * cr);  // I*ci + Q*cr
+        dst[i] = Complex{re, im};
+    }
+}
+
+// The fractional-delay trim (see samples_to_complex_with_compensation): 16 real
+// taps on complex samples. x points at sample 0 of the block with TRIM_HIST
+// samples of history in front of it, so every output is computed by this one
+// loop. Pure convolution over the interleaved floats (real taps, so I and Q
+// filter alike: float k's tap n is float k - 2n). Written on floats because
+// clang doesn't vectorize the std::complex form (6x slower on macOS); one
+// statement per multiply and per add, written out tap by tap so the compiler
+// vectorizes over k with every tap in a register. GCC fuses each multiply-add
+// into an FMA all the same (its C++ default is -ffp-contract=fast; only C's
+// ISO modes turn that off - seen in the x86 build), clang doesn't
+// (-ffp-contract=on stops at a statement).
+// No predictive commoning on 64-bit ARM: with it (-O3) GCC keeps 14 of the 16
+// shifted inputs in registers and rotates them with 13 register moves an
+// iteration, which compete with the 16 FMAs for the vector pipes of a
+// Cortex-A72 / A76 - the conversion ran 20 % slower on a Pi 4 and a Pi 5
+// (13.4 -> 16.1 / 4.8 -> 5.8 ns a sample); on x86 the same transformation is a
+// gain (2.0 -> 1.2 ns). Clang does not do it.
+#if defined(__aarch64__) && defined(__GNUC__) && !defined(__clang__)
+#define CONVBLK_TRIM_ATTR __attribute__((optimize("no-predictive-commoning")))
+#else
+#define CONVBLK_TRIM_ATTR
+#endif
+CONVBLK_TRIM_ATTR inline void trim_fir(const float* __restrict h, const Complex* __restrict x, Complex* __restrict y,
+                                       int n) {
+    static_assert(TRIM_TAPS == 16, "the body below is written out for 16 taps");
+    const float* __restrict xf = reinterpret_cast<const float*>(x);
+    float* __restrict yf = reinterpret_cast<float*>(y);
+    const float h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3];
+    const float h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
+    const float h8 = h[8], h9 = h[9], h10 = h[10], h11 = h[11];
+    const float h12 = h[12], h13 = h[13], h14 = h[14], h15 = h[15];
+    for (int k = 0; k < 2 * n; k++) {
+        float a = 0.0f, m;
+        m = h0  * xf[k];      a += m;
+        m = h1  * xf[k - 2];  a += m;
+        m = h2  * xf[k - 4];  a += m;
+        m = h3  * xf[k - 6];  a += m;
+        m = h4  * xf[k - 8];  a += m;
+        m = h5  * xf[k - 10]; a += m;
+        m = h6  * xf[k - 12]; a += m;
+        m = h7  * xf[k - 14]; a += m;
+        m = h8  * xf[k - 16]; a += m;
+        m = h9  * xf[k - 18]; a += m;
+        m = h10 * xf[k - 20]; a += m;
+        m = h11 * xf[k - 22]; a += m;
+        m = h12 * xf[k - 24]; a += m;
+        m = h13 * xf[k - 26]; a += m;
+        m = h14 * xf[k - 28]; a += m;
+        m = h15 * xf[k - 30]; a += m;
+        yf[k] = a;
+    }
+}
+
+// The per-bin EQ: EQ_TAPS complex taps; x as above, with EQ_HIST samples of
+// history in front
+inline void eq_fir(const Complex* __restrict h, const Complex* __restrict x, Complex* __restrict y, int n) {
+    for (int i = 0; i < n; i++) {
+        Complex acc(0.0f, 0.0f);
+        for (int t = 0; t < EQ_TAPS; t++) acc += h[t] * x[i - t];
+        y[i] = acc;
+    }
+}
+
+// The EQ stage: gives the trim the buffer to write a block into (the EQ's
+// history in front of it) and filters that block into y, carrying the
+// history in `tail`
+struct LegacyEq {
+    const Complex* h;            // EQ_TAPS taps
+    Complex* tail;               // EQ_HIST samples carried between blocks and sets
+    std::vector<Complex>* buf;   // thread_local scratch
+    Complex* input(int n) {
+        if (buf->size() < static_cast<size_t>(EQ_PAD + n)) buf->resize(static_cast<size_t>(EQ_PAD + n));
+        Complex* const x = buf->data() + EQ_PAD;
+        std::copy(tail, tail + EQ_HIST, x - EQ_HIST);
+        return x;
+    }
+    void run(Complex* y, int n) {
+        const Complex* const x = buf->data() + EQ_PAD;
+        eq_fir(h, x, y, n);
+        std::copy(x + n - EQ_HIST, x + n, tail);   // the last EQ_HIST of [history | block]
+    }
+};
+
+// One channel's set: `count` samples (interleaved uint8 at p) into y, in blocks
+// of `block` samples (<= 0: one block), each through every stage before the
+// next. trim_tail carries the trim's last TRIM_HIST input samples between
+// blocks and sets; fill_tail (the first set after a flush) replaces it with
+// the set's first sample. eq == nullptr: no EQ stage.
+template <class Eq>
+void convert(const uint8_t* p, int count, int block, const float* lut, Complex comp, float qs,
+             const float* trim_h, Complex* trim_tail, bool fill_tail, Eq* eq,
+             std::vector<Complex>& xbuf, Complex* y) {
+    if (count <= 0) return;
+    const int B = (block <= 0 || block > count) ? count : block;
+    if (xbuf.size() < static_cast<size_t>(TRIM_PAD + B)) xbuf.resize(static_cast<size_t>(TRIM_PAD + B));
+    Complex* const x = xbuf.data() + TRIM_PAD;
+    for (int b = 0; b < count; b += B) {
+        const int n = std::min(B, count - b);
+        iq_block(p + 2 * static_cast<size_t>(b), n, lut, comp.real(), comp.imag(), qs, x);
+        if (fill_tail && b == 0) std::fill(trim_tail, trim_tail + TRIM_HIST, x[0]);
+        std::copy(trim_tail, trim_tail + TRIM_HIST, x - TRIM_HIST);
+        Complex* const t = eq ? eq->input(n) : y + b;
+        trim_fir(trim_h, x, t, n);
+        std::copy(x + n - TRIM_HIST, x + n, trim_tail);   // the last TRIM_HIST of [history | block]
+        if (eq) eq->run(y + b, n);
+    }
+}
+
+}  // namespace convblk
+// CONVBLK-END
+
 void samples_to_complex_with_compensation(const uint8_t* samples, int count, int channel,
                                           const SetConversionState& st, ComplexBuffer& out) {
     // Validate channel index
@@ -420,34 +565,10 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
         out.assign(count, Complex(0.0f, 0.0f));
         return;
     }
-
-    const Complex comp = st.comp[channel];  // phase vector x forward comp (per set)
-
-    static thread_local ComplexBuffer tmp;
-    tmp.resize(count);
-
-    const uint8_t* __restrict p   = samples;
-    Complex*      __restrict dst  = tmp.data();
-    const float*  __restrict lut  = iq_lut();
-
-    const float cr = comp.real();
-    const float ci = comp.imag();
-
-    // High-side spectral inversion: negate Q. One multiply per sample, folded
-    // into the auto-vectorized loop.
-    const float qs = st.spectral_inversion ? -1.0f : 1.0f;
-
-    for (int i = 0; i < count; ++i) {
-        const float I = lut[p[0]];
-        const float Q = qs * lut[p[1]];
-
-        // Complex multiply: (I + jQ) * (cr + jci)
-        const float re = std::fmaf(I, cr, -Q * ci); // I*cr - Q*ci
-        const float im = std::fmaf(I, ci,  Q * cr); // I*ci + Q*cr
-
-        dst[i] = Complex{re, im};
-        p += 2;
-    }
+    // `out` is the caller's (pooled) buffer, written in place so a recycled
+    // buffer's capacity is reused
+    out.resize(count);
+    auto& dev = devices[channel];
 
     // Software fractional-delay FIR (SDRDevice::FRAC_TAPS = 16 taps, Hann-
     // windowed sinc, group delay FRAC_CENTRE (7) + d). Runs on EVERY channel so
@@ -459,19 +580,11 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
     // 11.8 deg at 0.4 fs (trim -0.45; up to 3.1 dB droop) - bearing error for
     // a VFO away from the centre; 16 taps: <= 0.15 / 0.20 deg, <= 0.07 dB over
     // the whole trim range (docs/dev/calibration.md *Fractional-delay trim
-    // filter*).
-    //
-    // `out` is the caller's (pooled) buffer, written in place so a recycled
-    // buffer's capacity is reused. When the per-bin EQ stage follows, the lag
-    // FIR writes to a thread-local intermediate and the EQ writes into `out`.
-    auto& dev = devices[channel];
-    const bool eq_active = st.eq_active;
-    static thread_local ComplexBuffer fir_tmp;
-    ComplexBuffer& fir_out = eq_active ? fir_tmp : out;
-    fir_out.resize(count);
+    // filter*). The filter itself: convblk::trim_fir.
+    static_assert(SDRDevice::FRAC_TAPS == convblk::TRIM_TAPS, "convblk's trim length");
+    static_assert(PerBinCalibration::FIR_LEN == convblk::EQ_TAPS, "convblk's EQ length");
     {
         constexpr int TAPS = SDRDevice::FRAC_TAPS;
-        constexpr int TL = TAPS - 1;   // input samples carried to the next set
         const float d = dev->compensation.frac_delay.load(std::memory_order_relaxed);
         if (d != dev->frac_coeff_for) {
             float g = 0.0f;
@@ -489,105 +602,25 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
             }
             dev->frac_coeff_for = d;
         }
-
-        const auto& h = dev->frac_coeff;
-        auto& tail = dev->frac_tail;
-        const Complex* __restrict x = tmp.data();
-        Complex* __restrict y = fir_out.data();
-        if (dev->frac_tail_epoch != st.epoch) {   // the first set after a flush (see frac_tail_epoch)
-            if (count > 0) tail.fill(x[0]);
-            dev->frac_tail_epoch = st.epoch;
-        }
-
-        // Head: taps reach into the previous chunk's tail
-        const int head = std::min(TL, count);
-        for (int i = 0; i < head; i++) {
-            Complex acc(0.0f, 0.0f);
-            for (int n = 0; n < TAPS; n++) {
-                const int j = i - n;
-                acc += h[n] * ((j >= 0) ? x[j] : tail[TL + j]);
-            }
-            y[i] = acc;
-        }
-        // Body: pure convolution over the interleaved floats (real taps, so I
-        // and Q filter alike: float k's tap n is float k - 2n). Written on
-        // floats because clang doesn't vectorize the std::complex form (6x
-        // slower on macOS); one statement per multiply and per add, in the
-        // std::complex loop's order, written out tap by tap so the compiler
-        // vectorizes over k with every tap in a register. GCC fuses each
-        // multiply-add into an FMA all the same (its C++ default is
-        // -ffp-contract=fast; only C's ISO modes turn that off - seen in the
-        // x86 build), clang doesn't (-ffp-contract=on stops at a statement).
-        static_assert(TAPS == 16, "the body below is written out for 16 taps");
-        {
-            const float* __restrict xf = reinterpret_cast<const float*>(x);
-            float* __restrict yf = reinterpret_cast<float*>(y);
-            const float h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3];
-            const float h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
-            const float h8 = h[8], h9 = h[9], h10 = h[10], h11 = h[11];
-            const float h12 = h[12], h13 = h[13], h14 = h[14], h15 = h[15];
-            for (int k = 2 * head; k < 2 * count; k++) {
-                float a = 0.0f, m;
-                m = h0  * xf[k];      a += m;
-                m = h1  * xf[k - 2];  a += m;
-                m = h2  * xf[k - 4];  a += m;
-                m = h3  * xf[k - 6];  a += m;
-                m = h4  * xf[k - 8];  a += m;
-                m = h5  * xf[k - 10]; a += m;
-                m = h6  * xf[k - 12]; a += m;
-                m = h7  * xf[k - 14]; a += m;
-                m = h8  * xf[k - 16]; a += m;
-                m = h9  * xf[k - 18]; a += m;
-                m = h10 * xf[k - 20]; a += m;
-                m = h11 * xf[k - 22]; a += m;
-                m = h12 * xf[k - 24]; a += m;
-                m = h13 * xf[k - 26]; a += m;
-                m = h14 * xf[k - 28]; a += m;
-                m = h15 * xf[k - 30]; a += m;
-                yf[k] = a;
-            }
-        }
-        // Save the last TL input samples for the next chunk
-        if (count >= TL) {
-            for (int t = 0; t < TL; t++) tail[t] = x[count - TL + t];
-        }
     }
+    // the first set after a flush (see frac_tail_epoch): the trim's history
+    // becomes this set's first sample
+    const bool fill_tail = dev->frac_tail_epoch != st.epoch;
+    dev->frac_tail_epoch = st.epoch;
 
     // ---- Optional per-bin phase-equalizer FIR (final stage) ----
     // Only runs when the user enabled per-bin mode AND this channel's equalizer
-    // has been designed. Off by default => this whole block is skipped and the
-    // hot path is just the scalar multiply + lag FIR above. The equalizer is a
-    // complex FIR_LEN-tap filter that flattens the residual frequency-dependent
-    // phase across the band; reference channel's filter is a pure delta, so all
+    // has been designed. Off by default => no EQ stage, and the hot path is
+    // just the scalar multiply + lag FIR. The equalizer is a complex
+    // FIR_LEN-tap filter that flattens the residual frequency-dependent phase
+    // across the band; reference channel's filter is a pure delta, so all
     // channels share the same FIR_LEN/2 group delay and stay aligned.
-    if (eq_active) {
-        constexpr int L = PerBinCalibration::FIR_LEN;
-        out.resize(count);
-        const Complex* __restrict h    = dev->eq_coeff.data();      // L taps
-        Complex*       __restrict etail = dev->eq_tail.data();      // L-1 carry-over
-        const Complex* __restrict x    = fir_out.data();
-        Complex*       __restrict y    = out.data();
-
-        const int head = std::min(L - 1, count);
-        for (int i = 0; i < head; i++) {
-            Complex acc(0.0f, 0.0f);
-            for (int n = 0; n < L; n++) {
-                const int j = i - n;
-                acc += h[n] * ((j >= 0) ? x[j] : etail[(L - 1) + j]);
-            }
-            y[i] = acc;
-        }
-        for (int i = head; i < count; i++) {
-            Complex acc(0.0f, 0.0f);
-            for (int n = 0; n < L; n++) {
-                acc += h[n] * x[i - n];
-            }
-            y[i] = acc;
-        }
-        if (count >= L - 1) {
-            for (int t = 0; t < L - 1; t++) etail[t] = x[count - (L - 1) + t];
-        }
-    }
+    static thread_local std::vector<Complex> xbuf, ebuf;   // per conversion thread
+    convblk::LegacyEq eq{dev->eq_coeff.data(), dev->eq_tail.data(), &ebuf};
+    const float qs = st.spectral_inversion ? -1.0f : 1.0f;
+    convblk::convert(samples, count, st.block, iq_lut(), st.comp[channel], qs,
+                     dev->frac_coeff.data(), dev->frac_tail.data(), fill_tail,
+                     st.eq_active ? &eq : nullptr, xbuf, out.data());
 }
 
 static void flush_downstream();
@@ -902,16 +935,14 @@ private:
 };
 
 // Conversion threads, worker included: HEIMDALL_CONVERT_THREADS, else
-// CONVERT_THREADS, else (0) automatic: CPUs - 1 (at most 3) threads while
-// the per-bin EQ is on, the serial loop otherwise. Measured on a Pi 4 / Pi 5
-// (docs/dev/architecture.md *Parallel conversion*): without the EQ the
-// conversion is a small part of the thread (the 8091 send dominates it), and
-// on a Pi 4 parallel threads slow each other down (shared L2 / memory), so it
-// costs CPU for little; with the EQ it is what keeps a Pi 4 up (3 threads:
-// 146.5 sets/s instead of 89 with today's EQ and a client).
+// CONVERT_THREADS, else (0) automatic: CPUs - 1, at most 3. Measured on a
+// Pi 4 / Pi 5 (docs/dev/architecture.md *Parallel conversion*): with the
+// conversion in blocks (CONVERT_BLOCK) the threads cost at most ~1-2 points
+// of a core in all and take 10-60 % off the busiest one; with the per-bin EQ
+// they are what keeps a Pi 4 up with a client.
 struct ConvertThreads {
     int n;           // threads, the worker included
-    bool automatic;  // parallel only while the per-bin EQ is on
+    bool automatic;  // chosen from the CPU count
 };
 ConvertThreads convert_thread_config() {
     int n = CONVERT_THREADS;
@@ -929,6 +960,22 @@ ConvertThreads convert_thread_config() {
         return {std::clamp(cpus - 1, 1, 3), true};
     }
     return {std::clamp(n, 1, NUM_DEVICES), false};
+}
+
+// Conversion block (samples): HEIMDALL_CONVERT_BLOCK, else CONVERT_BLOCK;
+// 0 = the whole set
+int convert_block_config() {
+    int b = CONVERT_BLOCK;
+    if (const char* e = std::getenv("HEIMDALL_CONVERT_BLOCK")) {
+        char* end = nullptr;
+        const long v = std::strtol(e, &end, 10);
+        if (end != e && *end == '\0' && v >= 0 && v <= 1 << 20) {
+            b = static_cast<int>(v);
+        } else {
+            std::cerr << "HEIMDALL_CONVERT_BLOCK=" << e << " ignored (0 - " << (1 << 20) << ")" << std::endl;
+        }
+    }
+    return std::max(b, 0);
 }
 
 }  // namespace
@@ -954,10 +1001,12 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
 
     const ConvertThreads ct = convert_thread_config();
     ConvertPool pool(ct.n - 1);
-    std::cout << "Conversion: " << ct.n << " thread(s)"
-              << (ct.automatic && ct.n > 1 ? " while the per-bin EQ is on, 1 otherwise (automatic)" : "") << std::endl;
-
     SetConversionState conv_state;
+    conv_state.block = convert_block_config();
+    std::cout << "Conversion: " << ct.n << " thread(s)"
+              << (ct.automatic ? " (automatic)" : "")
+              << ", blocks of " << (conv_state.block > 0 ? std::to_string(conv_state.block) : std::string("a whole set"))
+              << std::endl;
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
         // Read BEFORE the dequeue: a set dequeued before a flush must carry
         // the pre-flush epoch (see l2_flush_epoch)
@@ -1001,11 +1050,7 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
                 sb.data(), static_cast<int>(sb.size()) / 2, devices[i]->index,
                 conv_state, complex_samples[i]);
         };
-        if (ct.automatic && !conv_state.eq_active) {
-            for (int i = 0; i < num_elements; ++i) convert_one(i);   // automatic, EQ off: the serial loop
-        } else {
-            pool.run(num_elements, convert_one);
-        }
+        pool.run(num_elements, convert_one);
 
         // -------- Broadcast + push to L2, unless flushed meanwhile --------
         // Under the flush mutex with the epoch re-checked, so a flush can't

@@ -103,7 +103,10 @@ Coherence
   it): a set's channels run on a small fork-join pool (`ConvertPool`, the
   worker plus helpers `convert1`.. - `CONVERT_THREADS` /
   `HEIMDALL_CONVERT_THREADS`), each channel on one thread, joined before the
-  next set is dequeued; per-channel scratch is `thread_local`. All at normal
+  next set is dequeued; per-channel scratch is `thread_local`. A channel is
+  converted in blocks (`CONVERT_BLOCK`, `convblk::convert`), every stage
+  reading its history from in front of the block - the output must not
+  depend on the block size (`tools/convert_blocks/convert_blocks_test.cpp`). All at normal
   priority on purpose (realtime would priority-invert its malloc / mutex
   use). Set-wide state is read once per set (`SetConversionState`). Compensation vector elements are
   `AtomicComplex` (one 64-bit atomic), so the hot loop never reads a torn

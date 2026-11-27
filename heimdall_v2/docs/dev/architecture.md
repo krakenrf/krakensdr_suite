@@ -216,77 +216,96 @@ The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ c
 `conversion_worker` converts a set's channels on `ConvertPool`: the worker
 plus `CONVERT_THREADS - 1` helpers (`convert1`..), channels handed out by an
 atomic counter, the set joined before the next is dequeued. The worker then
-builds and sends the 8091 / RTL-TCP packets alone, as before. Default
-(automatic): CPUs - 1 threads (at most 3) **while the per-bin EQ is on**,
-the serial loop otherwise; `HEIMDALL_CONVERT_THREADS` / `CONVERT_THREADS`
-> 0 force a count (`configuration.md`).
+builds and sends the 8091 / RTL-TCP packets alone, as before. Each channel
+is converted in blocks of `CONVERT_BLOCK` (2048) samples, every block through
+every stage (IQ -> complex, the trim, the per-bin EQ) before the next
+(`convblk::convert`); each stage reads its history from in front of the block
+in a thread_local buffer, so the output is the same for every block size -
+bit for bit (`tools/convert_blocks/convert_blocks_test.cpp`: block sizes 1 -
+16384 over three carried sets, EQ on / off, Q negated; against a
+double-precision reference within 3.5e-7 of full scale; passes on x86, a Pi
+4 and a Pi 5). Default (automatic): CPUs - 1 threads, at most 3 - on a Pi, 3.
+`HEIMDALL_CONVERT_THREADS` / `HEIMDALL_CONVERT_BLOCK` override at startup
+(`configuration.md`).
 
-Measured on a Pi 4 (Cortex-A72, 1.8 GHz, 1 GB) and a Pi 5 (Cortex-A76,
+**Measured** on a Pi 4 (Cortex-A72, 1.8 GHz, 1 GB) and a Pi 5 (Cortex-A76,
 2.4 GHz), each with a KrakenSDR, 100 MHz, gain 49.6, cpufreq governor at
-`performance` (every clock sample at the top clock), the eq-fast prototype
-build with this change applied (its `PER_BIN_TEST_*` modes give "today's" =
-the per-bin EQ of main, and its 12-tap least-squares design), 2 x 25 s
-windows per mode, CPU from schedstat. "Busiest" = the busiest convert
-thread (the critical path: it must stay below 100 %); "sum" = all convert
-threads (the cost). % of one core; sets/s delivered to one 8091 client (of
-146.5):
+`performance` (every clock sample at the top clock), 2 x 20-25 s windows per
+mode, CPU from schedstat, built from the eq-fast prototype with this change
+applied (its `PER_BIN_TEST_*` modes: "today's" = main's per-bin EQ, "fast 32"
+= the vectorized kernel with today's design, "LS 12" = the 12-tap
+least-squares design). "Busiest" = the busiest convert thread (the critical
+path, must stay below 100 %), "sum" = all convert threads (the cost); % of
+one core. Final code (blocks of 2048):
 
-| | threads | EQ off: busiest / sum | today's EQ: busiest / sum (sets/s) | 12 taps: busiest / sum |
-|---|---|---|---|---|
-| Pi 4, no client | 1 | 16.9 / 16.9 | 97.2 / 97.2 (saturated) | 35.7 / 35.7 |
-| | 2 | 10.6 / 17.5 | 72.8 / 123.1 | 27.8 / 50.9 |
-| | 3 | 8.1 / 19.6 | 48.3 / 127.4 | 25.1 / 71.0 |
-| Pi 4, one client | 1 | 53.4 / 53.4 | 96.6 / 96.6 (**89**) | 73.3 / 73.3 |
-| | 2 | 48.3 / 56.1 | 92.6 / 140.0 (**125**) | 64.2 / 86.2 |
-| | 3 | 47.1 / 63.4 | 89.6 / 170.1 (**146.5**) | 59.9 / 103.8 |
-| Pi 5, no client | 1 | 6.3 / 6.3 | 70.3 / 70.3 | 12.5 / 12.5 |
-| | 2 | 3.9 / 6.4 | 37.4 / 70.2 | 7.3 / 13.1 |
-| | 3 | 2.8 / 6.6 | 26.4 / 70.5 | 5.6 / 15.3 |
-| Pi 5, one client | 1 | 24.7 / 24.7 | 88.9 / 88.9 | 31.1 / 31.1 |
-| | 2 | 21.7 / 24.3 | 56.0 / 88.4 | 25.5 / 31.5 |
-| | 3 | 19.9 / 23.7 | 43.6 / 88.1 | 23.5 / 34.3 |
+| | EQ | 1 thread | 3 threads: busiest / sum | 1 client: 1 thread (sets/s) | 1 client: 3 threads busiest / sum (sets/s) |
+|---|---|---|---|---|---|
+| Pi 4 | off | 17.5 | 7.7 / 18.4 | 53.4 | 43.9 / 55.0 |
+| | today's | 97.3 (saturated) | 49.0 / 122.9 | 96.6 (**89.6**) | 85.7 / 160.0 (146.5) |
+| | fast 32 | 63.1 | 28.6 / 65.6 | 95.9 (**142.0**) | 57.7 / 103.2 (146.5) |
+| | LS 12 | 39.4 | 17.2 / 43.0 | 75.2 | 51.7 / 80.1 |
+| Pi 5 | off | 6.5 | 2.9 / 6.7 | 24.6 | 21.1 / 24.9 |
+| | today's | 70.0 | 27.0 / 70.1 | 88.4 | 45.4 / 88.4 |
+| | fast 32 | 21.6 | 7.4 / 21.9 | 39.9 | 25.5 / 40.2 |
+| | LS 12 | 12.6 | 4.8 / 13.0 | 30.8 | 23.0 / 31.2 |
 
-0 coherence events, CONVERGED in 20-26 s, every run; all other cells
-delivered 146.5 sets/s.
+0 coherence events, CONVERGED in 20-23 s; every cell not marked delivered
+146.5 sets/s.
 
-- **Pi 5:** the work splits as expected - the busiest thread falls to about
-  1/2 and 1/3 of the serial one, the sum stays within ~3 points.
-- **Pi 4:** threads slow each other down. The busiest thread falls, but the
-  sum grows (today's EQ 97 -> 127-170 %, 12 taps 36 -> 71 %). A standalone
-  test of the EQ stage on 1-3 threads at once (`mt_test.cpp`) shows it: per
-  thread 33 ns a sample alone, 47 with 2 threads, 52-68 with 3 (Pi 5: 7.1 /
-  7.2 / 11.1). The Pi 4's 1 MB L2 is shared and a channel's conversion
-  touches ~550 KB with the EQ; working in 2048-sample blocks (~50 KB a
-  thread) cut the 3-thread penalty to 46-52 % (Pi 5: 7 %) but did not
-  remove it - memory bandwidth (inferred).
+- **Blocks are what make the threads cheap.** Converted a whole set at a
+  time (~550 KB of buffers a channel with the EQ), three threads slowed each
+  other down on a Pi 4 (shared 1 MB L2 / memory): sums at 3 threads, whole
+  set -> blocks of 2048 (same build): fast 32 92.4 -> 68.2, LS 12 74.5 ->
+  46.3, today's 129.8 -> 125.6, EQ off 22.2 -> 20.9 (with a client: fast 32
+  125.7 -> 105.7, LS 12 105.8 -> 83.2); Pi 5: fast 32 24.8 -> 22.6, LS 12
+  16.2 -> 13.7. On one thread blocks change nothing (within 2 %). A
+  standalone test of the EQ stage (`mt_test.cpp`) shows the same: per thread
+  on a Pi 4 33 ns a sample alone, 47 on 2 threads and 52-68 on 3 with whole
+  sets, 41 / 48-50 in blocks of 2048 (Pi 5: 7.1 / 7.2 / 11.1, blocks 7.6).
+- **Threads with the faster EQs** (question of 2026-11-27): on a Pi 4 with
+  a client the vectorized 32-tap EQ only keeps up on 3 threads (1 thread:
+  142 of 146.5 sets/s), at +7 points in all; the 12-tap design keeps up on
+  one thread (75 %) and 3 threads take its busiest thread to 52 % for +5
+  points. On a Pi 5 every EQ keeps up on one thread; 3 threads cut the
+  busiest by 25-65 % at an unchanged sum.
 - **With one client the worker stays busy** sending: the 8091 packet and
-  send add 37-39 points of a Pi 4 core and 17-18 of a Pi 5 core to it (one
-  client minus none, EQ off) and do not split by channel.
-- So: without the EQ, parallel threads buy a Pi 4 little (busiest 53 -> 47
-  %) for +10 points of CPU - the serial loop stays. With today's EQ they are
-  what keeps a Pi 4 up with a client (89 -> 146.5 sets/s at 3 threads). The
-  automatic rule follows from that (measured with it: Pi 4 serial 17.0 /
-  53.4 % with the EQ off, 3 threads 89.1 % busiest and 146.5 sets/s with
-  today's EQ and a client; Pi 5 likewise). A 12-tap EQ (branch `eq-fast`)
-  would not need the threads on a Pi 4 (serial 73 % with a client) and costs
-  +30 points with them: if it is productized, switch on load (the serial
-  conversion time against the set period), not on "EQ on".
-- Not done: processing a channel in blocks inside heimdall (would shrink
-  the working set: the measurement above suggests 1.2-1.4x on a Pi 4 alone,
-  `calibration.md` *On the Raspberry Pi*), moving the 8091 send to its own
-  thread.
+  send add ~36 points of a Pi 4 core and ~18 of a Pi 5 core to it (one
+  client minus none, EQ off, 1 thread) and do not split by channel.
+- Why automatic = always 3 threads on a Pi: with blocks, the threads cost
+  0.9-1.6 points with the EQ off and 2.5-7.3 with the faster EQs, and take
+  14-66 % off the busiest thread; with today's EQ they are what keeps a Pi 4
+  up with a client (89.6 -> 146.5 sets/s). (Before blocks, the first version
+  ran parallel only while the EQ was on: whole sets cost a Pi 4 +10 points
+  with the EQ off.)
+- **GCC on ARM - predictive commoning.** Run through the block loop the trim
+  first ran 20 % slower on a Pi 4 and a Pi 5 (13.4 -> 16.1 / 4.8 -> 5.8 ns a
+  sample) though it was faster on x86 (2.0 -> 1.2): with its loop starting at
+  0, GCC (-O3) kept 14 of the 16 shifted inputs in registers and rotated
+  them with 13 register moves an iteration, which compete with the 16 FMAs
+  on the A72 / A76 vector pipes. `trim_fir` is built without predictive
+  commoning on 64-bit ARM (GCC only): 13.6 / 5.1 ns, i.e. +1 % / +6 % (+0.2 /
+  +0.4 points of a core) against the old code. Measured with `conv_ab.cpp`
+  and `stage_ab.cpp` (old code verbatim against `convblk`, pinned).
+- Not done: moving the 8091 send to its own thread (now the biggest serial
+  part with a client).
 
-Checked on x86 with ThreadSanitizer (3 threads; calibration, a draining
-8091 client, per-bin EQ on, two retunes, Check Calibration, SIGTERM): no
-report in the conversion code; three in other places - two inside libusb
-(uninstrumented, transfer alloc / free) and one pre-existing shutdown
-race, **not changed here**: `release_hardware()` (`main.cpp`) closes the
-tuners and nulls `device->dev` while the web thread can still build a STATE
-message, whose `real_gain_json()` (`sweep.cpp`) reads `devices[i]->dev` and
-calls `rtlsdr_get_tuner_type()` on it. Data: job scratch 14951841 `pi/`
-(`*_PAR.txt`, `*_AUTO.txt`, `*_par_t*_results.json`, `mt_test.cpp`,
-`mt_pis.out`, `run_par.sh`, `run_auto.sh`, `ab_cpu_t.py`, `par_report.py`)
-and `tsan/`.
+Checked on x86 with ThreadSanitizer (3 threads, whole sets; calibration, a
+draining 8091 client, per-bin EQ on, two retunes, Check Calibration,
+SIGTERM): no report in the conversion code; three in other places - two
+inside libusb (uninstrumented, transfer alloc / free) and one pre-existing
+shutdown race, **not changed here**: `release_hardware()` (`main.cpp`)
+closes the tuners and nulls `device->dev` while the web thread can still
+build a STATE message, whose `real_gain_json()` (`sweep.cpp`) reads
+`devices[i]->dev` and calls `rtlsdr_get_tuner_type()` on it. The block code
+adds no shared state (thread_local scratch, per-device tails). End to end on
+x86 with the final build: CONVERGED, a client at the full rate, per-bin EQ on,
+retunes, 0 coherence events. Accuracy with blocks + 3 threads (x86, the
+noise-source A/B of `calibration.md` *A faster per-bin EQ*): EQ off 5.8-6.2
+deg, today's 0.74-0.88, fast 32 0.73-0.96, LS 12 0.66-1.19 - as before.
+Data: job scratch 14951841 `pi/` (`*_PAR.txt`, `*_AUTO.txt`, `*_BLK.txt`,
+`*_FIX.txt`, `run_*.sh`, `ab_cpu_t.py`, `par_report.py`, `mt_test.cpp`,
+`conv_ab*.out`), `blk/` (`conv_ab.cpp`, `stage_ab.cpp`, `eq_ab.cpp`,
+`mk_mtree.py`, `acc/`) and `tsan/`.
 
 ## Common Development Tasks
 

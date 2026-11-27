@@ -170,12 +170,21 @@
 
 // Conversion threads: the conversion worker converts a set's channels in
 // parallel on itself plus (N - 1) helper threads (`convert1`, `convert2`, ...),
-// joined before the next set, so sets stay in order. 0 = automatic: CPUs - 1
-// (at most 3) threads while the per-bin EQ is on, the serial loop otherwise
-// (convert_thread_config() in sdr_pipeline.cpp); > 0 = always that many. The
-// environment variable HEIMDALL_CONVERT_THREADS overrides it at startup.
+// joined before the next set, so sets stay in order. 0 = automatic: CPUs - 1,
+// at most 3 (convert_thread_config() in sdr_pipeline.cpp); > 0 = that many,
+// 1 = the serial loop. The environment variable HEIMDALL_CONVERT_THREADS
+// overrides it at startup.
 // Measurements: docs/dev/architecture.md *Parallel conversion*.
 #define CONVERT_THREADS 0
+
+// Conversion block: a channel's set is converted in blocks of this many
+// samples, each through every stage (IQ -> complex, the trim, the per-bin EQ)
+// before the next, so a thread's buffers stay small (cache). 0 = the whole set
+// at once. The output does not depend on it (every stage reads its history
+// from in front of the block). The environment variable HEIMDALL_CONVERT_BLOCK
+// overrides it at startup. Measurements: docs/dev/architecture.md *Parallel
+// conversion*.
+#define CONVERT_BLOCK 2048
 
 // C5: tighter L2-raw staging cap used ONLY while a coherent calibration is active
 // (phase not yet CONVERGED). Bounds the conversion-feedback latency the lag servo /

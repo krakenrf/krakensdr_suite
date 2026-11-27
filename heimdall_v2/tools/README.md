@@ -117,3 +117,25 @@ python3 $T/analyze.py F0 B1 B2 --baseline F0       # tables: $T/analysis/<label>
 `measure.py` needs numpy, the KrakenSDR's serials 1000-1004, heimdall's ports
 free, and nothing else on the dongles. Written and used on x86_64 Linux
 (2026-11-26); not run on a Pi.
+
+## convert_blocks/ - the block-wise channel conversion, checked
+
+`convert_blocks_test.cpp` compiles the conversion heimdall runs per channel
+(`namespace convblk` in `src/sdr/sdr_pipeline.cpp`, the text between the
+`CONVBLK-BEGIN` / `CONVBLK-END` markers, included verbatim) and checks that
+every block size (1 - 16384 samples) gives the same output bit for bit over
+three consecutive sets with the trim's and the EQ's history carried, with the
+per-bin EQ off and on and Q negated, and that the output agrees with a
+double-precision computation of the same chain. From `heimdall_v2/`:
+
+```bash
+sed -n '/CONVBLK-BEGIN/,/CONVBLK-END/p' src/sdr/sdr_pipeline.cpp > /tmp/convblk.inc
+g++ -O3 -march=native -fno-math-errno -fcx-fortran-rules -std=c++20 \
+    -DCONVBLK_INC='"/tmp/convblk.inc"' -o /tmp/convert_blocks_test \
+    tools/convert_blocks/convert_blocks_test.cpp
+/tmp/convert_blocks_test     # exit 0 = all checks passed
+```
+
+On a Raspberry Pi use `-mcpu=native`. Passed on x86_64, a Pi 4 and a Pi 5
+(2026-11-27). Run it after any change to the conversion
+(`docs/dev/architecture.md` *Parallel conversion*).
