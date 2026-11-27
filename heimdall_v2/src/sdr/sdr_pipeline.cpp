@@ -9,9 +9,14 @@
 #include "../net/rtl_tcp_server.hpp"   // Need full definition to call methods
 #include <iostream>
 #include <algorithm>
+#include <atomic>
 #include <climits>
+#include <condition_variable>
+#include <cstdlib>
+#include <functional>
 #include <mutex>
 #include <string>
+#include <thread>
 
 // Global L2 buffer
 moodycamel::BlockingConcurrentQueue<std::vector<ComplexBuffer>> l2_buffer;
@@ -809,13 +814,133 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     }
 }
 
+// ---- Parallel conversion: a set's channels on a small fork-join pool ----
+// The conversion worker plus (threads - 1) helpers. run() hands out the
+// channels of ONE set through an atomic counter (each channel to exactly one
+// thread) and returns when all are converted, before the next set is dequeued:
+// sets stay in order, and every channel's state (the trim's and the EQ's
+// tails and coefficients) is touched by one thread per set. Whichever thread
+// converts a channel next, it sees that state as the last set left it: a
+// helper's writes are released by its mutex-protected `pending_` decrement and
+// acquired by the worker's wait, and the next set's start is released by the
+// worker and acquired by every helper's wait. Scratch buffers in the
+// conversion are thread_local, so each helper has its own. Helpers run at
+// normal priority like the worker (see conversion_worker on why not RT).
+namespace {
+
+class ConvertPool {
+public:
+    explicit ConvertPool(int helpers) {
+        threads_.reserve(static_cast<size_t>(helpers));
+        for (int t = 0; t < helpers; ++t) threads_.emplace_back([this, t] { helper_loop(t + 1); });
+    }
+    ~ConvertPool() {
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            quit_ = true;
+        }
+        go_.notify_all();
+        for (auto& th : threads_) th.join();
+    }
+    ConvertPool(const ConvertPool&) = delete;
+    ConvertPool& operator=(const ConvertPool&) = delete;
+
+    // fn(i) for every i in [0, n), on the calling thread and the helpers;
+    // returns when every call has returned
+    void run(int n, const std::function<void(int)>& fn) {
+        if (threads_.empty() || n <= 1) {
+            for (int i = 0; i < n; ++i) fn(i);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            job_ = &fn;
+            n_ = n;
+            next_.store(0, std::memory_order_relaxed);
+            pending_ = static_cast<int>(threads_.size());
+            ++gen_;
+        }
+        go_.notify_all();
+        work();  // the worker takes its share
+        std::unique_lock<std::mutex> lk(m_);
+        done_.wait(lk, [this] { return pending_ == 0; });
+        job_ = nullptr;
+    }
+
+private:
+    void work() {
+        for (int i = next_.fetch_add(1, std::memory_order_relaxed); i < n_;
+             i = next_.fetch_add(1, std::memory_order_relaxed)) {
+            (*job_)(i);
+        }
+    }
+    void helper_loop(int index) {
+        const std::string name = "convert" + std::to_string(index);  // <= NUM_DEVICES: fits the 15-char limit
+        set_thread_realtime(name.c_str(), 0);
+        uint64_t seen = 0;
+        std::unique_lock<std::mutex> lk(m_);
+        for (;;) {
+            go_.wait(lk, [&] { return quit_ || gen_ != seen; });
+            if (quit_) return;
+            seen = gen_;
+            lk.unlock();
+            work();
+            lk.lock();
+            if (--pending_ == 0) done_.notify_one();
+        }
+    }
+
+    std::mutex m_;
+    std::condition_variable go_, done_;
+    std::vector<std::thread> threads_;
+    const std::function<void(int)>* job_ = nullptr;  // written under m_ before gen_ moves
+    int n_ = 0;                                       // likewise
+    std::atomic<int> next_{0};
+    int pending_ = 0;                                 // helpers still working on this set
+    uint64_t gen_ = 0;                                // one per set handed out
+    bool quit_ = false;
+};
+
+// Conversion threads, worker included: HEIMDALL_CONVERT_THREADS, else
+// CONVERT_THREADS, else (0) automatic: CPUs - 1 (at most 3) threads while
+// the per-bin EQ is on, the serial loop otherwise. Measured on a Pi 4 / Pi 5
+// (docs/dev/architecture.md *Parallel conversion*): without the EQ the
+// conversion is a small part of the thread (the 8091 send dominates it), and
+// on a Pi 4 parallel threads slow each other down (shared L2 / memory), so it
+// costs CPU for little; with the EQ it is what keeps a Pi 4 up (3 threads:
+// 146.5 sets/s instead of 89 with today's EQ and a client).
+struct ConvertThreads {
+    int n;           // threads, the worker included
+    bool automatic;  // parallel only while the per-bin EQ is on
+};
+ConvertThreads convert_thread_config() {
+    int n = CONVERT_THREADS;
+    if (const char* e = std::getenv("HEIMDALL_CONVERT_THREADS")) {
+        char* end = nullptr;
+        const long v = std::strtol(e, &end, 10);
+        if (end != e && *end == '\0' && v >= 0 && v <= NUM_DEVICES) {
+            n = static_cast<int>(v);
+        } else {
+            std::cerr << "HEIMDALL_CONVERT_THREADS=" << e << " ignored (0 - " << NUM_DEVICES << ")" << std::endl;
+        }
+    }
+    if (n <= 0) {
+        const int cpus = static_cast<int>(std::thread::hardware_concurrency());
+        return {std::clamp(cpus - 1, 1, 3), true};
+    }
+    return {std::clamp(n, 1, NUM_DEVICES), false};
+}
+
+}  // namespace
+
 // Heavy DSP stage (#4): consume aligned raw sets, convert uint8 IQ -> complex
-// with phase/lag/EQ compensation (parallel across channels), broadcast every set
-// to the TCP/RTL-TCP streamers in order, and push the converted set to L2 for
-// the correlation processor. Decoupled from the drain so it can fall behind
-// (dropping whole sets upstream at L2-raw) without ever stalling USB reads. The
-// per-channel FIR state stays correct: sets are processed in order on this one
-// thread, and the parallel loop touches each channel's state from exactly one task.
+// with phase/lag/EQ compensation (parallel across channels on ConvertPool),
+// broadcast every set to the TCP/RTL-TCP streamers in order, and push the
+// converted set to L2 for the correlation processor. Decoupled from the drain
+// so it can fall behind (dropping whole sets upstream at L2-raw) without ever
+// stalling USB reads. The per-channel FIR state stays correct: sets are
+// processed in order (each set's channels are joined before the next set),
+// and the parallel loop touches each channel's state from exactly one task.
 void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
                        TcpDataServer* tcp_data_server,
                        RtlTcpServer* rtl_tcp_server) {
@@ -826,6 +951,11 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
     // behind, whole aligned sets drop at L2-raw (coherence-safe) and only the
     // converted-output rate dips - USB keep-up is unaffected (that is the drain).
     set_thread_realtime("convert", 0);
+
+    const ConvertThreads ct = convert_thread_config();
+    ConvertPool pool(ct.n - 1);
+    std::cout << "Conversion: " << ct.n << " thread(s)"
+              << (ct.automatic && ct.n > 1 ? " while the per-bin EQ is on, 1 otherwise (automatic)" : "") << std::endl;
 
     SetConversionState conv_state;
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
@@ -863,12 +993,18 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
         complex_samples.resize(num_elements);
         snapshot_conversion_state(conv_state, num_elements);
         conv_state.epoch = epoch;
-        for (int i = 0; i < num_elements; ++i) {
+        // conv_state is only read by the tasks; each writes its own complex_samples[i]
+        const auto convert_one = [&](int i) {
             auto& sb = raw_set[i];
             // sb.size() is bytes of interleaved IQ; divide by 2 for complex count
             samples_to_complex_with_compensation(
                 sb.data(), static_cast<int>(sb.size()) / 2, devices[i]->index,
                 conv_state, complex_samples[i]);
+        };
+        if (ct.automatic && !conv_state.eq_active) {
+            for (int i = 0; i < num_elements; ++i) convert_one(i);   // automatic, EQ off: the serial loop
+        } else {
+            pool.run(num_elements, convert_one);
         }
 
         // -------- Broadcast + push to L2, unless flushed meanwhile --------

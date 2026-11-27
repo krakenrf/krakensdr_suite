@@ -168,6 +168,15 @@
 // The per-device sample pool is sized to cover L1 + L2-raw in-flight buffers.
 #define L2_RAW_MAX      16
 
+// Conversion threads: the conversion worker converts a set's channels in
+// parallel on itself plus (N - 1) helper threads (`convert1`, `convert2`, ...),
+// joined before the next set, so sets stay in order. 0 = automatic: CPUs - 1
+// (at most 3) threads while the per-bin EQ is on, the serial loop otherwise
+// (convert_thread_config() in sdr_pipeline.cpp); > 0 = always that many. The
+// environment variable HEIMDALL_CONVERT_THREADS overrides it at startup.
+// Measurements: docs/dev/architecture.md *Parallel conversion*.
+#define CONVERT_THREADS 0
+
 // C5: tighter L2-raw staging cap used ONLY while a coherent calibration is active
 // (phase not yet CONVERGED). Bounds the conversion-feedback latency the lag servo /
 // phase cal see if the conversion worker saturates during cal (16 sets ~109 ms ->

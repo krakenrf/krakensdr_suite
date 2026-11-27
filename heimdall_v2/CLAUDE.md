@@ -72,7 +72,8 @@ startup by `html_loader.cpp`.
 Threads: one USB reader per dongle and the sample drain (SCHED_RR when the
 process may; macOS has a single priority scale, so `set_thread_realtime`
 maps `RT_PRIO_*` above normal threads there - below them the RTL2832 drops
-packets), the conversion worker (normal priority), the correlation
+packets), the conversion worker and its helpers `convert1`.. (normal
+priority), the correlation
 processor, one compensation thread per non-reference channel, the coherence
 watchdog, the status broadcaster, the TCP servers, and the uWS loop on the
 main thread.
@@ -98,10 +99,13 @@ Coherence
   (`clear_l1_buffer()`, `flush_l1_now()` at a quiet point), and
   `flush_downstream()` bumps `l2_flush_epoch` under `l2_flush_mutex`, which
   the conversion worker re-checks before it broadcasts or pushes a set.
-- The conversion worker handles sets in order on one thread (its FIR tails
-  depend on it), at normal priority on purpose (realtime would
-  priority-invert its malloc / mutex use). Set-wide state is read once per
-  set (`SetConversionState`). Compensation vector elements are
+- The conversion worker handles sets in order (its FIR tails depend on
+  it): a set's channels run on a small fork-join pool (`ConvertPool`, the
+  worker plus helpers `convert1`.. - `CONVERT_THREADS` /
+  `HEIMDALL_CONVERT_THREADS`), each channel on one thread, joined before the
+  next set is dequeued; per-channel scratch is `thread_local`. All at normal
+  priority on purpose (realtime would priority-invert its malloc / mutex
+  use). Set-wide state is read once per set (`SetConversionState`). Compensation vector elements are
   `AtomicComplex` (one 64-bit atomic), so the hot loop never reads a torn
   value.
 - The `devices` vector never changes shape after startup (one `SDRDevice`

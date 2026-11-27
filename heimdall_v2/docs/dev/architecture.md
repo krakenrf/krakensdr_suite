@@ -169,7 +169,7 @@ loss under high CPU load.
    - **Stream start**: on Linux (fork with `RTLSDR_HAS_FIFO_HOLD`) every dongle's USB FIFO is held empty from `init_rtlsdr_device()` until `start_pipeline_threads()` releases all of them together (`rtlsdr_release_fifos`, once every reader has queued its transfers; elsewhere the reader threads wait at a gate and call `rtlsdr_read_async` together); and every pipeline start, before its first set, the drain waits for each stream's first two packets and flushes once at a quiet point (`startup_flush`), so the streams' buffers pair by arrival time instead of by count. Why and the measurements: calibration.md, *Stream start*.
 
 3. **Conversion Worker** (`conversion_worker` in sdr_pipeline.cpp):
-   - Consumes `l2_raw_buffer` **in order**; converts uint8 IQ → complex with phase/lag/EQ compensation (`samples_to_complex_with_compensation`, per channel, written in place into a recycled `l2_buffer_pool` set). Everything applied set-wide (phase vector × forward comp, noise-source state, per-bin EQ, spectral inversion) is read ONCE per set (`SetConversionState`), so a set straddling a change is converted the same way on every channel.
+   - Consumes `l2_raw_buffer` **in order**; converts uint8 IQ → complex with phase/lag/EQ compensation (`samples_to_complex_with_compensation`, per channel, written in place into a recycled `l2_buffer_pool` set). A set's channels run in parallel on `ConvertPool` (the worker plus helper threads `convert1`..; `CONVERT_THREADS` / `HEIMDALL_CONVERT_THREADS`, *Parallel conversion* below) and are joined before the next set. Everything applied set-wide (phase vector × forward comp, noise-source state, per-bin EQ, spectral inversion) is read ONCE per set (`SetConversionState`), so a set straddling a change is converted the same way on every channel.
    - Broadcasts **every** set to the TCP servers (tcp_data_server, rtl_tcp_server), then pushes the converted set to the L2 global queue (`l2_buffer`).
    - **Flush epoch**: every flush (`clear_l1_buffer` / `clear_l2_buffer` → `flush_downstream()`) empties L2-raw and L2 and THEN bumps `l2_flush_epoch`, under `l2_flush_mutex`. The worker reads the epoch BEFORE dequeuing a set; the TCP broadcast and the L2 push happen under the mutex after re-checking it, so no pre-flush set reaches L2 (calibration) or the 8091/1234 taps after a recovery/retune flush. Broadcasting under it is safe because the data server reads the phase state with a try_lock (`get_phase_compensation_state_nonblocking`) - `check_phase_convergence` flushes while holding `state_mutex`. `clear_l1_buffer()` empties the downstream queues AFTER the drain has served the L1 flush (a set completed just before it went into L2-raw).
    - Runs at **normal** priority on purpose: it may fall behind safely (whole sets drop upstream at L2-raw) and at realtime priority its malloc/mutex use would priority-invert against the web/correlation threads.
@@ -190,7 +190,7 @@ loss under high CPU load.
 - **Main Thread**: Runs uWebSockets event loop, handles WebSocket connections
 - **Per-Device RTL-SDR Threads**: One per device, receives samples from hardware (realtime/SCHED_RR, best-effort)
 - **Sample Drain Thread**: Cheap aligned L1→L2-raw collection (realtime/SCHED_RR, best-effort)
-- **Conversion Worker Thread**: IQ conversion/compensation + TCP broadcast, L2-raw→L2 (normal priority)
+- **Conversion Worker Thread**: IQ conversion/compensation + TCP broadcast, L2-raw→L2 (normal priority); with helper threads `convert1`.. (`ConvertPool`, *Parallel conversion* below) that convert a set's channels with it
 - **Correlation Processor Thread**: DSP processing and peak detection
 - **Per-Channel Compensation Threads**: One per non-reference channel, runs state machines
 - **Coherence Watchdog Thread**: Runs `recover_coherence()` (full recalibration) after a detected desync
@@ -209,7 +209,84 @@ loss under high CPU load.
 
 ### Pipeline Decoupling (L1 → L2-raw → L2)
 
-The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ conversion / compensation / TCP serialization (`conversion_worker`) by the `l2_raw_buffer` staging queue, so USB keep-up is independent of DSP load. Overflow drops whole aligned sets at L2-raw (coherence-safe), latency-bounded by `L2_RAW_MAX`. Per-device `sample_pool` is sized `MAX_BUFFER_SIZE + L2_RAW_MAX + 4` to cover both in-flight stages. The per-channel FIR state (`frac_tail`/`eq_tail`) stays correct because the worker processes sets in order on one thread.
+The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ conversion / compensation / TCP serialization (`conversion_worker`) by the `l2_raw_buffer` staging queue, so USB keep-up is independent of DSP load. Overflow drops whole aligned sets at L2-raw (coherence-safe), latency-bounded by `L2_RAW_MAX`. Per-device `sample_pool` is sized `MAX_BUFFER_SIZE + L2_RAW_MAX + 4` to cover both in-flight stages. The per-channel FIR state (`frac_tail`/`eq_tail`) stays correct because the worker processes sets in order: a set's channels are handed to the pool's threads one channel each and joined (mutex + condition variable, which also orders one set's state writes before the next set's reads on any thread) before the next set is dequeued.
+
+### Parallel conversion (2026-11-27)
+
+`conversion_worker` converts a set's channels on `ConvertPool`: the worker
+plus `CONVERT_THREADS - 1` helpers (`convert1`..), channels handed out by an
+atomic counter, the set joined before the next is dequeued. The worker then
+builds and sends the 8091 / RTL-TCP packets alone, as before. Default
+(automatic): CPUs - 1 threads (at most 3) **while the per-bin EQ is on**,
+the serial loop otherwise; `HEIMDALL_CONVERT_THREADS` / `CONVERT_THREADS`
+> 0 force a count (`configuration.md`).
+
+Measured on a Pi 4 (Cortex-A72, 1.8 GHz, 1 GB) and a Pi 5 (Cortex-A76,
+2.4 GHz), each with a KrakenSDR, 100 MHz, gain 49.6, cpufreq governor at
+`performance` (every clock sample at the top clock), the eq-fast prototype
+build with this change applied (its `PER_BIN_TEST_*` modes give "today's" =
+the per-bin EQ of main, and its 12-tap least-squares design), 2 x 25 s
+windows per mode, CPU from schedstat. "Busiest" = the busiest convert
+thread (the critical path: it must stay below 100 %); "sum" = all convert
+threads (the cost). % of one core; sets/s delivered to one 8091 client (of
+146.5):
+
+| | threads | EQ off: busiest / sum | today's EQ: busiest / sum (sets/s) | 12 taps: busiest / sum |
+|---|---|---|---|---|
+| Pi 4, no client | 1 | 16.9 / 16.9 | 97.2 / 97.2 (saturated) | 35.7 / 35.7 |
+| | 2 | 10.6 / 17.5 | 72.8 / 123.1 | 27.8 / 50.9 |
+| | 3 | 8.1 / 19.6 | 48.3 / 127.4 | 25.1 / 71.0 |
+| Pi 4, one client | 1 | 53.4 / 53.4 | 96.6 / 96.6 (**89**) | 73.3 / 73.3 |
+| | 2 | 48.3 / 56.1 | 92.6 / 140.0 (**125**) | 64.2 / 86.2 |
+| | 3 | 47.1 / 63.4 | 89.6 / 170.1 (**146.5**) | 59.9 / 103.8 |
+| Pi 5, no client | 1 | 6.3 / 6.3 | 70.3 / 70.3 | 12.5 / 12.5 |
+| | 2 | 3.9 / 6.4 | 37.4 / 70.2 | 7.3 / 13.1 |
+| | 3 | 2.8 / 6.6 | 26.4 / 70.5 | 5.6 / 15.3 |
+| Pi 5, one client | 1 | 24.7 / 24.7 | 88.9 / 88.9 | 31.1 / 31.1 |
+| | 2 | 21.7 / 24.3 | 56.0 / 88.4 | 25.5 / 31.5 |
+| | 3 | 19.9 / 23.7 | 43.6 / 88.1 | 23.5 / 34.3 |
+
+0 coherence events, CONVERGED in 20-26 s, every run; all other cells
+delivered 146.5 sets/s.
+
+- **Pi 5:** the work splits as expected - the busiest thread falls to about
+  1/2 and 1/3 of the serial one, the sum stays within ~3 points.
+- **Pi 4:** threads slow each other down. The busiest thread falls, but the
+  sum grows (today's EQ 97 -> 127-170 %, 12 taps 36 -> 71 %). A standalone
+  test of the EQ stage on 1-3 threads at once (`mt_test.cpp`) shows it: per
+  thread 33 ns a sample alone, 47 with 2 threads, 52-68 with 3 (Pi 5: 7.1 /
+  7.2 / 11.1). The Pi 4's 1 MB L2 is shared and a channel's conversion
+  touches ~550 KB with the EQ; working in 2048-sample blocks (~50 KB a
+  thread) cut the 3-thread penalty to 46-52 % (Pi 5: 7 %) but did not
+  remove it - memory bandwidth (inferred).
+- **With one client the worker stays busy** sending: the 8091 packet and
+  send add 37-39 points of a Pi 4 core and 17-18 of a Pi 5 core to it (one
+  client minus none, EQ off) and do not split by channel.
+- So: without the EQ, parallel threads buy a Pi 4 little (busiest 53 -> 47
+  %) for +10 points of CPU - the serial loop stays. With today's EQ they are
+  what keeps a Pi 4 up with a client (89 -> 146.5 sets/s at 3 threads). The
+  automatic rule follows from that (measured with it: Pi 4 serial 17.0 /
+  53.4 % with the EQ off, 3 threads 89.1 % busiest and 146.5 sets/s with
+  today's EQ and a client; Pi 5 likewise). A 12-tap EQ (branch `eq-fast`)
+  would not need the threads on a Pi 4 (serial 73 % with a client) and costs
+  +30 points with them: if it is productized, switch on load (the serial
+  conversion time against the set period), not on "EQ on".
+- Not done: processing a channel in blocks inside heimdall (would shrink
+  the working set: the measurement above suggests 1.2-1.4x on a Pi 4 alone,
+  `calibration.md` *On the Raspberry Pi*), moving the 8091 send to its own
+  thread.
+
+Checked on x86 with ThreadSanitizer (3 threads; calibration, a draining
+8091 client, per-bin EQ on, two retunes, Check Calibration, SIGTERM): no
+report in the conversion code; three in other places - two inside libusb
+(uninstrumented, transfer alloc / free) and one pre-existing shutdown
+race, **not changed here**: `release_hardware()` (`main.cpp`) closes the
+tuners and nulls `device->dev` while the web thread can still build a STATE
+message, whose `real_gain_json()` (`sweep.cpp`) reads `devices[i]->dev` and
+calls `rtlsdr_get_tuner_type()` on it. Data: job scratch 14951841 `pi/`
+(`*_PAR.txt`, `*_AUTO.txt`, `*_par_t*_results.json`, `mt_test.cpp`,
+`mt_pis.out`, `run_par.sh`, `run_auto.sh`, `ab_cpu_t.py`, `par_report.py`)
+and `tsan/`.
 
 ## Common Development Tasks
 
