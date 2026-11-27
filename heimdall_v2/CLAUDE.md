@@ -148,6 +148,14 @@ Calibration
   (`rtlsdr_set_sample_freq_correction_f`). The old PLL "bursts"
   (`rtlsdr_set_freq_correction`) were removed for measured reasons
   (`docs/dev/calibration.md`); don't bring them back.
+- The per-bin EQ (on by default, `per_bin_cal`) is re-measured by every
+  phase calibration (MEASURING_PER_BIN), and after it the phasor is
+  re-measured on the equalized stream (`fold_after_eq`). So the
+  compensation vector belongs to the EQ it was measured with: turning the
+  EQ off recalibrates, and a path that drops the EQ (`ready` false) must
+  recalibrate or mark `--kerberos` STALE - except putting the same taps back
+  at the same tuning (`docs/dev/calibration.md` *The per-bin EQ in the
+  product*).
 
 Hardware and replies
 - `init_rtlsdr_device()` fails a channel whose sample rate, centre frequency

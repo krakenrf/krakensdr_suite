@@ -1,5 +1,8 @@
 #include "compensation.hpp"
 #include "fft_plan.hpp"
+#include "per_bin_wls.hpp"
+#include <iomanip>
+#include <sstream>
 #include "../sdr/sdr_device.hpp"
 #include "../sdr/sdr_pipeline.hpp"
 #include "../sdr/sdr_init.hpp"
@@ -68,95 +71,58 @@ static void proceed_after_scalar_convergence_locked() {
     }
 }
 
-// Build a complex equalizing FIR per channel from the accumulated per-bin
-// cross-spectra. Phase-only correction W_i(f) = exp(-j*arg(H_i(f))) where
-// H_i(f) = <X_i*conj(X_ref)> / <|X_ref|^2>; a centering linear-phase ramp puts
-// the impulse response at group delay FIR_LEN/2 (applied to every channel,
-// reference = pure delta, so relative timing is preserved). Bins below the SNR
-// gate get no correction. Runs once, on the lag-compensation thread, after the
-// measurement window completes (single reader; writer has stopped).
-// Returns true if equalizers were built for all active channels. Writes only
-// eq_coeff/eq_tail; the single per_bin_cal.ready publish flag is set by the
-// caller (under state_mutex, after verifying no recalibration intervened).
+// Build the equalizing FIRs from the accumulated per-bin cross-spectra: the
+// least-squares design (per_bin_wls.cpp), FIR_LEN taps per channel fitted over
+// |f| <= FIT_BAND, CH0 a delta at DELAY (the conversion runs it as a plain
+// delay). Runs once, on a lag-compensation thread, after the measurement window
+// completes (single reader; the correlation thread has stopped writing). Writes
+// eq_coeff only - the caller publishes it (generation, then the single `ready`
+// flag, under state_mutex after verifying no recalibration intervened) and
+// re-measures the band-average phase on the equalized stream (fold_after_eq).
+// The logged band-average phase per channel is the fit's own (pairwise)
+// prediction of how far the EQ moves it; the eigenvector reading moved by
+// more (the clipped noise source), hence the fold. Returns false when the
+// design refuses (logged with the reason; e.g. too few frequency groups above
+// the gate): the calibration then finishes without the EQ.
 static bool design_per_bin_equalizers() {
-    const int nch  = per_bin_cal.num_channels;
-    const int bins = per_bin_cal.num_bins;
     constexpr int L = PerBinCalibration::FIR_LEN;
-    constexpr int D = L / 2;  // group delay (taps)
-    if (nch <= 0 || bins != CORRELATION_SIZE) return false;
-
-    double peak = 0.0;
-    for (int k = 0; k < bins; k++) peak = std::max(peak, per_bin_cal.ref_power[k]);
-    const double gate = static_cast<double>(PerBinCalibration::SNR_GATE) * peak;
-    if (peak <= 0.0) return false;  // no reference power -> nothing to design
-
-    FftPlan* plan = fft_pool.acquire();
-    std::vector<std::complex<float>> W(bins);
-
-    for (int ch = 0; ch < nch && ch < static_cast<int>(devices.size()); ch++) {
-        auto& dev = devices[ch];
-        if (!dev) continue;
-
-        if (ch == REF_CHANNEL) {
-            // Reference: pure delta at the common group-delay tap.
-            dev->eq_coeff.fill(Complex(0.0f, 0.0f));
-            dev->eq_coeff[D] = Complex(1.0f, 0.0f);
-            dev->eq_tail.fill(Complex(0.0f, 0.0f));
-            std::cout << "Per-bin EQ ch" << ch << ": reference (delta)" << std::endl;
-            continue;
-        }
-
-        const auto& acc = per_bin_cal.cross_acc[ch];
-        for (int k = 0; k < bins; k++) {
-            std::complex<float> w;
-            if (per_bin_cal.ref_power[k] > gate && std::abs(acc[k]) > 0.0f) {
-                // ref_power is real-positive, so arg(H) == arg(cross-spectrum)
-                w = std::polar(1.0f, -std::arg(acc[k]));     // exp(-j*arg H)
-            } else {
-                w = std::complex<float>(1.0f, 0.0f);          // low SNR -> identity
+    const int nch = std::min(per_bin_cal.num_channels, static_cast<int>(devices.size()));
+    if (nch <= 0 || per_bin_cal.num_bins != CORRELATION_SIZE) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::vector<std::complex<double>>> taps;
+    PerBinWlsInfo info;
+    const bool ok = design_per_bin_wls(per_bin_cal.cross_acc, per_bin_cal.ref_power, nch, L,
+                                       PerBinCalibration::FIT_BAND, taps, &info);
+    const long long us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    if (ok) {
+        for (int ch = 0; ch < nch && ch < NUM_DEVICES; ch++) {
+            auto& dev = devices[ch];
+            if (!dev) continue;
+            std::complex<double> dc(0.0, 0.0);
+            for (int n = 0; n < L; n++) {
+                dev->eq_coeff[n] = Complex(static_cast<float>(taps[ch][n].real()), static_cast<float>(taps[ch][n].imag()));
+                dc += taps[ch][n];
             }
-            const float ramp = -2.0f * static_cast<float>(M_PI) * static_cast<float>(k) * D / bins;
-            W[k] = w * std::polar(1.0f, ramp);                // center impulse at tap D
+            const double off = ch < static_cast<int>(info.band_phase_deg.size()) ? info.band_phase_deg[ch] : 0.0;
+            // own format: std::cout keeps the startup banner's fixed + setprecision(1)
+            std::ostringstream line;
+            line << std::setprecision(4);
+            if (ch == REF_CHANNEL)
+                line << "Per-bin EQ ch" << ch << ": reference (delay " << PerBinCalibration::DELAY << ")";
+            else
+                line << "Per-bin EQ ch" << ch << ": designed (" << L << " taps, DC mag " << std::abs(dc)
+                     << ", band-average phase " << off << " deg)";
+            std::cout << line.str() << std::endl;
         }
-
-        // Inverse transform -> impulse response (FFTW backward is unnormalized,
-        // scaled by `bins`). Window L taps and normalize DC to unit magnitude.
-        std::complex<float>* h = plan->inverse_transform(W.data());
-
-        // Sanity check (once): confirm the impulse peak landed near tap D, i.e.
-        // the half-buffer offset was correctly cancelled. If it is far from D,
-        // the windowed taps would be noise.
-        {
-            int peak_n = 0; float peak_mag = 0.0f;
-            for (int n = 0; n < bins; n++) {
-                const float m = std::abs(h[n]);
-                if (m > peak_mag) { peak_mag = m; peak_n = n; }
-            }
-            std::cout << "Per-bin EQ ch" << ch << ": impulse peak at tap " << peak_n
-                      << " (expected ~" << D << ")" << std::endl;
-        }
-
-        std::array<Complex, L> taps{};
-        std::complex<double> dc(0.0, 0.0);
-        for (int n = 0; n < L; n++) {
-            const float win = 0.54f - 0.46f * std::cos(2.0f * static_cast<float>(M_PI) * n / (L - 1));
-            const Complex t = (h[n] / static_cast<float>(bins)) * win;
-            taps[n] = t;
-            dc += std::complex<double>(t);
-        }
-        const double dcmag = std::abs(dc);
-        if (dcmag > 1e-9) {
-            const float inv = static_cast<float>(1.0 / dcmag);
-            for (auto& t : taps) t *= inv;
-        }
-
-        dev->eq_coeff = taps;
-        dev->eq_tail.fill(Complex(0.0f, 0.0f));
-        std::cout << "Per-bin EQ ch" << ch << ": designed (" << L << " taps, DC mag " << dcmag << ")" << std::endl;
     }
-
-    fft_pool.release(plan);
-    return true;
+    std::ostringstream line;
+    line << std::setprecision(4) << "Per-bin EQ design: " << L << " taps to " << PerBinCalibration::FIT_BAND
+         << " fs, groups usable " << info.usable << "/128, in-band " << info.inband_usable << "/" << info.inband
+         << ", " << per_bin_cal.snapshots.load(std::memory_order_acquire) << " snapshots, " << us << " us"
+         << (ok ? "" : std::string(" - REFUSED: ") + info.why);
+    std::cout << line.str() << std::endl;
+    return ok;
 }
 
 void apply_phase_compensation_once(const std::map<int, float>& measured_phases) {
@@ -266,6 +232,37 @@ bool check_phase_convergence(const std::map<int, float>& current_phases) {
     std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
     phase_compensation->checks_since_compensation++;
 
+    // After the per-bin EQ was published: fold the band-average phase of the
+    // equalized stream into the compensation vector first (fold_after_eq)
+    if (phase_compensation->fold_after_eq) {
+        if (phase_compensation->fold_readings++ < 0) return false;   // may predate the EQ
+        for (const auto& [channel, phase] : current_phases) {
+            if (channel == REF_CHANNEL || channel < 0 || channel >= NUM_DEVICES) continue;
+            const float r = phase * static_cast<float>(M_PI) / 180.0f;
+            phase_compensation->fold_accum[channel] += Complex(std::cos(-r), std::sin(-r));
+        }
+        if (phase_compensation->fold_readings < PhaseCompensationData::FOLD_READINGS) return false;
+        std::ostringstream line;   // own format: std::cout keeps the banner's setprecision(1)
+        line << std::setprecision(3) << "Phase: band-average phase of the equalized stream folded in (avg of "
+             << PhaseCompensationData::FOLD_READINGS << ") [";
+        bool first = true;
+        for (const auto& [channel, phase] : current_phases) {
+            if (channel == REF_CHANNEL || channel < 0 || channel >= NUM_DEVICES) continue;
+            Complex dir = phase_compensation->fold_accum[channel];
+            const float mag = std::abs(dir);
+            dir = (mag > 1e-6f) ? dir / mag : Complex(1.0f, 0.0f);
+            phase_compensation->compensation_vector.store(channel, phase_compensation->compensation_vector.load(channel) * dir);
+            line << (first ? "" : ", ") << "Ch" << channel << ":" << -std::arg(dir) * 180.0f / static_cast<float>(M_PI) << " deg";
+            first = false;
+        }
+        std::cout << line.str() << "]" << std::endl;
+        phase_compensation->fold_after_eq = false;
+        phase_compensation->checks_since_compensation = 0;
+        phase_compensation->convergence_count = 0;
+        clear_l2_buffer();
+        return false;
+    }
+
     float max_phase_error = 0.0f;
     bool all_converged = std::all_of(current_phases.begin(), current_phases.end(),
         [&max_phase_error](const auto& pair) {
@@ -349,6 +346,7 @@ void reset_phase_state_locked(PhaseCompensatorState state) {
     // immediately. Clearing ready under state_mutex (the same lock the design
     // uses to publish) makes the recal-vs-design race safe.
     phase_compensation->per_bin_measured = false;
+    phase_compensation->fold_after_eq = false;
     per_bin_cal.ready.store(false, std::memory_order_release);
     // Identity for every channel. The reference entry is never written (apply
     // and verify skip REF_CHANNEL), so this is equivalent to resetting only the
@@ -1701,12 +1699,30 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                                 std::chrono::steady_clock::now() - phase_compensation->per_bin_start).count();
                             const bool timed_out = elapsed > 15;
 
+                            // a refused design is final: the same snapshots would be refused again
+                            const bool refused = can_design && !design_ok;
                             if (design_ok) {
+                                // the taps are written; a new generation makes every conversion
+                                // thread restart its EQ history, then publish
+                                per_bin_cal.generation.fetch_add(1, std::memory_order_release);
                                 per_bin_cal.ready.store(true, std::memory_order_release);
-                                complete_phase_calibration_locked();
-                            } else if (!enabled || !fft_on || timed_out) {
+                                // the band-average phase again, on the equalized stream: fold the
+                                // next readings in, then verify as after the scalar calibration
+                                // (converged -> complete_phase_calibration_locked: per_bin_measured)
+                                phase_compensation->per_bin_measured = true;
+                                phase_compensation->fold_after_eq = true;
+                                phase_compensation->fold_readings = -1;   // skip the first: it may predate the EQ
+                                phase_compensation->fold_accum.fill(Complex(0.0f, 0.0f));
+                                phase_compensation->state = PhaseCompensatorState::VERIFYING_CONVERGENCE;
+                                phase_compensation->checks_since_compensation = 0;
+                                phase_compensation->convergence_count = 0;
+                                clear_l2_buffer();
+                                std::cout << "Phase: per-bin EQ applied - measuring the band-average phase of the "
+                                             "equalized stream" << std::endl;
+                            } else if (!enabled || !fft_on || timed_out || refused) {
                                 std::cout << "Per-bin: finishing without equalizer (enabled=" << enabled
-                                          << ", fft_on=" << fft_on << ", timed_out=" << timed_out << ")" << std::endl;
+                                          << ", fft_on=" << fft_on << ", timed_out=" << timed_out
+                                          << (refused ? ", design refused" : "") << ")" << std::endl;
                                 complete_phase_calibration_locked();
                             }
                             // else: keep waiting for more snapshots

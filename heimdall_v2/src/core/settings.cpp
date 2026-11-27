@@ -187,10 +187,14 @@ void load() {
             }
         }
 
-        if (key == "per_bin_eq") {
+        if (key == "per_bin_eq_ls12") {
             const bool on = parse_bool(val);
             per_bin_cal.enabled.store(on, std::memory_order_release);
-            std::cout << "Settings: per_bin_eq = " << (on ? "ON" : "OFF") << std::endl;
+            std::cout << "Settings: per_bin_eq_ls12 = " << (on ? "ON" : "OFF") << std::endl;
+        } else if (key == "per_bin_eq") {
+            // the 32-tap per-bin EQ of before 2026-11-27 (off by default, so saved
+            // 0 almost everywhere): superseded by per_bin_eq_ls12, ON by default
+            std::cout << "Settings: per_bin_eq (the old 32-tap EQ) ignored - per_bin_eq_ls12 replaces it" << std::endl;
         } else if (key == "periodic_recal_enabled") {
             const bool on = parse_bool(val);
             periodic_recal_enabled.store(on, std::memory_order_release);
@@ -350,7 +354,7 @@ void save() {
 
     std::ostringstream f;
     f << "# Heimdall runtime settings (auto-generated; edit values, keep keys)\n";
-    f << "per_bin_eq=" << (per_bin_cal.enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
+    f << "per_bin_eq_ls12=" << (per_bin_cal.enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     f << "periodic_recal_enabled=" << (periodic_recal_enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     f << "periodic_recal_minutes=" << periodic_recal_minutes.load(std::memory_order_acquire) << "\n";
     f << "antenna_bias_tee_mask=" << antenna_bias_tee_mask.load(std::memory_order_acquire) << "\n";

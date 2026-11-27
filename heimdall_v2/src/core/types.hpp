@@ -2,6 +2,8 @@
 
 #include "config.hpp"  // Need this for NUM_DEVICES, BUFFER_SIZE, etc.
 #include "atomic_complex.hpp"
+#include <array>
+#include <cstdint>
 #include <vector>
 #include <complex>
 #include <map>
@@ -138,6 +140,18 @@ struct PhaseCompensationData {
     // No mutex needed for reads during sample processing!
     AtomicCompensationVector<NUM_DEVICES> compensation_vector;
 
+    // After the per-bin EQ is published (MEASURING_PER_BIN -> VERIFYING_CONVERGENCE):
+    // the next FOLD_READINGS phase readings - of the equalized stream, the first
+    // after the L2 flush skipped - are averaged and folded into the compensation
+    // vector, so the band-average phase is set by the same estimator, on the
+    // same stream, as without the EQ (and as the calibration check reads it).
+    // The EQ moves it a little: the band edges the fit leaves out, and a clipped
+    // noise source, which shifts the eigenvector away from the pairwise phases.
+    static constexpr int FOLD_READINGS = 3;
+    bool fold_after_eq = false;
+    int fold_readings = 0;
+    std::array<Complex, NUM_DEVICES> fold_accum{};
+
     bool compensation_applied = false;
     int convergence_count = 0, stable_nonzero_count = 0, failed_convergence_attempts = 0, checks_since_compensation = 0;
     // required_stable_readings: post-settle snapshots averaged before the first apply
@@ -214,21 +228,30 @@ struct PhaseCompensationData {
 // band. The FIR is applied to the broadband stream so every downstream
 // frequency is coherent with no feedback needed.
 //
-// OFF by default: it adds a per-channel complex FIR to the hot path, only
-// worthwhile on faster hardware. When off, nothing here runs and the hot path
-// is unchanged (scalar multiply only).
+// The design (src/dsp/per_bin_wls.cpp): a 12-tap weighted least-squares fit to
+// the phase-only correction over |f| <= 0.42 fs (the band beyond is left as it
+// is), on 128 groups of bins, gated against the median group power. Applied in
+// the conversion's block loop (convblk::PlanarEq: a planar kernel the
+// compilers vectorize; CH0 a plain delay of DELAY samples). ON by default
+// since 2026-11-27 (the setting `per_bin_eq_ls12`): measured in
+// docs/dev/calibration.md *A faster per-bin EQ* and docs/dev/architecture.md
+// *Parallel conversion*.
 struct PerBinCalibration {
-    static constexpr int FIR_LEN = 32;            // equalizer taps (group delay FIR_LEN/2)
-    static constexpr int REQUIRED_SNAPSHOTS = 32; // cross-spectra averaged before design
-    static constexpr float SNR_GATE = 0.05f;      // bins below this fraction of peak ref power -> no correction
+    static constexpr int FIR_LEN = 12;             // equalizer taps
+    static constexpr int DELAY = FIR_LEN / 2;      // their group delay; CH0 is delayed by it
+    static constexpr double FIT_BAND = 0.42;       // fit over |f| <= FIT_BAND x fs
+    static constexpr int REQUIRED_SNAPSHOTS = 8;   // cross-spectra averaged before design (32 measured within 0.1 deg)
 
-    std::atomic<bool> enabled{false};             // UI toggle (default OFF)
+    std::atomic<bool> enabled{true};              // UI toggle (default ON)
     // Single publish flag for the designed equalizer set. Set true (release)
     // only after EVERY channel's eq_coeff is written, so the hot path never
     // sees a partially-equalized channel set; cleared on any (re)calibration.
     // Gating the hot path on this one flag (not per-device flags) makes the
     // whole channel set switch in/out atomically.
     std::atomic<bool> ready{false};
+    // + 1 with every published design (written before `ready`): a conversion
+    // thread that sees a new one restarts that channel's EQ history
+    std::atomic<uint32_t> generation{0};
 
     // Measurement accumulators (written by the correlation thread during
     // MEASURING_PER_BIN, read by the designer thread once snapshots complete).

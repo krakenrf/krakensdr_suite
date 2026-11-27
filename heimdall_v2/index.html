@@ -365,7 +365,7 @@ input[type="file"]::file-selector-button:hover {background:var(--l3)}
                     <span id="fft-status" class="st ok"><span id="fft-txt">On</span></span>
                 </div>
                 <div class="row disabled" id="perbin-control-group">
-                    <span class="lbl">Per-bin EQ<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Per-bin phase calibration: higher phase accuracy across the whole band, at more CPU (needs faster hardware). Turning it on starts a recalibration.</span></span></span>
+                    <span class="lbl">Per-bin EQ<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Per-bin phase calibration (on by default): a 12-tap equalizer per channel that keeps the phase between channels flat across the band, also near its edges. Costs some CPU. Turning it on or off starts a recalibration.</span></span></span>
                     <input type="checkbox" class="sw" id="perbin-chk" autocomplete="off" aria-label="Per-bin EQ">
                     <span id="perbin-status" class="st"><span id="perbin-txt">Off</span></span>
                 </div>

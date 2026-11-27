@@ -139,3 +139,24 @@ g++ -O3 -march=native -fno-math-errno -fcx-fortran-rules -std=c++20 \
 On a Raspberry Pi use `-mcpu=native`. Passed on x86_64, a Pi 4 and a Pi 5
 (2026-11-27). Run it after any change to the conversion
 (`docs/dev/architecture.md` *Parallel conversion*).
+
+## per_bin_design/ - the per-bin EQ's design, checked
+
+`per_bin_design_test.cpp` runs heimdall's least-squares EQ design
+(`src/dsp/per_bin_wls.cpp`, a pure function) on synthetic cross-spectra
+shaped like the measured ones (a constant, a residual-lag slope, a curve
+rising towards the tuner's IF corner) and checks that it flattens every
+channel's phase over |f| <= 0.40 fs with |H| near 1, keeps CH0 a pure
+delay, reports the band-average phase it leaves correctly, still designs
+an EQ for a weak noise source whose DC spike stands 25 dB above the rest
+(the median gate), and refuses with no noise source or half the band dead.
+From `heimdall_v2/`:
+
+```bash
+g++ -O3 -std=c++20 -Isrc/dsp -o /tmp/per_bin_design_test \
+    tools/per_bin_design/per_bin_design_test.cpp src/dsp/per_bin_wls.cpp
+/tmp/per_bin_design_test     # exit 0 = all checks passed
+```
+
+Passed on x86_64 (2026-11-27). Run it after any change to the design
+(`docs/dev/calibration.md` *The per-bin EQ in the product*).

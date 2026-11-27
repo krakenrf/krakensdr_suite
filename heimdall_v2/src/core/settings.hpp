@@ -4,7 +4,7 @@
 //
 // Stores a small key=value text file (heimdall_settings.conf) in the working
 // directory so user choices survive restarts. Currently persists:
-//   - per_bin_eq             : optional per-bin phase calibration toggle (default OFF)
+//   - per_bin_eq_ls12        : the per-bin phase EQ toggle (default ON; the old per_bin_eq key is ignored)
 //   - periodic_recal_enabled : periodic calibration check on/off (default ON)
 //   - periodic_recal_minutes : periodic calibration check period in minutes (default 5)
 //   - antenna_bias_tee_mask  : per-port antenna bias tee bitmask, bit N = channel N

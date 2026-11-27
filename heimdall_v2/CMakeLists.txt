@@ -152,6 +152,7 @@ set(DSP_SOURCES
     src/dsp/fft_plan.cpp
     src/dsp/correlation.cpp
     src/dsp/compensation.cpp
+    src/dsp/per_bin_wls.cpp
 )
 
 set(NET_SOURCES

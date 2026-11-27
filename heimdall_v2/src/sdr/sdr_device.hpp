@@ -98,6 +98,10 @@ struct SDRDevice {
     // publish flag, so the whole channel set switches in/out atomically).
     std::array<Complex, PerBinCalibration::FIR_LEN> eq_coeff{};
     std::array<Complex, PerBinCalibration::FIR_LEN - 1> eq_tail{};
+    // conversion thread only: the flush epoch and the design generation eq_tail
+    // belongs to - another one restarts the EQ history (convblk::PlanarEq::fill)
+    uint32_t eq_tail_epoch = ~0u;
+    uint32_t eq_generation_seen = ~0u;
 
     SDRDevice(int id, int idx, const std::string& serial);
 };

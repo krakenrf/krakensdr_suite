@@ -1,9 +1,10 @@
 // convert_blocks_test.cpp - checks heimdall's block-wise channel conversion (namespace convblk in
 // src/sdr/sdr_pipeline.cpp, the text between the CONVBLK markers, compiled here verbatim):
 //   1. every block size gives the SAME output, bit for bit, over three consecutive sets with the
-//      trim's and the EQ's history carried between them (the first set fills the trim's history,
-//      as after a flush), with the EQ off and on - block sizes down to 1 sample, shorter than
-//      the filters' history;
+//      trim's and the EQ's history carried between them (the first set fills both histories with
+//      its first sample, as after a flush or a new design), with the per-bin EQ off, on (a normal
+//      channel: the 12-tap planar kernel) and on for the reference channel (a plain delay) -
+//      block sizes down to 1 sample, shorter than the filters' history;
 //   2. the output against a double-precision computation of the same chain.
 // Build and run, from heimdall_v2/:
 //   sed -n '/CONVBLK-BEGIN/,/CONVBLK-END/p' src/sdr/sdr_pipeline.cpp > /tmp/convblk.inc
@@ -34,6 +35,9 @@ struct Inputs {
     Complex eq_h[convblk::EQ_TAPS];
 };
 
+enum EqMode { EQ_OFF = 0, EQ_ON = 1, EQ_REF = 2 };   // EQ_REF: the reference channel's delay
+static const char* eq_name(int m) { return m == EQ_OFF ? "off" : m == EQ_ON ? "on " : "ref"; }
+
 static Inputs make_inputs(unsigned seed, bool inverted) {
     Inputs in;
     std::mt19937 rng(seed);
@@ -54,25 +58,27 @@ static Inputs make_inputs(unsigned seed, bool inverted) {
     for (auto& h : in.trim_h) h /= g;
     std::normal_distribution<float> nd(0.0f, 0.03f);
     for (auto& h : in.eq_h) h = Complex(nd(rng), nd(rng));
-    in.eq_h[16] += Complex(0.95f, 0.1f);
+    in.eq_h[convblk::EQ_DELAY] += Complex(0.95f, 0.1f);
     return in;
 }
 
 // heimdall's way: SETS calls of convblk::convert with the state carried
-static std::vector<Complex> run(const Inputs& in, int block, bool eq_on) {
+static std::vector<Complex> run(const Inputs& in, int block, int eq_mode) {
     Complex trim_tail[convblk::TRIM_HIST] = {};
     Complex eq_tail[convblk::EQ_HIST] = {};
     std::vector<Complex> xbuf, ebuf, out(static_cast<size_t>(N) * SETS);
-    convblk::LegacyEq eq{in.eq_h, eq_tail, &ebuf};
+    std::vector<float> exr, exi;
+    convblk::PlanarEq eq{in.eq_h, eq_tail, eq_mode == EQ_REF, false, &ebuf, &exr, &exi};
     for (int s = 0; s < SETS; s++) {
+        eq.fill = (s == 0);   // heimdall: the first set after a flush / a new design
         convblk::convert(in.iq.data() + 2 * static_cast<size_t>(N) * s, N, block, in.lut, in.comp, in.qs, in.trim_h,
-                         trim_tail, s == 0, eq_on ? &eq : nullptr, xbuf, out.data() + static_cast<size_t>(N) * s);
+                         trim_tail, s == 0, eq_mode != EQ_OFF ? &eq : nullptr, xbuf, out.data() + static_cast<size_t>(N) * s);
     }
     return out;
 }
 
 // the same chain in double precision over the whole stream
-static std::vector<std::complex<double>> reference(const Inputs& in, bool eq_on) {
+static std::vector<std::complex<double>> reference(const Inputs& in, int eq_mode) {
     const int T = N * SETS;
     std::vector<std::complex<double>> x(T), t(T), y(T);
     const std::complex<double> c(in.comp.real(), in.comp.imag());
@@ -85,11 +91,15 @@ static std::vector<std::complex<double>> reference(const Inputs& in, bool eq_on)
         for (int n = 0; n < convblk::TRIM_TAPS; n++) a += static_cast<double>(in.trim_h[n]) * x[std::max(i - n, 0)];
         t[i] = a;
     }
-    if (!eq_on) return t;
-    for (int i = 0; i < T; i++) {   // EQ: history before sample 0 = 0 (a fresh eq_tail)
+    if (eq_mode == EQ_OFF) return t;
+    for (int i = 0; i < T; i++) {   // EQ: history before sample 0 = the trim's first output (fill)
+        if (eq_mode == EQ_REF) {
+            y[i] = t[std::max(i - convblk::EQ_DELAY, 0)];
+            continue;
+        }
         std::complex<double> a = 0;
         for (int n = 0; n < convblk::EQ_TAPS; n++)
-            if (i - n >= 0) a += std::complex<double>(in.eq_h[n].real(), in.eq_h[n].imag()) * t[i - n];
+            a += std::complex<double>(in.eq_h[n].real(), in.eq_h[n].imag()) * t[std::max(i - n, 0)];
         y[i] = a;
     }
     return y;
@@ -100,7 +110,7 @@ int main() {
     const int blocks[] = {0, 16384, 4096, 2048, 1000, 333, 31, 16, 15, 7, 1};
     for (int inv = 0; inv < 2; inv++) {
         const Inputs in = make_inputs(11 + inv, inv == 1);
-        for (int eq_on = 0; eq_on < 2; eq_on++) {
+        for (int eq_on = EQ_OFF; eq_on <= EQ_REF; eq_on++) {
             const std::vector<Complex> base = run(in, 0, eq_on);
             const auto ref = reference(in, eq_on);
             double rmax = 0, emax = 0;
@@ -111,7 +121,7 @@ int main() {
             const bool ref_ok = emax / rmax < 2e-6;
             fails += !ref_ok;
             std::printf("Q %s, EQ %s: whole set vs double reference: max error %.2e of max |y| %s\n",
-                        inv ? "negated" : "as is", eq_on ? "on " : "off", emax / rmax, ref_ok ? "ok" : "FAIL");
+                        inv ? "negated" : "as is", eq_name(eq_on), emax / rmax, ref_ok ? "ok" : "FAIL");
             for (int b : blocks) {
                 const std::vector<Complex> o = run(in, b, eq_on);
                 size_t diff = 0;

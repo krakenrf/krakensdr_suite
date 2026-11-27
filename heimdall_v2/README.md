@@ -161,26 +161,33 @@ State machine: `WAITING_FOR_LAG_COMPLETION` → `MEASURING_INITIAL_PHASE` (avera
 source off, FFT auto-disabled. A frequency change restarts this after a short
 stability cooldown.
 
-### 4. Optional: per-bin (frequency-dependent) EQ
+### 4. Per-bin (frequency-dependent) EQ - on by default
 
-Scalar phase compensation aligns each channel at the band *center* only; residual
-IF-filter group-delay differences and sub-sample lag leave a few degrees of error at
-the band edges. The optional **Per-Bin Phase Calibration** mode (web UI switch "Per-bin EQ",
-**OFF by default**) fixes this band-wide: after scalar convergence it accumulates the
-per-bin cross-spectrum `⟨Xᵢ(f)·conj(X_ref(f))⟩` over an extra window (noise still on),
-designs a short complex **phase-only equalizing FIR** per channel
-(`FIR_LEN = 32` taps, SNR-gated, reference = pure delta so all keep a common group
-delay), and applies it as the final pipeline stage. Off by default because it adds a
-per-channel complex FIR to the hot path — enable only on faster hardware (e.g. Pi 5).
+Scalar phase compensation aligns each channel at the band *center* only; the
+tuners' IF filters differ a little, which leaves 4-9° of phase error between
+channels near the band edges. The **Per-Bin Phase Calibration** (web UI switch
+"Per-bin EQ", **ON by default** on every system) fixes this band-wide: after scalar
+convergence it accumulates the per-bin cross-spectrum `⟨Xᵢ(f)·conj(X_ref(f))⟩` over
+8 snapshots (noise still on) and fits a **12-tap complex FIR** per channel by least
+squares (`src/dsp/per_bin_wls.cpp`: 128 groups of 256 bins, a median gate against
+weak groups, fitted to ±0.42 fs, regularised; the reference channel is a pure 6-sample
+delay so every channel keeps the same group delay). It runs as the last stage of the
+conversion (planar, vectorized; `convblk::PlanarEq` in `src/sdr/sdr_pipeline.cpp`).
+Once the taps are applied, the band-average phase of the equalized stream is
+measured again (3 readings) and folded into the compensation vector, so the
+eigenvector calibration and Check Calibration read the same stream with and without
+the EQ. Worst inter-channel phase within ±0.4 fs on the dev KrakenSDR: 0.5-1.6° with
+it, 4-9° without. Cost: ~0.5 s more per recalibration, ~5 % of one core on a Pi 5
+(`docs/dev/calibration.md` *The per-bin EQ*).
 
-The toggle is **persisted** in `heimdall_settings.conf` (a `key=value` file in the
-working dir, read at startup by `core/settings.cpp`); a saved "on" rebuilds the
-equalizer automatically during the first calibration.
+The toggle is **persisted** in `heimdall_settings.conf` (`per_bin_eq_ls12=0|1`, a
+`key=value` file in the working dir, read at startup by `core/settings.cpp`); the old
+32-tap EQ's `per_bin_eq` key is ignored, so a receiver that had it off gets the new
+one on. Turning it on or off recalibrates (phase only).
 
 > **Half-buffer offset:** the correlation FFT transforms the reference at a CS/2
 > offset, multiplying its spectrum by `(-1)ᵏ`. The per-bin accumulation cancels this
-> so the designed impulse lands at the intended group-delay tap (logged as
-> "impulse peak at tap N").
+> so the design sees the true cross-spectrum.
 
 ### 5. Coherence-loss detection & recovery
 
@@ -208,7 +215,7 @@ surfaced in the control-port status; a recovery that never converges is aborted 
 | `slide_convergence_threshold` | 0.02 | Lag lock target (samples) |
 | `convergence_threshold_degrees` | 1.0 | Phase lock target |
 | `NOISE_SETTLE_MS` | 150 | Discard window after noise-source on |
-| `PerBin FIR_LEN / REQUIRED_SNAPSHOTS / SNR_GATE` | 32 / 32 / 0.05 | Per-bin equalizer length, averaging, low-SNR gate |
+| `PerBin FIR_LEN / REQUIRED_SNAPSHOTS / FIT_BAND` | 12 / 8 / 0.42 | Per-bin equalizer length, averaging, fitted band (fs) |
 
 ---
 
@@ -241,7 +248,7 @@ compensation, and the live phase and correlation graphs
 |---------|--------|
 | `FFT_ENABLE` / `FFT_DISABLE` | Enable/disable FFT processing (clears the post-cal auto-disable) |
 | `BIAS_TEE_ENABLE` / `BIAS_TEE_DISABLE` | Switch the noise source on/off (all devices) |
-| `PER_BIN_ENABLE` / `PER_BIN_DISABLE` | Toggle per-bin phase calibration (persisted) |
+| `PER_BIN_ENABLE` / `PER_BIN_DISABLE` | Per-bin phase calibration on (default) / off; persisted, recalibrates |
 | `SDR_SETTINGS:{"frequency":F,"gain":G}` | Set center frequency / gain with cooldown handling |
 | `RTL_TCP_CHANNEL:<n>` | Select which channel the RTL-TCP server streams |
 | `ANT_BIAS_MASK:<mask>` | Antenna bias tees, bit N = channel N (saved; the control port's `set_antenna_bias_tees` does the same) |

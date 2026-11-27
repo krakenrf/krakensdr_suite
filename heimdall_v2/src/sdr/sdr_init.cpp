@@ -1305,6 +1305,7 @@ static void park_calibration_locked(const std::vector<std::unique_ptr<SDRDevice>
         // coherent tuning, and during the scan every tuner sits at a
         // different frequency. (It stayed applied to the scan data.)
         phase_compensation->per_bin_measured = false;
+        phase_compensation->fold_after_eq = false;
         per_bin_cal.ready.store(false, std::memory_order_release);
 
         // If we interrupted active calibration, turn off bias tee
@@ -1393,16 +1394,33 @@ static bool return_to_coherent_locked(const std::vector<std::unique_ptr<SDRDevic
     // This used to fall through to the automatic recal below.
     if (kerberos_manual_cal_only()) {
         if (wb_entry_converged && phase_compensation) {
+            // (the tuners were retuned / their gain changed while away: the
+            // sweep's hops, the scan's spread, an independent tuner - a PLL
+            // rewrite moves a tuner's phase, as a coherent retune does)
+            const bool moved = current_frequency.load() != wb_entry_freq ||
+                               tuners_changed_outside_coherent.load(std::memory_order_acquire);
+            // The per-bin equalizer was dropped on the way out; with the tuners
+            // back where it was measured, it goes back with the calibration (its
+            // taps are still in eq_coeff - no design runs outside coherent; a new
+            // generation restarts the FIR history). Turned off meanwhile, or the
+            // element count changed: the phasor holds the equalized stream's
+            // band-average phase (fold_after_eq), so the calibration is STALE.
+            bool eq_lost = false;
             {
                 std::lock_guard<std::mutex> ph_lock(phase_compensation->state_mutex);
                 phase_compensation->state = PhaseCompensatorState::CONVERGED;
                 phase_compensation->compensation_applied = true;
+                if (wb_entry_per_bin) {
+                    eq_lost = !per_bin_cal.enabled.load(std::memory_order_acquire) ||
+                              per_bin_cal.num_channels != active_num_elements.load();
+                    if (!moved && !eq_lost) {
+                        phase_compensation->per_bin_measured = true;
+                        per_bin_cal.generation.fetch_add(1, std::memory_order_release);
+                        per_bin_cal.ready.store(true, std::memory_order_release);
+                    }
+                }
             }
-            // (the tuners were retuned / their gain changed while away: the
-            // sweep's hops, the scan's spread, an independent tuner - a PLL
-            // rewrite moves a tuner's phase, as a coherent retune does)
-            if (current_frequency.load() != wb_entry_freq || wb_entry_per_bin ||
-                tuners_changed_outside_coherent.load(std::memory_order_acquire)) {
+            if (moved || eq_lost) {
                 kerberos_cal_stale.store(true, std::memory_order_release);
                 std::cerr << "KerberosSDR: " << leaving_mode_name << " mode ended - calibration restored but STALE "
                              "(tuners retuned, frequency or per-bin EQ changed). Disconnect antennas and press "

@@ -36,6 +36,8 @@ struct SetConversionState {
     bool eq_active = false;
     // samples a channel is converted in at a time (CONVERT_BLOCK; 0 = the whole set)
     int block = 0;
+    // the published per-bin design (PerBinCalibration::generation)
+    uint32_t eq_generation = 0;
     // the downstream flush epoch the set was dequeued under: a channel's lag
     // FIR tail from before a flush is not this stream's past (frac_tail_epoch)
     uint32_t epoch = 0;

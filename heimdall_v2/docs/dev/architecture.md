@@ -302,6 +302,11 @@ x86 with the final build: CONVERGED, a client at the full rate, per-bin EQ on,
 retunes, 0 coherence events. Accuracy with blocks + 3 threads (x86, the
 noise-source A/B of `calibration.md` *A faster per-bin EQ*): EQ off 5.8-6.2
 deg, today's 0.74-0.88, fast 32 0.73-0.96, LS 12 0.66-1.19 - as before.
+Later the same day the "LS 12" design became the product's per-bin EQ,
+on by default, with the `K1c planar` kernel instead of the prototype's
+(`convblk::PlanarEq`): its CPU with these threads and blocks on both Pis,
+and its accuracy, in `calibration.md` *The per-bin EQ in the product*
+(Pi 4 with a client: sum 69.8 %, busiest 48.7 %; Pi 5 29.4 / 22.2 %).
 Data: job scratch 14951841 `pi/` (`*_PAR.txt`, `*_AUTO.txt`, `*_BLK.txt`,
 `*_FIX.txt`, `run_*.sh`, `ab_cpu_t.py`, `par_report.py`, `mt_test.cpp`,
 `conv_ab*.out`), `blk/` (`conv_ab.cpp`, `stage_ab.cpp`, `eq_ab.cpp`,

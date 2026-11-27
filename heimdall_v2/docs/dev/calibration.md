@@ -244,8 +244,9 @@ channels alike, CH4 with trims of opposite sign in the two runs). Measured
 minus predicted - the dongles' own curvature - agrees between the builds
 within ~0.1-0.7°: 1.6-2.1° at −0.4 fs, 0.5-1.0° at ±0.3 fs, 3.7-7.0° at
 +0.4 fs. That is what remains at the band edges with 16 taps; only the
-per-bin EQ (off by default) flattens it - where it comes from and what the
-EQ does with it: *Band-edge phase* below. Both builds: CONVERGED 23.3 s
+per-bin EQ flattens it (off by default then, on since 2026-11-27: *The
+per-bin EQ in the product*) - where it comes from and what the EQ does
+with it: *Band-edge phase* below. Both builds: CONVERGED 23.3 s
 after a cold start, 2.6-4.7 s per full recalibration, Check Calibration
 |lag| 0.003-0.019 (8 taps) / 0.004-0.005 (16), |phase| 0.13-0.31°,
 `coherence_events` 0, `lag_no_peak` empty.
@@ -295,7 +296,8 @@ from 70 to 1575 MHz (the curve is fixed in the IF: <= 0.9° change over
 RF), at every gain, and for at least 20 minutes after a calibration (<=
 0.44° change, the band centre <= 0.21°, the lag <= 0.001 sample).
 
-**The per-bin EQ** (`PER_BIN_ENABLE`, off by default; 32 snapshots of the
+**The per-bin EQ as it was then** (`PER_BIN_ENABLE`, off by default until
+2026-11-27, replaced by *The per-bin EQ in the product*; 32 snapshots of the
 cross-spectrum after the scalar phase has converged, a phase-only target
 per bin, 32 complex taps per channel, Hamming window; re-measured on every
 recalibration) does remove most of it. Worst phase over |f| <= 0.4 fs,
@@ -359,7 +361,10 @@ heimdall (the more the busier the machine) at the same accuracy, by two independ
 compiler vectorizes (same taps, same output) and a design that needs 12 taps
 where today's needs 32. Nothing of it is in the product: the code is a
 prototype behind test commands on the branch `eq-fast`; the EQ stays off by
-default and its default design and loop are today's.
+default and its default design and loop are today's. (Since 2026-11-27 the
+12-tap design is the product's EQ, on by default, with the `K1c planar`
+kernel: *The per-bin EQ in the product* below. "Today's" in this section is
+the EQ before that.)
 
 **What it costs today** (x86 dev machine, i7-11800H, other jobs running:
 load average 10-22, so absolute x86 figures are pessimistic; ratios hold):
@@ -569,10 +574,16 @@ kernel copied from `eq-fast`) and `neon_pi*.out`, `run_perf.sh`, `build_pi.sh`.
   mean afterwards; taken to be the clipped noise source for every design and
   the uncorrected band edge for the short one (not proven). Far inside the
   10° recalibration threshold; rotating the taps by the fit's own mean
-  phase at design time should remove it (not tried).
+  phase at design time should remove it (not tried). Tried in the product
+  and dropped: the fit's own band-average phase (arg of the sum of S(f)
+  H(f) over the band) was only -0.35 to +0.57° per channel while the check
+  read 0.9-1.0° (EQ off 0.15-0.17°) - the clipped noise source's
+  eigenvector is not the pairwise phase. The product measures it on the
+  equalized stream instead (*The per-bin EQ in the product*).
 - `eq_tail` is not reset at a flush in today's loop (the trim's tail is):
   the first 31 samples after a flush carry the samples from before it. The
-  prototype's kernel refills its carry; today's loop was left alone.
+  prototype's kernel refills its carry; today's loop was left alone. (The
+  product's kernel refills it after a flush and after a new design.)
 
 **Considered and dropped**
 
@@ -606,6 +617,113 @@ comparison of the branch's default mode with main; a signal with a known
 bearing; the wideband and Kerberos variants; another KrakenSDR unit; 4
 elements with a capture; long runs.
 
+### The per-bin EQ in the product (2026-11-27)
+
+The 12-tap least-squares EQ of *A faster per-bin EQ* is the product's
+per-bin EQ and is **on by default on every system** (setting
+`per_bin_eq_ls12`; the old EQ's `per_bin_eq` key is ignored with a log
+line, so a receiver that had the old one off gets the new one on). The old
+32-tap design and its loop are gone.
+
+What runs:
+- **Design** (`design_per_bin_wls`, `src/dsp/per_bin_wls.cpp`, ported from
+  `eq-fast`): after the scalar phase converged, 8 snapshots of the
+  cross-spectrum (`REQUIRED_SNAPSHOTS`), 128 groups of 256 bins, the median
+  gate, 12 taps fitted to +-0.42 fs (`FIR_LEN`, `FIT_BAND`), CH0 a pure
+  6-sample delay. 0.8-1.4 ms on x86, 1.4-2.2 ms on a Pi 5, 4.8-5.2 ms on a
+  Pi 4. A refused design (no noise source, half the band dead) finishes the
+  calibration without the EQ (logged).
+- **Kernel** (`convblk::PlanarEq`, `src/sdr/sdr_pipeline.cpp`): the
+  `K1c planar` form chosen on the Pis - the 11 samples of history and the
+  block deinterleaved into I and Q arrays, 12 taps a compile-time constant,
+  the compiler vectorizes it; CH0 a plain delay. Inside the block loop on
+  the conversion threads (`architecture.md` *Parallel conversion*). The
+  history is refilled with the block's first sample after a flush and after
+  a new design (`generation`), so no sample from before either reaches the
+  output. `tools/convert_blocks/` checks it bit for bit across block sizes.
+- **The band-average phase is measured again after the design**
+  (`fold_after_eq`): once the taps are published the machine returns to
+  VERIFYING_CONVERGENCE, skips one reading (it may predate the EQ), averages
+  the next 3 and multiplies them into the compensation vector, then verifies
+  as after the scalar step. The EQ moves the band-average phase that the
+  eigenvector reads by up to ~2.4° (logged "band-average phase of the
+  equalized stream folded in": x86 -1.1 to +1.24°, Pi 4 -0.9 to +1.1°, Pi 5
+  -0.9 to +2.4°), more than the fit itself predicts (`band_phase_deg`,
+  logged per channel at the design: -0.35 to +0.57°): the clipped noise
+  source (*A faster per-bin EQ*, the Check Calibration bullet). Without the
+  fold Check Calibration read 0.9-1.0° with the EQ; with it 0.13-0.27°, as
+  with the EQ off.
+- **Turning it off recalibrates** (phase only, like turning it on): the
+  phasor holds the equalized stream's band-average phase. Leaving coherent
+  mode drops the EQ and coming back recalibrates, so it is measured again.
+  `--kerberos` (no automatic recal): coming back with the tuners untouched
+  puts the EQ back with the restored calibration (its taps are still there;
+  a new generation restarts the history); tuners moved, the EQ turned off
+  meanwhile, or another element count: STALE, as for any other change.
+- **Status**: 8092 `per_bin_eq` (switched on) and `per_bin_eq_applied` (in
+  the stream now). The terminal dashboard shows the same.
+
+**Accuracy** (worst phase against CH0 within +-0.4 fs as the stream leaves
+heimdall, CH1-CH4, after a 31-bin running median - narrow FM stations
+leaking past the noise source at 100 MHz dominate the raw curve with a weak
+noise source, 3-12° with the EQ on and off alike; 100 MHz, gain 49.6;
+2-4 recalibrations each, EQ on and off interleaved; each Pi with its own
+KrakenSDR):
+
+| unit | EQ off | EQ on | weak noise source (gain 0, IF VGA step 4): off -> on | Check Calibration on / off |
+|---|---|---|---|---|
+| x86 dev machine | 3.4-8.8° | 0.4-1.6° | 4.0-10.0° -> 0.24-0.62° | 0.14-0.27° / 0.16-0.24° |
+| Pi 4 | 0.5-3.4° | 0.3-1.2° | 1.4-4.2° -> 0.19-0.37° | 0.13-0.17° / 0.12-0.18° |
+| Pi 5 | 0.7-2.4° | 0.5-1.4° | 0.76-2.1° -> 0.28-0.44° | 0.14-0.20° / 0.22-0.25° |
+
+The units differ: the dev machine's curve is the one of *Band-edge phase*;
+the Pis' are flatter. On the Pi 4's unit CH2 is flat without the EQ
+(0.5°) and reads 0.7-1.1° with it at gain 49.6 - the clipped noise
+source's bias; unclipped (the weak case) the EQ leaves 0.2-0.6° on every
+channel of every unit.
+
+**Time**: a full recalibration 3.67-3.72 s -> 3.67-4.23 s (x86, Pi 4,
+Pi 5); a retune or gain change to CONVERGED 3.70 -> 4.22 s (x86, including
+the 3 s cooldown); turning the EQ on or off 0.76-1.29 s; back from
+independent / wideband scan mode 1.14-1.15 s, EQ included. CONVERGED
+20.7-24.0 s after a cold start.
+
+**CPU** (fixed clock - governor `performance`, Pi 4 1.8 GHz, Pi 5 2.4 GHz;
+the product build at its defaults: 3 conversion threads, blocks of 2048;
+2 x 20 s windows each; % of one core):
+
+| | Pi 4: threads sum / busiest | Pi 4 process | Pi 5: threads sum / busiest | Pi 5 process |
+|---|---|---|---|---|
+| EQ off, no client | 18.3 / 7.6 | 29.7 | 6.7 / 2.9 | 11.0 |
+| EQ on, no client | 31.1 / 11.6 | 42.7 | 11.6 / 4.5 | 15.9 |
+| EQ off, one 8091 client | 55.2 / 43.8 | 69.7 | 24.5 / 20.7 | 28.9 |
+| EQ on, one 8091 client | 69.8 / 48.7 | 84.4 | 29.4 / 22.2 | 33.7 |
+
+The EQ costs +13-15 points of a Pi 4 core and +5 of a Pi 5 core in all;
+the busiest thread (the critical path) +4-5 / +1.5 points. Every run
+delivered the full 146.5 sets a second; 0 coherence events. Against the
+prototype's 12-tap kernel (*Parallel conversion*, "LS 12", 3 threads,
+client) the planar kernel takes 10 points off the Pi 4's sum (80.1 ->
+69.8) and 2 off the Pi 5's (31.2 -> 29.4).
+
+Tests: `tools/per_bin_design/` (the design on synthetic cross-spectra; a
+weak noise source with a 25 dB DC spike still gets an EQ),
+`tools/convert_blocks/`; on the dev KrakenSDR also retunes, gain changes,
+independent / wideband scan and back, the EQ turned off right after a
+design (during a recovery: the recovery's phase stage restarts), `--kerberos`
+(4 elements: manual recal, independent mode untouched -> restored with the
+EQ, a tuner retuned -> STALE, the EQ off while away -> STALE). Data: job
+scratch 14951841 `blk/` (`eq_validate.py`, `results_x86b.json`,
+`results_x86c.json`, `curves_*.npz`, `edge_test.py` / `edge_edge1.json`,
+`kerb_test.py` / `kerb_kerb2.json`, `cpu_prod.py`), `pi/res_prod_pi4/`,
+`pi/res_prod_pi5/`.
+
+Not tested: the Wideband downconverter variant, `--ext_noise`,
+`--kerberos_sw`, a KerberosSDR itself, Windows and macOS builds (clang 14
+compiles every changed file without a warning; no MinGW here), a signal
+with a known bearing, runs longer than ~20 minutes, element counts other
+than 5 and 4.
+
 ### Phase Compensation (phase-only)
 
 Uses eigenvalue decomposition of the spatial correlation matrix. The dominant
@@ -623,7 +741,11 @@ Gain is measured (for display) but deliberately not corrected - see below.
 4. **VERIFYING_CONVERGENCE**: Measured on the compensated stream; requires phases
    within ±1°. A failing check triggers the retry pass, which multiplies the
    remaining phase into the vector.
-5. **CONVERGED**: Phase drift within threshold (±1°)
+5. **MEASURING_PER_BIN** (the per-bin EQ, on by default): 8 snapshots of the
+   cross-spectrum, the 12-tap design, then VERIFYING_CONVERGENCE again on the
+   equalized stream, its band-average phase folded in first (*The per-bin EQ
+   in the product*)
+6. **CONVERGED**: Phase drift within threshold (±1°)
 
 **Retune recalibration timing** (re-measured 2026-10-02, 8091 stream): a
 retune/gain/side/ring change runs the `STABILITY_DELAY_MS` (3000 ms) cooldown

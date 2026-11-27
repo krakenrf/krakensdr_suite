@@ -108,6 +108,9 @@ measurements; reasons in `heimdall_v2/docs/dev/calibration.md`):
   MEASURING -> SERVOING -> CONVERGED (within +-0.02 samples).
 - Phase: phase-only, from the dominant eigenvector of the noise-source
   covariance; one unit phasor per channel, applied in the conversion loop.
+- Band edges: a 12-tap per-bin EQ per channel, on by default, fitted by
+  least squares to the noise source after the phasor; the phasor is then
+  re-measured on the equalized stream.
 - Gain is measured but not corrected: the noise source compresses the front
   end, so its gain estimates are off by up to ~2.4 dB.
 - The R820T IF VGA is fixed (`rtlsdr_set_tuner_if_mode(10000 + step)`,

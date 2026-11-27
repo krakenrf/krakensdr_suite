@@ -387,10 +387,17 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                         if (converged) handle_settings_change();
                     }},
                     {"PER_BIN_DISABLE", []() {
+                        const bool was_applied = per_bin_cal.ready.load(std::memory_order_acquire);
                         per_bin_cal.enabled.store(false, std::memory_order_release);
                         per_bin_cal.ready.store(false, std::memory_order_release);
                         settings::save();  // remember across restarts
                         std::cout << "Per-bin phase calibration: Disabled" << std::endl;
+                        // The band-average phase was measured on the equalized stream
+                        // (fold_after_eq): measure it again on the plain one, as the
+                        // enable re-opens the calibration to build the equalizer.
+                        // `ready` was set only by a published design, so the machine
+                        // is past it (verifying or CONVERGED) with the lag converged.
+                        if (was_applied) handle_settings_change();
                     }},
                     {"PERIODIC_RECAL_ENABLE", []() {
                         periodic_recal_enabled.store(true, std::memory_order_release);

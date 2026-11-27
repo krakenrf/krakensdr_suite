@@ -342,6 +342,10 @@ One line per broadcast, terminated `"}\n"`:
   "antenna_bias_tee_mask": 0,        // in effect, bit N = channel N; 0 when not available.
                                      //   Bits past num_channels: the saved setting of channels not open
   "antenna_bias_tee_reserved": 128,  // channels that can't be switched: bit 0 under --ext_noise, bit 7 (no GPIO)
+  // the per-bin EQ (added 2026-11-27; absent from an older heimdall):
+  "per_bin_eq": true,                // switched on (the default; web PER_BIN_ENABLE / _DISABLE, saved)
+  "per_bin_eq_applied": true,        // its 12-tap filters are in the stream now; false while measured
+                                     //   (phase_state 6), outside coherent mode, or when a design was refused
 
   // ONLY when downconverter (--wideband variant) is enabled:
   "downconverter": {
@@ -420,7 +424,7 @@ then uint8 interleaved IQ per channel
   - `3` = `VERIFYING_CONVERGENCE`
   - `4` = `CONVERGED` ← the only "fully calibrated" state
   - `5` = `WAITING_FOR_STABILITY` (retune/gain cooldown)
-  - `6` = `MEASURING_PER_BIN` (optional per-bin equalizer measurement)
+  - `6` = `MEASURING_PER_BIN` (per-bin equalizer measurement; on by default, 8 snapshots, then the band-average phase is re-measured in state 3)
   - That is the LOW BYTE; higher bits are flags - mask them off: `0x100`
     KerberosSDR manual mode, `0x200` calibration stale, `0x400` wideband scan,
     `0x800` independent, `0x1000` generic RTL-SDRs (no coherent array; set on
@@ -436,7 +440,7 @@ then uint8 interleaved IQ per channel
 1. Send `{"command":"set_frequency","frequency":F}`; read the immediate `{"status":"success","frequency":F}` line.
 2. Hardware retunes right away; the server enters the cooldown: noise source OFF, `phase_state` → **5** (`WAITING_FOR_STABILITY`), compensation vector reset to **identity**, per-bin EQ disabled. The 8092 broadcasts flip to `"cooldown_active":true` with `"cooldown_remaining_ms"` counting down from `stability_delay_override_ms` (default **3000 ms**, settable 100–10000 via `set_stability_delay`); `"channel_comp"` shows 0 dB / 0°.
 3. Any further `set_frequency`/`set_gain` during the cooldown **restarts** the timer (rapid scrolling never triggers calibration mid-drag).
-4. When the timer expires (checked in the compensation thread, `compensation.cpp:996–1023`): `cooldown_active=false`, then `handle_settings_change()` (`sdr_init.cpp:446+`) — **noise source ON**, `phase_state` → **1** (`MEASURING_INITIAL_PHASE`); lag states stay CONVERGED (phase-only recal). It then walks 1 → 3 (`VERIFYING_CONVERGENCE`) → optionally 6 → **4** (`CONVERGED`), at which point `complete_phase_calibration_locked()` (`compensation.cpp:24–47`) switches the **noise source OFF** and auto-disables server-side FFT.
+4. When the timer expires (checked in the compensation thread, `compensation.cpp:996–1023`): `cooldown_active=false`, then `handle_settings_change()` (`sdr_init.cpp:446+`) — **noise source ON**, `phase_state` → **1** (`MEASURING_INITIAL_PHASE`); lag states stay CONVERGED (phase-only recal). It then walks 1 → 3 (`VERIFYING_CONVERGENCE`) → 6 (the per-bin EQ, on by default) → 3 again (the band-average phase of the equalized stream) → **4** (`CONVERGED`), at which point `complete_phase_calibration_locked()` (`compensation.cpp:24–47`) switches the **noise source OFF** and auto-disables server-side FFT.
 5. **Data-validity rule for a DoA client**: samples on port 8091 are antenna data with valid calibration only when the packet header has `phase_state == 4` **AND** `noise_source == 0`. During states 1/2/3/6 (or whenever `noise_source == 1`) the channels carry calibration noise; during state 5 the calibration vector is identity (uncalibrated antenna data — fine for spectrum display, wrong for DoA). Do **not** treat `phase_state < 5` alone as "frozen" (per project memory: gate on the noise source; 4 is converged).
 6. During the cooldown itself data flows continuously (identity compensation) — spectrum display keeps working; only DoA output should be gated.
 7. If `"recovering":true` (coherence recovery), frequency/gain changes still retune hardware but skip the cooldown; wait for `recovering:false` + `phase_state==4`.

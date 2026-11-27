@@ -371,6 +371,13 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                 << ",\"antenna_bias_tee_reserved\":" << antenna_bias_tee_reserved_mask();
     // a client's scan holds the calibration (hold_calibration)
     status_json << ",\"calibration_hold\":" << (calibration_held() ? "true" : "false");
+    // the per-bin EQ (on by default): switched on, and its taps applied to the
+    // stream now (false while it is measured, outside coherent mode, and when
+    // a calibration was refused it)
+    status_json << ",\"per_bin_eq\":" << (per_bin_cal.enabled.load(std::memory_order_relaxed) ? "true" : "false")
+                << ",\"per_bin_eq_applied\":"
+                << (per_bin_cal.enabled.load(std::memory_order_relaxed) &&
+                    per_bin_cal.ready.load(std::memory_order_acquire) ? "true" : "false");
     if (kerberos_mode.load()) {
         status_json << ",\"kerberos_mode\":true"
                     << ",\"kerberos_sw\":" << (kerberos_sw_mode.load() ? "true" : "false")

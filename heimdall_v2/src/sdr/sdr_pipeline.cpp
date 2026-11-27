@@ -409,6 +409,8 @@ static void snapshot_conversion_state(SetConversionState& st, int num_elements) 
     st.spectral_inversion = downconverter.spectral_inversion_active();
     st.eq_active = per_bin_cal.enabled.load(std::memory_order_relaxed) &&
                    per_bin_cal.ready.load(std::memory_order_acquire);
+    // written before `ready` (release): seen with it
+    st.eq_generation = per_bin_cal.generation.load(std::memory_order_acquire);
 }
 
 // ---- One channel's set, in blocks -------------------------------------------
@@ -421,14 +423,15 @@ namespace convblk {
 
 constexpr int TRIM_TAPS = 16;              // SDRDevice::FRAC_TAPS
 constexpr int TRIM_HIST = TRIM_TAPS - 1;   // input samples the trim carries
-constexpr int EQ_TAPS = 32;                // PerBinCalibration::FIR_LEN
-constexpr int EQ_HIST = EQ_TAPS - 1;
+constexpr int EQ_TAPS = 12;                // PerBinCalibration::FIR_LEN
+constexpr int EQ_HIST = EQ_TAPS - 1;       // input samples the EQ carries
+constexpr int EQ_DELAY = EQ_TAPS / 2;      // PerBinCalibration::DELAY: CH0's delay
 // Where a block starts in its scratch buffer: the history sits right in front
 // of it, and the block starts a multiple of 16 samples (128 bytes) in, so it
 // is as aligned as the buffer. Started TRIM_HIST in (8 bytes off 16) the
 // IQ-to-complex stores straddled cache lines: 20 % slower on a Pi 4 and a Pi 5.
 constexpr int TRIM_PAD = (TRIM_HIST + 15) / 16 * 16;
-constexpr int EQ_PAD = (EQ_HIST + 15) / 16 * 16;
+constexpr int EQ_PAD = (EQ_HIST + 15) / 16 * 16;   // floats in front of the planar block
 
 // uint8 IQ -> complex, times the set's phase vector (cr + j ci); qs = -1
 // negates Q (high-side spectral inversion), one multiply folded into the
@@ -498,33 +501,95 @@ CONVBLK_TRIM_ATTR inline void trim_fir(const float* __restrict h, const Complex*
     }
 }
 
-// The per-bin EQ: EQ_TAPS complex taps; x as above, with EQ_HIST samples of
-// history in front
-inline void eq_fir(const Complex* __restrict h, const Complex* __restrict x, Complex* __restrict y, int n) {
+#if defined(__GNUC__) || defined(__clang__)
+#define CONVBLK_ALWAYS_INLINE __attribute__((always_inline)) inline
+#else
+#define CONVBLK_ALWAYS_INLINE inline
+#endif
+
+// The per-bin EQ kernel: EQ_TAPS complex taps on planar data (re / im in
+// separate arrays, so the compilers vectorize over the samples), the output
+// stored interleaved. xr / xi point at sample 0 with EQ_HIST samples of history
+// in front. tools/eq_bench row "K1c planar": on a Pi 4 1.8x faster at 12 taps
+// than the chunked kernel of the eq-fast prototype (11.9 vs 21.9 ns a
+// sample), on x86 within 10 % of it.
+template <int L, int t = 0>
+CONVBLK_ALWAYS_INLINE void eq_taps(float& ar, float& ai, const float* __restrict xr, const float* __restrict xi,
+                                   const float* r, const float* q, int i) {
+    if constexpr (t < L) {
+        ar += r[t] * xr[i - t];
+        ar -= q[t] * xi[i - t];
+        ai += r[t] * xi[i - t];
+        ai += q[t] * xr[i - t];
+        eq_taps<L, t + 1>(ar, ai, xr, xi, r, q, i);
+    }
+}
+inline void eq_planar(const float* r, const float* q, const float* __restrict xr, const float* __restrict xi,
+                      float* __restrict yf, int n) {
     for (int i = 0; i < n; i++) {
-        Complex acc(0.0f, 0.0f);
-        for (int t = 0; t < EQ_TAPS; t++) acc += h[t] * x[i - t];
-        y[i] = acc;
+        float ar = 0.0f, ai = 0.0f;
+        eq_taps<EQ_TAPS>(ar, ai, xr, xi, r, q, i);
+        yf[2 * i] = ar;
+        yf[2 * i + 1] = ai;
     }
 }
 
-// The EQ stage: gives the trim the buffer to write a block into (the EQ's
-// history in front of it) and filters that block into y, carrying the
-// history in `tail`
-struct LegacyEq {
-    const Complex* h;            // EQ_TAPS taps
+// The EQ stage of the block loop: gives the trim the buffer to write a block
+// into, then filters that block into y, carrying its last EQ_HIST input
+// samples in `tail`. The reference channel (CH0, whose design is a delta at
+// EQ_DELAY) runs as a plain delay of EQ_DELAY samples, so every channel shares
+// the same group delay. `fill`: the first block after a flush or a new design
+// - the history becomes the block's first sample (as the trim's after a flush).
+struct PlanarEq {
+    const Complex* h;            // EQ_TAPS taps (not read by the delay)
     Complex* tail;               // EQ_HIST samples carried between blocks and sets
-    std::vector<Complex>* buf;   // thread_local scratch
+    bool delay_only;             // CH0
+    bool fill;
+    std::vector<Complex>* in;    // thread_local scratch: the trim's output block
+    std::vector<float>* xr;      // thread_local scratch: the planar input
+    std::vector<float>* xi;
     Complex* input(int n) {
-        if (buf->size() < static_cast<size_t>(EQ_PAD + n)) buf->resize(static_cast<size_t>(EQ_PAD + n));
-        Complex* const x = buf->data() + EQ_PAD;
-        std::copy(tail, tail + EQ_HIST, x - EQ_HIST);
-        return x;
+        if (in->size() < static_cast<size_t>(n)) in->resize(static_cast<size_t>(n));
+        return in->data();
     }
     void run(Complex* y, int n) {
-        const Complex* const x = buf->data() + EQ_PAD;
-        eq_fir(h, x, y, n);
-        std::copy(x + n - EQ_HIST, x + n, tail);   // the last EQ_HIST of [history | block]
+        const Complex* const x = in->data();
+        if (fill) {
+            std::fill(tail, tail + EQ_HIST, x[0]);
+            fill = false;
+        }
+        if (delay_only) {
+            for (int i = 0; i < n; i++) y[i] = (i < EQ_DELAY) ? tail[EQ_HIST - EQ_DELAY + i] : x[i - EQ_DELAY];
+        } else {
+            if (xr->size() < static_cast<size_t>(EQ_PAD + n)) {
+                xr->resize(static_cast<size_t>(EQ_PAD + n));
+                xi->resize(static_cast<size_t>(EQ_PAD + n));
+            }
+            float* const pr = xr->data() + EQ_PAD;
+            float* const pi = xi->data() + EQ_PAD;
+            for (int t = 0; t < EQ_HIST; t++) {
+                pr[t - EQ_HIST] = tail[t].real();
+                pi[t - EQ_HIST] = tail[t].imag();
+            }
+            const float* const xf = reinterpret_cast<const float*>(x);
+            for (int i = 0; i < n; i++) {
+                pr[i] = xf[2 * i];
+                pi[i] = xf[2 * i + 1];
+            }
+            float r[EQ_TAPS], q[EQ_TAPS];
+            for (int t = 0; t < EQ_TAPS; t++) {
+                r[t] = h[t].real();
+                q[t] = h[t].imag();
+            }
+            eq_planar(r, q, pr, pi, reinterpret_cast<float*>(y), n);
+        }
+        // the carry: the last EQ_HIST samples of [history | block]
+        if (n >= EQ_HIST) {
+            std::copy(x + n - EQ_HIST, x + n, tail);
+        } else {
+            std::copy(tail + n, tail + EQ_HIST, tail);
+            std::copy(x, x + n, tail + EQ_HIST - n);
+        }
     }
 };
 
@@ -608,15 +673,21 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
     const bool fill_tail = dev->frac_tail_epoch != st.epoch;
     dev->frac_tail_epoch = st.epoch;
 
-    // ---- Optional per-bin phase-equalizer FIR (final stage) ----
-    // Only runs when the user enabled per-bin mode AND this channel's equalizer
-    // has been designed. Off by default => no EQ stage, and the hot path is
-    // just the scalar multiply + lag FIR. The equalizer is a complex
-    // FIR_LEN-tap filter that flattens the residual frequency-dependent phase
-    // across the band; reference channel's filter is a pure delta, so all
-    // channels share the same FIR_LEN/2 group delay and stay aligned.
+    // ---- Per-bin phase equalizer (final stage) ----
+    // Runs while per-bin mode is on (the default) AND the equalizers of the
+    // current calibration are published (`ready`). A complex FIR_LEN-tap filter
+    // per channel that flattens the residual frequency-dependent phase over
+    // |f| <= FIT_BAND (PerBinCalibration); the reference channel is a plain
+    // delay of DELAY samples, so all channels share the same group delay.
     static thread_local std::vector<Complex> xbuf, ebuf;   // per conversion thread
-    convblk::LegacyEq eq{dev->eq_coeff.data(), dev->eq_tail.data(), &ebuf};
+    static thread_local std::vector<float> exr, exi;
+    convblk::PlanarEq eq{dev->eq_coeff.data(), dev->eq_tail.data(), channel == REF_CHANNEL, false, &ebuf, &exr, &exi};
+    if (st.eq_active) {
+        // a flush or a new design: the EQ's history is not this stream's past
+        eq.fill = dev->eq_tail_epoch != st.epoch || dev->eq_generation_seen != st.eq_generation;
+        dev->eq_tail_epoch = st.epoch;
+        dev->eq_generation_seen = st.eq_generation;
+    }
     const float qs = st.spectral_inversion ? -1.0f : 1.0f;
     convblk::convert(samples, count, st.block, iq_lut(), st.comp[channel], qs,
                      dev->frac_coeff.data(), dev->frac_tail.data(), fill_tail,
