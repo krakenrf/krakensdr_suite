@@ -348,8 +348,10 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   shared build and lose the sample-clock servo and GPIO control). heimdall
   requires 578b43d or later on every platform (`RTLSDR_FIX_MARK` =
   `rtlsdr_finish_tune`); its Makefile fast-forwards an older clone or stops
-  with instructions. The fork's master (9644d07) has everything heimdall
-  uses: `RTLSDR_NO_STREAM_SLIP` (a USB control read of 3, 7, 11 ... bytes
+  with instructions. The fork's ff2bb7b has everything heimdall uses
+  (until it is pushed: `docs/dev/librtlsdr-patches/`): the R820T's IF centre
+  at 2.4 MS/s 1.815 MHz (`RTLSDR_R82XX_IF_1815`; was 1.6, which put the
+  band's top edge on the tuner's IF high-pass), `RTLSDR_NO_STREAM_SLIP` (a USB control read of 3, 7, 11 ... bytes
   made the RTL2832U drop 2 samples, so every retune shifted that dongle's
   stream - with it heimdall returns to coherent phase-only and sweeps with
   the faster tune call) and `RTLSDR_HAS_GAIN_FAST` (the sweep's per-hop

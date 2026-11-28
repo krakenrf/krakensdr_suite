@@ -299,8 +299,8 @@ services:
 
 - **`Dockerfile`** has two stages:
   - The build stage (Debian trixie) clones the librtlsdr fork and uWebSockets
-    at pinned commits (`LIBRTLSDR_COMMIT` = krakenrf/librtlsdr 9644d07, the
-    fork's master with every feature heimdall uses; `UWS_COMMIT`, the one the
+    at pinned commits (`LIBRTLSDR_COMMIT` = krakenrf/librtlsdr ff2bb7b, the
+    fork commit with every feature heimdall uses - the IF centre 1.815 MHz; `UWS_COMMIT`, the one the
     Makefiles pin), then runs both apps' Makefiles. To build with a newer
     fork, pass `--build-arg LIBRTLSDR_COMMIT=<commit>`.
   - The runtime stage installs only the Debian packages that own the

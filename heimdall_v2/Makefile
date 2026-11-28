@@ -145,10 +145,13 @@ endif
 RTLSDR_FIX_MARK = rtlsdr_finish_tune
 RTLSDR_TRIED = $(RTLSDR_DIR)/build/.fork_update_tried
 # RTLSDR_FEATURE_MARK = the NEWEST fork feature heimdall uses, in the fork's
-# include/rtl-sdr.h (krakenrf/librtlsdr 9644d07's
-# rtlsdr_set_center_freq_gain_fast, RTLSDR_HAS_GAIN_FAST). Move it when
-# heimdall starts using a newer fork feature. A clone that has RTLSDR_FIX_MARK
-# but not this one builds and runs (heimdall's #ifdef fallbacks), so its
+# include/rtl-sdr.h (krakenrf/librtlsdr ff2bb7b's RTLSDR_R82XX_IF_1815: the
+# R820T's IF centre at 2.4 MS/s 1.815 MHz instead of 1.6, the band clear of
+# the tuner's IF high-pass - ../docs/dev/librtlsdr-fork.md, *The R820T IF
+# filter*; before it 9644d07's rtlsdr_set_center_freq_gain_fast). Move it
+# when heimdall starts using a newer fork feature. A clone that has
+# RTLSDR_FIX_MARK but not this one builds and runs (heimdall's #ifdef
+# fallbacks; without ff2bb7b the old IF centre), so its
 # update is SOFT (../scripts/librtlsdr-update.sh): fetched and fast-forwarded
 # to its upstream while make reads this file - the build below then sees the
 # new sources (the library is rebuilt by RTLSDR_SRCS, the objects that
@@ -162,7 +165,7 @@ RTLSDR_TRIED = $(RTLSDR_DIR)/build/.fork_update_tried
 # check asks the same script whether an attempt is due, so ./run.sh builds
 # then and only then. No script (the Docker build copies heimdall_v2/ only,
 # its pinned fork has the mark) = no soft update.
-RTLSDR_FEATURE_MARK = rtlsdr_set_center_freq_gain_fast
+RTLSDR_FEATURE_MARK = RTLSDR_R82XX_IF_1815
 RTLSDR_UPDATE_SH = ../scripts/librtlsdr-update.sh
 ifneq ($(wildcard $(RTLSDR_UPDATE_SH)),)
 ifeq ($(filter-out all run rebuild $(TARGET),$(MAKECMDGOALS)),)

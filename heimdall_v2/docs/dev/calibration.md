@@ -282,7 +282,10 @@ hold it, so it stays. That is the design, not a fault of the noise source.
 
 What bends: the corners of each R820T's IF band-pass, which differ by ~8 %
 between the chips of one unit. With the fork's filter setting the high-pass
-corner (IF 0.47-0.51 MHz) lies at the + edge of the streamed band; the
+corner (IF 0.47-0.51 MHz) lay at the + edge of the streamed band (until
+ff2bb7b moved the IF centre to 1.815 MHz, 2026-11-28: the curve below is
+from before it; after it, detrended 0.8-2.3° EQ off and 0.4-0.5° with the
+EQ, on three units - `../../../docs/dev/librtlsdr-fork.md`, *Adopted*); the
 low-pass corner the fork moved out of the band (commit 359a94d) lay at the
 - edge. Registers, the A/B and the measurements that pin it on those
 corners: `../../../docs/dev/librtlsdr-fork.md`, *The R820T IF filter*.

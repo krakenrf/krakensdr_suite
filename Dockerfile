@@ -24,13 +24,13 @@ ARG JOBS=3
 ARG UWS_REPO=https://github.com/uNetworking/uWebSockets
 ARG UWS_COMMIT=fe7da4cb05622b8d004718ec3ca05101782eb1c2
 # librtlsdr: the fork commit with the newest feature heimdall uses
-# (RTLSDR_FEATURE_MARK in heimdall_v2/Makefile: 9644d07, the fast tuner gain
-# write; also the zero-copy buffers / FIFO hold and the tunes that drop no
-# sample). A checkout of a commit has no upstream for the Makefile to
+# (RTLSDR_FEATURE_MARK in heimdall_v2/Makefile: ff2bb7b, the R820T's IF
+# centre 1.815 MHz at 2.4 MS/s; also the fast tuner gain write, the zero-copy
+# buffers / FIFO hold and the tunes that drop no sample). A checkout of a commit has no upstream for the Makefile to
 # fast-forward to: one before 578b43d (RTLSDR_FIX_MARK) stops the heimdall
 # build, one before 9644d07 builds heimdall without the newer features
 ARG LIBRTLSDR_REPO=https://github.com/krakenrf/librtlsdr
-ARG LIBRTLSDR_COMMIT=9644d077cba347e7a57c84b6badc2c56ebe334d8
+ARG LIBRTLSDR_COMMIT=ff2bb7bd7dfe2dcb407b66c80ed7b047e0ae7354
 
 # libjpeg-dev (libjpeg-turbo, IJG/BSD-3-Clause/zlib): the decoder plugins link
 # -ljpeg to compress video frames; the main app never links it. The runtime

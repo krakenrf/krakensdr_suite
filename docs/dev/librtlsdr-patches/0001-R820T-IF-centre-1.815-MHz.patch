@@ -1,0 +1,72 @@
+From ff2bb7bd7dfe2dcb407b66c80ed7b047e0ae7354 Mon Sep 17 00:00:00 2001
+From: Carl <admin@rtl-sdr.com>
+Date: Sat, 28 Nov 2026 14:35:37 +1300
+Subject: [PATCH] R820T: IF centre 1.815 MHz at ~2.08-2.6 MS/s (was 1.6),
+ RTLSDR_R82XX_IF_1815
+
+At 1.6 MHz a 2.4 MS/s stream (IF 0.4-2.8 MHz, spectrum inverted) reaches
+below the tuner's IF high-pass corner (-3 dB at IF 0.47-0.51 MHz, chip to
+chip): the top ~100 kHz of the band falls off steeply after a +1-1.6 dB
+peak, the dongles' levels there differ by 2-2.5 dB and their phases by
+5-10 deg. At 1.815 MHz (stock osmocom's IF centre for this bandwidth) the
+stream is IF 0.615-3.015 MHz, clear of the high-pass; the wide-open
+low-pass (FILT_CODE 0, 359a94d) is still above it.
+
+Measured on a KrakenSDR (5 x R820T), 100 and 868 MHz, noise source:
+phase between channels within +-0.4 fs 7.5 -> 4.3 deg (868 MHz: 9.4 ->
+3.6) without equalization, the level at +0.47 fs -7.4 -> -4.0 dB, the
+level spread between dongles at +0.45 fs 2.5 -> 0.3 dB. Only the 2.2 MHz
+row changes (bandwidth requests ~2.08-2.6 MHz); the other rows keep
+their IF centres.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ include/rtl-sdr.h |  8 ++++++++
+ src/tuner_r82xx.c | 12 +++++++++++-
+ 2 files changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/include/rtl-sdr.h b/include/rtl-sdr.h
+index 69ee037..1cbc2de 100755
+--- a/include/rtl-sdr.h
++++ b/include/rtl-sdr.h
+@@ -297,6 +297,14 @@ RTLSDR_API int rtlsdr_set_center_freq_gain_fast(rtlsdr_dev_t *dev, uint32_t freq
+  */
+ #define RTLSDR_NO_STREAM_SLIP 1
+ 
++/*
++ * Defined when an R820T / R828D tuner streams with its IF centre at
++ * 1.815 MHz for sample rates of about 2.08-2.6 MS/s (the 2.2 MHz filter row;
++ * was 1.6 MHz): the band then clears the tuner's IF high-pass, so both band
++ * edges roll off alike and the dongles match there in level and phase.
++ */
++#define RTLSDR_R82XX_IF_1815 1
++
+ /*!
+  * Set harmonic reception - for R820T/2 tuner
+  *
+diff --git a/src/tuner_r82xx.c b/src/tuner_r82xx.c
+index d1977f2..a17935a 100644
+--- a/src/tuner_r82xx.c
++++ b/src/tuner_r82xx.c
+@@ -2050,7 +2050,17 @@ static const struct IFinfo IFi[] = {
+ 
+ 	{ 3, 1950+3,      1500,  30, 0x0F, 0x8F, 0x60 },
+ 
+-	{ 3, 2200+0,      1600,   0, 0x0F, 0x8F, 0x00 },
++	/* IF centre 1.815 MHz (was 1.6, RTLSDR_R82XX_IF_1815): at 1.6 MHz a 2.4 MS/s
++	 * stream (IF 0.4-2.8 MHz; the spectrum is inverted, baseband +f at IF - f)
++	 * reached below the high-pass corner (-3 dB at IF 0.47-0.51 MHz, chip to
++	 * chip), so the top ~100 kHz of the band fell off steeply, after a +1-1.6 dB
++	 * peak, with the channels' levels 2-2.5 dB apart and their phases 5-10 deg
++	 * apart there. At 1.815 MHz (stock osmocom's IF centre) the stream is
++	 * IF 0.615-3.015 MHz: both band edges roll off alike (the RTL2832U's
++	 * decimation filter), the low-pass (FILT_CODE 0, corner > 3.7 MHz) still
++	 * clear. Measured on KrakenSDRs (heimdall_v2/docs/dev, librtlsdr-fork.md in
++	 * krakensdr_suite). */
++	{ 3, 2200+0,      1815,   0, 0x0F, 0x8F, 0x00 },
+ 	{ 3, 3000+0,      2000,   0, 0x04, 0x8F, 0x00 },
+ 	{ 3, 5000+0,      3570,   0, 0x0B, 0x6B, 0x00 }
+ 
+-- 
+2.34.1
+

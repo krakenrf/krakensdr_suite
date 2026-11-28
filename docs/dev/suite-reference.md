@@ -1779,7 +1779,7 @@ tree at the repo root):
   and fast-forwards a clone older than 578b43d (the fast drag calls + the
   stalled control OUT retry; else it stops - `librtlsdr-fork.md`); a clone
   from 578b43d on that lacks the newest fork feature heimdall uses
-  (`RTLSDR_FEATURE_MARK`, today 9644d07's fast gain write) is fetched and
+  (`RTLSDR_FEATURE_MARK`, today ff2bb7b's IF centre 1.815 MHz) is fetched and
   fast-forwarded softly (`scripts/librtlsdr-update.sh`: bounded, nothing
   discarded, at most once per HEAD or week; when it can't, one line and the
   build goes on - `librtlsdr-fork.md`, *Keeping the clone current*);

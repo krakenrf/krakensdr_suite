@@ -10,8 +10,11 @@ on every platform.
 
 ## Keeping the clone current (2026-11-25)
 
-The fork's `master` - krakenrf/librtlsdr **9644d07** since 2026-11-25 - has
-everything heimdall uses: 578b43d (the fast retunes, the stall retry), 701a832
+The fork's `master` - krakenrf/librtlsdr **9644d07** since 2026-11-25 - plus
+**ff2bb7b** (2026-11-28: the R820T's IF centre 1.815 MHz at 2.4 MS/s,
+`RTLSDR_R82XX_IF_1815`; a local commit on the fork clone's branch
+`if-center-1815` and a patch in `docs/dev/librtlsdr-patches/` until it is
+pushed - *The R820T IF filter*, *Adopted*) has everything heimdall uses: 578b43d (the fast retunes, the stall retry), 701a832
 + 3ad1746 (zero-copy buffers, the FIFO hold), 6da393d + 88993d3 (no retune
 drops a sample - `RTLSDR_NO_STREAM_SLIP` -, `RTLSDR_TUNE_NO_DUMMY_READ`, the
 register repair after an early lock read) and 9644d07 (the fast tuner gain
@@ -36,8 +39,9 @@ What brings the `librtlsdr/` clone up to the fork's latest:
     the oldest fork heimdall builds with. A clone without it is fetched and
     fast-forwarded to its upstream, else the build stops with instructions
     (the hard path: *WinUSB fixes and fast retunes*, below).
-  - `RTLSDR_FEATURE_MARK` (`rtlsdr_set_center_freq_gain_fast` in
-    `include/rtl-sdr.h`, 9644d07): the newest fork feature heimdall uses -
+  - `RTLSDR_FEATURE_MARK` (`RTLSDR_R82XX_IF_1815` in `include/rtl-sdr.h`,
+    ff2bb7b; before it `rtlsdr_set_center_freq_gain_fast`, 9644d07): the
+    newest fork feature heimdall uses -
     move it when heimdall starts using a newer one (and the Dockerfile's
     pin with it). A clone that has the first mark but not this one is
     updated SOFTLY by `scripts/librtlsdr-update.sh`, which make runs while
@@ -1125,7 +1129,8 @@ environment variables (`heimdall_v2/tools/rtl_filter_phase/`). Summary:
 - Stock osmocom rtl-sdr's values for 2.4 MS/s (each chip's own calibration
   code, IF centre 1.815 MHz) leave 0.5-1.5° on this unit, and moving only
   the IF centre to 1.815 MHz 1.1-2.2° - both less than the fork's, from 70
-  to 1575 MHz. Not adopted; see *Alternatives* below.
+  to 1575 MHz. The IF centre 1.815 MHz was adopted on 2026-11-28 (ff2bb7b),
+  after the measurements with the per-bin EQ in *Adopted* below.
 - Why the calibration does not remove any of this, and what the per-bin EQ
   does with it: `heimdall_v2/docs/dev/calibration.md`, *Band-edge phase*.
 
@@ -1256,7 +1261,7 @@ One register field at a time (CH1 and CH4 against CH0, detrended):
 So the - edge follows the low-pass setting and nothing else, the + edge
 follows the high-pass corner and the IF centre and nothing else.
 
-### Alternatives measured (not adopted - a decision for the fork)
+### Alternatives measured (2026-11-26; the IF centre adopted since - *Adopted* below)
 
 Worst detrended phase over |f| <= 0.4 fs, CH1 / CH2 / CH3 / CH4, 100 MHz:
 
@@ -1303,3 +1308,96 @@ Open before anything is changed in the fork:
 Data: job scratch 14951841 `rtlfilt/w_hw1/` (register A/B, sweeps, IF map;
 `analysis/SUMMARY_ALL.txt`, `REGISTERS.txt`, `stitch_fc0.txt`) and
 `rtlfilt/w_hw2/` (per-bin EQ, frequency, time; `analysis/D*_COMPACT.txt`).
+
+### Adopted: IF centre 1.815 MHz (ff2bb7b, measured 2026-11-28)
+
+The question (the user, 2026-11-28): the live spectrum showed a distorted top
+edge - with the per-bin EQ on by default, is the IF centre still worth moving,
+can the low-pass go back to narrow, is there a width in between. Measured
+with heimdall's product code (12-tap EQ on by default) built against a copy
+of the fork with the register knobs (`r82xx-env-test.patch`, plus an EQ
+fit-band knob in that scratch build only), 100 MHz and gain 49.6 unless
+stated; then the fork commit itself on both Pis against the fork as it was,
+same heimdall source. Phase: worst channel against CH0, mean of two
+calibrations per EQ state, "raw" = referred to the band centre as the
+stream leaves heimdall, "detrended" = each curve's constant and slope
+removed (the slope is the lag servo's residual, up to +-3° at 0.4 fs and
+different at every calibration, so raw comparisons between single runs
+carry it); 31-bin median against FM stations leaking past the noise source.
+Strips: 0.40-0.45 fs on each side.
+
+The change (`src/tuner_r82xx.c`, the 2.2 MHz `IFi[]` row, chosen for
+bandwidth requests of ~2.08-2.6 MHz): IF centre 1600 -> 1815 kHz. The
+stream then covers IF 0.615-3.015 MHz, clear of the high-pass corner
+(0.47-0.51 MHz), the low-pass (FILT_CODE 0, > 3.7 MHz) still above it.
+
+| unit, frequency | detrended in band, EQ off: IF 1.6 -> 1.815 | EQ on | lower strip, EQ on | upper strip, EQ on |
+|---|---|---|---|---|
+| x86 dev machine, 100 MHz | 7.4 -> 2.3° | 0.6 -> 0.5° | 6.8 -> 4.0° | 4.1 -> 4.8° |
+| x86 dev machine, 868 MHz | 7.3 -> 1.8° | 0.7 -> 0.5° | 7.5 -> 3.7° | 5.0 -> 4.7° |
+| Pi 4, 100 MHz | 2.2 -> 0.8° | 0.6 -> 0.4° | 5.2 -> 5.0° | 4.5 -> 4.0° |
+| Pi 4, 868 MHz | 2.1 -> 0.8° | 0.5 -> 0.4° | 5.6 -> 4.8° | 2.6 -> 4.1° |
+| Pi 5, 100 MHz | 1.7 -> 0.9° | 0.5 -> 0.4° | 6.5 -> 5.5° | 4.5 -> 3.0° |
+| Pi 5, 868 MHz | 1.9 -> 0.9° | 0.4 -> 0.5° | 6.6 -> 4.8° | 3.1 -> 3.4° |
+
+- The level, what the spectrum shows (CH0 against the band centre, EQ off,
+  noise source): at +0.45 / +0.47 fs -5.0 / -7.4 dB -> -3.4 / -4.0 dB
+  (x86), -5.9 / -8.1 -> -3.3 / -4.0 (Pi 5), -6.0 / -8.0 -> -3.2 / -3.9
+  (Pi 4); the high-pass's +1-1.6 dB peak before it is gone. The top edge
+  now rolls off like the bottom one (-4.0 to -4.3 dB at -0.45 fs, the
+  RTL2832U's decimation filter). The level spread between the dongles at
+  +0.45 fs: 2.5 -> 0.3 dB (x86, 100 MHz), 2.1 -> 1.0 dB (868 MHz); the
+  Pis' units matched better already: 0.2-1.2 dB before, 0.3-0.7 dB after.
+- Raw, single runs: the x86 unit 7.5 -> 4.3° (100 MHz) and 9.4 -> 3.6°
+  (868 MHz) with the EQ off, 1.0 -> 0.8° and 1.2 -> 0.75° with it; on the
+  Pi 5 at 868 MHz one run read worse (EQ off 2.3 -> 3.8°, on 0.6 -> 1.3°,
+  Check Calibration 0.4-0.5°): a slope of 4° at 0.4 fs in that run's
+  calibrations, the same curve without it (table).
+- Check Calibration 0.1-0.4° in every run (0.4-0.5° in that one), 0
+  coherence events, recalibration times unchanged (full 3.15 s, the EQ on
+  / off 0.76-1.28 s on x86).
+- In band the IF centre is better or equal on all three units at both
+  frequencies, the lower strip better by 0.2-3.8°, the upper strip mixed
+  (-1.5 to +1.5°). The strips stay at 3-6° with any setting: past 0.42 fs the noise
+  source's own noise folded in by the RTL2832U's decimation sits in the
+  measurement (*Method* above), so these numbers say little about a real
+  signal there.
+
+Measured on the way (x86 unit, 100 MHz, gain 49.6):
+
+- Stock osmocom's values (each chip's calibration code, FILT_Q 0, IF 1.815
+  MHz): raw in band 2.8° EQ off, 1.0° on - no better than the IF centre
+  alone once the EQ is on.
+- The old narrow low-pass (FILT_CODE 15) with the EQ on: 3.9° in band at
+  IF 1.6 (5.0° at 1.815), the channels' levels 4.0 / 5.6 dB apart at -0.40
+  / -0.45 fs (the EQ is phase-only), CH0 -8 dB at -0.45 fs. At RF gain 0
+  (noise source unclipped) the EQ takes it to 0.5° in band: the clipped
+  noise source is what limits it at a working gain. Not usable.
+- In-between low-pass codes, IF 1.6, raw in band EQ off / on, lower strip
+  EQ on: code 0 7.5 / 1.0°, 7.6°; 4: 9.4 / 1.5°, 6.7°; 6: 7.6 / 1.1°,
+  4.7°; 8: 9.0 / 1.6°, 5.6°; 10: 10.6 / 1.8°, 9.0°. What they filter
+  beyond the band's lower edge (IF centre moved to 2.6 MHz so the stream
+  shows IF 1.4-3.8 MHz; against code 0, mean of the dongles), at 0 / 0.2 /
+  0.4 / 0.6 / 0.8 MHz past the edge: code 4 0.0 / -0.1 / -0.5 / -2.2 /
+  -5.2 dB; 6: -0.1 / -0.4 / -2.2 / -5.9 / -7.9; 8: -0.4 / -1.6 / -5.3 /
+  -8.9 / -7.7; 10: -1.0 / -4.4 / -8.7 / -9.7 / -9.0 - the corners' spread
+  between dongles 5-8 dB near each corner. Lower side only (the upper side
+  is the high-pass). Code 6 costs ~0.1° in band with the EQ at IF 1.6; at
+  IF 1.815 the band's lower edge sits 0.2 MHz closer to the corner (not
+  measured). Not adopted: at most 8-10 dB, one side.
+- The EQ fitted to +-0.45 fs instead of +-0.42 (scratch knob): strips 3.1 /
+  3.4° (both IF centres) for +0.3° in band - measured on the noise source,
+  whose strips carry the folded noise; not adopted without a real signal.
+- Not measured: image rejection, and the calibration as a real signal sees
+  it across the band - the bench's FM stations were too weak and not
+  coherent enough between antennas (per-bin coherence 0.15-0.55, phases
+  moving 3-14° between tunings where the noise source showed < 1°); that
+  needs a CW generator through a splitter. Also not tested: the Wideband
+  variant (tuners at 1268 MHz), other KrakenSDR units than these three,
+  KerberosSDR, other sample rates in the row's range (2.08-2.6 MS/s),
+  Windows and macOS (the same table).
+
+Data: job scratch 14951841 `rtlfilt2/` (`ifm.py`, `campaign*.sh`,
+`analyze2.py`, `detrend_cmp.py`, `oob.py` / `oob_analyze.py`,
+`stationtest.py`, `out/`), `pi/res_if_pi4/`, `pi/res_if_pi5/`
+(`ifm_pi.py`, `run_if.sh`).
